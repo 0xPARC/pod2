@@ -318,17 +318,11 @@ impl MainPodBuilder {
         // TODO: Error handling
         let (statements, operations) = compiler.compile(inputs).expect("TODO");
 
+        // TODO: Add API to specify public/private statement
+        let statements = statements.into_iter().map(|s| (false, s)).collect_vec();
         let inputs = MainPodInputs {
-            signed_pods: &self
-                .input_signed_pods
-                .iter()
-                .map(|p| p.pod.as_ref())
-                .collect_vec(),
-            main_pods: &self
-                .input_main_pods
-                .iter()
-                .map(|p| p.pod.as_ref())
-                .collect_vec(),
+            signed_pods: &self.input_signed_pods.iter().map(|p| &p.pod).collect_vec(),
+            main_pods: &self.input_main_pods.iter().map(|p| &p.pod).collect_vec(),
             statements: &statements,
             operations: &operations,
         };

@@ -171,6 +171,7 @@ pub struct Params {
     pub max_signed_pod_values: usize,
     pub max_public_statements: usize,
     pub max_statement_args: usize,
+    pub max_operation_args: usize,
 }
 
 impl Params {
@@ -188,6 +189,7 @@ impl Default for Params {
             max_signed_pod_values: 8,
             max_public_statements: 10,
             max_statement_args: 5,
+            max_operation_args: 5,
         }
     }
 }
@@ -219,6 +221,29 @@ pub trait SignedPod: fmt::Debug + DynClone {
 
 // impl Clone for Box<dyn SignedPod>
 dyn_clone::clone_trait_object!(SignedPod);
+
+/// This is a filler type that fulfills the SignedPod trait and always verifies.  It's empty.  This
+/// can be used to simulate padding in a circuit.
+#[derive(Debug, Clone)]
+pub struct NoneSignedPod {}
+
+impl SignedPod for NoneSignedPod {
+    fn verify(&self) -> bool {
+        true
+    }
+    fn id(&self) -> PodId {
+        PodId(NULL)
+    }
+    fn kvs(&self) -> HashMap<Hash, Value> {
+        HashMap::new()
+    }
+    fn pub_statements(&self) -> Vec<Statement> {
+        Vec::new()
+    }
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+}
 
 pub trait PodSigner {
     fn sign(&mut self, params: &Params, kvs: &HashMap<Hash, Value>) -> Result<Box<dyn SignedPod>>;
@@ -305,11 +330,32 @@ pub trait MainPod: fmt::Debug + DynClone {
 // impl Clone for Box<dyn SignedPod>
 dyn_clone::clone_trait_object!(MainPod);
 
+/// This is a filler type that fulfills the MainPod trait and always verifies.  It's empty.  This
+/// can be used to simulate padding in a circuit.
+#[derive(Debug, Clone)]
+pub struct NoneMainPod {}
+
+impl MainPod for NoneMainPod {
+    fn verify(&self) -> bool {
+        true
+    }
+    fn id(&self) -> PodId {
+        PodId(NULL)
+    }
+    fn pub_statements(&self) -> Vec<Statement> {
+        Vec::new()
+    }
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+}
+
 #[derive(Debug)]
 pub struct MainPodInputs<'a> {
-    pub signed_pods: &'a [&'a dyn SignedPod],
-    pub main_pods: &'a [&'a dyn MainPod],
-    pub statements: &'a [Statement],
+    pub signed_pods: &'a [&'a Box<dyn SignedPod>],
+    pub main_pods: &'a [&'a Box<dyn MainPod>],
+    /// Each entry is `(is_public, Statement)`
+    pub statements: &'a [(bool, Statement)],
     pub operations: &'a [Operation],
 }
 

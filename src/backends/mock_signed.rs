@@ -26,9 +26,9 @@ impl PodSigner for MockSigner {
 
 #[derive(Clone, Debug)]
 pub struct MockSignedPod {
-    pub id: PodId,
-    pub signature: String,
-    pub mt: MerkleTree,
+    id: PodId,
+    signature: String,
+    mt: MerkleTree,
 }
 
 impl SignedPod for MockSignedPod {
