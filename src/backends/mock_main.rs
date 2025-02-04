@@ -13,7 +13,7 @@ pub struct MockProver {}
 
 impl PodProver for MockProver {
     fn prove(&mut self, params: &Params, inputs: MainPodInputs) -> Result<Box<dyn MainPod>> {
-        todo!()
+        Ok(Box::new(MockMainPod::new(params, inputs)?))
     }
 }
 
@@ -49,13 +49,6 @@ fn fill_pad<T: Clone>(v: &mut Vec<T>, pad_value: T, len: usize) {
 
 impl MockMainPod {
     fn layout_statements(params: &Params, inputs: &MainPodInputs) -> Vec<Statement> {
-        let input_signed_pods = inputs
-            .signed_pods
-            .iter()
-            .map(|p| (*p).clone())
-            .collect_vec();
-        let input_main_pods = inputs.main_pods.iter().map(|p| (*p).clone()).collect_vec();
-        let input_statements = inputs.statements.iter().cloned().collect_vec();
         let mut statements = Vec::new();
 
         let st_none = Self::statement_none(params);
@@ -63,7 +56,11 @@ impl MockMainPod {
         // Input signed pods region
         let none_sig_pod: Box<dyn SignedPod> = Box::new(NoneSignedPod {});
         for i in 0..params.max_input_signed_pods {
-            let pod = input_signed_pods.get(i).unwrap_or(&none_sig_pod);
+            let pod = inputs
+                .signed_pods
+                .get(i)
+                .map(|p| *p)
+                .unwrap_or(&none_sig_pod);
             for j in 0..params.max_signed_pod_values {
                 let sts = pod.pub_statements();
                 let mut st = sts.get(j).unwrap_or(&st_none).clone();
@@ -75,7 +72,11 @@ impl MockMainPod {
         // Input main pods region
         let none_main_pod: Box<dyn MainPod> = Box::new(NoneMainPod {});
         for i in 0..params.max_input_main_pods {
-            let pod = input_main_pods.get(i).unwrap_or(&none_main_pod);
+            let pod = inputs
+                .main_pods
+                .get(i)
+                .map(|p| *p)
+                .unwrap_or(&none_main_pod);
             for j in 0..params.max_public_statements {
                 let sts = pod.pub_statements();
                 let mut st = sts.get(j).unwrap_or(&st_none).clone();
@@ -86,7 +87,8 @@ impl MockMainPod {
 
         // Input statements
         for i in 0..params.max_statements {
-            let mut st = input_statements
+            let mut st = inputs
+                .statements
                 .get(i)
                 .map(|s| &s.1)
                 .unwrap_or(&st_none)
@@ -145,8 +147,8 @@ impl MockMainPod {
         operations
     }
 
-    pub fn new(params: &Params, inputs: &MainPodInputs) -> Result<Self> {
-        let statements = Self::layout_statements(params, inputs);
+    pub fn new(params: &Params, inputs: MainPodInputs) -> Result<Self> {
+        let statements = Self::layout_statements(params, &inputs);
         let operations = Self::process_operations(params, &statements, inputs.operations);
 
         let input_signed_pods = inputs
