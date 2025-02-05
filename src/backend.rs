@@ -1,4 +1,3 @@
-// TODO: Move the SignedPod.id calculation to mock_signed
 // TODO: Move the MainPod logic to mock_main and implement the MainPod trait
 /*
 use anyhow::Result;
@@ -10,29 +9,6 @@ use std::iter;
 
 use crate::merkletree::MerkleTree;
 use crate::middleware::{Hash, Params, PodId, Value, NULL};
-
-#[derive(Clone, Debug)]
-pub struct SignedPod {
-    pub params: Params,
-    pub id: PodId,
-    pub kvs: MerkleTree,
-}
-
-impl SignedPod {
-    pub fn new(params: &Params, kvs: HashMap<Hash, Value>) -> Result<Self> {
-        let mt = MerkleTree::new(kvs);
-        let root = mt.root()?;
-        Ok(Self {
-            params: *params,
-            id: PodId(root),
-            kvs: mt,
-        })
-    }
-
-    pub fn is_null(&self) -> bool {
-        self.id.0 == NULL
-    }
-}
 
 #[derive(Clone, Debug)]
 pub struct MainPod {

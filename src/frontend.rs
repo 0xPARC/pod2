@@ -94,7 +94,7 @@ impl SignedPodBuilder {
         self.kvs.insert(key.into(), value.into());
     }
 
-    pub fn sign<S: PodSigner>(&self, signer: &mut S) -> SignedPod {
+    pub fn sign<S: PodSigner>(&self, signer: &mut S) -> Result<SignedPod> {
         let mut kvs = HashMap::new();
         let mut key_string_map = HashMap::new();
         for (k, v) in self.kvs.iter() {
@@ -102,11 +102,11 @@ impl SignedPodBuilder {
             kvs.insert(k_hash, middleware::Value::from(v));
             key_string_map.insert(k_hash, k.clone());
         }
-        let pod = signer.sign(&self.params, &kvs);
-        SignedPod {
+        let pod = signer.sign(&self.params, &kvs)?;
+        Ok(SignedPod {
             pod,
             key_string_map,
-        }
+        })
     }
 }
 
@@ -254,7 +254,7 @@ impl MainPodBuilder {
         let mut st_args = Vec::new();
         for arg in args.iter_mut() {
             match arg {
-                OperationArg::Statement(s) => panic!("can't convert Statement to StatementArg"),
+                OperationArg::Statement(_s) => panic!("can't convert Statement to StatementArg"),
                 OperationArg::Key(k) => st_args.push(StatementArg::Key(k.clone())),
                 OperationArg::Literal(v) => {
                     let k = format!("c{}", self.const_cnt);
@@ -307,7 +307,7 @@ impl MainPodBuilder {
         &self.statements[self.statements.len() - 1]
     }
 
-    pub fn prove<P: PodProver>(&self, prover: &mut P) -> MainPod {
+    pub fn prove<P: PodProver>(&self, prover: &mut P) -> Result<MainPod> {
         let compiler = MainPodCompiler::new(&self.params);
         let inputs = MainPodCompilerInputs {
             // signed_pods: &self.input_signed_pods,
@@ -315,9 +315,10 @@ impl MainPodBuilder {
             statements: &self.statements,
             operations: &self.operations,
         };
+        // TODO: Error handling
         let (statements, operations) = compiler.compile(inputs).expect("TODO");
 
-        let inputs = middleware::MainPodInputs {
+        let inputs = MainPodInputs {
             signed_pods: &self
                 .input_signed_pods
                 .iter()
@@ -331,8 +332,8 @@ impl MainPodBuilder {
             statements: &statements,
             operations: &operations,
         };
-        let pod = prover.prove(&self.params, inputs);
-        MainPod { pod }
+        let pod = prover.prove(&self.params, inputs)?;
+        Ok(MainPod { pod })
     }
 }
 
@@ -374,10 +375,6 @@ impl MainPodCompiler {
         }
     }
 
-    fn max_priv_statements(&self) -> usize {
-        self.params.max_statements - self.params.max_public_statements
-    }
-
     fn push_st_op(&mut self, st: middleware::Statement, op: middleware::Operation) {
         self.statements.push(st);
         self.operations.push(op);
@@ -394,7 +391,8 @@ impl MainPodCompiler {
             }
             OperationArg::Entry(_k, _v) => {
                 // OperationArg::Entry is only used in the frontend.  The (key, value) will only
-                // appear in the ValueOf statement in the backend.
+                // appear in the ValueOf statement in the backend.  This is because a new ValueOf
+                // statement doesn't have any requirement on the key and value.
                 middleware::OperationArg::None
             }
         }
@@ -521,13 +519,7 @@ impl Printer {
 pub mod tests {
     use super::*;
     use crate::backends::mock_signed::MockSigner;
-    use crate::middleware::Hash;
-    use hex::FromHex;
     use std::io;
-
-    fn pod_id(hex: &str) -> PodId {
-        PodId(Hash::from_hex(hex).unwrap())
-    }
 
     macro_rules! args {
         ($($arg:expr),+) => {vec![$(OperationArg::from($arg)),*]}
@@ -592,13 +584,13 @@ pub mod tests {
         let mut signer = MockSigner {
             pk: "ZooGov".into(),
         };
-        let gov_id = gov_id.sign(&mut signer);
+        let gov_id = gov_id.sign(&mut signer).unwrap();
         printer.fmt_signed_pod(&mut w, &gov_id).unwrap();
 
         let mut signer = MockSigner {
             pk: "ZooDeel".into(),
         };
-        let pay_stub = pay_stub.sign(&mut signer);
+        let pay_stub = pay_stub.sign(&mut signer).unwrap();
         printer.fmt_signed_pod(&mut w, &pay_stub).unwrap();
 
         let kyc = zu_kyc_pod_builder(&params, &gov_id, &pay_stub);

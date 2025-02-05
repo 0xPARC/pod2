@@ -1,6 +1,7 @@
 //! The middleware includes the type definitions and the traits used to connect the frontend and
 //! the backend.
 
+use anyhow::Result;
 use dyn_clone::DynClone;
 use hex::{FromHex, FromHexError};
 use itertools::Itertools;
@@ -220,7 +221,7 @@ pub trait SignedPod: fmt::Debug + DynClone {
 dyn_clone::clone_trait_object!(SignedPod);
 
 pub trait PodSigner {
-    fn sign(&mut self, params: &Params, kvs: &HashMap<Hash, Value>) -> Box<dyn SignedPod>;
+    fn sign(&mut self, params: &Params, kvs: &HashMap<Hash, Value>) -> Result<Box<dyn SignedPod>>;
 }
 
 #[derive(Clone, Copy, Debug, FromRepr, PartialEq, Eq)]
@@ -313,5 +314,5 @@ pub struct MainPodInputs<'a> {
 }
 
 pub trait PodProver {
-    fn prove(&mut self, params: &Params, inputs: MainPodInputs) -> Box<dyn MainPod>;
+    fn prove(&mut self, params: &Params, inputs: MainPodInputs) -> Result<Box<dyn MainPod>>;
 }

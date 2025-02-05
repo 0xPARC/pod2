@@ -42,18 +42,18 @@ pub struct MerkleProof {
 }
 
 impl MerkleTree {
-    pub fn new(kvs: HashMap<Hash, Value>) -> Self {
+    pub fn new(kvs: &HashMap<Hash, Value>) -> Self {
         let mut keyindex: HashMap<Hash, usize> = HashMap::new();
         let mut leaves: Vec<Vec<F>> = Vec::new();
         // Note: current version iterates sorting by keys of the kvs, but the merkletree defined at
         // https://0xparc.github.io/pod2/merkletree.html will not need it since it will be
         // deterministic based on the keys values not on the order of the keys when added into the
         // tree.
-        for (i, (k, v)) in kvs.clone().into_iter().sorted_by_key(|kv| kv.0).enumerate() {
+        for (i, (k, v)) in kvs.iter().sorted_by_key(|kv| kv.0).enumerate() {
             let input: Vec<F> = [k.0, v.0].concat();
             let leaf = PoseidonHash::hash_no_pad(&input).elements;
             leaves.push(leaf.into());
-            keyindex.insert(k, i);
+            keyindex.insert(*k, i);
         }
 
         // pad to a power of two if needed
@@ -66,7 +66,7 @@ impl MerkleTree {
         Self {
             tree,
             keyindex,
-            kvs,
+            kvs: kvs.clone(),
         }
     }
 
@@ -127,6 +127,10 @@ impl MerkleTree {
     pub fn iter(&self) -> std::collections::hash_map::Iter<Hash, Value> {
         self.kvs.iter()
     }
+
+    pub fn kvs(&self) -> &HashMap<Hash, Value> {
+        &self.kvs
+    }
 }
 
 impl<'a> IntoIterator for &'a MerkleTree {
@@ -164,7 +168,7 @@ pub mod tests {
         kvs.insert(k1, v1);
         kvs.insert(k2, v2);
 
-        let tree = MerkleTree::new(kvs);
+        let tree = MerkleTree::new(&kvs);
 
         let proof = tree.prove(&k2)?;
         MerkleTree::verify(tree.root()?, &proof, &k2, &v2)?;
