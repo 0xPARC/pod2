@@ -12,5 +12,7 @@
 	- [SignedPOD](./signedpod.md)
 	- [MainPOD](./mainpod.md)
 	- [MockPOD](./mockpod.md)
-- [POD value types](./values.md)
+- The data model
+	- [POD value types](./values.md)
+	- [Anchored keys](./anchoredkeys.md)
 - [Examples](./examples.md)
