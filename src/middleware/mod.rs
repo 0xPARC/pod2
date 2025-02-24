@@ -48,6 +48,12 @@ pub type Entry = (String, Value);
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]
 pub struct Value(pub [F; 4]);
 
+impl ToFields for Value {
+    fn to_fields(self) -> (Vec<F>, usize) {
+        (self.0.to_vec(), 4)
+    }
+}
+
 impl Value {
     pub fn to_bytes(self) -> Vec<u8> {
         self.0

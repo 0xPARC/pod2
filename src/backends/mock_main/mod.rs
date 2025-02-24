@@ -115,6 +115,11 @@ fn fill_pad<T: Clone>(v: &mut Vec<T>, pad_value: T, len: usize) {
     }
 }
 
+/// Inputs are sorted as:
+/// - SignedPods
+/// - MainPods
+/// - private Statements
+/// - public Statements
 impl MockMainPod {
     fn offset_input_signed_pods(&self) -> usize {
         0
@@ -136,6 +141,8 @@ impl MockMainPod {
         fill_pad(&mut op.1, OperationArg::None, params.max_operation_args)
     }
 
+    /// Returns the statements from the given MainPodInputs, padding to the
+    /// respective max lengths defined at the given Params.
     fn layout_statements(params: &Params, inputs: &MainPodInputs) -> Vec<Statement> {
         let mut statements = Vec::new();
 
@@ -259,8 +266,10 @@ impl MockMainPod {
         Ok(operations)
     }
 
-    // NOTE: In this implementation public statements are always copies from previous statements,
-    // so we fill in the operations accordingly.
+    // NOTE: In this implementation public statements are always copies from
+    // previous statements, so we fill in the operations accordingly.
+    /// This method assumes that the given `statements` array has been padded to
+    /// `params.max_statements`.
     fn process_public_statements_operations(
         params: &Params,
         statements: &[Statement],
