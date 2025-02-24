@@ -1,37 +1,5 @@
 
-# Ethdos custom predicate, using binary AND and OR: example of a direct definition and a recursive group
-
-## Direct definition
-(DEPRECATED: All predicates must be defined as part of a group.)
-```
-eth_friend(src_or, src_key, dst_or, dst_key) = and<
-    // there is an attestation pod that's a SIGNATURE POD
-    ValueOf(attestation_pod, "type", SIGNATURE)     
-    
-    // the attestation pod is signed by (src_or, src_key)
-    Equal((attestation_pod, "signer"), (src_or, src_key))  
-
-    // that same attestation pod has an "attestation"
-    Equal((attestation_pod, "attestation"), (dst_or, dst_key))
->
-
-On the backend, this is converted to a rule where all the arguments are either wildcards or literals:
-eth_friend(*1, *2, *3, *4) = and<
-    // there is an attestation pod that's a SIGNATURE POD
-    ValueOf(*5, "type", SIGNATURE)     
-    
-    // the attestation pod is signed by (src_or, src_key)
-    Equal((*5, "signer"), (*1, *2))  
-
-    // that same attestation pod has an "attestation"
-    Equal((*5, "attestation"), (*3, *4))
->
-
-This backend definition is then hashed in the obvious way.
-
-```
-
-## Recursive group definition
+# Ethdos custom predicate, using binary AND and OR: example of a recursive group
 
 ```
 eth_dos_distance(src_or, src_key, dst_or, dst_key, distance_or, distance_key) = or<
