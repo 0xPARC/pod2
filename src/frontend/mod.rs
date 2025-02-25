@@ -96,6 +96,16 @@ pub struct SignedPodBuilder {
     pub kvs: HashMap<String, Value>,
 }
 
+impl fmt::Display for SignedPodBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "SignedPodBuilder:")?;
+        for (k, v) in self.kvs.iter().sorted_by_key(|kv| kv.0){
+            writeln!(f, "  - {}: {}", k, v)?;
+        }
+        Ok(())
+    }
+}
+
 impl SignedPodBuilder {
     pub fn new(params: &Params) -> Self {
         Self {
@@ -498,7 +508,7 @@ pub mod tests {
         let params = Params::default();
         let (gov_id, pay_stub) = zu_kyc_sign_pod_builders(&params);
 
-        // TODO: print pods from the builder
+        println!("{}", gov_id);
 
         let mut signer = MockSigner {
             pk: "ZooGov".into(),
