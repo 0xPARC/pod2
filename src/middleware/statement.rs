@@ -3,13 +3,13 @@ use plonky2::field::types::Field;
 use std::fmt;
 use strum_macros::FromRepr;
 
-use super::{AnchoredKey, ToFields, Value, F};
+use super::{AnchoredKey, CustomPredicateRef, Hash, Predicate, ToFields, Value, F};
 
 pub const KEY_SIGNER: &str = "_signer";
 pub const KEY_TYPE: &str = "_type";
 pub const STATEMENT_ARG_F_LEN: usize = 8;
 
-#[derive(Clone, Copy, Debug, FromRepr, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, FromRepr, PartialEq, Eq, Hash)]
 pub enum NativePredicate {
     None = 0,
     ValueOf = 1,
@@ -32,7 +32,7 @@ impl ToFields for NativePredicate {
 
 // TODO: Incorporate custom statements into this enum.
 /// Type encapsulating statements with their associated arguments.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Statement {
     None,
     ValueOf(AnchoredKey, Value),
@@ -45,25 +45,28 @@ pub enum Statement {
     SumOf(AnchoredKey, AnchoredKey, AnchoredKey),
     ProductOf(AnchoredKey, AnchoredKey, AnchoredKey),
     MaxOf(AnchoredKey, AnchoredKey, AnchoredKey),
+    Custom(CustomPredicateRef, Vec<Hash>),
 }
 
 impl Statement {
     pub fn is_none(&self) -> bool {
         self == &Self::None
     }
-    pub fn code(&self) -> NativePredicate {
+    pub fn code(&self) -> Predicate {
+        use Predicate::*;
         match self {
-            Self::None => NativePredicate::None,
-            Self::ValueOf(_, _) => NativePredicate::ValueOf,
-            Self::Equal(_, _) => NativePredicate::Equal,
-            Self::NotEqual(_, _) => NativePredicate::NotEqual,
-            Self::Gt(_, _) => NativePredicate::Gt,
-            Self::Lt(_, _) => NativePredicate::Lt,
-            Self::Contains(_, _) => NativePredicate::Contains,
-            Self::NotContains(_, _) => NativePredicate::NotContains,
-            Self::SumOf(_, _, _) => NativePredicate::SumOf,
-            Self::ProductOf(_, _, _) => NativePredicate::ProductOf,
-            Self::MaxOf(_, _, _) => NativePredicate::MaxOf,
+            Self::None => Native(NativePredicate::None),
+            Self::ValueOf(_, _) => Native(NativePredicate::ValueOf),
+            Self::Equal(_, _) => Native(NativePredicate::Equal),
+            Self::NotEqual(_, _) => Native(NativePredicate::NotEqual),
+            Self::Gt(_, _) => Native(NativePredicate::Gt),
+            Self::Lt(_, _) => Native(NativePredicate::Lt),
+            Self::Contains(_, _) => Native(NativePredicate::Contains),
+            Self::NotContains(_, _) => Native(NativePredicate::NotContains),
+            Self::SumOf(_, _, _) => Native(NativePredicate::SumOf),
+            Self::ProductOf(_, _, _) => Native(NativePredicate::ProductOf),
+            Self::MaxOf(_, _, _) => Native(NativePredicate::MaxOf),
+            Self::Custom(cpr, _) => Custom(cpr.clone()),
         }
     }
     pub fn args(&self) -> Vec<StatementArg> {
@@ -80,6 +83,7 @@ impl Statement {
             Self::SumOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
             Self::ProductOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
             Self::MaxOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
+            Self::Custom(_, args) => Vec::from_iter(args.into_iter().map(|h| Literal(h.into()))),
         }
     }
 }

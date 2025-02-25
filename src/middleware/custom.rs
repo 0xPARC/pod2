@@ -1,11 +1,11 @@
-use std::fmt;
 use std::sync::Arc;
+use std::{fmt, hash as h};
 
 use super::{hash_str, Hash, NativePredicate, ToFields, Value, F};
 
 // BEGIN Custom 1b
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, h::Hash)]
 pub enum HashOrWildcard {
     Hash(Hash),
     Wildcard(usize),
@@ -20,7 +20,7 @@ impl fmt::Display for HashOrWildcard {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, h::Hash)]
 pub enum StatementTmplArg {
     None,
     Literal(Value),
@@ -50,10 +50,10 @@ impl fmt::Display for StatementTmplArg {
 // END
 
 /// Statement Template for a Custom Predicate
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StatementTmpl(pub Predicate, pub Vec<StatementTmplArg>);
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CustomPredicate {
     /// true for "and", false for "or"
     pub conjunction: bool,
@@ -96,7 +96,7 @@ impl fmt::Display for CustomPredicate {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CustomPredicateBatch {
     pub name: String,
     pub predicates: Vec<CustomPredicate>,
@@ -109,11 +109,14 @@ impl CustomPredicateBatch {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CustomPredicateRef(pub Arc<CustomPredicateBatch>, pub usize);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Predicate {
     Native(NativePredicate),
     BatchSelf(usize),
-    Custom(Arc<CustomPredicateBatch>, usize),
+    Custom(CustomPredicateRef),
 }
 
 impl From<NativePredicate> for Predicate {
@@ -127,7 +130,7 @@ impl ToFields for Predicate {
         match self {
             Self::Native(p) => p.to_fields(),
             Self::BatchSelf(i) => Value::from(i as i64).to_fields(),
-            Self::Custom(_pb, _i) => todo!(), // TODO
+            Self::Custom(_) => todo!(), // TODO
         }
     }
 }
@@ -137,7 +140,7 @@ impl fmt::Display for Predicate {
         match self {
             Self::Native(p) => write!(f, "{:?}", p),
             Self::BatchSelf(i) => write!(f, "self.{}", i),
-            Self::Custom(pb, i) => write!(f, "{}.{}", pb.name, i),
+            Self::Custom(CustomPredicateRef(pb, i)) => write!(f, "{}.{}", pb.name, i),
         }
     }
 }

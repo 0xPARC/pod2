@@ -5,7 +5,7 @@ use anyhow::Result;
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::convert::From;
-use std::fmt;
+use std::{fmt, hash as h};
 
 use crate::middleware::{
     self,
@@ -22,7 +22,7 @@ pub use operation::*;
 pub use statement::*;
 
 /// This type is just for presentation purposes.
-#[derive(Clone, Debug, Default, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, h::Hash, PartialEq, Eq)]
 pub enum PodClass {
     #[default]
     Signed,
@@ -30,7 +30,7 @@ pub enum PodClass {
 }
 
 // An Origin, which represents a reference to an ancestor POD.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, h::Hash, Default)]
 pub struct Origin(pub PodClass, pub PodId);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -166,7 +166,7 @@ impl SignedPod {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, h::Hash)]
 pub struct AnchoredKey(pub Origin, pub String);
 
 impl From<AnchoredKey> for middleware::AnchoredKey {

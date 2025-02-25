@@ -82,7 +82,13 @@ impl TryFrom<Statement> for middleware::Statement {
 
 impl From<middleware::Statement> for Statement {
     fn from(s: middleware::Statement) -> Self {
-        Statement(s.code(), s.args().into_iter().map(|arg| arg).collect())
+        match s.code() {
+            middleware::Predicate::Native(c) => {
+                Statement(c, s.args().into_iter().map(|arg| arg).collect())
+            }
+            // TODO: Custom statements
+            _ => todo!(),
+        }
     }
 }
 

@@ -171,7 +171,7 @@ fn resolve_wildcard(args: &[&str], priv_args: &[&str], v: &HashOrWildcardStr) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::middleware::PodType;
+    use crate::middleware::{CustomPredicateRef, PodType};
 
     #[test]
     fn test_custom_pred() {
@@ -204,7 +204,7 @@ mod tests {
         println!("a.0. eth_friend = {}", builder.predicates.last().unwrap());
         let eth_friend = builder.finish();
         // This batch only has 1 predicate, so we pick it already for convenience
-        let eth_friend = Predicate::Custom(eth_friend, 0);
+        let eth_friend = Predicate::Custom(CustomPredicateRef(eth_friend, 0));
 
         // next chunk builds:
         // eth_dos_distance_base(src_or, src_key, dst_or, dst_key, distance_or, distance_key) = and<
