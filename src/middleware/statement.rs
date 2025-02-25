@@ -3,7 +3,7 @@ use plonky2::field::types::Field;
 use std::{collections::HashMap, fmt};
 use strum_macros::FromRepr;
 
-use super::{AnchoredKey, CustomPredicateRef, Hash, Predicate, ToFields, Value, F};
+use super::{AnchoredKey, CustomPredicateRef, Hash, Params, Predicate, ToFields, Value, F};
 
 pub const KEY_SIGNER: &str = "_signer";
 pub const KEY_TYPE: &str = "_type";
@@ -25,8 +25,8 @@ pub enum NativePredicate {
 }
 
 impl ToFields for NativePredicate {
-    fn to_fields(self) -> (Vec<F>, usize) {
-        (vec![F::from_canonical_u64(self as u64)], 1)
+    fn to_fields(&self, params: Params) -> (Vec<F>, usize) {
+        (vec![F::from_canonical_u64(*self as u64)], 1)
     }
 }
 
@@ -88,12 +88,12 @@ impl Statement {
 }
 
 impl ToFields for Statement {
-    fn to_fields(self) -> (Vec<F>, usize) {
-        let (native_statement_f, native_statement_f_len) = self.code().to_fields();
+    fn to_fields(&self, params: Params) -> (Vec<F>, usize) {
+        let (native_statement_f, native_statement_f_len) = self.code().to_fields(params);
         let (vec_statementarg_f, vec_statementarg_f_len) = self
             .args()
             .into_iter()
-            .map(|statement_arg| statement_arg.to_fields())
+            .map(|statement_arg| statement_arg.to_fields(params))
             .fold((Vec::new(), 0), |mut acc, (f, l)| {
                 acc.0.extend(f);
                 acc.1 += l;
@@ -156,7 +156,7 @@ impl StatementArg {
 }
 
 impl ToFields for StatementArg {
-    fn to_fields(self) -> (Vec<F>, usize) {
+    fn to_fields(&self, params: Params) -> (Vec<F>, usize) {
         // NOTE: current version returns always the same amount of field elements in the returned
         // vector, which means that the `None` case is padded with 8 zeroes, and the `Literal` case
         // is padded with 4 zeroes. Since the returned vector will mostly be hashed (and reproduced
@@ -175,8 +175,8 @@ impl ToFields for StatementArg {
                 .concat()
             }
             StatementArg::Key(ak) => {
-                let (podid_f, _) = ak.0.to_fields();
-                let (hash_f, _) = ak.1.to_fields();
+                let (podid_f, _) = ak.0.to_fields(params);
+                let (hash_f, _) = ak.1.to_fields(params);
                 [podid_f, hash_f].concat()
             }
         };

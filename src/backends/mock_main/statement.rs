@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use std::fmt;
 
-use crate::middleware::{self, NativePredicate, StatementArg, ToFields};
+use crate::middleware::{self, NativePredicate, Params, StatementArg, ToFields};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Statement(pub NativePredicate, pub Vec<StatementArg>);
@@ -21,12 +21,12 @@ impl Statement {
 }
 
 impl ToFields for Statement {
-    fn to_fields(self) -> (Vec<middleware::F>, usize) {
-        let (native_statement_f, native_statement_f_len) = self.0.to_fields();
+    fn to_fields(&self, params: Params) -> (Vec<middleware::F>, usize) {
+        let (native_statement_f, native_statement_f_len) = self.0.to_fields(params);
         let (vec_statementarg_f, vec_statementarg_f_len) = self
-            .1
+            .1.clone()
             .into_iter()
-            .map(|statement_arg| statement_arg.to_fields())
+            .map(|statement_arg| statement_arg.to_fields(params))
             .fold((Vec::new(), 0), |mut acc, (f, l)| {
                 acc.0.extend(f);
                 acc.1 += l;

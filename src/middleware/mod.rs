@@ -56,7 +56,7 @@ pub type Entry = (String, Value);
 pub struct Value(pub [F; 4]);
 
 impl ToFields for Value {
-    fn to_fields(self) -> (Vec<F>, usize) {
+    fn to_fields(&self, params: Params) -> (Vec<F>, usize) {
         (self.0.to_vec(), 4)
     }
 }
@@ -139,7 +139,7 @@ impl fmt::Display for Value {
 pub struct Hash(pub [F; 4]);
 
 impl ToFields for Hash {
-    fn to_fields(self) -> (Vec<F>, usize) {
+    fn to_fields(&self, params: Params) -> (Vec<F>, usize) {
         (self.0.to_vec(), 4)
     }
 }
@@ -189,8 +189,8 @@ impl FromHex for Hash {
 pub struct PodId(pub Hash);
 
 impl ToFields for PodId {
-    fn to_fields(self) -> (Vec<F>, usize) {
-        self.0.to_fields()
+    fn to_fields(&self, params: Params) -> (Vec<F>, usize) {
+        self.0.to_fields(params)
     }
 }
 
@@ -241,7 +241,7 @@ pub fn hash_str(s: &str) -> Hash {
     Hash(PoseidonHash::hash_no_pad(&input).elements)
 }
 
-#[derive(Clone, Debug, Copy)]
+#[derive(Clone, Debug, Copy, PartialEq, Eq)]
 pub struct Params {
     pub max_input_signed_pods: usize,
     pub max_input_main_pods: usize,
@@ -250,11 +250,37 @@ pub struct Params {
     pub max_public_statements: usize,
     pub max_statement_args: usize,
     pub max_operation_args: usize,
+    // max number of statements that can be ANDed or ORed together
+    // in a custom predicate
+    pub max_custom_predicate_arity: usize,
+    pub max_custom_batch_size: usize,
+    // number of field elements in a hash
+    pub hash_size: usize,
 }
 
 impl Params {
     pub fn max_priv_statements(&self) -> usize {
         self.max_statements - self.max_public_statements
+    }
+
+    pub fn statement_tmpl_arg_size(self) -> usize {
+        2 * self.hash_size + 1
+    }
+
+    pub fn predicate_size(self) -> usize {
+        self.hash_size + 2
+    }
+
+    pub fn statement_tmpl_size(self) -> usize {
+        self.predicate_size() + self.max_statement_args * self.statement_tmpl_arg_size()
+    }
+
+    pub fn custom_predicate_size(self) -> usize {
+        self.max_custom_predicate_arity * self.statement_tmpl_size() + 2
+    }
+
+    pub fn custom_predicate_batch_size_field_elts(self) -> usize {
+        self.max_custom_batch_size * self.custom_predicate_size()
     }
 }
 
@@ -268,6 +294,9 @@ impl Default for Params {
             max_public_statements: 10,
             max_statement_args: 5,
             max_operation_args: 5,
+            max_custom_predicate_arity: 5,
+            max_custom_batch_size: 5,
+            hash_size: 4,
         }
     }
 }
@@ -335,5 +364,5 @@ pub trait PodProver {
 pub trait ToFields {
     /// returns Vec<F> representation of the type, and a usize indicating how many field elements
     /// does the vector contain
-    fn to_fields(self) -> (Vec<F>, usize);
+    fn to_fields(&self, params: Params) -> (Vec<F>, usize);
 }

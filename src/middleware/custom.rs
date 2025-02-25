@@ -2,10 +2,13 @@ use std::sync::Arc;
 use std::{fmt, hash as h, iter::zip};
 
 use anyhow::{anyhow, Result};
+use plonky2::field::goldilocks_field::GoldilocksField;
+use plonky2::field::types::Field;
+use plonky2::hash::poseidon::PoseidonHash;
+use plonky2::plonk::config::Hasher;
 
 use super::{
-    hash_str, AnchoredKey, Hash, NativePredicate, PodId, Statement, StatementArg, ToFields, Value,
-    F,
+    hash_str, AnchoredKey, Hash, NativePredicate, Params, PodId, Statement, StatementArg, ToFields, Value, F
 };
 
 // BEGIN Custom 1b
@@ -38,6 +41,23 @@ impl fmt::Display for HashOrWildcard {
     }
 }
 
+impl ToFields for HashOrWildcard {
+    fn to_fields(&self, params: Params) -> (Vec<F>, usize) {
+        match self {
+            HashOrWildcard::Hash(h) => {
+                h.to_fields(params)
+            }
+            HashOrWildcard::Wildcard(w) => {
+                let usizes: Vec<usize> = vec![0, 0, 0, *w];
+                let fields: Vec<F> = usizes.iter().map(
+                    |x| F::from_canonical_u64(*x as u64)
+                ).collect();
+                (fields, 4)
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, h::Hash)]
 pub enum StatementTmplArg {
     None,
@@ -60,6 +80,40 @@ impl StatementTmplArg {
                 Ok([o_corr, k_corr].into_iter().flat_map(|x| x).collect())
             }
             _ => Err(anyhow!("Failed to match {} against {}.", self, s_arg)),
+        }
+    }
+}
+
+impl ToFields for StatementTmplArg {
+    fn to_fields(&self, params: Params) -> (Vec<F>, usize) {
+        // None => (0, ...)
+        // Literal(value) => (1, [value], 0, 0, 0, 0)
+        // Key(hash_or_wildcard1, hash_or_wildcard2)
+        //    => (2, [hash_or_wildcard1], [hash_or_wildcard2])
+        // In all three cases, we pad to 2 * hash_size + 1 = 9 field elements
+        let hash_size = 4;
+        let statement_tmpl_arg_size = 2 * hash_size + 1;
+        match self {
+            StatementTmplArg::None => {
+                let fields: Vec<F> = std::iter::repeat_with(|| F::from_canonical_u64(0))
+                    .take(statement_tmpl_arg_size)
+                    .collect();
+                (fields, statement_tmpl_arg_size)
+            }
+            StatementTmplArg::Literal(v) => {
+                let fields: Vec<F> = std::iter::once(F::from_canonical_u64(1))
+                    .chain(v.to_fields(params).0.into_iter())
+                    .chain(std::iter::repeat_with(|| F::from_canonical_u64(0)).take(hash_size))
+                    .collect();
+                (fields, statement_tmpl_arg_size)
+            }
+            StatementTmplArg::Key(hw1, hw2) => {
+                let fields: Vec<F> = std::iter::once(F::from_canonical_u64(2))
+                    .chain(hw1.to_fields(params).0.into_iter())
+                    .chain(hw2.to_fields(params).0.into_iter())
+                    .collect();
+                (fields, statement_tmpl_arg_size)
+            }
         }
     }
 }
@@ -117,6 +171,28 @@ impl StatementTmpl {
     }
 }
 
+impl ToFields for StatementTmpl {
+    fn to_fields(&self, params: Params) -> (Vec<F>, usize) {
+        // serialize as:
+        // predicate (6 field elements)
+        // then the StatementTmplArgs
+        if self.1.len() > params.max_statement_args {
+            panic!("Statement template has too many arguments");
+        }
+        let mut fields: Vec<F> = self.0.to_fields(params).0
+            .into_iter()
+            .chain(
+                self.1.iter()
+                .flat_map(|sta| sta.to_fields(params).0)
+            )
+            .collect();
+        fields.resize_with(params.statement_tmpl_size(),
+            || F::from_canonical_u64(0)
+        );
+        (fields, params.statement_tmpl_size())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CustomPredicate {
     /// true for "and", false for "or"
@@ -128,10 +204,27 @@ pub struct CustomPredicate {
 }
 
 impl ToFields for CustomPredicate {
-    fn to_fields(self) -> (Vec<F>, usize) {
-        todo!()
-        // let f: Vec<F> = Vec::new();
-        // (self.conjunction.to_f(), 1)
+    fn to_fields(&self, params: Params) -> (Vec<F>, usize) {
+        // serialize as:
+        // conjunction (one field element)
+        // statements 
+        // (params.max_custom_predicate_arity * params.statement_tmpl_size())
+        // field elements
+        // args_len (one field element)
+        if self.statements.len() > params.max_custom_predicate_arity {
+            panic!("Custom predicate depends on too many statements");
+        }
+        let mut fields: Vec<F> = std::iter::once(F::from_bool(self.conjunction))
+            .chain(
+                self.statements.iter().flat_map(
+                    |st| st.to_fields(params).0
+                )
+            ).chain(
+                std::iter::once(F::from_canonical_usize(self.args_len))
+            ).collect();
+        fields.resize_with(params.custom_predicate_size(), 
+            || F::from_canonical_u64(0));
+        (fields, params.custom_predicate_size())
     }
 }
 
@@ -166,10 +259,27 @@ pub struct CustomPredicateBatch {
     pub predicates: Vec<CustomPredicate>,
 }
 
+impl ToFields for CustomPredicateBatch {
+    fn to_fields(&self, params: Params) -> (Vec<F>, usize) {
+        // all the custom predicates in order
+        if self.predicates.len() > params.max_custom_batch_size {
+            panic!("Predicate batch exceeds maximum size");
+        }
+        let mut fields: Vec<F> = self.predicates.iter().flat_map(
+            |p| p.to_fields(params).0
+        ).collect();
+        fields.resize_with( params.custom_predicate_batch_size_field_elts(),
+            || F::from_canonical_u64(0));
+        
+        (fields, params.custom_predicate_batch_size_field_elts())
+    }
+}
+
 impl CustomPredicateBatch {
-    pub fn hash(&self) -> Hash {
-        // TODO
-        hash_str(&format!("{:?}", self))
+    pub fn hash(&self, params: Params) -> Hash {
+        let input = self.to_fields(params).0;
+        let h = Hash(PoseidonHash::hash_no_pad(&input).elements);
+        h
     }
 }
 
@@ -190,12 +300,38 @@ impl From<NativePredicate> for Predicate {
 }
 
 impl ToFields for Predicate {
-    fn to_fields(self) -> (Vec<F>, usize) {
+    fn to_fields(&self, params: Params) -> (Vec<F>, usize) {
+        // serialize:
+        // NativePredicate(id) as (0, id, 0, 0, 0, 0) -- id: usize
+        // BatchSelf(i) as (1, i, 0, 0, 0, 0) -- i: usize
+        // CustomPredicateRef(pb, i) as
+        // (2, [hash of pb], i) -- pb hashes to 4 field elements
+        //                      -- i: usize
+
+        // in every case: pad to (hash_size + 2) field elements
+        let mut fields: Vec<F> = Vec::new();
         match self {
-            Self::Native(p) => p.to_fields(),
-            Self::BatchSelf(i) => Value::from(i as i64).to_fields(),
-            Self::Custom(_) => todo!(), // TODO
+            Self::Native(p) => {
+                fields = std::iter::once(F::from_canonical_u64(0))
+                    .chain(p.to_fields(params).0.into_iter())
+                    .collect();
+
+            },
+            Self::BatchSelf(i) => {
+                fields = std::iter::once(F::from_canonical_u64(1))
+                    .chain(std::iter::once(F::from_canonical_usize(*i)))
+                    .collect();
+            }
+            Self::Custom(CustomPredicateRef(pb, i)) => {
+                fields = std::iter::once(F::from_canonical_u64(2))
+                    .chain(pb.hash(params).0)
+                    .chain(std::iter::once(F::from_canonical_usize(*i)))
+                    .collect();
+            }
         }
+        fields.resize_with(params.predicate_size(), 
+            || F::from_canonical_u64(0));
+        (fields, params.predicate_size())        
     }
 }
 
