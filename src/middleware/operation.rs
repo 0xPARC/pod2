@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 
-use super::Statement;
+use super::{CustomPredicateRef, Statement};
 use crate::middleware::{AnchoredKey, SELF};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,6 +42,7 @@ pub enum Operation {
     SumOf(Statement, Statement, Statement),
     ProductOf(Statement, Statement, Statement),
     MaxOf(Statement, Statement, Statement),
+    Custom(CustomPredicateRef, Vec<Statement>),
 }
 
 impl Operation {
@@ -64,6 +65,7 @@ impl Operation {
             Self::SumOf(_, _, _) => SumOf,
             Self::ProductOf(_, _, _) => ProductOf,
             Self::MaxOf(_, _, _) => MaxOf,
+            Self::Custom(_, _) => todo!(),
         }
     }
 
@@ -85,6 +87,7 @@ impl Operation {
             Self::SumOf(s1, s2, s3) => vec![s1, s2, s3],
             Self::ProductOf(s1, s2, s3) => vec![s1, s2, s3],
             Self::MaxOf(s1, s2, s3) => vec![s1, s2, s3],
+            Self::Custom(_, args) => args,
         }
     }
     /// Forms operation from op-code and arguments.
@@ -171,6 +174,10 @@ impl Operation {
                 let v3: i64 = v3.clone().try_into()?;
                 Ok((v1 == v2 + v3) && ak4 == ak1 && ak5 == ak2 && ak6 == ak3)
             }
+            (
+                Self::Custom(CustomPredicateRef(cpb, i), _args),
+                Custom(CustomPredicateRef(s_cpb, s_i), _s_args),
+            ) if cpb == s_cpb && i == s_i => todo!(),
             _ => Err(anyhow!(
                 "Invalid deduction: {:?} ⇏ {:#}",
                 self,

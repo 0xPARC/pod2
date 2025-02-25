@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use plonky2::field::types::Field;
-use std::fmt;
+use std::{collections::HashMap, fmt};
 use strum_macros::FromRepr;
 
 use super::{AnchoredKey, CustomPredicateRef, Hash, Predicate, ToFields, Value, F};
@@ -30,7 +30,6 @@ impl ToFields for NativePredicate {
     }
 }
 
-// TODO: Incorporate custom statements into this enum.
 /// Type encapsulating statements with their associated arguments.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Statement {
@@ -45,7 +44,7 @@ pub enum Statement {
     SumOf(AnchoredKey, AnchoredKey, AnchoredKey),
     ProductOf(AnchoredKey, AnchoredKey, AnchoredKey),
     MaxOf(AnchoredKey, AnchoredKey, AnchoredKey),
-    Custom(CustomPredicateRef, Vec<Hash>),
+    Custom(CustomPredicateRef, Vec<AnchoredKey>),
 }
 
 impl Statement {
@@ -83,7 +82,7 @@ impl Statement {
             Self::SumOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
             Self::ProductOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
             Self::MaxOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
-            Self::Custom(_, args) => Vec::from_iter(args.into_iter().map(|h| Literal(h.into()))),
+            Self::Custom(_, args) => Vec::from_iter(args.into_iter().map(|h| Key(h))),
         }
     }
 }
