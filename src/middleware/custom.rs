@@ -312,18 +312,18 @@ impl ToFields for Predicate {
         let mut fields: Vec<F> = Vec::new();
         match self {
             Self::Native(p) => {
-                fields = std::iter::once(F::from_canonical_u64(0))
+                fields = std::iter::once(F::from_canonical_u64(1))
                     .chain(p.to_fields(params).0.into_iter())
                     .collect();
 
             },
             Self::BatchSelf(i) => {
-                fields = std::iter::once(F::from_canonical_u64(1))
+                fields = std::iter::once(F::from_canonical_u64(2))
                     .chain(std::iter::once(F::from_canonical_usize(*i)))
                     .collect();
             }
             Self::Custom(CustomPredicateRef(pb, i)) => {
-                fields = std::iter::once(F::from_canonical_u64(2))
+                fields = std::iter::once(F::from_canonical_u64(3))
                     .chain(pb.hash(params).0)
                     .chain(std::iter::once(F::from_canonical_usize(*i)))
                     .collect();
