@@ -42,6 +42,13 @@ impl AnchoredKey {
     }
 }
 
+impl fmt::Display for AnchoredKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}.{}", self.0, self.1)?;
+        Ok(())
+    }
+}
+
 /// An entry consists of a key-value pair.
 pub type Entry = (String, Value);
 

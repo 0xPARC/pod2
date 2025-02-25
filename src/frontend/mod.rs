@@ -357,6 +357,22 @@ pub struct MainPod {
     // TODO: metadata
 }
 
+impl fmt::Display for MainPod {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "MainPod: {}", self.pod.id())?;
+        writeln!(f, "  valid?  {}", self.pod.verify())?;
+        writeln!(f, "  statements:")?;
+        for st in &self.pod.pub_statements() {
+            writeln!(f, "    - {}", st)?;
+        }
+        writeln!(f, "  kvs:")?;
+        for (k, v) in &self.pod.kvs() {
+            writeln!(f, "    - {}: {}", k, v)?;
+        }
+        Ok(())
+    }
+}
+
 impl MainPod {
     pub fn id(&self) -> PodId {
         self.pod.id()
@@ -497,6 +513,7 @@ pub mod build_utils {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::backends::mock_main::MockProver;
     use crate::backends::mock_signed::MockSigner;
     use crate::examples::{
         great_boy_pod_full_flow, tickets_pod_full_flow, zu_kyc_pod_builder,
@@ -526,7 +543,11 @@ pub mod tests {
         let kyc = zu_kyc_pod_builder(&params, &gov_id, &pay_stub)?;
         println!("{}", kyc);
 
+        let mut prover = MockProver{};
+        let kyc = kyc.prove(&mut prover)?;
+
         // TODO: prove kyc with MockProver and print it
+        println!("{}", kyc);
 
         Ok(())
     }
