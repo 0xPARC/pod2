@@ -509,6 +509,7 @@ pub mod tests {
         let (gov_id, pay_stub) = zu_kyc_sign_pod_builders(&params);
 
         println!("{}", gov_id);
+        println!("{}", pay_stub);
 
         let mut signer = MockSigner {
             pk: "ZooGov".into(),
