@@ -242,7 +242,7 @@ mod tests {
             builder.predicates.last().unwrap()
         );
 
-        let eth_dos_distance = Predicate::BatchSelf(3);
+        let eth_dos_distance = Predicate::BatchSelf(2);
 
         // next chunk builds:
         let eth_dos_distance_ind = builder.predicate_and(

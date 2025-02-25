@@ -315,7 +315,6 @@ impl ToFields for Predicate {
                 fields = std::iter::once(F::from_canonical_u64(1))
                     .chain(p.to_fields(params).0.into_iter())
                     .collect();
-
             },
             Self::BatchSelf(i) => {
                 fields = std::iter::once(F::from_canonical_u64(2))
