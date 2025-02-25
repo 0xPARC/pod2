@@ -207,20 +207,20 @@ impl ToFields for CustomPredicate {
     fn to_fields(&self, params: Params) -> (Vec<F>, usize) {
         // serialize as:
         // conjunction (one field element)
-        // statements 
-        // (params.max_custom_predicate_arity * params.statement_tmpl_size())
-        // field elements
         // args_len (one field element)
+        // statements 
+        //   (params.max_custom_predicate_arity * params.statement_tmpl_size())
+        //   field elements
         if self.statements.len() > params.max_custom_predicate_arity {
             panic!("Custom predicate depends on too many statements");
         }
         let mut fields: Vec<F> = std::iter::once(F::from_bool(self.conjunction))
             .chain(
+                std::iter::once(F::from_canonical_usize(self.args_len))
+            ).chain(
                 self.statements.iter().flat_map(
                     |st| st.to_fields(params).0
                 )
-            ).chain(
-                std::iter::once(F::from_canonical_usize(self.args_len))
             ).collect();
         fields.resize_with(params.custom_predicate_size(), 
             || F::from_canonical_u64(0));

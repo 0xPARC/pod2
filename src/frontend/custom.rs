@@ -179,6 +179,7 @@ mod tests {
         use StatementTmplBuilder as STB;
 
         let params = Params::default();
+        params.print_serialized_sizes();
 
         let mut builder = CustomPredicateBatchBuilder::new("eth_friend".into());
         let _eth_friend = builder.predicate_and(
