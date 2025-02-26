@@ -8,10 +8,15 @@ name = "pod2"
 path = "src/lib.rs"
 
 [dependencies]
-plonky2 = { git = "https://github.com/0xPolygonZero/plonky2" }
 hex = "0.4.3"
 itertools = "0.14.0"
 strum = "0.26"
 strum_macros = "0.26"
 anyhow = "1.0.56"
 dyn-clone = "1.0.18"
+# enabled by features:
+plonky2 = { git = "https://github.com/0xPolygonZero/plonky2", optional = true }
+
+[features]
+default = ["backend_plonky2"]
+backend_plonky2 = ["plonky2"]

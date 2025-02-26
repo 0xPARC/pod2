@@ -21,13 +21,13 @@ impl Statement {
 }
 
 impl ToFields for Statement {
-    fn to_fields(&self, params: Params) -> (Vec<middleware::F>, usize) {
-        let (native_statement_f, native_statement_f_len) = self.0.to_fields(params);
+    fn to_fields(&self, _params: &Params) -> (Vec<middleware::F>, usize) {
+        let (native_statement_f, native_statement_f_len) = self.0.to_fields(_params);
         let (vec_statementarg_f, vec_statementarg_f_len) = self
             .1
             .clone()
             .into_iter()
-            .map(|statement_arg| statement_arg.to_fields(params))
+            .map(|statement_arg| statement_arg.to_fields(_params))
             .fold((Vec::new(), 0), |mut acc, (f, l)| {
                 acc.0.extend(f);
                 acc.1 += l;

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::collections::HashMap;
 
-use crate::backends::mock_signed::MockSigner;
+use crate::backends::plonky2::mock_signed::MockSigner;
 use crate::frontend::{MainPodBuilder, SignedPod, SignedPodBuilder, Value};
 use crate::middleware::{containers::Dictionary, Params, PodType, KEY_SIGNER, KEY_TYPE};
 use crate::op;
