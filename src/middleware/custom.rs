@@ -8,7 +8,8 @@ use plonky2::hash::poseidon::PoseidonHash;
 use plonky2::plonk::config::Hasher;
 
 use super::{
-    hash_str, AnchoredKey, Hash, NativePredicate, Params, PodId, Statement, StatementArg, ToFields, Value, F
+    hash_str, AnchoredKey, Hash, NativePredicate, Params, PodId, Statement, StatementArg, ToFields,
+    Value, F,
 };
 
 // BEGIN Custom 1b
@@ -44,14 +45,13 @@ impl fmt::Display for HashOrWildcard {
 impl ToFields for HashOrWildcard {
     fn to_fields(&self, params: Params) -> (Vec<F>, usize) {
         match self {
-            HashOrWildcard::Hash(h) => {
-                h.to_fields(params)
-            }
+            HashOrWildcard::Hash(h) => h.to_fields(params),
             HashOrWildcard::Wildcard(w) => {
                 let usizes: Vec<usize> = vec![0, 0, 0, *w];
-                let fields: Vec<F> = usizes.iter().map(
-                    |x| F::from_canonical_u64(*x as u64)
-                ).collect();
+                let fields: Vec<F> = usizes
+                    .iter()
+                    .map(|x| F::from_canonical_u64(*x as u64))
+                    .collect();
                 (fields, 4)
             }
         }
@@ -179,16 +179,14 @@ impl ToFields for StatementTmpl {
         if self.1.len() > params.max_statement_args {
             panic!("Statement template has too many arguments");
         }
-        let mut fields: Vec<F> = self.0.to_fields(params).0
+        let mut fields: Vec<F> = self
+            .0
+            .to_fields(params)
+            .0
             .into_iter()
-            .chain(
-                self.1.iter()
-                .flat_map(|sta| sta.to_fields(params).0)
-            )
+            .chain(self.1.iter().flat_map(|sta| sta.to_fields(params).0))
             .collect();
-        fields.resize_with(params.statement_tmpl_size(),
-            || F::from_canonical_u64(0)
-        );
+        fields.resize_with(params.statement_tmpl_size(), || F::from_canonical_u64(0));
         (fields, params.statement_tmpl_size())
     }
 }
@@ -208,22 +206,17 @@ impl ToFields for CustomPredicate {
         // serialize as:
         // conjunction (one field element)
         // args_len (one field element)
-        // statements 
+        // statements
         //   (params.max_custom_predicate_arity * params.statement_tmpl_size())
         //   field elements
         if self.statements.len() > params.max_custom_predicate_arity {
             panic!("Custom predicate depends on too many statements");
         }
         let mut fields: Vec<F> = std::iter::once(F::from_bool(self.conjunction))
-            .chain(
-                std::iter::once(F::from_canonical_usize(self.args_len))
-            ).chain(
-                self.statements.iter().flat_map(
-                    |st| st.to_fields(params).0
-                )
-            ).collect();
-        fields.resize_with(params.custom_predicate_size(), 
-            || F::from_canonical_u64(0));
+            .chain(std::iter::once(F::from_canonical_usize(self.args_len)))
+            .chain(self.statements.iter().flat_map(|st| st.to_fields(params).0))
+            .collect();
+        fields.resize_with(params.custom_predicate_size(), || F::from_canonical_u64(0));
         (fields, params.custom_predicate_size())
     }
 }
@@ -265,12 +258,15 @@ impl ToFields for CustomPredicateBatch {
         if self.predicates.len() > params.max_custom_batch_size {
             panic!("Predicate batch exceeds maximum size");
         }
-        let mut fields: Vec<F> = self.predicates.iter().flat_map(
-            |p| p.to_fields(params).0
-        ).collect();
-        fields.resize_with( params.custom_predicate_batch_size_field_elts(),
-            || F::from_canonical_u64(0));
-        
+        let mut fields: Vec<F> = self
+            .predicates
+            .iter()
+            .flat_map(|p| p.to_fields(params).0)
+            .collect();
+        fields.resize_with(params.custom_predicate_batch_size_field_elts(), || {
+            F::from_canonical_u64(0)
+        });
+
         (fields, params.custom_predicate_batch_size_field_elts())
     }
 }
@@ -315,7 +311,7 @@ impl ToFields for Predicate {
                 fields = std::iter::once(F::from_canonical_u64(1))
                     .chain(p.to_fields(params).0.into_iter())
                     .collect();
-            },
+            }
             Self::BatchSelf(i) => {
                 fields = std::iter::once(F::from_canonical_u64(2))
                     .chain(std::iter::once(F::from_canonical_usize(*i)))
@@ -328,9 +324,8 @@ impl ToFields for Predicate {
                     .collect();
             }
         }
-        fields.resize_with(params.predicate_size(), 
-            || F::from_canonical_u64(0));
-        (fields, params.predicate_size())        
+        fields.resize_with(params.predicate_size(), || F::from_canonical_u64(0));
+        (fields, params.predicate_size())
     }
 }
 
