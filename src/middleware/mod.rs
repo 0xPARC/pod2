@@ -185,6 +185,12 @@ impl FromHex for Hash {
     }
 }
 
+impl From<&str> for Hash {
+    fn from(s: &str) -> Self {
+        hash_str(s)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct PodId(pub Hash);
 

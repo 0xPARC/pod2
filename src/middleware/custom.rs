@@ -2,10 +2,11 @@ use std::sync::Arc;
 use std::{fmt, hash as h, iter::zip};
 
 use anyhow::{anyhow, Result};
-use plonky2::field::goldilocks_field::GoldilocksField;
 use plonky2::field::types::Field;
 use plonky2::hash::poseidon::PoseidonHash;
 use plonky2::plonk::config::Hasher;
+
+use crate::middleware::{Operation, SELF};
 
 use super::{
     hash_str, AnchoredKey, Hash, NativePredicate, Params, PodId, Statement, StatementArg, ToFields,
@@ -336,5 +337,242 @@ impl fmt::Display for Predicate {
             Self::BatchSelf(i) => write!(f, "self.{}", i),
             Self::Custom(CustomPredicateRef(pb, i)) => write!(f, "{}.{}", pb.name, i),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{array, sync::Arc};
+
+    use anyhow::Result;
+    use plonky2::field::goldilocks_field::GoldilocksField;
+
+    use crate::middleware::{
+        AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash,
+        HashOrWildcard, NativePredicate, Operation, PodId, PodType, Predicate, Statement,
+        StatementTmpl, StatementTmplArg, SELF,
+    };
+
+    fn st(p: Predicate, args: Vec<StatementTmplArg>) -> StatementTmpl {
+        StatementTmpl(p, args)
+    }
+
+    type STA = StatementTmplArg;
+    type HOW = HashOrWildcard;
+    type P = Predicate;
+    type NP = NativePredicate;
+
+    #[test]
+    fn is_double_test() -> Result<()> {
+        /*
+        is_double(S1, S2) :-
+        p:value_of(Constant, 2),
+        p:product_of(S1, Constant, S2)
+         */
+        let cust_pred_batch = Arc::new(CustomPredicateBatch {
+            name: "is_double".to_string(),
+            predicates: vec![CustomPredicate {
+                conjunction: true,
+                statements: vec![
+                    st(
+                        P::Native(NP::ValueOf),
+                        vec![
+                            STA::Key(HOW::Wildcard(4), HOW::Wildcard(5)),
+                            STA::Literal(2.into()),
+                        ],
+                    ),
+                    st(
+                        P::Native(NP::ProductOf),
+                        vec![
+                            STA::Key(HOW::Wildcard(0), HOW::Wildcard(1)),
+                            STA::Key(HOW::Wildcard(4), HOW::Wildcard(5)),
+                            STA::Key(HOW::Wildcard(2), HOW::Wildcard(3)),
+                        ],
+                    ),
+                ],
+                args_len: 4,
+            }],
+        });
+
+        let custom_statement = Statement::Custom(
+            CustomPredicateRef(cust_pred_batch.clone(), 0),
+            vec![
+                AnchoredKey(SELF, "Some value".into()),
+                AnchoredKey(SELF, "Some other value".into()),
+            ],
+        );
+
+        let custom_deduction = Operation::Custom(
+            CustomPredicateRef(cust_pred_batch, 0),
+            vec![
+                Statement::ValueOf(AnchoredKey(SELF, "Some constant".into()), 2.into()),
+                Statement::ProductOf(
+                    AnchoredKey(SELF, "Some value".into()),
+                    AnchoredKey(SELF, "Some constant".into()),
+                    AnchoredKey(SELF, "Some other value".into()),
+                ),
+            ],
+        );
+
+        assert!(custom_deduction.check(&custom_statement)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn ethdos_test() -> Result<()> {
+        let eth_friend_cp = CustomPredicate {
+            conjunction: true,
+            statements: vec![
+                st(
+                    P::Native(NP::ValueOf),
+                    vec![
+                        STA::Key(HOW::Wildcard(4), HashOrWildcard::Hash("type".into())),
+                        STA::Literal(PodType::Signed.into()),
+                    ],
+                ),
+                st(
+                    P::Native(NP::Equal),
+                    vec![
+                        STA::Key(HOW::Wildcard(4), HashOrWildcard::Hash("signer".into())),
+                        STA::Key(HOW::Wildcard(0), HOW::Wildcard(1)),
+                    ],
+                ),
+                st(
+                    P::Native(NP::Equal),
+                    vec![
+                        STA::Key(HOW::Wildcard(4), HashOrWildcard::Hash("attestation".into())),
+                        STA::Key(HOW::Wildcard(2), HOW::Wildcard(3)),
+                    ],
+                ),
+            ],
+            args_len: 4,
+        };
+
+        let eth_friend_batch = Arc::new(CustomPredicateBatch {
+            name: "eth_friend".to_string(),
+            predicates: vec![eth_friend_cp],
+        });
+
+        let eth_dos_base = CustomPredicate {
+            conjunction: true,
+            statements: vec![
+                st(
+                    P::Native(NP::Equal),
+                    vec![
+                        STA::Key(HOW::Wildcard(0), HOW::Wildcard(1)),
+                        STA::Key(HOW::Wildcard(2), HOW::Wildcard(3)),
+                    ],
+                ),
+                st(
+                    P::Native(NP::ValueOf),
+                    vec![
+                        STA::Key(HOW::Wildcard(4), HOW::Wildcard(5)),
+                        STA::Literal(0.into()),
+                    ],
+                ),
+            ],
+            args_len: 6,
+        };
+
+        let eth_dos_ind = CustomPredicate {
+            conjunction: true,
+            statements: vec![
+                st(
+                    P::BatchSelf(2),
+                    vec![
+                        STA::Key(HOW::Wildcard(0), HOW::Wildcard(1)),
+                        STA::Key(HOW::Wildcard(10), HOW::Wildcard(11)),
+                        STA::Key(HOW::Wildcard(8), HOW::Wildcard(9)),
+                    ],
+                ),
+                st(
+                    P::Native(NP::ValueOf),
+                    vec![
+                        STA::Key(HOW::Wildcard(6), HOW::Wildcard(7)),
+                        STA::Literal(1.into()),
+                    ],
+                ),
+                st(
+                    P::Native(NP::SumOf),
+                    vec![
+                        STA::Key(HOW::Wildcard(4), HOW::Wildcard(5)),
+                        STA::Key(HOW::Wildcard(8), HOW::Wildcard(9)),
+                        STA::Key(HOW::Wildcard(6), HOW::Wildcard(7)),
+                    ],
+                ),
+                st(
+                    P::Custom(CustomPredicateRef(eth_friend_batch.clone(), 0)),
+                    vec![
+                        STA::Key(HOW::Wildcard(10), HOW::Wildcard(11)),
+                        STA::Key(HOW::Wildcard(2), HOW::Wildcard(3)),
+                    ],
+                ),
+            ],
+            args_len: 6,
+        };
+
+        let eth_dos_distance_either = CustomPredicate {
+            conjunction: false,
+            statements: vec![
+                st(
+                    P::BatchSelf(0),
+                    vec![
+                        STA::Key(HOW::Wildcard(0), HOW::Wildcard(1)),
+                        STA::Key(HOW::Wildcard(2), HOW::Wildcard(3)),
+                        STA::Key(HOW::Wildcard(4), HOW::Wildcard(5)),
+                    ],
+                ),
+                st(
+                    P::BatchSelf(1),
+                    vec![
+                        STA::Key(HOW::Wildcard(0), HOW::Wildcard(1)),
+                        STA::Key(HOW::Wildcard(2), HOW::Wildcard(3)),
+                        STA::Key(HOW::Wildcard(4), HOW::Wildcard(5)),
+                    ],
+                ),
+            ],
+            args_len: 6,
+        };
+
+        let eth_dos_distance_batch = Arc::new(CustomPredicateBatch {
+            name: "ETHDoS_distance".to_string(),
+            predicates: vec![eth_dos_base, eth_dos_ind, eth_dos_distance_either],
+        });
+
+        // Some POD IDs
+        let attestation_pod_id = PodId(Hash(array::from_fn(|i| GoldilocksField(i as u64))));
+        let other_pod_id = PodId(Hash(array::from_fn(|i| GoldilocksField((i * i) as u64))));
+
+        // Example statement
+        let ethdos_example = Statement::Custom(
+            CustomPredicateRef(eth_dos_distance_batch.clone(), 2),
+            vec![
+                AnchoredKey(SELF, "Alice".into()),
+                AnchoredKey(SELF, "Bob".into()),
+                AnchoredKey(SELF, "Seven".into()),
+            ],
+        );
+
+        // Copies should work.
+        assert!(Operation::CopyStatement(ethdos_example.clone()).check(&ethdos_example)?);
+
+        // This could arise as the inductive step.
+        let ethdos_ind_example = Statement::Custom(
+            CustomPredicateRef(eth_dos_distance_batch.clone(), 1),
+            vec![
+                AnchoredKey(SELF, "Alice".into()),
+                AnchoredKey(SELF, "Bob".into()),
+                AnchoredKey(SELF, "Seven".into()),
+            ],
+        );
+
+        assert!(Operation::Custom(
+            CustomPredicateRef(eth_dos_distance_batch.clone(), 2),
+            vec![ethdos_ind_example.clone()]
+        )
+        .check(&ethdos_example)?);
+
+        Ok(())
     }
 }
