@@ -285,11 +285,17 @@ impl Params {
 
     pub fn print_serialized_sizes(self) -> () {
         println!("Parameter sizes:");
-        println!("  Statement template argument: {}", self.statement_tmpl_arg_size());
+        println!(
+            "  Statement template argument: {}",
+            self.statement_tmpl_arg_size()
+        );
         println!("  Predicate: {}", self.predicate_size());
         println!("  Statement template: {}", self.statement_tmpl_size());
         println!("  Custom predicate: {}", self.custom_predicate_size());
-        println!("  Custom predicate batch: {}", self.custom_predicate_batch_size_field_elts());
+        println!(
+            "  Custom predicate batch: {}",
+            self.custom_predicate_batch_size_field_elts()
+        );
         println!("");
     }
 }

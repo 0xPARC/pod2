@@ -99,7 +99,7 @@ pub struct SignedPodBuilder {
 impl fmt::Display for SignedPodBuilder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "SignedPodBuilder:")?;
-        for (k, v) in self.kvs.iter().sorted_by_key(|kv| kv.0){
+        for (k, v) in self.kvs.iter().sorted_by_key(|kv| kv.0) {
             writeln!(f, "  - {}: {}", k, v)?;
         }
         Ok(())
@@ -151,7 +151,13 @@ impl fmt::Display for SignedPod {
         // deterministic based on the keys values not on the order of the keys when added into the
         // tree.
         for (k, v) in self.kvs().iter().sorted_by_key(|kv| kv.0) {
-            writeln!(f, "  - {} = {}: {}", k, *self.key_string_map.get(&k).unwrap_or(&"--".to_string()), v)?;
+            writeln!(
+                f,
+                "  - {} = {}: {}",
+                k,
+                *self.key_string_map.get(&k).unwrap_or(&"--".to_string()),
+                v
+            )?;
         }
         Ok(())
     }
@@ -543,7 +549,7 @@ pub mod tests {
         let kyc = zu_kyc_pod_builder(&params, &gov_id, &pay_stub)?;
         println!("{}", kyc);
 
-        let mut prover = MockProver{};
+        let mut prover = MockProver {};
         let kyc = kyc.prove(&mut prover)?;
 
         // TODO: prove kyc with MockProver and print it
