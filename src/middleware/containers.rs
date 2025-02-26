@@ -1,13 +1,12 @@
 /// This file implements the types defined at
 /// https://0xparc.github.io/pod2/values.html#dictionary-array-set .
 use anyhow::Result;
-use plonky2::hash::poseidon::PoseidonHash;
-use plonky2::plonk::config::Hasher;
 use std::collections::HashMap;
 
-use super::{Hash, Value, EMPTY};
 use crate::constants::MAX_DEPTH;
 use crate::primitives::merkletree::{MerkleProof, MerkleTree};
+
+use super::basetypes::{hash_value, Hash, Value, EMPTY};
 
 /// Dictionary: the user original keys and values are hashed to be used in the leaf.
 ///    leaf.key=hash(original_key)
@@ -76,8 +75,8 @@ impl Set {
         let kvs: HashMap<Value, Value> = set
             .into_iter()
             .map(|e| {
-                let h = PoseidonHash::hash_no_pad(&e.0).elements;
-                (Value(h), EMPTY)
+                let h = hash_value(e);
+                (Value::from(h), EMPTY)
             })
             .collect();
         Ok(Self {

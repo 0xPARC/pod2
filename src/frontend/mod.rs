@@ -65,12 +65,12 @@ impl From<bool> for Value {
 impl From<&Value> for middleware::Value {
     fn from(v: &Value) -> Self {
         match v {
-            Value::String(s) => middleware::Value(hash_str(s).0),
+            Value::String(s) => hash_str(s).value(),
             Value::Int(v) => middleware::Value::from(*v),
             Value::Bool(b) => middleware::Value::from(*b as i64),
-            Value::Dictionary(d) => middleware::Value(d.commitment().0),
-            Value::Set(s) => middleware::Value(s.commitment().0),
-            Value::Array(a) => middleware::Value(a.commitment().0),
+            Value::Dictionary(d) => d.commitment().value(),
+            Value::Set(s) => s.commitment().value(),
+            Value::Array(a) => a.commitment().value(),
             Value::Raw(v) => v.clone(),
         }
     }
@@ -513,8 +513,8 @@ pub mod build_utils {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::backends::mock_main::MockProver;
-    use crate::backends::mock_signed::MockSigner;
+    use crate::backends::plonky2::mock_main::MockProver;
+    use crate::backends::plonky2::mock_signed::MockSigner;
     use crate::examples::{
         great_boy_pod_full_flow, tickets_pod_full_flow, zu_kyc_pod_builder,
         zu_kyc_sign_pod_builders,

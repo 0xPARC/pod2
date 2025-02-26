@@ -316,7 +316,7 @@ mod tests {
         );
 
         let eth_dos_batch_b = builder.finish();
-        let fields = eth_dos_batch_b.to_fields(params);
+        let fields = eth_dos_batch_b.to_fields(&params);
         println!("Batch b, serialized: {:?}", fields);
     }
 }

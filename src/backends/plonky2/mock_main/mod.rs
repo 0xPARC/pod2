@@ -327,7 +327,7 @@ impl MockMainPod {
             statements[statements.len() - params.max_public_statements..].to_vec();
 
         // get the id out of the public statements
-        let id: PodId = PodId(hash_statements(&public_statements, *params));
+        let id: PodId = PodId(hash_statements(&public_statements, params));
 
         Ok(Self {
             params: params.clone(),
@@ -362,10 +362,10 @@ impl MockMainPod {
     }
 }
 
-pub fn hash_statements(statements: &[Statement], params: Params) -> middleware::Hash {
+pub fn hash_statements(statements: &[Statement], _params: &Params) -> middleware::Hash {
     let field_elems = statements
         .into_iter()
-        .flat_map(|statement| statement.clone().to_fields(params).0)
+        .flat_map(|statement| statement.clone().to_fields(_params).0)
         .collect::<Vec<_>>();
     Hash(PoseidonHash::hash_no_pad(&field_elems).elements)
 }
@@ -376,7 +376,7 @@ impl Pod for MockMainPod {
         // get the input_statements from the self.statements
         let input_statements = &self.statements[input_statement_offset..];
         // get the id out of the public statements, and ensure it is equal to self.id
-        let ids_match = self.id == PodId(hash_statements(&self.public_statements, self.params));
+        let ids_match = self.id == PodId(hash_statements(&self.public_statements, &self.params));
         // find a ValueOf statement from the public statements with key=KEY_TYPE and check that the
         // value is PodType::MockMainPod
         let has_type_statement = self
@@ -474,7 +474,7 @@ impl Pod for MockMainPod {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::backends::mock_signed::MockSigner;
+    use crate::backends::plonky2::mock_signed::MockSigner;
     use crate::examples::{
         great_boy_pod_full_flow, tickets_pod_full_flow, zu_kyc_pod_builder,
         zu_kyc_sign_pod_builders,

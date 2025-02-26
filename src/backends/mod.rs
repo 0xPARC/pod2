@@ -1,3 +1,2 @@
-pub mod mock_main;
-pub mod mock_signed;
+#[cfg(feature = "backend_plonky2")]
 pub mod plonky2;
