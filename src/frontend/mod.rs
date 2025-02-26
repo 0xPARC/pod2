@@ -151,7 +151,7 @@ impl fmt::Display for SignedPod {
         // deterministic based on the keys values not on the order of the keys when added into the
         // tree.
         for (k, v) in self.kvs().iter().sorted_by_key(|kv| kv.0) {
-            writeln!(f, "  - {}: {}", k, v)?;
+            writeln!(f, "  - {} = {}: {}", k, *self.key_string_map.get(&k).unwrap_or(&"--".to_string()), v)?;
         }
         Ok(())
     }
