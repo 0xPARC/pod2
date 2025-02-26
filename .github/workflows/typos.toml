@@ -1,3 +1,4 @@
 [default.extend-words]
 groth = "groth" # to avoid it dectecting it as 'growth'
 BA = "BA"
+ANDed = "ANDed"
