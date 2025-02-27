@@ -1,4 +1,4 @@
-# Custom operations (or: how to define a custom predicate): VERSION 1
+# Defining custom predicates
 
 (Note: At the moment, we consider a "custom operation" to be exactly the same thing as the "definition of a custom predicate.")
 

@@ -1,7 +1,9 @@
 # POD value types
 From the frontend perspective, POD values may be one of the following[^type] types: two atomic types
 - `Integer`
+- `Bool`
 - `String`
+- `Raw`
 
 and three compound types
 - `Dictionary`
@@ -24,6 +26,8 @@ with $0 \leq x_0, x_1 < 2^{32}$ and representing it as
 $$\texttt{map}\ \iota\ [x_0, x_1, 0, 0],$$
 where $\iota:\mathbb{N}\cup\{0\}\rightarrow\texttt{GoldilocksField}$ is the canonical projection.
 
+## `Bool`
+In the frontend, this is a simple bool.  In the backend, it will have the same encoding as an `Integer` `0` (for `false`) or `1` (for `true`).
 
 ## `String`
 In the frontend, this type corresponds to the usual `String`. In the backend, the string will be mapped to a sequence of field elements and hashed with the hash function employed there, thus being represented by its hash.
@@ -42,7 +46,10 @@ $$[b_0,\dots,b_{N-1}]\mapsto \sum_{i=0}^{N-1} b_i \cdot 2^{8i},$$
 
 and $\jmath_\texttt{string->bytes}$ is the canonical mapping of a string to its UTF-8 representation.
 
+## `Raw`
+"Raw" is short for "raw value".  A `Raw` exposes a backend value on the frontend.
 
+With the plonky2 backend, a `Raw` is a tuple of 4 elements of the Goldilocks field.
 
 ## Dictionary, array, set
 
