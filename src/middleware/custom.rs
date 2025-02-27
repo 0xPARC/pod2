@@ -541,15 +541,17 @@ mod tests {
         });
 
         // Some POD IDs
-        let attestation_pod_id = PodId(Hash(array::from_fn(|i| GoldilocksField(i as u64))));
-        let other_pod_id = PodId(Hash(array::from_fn(|i| GoldilocksField((i * i) as u64))));
+        let pod_id1 = PodId(Hash(array::from_fn(|i| GoldilocksField(i as u64))));
+        let pod_id2 = PodId(Hash(array::from_fn(|i| GoldilocksField((i * i) as u64))));
+        let pod_id3 = PodId(Hash(array::from_fn(|i| GoldilocksField((2 * i) as u64))));
+        let pod_id4 = PodId(Hash(array::from_fn(|i| GoldilocksField((2 * i) as u64))));
 
         // Example statement
         let ethdos_example = Statement::Custom(
             CustomPredicateRef(eth_dos_distance_batch.clone(), 2),
             vec![
-                AnchoredKey(SELF, "Alice".into()),
-                AnchoredKey(SELF, "Bob".into()),
+                AnchoredKey(pod_id1, "Alice".into()),
+                AnchoredKey(pod_id2, "Bob".into()),
                 AnchoredKey(SELF, "Seven".into()),
             ],
         );
@@ -561,8 +563,8 @@ mod tests {
         let ethdos_ind_example = Statement::Custom(
             CustomPredicateRef(eth_dos_distance_batch.clone(), 1),
             vec![
-                AnchoredKey(SELF, "Alice".into()),
-                AnchoredKey(SELF, "Bob".into()),
+                AnchoredKey(pod_id1, "Alice".into()),
+                AnchoredKey(pod_id2, "Bob".into()),
                 AnchoredKey(SELF, "Seven".into()),
             ],
         );
@@ -572,6 +574,39 @@ mod tests {
             vec![ethdos_ind_example.clone()]
         )
         .check(&ethdos_example)?);
+
+        // And the inductive step would arise as follows: Say the
+        // ETHDoS distance from Alice to Charlie is 6, which is one
+        // less than 7, and Charlie is ETH-friends with Bob.
+        let ethdos_facts = vec![
+            Statement::Custom(
+                CustomPredicateRef(eth_dos_distance_batch.clone(), 2),
+                vec![
+                    AnchoredKey(pod_id1, "Alice".into()),
+                    AnchoredKey(pod_id3, "Charlie".into()),
+                    AnchoredKey(pod_id4, "Six".into()),
+                ],
+            ),
+            Statement::ValueOf(AnchoredKey(SELF, "One".into()), 1.into()),
+            Statement::SumOf(
+                AnchoredKey(SELF, "Seven".into()),
+                AnchoredKey(pod_id4, "Six".into()),
+                AnchoredKey(SELF, "One".into()),
+            ),
+            Statement::Custom(
+                CustomPredicateRef(eth_friend_batch.clone(), 0),
+                vec![
+                    AnchoredKey(pod_id3, "Charlie".into()),
+                    AnchoredKey(pod_id2, "Bob".into()),
+                ],
+            ),
+        ];
+
+        assert!(Operation::Custom(
+            CustomPredicateRef(eth_dos_distance_batch.clone(), 1),
+            ethdos_facts
+        )
+        .check(&ethdos_ind_example)?);
 
         Ok(())
     }
