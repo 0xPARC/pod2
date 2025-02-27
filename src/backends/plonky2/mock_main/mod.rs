@@ -7,7 +7,7 @@ use std::fmt;
 
 use crate::middleware::{
     self, hash_str, AnchoredKey, Hash, MainPodInputs, NativeOperation, NativePredicate, NonePod,
-    Params, Pod, PodId, PodProver, StatementArg, ToFields, KEY_TYPE, SELF,
+    OperationType, Params, Pod, PodId, PodProver, StatementArg, ToFields, KEY_TYPE, SELF,
 };
 
 mod operation;
@@ -261,7 +261,11 @@ impl MockMainPod {
                 .map(|mid_arg| Self::find_op_arg(statements, mid_arg))
                 .collect::<Result<Vec<_>>>()?;
             Self::pad_operation_args(params, &mut args);
-            operations.push(Operation(op.code(), args));
+            let op_code = match op.code() {
+                OperationType::Native(code) => code,
+                _ => unimplemented!(),
+            };
+            operations.push(Operation(op_code, args));
         }
         Ok(operations)
     }

@@ -8,6 +8,12 @@ use crate::{
     util::hashmap_insert_no_dupe,
 };
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OperationType {
+    Native(NativeOperation),
+    Custom(CustomPredicateRef),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NativeOperation {
     None = 0,
@@ -51,26 +57,27 @@ pub enum Operation {
 }
 
 impl Operation {
-    pub fn code(&self) -> NativeOperation {
+    pub fn code(&self) -> OperationType {
+        type OT = OperationType;
         use NativeOperation::*;
         match self {
-            Self::None => None,
-            Self::NewEntry => NewEntry,
-            Self::CopyStatement(_) => CopyStatement,
-            Self::EqualFromEntries(_, _) => EqualFromEntries,
-            Self::NotEqualFromEntries(_, _) => NotEqualFromEntries,
-            Self::GtFromEntries(_, _) => GtFromEntries,
-            Self::LtFromEntries(_, _) => LtFromEntries,
-            Self::TransitiveEqualFromStatements(_, _) => TransitiveEqualFromStatements,
-            Self::GtToNotEqual(_) => GtToNotEqual,
-            Self::LtToNotEqual(_) => LtToNotEqual,
-            Self::ContainsFromEntries(_, _) => ContainsFromEntries,
-            Self::NotContainsFromEntries(_, _) => NotContainsFromEntries,
-            Self::RenameContainedBy(_, _) => RenameContainedBy,
-            Self::SumOf(_, _, _) => SumOf,
-            Self::ProductOf(_, _, _) => ProductOf,
-            Self::MaxOf(_, _, _) => MaxOf,
-            Self::Custom(_, _) => todo!(),
+            Self::None => OT::Native(None),
+            Self::NewEntry => OT::Native(NewEntry),
+            Self::CopyStatement(_) => OT::Native(CopyStatement),
+            Self::EqualFromEntries(_, _) => OT::Native(EqualFromEntries),
+            Self::NotEqualFromEntries(_, _) => OT::Native(NotEqualFromEntries),
+            Self::GtFromEntries(_, _) => OT::Native(GtFromEntries),
+            Self::LtFromEntries(_, _) => OT::Native(LtFromEntries),
+            Self::TransitiveEqualFromStatements(_, _) => OT::Native(TransitiveEqualFromStatements),
+            Self::GtToNotEqual(_) => OT::Native(GtToNotEqual),
+            Self::LtToNotEqual(_) => OT::Native(LtToNotEqual),
+            Self::ContainsFromEntries(_, _) => OT::Native(ContainsFromEntries),
+            Self::NotContainsFromEntries(_, _) => OT::Native(NotContainsFromEntries),
+            Self::RenameContainedBy(_, _) => OT::Native(RenameContainedBy),
+            Self::SumOf(_, _, _) => OT::Native(SumOf),
+            Self::ProductOf(_, _, _) => OT::Native(ProductOf),
+            Self::MaxOf(_, _, _) => OT::Native(MaxOf),
+            Self::Custom(cpr, _) => OT::Custom(cpr.clone()),
         }
     }
 
@@ -96,40 +103,45 @@ impl Operation {
         }
     }
     /// Forms operation from op-code and arguments.
-    pub fn op(op_code: NativeOperation, args: &[Statement]) -> Result<Self> {
+    pub fn op(op_code: OperationType, args: &[Statement]) -> Result<Self> {
         type NO = NativeOperation;
         let arg_tup = (
             args.get(0).cloned(),
             args.get(1).cloned(),
             args.get(2).cloned(),
         );
-        Ok(match (op_code, arg_tup, args.len()) {
-            (NO::None, (None, None, None), 0) => Self::None,
-            (NO::NewEntry, (None, None, None), 0) => Self::NewEntry,
-            (NO::CopyStatement, (Some(s), None, None), 1) => Self::CopyStatement(s),
-            (NO::EqualFromEntries, (Some(s1), Some(s2), None), 2) => Self::EqualFromEntries(s1, s2),
-            (NO::NotEqualFromEntries, (Some(s1), Some(s2), None), 2) => {
-                Self::NotEqualFromEntries(s1, s2)
-            }
-            (NO::GtFromEntries, (Some(s1), Some(s2), None), 2) => Self::GtFromEntries(s1, s2),
-            (NO::LtFromEntries, (Some(s1), Some(s2), None), 2) => Self::LtFromEntries(s1, s2),
-            (NO::ContainsFromEntries, (Some(s1), Some(s2), None), 2) => {
-                Self::ContainsFromEntries(s1, s2)
-            }
-            (NO::NotContainsFromEntries, (Some(s1), Some(s2), None), 2) => {
-                Self::NotContainsFromEntries(s1, s2)
-            }
-            (NO::RenameContainedBy, (Some(s1), Some(s2), None), 2) => {
-                Self::RenameContainedBy(s1, s2)
-            }
-            (NO::SumOf, (Some(s1), Some(s2), Some(s3)), 3) => Self::SumOf(s1, s2, s3),
-            (NO::ProductOf, (Some(s1), Some(s2), Some(s3)), 3) => Self::ProductOf(s1, s2, s3),
-            (NO::MaxOf, (Some(s1), Some(s2), Some(s3)), 3) => Self::MaxOf(s1, s2, s3),
-            _ => Err(anyhow!(
-                "Ill-formed operation {:?} with arguments {:?}.",
-                op_code,
-                args
-            ))?,
+        Ok(match op_code {
+            OperationType::Native(o) => match (o, arg_tup, args.len()) {
+                (NO::None, (None, None, None), 0) => Self::None,
+                (NO::NewEntry, (None, None, None), 0) => Self::NewEntry,
+                (NO::CopyStatement, (Some(s), None, None), 1) => Self::CopyStatement(s),
+                (NO::EqualFromEntries, (Some(s1), Some(s2), None), 2) => {
+                    Self::EqualFromEntries(s1, s2)
+                }
+                (NO::NotEqualFromEntries, (Some(s1), Some(s2), None), 2) => {
+                    Self::NotEqualFromEntries(s1, s2)
+                }
+                (NO::GtFromEntries, (Some(s1), Some(s2), None), 2) => Self::GtFromEntries(s1, s2),
+                (NO::LtFromEntries, (Some(s1), Some(s2), None), 2) => Self::LtFromEntries(s1, s2),
+                (NO::ContainsFromEntries, (Some(s1), Some(s2), None), 2) => {
+                    Self::ContainsFromEntries(s1, s2)
+                }
+                (NO::NotContainsFromEntries, (Some(s1), Some(s2), None), 2) => {
+                    Self::NotContainsFromEntries(s1, s2)
+                }
+                (NO::RenameContainedBy, (Some(s1), Some(s2), None), 2) => {
+                    Self::RenameContainedBy(s1, s2)
+                }
+                (NO::SumOf, (Some(s1), Some(s2), Some(s3)), 3) => Self::SumOf(s1, s2, s3),
+                (NO::ProductOf, (Some(s1), Some(s2), Some(s3)), 3) => Self::ProductOf(s1, s2, s3),
+                (NO::MaxOf, (Some(s1), Some(s2), Some(s3)), 3) => Self::MaxOf(s1, s2, s3),
+                _ => Err(anyhow!(
+                    "Ill-formed operation {:?} with arguments {:?}.",
+                    op_code,
+                    args
+                ))?,
+            },
+            OperationType::Custom(cpr) => Self::Custom(cpr, args.to_vec()),
         })
     }
     /// Checks the given operation against a statement.

@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::fmt;
 
 use super::Statement;
-use crate::middleware::{self, NativeOperation};
+use crate::middleware::{self, NativeOperation, OperationType};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OperationArg {
@@ -29,7 +29,7 @@ impl Operation {
                 OperationArg::Index(i) => Some(statements[*i].clone().try_into()),
             })
             .collect::<Result<Vec<crate::middleware::Statement>>>()?;
-        middleware::Operation::op(self.0, &deref_args)
+        middleware::Operation::op(OperationType::Native(self.0), &deref_args)
     }
 }
 
