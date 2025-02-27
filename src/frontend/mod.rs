@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::convert::From;
 use std::{fmt, hash as h};
 
+use crate::middleware::Predicate;
 use crate::middleware::{
     self,
     containers::{Array, Dictionary, Set},
@@ -254,7 +255,7 @@ impl MainPodBuilder {
         for arg in args.iter_mut() {
             match arg {
                 OperationArg::Statement(s) => {
-                    if s.0 == NativePredicate::ValueOf {
+                    if s.0 == Predicate::Native(NativePredicate::ValueOf) {
                         st_args.push(s.1[0].clone())
                     } else {
                         panic!("Invalid statement argument.");
@@ -294,27 +295,37 @@ impl MainPodBuilder {
         let Operation(op_type, ref mut args) = op;
         // TODO: argument type checking
         let st = match op_type {
-            None => Statement(NativePredicate::None, vec![]),
-            NewEntry => Statement(NativePredicate::ValueOf, self.op_args_entries(public, args)),
-            CopyStatement => todo!(),
-            EqualFromEntries => {
-                Statement(NativePredicate::Equal, self.op_args_entries(public, args))
-            }
-            NotEqualFromEntries => Statement(
-                NativePredicate::NotEqual,
+            None => Statement(Predicate::Native(NativePredicate::None), vec![]),
+            NewEntry => Statement(
+                Predicate::Native(NativePredicate::ValueOf),
                 self.op_args_entries(public, args),
             ),
-            GtFromEntries => Statement(NativePredicate::Gt, self.op_args_entries(public, args)),
-            LtFromEntries => Statement(NativePredicate::Lt, self.op_args_entries(public, args)),
+            CopyStatement => todo!(),
+            EqualFromEntries => Statement(
+                Predicate::Native(NativePredicate::Equal),
+                self.op_args_entries(public, args),
+            ),
+            NotEqualFromEntries => Statement(
+                Predicate::Native(NativePredicate::NotEqual),
+                self.op_args_entries(public, args),
+            ),
+            GtFromEntries => Statement(
+                Predicate::Native(NativePredicate::Gt),
+                self.op_args_entries(public, args),
+            ),
+            LtFromEntries => Statement(
+                Predicate::Native(NativePredicate::Lt),
+                self.op_args_entries(public, args),
+            ),
             TransitiveEqualFromStatements => todo!(),
             GtToNotEqual => todo!(),
             LtToNotEqual => todo!(),
             ContainsFromEntries => Statement(
-                NativePredicate::Contains,
+                Predicate::Native(NativePredicate::Contains),
                 self.op_args_entries(public, args),
             ),
             NotContainsFromEntries => Statement(
-                NativePredicate::NotContains,
+                Predicate::Native(NativePredicate::NotContains),
                 self.op_args_entries(public, args),
             ),
             RenameContainedBy => todo!(),

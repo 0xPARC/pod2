@@ -6,7 +6,7 @@ use crate::middleware::{
     Predicate, StatementTmpl, StatementTmplArg, ToFields, Value, F,
 };
 
-/// Argument to an statement template
+/// Argument to a statement template
 pub enum HashOrWildcardStr {
     Hash(Hash), // represents a literal key
     Wildcard(String),
