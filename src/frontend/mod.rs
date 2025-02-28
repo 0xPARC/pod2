@@ -1,7 +1,7 @@
 //! The frontend includes the user-level abstractions and user-friendly types to define and work
 //! with Pods.
 
-use anyhow::Result;
+use anyhow::{anyhow, Error, Result};
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::convert::From;
@@ -462,10 +462,19 @@ impl MainPodCompiler {
         middleware::Operation::op(mop_code, &mop_args).unwrap()
     }
 
-    fn compile_st_op(&mut self, st: &Statement, op: &Operation) {
+    fn compile_st_op(&mut self, st: &Statement, op: &Operation) -> Result<()> {
         let middle_st = self.compile_st(st);
         let middle_op = self.compile_op(op);
+        let is_correct = middle_op.check(&middle_st).unwrap();
+        if !is_correct {
+            println!("Compile failed because of incorrect operation:");
+            println!("{}", middle_op);
+            println!("{}", middle_st);
+            // todo: improve error handling
+            return Err(anyhow!("Compile failed because of incorrect operation".to_string()));
+        }
         self.push_st_op(middle_st, middle_op);
+        Ok(())
     }
 
     pub fn compile<'a>(
@@ -484,7 +493,7 @@ impl MainPodCompiler {
             public_statements,
         } = inputs;
         for (st, op) in statements.iter().zip_eq(operations.iter()) {
-            self.compile_st_op(st, op);
+            self.compile_st_op(st, op)?;
             if self.statements.len() > self.params.max_statements {
                 panic!("too many statements");
             }
@@ -594,5 +603,33 @@ pub mod tests {
         println!("{}", builder);
 
         Ok(())
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_false_st() -> () {
+        let params = Params::default();
+        let mut builder = SignedPodBuilder::new(&params);
+
+        builder.insert("num", 2);
+
+        let mut signer = MockSigner{
+            pk: "signer".into()
+        };
+        let pod = builder.sign(&mut signer).unwrap();
+
+        println!("{}", pod);
+
+        let mut builder = MainPodBuilder::new(&params);
+        builder.add_signed_pod(&pod);
+        builder.pub_op(op!(gt, (&pod, "num"), 5));
+
+        let mut prover = MockProver {};
+        let false_pod = builder.prove(&mut prover).unwrap();
+
+        println!("{}", builder);
+        println!("{}", false_pod);
+
+        ()
     }
 }
