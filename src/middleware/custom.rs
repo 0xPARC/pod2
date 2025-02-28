@@ -195,12 +195,40 @@ impl ToFields for StatementTmpl {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CustomPredicate {
+    /// NOTE: fields are not public (outside of crate) to enforce the struct instantiation through
+    /// the `::and/or` methods, which performs checks on the values.
+
     /// true for "and", false for "or"
-    pub conjunction: bool,
-    pub statements: Vec<StatementTmpl>,
-    pub args_len: usize,
+    pub(crate) conjunction: bool,
+    pub(crate) statements: Vec<StatementTmpl>,
+    pub(crate) args_len: usize,
     // TODO: Add private args length?
     // TODO: Add args type information?
+}
+
+impl CustomPredicate {
+    pub fn and(params: &Params, statements: Vec<StatementTmpl>, args_len: usize) -> Result<Self> {
+        Self::new(params, true, statements, args_len)
+    }
+    pub fn or(params: &Params, statements: Vec<StatementTmpl>, args_len: usize) -> Result<Self> {
+        Self::new(params, false, statements, args_len)
+    }
+    pub fn new(
+        params: &Params,
+        conjunction: bool,
+        statements: Vec<StatementTmpl>,
+        args_len: usize,
+    ) -> Result<Self> {
+        if statements.len() > params.max_custom_predicate_arity {
+            return Err(anyhow!("Custom predicate depends on too many statements"));
+        }
+
+        Ok(Self {
+            conjunction,
+            statements,
+            args_len,
+        })
+    }
 }
 
 impl ToFields for CustomPredicate {
@@ -212,9 +240,9 @@ impl ToFields for CustomPredicate {
         //   (params.max_custom_predicate_arity * params.statement_tmpl_size())
         //   field elements
 
-        // TODO think if this check should go into the StatementTmpl creation,
-        // instead of at the `to_fields` method, where we should assume that the
-        // values are already valid
+        // NOTE: this method assumes that the self.params.len() is inside the
+        // expected bound, as Self should be instantiated with the constructor
+        // method `new` which performs the check.
         if self.statements.len() > params.max_custom_predicate_arity {
             panic!("Custom predicate depends on too many statements");
         }
@@ -353,7 +381,7 @@ mod tests {
 
     use crate::middleware::{
         AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash,
-        HashOrWildcard, NativePredicate, Operation, PodId, PodType, Predicate, Statement,
+        HashOrWildcard, NativePredicate, Operation, Params, PodId, PodType, Predicate, Statement,
         StatementTmpl, StatementTmplArg, SELF,
     };
 
@@ -418,13 +446,16 @@ mod tests {
             ],
         );
 
-        assert!(custom_deduction.check(&custom_statement)?);
+        let params = Params::default();
+        assert!(custom_deduction.check(&params, &custom_statement)?);
 
         Ok(())
     }
 
     #[test]
     fn ethdos_test() -> Result<()> {
+        let params = Params::default();
+
         let eth_friend_cp = CustomPredicate {
             conjunction: true,
             statements: vec![
@@ -561,7 +592,7 @@ mod tests {
         );
 
         // Copies should work.
-        assert!(Operation::CopyStatement(ethdos_example.clone()).check(&ethdos_example)?);
+        assert!(Operation::CopyStatement(ethdos_example.clone()).check(&params, &ethdos_example)?);
 
         // This could arise as the inductive step.
         let ethdos_ind_example = Statement::Custom(
@@ -577,7 +608,7 @@ mod tests {
             CustomPredicateRef(eth_dos_distance_batch.clone(), 2),
             vec![ethdos_ind_example.clone()]
         )
-        .check(&ethdos_example)?);
+        .check(&params, &ethdos_example)?);
 
         // And the inductive step would arise as follows: Say the
         // ETHDoS distance from Alice to Charlie is 6, which is one
@@ -610,7 +641,7 @@ mod tests {
             CustomPredicateRef(eth_dos_distance_batch.clone(), 1),
             ethdos_facts
         )
-        .check(&ethdos_ind_example)?);
+        .check(&params, &ethdos_ind_example)?);
 
         Ok(())
     }

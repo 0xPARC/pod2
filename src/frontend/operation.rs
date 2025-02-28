@@ -1,7 +1,7 @@
 use std::fmt;
 
 use super::{AnchoredKey, SignedPod, Statement, StatementArg, Value};
-use crate::middleware::{hash_str, NativeOperation, NativePredicate, OperationType, Predicate};
+use crate::middleware::{hash_str, NativePredicate, OperationType, Predicate};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OperationArg {

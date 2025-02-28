@@ -4,7 +4,9 @@ use anyhow::{anyhow, Result};
 
 use super::{CustomPredicateRef, Statement};
 use crate::{
-    middleware::{AnchoredKey, CustomPredicate, PodId, Predicate, StatementTmpl, Value, SELF},
+    middleware::{
+        AnchoredKey, CustomPredicate, Params, PodId, Predicate, StatementTmpl, Value, SELF,
+    },
     util::hashmap_insert_no_dupe,
 };
 
@@ -145,7 +147,7 @@ impl Operation {
         })
     }
     /// Checks the given operation against a statement.
-    pub fn check(&self, output_statement: &Statement) -> Result<bool> {
+    pub fn check(&self, params: &Params, output_statement: &Statement) -> Result<bool> {
         use Statement::*;
         match (self, output_statement) {
             (Self::None, None) => Ok(true),
@@ -211,10 +213,10 @@ impl Operation {
                 // references with custom predicate references.
                 let custom_predicate = {
                     let cp = (**cpb).predicates[*i].clone();
-                    CustomPredicate {
-                        conjunction: cp.conjunction,
-                        statements: cp
-                            .statements
+                    CustomPredicate::new(
+                        params,
+                        cp.conjunction,
+                        cp.statements
                             .into_iter()
                             .map(|StatementTmpl(p, args)| {
                                 StatementTmpl(
@@ -228,8 +230,8 @@ impl Operation {
                                 )
                             })
                             .collect(),
-                        args_len: cp.args_len,
-                    }
+                        cp.args_len,
+                    )?
                 };
                 match custom_predicate.conjunction {
                     true if custom_predicate.statements.len() == args.len() => {
