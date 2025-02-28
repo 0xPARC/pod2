@@ -471,7 +471,9 @@ impl MainPodCompiler {
             println!("{}", middle_op);
             println!("{}", middle_st);
             // todo: improve error handling
-            return Err(anyhow!("Compile failed because of incorrect operation".to_string()));
+            return Err(anyhow!(
+                "Compile failed because of incorrect operation".to_string()
+            ));
         }
         self.push_st_op(middle_st, middle_op);
         Ok(())
@@ -613,8 +615,8 @@ pub mod tests {
 
         builder.insert("num", 2);
 
-        let mut signer = MockSigner{
-            pk: "signer".into()
+        let mut signer = MockSigner {
+            pk: "signer".into(),
         };
         let pod = builder.sign(&mut signer).unwrap();
 
