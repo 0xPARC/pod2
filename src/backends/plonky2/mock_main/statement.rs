@@ -1,14 +1,14 @@
 use anyhow::{anyhow, Result};
 use std::fmt;
 
-use crate::middleware::{self, NativePredicate, Params, StatementArg, ToFields};
+use crate::middleware::{self, AnchoredKey, NativePredicate, Params, Predicate, StatementArg, ToFields};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Statement(pub NativePredicate, pub Vec<StatementArg>);
+pub struct Statement(pub Predicate, pub Vec<StatementArg>);
 
 impl Statement {
     pub fn is_none(&self) -> bool {
-        self.0 == NativePredicate::None
+        self.0 == Predicate::Native(NativePredicate::None)
     }
     /// Argument method. Trailing Nones are filtered out.
     pub fn args(&self) -> Vec<StatementArg> {
@@ -52,31 +52,53 @@ impl TryFrom<Statement> for middleware::Statement {
             proper_args.get(1).cloned(),
             proper_args.get(2).cloned(),
         );
-        Ok(match (s.0, args, proper_args.len()) {
-            (NP::None, _, 0) => S::None,
-            (NP::ValueOf, (Some(SA::Key(ak)), Some(SA::Literal(v)), None), 2) => S::ValueOf(ak, v),
-            (NP::Equal, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None), 2) => S::Equal(ak1, ak2),
-            (NP::NotEqual, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None), 2) => {
-                S::NotEqual(ak1, ak2)
+        Ok(match (s.0.clone(), args, proper_args.len()) {
+            (Predicate::Native(np), args, pa_length) => {
+                match (np, args, pa_length) {
+                    (NP::None, _, 0) => S::None,
+                    (NP::ValueOf, (Some(SA::Key(ak)), Some(SA::Literal(v)), None), 2) => S::ValueOf(ak, v),
+                    (NP::Equal, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None), 2) => S::Equal(ak1, ak2),
+                    (NP::NotEqual, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None), 2) => {
+                        S::NotEqual(ak1, ak2)
+                    }
+                    (NP::Gt, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None), 2) => S::Gt(ak1, ak2),
+                    (NP::Lt, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None), 2) => S::Lt(ak1, ak2),
+                    (NP::Contains, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None), 2) => {
+                        S::Contains(ak1, ak2)
+                    }
+                    (NP::NotContains, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None), 2) => {
+                        S::NotContains(ak1, ak2)
+                    }
+                    (NP::SumOf, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), Some(SA::Key(ak3))), 3) => {
+                        S::SumOf(ak1, ak2, ak3)
+                    }
+                    (NP::ProductOf, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), Some(SA::Key(ak3))), 3) => {
+                        S::ProductOf(ak1, ak2, ak3)
+                    }
+                    (NP::MaxOf, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), Some(SA::Key(ak3))), 3) => {
+                        S::MaxOf(ak1, ak2, ak3)
+                    }
+                    _ => Err(anyhow!("Ill-formed statement expression {:?}", s))?,
+        
+                }
             }
-            (NP::Gt, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None), 2) => S::Gt(ak1, ak2),
-            (NP::Lt, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None), 2) => S::Lt(ak1, ak2),
-            (NP::Contains, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None), 2) => {
-                S::Contains(ak1, ak2)
+            (Predicate::Custom(cpr), args, pa_length) => {
+                let aks: Vec<AnchoredKey> = proper_args
+                    .into_iter()
+                    .filter_map(
+                        |arg|
+                        match arg {
+                            SA::None => None,
+                            SA::Key(ak) => Some(ak),
+                            SA::Literal(val) => unreachable!(),
+                        }
+                    )
+                    .collect();
+                S::Custom(cpr.clone(), aks)
             }
-            (NP::NotContains, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None), 2) => {
-                S::NotContains(ak1, ak2)
+            (Predicate::BatchSelf(bs), _, _) => {
+                unreachable!();
             }
-            (NP::SumOf, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), Some(SA::Key(ak3))), 3) => {
-                S::SumOf(ak1, ak2, ak3)
-            }
-            (NP::ProductOf, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), Some(SA::Key(ak3))), 3) => {
-                S::ProductOf(ak1, ak2, ak3)
-            }
-            (NP::MaxOf, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), Some(SA::Key(ak3))), 3) => {
-                S::MaxOf(ak1, ak2, ak3)
-            }
-            _ => Err(anyhow!("Ill-formed statement expression {:?}", s))?,
         })
     }
 }
@@ -85,10 +107,15 @@ impl From<middleware::Statement> for Statement {
     fn from(s: middleware::Statement) -> Self {
         match s.code() {
             middleware::Predicate::Native(c) => {
-                Statement(c, s.args().into_iter().map(|arg| arg).collect())
+                Statement(middleware::Predicate::Native(c), s.args().into_iter().map(|arg| arg).collect())
             }
             // TODO: Custom statements
-            _ => todo!(),
+            middleware::Predicate::Custom(cpr) => {
+                Statement(
+                    middleware::Predicate::Custom(cpr), s.args().into_iter().map(|arg| arg).collect()
+                )
+            },
+            middleware::Predicate::BatchSelf(_) => unreachable!(),
         }
     }
 }

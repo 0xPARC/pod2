@@ -6,8 +6,7 @@ use std::any::Any;
 use std::fmt;
 
 use crate::middleware::{
-    self, hash_str, AnchoredKey, Hash, MainPodInputs, NativeOperation, NativePredicate, NonePod,
-    OperationType, Params, Pod, PodId, PodProver, StatementArg, ToFields, KEY_TYPE, SELF,
+    self, hash_str, AnchoredKey, Hash, MainPodInputs, NativeOperation, NativePredicate, NonePod, OperationType, Params, Pod, PodId, PodProver, Predicate, StatementArg, ToFields, KEY_TYPE, SELF
 };
 
 mod operation;
@@ -348,7 +347,7 @@ impl MockMainPod {
     fn statement_none(params: &Params) -> Statement {
         let mut args = Vec::with_capacity(params.max_statement_args);
         Self::pad_statement_args(&params, &mut args);
-        Statement(NativePredicate::None, args)
+        Statement(Predicate::Native(NativePredicate::None), args)
     }
 
     fn operation_none(params: &Params) -> Operation {
@@ -387,7 +386,7 @@ impl Pod for MockMainPod {
             .public_statements
             .iter()
             .find(|s| {
-                s.0 == NativePredicate::ValueOf
+                s.0 == Predicate::Native(NativePredicate::ValueOf)
                     && s.1.len() > 0
                     && if let StatementArg::Key(AnchoredKey(pod_id, key_hash)) = s.1[0] {
                         pod_id == SELF && key_hash == hash_str(KEY_TYPE)
@@ -415,7 +414,7 @@ impl Pod for MockMainPod {
                         s,
                     )
                 })
-                .filter(|(_, s)| s.0 == NativePredicate::ValueOf)
+                .filter(|(_, s)| s.0 == Predicate::Native(NativePredicate::ValueOf))
                 .flat_map(|(i, s)| {
                     if let StatementArg::Key(ak) = &s.1[0] {
                         vec![(i, ak.1, ak.0)]
