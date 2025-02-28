@@ -3,3 +3,4 @@ groth = "groth" # to avoid it dectecting it as 'growth'
 BA = "BA"
 Ded = "Ded" # "ANDed", it thought "Ded" should be "Dead"
 OT = "OT"
+aks = "aks" # anchored keys
