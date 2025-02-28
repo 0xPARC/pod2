@@ -529,7 +529,7 @@ pub mod tests {
     #[test]
     fn test_front_zu_kyc() -> Result<()> {
         let params = Params::default();
-        let (gov_id, pay_stub) = zu_kyc_sign_pod_builders(&params);
+        let (gov_id, pay_stub, sanction_list) = zu_kyc_sign_pod_builders(&params);
 
         println!("{}", gov_id);
         println!("{}", pay_stub);
@@ -546,7 +546,13 @@ pub mod tests {
         let pay_stub = pay_stub.sign(&mut signer).unwrap();
         println!("{}", pay_stub);
 
-        let kyc = zu_kyc_pod_builder(&params, &gov_id, &pay_stub)?;
+        let mut signer = MockSigner {
+            pk: "ZooOFAC".into(),
+        };
+        let sanction_list = sanction_list.sign(&mut signer).unwrap();
+        println!("{}", sanction_list);
+
+        let kyc = zu_kyc_pod_builder(&params, &gov_id, &pay_stub, &sanction_list)?;
         println!("{}", kyc);
 
         let mut prover = MockProver {};

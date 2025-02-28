@@ -485,7 +485,7 @@ pub mod tests {
     fn test_mock_main_zu_kyc() -> Result<()> {
         let params = middleware::Params::default();
 
-        let (gov_id_builder, pay_stub_builder) = zu_kyc_sign_pod_builders(&params);
+        let (gov_id_builder, pay_stub_builder, sanction_list_builder) = zu_kyc_sign_pod_builders(&params);
         let mut signer = MockSigner {
             pk: "ZooGov".into(),
         };
@@ -494,7 +494,11 @@ pub mod tests {
             pk: "ZooDeel".into(),
         };
         let pay_stub_pod = pay_stub_builder.sign(&mut signer)?;
-        let kyc_builder = zu_kyc_pod_builder(&params, &gov_id_pod, &pay_stub_pod)?;
+        let mut signer = MockSigner {
+            pk: "ZooOFAC".into(),
+        };
+        let sanction_list_pod = sanction_list_builder.sign(&mut signer)?;
+        let kyc_builder = zu_kyc_pod_builder(&params, &gov_id_pod, &pay_stub_pod, &sanction_list_pod)?;
 
         let mut prover = MockProver {};
         let kyc_pod = kyc_builder.prove(&mut prover)?;

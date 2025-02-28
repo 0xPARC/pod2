@@ -3,12 +3,14 @@ use std::collections::HashMap;
 
 use crate::backends::plonky2::mock_signed::MockSigner;
 use crate::frontend::{MainPodBuilder, SignedPod, SignedPodBuilder, Value};
+use crate::middleware::containers::Set;
+use crate::middleware::hash_str;
 use crate::middleware::{containers::Dictionary, Params, PodType, KEY_SIGNER, KEY_TYPE};
 use crate::op;
 
 // ZuKYC
 
-pub fn zu_kyc_sign_pod_builders(params: &Params) -> (SignedPodBuilder, SignedPodBuilder) {
+pub fn zu_kyc_sign_pod_builders(params: &Params) -> (SignedPodBuilder, SignedPodBuilder, SignedPodBuilder) {
     let mut gov_id = SignedPodBuilder::new(params);
     gov_id.insert("idNumber", "4242424242");
     gov_id.insert("dateOfBirth", 1169909384);
@@ -18,22 +20,27 @@ pub fn zu_kyc_sign_pod_builders(params: &Params) -> (SignedPodBuilder, SignedPod
     pay_stub.insert("socialSecurityNumber", "G2121210");
     pay_stub.insert("startDate", 1706367566);
 
-    (gov_id, pay_stub)
+    let mut sanction_list = SignedPodBuilder::new(params);
+    let sanctions_values = ["A343434340"].map(|s| crate::middleware::Value::from(hash_str(s)));
+    sanction_list.insert("sanctionList", Value::Set(Set::new(&sanctions_values.to_vec()).unwrap()));
+
+    (gov_id, pay_stub, sanction_list)
 }
 
 pub fn zu_kyc_pod_builder(
     params: &Params,
     gov_id: &SignedPod,
     pay_stub: &SignedPod,
+    sanction_list: &SignedPod,
 ) -> Result<MainPodBuilder> {
-    let sanction_list = Value::Dictionary(Dictionary::new(&HashMap::new())?); // empty dictionary
     let now_minus_18y: i64 = 1169909388;
     let now_minus_1y: i64 = 1706367566;
 
     let mut kyc = MainPodBuilder::new(params);
     kyc.add_signed_pod(&gov_id);
     kyc.add_signed_pod(&pay_stub);
-    kyc.pub_op(op!(not_contains, &sanction_list, (gov_id, "idNumber")));
+    kyc.add_signed_pod(&sanction_list);
+    kyc.pub_op(op!(not_contains, (sanction_list, "sanctionList"), (gov_id, "idNumber")));
     kyc.pub_op(op!(lt, (gov_id, "dateOfBirth"), now_minus_18y));
     kyc.pub_op(op!(
         eq,
