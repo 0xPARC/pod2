@@ -6,7 +6,9 @@ use std::any::Any;
 use std::fmt;
 
 use crate::middleware::{
-    self, hash_str, AnchoredKey, Hash, MainPodInputs, NativeOperation, NativePredicate, NonePod, OperationType, Params, Pod, PodId, PodProver, Predicate, StatementArg, ToFields, KEY_TYPE, SELF
+    self, hash_str, AnchoredKey, Hash, MainPodInputs, NativeOperation, NativePredicate, NonePod,
+    OperationType, Params, Pod, PodId, PodProver, Predicate, StatementArg, ToFields, KEY_TYPE,
+    SELF,
 };
 
 mod operation;
@@ -260,11 +262,7 @@ impl MockMainPod {
                 .map(|mid_arg| Self::find_op_arg(statements, mid_arg))
                 .collect::<Result<Vec<_>>>()?;
             Self::pad_operation_args(params, &mut args);
-            let op_code = match op.code() {
-                OperationType::Native(code) => code,
-                _ => unimplemented!(),
-            };
-            operations.push(Operation(op_code, args));
+            operations.push(Operation(op.code(), args));
         }
         Ok(operations)
     }
@@ -279,15 +277,18 @@ impl MockMainPod {
         mut operations: Vec<Operation>,
     ) -> Result<Vec<Operation>> {
         let offset_public_statements = statements.len() - params.max_public_statements;
-        operations.push(Operation(NativeOperation::NewEntry, vec![]));
+        operations.push(Operation(
+            OperationType::Native(NativeOperation::NewEntry),
+            vec![],
+        ));
         for i in 0..(params.max_public_statements - 1) {
             let st = &statements[offset_public_statements + i + 1];
             let mut op = if st.is_none() {
-                Operation(NativeOperation::None, vec![])
+                Operation(OperationType::Native(NativeOperation::None), vec![])
             } else {
                 let mid_arg = st.clone();
                 Operation(
-                    NativeOperation::CopyStatement,
+                    OperationType::Native(NativeOperation::CopyStatement),
                     // TODO
                     vec![Self::find_op_arg(statements, &mid_arg.try_into().unwrap())?],
                 )
@@ -351,7 +352,7 @@ impl MockMainPod {
     }
 
     fn operation_none(params: &Params) -> Operation {
-        let mut op = Operation(NativeOperation::None, vec![]);
+        let mut op = Operation(OperationType::Native(NativeOperation::None), vec![]);
         fill_pad(&mut op.1, OperationArg::None, params.max_operation_args);
         op
     }

@@ -17,7 +17,7 @@ impl OperationArg {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Operation(pub NativeOperation, pub Vec<OperationArg>);
+pub struct Operation(pub OperationType, pub Vec<OperationArg>);
 
 impl Operation {
     pub fn deref(&self, statements: &[Statement]) -> Result<crate::middleware::Operation> {
@@ -29,7 +29,7 @@ impl Operation {
                 OperationArg::Index(i) => Some(statements[*i].clone().try_into()),
             })
             .collect::<Result<Vec<crate::middleware::Statement>>>()?;
-        middleware::Operation::op(OperationType::Native(self.0), &deref_args)
+        middleware::Operation::op(self.0.clone(), &deref_args)
     }
 }
 
