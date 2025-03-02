@@ -1,5 +1,5 @@
 # POD value types
-From the frontend perspective, POD values may be one of the following[^type] types: two atomic types
+From the frontend perspective, POD values may be one of the following[^type] types: four atomic types
 - `Integer`
 - `Bool`
 - `String`
