@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 
 use anyhow::{anyhow, Result};
 
@@ -261,5 +262,16 @@ impl Operation {
                 output_statement
             )),
         }
+    }
+}
+
+impl fmt::Display for Operation {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "middleware::Operation:")?;
+        writeln!(f, "  {:?} ", self.code())?;
+        for (i, arg) in self.args().iter().enumerate() {
+            writeln!(f, "    {}", arg)?;
+        }
+        Ok(())
     }
 }
