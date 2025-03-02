@@ -396,6 +396,8 @@ mod tests {
 
     #[test]
     fn is_double_test() -> Result<()> {
+        let params = Params::default();
+
         /*
         is_double(S1, S2) :-
         p:value_of(Constant, 2),
@@ -403,9 +405,9 @@ mod tests {
          */
         let cust_pred_batch = Arc::new(CustomPredicateBatch {
             name: "is_double".to_string(),
-            predicates: vec![CustomPredicate {
-                conjunction: true,
-                statements: vec![
+            predicates: vec![CustomPredicate::and(
+                &params,
+                vec![
                     st(
                         P::Native(NP::ValueOf),
                         vec![
@@ -422,8 +424,8 @@ mod tests {
                         ],
                     ),
                 ],
-                args_len: 4,
-            }],
+                4,
+            )?],
         });
 
         let custom_statement = Statement::Custom(
@@ -446,7 +448,6 @@ mod tests {
             ],
         );
 
-        let params = Params::default();
         assert!(custom_deduction.check(&params, &custom_statement)?);
 
         Ok(())
@@ -456,9 +457,9 @@ mod tests {
     fn ethdos_test() -> Result<()> {
         let params = Params::default();
 
-        let eth_friend_cp = CustomPredicate {
-            conjunction: true,
-            statements: vec![
+        let eth_friend_cp = CustomPredicate::and(
+            &params,
+            vec![
                 st(
                     P::Native(NP::ValueOf),
                     vec![
@@ -481,17 +482,17 @@ mod tests {
                     ],
                 ),
             ],
-            args_len: 4,
-        };
+            4,
+        )?;
 
         let eth_friend_batch = Arc::new(CustomPredicateBatch {
             name: "eth_friend".to_string(),
             predicates: vec![eth_friend_cp],
         });
 
-        let eth_dos_base = CustomPredicate {
-            conjunction: true,
-            statements: vec![
+        let eth_dos_base = CustomPredicate::and(
+            &params,
+            vec![
                 st(
                     P::Native(NP::Equal),
                     vec![
@@ -507,12 +508,12 @@ mod tests {
                     ],
                 ),
             ],
-            args_len: 6,
-        };
+            6,
+        )?;
 
-        let eth_dos_ind = CustomPredicate {
-            conjunction: true,
-            statements: vec![
+        let eth_dos_ind = CustomPredicate::and(
+            &params,
+            vec![
                 st(
                     P::BatchSelf(2),
                     vec![
@@ -544,12 +545,12 @@ mod tests {
                     ],
                 ),
             ],
-            args_len: 6,
-        };
+            6,
+        )?;
 
-        let eth_dos_distance_either = CustomPredicate {
-            conjunction: false,
-            statements: vec![
+        let eth_dos_distance_either = CustomPredicate::or(
+            &params,
+            vec![
                 st(
                     P::BatchSelf(0),
                     vec![
@@ -567,8 +568,8 @@ mod tests {
                     ],
                 ),
             ],
-            args_len: 6,
-        };
+            6,
+        )?;
 
         let eth_dos_distance_batch = Arc::new(CustomPredicateBatch {
             name: "ETHDoS_distance".to_string(),
