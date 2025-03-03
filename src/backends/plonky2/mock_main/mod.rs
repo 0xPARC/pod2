@@ -507,7 +507,7 @@ pub mod tests {
             zu_kyc_pod_builder(&params, &gov_id_pod, &pay_stub_pod, &sanction_list_pod)?;
 
         let mut prover = MockProver {};
-        let kyc_pod = kyc_builder.prove(&mut prover)?;
+        let kyc_pod = kyc_builder.prove(&mut prover, &params)?;
         let pod = kyc_pod.pod.into_any().downcast::<MockMainPod>().unwrap();
 
         println!("{:#}", pod);
@@ -520,10 +520,11 @@ pub mod tests {
 
     #[test]
     fn test_mock_main_great_boy() -> Result<()> {
+        let params = middleware::Params::default();
         let great_boy_builder = great_boy_pod_full_flow()?;
 
         let mut prover = MockProver {};
-        let great_boy_pod = great_boy_builder.prove(&mut prover)?;
+        let great_boy_pod = great_boy_builder.prove(&mut prover, &params)?;
         let pod = great_boy_pod
             .pod
             .into_any()
@@ -539,9 +540,10 @@ pub mod tests {
 
     #[test]
     fn test_mock_main_tickets() -> Result<()> {
+        let params = middleware::Params::default();
         let tickets_builder = tickets_pod_full_flow()?;
         let mut prover = MockProver {};
-        let proof_pod = tickets_builder.prove(&mut prover)?;
+        let proof_pod = tickets_builder.prove(&mut prover, &params)?;
         let pod = proof_pod.pod.into_any().downcast::<MockMainPod>().unwrap();
 
         println!("{}", pod);
