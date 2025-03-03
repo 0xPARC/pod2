@@ -631,7 +631,5 @@ pub mod tests {
 
         println!("{}", builder);
         println!("{}", false_pod);
-
-        ()
     }
 }
