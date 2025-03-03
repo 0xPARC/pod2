@@ -54,8 +54,8 @@ impl TryFrom<Statement> for middleware::Statement {
             proper_args.get(1).cloned(),
             proper_args.get(2).cloned(),
         );
-        Ok(match (s.0.clone(), args, proper_args.len()) {
-            (Predicate::Native(np), args, pa_length) => match (np, args, pa_length) {
+        Ok(match s.0 {
+            Predicate::Native(np) => match (np, args, proper_args.len()) {
                 (NP::None, _, 0) => S::None,
                 (NP::ValueOf, (Some(SA::Key(ak)), Some(SA::Literal(v)), None), 2) => {
                     S::ValueOf(ak, v)
@@ -87,16 +87,16 @@ impl TryFrom<Statement> for middleware::Statement {
                 }
                 _ => Err(anyhow!("Ill-formed statement expression {:?}", s))?,
             },
-            (Predicate::Custom(cpr), args, pa_length) => {
+            Predicate::Custom(cpr) => {
                 let aks: Vec<AnchoredKey> = proper_args
                     .into_iter()
                     .filter_map(|arg| match arg {
                         SA::None => None,
                         SA::Key(ak) => Some(ak),
-                        SA::Literal(val) => unreachable!(),
+                        SA::Literal(_) => unreachable!(),
                     })
                     .collect();
-                S::Custom(cpr.clone(), aks)
+                S::Custom(cpr, aks)
             }
             (Predicate::BatchSelf(bs), _, _) => {
                 unreachable!();
