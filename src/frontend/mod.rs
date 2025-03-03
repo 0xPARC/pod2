@@ -467,16 +467,16 @@ impl MainPodCompiler {
         let middle_op = self.compile_op(op);
         let is_correct = middle_op.check(&middle_st)?;
         if !is_correct {
-            println!("Compile failed because of incorrect operation:");
-            println!("{}", middle_op);
-            println!("{}", middle_st);
             // todo: improve error handling
-            return Err(anyhow!(
-                "Compile failed because of incorrect operation".to_string()
-            ));
+            Err(anyhow!(
+                "Compile failed due to invalid deduction:\n {} ⇏ {}",
+                middle_op,
+                middle_st
+            ))
+        } else {
+            self.push_st_op(middle_st, middle_op);
+            Ok(())
         }
-        self.push_st_op(middle_st, middle_op);
-        Ok(())
     }
 
     pub fn compile<'a>(
