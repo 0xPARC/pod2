@@ -112,7 +112,6 @@ impl From<middleware::Statement> for Statement {
                 middleware::Predicate::Native(c),
                 s.args().into_iter().map(|arg| arg).collect(),
             ),
-            // TODO: Custom statements
             middleware::Predicate::Custom(cpr) => Statement(
                 middleware::Predicate::Custom(cpr),
                 s.args().into_iter().map(|arg| arg).collect(),
