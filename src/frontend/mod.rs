@@ -465,7 +465,7 @@ impl MainPodCompiler {
     fn compile_st_op(&mut self, st: &Statement, op: &Operation) -> Result<()> {
         let middle_st = self.compile_st(st);
         let middle_op = self.compile_op(op);
-        let is_correct = middle_op.check(&middle_st).unwrap();
+        let is_correct = middle_op.check(&middle_st)?;
         if !is_correct {
             println!("Compile failed because of incorrect operation:");
             println!("{}", middle_op);
