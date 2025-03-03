@@ -586,6 +586,7 @@ pub mod tests {
 
         // TODO: prove kyc with MockProver and print it
         println!("{}", kyc);
+        assert!(kyc.pod.verify());
 
         Ok(())
     }
@@ -595,7 +596,12 @@ pub mod tests {
         let great_boy = great_boy_pod_full_flow()?;
         println!("{}", great_boy);
 
-        // TODO: prove kyc with MockProver and print it
+        let params = Params::default();
+        let mut prover = MockProver {};
+        let great_boy_pod = great_boy.prove(&mut prover, &params)?;
+
+        println!("{}", great_boy_pod);
+        assert!(great_boy_pod.pod.verify());
 
         Ok(())
     }
@@ -604,6 +610,13 @@ pub mod tests {
     fn test_front_tickets() -> Result<()> {
         let builder = tickets_pod_full_flow()?;
         println!("{}", builder);
+
+        let params = Params::default();
+        let mut prover = MockProver {};
+        let tickets_pod = builder.prove(&mut prover, &params)?;
+
+        println!("{}", tickets_pod);
+        assert!(tickets_pod.pod.verify());
 
         Ok(())
     }
