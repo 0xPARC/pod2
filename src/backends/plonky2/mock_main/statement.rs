@@ -98,8 +98,8 @@ impl TryFrom<Statement> for middleware::Statement {
                     .collect();
                 S::Custom(cpr, aks)
             }
-            (Predicate::BatchSelf(bs), _, _) => {
-                unreachable!();
+            Predicate::BatchSelf(_) => {
+                unreachable!()
             }
         })
     }
