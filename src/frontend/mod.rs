@@ -609,7 +609,7 @@ pub mod tests {
 
     #[test]
     #[should_panic]
-    fn test_false_st() -> () {
+    fn test_false_st() {
         let params = Params::default();
         let mut builder = SignedPodBuilder::new(&params);
 
