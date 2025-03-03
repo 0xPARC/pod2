@@ -22,7 +22,6 @@
 - [POD types](./podtypes.md)
   - [SignedPOD](./signedpod.md)
   - [MainPOD](./mainpod.md)
-  - [MockPOD](./mockpod.md)
 - [Examples](./examples.md)
 
 # Architecture

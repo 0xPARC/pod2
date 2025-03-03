@@ -578,13 +578,12 @@ pub mod tests {
         let sanction_list = sanction_list.sign(&mut signer).unwrap();
         println!("{}", sanction_list);
 
-        let kyc = zu_kyc_pod_builder(&params, &gov_id, &pay_stub, &sanction_list)?;
-        println!("{}", kyc);
+        let kyc_builder = zu_kyc_pod_builder(&params, &gov_id, &pay_stub, &sanction_list)?;
+        println!("{}", kyc_builder);
 
         let mut prover = MockProver {};
-        let kyc = kyc.prove(&mut prover, &params)?;
+        let kyc = kyc_builder.prove(&mut prover, &params)?;
 
-        // TODO: prove kyc with MockProver and print it
         println!("{}", kyc);
 
         Ok(())
@@ -595,7 +594,7 @@ pub mod tests {
         let great_boy = great_boy_pod_full_flow()?;
         println!("{}", great_boy);
 
-        // TODO: prove kyc with MockProver and print it
+        // TODO: prove great_boy with MockProver and print it
 
         Ok(())
     }

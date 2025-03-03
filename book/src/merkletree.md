@@ -145,39 +145,48 @@ For the current use cases, we don't need to prove that the key exists but the va
 
 ```rust
 impl MerkleTree {
+    /// builds a new `MerkleTree` where the leaves contain the given key-values
+    fn new(max_depth: usize, kvs: &HashMap<Value, Value>) -> Result<Self>;
+
     /// returns the root of the tree
     fn root(&self) -> Hash;
+    
+    /// returns the max_depth parameter from the tree
+    fn max_depth(&self) -> usize;
 
     /// returns the value at the given key
     fn get(&self, key: &Value) -> Result<Value>;
     
     /// returns a boolean indicating whether the key exists in the tree
-    fn contains(&self, key: &Value) -> bool;
+    fn contains(&self, key: &Value) -> Result<bool>;
 
     /// returns a proof of existence, which proves that the given key exists in
-    /// the tree. It returns the `MerkleProof`.
-    fn prove(&self, key: &Value) -> Result<MerkleProof>;
+    /// the tree. It returns the `value` of the leaf at the given `key`, and the
+    /// `MerkleProof`.
+    fn prove(&self, key: &Value) -> Result<(Value, MerkleProof)>;
 
-    /// returns a proof of non-existence, which proves that the given `key`
-    /// does not exist in the tree
+    /// returns a proof of non-existence, which proves that the given
+    /// `key` does not exist in the tree. The return value specifies
+    /// the key-value pair in the leaf reached as a result of
+    /// resolving `key` as well as a `MerkleProof`.
     fn prove_nonexistence(&self, key: &Value) -> Result<MerkleProof>;
 
     /// verifies an inclusion proof for the given `key` and `value`
-    fn verify(root: Hash, proof: &MerkleProof, key: &Value, value: &Value) -> Result<()>;
+    fn verify(max_depth: usize, root: Hash, proof: &MerkleProof,
+                        key: &Value, value: &Value,) -> Result<()>;
 
     /// verifies a non-inclusion proof for the given `key`, that is, the given
     /// `key` does not exist in the tree
-    fn verify_nonexistence(root: Hash, proof: &MerkleProof, key: &Value) -> Result<()>;
+    fn verify_nonexistence( max_depth: usize, root: Hash,
+                        proof: &MerkleProof, key: &Value,) -> Result<()>;
 
     /// returns an iterator over the leaves of the tree
-    fn iter(&self) -> std::collections::hash_map::Iter<Value, Value>;
+    fn iter(&self) -> Iter;
 }
 ```
 
 ## Development plan
 - short term: merkle tree as a 'precompile' in POD operations, which allows to directly verify proofs
-	- initial version: just a wrapper on top of the existing Plonky2's MerkleTree
-	- second iteration: implement the MerkleTree specified in this document
 - long term exploration:
 	- explore feasibility of using Starky (for lookups) connected to Plonky2, which would allow doing the approach described at [https://hackmd.io/@aardvark/SkJ-wcTDJe](https://hackmd.io/@aardvark/SkJ-wcTDJe)
 

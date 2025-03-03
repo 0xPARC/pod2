@@ -37,6 +37,7 @@ impl MerkleTree {
         self.root.hash()
     }
 
+    /// returns the max_depth parameter from the tree
     pub fn max_depth(&self) -> usize {
         self.max_depth
     }
