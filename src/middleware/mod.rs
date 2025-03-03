@@ -92,6 +92,22 @@ pub struct Params {
     pub max_custom_batch_size: usize,
 }
 
+impl Default for Params {
+    fn default() -> Self {
+        Self {
+            max_input_signed_pods: 3,
+            max_input_main_pods: 3,
+            max_statements: 20,
+            max_signed_pod_values: 8,
+            max_public_statements: 10,
+            max_statement_args: 5,
+            max_operation_args: 5,
+            max_custom_predicate_arity: 5,
+            max_custom_batch_size: 5,
+        }
+    }
+}
+
 impl Params {
     pub fn max_priv_statements(&self) -> usize {
         self.max_statements - self.max_public_statements
@@ -131,22 +147,6 @@ impl Params {
             self.custom_predicate_batch_size_field_elts()
         );
         println!("");
-    }
-}
-
-impl Default for Params {
-    fn default() -> Self {
-        Self {
-            max_input_signed_pods: 3,
-            max_input_main_pods: 3,
-            max_statements: 20,
-            max_signed_pod_values: 8,
-            max_public_statements: 10,
-            max_statement_args: 5,
-            max_operation_args: 5,
-            max_custom_predicate_arity: 5,
-            max_custom_batch_size: 5,
-        }
     }
 }
 

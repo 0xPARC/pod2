@@ -1,7 +1,9 @@
 # POD value types
-From the frontend perspective, POD values may be one of the following[^type] types: two atomic types
+From the frontend perspective, POD values may be one of the following[^type] types: four atomic types
 - `Integer`
+- `Bool`
 - `String`
+- `Raw`
 
 and three compound types
 - `Dictionary`
@@ -18,31 +20,16 @@ $$\texttt{HashOut<GoldilocksField>}\simeq\texttt{[GoldilocksField; 4]}.$$
 ## `Integer`
 In the frontend, this type is none other than `u64`[^i64]. In the backend, it will be appropriately embedded into the codomain of the canonical hash function.
 
-In the case of the Plonky2 backend, this is done by decomposing such an integer $x$ as
-$$x = x_0 + x_1 \cdot 2^{32}$$
-with $0 \leq x_0, x_1 < 2^{32}$ and representing it as
-$$\texttt{map}\ \iota\ [x_0, x_1, 0, 0],$$
-where $\iota:\mathbb{N}\cup\{0\}\rightarrow\texttt{GoldilocksField}$ is the canonical projection.
-
+## `Bool`
+In the frontend, this is a simple bool.  In the backend, it will have the same encoding as an `Integer` `0` (for `false`) or `1` (for `true`).
 
 ## `String`
 In the frontend, this type corresponds to the usual `String`. In the backend, the string will be mapped to a sequence of field elements and hashed with the hash function employed there, thus being represented by its hash.
 
-In the case of the Plonky2 backend, the string is converted to a sequence of bytes with the byte `0x01` appended as  padding, then the bytes are split into 7-byte chunks starting from the left, these chunks then being interpreted as integers in little-endian form, each of which is naturally an element of `GoldilocksField`, whence the resulting sequence may be hashed via the Poseidon hash function. Symbolically, given a string $s$, its hash is defined by
+## `Raw`
+"Raw" is short for "raw value".  A `Raw` exposes a backend value on the frontend.
 
-$$\texttt{poseidon}(\texttt{map}\ (\iota\circ\jmath_\texttt{le-bytes->int})\ \texttt{chunks}_7(\jmath_\texttt{string->bytes}(s)\ \texttt{++}\ [\texttt{0x01}])),$$
-
-where `poseidon` is the Poseidon instance used by Plonky2, $\iota$ is as above, $\texttt{chunks}_{n}:[\texttt{u8}]\rightarrow [[\texttt{u8}]]$ is defined such that[^aux]
-
-$$\texttt{chunks}_n(v) = \textup{if}\ v = [\ ]\ \textup{then}\ [\ ]\ \textup{else}\ [\texttt{take}_n v]\ \texttt{++}\ \texttt{chunks}_n(\texttt{drop}_n v),$$
-
-the mapping $\jmath_\texttt{le-bytes->int}: [u8] \rightarrow{N}\cup\{0\}$ is given by
-
-$$[b_0,\dots,b_{N-1}]\mapsto \sum_{i=0}^{N-1} b_i \cdot 2^{8i},$$
-
-and $\jmath_\texttt{string->bytes}$ is the canonical mapping of a string to its UTF-8 representation.
-
-
+With the plonky2 backend, a `Raw` is a tuple of 4 elements of the Goldilocks field.
 
 ## Dictionary, array, set
 
