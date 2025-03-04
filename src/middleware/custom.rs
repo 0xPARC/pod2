@@ -1,8 +1,11 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::{fmt, hash as h, iter::zip};
 
 use anyhow::{anyhow, Result};
 use plonky2::field::types::Field;
+
+use crate::util::hashmap_insert_no_dupe;
 
 use super::{
     hash_fields, AnchoredKey, Hash, NativePredicate, Params, PodId, Statement, StatementArg,
@@ -25,7 +28,11 @@ impl HashOrWildcard {
         match self {
             HashOrWildcard::Hash(h) if &Value::from(h.clone()) == v => Ok(None),
             HashOrWildcard::Wildcard(i) => Ok(Some((*i, v.clone()))),
-            _ => Err(anyhow!("Failed to match {} against {}.", self, v)),
+            _ => Err(anyhow!(
+                "Failed to match hash or wildcard {} against value {}.",
+                self,
+                v
+            )),
         }
     }
 }
@@ -76,7 +83,11 @@ impl StatementTmplArg {
                 let k_corr = tmpl_k.match_against(&k.clone().into())?;
                 Ok([o_corr, k_corr].into_iter().flat_map(|x| x).collect())
             }
-            _ => Err(anyhow!("Failed to match {} against {}.", self, s_arg)),
+            _ => Err(anyhow!(
+                "Failed to match statement template argument {:?} against statement argument {:?}.",
+                self,
+                s_arg
+            )),
         }
     }
 }
@@ -321,6 +332,62 @@ impl CustomPredicateBatch {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CustomPredicateRef(pub Arc<CustomPredicateBatch>, pub usize);
+
+impl CustomPredicateRef {
+    pub fn arg_len(&self) -> usize {
+        (*self.0).predicates[self.1].args_len
+    }
+    pub fn match_against(&self, statements: &[Statement]) -> Result<HashMap<usize, Value>> {
+        let mut bindings = HashMap::new();
+        // Single out custom predicate, replacing batch-self
+        // references with custom predicate references.
+        let custom_predicate = {
+            let cp = &Arc::unwrap_or_clone(self.0.clone()).predicates[self.1];
+            CustomPredicate {
+                conjunction: cp.conjunction,
+                statements: cp
+                    .statements
+                    .iter()
+                    .map(|StatementTmpl(p, args)| {
+                        StatementTmpl(
+                            match p {
+                                Predicate::BatchSelf(i) => {
+                                    Predicate::Custom(CustomPredicateRef(self.0.clone(), *i))
+                                }
+                                _ => p.clone(),
+                            },
+                            args.to_vec(),
+                        )
+                    })
+                    .collect(),
+                args_len: cp.args_len,
+            }
+        };
+        match custom_predicate.conjunction {
+                    true if custom_predicate.statements.len() == statements.len() => {
+                        // Match op args against statement templates
+                    let match_bindings = std::iter::zip(custom_predicate.statements, statements).map(
+                        |(s_tmpl, s)| s_tmpl.match_against(s)
+                    ).collect::<Result<Vec<_>>>()
+                        .map(|v| v.concat())?;
+                    // Add bindings to binding table, throwing if there is an inconsistency.
+                    match_bindings.into_iter().try_for_each(|kv| hashmap_insert_no_dupe(&mut bindings, kv))?;
+                    Ok(bindings)
+                    },
+                    false if statements.len() == 1 => {
+                        // Match op arg against each statement template
+                        custom_predicate.statements.iter().map(
+                            |s_tmpl| {
+                                let mut bindings = bindings.clone();
+                                s_tmpl.match_against(&statements[0])?.into_iter().try_for_each(|kv| hashmap_insert_no_dupe(&mut bindings, kv))?;
+                                Ok::<_, anyhow::Error>(bindings)
+                            }
+                        ).find(|m| m.is_ok()).unwrap_or(Err(anyhow!("Statement {} does not match disjunctive custom predicate {}.", &statements[0], custom_predicate)))
+                    },
+                    _ =>                     Err(anyhow!("Custom predicate statement template list {:?} does not match op argument list {:?}.", custom_predicate.statements, statements))
+                }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Predicate {

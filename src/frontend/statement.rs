@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Result};
 use std::fmt;
 
-use super::{AnchoredKey, Value};
-use crate::middleware::{self, NativePredicate, Predicate};
+use super::{AnchoredKey, SignedPod, Value};
+use crate::middleware::{self, hash_str, NativePredicate, Predicate};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StatementArg {
@@ -21,6 +21,25 @@ impl fmt::Display for StatementArg {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Statement(pub Predicate, pub Vec<StatementArg>);
+
+impl From<(&SignedPod, &str)> for Statement {
+    fn from((pod, key): (&SignedPod, &str)) -> Self {
+        // TODO: Actual value, TryFrom.
+        let value_hash = pod.kvs().get(&hash_str(key)).cloned().unwrap();
+        let value = pod
+            .value_hash_map
+            .get(&value_hash.into())
+            .cloned()
+            .unwrap_or(Value::Raw(value_hash));
+        Statement(
+            Predicate::Native(NativePredicate::ValueOf),
+            vec![
+                StatementArg::Key(AnchoredKey(pod.origin(), key.to_string())),
+                StatementArg::Literal(value),
+            ],
+        )
+    }
+}
 
 impl TryFrom<Statement> for middleware::Statement {
     type Error = anyhow::Error;

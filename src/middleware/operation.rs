@@ -194,68 +194,34 @@ impl Operation {
                 let v3: i64 = v3.clone().try_into()?;
                 Ok((v1 == v2 + v3) && ak4 == ak1 && ak5 == ak2 && ak6 == ak3)
             }
-            (
-                Self::Custom(CustomPredicateRef(cpb, i), args),
-                Custom(CustomPredicateRef(s_cpb, s_i), s_args),
-            ) if cpb == s_cpb && i == s_i => {
-                // Bind statement arguments
-                let mut bindings = s_args
-                    .into_iter()
-                    .enumerate()
-                    .flat_map(|(i, AnchoredKey(PodId(o), k))| {
-                        vec![
-                            (2 * i, Value::from(o.clone())),
-                            (2 * i + 1, Value::from(k.clone())),
-                        ]
-                    })
-                    .collect::<HashMap<_, _>>();
-
-                // Single out custom predicate, replacing batch-self
-                // references with custom predicate references.
-                let custom_predicate = {
-                    let cp = (**cpb).predicates[*i].clone();
-                    CustomPredicate::new(
-                        params,
-                        cp.conjunction,
-                        cp.statements
-                            .into_iter()
-                            .map(|StatementTmpl(p, args)| {
-                                StatementTmpl(
-                                    match p {
-                                        Predicate::BatchSelf(i) => {
-                                            Predicate::Custom(CustomPredicateRef(cpb.clone(), i))
-                                        }
-                                        _ => p,
-                                    },
-                                    args,
-                                )
-                            })
-                            .collect(),
-                        cp.args_len,
-                    )?
-                };
-                match custom_predicate.conjunction {
-                    true if custom_predicate.statements.len() == args.len() => {
-                        // Match op args against statement templates
-                    let match_bindings = std::iter::zip(custom_predicate.statements, args).map(
-                        |(s_tmpl, s)| s_tmpl.match_against(s)
-                    ).collect::<Result<Vec<_>>>()
-                        .map(|v| v.concat())?;
-                    // Add bindings to binding table, throwing if there is an inconsistency.
-                    match_bindings.into_iter().try_for_each(|kv| hashmap_insert_no_dupe(&mut bindings, kv))?;
-                    Ok(true)
-                    },
-                    false if args.len() == 1 => {
-                        // Match op arg against each statement template
-                        custom_predicate.statements.into_iter().map(
-                            |s_tmpl| {
-                                let mut bindings = bindings.clone();
-                                s_tmpl.match_against(&args[0])?.into_iter().try_for_each(|kv| hashmap_insert_no_dupe(&mut bindings, kv))?;
-                                Ok::<_, anyhow::Error>(true)
-                            }
-                        ).find(|m| m.is_ok()).unwrap_or(Ok(false))
-                    },
-                    _ =>                     Err(anyhow!("Custom predicate statement template list {:?} does not match op argument list {:?}.", custom_predicate.statements, args))
+            (Self::Custom(CustomPredicateRef(cpb, i), args), Custom(cpr, s_args))
+                if cpb == &cpr.0 && i == &cpr.1 =>
+            {
+                // Bind according to custom predicate pattern match against arg list.
+                let bindings = cpr.match_against(args)?;
+                // Check arg length
+                let arg_len = cpr.arg_len();
+                if arg_len != 2 * s_args.len() {
+                    Err(anyhow!("Custom predicate arg list {:?} must have {} arguments after destructuring.", s_args, arg_len))
+                } else {
+                    let bound_args = (0..arg_len)
+                        .map(|i| {
+                            bindings.get(&i).cloned().ok_or(anyhow!(
+                                "Wildcard {} of custom predicate {:?} is unbound.",
+                                i,
+                                cpr
+                            ))
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    let s_args = s_args
+                        .into_iter()
+                        .flat_map(|AnchoredKey(o, k)| [Value::from(o.0.clone()), k.clone().into()])
+                        .collect::<Vec<_>>();
+                    if bound_args != s_args {
+                        Err(anyhow!("Arguments to output statement {} do not match those implied by operation {:?}", output_statement,self))
+                    } else {
+                        Ok(true)
+                    }
                 }
             }
             _ => Err(anyhow!(

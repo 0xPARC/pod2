@@ -52,15 +52,7 @@ impl From<bool> for OperationArg {
 
 impl From<(&SignedPod, &str)> for OperationArg {
     fn from((pod, key): (&SignedPod, &str)) -> Self {
-        // TODO: Actual value, TryFrom.
-        let value = pod.kvs().get(&hash_str(key)).unwrap().clone();
-        Self::Statement(Statement(
-            Predicate::Native(NativePredicate::ValueOf),
-            vec![
-                StatementArg::Key(AnchoredKey(pod.origin(), key.to_string())),
-                StatementArg::Literal(Value::Raw(value)),
-            ],
-        ))
+        Self::Statement((pod, key).into())
     }
 }
 

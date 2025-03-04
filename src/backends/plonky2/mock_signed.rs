@@ -13,16 +13,22 @@ pub struct MockSigner {
     pub pk: String,
 }
 
+impl MockSigner {
+    pub fn pubkey(&self) -> Value {
+        Value(hash_str(&self.pk).0)
+    }
+}
+
 impl PodSigner for MockSigner {
     fn sign(&mut self, _params: &Params, kvs: &HashMap<Hash, Value>) -> Result<Box<dyn Pod>> {
         let mut kvs = kvs.clone();
-        let pk_hash = hash_str(&self.pk);
-        kvs.insert(hash_str(&KEY_SIGNER), Value(pk_hash.0));
+        let pubkey = self.pubkey();
+        kvs.insert(hash_str(&KEY_SIGNER), pubkey);
         kvs.insert(hash_str(&KEY_TYPE), Value::from(PodType::MockSigned));
 
         let dict = Dictionary::new(&kvs)?;
         let id = PodId(dict.commitment());
-        let signature = format!("{}_signed_by_{}", id, pk_hash);
+        let signature = format!("{}_signed_by_{}", id, pubkey);
         Ok(Box::new(MockSignedPod {
             dict,
             id,
