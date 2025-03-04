@@ -26,16 +26,20 @@ The following table summarises the natively-supported operations:
 
 <!-- NOTE: should we 'uniformalize' the names? eg. currently we have `EntryGt` and `GtToNEq` -->
 
-<span style="color:red">WIP, the following ones were appearing at the docs table but not at the implementation ([src/middleware/operation.rs](https://github.com/0xPARC/pod2/blob/main/src/middleware/operation.rs#L20)):</span><br>
-<span style="color:red">TODO rm?</span>
-| Code | Identifier            | Args                | Condition                                                                                                             | Output                                                         |
-|------|-----------------------|---------------------|-----------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------|
-| 3    | `SymmetricEq`         | `s`                 | `s = Equal(ak1, ak2)`                                                                                                 | `Eq(ak2, ak1)`                                                 |
-| 6    | `SymmetricNEq`        | `s`                 | `s = NotEqual(ak1, ak2)`                                                                                              | `NEq(ak2, ak1)`                                                |
-| 16   | `RenameSintains`      | `s1`, `s2`          | `s1 = Sintains(ak1, ak2)`, `s2 = Equal(ak3, ak4)`, `ak1 = ak3`                                                        | `Sintains(ak4, ak2)`                                           |
-| 7    | `TransitiveEq`        | `s1`, `s2`          | `s1 = Equal(ak1, ak2)`, `s2 = Equal(ak3, ak4)`, `ak2 = ak3`                                                           | `Eq(ak1, ak4)`                                                 |
-| 6    | `LEqToNEq`            | `s`                 | `s = LEq(ak1, ak2)`                                                                                                   | `NEq(ak1, ak2)`                                                |
-| 10   | `TransitiveGt`        | `s1`, `s2`          | `s1 = Gt(ak1, ak2)`, `s2 = Gt(ak3, ak4)`, `ak2 = ak3`                                                                 | `Gt(ak1, ak4)`                                                 |
-| 12   | `TransitiveLEq`       | `s1`, `s2`          | `s1 = LEq(ak1, ak2)`, `s2 = LEq(ak3, ak4)`, `ak2 = ak3`                                                               | `LEq(ak1, ak4)`                                                |
+<br><br>
+
+<span style="color:green"><b>WIP</b>. The following table defines more operations that are not yet [implemented](https://github.com/0xPARC/pod2/blob/main/src/middleware/operation.rs#L20).<br>
+Issue keeping track of the operations: [#108](https://github.com/0xPARC/pod2/issues/108).
+</span><br>
+| Code | Identifier       | Args       | Condition                                                      | Output               |
+|------|------------------|------------|----------------------------------------------------------------|----------------------|
+|      | `SymmetricEq`    | `s`        | `s = Equal(ak1, ak2)`                                          | `Eq(ak2, ak1)`       |
+|      | `SymmetricNEq`   | `s`        | `s = NotEqual(ak1, ak2)`                                       | `NEq(ak2, ak1)`      |
+|      | `RenameSintains` | `s1`, `s2` | `s1 = Sintains(ak1, ak2)`, `s2 = Equal(ak3, ak4)`, `ak1 = ak3` | `Sintains(ak4, ak2)` |
+|      | `TransitiveEq`   | `s1`, `s2` | `s1 = Equal(ak1, ak2)`, `s2 = Equal(ak3, ak4)`, `ak2 = ak3`    | `Eq(ak1, ak4)`       |
+|      | `LEqToNEq`       | `s`        | `s = LEq(ak1, ak2)`                                            | `NEq(ak1, ak2)`      |
+|      | `TransitiveGt`   | `s1`, `s2` | `s1 = Gt(ak1, ak2)`, `s2 = Gt(ak3, ak4)`, `ak2 = ak3`          | `Gt(ak1, ak4)`       |
+|      | `TransitiveLEq`  | `s1`, `s2` | `s1 = LEq(ak1, ak2)`, `s2 = LEq(ak3, ak4)`, `ak2 = ak3`        | `LEq(ak1, ak4)`      |
+
 
 [^newentry]: Since new key-value pairs are not constrained, this operation will have no arguments in-circuit.
