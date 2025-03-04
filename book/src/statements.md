@@ -40,7 +40,7 @@ The following table summarises the natively-supported statements, where we write
 
 <span style="color:red">TODO: Current implementation frontend Statements reuse the middleware Statements, which:</span><br>
 <span style="color:red">- 1: GEq & LEq don't appear in the frontend impl</span><br>
-<span style="color:red">- 2: frontend impl has Contains & NotCointains, which don't appear at the following block</span>
+<span style="color:red">- 2: frontend impl has Contains & NotContains, which don't appear at the following block</span>
 ```
 ValueOf(key: AnchoredKey, value: ScalarOrVec)
 

@@ -24,7 +24,7 @@ The following table summarises the natively-supported operations:
 | 14   | `ProductOf`           | `s1`, `s2`, `s3`    | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `s3 = ValueOf(ak3, value3)`, `value1 = value2 * value3`     | `ProductOf(ak1, ak2, ak3)`                                     |
 | 15   | `MaxOf`               | `s1`, `s2`, `s3`    | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `s3 = ValueOf(ak3, value3)`, `value1 = max(value2, value3)` | `MaxOf(ak1, ak2, ak3)`                                         |
 
-<!-- NOTE: should we 'uniformalize' the names? eg. currently we have `EntryGt` and `GtToNEq` -->
+<!-- NOTE: should we 'uniformize' the names? eg. currently we have `EntryGt` and `GtToNEq` -->
 
 <br><br>
 
@@ -37,9 +37,9 @@ Issue keeping track of the operations: [#108](https://github.com/0xPARC/pod2/iss
 |      | `SymmetricNEq`   | `s`        | `s = NotEqual(ak1, ak2)`                                       | `NEq(ak2, ak1)`      |
 |      | `RenameSintains` | `s1`, `s2` | `s1 = Sintains(ak1, ak2)`, `s2 = Equal(ak3, ak4)`, `ak1 = ak3` | `Sintains(ak4, ak2)` |
 |      | `TransitiveEq`   | `s1`, `s2` | `s1 = Equal(ak1, ak2)`, `s2 = Equal(ak3, ak4)`, `ak2 = ak3`    | `Eq(ak1, ak4)`       |
-|      | `LEqToNEq`       | `s`        | `s = LEq(ak1, ak2)`                                            | `NEq(ak1, ak2)`      |
 |      | `TransitiveGt`   | `s1`, `s2` | `s1 = Gt(ak1, ak2)`, `s2 = Gt(ak3, ak4)`, `ak2 = ak3`          | `Gt(ak1, ak4)`       |
 |      | `TransitiveLEq`  | `s1`, `s2` | `s1 = LEq(ak1, ak2)`, `s2 = LEq(ak3, ak4)`, `ak2 = ak3`        | `LEq(ak1, ak4)`      |
+|      | `LEqToNEq`       | `s`        | `s = LEq(ak1, ak2)`                                            | `NEq(ak1, ak2)`      |
 
 
 [^newentry]: Since new key-value pairs are not constrained, this operation will have no arguments in-circuit.
