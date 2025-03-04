@@ -32,7 +32,7 @@ impl fmt::Display for PodId {
 }
 
 /// AnchoredKey is a tuple containing (OriginId: PodId, key: Hash)
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct AnchoredKey(pub PodId, pub Hash);
 
 impl AnchoredKey {

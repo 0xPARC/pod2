@@ -609,6 +609,57 @@ pub mod tests {
     }
 
     #[test]
+    fn test_equal() -> Result<()> {
+        let params = Params::default();
+        let mut signed_builder = SignedPodBuilder::new(&params);
+        signed_builder.insert("a", 1);
+        signed_builder.insert("b", 1);
+        let mut signer = MockSigner{pk: "key".into()};
+        let signed_pod = signed_builder.sign(&mut signer)?;
+
+        let mut builder = MainPodBuilder::new(&params);
+        builder.add_signed_pod(&signed_pod);
+
+        //let op_val1 = Operation{
+        //    OperationType::Native(NativeOperation::CopyStatement),
+        //    signed_pod.
+        //}
+
+        let op_eq1 = Operation(
+            OperationType::Native(NativeOperation::EqualFromEntries),
+            vec![
+                OperationArg::from((&signed_pod, "a")),
+                OperationArg::from((&signed_pod, "b")),
+            ],
+        );
+        let st1 = builder.op(true, op_eq1);
+        let op_eq2 = Operation(
+            OperationType::Native(NativeOperation::EqualFromEntries),
+            vec![
+                OperationArg::from((&signed_pod, "b")),
+                OperationArg::from((&signed_pod, "a")),
+            ],
+        );
+        let st2 = builder.op(true, op_eq2);
+
+        let op_eq3 = Operation(
+            OperationType::Native(NativeOperation::TransitiveEqualFromStatements),
+            vec![
+                OperationArg::Statement(st1), 
+                OperationArg::Statement(st2),
+            ],
+        );
+        let st3 = builder.op(true, op_eq3);
+
+        let mut prover = MockProver{};
+        let pod = builder.prove(&mut prover, &params)?;
+
+        println!("{}", pod);
+
+        Ok(())
+    }
+
+    #[test]
     #[should_panic]
     fn test_false_st() {
         let params = Params::default();
