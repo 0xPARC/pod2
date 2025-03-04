@@ -1,7 +1,7 @@
 //! The frontend includes the user-level abstractions and user-friendly types to define and work
 //! with Pods.
 
-use anyhow::{anyhow, Error, Result};
+use anyhow::{anyhow, Result};
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::convert::From;

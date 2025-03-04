@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::iter::IntoIterator;
 
-use crate::middleware::{Hash, Value, F, NULL};
+use crate::backends::plonky2::basetypes::{Hash, Value, F, NULL};
 
 /// Implements the MerkleTree specified at
 /// https://0xparc.github.io/pod2/merkletree.html
