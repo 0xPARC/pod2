@@ -9,6 +9,7 @@ use plonky2::field::types::{Field, PrimeField64};
 use plonky2::hash::poseidon::PoseidonHash;
 use plonky2::plonk::config::Hasher;
 use plonky2::plonk::config::PoseidonGoldilocksConfig;
+use plonky2::plonk::proof::Proof as Plonky2Proof;
 use std::cmp::{Ord, Ordering};
 use std::fmt;
 
@@ -20,6 +21,9 @@ pub type F = GoldilocksField;
 pub type C = PoseidonGoldilocksConfig;
 /// D defines the extension degree of the field used in the Plonky2 proofs (quadratic extension).
 pub const D: usize = 2;
+
+/// proof system proof
+pub type Proof = Plonky2Proof<F, PoseidonGoldilocksConfig, D>;
 
 pub const HASH_SIZE: usize = 4;
 pub const VALUE_SIZE: usize = 4;
