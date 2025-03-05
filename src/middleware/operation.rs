@@ -42,25 +42,33 @@ impl OperationType {
     // so output_predicate returns None on CopyStatement
     pub fn output_predicate(&self) -> Option<Predicate> {
         match self {
-            OperationType::Native(native_op) => {
-                match native_op {
-                    NativeOperation::None => Some(Predicate::Native(NativePredicate::None)),
-                    NativeOperation::NewEntry => Some(Predicate::Native(NativePredicate::ValueOf)),
-                    NativeOperation::CopyStatement => None,
-                    NativeOperation::EqualFromEntries => Some(Predicate::Native(NativePredicate::Equal)),
-                    NativeOperation::NotEqualFromEntries => Some(Predicate::Native(NativePredicate::NotEqual)),
-                    NativeOperation::GtFromEntries => Some(Predicate::Native(NativePredicate::Gt)),
-                    NativeOperation::LtFromEntries => Some(Predicate::Native(NativePredicate::Lt)),
-                    NativeOperation::TransitiveEqualFromStatements => Some(Predicate::Native(NativePredicate::Equal)),
-                    NativeOperation::GtToNotEqual => Some(Predicate::Native(NativePredicate::NotEqual)),
-                    NativeOperation::LtToNotEqual => Some(Predicate::Native(NativePredicate::NotEqual)),
-                    NativeOperation::ContainsFromEntries => Some(Predicate::Native(NativePredicate::Contains)),
-                    NativeOperation::NotContainsFromEntries => Some(Predicate::Native(NativePredicate::NotContains)),
-                    NativeOperation::SumOf => Some(Predicate::Native(NativePredicate::SumOf)),
-                    NativeOperation::ProductOf => Some(Predicate::Native(NativePredicate::ProductOf)),
-                    NativeOperation::MaxOf => Some(Predicate::Native(NativePredicate::MaxOf)),
+            OperationType::Native(native_op) => match native_op {
+                NativeOperation::None => Some(Predicate::Native(NativePredicate::None)),
+                NativeOperation::NewEntry => Some(Predicate::Native(NativePredicate::ValueOf)),
+                NativeOperation::CopyStatement => None,
+                NativeOperation::EqualFromEntries => {
+                    Some(Predicate::Native(NativePredicate::Equal))
                 }
-            }
+                NativeOperation::NotEqualFromEntries => {
+                    Some(Predicate::Native(NativePredicate::NotEqual))
+                }
+                NativeOperation::GtFromEntries => Some(Predicate::Native(NativePredicate::Gt)),
+                NativeOperation::LtFromEntries => Some(Predicate::Native(NativePredicate::Lt)),
+                NativeOperation::TransitiveEqualFromStatements => {
+                    Some(Predicate::Native(NativePredicate::Equal))
+                }
+                NativeOperation::GtToNotEqual => Some(Predicate::Native(NativePredicate::NotEqual)),
+                NativeOperation::LtToNotEqual => Some(Predicate::Native(NativePredicate::NotEqual)),
+                NativeOperation::ContainsFromEntries => {
+                    Some(Predicate::Native(NativePredicate::Contains))
+                }
+                NativeOperation::NotContainsFromEntries => {
+                    Some(Predicate::Native(NativePredicate::NotContains))
+                }
+                NativeOperation::SumOf => Some(Predicate::Native(NativePredicate::SumOf)),
+                NativeOperation::ProductOf => Some(Predicate::Native(NativePredicate::ProductOf)),
+                NativeOperation::MaxOf => Some(Predicate::Native(NativePredicate::MaxOf)),
+            },
             OperationType::Custom(cpr) => Some(Predicate::Custom(cpr.clone())),
         }
     }
@@ -182,106 +190,160 @@ impl Operation {
             Self::NewEntry => Option::None,
             Self::CopyStatement(s1) => Some(s1.args()),
             Self::EqualFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) => {
-                if(v1 == v2) {
-                    Some(vec![StatementArg::Key(ak1.clone()), StatementArg::Key(ak2.clone())])
+                if (v1 == v2) {
+                    Some(vec![
+                        StatementArg::Key(ak1.clone()),
+                        StatementArg::Key(ak2.clone()),
+                    ])
                 } else {
                     return Err(anyhow!("Invalid operation"));
                 }
-            },
-            Self::EqualFromEntries(_, _) => {return Err(anyhow!("Invalid operation"));}
+            }
+            Self::EqualFromEntries(_, _) => {
+                return Err(anyhow!("Invalid operation"));
+            }
             Self::NotEqualFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) => {
-                if(v1 != v2) {
-                    Some(vec![StatementArg::Key(ak1.clone()), StatementArg::Key(ak2.clone())])
+                if (v1 != v2) {
+                    Some(vec![
+                        StatementArg::Key(ak1.clone()),
+                        StatementArg::Key(ak2.clone()),
+                    ])
                 } else {
                     return Err(anyhow!("Invalid operation"));
                 }
-            },
-            Self::NotEqualFromEntries(_, _) => {return Err(anyhow!("Invalid operation"));}
+            }
+            Self::NotEqualFromEntries(_, _) => {
+                return Err(anyhow!("Invalid operation"));
+            }
             Self::GtFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) => {
-                if(v1 > v2) {
-                    Some(vec![StatementArg::Key(ak1.clone()), StatementArg::Key(ak2.clone())])
+                if (v1 > v2) {
+                    Some(vec![
+                        StatementArg::Key(ak1.clone()),
+                        StatementArg::Key(ak2.clone()),
+                    ])
                 } else {
                     return Err(anyhow!("Invalid operation"));
                 }
-            },
-            Self::GtFromEntries(_, _) => {return Err(anyhow!("Invalid operation"));}
+            }
+            Self::GtFromEntries(_, _) => {
+                return Err(anyhow!("Invalid operation"));
+            }
             Self::LtFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) => {
-                if(v1 < v2) {
-                    Some(vec![StatementArg::Key(ak1.clone()), StatementArg::Key(ak2.clone())])
+                if (v1 < v2) {
+                    Some(vec![
+                        StatementArg::Key(ak1.clone()),
+                        StatementArg::Key(ak2.clone()),
+                    ])
                 } else {
                     return Err(anyhow!("Invalid operation"));
                 }
-            },
-            Self::LtFromEntries(_, _) => {return Err(anyhow!("Invalid operation"));}
+            }
+            Self::LtFromEntries(_, _) => {
+                return Err(anyhow!("Invalid operation"));
+            }
             Self::TransitiveEqualFromStatements(Equal(ak1, ak2), Equal(ak3, ak4)) => {
-                if(ak2 == ak3) {
-                    Some(vec![StatementArg::Key(ak1.clone()), StatementArg::Key(ak3.clone())])
+                if (ak2 == ak3) {
+                    Some(vec![
+                        StatementArg::Key(ak1.clone()),
+                        StatementArg::Key(ak3.clone()),
+                    ])
                 } else {
                     return Err(anyhow!("Invalid operation"));
                 }
-            },
-            Self::TransitiveEqualFromStatements(_, _) => {return Err(anyhow!("Invalid operation"));}
-            Self::GtToNotEqual(Gt(ak1, ak2)) => {
-                Some(vec![StatementArg::Key(ak1.clone()), StatementArg::Key(ak2.clone())])
-            },
-            Self::GtToNotEqual(_) => {return Err(anyhow!("Invalid operation"));}
-            Self::LtToNotEqual(Gt(ak1, ak2)) => {
-                Some(vec![StatementArg::Key(ak1.clone()), StatementArg::Key(ak2.clone())])
-            },
-            Self::LtToNotEqual(_) => {return Err(anyhow!("Invalid operation"));}
+            }
+            Self::TransitiveEqualFromStatements(_, _) => {
+                return Err(anyhow!("Invalid operation"));
+            }
+            Self::GtToNotEqual(Gt(ak1, ak2)) => Some(vec![
+                StatementArg::Key(ak1.clone()),
+                StatementArg::Key(ak2.clone()),
+            ]),
+            Self::GtToNotEqual(_) => {
+                return Err(anyhow!("Invalid operation"));
+            }
+            Self::LtToNotEqual(Gt(ak1, ak2)) => Some(vec![
+                StatementArg::Key(ak1.clone()),
+                StatementArg::Key(ak2.clone()),
+            ]),
+            Self::LtToNotEqual(_) => {
+                return Err(anyhow!("Invalid operation"));
+            }
             Self::ContainsFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) =>
             /* TODO */
             {
-                Some(vec![StatementArg::Key(ak1.clone()), StatementArg::Key(ak2.clone())])
+                Some(vec![
+                    StatementArg::Key(ak1.clone()),
+                    StatementArg::Key(ak2.clone()),
+                ])
             }
-            Self::ContainsFromEntries(_, _) => {return Err(anyhow!("Invalid operation"));}
+            Self::ContainsFromEntries(_, _) => {
+                return Err(anyhow!("Invalid operation"));
+            }
             Self::NotContainsFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) =>
             /* TODO */
             {
-                Some(vec![StatementArg::Key(ak1.clone()), StatementArg::Key(ak2.clone())])
+                Some(vec![
+                    StatementArg::Key(ak1.clone()),
+                    StatementArg::Key(ak2.clone()),
+                ])
             }
-            Self::NotContainsFromEntries(_, _) => {return Err(anyhow!("Invalid operation"));}
+            Self::NotContainsFromEntries(_, _) => {
+                return Err(anyhow!("Invalid operation"));
+            }
             Self::SumOf(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3)) => {
                 let v1: i64 = v1.clone().try_into()?;
                 let v2: i64 = v2.clone().try_into()?;
                 let v3: i64 = v3.clone().try_into()?;
-                if(v1 == v2 + v3) {
-                    Some(vec![StatementArg::Key(ak1.clone()), StatementArg::Key(ak2.clone())])
+                if (v1 == v2 + v3) {
+                    Some(vec![
+                        StatementArg::Key(ak1.clone()),
+                        StatementArg::Key(ak2.clone()),
+                    ])
                 } else {
                     return Err(anyhow!("Invalid operation"));
                 }
             }
-            Self::SumOf(_, _, _) => {return Err(anyhow!("Invalid operation"));}
+            Self::SumOf(_, _, _) => {
+                return Err(anyhow!("Invalid operation"));
+            }
             Self::ProductOf(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3)) => {
                 let v1: i64 = v1.clone().try_into()?;
                 let v2: i64 = v2.clone().try_into()?;
                 let v3: i64 = v3.clone().try_into()?;
-                if(v1 == v2 * v3) {
-                    Some(vec![StatementArg::Key(ak1.clone()), StatementArg::Key(ak2.clone())])
+                if (v1 == v2 * v3) {
+                    Some(vec![
+                        StatementArg::Key(ak1.clone()),
+                        StatementArg::Key(ak2.clone()),
+                    ])
                 } else {
                     return Err(anyhow!("Invalid operation"));
                 }
             }
-            Self::ProductOf(_, _, _) => {return Err(anyhow!("Invalid operation"));}
+            Self::ProductOf(_, _, _) => {
+                return Err(anyhow!("Invalid operation"));
+            }
             Self::MaxOf(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3)) => {
                 let v1: i64 = v1.clone().try_into()?;
                 let v2: i64 = v2.clone().try_into()?;
                 let v3: i64 = v3.clone().try_into()?;
-                if(v1 == std::cmp::max(v2, v3)) {
-                    Some(vec![StatementArg::Key(ak1.clone()), StatementArg::Key(ak2.clone())])
+                if (v1 == std::cmp::max(v2, v3)) {
+                    Some(vec![
+                        StatementArg::Key(ak1.clone()),
+                        StatementArg::Key(ak2.clone()),
+                    ])
                 } else {
                     return Err(anyhow!("Invalid operation"));
                 }
             }
-            Self::MaxOf(_, _, _) => {return Err(anyhow!("Invalid operation"));}
-            Self::Custom(_, _) => todo!()
+            Self::MaxOf(_, _, _) => {
+                return Err(anyhow!("Invalid operation"));
+            }
+            Self::Custom(_, _) => todo!(),
         };
 
         let x: Option<Result<Statement>> = pred
             .zip(st_args)
-            .map(|(pred, st_args)| 
-                Statement::from_args(pred, st_args)
-            );
+            .map(|(pred, st_args)| Statement::from_args(pred, st_args));
         x.transpose()
     }
     /// Checks the given operation against a statement.
