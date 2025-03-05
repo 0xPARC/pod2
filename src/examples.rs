@@ -1,11 +1,16 @@
-use anyhow::Result;
+pub mod custom;
+
+use anyhow::{anyhow, Result};
+use custom::{eth_dos_batch, eth_friend_batch};
 use std::collections::HashMap;
 
 use crate::backends::plonky2::mock_signed::MockSigner;
-use crate::frontend::{MainPodBuilder, SignedPod, SignedPodBuilder, Value};
+use crate::frontend::{
+    MainPodBuilder, Operation, OperationArg, SignedPod, SignedPodBuilder, Statement, Value,
+};
 use crate::middleware::containers::Set;
-use crate::middleware::hash_str;
 use crate::middleware::{containers::Dictionary, Params, PodType, KEY_SIGNER, KEY_TYPE};
+use crate::middleware::{hash_str, CustomPredicateRef, NativeOperation, OperationType, Pod};
 use crate::op;
 
 // ZuKYC
@@ -59,6 +64,131 @@ pub fn zu_kyc_pod_builder(
     kyc.pub_op(op!(eq, (pay_stub, "startDate"), now_minus_1y));
 
     Ok(kyc)
+}
+
+// ETHDoS
+
+pub fn eth_friend_signed_pod_builder(params: &Params, friend_pubkey: Value) -> SignedPodBuilder {
+    let mut attestation = SignedPodBuilder::new(params);
+    attestation.insert("attestation", friend_pubkey);
+
+    attestation
+}
+
+pub fn eth_dos_pod_builder(
+    params: &Params,
+    alice_attestation: &SignedPod,
+    charlie_attestation: &SignedPod,
+    bob_pubkey: &Value,
+) -> Result<MainPodBuilder> {
+    // Will need ETH friend and ETH DoS custom predicate batches.
+    let eth_friend_batch = eth_friend_batch(params)?;
+    let eth_dos_batch = eth_dos_batch(params)?;
+
+    // ETHDoS POD builder
+    let mut alice_bob_ethdos = MainPodBuilder::new(params);
+    alice_bob_ethdos.add_signed_pod(&alice_attestation);
+    alice_bob_ethdos.add_signed_pod(&charlie_attestation);
+
+    // Attestation POD entries
+    let alice_pubkey = alice_attestation
+        .kvs()
+        .get(&KEY_SIGNER.into())
+        .ok_or(anyhow!("Could not find Alice's public key!"))?
+        .clone();
+    let charlie_pubkey = charlie_attestation
+        .kvs()
+        .get(&KEY_SIGNER.into())
+        .ok_or(anyhow!("Could not find Charlie's public key!"))?
+        .clone();
+
+    // Include Alice and Bob's keys as public statements.
+    let alice_pubkey_copy = alice_bob_ethdos.pub_op(Operation(
+        OperationType::Native(NativeOperation::NewEntry),
+        vec![OperationArg::Entry(
+            "Alice".to_string(),
+            alice_pubkey.into(),
+        )],
+    ))?;
+    let bob_pubkey_copy = alice_bob_ethdos.pub_op(Operation(
+        OperationType::Native(NativeOperation::NewEntry),
+        vec![OperationArg::Entry(
+            "Bob".to_string(),
+            bob_pubkey.clone().into(),
+        )],
+    ))?;
+    let charlie_pubkey = alice_bob_ethdos.priv_op(Operation(
+        OperationType::Native(NativeOperation::NewEntry),
+        vec![OperationArg::Entry(
+            "Charlie".to_string(),
+            charlie_pubkey.into(),
+        )],
+    ))?;
+
+    // The ETHDoS distance from Alice to Alice is 0.
+    let zero = alice_bob_ethdos.priv_op(Operation(
+        OperationType::Native(NativeOperation::NewEntry),
+        vec![OperationArg::Entry("ZERO".to_string(), Value::from(0i64))],
+    ))?;
+    let alice_equals_alice = alice_bob_ethdos.priv_op(Operation(
+        OperationType::Native(NativeOperation::EqualFromEntries),
+        vec![
+            (alice_attestation, KEY_SIGNER).into(),
+            OperationArg::Statement(alice_pubkey_copy.clone()),
+        ],
+    ))?;
+    let ethdos_alice_alice_is_zero = alice_bob_ethdos.priv_op(Operation(
+        OperationType::Custom(CustomPredicateRef(eth_dos_batch, 0)),
+        vec![
+            OperationArg::Statement(alice_equals_alice),
+            OperationArg::Statement(zero.clone()),
+        ],
+    ))?;
+
+    // Alice and Charlie are ETH friends.
+    let attestation_is_signed_pod = Statement::from((alice_attestation, KEY_TYPE));
+    let attestation_signed_by_alice = alice_bob_ethdos.priv_op(Operation(
+        OperationType::Native(NativeOperation::EqualFromEntries),
+        vec![
+            OperationArg::from((alice_attestation, KEY_SIGNER)),
+            OperationArg::Statement(alice_pubkey_copy),
+        ],
+    ))?;
+    let alice_attests_to_charlie = alice_bob_ethdos.priv_op(Operation(
+        OperationType::Native(NativeOperation::EqualFromEntries),
+        vec![
+            OperationArg::from((alice_attestation, "attestation")),
+            OperationArg::Statement(charlie_pubkey),
+        ],
+    ))?;
+    let ethfriends_alice_charlie = alice_bob_ethdos.priv_op(Operation(
+        OperationType::Custom(CustomPredicateRef(eth_friend_batch, 0)),
+        vec![
+            OperationArg::Statement(attestation_is_signed_pod),
+            OperationArg::Statement(attestation_signed_by_alice),
+            OperationArg::Statement(alice_attests_to_charlie),
+        ],
+    ))?;
+
+    // The ETHDoS distance from Alice to Charlie is 1.
+    let one = alice_bob_ethdos.priv_op(Operation(
+        OperationType::Native(NativeOperation::NewEntry),
+        vec![OperationArg::Entry("ZERO".to_string(), Value::from(0i64))],
+    ))?;
+    // 1 = 0 + 1
+    // let ethdos_sum = alice_bob_ethdos.priv_op(
+    //     Operation(
+    //         OperationType::Native(NativeOperation::SumOf
+    //         ),
+    //         vec![
+    //             OperationArg::Statement(one.clone()),
+    //             OperationArg::Statement(zero.clone()),
+    //             OperationArg::Statement(zero.clone())
+    //             ]
+    //         )
+    //     );
+
+    Ok(alice_bob_ethdos)
 }
 
 // GreatBoy

@@ -91,7 +91,7 @@ impl TryInto<i64> for Value {
         {
             Err(anyhow!("Value not an element of the i64 embedding."))
         } else {
-            Ok((value[0].to_canonical_u64() + value[1].to_canonical_u64() << 32) as i64)
+            Ok((value[0].to_canonical_u64() | (value[1].to_canonical_u64() << 32)) as i64)
         }
     }
 }
@@ -200,4 +200,30 @@ pub fn hash_str(s: &str) -> Hash {
         })
         .collect();
     Hash(PoseidonHash::hash_no_pad(&input).elements)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_i64_value_roundtrip() {
+        let test_cases = vec![
+            0i64,
+            1,
+            -1,
+            i64::MAX,
+            i64::MIN,
+            42,
+            -42,
+            1 << 32,
+            -(1 << 32),
+        ];
+
+        for &original in test_cases.iter() {
+            let value = Value::from(original);
+            let roundtrip: i64 = value.try_into().unwrap();
+            assert_eq!(original, roundtrip, "Failed roundtrip for {}", original);
+        }
+    }
 }
