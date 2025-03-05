@@ -91,7 +91,7 @@ impl TryInto<i64> for Value {
         {
             Err(anyhow!("Value not an element of the i64 embedding."))
         } else {
-            Ok((value[0].to_canonical_u64() + value[1].to_canonical_u64() << 32) as i64)
+            Ok((value[0].to_canonical_u64() | (value[1].to_canonical_u64() << 32)) as i64)
         }
     }
 }
