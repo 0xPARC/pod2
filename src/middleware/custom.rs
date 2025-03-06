@@ -6,6 +6,7 @@ use anyhow::{anyhow, Result};
 use plonky2::field::types::Field;
 
 use crate::util::hashmap_insert_no_dupe;
+use crate::backends::plonky2::basetypes::HASH_SIZE;
 
 use super::{
     hash_fields, AnchoredKey, Hash, NativePredicate, Params, PodId, Statement, StatementArg,
@@ -51,12 +52,13 @@ impl ToFields for HashOrWildcard {
         match self {
             HashOrWildcard::Hash(h) => h.to_fields(_params),
             HashOrWildcard::Wildcard(w) => {
-                let usizes: Vec<usize> = vec![0, 0, 0, *w];
+                let mut usizes: Vec<usize> = vec![0; HASH_SIZE - 1];
+                usizes.push(*w);
                 let fields: Vec<F> = usizes
                     .iter()
                     .map(|x| F::from_canonical_u64(*x as u64))
                     .collect();
-                (fields, 4)
+                (fields, HASH_SIZE)
             }
         }
     }
@@ -99,8 +101,7 @@ impl ToFields for StatementTmplArg {
         // Key(hash_or_wildcard1, hash_or_wildcard2)
         //    => (2, [hash_or_wildcard1], [hash_or_wildcard2])
         // In all three cases, we pad to 2 * hash_size + 1 = 9 field elements
-        let hash_size = 4;
-        let statement_tmpl_arg_size = 2 * hash_size + 1;
+        let statement_tmpl_arg_size = 2 * HASH_SIZE + 1;
         match self {
             StatementTmplArg::None => {
                 let fields: Vec<F> = std::iter::repeat_with(|| F::from_canonical_u64(0))
@@ -111,7 +112,7 @@ impl ToFields for StatementTmplArg {
             StatementTmplArg::Literal(v) => {
                 let fields: Vec<F> = std::iter::once(F::from_canonical_u64(1))
                     .chain(v.to_fields(_params).0.into_iter())
-                    .chain(std::iter::repeat_with(|| F::from_canonical_u64(0)).take(hash_size))
+                    .chain(std::iter::repeat_with(|| F::from_canonical_u64(0)).take(HASH_SIZE))
                     .collect();
                 (fields, statement_tmpl_arg_size)
             }
