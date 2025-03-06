@@ -279,28 +279,19 @@ impl MainPodBuilder {
     pub fn add_main_pod(&mut self, pod: MainPod) {
         // Add POD class to POD class table.
         self.pod_class_table.insert(pod.id(), PodClass::Main);
-        // Add key-hash correspondences to key table.
+        // Add key-hash and POD ID-class correspondences to tables.
         pod.public_statements
             .iter()
             .flat_map(|s| &s.1)
             .flat_map(|arg| match arg {
-                StatementArg::Key(AnchoredKey(_, key)) => Some((hash_str(key), key.clone())),
-                _ => None,
-            })
-            .for_each(|(hash, key)| {
-                self.key_table.insert(hash, key);
-            });
-        pod.public_statements
-            .iter()
-            .flat_map(|s| &s.1)
-            .flat_map(|arg| match arg {
-                StatementArg::Key(AnchoredKey(Origin(pod_class, pod_id), _)) => {
-                    Some((*pod_id, pod_class.clone()))
+                StatementArg::Key(AnchoredKey(Origin(pod_class, pod_id), key)) => {
+                    Some((*pod_id, pod_class.clone(), hash_str(key), key.clone()))
                 }
                 _ => None,
             })
-            .for_each(|(pod_id, pod_class)| {
+            .for_each(|(pod_id, pod_class, hash, key)| {
                 self.pod_class_table.insert(pod_id, pod_class);
+                self.key_table.insert(hash, key);
             });
         self.input_main_pods.push(pod);
     }
