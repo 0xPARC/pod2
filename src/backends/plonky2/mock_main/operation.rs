@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::fmt;
 
 use super::Statement;
-use crate::middleware::{self, NativeOperation, OperationType};
+use crate::middleware::{self, OperationType};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OperationArg {

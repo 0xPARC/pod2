@@ -44,13 +44,13 @@ impl From<(&str, HashOrWildcardStr)> for BuilderArg {
             HashOrWildcardStr::Hash(_) => (),
             _ => panic!("not supported"),
         };
-        Self::Key(wildcard(&origin), lit)
+        Self::Key(wildcard(origin), lit)
     }
 }
 /// case ii.
 impl From<(&str, &str)> for BuilderArg {
     fn from((origin, field): (&str, &str)) -> Self {
-        Self::Key(wildcard(&origin), wildcard(&field))
+        Self::Key(wildcard(origin), wildcard(field))
     }
 }
 /// case iii.

@@ -26,8 +26,8 @@ impl HashOrWildcard {
     /// match is possible.
     pub fn match_against(&self, v: &Value) -> Result<Option<(usize, Value)>> {
         match self {
-            HashOrWildcard::Hash(h) if &Value::from(h.clone()) == v => Ok(None),
-            HashOrWildcard::Wildcard(i) => Ok(Some((*i, v.clone()))),
+            HashOrWildcard::Hash(h) if &Value::from(*h) == v => Ok(None),
+            HashOrWildcard::Wildcard(i) => Ok(Some((*i, *v))),
             _ => Err(anyhow!(
                 "Failed to match hash or wildcard {} against value {}.",
                 self,
@@ -79,9 +79,9 @@ impl StatementTmplArg {
             (Self::None, StatementArg::None) => Ok(vec![]),
             (Self::Literal(v), StatementArg::Literal(w)) if v == w => Ok(vec![]),
             (Self::Key(tmpl_o, tmpl_k), StatementArg::Key(AnchoredKey(PodId(o), k))) => {
-                let o_corr = tmpl_o.match_against(&o.clone().into())?;
-                let k_corr = tmpl_k.match_against(&k.clone().into())?;
-                Ok([o_corr, k_corr].into_iter().flat_map(|x| x).collect())
+                let o_corr = tmpl_o.match_against(&(*o).into())?;
+                let k_corr = tmpl_k.match_against(&(*k).into())?;
+                Ok([o_corr, k_corr].into_iter().flatten().collect())
             }
             _ => Err(anyhow!(
                 "Failed to match statement template argument {:?} against statement argument {:?}.",
@@ -110,15 +110,15 @@ impl ToFields for StatementTmplArg {
             }
             StatementTmplArg::Literal(v) => {
                 let fields: Vec<F> = std::iter::once(F::from_canonical_u64(1))
-                    .chain(v.to_fields(_params).0.into_iter())
+                    .chain(v.to_fields(_params).0)
                     .chain(std::iter::repeat_with(|| F::from_canonical_u64(0)).take(hash_size))
                     .collect();
                 (fields, statement_tmpl_arg_size)
             }
             StatementTmplArg::Key(hw1, hw2) => {
                 let fields: Vec<F> = std::iter::once(F::from_canonical_u64(2))
-                    .chain(hw1.to_fields(_params).0.into_iter())
-                    .chain(hw2.to_fields(_params).0.into_iter())
+                    .chain(hw1.to_fields(_params).0)
+                    .chain(hw2.to_fields(_params).0)
                     .collect();
                 (fields, statement_tmpl_arg_size)
             }
@@ -325,8 +325,8 @@ impl ToFields for CustomPredicateBatch {
 impl CustomPredicateBatch {
     pub fn hash(&self, _params: &Params) -> Hash {
         let input = self.to_fields(_params).0;
-        let h = hash_fields(&input);
-        h
+
+        hash_fields(&input)
     }
 }
 
@@ -335,7 +335,7 @@ pub struct CustomPredicateRef(pub Arc<CustomPredicateBatch>, pub usize);
 
 impl CustomPredicateRef {
     pub fn arg_len(&self) -> usize {
-        (*self.0).predicates[self.1].args_len
+        self.0.predicates[self.1].args_len
     }
     pub fn match_against(&self, statements: &[Statement]) -> Result<HashMap<usize, Value>> {
         let mut bindings = HashMap::new();
@@ -414,7 +414,7 @@ impl ToFields for Predicate {
         // in every case: pad to (hash_size + 2) field elements
         let mut fields: Vec<F> = match self {
             Self::Native(p) => std::iter::once(F::from_canonical_u64(1))
-                .chain(p.to_fields(_params).0.into_iter())
+                .chain(p.to_fields(_params).0)
                 .collect(),
             Self::BatchSelf(i) => std::iter::once(F::from_canonical_u64(2))
                 .chain(std::iter::once(F::from_canonical_usize(*i)))

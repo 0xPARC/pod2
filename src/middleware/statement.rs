@@ -82,7 +82,7 @@ impl Statement {
             Self::SumOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
             Self::ProductOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
             Self::MaxOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
-            Self::Custom(_, args) => Vec::from_iter(args.into_iter().map(|h| Key(h))),
+            Self::Custom(_, args) => Vec::from_iter(args.into_iter().map(Key)),
         }
     }
 }

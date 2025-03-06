@@ -1,15 +1,9 @@
-use std::collections::HashMap;
 use std::fmt;
 
 use anyhow::{anyhow, Result};
 
 use super::{CustomPredicateRef, Statement};
-use crate::{
-    middleware::{
-        AnchoredKey, CustomPredicate, Params, PodId, Predicate, StatementTmpl, Value, SELF,
-    },
-    util::hashmap_insert_no_dupe,
-};
+use crate::middleware::{AnchoredKey, Params, Value, SELF};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OperationType {
@@ -109,7 +103,7 @@ impl Operation {
     pub fn op(op_code: OperationType, args: &[Statement]) -> Result<Self> {
         type NO = NativeOperation;
         let arg_tup = (
-            args.get(0).cloned(),
+            args.first().cloned(),
             args.get(1).cloned(),
             args.get(2).cloned(),
         );
@@ -148,7 +142,7 @@ impl Operation {
         })
     }
     /// Checks the given operation against a statement.
-    pub fn check(&self, params: &Params, output_statement: &Statement) -> Result<bool> {
+    pub fn check(&self, _params: &Params, output_statement: &Statement) -> Result<bool> {
         use Statement::*;
         match (self, output_statement) {
             (Self::None, None) => Ok(true),
@@ -189,9 +183,9 @@ impl Operation {
                 Self::SumOf(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3)),
                 SumOf(ak4, ak5, ak6),
             ) => {
-                let v1: i64 = v1.clone().try_into()?;
-                let v2: i64 = v2.clone().try_into()?;
-                let v3: i64 = v3.clone().try_into()?;
+                let v1: i64 = (*v1).try_into()?;
+                let v2: i64 = (*v2).try_into()?;
+                let v3: i64 = (*v3).try_into()?;
                 Ok((v1 == v2 + v3) && ak4 == ak1 && ak5 == ak2 && ak6 == ak3)
             }
             (Self::Custom(CustomPredicateRef(cpb, i), args), Custom(cpr, s_args))
@@ -214,8 +208,8 @@ impl Operation {
                         })
                         .collect::<Result<Vec<_>>>()?;
                     let s_args = s_args
-                        .into_iter()
-                        .flat_map(|AnchoredKey(o, k)| [Value::from(o.0.clone()), k.clone().into()])
+                        .iter()
+                        .flat_map(|AnchoredKey(o, k)| [Value::from(o.0), (*k).into()])
                         .collect::<Vec<_>>();
                     if bound_args != s_args {
                         Err(anyhow!("Arguments to output statement {} do not match those implied by operation {:?}", output_statement,self))
@@ -237,7 +231,7 @@ impl fmt::Display for Operation {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "middleware::Operation:")?;
         writeln!(f, "  {:?} ", self.code())?;
-        for (i, arg) in self.args().iter().enumerate() {
+        for (_, arg) in self.args().iter().enumerate() {
             writeln!(f, "    {}", arg)?;
         }
         Ok(())
