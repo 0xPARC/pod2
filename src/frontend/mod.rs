@@ -134,8 +134,10 @@ impl SignedPodBuilder {
             kvs.insert(k_hash, v_hash);
         }
         let pod = signer.sign(&self.params, &kvs)?;
-        self.kvs.insert(KEY_SIGNER.into(), Value::String(signer.fe_pubkey()));
-        self.kvs.insert(KEY_TYPE.into(), Value::Int(PodType::MockSigned as i64));
+        self.kvs
+            .insert(KEY_SIGNER.into(), Value::String(signer.fe_pubkey()));
+        self.kvs
+            .insert(KEY_TYPE.into(), Value::Int(PodType::MockSigned as i64));
         Ok(SignedPod {
             pod,
             key_value_map: self.kvs.clone(),
@@ -159,13 +161,7 @@ impl fmt::Display for SignedPod {
         // deterministic based on the keys values not on the order of the keys when added into the
         // tree.
         for (k, v) in self.key_value_map.iter().sorted_by_key(|kv| kv.0) {
-            writeln!(
-                f,
-                "  - {} = {}: {}",
-                hash_str(&k),
-                k,
-                v
-            )?;
+            writeln!(f, "  - {} = {}: {}", hash_str(&k), k, v)?;
         }
         Ok(())
     }
