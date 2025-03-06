@@ -153,7 +153,7 @@ impl PartialOrd for Hash {
 impl fmt::Display for Hash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let v0 = self.0[0].to_canonical_u64();
-        for i in 0..4 {
+        for i in 0..HASH_SIZE {
             write!(f, "{:02x}", (v0 >> (i * 8)) & 0xff)?;
         }
         write!(f, "…")
@@ -168,8 +168,8 @@ impl FromHex for Hash {
         // In little endian
         let bytes = <[u8; 32]>::from_hex(hex)?;
         let mut buf: [u8; 8] = [0; 8];
-        let mut inner = [F::ZERO; 4];
-        for i in 0..4 {
+        let mut inner = [F::ZERO; HASH_SIZE];
+        for i in 0..HASH_SIZE {
             buf.copy_from_slice(&bytes[8 * i..8 * (i + 1)]);
             inner[i] = F::from_canonical_u64(u64::from_le_bytes(buf));
         }
