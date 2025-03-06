@@ -128,20 +128,15 @@ impl SignedPodBuilder {
 
     pub fn sign<S: PodSigner>(&self, signer: &mut S) -> Result<SignedPod> {
         let mut kvs = HashMap::new();
-        let mut key_string_map = HashMap::new();
-        let mut value_hash_map = HashMap::new();
         for (k, v) in self.kvs.iter() {
             let k_hash = hash_str(k);
             let v_hash = middleware::Value::from(v);
             kvs.insert(k_hash, v_hash);
-            key_string_map.insert(k_hash, k.clone());
-            value_hash_map.insert(v_hash.into(), v.clone());
         }
         let pod = signer.sign(&self.params, &kvs)?;
         Ok(SignedPod {
             pod,
-            key_string_map,
-            value_hash_map,
+            key_value_map: self.kvs.clone(),
         })
     }
 }
@@ -151,10 +146,7 @@ impl SignedPodBuilder {
 #[derive(Debug, Clone)]
 pub struct SignedPod {
     pub pod: Box<dyn middleware::Pod>,
-    /// HashMap to store the reverse relation between key strings and key hashes
-    pub key_string_map: HashMap<Hash, String>,
-    /// HashMap to store the reverse relation between values and their hashes
-    pub value_hash_map: HashMap<Hash, Value>,
+    pub key_value_map: HashMap<String, Value>,
 }
 
 impl fmt::Display for SignedPod {
@@ -164,12 +156,12 @@ impl fmt::Display for SignedPod {
         // https://0xparc.github.io/pod2/merkletree.html will not need it since it will be
         // deterministic based on the keys values not on the order of the keys when added into the
         // tree.
-        for (k, v) in self.kvs().iter().sorted_by_key(|kv| kv.0) {
+        for (k, v) in self.key_value_map.iter().sorted_by_key(|kv| kv.0) {
             writeln!(
                 f,
                 "  - {} = {}: {}",
+                hash_str(&k),
                 k,
-                *self.key_string_map.get(&k).unwrap_or(&"--".to_string()),
                 v
             )?;
         }
@@ -193,6 +185,22 @@ impl SignedPod {
             .into_iter()
             .map(|(middleware::AnchoredKey(_, k), v)| (k, v))
             .collect()
+    }
+    pub fn key_string_map(&self) -> HashMap<Hash, String> {
+        let mut key_string_map = HashMap::new();
+        for (k, _v) in self.key_value_map.iter() {
+            let k_hash = hash_str(k);
+            key_string_map.insert(k_hash, k.clone());
+        }
+        key_string_map
+    }
+    pub fn value_hash_map(&self) -> HashMap<Hash, Value> {
+        let mut value_hash_map = HashMap::new();
+        for (_k, v) in self.key_value_map.iter() {
+            let v_hash = middleware::Value::from(v);
+            value_hash_map.insert(v_hash.into(), v.clone());
+        }
+        value_hash_map
     }
 }
 
@@ -256,7 +264,7 @@ impl MainPodBuilder {
     }
     pub fn add_signed_pod(&mut self, pod: &SignedPod) {
         self.input_signed_pods.push(pod.clone());
-        pod.key_string_map.iter().for_each(|(hash, key)| {
+        pod.key_string_map().iter().for_each(|(hash, key)| {
             self.key_table.insert(hash.clone(), key.clone());
         });
         self.pod_class_table.insert(pod.id(), PodClass::Signed);

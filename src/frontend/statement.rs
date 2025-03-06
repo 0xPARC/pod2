@@ -25,12 +25,7 @@ pub struct Statement(pub Predicate, pub Vec<StatementArg>);
 impl From<(&SignedPod, &str)> for Statement {
     fn from((pod, key): (&SignedPod, &str)) -> Self {
         // TODO: Actual value, TryFrom.
-        let value_hash = pod.kvs().get(&hash_str(key)).cloned().unwrap();
-        let value = pod
-            .value_hash_map
-            .get(&value_hash.into())
-            .cloned()
-            .unwrap_or(Value::Raw(value_hash));
+        let value = pod.key_value_map.get(key).cloned().unwrap();
         Statement(
             Predicate::Native(NativePredicate::ValueOf),
             vec![
