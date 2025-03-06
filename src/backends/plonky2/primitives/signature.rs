@@ -1,4 +1,5 @@
-//! Proof-based signatures, following https://eprint.iacr.org/2024/1553
+//! Proof-based signatures using Plonky2 proofs, following
+//! https://eprint.iacr.org/2024/1553 .
 use anyhow::Result;
 use plonky2::{
     field::types::Sample,
@@ -35,19 +36,19 @@ pub struct SecretKey(Value);
 pub struct PublicKey(Value);
 
 #[derive(Clone, Debug)]
-pub struct Signature {
-    s: Value,
-    proof: Proof,
-}
+pub struct Signature(Proof);
 
+/// Implements the key generation and the computation of proof-based signatures.
 impl SecretKey {
     pub fn new() -> Self {
-        // TODO review randomness
+        // note: the `F::rand()` internally uses `rand::rngs::OsRng`
         Self(Value(std::array::from_fn(|_| F::rand())))
     }
+
     pub fn public_key(&self) -> PublicKey {
         PublicKey(Value(PoseidonHash::hash_no_pad(&self.0 .0).elements))
     }
+
     pub fn sign(&self, pp: &ProverParams, msg: Value) -> Result<Signature> {
         let pk = self.public_key();
         let s = Value(PoseidonHash::hash_no_pad(&[pk.0 .0, msg.0].concat()).elements);
@@ -57,34 +58,54 @@ impl SecretKey {
 
         let proof = pp.prover.prove(pw)?;
 
-        Ok(Signature {
-            s,
-            proof: proof.proof,
-        })
+        Ok(Signature(proof.proof))
     }
 }
 
+/// Implements the parameters generation and the verification of proof-based
+/// signatures.
 impl Signature {
     pub fn params() -> Result<(ProverParams, VerifierParams)> {
-        let (builder, circuit) = SignatureCircuit::builder()?;
+        let (builder, circuit) = Self::builder()?;
         let prover = builder.build_prover::<C>();
 
-        let (builder, _) = SignatureCircuit::builder()?;
+        let (builder, _) = Self::builder()?;
         let circuit_data = builder.build::<C>();
         let vp = circuit_data.verifier_data();
 
         Ok((ProverParams { prover, circuit }, VerifierParams(vp)))
     }
 
+    fn builder() -> Result<(CircuitBuilder<F, D>, SignatureCircuit)> {
+        // notice that we use the 'zk' config
+        let config = CircuitConfig::standard_recursion_zk_config();
+
+        let mut builder = CircuitBuilder::<F, D>::new(config);
+        let circuit = SignatureCircuit::add_targets(&mut builder)?;
+
+        Ok((builder, circuit))
+    }
+
     pub fn verify(&self, vp: &VerifierParams, pk: &PublicKey, msg: Value) -> Result<()> {
-        let public_inputs: Vec<F> = [pk.0 .0, msg.0, self.s.0].concat();
+        // prepare public inputs as [pk, msg, s]
+        let s = Value(PoseidonHash::hash_no_pad(&[pk.0 .0, msg.0].concat()).elements);
+        let public_inputs: Vec<F> = [pk.0 .0, msg.0, s.0].concat();
+
+        // verify plonky2 proof
         vp.0.verify(ProofWithPublicInputs {
-            proof: self.proof.clone(),
+            proof: self.0.clone(),
             public_inputs,
         })
     }
 }
 
+/// The SignatureCircuit implements the circuit used for the proof of the
+/// argument described at https://eprint.iacr.org/2024/1553.
+///
+/// The circuit proves that for the given public inputs (pk, msg, s), the Prover
+/// knows the secret (sk) such that:
+/// i) pk == H(sk)
+/// ii) s == H(pk, msg)
 struct SignatureCircuit {
     sk_targ: Vec<Target>,
     pk_targ: HashOutTarget,
@@ -93,26 +114,20 @@ struct SignatureCircuit {
 }
 
 impl SignatureCircuit {
-    fn builder() -> Result<(CircuitBuilder<F, D>, Self)> {
-        // notice that we use the 'zk' config
-        let config = CircuitConfig::standard_recursion_zk_config();
-
-        let mut builder = CircuitBuilder::<F, D>::new(config);
-        let circuit = Self::add_targets(&mut builder)?;
-
-        Ok((builder, circuit))
-    }
-
+    /// creates the targets and defines the logic of the circuit
     fn add_targets(builder: &mut CircuitBuilder<F, D>) -> Result<Self> {
+        // create the targets
         let sk_targ = builder.add_virtual_targets(VALUE_SIZE);
         let pk_targ = builder.add_virtual_hash();
         let msg_targ = builder.add_virtual_targets(VALUE_SIZE);
         let s_targ = builder.add_virtual_hash();
 
+        // define the public inputs
         builder.register_public_inputs(&pk_targ.elements);
         builder.register_public_inputs(&msg_targ);
         builder.register_public_inputs(&s_targ.elements);
 
+        // define the logic
         let computed_pk_targ = builder.hash_n_to_hash_no_pad::<PoseidonHash>(sk_targ.clone());
         builder.connect_array::<VALUE_SIZE>(computed_pk_targ.elements, pk_targ.elements);
 
@@ -120,6 +135,7 @@ impl SignatureCircuit {
         let computed_s_targ = builder.hash_n_to_hash_no_pad::<PoseidonHash>(inp);
         builder.connect_array::<VALUE_SIZE>(computed_s_targ.elements, s_targ.elements);
 
+        // return the targets
         Ok(Self {
             sk_targ,
             pk_targ,
@@ -128,6 +144,7 @@ impl SignatureCircuit {
         })
     }
 
+    /// assigns the given values to the targets
     fn set_targets(
         &self,
         pw: &mut PartialWitness<F>,
@@ -147,32 +164,28 @@ impl SignatureCircuit {
 
 #[cfg(test)]
 pub mod tests {
-    use std::time::Instant;
+    use crate::backends::plonky2::basetypes::Hash;
 
     use super::*;
 
     // Note: this test must be run with the `--release` flag.
     #[test]
     fn test_signature() -> Result<()> {
+        let (pp, vp) = Signature::params()?;
+
         let sk = SecretKey::new();
         let pk = sk.public_key();
 
         let msg = Value::from(42);
-
-        let start = Instant::now();
-        let (pp, vp) = Signature::params()?;
-        println!("Signature::params(): {:?}", start.elapsed());
-
-        let start = Instant::now();
         let sig = sk.sign(&pp, msg)?;
-        println!("sk.sign(): {:?}", start.elapsed());
-
-        let start = Instant::now();
         sig.verify(&vp, &pk, msg)?;
-        println!("sig.verify(): {:?}", start.elapsed());
 
-        // perform a 2nd signature and verify it
-        let msg_2 = Value::from(1000);
+        // expect the signature verification to fail when using a different msg
+        let v = sig.verify(&vp, &pk, Value::from(24));
+        assert!(v.is_err(), "should fail to verify");
+
+        // perform a 2nd signature over another msg and verify it
+        let msg_2 = Value::from(Hash::from("message"));
         let sig2 = sk.sign(&pp, msg_2)?;
         sig2.verify(&vp, &pk, msg_2)?;
 
