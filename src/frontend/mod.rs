@@ -14,7 +14,7 @@ use crate::middleware::{
     hash_str, Hash, MainPodInputs, NativeOperation, NativePredicate, Params, PodId, PodProver,
     PodSigner, SELF,
 };
-use crate::middleware::{OperationType, Predicate, KEY_SIGNER};
+use crate::middleware::{OperationType, PodType, Predicate, KEY_SIGNER, KEY_TYPE};
 
 mod custom;
 mod operation;
@@ -126,7 +126,7 @@ impl SignedPodBuilder {
         self.kvs.insert(key.into(), value.into());
     }
 
-    pub fn sign<S: PodSigner>(&self, signer: &mut S) -> Result<SignedPod> {
+    pub fn sign<S: PodSigner>(&mut self, signer: &mut S) -> Result<SignedPod> {
         let mut kvs = HashMap::new();
         for (k, v) in self.kvs.iter() {
             let k_hash = hash_str(k);
@@ -134,6 +134,8 @@ impl SignedPodBuilder {
             kvs.insert(k_hash, v_hash);
         }
         let pod = signer.sign(&self.params, &kvs)?;
+        self.kvs.insert(KEY_SIGNER.into(), Value::String(signer.fe_pubkey()));
+        self.kvs.insert(KEY_TYPE.into(), Value::Int(PodType::MockSigned as i64));
         Ok(SignedPod {
             pod,
             key_value_map: self.kvs.clone(),
@@ -674,7 +676,7 @@ pub mod tests {
     #[test]
     fn test_front_zu_kyc() -> Result<()> {
         let params = Params::default();
-        let (gov_id, pay_stub, sanction_list) = zu_kyc_sign_pod_builders(&params);
+        let (mut gov_id, mut pay_stub, mut sanction_list) = zu_kyc_sign_pod_builders(&params);
 
         println!("{}", gov_id);
         println!("{}", pay_stub);

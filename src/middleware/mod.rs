@@ -173,6 +173,7 @@ dyn_clone::clone_trait_object!(Pod);
 
 pub trait PodSigner {
     fn sign(&mut self, params: &Params, kvs: &HashMap<Hash, Value>) -> Result<Box<dyn Pod>>;
+    fn fe_pubkey(&self) -> String;
 }
 
 /// This is a filler type that fulfills the Pod trait and always verifies.  It's empty.  This

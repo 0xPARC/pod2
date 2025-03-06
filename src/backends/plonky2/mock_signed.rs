@@ -35,6 +35,10 @@ impl PodSigner for MockSigner {
             signature,
         }))
     }
+
+    fn fe_pubkey(&self) -> String {
+        self.pk.clone()
+    }
 }
 
 #[derive(Clone, Debug)]

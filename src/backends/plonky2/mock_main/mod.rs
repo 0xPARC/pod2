@@ -489,7 +489,7 @@ pub mod tests {
     fn test_mock_main_zu_kyc() -> Result<()> {
         let params = middleware::Params::default();
 
-        let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
+        let (mut gov_id_builder, mut pay_stub_builder, mut sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params);
         let mut signer = MockSigner {
             pk: "ZooGov".into(),

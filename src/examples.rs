@@ -306,7 +306,7 @@ pub fn great_boy_pod_full_flow() -> Result<MainPodBuilder> {
     let bob = "Bob";
     let mut bob_good_boys = Vec::new();
 
-    let good_boy = good_boy_sign_pod_builder(&params, &bob, 36);
+    let mut good_boy = good_boy_sign_pod_builder(&params, &bob, 36);
     bob_good_boys.push(good_boy.sign(&mut giggles_signer).unwrap());
     bob_good_boys.push(good_boy.sign(&mut macrosoft_signer).unwrap());
 
@@ -315,14 +315,14 @@ pub fn great_boy_pod_full_flow() -> Result<MainPodBuilder> {
     let charlie = "Charlie";
     let mut charlie_good_boys = Vec::new();
 
-    let good_boy = good_boy_sign_pod_builder(&params, &charlie, 27);
+    let mut good_boy = good_boy_sign_pod_builder(&params, &charlie, 27);
     charlie_good_boys.push(good_boy.sign(&mut macrosoft_signer).unwrap());
     charlie_good_boys.push(good_boy.sign(&mut faebook_signer).unwrap());
 
     // Bob and Charlie send Alice a Friend POD
 
     let mut alice_friend_pods = Vec::new();
-    let friend = friend_sign_pod_builder(&params, &alice);
+    let mut friend = friend_sign_pod_builder(&params, &alice);
     alice_friend_pods.push(friend.sign(&mut bob_signer).unwrap());
     alice_friend_pods.push(friend.sign(&mut charlie_signer).unwrap());
 
@@ -378,7 +378,7 @@ pub fn tickets_pod_builder(
 
 pub fn tickets_pod_full_flow() -> Result<MainPodBuilder> {
     let params = Params::default();
-    let builder = tickets_sign_pod_builder(&params);
+    let mut builder = tickets_sign_pod_builder(&params);
     let signed_pod = builder.sign(&mut MockSigner { pk: "test".into() }).unwrap();
     Ok(tickets_pod_builder(
         &params,
