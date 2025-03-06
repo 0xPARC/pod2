@@ -5,8 +5,8 @@ use std::{fmt, hash as h, iter::zip};
 use anyhow::{anyhow, Result};
 use plonky2::field::types::Field;
 
-use crate::util::hashmap_insert_no_dupe;
 use crate::backends::plonky2::basetypes::HASH_SIZE;
+use crate::util::hashmap_insert_no_dupe;
 
 use super::{
     hash_fields, AnchoredKey, Hash, NativePredicate, Params, PodId, Statement, StatementArg,
