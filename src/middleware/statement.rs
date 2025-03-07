@@ -82,8 +82,102 @@ impl Statement {
             Self::SumOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
             Self::ProductOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
             Self::MaxOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
-            Self::Custom(_, args) => Vec::from_iter(args.into_iter().map(|h| Key(h))),
+            Self::Custom(_, args) => Vec::from_iter(args.into_iter().map(Key)),
         }
+    }
+    pub fn from_args(pred: Predicate, args: Vec<StatementArg>) -> Result<Self> {
+        use Predicate::*;
+        let st: Result<Self> = match pred {
+            Native(NativePredicate::None) => Ok(Self::None),
+            Native(NativePredicate::ValueOf) => {
+                if let (StatementArg::Key(a0), StatementArg::Literal(v1)) = (args[0], args[1]) {
+                    Ok(Self::ValueOf(a0, v1))
+                } else {
+                    Err(anyhow!("Incorrect statement args"))
+                }
+            }
+            Native(NativePredicate::Equal) => {
+                if let (StatementArg::Key(a0), StatementArg::Key(a1)) = (args[0], args[1]) {
+                    Ok(Self::Equal(a0, a1))
+                } else {
+                    Err(anyhow!("Incorrect statement args"))
+                }
+            }
+            Native(NativePredicate::NotEqual) => {
+                if let (StatementArg::Key(a0), StatementArg::Key(a1)) = (args[0], args[1]) {
+                    Ok(Self::NotEqual(a0, a1))
+                } else {
+                    Err(anyhow!("Incorrect statement args"))
+                }
+            }
+            Native(NativePredicate::Gt) => {
+                if let (StatementArg::Key(a0), StatementArg::Key(a1)) = (args[0], args[1]) {
+                    Ok(Self::Gt(a0, a1))
+                } else {
+                    Err(anyhow!("Incorrect statement args"))
+                }
+            }
+            Native(NativePredicate::Lt) => {
+                if let (StatementArg::Key(a0), StatementArg::Key(a1)) = (args[0], args[1]) {
+                    Ok(Self::Lt(a0, a1))
+                } else {
+                    Err(anyhow!("Incorrect statement args"))
+                }
+            }
+            Native(NativePredicate::Contains) => {
+                if let (StatementArg::Key(a0), StatementArg::Key(a1)) = (args[0], args[1]) {
+                    Ok(Self::Contains(a0, a1))
+                } else {
+                    Err(anyhow!("Incorrect statement args"))
+                }
+            }
+            Native(NativePredicate::NotContains) => {
+                if let (StatementArg::Key(a0), StatementArg::Key(a1)) = (args[0], args[1]) {
+                    Ok(Self::NotContains(a0, a1))
+                } else {
+                    Err(anyhow!("Incorrect statement args"))
+                }
+            }
+            Native(NativePredicate::SumOf) => {
+                if let (StatementArg::Key(a0), StatementArg::Key(a1), StatementArg::Key(a2)) =
+                    (args[0], args[1], args[2])
+                {
+                    Ok(Self::SumOf(a0, a1, a2))
+                } else {
+                    Err(anyhow!("Incorrect statement args"))
+                }
+            }
+            Native(NativePredicate::ProductOf) => {
+                if let (StatementArg::Key(a0), StatementArg::Key(a1), StatementArg::Key(a2)) =
+                    (args[0], args[1], args[2])
+                {
+                    Ok(Self::ProductOf(a0, a1, a2))
+                } else {
+                    Err(anyhow!("Incorrect statement args"))
+                }
+            }
+            Native(NativePredicate::MaxOf) => {
+                if let (StatementArg::Key(a0), StatementArg::Key(a1), StatementArg::Key(a2)) =
+                    (args[0], args[1], args[2])
+                {
+                    Ok(Self::MaxOf(a0, a1, a2))
+                } else {
+                    Err(anyhow!("Incorrect statement args"))
+                }
+            }
+            BatchSelf(_) => unreachable!(),
+            Custom(cpr) => {
+                let ak_args: Result<Vec<AnchoredKey>> = args
+                    .iter()
+                    .map(|x| match x {
+                        StatementArg::Key(ak) => Ok(*ak),
+                        _ => Err(anyhow!("Incorrect statement args")),
+                    })
+                    .collect();
+                Ok(Self::Custom(cpr, ak_args?))
+            }
+        };
+        st
     }
 }
 
@@ -120,7 +214,7 @@ impl fmt::Display for Statement {
 }
 
 /// Statement argument type. Useful for statement decompositions.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StatementArg {
     None,
     Literal(Value),
@@ -149,7 +243,7 @@ impl StatementArg {
     }
     pub fn key(&self) -> Result<AnchoredKey> {
         match self {
-            Self::Key(ak) => Ok(ak.clone()),
+            Self::Key(ak) => Ok(*ak),
             _ => Err(anyhow!("Statement argument {:?} is not a key.", self)),
         }
     }

@@ -21,7 +21,7 @@ pub struct Dictionary {
 
 impl Dictionary {
     pub fn new(kvs: &HashMap<Hash, Value>) -> Result<Self> {
-        let kvs: HashMap<Value, Value> = kvs.into_iter().map(|(&k, &v)| (Value(k.0), v)).collect();
+        let kvs: HashMap<Value, Value> = kvs.iter().map(|(&k, &v)| (Value(k.0), v)).collect();
         Ok(Self {
             mt: MerkleTree::new(MAX_DEPTH, &kvs)?,
         })
@@ -75,7 +75,7 @@ pub struct Set {
 impl Set {
     pub fn new(set: &Vec<Value>) -> Result<Self> {
         let kvs: HashMap<Value, Value> = set
-            .into_iter()
+            .iter()
             .map(|e| {
                 let h = hash_value(e);
                 (Value::from(h), EMPTY)
@@ -128,7 +128,7 @@ pub struct Array {
 impl Array {
     pub fn new(array: &Vec<Value>) -> Result<Self> {
         let kvs: HashMap<Value, Value> = array
-            .into_iter()
+            .iter()
             .enumerate()
             .map(|(i, &e)| (Value::from(i as i64), e))
             .collect();

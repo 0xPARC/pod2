@@ -23,8 +23,8 @@ impl PodSigner for MockSigner {
     fn sign(&mut self, _params: &Params, kvs: &HashMap<Hash, Value>) -> Result<Box<dyn Pod>> {
         let mut kvs = kvs.clone();
         let pubkey = self.pubkey();
-        kvs.insert(hash_str(&KEY_SIGNER), pubkey);
-        kvs.insert(hash_str(&KEY_TYPE), Value::from(PodType::MockSigned));
+        kvs.insert(hash_str(KEY_SIGNER), pubkey);
+        kvs.insert(hash_str(KEY_TYPE), Value::from(PodType::MockSigned));
 
         let dict = Dictionary::new(&kvs)?;
         let id = PodId(dict.commitment());
@@ -47,7 +47,7 @@ pub struct MockSignedPod {
 impl Pod for MockSignedPod {
     fn verify(&self) -> bool {
         // Verify type
-        let value_at_type = match self.dict.get(&hash_str(&KEY_TYPE).into()) {
+        let value_at_type = match self.dict.get(&hash_str(KEY_TYPE).into()) {
             Ok(v) => v,
             Err(_) => return false,
         };
@@ -73,7 +73,7 @@ impl Pod for MockSignedPod {
         }
 
         // Verify signature
-        let pk_hash = match self.dict.get(&hash_str(&KEY_SIGNER).into()) {
+        let pk_hash = match self.dict.get(&hash_str(KEY_SIGNER).into()) {
             Ok(v) => v,
             Err(_) => return false,
         };
@@ -82,7 +82,7 @@ impl Pod for MockSignedPod {
             return false;
         }
 
-        return true;
+        true
     }
 
     fn id(&self) -> PodId {
@@ -124,17 +124,17 @@ pub mod tests {
         let pod = pod.sign(&mut signer).unwrap();
         let pod = pod.pod.into_any().downcast::<MockSignedPod>().unwrap();
 
-        assert_eq!(pod.verify(), true);
+        assert!(pod.verify());
         println!("id: {}", pod.id());
         println!("kvs: {:?}", pod.kvs());
 
         let mut bad_pod = pod.clone();
         bad_pod.signature = "".into();
-        assert_eq!(bad_pod.verify(), false);
+        assert!(!bad_pod.verify());
 
         let mut bad_pod = pod.clone();
         bad_pod.id.0 .0[0] = F::ZERO;
-        assert_eq!(bad_pod.verify(), false);
+        assert!(!bad_pod.verify());
 
         let mut bad_pod = pod.clone();
         let bad_kv = (hash_str(KEY_SIGNER).into(), Value(PodId(NULL).0 .0));
@@ -144,9 +144,9 @@ pub mod tests {
             .map(|(AnchoredKey(_, k), v)| (Value(k.0), v))
             .chain(iter::once(bad_kv))
             .collect::<HashMap<Value, Value>>();
-        let bad_mt = MerkleTree::new(MAX_DEPTH, &bad_kvs_mt)?;
+        let bad_mt = MerkleTree::new(MAX_DEPTH, bad_kvs_mt)?;
         bad_pod.dict.mt = bad_mt;
-        assert_eq!(bad_pod.verify(), false);
+        assert!(!bad_pod.verify());
 
         let mut bad_pod = pod.clone();
         let bad_kv = (hash_str(KEY_TYPE).into(), Value::from(0));
@@ -156,9 +156,9 @@ pub mod tests {
             .map(|(AnchoredKey(_, k), v)| (Value(k.0), v))
             .chain(iter::once(bad_kv))
             .collect::<HashMap<Value, Value>>();
-        let bad_mt = MerkleTree::new(MAX_DEPTH, &bad_kvs_mt)?;
+        let bad_mt = MerkleTree::new(MAX_DEPTH, bad_kvs_mt)?;
         bad_pod.dict.mt = bad_mt;
-        assert_eq!(bad_pod.verify(), false);
+        assert!(!bad_pod.verify());
 
         Ok(())
     }

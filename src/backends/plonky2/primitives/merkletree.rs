@@ -133,7 +133,7 @@ impl MerkleTree {
         let h = proof.compute_root_from_leaf(max_depth, key, Some(*value))?;
 
         if h != root {
-            return Err(anyhow!("proof of inclusion does not verify"));
+            Err(anyhow!("proof of inclusion does not verify"))
         } else {
             Ok(())
         }
@@ -155,7 +155,7 @@ impl MerkleTree {
                 let h = proof.compute_root_from_leaf(max_depth, &k, v)?;
 
                 if h != root {
-                    return Err(anyhow!("proof of exclusion does not verify"));
+                    Err(anyhow!("proof of exclusion does not verify"))
                 } else {
                     Ok(())
                 }
@@ -332,12 +332,12 @@ impl Node {
                     if let Some(s) = siblings.as_mut() {
                         s.push(n.left.hash());
                     }
-                    return n.right.down(lvl + 1, max_depth, path, siblings);
+                    n.right.down(lvl + 1, max_depth, path, siblings)
                 } else {
                     if let Some(s) = siblings.as_mut() {
                         s.push(n.right.hash());
                     }
-                    return n.left.down(lvl + 1, max_depth, path, siblings);
+                    n.left.down(lvl + 1, max_depth, path, siblings)
                 }
             }
             Self::Leaf(Leaf {
@@ -345,7 +345,7 @@ impl Node {
                 value,
                 path: _p,
                 hash: _h,
-            }) => Ok(Some((key.clone(), value.clone()))),
+            }) => Ok(Some((*key, *value))),
             _ => Ok(None),
         }
     }
@@ -549,8 +549,8 @@ impl<'a> Iterator for Iter<'a> {
                 left,
                 right,
             })) => {
-                self.state.push(&right);
-                self.state.push(&left);
+                self.state.push(right);
+                self.state.push(left);
                 self.next()
             }
             _ => None,
@@ -621,7 +621,7 @@ pub mod tests {
 
                 match first_unequal_bits {
                     Some((b1, b2)) => {
-                        if b1 < b2 {
+                        if !b1 & b2 {
                             Ordering::Less
                         } else {
                             Ordering::Greater

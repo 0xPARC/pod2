@@ -53,7 +53,7 @@ pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
     //   ValueOf(distance_or, distance_key, 0)
     // >
     let eth_dos_distance_base = builder.predicate_and(
-        &params,
+        params,
         &[
             // arguments:
             "src_ori",
@@ -83,7 +83,7 @@ pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
     let eth_dos_distance = Predicate::BatchSelf(2);
 
     let eth_dos_distance_ind = builder.predicate_and(
-        &params,
+        params,
         &[
             // arguments:
             "src_ori",
@@ -127,7 +127,7 @@ pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
     );
 
     let _eth_dos_distance = builder.predicate_or(
-        &params,
+        params,
         &[
             "src_ori",
             "src_key",
