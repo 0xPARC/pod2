@@ -384,7 +384,7 @@ impl MainPodBuilder {
                 CopyStatement => match &args[0] {
                     OperationArg::Statement(s) => s.1.clone(),
                     _ => {
-                        return Err(anyhow!("Invalid arguments to operation: {}", op));
+                        return Err(anyhow!("Invalid arguments to copy operation: {}", op));
                     }
                 },
                 EqualFromEntries => self.op_args_entries(public, args)?,
@@ -409,11 +409,15 @@ impl MainPodBuilder {
                             if st0_args[1] == st1_args[0] {
                                 vec![st0_args[0].clone(), st1_args[1].clone()]
                             } else {
-                                return Err(anyhow!("Invalid arguments to operation"));
+                                return Err(anyhow!(
+                                    "Invalid arguments to transitive equality operation"
+                                ));
                             }
                         }
                         _ => {
-                            return Err(anyhow!("Invalid arguments to operation"));
+                            return Err(anyhow!(
+                                "Invalid arguments to transitive equality operation"
+                            ));
                         }
                     }
                 }
@@ -425,7 +429,7 @@ impl MainPodBuilder {
                         vec![st_args[0].clone()]
                     }
                     _ => {
-                        return Err(anyhow!("Invalid arguments to operation"));
+                        return Err(anyhow!("Invalid arguments to gt-to-neq operation"));
                     }
                 },
                 LtToNotEqual => match args[0].clone() {
@@ -436,7 +440,7 @@ impl MainPodBuilder {
                         vec![st_args[0].clone()]
                     }
                     _ => {
-                        return Err(anyhow!("Invalid arguments to operation"));
+                        return Err(anyhow!("Invalid arguments to lt-to-neq operation"));
                     }
                 },
                 ContainsFromEntries => self.op_args_entries(public, args)?,
@@ -476,17 +480,17 @@ impl MainPodBuilder {
                                         st2_args[0].clone(),
                                     ]
                                 } else {
-                                    return Err(anyhow!("Invalid arguments to operation"));
+                                    return Err(anyhow!("Invalid arguments to sum-of operation"));
                                 }
                             }
                             _ => {
-                                return Err(anyhow!("Invalid arguments to operation"));
+                                return Err(anyhow!("Invalid arguments to sum-of operation"));
                             }
                         };
                         st_args
                     }
                     _ => {
-                        return Err(anyhow!("Invalid arguments to operation"));
+                        return Err(anyhow!("Invalid arguments to sum-of operation"));
                     }
                 },
                 ProductOf => match (args[0].clone(), args[1].clone(), args[2].clone()) {
@@ -524,17 +528,19 @@ impl MainPodBuilder {
                                         st2_args[0].clone(),
                                     ]
                                 } else {
-                                    return Err(anyhow!("Invalid arguments to operation"));
+                                    return Err(anyhow!(
+                                        "Invalid arguments to product-of operation"
+                                    ));
                                 }
                             }
                             _ => {
-                                return Err(anyhow!("Invalid arguments to operation"));
+                                return Err(anyhow!("Invalid arguments to product-of operation"));
                             }
                         };
                         st_args
                     }
                     _ => {
-                        return Err(anyhow!("Invalid arguments to operation"));
+                        return Err(anyhow!("Invalid arguments to product-of operation"));
                     }
                 },
                 MaxOf => match (args[0].clone(), args[1].clone(), args[2].clone()) {
@@ -572,11 +578,11 @@ impl MainPodBuilder {
                                         st2_args[0].clone(),
                                     ]
                                 } else {
-                                    return Err(anyhow!("Invalid arguments to operation"));
+                                    return Err(anyhow!("Invalid arguments to max-of operation"));
                                 }
                             }
                             _ => {
-                                return Err(anyhow!("Invalid arguments to operation"));
+                                return Err(anyhow!("Invalid arguments to max-of operation"));
                             }
                         };
                         st_args
@@ -977,7 +983,17 @@ pub mod tests {
 
     #[test]
     fn test_ethdos() -> Result<()> {
-        let params = Params::default();
+        let params = Params {
+            max_input_signed_pods: 3,
+            max_input_main_pods: 3,
+            max_statements: 31,
+            max_signed_pod_values: 8,
+            max_public_statements: 10,
+            max_statement_args: 5,
+            max_operation_args: 5,
+            max_custom_predicate_arity: 5,
+            max_custom_batch_size: 5,
+        };
 
         let mut alice = MockSigner { pk: "Alice".into() };
         let bob = MockSigner { pk: "Bob".into() };
