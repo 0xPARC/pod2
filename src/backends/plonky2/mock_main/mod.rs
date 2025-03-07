@@ -455,7 +455,7 @@ impl Pod for MockMainPod {
                             StatementArg::Key(AnchoredKey(pod_id, h)) if *pod_id == SELF => {
                                 StatementArg::Key(AnchoredKey(self.id(), *h))
                             }
-                            _ => sa.clone(),
+                            _ => *sa,
                         })
                         .collect(),
                 )

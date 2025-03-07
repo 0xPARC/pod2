@@ -170,7 +170,7 @@ impl Statement {
                 let ak_args: Result<Vec<AnchoredKey>> = args
                     .iter()
                     .map(|x| match x {
-                        StatementArg::Key(ak) => Ok(ak.clone()),
+                        StatementArg::Key(ak) => Ok(*ak),
                         _ => Err(anyhow!("Incorrect statement args")),
                     })
                     .collect();
@@ -243,7 +243,7 @@ impl StatementArg {
     }
     pub fn key(&self) -> Result<AnchoredKey> {
         match self {
-            Self::Key(ak) => Ok(ak.clone()),
+            Self::Key(ak) => Ok(*ak),
             _ => Err(anyhow!("Statement argument {:?} is not a key.", self)),
         }
     }

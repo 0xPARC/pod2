@@ -600,7 +600,8 @@ impl MainPodBuilder {
                         ))
                     })
                     .collect::<Result<Vec<_>>>()?;
-                let output_args = output_arg_values
+                
+                output_arg_values
                     .chunks(2)
                     .map(|chunk| {
                         Ok(StatementArg::Key(AnchoredKey(
@@ -617,8 +618,7 @@ impl MainPodBuilder {
                                 .ok_or(anyhow!("Missing key corresponding to hash."))?,
                         )))
                     })
-                    .collect::<Result<Vec<_>>>()?;
-                output_args
+                    .collect::<Result<Vec<_>>>()?
             }
         };
         let st = Statement(pred, st_args);
@@ -867,8 +867,8 @@ pub mod build_utils {
             $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::EqualFromEntries),
             $crate::op_args!($($arg),*)) };
         (ne, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Native(crate::middleware::NativeOperation::NotEqualFromEntries),
-            crate::op_args!($($arg),*)) };
+            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::NotEqualFromEntries),
+            $crate::op_args!($($arg),*)) };
         (gt, $($arg:expr),+) => { crate::frontend::Operation(
             crate::middleware::OperationType::Native(crate::middleware::NativeOperation::GtFromEntries),
             crate::op_args!($($arg),*)) };
@@ -1021,7 +1021,7 @@ pub mod tests {
     #[test]
     // Transitive equality not implemented yet
     #[should_panic]
-    fn test_equal() -> () {
+    fn test_equal() {
         let params = Params::default();
         let mut signed_builder = SignedPodBuilder::new(&params);
         signed_builder.insert("a", 1);
@@ -1065,7 +1065,7 @@ pub mod tests {
 
         println!("{}", pod);
 
-        ()
+        
     }
 
     #[test]
