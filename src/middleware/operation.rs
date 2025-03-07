@@ -31,9 +31,9 @@ pub enum NativeOperation {
 }
 
 impl OperationType {
-    // Gives the type of predicate that the operation will output, if known.
-    // CopyStatement may output any predicate (it will match the statement copied),
-    // so output_predicate returns None on CopyStatement
+    /// Gives the type of predicate that the operation will output, if known.
+    /// CopyStatement may output any predicate (it will match the statement copied),
+    /// so output_predicate returns None on CopyStatement.
     pub fn output_predicate(&self) -> Option<Predicate> {
         match self {
             OperationType::Native(native_op) => match native_op {
@@ -185,10 +185,7 @@ impl Operation {
             Self::CopyStatement(s1) => Some(s1.args()),
             Self::EqualFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) => {
                 if v1 == v2 {
-                    Some(vec![
-                        StatementArg::Key(*ak1),
-                        StatementArg::Key(*ak2),
-                    ])
+                    Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
                 } else {
                     return Err(anyhow!("Invalid operation"));
                 }
@@ -198,10 +195,7 @@ impl Operation {
             }
             Self::NotEqualFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) => {
                 if v1 != v2 {
-                    Some(vec![
-                        StatementArg::Key(*ak1),
-                        StatementArg::Key(*ak2),
-                    ])
+                    Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
                 } else {
                     return Err(anyhow!("Invalid operation"));
                 }
@@ -211,10 +205,7 @@ impl Operation {
             }
             Self::GtFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) => {
                 if v1 > v2 {
-                    Some(vec![
-                        StatementArg::Key(*ak1),
-                        StatementArg::Key(*ak2),
-                    ])
+                    Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
                 } else {
                     return Err(anyhow!("Invalid operation"));
                 }
@@ -224,10 +215,7 @@ impl Operation {
             }
             Self::LtFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) => {
                 if v1 < v2 {
-                    Some(vec![
-                        StatementArg::Key(*ak1),
-                        StatementArg::Key(*ak2),
-                    ])
+                    Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
                 } else {
                     return Err(anyhow!("Invalid operation"));
                 }
@@ -237,10 +225,7 @@ impl Operation {
             }
             Self::TransitiveEqualFromStatements(Equal(ak1, ak2), Equal(ak3, ak4)) => {
                 if ak2 == ak3 {
-                    Some(vec![
-                        StatementArg::Key(*ak1),
-                        StatementArg::Key(*ak3),
-                    ])
+                    Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak3)])
                 } else {
                     return Err(anyhow!("Invalid operation"));
                 }
@@ -248,27 +233,22 @@ impl Operation {
             Self::TransitiveEqualFromStatements(_, _) => {
                 return Err(anyhow!("Invalid operation"));
             }
-            Self::GtToNotEqual(Gt(ak1, ak2)) => Some(vec![
-                StatementArg::Key(*ak1),
-                StatementArg::Key(*ak2),
-            ]),
+            Self::GtToNotEqual(Gt(ak1, ak2)) => {
+                Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
+            }
             Self::GtToNotEqual(_) => {
                 return Err(anyhow!("Invalid operation"));
             }
-            Self::LtToNotEqual(Gt(ak1, ak2)) => Some(vec![
-                StatementArg::Key(*ak1),
-                StatementArg::Key(*ak2),
-            ]),
+            Self::LtToNotEqual(Gt(ak1, ak2)) => {
+                Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
+            }
             Self::LtToNotEqual(_) => {
                 return Err(anyhow!("Invalid operation"));
             }
             Self::ContainsFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) =>
             /* TODO */
             {
-                Some(vec![
-                    StatementArg::Key(*ak1),
-                    StatementArg::Key(*ak2),
-                ])
+                Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
             }
             Self::ContainsFromEntries(_, _) => {
                 return Err(anyhow!("Invalid operation"));
@@ -276,10 +256,7 @@ impl Operation {
             Self::NotContainsFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) =>
             /* TODO */
             {
-                Some(vec![
-                    StatementArg::Key(*ak1),
-                    StatementArg::Key(*ak2),
-                ])
+                Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
             }
             Self::NotContainsFromEntries(_, _) => {
                 return Err(anyhow!("Invalid operation"));
@@ -289,10 +266,7 @@ impl Operation {
                 let v2: i64 = (*v2).try_into()?;
                 let v3: i64 = (*v3).try_into()?;
                 if v1 == v2 + v3 {
-                    Some(vec![
-                        StatementArg::Key(*ak1),
-                        StatementArg::Key(*ak2),
-                    ])
+                    Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
                 } else {
                     return Err(anyhow!("Invalid operation"));
                 }
@@ -305,10 +279,7 @@ impl Operation {
                 let v2: i64 = (*v2).try_into()?;
                 let v3: i64 = (*v3).try_into()?;
                 if v1 == v2 * v3 {
-                    Some(vec![
-                        StatementArg::Key(*ak1),
-                        StatementArg::Key(*ak2),
-                    ])
+                    Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
                 } else {
                     return Err(anyhow!("Invalid operation"));
                 }
@@ -321,10 +292,7 @@ impl Operation {
                 let v2: i64 = (*v2).try_into()?;
                 let v3: i64 = (*v3).try_into()?;
                 if v1 == std::cmp::max(v2, v3) {
-                    Some(vec![
-                        StatementArg::Key(*ak1),
-                        StatementArg::Key(*ak2),
-                    ])
+                    Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
                 } else {
                     return Err(anyhow!("Invalid operation"));
                 }

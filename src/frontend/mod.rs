@@ -366,19 +366,25 @@ impl MainPodBuilder {
         use NativeOperation::*;
         let Operation(op_type, ref mut args) = &mut op;
         // TODO: argument type checking
-        // TODO: this unwrap() won't work if it's a CopyStatement operation
-        let pred = op_type.output_predicate().ok_or(anyhow!(
-            "Could not determine output predicate type of op type {:?}",
-            op_type
-        ))?;
+        let pred = op_type
+            .output_predicate()
+            .map(|p| Ok(p))
+            .unwrap_or_else(|| {
+                // We are dealing with a copy here.
+                match (&args).get(0) {
+                    Some(OperationArg::Statement(s)) if args.len() == 1 => Ok(s.0.clone()),
+                    _ => Err(anyhow!("Invalid arguments to copy operation: {:?}", args)),
+                }
+            })?;
+
         let st_args: Vec<StatementArg> = match op_type {
             OperationType::Native(o) => match o {
                 None => vec![],
                 NewEntry => self.op_args_entries(public, args)?,
-                CopyStatement => match args[0].clone() {
-                    OperationArg::Statement(s) => s.1,
+                CopyStatement => match &args[0] {
+                    OperationArg::Statement(s) => s.1.clone(),
                     _ => {
-                        return Err(anyhow!("Invalid arguments to operation"));
+                        return Err(anyhow!("Invalid arguments to operation: {}", op));
                     }
                 },
                 EqualFromEntries => self.op_args_entries(public, args)?,
@@ -435,7 +441,6 @@ impl MainPodBuilder {
                 },
                 ContainsFromEntries => self.op_args_entries(public, args)?,
                 NotContainsFromEntries => self.op_args_entries(public, args)?,
-                RenameContainedBy => todo!(),
                 SumOf => match (args[0].clone(), args[1].clone(), args[2].clone()) {
                     (
                         OperationArg::Statement(Statement(
@@ -576,6 +581,7 @@ impl MainPodBuilder {
                         };
                         st_args
                     }
+                    RenameContainedBy => todo!(),
                     _ => {
                         return Err(anyhow!("Invalid arguments to operation"));
                     }
@@ -600,7 +606,7 @@ impl MainPodBuilder {
                         ))
                     })
                     .collect::<Result<Vec<_>>>()?;
-                
+
                 output_arg_values
                     .chunks(2)
                     .map(|chunk| {
@@ -1064,8 +1070,6 @@ pub mod tests {
         let pod = builder.prove(&mut prover, &params).unwrap();
 
         println!("{}", pod);
-
-        
     }
 
     #[test]
