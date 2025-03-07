@@ -133,7 +133,7 @@ impl Params {
         self.max_custom_batch_size * self.custom_predicate_size()
     }
 
-    pub fn print_serialized_sizes(&self) -> () {
+    pub fn print_serialized_sizes(&self) {
         println!("Parameter sizes:");
         println!(
             "  Statement template argument: {}",
@@ -146,7 +146,7 @@ impl Params {
             "  Custom predicate batch: {}",
             self.custom_predicate_batch_size_field_elts()
         );
-        println!("");
+        println!();
     }
 }
 

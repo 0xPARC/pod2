@@ -5,7 +5,6 @@ use anyhow::{anyhow, Error, Result};
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::convert::From;
-use std::sync::Arc;
 use std::{fmt, hash as h};
 
 use crate::middleware::{
@@ -14,7 +13,7 @@ use crate::middleware::{
     hash_str, Hash, MainPodInputs, NativeOperation, NativePredicate, Params, PodId, PodProver,
     PodSigner, SELF,
 };
-use crate::middleware::{OperationType, Predicate, KEY_SIGNER};
+use crate::middleware::{OperationType, Predicate, KEY_SIGNER, KEY_TYPE};
 
 mod custom;
 mod operation;
@@ -73,7 +72,7 @@ impl From<&Value> for middleware::Value {
             Value::Dictionary(d) => d.commitment().value(),
             Value::Set(s) => s.commitment().value(),
             Value::Array(a) => a.commitment().value(),
-            Value::Raw(v) => v.clone(),
+            Value::Raw(v) => *v,
         }
     }
 }
@@ -138,22 +137,36 @@ impl SignedPodBuilder {
     }
 
     pub fn sign<S: PodSigner>(&self, signer: &mut S) -> Result<SignedPod> {
-        let mut kvs = HashMap::new();
-        let mut key_string_map = HashMap::new();
-        let mut value_hash_map = HashMap::new();
-        for (k, v) in self.kvs.iter() {
-            let k_hash = hash_str(k);
-            let v_hash = middleware::Value::from(v);
-            kvs.insert(k_hash, v_hash);
-            key_string_map.insert(k_hash, k.clone());
-            value_hash_map.insert(v_hash.into(), v.clone());
-        }
-        let pod = signer.sign(&self.params, &kvs)?;
-        Ok(SignedPod {
-            pod,
-            key_string_map,
-            value_hash_map,
-        })
+        // Sign POD with committed KV store.
+        let committed_kvs = self
+            .kvs
+            .iter()
+            .map(|(k, v)| (hash_str(k), v.into()))
+            .collect::<HashMap<_, _>>();
+        let pod = signer.sign(&self.params, &committed_kvs)?;
+
+        let mut kvs = self.kvs.clone();
+
+        // Type and signer information are passed in by the
+        // backend. Include these in the frontend representation.
+        let mid_kvs = pod.kvs();
+        let pod_type = mid_kvs
+            .get(&crate::middleware::AnchoredKey(
+                pod.id(),
+                hash_str(KEY_TYPE),
+            ))
+            .cloned()
+            .ok_or(anyhow!("Missing POD type information in POD: {:?}", pod))?;
+        let pod_signer = mid_kvs
+            .get(&crate::middleware::AnchoredKey(
+                pod.id(),
+                hash_str(KEY_SIGNER),
+            ))
+            .cloned()
+            .ok_or(anyhow!("Missing POD signer in POD: {:?}", pod))?;
+        kvs.insert(KEY_TYPE.to_string(), pod_type.into());
+        kvs.insert(KEY_SIGNER.to_string(), pod_signer.into());
+        Ok(SignedPod { pod, kvs })
     }
 }
 
@@ -162,10 +175,10 @@ impl SignedPodBuilder {
 #[derive(Debug, Clone)]
 pub struct SignedPod {
     pub pod: Box<dyn middleware::Pod>,
-    /// HashMap to store the reverse relation between key strings and key hashes
-    pub key_string_map: HashMap<Hash, String>,
-    /// HashMap to store the reverse relation between values and their hashes
-    pub value_hash_map: HashMap<Hash, Value>,
+    /// Key-value pairs as represented in the frontend. These should
+    /// correspond to the entries of `pod.kvs()` after hashing and
+    /// replacing each key with its corresponding anchored key.
+    pub kvs: HashMap<String, Value>,
 }
 
 impl fmt::Display for SignedPod {
@@ -175,13 +188,13 @@ impl fmt::Display for SignedPod {
         // https://0xparc.github.io/pod2/merkletree.html will not need it since it will be
         // deterministic based on the keys values not on the order of the keys when added into the
         // tree.
-        for (k, v) in self.kvs().iter().sorted_by_key(|kv| kv.0) {
+        for (k, v) in self.kvs.iter().sorted_by_key(|kv| kv.0) {
             writeln!(
                 f,
                 "  - {} = {}: {}",
+                hash_str(k),
                 k,
-                *self.key_string_map.get(&k).unwrap_or(&"--".to_string()),
-                v
+                crate::middleware::Value::from(v)
             )?;
         }
         Ok(())
@@ -245,7 +258,7 @@ impl fmt::Display for MainPodBuilder {
         for (st, op) in self.statements.iter().zip_eq(self.operations.iter()) {
             write!(f, "    - {} <- ", st)?;
             write!(f, "{}", op)?;
-            write!(f, "\n")?;
+            writeln!(f)?;
         }
         Ok(())
     }
@@ -262,25 +275,35 @@ impl MainPodBuilder {
             public_statements: Vec::new(),
             const_cnt: 0,
             key_table: HashMap::new(),
-            pod_class_table: HashMap::from_iter([(SELF, PodClass::Main)].into_iter()),
+            pod_class_table: HashMap::from_iter([(SELF, PodClass::Main)]),
         }
     }
     pub fn add_signed_pod(&mut self, pod: &SignedPod) {
         self.input_signed_pods.push(pod.clone());
-        pod.key_string_map.iter().for_each(|(hash, key)| {
-            self.key_table.insert(hash.clone(), key.clone());
+        // Add key-hash correspondences to key table.
+        pod.kvs.iter().for_each(|(key, _)| {
+            self.key_table.insert(hash_str(key), key.clone());
         });
+        // Add POD class to POD class table.
         self.pod_class_table.insert(pod.id(), PodClass::Signed);
     }
     pub fn add_main_pod(&mut self, pod: MainPod) {
+        // Add POD class to POD class table.
         self.pod_class_table.insert(pod.id(), PodClass::Main);
-        pod.key_string_map.iter().for_each(|(hash, key)| {
-            self.key_table.insert(hash.clone(), key.clone());
-        });
-        pod.pod_class_map.iter().for_each(|(pod_id, pod_class)| {
-            self.pod_class_table
-                .insert(pod_id.clone(), pod_class.clone());
-        });
+        // Add key-hash and POD ID-class correspondences to tables.
+        pod.public_statements
+            .iter()
+            .flat_map(|s| &s.1)
+            .flat_map(|arg| match arg {
+                StatementArg::Key(AnchoredKey(Origin(pod_class, pod_id), key)) => {
+                    Some((*pod_id, pod_class.clone(), hash_str(key), key.clone()))
+                }
+                _ => None,
+            })
+            .for_each(|(pod_id, pod_class, hash, key)| {
+                self.pod_class_table.insert(pod_id, pod_class);
+                self.key_table.insert(hash, key);
+            });
         self.input_main_pods.push(pod);
     }
     pub fn insert(&mut self, st_op: (Statement, Operation)) {
@@ -605,11 +628,10 @@ impl MainPodBuilder {
         }
 
         // Add key-hash pairs in statement to table.
-        (&st).1.iter().for_each(|arg| match arg {
-            StatementArg::Key(AnchoredKey(_, key)) => {
+        st.1.iter().for_each(|arg| {
+            if let StatementArg::Key(AnchoredKey(_, key)) = arg {
                 self.key_table.insert(hash_str(key), key.clone());
             }
-            _ => (),
         });
 
         self.statements.push(st);
@@ -629,27 +651,6 @@ impl MainPodBuilder {
             operations: &self.operations,
             public_statements: &self.public_statements,
         };
-        let key_string_map = inputs
-            .public_statements
-            .iter()
-            .flat_map(|s| &s.1)
-            .flat_map(|arg| match arg {
-                StatementArg::Key(AnchoredKey(_, key)) => Some((hash_str(key), key.clone())),
-                _ => None,
-            })
-            .collect::<HashMap<_, _>>();
-
-        let pod_class_map = (&inputs)
-            .public_statements
-            .into_iter()
-            .flat_map(|s| &s.1)
-            .flat_map(|arg| match arg {
-                StatementArg::Key(AnchoredKey(Origin(pod_class, pod_id), _)) => {
-                    Some((pod_id.clone(), pod_class.clone()))
-                }
-                _ => None,
-            })
-            .collect::<HashMap<_, _>>();
 
         let (statements, operations, public_statements) = compiler.compile(inputs, params)?;
         let inputs = MainPodInputs {
@@ -660,10 +661,54 @@ impl MainPodBuilder {
             public_statements: &public_statements,
         };
         let pod = prover.prove(&self.params, inputs)?;
+
+        // Gather public statements, making sure to inject the type
+        // information specified by the backend.
+        let pod_id = pod.id();
+        let type_key_hash = hash_str(KEY_TYPE);
+        let type_statement = pod
+            .pub_statements()
+            .into_iter()
+            .find_map(|s| match s {
+                crate::middleware::Statement::ValueOf(
+                    crate::middleware::AnchoredKey(id, key),
+                    value,
+                ) if id == pod_id && key == type_key_hash => Some(Statement(
+                    Predicate::Native(NativePredicate::ValueOf),
+                    vec![
+                        StatementArg::Key(AnchoredKey(
+                            Origin(PodClass::Main, pod_id),
+                            KEY_TYPE.to_string(),
+                        )),
+                        StatementArg::Literal(value.into()),
+                    ],
+                )),
+                _ => None,
+            })
+            .ok_or(anyhow!("Missing POD type information in POD: {:?}", pod))?;
+        // Replace instances of `SELF` with the POD ID for consistency
+        // with `pub_statements` method.
+        let public_statements = [type_statement]
+            .into_iter()
+            .chain(self.public_statements.clone().into_iter().map(|s| {
+                let s_type = s.0;
+                let s_args = s
+                    .1
+                    .into_iter()
+                    .map(|arg| match arg {
+                        StatementArg::Key(AnchoredKey(Origin(class, id), key)) if id == SELF => {
+                            StatementArg::Key(AnchoredKey(Origin(class, pod_id), key))
+                        }
+                        _ => arg,
+                    })
+                    .collect();
+                Statement(s_type, s_args)
+            }))
+            .collect();
+
         Ok(MainPod {
             pod,
-            key_string_map,
-            pod_class_map,
+            public_statements,
         })
     }
 }
@@ -671,9 +716,7 @@ impl MainPodBuilder {
 #[derive(Debug)]
 pub struct MainPod {
     pub pod: Box<dyn middleware::Pod>,
-    // TODO: metadata
-    pub key_string_map: HashMap<Hash, String>,
-    pub pod_class_map: HashMap<PodId, PodClass>,
+    pub public_statements: Vec<Statement>,
 }
 
 impl fmt::Display for MainPod {
@@ -778,9 +821,9 @@ impl MainPodCompiler {
         }
     }
 
-    pub fn compile<'a>(
+    pub fn compile(
         mut self,
-        inputs: MainPodCompilerInputs<'a>,
+        inputs: MainPodCompilerInputs<'_>,
         params: &Params,
     ) -> Result<(
         Vec<middleware::Statement>, // input statements
@@ -815,16 +858,16 @@ impl MainPodCompiler {
 pub mod build_utils {
     #[macro_export]
     macro_rules! op_args {
-        ($($arg:expr),+) => {vec![$(crate::frontend::OperationArg::from($arg)),*]}
+        ($($arg:expr),+) => {vec![$($crate::frontend::OperationArg::from($arg)),*]}
     }
 
     #[macro_export]
     macro_rules! op {
-        (eq, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::EqualFromEntries),
-            crate::op_args!($($arg),*)) };
-        (ne, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::NotEqualFromEntries),
+        (eq, $($arg:expr),+) => { $crate::frontend::Operation(
+            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::EqualFromEntries),
+            $crate::op_args!($($arg),*)) };
+        (ne, $($arg:expr),+) => { $crate::frontend::Operation(
+            $crate::middleware::OperationType::Native(crate::middleware::NativeOperation::NotEqualFromEntries),
             crate::op_args!($($arg),*)) };
         (gt, $($arg:expr),+) => { crate::frontend::Operation(
             crate::middleware::OperationType::Native(crate::middleware::NativeOperation::GtFromEntries),
@@ -851,6 +894,40 @@ pub mod tests {
         tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_sign_pod_builders,
     };
 
+    // Check that frontend public statements agree with those
+    // embedded in a MainPod.
+    fn check_public_statements(pod: &MainPod) -> Result<()> {
+        std::iter::zip(pod.public_statements.clone(), pod.pod.pub_statements()).try_for_each(
+            |(fes, s)| crate::middleware::Statement::try_from(fes).map(|fes| assert_eq!(fes, s)),
+        )
+    }
+
+    // Check that frontend key-values agree with those embedded in a
+    // SignedPod.
+    fn check_kvs(pod: &SignedPod) -> Result<()> {
+        let kvs = pod
+            .kvs
+            .iter()
+            .map(|(k, v)| (hash_str(k), middleware::Value::from(v)))
+            .collect::<HashMap<_, _>>();
+        let embedded_kvs = pod
+            .pod
+            .kvs()
+            .into_iter()
+            .map(|(middleware::AnchoredKey(_, k), v)| (k, v))
+            .collect::<HashMap<_, _>>();
+
+        if kvs == embedded_kvs {
+            Ok(())
+        } else {
+            Err(anyhow!(
+                "KVs {:?} do not agree with those embedded in the POD: {:?}",
+                kvs,
+                embedded_kvs
+            ))
+        }
+    }
+
     #[test]
     fn test_front_zu_kyc() -> Result<()> {
         let params = Params::default();
@@ -863,30 +940,33 @@ pub mod tests {
             pk: "ZooGov".into(),
         };
         let gov_id = gov_id.sign(&mut signer)?;
+        check_kvs(&gov_id)?;
         println!("{}", gov_id);
 
         let mut signer = MockSigner {
             pk: "ZooDeel".into(),
         };
         let pay_stub = pay_stub.sign(&mut signer)?;
+        check_kvs(&pay_stub)?;
         println!("{}", pay_stub);
 
         let mut signer = MockSigner {
             pk: "ZooOFAC".into(),
         };
         let sanction_list = sanction_list.sign(&mut signer)?;
+        check_kvs(&sanction_list)?;
         println!("{}", sanction_list);
 
-        let kyc = zu_kyc_pod_builder(&params, &gov_id, &pay_stub, &sanction_list)?;
-        println!("{}", kyc);
+        let kyc_builder = zu_kyc_pod_builder(&params, &gov_id, &pay_stub, &sanction_list)?;
+        println!("{}", kyc_builder);
 
+        // prove kyc with MockProver and print it
         let mut prover = MockProver {};
-        let kyc = kyc.prove(&mut prover, &params)?;
+        let kyc = kyc_builder.prove(&mut prover, &params)?;
 
-        // TODO: prove kyc with MockProver and print it
         println!("{}", kyc);
 
-        Ok(())
+        check_public_statements(&kyc)
     }
 
     #[test]
@@ -894,7 +974,7 @@ pub mod tests {
         let params = Params::default();
 
         let mut alice = MockSigner { pk: "Alice".into() };
-        let mut bob = MockSigner { pk: "Bob".into() };
+        let bob = MockSigner { pk: "Bob".into() };
         let mut charlie = MockSigner {
             pk: "Charlie".into(),
         };
@@ -903,8 +983,10 @@ pub mod tests {
         // attests that he is ETH friends with Bob.
         let alice_attestation =
             eth_friend_signed_pod_builder(&params, charlie.pubkey().into()).sign(&mut alice)?;
+        check_kvs(&alice_attestation)?;
         let charlie_attestation =
             eth_friend_signed_pod_builder(&params, bob.pubkey().into()).sign(&mut charlie)?;
+        check_kvs(&charlie_attestation)?;
 
         let mut prover = MockProver {};
         let alice_bob_ethdos = eth_dos_pod_builder(
@@ -915,7 +997,7 @@ pub mod tests {
         )?
         .prove(&mut prover, &params)?;
 
-        Ok(())
+        check_public_statements(&alice_bob_ethdos)
     }
 
     #[test]
@@ -923,7 +1005,7 @@ pub mod tests {
         let great_boy = great_boy_pod_full_flow()?;
         println!("{}", great_boy);
 
-        // TODO: prove kyc with MockProver and print it
+        // TODO: prove great_boy with MockProver and print it
 
         Ok(())
     }

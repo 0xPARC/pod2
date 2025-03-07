@@ -3,7 +3,7 @@
 The front end has three compound types
 - `Dictionary`
 - `Array`
-- `Set`,
+- `Set`
 
 all of which are represented as `MerkleTree` on the back end.
 

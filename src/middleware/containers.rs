@@ -4,7 +4,9 @@ use anyhow::Result;
 use std::collections::HashMap;
 
 use crate::constants::MAX_DEPTH;
-use crate::primitives::merkletree::{MerkleProof, MerkleTree};
+
+#[cfg(feature = "backend_plonky2")]
+use crate::backends::plonky2::primitives::merkletree::{Iter as TreeIter, MerkleProof, MerkleTree};
 
 use super::basetypes::{hash_value, Hash, Value, EMPTY};
 
@@ -19,7 +21,7 @@ pub struct Dictionary {
 
 impl Dictionary {
     pub fn new(kvs: &HashMap<Hash, Value>) -> Result<Self> {
-        let kvs: HashMap<Value, Value> = kvs.into_iter().map(|(&k, &v)| (Value(k.0), v)).collect();
+        let kvs: HashMap<Value, Value> = kvs.iter().map(|(&k, &v)| (Value(k.0), v)).collect();
         Ok(Self {
             mt: MerkleTree::new(MAX_DEPTH, &kvs)?,
         })
@@ -42,13 +44,13 @@ impl Dictionary {
     pub fn verify_nonexistence(root: Hash, proof: &MerkleProof, key: &Value) -> Result<()> {
         MerkleTree::verify_nonexistence(MAX_DEPTH, root, proof, key)
     }
-    pub fn iter(&self) -> crate::primitives::merkletree::Iter {
+    pub fn iter(&self) -> TreeIter {
         self.mt.iter()
     }
 }
 impl<'a> IntoIterator for &'a Dictionary {
     type Item = (&'a Value, &'a Value);
-    type IntoIter = crate::primitives::merkletree::Iter<'a>;
+    type IntoIter = TreeIter<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.mt.iter()
@@ -73,7 +75,7 @@ pub struct Set {
 impl Set {
     pub fn new(set: &Vec<Value>) -> Result<Self> {
         let kvs: HashMap<Value, Value> = set
-            .into_iter()
+            .iter()
             .map(|e| {
                 let h = hash_value(e);
                 (Value::from(h), EMPTY)
@@ -102,7 +104,7 @@ impl Set {
     pub fn verify_nonexistence(root: Hash, proof: &MerkleProof, value: &Value) -> Result<()> {
         MerkleTree::verify_nonexistence(MAX_DEPTH, root, proof, value)
     }
-    pub fn iter(&self) -> crate::primitives::merkletree::Iter {
+    pub fn iter(&self) -> TreeIter {
         self.mt.iter()
     }
 }
@@ -126,7 +128,7 @@ pub struct Array {
 impl Array {
     pub fn new(array: &Vec<Value>) -> Result<Self> {
         let kvs: HashMap<Value, Value> = array
-            .into_iter()
+            .iter()
             .enumerate()
             .map(|(i, &e)| (Value::from(i as i64), e))
             .collect();
@@ -147,7 +149,7 @@ impl Array {
     pub fn verify(root: Hash, proof: &MerkleProof, i: usize, value: &Value) -> Result<()> {
         MerkleTree::verify(MAX_DEPTH, root, proof, &Value::from(i as i64), value)
     }
-    pub fn iter(&self) -> crate::primitives::merkletree::Iter {
+    pub fn iter(&self) -> TreeIter {
         self.mt.iter()
     }
 }

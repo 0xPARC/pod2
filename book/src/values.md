@@ -27,7 +27,7 @@ In the frontend, this is a simple bool.  In the backend, it will have the same e
 In the frontend, this type corresponds to the usual `String`. In the backend, the string will be mapped to a sequence of field elements and hashed with the hash function employed there, thus being represented by its hash.
 
 ## `Raw`
-"Raw" is short for "raw value".  A `Raw` exposes a backend value on the frontend.
+"Raw" is short for "raw value".  A `Raw` exposes a [backend `Value`](./backendtypes.md) on the frontend.
 
 With the plonky2 backend, a `Raw` is a tuple of 4 elements of the Goldilocks field.
 

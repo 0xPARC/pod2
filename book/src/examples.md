@@ -3,6 +3,7 @@
 Examples of POD2 use cases
 
 ## EthDos
+*Check also the [custom statement example](./customexample.md) section.*
 
 Original in prolog https://gist.github.com/ludns/f84b379ec8c53c97b7f95630e16cc39c#file-eth_dos-pl
 

@@ -75,7 +75,7 @@ impl fmt::Display for MockMainPod {
 
             let op = (i >= offset_input_statements)
                 .then(|| &self.operations[i - offset_input_statements]);
-            fmt_statement_index(f, &st, op, i)?;
+            fmt_statement_index(f, st, op, i)?;
         }
         Ok(())
     }
@@ -102,7 +102,7 @@ fn fmt_statement_index(
                 write!(f, "{}", op)?;
             }
         }
-        write!(f, "\n")?;
+        writeln!(f)?;
     }
     Ok(())
 }
@@ -151,11 +151,7 @@ impl MockMainPod {
         let none_sig_pod: Box<dyn Pod> = Box::new(NonePod {});
         assert!(inputs.signed_pods.len() <= params.max_input_signed_pods);
         for i in 0..params.max_input_signed_pods {
-            let pod = inputs
-                .signed_pods
-                .get(i)
-                .map(|p| *p)
-                .unwrap_or(&none_sig_pod);
+            let pod = inputs.signed_pods.get(i).copied().unwrap_or(&none_sig_pod);
             let sts = pod.pub_statements();
             assert!(sts.len() <= params.max_signed_pod_values);
             for j in 0..params.max_signed_pod_values {
@@ -173,11 +169,7 @@ impl MockMainPod {
         let none_main_pod: Box<dyn Pod> = Box::new(NonePod {});
         assert!(inputs.main_pods.len() <= params.max_input_main_pods);
         for i in 0..params.max_input_main_pods {
-            let pod = inputs
-                .main_pods
-                .get(i)
-                .map(|p| *p)
-                .unwrap_or(&none_main_pod);
+            let pod = inputs.main_pods.get(i).copied().unwrap_or(&none_main_pod);
             let sts = pod.pub_statements();
             assert!(sts.len() <= params.max_public_statements);
             for j in 0..params.max_public_statements {
@@ -241,7 +233,10 @@ impl MockMainPod {
                     (&middleware::Statement::try_from(s.clone()).ok()? == op_arg).then_some(i)
                 })
                 .map(OperationArg::Index)
-                .ok_or(anyhow!("statement not found")),
+                .ok_or(anyhow!(
+                    "Statement corresponding to op arg {} not found",
+                    op_arg
+                )),
         }
     }
 
@@ -347,7 +342,7 @@ impl MockMainPod {
 
     fn statement_none(params: &Params) -> Statement {
         let mut args = Vec::with_capacity(params.max_statement_args);
-        Self::pad_statement_args(&params, &mut args);
+        Self::pad_statement_args(params, &mut args);
         Statement(Predicate::Native(NativePredicate::None), args)
     }
 
@@ -368,7 +363,7 @@ impl MockMainPod {
 
 pub fn hash_statements(statements: &[Statement], _params: &Params) -> middleware::Hash {
     let field_elems = statements
-        .into_iter()
+        .iter()
         .flat_map(|statement| statement.clone().to_fields(_params).0)
         .collect::<Vec<_>>();
     Hash(PoseidonHash::hash_no_pad(&field_elems).elements)
@@ -388,7 +383,7 @@ impl Pod for MockMainPod {
             .iter()
             .find(|s| {
                 s.0 == Predicate::Native(NativePredicate::ValueOf)
-                    && s.1.len() > 0
+                    && !s.1.is_empty()
                     && if let StatementArg::Key(AnchoredKey(pod_id, key_hash)) = s.1[0] {
                         pod_id == SELF && key_hash == hash_str(KEY_TYPE)
                     } else {
@@ -402,7 +397,7 @@ impl Pod for MockMainPod {
         // `NewValue` operation.
         let value_ofs_unique = {
             let key_id_pairs = input_statements
-                .into_iter()
+                .iter()
                 .enumerate()
                 .map(|(i, s)| {
                     (
@@ -512,9 +507,9 @@ pub mod tests {
 
         println!("{:#}", pod);
 
-        assert_eq!(pod.verify(), true); // TODO
-                                        // println!("id: {}", pod.id());
-                                        // println!("pub_statements: {:?}", pod.pub_statements());
+        assert!(pod.verify()); // TODO
+                               // println!("id: {}", pod.id());
+                               // println!("pub_statements: {:?}", pod.pub_statements());
         Ok(())
     }
 
@@ -533,7 +528,7 @@ pub mod tests {
 
         println!("{}", pod);
 
-        assert_eq!(pod.verify(), true);
+        assert!(pod.verify());
 
         Ok(())
     }
@@ -547,7 +542,7 @@ pub mod tests {
         let pod = proof_pod.pod.into_any().downcast::<MockMainPod>().unwrap();
 
         println!("{}", pod);
-        assert_eq!(pod.verify(), true);
+        assert!(pod.verify());
 
         Ok(())
     }

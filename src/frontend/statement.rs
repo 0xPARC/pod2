@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use std::fmt;
 
 use super::{AnchoredKey, SignedPod, Value};
-use crate::middleware::{self, hash_str, NativePredicate, Predicate};
+use crate::middleware::{self, NativePredicate, Predicate};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StatementArg {
@@ -24,13 +24,12 @@ pub struct Statement(pub Predicate, pub Vec<StatementArg>);
 
 impl From<(&SignedPod, &str)> for Statement {
     fn from((pod, key): (&SignedPod, &str)) -> Self {
-        // TODO: Actual value, TryFrom.
-        let value_hash = pod.kvs().get(&hash_str(key)).cloned().unwrap();
+        // TODO: TryFrom.
         let value = pod
-            .value_hash_map
-            .get(&value_hash.into())
+            .kvs
+            .get(key)
             .cloned()
-            .unwrap_or(Value::Raw(value_hash));
+            .unwrap_or_else(|| panic!("Key {} is not present in POD: {}", key, pod));
         Statement(
             Predicate::Native(NativePredicate::ValueOf),
             vec![
@@ -48,7 +47,7 @@ impl TryFrom<Statement> for middleware::Statement {
         type NP = NativePredicate;
         type SA = StatementArg;
         let args = (
-            s.1.get(0).cloned(),
+            s.1.first().cloned(),
             s.1.get(1).cloned(),
             s.1.get(2).cloned(),
         );

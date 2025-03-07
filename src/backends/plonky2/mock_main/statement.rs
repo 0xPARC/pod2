@@ -50,7 +50,7 @@ impl TryFrom<Statement> for middleware::Statement {
         type SA = StatementArg;
         let proper_args = s.args();
         let args = (
-            proper_args.get(0).cloned(),
+            proper_args.first().cloned(),
             proper_args.get(1).cloned(),
             proper_args.get(2).cloned(),
         );
@@ -110,11 +110,11 @@ impl From<middleware::Statement> for Statement {
         match s.code() {
             middleware::Predicate::Native(c) => Statement(
                 middleware::Predicate::Native(c),
-                s.args().into_iter().map(|arg| arg).collect(),
+                s.args().into_iter().collect(),
             ),
             middleware::Predicate::Custom(cpr) => Statement(
                 middleware::Predicate::Custom(cpr),
-                s.args().into_iter().map(|arg| arg).collect(),
+                s.args().into_iter().collect(),
             ),
             middleware::Predicate::BatchSelf(_) => unreachable!(),
         }

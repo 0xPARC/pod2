@@ -56,7 +56,7 @@ impl Ord for Value {
                 return Ordering::Greater;
             }
         }
-        return Ordering::Equal;
+        Ordering::Equal
     }
 }
 
@@ -84,7 +84,7 @@ impl TryInto<i64> for Value {
     type Error = Error;
     fn try_into(self) -> std::result::Result<i64, Self::Error> {
         let value = self.0;
-        if &value[2..] != &[F::ZERO, F::ZERO]
+        if value[2..] != [F::ZERO, F::ZERO]
             || value[..2]
                 .iter()
                 .all(|x| x.to_canonical_u64() > u32::MAX as u64)
@@ -118,7 +118,7 @@ pub fn hash_value(input: &Value) -> Hash {
     Hash(PoseidonHash::hash_no_pad(&input.0).elements)
 }
 pub fn hash_fields(input: &[F]) -> Hash {
-    Hash(PoseidonHash::hash_no_pad(&input).elements)
+    Hash(PoseidonHash::hash_no_pad(input).elements)
 }
 
 impl From<Value> for Hash {
@@ -208,7 +208,7 @@ mod tests {
 
     #[test]
     fn test_i64_value_roundtrip() {
-        let test_cases = vec![
+        let test_cases = [
             0i64,
             1,
             -1,
