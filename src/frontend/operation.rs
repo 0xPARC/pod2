@@ -56,6 +56,18 @@ impl From<(&SignedPod, &str)> for OperationArg {
     }
 }
 
+impl From<Statement> for OperationArg {
+    fn from(s: Statement) -> Self {
+        Self::Statement(s)
+    }
+}
+
+impl<V: Into<Value>> From<(&str, V)> for OperationArg {
+    fn from((key, value): (&str, V)) -> Self {
+        Self::Entry(key.to_string(), value.into())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Operation(pub OperationType, pub Vec<OperationArg>);
 

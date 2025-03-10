@@ -890,6 +890,9 @@ pub mod build_utils {
 
     #[macro_export]
     macro_rules! op {
+        (new_entry, ($key:expr, $value:expr)) => { $crate::frontend::Operation(
+            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::NewEntry),
+            $crate::op_args!(($key, $value))) };
         (eq, $($arg:expr),+) => { $crate::frontend::Operation(
             $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::EqualFromEntries),
             $crate::op_args!($($arg),*)) };
@@ -902,12 +905,33 @@ pub mod build_utils {
         (lt, $($arg:expr),+) => { crate::frontend::Operation(
             crate::middleware::OperationType::Native(crate::middleware::NativeOperation::LtFromEntries),
             crate::op_args!($($arg),*)) };
+        (transitive_eq, $($arg:expr),+) => { crate::frontend::Operation(
+            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::TransitiveEqualFromStatements),
+            crate::op_args!($($arg),*)) };
+        (gt_to_ne, $($arg:expr),+) => { crate::frontend::Operation(
+            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::GtToNotEqual),
+            crate::op_args!($($arg),*)) };
+        (lt_to_ne, $($arg:expr),+) => { crate::frontend::Operation(
+            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::LtToNotEqual),
+            crate::op_args!($($arg),*)) };
         (contains, $($arg:expr),+) => { crate::frontend::Operation(
             crate::middleware::OperationType::Native(crate::middleware::NativeOperation::ContainsFromEntries),
             crate::op_args!($($arg),*)) };
         (not_contains, $($arg:expr),+) => { crate::frontend::Operation(
             crate::middleware::OperationType::Native(crate::middleware::NativeOperation::NotContainsFromEntries),
             crate::op_args!($($arg),*)) };
+        (sum_of, $($arg:expr),+) => { crate::frontend::Operation(
+            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::SumOf),
+            crate::op_args!($($arg),*)) };
+        (product_of, $($arg:expr),+) => { crate::frontend::Operation(
+            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::ProductOf),
+            crate::op_args!($($arg),*)) };
+        (max_of, $($arg:expr),+) => { crate::frontend::Operation(
+            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::MaxOf),
+            crate::op_args!($($arg),*)) };
+        (custom, $op:expr, $($arg:expr),+) => { $crate::frontend::Operation(
+            $crate::middleware::OperationType::Custom($op),
+            $crate::op_args!($($arg),*)) };
     }
 }
 

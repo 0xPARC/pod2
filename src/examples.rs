@@ -105,119 +105,80 @@ pub fn eth_dos_pod_builder(
 
     // Include Alice and Bob's keys as public statements. We don't
     // want to reveal the middleman.
-    let alice_pubkey_copy = alice_bob_ethdos.pub_op(Operation(
-        OperationType::Native(NativeOperation::NewEntry),
-        vec![OperationArg::Entry(
-            "Alice".to_string(),
-            alice_pubkey.into(),
-        )],
-    ))?;
-    let bob_pubkey_copy = alice_bob_ethdos.pub_op(Operation(
-        OperationType::Native(NativeOperation::NewEntry),
-        vec![OperationArg::Entry("Bob".to_string(), bob_pubkey.clone())],
-    ))?;
-    let charlie_pubkey = alice_bob_ethdos.priv_op(Operation(
-        OperationType::Native(NativeOperation::NewEntry),
-        vec![OperationArg::Entry(
-            "Charlie".to_string(),
-            charlie_pubkey.into(),
-        )],
-    ))?;
+    let alice_pubkey_copy = alice_bob_ethdos.pub_op(op!(new_entry, ("Alice", alice_pubkey)))?;
+    let bob_pubkey_copy = alice_bob_ethdos.pub_op(op!(new_entry, ("Bob", bob_pubkey.clone())))?;
+    let charlie_pubkey = alice_bob_ethdos.priv_op(op!(new_entry, ("Charlie", charlie_pubkey)))?;
 
     // The ETHDoS distance from Alice to Alice is 0.
     let zero = alice_bob_ethdos.priv_literal(&0)?;
-    let alice_equals_alice = alice_bob_ethdos.priv_op(Operation(
-        OperationType::Native(NativeOperation::EqualFromEntries),
-        vec![
-            (alice_attestation, KEY_SIGNER).into(),
-            OperationArg::Statement(alice_pubkey_copy.clone()),
-        ],
+    let alice_equals_alice = alice_bob_ethdos.priv_op(op!(
+        eq,
+        (alice_attestation, KEY_SIGNER),
+        alice_pubkey_copy.clone()
     ))?;
-    let ethdos_alice_alice_is_zero_base = alice_bob_ethdos.priv_op(Operation(
-        OperationType::Custom(eth_dos_base.clone()),
-        vec![
-            OperationArg::Statement(alice_equals_alice),
-            OperationArg::Statement(zero.clone()),
-        ],
+    let ethdos_alice_alice_is_zero_base = alice_bob_ethdos.priv_op(op!(
+        custom,
+        eth_dos_base.clone(),
+        alice_equals_alice,
+        zero.clone()
     ))?;
-    let ethdos_alice_alice_is_zero = alice_bob_ethdos.priv_op(Operation(
-        OperationType::Custom(eth_dos.clone()),
-        vec![OperationArg::Statement(ethdos_alice_alice_is_zero_base)],
+    let ethdos_alice_alice_is_zero = alice_bob_ethdos.priv_op(op!(
+        custom,
+        eth_dos.clone(),
+        ethdos_alice_alice_is_zero_base
     ))?;
 
     // Alice and Charlie are ETH friends.
     let attestation_is_signed_pod = Statement::from((alice_attestation, KEY_TYPE));
-    let attestation_signed_by_alice = alice_bob_ethdos.priv_op(Operation(
-        OperationType::Native(NativeOperation::EqualFromEntries),
-        vec![
-            OperationArg::from((alice_attestation, KEY_SIGNER)),
-            OperationArg::Statement(alice_pubkey_copy),
-        ],
+    let attestation_signed_by_alice =
+        alice_bob_ethdos.priv_op(op!(eq, (alice_attestation, KEY_SIGNER), alice_pubkey_copy))?;
+    let alice_attests_to_charlie = alice_bob_ethdos.priv_op(op!(
+        eq,
+        (alice_attestation, "attestation"),
+        charlie_pubkey.clone()
     ))?;
-    let alice_attests_to_charlie = alice_bob_ethdos.priv_op(Operation(
-        OperationType::Native(NativeOperation::EqualFromEntries),
-        vec![
-            OperationArg::from((alice_attestation, "attestation")),
-            OperationArg::Statement(charlie_pubkey.clone()),
-        ],
-    ))?;
-    let ethfriends_alice_charlie = alice_bob_ethdos.priv_op(Operation(
-        OperationType::Custom(eth_friend.clone()),
-        vec![
-            OperationArg::Statement(attestation_is_signed_pod),
-            OperationArg::Statement(attestation_signed_by_alice),
-            OperationArg::Statement(alice_attests_to_charlie),
-        ],
+    let ethfriends_alice_charlie = alice_bob_ethdos.priv_op(op!(
+        custom,
+        eth_friend.clone(),
+        attestation_is_signed_pod,
+        attestation_signed_by_alice,
+        alice_attests_to_charlie
     ))?;
 
     // ...and so are Chuck and Bob.
     let attestation_is_signed_pod = Statement::from((charlie_attestation, KEY_TYPE));
-    let attestation_signed_by_charlie = alice_bob_ethdos.priv_op(Operation(
-        OperationType::Native(NativeOperation::EqualFromEntries),
-        vec![
-            OperationArg::from((charlie_attestation, KEY_SIGNER)),
-            OperationArg::Statement(charlie_pubkey),
-        ],
+    let attestation_signed_by_charlie =
+        alice_bob_ethdos.priv_op(op!(eq, (charlie_attestation, KEY_SIGNER), charlie_pubkey))?;
+    let charlie_attests_to_bob = alice_bob_ethdos.priv_op(op!(
+        eq,
+        (charlie_attestation, "attestation"),
+        bob_pubkey_copy
     ))?;
-    let charlie_attests_to_bob = alice_bob_ethdos.priv_op(Operation(
-        OperationType::Native(NativeOperation::EqualFromEntries),
-        vec![
-            OperationArg::from((charlie_attestation, "attestation")),
-            OperationArg::Statement(bob_pubkey_copy),
-        ],
-    ))?;
-    let ethfriends_charlie_bob = alice_bob_ethdos.priv_op(Operation(
-        OperationType::Custom(eth_friend.clone()),
-        vec![
-            OperationArg::Statement(attestation_is_signed_pod),
-            OperationArg::Statement(attestation_signed_by_charlie),
-            OperationArg::Statement(charlie_attests_to_bob),
-        ],
+    let ethfriends_charlie_bob = alice_bob_ethdos.priv_op(op!(
+        custom,
+        eth_friend.clone(),
+        attestation_is_signed_pod,
+        attestation_signed_by_charlie,
+        charlie_attests_to_bob
     ))?;
 
     // The ETHDoS distance from Alice to Charlie is 1.
     let one = alice_bob_ethdos.priv_literal(&1)?;
     // 1 = 0 + 1
-    let ethdos_sum = alice_bob_ethdos.priv_op(Operation(
-        OperationType::Native(NativeOperation::SumOf),
-        vec![
-            OperationArg::Statement(one.clone()),
-            OperationArg::Statement(zero.clone()),
-            OperationArg::Statement(one.clone()),
-        ],
+    let ethdos_sum =
+        alice_bob_ethdos.priv_op(op!(sum_of, one.clone(), zero.clone(), one.clone()))?;
+    let ethdos_alice_charlie_is_one_ind = alice_bob_ethdos.priv_op(op!(
+        custom,
+        eth_dos_ind.clone(),
+        ethdos_alice_alice_is_zero,
+        one.clone(),
+        ethdos_sum,
+        ethfriends_alice_charlie
     ))?;
-    let ethdos_alice_charlie_is_one_ind = alice_bob_ethdos.priv_op(Operation(
-        OperationType::Custom(eth_dos_ind.clone()),
-        vec![
-            OperationArg::Statement(ethdos_alice_alice_is_zero),
-            OperationArg::Statement(one.clone()),
-            OperationArg::Statement(ethdos_sum),
-            OperationArg::Statement(ethfriends_alice_charlie),
-        ],
-    ))?;
-    let ethdos_alice_charlie_is_one = alice_bob_ethdos.priv_op(Operation(
-        OperationType::Custom(eth_dos.clone()),
-        vec![OperationArg::Statement(ethdos_alice_charlie_is_one_ind)],
+    let ethdos_alice_charlie_is_one = alice_bob_ethdos.priv_op(op!(
+        custom,
+        eth_dos.clone(),
+        ethdos_alice_charlie_is_one_ind
     ))?;
 
     // The ETHDoS distance from Alice to Bob is 2.
@@ -225,27 +186,18 @@ pub fn eth_dos_pod_builder(
     // public.
     let two = alice_bob_ethdos.pub_literal(&2)?;
     // 2 = 1 + 1
-    let ethdos_sum = alice_bob_ethdos.priv_op(Operation(
-        OperationType::Native(NativeOperation::SumOf),
-        vec![
-            OperationArg::Statement(two.clone()),
-            OperationArg::Statement(one.clone()),
-            OperationArg::Statement(one.clone()),
-        ],
+    let ethdos_sum =
+        alice_bob_ethdos.priv_op(op!(sum_of, two.clone(), one.clone(), one.clone()))?;
+    let ethdos_alice_bob_is_two_ind = alice_bob_ethdos.priv_op(op!(
+        custom,
+        eth_dos_ind.clone(),
+        ethdos_alice_charlie_is_one,
+        one.clone(),
+        ethdos_sum,
+        ethfriends_charlie_bob
     ))?;
-    let ethdos_alice_bob_is_two_ind = alice_bob_ethdos.priv_op(Operation(
-        OperationType::Custom(eth_dos_ind.clone()),
-        vec![
-            OperationArg::Statement(ethdos_alice_charlie_is_one),
-            OperationArg::Statement(one.clone()),
-            OperationArg::Statement(ethdos_sum),
-            OperationArg::Statement(ethfriends_charlie_bob),
-        ],
-    ))?;
-    let _ethdos_alice_bob_is_two = alice_bob_ethdos.pub_op(Operation(
-        OperationType::Custom(eth_dos.clone()),
-        vec![OperationArg::Statement(ethdos_alice_bob_is_two_ind)],
-    ))?;
+    let _ethdos_alice_bob_is_two =
+        alice_bob_ethdos.pub_op(op!(custom, eth_dos.clone(), ethdos_alice_bob_is_two_ind))?;
 
     Ok(alice_bob_ethdos)
 }
