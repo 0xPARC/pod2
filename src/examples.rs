@@ -125,10 +125,7 @@ pub fn eth_dos_pod_builder(
     ))?;
 
     // The ETHDoS distance from Alice to Alice is 0.
-    let zero = alice_bob_ethdos.priv_op(Operation(
-        OperationType::Native(NativeOperation::NewEntry),
-        vec![OperationArg::Entry("ZERO".to_string(), Value::from(0i64))],
-    ))?;
+    let zero = alice_bob_ethdos.priv_literal(&0)?;
     let alice_equals_alice = alice_bob_ethdos.priv_op(Operation(
         OperationType::Native(NativeOperation::EqualFromEntries),
         vec![
@@ -199,10 +196,7 @@ pub fn eth_dos_pod_builder(
     ))?;
 
     // The ETHDoS distance from Alice to Charlie is 1.
-    let one = alice_bob_ethdos.priv_op(Operation(
-        OperationType::Native(NativeOperation::NewEntry),
-        vec![OperationArg::Entry("ONE".to_string(), Value::from(1i64))],
-    ))?;
+    let one = alice_bob_ethdos.priv_literal(&1)?;
     // 1 = 0 + 1
     let ethdos_sum = alice_bob_ethdos.priv_op(Operation(
         OperationType::Native(NativeOperation::SumOf),
@@ -229,10 +223,7 @@ pub fn eth_dos_pod_builder(
     // The ETHDoS distance from Alice to Bob is 2.
     // The constant "TWO" and the final statement are both to be
     // public.
-    let two = alice_bob_ethdos.pub_op(Operation(
-        OperationType::Native(NativeOperation::NewEntry),
-        vec![OperationArg::Entry("TWO".to_string(), Value::from(2i64))],
-    ))?;
+    let two = alice_bob_ethdos.pub_literal(&2)?;
     // 2 = 1 + 1
     let ethdos_sum = alice_bob_ethdos.priv_op(Operation(
         OperationType::Native(NativeOperation::SumOf),

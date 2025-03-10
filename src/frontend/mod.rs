@@ -330,15 +330,7 @@ impl MainPodBuilder {
                 }
                 // todo: better error handling
                 OperationArg::Literal(v) => {
-                    let k = format!("c{}", self.const_cnt);
-                    self.const_cnt += 1;
-                    let value_of_st = self.op(
-                        public,
-                        Operation(
-                            OperationType::Native(NativeOperation::NewEntry),
-                            vec![OperationArg::Entry(k.clone(), v.clone())],
-                        ),
-                    )?;
+                    let value_of_st = self.literal(public, v)?;
                     *arg = OperationArg::Statement(value_of_st.clone());
                     st_args.push(value_of_st.1[0].clone())
                 }
@@ -648,6 +640,29 @@ impl MainPodBuilder {
 
         self.statements.push(st);
         Ok(self.statements[self.statements.len() - 1].clone())
+    }
+
+    /// Convenience method for introducing public constants.
+    pub fn pub_literal<V: Clone + Into<Value>>(&mut self, v: &V) -> Result<Statement> {
+        self.literal(true, v)
+    }
+
+    /// Convenience method for introducing private constants.
+    pub fn priv_literal<V: Clone + Into<Value>>(&mut self, v: &V) -> Result<Statement> {
+        self.literal(false, v)
+    }
+
+    fn literal<V: Clone + Into<Value>>(&mut self, public: bool, v: &V) -> Result<Statement> {
+        let v: Value = v.clone().into();
+        let k = format!("c{}", self.const_cnt);
+        self.const_cnt += 1;
+        self.op(
+            public,
+            Operation(
+                OperationType::Native(NativeOperation::NewEntry),
+                vec![OperationArg::Entry(k.clone(), v)],
+            ),
+        )
     }
 
     pub fn reveal(&mut self, st: &Statement) {
