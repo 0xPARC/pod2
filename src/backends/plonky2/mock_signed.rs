@@ -44,6 +44,12 @@ pub struct MockSignedPod {
     dict: Dictionary,
 }
 
+impl MockSignedPod {
+    pub fn new(id: PodId, signature: String, dict: Dictionary) -> Self {
+        Self { id, signature, dict }
+    }
+}
+
 impl Pod for MockSignedPod {
     fn verify(&self) -> bool {
         // Verify type

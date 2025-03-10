@@ -6,10 +6,10 @@ use itertools::Itertools;
 use std::collections::HashMap;
 use std::convert::From;
 use std::{fmt, hash as h};
+use containers::{Array, Dictionary, Set};
 
 use crate::middleware::{
     self,
-    containers::{Array, Dictionary, Set},
     hash_str, Hash, MainPodInputs, NativeOperation, NativePredicate, Params, PodId, PodProver,
     PodSigner, SELF,
 };
@@ -18,6 +18,8 @@ use crate::middleware::{OperationType, Predicate, KEY_SIGNER, KEY_TYPE};
 mod custom;
 mod operation;
 mod statement;
+mod serialization;
+pub mod containers;
 pub use custom::*;
 pub use operation::*;
 pub use statement::*;
@@ -69,9 +71,9 @@ impl From<&Value> for middleware::Value {
             Value::String(s) => hash_str(s).value(),
             Value::Int(v) => middleware::Value::from(*v),
             Value::Bool(b) => middleware::Value::from(*b as i64),
-            Value::Dictionary(d) => d.commitment().value(),
-            Value::Set(s) => s.commitment().value(),
-            Value::Array(a) => a.commitment().value(),
+            Value::Dictionary(d) => d.middleware_dict().commitment().value(),
+            Value::Set(s) => s.middleware_set().commitment().value(),
+            Value::Array(a) => a.middleware_array().commitment().value(),
             Value::Raw(v) => *v,
         }
     }
@@ -100,9 +102,9 @@ impl fmt::Display for Value {
             Value::String(s) => write!(f, "\"{}\"", s),
             Value::Int(v) => write!(f, "{}", v),
             Value::Bool(b) => write!(f, "{}", b),
-            Value::Dictionary(d) => write!(f, "dict:{}", d.commitment()),
-            Value::Set(s) => write!(f, "set:{}", s.commitment()),
-            Value::Array(a) => write!(f, "arr:{}", a.commitment()),
+            Value::Dictionary(d) => write!(f, "dict:{}", d.middleware_dict().commitment()),
+            Value::Set(s) => write!(f, "set:{}", s.middleware_set().commitment()),
+            Value::Array(a) => write!(f, "arr:{}", a.middleware_array().commitment()),
             Value::Raw(v) => write!(f, "{}", v),
         }
     }
