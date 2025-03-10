@@ -10,6 +10,7 @@
 - [The backend structure of a POD]()
   - [Backend types](./backendtypes.md)
   - [MerkleTree](./merkletree.md)
+  - [Signature](./signature.md)
 - [Deductions](./deductions.md)
   - [Statements](./statements.md)
     - [Statements involving compound types and Merkle trees](./merklestatements.md)

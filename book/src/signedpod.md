@@ -5,7 +5,7 @@ A SignedPod consists of the following fields:
 	- it can only contain [`ValueOf` statements](./statements.md).
 	- the Signer's public key is one of the key-values in the `kvs`.
 - `id`: the Root of the `kvs` MerkleTree
-- `signature`: a signature over the `id`
+- `signature`: a [signature](./signature.md) over the `id`
 - `signer`: the public key attached to the digital signature `signature`
 - `type`: the constant `SIGNATURE`
 
