@@ -10,6 +10,7 @@
 - [The backend structure of a POD]()
   - [Backend types](./backendtypes.md)
   - [MerkleTree](./merkletree.md)
+  - [Example of a custom statement using Merkle trees](./merkleexample.md)
 - [Deductions](./deductions.md)
   - [Statements](./statements.md)
     - [Statements involving compound types and Merkle trees](./merklestatements.md)
@@ -23,6 +24,7 @@
   - [SignedPOD](./signedpod.md)
   - [MainPOD](./mainpod.md)
 - [Examples](./examples.md)
+  - [Average income](./average.md)
 
 # Architecture
 - [Architecture](./architecture.md)
