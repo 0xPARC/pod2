@@ -4,8 +4,9 @@ use serde::ser::{SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
 
 use crate::backends::plonky2::mock_signed::MockSignedPod;
-use crate::frontend::containers::{Array, Dictionary, Set};
-use crate::middleware::{self, PodId, F};
+use crate::frontend::containers::Dictionary;
+use crate::middleware::{PodId, F};
+use crate::middleware;
 use plonky2::field::types::Field;
 
 use super::SignedPod;
@@ -26,10 +27,6 @@ impl Serialize for SignedPod {
                 .collect::<HashMap<String, &Value>>(),
         )?;
 
-        let signer = match self.kvs.get("_signer").unwrap() {
-            Value::Raw(s) => s,
-            _ => panic!("_signer must be a raw value"),
-        };
         let signature = self.pod.serialized_proof();
 
         state.serialize_field("proof", &signature)?;
@@ -107,12 +104,11 @@ where
 mod tests {
     use crate::{
         backends::plonky2::mock_signed::MockSigner,
-        frontend::{containers::Dictionary, SignedPodBuilder},
+        frontend::{containers::{Dictionary, Array, Set}, SignedPodBuilder},
         middleware::Params,
     };
 
     use super::*;
-    use serde_json::json;
 
     #[test]
     fn test_value_serialization() {
@@ -139,12 +135,13 @@ mod tests {
         let mut builder = SignedPodBuilder::new(&Params::default());
         builder.insert("name", "test");
         builder.insert("age", 30);
+        builder.insert("very_large_int", 1152921504606846976);
         builder.insert(
-            "map",
+            "a_dict_containing_one_key",
             Value::Dictionary(Dictionary::new(HashMap::from([
                 ("foo".to_string(), Value::Int(123)),
                 (
-                    "array".to_string(),
+                    "an_array_containing_three_ints".to_string(),
                     Value::Array(Array::new(vec![
                         Value::Int(1),
                         Value::Int(2),
@@ -152,7 +149,7 @@ mod tests {
                     ])),
                 ),
                 (
-                    "set".to_string(),
+                    "a_set_containing_two_strings".to_string(),
                     Value::Set(Set::new(vec![
                         Value::Array(Array::new(vec![
                             Value::String("foo".to_string()),

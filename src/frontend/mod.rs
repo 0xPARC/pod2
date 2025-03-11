@@ -39,17 +39,30 @@ pub enum PodClass {
 pub struct Origin(pub PodClass, pub PodId);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", content = "value")]
 pub enum Value {
-    String(String),
+    // Serde cares about the order of the enum variants, with untagged variants
+    // appearing at the end.
+    // Variants without "untagged" will be serialized as "tagged" values by
+    // default, meaning that a Set appears in JSON as {"Set":[...]}
+    // and not as [...]
+    // Arrays, Strings and Booleans are untagged, as there is a natural JSON
+    // representation for them that is unambiguous to deserialize and is fully
+    // compatible with the semantics of the POD types.
+    // As JSON integers do not specify precision, and JavaScript is limited to
+    // 53-bit precision for integers, integers are represented as tagged
+    // strings, with a custom serializer and deserializer.
+    Set(Set),
+    Dictionary(Dictionary),
     #[serde(serialize_with = "serialize_i64", deserialize_with = "deserialize_i64")]
     Int(i64),
-    Bool(bool),
-    Dictionary(Dictionary),
-    Set(Set),
-    Array(Array),
     #[serde(serialize_with = "serialize_raw", deserialize_with = "deserialize_raw")]
     Raw(middleware::Value),
+    #[serde(untagged)]
+    Array(Array),
+    #[serde(untagged)]
+    String(String),
+    #[serde(untagged)]
+    Bool(bool),
 }
 
 impl From<&str> for Value {
