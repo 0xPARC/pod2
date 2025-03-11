@@ -35,6 +35,8 @@ The following table summarises the natively-supported statements, where we write
 | 8    | `SumOf`       | `ak1`, `ak2`, `ak3` | `value_of(ak1) = value_of(ak2) + value_of(ak3)`                   |
 | 9    | `ProductOf`   | `ak1`, `ak2`, `ak3` | `value_of(ak1) = value_of(ak2) * value_of(ak3)`                   |
 | 10   | `MaxOf`       | `ak1`, `ak2`, `ak3` | `value_of(ak1) = max(value_of(ak2), value_of(ak3))`               |
+| 11   | `IsDefined` | `ak` | the anchored key `ak` has been assigned a value |
+| 12   | `IsInt` | `ak` | the anchored key `ak` has been assigned an integer value |
 
 ### Frontend statements
 

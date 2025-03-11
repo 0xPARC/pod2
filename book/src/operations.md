@@ -3,7 +3,119 @@ The mechanism by which statements are derived is furnished by *operations*. Roug
 
 More precisely, an operation is a code (or, in the frontend, string identifier) followed by 0 or more arguments. These arguments may consist of up to three statements, up to one key-value pair and up to one Merkle proof.
 
-The following table summarises the natively-supported operations:
+The following tables summarize the natively-supported operations:
+
+Operations that produce new entries:
+| Identifier | Args | Condition | Output |
+| -- | -- | -- | -- |
+| `NewEntryFromValueOf` | - | | `ValueOf(new_ak, value)`, where `new_ak` has key `key` and origin ID 1, and `key` has not yet been used |
+| `NewEntryFromEq` | - | | `Eq(new_ak, old_ak)`, where `new_ak` has key `key` and origin ID 1, and `key` has not yet been used |
+| `NewEntryFromSum` | `IsInt(old_ak1), IsInt(old_ak2)` | | `SumOf(new_ak, old_ak1, old_ak2)`, where `new_ak` has key `key` and origin ID 1, and `key` has not yet been used |
+| `NewEntryFromDiff` | `IsInt(old_ak1), IsInt(old_ak2)` | | `SumOf(old_ak1, new_ak, old_ak2)`, where `new_ak` has key `key` and origin ID 1, and `key` has not yet been used |
+| `NewEntryFromProduct` | `IsInt(old_ak1), IsInt(old_ak2)` | | `ProductOf(new_ak, old_ak1, old_ak2)`, where `new_ak` has key `key` and origin ID 1, and `key` has not yet been used |
+| `NewEntryFromMax` | `IsInt(old_ak1), IsInt(old_ak2)` | | `MaxOf(new_ak, old_ak1, old_ak2)`, where `new_ak` has key `key` and origin ID 1, and `key` has not yet been used |
+
+Copying statements, and the substitution principle of equality:
+| Identifier | Args | Condition | Output |
+| -- | -- | -- | -- |
+| `CopyStatement` | `AnyStatement(args...)` | (copy the same statement) | `AnyStatement(args...)` |
+| `SubstituteEqual` | `Eq(ak1, ak2)`, `AnyStatement(old_args...)` | `new_args` is the same as `old_args` except that one instance of `ak1` is replaced by `ak2` | `AnyStatement(new_args...)` |
+
+Further properties of equality:
+| Identifier | Args | Condition | Output |
+| -- | -- | -- | -- |
+| `ReflexiveEquality` | | `IsDefined(x)` | `Eq(x, x)`, where `x` is any anchored key |
+| `SymmetricEquality` | `Eq(x, y)` | | `Eq(y, x)`, where `x` and `y` are any anchored keys |
+
+Notes:
+- `SymmetricEquality` is not required: it could be derived from `ReflexiveEquality` and `SubstituteEqual`.  We include it because we prefer to have one statement than two.
+- Transitivity (if `Eq(x, y)` and `Eq(y, z)`, then `Eq(x, z)`) is not included, because it is nothing more than a special case of `SubstituteEqual`.
+
+Other ways to prove equality:
+| Identifier | Args | Condition | Output |
+| -- | -- | -- | -- |
+| `EqFromValues` | `ValueOf(ak1, val1), ValueOf(ak2, val2)` | `Eq(ak1, ak2)` if `val1 == val2` |
+| `EqFromSum` | `SumOf(x, ak1, ak2), SumOf(y, ak1, ak2)` | `Eq(x, y)` |
+| `EqFromDiff` | `SumOf(ak1, x, ak2), SumOf(ak1, y, ak2)` | `Eq(x, y)` |
+| `EqFromProduct` | `ProductOf(x, ak1, ak2), SumOf(y, ak1, ak2)` | `Eq(x, y)` |
+| `EqFromMax` | `MaxOf(x, ak1, ak2), SumOf(y, ak1, ak2)` | `Eq(x, y)` |
+
+Statements directly from values:
+| Identifier | Args | Condition | Output |
+| -- | -- | -- | -- |
+| `IsDefinedFromValue` | `ValueOf(ak1, value1)` | | `IsDefined(ak1)` |
+| `IsIntFromValue` | `ValueOf(ak1, value1)` | `value1` is in the integer range | `IsInt(ak1)` |
+| `EqFromValues`| `ValueOf(ak1, value1), ValueOf(ak2, value2)` | `value1 = value2` | `Eq(ak1, ak2) |
+| `NeqFromValues`| `ValueOf(ak1, value1), ValueOf(ak2, value2)` | `value1 != value2` | `Neq(ak1, ak2) |
+| `GtFromValues`| `ValueOf(ak1, value1), ValueOf(ak2, value2)` | `value1 > value2` | `Gt(ak1, ak2) |
+| `EqFromValues`| `ValueOf(ak1, value1), ValueOf(ak2, value2)` | `value1 >= value2` | `Geq(ak1, ak2) |
+| `SumOfFromValues`  | `ValueOf(ak1, value1)`, `ValueOf(ak2, value2)`, `ValueOf(ak3, value3)`    |  `value1 = value2 + value3`, `value1`, `value2`, `value3` are in the integer range     | `SumOf(ak1, ak2, ak3)` |
+| `ProductOfFromValues`  | `ValueOf(ak1, value1)`, `ValueOf(ak2, value2)`, `ValueOf(ak3, value3)`    |  `value1 = value2 * value3`, `value1`, `value2`, `value3` are in the integer range     | `ProductOf(ak1, ak2, ak3)` |
+| `MaxOfFromValues`  | `ValueOf(ak1, value1)`, `ValueOf(ak2, value2)`, `ValueOf(ak3, value3)`    |  `value1 = max(value2, value3)`, `value1`, `value2`, `value3` are in the integer range     | `MaxOf(ak1, ak2, ak3)` |
+
+Implications about inequalities:
+| Identifier | Args | Condition | Output |
+| -- | -- | -- | -- |
+| `GeqFromGt` | `Gt(ak1, ak2)` | | `Geq(ak1, ak2)` |
+| `NeqFromGt` | `Gt(ak1, ak2)` | | `Neq(ak1, ak2)` |
+| `GeqFromEq` | `Eq(ak1, ak2)` | | `Geq(ak1, ak2)` |
+| `SymmetricNeq` | `Neq(ak1, ak2)` | | `Neq(ak2, ak1)` |
+| `GtFromGeqAndNeq` | `Geq(ak1, ak2), Neq(ak1, ak2)` | | `Gt(ak1, ak2)` |
+
+Transitivity for inequalities:
+| Identifier | Args | Condition | Output |
+| -- | -- | -- | -- |
+| `TransitiveGtGeq` | `Gt(ak1, ak2), Geq(ak2, ak3)` | | `Gt(ak1, ak3)` |
+| `TransitiveGeqGt` | `Geq(ak1, ak2), Gt(ak2, ak3)` | | `Gt(ak1, ak3)` |
+| `TransitiveGeqGeq` | `Geq(ak1, ak2), Geq(ak2, ak3)` | | `Geq(ak1, ak3)` |
+
+
+Deducing `IsInt` and `IsDefined`:
+| Identifier | Args | Condition | Output |
+| -- | -- | -- | -- |
+| `IsDefinedFromIsInt` | `IsInt(ak1)` | | `IsDefined(ak1)` |
+| `IsIntFromEq` | `Eq(x, y), IsInt(y)` | | `IsInt(x)` |
+| `IsIntFromGt1` | `Gt(x, y)` | | `IsInt(x)` |
+| `IsIntFromGt2` | `Gt(x, y)` | | `IsInt(y)` |
+| `IsIntFromGeq1` | `Geq(x, y)` | | `IsInt(x)` |
+| `IsIntFromGeq2` | `Geq(x, y)` | | `IsInt(y)` |
+| `IsIntFromNeq` | `Neq(x, y)` | | `IsInt(x)` |
+| `IsIntFromSum` | `SumOf(x, y, z)` | (note that SumOf implies that all its arguments are ints) | `IsInt(x)` |
+| `IsIntFromDiff` | `SumOf(x, y, z)` | | `IsInt(y)` |
+| `IsIntFromProduct` | `ProductOf(x, y, z)` | (same with ProductOf) | `IsInt(x)` |
+| `IsIntFromQuotient` | `ProductOf(x, y, z)` | | `IsInt(y)` |
+| `IsIntFromMax` | `MaxOf(x, y, z)` |  | `IsInt(x)` |
+| `IsIntFromMax2` | `MaxOf(x, y, z)` |  | `IsInt(y)` |
+| `IsIntFromMax3` | `MaxOf(x, y, z)` |  | `IsInt(z)` |
+
+Ring axioms
+| Identifier | Args | Condition | Output |
+| -- | -- | -- | -- |
+| `ZeroAddition` | `IsInt(x)` | `x` is an anchored key | `SumOf(x, x, 0)` |
+| `CommutativeAddition` | `SumOf(s1, x, y), SumOf(s2, y, x)` | | `Eq(s1, s2)` |
+| `AssociativeAddition` | `SumOf(xy, x, y), SumOf(s1, xy, z), SumOf(yz, y, z), SumOf(s2, x, yz)` | | `Eq(s1, s2)` |
+| `ZeroMultiplication` | `IsInt(x)` | `x` is an anchored key | `ProductOf(0, 0, x)` |
+| `OneMultiplication` | `IsInt(x)` | `x` is an anchored key | `ProductOf(x, 1, x)` |
+| `CommutativeMultiplication` | `ProductOf(p1, x, y), ProductOf(p2, y, x)` | | `Eq(p1, p2)` |
+| `AssociativeMultiplication` | `ProductOf(xy, x, y), ProductOf(p1, xy, z), ProductOf(yz, y, z), ProductOf(p2, x, yz)` | | `Eq(p1, p2)` |
+| `Distributive` | `SumOf(yplusz, y, z), ProductOf(res1, x, yplusz), ProductOf(xy, x, y), ProductOf(xz, x, z), SumOf(res2, xy, xz)` | | `Eq(res1, res2)` |
+
+Note: `ZeroAddition` and `ZeroMultiplication` can be derived from other statements but we include them for simplicity.
+
+Order axioms
+| Identifier | Args | Condition | Output |
+| -- | -- | -- | -- |
+| `AddGt` | `Gt(x1, y1), SumOf(x2, x1, c), SumOf(y2, y1, c)` | | `Gt(x2, y2)` |
+| `AddGeq` | `Geq(x1, y1), SumOf(x2, x1, c), SumOf(y2, y1, c)` | | `Geq(x2, y2)` |
+| `AddNeq` | `Neq(x1, y1), SumOf(x2, x1, c), SumOf(y2, y1, c)` | | `Neq(x2, y2)` |
+| `MulPosGt`  | `Gt(x1, y1), Gt(c, 0), ProductOf(x2, x1, c), ProductOf(y2, y1, c)` | | `Gt(x2, y2)` |
+| `MulPosGeq`  | `Geq(x1, y1), Geq(c, 0), ProductOf(x2, x1, c), ProductOf(y2, y1, c)` | | `Geq(x2, y2)` |
+| `MulNonzeroNeq`  | `Neq(x1, y1), Neq(c, 0), ProductOf(x2, x1, c), ProductOf(y2, y1, c)` | | `Neq(x2, y2)` |
+
+Some implications involving `MaxOf`
+
+
+the original versions...
 
 | Code | Identifier            | Args                | Condition                                                                                                             | Output                                                         |
 |------|-----------------------|---------------------|-----------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------|
