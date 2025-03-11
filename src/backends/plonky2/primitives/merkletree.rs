@@ -171,6 +171,21 @@ impl MerkleTree {
     }
 }
 
+/// Hash function for key-value pairs. Different branch pair hashes to
+/// mitigate fake proofs.
+pub fn kv_hash(key: &Value, value: Option<Value>) -> Hash {
+    value
+        .map(|v| {
+            Hash(
+                PoseidonHash::hash_no_pad(
+                    &[key.0.to_vec(), v.0.to_vec(), vec![GoldilocksField(1)]].concat(),
+                )
+                .elements,
+            )
+        })
+        .unwrap_or(Hash([GoldilocksField(0); 4]))
+}
+
 impl<'a> IntoIterator for &'a MerkleTree {
     type Item = (&'a Value, &'a Value);
     type IntoIter = Iter<'a>;
@@ -231,9 +246,7 @@ impl MerkleProof {
         }
 
         let path = keypath(max_depth, *key)?;
-        let mut h = value
-            .map(|v| Hash(PoseidonHash::hash_no_pad(&[key.0, v.0].concat()).elements))
-            .unwrap_or(Hash([GoldilocksField(0); 4]));
+        let mut h = kv_hash(key, value);
         for (i, sibling) in self.siblings.iter().enumerate().rev() {
             let input: Vec<F> = if path[i] {
                 [sibling.0, h.0].concat()
@@ -493,8 +506,7 @@ impl Leaf {
         })
     }
     fn compute_hash(&mut self) -> Hash {
-        let input: Vec<F> = [self.key.0, self.value.0].concat();
-        let h = Hash(PoseidonHash::hash_no_pad(&input).elements);
+        let h = kv_hash(&self.key, Some(self.value));
         self.hash = Some(h);
         h
     }
