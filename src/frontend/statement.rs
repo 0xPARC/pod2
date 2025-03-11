@@ -1,10 +1,10 @@
 use anyhow::{anyhow, Result};
 use std::fmt;
-
+use serde::{Deserialize, Serialize};
 use super::{AnchoredKey, SignedPod, Value};
 use crate::middleware::{self, NativePredicate, Predicate};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StatementArg {
     Literal(Value),
     Key(AnchoredKey),
@@ -19,7 +19,7 @@ impl fmt::Display for StatementArg {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Statement(pub Predicate, pub Vec<StatementArg>);
 
 impl From<(&SignedPod, &str)> for Statement {

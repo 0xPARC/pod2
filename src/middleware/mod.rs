@@ -16,6 +16,7 @@ use dyn_clone::DynClone;
 use std::any::Any;
 use std::collections::HashMap;
 use std::fmt;
+use serde::{Deserialize, Serialize};
 
 pub const SELF: PodId = PodId(SELF_ID_HASH);
 
@@ -32,7 +33,7 @@ impl fmt::Display for PodId {
 }
 
 /// AnchoredKey is a tuple containing (OriginId: PodId, key: Hash)
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AnchoredKey(pub PodId, pub Hash);
 
 impl AnchoredKey {
@@ -54,7 +55,7 @@ impl fmt::Display for AnchoredKey {
 /// An entry consists of a key-value pair.
 pub type Entry = (String, Value);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct PodId(pub Hash);
 
 impl ToFields for PodId {
@@ -77,7 +78,7 @@ impl From<PodType> for Value {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Params {
     pub max_input_signed_pods: usize,
     pub max_input_main_pods: usize,

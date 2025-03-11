@@ -20,14 +20,14 @@ use std::{fmt, hash as h};
 pub mod containers;
 mod custom;
 mod operation;
-mod serialization;
+pub mod serialization;
 mod statement;
 pub use custom::*;
 pub use operation::*;
 pub use statement::*;
 
 /// This type is just for presentation purposes.
-#[derive(Clone, Debug, Default, h::Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, h::Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PodClass {
     #[default]
     Signed,
@@ -35,7 +35,7 @@ pub enum PodClass {
 }
 
 // An Origin, which represents a reference to an ancestor POD.
-#[derive(Clone, Debug, PartialEq, Eq, h::Hash, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, h::Hash, Default, Serialize, Deserialize)]
 pub struct Origin(pub PodClass, pub PodId);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -240,7 +240,7 @@ impl SignedPod {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, h::Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, h::Hash, Serialize, Deserialize)]
 pub struct AnchoredKey(pub Origin, pub String);
 
 impl From<AnchoredKey> for middleware::AnchoredKey {

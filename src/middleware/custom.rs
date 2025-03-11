@@ -7,7 +7,7 @@ use plonky2::field::types::Field;
 
 use crate::backends::plonky2::basetypes::HASH_SIZE;
 use crate::util::hashmap_insert_no_dupe;
-
+use serde::{Deserialize, Serialize};
 use super::{
     hash_fields, AnchoredKey, Hash, NativePredicate, Params, PodId, Statement, StatementArg,
     ToFields, Value, F,
@@ -15,7 +15,7 @@ use super::{
 
 // BEGIN Custom 1b
 
-#[derive(Clone, Debug, PartialEq, Eq, h::Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, h::Hash, Serialize, Deserialize)]
 pub enum HashOrWildcard {
     Hash(Hash),
     Wildcard(usize),
@@ -59,7 +59,7 @@ impl ToFields for HashOrWildcard {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, h::Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, h::Hash, Serialize, Deserialize)]
 pub enum StatementTmplArg {
     None,
     Literal(Value),
@@ -145,7 +145,7 @@ impl fmt::Display for StatementTmplArg {
 // END
 
 /// Statement Template for a Custom Predicate
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StatementTmpl(pub Predicate, pub Vec<StatementTmplArg>);
 
 impl StatementTmpl {
@@ -199,7 +199,7 @@ impl ToFields for StatementTmpl {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CustomPredicate {
     /// NOTE: fields are not public (outside of crate) to enforce the struct instantiation through
     /// the `::and/or` methods, which performs checks on the values.
@@ -287,7 +287,7 @@ impl fmt::Display for CustomPredicate {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CustomPredicateBatch {
     pub name: String,
     pub predicates: Vec<CustomPredicate>,
@@ -324,7 +324,7 @@ impl CustomPredicateBatch {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CustomPredicateRef(pub Arc<CustomPredicateBatch>, pub usize);
 
 impl CustomPredicateRef {
@@ -383,7 +383,7 @@ impl CustomPredicateRef {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Predicate {
     Native(NativePredicate),
     BatchSelf(usize),
