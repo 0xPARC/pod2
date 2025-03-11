@@ -2,13 +2,12 @@
 //! https://0xparc.github.io/pod2/merkletree.html .
 use anyhow::{anyhow, Result};
 use plonky2::field::goldilocks_field::GoldilocksField;
-use plonky2::hash::poseidon::PoseidonHash;
-use plonky2::plonk::config::Hasher;
 use std::collections::HashMap;
 use std::fmt;
 use std::iter::IntoIterator;
 
-use crate::backends::plonky2::basetypes::{Hash, Value, F, NULL};
+use crate::backends::counter;
+use crate::backends::plonky2::basetypes::{hash_fields, Hash, Value, F, NULL};
 
 /// Implements the MerkleTree specified at
 /// https://0xparc.github.io/pod2/merkletree.html
@@ -71,6 +70,8 @@ impl MerkleTree {
     /// the tree. It returns the `value` of the leaf at the given `key`, and the
     /// `MerkleProof`.
     pub fn prove(&self, key: &Value) -> Result<(Value, MerkleProof)> {
+        counter::count_tree_proof_gen();
+
         let path = keypath(self.max_depth, *key)?;
 
         let mut siblings: Vec<Hash> = Vec::new();
@@ -96,6 +97,8 @@ impl MerkleTree {
     /// the key-value pair in the leaf reached as a result of
     /// resolving `key` as well as a `MerkleProof`.
     pub fn prove_nonexistence(&self, key: &Value) -> Result<MerkleProof> {
+        counter::count_tree_proof_gen();
+
         let path = keypath(self.max_depth, *key)?;
 
         let mut siblings: Vec<Hash> = Vec::new();
@@ -175,14 +178,7 @@ impl MerkleTree {
 /// mitigate fake proofs.
 pub fn kv_hash(key: &Value, value: Option<Value>) -> Hash {
     value
-        .map(|v| {
-            Hash(
-                PoseidonHash::hash_no_pad(
-                    &[key.0.to_vec(), v.0.to_vec(), vec![GoldilocksField(1)]].concat(),
-                )
-                .elements,
-            )
-        })
+        .map(|v| hash_fields(&[key.0.to_vec(), v.0.to_vec(), vec![GoldilocksField(1)]].concat()))
         .unwrap_or(Hash([GoldilocksField(0); 4]))
 }
 
@@ -253,7 +249,7 @@ impl MerkleProof {
             } else {
                 [h.0, sibling.0].concat()
             };
-            h = Hash(PoseidonHash::hash_no_pad(&input).elements);
+            h = hash_fields(&input);
         }
         Ok(h)
     }
@@ -319,7 +315,7 @@ impl Node {
         }
     }
 
-    /// Goes down from the current node until it encounters a terminal node,
+    /// Goes down from the current node until it encounter a terminal node,
     /// viz. a leaf or empty node, or until it reaches the maximum depth. The
     /// `siblings` parameter is used to store the siblings while going down to
     /// the leaf, if the given parameter is set to `None`, then no siblings are
@@ -365,6 +361,8 @@ impl Node {
 
     // adds the leaf at the tree from the current node (self), without computing any hash
     fn add_leaf(&mut self, lvl: usize, max_depth: usize, leaf: Leaf) -> Result<()> {
+        counter::count_tree_insert();
+
         if lvl >= max_depth {
             return Err(anyhow!("max depth reached"));
         }
@@ -480,7 +478,7 @@ impl Intermediate {
         let l_hash = self.left.compute_hash();
         let r_hash = self.right.compute_hash();
         let input: Vec<F> = [l_hash.0, r_hash.0].concat();
-        let h = Hash(PoseidonHash::hash_no_pad(&input).elements);
+        let h = hash_fields(&input);
         self.hash = Some(h);
         h
     }
@@ -599,8 +597,11 @@ pub mod tests {
         let (v, proof) = tree.prove(&Value::from(13))?;
         assert_eq!(v, Value::from(1013));
         println!("{}", proof);
+        println!("after proof generation, {}", counter::counter_get());
 
+        counter::counter_reset();
         MerkleTree::verify(32, tree.root(), &proof, &key, &value)?;
+        println!("after verify, {}", counter::counter_get());
 
         // Exclusion checks
         let key = Value::from(12);

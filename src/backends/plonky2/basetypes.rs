@@ -15,6 +15,8 @@ use std::fmt;
 
 use crate::middleware::{Params, ToFields};
 
+use crate::backends::counter;
+
 /// F is the native field we use everywhere.  Currently it's Goldilocks from plonky2
 pub type F = GoldilocksField;
 /// C is the Plonky2 config used in POD2 to work with Plonky2 recursion.
@@ -119,10 +121,14 @@ impl fmt::Display for Value {
 pub struct Hash(pub [F; HASH_SIZE]);
 
 pub fn hash_value(input: &Value) -> Hash {
-    Hash(PoseidonHash::hash_no_pad(&input.0).elements)
+    hash_fields(&input.0)
 }
+
 pub fn hash_fields(input: &[F]) -> Hash {
-    Hash(PoseidonHash::hash_no_pad(input).elements)
+    // Note: the counter counts when this method is called, but different input
+    // sizes will have different costs in-circuit.
+    counter::count_hash();
+    Hash(PoseidonHash::hash_no_pad(&input).elements)
 }
 
 impl From<Value> for Hash {
@@ -203,7 +209,7 @@ pub fn hash_str(s: &str) -> Hash {
             F::from_canonical_u64(v)
         })
         .collect();
-    Hash(PoseidonHash::hash_no_pad(&input).elements)
+    hash_fields(&input)
 }
 
 #[cfg(test)]
