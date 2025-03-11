@@ -1,16 +1,19 @@
 use std::collections::HashMap;
 
+use base64::prelude::*;
 use serde::ser::{SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
 
+use crate::backends::plonky2::mock_main::MockMainPod;
 use crate::backends::plonky2::mock_signed::MockSignedPod;
 use crate::frontend::containers::Dictionary;
-use crate::middleware::{PodId, F};
-use crate::middleware;
+use crate::frontend::Statement;
+use crate::middleware::{self, HASH_SIZE, VALUE_SIZE};
+use crate::middleware::{Hash, PodId, F};
 use plonky2::field::types::Field;
 
-use super::SignedPod;
 use super::Value;
+use super::{MainPod, SignedPod};
 
 impl Serialize for SignedPod {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -44,15 +47,58 @@ impl<'de> Deserialize<'de> for SignedPod {
         struct SignedPodHelper {
             entries: HashMap<String, Value>,
             proof: String,
+            pod_type: String,
         }
 
         let helper = SignedPodHelper::deserialize(deserializer)?;
+        if helper.pod_type != "signed" {
+            return Err(serde::de::Error::custom("pod_type is not signed"));
+        }
         let kvs = helper.entries;
         let dict = Dictionary::new(kvs.clone()).middleware_dict().clone();
         let pod = MockSignedPod::new(PodId(dict.commitment()), helper.proof, dict);
         Ok(SignedPod {
             pod: Box::new(pod),
             kvs: kvs,
+        })
+    }
+}
+
+impl Serialize for MainPod {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("MainPod", 2)?;
+        state.serialize_field("public_statements", &self.public_statements)?;
+        state.serialize_field("proof", &self.pod.serialized_proof())?;
+        state.serialize_field("pod_type", "main")?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for MainPod {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct MainPodHelper {
+            public_statements: Vec<Statement>,
+            proof: String,
+            pod_type: String,
+        }
+
+        let helper = MainPodHelper::deserialize(deserializer)?;
+        if helper.pod_type != "main" {
+            return Err(serde::de::Error::custom("pod_type is not main"));
+        }
+        let proof = String::from_utf8(BASE64_STANDARD.decode(&helper.proof).unwrap()).unwrap();
+        let pod: MockMainPod = serde_json::from_str(&proof).unwrap();
+
+        Ok(MainPod {
+            pod: Box::new(pod),
+            public_statements: helper.public_statements,
         })
     }
 }
@@ -100,12 +146,70 @@ where
     Ok(middleware::Value(v))
 }
 
+pub fn serialize_hash_tuple<S>(value: &[F; HASH_SIZE], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(&format!(
+        "{:016x}{:016x}{:016x}{:016x}",
+        value[0].0, value[1].0, value[2].0, value[3].0
+    ))
+}
+
+pub fn deserialize_hash_tuple<'de, D>(deserializer: D) -> Result<[F; HASH_SIZE], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let hex_str = String::deserialize(deserializer)?;
+    let mut v = [F::ZERO; 4];
+    for i in 0..4 {
+        let start = i * 16;
+        let end = start + 16;
+        let hex_part = &hex_str[start..end];
+        v[i] = F::from_canonical_u64(
+            u64::from_str_radix(hex_part, 16).map_err(serde::de::Error::custom)?,
+        );
+    }
+    Ok(v)
+}
+
+pub fn serialize_value_tuple<S>(value: &[F; VALUE_SIZE], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(&format!(
+        "{:016x}{:016x}{:016x}{:016x}",
+        value[0].0, value[1].0, value[2].0, value[3].0
+    ))
+}
+
+pub fn deserialize_value_tuple<'de, D>(deserializer: D) -> Result<[F; VALUE_SIZE], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let hex_str = String::deserialize(deserializer)?;
+    let mut v = [F::ZERO; VALUE_SIZE];
+    for i in 0..VALUE_SIZE {
+        let start = i * 16;
+        let end = start + 16;
+        let hex_part = &hex_str[start..end];
+        v[i] = F::from_canonical_u64(
+            u64::from_str_radix(hex_part, 16).map_err(serde::de::Error::custom)?,
+        );
+    }
+    Ok(v)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
-        backends::plonky2::mock_signed::MockSigner,
-        frontend::{containers::{Dictionary, Array, Set}, SignedPodBuilder},
-        middleware::Params,
+        backends::plonky2::{mock_main::MockProver, mock_signed::MockSigner},
+        examples::{zu_kyc_pod_builder, zu_kyc_sign_pod_builders},
+        frontend::{
+            containers::{Array, Dictionary, Set},
+            MainPodBuilder, Operation, OperationArg, SignedPodBuilder,
+        },
+        middleware::{NativeOperation, OperationType, Params},
     };
 
     use super::*;
@@ -171,5 +275,38 @@ mod tests {
         assert_eq!(pod.origin(), deserialized.origin());
         assert_eq!(pod.verify(), deserialized.verify());
         assert_eq!(pod.id(), deserialized.id())
+    }
+
+    #[test]
+    fn test_main_pod_serialization() {
+        let params = middleware::Params::default();
+
+        let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
+            zu_kyc_sign_pod_builders(&params);
+        let mut signer = MockSigner {
+            pk: "ZooGov".into(),
+        };
+        let gov_id_pod = gov_id_builder.sign(&mut signer).unwrap();
+        let mut signer = MockSigner {
+            pk: "ZooDeel".into(),
+        };
+        let pay_stub_pod = pay_stub_builder.sign(&mut signer).unwrap();
+        let mut signer = MockSigner {
+            pk: "ZooOFAC".into(),
+        };
+        let sanction_list_pod = sanction_list_builder.sign(&mut signer).unwrap();
+        let kyc_builder =
+            zu_kyc_pod_builder(&params, &gov_id_pod, &pay_stub_pod, &sanction_list_pod).unwrap();
+
+        let mut prover = MockProver {};
+        let kyc_pod = kyc_builder.prove(&mut prover, &params).unwrap();
+
+        let serialized = serde_json::to_string(&kyc_pod).unwrap();
+        println!("serialized: {}", serialized);
+        let deserialized: MainPod = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(kyc_pod.public_statements, deserialized.public_statements);
+        assert_eq!(kyc_pod.pod.id(), deserialized.pod.id());
+        assert_eq!(kyc_pod.pod.verify(), deserialized.pod.verify());
     }
 }

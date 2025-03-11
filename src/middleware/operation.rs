@@ -1,17 +1,17 @@
 use std::fmt;
-
+use serde::{Deserialize, Serialize};
 use anyhow::{anyhow, Result};
 
 use super::{CustomPredicateRef, NativePredicate, Statement, StatementArg};
 use crate::middleware::{AnchoredKey, Params, Predicate, Value, SELF};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperationType {
     Native(NativeOperation),
     Custom(CustomPredicateRef),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NativeOperation {
     None = 0,
     NewEntry = 1,

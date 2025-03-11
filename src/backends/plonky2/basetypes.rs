@@ -2,6 +2,10 @@
 //! `backend_plonky2` feature is enabled.
 //! See src/middleware/basetypes.rs for more details.
 
+use crate::frontend::serialization::{
+    deserialize_hash_tuple, deserialize_value_tuple, serialize_hash_tuple, serialize_value_tuple,
+};
+use crate::middleware::{Params, ToFields};
 use anyhow::{anyhow, Error, Result};
 use hex::{FromHex, FromHexError};
 use plonky2::field::goldilocks_field::GoldilocksField;
@@ -10,10 +14,9 @@ use plonky2::hash::poseidon::PoseidonHash;
 use plonky2::plonk::config::Hasher;
 use plonky2::plonk::config::PoseidonGoldilocksConfig;
 use plonky2::plonk::proof::Proof as Plonky2Proof;
+use serde::{Deserialize, Serialize};
 use std::cmp::{Ord, Ordering};
 use std::fmt;
-
-use crate::middleware::{Params, ToFields};
 
 use crate::backends::counter;
 
@@ -34,8 +37,14 @@ pub const EMPTY: Value = Value([F::ZERO, F::ZERO, F::ZERO, F::ZERO]);
 pub const SELF_ID_HASH: Hash = Hash([F::ONE, F::ZERO, F::ZERO, F::ZERO]);
 pub const NULL: Hash = Hash([F::ZERO, F::ZERO, F::ZERO, F::ZERO]);
 
-#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]
-pub struct Value(pub [F; VALUE_SIZE]);
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Value(
+    #[serde(
+        serialize_with = "serialize_value_tuple",
+        deserialize_with = "deserialize_value_tuple"
+    )]
+    pub [F; VALUE_SIZE],
+);
 
 impl ToFields for Value {
     fn to_fields(&self, _params: &Params) -> (Vec<F>, usize) {
@@ -117,8 +126,14 @@ impl fmt::Display for Value {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
-pub struct Hash(pub [F; HASH_SIZE]);
+#[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq, Serialize, Deserialize)]
+pub struct Hash(
+    #[serde(
+        serialize_with = "serialize_hash_tuple",
+        deserialize_with = "deserialize_hash_tuple"
+    )]
+    pub [F; HASH_SIZE],
+);
 
 pub fn hash_value(input: &Value) -> Hash {
     hash_fields(&input.0)
