@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 use super::Value;
 use crate::middleware::{
     containers::{
@@ -8,8 +10,13 @@ use crate::middleware::{
     hash_str, Value as MiddlewareValue,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Set(Vec<Value>, MiddlewareSet);
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct Set(
+    Vec<Value>,
+    #[serde(skip)]
+    MiddlewareSet,
+);
 
 impl Set {
   pub fn new(values: Vec<Value>) -> Self {
@@ -26,8 +33,23 @@ impl Set {
   }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Dictionary(HashMap<String, Value>, MiddlewareDictionary);
+impl<'de> Deserialize<'de> for Set {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let values: Vec<Value> = Vec::deserialize(deserializer)?;
+        Ok(Set::new(values))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct Dictionary(
+    HashMap<String, Value>,
+    #[serde(skip)]
+    MiddlewareDictionary
+);
 
 impl Dictionary {
     pub fn new(values: HashMap<String, Value>) -> Self {
@@ -50,8 +72,22 @@ impl Dictionary {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Array(Vec<Value>, MiddlewareArray);
+impl<'de> Deserialize<'de> for Dictionary {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let values: HashMap<String, Value> = HashMap::deserialize(deserializer)?;
+        Ok(Dictionary::new(values))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct Array(
+    Vec<Value>, 
+    #[serde(skip)]
+    MiddlewareArray);
 
 impl Array {
     pub fn new(values: Vec<Value>) -> Self {
@@ -67,5 +103,15 @@ impl Array {
 
     pub fn values(&self) -> &Vec<Value> {
         &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for Array {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let values: Vec<Value> = Vec::deserialize(deserializer)?;
+        Ok(Array::new(values))
     }
 }

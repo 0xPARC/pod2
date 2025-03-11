@@ -166,6 +166,7 @@ pub trait Pod: fmt::Debug + DynClone {
     }
     // Used for downcasting
     fn into_any(self: Box<Self>) -> Box<dyn Any>;
+    fn serialized_proof(&self) -> String;
 }
 
 // impl Clone for Box<dyn SignedPod>
@@ -192,6 +193,9 @@ impl Pod for NonePod {
     }
     fn into_any(self: Box<Self>) -> Box<dyn Any> {
         self
+    }
+    fn serialized_proof(&self) -> String {
+        "".to_string()
     }
 }
 
