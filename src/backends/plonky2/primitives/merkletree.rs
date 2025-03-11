@@ -315,7 +315,7 @@ impl Node {
         }
     }
 
-    /// Goes down from the current node until it encounter a terminal node,
+    /// Goes down from the current node until it encounters a terminal node,
     /// viz. a leaf or empty node, or until it reaches the maximum depth. The
     /// `siblings` parameter is used to store the siblings while going down to
     /// the leaf, if the given parameter is set to `None`, then no siblings are
