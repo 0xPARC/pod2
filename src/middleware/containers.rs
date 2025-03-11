@@ -160,3 +160,92 @@ impl PartialEq for Array {
     }
 }
 impl Eq for Array {}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+
+    #[test]
+    fn test_dictionary() -> Result<()> {
+        // prepare key-value entries
+        let mut kvs = HashMap::new();
+        for i in 0..8 {
+            kvs.insert(hash_value(&Value::from(i)), Value::from(1000 + i));
+        }
+
+        let dict = Dictionary::new(&kvs)?;
+
+        // get the leafs into a hashmap
+        let leafs: HashMap<Value, Value> = dict.iter().map(|(&k, &v)| (k, v)).collect();
+
+        // check that the leafs `keys` appear in the original kvs and they have
+        // the same `value`
+        for (k, v) in leafs.clone() {
+            assert_eq!(v, *leafs.get(&k).unwrap());
+        }
+
+        // reconstruct the tree from the leafs
+        let tree2 = MerkleTree::new(32, &leafs)?;
+
+        // check that the new tree has the same root as the original dict
+        assert_eq!(dict.commitment(), tree2.root());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_set() -> Result<()> {
+        // prepare set elements
+        let mut set_elems: Vec<Value> = Vec::new();
+        for i in 0..8 {
+            set_elems.push(Value::from(i));
+        }
+
+        let set = Set::new(&set_elems)?;
+
+        // get the leafs into a hashmap
+        let leafs: HashMap<Value, Value> = set.iter().map(|(&k, &v)| (k, v)).collect();
+
+        // check that the leafs `keys` appear in the original kvs and they have
+        // the same `value`
+        for (k, v) in leafs.clone() {
+            assert_eq!(v, *leafs.get(&k).unwrap());
+        }
+
+        // reconstruct the tree from the leafs
+        let tree2 = MerkleTree::new(32, &leafs)?;
+
+        // check that the new tree has the same root as the original set
+        assert_eq!(set.commitment(), tree2.root());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_array() -> Result<()> {
+        // prepare set elements
+        let mut array_elems: Vec<Value> = Vec::new();
+        for i in 0..8 {
+            array_elems.push(Value::from(i));
+        }
+
+        let array = Array::new(&array_elems)?;
+
+        // get the leafs into a hashmap
+        let leafs: HashMap<Value, Value> = array.iter().map(|(&k, &v)| (k, v)).collect();
+
+        // check that the leafs `keys` appear in the original kvs and they have
+        // the same `value`
+        for (k, v) in leafs.clone() {
+            assert_eq!(v, *leafs.get(&k).unwrap());
+        }
+
+        // reconstruct the tree from the leafs
+        let tree2 = MerkleTree::new(32, &leafs)?;
+
+        // check that the new tree has the same root as the original array
+        assert_eq!(array.commitment(), tree2.root());
+
+        Ok(())
+    }
+}
