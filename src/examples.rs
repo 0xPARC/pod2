@@ -28,13 +28,11 @@ pub fn zu_kyc_sign_pod_builders(
     pay_stub.insert("startDate", 1706367566);
 
     let mut sanction_list = SignedPodBuilder::new(params);
-    let sanctions_values = vec!["A343434340"].into_iter()
-        .map(Value::from)
-        .collect::<Vec<Value>>();
+    let sanctions_values = ["A343434340"].map(Value::from);
 
     sanction_list.insert(
         "sanctionList",
-        Value::Set(Set::new(sanctions_values))
+        Value::Set(Set::new(sanctions_values.into()))
     );
 
     (gov_id, pay_stub, sanction_list)

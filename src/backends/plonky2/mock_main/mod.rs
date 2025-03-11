@@ -485,6 +485,10 @@ impl Pod for MockMainPod {
     fn into_any(self: Box<Self>) -> Box<dyn Any> {
         self
     }
+
+    fn serialized_proof(&self) -> String {
+        "".to_string()
+    }
 }
 
 #[cfg(test)]

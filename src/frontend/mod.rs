@@ -1,27 +1,27 @@
 //! The frontend includes the user-level abstractions and user-friendly types to define and work
 //! with Pods.
 
+use crate::frontend::serialization::*;
+use crate::middleware::{
+    self, hash_str, Hash, MainPodInputs, NativeOperation, NativePredicate, Params, PodId,
+    PodProver, PodSigner, SELF,
+};
+use crate::middleware::{OperationType, Predicate, KEY_SIGNER, KEY_TYPE};
 use anyhow::{anyhow, Error, Result};
+use containers::{Array, Dictionary, Set};
 use env_logger;
 use itertools::Itertools;
 use log::error;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::convert::From;
 use std::{fmt, hash as h};
-use containers::{Array, Dictionary, Set};
 
-use crate::middleware::{
-    self,
-    hash_str, Hash, MainPodInputs, NativeOperation, NativePredicate, Params, PodId, PodProver,
-    PodSigner, SELF,
-};
-use crate::middleware::{OperationType, Predicate, KEY_SIGNER, KEY_TYPE};
-
+pub mod containers;
 mod custom;
 mod operation;
-mod statement;
 mod serialization;
-pub mod containers;
+mod statement;
 pub use custom::*;
 pub use operation::*;
 pub use statement::*;
@@ -38,14 +38,17 @@ pub enum PodClass {
 #[derive(Clone, Debug, PartialEq, Eq, h::Hash, Default)]
 pub struct Origin(pub PodClass, pub PodId);
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value")]
 pub enum Value {
     String(String),
+    #[serde(serialize_with = "serialize_i64", deserialize_with = "deserialize_i64")]
     Int(i64),
     Bool(bool),
     Dictionary(Dictionary),
     Set(Set),
     Array(Array),
+    #[serde(serialize_with = "serialize_raw", deserialize_with = "deserialize_raw")]
     Raw(middleware::Value),
 }
 
