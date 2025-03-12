@@ -53,7 +53,7 @@ pub enum Value {
     Dictionary(Dictionary),
     #[serde(serialize_with = "serialize_i64", deserialize_with = "deserialize_i64")]
     Int(i64),
-    #[serde(serialize_with = "serialize_raw", deserialize_with = "deserialize_raw")]
+    // Uses the serialization for middleware::Value:
     Raw(middleware::Value),
     #[serde(untagged)]
     Array(Array),

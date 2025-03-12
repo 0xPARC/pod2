@@ -10,7 +10,7 @@ use crate::frontend::{
     containers::{Dictionary, Set},
 };
 use crate::middleware::{Params, PodType, KEY_SIGNER, KEY_TYPE};
-use crate::middleware::{hash_str, CustomPredicateRef, NativeOperation, OperationType};
+use crate::middleware::{CustomPredicateRef, NativeOperation, OperationType};
 use crate::op;
 
 // ZuKYC

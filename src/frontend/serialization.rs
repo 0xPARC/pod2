@@ -8,8 +8,8 @@ use crate::backends::plonky2::mock_main::MockMainPod;
 use crate::backends::plonky2::mock_signed::MockSignedPod;
 use crate::frontend::containers::Dictionary;
 use crate::frontend::Statement;
-use crate::middleware::{self, HASH_SIZE, VALUE_SIZE};
-use crate::middleware::{Hash, PodId, F};
+use crate::middleware::{HASH_SIZE, VALUE_SIZE};
+use crate::middleware::{PodId, F};
 use plonky2::field::types::Field;
 
 use super::Value;
@@ -33,7 +33,7 @@ impl Serialize for SignedPod {
         let signature = self.pod.serialized_proof();
 
         state.serialize_field("proof", &signature)?;
-        state.serialize_field("pod_type", "signed")?;
+        state.serialize_field("pod_class", "signed")?;
         state.end()
     }
 }
@@ -47,12 +47,12 @@ impl<'de> Deserialize<'de> for SignedPod {
         struct SignedPodHelper {
             entries: HashMap<String, Value>,
             proof: String,
-            pod_type: String,
+            pod_class: String,
         }
 
         let helper = SignedPodHelper::deserialize(deserializer)?;
-        if helper.pod_type != "signed" {
-            return Err(serde::de::Error::custom("pod_type is not signed"));
+        if helper.pod_class != "signed" {
+            return Err(serde::de::Error::custom("pod_class is not signed"));
         }
         let kvs = helper.entries;
         let dict = Dictionary::new(kvs.clone()).middleware_dict().clone();
@@ -72,7 +72,7 @@ impl Serialize for MainPod {
         let mut state = serializer.serialize_struct("MainPod", 2)?;
         state.serialize_field("public_statements", &self.public_statements)?;
         state.serialize_field("proof", &self.pod.serialized_proof())?;
-        state.serialize_field("pod_type", "main")?;
+        state.serialize_field("pod_class", "main")?;
         state.end()
     }
 }
@@ -86,12 +86,12 @@ impl<'de> Deserialize<'de> for MainPod {
         struct MainPodHelper {
             public_statements: Vec<Statement>,
             proof: String,
-            pod_type: String,
+            pod_class: String,
         }
 
         let helper = MainPodHelper::deserialize(deserializer)?;
-        if helper.pod_type != "main" {
-            return Err(serde::de::Error::custom("pod_type is not main"));
+        if helper.pod_class != "main" {
+            return Err(serde::de::Error::custom("pod_class is not main"));
         }
         let proof = String::from_utf8(BASE64_STANDARD.decode(&helper.proof).unwrap()).unwrap();
         let pod: MockMainPod = serde_json::from_str(&proof).unwrap();
@@ -119,85 +119,59 @@ where
         .map_err(serde::de::Error::custom)
 }
 
-pub fn serialize_raw<S>(value: &middleware::Value, serializer: S) -> Result<S::Ok, S::Error>
+fn serialize_field_tuple<S, const N: usize>(value: &[F; N], serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {
     serializer.serialize_str(&format!(
         "{:016x}{:016x}{:016x}{:016x}",
-        value.0[0].0, value.0[1].0, value.0[2].0, value.0[3].0
+        value[0].0, value[1].0, value[2].0, value[3].0
     ))
 }
 
-pub fn deserialize_raw<'de, D>(deserializer: D) -> Result<middleware::Value, D::Error>
+fn deserialize_field_tuple<'de, D, const N: usize>(deserializer: D) -> Result<[F; N], D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     let hex_str = String::deserialize(deserializer)?;
-    let mut v = [F::ZERO; 4];
-    for i in 0..4 {
+    let mut v = [F::ZERO; N];
+    for i in 0..N {
         let start = i * 16;
         let end = start + 16;
         let hex_part = &hex_str[start..end];
         v[i] = F::from_canonical_u64(
-            u64::from_str_radix(hex_part, 16).map_err(serde::de::Error::custom)?,
+            u64::from_str_radix(hex_part, 16).map_err(serde::de::Error::custom)?
         );
     }
-    Ok(middleware::Value(v))
+    Ok(v)
 }
 
 pub fn serialize_hash_tuple<S>(value: &[F; HASH_SIZE], serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {
-    serializer.serialize_str(&format!(
-        "{:016x}{:016x}{:016x}{:016x}",
-        value[0].0, value[1].0, value[2].0, value[3].0
-    ))
+    serialize_field_tuple::<S, HASH_SIZE>(value, serializer)
 }
 
 pub fn deserialize_hash_tuple<'de, D>(deserializer: D) -> Result<[F; HASH_SIZE], D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let hex_str = String::deserialize(deserializer)?;
-    let mut v = [F::ZERO; 4];
-    for i in 0..4 {
-        let start = i * 16;
-        let end = start + 16;
-        let hex_part = &hex_str[start..end];
-        v[i] = F::from_canonical_u64(
-            u64::from_str_radix(hex_part, 16).map_err(serde::de::Error::custom)?,
-        );
-    }
-    Ok(v)
+    deserialize_field_tuple::<D, HASH_SIZE>(deserializer)
 }
 
 pub fn serialize_value_tuple<S>(value: &[F; VALUE_SIZE], serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {
-    serializer.serialize_str(&format!(
-        "{:016x}{:016x}{:016x}{:016x}",
-        value[0].0, value[1].0, value[2].0, value[3].0
-    ))
+    serialize_field_tuple::<S, VALUE_SIZE>(value, serializer)
 }
 
 pub fn deserialize_value_tuple<'de, D>(deserializer: D) -> Result<[F; VALUE_SIZE], D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let hex_str = String::deserialize(deserializer)?;
-    let mut v = [F::ZERO; VALUE_SIZE];
-    for i in 0..VALUE_SIZE {
-        let start = i * 16;
-        let end = start + 16;
-        let hex_part = &hex_str[start..end];
-        v[i] = F::from_canonical_u64(
-            u64::from_str_radix(hex_part, 16).map_err(serde::de::Error::custom)?,
-        );
-    }
-    Ok(v)
+    deserialize_field_tuple::<D, VALUE_SIZE>(deserializer)
 }
 
 #[cfg(test)]
@@ -207,9 +181,9 @@ mod tests {
         examples::{zu_kyc_pod_builder, zu_kyc_sign_pod_builders},
         frontend::{
             containers::{Array, Dictionary, Set},
-            MainPodBuilder, Operation, OperationArg, SignedPodBuilder,
+            SignedPodBuilder,
         },
-        middleware::{NativeOperation, OperationType, Params},
+        middleware::{self, Params},
     };
 
     use super::*;
