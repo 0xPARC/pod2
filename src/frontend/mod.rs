@@ -2,6 +2,11 @@
 //! with Pods.
 
 use crate::frontend::serialization::*;
+use crate::middleware::{
+    self, hash_str, Hash, MainPodInputs, NativeOperation, NativePredicate, Params, PodId,
+    PodProver, PodSigner, SELF,
+};
+use crate::middleware::{OperationType, Predicate, KEY_SIGNER, KEY_TYPE};
 use anyhow::{anyhow, Error, Result};
 use containers::{Array, Dictionary, Set};
 use itertools::Itertools;
@@ -9,11 +14,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::convert::From;
 use std::{fmt, hash as h};
-use crate::middleware::{
-    self, hash_str, Hash, MainPodInputs, NativeOperation, NativePredicate, Params, PodId,
-    PodProver, PodSigner, SELF,
-};
-use crate::middleware::{OperationType, Predicate, KEY_SIGNER, KEY_TYPE};
 
 pub mod containers;
 mod custom;

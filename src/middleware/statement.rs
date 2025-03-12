@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Result};
 use plonky2::field::types::Field;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use strum_macros::FromRepr;
-use serde::{Deserialize, Serialize};
 
 use super::{AnchoredKey, CustomPredicateRef, Params, Predicate, ToFields, Value, F};
 

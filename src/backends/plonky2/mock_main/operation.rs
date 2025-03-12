@@ -1,8 +1,8 @@
-use anyhow::Result;
-use std::fmt;
-use serde::{Deserialize, Serialize};
 use super::Statement;
 use crate::middleware::{self, OperationType};
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use std::fmt;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperationArg {

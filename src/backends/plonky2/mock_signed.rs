@@ -46,7 +46,11 @@ pub struct MockSignedPod {
 
 impl MockSignedPod {
     pub fn new(id: PodId, signature: String, dict: Dictionary) -> Self {
-        Self { id, signature, dict }
+        Self {
+            id,
+            signature,
+            dict,
+        }
     }
 }
 

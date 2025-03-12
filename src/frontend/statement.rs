@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Result};
-use std::fmt;
-use serde::{Deserialize, Serialize};
 use super::{AnchoredKey, SignedPod, Value};
 use crate::middleware::{self, NativePredicate, Predicate};
+use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
+use std::fmt;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StatementArg {
