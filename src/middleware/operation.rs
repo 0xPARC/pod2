@@ -1,7 +1,7 @@
-use std::fmt;
-use serde::{Deserialize, Serialize};
 use anyhow::{anyhow, Result};
 use log::error;
+use serde::{Deserialize, Serialize};
+use std::fmt;
 
 use super::{CustomPredicateRef, NativePredicate, Statement, StatementArg};
 use crate::middleware::{AnchoredKey, Params, Predicate, Value, SELF};

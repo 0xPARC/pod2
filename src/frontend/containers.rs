@@ -12,25 +12,22 @@ use crate::middleware::{
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
-pub struct Set(
-    Vec<Value>,
-    #[serde(skip)]
-    MiddlewareSet,
-);
+pub struct Set(Vec<Value>, #[serde(skip)] MiddlewareSet);
 
 impl Set {
-  pub fn new(values: Vec<Value>) -> Self {
-    let set = MiddlewareSet::new(&values.iter().map(|v| MiddlewareValue::from(v)).collect()).unwrap();
-    Self(values, set)
-  }
+    pub fn new(values: Vec<Value>) -> Self {
+        let set =
+            MiddlewareSet::new(&values.iter().map(|v| MiddlewareValue::from(v)).collect()).unwrap();
+        Self(values, set)
+    }
 
-  pub fn middleware_set(&self) -> &MiddlewareSet {
-    &self.1
-  }
+    pub fn middleware_set(&self) -> &MiddlewareSet {
+        &self.1
+    }
 
-  pub fn values(&self) -> &Vec<Value> {
-    &self.0
-  }
+    pub fn values(&self) -> &Vec<Value> {
+        &self.0
+    }
 }
 
 impl<'de> Deserialize<'de> for Set {
@@ -45,11 +42,7 @@ impl<'de> Deserialize<'de> for Set {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
-pub struct Dictionary(
-    HashMap<String, Value>,
-    #[serde(skip)]
-    MiddlewareDictionary
-);
+pub struct Dictionary(HashMap<String, Value>, #[serde(skip)] MiddlewareDictionary);
 
 impl Dictionary {
     pub fn new(values: HashMap<String, Value>) -> Self {
@@ -84,10 +77,7 @@ impl<'de> Deserialize<'de> for Dictionary {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
-pub struct Array(
-    Vec<Value>, 
-    #[serde(skip)]
-    MiddlewareArray);
+pub struct Array(Vec<Value>, #[serde(skip)] MiddlewareArray);
 
 impl Array {
     pub fn new(values: Vec<Value>) -> Self {

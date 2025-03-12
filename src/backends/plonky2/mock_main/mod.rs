@@ -1,12 +1,12 @@
 use anyhow::{anyhow, Result};
+use base64::prelude::*;
 use itertools::Itertools;
 use log::error;
 use plonky2::hash::poseidon::PoseidonHash;
 use plonky2::plonk::config::Hasher;
+use serde::{Deserialize, Serialize};
 use std::any::Any;
 use std::fmt;
-use serde::{Deserialize, Serialize};
-use base64::prelude::*;
 
 use crate::middleware::{
     self, hash_str, AnchoredKey, Hash, MainPodInputs, NativeOperation, NativePredicate, NonePod,
@@ -33,10 +33,10 @@ impl PodProver for MockProver {
 pub struct MockMainPod {
     params: Params,
     id: PodId,
- //   input_signed_pods: Vec<Box<dyn Pod>>,
- //   input_main_pods: Vec<Box<dyn Pod>>,
+    //   input_signed_pods: Vec<Box<dyn Pod>>,
+    //   input_main_pods: Vec<Box<dyn Pod>>,
     // New statements introduced by this pod
- //   input_statements: Vec<Statement>,
+    //   input_statements: Vec<Statement>,
     public_statements: Vec<Statement>,
     operations: Vec<Operation>,
     // All statements (inherited + new)
@@ -334,9 +334,9 @@ impl MockMainPod {
         Ok(Self {
             params: params.clone(),
             id,
-          //  input_signed_pods,
-          //  input_main_pods,
-          //  input_statements,
+            //  input_signed_pods,
+            //  input_main_pods,
+            //  input_statements,
             public_statements,
             statements,
             operations,

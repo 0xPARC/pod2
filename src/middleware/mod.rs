@@ -13,10 +13,10 @@ pub use statement::*;
 
 use anyhow::Result;
 use dyn_clone::DynClone;
+use serde::{Deserialize, Serialize};
 use std::any::Any;
 use std::collections::HashMap;
 use std::fmt;
-use serde::{Deserialize, Serialize};
 
 pub const SELF: PodId = PodId(SELF_ID_HASH);
 

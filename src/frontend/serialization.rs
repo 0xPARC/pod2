@@ -8,8 +8,8 @@ use crate::backends::plonky2::mock_main::MockMainPod;
 use crate::backends::plonky2::mock_signed::MockSignedPod;
 use crate::frontend::containers::Dictionary;
 use crate::frontend::Statement;
-use crate::middleware::{HASH_SIZE, VALUE_SIZE};
 use crate::middleware::{PodId, F};
+use crate::middleware::{HASH_SIZE, VALUE_SIZE};
 use plonky2::field::types::Field;
 
 use super::Value;
@@ -80,7 +80,7 @@ impl Serialize for MainPod {
         state.serialize_field("pod_class", "Main")?;
         state.serialize_field("pod_type", "Mock")?;
         state.end()
-    }   
+    }
 }
 
 impl<'de> Deserialize<'de> for MainPod {
@@ -94,7 +94,7 @@ impl<'de> Deserialize<'de> for MainPod {
             proof: String,
             pod_class: String,
             pod_type: String,
-            }
+        }
 
         let helper = MainPodHelper::deserialize(deserializer)?;
         if helper.pod_class != "Main" {
@@ -129,7 +129,10 @@ where
         .map_err(serde::de::Error::custom)
 }
 
-fn serialize_field_tuple<S, const N: usize>(value: &[F; N], serializer: S) -> Result<S::Ok, S::Error>
+fn serialize_field_tuple<S, const N: usize>(
+    value: &[F; N],
+    serializer: S,
+) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {
@@ -150,7 +153,7 @@ where
         let end = start + 16;
         let hex_part = &hex_str[start..end];
         v[i] = F::from_canonical_u64(
-            u64::from_str_radix(hex_part, 16).map_err(serde::de::Error::custom)?
+            u64::from_str_radix(hex_part, 16).map_err(serde::de::Error::custom)?,
         );
     }
     Ok(v)

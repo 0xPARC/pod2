@@ -6,11 +6,11 @@ use std::collections::HashMap;
 
 use crate::backends::plonky2::mock_signed::MockSigner;
 use crate::frontend::{
-    MainPodBuilder, Operation, OperationArg, SignedPod, SignedPodBuilder, Statement, Value,
     containers::{Dictionary, Set},
+    MainPodBuilder, Operation, OperationArg, SignedPod, SignedPodBuilder, Statement, Value,
 };
-use crate::middleware::{Params, PodType, KEY_SIGNER, KEY_TYPE};
 use crate::middleware::{CustomPredicateRef, NativeOperation, OperationType};
+use crate::middleware::{Params, PodType, KEY_SIGNER, KEY_TYPE};
 use crate::op;
 
 // ZuKYC
@@ -32,7 +32,7 @@ pub fn zu_kyc_sign_pod_builders(
 
     sanction_list.insert(
         "sanctionList",
-        Value::Set(Set::new(sanctions_values.into()))
+        Value::Set(Set::new(sanctions_values.into())),
     );
 
     (gov_id, pay_stub, sanction_list)
