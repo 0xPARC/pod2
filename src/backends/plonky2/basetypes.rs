@@ -146,6 +146,31 @@ pub fn kv_hash(key: &Value, value: Option<Value>) -> Hash {
         .unwrap_or(Hash([GoldilocksField(0); 4]))
 }
 
+// NOTE 1: think if maybe the length of the returned vector can be <256
+// (8*bytes.len()), so that we can do fewer iterations. For example, if the
+// tree.max_depth is set to 20, we just need 20 iterations of the loop, not 256.
+// NOTE 2: which approach do we take with keys that are longer than the
+// max-depth? ie, what happens when two keys share the same path for more bits
+// than the max_depth?
+/// returns the path (bit decomposition) of the given key
+pub fn keypath(max_depth: usize, k: Value) -> Result<Vec<bool>> {
+    let bytes = k.to_bytes();
+    if max_depth > 8 * bytes.len() {
+        // note that our current keys are of Value type, which are 4 Goldilocks
+        // field elements, ie ~256 bits, therefore the max_depth can not be
+        // bigger than 256.
+        Err(anyhow!(
+            "key too short (key length: {}) for the max_depth: {}",
+            8 * bytes.len(),
+            max_depth
+        ))
+    } else {
+        Ok((0..max_depth)
+            .map(|n| bytes[n / 8] & (1 << (n % 8)) != 0)
+            .collect())
+    }
+}
+
 impl From<Value> for Hash {
     fn from(v: Value) -> Self {
         Hash(v.0)

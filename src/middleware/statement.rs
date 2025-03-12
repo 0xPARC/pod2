@@ -22,9 +22,11 @@ pub enum NativePredicate {
     Branches = 8,
     Leaf = 9,
     IsNullTree = 10,
-    SumOf = 11,
-    ProductOf = 12,
-    MaxOf = 13,
+    GoesLeft = 11,
+    GoesRight = 12,
+    SumOf = 13,
+    ProductOf = 14,
+    MaxOf = 15,
 }
 
 impl ToFields for NativePredicate {
@@ -50,6 +52,8 @@ pub enum Statement {
     Branches(AnchoredKey, AnchoredKey, AnchoredKey),
     Leaf(AnchoredKey, AnchoredKey, AnchoredKey),
     IsNullTree(AnchoredKey),
+    GoesLeft(AnchoredKey, Value),
+    GoesRight(AnchoredKey, Value),
     SumOf(AnchoredKey, AnchoredKey, AnchoredKey),
     ProductOf(AnchoredKey, AnchoredKey, AnchoredKey),
     MaxOf(AnchoredKey, AnchoredKey, AnchoredKey),
@@ -74,6 +78,8 @@ impl Statement {
             Self::Branches(_, _, _) => Native(NativePredicate::Branches),
             Self::Leaf(_, _, _) => Native(NativePredicate::Leaf),
             Self::IsNullTree(_) => Native(NativePredicate::IsNullTree),
+            Self::GoesLeft(_, _) => Native(NativePredicate::GoesLeft),
+            Self::GoesRight(_, _) => Native(NativePredicate::GoesRight),
             Self::SumOf(_, _, _) => Native(NativePredicate::SumOf),
             Self::ProductOf(_, _, _) => Native(NativePredicate::ProductOf),
             Self::MaxOf(_, _, _) => Native(NativePredicate::MaxOf),
@@ -94,6 +100,8 @@ impl Statement {
             Self::Branches(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
             Self::Leaf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
             Self::IsNullTree(ak) => vec![Key(ak)],
+            Self::GoesLeft(ak, v) => vec![Key(ak), Literal(v)],
+            Self::GoesRight(ak, v) => vec![Key(ak), Literal(v)],
             Self::SumOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
             Self::ProductOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
             Self::MaxOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
@@ -174,6 +182,20 @@ impl Statement {
             Native(NativePredicate::IsNullTree) => {
                 if let StatementArg::Key(a) = args[0] {
                     Ok(Self::IsNullTree(a))
+                } else {
+                    Err(anyhow!("Incorrect statement args"))
+                }
+            }
+            Native(NativePredicate::GoesLeft) => {
+                if let (StatementArg::Key(a), StatementArg::Literal(v)) = (args[0], args[1]) {
+                    Ok(Self::GoesLeft(a, v))
+                } else {
+                    Err(anyhow!("Incorrect statement args"))
+                }
+            }
+            Native(NativePredicate::GoesRight) => {
+                if let (StatementArg::Key(a), StatementArg::Literal(v)) = (args[0], args[1]) {
+                    Ok(Self::GoesRight(a, v))
                 } else {
                     Err(anyhow!("Incorrect statement args"))
                 }

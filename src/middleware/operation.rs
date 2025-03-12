@@ -3,8 +3,12 @@ use std::fmt;
 use anyhow::{anyhow, Result};
 
 use super::{CustomPredicateRef, NativePredicate, Statement, StatementArg};
-use crate::middleware::{
-    hash_fields, kv_hash, AnchoredKey, Hash, Params, Predicate, Value, EMPTY, SELF, VALUE_SIZE,
+use crate::{
+    constants::MAX_DEPTH,
+    middleware::{
+        hash_fields, keypath, kv_hash, AnchoredKey, Hash, Params, Predicate, Value, EMPTY, SELF,
+        VALUE_SIZE,
+    },
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,10 +33,12 @@ pub enum NativeOperation {
     NotContainsFromEntries = 11,
     BranchesFromEntries = 12,
     LeafFromEntries = 13,
-    IsNullTree = 14,
-    SumOf = 15,
-    ProductOf = 16,
-    MaxOf = 17,
+    GoesLeft = 14,
+    GoesRight = 15,
+    IsNullTree = 16,
+    SumOf = 17,
+    ProductOf = 18,
+    MaxOf = 19,
 }
 
 impl OperationType {
@@ -70,6 +76,8 @@ impl OperationType {
                 NativeOperation::LeafFromEntries => Some(Predicate::Native(NativePredicate::Leaf)),
 
                 NativeOperation::IsNullTree => Some(Predicate::Native(NativePredicate::IsNullTree)),
+                NativeOperation::GoesLeft => Some(Predicate::Native(NativePredicate::GoesLeft)),
+                NativeOperation::GoesRight => Some(Predicate::Native(NativePredicate::GoesRight)),
 
                 NativeOperation::SumOf => Some(Predicate::Native(NativePredicate::SumOf)),
                 NativeOperation::ProductOf => Some(Predicate::Native(NativePredicate::ProductOf)),
@@ -98,6 +106,8 @@ pub enum Operation {
     BranchesFromEntries(Statement, Statement, Statement),
     LeafFromEntries(Statement, Statement, Statement),
     IsNullTree(Statement),
+    GoesLeft(Statement, Statement),
+    GoesRight(Statement, Statement),
     SumOf(Statement, Statement, Statement),
     ProductOf(Statement, Statement, Statement),
     MaxOf(Statement, Statement, Statement),
@@ -124,6 +134,8 @@ impl Operation {
             Self::BranchesFromEntries(_, _, _) => OT::Native(BranchesFromEntries),
             Self::LeafFromEntries(_, _, _) => OT::Native(LeafFromEntries),
             Self::IsNullTree(_) => OT::Native(IsNullTree),
+            Self::GoesLeft(_, _) => OT::Native(GoesLeft),
+            Self::GoesRight(_, _) => OT::Native(GoesRight),
             Self::SumOf(_, _, _) => OT::Native(SumOf),
             Self::ProductOf(_, _, _) => OT::Native(ProductOf),
             Self::MaxOf(_, _, _) => OT::Native(MaxOf),
@@ -148,6 +160,8 @@ impl Operation {
             Self::BranchesFromEntries(s1, s2, s3) => vec![s1, s2, s3],
             Self::LeafFromEntries(s1, s2, s3) => vec![s1, s2, s3],
             Self::IsNullTree(s) => vec![s],
+            Self::GoesLeft(s1, s2) => vec![s1, s2],
+            Self::GoesRight(s1, s2) => vec![s1, s2],
             Self::SumOf(s1, s2, s3) => vec![s1, s2, s3],
             Self::ProductOf(s1, s2, s3) => vec![s1, s2, s3],
             Self::MaxOf(s1, s2, s3) => vec![s1, s2, s3],
@@ -181,6 +195,15 @@ impl Operation {
                 (NO::NotContainsFromEntries, (Some(s1), Some(s2), None), 2) => {
                     Self::NotContainsFromEntries(s1, s2)
                 }
+                (NO::BranchesFromEntries, (Some(s1), Some(s2), Some(s3)), 3) => {
+                    Self::BranchesFromEntries(s1, s2, s3)
+                }
+                (NO::LeafFromEntries, (Some(s1), Some(s2), Some(s3)), 3) => {
+                    Self::LeafFromEntries(s1, s2, s3)
+                }
+                (NO::IsNullTree, (Some(s), None, None), 1) => Self::IsNullTree(s),
+                (NO::GoesLeft, (Some(s1), Some(s2), None), 2) => Self::GoesLeft(s1, s2),
+                (NO::GoesRight, (Some(s1), Some(s2), None), 2) => Self::GoesRight(s1, s2),
                 (NO::SumOf, (Some(s1), Some(s2), Some(s3)), 3) => Self::SumOf(s1, s2, s3),
                 (NO::ProductOf, (Some(s1), Some(s2), Some(s3)), 3) => Self::ProductOf(s1, s2, s3),
                 (NO::MaxOf, (Some(s1), Some(s2), Some(s3)), 3) => Self::MaxOf(s1, s2, s3),
@@ -254,13 +277,31 @@ impl Operation {
                 ])
             }
             Self::IsNullTree(ValueOf(ak, v)) if v == &EMPTY => Some(vec![StatementArg::Key(*ak)]),
-            Self::SumOf(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3))
+            Self::GoesLeft(ValueOf(ak, key), ValueOf(_, depth))
                 if ({
+                    let depth_index = <Value as TryInto<i64>>::try_into(*depth)? as usize;
+                    let key_bits = keypath(MAX_DEPTH, *key)?;
+                    !key_bits[depth_index]
+                }) =>
+            {
+                Some(vec![StatementArg::Key(*ak), StatementArg::Literal(*depth)])
+            }
+            Self::GoesRight(ValueOf(ak, key), ValueOf(_, depth))
+                if {
+                    let depth_index = <Value as TryInto<i64>>::try_into(*depth)? as usize;
+                    let key_bits = keypath(MAX_DEPTH, *key)?;
+                    key_bits[depth_index]
+                } =>
+            {
+                Some(vec![StatementArg::Key(*ak), StatementArg::Literal(*depth)])
+            }
+            Self::SumOf(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3))
+                if {
                     let v1: i64 = (*v1).try_into()?;
                     let v2: i64 = (*v2).try_into()?;
                     let v3: i64 = (*v3).try_into()?;
                     v1 == v2 + v3
-                }) =>
+                } =>
             {
                 Some(vec![
                     StatementArg::Key(*ak1),

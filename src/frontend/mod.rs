@@ -440,6 +440,8 @@ impl MainPodBuilder {
                 BranchesFromEntries => self.op_args_entries(public, args)?,
                 LeafFromEntries => self.op_args_entries(public, args)?,
                 IsNullTree => self.op_args_entries(public, args)?,
+                GoesLeft => self.op_args_entries(public, args)?,
+                GoesRight => self.op_args_entries(public, args)?,
                 SumOf => match (args[0].clone(), args[1].clone(), args[2].clone()) {
                     (
                         OperationArg::Statement(Statement(

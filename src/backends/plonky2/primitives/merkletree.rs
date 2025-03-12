@@ -7,7 +7,7 @@ use std::iter::IntoIterator;
 
 use crate::backends::counter;
 use crate::backends::plonky2::basetypes::{hash_fields, Hash, Value, F, NULL};
-use crate::middleware::kv_hash;
+use crate::middleware::{keypath, kv_hash};
 
 /// Implements the MerkleTree specified at
 /// https://0xparc.github.io/pod2/merkletree.html
@@ -503,30 +503,6 @@ impl Leaf {
     fn hash(&self) -> Hash {
         self.hash.unwrap()
     }
-}
-
-// NOTE 1: think if maybe the length of the returned vector can be <256
-// (8*bytes.len()), so that we can do fewer iterations. For example, if the
-// tree.max_depth is set to 20, we just need 20 iterations of the loop, not 256.
-// NOTE 2: which approach do we take with keys that are longer than the
-// max-depth? ie, what happens when two keys share the same path for more bits
-// than the max_depth?
-/// returns the path of the given key
-fn keypath(max_depth: usize, k: Value) -> Result<Vec<bool>> {
-    let bytes = k.to_bytes();
-    if max_depth > 8 * bytes.len() {
-        // note that our current keys are of Value type, which are 4 Goldilocks
-        // field elements, ie ~256 bits, therefore the max_depth can not be
-        // bigger than 256.
-        return Err(anyhow!(
-            "key to short (key length: {}) for the max_depth: {}",
-            8 * bytes.len(),
-            max_depth
-        ));
-    }
-    Ok((0..max_depth)
-        .map(|n| bytes[n / 8] & (1 << (n % 8)) != 0)
-        .collect())
 }
 
 pub struct Iter<'a> {

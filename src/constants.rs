@@ -1,1 +1,1 @@
-pub const MAX_DEPTH: usize = 32;
+pub const MAX_DEPTH: usize = 256;
