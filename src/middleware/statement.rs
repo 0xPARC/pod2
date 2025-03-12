@@ -19,9 +19,12 @@ pub enum NativePredicate {
     Lt = 5,
     Contains = 6,
     NotContains = 7,
-    SumOf = 8,
-    ProductOf = 9,
-    MaxOf = 10,
+    Branches = 8,
+    Leaf = 9,
+    IsNullTree = 10,
+    SumOf = 11,
+    ProductOf = 12,
+    MaxOf = 13,
 }
 
 impl ToFields for NativePredicate {
@@ -38,9 +41,15 @@ pub enum Statement {
     Equal(AnchoredKey, AnchoredKey),
     NotEqual(AnchoredKey, AnchoredKey),
     Gt(AnchoredKey, AnchoredKey),
+    // TODO: Remove.
     Lt(AnchoredKey, AnchoredKey),
+    // TODO: Remove.
     Contains(AnchoredKey, AnchoredKey),
+    // TODO: Remove.
     NotContains(AnchoredKey, AnchoredKey),
+    Branches(AnchoredKey, AnchoredKey, AnchoredKey),
+    Leaf(AnchoredKey, AnchoredKey, AnchoredKey),
+    IsNullTree(AnchoredKey),
     SumOf(AnchoredKey, AnchoredKey, AnchoredKey),
     ProductOf(AnchoredKey, AnchoredKey, AnchoredKey),
     MaxOf(AnchoredKey, AnchoredKey, AnchoredKey),
@@ -62,6 +71,9 @@ impl Statement {
             Self::Lt(_, _) => Native(NativePredicate::Lt),
             Self::Contains(_, _) => Native(NativePredicate::Contains),
             Self::NotContains(_, _) => Native(NativePredicate::NotContains),
+            Self::Branches(_, _, _) => Native(NativePredicate::Branches),
+            Self::Leaf(_, _, _) => Native(NativePredicate::Leaf),
+            Self::IsNullTree(_) => Native(NativePredicate::IsNullTree),
             Self::SumOf(_, _, _) => Native(NativePredicate::SumOf),
             Self::ProductOf(_, _, _) => Native(NativePredicate::ProductOf),
             Self::MaxOf(_, _, _) => Native(NativePredicate::MaxOf),
@@ -79,6 +91,9 @@ impl Statement {
             Self::Lt(ak1, ak2) => vec![Key(ak1), Key(ak2)],
             Self::Contains(ak1, ak2) => vec![Key(ak1), Key(ak2)],
             Self::NotContains(ak1, ak2) => vec![Key(ak1), Key(ak2)],
+            Self::Branches(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
+            Self::Leaf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
+            Self::IsNullTree(ak) => vec![Key(ak)],
             Self::SumOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
             Self::ProductOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
             Self::MaxOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
@@ -134,6 +149,31 @@ impl Statement {
             Native(NativePredicate::NotContains) => {
                 if let (StatementArg::Key(a0), StatementArg::Key(a1)) = (args[0], args[1]) {
                     Ok(Self::NotContains(a0, a1))
+                } else {
+                    Err(anyhow!("Incorrect statement args"))
+                }
+            }
+            Native(NativePredicate::Branches) => {
+                if let (StatementArg::Key(a0), StatementArg::Key(a1), StatementArg::Key(a2)) =
+                    (args[0], args[1], args[2])
+                {
+                    Ok(Self::Branches(a0, a1, a2))
+                } else {
+                    Err(anyhow!("Incorrect statement args"))
+                }
+            }
+            Native(NativePredicate::Leaf) => {
+                if let (StatementArg::Key(a0), StatementArg::Key(a1), StatementArg::Key(a2)) =
+                    (args[0], args[1], args[2])
+                {
+                    Ok(Self::Leaf(a0, a1, a2))
+                } else {
+                    Err(anyhow!("Incorrect statement args"))
+                }
+            }
+            Native(NativePredicate::IsNullTree) => {
+                if let StatementArg::Key(a) = args[0] {
+                    Ok(Self::IsNullTree(a))
                 } else {
                     Err(anyhow!("Incorrect statement args"))
                 }

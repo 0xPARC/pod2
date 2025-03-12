@@ -131,6 +131,21 @@ pub fn hash_fields(input: &[F]) -> Hash {
     Hash(PoseidonHash::hash_no_pad(&input).elements)
 }
 
+/// Hash function for key-value pairs. Different branch pair hashes to
+/// mitigate fake proofs.
+pub fn kv_hash(key: &Value, value: Option<Value>) -> Hash {
+    value
+        .map(|v| {
+            Hash(
+                PoseidonHash::hash_no_pad(
+                    &[key.0.to_vec(), v.0.to_vec(), vec![GoldilocksField(1)]].concat(),
+                )
+                .elements,
+            )
+        })
+        .unwrap_or(Hash([GoldilocksField(0); 4]))
+}
+
 impl From<Value> for Hash {
     fn from(v: Value) -> Self {
         Hash(v.0)

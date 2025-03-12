@@ -1,13 +1,13 @@
 //! Module that implements the MerkleTree specified at
 //! https://0xparc.github.io/pod2/merkletree.html .
 use anyhow::{anyhow, Result};
-use plonky2::field::goldilocks_field::GoldilocksField;
 use std::collections::HashMap;
 use std::fmt;
 use std::iter::IntoIterator;
 
 use crate::backends::counter;
 use crate::backends::plonky2::basetypes::{hash_fields, Hash, Value, F, NULL};
+use crate::middleware::kv_hash;
 
 /// Implements the MerkleTree specified at
 /// https://0xparc.github.io/pod2/merkletree.html
@@ -172,14 +172,6 @@ impl MerkleTree {
             state: vec![&self.root],
         }
     }
-}
-
-/// Hash function for key-value pairs. Different branch pair hashes to
-/// mitigate fake proofs.
-pub fn kv_hash(key: &Value, value: Option<Value>) -> Hash {
-    value
-        .map(|v| hash_fields(&[key.0.to_vec(), v.0.to_vec(), vec![GoldilocksField(1)]].concat()))
-        .unwrap_or(Hash([GoldilocksField(0); 4]))
 }
 
 impl<'a> IntoIterator for &'a MerkleTree {
