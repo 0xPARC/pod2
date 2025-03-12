@@ -8,18 +8,19 @@ The following tables summarize the natively-supported operations:
 Operations that produce new entries:
 | Identifier | Args | Condition | Output |
 | -- | -- | -- | -- |
-| `NewEntryFromValueOf` | - | | `ValueOf(new_ak, value)`, where `new_ak` has key `key` and origin ID 1, and `key` has not yet been used |
-| `NewEntryFromEq` | - | | `Eq(new_ak, old_ak)`, where `new_ak` has key `key` and origin ID 1, and `key` has not yet been used |
-| `NewEntryFromSum` | `IsInt(old_ak1), IsInt(old_ak2)` | | `SumOf(new_ak, old_ak1, old_ak2)`, where `new_ak` has key `key` and origin ID 1, and `key` has not yet been used |
-| `NewEntryFromDiff` | `IsInt(old_ak1), IsInt(old_ak2)` | | `SumOf(old_ak1, new_ak, old_ak2)`, where `new_ak` has key `key` and origin ID 1, and `key` has not yet been used |
-| `NewEntryFromProduct` | `IsInt(old_ak1), IsInt(old_ak2)` | | `ProductOf(new_ak, old_ak1, old_ak2)`, where `new_ak` has key `key` and origin ID 1, and `key` has not yet been used |
-| `NewEntryFromMax` | `IsInt(old_ak1), IsInt(old_ak2)` | | `MaxOf(new_ak, old_ak1, old_ak2)`, where `new_ak` has key `key` and origin ID 1, and `key` has not yet been used |
+| `*NewEntryFromValueOf` | - | | `ValueOf(new_ak, value)`, where `new_ak` has key `key` and origin ID 1, and `key` has not yet been used |
+| `*NewEntryFromEq` | - | | `Eq(new_ak, old_ak)`, where `new_ak` has key `key` and origin ID 1, and `key` has not yet been used |
+| `*NewEntryFromSum` | `IsInt(old_ak1), IsInt(old_ak2)` | | `SumOf(new_ak, old_ak1, old_ak2)`, where `new_ak` has key `key` and origin ID 1, and `key` has not yet been used |
+| `*NewEntryFromDiff` | `IsInt(old_ak1), IsInt(old_ak2)` | | `SumOf(old_ak1, new_ak, old_ak2)`, where `new_ak` has key `key` and origin ID 1, and `key` has not yet been used |
+| `*NewEntryFromProduct` | `IsInt(old_ak1), IsInt(old_ak2)` | | `ProductOf(new_ak, old_ak1, old_ak2)`, where `new_ak` has key `key` and origin ID 1, and `key` has not yet been used |
 
 Copying statements, and the substitution principle of equality:
 | Identifier | Args | Condition | Output |
 | -- | -- | -- | -- |
-| `CopyStatement` | `AnyStatement(args...)` | (copy the same statement) | `AnyStatement(args...)` |
-| `SubstituteEqual` | `Eq(ak1, ak2)`, `AnyStatement(old_args...)` | `new_args` is the same as `old_args` except that one instance of `ak1` is replaced by `ak2` | `AnyStatement(new_args...)` |
+| `*CopyStatement` | `AnyStatement(args...)` | (copy the same statement) | `AnyStatement(args...)` |
+| `*SubstituteEqual` | `Eq(ak1, ak2)`, `AnyStatement(old_args...)` | `new_args` is the same as `old_args` except that one instance of `ak1` is replaced by `ak2` | `AnyStatement(new_args...)` |
+
+Note: Since a statement can take a literal as an argument in place of an anchored key, `SubstituteEqual` should be able to take `ValueOf` in place of `Eq`, and perform the substitution in either direction...
 
 Further properties of equality:
 | Identifier | Args | Condition | Output |
@@ -34,24 +35,22 @@ Notes:
 Other ways to prove equality:
 | Identifier | Args | Condition | Output |
 | -- | -- | -- | -- |
-| `EqFromValues` | `ValueOf(ak1, val1), ValueOf(ak2, val2)` | `Eq(ak1, ak2)` if `val1 == val2` |
 | `EqFromSum` | `SumOf(x, ak1, ak2), SumOf(y, ak1, ak2)` | `Eq(x, y)` |
 | `EqFromDiff` | `SumOf(ak1, x, ak2), SumOf(ak1, y, ak2)` | `Eq(x, y)` |
-| `EqFromProduct` | `ProductOf(x, ak1, ak2), SumOf(y, ak1, ak2)` | `Eq(x, y)` |
-| `EqFromMax` | `MaxOf(x, ak1, ak2), SumOf(y, ak1, ak2)` | `Eq(x, y)` |
+| `EqFromProduct` | `ProductOf(x, ak1, ak2), ProductOf(y, ak1, ak2)` | `Eq(x, y)` |
 
 Statements directly from values:
 | Identifier | Args | Condition | Output |
 | -- | -- | -- | -- |
 | `IsDefinedFromValue` | `ValueOf(ak1, value1)` | | `IsDefined(ak1)` |
-| `IsIntFromValue` | `ValueOf(ak1, value1)` | `value1` is in the integer range | `IsInt(ak1)` |
-| `EqFromValues`| `ValueOf(ak1, value1), ValueOf(ak2, value2)` | `value1 = value2` | `Eq(ak1, ak2) |
-| `NeqFromValues`| `ValueOf(ak1, value1), ValueOf(ak2, value2)` | `value1 != value2` | `Neq(ak1, ak2) |
-| `GtFromValues`| `ValueOf(ak1, value1), ValueOf(ak2, value2)` | `value1 > value2` | `Gt(ak1, ak2) |
-| `EqFromValues`| `ValueOf(ak1, value1), ValueOf(ak2, value2)` | `value1 >= value2` | `Geq(ak1, ak2) |
-| `SumOfFromValues`  | `ValueOf(ak1, value1)`, `ValueOf(ak2, value2)`, `ValueOf(ak3, value3)`    |  `value1 = value2 + value3`, `value1`, `value2`, `value3` are in the integer range     | `SumOf(ak1, ak2, ak3)` |
-| `ProductOfFromValues`  | `ValueOf(ak1, value1)`, `ValueOf(ak2, value2)`, `ValueOf(ak3, value3)`    |  `value1 = value2 * value3`, `value1`, `value2`, `value3` are in the integer range     | `ProductOf(ak1, ak2, ak3)` |
-| `MaxOfFromValues`  | `ValueOf(ak1, value1)`, `ValueOf(ak2, value2)`, `ValueOf(ak3, value3)`    |  `value1 = max(value2, value3)`, `value1`, `value2`, `value3` are in the integer range     | `MaxOf(ak1, ak2, ak3)` |
+| `*IsIntFromValue` | `ValueOf(ak1, value1)` | `value1` is in the integer range | `IsInt(ak1)` |
+| `*EqFromValues`| `ValueOf(ak1, value1), ValueOf(ak2, value2)` | `value1 = value2` | `Eq(ak1, ak2) |
+| `*NeqFromValues`| `ValueOf(ak1, value1), ValueOf(ak2, value2)` | `value1 != value2` | `Neq(ak1, ak2) |
+| `*GtFromValues`| `ValueOf(ak1, value1), ValueOf(ak2, value2)` | `value1 > value2` | `Gt(ak1, ak2) |
+| `*GeqFromValues`| `ValueOf(ak1, value1), ValueOf(ak2, value2)` | `value1 >= value2` | `Geq(ak1, ak2) |
+| `*SumOfFromValues`  | `ValueOf(ak1, value1)`, `ValueOf(ak2, value2)`, `ValueOf(ak3, value3)`    |  `value1 = value2 + value3`, `value1`, `value2`, `value3` are in the integer range     | `SumOf(ak1, ak2, ak3)` |
+| `*ProductOfFromValues`  | `ValueOf(ak1, value1)`, `ValueOf(ak2, value2)`, `ValueOf(ak3, value3)`    |  `value1 = value2 * value3`, `value1`, `value2`, `value3` are in the integer range     | `ProductOf(ak1, ak2, ak3)` |
+
 
 Implications about inequalities:
 | Identifier | Args | Condition | Output |
@@ -61,6 +60,7 @@ Implications about inequalities:
 | `GeqFromEq` | `Eq(ak1, ak2)` | | `Geq(ak1, ak2)` |
 | `SymmetricNeq` | `Neq(ak1, ak2)` | | `Neq(ak2, ak1)` |
 | `GtFromGeqAndNeq` | `Geq(ak1, ak2), Neq(ak1, ak2)` | | `Gt(ak1, ak2)` |
+| `EqFromGeqAndGeq` | `Geq(ak1, ak2), Geq(ak2, ak1)` | | `Eq(ak1, ak2)` |
 
 Transitivity for inequalities:
 | Identifier | Args | Condition | Output |
@@ -84,9 +84,6 @@ Deducing `IsInt` and `IsDefined`:
 | `IsIntFromDiff` | `SumOf(x, y, z)` | | `IsInt(y)` |
 | `IsIntFromProduct` | `ProductOf(x, y, z)` | (same with ProductOf) | `IsInt(x)` |
 | `IsIntFromQuotient` | `ProductOf(x, y, z)` | | `IsInt(y)` |
-| `IsIntFromMax` | `MaxOf(x, y, z)` |  | `IsInt(x)` |
-| `IsIntFromMax2` | `MaxOf(x, y, z)` |  | `IsInt(y)` |
-| `IsIntFromMax3` | `MaxOf(x, y, z)` |  | `IsInt(z)` |
 
 Ring axioms
 | Identifier | Args | Condition | Output |
@@ -112,29 +109,6 @@ Order axioms
 | `MulPosGeq`  | `Geq(x1, y1), Geq(c, 0), ProductOf(x2, x1, c), ProductOf(y2, y1, c)` | | `Geq(x2, y2)` |
 | `MulNonzeroNeq`  | `Neq(x1, y1), Neq(c, 0), ProductOf(x2, x1, c), ProductOf(y2, y1, c)` | | `Neq(x2, y2)` |
 
-Some implications involving `MaxOf`
-
-
-the original versions...
-
-| Code | Identifier            | Args                | Condition                                                                                                             | Output                                                         |
-|------|-----------------------|---------------------|-----------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------|
-| 0    | `None`                |                     |                                                                                                                       | `None`                                                         |
-| 1    | `NewEntry`[^newentry] | `(key, value)`      |                                                                                                                       | `ValueOf(ak, value)`, where `ak` has key `key` and origin ID 1 |
-| 2    | `CopyStatement`       | `s`                 |                                                                                                                       |                                                                |
-| 3    | `EntryEq`             | `s1`, `s2`          | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `value1 = value2`                                           | `Eq(ak1, ak2)`                                                 |
-| 4    | `EntryNEq`            | `s1`, `s2`          | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `value1 != value2`                                          | `NEq(ak1, ak2)`                                                |
-| 5    | `EntryGt`             | `s1`, `s2`          | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `value1 > value2`                                           | `Gt(ak1, ak2)`                                                 |
-| 6    | `EntryLEq`            | `s1`, `s2`          | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `value1 <= value2`                                          | `LEq(ak1, ak2)`                                                |
-| 7    | `TransitiveEq`        | `s1`, `s2`          | `s1 = Equal(ak1, ak2)`, `s2 = Equal(ak3, ak4)`, `ak2 = ak3`                                                           | `Eq(ak1, ak4)`                                                 |
-| 8    | `GtToNEq`             | `s`                 | `s = Gt(ak1, ak2)`                                                                                                    | `NEq(ak1, ak2)`                                                |
-| 9    | `LtToNEq`             | `s`                 | `s = Lt(ak1, ak2)`                                                                                                    | `NEq(ak1, ak2)`                                                |
-| 10   | `EntryContains`       | `s1`, `s2`, `proof` | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `merkle_includes(value1, value2, proof) = true`             | `Contains(ak1, ak2)`                                           |
-| 11   | `EntrySintains`       | `s1`, `s2`, `proof` | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `merkle_excludes(value1, value2, proof) = true`             | `Sintains(ak1, ak2)`                                           |
-| 12   | `RenameContains`      | `s1`, `s2`          | `s1 = Contains(ak1, ak2)`, `s2 = Equal(ak3, ak4)`, `ak1 = ak3`                                                        | `Contains(ak4, ak2)`                                           |
-| 13   | `SumOf`               | `s1`, `s2`, `s3`    | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `s3 = ValueOf(ak3, value3)`, `value1 = value2 + value3`     | `SumOf(ak1, ak2, ak3)`                                         |
-| 14   | `ProductOf`           | `s1`, `s2`, `s3`    | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `s3 = ValueOf(ak3, value3)`, `value1 = value2 * value3`     | `ProductOf(ak1, ak2, ak3)`                                     |
-| 15   | `MaxOf`               | `s1`, `s2`, `s3`    | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `s3 = ValueOf(ak3, value3)`, `value1 = max(value2, value3)` | `MaxOf(ak1, ak2, ak3)`                                         |
 
 <!-- NOTE: should we 'uniformize' the names? eg. currently we have `EntryGt` and `GtToNEq` -->
 

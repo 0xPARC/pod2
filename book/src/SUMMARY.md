@@ -16,6 +16,7 @@
     - [Statements involving compound types and Merkle trees](./merklestatements.md)
   - [Operations](./operations.md)
     - [Simple example](./simpleexample.md)
+    - [Prove arithmetic operations](./arithmeticdeductions.md)
   - [Custom statements and custom operations](./custom.md)
     - [Defining custom predicates](./custompred.md)
     - [Custom statement example](./customexample.md)
