@@ -33,7 +33,8 @@ impl Serialize for SignedPod {
         let signature = self.pod.serialized_proof();
 
         state.serialize_field("proof", &signature)?;
-        state.serialize_field("pod_class", "signed")?;
+        state.serialize_field("pod_class", "Signed")?;
+        state.serialize_field("pod_type", "Mock")?;
         state.end()
     }
 }
@@ -48,11 +49,15 @@ impl<'de> Deserialize<'de> for SignedPod {
             entries: HashMap<String, Value>,
             proof: String,
             pod_class: String,
+            pod_type: String,
         }
 
         let helper = SignedPodHelper::deserialize(deserializer)?;
-        if helper.pod_class != "signed" {
-            return Err(serde::de::Error::custom("pod_class is not signed"));
+        if helper.pod_class != "Signed" {
+            return Err(serde::de::Error::custom("pod_class is not Signed"));
+        }
+        if helper.pod_type != "Mock" {
+            return Err(serde::de::Error::custom("pod_type is not Mock"));
         }
         let kvs = helper.entries;
         let dict = Dictionary::new(kvs.clone()).middleware_dict().clone();
@@ -72,9 +77,10 @@ impl Serialize for MainPod {
         let mut state = serializer.serialize_struct("MainPod", 2)?;
         state.serialize_field("public_statements", &self.public_statements)?;
         state.serialize_field("proof", &self.pod.serialized_proof())?;
-        state.serialize_field("pod_class", "main")?;
+        state.serialize_field("pod_class", "Main")?;
+        state.serialize_field("pod_type", "Mock")?;
         state.end()
-    }
+    }   
 }
 
 impl<'de> Deserialize<'de> for MainPod {
@@ -87,11 +93,15 @@ impl<'de> Deserialize<'de> for MainPod {
             public_statements: Vec<Statement>,
             proof: String,
             pod_class: String,
-        }
+            pod_type: String,
+            }
 
         let helper = MainPodHelper::deserialize(deserializer)?;
-        if helper.pod_class != "main" {
-            return Err(serde::de::Error::custom("pod_class is not main"));
+        if helper.pod_class != "Main" {
+            return Err(serde::de::Error::custom("pod_class is not Main"));
+        }
+        if helper.pod_type != "Mock" {
+            return Err(serde::de::Error::custom("pod_type is not Mock"));
         }
         let proof = String::from_utf8(BASE64_STANDARD.decode(&helper.proof).unwrap()).unwrap();
         let pod: MockMainPod = serde_json::from_str(&proof).unwrap();
@@ -204,7 +214,7 @@ mod tests {
     }
 
     #[test]
-    fn test_serialized_pod() {
+    fn test_serialized_signed_pod() {
         let mut entries = HashMap::new();
         entries.insert("name".to_string(), Value::String("test".to_string()));
         entries.insert("age".to_string(), Value::Int(30));
