@@ -7,13 +7,15 @@ use std::collections::HashMap;
 use std::convert::From;
 use std::{fmt, hash as h};
 
+use crate::backends::plonky2::primitives::merkletree::MerkleProof;
 use crate::middleware::{
     self,
     containers::{Array, Dictionary, Set},
     hash_str, Hash, MainPodInputs, NativeOperation, NativePredicate, Params, PodId, PodProver,
     PodSigner, SELF,
 };
-use crate::middleware::{OperationType, Predicate, KEY_SIGNER, KEY_TYPE};
+use crate::middleware::{kv_hash, OperationType, Predicate, KEY_SIGNER, KEY_TYPE};
+use crate::op;
 
 mod custom;
 mod operation;
@@ -924,6 +926,12 @@ pub mod build_utils {
             crate::op_args!($($arg),*)) };
         (not_contains, $($arg:expr),+) => { crate::frontend::Operation(
             crate::middleware::OperationType::Native(crate::middleware::NativeOperation::NotContainsFromEntries),
+            crate::op_args!($($arg),*)) };
+        (branches, $($arg:expr),+) => { crate::frontend::Operation(
+            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::BranchesFromEntries),
+            crate::op_args!($($arg),*)) };
+        (leaf, $($arg:expr),+) => { crate::frontend::Operation(
+            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::LeafFromEntries),
             crate::op_args!($($arg),*)) };
         (sum_of, $($arg:expr),+) => { crate::frontend::Operation(
             crate::middleware::OperationType::Native(crate::middleware::NativeOperation::SumOf),
