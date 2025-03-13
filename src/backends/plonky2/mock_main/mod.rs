@@ -430,10 +430,22 @@ impl Pod for MockMainPod {
                 self.operations[i]
                     .deref(&self.statements[..input_statement_offset + i])
                     .unwrap()
-                    .check(&self.params, &s.clone().try_into().unwrap())
+                    .check_and_print(&self.params, &s.clone().try_into().unwrap())
             })
             .collect::<Result<Vec<_>>>()
             .unwrap();
+        if !ids_match {
+            println!("Verification failed: POD ID is incorrect.");
+        }
+        if !has_type_statement {
+            println!("Verification failed: POD does not have type statement.");
+        }
+        if !value_ofs_unique {
+            println!("Verification failed: Repeated ValueOf");
+        }
+        if !statement_check.iter().all(|b| *b) {
+            println!("Verification failed: Statement did not check.")
+        }
         ids_match && has_type_statement && value_ofs_unique & statement_check.into_iter().all(|b| b)
     }
     fn id(&self) -> PodId {
