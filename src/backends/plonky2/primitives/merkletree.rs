@@ -9,6 +9,9 @@ use std::iter::IntoIterator;
 use crate::backends::counter;
 use crate::backends::plonky2::basetypes::{hash_fields, Hash, Value, F, NULL};
 
+// mod merkletree_circuit;
+pub use super::merkletree_circuit::*;
+
 /// Implements the MerkleTree specified at
 /// https://0xparc.github.io/pod2/merkletree.html
 #[derive(Clone, Debug)]
@@ -520,7 +523,7 @@ impl Leaf {
 // max-depth? ie, what happens when two keys share the same path for more bits
 // than the max_depth?
 /// returns the path of the given key
-fn keypath(max_depth: usize, k: Value) -> Result<Vec<bool>> {
+pub(crate) fn keypath(max_depth: usize, k: Value) -> Result<Vec<bool>> {
     let bytes = k.to_bytes();
     if max_depth > 8 * bytes.len() {
         // note that our current keys are of Value type, which are 4 Goldilocks
