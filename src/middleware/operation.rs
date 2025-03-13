@@ -347,6 +347,15 @@ impl Operation {
             .map(|(pred, st_args)| Statement::from_args(pred, st_args));
         x.transpose()
     }
+    /// Checks the given operation against a statement, and prints information if the check does not pass
+    pub fn check_and_print(&self, params: &Params, output_statement: &Statement) -> Result<bool> {
+        let valid: bool = self.check(params, output_statement)?;
+        if !valid {
+            println!("Check failed on the following statement");
+            println!("{}", output_statement);
+        }
+        Ok(valid)
+    }
     /// Checks the given operation against a statement.
     pub fn check(&self, _params: &Params, output_statement: &Statement) -> Result<bool> {
         use Statement::*;

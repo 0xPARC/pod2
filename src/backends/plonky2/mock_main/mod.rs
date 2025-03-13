@@ -430,7 +430,7 @@ impl Pod for MockMainPod {
                 self.operations[i]
                     .deref(&self.statements[..input_statement_offset + i])
                     .unwrap()
-                    .check(&self.params, &s.clone().try_into().unwrap())
+                    .check_and_print(&self.params, &s.clone().try_into().unwrap())
             })
             .collect::<Result<Vec<_>>>()
             .unwrap();

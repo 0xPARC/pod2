@@ -13,8 +13,8 @@ use crate::middleware::{keypath, kv_hash};
 /// https://0xparc.github.io/pod2/merkletree.html
 #[derive(Clone, Debug)]
 pub struct MerkleTree {
-    max_depth: usize,
-    root: Node,
+    pub max_depth: usize,
+    pub root: Node,
 }
 
 impl MerkleTree {
@@ -248,7 +248,7 @@ impl MerkleProof {
 }
 
 #[derive(Clone, Debug)]
-enum Node {
+pub enum Node {
     None,
     Leaf(Leaf),
     Intermediate(Intermediate),
@@ -285,7 +285,7 @@ impl fmt::Display for Node {
 }
 
 impl Node {
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         match self {
             Self::None => true,
             Self::Leaf(_l) => false,
@@ -299,11 +299,35 @@ impl Node {
             Self::Intermediate(n) => n.compute_hash(),
         }
     }
-    fn hash(&self) -> Hash {
+    pub fn hash(&self) -> Hash {
         match self {
             Self::None => NULL,
             Self::Leaf(l) => l.hash(),
             Self::Intermediate(n) => n.hash(),
+        }
+    }
+
+    pub fn left(&self) -> Option<&Box<Node>> {
+        match self {
+            Self::None => None,
+            Self::Leaf(_l) => None,
+            Self::Intermediate(Intermediate {
+                hash: _h,
+                left: l, 
+                right: _r
+            }) => Some(l),
+        }
+    }
+
+    pub fn right(&self) -> Option<&Box<Node>> {
+        match self {
+            Self::None => None,
+            Self::Leaf(_l) => None,
+            Self::Intermediate(Intermediate {
+                hash: _h,
+                left: _l, 
+                right: r
+            }) => Some(r),
         }
     }
 

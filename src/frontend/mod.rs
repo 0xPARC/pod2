@@ -953,6 +953,7 @@ pub mod tests {
     use super::*;
     use crate::backends::plonky2::mock_main::MockProver;
     use crate::backends::plonky2::mock_signed::MockSigner;
+    use crate::backends::plonky2::primitives::merkletree::MerkleTree;
     use crate::examples::{
         eth_dos_pod_builder, eth_friend_signed_pod_builder, great_boy_pod_full_flow,
         tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_sign_pod_builders,
@@ -1164,5 +1165,75 @@ pub mod tests {
 
         println!("{}", builder);
         println!("{}", false_pod);
+    }
+
+    #[test]
+    fn test_merkle_proofs() -> Result<()> {
+        let mut kvs = HashMap::new();
+        for i in 0..8 {
+            if i == 1 {
+                continue;
+            }
+            kvs.insert(middleware::Value::from(i), middleware::Value::from(1000 + i));
+        }
+        let key = middleware::Value::from(13);
+        let value = middleware::Value::from(1013);
+        kvs.insert(key, value);
+
+        let tree = MerkleTree::new(32, &kvs)?;
+        // when printing the tree, it should print the same tree as in
+        // https://0xparc.github.io/pod2/merkletree.html#example-2
+        println!("{}", tree);
+
+        println!("{}", tree.root());
+
+        let root: Hash = tree.root();
+        let left: Hash = (*tree.root.left().unwrap().clone()).hash();
+        let right: Hash = (*tree.root.right().unwrap().clone()).hash();
+
+        let params = Params::default();
+        let mut signed_builder = SignedPodBuilder::new(&params);
+
+        let mut builder = MainPodBuilder::new(&params);
+        let introduce_root_op = Operation(
+            OperationType::Native(NativeOperation::NewEntry),
+            vec![
+                OperationArg::Entry("root".into(), Value::Raw(middleware::Value::from(root))),
+            ]
+        );
+        let introduce_left_op = Operation(
+            OperationType::Native(NativeOperation::NewEntry),
+            vec![
+                OperationArg::Entry("left".into(), Value::Raw(middleware::Value::from(left))),
+            ]
+        );
+        let introduce_right_op = Operation(
+            OperationType::Native(NativeOperation::NewEntry),
+            vec![
+                OperationArg::Entry("right".into(), Value::Raw(middleware::Value::from(right))),
+            ]
+        );
+        let st1 = builder.op(false, introduce_root_op).unwrap();
+        let st2 = builder.op(false, introduce_left_op).unwrap();
+        let st3 = builder.op(false, introduce_right_op).unwrap();
+        
+        // verify Branches statement
+        let branches_op = Operation(
+            OperationType::Native(NativeOperation::BranchesFromEntries),
+            vec![
+                OperationArg::Statement(st1),
+                OperationArg::Statement(st2),
+                OperationArg::Statement(st3),
+            ]
+        );
+
+        let _branches_st = builder.op(true, branches_op).unwrap();
+
+        let mut prover = MockProver {};
+        let pod = builder.prove(&mut prover, &params).unwrap();
+        print!("{}", pod);
+        assert_eq!(pod.pod.verify(), true);
+
+        Ok(())
     }
 }
