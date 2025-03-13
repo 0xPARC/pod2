@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>POD2 Viewer</title>
+    <link rel="stylesheet" href="css/style.css">
+    <!-- Add D3.js for visualizations -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="js/app.js" defer></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>POD2 Viewer</h1>
+        </header>
+        
+        <div class="main-content">
+            <!-- Left Sidebar: POD List -->
+            <div class="sidebar">
+                <h2>Stored PODs</h2>
+                <div class="sidebar-buttons">
+                    <button id="refresh-pods-btn" class="btn">Refresh from Server</button>
+                    <button id="load-local-pods-btn" class="btn btn-secondary">Load from Local Storage</button>
+                    <button id="clear-storage-btn" class="btn btn-danger">Clear Storage</button>
+                </div>
+                <div id="pod-list" class="pod-list">
+                    <!-- POD items will be loaded here -->
+                </div>
+            </div>
+            
+            <!-- Main Panel: POD Viewer/Creator -->
+            <div class="content">
+                <div class="tabs">
+                    <button class="tab-btn active" data-tab="view-pod">View POD</button>
+                    <button class="tab-btn" data-tab="create-pod">Create POD</button>
+                    <button class="tab-btn" data-tab="visualize-pod">Visualize</button>
+                </div>
+                
+                <!-- View POD Tab -->
+                <div id="view-pod" class="tab-content active">
+                    <div id="pod-details">
+                        <p class="select-message">Select a POD from the sidebar to view details</p>
+                    </div>
+                </div>
+                
+                <!-- Create POD Tab -->
+                <div id="create-pod" class="tab-content">
+                    <h2>Create a Signed POD</h2>
+                    <form id="create-pod-form">
+                        <div class="form-group">
+                            <label for="signer">Signer:</label>
+                            <input type="text" id="signer" name="signer" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <h3>Entries</h3>
+                            <div id="entries-container">
+                                <!-- Dynamic entries will be added here -->
+                                <div class="entry-row">
+                                    <input type="text" class="entry-key" placeholder="Key" required>
+                                    <input type="text" class="entry-value" placeholder="Value" required>
+                                    <select class="entry-type">
+                                        <option value="string">String</option>
+                                        <option value="int">Integer</option>
+                                        <option value="bool">Boolean</option>
+                                    </select>
+                                    <button type="button" class="remove-entry-btn">✕</button>
+                                </div>
+                            </div>
+                            <button type="button" id="add-entry-btn" class="btn">Add Entry</button>
+                        </div>
+                        
+                        <button type="submit" class="btn submit-btn">Create POD</button>
+                    </form>
+                </div>
+                
+                <!-- Visualize POD Tab -->
+                <div id="visualize-pod" class="tab-content">
+                    <h2>POD Visualization</h2>
+                    <div class="visualization-controls">
+                        <button id="visualize-all-pods-btn" class="btn">Visualize All PODs</button>
+                        <select id="visualization-type">
+                            <option value="tree">Tree View</option>
+                            <option value="network">Network View</option>
+                            <option value="json">JSON Structure</option>
+                        </select>
+                    </div>
+                    <div id="visualization-container">
+                        <p class="select-message">Select a visualization type and click "Visualize All PODs"</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
