@@ -74,6 +74,19 @@ impl TryFrom<Statement> for middleware::Statement {
                 (NP::NotContains, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None), 2) => {
                     S::NotContains(ak1, ak2)
                 }
+                (NP::Branches, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), Some(SA::Key(ak3))), 3) => {
+                    S::Branches(ak1, ak2, ak3)
+                }
+                (NP::Leaf, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), Some(SA::Key(ak3))), 3) => {
+                    S::Leaf(ak1, ak2, ak3)
+                }
+                (NP::IsNullTree, (Some(SA::Key(ak)), None, None), 1) => S::IsNullTree(ak),
+                (NP::GoesLeft, (Some(SA::Key(ak)), Some(SA::Literal(depth)), None), 2) => {
+                    S::GoesLeft(ak, depth)
+                }
+                (NP::GoesRight, (Some(SA::Key(ak)), Some(SA::Literal(depth)), None), 2) => {
+                    S::GoesRight(ak, depth)
+                }
                 (NP::SumOf, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), Some(SA::Key(ak3))), 3) => {
                     S::SumOf(ak1, ak2, ak3)
                 }

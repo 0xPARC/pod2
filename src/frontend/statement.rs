@@ -1,9 +1,15 @@
 use anyhow::{anyhow, Result};
-use std::fmt;
+use std::{fmt, sync::Arc};
 
 use super::{AnchoredKey, SignedPod, Value};
-use crate::middleware::{self, NativePredicate, Predicate};
+use crate::{
+    frontend::{CustomPredicateBatchBuilder, StatementTmplBuilder},
+    middleware::{
+        self, CustomPredicateBatch, CustomPredicateRef, NativePredicate, Params, Predicate,
+    },
+};
 
+/// Frontend statement arguments are either anchored keys or values.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StatementArg {
     Literal(Value),
@@ -19,9 +25,24 @@ impl fmt::Display for StatementArg {
     }
 }
 
+/// A frontend statement is a predicate code together with a vector of
+/// arguments.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Statement(pub Predicate, pub Vec<StatementArg>);
 
+impl Statement {
+    pub fn value(&self) -> Option<Value> {
+        match (&self.0, self.1.get(1)) {
+            (Predicate::Native(NativePredicate::ValueOf), Some(StatementArg::Literal(v))) => {
+                Some(v.clone())
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Given a signed POD and a key string, we may produce the statement
+/// containing this key and its corresponding value from the KV store.
 impl From<(&SignedPod, &str)> for Statement {
     fn from((pod, key): (&SignedPod, &str)) -> Self {
         // TODO: TryFrom.
@@ -40,6 +61,8 @@ impl From<(&SignedPod, &str)> for Statement {
     }
 }
 
+/// A frontend statement may be converted to a middleware statement
+/// provided that it is well-formed.
 impl TryFrom<Statement> for middleware::Statement {
     type Error = anyhow::Error;
     fn try_from(s: Statement) -> Result<Self> {
@@ -74,6 +97,19 @@ impl TryFrom<Statement> for middleware::Statement {
                 }
                 (NP::NotContains, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None)) => {
                     MS::NotContains(ak1.into(), ak2.into())
+                }
+                (NP::Branches, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), Some(SA::Key(ak3)))) => {
+                    MS::Branches(ak1.into(), ak2.into(), ak3.into())
+                }
+                (NP::Leaf, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), Some(SA::Key(ak3)))) => {
+                    MS::Leaf(ak1.into(), ak2.into(), ak3.into())
+                }
+                (NP::IsNullTree, (Some(SA::Key(ak)), None, None)) => MS::IsNullTree(ak.into()),
+                (NP::GoesLeft, (Some(SA::Key(ak)), Some(SA::Literal(depth)), None)) => {
+                    MS::GoesLeft(ak.into(), (&depth).into())
+                }
+                (NP::GoesRight, (Some(SA::Key(ak)), Some(SA::Literal(depth)), None)) => {
+                    MS::GoesRight(ak.into(), (&depth).into())
                 }
                 (NP::SumOf, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), Some(SA::Key(ak3)))) => {
                     MS::SumOf(ak1.into(), ak2.into(), ak3.into())
@@ -111,4 +147,102 @@ impl fmt::Display for Statement {
         }
         Ok(())
     }
+}
+
+// Useful custom predicates follow.
+
+use NativePredicate as NP;
+use StatementTmplBuilder as STB;
+
+pub fn merkle_subtree_predicate(params: &Params) -> Result<Predicate> {
+    let mut builder = CustomPredicateBatchBuilder::new("merkle_subtree".into());
+
+    let merkle_subtree = Predicate::BatchSelf(3);
+
+    let merkle_subtree_base = builder.predicate_and(
+        params,
+        &["root_ori", "root_key", "node_ori", "node_key"],
+        &[],
+        &[STB::new(NP::Equal)
+            .arg(("root_ori", "root_key"))
+            .arg(("node_ori", "node_key"))],
+    )?;
+    let merkle_subtree_ind1 = builder.predicate_and(
+        params,
+        &["root_ori", "root_key", "node_ori", "node_key"],
+        &["parent_ori", "parent_key", "other_ori", "other_key"],
+        &[
+            STB::new(merkle_subtree.clone())
+                .arg(("root_ori", "root_key"))
+                .arg(("parent_ori", "parent_key")),
+            STB::new(NP::Branches)
+                .arg(("parent_ori", "parent_key"))
+                .arg(("node_ori", "node_key"))
+                .arg(("other_ori", "other_key")),
+        ],
+    )?;
+    let merkle_subtree_ind2 = builder.predicate_and(
+        params,
+        &["root_ori", "root_key", "node_ori", "node_key"],
+        &["parent_ori", "parent_key", "other_ori", "other_key"],
+        &[
+            STB::new(merkle_subtree)
+                .arg(("root_ori", "root_key"))
+                .arg(("parent_ori", "parent_key")),
+            STB::new(NP::Branches)
+                .arg(("parent_ori", "parent_key"))
+                .arg(("other_ori", "other_key"))
+                .arg(("node_ori", "node_key")),
+        ],
+    )?;
+    let _merkle_subtree_general = builder.predicate_or(
+        params,
+        &["root_ori", "root_key", "node_ori", "node_key"],
+        &[],
+        &[
+            STB::new(merkle_subtree_base)
+                .arg(("root_ori", "root_key"))
+                .arg(("node_ori", "node_key")),
+            STB::new(merkle_subtree_ind1)
+                .arg(("root_ori", "root_key"))
+                .arg(("node_ori", "node_key")),
+            STB::new(merkle_subtree_ind2)
+                .arg(("root_ori", "root_key"))
+                .arg(("node_ori", "node_key")),
+        ],
+    )?;
+    let batch = builder.finish();
+
+    Ok(Predicate::Custom(CustomPredicateRef(batch, 3)))
+}
+
+pub fn merkle_contains_predicate(params: &Params) -> Result<Predicate> {
+    let mut builder = CustomPredicateBatchBuilder::new("merkle_subtree".into());
+    let merkle_subtree = merkle_subtree_predicate(params)?;
+
+    builder.predicate_and(
+        params,
+        &[
+            "root_ori",
+            "root_key",
+            "key_ori",
+            "key_key",
+            "value_ori",
+            "value_key",
+        ],
+        &["node_ori", "node_key"],
+        &[
+            STB::new(merkle_subtree)
+                .arg(("root_ori", "root_key"))
+                .arg(("node_ori", "node_key")),
+            STB::new(NP::Leaf)
+                .arg(("node_ori", "node_key"))
+                .arg(("key_ori", "key_key"))
+                .arg(("value_ori", "value_key")),
+        ],
+    )?;
+
+    let batch = builder.finish();
+
+    Ok(Predicate::Custom(CustomPredicateRef(batch, 0)))
 }
