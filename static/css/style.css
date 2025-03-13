@@ -1,0 +1,396 @@
+:root {
+    --primary-color: #3498db;
+    --secondary-color: #2980b9;
+    --background-color: #ecf0f1;
+    --card-background: #ffffff;
+    --text-color: #2c3e50;
+    --border-color: #bdc3c7;
+    --success-color: #2ecc71;
+    --error-color: #e74c3c;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    line-height: 1.6;
+    color: var(--text-color);
+    background-color: var(--background-color);
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+header {
+    text-align: center;
+    margin-bottom: 30px;
+}
+
+header h1 {
+    color: var(--primary-color);
+}
+
+.main-content {
+    display: flex;
+    gap: 20px;
+    min-height: 80vh;
+}
+
+/* Sidebar */
+.sidebar {
+    flex-basis: 25%;
+    background-color: var(--card-background);
+    border-radius: 5px;
+    padding: 15px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+}
+
+.sidebar h2 {
+    margin-bottom: 15px;
+    font-size: 1.3rem;
+    color: var(--secondary-color);
+}
+
+.pod-list {
+    margin-top: 15px;
+}
+
+.pod-item {
+    padding: 10px;
+    margin-bottom: 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.pod-item:hover {
+    background-color: #f5f7fa;
+}
+
+.pod-item.active {
+    background-color: #e1f0fa;
+    border-color: var(--primary-color);
+}
+
+/* Main Content */
+.content {
+    flex-basis: 75%;
+    background-color: var(--card-background);
+    border-radius: 5px;
+    padding: 20px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+}
+
+/* Tabs */
+.tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 20px;
+}
+
+.tab-btn {
+    padding: 10px 20px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1rem;
+    color: var(--text-color);
+    opacity: 0.7;
+}
+
+.tab-btn:hover {
+    opacity: 1;
+}
+
+.tab-btn.active {
+    border-bottom: 3px solid var(--primary-color);
+    opacity: 1;
+    font-weight: bold;
+}
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+/* Forms */
+.form-group {
+    margin-bottom: 20px;
+}
+
+label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+}
+
+input[type="text"],
+select {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-size: 1rem;
+}
+
+/* Buttons */
+.btn {
+    padding: 8px 15px;
+    background-color: var(--primary-color);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 1rem;
+    transition: background-color 0.2s ease;
+}
+
+.btn:hover {
+    background-color: var(--secondary-color);
+}
+
+.submit-btn {
+    background-color: var(--success-color);
+    padding: 10px 20px;
+    font-size: 1.1rem;
+}
+
+.submit-btn:hover {
+    background-color: #27ae60;
+}
+
+/* Entry fields */
+.entry-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 10px;
+    align-items: center;
+}
+
+.entry-key {
+    flex: 2;
+}
+
+.entry-value {
+    flex: 3;
+}
+
+.entry-type {
+    flex: 1;
+}
+
+.remove-entry-btn {
+    background-color: var(--error-color);
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 25px;
+    height: 25px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.8rem;
+}
+
+/* POD Details */
+.pod-details-container {
+    margin-top: 20px;
+}
+
+.pod-info {
+    margin-bottom: 20px;
+    padding: 15px;
+    background-color: #f8f9fa;
+    border-radius: 5px;
+}
+
+.pod-entries {
+    border: 1px solid var(--border-color);
+    border-radius: 5px;
+}
+
+.pod-entry {
+    display: flex;
+    padding: 10px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.pod-entry:last-child {
+    border-bottom: none;
+}
+
+.entry-name {
+    font-weight: bold;
+    width: 30%;
+}
+
+.entry-value-container {
+    width: 70%;
+}
+
+.select-message {
+    text-align: center;
+    color: #7f8c8d;
+    margin-top: 50px;
+}
+
+.sidebar-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+#refresh-pods-btn, #load-local-pods-btn {
+    width: 100%;
+}
+
+.btn-secondary {
+    background-color: #95a5a6;
+}
+
+.btn-secondary:hover {
+    background-color: #7f8c8d;
+}
+
+.btn-danger {
+    background-color: #e74c3c;
+}
+
+.btn-danger:hover {
+    background-color: #c0392b;
+}
+
+/* Status messages */
+.status-message {
+    padding: 10px;
+    margin: 10px 0;
+    border-radius: 4px;
+}
+
+.success {
+    background-color: #d1f8d9;
+    color: #196619;
+    border: 1px solid #99e699;
+}
+
+.error {
+    background-color: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+}
+
+/* Visualization styles */
+.visualization-controls {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+    align-items: center;
+}
+
+#visualization-container {
+    height: 500px;
+    border: 1px solid var(--border-color);
+    border-radius: 5px;
+    padding: 10px;
+    overflow: auto;
+    position: relative;
+}
+
+.node {
+    cursor: pointer;
+}
+
+.node circle {
+    fill: var(--primary-color);
+    stroke: var(--secondary-color);
+    stroke-width: 1.5px;
+}
+
+.node text {
+    font-size: 12px;
+    font-family: sans-serif;
+}
+
+.link {
+    fill: none;
+    stroke: #ccc;
+    stroke-width: 1.5px;
+}
+
+.node-label {
+    font-size: 10px;
+}
+
+svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+.tooltip {
+    position: absolute;
+    padding: 8px;
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    pointer-events: none;
+    font-size: 12px;
+    z-index: 1000;
+    max-width: 300px;
+}
+
+.json-container {
+    font-family: monospace;
+    white-space: pre-wrap;
+    font-size: 13px;
+    line-height: 1.4;
+}
+
+.json-key {
+    color: #881391;
+}
+
+.json-value-string {
+    color: #1a5723;
+}
+
+.json-value-number {
+    color: #0000ff;
+}
+
+.json-value-boolean {
+    color: #0000ff;
+}
+
+.json-bracket {
+    color: #555;
+}
+
+.node-details {
+    position: absolute;
+    right: 10px;
+    top: 10px;
+    width: 250px;
+    background: white;
+    border: 1px solid var(--border-color);
+    border-radius: 5px;
+    padding: 10px;
+    z-index: 100;
+    font-size: 12px;
+    max-height: 300px;
+    overflow-y: auto;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+}
