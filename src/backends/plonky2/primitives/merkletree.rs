@@ -212,10 +212,10 @@ pub struct MerkleProof {
     // note: currently we don't use the `_existence` field, we would use if we merge the methods
     // `verify` and `verify_nonexistence` into a single one
     #[allow(unused)]
-    existence: bool,
-    siblings: Vec<Hash>,
+    pub(crate) existence: bool,
+    pub(crate) siblings: Vec<Hash>,
     // other_leaf is used for non-existence proofs
-    other_leaf: Option<(Value, Value)>,
+    pub(crate) other_leaf: Option<(Value, Value)>,
 }
 
 impl fmt::Display for MerkleProof {
