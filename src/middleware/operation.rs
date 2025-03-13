@@ -216,6 +216,7 @@ impl Operation {
             OperationType::Custom(cpr) => Self::Custom(cpr, args.to_vec()),
         })
     }
+
     /// Gives the output statement of the given operation, where determined
     /// A ValueOf statement is not determined by the NewEntry operation, so returns Ok(None)
     /// The outer Result is error handling
@@ -374,6 +375,31 @@ impl Operation {
             /* TODO */
             {
                 Ok(true)
+            }
+            (
+                Self::BranchesFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3)),
+                Branches(ak4, ak5, ak6),
+            ) => Ok(Hash::from(*v1) == hash_fields(&[v2.0, v3.0].concat())
+                && ak1 == ak4
+                && ak2 == ak5
+                && ak3 == ak6),
+            (
+                Self::LeafFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3)),
+                Leaf(ak4, ak5, ak6),
+            ) => Ok(Hash::from(*v1) == kv_hash(v2, Some(*v3))
+                && ak1 == ak4
+                && ak2 == ak5
+                && ak3 == ak6),
+            (Self::IsNullTree(ValueOf(ak1, v)), IsNullTree(ak2)) => Ok(v == &EMPTY && ak1 == ak2),
+            (Self::GoesLeft(ValueOf(ak1, key), ValueOf(_, depth)), GoesLeft(ak2, d)) => {
+                let depth_index = <Value as TryInto<i64>>::try_into(*depth)? as usize;
+                let key_bits = keypath(MAX_DEPTH, *key)?;
+                Ok(!key_bits[depth_index] && ak1 == ak2 && depth == d)
+            }
+            (Self::GoesRight(ValueOf(ak1, key), ValueOf(_, depth)), GoesRight(ak2, d)) => {
+                let depth_index = <Value as TryInto<i64>>::try_into(*depth)? as usize;
+                let key_bits = keypath(MAX_DEPTH, *key)?;
+                Ok(key_bits[depth_index] && ak1 == ak2 && depth == d)
             }
             (
                 Self::TransitiveEqualFromStatements(Equal(ak1, ak2), Equal(ak3, ak4)),
