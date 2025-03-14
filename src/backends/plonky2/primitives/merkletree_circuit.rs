@@ -28,24 +28,16 @@ use crate::backends::plonky2::basetypes::{
 };
 use crate::backends::plonky2::primitives::merkletree::MerkleProof;
 
-// TODO TMP, this might end up being a parameter of the proof struct
-const MAX_DEPTH: usize = 256;
-
-// TODO: think if maybe define a ValueTarget type, which to instantiate it
-// already performs the checks of length.
-
-pub struct MerkleProofCircuit {
+pub struct MerkleProofCircuit<const MAX_DEPTH: usize> {
     root: HashOutTarget,
     key: Vec<Target>,
     value: Vec<Target>,
     existence: BoolTarget,
     siblings: Vec<HashOutTarget>,
     siblings_selectors: Vec<BoolTarget>,
-    // other_key: Vec<Target>,
-    // other_value: Vec<Target>,
 }
 
-impl MerkleProofCircuit {
+impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
     /// creates the targets and defines the logic of the circuit
     fn add_targets(builder: &mut CircuitBuilder<F, D>) -> Result<Self> {
         // create the targets
@@ -60,22 +52,17 @@ impl MerkleProofCircuit {
             .map(|_| builder.add_virtual_bool_target_safe())
             .collect();
 
-        // let other_key = builder.add_virtual_targets(VALUE_SIZE);
-        // let other_value = builder.add_virtual_targets(VALUE_SIZE);
-
-        // WIP: only covers proof of existence for the moment
-        let h = compute_root_from_leaf(builder, &key, &value, &siblings, &siblings_selectors)?;
+        let h =
+            Self::compute_root_from_leaf(builder, &key, &value, &siblings, &siblings_selectors)?;
         builder.connect_hashes(h, root);
 
         Ok(Self {
             existence,
             root,
             siblings,
+            siblings_selectors,
             key,
             value,
-            // other_key,
-            // other_value,
-            siblings_selectors,
         })
     }
 
@@ -113,98 +100,110 @@ impl MerkleProofCircuit {
             pw.set_bool_target(self.siblings_selectors[i], false)?;
         }
 
-        // non-existence proof values:
-        // pw.set_target_arr(&self.other_key, &proof.other_leaf.0 .0.to_vec())?;
-        // pw.set_target_arr(&self.other_value, &proof.other_leaf.1 .0.to_vec())?;
-
         Ok(())
     }
-}
 
-fn compute_root_from_leaf(
-    builder: &mut CircuitBuilder<F, D>,
-    key: &Vec<Target>,
-    value: &Vec<Target>,
-    siblings: &Vec<HashOutTarget>,
-    siblings_selectors: &Vec<BoolTarget>,
-) -> Result<HashOutTarget> {
-    assert!(siblings.len() / HASH_SIZE < MAX_DEPTH);
-    assert_eq!(siblings_selectors.len(), MAX_DEPTH);
+    fn compute_root_from_leaf(
+        builder: &mut CircuitBuilder<F, D>,
+        key: &Vec<Target>,
+        value: &Vec<Target>,
+        siblings: &Vec<HashOutTarget>,
+        siblings_selectors: &Vec<BoolTarget>,
+    ) -> Result<HashOutTarget> {
+        assert!(siblings.len() / HASH_SIZE < MAX_DEPTH);
+        assert_eq!(siblings_selectors.len(), MAX_DEPTH);
 
-    // get key's path
-    let path: Vec<BoolTarget> = key
-        .iter()
-        .flat_map(|e| builder.split_le(*e, MAX_DEPTH / 4))
-        .collect();
+        // get key's path
+        let path = Self::keypath_target(builder, key);
+        // get leaf's hash
+        let mut h = Self::kv_hash_target(builder, key, value);
 
-    let mut h = kv_hash_target(builder, key, value);
+        let one: Target = builder.one(); // constant in-circuit
+        for (i, sibling) in siblings.iter().enumerate().rev() {
+            // to compute the hash, we want to do the following 3 steps:
+            //     Let s := path[i], then
+            //     input_1 = sibling * s + h * (1-s)
+            //     input_2 = sibling * (1-s) + h * s
+            //     new_h = hash([input_1, input_2])
 
-    let one: Target = builder.one(); // constant in-circuit
-    for (i, sibling) in siblings.iter().enumerate().rev() {
-        // to compute the hash, we want to do the following 3 steps:
-        //     Let s := path[i], then
-        //     input_1 = sibling * s + h * (1-s)
-        //     input_2 = sibling * (1-s) + h * s
-        //     new_h = hash([input_1, input_2])
+            // TODO group multiple muls in a single gate
+            let bit: Target = path[i].target;
+            let bit_inv: Target = builder.sub(one, bit);
 
-        // TODO group multiple muls in a single gate
-        let bit: Target = path[i].target;
-        let bit_inv: Target = builder.sub(one, bit);
+            let input_1_sibling: Vec<Target> = sibling
+                .elements
+                .iter()
+                .map(|e| builder.mul(*e, bit))
+                .collect();
+            let input_1_h: Vec<Target> = h
+                .elements
+                .iter()
+                .map(|e| builder.mul(*e, bit_inv))
+                .collect();
+            let input_1: Vec<Target> = (0..4)
+                .map(|j| builder.add(input_1_sibling[j], input_1_h[j]))
+                .collect();
 
-        let input_1_sibling: Vec<Target> = sibling
-            .elements
-            .iter()
-            .map(|e| builder.mul(*e, bit))
-            .collect();
-        let input_1_h: Vec<Target> = h
-            .elements
-            .iter()
-            .map(|e| builder.mul(*e, bit_inv))
-            .collect();
-        let input_1: Vec<Target> = (0..4)
-            .map(|j| builder.add(input_1_sibling[j], input_1_h[j]))
-            .collect();
+            let input_2_sibling: Vec<Target> = sibling
+                .elements
+                .iter()
+                .map(|e| builder.mul(*e, bit_inv))
+                .collect();
+            let input_2_h: Vec<Target> = h.elements.iter().map(|e| builder.mul(*e, bit)).collect();
+            let input_2: Vec<Target> = (0..4)
+                .map(|j| builder.add(input_2_sibling[j], input_2_h[j]))
+                .collect();
 
-        let input_2_sibling: Vec<Target> = sibling
-            .elements
-            .iter()
-            .map(|e| builder.mul(*e, bit_inv))
-            .collect();
-        let input_2_h: Vec<Target> = h.elements.iter().map(|e| builder.mul(*e, bit)).collect();
-        let input_2: Vec<Target> = (0..4)
-            .map(|j| builder.add(input_2_sibling[j], input_2_h[j]))
-            .collect();
+            let new_h = builder.hash_n_to_hash_no_pad::<PoseidonHash>([input_1, input_2].concat());
 
-        let new_h = builder.hash_n_to_hash_no_pad::<PoseidonHash>([input_1, input_2].concat());
-
-        // Let s := siblings_selectors[i], then
-        // h = new_h * s + h * (1-s)
-        let s: Target = siblings_selectors[i].target;
-        let s_inv: Target = builder.sub(one, s);
-        let new_h_s: Vec<Target> = new_h.elements.iter().map(|e| builder.mul(*e, s)).collect();
-        let h_s: Vec<Target> = h.elements.iter().map(|e| builder.mul(*e, s_inv)).collect();
-        let h_targ = (0..4).map(|j| builder.add(new_h_s[j], h_s[j])).collect();
-        h = HashOutTarget::from_vec(h_targ);
+            // Let s := siblings_selectors[i], then h = new_h * s + h * (1-s)
+            let s: Target = siblings_selectors[i].target;
+            let s_inv: Target = builder.sub(one, s);
+            let new_h_s: Vec<Target> = new_h.elements.iter().map(|e| builder.mul(*e, s)).collect();
+            let h_s: Vec<Target> = h.elements.iter().map(|e| builder.mul(*e, s_inv)).collect();
+            let h_targ = (0..4).map(|j| builder.add(new_h_s[j], h_s[j])).collect();
+            h = HashOutTarget::from_vec(h_targ);
+        }
+        Ok(h)
     }
-    Ok(h)
-}
 
-// Note: this logic is in its own method for easy of reusability but specially
-// to be able to test it isolated
-fn keypath_target(builder: &mut CircuitBuilder<F, D>, key: &Vec<Target>) -> Vec<BoolTarget> {
-    assert_eq!(key.len(), VALUE_SIZE);
-    key.iter()
-        .flat_map(|e| builder.split_le(*e, F::BITS))
-        .collect()
-}
+    // Note: this logic is in its own method for easy of reusability but
+    // specially to be able to test it isolated.
+    fn keypath_target(builder: &mut CircuitBuilder<F, D>, key: &Vec<Target>) -> Vec<BoolTarget> {
+        assert_eq!(key.len(), VALUE_SIZE);
 
-fn kv_hash_target(
-    builder: &mut CircuitBuilder<F, D>,
-    key: &Vec<Target>,
-    value: &Vec<Target>,
-) -> HashOutTarget {
-    let inputs: Vec<Target> = [key.clone(), value.clone(), vec![builder.one()]].concat();
-    builder.hash_n_to_hash_no_pad::<PoseidonHash>(inputs)
+        let n_complete_field_elems: usize = MAX_DEPTH / F::BITS;
+        let n_extra_bits: usize = MAX_DEPTH - n_complete_field_elems * F::BITS;
+
+        let path: Vec<BoolTarget> = key
+            .iter()
+            .take(n_complete_field_elems)
+            .flat_map(|e| builder.split_le(*e, F::BITS))
+            .collect();
+
+        let extra_bits = if n_extra_bits > 0 {
+            let extra_bits: Vec<BoolTarget> =
+                builder.split_le(key[n_complete_field_elems], F::BITS);
+            extra_bits[..n_extra_bits].to_vec()
+            // Note: ideally we would do:
+            //     let extra_bits = builder.split_le(key[n_complete_field_elems], n_extra_bits);
+            // and directly get the extra_bits, but the `split_le` method
+            // returns the wrong bits, so currently we get the entire array of
+            // bits and crop it at the desired n_extra_bits amount.
+        } else {
+            vec![]
+        };
+        [path, extra_bits].concat()
+    }
+
+    fn kv_hash_target(
+        builder: &mut CircuitBuilder<F, D>,
+        key: &Vec<Target>,
+        value: &Vec<Target>,
+    ) -> HashOutTarget {
+        let inputs: Vec<Target> = [key.clone(), value.clone(), vec![builder.one()]].concat();
+        builder.hash_n_to_hash_no_pad::<PoseidonHash>(inputs)
+    }
 }
 
 #[cfg(test)]
@@ -219,28 +218,42 @@ pub mod tests {
 
     #[test]
     fn test_keypath() -> Result<()> {
-        for i in 0..10 {
+        test_keypath_opt::<10>()?;
+        test_keypath_opt::<16>()?;
+        test_keypath_opt::<32>()?;
+        test_keypath_opt::<40>()?;
+        test_keypath_opt::<64>()?;
+        test_keypath_opt::<128>()?;
+        test_keypath_opt::<130>()?;
+        test_keypath_opt::<250>()?;
+        test_keypath_opt::<256>()?;
+        Ok(())
+    }
+
+    fn test_keypath_opt<const MD: usize>() -> Result<()> {
+        for i in 0..5 {
             let config = CircuitConfig::standard_recursion_config();
             let mut builder = CircuitBuilder::<F, D>::new(config);
             let mut pw = PartialWitness::<F>::new();
 
             let key = Value::from(hash_value(&Value::from(i)));
-            let expected_path = keypath(MAX_DEPTH, key)?;
+            let expected_path = keypath(MD, key)?;
 
             // small circuit logic to check
             // expected_path_targ==keypath_target(key_targ)
-            let expected_path_targ: Vec<BoolTarget> = (0..MAX_DEPTH)
+            let expected_path_targ: Vec<BoolTarget> = (0..MD)
                 .map(|_| builder.add_virtual_bool_target_safe())
                 .collect();
             let key_targ = builder.add_virtual_targets(VALUE_SIZE);
-            let computed_path_targ = keypath_target(&mut builder, &key_targ);
-            for i in 0..MAX_DEPTH {
+            let computed_path_targ =
+                MerkleProofCircuit::<MD>::keypath_target(&mut builder, &key_targ);
+            for i in 0..MD {
                 builder.connect(computed_path_targ[i].target, expected_path_targ[i].target);
             }
 
             // assign the input values to the targets
             pw.set_target_arr(&key_targ, &key.0.to_vec())?;
-            for i in 0..MAX_DEPTH {
+            for i in 0..MD {
                 pw.set_bool_target(expected_path_targ[i], expected_path[i])?;
             }
 
@@ -268,7 +281,8 @@ pub mod tests {
             let key_targ = builder.add_virtual_targets(VALUE_SIZE);
             let value_targ = builder.add_virtual_targets(VALUE_SIZE);
 
-            let computed_h = kv_hash_target(&mut builder, &key_targ, &value_targ);
+            let computed_h =
+                MerkleProofCircuit::<256>::kv_hash_target(&mut builder, &key_targ, &value_targ);
             builder.connect_hashes(computed_h, h_targ);
 
             // assign the input values to the targets
@@ -286,6 +300,19 @@ pub mod tests {
 
     #[test]
     fn test_merkleproof_verify() -> Result<()> {
+        test_merkleproof_verify_opt::<10>()?;
+        test_merkleproof_verify_opt::<16>()?;
+        test_merkleproof_verify_opt::<32>()?;
+        test_merkleproof_verify_opt::<40>()?;
+        test_merkleproof_verify_opt::<64>()?;
+        test_merkleproof_verify_opt::<128>()?;
+        test_merkleproof_verify_opt::<130>()?;
+        test_merkleproof_verify_opt::<250>()?;
+        test_merkleproof_verify_opt::<256>()?;
+        Ok(())
+    }
+
+    fn test_merkleproof_verify_opt<const MD: usize>() -> Result<()> {
         let mut kvs: HashMap<Value, Value> = HashMap::new();
         for i in 0..8 {
             kvs.insert(
@@ -294,20 +321,20 @@ pub mod tests {
             );
         }
 
-        let tree = MerkleTree::new(32, &kvs)?;
+        let tree = MerkleTree::new(MD, &kvs)?;
 
         let key = Value::from(hash_value(&Value::from(5)));
         let (value, proof) = tree.prove(&key)?;
         assert_eq!(value, Value::from(1005));
 
-        MerkleTree::verify(32, tree.root(), &proof, &key, &value)?;
+        MerkleTree::verify(MD, tree.root(), &proof, &key, &value)?;
 
         // circuit
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = MerkleProofCircuit::add_targets(&mut builder)?;
+        let targets = MerkleProofCircuit::<MD>::add_targets(&mut builder)?;
         targets.set_targets(&mut pw, tree.root(), proof, key, value)?;
 
         // generate & verify proof
