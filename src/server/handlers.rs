@@ -1,11 +1,10 @@
-use axum::{extract::State, handler::Handler, Json};
-use uuid::Uuid;
+use axum::Json;
 
 use super::{error::ServerError, types::*};
 use crate::{
     backends::plonky2::{mock_main::MockProver, mock_signed::MockSigner},
-    frontend::{MainPod, MainPodBuilder, SignedPod, SignedPodBuilder, Value},
-    middleware::{Params, PodId},
+    frontend::{MainPod, MainPodBuilder, SignedPod, SignedPodBuilder},
+    middleware::Params,
 };
 
 pub async fn list_pods(state: StateExtractor) -> Result<Json<Vec<Pod>>, ServerError> {

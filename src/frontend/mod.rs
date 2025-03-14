@@ -9,7 +9,6 @@ use crate::middleware::{
 use crate::middleware::{OperationType, Predicate, KEY_SIGNER, KEY_TYPE};
 use anyhow::{anyhow, Error, Result};
 use containers::{Array, Dictionary, Set};
-use dyn_clone::DynClone;
 use itertools::Itertools;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

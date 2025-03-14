@@ -26,7 +26,6 @@ tokio = { version = "1.36.0", features = ["full"] }
 tower-http = { version = "0.5.1", features = ["cors"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-uuid = { version = "1.7.0", features = ["v4", "serde"] }
 
 [dev-dependencies]
 hyper = { version = "1.1.0", features = ["full"] }

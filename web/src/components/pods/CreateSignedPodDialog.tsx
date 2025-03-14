@@ -19,7 +19,7 @@ import {
   SelectValue
 } from "@/components/ui/select";
 
-interface CreatePodDialogProps {
+interface CreateSignedPodDialogProps {
   onPodCreated: () => void;
 }
 
@@ -31,28 +31,15 @@ interface KeyValuePair {
   value: string;
 }
 
-export function CreatePodDialog({ onPodCreated }: CreatePodDialogProps) {
+export function CreateSignedPodDialog({
+  onPodCreated
+}: CreateSignedPodDialogProps) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [keyValuePairs, setKeyValuePairs] = useState<KeyValuePair[]>([
     { key: "", type: "string", value: "" }
   ]);
-
-  async function handleCreateMainPod() {
-    try {
-      setLoading(true);
-      setError(null);
-      await api.createMainPod();
-      setOpen(false);
-      onPodCreated();
-    } catch (err) {
-      setError("Failed to create Main POD");
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  }
 
   async function handleCreateSignedPod() {
     try {
@@ -102,32 +89,22 @@ export function CreatePodDialog({ onPodCreated }: CreatePodDialogProps) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button>
+        <Button variant="outline">
           <PlusIcon className="w-4 h-4 mr-2" />
-          New POD
+          Create Signed POD
         </Button>
       </DialogTrigger>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Create New POD</DialogTitle>
+          <DialogTitle>Create Signed POD</DialogTitle>
           <DialogDescription>
-            Choose the type of POD you want to create.
+            Create a new Signed POD with key-value pairs.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 py-4">
-          <Button
-            onClick={handleCreateMainPod}
-            disabled={loading}
-            variant="outline"
-          >
-            Create Main POD
-          </Button>
-
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-medium">
-                Signed POD Key-Value Pairs
-              </h3>
+              <h3 className="text-sm font-medium">Key-Value Pairs</h3>
               <Button
                 type="button"
                 variant="outline"
