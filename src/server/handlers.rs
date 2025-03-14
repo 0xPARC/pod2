@@ -220,3 +220,21 @@ pub async fn validate_statement(
     // TODO: Implement actual statement validation
     Ok(Json(true))
 }
+
+pub async fn validate_statements(
+    state: StateExtractor,
+    Json(req): Json<ValidateStatementsRequest>,
+) -> Result<Json<bool>, ServerError> {
+    let state = state.lock().await;
+
+    // Create a temporary MainPod with the statements
+    let mut main_pod = MainPod::new();
+    for statement in req.statements {
+        main_pod.add_statement(statement)?;
+    }
+
+    // Validate the MainPod
+    let is_valid = main_pod.validate(&state.signed_pods)?;
+
+    Ok(Json(is_valid))
+}
