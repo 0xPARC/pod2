@@ -32,6 +32,7 @@ impl Serialize for SignedPod {
 
         let signature = self.pod.serialized_proof();
 
+        state.serialize_field("id", &self.id())?;
         state.serialize_field("proof", &signature)?;
         state.serialize_field("pod_class", "Signed")?;
         state.serialize_field("pod_type", "Mock")?;
@@ -76,6 +77,7 @@ impl Serialize for MainPod {
     {
         let mut state = serializer.serialize_struct("MainPod", 2)?;
         state.serialize_field("public_statements", &self.public_statements)?;
+        state.serialize_field("id", &self.pod.id())?;
         state.serialize_field("proof", &self.pod.serialized_proof())?;
         state.serialize_field("pod_class", "Main")?;
         state.serialize_field("pod_type", "Mock")?;
