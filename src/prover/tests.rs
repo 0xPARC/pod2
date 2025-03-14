@@ -1,13 +1,14 @@
 #[cfg(test)]
 mod tests {
     use crate::{
-        backends::plonky2::mock_signed::MockSigner,
+        backends::plonky2::{mock_main::MockProver, mock_signed::MockSigner},
         examples::zu_kyc_sign_pod_builders,
         frontend::{
-            containers::Array as FrontendArray, AnchoredKey, MainPodBuilder, Origin, PodClass,
-            Value,
+            containers::Array as FrontendArray, AnchoredKey, MainPodBuilder, Operation,
+            OperationArg, Origin, PodClass, StatementArg, Value,
         },
-        middleware::{self, hash_str, NativeOperation, Operation, PodId, SELF},
+        middleware::{self, hash_str, NativeOperation, OperationType, PodId, SELF},
+        prover::types::{FrontendWildcardStatement, WildcardStatementArg},
     };
 
     use crate::{
@@ -51,9 +52,9 @@ mod tests {
         ));
 
         // Try to prove X = W
-        engine.set_target(WildcardStatement::Equal(
+        engine.set_target(FrontendWildcardStatement::Equal(
             WildcardAnchoredKey(WildcardId::Named("X".to_string()), "X".to_string()),
-            make_anchored_key("W", "W"),
+            WildcardStatementArg::Key(make_anchored_key("W", "W")),
         ));
 
         let proofs = engine.prove();
@@ -94,9 +95,9 @@ mod tests {
         ));
 
         // Test case 1: Find GT through value comparison
-        let target = WildcardStatement::Gt(
+        let target = FrontendWildcardStatement::Gt(
             WildcardAnchoredKey(WildcardId::Named("n".to_string()), "value".to_string()),
-            make_anchored_key("Y", "value"),
+            WildcardStatementArg::Key(make_anchored_key("Y", "value")),
         );
         engine.set_target(target.clone());
 
@@ -151,9 +152,9 @@ mod tests {
         ));
 
         // Test case 1: Find LT through value comparison
-        let target = WildcardStatement::Lt(
+        let target = FrontendWildcardStatement::Lt(
             WildcardAnchoredKey(WildcardId::Named("n".to_string()), "value".to_string()),
-            make_anchored_key("Y", "value"),
+            WildcardStatementArg::Key(make_anchored_key("Y", "value")),
         );
         engine.set_target(target.clone());
 
@@ -204,9 +205,9 @@ mod tests {
         ));
 
         // Test case 1: Find NEq through GT conversion
-        let target = WildcardStatement::NotEqual(
+        let target = FrontendWildcardStatement::NotEqual(
             WildcardAnchoredKey(WildcardId::Named("n".to_string()), "value".to_string()),
-            make_anchored_key("Y", "value"),
+            WildcardStatementArg::Key(make_anchored_key("Y", "value")),
         );
         engine.set_target(target.clone());
 
@@ -257,9 +258,9 @@ mod tests {
         ));
 
         // Test case 1: Find NEq through LT conversion
-        let target = WildcardStatement::NotEqual(
+        let target = FrontendWildcardStatement::NotEqual(
             WildcardAnchoredKey(WildcardId::Named("n".to_string()), "value".to_string()),
-            make_anchored_key("Y", "value"),
+            WildcardStatementArg::Key(make_anchored_key("Y", "value")),
         );
         engine.set_target(target.clone());
 
@@ -320,9 +321,9 @@ mod tests {
         ));
 
         // Test case 1: Find Contains through value comparison
-        let target = WildcardStatement::Contains(
+        let target = FrontendWildcardStatement::Contains(
             WildcardAnchoredKey(WildcardId::Named("n".to_string()), "value".to_string()),
-            make_anchored_key("Y", "value"),
+            WildcardStatementArg::Key(make_anchored_key("Y", "value")),
         );
         engine.set_target(target.clone());
 
@@ -378,9 +379,9 @@ mod tests {
         ));
 
         // Try to prove that X contains Y (which should be impossible)
-        let target = WildcardStatement::Contains(
+        let target = FrontendWildcardStatement::Contains(
             WildcardAnchoredKey(WildcardId::Named("n".to_string()), "value".to_string()),
-            make_anchored_key("Y", "value"),
+            WildcardStatementArg::Key(make_anchored_key("Y", "value")),
         );
         engine.set_target(target.clone());
 
@@ -415,20 +416,20 @@ mod tests {
 
         let targets = vec![
             // First prove b = c (because they have the same value)
-            WildcardStatement::Equal(
+            FrontendWildcardStatement::Equal(
                 WildcardAnchoredKey(
                     WildcardId::Concrete(make_signed_origin("b")),
                     "value".to_string(),
                 ),
-                make_anchored_key("c", "value"),
+                WildcardStatementArg::Key(make_anchored_key("c", "value")),
             ),
             // Then we can prove a = d (using the chain a = b = c = d)
-            WildcardStatement::Equal(
+            FrontendWildcardStatement::Equal(
                 WildcardAnchoredKey(
                     WildcardId::Concrete(make_signed_origin("a")),
                     "value".to_string(),
                 ),
-                make_anchored_key("d", "value"),
+                WildcardStatementArg::Key(make_anchored_key("d", "value")),
             ),
         ];
 
@@ -505,58 +506,67 @@ mod tests {
         engine.add_signed_pod(pay_stub_pod.clone());
         engine.add_signed_pod(sanction_list_pod.clone());
 
+        let mut builder = MainPodBuilder::new(&params);
+
         let now_minus_18y: i64 = 1169909388;
         let now_minus_1y: i64 = 1706367566;
 
-        let ak_now_minus_18y =
-            AnchoredKey(Origin(PodClass::Main, SELF), "now_minus_18y".to_string());
+        let stmt = builder.pub_literal(&now_minus_18y).unwrap();
+        let ak_now_minus_18y = if let StatementArg::Key(ak) = &stmt.1[0] {
+            engine.add_fact(ProvableStatement::ValueOf(
+                ak.clone(),
+                ProvableValue::Int(now_minus_18y),
+            ));
+            ak.clone()
+        } else {
+            panic!("Expected StatementArg::Key")
+        };
 
-        engine.add_fact(ProvableStatement::ValueOf(
-            ak_now_minus_18y.clone(),
-            ProvableValue::Int(now_minus_18y),
-        ));
-
-        let ak_now_minus_1y = AnchoredKey(Origin(PodClass::Main, SELF), "now_minus_1y".to_string());
-
-        engine.add_fact(ProvableStatement::ValueOf(
-            ak_now_minus_1y.clone(),
-            ProvableValue::Int(now_minus_1y),
-        ));
+        let stmt = builder.pub_literal(&now_minus_1y).unwrap();
+        let ak_now_minus_1y = if let StatementArg::Key(ak) = &stmt.1[0] {
+            engine.add_fact(ProvableStatement::ValueOf(
+                ak.clone(),
+                ProvableValue::Int(now_minus_1y),
+            ));
+            ak.clone()
+        } else {
+            panic!("Expected StatementArg::Key")
+        };
 
         let targets = vec![
-            WildcardStatement::NotContains(
+            FrontendWildcardStatement::NotContains(
                 WildcardAnchoredKey(
                     WildcardId::Concrete(Origin(PodClass::Signed, sanction_list_pod.pod.id())),
                     "sanctionList".to_string(),
                 ),
-                AnchoredKey(
+                WildcardStatementArg::Key(AnchoredKey(
                     Origin(PodClass::Signed, gov_id_pod.pod.id()),
                     "idNumber".to_string(),
-                ),
+                )),
             ),
-            WildcardStatement::Lt(
+            FrontendWildcardStatement::Lt(
                 WildcardAnchoredKey(
                     WildcardId::Concrete(Origin(PodClass::Signed, gov_id_pod.pod.id())),
                     "dateOfBirth".to_string(),
                 ),
-                ak_now_minus_18y.clone(),
+                WildcardStatementArg::Key(ak_now_minus_18y.clone()),
             ),
-            WildcardStatement::Equal(
+            FrontendWildcardStatement::Equal(
                 WildcardAnchoredKey(
                     WildcardId::Concrete(Origin(PodClass::Signed, pay_stub_pod.pod.id())),
                     "socialSecurityNumber".to_string(),
                 ),
-                AnchoredKey(
+                WildcardStatementArg::Key(AnchoredKey(
                     Origin(PodClass::Signed, gov_id_pod.pod.id()),
                     "socialSecurityNumber".to_string(),
-                ),
+                )),
             ),
-            WildcardStatement::Equal(
+            FrontendWildcardStatement::Equal(
                 WildcardAnchoredKey(
                     WildcardId::Concrete(Origin(PodClass::Signed, pay_stub_pod.pod.id())),
                     "startDate".to_string(),
                 ),
-                ak_now_minus_1y.clone(),
+                WildcardStatementArg::Key(ak_now_minus_1y.clone()),
             ),
         ];
 
@@ -570,6 +580,56 @@ mod tests {
         assert_eq!(proofs[1].1[0].0, NativeOperation::LtFromEntries as u8);
         assert_eq!(proofs[2].1[0].0, NativeOperation::EqualFromEntries as u8);
         assert_eq!(proofs[3].1[0].0, NativeOperation::EqualFromEntries as u8);
+
+        for (stmt, chain) in proofs.iter() {
+            for (op_code, inputs, output) in chain {
+                let op = Operation(
+                    match op_code {
+                        x if *x == NativeOperation::ContainsFromEntries as u8 => {
+                            OperationType::Native(NativeOperation::ContainsFromEntries)
+                        }
+                        x if *x == NativeOperation::NotContainsFromEntries as u8 => {
+                            OperationType::Native(NativeOperation::NotContainsFromEntries)
+                        }
+                        x if *x == NativeOperation::EqualFromEntries as u8 => {
+                            OperationType::Native(NativeOperation::EqualFromEntries)
+                        }
+                        x if *x == NativeOperation::LtFromEntries as u8 => {
+                            OperationType::Native(NativeOperation::LtFromEntries)
+                        }
+                        x if *x == NativeOperation::GtFromEntries as u8 => {
+                            OperationType::Native(NativeOperation::GtFromEntries)
+                        }
+                        x if *x == NativeOperation::SumOf as u8 => {
+                            OperationType::Native(NativeOperation::SumOf)
+                        }
+                        x if *x == NativeOperation::ProductOf as u8 => {
+                            OperationType::Native(NativeOperation::ProductOf)
+                        }
+                        x if *x == NativeOperation::MaxOf as u8 => {
+                            OperationType::Native(NativeOperation::MaxOf)
+                        }
+                        _ => panic!("Unknown operation code: {}", op_code),
+                    },
+                    inputs
+                        .iter()
+                        .map(|i| OperationArg::Statement(i.clone().into()))
+                        .collect(),
+                );
+                println!("Adding op: {:?}", op);
+                builder.pub_op(op).unwrap();
+            }
+        }
+
+        builder.add_signed_pod(&gov_id_pod);
+        builder.add_signed_pod(&pay_stub_pod);
+        builder.add_signed_pod(&sanction_list_pod);
+
+        println!("Builder: {:?}", builder);
+
+        let mut prover = MockProver {};
+        let pod = builder.prove(&mut prover, &params).unwrap();
+        println!("Pod: {}", pod.pod.id());
 
         for (i, (stmt, chain)) in proofs.iter().enumerate() {
             println!("\nProof {}:", i + 1);
