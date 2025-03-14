@@ -25,6 +25,18 @@ pub async fn list_pods(state: StateExtractor) -> Result<Json<Vec<Pod>>, ServerEr
         state.main_pods.keys().collect::<Vec<_>>()
     );
 
+    // Add detailed logging for each pod's ID
+    for pod in &pods {
+        match pod {
+            Pod::Signed(signed_pod) => {
+                println!("DEBUG list_pods - Signed pod ID: {:?}", signed_pod.id());
+            }
+            Pod::Main(main_pod) => {
+                println!("DEBUG list_pods - Main pod ID: {:?}", main_pod.id());
+            }
+        }
+    }
+
     Ok(Json(pods))
 }
 
@@ -44,10 +56,10 @@ pub async fn get_pod(
     );
 
     if let Some(pod) = state.signed_pods.get(&req.id) {
-        println!("DEBUG get_pod - Found signed pod with ID: {}", pod.id());
+        println!("DEBUG get_pod - Found signed pod with ID: {:?}", pod.id());
         Ok(Json(Pod::Signed(pod.clone())))
     } else if let Some(pod) = state.main_pods.get(&req.id) {
-        println!("DEBUG get_pod - Found main pod with ID: {}", pod.id());
+        println!("DEBUG get_pod - Found main pod with ID: {:?}", pod.id());
         Ok(Json(Pod::Main(pod.clone())))
     } else {
         println!("DEBUG get_pod - Pod not found");
@@ -75,9 +87,17 @@ pub async fn create_signed_pod(
     let pod = builder.sign(&mut signer).map_err(ServerError::from)?;
 
     // Store the pod with its ID as a string
-    let id = pod.id().to_string();
-    println!("DEBUG create_signed_pod - Created pod with ID: {}", id);
-    println!("DEBUG create_signed_pod - Raw pod ID: {:?}", pod.id());
+    let id = format!(
+        "{:016x}{:016x}{:016x}{:016x}",
+        pod.id().0 .0[0].0,
+        pod.id().0 .0[1].0,
+        pod.id().0 .0[2].0,
+        pod.id().0 .0[3].0
+    );
+    println!(
+        "DEBUG create_signed_pod - Created pod with ID: {:?}",
+        pod.id()
+    );
     state.signed_pods.insert(id.clone(), pod.clone());
     println!(
         "DEBUG create_signed_pod - State now contains IDs: {:?}",
@@ -98,9 +118,17 @@ pub async fn create_main_pod(state: StateExtractor) -> Result<Json<MainPod>, Ser
         .map_err(ServerError::from)?;
 
     // Store the pod with its ID as a string
-    let id = pod.id().to_string();
-    println!("DEBUG create_main_pod - Created pod with ID: {}", id);
-    println!("DEBUG create_main_pod - Raw pod ID: {:?}", pod.id());
+    let id = format!(
+        "{:016x}{:016x}{:016x}{:016x}",
+        pod.id().0 .0[0].0,
+        pod.id().0 .0[1].0,
+        pod.id().0 .0[2].0,
+        pod.id().0 .0[3].0
+    );
+    println!(
+        "DEBUG create_main_pod - Created pod with ID: {:?}",
+        pod.id()
+    );
     state.main_pods.insert(id.clone(), pod.clone());
     println!(
         "DEBUG create_main_pod - State now contains IDs: {:?}",
@@ -118,13 +146,24 @@ pub async fn delete_pod(
         "DEBUG delete_pod - Attempting to delete pod with ID: {}",
         req.id
     );
+    println!(
+        "DEBUG delete_pod - Available signed pod IDs: {:?}",
+        state.signed_pods.keys().collect::<Vec<_>>()
+    );
+    println!(
+        "DEBUG delete_pod - Available main pod IDs: {:?}",
+        state.main_pods.keys().collect::<Vec<_>>()
+    );
 
-    if state.signed_pods.remove(&req.id).is_none() && state.main_pods.remove(&req.id).is_none() {
+    if state.signed_pods.remove(&req.id).is_some() {
+        println!("DEBUG delete_pod - Successfully deleted signed pod");
+        Ok(())
+    } else if state.main_pods.remove(&req.id).is_some() {
+        println!("DEBUG delete_pod - Successfully deleted main pod");
+        Ok(())
+    } else {
         println!("DEBUG delete_pod - Pod not found for deletion");
         Err(ServerError::PodNotFound(req.id))
-    } else {
-        println!("DEBUG delete_pod - Pod successfully deleted");
-        Ok(())
     }
 }
 
@@ -136,9 +175,17 @@ pub async fn import_pod(
 
     match req.pod {
         Pod::Signed(pod) => {
-            let id = pod.id().to_string();
-            println!("DEBUG import_pod - Importing signed pod with ID: {}", id);
-            println!("DEBUG import_pod - Raw pod ID: {:?}", pod.id());
+            let id = format!(
+                "{:016x}{:016x}{:016x}{:016x}",
+                pod.id().0 .0[0].0,
+                pod.id().0 .0[1].0,
+                pod.id().0 .0[2].0,
+                pod.id().0 .0[3].0
+            );
+            println!(
+                "DEBUG import_pod - Importing signed pod with ID: {:?}",
+                pod.id()
+            );
             state.signed_pods.insert(id.clone(), pod.clone());
             println!(
                 "DEBUG import_pod - State now contains signed pod IDs: {:?}",
@@ -147,9 +194,17 @@ pub async fn import_pod(
             Ok(Json(Pod::Signed(pod)))
         }
         Pod::Main(pod) => {
-            let id = pod.id().to_string();
-            println!("DEBUG import_pod - Importing main pod with ID: {}", id);
-            println!("DEBUG import_pod - Raw pod ID: {:?}", pod.id());
+            let id = format!(
+                "{:016x}{:016x}{:016x}{:016x}",
+                pod.id().0 .0[0].0,
+                pod.id().0 .0[1].0,
+                pod.id().0 .0[2].0,
+                pod.id().0 .0[3].0
+            );
+            println!(
+                "DEBUG import_pod - Importing main pod with ID: {:?}",
+                pod.id()
+            );
             state.main_pods.insert(id.clone(), pod.clone());
             println!(
                 "DEBUG import_pod - State now contains main pod IDs: {:?}",

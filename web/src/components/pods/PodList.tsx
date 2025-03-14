@@ -51,12 +51,12 @@ export function PodList() {
     }
   }
 
-  function toggleExpand(proof: string) {
+  function toggleExpand(id: string) {
     const newExpanded = new Set(expandedPods);
-    if (newExpanded.has(proof)) {
-      newExpanded.delete(proof);
+    if (newExpanded.has(id)) {
+      newExpanded.delete(id);
     } else {
-      newExpanded.add(proof);
+      newExpanded.add(id);
     }
     setExpandedPods(newExpanded);
   }
@@ -87,15 +87,15 @@ export function PodList() {
         <TableBody>
           {pods.map((pod) => (
             <>
-              <TableRow key={pod.proof}>
+              <TableRow key={pod.id}>
                 <TableCell>
                   {pod.pod_class === "Signed" && (
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() => toggleExpand(pod.proof)}
+                      onClick={() => toggleExpand(pod.id)}
                     >
-                      {expandedPods.has(pod.proof) ? (
+                      {expandedPods.has(pod.id) ? (
                         <ChevronDownIcon className="w-4 h-4" />
                       ) : (
                         <ChevronRightIcon className="w-4 h-4" />
@@ -103,7 +103,7 @@ export function PodList() {
                     </Button>
                   )}
                 </TableCell>
-                <TableCell className="font-mono">{pod.proof}</TableCell>
+                <TableCell className="font-mono">{pod.id}</TableCell>
                 <TableCell>{pod.pod_class}</TableCell>
                 <TableCell>
                   {pod.pod_class === "Signed" ? (
@@ -120,13 +120,13 @@ export function PodList() {
                   <Button
                     variant="ghost"
                     size="icon"
-                    onClick={() => handleDelete(pod.proof)}
+                    onClick={() => handleDelete(pod.id)}
                   >
                     <TrashIcon className="w-4 h-4" />
                   </Button>
                 </TableCell>
               </TableRow>
-              {pod.pod_class === "Signed" && expandedPods.has(pod.proof) && (
+              {pod.pod_class === "Signed" && expandedPods.has(pod.id) && (
                 <TableRow>
                   <TableCell colSpan={5}>
                     <div className="bg-gray-50 p-4 rounded-lg">
