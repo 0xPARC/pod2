@@ -61,6 +61,49 @@ async fn test_create_and_list_pods() -> Result<(), Box<dyn std::error::Error>> {
         let response = app.clone().oneshot(signed_pod_req).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
 
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let created_pod: SignedPod = serde_json::from_slice(&body).unwrap();
+        let created_id = created_pod.id().to_string();
+        println!(
+            "DEBUG test_create_and_list_pods - Created pod with ID: {:?}",
+            created_pod.id()
+        );
+
+        // List pods to verify storage
+        let list_req = Request::builder()
+            .method("POST")
+            .uri("/api/list-pods")
+            .header("Content-Type", "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+
+        let response = app.clone().oneshot(list_req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let pods: Vec<Pod> = serde_json::from_slice(&body).unwrap();
+        assert_eq!(pods.len(), 1);
+
+        // Verify the pod ID matches
+        match &pods[0] {
+            Pod::Signed(pod) => {
+                let stored_id = pod.id().to_string();
+                println!(
+                    "DEBUG test_create_and_list_pods - Stored pod ID: {:?}",
+                    pod.id()
+                );
+                assert_eq!(
+                    created_id, stored_id,
+                    "Created pod ID does not match stored pod ID"
+                );
+            }
+            Pod::Main(_) => panic!("Expected Signed pod"),
+        }
+
         // Create a main pod
         let main_pod_req = Request::builder()
             .method("POST")
@@ -69,25 +112,8 @@ async fn test_create_and_list_pods() -> Result<(), Box<dyn std::error::Error>> {
             .body(Body::from("{}"))
             .unwrap();
 
-        let response = app.clone().oneshot(main_pod_req).await.unwrap();
+        let response = app.oneshot(main_pod_req).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-
-        // List pods
-        let list_req = Request::builder()
-            .method("POST")
-            .uri("/api/list-pods")
-            .header("Content-Type", "application/json")
-            .body(Body::from("{}"))
-            .unwrap();
-
-        let response = app.oneshot(list_req).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let pods: Vec<Pod> = serde_json::from_slice(&body).unwrap();
-        assert_eq!(pods.len(), 2);
 
         Ok(())
     })

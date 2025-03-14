@@ -6,6 +6,7 @@ import { z } from "zod";
 const SignedPodSchema = z.object({
   entries: z.record(z.string(), z.any()),
   proof: z.string(),
+  id: z.string(),
   pod_class: z.literal("Signed"),
   pod_type: z.literal("Mock")
 });
@@ -13,6 +14,7 @@ const SignedPodSchema = z.object({
 const MainPodSchema = z.object({
   public_statements: z.array(z.any()),
   proof: z.string(),
+  id: z.string(),
   pod_class: z.literal("Main"),
   pod_type: z.literal("Mock")
 });
