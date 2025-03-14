@@ -182,7 +182,7 @@ impl MerkleTree {
 pub fn kv_hash(key: &Value, value: Option<Value>) -> Hash {
     value
         .map(|v| hash_fields(&[key.0.to_vec(), v.0.to_vec(), vec![GoldilocksField(1)]].concat()))
-        .unwrap_or(Hash([GoldilocksField(0); 4]))
+        .unwrap_or(NULL)
 }
 
 impl<'a> IntoIterator for &'a MerkleTree {

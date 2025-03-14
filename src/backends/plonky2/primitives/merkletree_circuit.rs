@@ -24,7 +24,7 @@ use std::iter::IntoIterator;
 
 use crate::backends::counter;
 use crate::backends::plonky2::basetypes::{
-    hash_fields, Hash, Value, D, F, HASH_SIZE, NULL, VALUE_SIZE,
+    hash_fields, Hash, Value, D, EMPTY, F, HASH_SIZE, NULL, VALUE_SIZE,
 };
 use crate::backends::plonky2::primitives::merkletree::MerkleProof;
 
@@ -35,6 +35,9 @@ pub struct MerkleProofCircuit<const MAX_DEPTH: usize> {
     existence: BoolTarget,
     siblings: Vec<HashOutTarget>,
     siblings_selectors: Vec<BoolTarget>,
+    case_ii_selector: BoolTarget, // for case ii)
+    other_key: Vec<Target>,
+    other_value: Vec<Target>,
 }
 
 impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
@@ -52,9 +55,79 @@ impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
             .map(|_| builder.add_virtual_bool_target_safe())
             .collect();
 
-        let h =
-            Self::compute_root_from_leaf(builder, &key, &value, &siblings, &siblings_selectors)?;
-        builder.connect_hashes(h, root);
+        let case_ii_selector = builder.add_virtual_bool_target_safe();
+        let other_key = builder.add_virtual_targets(VALUE_SIZE);
+        let other_value = builder.add_virtual_targets(VALUE_SIZE);
+
+        // We have 3 cases for when computing the Leaf's hash:
+        // - existence: leaf contains the given key & value
+        // - non-existence:
+        //      - case i) expected leaf does not exist
+        //      - case ii) expected leaf does exist but it has a different key
+        //
+        // The following table expresses the options with their in-circuit
+        // selectors:
+        // | existence   | case_ii   | leaf_hash                    |
+        // | ----------- | --------- | ---------------------------- |
+        // | 1           | 0         | H(key, value, 1)             |
+        // | 0           | 0         | EMPTY_HASH                   |
+        // | 0           | 1         | H(other_key, other_value, 1) |
+        // | 1           | 1         | invalid combination          |
+
+        // First, ensure that both existence & case_ii are not true at the same
+        // time:
+        // 1. sum = existence + case_ii_selector
+        let sum = builder.add(existence.target, case_ii_selector.target);
+        // 2. sum * (sum-1) == 0
+        builder.assert_bool(BoolTarget::new_unsafe(sum));
+
+        // define the case_i_selector as true when both existence and
+        // case_ii_selector are false:
+        //     case_i_selector = (1 - existence) * (1- case_ii_selector)
+        let one = builder.one();
+        let existence_inv = builder.sub(one, existence.target);
+        let case_ii_inv = builder.sub(one, case_ii_selector.target);
+        let case_i_selector = BoolTarget::new_unsafe(builder.mul(existence_inv, case_ii_inv));
+
+        // use (key,value) or (other_key, other_value) depending if it's a proof
+        // of existence or of non-existence, ie:
+        // k = key * existence + other_key * (1-existence)
+        // v = value * existence + other_value * (1-existence)
+        let k: Vec<Target> = (0..4)
+            .map(|j| builder.select(existence, key[j], other_key[j]))
+            .collect();
+        let v: Vec<Target> = (0..4)
+            .map(|j| builder.select(existence, value[j], other_value[j]))
+            .collect();
+
+        // get leaf's hash for the selected k & v
+        let h = Self::kv_hash_target(builder, &k, &v);
+
+        // if we're in the case i), use leaf_hash=EMPTY_HASH, else use the
+        // previously computed hash h.
+        let empty_hash = builder.constant_hash(HashOut::from(NULL.0));
+        let leaf_hash = HashOutTarget::from_vec(
+            (0..4)
+                .map(|j| builder.select(case_i_selector, empty_hash.elements[j], h.elements[j]))
+                .collect(),
+        );
+
+        // get key's path
+        let path = Self::keypath_target(builder, &key);
+
+        // compute the root for the given siblings and the computed leaf_hash
+        // (this is for the three cases (existence, non-existence case i, and
+        // non-existence case ii)
+        let computed_root = Self::compute_root_from_leaf(
+            builder,
+            &path,
+            &leaf_hash,
+            &siblings,
+            &siblings_selectors,
+        )?;
+        // ensure that the computed root matches the given root (which is a
+        // public input)
+        builder.connect_hashes(computed_root, root);
 
         Ok(Self {
             existence,
@@ -63,6 +136,9 @@ impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
             siblings_selectors,
             key,
             value,
+            case_ii_selector,
+            other_key,
+            other_value,
         })
     }
 
@@ -70,6 +146,7 @@ impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
     fn set_targets(
         &self,
         pw: &mut PartialWitness<F>,
+        existence: bool,
         root: Hash,
         proof: MerkleProof,
         key: Value,
@@ -78,7 +155,7 @@ impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
         pw.set_hash_target(self.root, HashOut::from_vec(root.0.to_vec()))?;
         pw.set_target_arr(&self.key, &key.0.to_vec())?;
         pw.set_target_arr(&self.value, &value.0.to_vec())?;
-        pw.set_bool_target(self.existence, proof.existence)?;
+        pw.set_bool_target(self.existence, existence)?;
 
         // pad siblings
         let mut siblings = proof.siblings.clone();
@@ -100,68 +177,57 @@ impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
             pw.set_bool_target(self.siblings_selectors[i], false)?;
         }
 
+        if !existence && proof.other_leaf.is_some() {
+            // non-existence case ii) expected leaf does exist but it has a different key
+            pw.set_bool_target(self.case_ii_selector, true)?;
+            pw.set_target_arr(&self.other_key, &proof.other_leaf.unwrap().0 .0.to_vec())?;
+            pw.set_target_arr(&self.other_value, &proof.other_leaf.unwrap().1 .0.to_vec())?;
+        } else {
+            // existence & non-existence case i) expected leaf does not exist
+            pw.set_bool_target(self.case_ii_selector, false)?;
+            pw.set_target_arr(&self.other_key, &EMPTY.0.to_vec())?;
+            pw.set_target_arr(&self.other_value, &EMPTY.0.to_vec())?;
+        }
+
         Ok(())
     }
 
     fn compute_root_from_leaf(
         builder: &mut CircuitBuilder<F, D>,
-        key: &Vec<Target>,
-        value: &Vec<Target>,
+        path: &Vec<BoolTarget>,
+        leaf_hash: &HashOutTarget,
         siblings: &Vec<HashOutTarget>,
         siblings_selectors: &Vec<BoolTarget>,
     ) -> Result<HashOutTarget> {
         assert!(siblings.len() / HASH_SIZE < MAX_DEPTH);
         assert_eq!(siblings_selectors.len(), MAX_DEPTH);
 
-        // get key's path
-        let path = Self::keypath_target(builder, key);
-        // get leaf's hash
-        let mut h = Self::kv_hash_target(builder, key, value);
-
+        let mut h = leaf_hash.clone();
         let one: Target = builder.one(); // constant in-circuit
         for (i, sibling) in siblings.iter().enumerate().rev() {
             // to compute the hash, we want to do the following 3 steps:
             //     Let s := path[i], then
-            //     input_1 = sibling * s + h * (1-s)
-            //     input_2 = sibling * (1-s) + h * s
+            //     input_1 = sibling * s + h * (1-s) = select(s, sibling, h)
+            //     input_2 = sibling * (1-s) + h * s = select(s, h, sibling)
             //     new_h = hash([input_1, input_2])
 
             // TODO group multiple muls in a single gate
-            let bit: Target = path[i].target;
-            let bit_inv: Target = builder.sub(one, bit);
-
-            let input_1_sibling: Vec<Target> = sibling
-                .elements
-                .iter()
-                .map(|e| builder.mul(*e, bit))
-                .collect();
-            let input_1_h: Vec<Target> = h
-                .elements
-                .iter()
-                .map(|e| builder.mul(*e, bit_inv))
-                .collect();
+            let bit: BoolTarget = path[i];
             let input_1: Vec<Target> = (0..4)
-                .map(|j| builder.add(input_1_sibling[j], input_1_h[j]))
+                .map(|j| builder.select(bit, sibling.elements[j], h.elements[j]))
                 .collect();
-
-            let input_2_sibling: Vec<Target> = sibling
-                .elements
-                .iter()
-                .map(|e| builder.mul(*e, bit_inv))
-                .collect();
-            let input_2_h: Vec<Target> = h.elements.iter().map(|e| builder.mul(*e, bit)).collect();
             let input_2: Vec<Target> = (0..4)
-                .map(|j| builder.add(input_2_sibling[j], input_2_h[j]))
+                .map(|j| builder.select(bit, h.elements[j], sibling.elements[j]))
                 .collect();
 
             let new_h = builder.hash_n_to_hash_no_pad::<PoseidonHash>([input_1, input_2].concat());
 
-            // Let s := siblings_selectors[i], then h = new_h * s + h * (1-s)
-            let s: Target = siblings_selectors[i].target;
-            let s_inv: Target = builder.sub(one, s);
-            let new_h_s: Vec<Target> = new_h.elements.iter().map(|e| builder.mul(*e, s)).collect();
-            let h_s: Vec<Target> = h.elements.iter().map(|e| builder.mul(*e, s_inv)).collect();
-            let h_targ = (0..4).map(|j| builder.add(new_h_s[j], h_s[j])).collect();
+            // Let s := siblings_selectors[i], then
+            // h = new_h * s + h * (1-s) = select(s, new_h, h)
+            let s: BoolTarget = siblings_selectors[i];
+            let h_targ = (0..4)
+                .map(|j| builder.select(s, new_h.elements[j], h.elements[j]))
+                .collect();
             h = HashOutTarget::from_vec(h_targ);
         }
         Ok(h)
@@ -185,7 +251,7 @@ impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
             let extra_bits: Vec<BoolTarget> =
                 builder.split_le(key[n_complete_field_elems], F::BITS);
             extra_bits[..n_extra_bits].to_vec()
-            // Note: ideally we would do:
+            // NOTE: ideally we would do:
             //     let extra_bits = builder.split_le(key[n_complete_field_elems], n_extra_bits);
             // and directly get the extra_bits, but the `split_le` method
             // returns the wrong bits, so currently we get the entire array of
@@ -299,35 +365,57 @@ pub mod tests {
     }
 
     #[test]
-    fn test_merkleproof_verify() -> Result<()> {
-        test_merkleproof_verify_opt::<10>()?;
-        test_merkleproof_verify_opt::<16>()?;
-        test_merkleproof_verify_opt::<32>()?;
-        test_merkleproof_verify_opt::<40>()?;
-        test_merkleproof_verify_opt::<64>()?;
-        test_merkleproof_verify_opt::<128>()?;
-        test_merkleproof_verify_opt::<130>()?;
-        test_merkleproof_verify_opt::<250>()?;
-        test_merkleproof_verify_opt::<256>()?;
+    fn test_merkleproof_verify_existence() -> Result<()> {
+        test_merkleproof_verify_opt::<10>(true)?;
+        test_merkleproof_verify_opt::<16>(true)?;
+        test_merkleproof_verify_opt::<32>(true)?;
+        test_merkleproof_verify_opt::<40>(true)?;
+        test_merkleproof_verify_opt::<64>(true)?;
+        test_merkleproof_verify_opt::<128>(true)?;
+        test_merkleproof_verify_opt::<130>(true)?;
+        test_merkleproof_verify_opt::<250>(true)?;
+        test_merkleproof_verify_opt::<256>(true)?;
+        Ok(())
+    }
+    #[test]
+    fn test_merkleproof_verify_nonexistence() -> Result<()> {
+        test_merkleproof_verify_opt::<10>(false)?;
+        test_merkleproof_verify_opt::<16>(false)?;
+        test_merkleproof_verify_opt::<32>(false)?;
+        test_merkleproof_verify_opt::<40>(false)?;
+        test_merkleproof_verify_opt::<64>(false)?;
+        test_merkleproof_verify_opt::<128>(false)?;
+        test_merkleproof_verify_opt::<130>(false)?;
+        test_merkleproof_verify_opt::<250>(false)?;
+        test_merkleproof_verify_opt::<256>(false)?;
         Ok(())
     }
 
-    fn test_merkleproof_verify_opt<const MD: usize>() -> Result<()> {
+    // test logic to be reused both by the existence & nonexistence tests
+    fn test_merkleproof_verify_opt<const MD: usize>(existence: bool) -> Result<()> {
         let mut kvs: HashMap<Value, Value> = HashMap::new();
-        for i in 0..8 {
-            kvs.insert(
-                Value::from(hash_value(&Value::from(i))),
-                Value::from(1000 + i),
-            );
+        for i in 0..10 {
+            kvs.insert(Value::from(hash_value(&Value::from(i))), Value::from(i));
         }
 
         let tree = MerkleTree::new(MD, &kvs)?;
 
-        let key = Value::from(hash_value(&Value::from(5)));
-        let (value, proof) = tree.prove(&key)?;
-        assert_eq!(value, Value::from(1005));
+        let (key, value, proof) = if existence {
+            let key = Value::from(hash_value(&Value::from(5)));
+            let (value, proof) = tree.prove(&key)?;
+            assert_eq!(value, Value::from(5));
+            (key, value, proof)
+        } else {
+            let key = Value::from(hash_value(&Value::from(200)));
+            (key, EMPTY, tree.prove_nonexistence(&key)?)
+        };
+        assert_eq!(proof.existence, existence);
 
-        MerkleTree::verify(MD, tree.root(), &proof, &key, &value)?;
+        if existence {
+            MerkleTree::verify(MD, tree.root(), &proof, &key, &value)?;
+        } else {
+            MerkleTree::verify_nonexistence(MD, tree.root(), &proof, &key)?;
+        }
 
         // circuit
         let config = CircuitConfig::standard_recursion_config();
@@ -335,7 +423,74 @@ pub mod tests {
         let mut pw = PartialWitness::<F>::new();
 
         let targets = MerkleProofCircuit::<MD>::add_targets(&mut builder)?;
-        targets.set_targets(&mut pw, tree.root(), proof, key, value)?;
+        targets.set_targets(&mut pw, existence, tree.root(), proof, key, value)?;
+
+        // generate & verify proof
+        let data = builder.build::<C>();
+        let proof = data.prove(pw)?;
+        data.verify(proof)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_merkletree_edgecases() -> Result<()> {
+        // fill the tree as in https://0xparc.github.io/pod2/merkletree.html#example-3
+        //
+        //     root
+        //     /  \
+        //    ()  ()
+        //   / \  /
+        //   0 2 ()
+        //        \
+        //        ()
+        //        /\
+        //       5  13
+
+        let mut kvs = HashMap::new();
+        kvs.insert(Value::from(0), Value::from(1000));
+        kvs.insert(Value::from(2), Value::from(1002));
+        kvs.insert(Value::from(5), Value::from(1005));
+        kvs.insert(Value::from(13), Value::from(1013));
+
+        const MD: usize = 5;
+        let tree = MerkleTree::new(MD, &kvs)?;
+        // existence
+        test_merkletree_edgecase_opt::<MD>(&tree, Value::from(5))?;
+        // non-existence case i) expected leaf does not exist
+        test_merkletree_edgecase_opt::<MD>(&tree, Value::from(1))?;
+        // non-existence case ii) expected leaf does exist but it has a different 'key'
+        test_merkletree_edgecase_opt::<MD>(&tree, Value::from(21))?;
+
+        Ok(())
+    }
+
+    fn test_merkletree_edgecase_opt<const MD: usize>(tree: &MerkleTree, key: Value) -> Result<()> {
+        let contains = tree.contains(&key)?;
+        // generate merkleproof
+        let (value, proof) = if contains {
+            tree.prove(&key)?
+        } else {
+            let proof = tree.prove_nonexistence(&key)?;
+            (EMPTY, proof)
+        };
+
+        assert_eq!(proof.existence, contains);
+
+        // verify the proof (non circuit)
+        if proof.existence {
+            MerkleTree::verify(MD, tree.root(), &proof, &key, &value)?;
+        } else {
+            MerkleTree::verify_nonexistence(MD, tree.root(), &proof, &key)?;
+        }
+
+        // circuit
+        let config = CircuitConfig::standard_recursion_config();
+        let mut builder = CircuitBuilder::<F, D>::new(config);
+        let mut pw = PartialWitness::<F>::new();
+
+        let targets = MerkleProofCircuit::<MD>::add_targets(&mut builder)?;
+        targets.set_targets(&mut pw, proof.existence, tree.root(), proof, key, value)?;
 
         // generate & verify proof
         let data = builder.build::<C>();
