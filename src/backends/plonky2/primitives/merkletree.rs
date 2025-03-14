@@ -9,6 +9,9 @@ use std::iter::IntoIterator;
 use crate::backends::counter;
 use crate::backends::plonky2::basetypes::{hash_fields, Hash, Value, F, NULL};
 
+// mod merkletree_circuit;
+pub use super::merkletree_circuit::*;
+
 /// Implements the MerkleTree specified at
 /// https://0xparc.github.io/pod2/merkletree.html
 #[derive(Clone, Debug)]
@@ -209,10 +212,10 @@ pub struct MerkleProof {
     // note: currently we don't use the `_existence` field, we would use if we merge the methods
     // `verify` and `verify_nonexistence` into a single one
     #[allow(unused)]
-    existence: bool,
-    siblings: Vec<Hash>,
+    pub(crate) existence: bool,
+    pub(crate) siblings: Vec<Hash>,
     // other_leaf is used for non-existence proofs
-    other_leaf: Option<(Value, Value)>,
+    pub(crate) other_leaf: Option<(Value, Value)>,
 }
 
 impl fmt::Display for MerkleProof {
@@ -520,7 +523,7 @@ impl Leaf {
 // max-depth? ie, what happens when two keys share the same path for more bits
 // than the max_depth?
 /// returns the path of the given key
-fn keypath(max_depth: usize, k: Value) -> Result<Vec<bool>> {
+pub(crate) fn keypath(max_depth: usize, k: Value) -> Result<Vec<bool>> {
     let bytes = k.to_bytes();
     if max_depth > 8 * bytes.len() {
         // note that our current keys are of Value type, which are 4 Goldilocks
