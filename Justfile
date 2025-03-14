@@ -6,3 +6,6 @@ run-web:
 
 test:
     cargo test --release
+
+test-web:
+    cd web && pnpm test

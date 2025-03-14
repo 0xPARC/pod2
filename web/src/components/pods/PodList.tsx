@@ -10,11 +10,12 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { TrashIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
-import { CreatePodDialog } from "./CreatePodDialog";
 import { ImportPodDialog } from "./ImportPodDialog";
 import { toast } from "sonner";
+import { useNavigate } from "@tanstack/react-router";
 
 export function PodList() {
+  const navigate = useNavigate();
   const [pods, setPods] = useState<Pod[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -70,7 +71,18 @@ export function PodList() {
         <h1 className="text-2xl font-bold">PODs</h1>
         <div className="space-x-2">
           <ImportPodDialog onPodImported={loadPods} />
-          <CreatePodDialog onPodCreated={loadPods} />
+          <Button
+            variant="outline"
+            onClick={() => navigate({ to: "/create/main" })}
+          >
+            Create Main POD
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => navigate({ to: "/create/signed" })}
+          >
+            Create Signed POD
+          </Button>
         </div>
       </div>
 

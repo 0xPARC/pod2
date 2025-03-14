@@ -1,11 +1,12 @@
-import { PodList } from "./components/pods/PodList";
+import { RouterProvider } from "@tanstack/react-router";
+import { router } from "./routes";
 import { Toaster } from "sonner";
 
 export default function App() {
   return (
-    <main className="min-h-screen bg-background">
-      <PodList />
+    <>
+      <RouterProvider router={router} />
       <Toaster />
-    </main>
+    </>
   );
 }
