@@ -478,7 +478,7 @@ mod tests {
     }
 
     #[test]
-    fn test_signed_pod_statement() {
+    fn test_auto_zu_kyc() {
         let mut engine = DeductionEngine::new();
 
         let params = middleware::Params::default();
