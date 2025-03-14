@@ -1,10 +1,13 @@
 #[cfg(test)]
 mod tests {
     use crate::{
-        backends::plonky2::{mock_main::MockProver, mock_signed::MockSigner},
-        examples::{zu_kyc_pod_builder, zu_kyc_sign_pod_builders},
-        frontend::{containers::Array as FrontendArray, AnchoredKey, Origin, PodClass, Value},
-        middleware::{self, hash_str, NativeOperation, PodId, SELF},
+        backends::plonky2::mock_signed::MockSigner,
+        examples::zu_kyc_sign_pod_builders,
+        frontend::{
+            containers::Array as FrontendArray, AnchoredKey, MainPodBuilder, Origin, PodClass,
+            Value,
+        },
+        middleware::{self, hash_str, NativeOperation, Operation, PodId, SELF},
     };
 
     use crate::{
@@ -560,6 +563,13 @@ mod tests {
         let proofs = engine.prove_multiple(targets);
 
         assert_eq!(proofs.len(), 4, "Should prove all statements");
+        assert_eq!(
+            proofs[0].1[0].0,
+            NativeOperation::NotContainsFromEntries as u8
+        );
+        assert_eq!(proofs[1].1[0].0, NativeOperation::LtFromEntries as u8);
+        assert_eq!(proofs[2].1[0].0, NativeOperation::EqualFromEntries as u8);
+        assert_eq!(proofs[3].1[0].0, NativeOperation::EqualFromEntries as u8);
 
         for (i, (stmt, chain)) in proofs.iter().enumerate() {
             println!("\nProof {}:", i + 1);
