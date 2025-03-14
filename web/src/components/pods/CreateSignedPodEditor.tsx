@@ -369,47 +369,45 @@ export function CreateSignedPodEditor() {
               No key-value pairs added yet. Click "Add Key-Value Pair" to begin.
             </div>
           ) : (
-            <>
-              {nodes.map((node) => (
-                <TreeNodeEditor
-                  key={node.id}
-                  node={node}
-                  onUpdate={(updatedNode) => {
-                    setNodes(
-                      nodes.map((n) => (n.id === node.id ? updatedNode : n))
-                    );
-                  }}
-                  onDelete={() => {
-                    setNodes(nodes.filter((n) => n.id !== node.id));
-                  }}
-                  onAddChild={() => {
-                    const newChild: TreeNode = {
-                      id: generateId(),
-                      key: "",
-                      type: "string",
-                      value: ""
-                    };
-                    setNodes(
-                      nodes.map((n) =>
-                        n.id === node.id
-                          ? {
-                              ...n,
-                              children: [...(n.children || []), newChild]
-                            }
-                          : n
-                      )
-                    );
-                  }}
-                />
-              ))}
-              <div className="flex justify-center">
-                <Button variant="outline" onClick={addNode}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Key-Value Pair
-                </Button>
-              </div>
-            </>
+            nodes.map((node) => (
+              <TreeNodeEditor
+                key={node.id}
+                node={node}
+                onUpdate={(updatedNode) => {
+                  setNodes(
+                    nodes.map((n) => (n.id === node.id ? updatedNode : n))
+                  );
+                }}
+                onDelete={() => {
+                  setNodes(nodes.filter((n) => n.id !== node.id));
+                }}
+                onAddChild={() => {
+                  const newChild: TreeNode = {
+                    id: generateId(),
+                    key: "",
+                    type: "string",
+                    value: ""
+                  };
+                  setNodes(
+                    nodes.map((n) =>
+                      n.id === node.id
+                        ? {
+                            ...n,
+                            children: [...(n.children || []), newChild]
+                          }
+                        : n
+                    )
+                  );
+                }}
+              />
+            ))
           )}
+          <div className="flex justify-center">
+            <Button variant="outline" onClick={addNode}>
+              <Plus className="h-4 w-4 mr-2" />
+              Add Key-Value Pair
+            </Button>
+          </div>
         </div>
       </div>
     </div>

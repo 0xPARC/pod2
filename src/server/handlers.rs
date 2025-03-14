@@ -1,11 +1,14 @@
-use axum::Json;
-
 use super::{error::ServerError, types::*};
 use crate::{
     backends::plonky2::{mock_main::MockProver, mock_signed::MockSigner},
-    frontend::{MainPod, MainPodBuilder, SignedPod, SignedPodBuilder},
-    middleware::Params,
+    frontend::{
+        MainPod, MainPodBuilder, Operation, OperationArg, SignedPod, SignedPodBuilder, StatementArg,
+    },
+    middleware::{NativeOperation, OperationType, Params, PodId},
+    prover::engine::DeductionEngine,
 };
+use axum::Json;
+use std::collections::HashSet;
 
 pub async fn list_pods(state: StateExtractor) -> Result<Json<Vec<Pod>>, ServerError> {
     let state = state.lock().await;
@@ -86,13 +89,7 @@ pub async fn create_signed_pod(
     let pod = builder.sign(&mut signer).map_err(ServerError::from)?;
 
     // Store the pod with its ID as a string
-    let id = format!(
-        "{:016x}{:016x}{:016x}{:016x}",
-        pod.id().0 .0[0].0,
-        pod.id().0 .0[1].0,
-        pod.id().0 .0[2].0,
-        pod.id().0 .0[3].0
-    );
+    let id = format!("{:x}", pod.id());
     println!(
         "DEBUG create_signed_pod - Created pod with ID: {:?}",
         pod.id()
@@ -105,25 +102,115 @@ pub async fn create_signed_pod(
     Ok(Json(pod))
 }
 
-pub async fn create_main_pod(state: StateExtractor) -> Result<Json<MainPod>, ServerError> {
+pub async fn create_main_pod(
+    state: StateExtractor,
+    Json(req): Json<CreateMainPodRequest>,
+) -> Result<Json<MainPod>, ServerError> {
     let mut state = state.lock().await;
     let params = Params::default();
     let mut builder = MainPodBuilder::new(&params);
 
+    let mut engine = DeductionEngine::new();
+    for signed_pod in state.signed_pods.values() {
+        println!(
+            "DEBUG validate_statements - Adding signed pod to engine with ID: {}",
+            signed_pod.id()
+        );
+        engine.add_signed_pod(signed_pod.clone());
+    }
+
+    println!("DEBUG validate_statements - Statements to validate:");
+    for (i, stmt) in req.statements.iter().enumerate() {
+        println!("DEBUG validate_statements - Statement {}: {:?}", i, stmt);
+    }
+
+    let proofs = engine.prove_multiple(req.statements);
+    println!(
+        "DEBUG validate_statements - Number of proofs found: {}",
+        proofs.len()
+    );
+
+    if !proofs.is_empty() {
+        let mut ops = Vec::new();
+        let mut pod_ids: HashSet<PodId> = HashSet::new();
+        for (stmt, chain) in proofs.iter() {
+            for (op_code, inputs, output) in chain {
+                let op = Operation(
+                    match op_code {
+                        x if *x == NativeOperation::ContainsFromEntries as u8 => {
+                            OperationType::Native(NativeOperation::ContainsFromEntries)
+                        }
+                        x if *x == NativeOperation::NotContainsFromEntries as u8 => {
+                            OperationType::Native(NativeOperation::NotContainsFromEntries)
+                        }
+                        x if *x == NativeOperation::EqualFromEntries as u8 => {
+                            OperationType::Native(NativeOperation::EqualFromEntries)
+                        }
+                        x if *x == NativeOperation::LtFromEntries as u8 => {
+                            OperationType::Native(NativeOperation::LtFromEntries)
+                        }
+                        x if *x == NativeOperation::GtFromEntries as u8 => {
+                            OperationType::Native(NativeOperation::GtFromEntries)
+                        }
+                        x if *x == NativeOperation::SumOf as u8 => {
+                            OperationType::Native(NativeOperation::SumOf)
+                        }
+                        x if *x == NativeOperation::ProductOf as u8 => {
+                            OperationType::Native(NativeOperation::ProductOf)
+                        }
+                        x if *x == NativeOperation::MaxOf as u8 => {
+                            OperationType::Native(NativeOperation::MaxOf)
+                        }
+                        _ => panic!("Unknown operation code: {}", op_code),
+                    },
+                    inputs
+                        .iter()
+                        .map(|i| OperationArg::Statement(i.clone().into()))
+                        .collect(),
+                );
+                println!("Adding op: {:?}", op);
+                ops.push(op.clone());
+                for arg in op.1 {
+                    if let OperationArg::Statement(stmt) = arg {
+                        for stmt_arg in stmt.1 {
+                            if let StatementArg::Key(key) = stmt_arg {
+                                pod_ids.insert(key.0 .1);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for op in ops {
+            // TODO not all ops should be public
+            builder.pub_op(op).unwrap();
+        }
+        println!("DEBUG create_main_pod - Pod IDs: {:?}", pod_ids);
+        println!("DEBUG create_main_pod - State: {:?}", state.signed_pods);
+        for pod_id in pod_ids {
+            println!("DEBUG create_main_pod - Adding Pod ID: {:?}", pod_id);
+            let id_string = format!("{:x}", pod_id);
+            println!("DEBUG create_main_pod - ID String: {:?}", id_string);
+            if let Some(pod) = state.signed_pods.get(&id_string) {
+                builder.add_signed_pod(pod);
+            }
+            if let Some(pod) = state.main_pods.get(&id_string) {
+                builder.add_main_pod(pod.clone());
+            }
+        }
+    } else {
+        println!("DEBUG validate_statements - No proofs found");
+    }
+
     // Create a prover and prove the pod
+    println!("DEBUG create_main_pod - Builder: {:?}", builder);
     let mut prover = MockProver {};
     let pod = builder
         .prove(&mut prover, &params)
         .map_err(ServerError::from)?;
 
     // Store the pod with its ID as a string
-    let id = format!(
-        "{:016x}{:016x}{:016x}{:016x}",
-        pod.id().0 .0[0].0,
-        pod.id().0 .0[1].0,
-        pod.id().0 .0[2].0,
-        pod.id().0 .0[3].0
-    );
+    let id = format!("{:x}", pod.id());
     println!(
         "DEBUG create_main_pod - Created pod with ID: {:?}",
         pod.id()
@@ -174,13 +261,7 @@ pub async fn import_pod(
 
     match req.pod {
         Pod::Signed(pod) => {
-            let id = format!(
-                "{:016x}{:016x}{:016x}{:016x}",
-                pod.id().0 .0[0].0,
-                pod.id().0 .0[1].0,
-                pod.id().0 .0[2].0,
-                pod.id().0 .0[3].0
-            );
+            let id = format!("{:x}", pod.id());
             println!(
                 "DEBUG import_pod - Importing signed pod with ID: {:?}",
                 pod.id()
@@ -193,13 +274,7 @@ pub async fn import_pod(
             Ok(Json(Pod::Signed(pod)))
         }
         Pod::Main(pod) => {
-            let id = format!(
-                "{:016x}{:016x}{:016x}{:016x}",
-                pod.id().0 .0[0].0,
-                pod.id().0 .0[1].0,
-                pod.id().0 .0[2].0,
-                pod.id().0 .0[3].0
-            );
+            let id = format!("{:x}", pod.id());
             println!(
                 "DEBUG import_pod - Importing main pod with ID: {:?}",
                 pod.id()
@@ -227,14 +302,49 @@ pub async fn validate_statements(
 ) -> Result<Json<bool>, ServerError> {
     let state = state.lock().await;
 
-    // Create a temporary MainPod with the statements
-    let mut main_pod = MainPod::new();
-    for statement in req.statements {
-        main_pod.add_statement(statement)?;
+    println!("DEBUG validate_statements - Starting validation");
+    println!(
+        "DEBUG validate_statements - Number of statements to validate: {}",
+        req.statements.len()
+    );
+    println!(
+        "DEBUG validate_statements - Number of signed pods in state: {}",
+        state.signed_pods.len()
+    );
+
+    let mut engine = DeductionEngine::new();
+    for signed_pod in state.signed_pods.values() {
+        println!(
+            "DEBUG validate_statements - Adding signed pod to engine with ID: {}",
+            signed_pod.id()
+        );
+        engine.add_signed_pod(signed_pod.clone());
     }
 
-    // Validate the MainPod
-    let is_valid = main_pod.validate(&state.signed_pods)?;
+    let proofs = engine.prove_multiple(req.statements);
 
-    Ok(Json(is_valid))
+    if !proofs.is_empty() {
+        println!("DEBUG validate_statements - Proofs found:");
+        for (i, (stmt, chain)) in proofs.iter().enumerate() {
+            println!("DEBUG validate_statements - Proof {}:", i);
+            println!("DEBUG validate_statements -   Statement: {:?}", stmt);
+            println!(
+                "DEBUG validate_statements -   Chain length: {}",
+                chain.len()
+            );
+            for (j, (op, inputs, output)) in chain.iter().enumerate() {
+                println!(
+                    "DEBUG validate_statements -   Step {}: Operation {:?}",
+                    j, op
+                );
+                println!("DEBUG validate_statements -     Inputs: {:?}", inputs);
+                println!("DEBUG validate_statements -     Output: {:?}", output);
+            }
+        }
+    } else {
+        println!("DEBUG validate_statements - No proofs found");
+    }
+
+    // Return true only if we found proofs for all statements
+    Ok(Json(!proofs.is_empty()))
 }

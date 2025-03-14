@@ -13,6 +13,10 @@ mod types;
 pub use error::ServerError;
 pub use types::*;
 
+use crate::{
+    backends::plonky2::mock_signed::MockSigner, frontend::SignedPodBuilder, middleware::Params,
+};
+
 pub async fn start_server() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing
     tracing_subscriber::fmt::init();
@@ -25,6 +29,27 @@ pub async fn start_server() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create shared state
     let state = Arc::new(Mutex::new(ServerState::new()));
+
+    let mut signed_pod_builder = SignedPodBuilder::new(&Params::default());
+    signed_pod_builder.insert("number", 1);
+    let mut signer = MockSigner {
+        pk: "test_signer".into(),
+    };
+    let pod = signed_pod_builder.sign(&mut signer)?;
+    {
+        let mut state_lock = state.lock().await;
+        let id_string = format!("{:x}", pod.id());
+        state_lock.signed_pods.insert(id_string, pod);
+    }
+
+    let mut signed_pod_builder = SignedPodBuilder::new(&Params::default());
+    signed_pod_builder.insert("other_number", 1);
+    let pod = signed_pod_builder.sign(&mut signer)?;
+    {
+        let mut state_lock = state.lock().await;
+        let id_string = format!("{:x}", pod.id());
+        state_lock.signed_pods.insert(id_string, pod);
+    }
 
     // Build router
     let app = Router::new()

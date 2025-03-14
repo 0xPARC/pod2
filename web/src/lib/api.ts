@@ -34,6 +34,122 @@ export type MainPod = z.infer<typeof MainPodSchema>;
 export type Pod = z.infer<typeof PodSchema>;
 export type Statement = z.infer<typeof StatementSchema>;
 
+export type StatementType =
+  | "Equal"
+  | "NotEqual"
+  | "Gt"
+  | "Lt"
+  | "Contains"
+  | "NotContains";
+
+export interface TreeNode {
+  id: string;
+  key: string;
+  type: string;
+  value: string | number;
+}
+
+// Helper function to check if a value is a TreeNode
+export function isTreeNode(value: any): value is TreeNode {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "id" in value &&
+    "key" in value &&
+    "type" in value &&
+    "value" in value
+  );
+}
+
+export interface KeyValue {
+  podId: string;
+  podClass: string;
+  key: string;
+}
+
+export function isKeyValue(value: any): value is KeyValue {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "podId" in value &&
+    "podClass" in value &&
+    "key" in value
+  );
+}
+
+export interface EditorStatement {
+  id: string;
+  type: StatementType;
+  firstArg: {
+    wildcardId: {
+      type: "concrete" | "named";
+      value: string;
+    };
+    key: string;
+  };
+  secondArg:
+    | {
+        type: "key";
+        value: KeyValue;
+      }
+    | {
+        type: "literal";
+        value: TreeNode;
+      };
+  isValid?: boolean;
+  isPending?: boolean;
+}
+
+export interface WildcardAnchoredKey {
+  wildcardId:
+    | {
+        Concrete: [string, string]; // [PodClass, PodId]
+      }
+    | {
+        Named: string;
+      };
+  key: string;
+}
+
+export interface FrontendWildcardStatement {
+  Equal?:
+    | [
+        [{ Concrete: [string, string] } | { Named: string }, string],
+        { Key: [[string, string], string] }
+      ]
+    | undefined;
+  NotEqual?:
+    | [
+        [{ Concrete: [string, string] } | { Named: string }, string],
+        { Key: [[string, string], string] }
+      ]
+    | undefined;
+  Gt?:
+    | [
+        [{ Concrete: [string, string] } | { Named: string }, string],
+        { Key: [[string, string], string] }
+      ]
+    | undefined;
+  Lt?:
+    | [
+        [{ Concrete: [string, string] } | { Named: string }, string],
+        { Key: [[string, string], string] }
+      ]
+    | undefined;
+  Contains?:
+    | [
+        [{ Concrete: [string, string] } | { Named: string }, string],
+        { Key: [[string, string], string] }
+      ]
+    | undefined;
+  NotContains?:
+    | [
+        [{ Concrete: [string, string] } | { Named: string }, string],
+        { Key: [[string, string], string] }
+      ]
+    | undefined;
+}
+
 const API_BASE = "http://localhost:3000/api";
 
 const axiosInstance = axios.create({
@@ -65,8 +181,42 @@ class ApiClient {
     return SignedPodSchema.parse(data);
   }
 
-  async createMainPod(): Promise<MainPod> {
-    const { data } = await axiosInstance.post("/create-main-pod");
+  async createMainPod(statements: EditorStatement[]): Promise<MainPod> {
+    const frontendStatements = statements.map((s) => {
+      // Convert EditorStatement to FrontendWildcardStatement
+      const firstArg = [
+        s.firstArg.wildcardId.type === "named"
+          ? { Named: s.firstArg.wildcardId.value }
+          : { Concrete: ["Signed", s.firstArg.wildcardId.value] },
+        s.firstArg.key
+      ];
+
+      let secondArg;
+      if (s.secondArg.type === "key") {
+        secondArg = {
+          Key: [["Signed", s.secondArg.value.podId], s.secondArg.value.key]
+        };
+      } else {
+        // For literal values, we create a temporary key with the literal value
+        secondArg = {
+          Key: [
+            ["Signed", String(s.secondArg.value.value)],
+            s.secondArg.value.key
+          ]
+        };
+      }
+
+      // Create the statement object with the correct variant
+      const statement: FrontendWildcardStatement = {
+        [s.type]: [firstArg, secondArg]
+      };
+
+      return statement;
+    });
+
+    const { data } = await axiosInstance.post("/create-main-pod", {
+      statements: frontendStatements
+    });
     return MainPodSchema.parse(data);
   }
 
@@ -79,16 +229,48 @@ class ApiClient {
     return PodSchema.parse(data);
   }
 
-  async validateStatement(statement: Statement): Promise<boolean> {
+  async validateStatement(statement: EditorStatement): Promise<boolean> {
     const { data } = await axiosInstance.post("/validate-statement", {
       statement
     });
     return z.boolean().parse(data);
   }
 
-  async validateStatements(statements: Statement[]): Promise<boolean> {
+  async validateStatements(statements: EditorStatement[]): Promise<boolean> {
+    const frontendStatements = statements.map((s) => {
+      // Convert EditorStatement to FrontendWildcardStatement
+      const firstArg = [
+        s.firstArg.wildcardId.type === "named"
+          ? { Named: s.firstArg.wildcardId.value }
+          : { Concrete: ["Signed", s.firstArg.wildcardId.value] },
+        s.firstArg.key
+      ];
+
+      let secondArg;
+      if (s.secondArg.type === "key") {
+        secondArg = {
+          Key: [["Signed", s.secondArg.value.podId], s.secondArg.value.key]
+        };
+      } else {
+        // For literal values, we create a temporary key with the literal value
+        secondArg = {
+          Key: [
+            ["Signed", String(s.secondArg.value.value)],
+            s.secondArg.value.key
+          ]
+        };
+      }
+
+      // Create the statement object with the correct variant
+      const statement: FrontendWildcardStatement = {
+        [s.type]: [firstArg, secondArg]
+      };
+
+      return statement;
+    });
+
     const { data } = await axiosInstance.post("/validate-statements", {
-      statements
+      statements: frontendStatements
     });
     return z.boolean().parse(data);
   }
@@ -131,7 +313,8 @@ export function useCreateSignedPod() {
 export function useCreateMainPod() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: api.createMainPod,
+    mutationFn: (statements: EditorStatement[]) =>
+      api.createMainPod(statements),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["pods"] });
     }
@@ -160,6 +343,10 @@ export function useImportPod() {
 
 export function useValidateStatement() {
   return useMutation({
-    mutationFn: (statement: Statement) => api.validateStatement(statement)
+    mutationFn: (statement: EditorStatement) => api.validateStatement(statement)
   });
+}
+
+export function isSignedPod(pod: Pod | undefined): pod is SignedPod {
+  return pod?.pod_class === "Signed";
 }
