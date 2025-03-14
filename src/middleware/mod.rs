@@ -152,7 +152,7 @@ impl Params {
     }
 }
 
-pub trait Pod: fmt::Debug + DynClone {
+pub trait Pod: fmt::Debug + DynClone + Send + Sync {
     fn verify(&self) -> bool;
     fn id(&self) -> PodId;
     fn pub_statements(&self) -> Vec<Statement>;
