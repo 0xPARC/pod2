@@ -38,6 +38,10 @@ pub async fn start_server() -> Result<(), Box<dyn std::error::Error>> {
             "/api/validate-statement",
             post(handlers::validate_statement),
         )
+        .route(
+            "/api/validate-statements",
+            post(handlers::validate_statements),
+        )
         .layer(cors)
         .with_state(state);
 

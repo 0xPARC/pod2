@@ -40,6 +40,11 @@ pub struct ValidateStatementRequest {
     pub statement: Statement,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ValidateStatementsRequest {
+    pub statements: Vec<Statement>,
+}
+
 // Server state
 #[derive(Default)]
 pub struct ServerState {

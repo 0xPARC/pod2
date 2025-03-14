@@ -5,15 +5,19 @@ import {
   Outlet
 } from "@tanstack/react-router";
 import { PodList } from "./components/pods/PodList";
-import { CreateMainPodDialog } from "./components/pods/CreateMainPodDialog";
+import { MainPodEditor } from "./components/pods/MainPodEditor";
 import { CreateSignedPodEditor } from "./components/pods/CreateSignedPodEditor";
+import { Navigation } from "./components/layout/Navigation";
 import { api } from "./lib/api";
 
 // Root route
 const rootRoute = createRootRoute({
   component: () => (
     <div className="min-h-screen bg-background">
-      <Outlet />
+      <Navigation />
+      <main>
+        <Outlet />
+      </main>
     </div>
   )
 });
@@ -33,7 +37,7 @@ const listRoute = createRoute({
 const createMainRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/create/main",
-  component: CreateMainPodDialog
+  component: MainPodEditor
 });
 
 // Create Signed POD route

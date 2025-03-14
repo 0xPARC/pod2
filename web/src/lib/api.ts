@@ -85,6 +85,13 @@ class ApiClient {
     });
     return z.boolean().parse(data);
   }
+
+  async validateStatements(statements: Statement[]): Promise<boolean> {
+    const { data } = await axiosInstance.post("/validate-statements", {
+      statements
+    });
+    return z.boolean().parse(data);
+  }
 }
 
 export const api = new ApiClient();
