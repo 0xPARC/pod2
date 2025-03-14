@@ -30,6 +30,7 @@ pub type Proof = Plonky2Proof<F, PoseidonGoldilocksConfig, D>;
 pub const HASH_SIZE: usize = 4;
 pub const VALUE_SIZE: usize = 4;
 
+// TODO mv `EMPTY`-> `EMTPY_VALUE`, and `NULL` -> `EMPTY_HASH`.
 pub const EMPTY: Value = Value([F::ZERO, F::ZERO, F::ZERO, F::ZERO]);
 pub const SELF_ID_HASH: Hash = Hash([F::ONE, F::ZERO, F::ZERO, F::ZERO]);
 pub const NULL: Hash = Hash([F::ZERO, F::ZERO, F::ZERO, F::ZERO]);
