@@ -149,6 +149,13 @@ where
     D: serde::Deserializer<'de>,
 {
     let hex_str = String::deserialize(deserializer)?;
+
+    if !hex_str.chars().count() == 64 || !hex_str.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(serde::de::Error::custom(
+            "Invalid hex string format - expected 64 hexadecimal characters",
+        ));
+    }
+
     let mut v = [F::ZERO; N];
     for i in 0..N {
         let start = i * 16;
