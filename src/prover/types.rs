@@ -1,13 +1,13 @@
 use crate::frontend::containers::{Array, Dictionary, Set};
-use crate::frontend::{AnchoredKey, Origin, Value};
-use crate::middleware::{self, NativeOperation};
+use crate::frontend::{self, AnchoredKey, Origin, Value};
+use crate::middleware::{self, hash_str, NativeOperation, NativePredicate, Predicate};
+use serde::{Deserialize, Serialize};
 
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ProvableStatement {
-    None,
     ValueOf(AnchoredKey, ProvableValue),
     Equal(AnchoredKey, AnchoredKey),
     NotEqual(AnchoredKey, AnchoredKey),
@@ -20,7 +20,121 @@ pub enum ProvableStatement {
     MaxOf(AnchoredKey, AnchoredKey, AnchoredKey),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+impl From<ProvableStatement> for frontend::Statement {
+    fn from(stmt: ProvableStatement) -> Self {
+        match stmt {
+            ProvableStatement::ValueOf(ak, v) => frontend::Statement(
+                Predicate::Native(NativePredicate::ValueOf),
+                vec![
+                    frontend::StatementArg::Key(ak.into()),
+                    frontend::StatementArg::Literal(v.into()),
+                ],
+            ),
+            ProvableStatement::Equal(ak1, ak2) => frontend::Statement(
+                Predicate::Native(NativePredicate::Equal),
+                vec![
+                    frontend::StatementArg::Key(ak1.into()),
+                    frontend::StatementArg::Key(ak2.into()),
+                ],
+            ),
+            ProvableStatement::NotEqual(ak1, ak2) => frontend::Statement(
+                Predicate::Native(NativePredicate::NotEqual),
+                vec![
+                    frontend::StatementArg::Key(ak1.into()),
+                    frontend::StatementArg::Key(ak2.into()),
+                ],
+            ),
+            ProvableStatement::Gt(ak1, ak2) => frontend::Statement(
+                Predicate::Native(NativePredicate::Gt),
+                vec![
+                    frontend::StatementArg::Key(ak1.into()),
+                    frontend::StatementArg::Key(ak2.into()),
+                ],
+            ),
+            ProvableStatement::Lt(ak1, ak2) => frontend::Statement(
+                Predicate::Native(NativePredicate::Lt),
+                vec![
+                    frontend::StatementArg::Key(ak1.into()),
+                    frontend::StatementArg::Key(ak2.into()),
+                ],
+            ),
+            ProvableStatement::Contains(ak1, ak2) => frontend::Statement(
+                Predicate::Native(NativePredicate::Contains),
+                vec![
+                    frontend::StatementArg::Key(ak1.into()),
+                    frontend::StatementArg::Key(ak2.into()),
+                ],
+            ),
+            ProvableStatement::NotContains(ak1, ak2) => frontend::Statement(
+                Predicate::Native(NativePredicate::NotContains),
+                vec![
+                    frontend::StatementArg::Key(ak1.into()),
+                    frontend::StatementArg::Key(ak2.into()),
+                ],
+            ),
+            ProvableStatement::SumOf(ak1, ak2, ak3) => frontend::Statement(
+                Predicate::Native(NativePredicate::SumOf),
+                vec![
+                    frontend::StatementArg::Key(ak1.into()),
+                    frontend::StatementArg::Key(ak2.into()),
+                    frontend::StatementArg::Key(ak3.into()),
+                ],
+            ),
+            ProvableStatement::ProductOf(ak1, ak2, ak3) => frontend::Statement(
+                Predicate::Native(NativePredicate::ProductOf),
+                vec![
+                    frontend::StatementArg::Key(ak1.into()),
+                    frontend::StatementArg::Key(ak2.into()),
+                    frontend::StatementArg::Key(ak3.into()),
+                ],
+            ),
+            ProvableStatement::MaxOf(ak1, ak2, ak3) => frontend::Statement(
+                Predicate::Native(NativePredicate::MaxOf),
+                vec![
+                    frontend::StatementArg::Key(ak1.into()),
+                    frontend::StatementArg::Key(ak2.into()),
+                    frontend::StatementArg::Key(ak3.into()),
+                ],
+            ),
+        }
+    }
+}
+
+// impl From<ProvableStatement> for middleware::Statement {
+//     fn from(stmt: ProvableStatement) -> Self {
+//         match stmt {
+//             ProvableStatement::None => middleware::Statement::None,
+//             ProvableStatement::ValueOf(ak, v) => {
+//                 middleware::Statement::ValueOf(ak.into(), v.into())
+//             }
+//             ProvableStatement::Equal(ak1, ak2) => {
+//                 middleware::Statement::Equal(ak1.into(), ak2.into())
+//             }
+//             ProvableStatement::NotEqual(ak1, ak2) => {
+//                 middleware::Statement::NotEqual(ak1.into(), ak2.into())
+//             }
+//             ProvableStatement::Gt(ak1, ak2) => middleware::Statement::Gt(ak1.into(), ak2.into()),
+//             ProvableStatement::Lt(ak1, ak2) => middleware::Statement::Lt(ak1.into(), ak2.into()),
+//             ProvableStatement::Contains(ak1, ak2) => {
+//                 middleware::Statement::Contains(ak1.into(), ak2.into())
+//             }
+//             ProvableStatement::NotContains(ak1, ak2) => {
+//                 middleware::Statement::NotContains(ak1.into(), ak2.into())
+//             }
+//             ProvableStatement::SumOf(ak1, ak2, ak3) => {
+//                 middleware::Statement::SumOf(ak1.into(), ak2.into(), ak3.into())
+//             }
+//             ProvableStatement::ProductOf(ak1, ak2, ak3) => {
+//                 middleware::Statement::ProductOf(ak1.into(), ak2.into(), ak3.into())
+//             }
+//             ProvableStatement::MaxOf(ak1, ak2, ak3) => {
+//                 middleware::Statement::MaxOf(ak1.into(), ak2.into(), ak3.into())
+//             }
+//         }
+//     }
+// }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProvableValue {
     String(String),
     Int(i64),
@@ -41,6 +155,34 @@ impl From<Value> for ProvableValue {
             Value::Set(s) => ProvableValue::Set(s),
             Value::Array(a) => ProvableValue::Array(a),
             Value::Raw(r) => ProvableValue::Raw(r),
+        }
+    }
+}
+
+impl From<ProvableValue> for frontend::Value {
+    fn from(value: ProvableValue) -> Self {
+        match value {
+            ProvableValue::String(s) => frontend::Value::String(s),
+            ProvableValue::Int(i) => frontend::Value::Int(i),
+            ProvableValue::Bool(b) => frontend::Value::Bool(b),
+            ProvableValue::Dictionary(d) => frontend::Value::Dictionary(d),
+            ProvableValue::Set(s) => frontend::Value::Set(s),
+            ProvableValue::Array(a) => frontend::Value::Array(a),
+            ProvableValue::Raw(r) => frontend::Value::Raw(r),
+        }
+    }
+}
+
+impl From<ProvableValue> for middleware::Value {
+    fn from(value: ProvableValue) -> Self {
+        match value {
+            ProvableValue::String(s) => hash_str(&s).value(),
+            ProvableValue::Int(v) => middleware::Value::from(v),
+            ProvableValue::Bool(b) => middleware::Value::from(b as i64),
+            ProvableValue::Dictionary(d) => d.middleware_dict().commitment().value(),
+            ProvableValue::Set(s) => s.middleware_set().commitment().value(),
+            ProvableValue::Array(a) => a.middleware_array().commitment().value(),
+            ProvableValue::Raw(v) => v,
         }
     }
 }
@@ -88,7 +230,6 @@ impl fmt::Display for ProvableValue {
 impl fmt::Display for ProvableStatement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::None => write!(f, "None"),
             Self::ValueOf(ak, v) => write!(f, "{} = {}", format_anchored_key(ak), v),
             Self::Equal(ak1, ak2) => write!(
                 f,
@@ -175,14 +316,33 @@ pub fn operation_name(op_code: u8) -> &'static str {
 }
 
 // The core wildcard type - represents either a concrete origin or a named wildcard
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum WildcardId {
     Concrete(Origin),
     Named(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct WildcardAnchoredKey(pub WildcardId, pub String);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum WildcardStatementArg {
+    Literal(ProvableValue),
+    Key(AnchoredKey),
+}
+
+// This is somewhat ugly but we're having to mirror some of the frontend/middleware
+// type distinctions to get this to work. Probably there is a better way to do this.
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum FrontendWildcardStatement {
+    Equal(WildcardAnchoredKey, WildcardStatementArg),
+    NotEqual(WildcardAnchoredKey, WildcardStatementArg),
+    Gt(WildcardAnchoredKey, WildcardStatementArg),
+    Lt(WildcardAnchoredKey, WildcardStatementArg),
+    Contains(WildcardAnchoredKey, WildcardStatementArg),
+    NotContains(WildcardAnchoredKey, WildcardStatementArg),
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum WildcardStatement {

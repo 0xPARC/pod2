@@ -1,6 +1,6 @@
 use super::types::*;
 use crate::frontend::{AnchoredKey, Origin, PodClass};
-use crate::middleware::{hash_str, NativeOperation, Value as MiddlewareValue};
+use crate::middleware::{hash_str, NativeOperation, Value as MiddlewareValue, SELF};
 use crate::SignedPod;
 use ascent::ascent;
 
@@ -78,7 +78,81 @@ impl DeductionEngine {
     }
 
     // Set the target statement we're trying to prove
-    pub fn set_target(&mut self, target: WildcardStatement) {
+    pub fn set_target(&mut self, target: FrontendWildcardStatement) {
+        let target = match target {
+            FrontendWildcardStatement::Equal(ak, arg) => {
+                if let WildcardStatementArg::Key(key) = arg {
+                    WildcardStatement::Equal(ak, key)
+                } else if let WildcardStatementArg::Literal(v) = arg {
+                    let new_ak =
+                        AnchoredKey(Origin(PodClass::Main, SELF), "value_of_0".to_string());
+                    self.add_fact(ProvableStatement::ValueOf(new_ak.clone(), v));
+                    WildcardStatement::Equal(ak, new_ak.clone())
+                } else {
+                    panic!("Invalid wildcard statement argument");
+                }
+            }
+            FrontendWildcardStatement::NotEqual(ak, arg) => {
+                if let WildcardStatementArg::Key(key) = arg {
+                    WildcardStatement::NotEqual(ak, key)
+                } else if let WildcardStatementArg::Literal(v) = arg {
+                    let new_ak =
+                        AnchoredKey(Origin(PodClass::Main, SELF), "value_of_0".to_string());
+                    self.add_fact(ProvableStatement::ValueOf(new_ak.clone(), v));
+                    WildcardStatement::NotEqual(ak, new_ak.clone())
+                } else {
+                    panic!("Invalid wildcard statement argument");
+                }
+            }
+            FrontendWildcardStatement::Gt(ak, arg) => {
+                if let WildcardStatementArg::Key(key) = arg {
+                    WildcardStatement::Gt(ak, key)
+                } else if let WildcardStatementArg::Literal(v) = arg {
+                    let new_ak =
+                        AnchoredKey(Origin(PodClass::Main, SELF), "value_of_0".to_string());
+                    self.add_fact(ProvableStatement::ValueOf(new_ak.clone(), v));
+                    WildcardStatement::Gt(ak, new_ak.clone())
+                } else {
+                    panic!("Invalid wildcard statement argument");
+                }
+            }
+            FrontendWildcardStatement::Lt(ak, arg) => {
+                if let WildcardStatementArg::Key(key) = arg {
+                    WildcardStatement::Lt(ak, key)
+                } else if let WildcardStatementArg::Literal(v) = arg {
+                    let new_ak =
+                        AnchoredKey(Origin(PodClass::Main, SELF), "value_of_0".to_string());
+                    self.add_fact(ProvableStatement::ValueOf(new_ak.clone(), v));
+                    WildcardStatement::Lt(ak, new_ak.clone())
+                } else {
+                    panic!("Invalid wildcard statement argument");
+                }
+            }
+            FrontendWildcardStatement::Contains(ak, arg) => {
+                if let WildcardStatementArg::Key(key) = arg {
+                    WildcardStatement::Contains(ak, key)
+                } else if let WildcardStatementArg::Literal(v) = arg {
+                    let new_ak =
+                        AnchoredKey(Origin(PodClass::Main, SELF), "value_of_0".to_string());
+                    self.add_fact(ProvableStatement::ValueOf(new_ak.clone(), v));
+                    WildcardStatement::Contains(ak, new_ak.clone())
+                } else {
+                    panic!("Invalid wildcard statement argument");
+                }
+            }
+            FrontendWildcardStatement::NotContains(ak, arg) => {
+                if let WildcardStatementArg::Key(key) = arg {
+                    WildcardStatement::NotContains(ak, key)
+                } else if let WildcardStatementArg::Literal(v) = arg {
+                    let new_ak =
+                        AnchoredKey(Origin(PodClass::Main, SELF), "value_of_0".to_string());
+                    self.add_fact(ProvableStatement::ValueOf(new_ak.clone(), v));
+                    WildcardStatement::NotContains(ak, new_ak.clone())
+                } else {
+                    panic!("Invalid wildcard statement argument");
+                }
+            }
+        };
         self.prog.target_statement = vec![(target,)];
     }
 
@@ -111,7 +185,7 @@ impl DeductionEngine {
 
     pub fn prove_multiple(
         &mut self,
-        targets: Vec<WildcardStatement>,
+        targets: Vec<FrontendWildcardStatement>,
     ) -> Vec<(ProvableStatement, DeductionChain)> {
         let mut all_proofs = Vec::new();
         let mut remaining_targets = targets;
@@ -152,7 +226,7 @@ impl DeductionEngine {
                     self.add_fact(output.clone());
                 }
 
-                self.prog.target_statement = vec![(target.clone(),)];
+                self.set_target(target.clone());
 
                 self.prog.run();
                 if let Some(proof) = self.prog.can_prove.first().cloned() {
