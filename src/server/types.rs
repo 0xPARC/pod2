@@ -3,7 +3,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::frontend::{MainPod, SignedPod, Statement};
+use crate::{
+    frontend::{MainPod, SignedPod, Statement},
+    prover::types::FrontendWildcardStatement,
+};
 
 // Types matching frontend
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,6 +29,11 @@ pub struct CreateSignedPodRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct CreateMainPodRequest {
+    pub statements: Vec<FrontendWildcardStatement>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct DeletePodRequest {
     pub id: String,
 }
@@ -42,7 +50,7 @@ pub struct ValidateStatementRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct ValidateStatementsRequest {
-    pub statements: Vec<Statement>,
+    pub statements: Vec<FrontendWildcardStatement>,
 }
 
 // Server state

@@ -8,99 +8,93 @@ import {
   SelectValue
 } from "@/components/ui/select";
 import { Plus, Trash2, CheckCircle2, XCircle, Loader2 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { api, Pod, Statement as ApiStatement } from "@/lib/api";
-import { TreeNodeEditor, TreeNode, ValueType } from "./CreateSignedPodEditor";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  api,
+  Pod,
+  EditorStatement,
+  StatementType,
+  isSignedPod,
+  TreeNode,
+  isTreeNode,
+  KeyValue,
+  isKeyValue
+} from "@/lib/api";
 import { useDebounce } from "@/lib/hooks/useDebounce";
+import { useNavigate } from "@tanstack/react-router";
+import { toast } from "sonner";
 
-// Define the available statement types based on the documentation
-export type StatementType =
-  | "Equal"
-  | "NotEqual"
-  | "Gt"
-  | "Lt"
-  | "GEq"
-  | "LEq"
-  | "SumOf"
-  | "ProductOf"
-  | "MaxOf";
-
-export interface AnchoredKey {
-  podId: string;
-  podClass: "Signed" | "Main";
-  key: string;
-}
-
-export interface Statement {
-  id: string;
-  type: StatementType;
-  firstArg: AnchoredKey;
-  secondArgType: "anchoredKey" | "literal";
-  secondArgAnchoredKey?: AnchoredKey;
-  secondArgLiteral?: TreeNode;
-  isValid?: boolean;
-  isPending?: boolean;
-}
-
-// Helper function to check if a pod is a SignedPod
-function isSignedPod(pod: Pod | undefined): pod is {
-  pod_class: "Signed";
-  entries: Record<string, any>;
-  proof: string;
-  id: string;
-  pod_type: "Mock";
-} {
-  return pod?.pod_class === "Signed";
+// Simple TreeNodeEditor component
+function TreeNodeEditor({
+  node,
+  onUpdate,
+  onDelete,
+  onAddChild
+}: {
+  node: TreeNode;
+  onUpdate: (node: TreeNode) => void;
+  onDelete: () => void;
+  onAddChild: () => void;
+}) {
+  return (
+    <div>
+      <input
+        type="text"
+        value={String(node.value)}
+        onChange={(e) => onUpdate({ ...node, value: e.target.value })}
+      />
+    </div>
+  );
 }
 
 export function MainPodEditor() {
-  const [statements, setStatements] = useState<Statement[]>([]);
+  const [statements, setStatements] = useState<EditorStatement[]>([]);
+  const [validationState, setValidationState] = useState<{
+    isPending: boolean;
+    isValid?: boolean;
+  }>({ isPending: false });
   const [pods, setPods] = useState<Pod[]>([]);
   const debouncedStatements = useDebounce(statements, 500);
+  const navigate = useNavigate();
 
   // Load available PODs
   useEffect(() => {
     api.listPods().then(setPods);
   }, []);
 
+  function isStatementComplete(statement: EditorStatement): boolean {
+    // Check first argument
+    if (!statement.firstArg.wildcardId.value || !statement.firstArg.key) {
+      return false;
+    }
+
+    // Check second argument
+    if (statement.secondArg.type === "key") {
+      return !!(
+        statement.secondArg.value.podId && statement.secondArg.value.key
+      );
+    } else {
+      return statement.secondArg.value.value !== "";
+    }
+  }
+
   // Validate statements when they change
   useEffect(() => {
     const validateStatements = async () => {
-      // Skip validation if no statements
-      if (debouncedStatements.length === 0) {
-        return;
-      }
+      if (debouncedStatements.length === 0) return;
 
-      // Set all statements to pending
-      setStatements((prev) => prev.map((s) => ({ ...s, isPending: true })));
+      // Only validate if all statements are complete
+      if (!debouncedStatements.every(isStatementComplete)) return;
+
+      // Set validation state to pending
+      setValidationState({ isPending: true });
 
       try {
-        // Convert frontend statements to API statements
-        const apiStatements: ApiStatement[] = debouncedStatements
-          .filter((s) => s.firstArg.podId && s.firstArg.key)
-          .map((s) => ({
-            id: s.id,
-            type: s.type,
-            firstArg: s.firstArg,
-            secondArgType: s.secondArgType,
-            secondArgAnchoredKey: s.secondArgAnchoredKey,
-            secondArgLiteral: s.secondArgLiteral
-          }));
-
-        // Validate all statements together
-        const isValid = await api.validateStatements(apiStatements);
-
-        // Update validation state for all statements
-        setStatements((prev) =>
-          prev.map((s) => ({ ...s, isValid, isPending: false }))
-        );
+        const isValid = await api.validateStatements(debouncedStatements);
+        setValidationState({ isPending: false, isValid });
       } catch (error) {
-        // On error, mark all statements as invalid
-        setStatements((prev) =>
-          prev.map((s) => ({ ...s, isValid: false, isPending: false }))
-        );
+        console.error("Validation error:", error);
+        setValidationState({ isPending: false, isValid: false });
       }
     };
 
@@ -108,12 +102,17 @@ export function MainPodEditor() {
   }, [debouncedStatements]);
 
   function handleAddStatement() {
-    const newStatement: Statement = {
+    const newStatement: EditorStatement = {
       id: crypto.randomUUID(),
       type: "Equal",
-      firstArg: { podId: "", podClass: "Signed", key: "" },
-      secondArgType: "anchoredKey",
-      secondArgAnchoredKey: { podId: "", podClass: "Signed", key: "" }
+      firstArg: {
+        wildcardId: { type: "concrete", value: "" },
+        key: ""
+      },
+      secondArg: {
+        type: "key",
+        value: { podId: "", podClass: "Signed", key: "" }
+      }
     };
     setStatements([...statements, newStatement]);
   }
@@ -126,45 +125,66 @@ export function MainPodEditor() {
     setStatements(statements.map((s) => (s.id === id ? { ...s, type } : s)));
   }
 
-  function handleFirstArgChange(id: string, arg: AnchoredKey) {
-    setStatements(
-      statements.map((s) => (s.id === id ? { ...s, firstArg: arg } : s))
-    );
-  }
-
-  function handleSecondArgTypeChange(
+  function handleFirstArgChange(
     id: string,
-    type: "anchoredKey" | "literal"
+    arg: { podId: string; podClass: string; key: string }
   ) {
     setStatements(
       statements.map((s) =>
         s.id === id
           ? {
               ...s,
-              secondArgType: type,
-              secondArgAnchoredKey:
-                type === "anchoredKey"
-                  ? { podId: "", podClass: "Signed", key: "" }
-                  : undefined,
-              secondArgLiteral:
-                type === "literal"
-                  ? {
-                      id: crypto.randomUUID(),
-                      key: "",
-                      type: "string",
-                      value: ""
-                    }
-                  : undefined
+              firstArg: {
+                wildcardId: { type: "concrete", value: arg.podId },
+                key: arg.key
+              }
             }
           : s
       )
     );
   }
 
-  function handleSecondArgAnchoredKeyChange(id: string, arg: AnchoredKey) {
+  function handleSecondArgTypeChange(id: string, type: "key" | "literal") {
     setStatements(
       statements.map((s) =>
-        s.id === id ? { ...s, secondArgAnchoredKey: arg } : s
+        s.id === id
+          ? {
+              ...s,
+              secondArg:
+                type === "key"
+                  ? {
+                      type: "key",
+                      value: { podId: "", podClass: "Signed", key: "" }
+                    }
+                  : {
+                      type: "literal",
+                      value: {
+                        id: crypto.randomUUID(),
+                        key: "",
+                        type: "string",
+                        value: ""
+                      }
+                    }
+            }
+          : s
+      )
+    );
+  }
+
+  function handleSecondArgAnchoredKeyChange(id: string, arg: KeyValue) {
+    setStatements(
+      statements.map((s) =>
+        s.id === id &&
+        s.secondArg.type === "key" &&
+        isKeyValue(s.secondArg.value)
+          ? {
+              ...s,
+              secondArg: {
+                type: "key",
+                value: arg
+              }
+            }
+          : s
       )
     );
   }
@@ -172,39 +192,179 @@ export function MainPodEditor() {
   function handleSecondArgLiteralChange(id: string, node: TreeNode) {
     setStatements(
       statements.map((s) =>
-        s.id === id ? { ...s, secondArgLiteral: node } : s
+        s.id === id
+          ? {
+              ...s,
+              secondArg: {
+                type: "literal",
+                value: node
+              }
+            }
+          : s
       )
     );
   }
 
+  async function handleCreateMainPod() {
+    try {
+      await api.createMainPod(statements);
+      toast.success("Main POD created successfully");
+      // Navigate back to the pods list on success
+      navigate({ to: "/" });
+    } catch (error) {
+      console.error("Failed to create Main POD:", error);
+      toast.error("Failed to create Main POD");
+    }
+  }
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">Main POD Editor</h2>
-        <Button onClick={handleAddStatement}>
-          <Plus className="w-4 h-4 mr-2" />
-          Add Statement
-        </Button>
+    <div className="container mx-auto py-8">
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-bold">Create Main POD</h1>
+        <div className="flex gap-4">
+          <Button onClick={handleAddStatement}>
+            <Plus className="w-4 h-4 mr-2" />
+            Add Statement
+          </Button>
+          <Button
+            onClick={handleCreateMainPod}
+            disabled={!validationState.isValid || validationState.isPending}
+            variant="default"
+          >
+            Create Main POD
+          </Button>
+        </div>
       </div>
 
-      <div className="space-y-4">
-        {statements.map((statement) => (
-          <Card key={statement.id}>
-            <CardContent className="pt-6">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
+      <div className="bg-white rounded-lg shadow p-6">
+        <div className="space-y-4">
+          {statements.map((statement) => (
+            <Card key={statement.id}>
+              <CardContent className="pt-6">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium">
+                          Statement Type
+                        </span>
+                      </div>
+                      <Select
+                        value={statement.type}
+                        onValueChange={(value) =>
+                          handleStatementTypeChange(
+                            statement.id,
+                            value as StatementType
+                          )
+                        }
+                      >
+                        <SelectTrigger className="w-[180px]">
+                          <SelectValue placeholder="Select type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Equal">Equal</SelectItem>
+                          <SelectItem value="NotEqual">NotEqual</SelectItem>
+                          <SelectItem value="Gt">Gt</SelectItem>
+                          <SelectItem value="Lt">Lt</SelectItem>
+                          <SelectItem value="Contains">Contains</SelectItem>
+                          <SelectItem value="NotContains">
+                            NotContains
+                          </SelectItem>
+                          <SelectItem value="SumOf">SumOf</SelectItem>
+                          <SelectItem value="ProductOf">ProductOf</SelectItem>
+                          <SelectItem value="MaxOf">MaxOf</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {validationState.isPending ? (
+                        <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                      ) : validationState.isValid ? (
+                        <CheckCircle2 className="w-4 h-4 text-green-500" />
+                      ) : validationState.isValid === false ? (
+                        <XCircle className="w-4 h-4 text-red-500" />
+                      ) : null}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleDeleteStatement(statement.id)}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+
                   <div className="flex items-center gap-4">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium">
-                        Statement Type
+                        First Argument
                       </span>
                     </div>
                     <Select
-                      value={statement.type}
+                      value={`${statement.firstArg.wildcardId.value}:${statement.firstArg.key}`}
+                      onValueChange={(value) => {
+                        const [wildcardId, key] = value.split(":");
+                        const pod = pods.find((p) => p.id === wildcardId);
+                        if (pod) {
+                          handleFirstArgChange(statement.id, {
+                            podId: wildcardId,
+                            podClass: pod.pod_class,
+                            key
+                          });
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="w-[180px]">
+                        <SelectValue placeholder="Select key" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {pods.map(
+                          (pod) =>
+                            isSignedPod(pod) &&
+                            Object.entries(pod.entries).map(([key, value]) => (
+                              <SelectItem
+                                key={`${pod.id}:${key}`}
+                                value={`${pod.id}:${key}`}
+                              >
+                                {pod.id}.{key}
+                              </SelectItem>
+                            ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                    {statement.firstArg.wildcardId.value &&
+                      statement.firstArg.key && (
+                        <span className="text-sm text-muted-foreground">
+                          {(() => {
+                            const pod = pods.find(
+                              (p) =>
+                                p.id === statement.firstArg.wildcardId.value
+                            );
+                            if (isSignedPod(pod)) {
+                              return (
+                                pod.entries[
+                                  statement.firstArg.key
+                                ]?.toString() || "N/A"
+                              );
+                            }
+                            return "N/A";
+                          })()}
+                        </span>
+                      )}
+                  </div>
+
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium">
+                        Second Argument
+                      </span>
+                    </div>
+                    <Select
+                      value={statement.secondArg.type}
                       onValueChange={(value) =>
-                        handleStatementTypeChange(
+                        handleSecondArgTypeChange(
                           statement.id,
-                          value as StatementType
+                          value as "key" | "literal"
                         )
                       }
                     >
@@ -212,194 +372,101 @@ export function MainPodEditor() {
                         <SelectValue placeholder="Select type" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="Equal">Equal</SelectItem>
-                        <SelectItem value="NotEqual">NotEqual</SelectItem>
-                        <SelectItem value="Gt">Gt</SelectItem>
-                        <SelectItem value="Lt">Lt</SelectItem>
-                        <SelectItem value="GEq">GEq</SelectItem>
-                        <SelectItem value="LEq">LEq</SelectItem>
-                        <SelectItem value="SumOf">SumOf</SelectItem>
-                        <SelectItem value="ProductOf">ProductOf</SelectItem>
-                        <SelectItem value="MaxOf">MaxOf</SelectItem>
+                        <SelectItem value="key">Anchored Key</SelectItem>
+                        <SelectItem value="literal">Literal Value</SelectItem>
                       </SelectContent>
                     </Select>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {statement.isPending ? (
-                      <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-                    ) : statement.isValid ? (
-                      <CheckCircle2 className="w-4 h-4 text-green-500" />
-                    ) : statement.isValid === false ? (
-                      <XCircle className="w-4 h-4 text-red-500" />
-                    ) : null}
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleDeleteStatement(statement.id)}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </div>
-                </div>
 
-                <div className="flex items-center gap-4">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">First Argument</span>
-                  </div>
-                  <Select
-                    value={`${statement.firstArg.podId}:${statement.firstArg.key}`}
-                    onValueChange={(value) => {
-                      const [podId, key] = value.split(":");
-                      const pod = pods.find((p) => p.id === podId);
-                      if (pod) {
-                        handleFirstArgChange(statement.id, {
-                          podId,
-                          podClass: pod.pod_class,
-                          key
-                        });
-                      }
-                    }}
-                  >
-                    <SelectTrigger className="w-[180px]">
-                      <SelectValue placeholder="Select key" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {pods.map(
-                        (pod) =>
-                          isSignedPod(pod) &&
-                          Object.entries(pod.entries).map(([key, value]) => (
-                            <SelectItem
-                              key={`${pod.id}:${key}`}
-                              value={`${pod.id}:${key}`}
-                            >
-                              {pod.id}.{key}
-                            </SelectItem>
-                          ))
-                      )}
-                    </SelectContent>
-                  </Select>
-                  {statement.firstArg.podId && statement.firstArg.key && (
-                    <span className="text-sm text-muted-foreground">
-                      {(() => {
-                        const pod = pods.find(
-                          (p) => p.id === statement.firstArg.podId
-                        );
-                        if (isSignedPod(pod)) {
-                          return (
-                            pod.entries[statement.firstArg.key]?.toString() ||
-                            "N/A"
-                          );
-                        }
-                        return "N/A";
-                      })()}
-                    </span>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-4">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">Second Argument</span>
-                  </div>
-                  <Select
-                    value={statement.secondArgType}
-                    onValueChange={(value) =>
-                      handleSecondArgTypeChange(
-                        statement.id,
-                        value as "anchoredKey" | "literal"
-                      )
-                    }
-                  >
-                    <SelectTrigger className="w-[180px]">
-                      <SelectValue placeholder="Select type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="anchoredKey">Anchored Key</SelectItem>
-                      <SelectItem value="literal">Literal Value</SelectItem>
-                    </SelectContent>
-                  </Select>
-
-                  {statement.secondArgType === "anchoredKey" && (
-                    <>
-                      <Select
-                        value={`${statement.secondArgAnchoredKey?.podId}:${statement.secondArgAnchoredKey?.key}`}
-                        onValueChange={(value) => {
-                          const [podId, key] = value.split(":");
-                          const pod = pods.find((p) => p.id === podId);
-                          if (pod) {
-                            handleSecondArgAnchoredKeyChange(statement.id, {
-                              podId,
-                              podClass: pod.pod_class,
-                              key
-                            });
+                    {statement.secondArg.type === "key" && (
+                      <>
+                        <Select
+                          value={
+                            isKeyValue(statement.secondArg.value)
+                              ? `${statement.secondArg.value.podId}:${statement.secondArg.value.key}`
+                              : ""
                           }
-                        }}
-                      >
-                        <SelectTrigger className="w-[180px]">
-                          <SelectValue placeholder="Select key" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {pods.map(
-                            (pod) =>
-                              isSignedPod(pod) &&
-                              Object.entries(pod.entries).map(
-                                ([key, value]) => (
-                                  <SelectItem
-                                    key={`${pod.id}:${key}`}
-                                    value={`${pod.id}:${key}`}
-                                  >
-                                    {pod.id}.{key}
-                                  </SelectItem>
+                          onValueChange={(value) => {
+                            const [podId, key] = value.split(":");
+                            const pod = pods.find((p) => p.id === podId);
+                            if (pod) {
+                              handleSecondArgAnchoredKeyChange(statement.id, {
+                                podId,
+                                podClass: pod.pod_class,
+                                key
+                              });
+                            }
+                          }}
+                        >
+                          <SelectTrigger className="w-[180px]">
+                            <SelectValue placeholder="Select key" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {pods.map(
+                              (pod) =>
+                                isSignedPod(pod) &&
+                                Object.entries(pod.entries).map(
+                                  ([key, value]) => (
+                                    <SelectItem
+                                      key={`${pod.id}:${key}`}
+                                      value={`${pod.id}:${key}`}
+                                    >
+                                      {pod.id}.{key}
+                                    </SelectItem>
+                                  )
                                 )
-                              )
-                          )}
-                        </SelectContent>
-                      </Select>
-                      {statement.secondArgAnchoredKey?.podId &&
-                        statement.secondArgAnchoredKey?.key && (
-                          <span className="text-sm text-muted-foreground">
-                            {(() => {
-                              const pod = pods.find(
-                                (p) =>
-                                  p.id === statement.secondArgAnchoredKey?.podId
-                              );
-                              if (isSignedPod(pod)) {
-                                return (
-                                  pod.entries[
-                                    statement.secondArgAnchoredKey?.key
-                                  ]?.toString() || "N/A"
+                            )}
+                          </SelectContent>
+                        </Select>
+                        {isKeyValue(statement.secondArg.value) &&
+                          statement.secondArg.value.podId &&
+                          statement.secondArg.value.key && (
+                            <span className="text-sm text-muted-foreground">
+                              {(() => {
+                                const pod = pods.find(
+                                  (p) =>
+                                    isKeyValue(statement.secondArg.value) &&
+                                    p.id === statement.secondArg.value.podId
                                 );
-                              }
-                              return "N/A";
-                            })()}
-                          </span>
-                        )}
-                    </>
-                  )}
+                                if (isSignedPod(pod)) {
+                                  return (
+                                    pod.entries[
+                                      (statement.secondArg.value as KeyValue)
+                                        .key
+                                    ]?.toString() || "N/A"
+                                  );
+                                }
+                                return "N/A";
+                              })()}
+                            </span>
+                          )}
+                      </>
+                    )}
 
-                  {statement.secondArgType === "literal" && (
-                    <div className="flex-1">
-                      <TreeNodeEditor
-                        node={
-                          statement.secondArgLiteral || {
-                            id: crypto.randomUUID(),
-                            key: "",
-                            type: "string",
-                            value: ""
+                    {statement.secondArg.type === "literal" && (
+                      <div className="flex-1">
+                        <TreeNodeEditor
+                          node={
+                            statement.secondArg.value || {
+                              id: crypto.randomUUID(),
+                              key: "",
+                              type: "string",
+                              value: ""
+                            }
                           }
-                        }
-                        onUpdate={(node) =>
-                          handleSecondArgLiteralChange(statement.id, node)
-                        }
-                        onDelete={() => {}}
-                        onAddChild={() => {}}
-                      />
-                    </div>
-                  )}
+                          onUpdate={(node) =>
+                            handleSecondArgLiteralChange(statement.id, node)
+                          }
+                          onDelete={() => {}}
+                          onAddChild={() => {}}
+                        />
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       </div>
     </div>
   );

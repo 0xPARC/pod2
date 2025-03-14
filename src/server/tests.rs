@@ -3,7 +3,7 @@ use crate::backends::plonky2::mock_signed::MockSigner;
 use crate::frontend::{
     AnchoredKey, Origin, PodClass, SignedPod, SignedPodBuilder, Statement, StatementArg, Value,
 };
-use crate::middleware::{NativePredicate, Params, Predicate};
+use crate::middleware::{NativePredicate, Params, PodId, Predicate};
 use axum::{
     body::Body,
     http::{Request, StatusCode},
@@ -37,6 +37,10 @@ async fn setup_test_app() -> Router {
         .route(
             "/api/validate-statement",
             post(handlers::validate_statement),
+        )
+        .route(
+            "/api/validate-statements",
+            post(handlers::validate_statements),
         )
         .with_state(state)
 }
@@ -298,4 +302,206 @@ async fn test_validate_statement() -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     })
     .await
+}
+
+#[tokio::test]
+async fn test_validate_statements() -> Result<(), Box<dyn std::error::Error>> {
+    with_clean_state(|app| async move {
+        println!("DEBUG test_validate_statements - Starting test");
+
+        // Create a test pod first
+        let mut signed_pod_builder = SignedPodBuilder::new(&Params::default());
+        signed_pod_builder.insert("test_key", "test_value");
+        let mut signer = MockSigner {
+            pk: "test_signer".into(),
+        };
+        let pod = signed_pod_builder.sign(&mut signer)?;
+        println!(
+            "DEBUG test_validate_statements - Created test pod with ID: {}",
+            pod.id()
+        );
+        println!(
+            "DEBUG test_validate_statements - Pod contents: {:?}",
+            pod.kvs
+        );
+
+        // Import the pod into the server state
+        let import_req = Request::builder()
+            .method("POST")
+            .uri("/api/import-pod")
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                json!({ "pod": Pod::Signed(pod.clone()) }).to_string(),
+            ))
+            .unwrap();
+
+        println!("DEBUG test_validate_statements - Importing pod into server state");
+        let response = app.clone().oneshot(import_req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        println!("DEBUG test_validate_statements - Pod imported successfully");
+
+        // Create a statement that checks if the pod's test_key equals "test_value"
+        let statement = Statement(
+            Predicate::Native(NativePredicate::Equal),
+            vec![
+                StatementArg::Key(AnchoredKey(
+                    Origin(PodClass::Signed, pod.id()),
+                    "test_key".to_string(),
+                )),
+                StatementArg::Key(AnchoredKey(
+                    Origin(PodClass::Signed, pod.id()),
+                    "test_key".to_string(),
+                )),
+            ],
+        );
+        println!(
+            "DEBUG test_validate_statements - Created statement: {:?}",
+            statement
+        );
+
+        let validate_req = Request::builder()
+            .method("POST")
+            .uri("/api/validate-statements")
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                json!({
+                    "statements": [{
+                        "Equal": [
+                            {
+                                "Concrete": {
+                                    "0": "Signed",
+                                    "1": pod.id().to_string()
+                                },
+                                "1": "test_key"
+                            },
+                            {
+                                "Key": {
+                                    "0": {
+                                        "0": "Signed",
+                                        "1": pod.id().to_string()
+                                    },
+                                    "1": "test_key"
+                                }
+                            }
+                        ]
+                    }]
+                })
+                .to_string(),
+            ))
+            .unwrap();
+
+        println!("DEBUG test_validate_statements - Sending validation request");
+        let response = app.oneshot(validate_req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        println!("DEBUG test_validate_statements - Validation request successful");
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let result: bool = serde_json::from_slice(&body).unwrap();
+        println!(
+            "DEBUG test_validate_statements - Validation result: {}",
+            result
+        );
+        assert!(result);
+
+        Ok(())
+    })
+    .await
+}
+
+#[test]
+fn test_frontend_wildcard_statement_deserialization() {
+    use crate::frontend::{AnchoredKey, Origin, PodClass};
+    use crate::middleware::hash_str;
+    use crate::prover::types::{
+        FrontendWildcardStatement, WildcardAnchoredKey, WildcardId, WildcardStatementArg,
+    };
+
+    // Create a valid PodId using hash_str
+    let pod_id = hash_str("test_pod_id");
+
+    let json = r#"{
+        "Equal": [
+            [
+                {
+                    "Concrete": [
+                        "Signed",
+                        "5e7973ac718ad29817adf29a28ebe67e87ae945474ba3d1bdc903b7ff0e89f8a"
+                    ]
+                },
+                "test_key"
+            ],
+            {
+                "Key": [
+                    [
+                        "Signed",
+                        "5e7973ac718ad29817adf29a28ebe67e87ae945474ba3d1bdc903b7ff0e89f8a"
+                    ],
+                    "test_key"
+                ]
+            }
+        ]
+    }"#;
+
+    let result = serde_json::from_str::<FrontendWildcardStatement>(json);
+    match result {
+        Ok(stmt) => {
+            println!("Successfully deserialized: {:?}", stmt);
+            match stmt {
+                FrontendWildcardStatement::Equal(key, arg) => {
+                    println!("First arg: {:?}", key);
+                    println!("Second arg: {:?}", arg);
+                }
+                _ => panic!("Expected Equal statement"),
+            }
+        }
+        Err(e) => {
+            println!("Deserialization error: {}", e);
+            panic!("Failed to deserialize");
+        }
+    }
+}
+
+#[test]
+fn test_frontend_wildcard_statement_serialization() {
+    use crate::frontend::{AnchoredKey, Origin, PodClass};
+    use crate::middleware::hash_str;
+    use crate::prover::types::{
+        FrontendWildcardStatement, WildcardAnchoredKey, WildcardId, WildcardStatementArg,
+    };
+
+    // Create a concrete origin
+    let origin = Origin(PodClass::Signed, PodId(hash_str("1234567890abcdef")));
+
+    // Create a wildcard anchored key
+    let wildcard_key =
+        WildcardAnchoredKey(WildcardId::Concrete(origin.clone()), "test_key".to_string());
+
+    // Create a concrete anchored key for the second argument
+    let concrete_key = AnchoredKey(origin, "test_key".to_string());
+
+    // Create the statement
+    let statement =
+        FrontendWildcardStatement::Equal(wildcard_key, WildcardStatementArg::Key(concrete_key));
+
+    // Serialize to JSON
+    let json = serde_json::to_string_pretty(&statement).unwrap();
+    println!("Serialized JSON:\n{}", json);
+
+    // Try to deserialize it back
+    let result = serde_json::from_str::<FrontendWildcardStatement>(&json);
+    match result {
+        Ok(stmt) => {
+            println!("Successfully deserialized: {:?}", stmt);
+            assert_eq!(
+                stmt, statement,
+                "Deserialized statement should match original"
+            );
+        }
+        Err(e) => {
+            println!("Deserialization error: {}", e);
+            panic!("Failed to deserialize");
+        }
+    }
 }
