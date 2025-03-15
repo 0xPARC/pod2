@@ -9,6 +9,7 @@ mod statement;
 pub use basetypes::*;
 pub use custom::*;
 pub use operation::*;
+use schemars::JsonSchema;
 pub use statement::*;
 
 use anyhow::Result;
@@ -55,7 +56,7 @@ impl fmt::Display for AnchoredKey {
 /// An entry consists of a key-value pair.
 pub type Entry = (String, Value);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
 pub struct PodId(pub Hash);
 
 impl ToFields for PodId {
