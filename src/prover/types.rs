@@ -317,13 +317,39 @@ pub fn operation_name(op_code: u8) -> &'static str {
 
 // The core wildcard type - represents either a concrete origin or a named wildcard
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value")]
 pub enum WildcardId {
     Concrete(Origin),
     Named(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(
+    into = "WildcardAnchoredKeySerdeHelper",
+    from = "WildcardAnchoredKeySerdeHelper"
+)]
 pub struct WildcardAnchoredKey(pub WildcardId, pub String);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct WildcardAnchoredKeySerdeHelper {
+    pub wildcard_id: WildcardId,
+    pub key: String,
+}
+
+impl From<WildcardAnchoredKey> for WildcardAnchoredKeySerdeHelper {
+    fn from(key: WildcardAnchoredKey) -> Self {
+        WildcardAnchoredKeySerdeHelper {
+            wildcard_id: key.0,
+            key: key.1,
+        }
+    }
+}
+
+impl From<WildcardAnchoredKeySerdeHelper> for WildcardAnchoredKey {
+    fn from(helper: WildcardAnchoredKeySerdeHelper) -> Self {
+        WildcardAnchoredKey(helper.wildcard_id, helper.key)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum WildcardStatementArg {
