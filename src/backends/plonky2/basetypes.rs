@@ -14,6 +14,7 @@ use plonky2::hash::poseidon::PoseidonHash;
 use plonky2::plonk::config::Hasher;
 use plonky2::plonk::config::PoseidonGoldilocksConfig;
 use plonky2::plonk::proof::Proof as Plonky2Proof;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::cmp::{Ord, Ordering};
 use std::fmt;
@@ -37,12 +38,16 @@ pub const EMPTY_VALUE: Value = Value([F::ZERO, F::ZERO, F::ZERO, F::ZERO]);
 pub const SELF_ID_HASH: Hash = Hash([F::ONE, F::ZERO, F::ZERO, F::ZERO]);
 pub const EMPTY_HASH: Hash = Hash([F::ZERO, F::ZERO, F::ZERO, F::ZERO]);
 
-#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "MiddlewareValue")]
 pub struct Value(
     #[serde(
         serialize_with = "serialize_value_tuple",
         deserialize_with = "deserialize_value_tuple"
     )]
+    // We know that Serde will serialize and deserialize this as a string, so we can
+    // use the JsonSchema to validate the format.
+    #[schemars(with = "String", regex(pattern = r"^[0-9a-fA-F]{64}$"))]
     pub [F; VALUE_SIZE],
 );
 
@@ -126,12 +131,13 @@ impl fmt::Display for Value {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Hash(
     #[serde(
         serialize_with = "serialize_hash_tuple",
         deserialize_with = "deserialize_hash_tuple"
     )]
+    #[schemars(with = "String", regex(pattern = r"^[0-9a-fA-F]{64}$"))]
     pub [F; HASH_SIZE],
 );
 

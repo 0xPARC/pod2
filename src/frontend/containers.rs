@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::Value;
@@ -10,7 +11,7 @@ use crate::middleware::{
     hash_str, Value as MiddlewareValue,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(transparent)]
 pub struct Set(Vec<Value>, #[serde(skip)] MiddlewareSet);
 
@@ -40,7 +41,7 @@ impl<'de> Deserialize<'de> for Set {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(transparent)]
 pub struct Dictionary(HashMap<String, Value>, #[serde(skip)] MiddlewareDictionary);
 
@@ -75,7 +76,7 @@ impl<'de> Deserialize<'de> for Dictionary {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(transparent)]
 pub struct Array(Vec<Value>, #[serde(skip)] MiddlewareArray);
 

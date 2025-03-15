@@ -1,13 +1,14 @@
 use std::collections::HashMap;
 
 use base64::prelude::*;
-use serde::ser::{SerializeStruct, Serializer};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::backends::plonky2::mock_main::MockMainPod;
 use crate::backends::plonky2::mock_signed::MockSignedPod;
 use crate::frontend::containers::Dictionary;
 use crate::frontend::Statement;
+use crate::frontend::StatementSerdeHelper;
 use crate::middleware::{PodId, F};
 use crate::middleware::{HASH_SIZE, VALUE_SIZE};
 use plonky2::field::types::Field;
@@ -15,103 +16,89 @@ use plonky2::field::types::Field;
 use super::Value;
 use super::{MainPod, SignedPod};
 
-impl Serialize for SignedPod {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut state = serializer.serialize_struct("SignedPod", 3)?;
-        state.serialize_field(
-            "entries",
-            &self
-                .kvs
-                .iter()
-                .map(|(k, v)| (k.clone(), v))
-                .collect::<HashMap<String, &Value>>(),
-        )?;
-
-        let signature = self.pod.serialized_proof();
-
-        state.serialize_field("id", &self.id())?;
-        state.serialize_field("proof", &signature)?;
-        state.serialize_field("pod_class", "Signed")?;
-        state.serialize_field("pod_type", "Mock")?;
-        state.end()
-    }
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct SignedPodHelper {
+    entries: HashMap<String, Value>,
+    proof: String,
+    pod_class: String,
+    pod_type: String,
 }
 
-impl<'de> Deserialize<'de> for SignedPod {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        struct SignedPodHelper {
-            entries: HashMap<String, Value>,
-            proof: String,
-            pod_class: String,
-            pod_type: String,
-        }
+impl TryFrom<SignedPodHelper> for SignedPod {
+    type Error = anyhow::Error;
 
-        let helper = SignedPodHelper::deserialize(deserializer)?;
+    fn try_from(helper: SignedPodHelper) -> Result<SignedPod, Self::Error> {
         if helper.pod_class != "Signed" {
-            return Err(serde::de::Error::custom("pod_class is not Signed"));
+            return Err(anyhow::anyhow!("pod_class is not Signed"));
         }
         if helper.pod_type != "Mock" {
-            return Err(serde::de::Error::custom("pod_type is not Mock"));
+            return Err(anyhow::anyhow!("pod_type is not Mock"));
         }
-        let kvs = helper.entries;
-        let dict = Dictionary::new(kvs.clone()).middleware_dict().clone();
+
+        let dict = Dictionary::new(helper.entries.clone())
+            .middleware_dict()
+            .clone();
         let pod = MockSignedPod::new(PodId(dict.commitment()), helper.proof, dict);
+
         Ok(SignedPod {
             pod: Box::new(pod),
-            kvs: kvs,
+            kvs: helper.entries,
         })
     }
 }
 
-impl Serialize for MainPod {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut state = serializer.serialize_struct("MainPod", 2)?;
-        state.serialize_field("public_statements", &self.public_statements)?;
-        state.serialize_field("id", &self.pod.id())?;
-        state.serialize_field("proof", &self.pod.serialized_proof())?;
-        state.serialize_field("pod_class", "Main")?;
-        state.serialize_field("pod_type", "Mock")?;
-        state.end()
+impl From<SignedPod> for SignedPodHelper {
+    fn from(pod: SignedPod) -> Self {
+        SignedPodHelper {
+            entries: pod.kvs,
+            proof: pod.pod.serialized_proof(),
+            pod_class: "Signed".to_string(),
+            pod_type: "Mock".to_string(),
+        }
     }
 }
 
-impl<'de> Deserialize<'de> for MainPod {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        struct MainPodHelper {
-            public_statements: Vec<Statement>,
-            proof: String,
-            pod_class: String,
-            pod_type: String,
-        }
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct MainPodHelper {
+    #[schemars(with = "Vec<StatementSerdeHelper>")]
+    public_statements: Vec<Statement>,
+    proof: String,
+    pod_class: String,
+    pod_type: String,
+}
 
-        let helper = MainPodHelper::deserialize(deserializer)?;
+impl TryFrom<MainPodHelper> for MainPod {
+    type Error = anyhow::Error; // or you can create a custom error type
+
+    fn try_from(helper: MainPodHelper) -> Result<Self, Self::Error> {
         if helper.pod_class != "Main" {
-            return Err(serde::de::Error::custom("pod_class is not Main"));
+            return Err(anyhow::anyhow!("pod_class is not Main"));
         }
         if helper.pod_type != "Mock" {
-            return Err(serde::de::Error::custom("pod_type is not Mock"));
+            return Err(anyhow::anyhow!("pod_type is not Mock"));
         }
-        let proof = String::from_utf8(BASE64_STANDARD.decode(&helper.proof).unwrap()).unwrap();
-        let pod: MockMainPod = serde_json::from_str(&proof).unwrap();
+
+        let proof = String::from_utf8(BASE64_STANDARD.decode(&helper.proof)?)
+            .map_err(|e| anyhow::anyhow!("Invalid base64 encoding: {}", e))?;
+
+        let pod: MockMainPod = serde_json::from_str(&proof)
+            .map_err(|e| anyhow::anyhow!("Failed to parse proof: {}", e))?;
 
         Ok(MainPod {
             pod: Box::new(pod),
             public_statements: helper.public_statements,
         })
+    }
+}
+
+impl From<MainPod> for MainPodHelper {
+    fn from(pod: MainPod) -> Self {
+        MainPodHelper {
+            public_statements: pod.public_statements,
+            proof: pod.pod.serialized_proof(),
+            pod_class: "Main".to_string(),
+            pod_type: "Mock".to_string(),
+        }
     }
 }
 
@@ -304,5 +291,16 @@ mod tests {
         assert_eq!(kyc_pod.public_statements, deserialized.public_statements);
         assert_eq!(kyc_pod.pod.id(), deserialized.pod.id());
         assert_eq!(kyc_pod.pod.verify(), deserialized.pod.verify());
+    }
+
+    #[test]
+    fn test_gen_schema() {
+        let schema = schemars::schema_for!(SignedPodHelper);
+        let schema = serde_json::to_string_pretty(&schema).unwrap();
+        println!("schema: {}", schema);
+
+        let schema = schemars::schema_for!(MainPodHelper);
+        let schema = serde_json::to_string_pretty(&schema).unwrap();
+        println!("schema: {}", schema);
     }
 }

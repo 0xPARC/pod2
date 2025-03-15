@@ -1,12 +1,14 @@
-use super::{AnchoredKey, SignedPod, Value};
+use super::{AnchoredKey, AnchoredKeySerdeHelper, SignedPod, Value};
 use crate::middleware::{self, NativePredicate, Predicate};
 use anyhow::{anyhow, Result};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum StatementArg {
     Literal(Value),
+    #[schemars(with = "AnchoredKeySerdeHelper")]
     Key(AnchoredKey),
 }
 
@@ -19,12 +21,13 @@ impl fmt::Display for StatementArg {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(into = "StatementSerdeHelper", from = "StatementSerdeHelper")]
 pub struct Statement(pub Predicate, pub Vec<StatementArg>);
 
-#[derive(Serialize, Deserialize)]
-struct StatementSerdeHelper {
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "Statement")]
+pub struct StatementSerdeHelper {
     predicate: Predicate,
     args: Vec<StatementArg>,
 }
