@@ -8,6 +8,8 @@ use crate::{
     prover::types::FrontendWildcardStatement,
 };
 
+use super::storage;
+
 // Types matching frontend
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -54,15 +56,19 @@ pub struct ValidateStatementsRequest {
 }
 
 // Server state
-#[derive(Default)]
 pub struct ServerState {
-    pub signed_pods: std::collections::HashMap<String, SignedPod>,
-    pub main_pods: std::collections::HashMap<String, MainPod>,
+    pub db: storage::Database,
 }
 
 impl ServerState {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+        Self::new_with_path("pods.db")
+    }
+
+    pub fn new_with_path(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        Ok(Self {
+            db: storage::Database::new(path)?,
+        })
     }
 }
 

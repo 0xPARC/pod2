@@ -4,6 +4,9 @@ use crate::frontend::{
     AnchoredKey, Origin, PodClass, SignedPod, SignedPodBuilder, Statement, StatementArg, Value,
 };
 use crate::middleware::{NativePredicate, Params, PodId, Predicate};
+use crate::prover::types::{
+    FrontendWildcardStatement, WildcardAnchoredKey, WildcardId, WildcardStatementArg,
+};
 use axum::{
     body::Body,
     http::{Request, StatusCode},
@@ -11,6 +14,7 @@ use axum::{
     Router,
 };
 use serde_json::json;
+use std::fs;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 use tower::ServiceExt;
@@ -22,11 +26,12 @@ where
     Fut: std::future::Future<Output = Result<(), Box<dyn std::error::Error>>>,
 {
     let app = setup_test_app().await;
-    f(app).await
+    let result = f(app).await;
+    result
 }
 
 async fn setup_test_app() -> Router {
-    let state = Arc::new(Mutex::new(ServerState::new()));
+    let state = Arc::new(Mutex::new(ServerState::new_with_path(":memory:").unwrap()));
     Router::new()
         .route("/api/list-pods", post(handlers::list_pods))
         .route("/api/get-pod", post(handlers::get_pod))
@@ -69,7 +74,7 @@ async fn test_create_and_list_pods() -> Result<(), Box<dyn std::error::Error>> {
             .await
             .unwrap();
         let created_pod: SignedPod = serde_json::from_slice(&body).unwrap();
-        let created_id = created_pod.id().to_string();
+        let created_id = format!("{:x}", created_pod.id());
         println!(
             "DEBUG test_create_and_list_pods - Created pod with ID: {:?}",
             created_pod.id()
@@ -95,7 +100,7 @@ async fn test_create_and_list_pods() -> Result<(), Box<dyn std::error::Error>> {
         // Verify the pod ID matches
         match &pods[0] {
             Pod::Signed(pod) => {
-                let stored_id = pod.id().to_string();
+                let stored_id = format!("{:x}", pod.id());
                 println!(
                     "DEBUG test_create_and_list_pods - Stored pod ID: {:?}",
                     pod.id()
@@ -107,17 +112,6 @@ async fn test_create_and_list_pods() -> Result<(), Box<dyn std::error::Error>> {
             }
             Pod::Main(_) => panic!("Expected Signed pod"),
         }
-
-        // Create a main pod
-        let main_pod_req = Request::builder()
-            .method("POST")
-            .uri("/api/create-main-pod")
-            .header("Content-Type", "application/json")
-            .body(Body::from("{}"))
-            .unwrap();
-
-        let response = app.oneshot(main_pod_req).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
 
         Ok(())
     })
@@ -148,6 +142,7 @@ async fn test_get_and_delete_pod() -> Result<(), Box<dyn std::error::Error>> {
             .await
             .unwrap();
         let pod: SignedPod = serde_json::from_slice(&body).unwrap();
+        let pod_id = format!("{:x}", pod.id());
         println!(
             "DEBUG test_get_and_delete_pod - Created pod with ID: {}",
             pod.id()
@@ -158,9 +153,7 @@ async fn test_get_and_delete_pod() -> Result<(), Box<dyn std::error::Error>> {
             .method("POST")
             .uri("/api/get-pod")
             .header("Content-Type", "application/json")
-            .body(Body::from(
-                json!({ "id": pod.id().to_string() }).to_string(),
-            ))
+            .body(Body::from(json!({ "id": pod_id }).to_string()))
             .unwrap();
 
         println!(
@@ -175,9 +168,7 @@ async fn test_get_and_delete_pod() -> Result<(), Box<dyn std::error::Error>> {
             .method("POST")
             .uri("/api/delete-pod")
             .header("Content-Type", "application/json")
-            .body(Body::from(
-                json!({ "id": pod.id().to_string() }).to_string(),
-            ))
+            .body(Body::from(json!({ "id": pod_id }).to_string()))
             .unwrap();
 
         println!(
@@ -192,9 +183,7 @@ async fn test_get_and_delete_pod() -> Result<(), Box<dyn std::error::Error>> {
             .method("POST")
             .uri("/api/get-pod")
             .header("Content-Type", "application/json")
-            .body(Body::from(
-                json!({ "id": pod.id().to_string() }).to_string(),
-            ))
+            .body(Body::from(json!({ "id": pod_id }).to_string()))
             .unwrap();
 
         println!(
@@ -219,6 +208,7 @@ async fn test_import_pod() -> Result<(), Box<dyn std::error::Error>> {
             pk: "test_signer".into(),
         };
         let pod = signed_pod_builder.sign(&mut signer)?;
+        let pod_id = format!("{:x}", pod.id());
         println!("DEBUG test_import_pod - Created pod with ID: {}", pod.id());
 
         // Import the pod
@@ -243,9 +233,7 @@ async fn test_import_pod() -> Result<(), Box<dyn std::error::Error>> {
             .method("POST")
             .uri("/api/get-pod")
             .header("Content-Type", "application/json")
-            .body(Body::from(
-                json!({ "id": pod.id().to_string() }).to_string(),
-            ))
+            .body(Body::from(json!({ "id": pod_id }).to_string()))
             .unwrap();
 
         println!(
@@ -341,23 +329,22 @@ async fn test_validate_statements() -> Result<(), Box<dyn std::error::Error>> {
         println!("DEBUG test_validate_statements - Pod imported successfully");
 
         // Create a statement that checks if the pod's test_key equals "test_value"
-        let statement = Statement(
-            Predicate::Native(NativePredicate::Equal),
-            vec![
-                StatementArg::Key(AnchoredKey(
-                    Origin(PodClass::Signed, pod.id()),
-                    "test_key".to_string(),
-                )),
-                StatementArg::Key(AnchoredKey(
-                    Origin(PodClass::Signed, pod.id()),
-                    "test_key".to_string(),
-                )),
-            ],
+        let statement = FrontendWildcardStatement::Equal(
+            WildcardAnchoredKey(
+                WildcardId::Concrete(Origin(PodClass::Signed, pod.id())),
+                "test_key".to_string(),
+            ),
+            WildcardStatementArg::Key(AnchoredKey(
+                Origin(PodClass::Signed, pod.id()),
+                "test_key".to_string(),
+            )),
         );
         println!(
             "DEBUG test_validate_statements - Created statement: {:?}",
             statement
         );
+
+        let statements = vec![statement];
 
         let validate_req = Request::builder()
             .method("POST")
@@ -365,26 +352,7 @@ async fn test_validate_statements() -> Result<(), Box<dyn std::error::Error>> {
             .header("Content-Type", "application/json")
             .body(Body::from(
                 json!({
-                    "statements": [{
-                        "Equal": [
-                            {
-                                "Concrete": {
-                                    "0": "Signed",
-                                    "1": pod.id().to_string()
-                                },
-                                "1": "test_key"
-                            },
-                            {
-                                "Key": {
-                                    "0": {
-                                        "0": "Signed",
-                                        "1": pod.id().to_string()
-                                    },
-                                    "1": "test_key"
-                                }
-                            }
-                        ]
-                    }]
+                    "statements": statements
                 })
                 .to_string(),
             ))

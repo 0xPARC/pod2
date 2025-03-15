@@ -1,5 +1,5 @@
 use super::types::*;
-use crate::frontend::{AnchoredKey, Origin, PodClass};
+use crate::frontend::{AnchoredKey, MainPodBuilder, Origin, PodClass};
 use crate::middleware::{hash_str, NativeOperation, Value as MiddlewareValue, SELF};
 use crate::SignedPod;
 use ascent::ascent;

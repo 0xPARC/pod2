@@ -9,6 +9,7 @@ use std::fmt;
 pub enum ServerError {
     PodNotFound(String),
     FrontendError(anyhow::Error),
+    DatabaseError(String),
 }
 
 impl fmt::Display for ServerError {
@@ -16,6 +17,7 @@ impl fmt::Display for ServerError {
         match self {
             ServerError::PodNotFound(id) => write!(f, "Pod not found: {}", id),
             ServerError::FrontendError(e) => write!(f, "Frontend error: {}", e),
+            ServerError::DatabaseError(e) => write!(f, "Database error: {}", e),
         }
     }
 }
@@ -33,6 +35,7 @@ impl axum::response::IntoResponse for ServerError {
         let (status, error_message) = match self {
             ServerError::PodNotFound(_) => (StatusCode::NOT_FOUND, self.to_string()),
             ServerError::FrontendError(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
+            ServerError::DatabaseError(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
         };
 
         let body = axum::Json(serde_json::json!({
