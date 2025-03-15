@@ -1,5 +1,5 @@
 use super::types::*;
-use crate::frontend::{AnchoredKey, MainPodBuilder, Origin, PodClass};
+use crate::frontend::{AnchoredKey, Origin, PodClass};
 use crate::middleware::{hash_str, NativeOperation, Value as MiddlewareValue, SELF};
 use crate::SignedPod;
 use ascent::ascent;
@@ -71,7 +71,13 @@ impl DeductionEngine {
     pub fn add_signed_pod(&mut self, pod: SignedPod) {
         for (key, value) in pod.kvs {
             self.add_fact(ProvableStatement::ValueOf(
-                AnchoredKey(Origin(PodClass::Signed, pod.pod.id()), key.to_string()),
+                AnchoredKey {
+                    origin: Origin {
+                        pod_class: PodClass::Signed,
+                        pod_id: pod.pod.id(),
+                    },
+                    key: key.to_string(),
+                },
                 value.into(),
             ));
         }
@@ -84,8 +90,13 @@ impl DeductionEngine {
                 if let WildcardStatementArg::Key(key) = arg {
                     WildcardStatement::Equal(ak, key)
                 } else if let WildcardStatementArg::Literal(v) = arg {
-                    let new_ak =
-                        AnchoredKey(Origin(PodClass::Main, SELF), "value_of_0".to_string());
+                    let new_ak = AnchoredKey {
+                        origin: Origin {
+                            pod_class: PodClass::Main,
+                            pod_id: SELF,
+                        },
+                        key: "value_of_0".to_string(),
+                    };
                     self.add_fact(ProvableStatement::ValueOf(new_ak.clone(), v));
                     WildcardStatement::Equal(ak, new_ak.clone())
                 } else {
@@ -96,8 +107,13 @@ impl DeductionEngine {
                 if let WildcardStatementArg::Key(key) = arg {
                     WildcardStatement::NotEqual(ak, key)
                 } else if let WildcardStatementArg::Literal(v) = arg {
-                    let new_ak =
-                        AnchoredKey(Origin(PodClass::Main, SELF), "value_of_0".to_string());
+                    let new_ak = AnchoredKey {
+                        origin: Origin {
+                            pod_class: PodClass::Main,
+                            pod_id: SELF,
+                        },
+                        key: "value_of_0".to_string(),
+                    };
                     self.add_fact(ProvableStatement::ValueOf(new_ak.clone(), v));
                     WildcardStatement::NotEqual(ak, new_ak.clone())
                 } else {
@@ -108,8 +124,13 @@ impl DeductionEngine {
                 if let WildcardStatementArg::Key(key) = arg {
                     WildcardStatement::Gt(ak, key)
                 } else if let WildcardStatementArg::Literal(v) = arg {
-                    let new_ak =
-                        AnchoredKey(Origin(PodClass::Main, SELF), "value_of_0".to_string());
+                    let new_ak = AnchoredKey {
+                        origin: Origin {
+                            pod_class: PodClass::Main,
+                            pod_id: SELF,
+                        },
+                        key: "value_of_0".to_string(),
+                    };
                     self.add_fact(ProvableStatement::ValueOf(new_ak.clone(), v));
                     WildcardStatement::Gt(ak, new_ak.clone())
                 } else {
@@ -120,8 +141,13 @@ impl DeductionEngine {
                 if let WildcardStatementArg::Key(key) = arg {
                     WildcardStatement::Lt(ak, key)
                 } else if let WildcardStatementArg::Literal(v) = arg {
-                    let new_ak =
-                        AnchoredKey(Origin(PodClass::Main, SELF), "value_of_0".to_string());
+                    let new_ak = AnchoredKey {
+                        origin: Origin {
+                            pod_class: PodClass::Main,
+                            pod_id: SELF,
+                        },
+                        key: "value_of_0".to_string(),
+                    };
                     self.add_fact(ProvableStatement::ValueOf(new_ak.clone(), v));
                     WildcardStatement::Lt(ak, new_ak.clone())
                 } else {
@@ -132,8 +158,13 @@ impl DeductionEngine {
                 if let WildcardStatementArg::Key(key) = arg {
                     WildcardStatement::Contains(ak, key)
                 } else if let WildcardStatementArg::Literal(v) = arg {
-                    let new_ak =
-                        AnchoredKey(Origin(PodClass::Main, SELF), "value_of_0".to_string());
+                    let new_ak = AnchoredKey {
+                        origin: Origin {
+                            pod_class: PodClass::Main,
+                            pod_id: SELF,
+                        },
+                        key: "value_of_0".to_string(),
+                    };
                     self.add_fact(ProvableStatement::ValueOf(new_ak.clone(), v));
                     WildcardStatement::Contains(ak, new_ak.clone())
                 } else {
@@ -144,8 +175,13 @@ impl DeductionEngine {
                 if let WildcardStatementArg::Key(key) = arg {
                     WildcardStatement::NotContains(ak, key)
                 } else if let WildcardStatementArg::Literal(v) = arg {
-                    let new_ak =
-                        AnchoredKey(Origin(PodClass::Main, SELF), "value_of_0".to_string());
+                    let new_ak = AnchoredKey {
+                        origin: Origin {
+                            pod_class: PodClass::Main,
+                            pod_id: SELF,
+                        },
+                        key: "value_of_0".to_string(),
+                    };
                     self.add_fact(ProvableStatement::ValueOf(new_ak.clone(), v));
                     WildcardStatement::NotContains(ak, new_ak.clone())
                 } else {

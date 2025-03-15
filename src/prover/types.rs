@@ -1,6 +1,7 @@
 use crate::frontend::containers::{Array, Dictionary, Set};
 use crate::frontend::{self, AnchoredKey, Origin, Value};
 use crate::middleware::{self, hash_str, NativeOperation, NativePredicate, Predicate};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use std::fmt;
@@ -23,118 +24,84 @@ pub enum ProvableStatement {
 impl From<ProvableStatement> for frontend::Statement {
     fn from(stmt: ProvableStatement) -> Self {
         match stmt {
-            ProvableStatement::ValueOf(ak, v) => frontend::Statement(
-                Predicate::Native(NativePredicate::ValueOf),
-                vec![
+            ProvableStatement::ValueOf(ak, v) => frontend::Statement {
+                predicate: Predicate::Native(NativePredicate::ValueOf),
+                args: vec![
                     frontend::StatementArg::Key(ak.into()),
                     frontend::StatementArg::Literal(v.into()),
                 ],
-            ),
-            ProvableStatement::Equal(ak1, ak2) => frontend::Statement(
-                Predicate::Native(NativePredicate::Equal),
-                vec![
+            },
+            ProvableStatement::Equal(ak1, ak2) => frontend::Statement {
+                predicate: Predicate::Native(NativePredicate::Equal),
+                args: vec![
                     frontend::StatementArg::Key(ak1.into()),
                     frontend::StatementArg::Key(ak2.into()),
                 ],
-            ),
-            ProvableStatement::NotEqual(ak1, ak2) => frontend::Statement(
-                Predicate::Native(NativePredicate::NotEqual),
-                vec![
+            },
+            ProvableStatement::NotEqual(ak1, ak2) => frontend::Statement {
+                predicate: Predicate::Native(NativePredicate::NotEqual),
+                args: vec![
                     frontend::StatementArg::Key(ak1.into()),
                     frontend::StatementArg::Key(ak2.into()),
                 ],
-            ),
-            ProvableStatement::Gt(ak1, ak2) => frontend::Statement(
-                Predicate::Native(NativePredicate::Gt),
-                vec![
+            },
+            ProvableStatement::Gt(ak1, ak2) => frontend::Statement {
+                predicate: Predicate::Native(NativePredicate::Gt),
+                args: vec![
                     frontend::StatementArg::Key(ak1.into()),
                     frontend::StatementArg::Key(ak2.into()),
                 ],
-            ),
-            ProvableStatement::Lt(ak1, ak2) => frontend::Statement(
-                Predicate::Native(NativePredicate::Lt),
-                vec![
+            },
+            ProvableStatement::Lt(ak1, ak2) => frontend::Statement {
+                predicate: Predicate::Native(NativePredicate::Lt),
+                args: vec![
                     frontend::StatementArg::Key(ak1.into()),
                     frontend::StatementArg::Key(ak2.into()),
                 ],
-            ),
-            ProvableStatement::Contains(ak1, ak2) => frontend::Statement(
-                Predicate::Native(NativePredicate::Contains),
-                vec![
+            },
+            ProvableStatement::Contains(ak1, ak2) => frontend::Statement {
+                predicate: Predicate::Native(NativePredicate::Contains),
+                args: vec![
                     frontend::StatementArg::Key(ak1.into()),
                     frontend::StatementArg::Key(ak2.into()),
                 ],
-            ),
-            ProvableStatement::NotContains(ak1, ak2) => frontend::Statement(
-                Predicate::Native(NativePredicate::NotContains),
-                vec![
+            },
+            ProvableStatement::NotContains(ak1, ak2) => frontend::Statement {
+                predicate: Predicate::Native(NativePredicate::NotContains),
+                args: vec![
                     frontend::StatementArg::Key(ak1.into()),
                     frontend::StatementArg::Key(ak2.into()),
                 ],
-            ),
-            ProvableStatement::SumOf(ak1, ak2, ak3) => frontend::Statement(
-                Predicate::Native(NativePredicate::SumOf),
-                vec![
-                    frontend::StatementArg::Key(ak1.into()),
-                    frontend::StatementArg::Key(ak2.into()),
-                    frontend::StatementArg::Key(ak3.into()),
-                ],
-            ),
-            ProvableStatement::ProductOf(ak1, ak2, ak3) => frontend::Statement(
-                Predicate::Native(NativePredicate::ProductOf),
-                vec![
+            },
+            ProvableStatement::SumOf(ak1, ak2, ak3) => frontend::Statement {
+                predicate: Predicate::Native(NativePredicate::SumOf),
+                args: vec![
                     frontend::StatementArg::Key(ak1.into()),
                     frontend::StatementArg::Key(ak2.into()),
                     frontend::StatementArg::Key(ak3.into()),
                 ],
-            ),
-            ProvableStatement::MaxOf(ak1, ak2, ak3) => frontend::Statement(
-                Predicate::Native(NativePredicate::MaxOf),
-                vec![
+            },
+            ProvableStatement::ProductOf(ak1, ak2, ak3) => frontend::Statement {
+                predicate: Predicate::Native(NativePredicate::ProductOf),
+                args: vec![
                     frontend::StatementArg::Key(ak1.into()),
                     frontend::StatementArg::Key(ak2.into()),
                     frontend::StatementArg::Key(ak3.into()),
                 ],
-            ),
+            },
+            ProvableStatement::MaxOf(ak1, ak2, ak3) => frontend::Statement {
+                predicate: Predicate::Native(NativePredicate::MaxOf),
+                args: vec![
+                    frontend::StatementArg::Key(ak1.into()),
+                    frontend::StatementArg::Key(ak2.into()),
+                    frontend::StatementArg::Key(ak3.into()),
+                ],
+            },
         }
     }
 }
 
-// impl From<ProvableStatement> for middleware::Statement {
-//     fn from(stmt: ProvableStatement) -> Self {
-//         match stmt {
-//             ProvableStatement::None => middleware::Statement::None,
-//             ProvableStatement::ValueOf(ak, v) => {
-//                 middleware::Statement::ValueOf(ak.into(), v.into())
-//             }
-//             ProvableStatement::Equal(ak1, ak2) => {
-//                 middleware::Statement::Equal(ak1.into(), ak2.into())
-//             }
-//             ProvableStatement::NotEqual(ak1, ak2) => {
-//                 middleware::Statement::NotEqual(ak1.into(), ak2.into())
-//             }
-//             ProvableStatement::Gt(ak1, ak2) => middleware::Statement::Gt(ak1.into(), ak2.into()),
-//             ProvableStatement::Lt(ak1, ak2) => middleware::Statement::Lt(ak1.into(), ak2.into()),
-//             ProvableStatement::Contains(ak1, ak2) => {
-//                 middleware::Statement::Contains(ak1.into(), ak2.into())
-//             }
-//             ProvableStatement::NotContains(ak1, ak2) => {
-//                 middleware::Statement::NotContains(ak1.into(), ak2.into())
-//             }
-//             ProvableStatement::SumOf(ak1, ak2, ak3) => {
-//                 middleware::Statement::SumOf(ak1.into(), ak2.into(), ak3.into())
-//             }
-//             ProvableStatement::ProductOf(ak1, ak2, ak3) => {
-//                 middleware::Statement::ProductOf(ak1.into(), ak2.into(), ak3.into())
-//             }
-//             ProvableStatement::MaxOf(ak1, ak2, ak3) => {
-//                 middleware::Statement::MaxOf(ak1.into(), ak2.into(), ak3.into())
-//             }
-//         }
-//     }
-// }
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum ProvableValue {
     String(String),
     Int(i64),
@@ -210,7 +177,7 @@ pub type DeductionChain = Vec<DeductionStep>;
 
 // Helper function to format AnchoredKey
 fn format_anchored_key(ak: &AnchoredKey) -> String {
-    format!("{}:{}", ak.0 .1.to_string(), ak.1) // Show both origin ID and key
+    format!("{}:{}", ak.origin.pod_id.to_string(), ak.key) // Show both origin ID and key
 }
 
 impl fmt::Display for ProvableValue {
@@ -316,21 +283,22 @@ pub fn operation_name(op_code: u8) -> &'static str {
 }
 
 // The core wildcard type - represents either a concrete origin or a named wildcard
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", content = "value")]
 pub enum WildcardId {
     Concrete(Origin),
     Named(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(
     into = "WildcardAnchoredKeySerdeHelper",
     from = "WildcardAnchoredKeySerdeHelper"
 )]
 pub struct WildcardAnchoredKey(pub WildcardId, pub String);
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "WildcardAnchoredKey")]
 pub struct WildcardAnchoredKeySerdeHelper {
     pub wildcard_id: WildcardId,
     pub key: String,
@@ -351,7 +319,7 @@ impl From<WildcardAnchoredKeySerdeHelper> for WildcardAnchoredKey {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum WildcardStatementArg {
     Literal(ProvableValue),
     Key(AnchoredKey),
@@ -360,25 +328,64 @@ pub enum WildcardStatementArg {
 // This is somewhat ugly but we're having to mirror some of the frontend/middleware
 // type distinctions to get this to work. Probably there is a better way to do this.
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum FrontendWildcardStatement {
-    Equal(WildcardAnchoredKey, WildcardStatementArg),
-    NotEqual(WildcardAnchoredKey, WildcardStatementArg),
-    Gt(WildcardAnchoredKey, WildcardStatementArg),
-    Lt(WildcardAnchoredKey, WildcardStatementArg),
-    Contains(WildcardAnchoredKey, WildcardStatementArg),
-    NotContains(WildcardAnchoredKey, WildcardStatementArg),
+    Equal(
+        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
+        WildcardStatementArg,
+    ),
+    NotEqual(
+        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
+        WildcardStatementArg,
+    ),
+    Gt(
+        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
+        WildcardStatementArg,
+    ),
+    Lt(
+        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
+        WildcardStatementArg,
+    ),
+    Contains(
+        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
+        WildcardStatementArg,
+    ),
+    NotContains(
+        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
+        WildcardStatementArg,
+    ),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, JsonSchema)]
 pub enum WildcardStatement {
-    ValueOf(WildcardAnchoredKey, ProvableValue),
-    Equal(WildcardAnchoredKey, AnchoredKey),
-    NotEqual(WildcardAnchoredKey, AnchoredKey),
-    Gt(WildcardAnchoredKey, AnchoredKey),
-    Lt(WildcardAnchoredKey, AnchoredKey),
-    Contains(WildcardAnchoredKey, AnchoredKey),
-    NotContains(WildcardAnchoredKey, AnchoredKey),
+    ValueOf(
+        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
+        ProvableValue,
+    ),
+    Equal(
+        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
+        AnchoredKey,
+    ),
+    NotEqual(
+        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
+        AnchoredKey,
+    ),
+    Gt(
+        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
+        AnchoredKey,
+    ),
+    Lt(
+        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
+        AnchoredKey,
+    ),
+    Contains(
+        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
+        AnchoredKey,
+    ),
+    NotContains(
+        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
+        AnchoredKey,
+    ),
 }
 
 // Helper methods for WildcardAnchoredKey
@@ -397,19 +404,19 @@ impl WildcardAnchoredKey {
             self, concrete
         );
         let result = if let WildcardId::Concrete(origin) = &self.0 {
-            let matches = *origin == concrete.0 && self.1 == concrete.1;
+            let matches = *origin == concrete.origin && self.1 == concrete.key;
             println!(
                 "  Concrete match: origin {} == {} ? {}",
-                origin.1.to_string(),
-                concrete.0 .1.to_string(),
+                origin.pod_id.to_string(),
+                concrete.origin.pod_id.to_string(),
                 matches
             );
             matches
         } else if let WildcardId::Named(_) = &self.0 {
-            let matches = self.1 == concrete.1;
+            let matches = self.1 == concrete.key;
             println!(
                 "  Named match: key {} == {} ? {}",
-                self.1, concrete.1, matches
+                self.1, concrete.key, matches
             );
             matches
         } else {

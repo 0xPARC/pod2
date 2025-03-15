@@ -7,23 +7,27 @@ mod tests {
             containers::Array as FrontendArray, AnchoredKey, MainPodBuilder, Operation,
             OperationArg, Origin, PodClass, StatementArg, Value,
         },
-        middleware::{self, hash_str, NativeOperation, OperationType, PodId, SELF},
+        middleware::{self, hash_str, NativeOperation, OperationType, PodId},
         prover::types::{FrontendWildcardStatement, WildcardStatementArg},
     };
 
     use crate::{
         prover::engine::DeductionEngine,
-        prover::types::{
-            ProvableStatement, ProvableValue, WildcardAnchoredKey, WildcardId, WildcardStatement,
-        },
+        prover::types::{ProvableStatement, ProvableValue, WildcardAnchoredKey, WildcardId},
     };
 
     fn make_signed_origin(id: &str) -> Origin {
-        Origin(PodClass::Signed, PodId(hash_str(id)))
+        Origin {
+            pod_class: PodClass::Signed,
+            pod_id: PodId(hash_str(id)),
+        }
     }
 
     fn make_anchored_key(id: &str, key: &str) -> AnchoredKey {
-        AnchoredKey(make_signed_origin(id), key.to_string())
+        AnchoredKey {
+            origin: make_signed_origin(id),
+            key: key.to_string(),
+        }
     }
 
     #[test]
@@ -121,9 +125,12 @@ mod tests {
         // Verify the found statement matches what we expect
         match stmt {
             ProvableStatement::Gt(found_key, target_key) => {
-                assert_eq!(found_key.1, "value", "Found key should have suffix 'value'");
                 assert_eq!(
-                    target_key.1, "value",
+                    found_key.key, "value",
+                    "Found key should have suffix 'value'"
+                );
+                assert_eq!(
+                    target_key.key, "value",
                     "Target key should have suffix 'value'"
                 );
             }
@@ -178,9 +185,12 @@ mod tests {
         // Verify the found statement matches what we expect
         match stmt {
             ProvableStatement::Lt(found_key, target_key) => {
-                assert_eq!(found_key.1, "value", "Found key should have suffix 'value'");
                 assert_eq!(
-                    target_key.1, "value",
+                    found_key.key, "value",
+                    "Found key should have suffix 'value'"
+                );
+                assert_eq!(
+                    target_key.key, "value",
                     "Target key should have suffix 'value'"
                 );
             }
@@ -231,9 +241,12 @@ mod tests {
         // Verify the found statement matches what we expect
         match stmt {
             ProvableStatement::NotEqual(found_key, target_key) => {
-                assert_eq!(found_key.1, "value", "Found key should have suffix 'value'");
                 assert_eq!(
-                    target_key.1, "value",
+                    found_key.key, "value",
+                    "Found key should have suffix 'value'"
+                );
+                assert_eq!(
+                    target_key.key, "value",
                     "Target key should have suffix 'value'"
                 );
             }
@@ -284,9 +297,12 @@ mod tests {
         // Verify the found statement matches what we expect
         match stmt {
             ProvableStatement::NotEqual(found_key, target_key) => {
-                assert_eq!(found_key.1, "value", "Found key should have suffix 'value'");
                 assert_eq!(
-                    target_key.1, "value",
+                    found_key.key, "value",
+                    "Found key should have suffix 'value'"
+                );
+                assert_eq!(
+                    target_key.key, "value",
                     "Target key should have suffix 'value'"
                 );
             }
@@ -347,9 +363,12 @@ mod tests {
         // Verify the found statement matches what we expect
         match stmt {
             ProvableStatement::Contains(found_key, target_key) => {
-                assert_eq!(found_key.1, "value", "Found key should have suffix 'value'");
                 assert_eq!(
-                    target_key.1, "value",
+                    found_key.key, "value",
+                    "Found key should have suffix 'value'"
+                );
+                assert_eq!(
+                    target_key.key, "value",
                     "Target key should have suffix 'value'"
                 );
             }
@@ -445,15 +464,11 @@ mod tests {
         // First proof should be b = c
         match &proofs[0].0 {
             ProvableStatement::Equal(k1, k2) => {
-                assert_eq!(k1.1, "value");
-                assert_eq!(k2.1, "value");
-                println!(
-                    "First proof keys: {} = {}",
-                    k1.0 .1.to_string(),
-                    k2.0 .1.to_string()
-                );
-                assert_eq!(k1.0 .1.to_string(), hash_str("b").to_string());
-                assert_eq!(k2.0 .1.to_string(), hash_str("c").to_string());
+                assert_eq!(k1.key, "value");
+                assert_eq!(k2.key, "value");
+                println!("First proof keys: {} = {}", k1.key, k2.key);
+                assert_eq!(k1.key, hash_str("b").to_string());
+                assert_eq!(k2.key, hash_str("c").to_string());
             }
             _ => panic!("First proof should be Equal statement"),
         }
@@ -461,15 +476,11 @@ mod tests {
         // Second proof should be a = d
         match &proofs[1].0 {
             ProvableStatement::Equal(k1, k2) => {
-                assert_eq!(k1.1, "value");
-                assert_eq!(k2.1, "value");
-                println!(
-                    "Second proof keys: {} = {}",
-                    k1.0 .1.to_string(),
-                    k2.0 .1.to_string()
-                );
-                assert_eq!(k1.0 .1.to_string(), hash_str("a").to_string());
-                assert_eq!(k2.0 .1.to_string(), hash_str("d").to_string());
+                assert_eq!(k1.key, "value");
+                assert_eq!(k2.key, "value");
+                println!("Second proof keys: {} = {}", k1.key, k2.key);
+                assert_eq!(k1.key, hash_str("a").to_string());
+                assert_eq!(k2.key, hash_str("d").to_string());
             }
             _ => panic!("Second proof should be Equal statement"),
         }
@@ -512,7 +523,7 @@ mod tests {
         let now_minus_1y: i64 = 1706367566;
 
         let stmt = builder.pub_literal(&now_minus_18y).unwrap();
-        let ak_now_minus_18y = if let StatementArg::Key(ak) = &stmt.1[0] {
+        let ak_now_minus_18y = if let StatementArg::Key(ak) = &stmt.args[0] {
             engine.add_fact(ProvableStatement::ValueOf(
                 ak.clone(),
                 ProvableValue::Int(now_minus_18y),
@@ -523,7 +534,7 @@ mod tests {
         };
 
         let stmt = builder.pub_literal(&now_minus_1y).unwrap();
-        let ak_now_minus_1y = if let StatementArg::Key(ak) = &stmt.1[0] {
+        let ak_now_minus_1y = if let StatementArg::Key(ak) = &stmt.args[0] {
             engine.add_fact(ProvableStatement::ValueOf(
                 ak.clone(),
                 ProvableValue::Int(now_minus_1y),
@@ -536,34 +547,52 @@ mod tests {
         let targets = vec![
             FrontendWildcardStatement::NotContains(
                 WildcardAnchoredKey(
-                    WildcardId::Concrete(Origin(PodClass::Signed, sanction_list_pod.pod.id())),
+                    WildcardId::Concrete(Origin {
+                        pod_class: PodClass::Signed,
+                        pod_id: sanction_list_pod.pod.id(),
+                    }),
                     "sanctionList".to_string(),
                 ),
-                WildcardStatementArg::Key(AnchoredKey(
-                    Origin(PodClass::Signed, gov_id_pod.pod.id()),
-                    "idNumber".to_string(),
-                )),
+                WildcardStatementArg::Key(AnchoredKey {
+                    origin: Origin {
+                        pod_class: PodClass::Signed,
+                        pod_id: gov_id_pod.pod.id(),
+                    },
+                    key: "idNumber".to_string(),
+                }),
             ),
             FrontendWildcardStatement::Lt(
                 WildcardAnchoredKey(
-                    WildcardId::Concrete(Origin(PodClass::Signed, gov_id_pod.pod.id())),
+                    WildcardId::Concrete(Origin {
+                        pod_class: PodClass::Signed,
+                        pod_id: gov_id_pod.pod.id(),
+                    }),
                     "dateOfBirth".to_string(),
                 ),
                 WildcardStatementArg::Key(ak_now_minus_18y.clone()),
             ),
             FrontendWildcardStatement::Equal(
                 WildcardAnchoredKey(
-                    WildcardId::Concrete(Origin(PodClass::Signed, pay_stub_pod.pod.id())),
+                    WildcardId::Concrete(Origin {
+                        pod_class: PodClass::Signed,
+                        pod_id: pay_stub_pod.pod.id(),
+                    }),
                     "socialSecurityNumber".to_string(),
                 ),
-                WildcardStatementArg::Key(AnchoredKey(
-                    Origin(PodClass::Signed, gov_id_pod.pod.id()),
-                    "socialSecurityNumber".to_string(),
-                )),
+                WildcardStatementArg::Key(AnchoredKey {
+                    origin: Origin {
+                        pod_class: PodClass::Signed,
+                        pod_id: gov_id_pod.pod.id(),
+                    },
+                    key: "socialSecurityNumber".to_string(),
+                }),
             ),
             FrontendWildcardStatement::Equal(
                 WildcardAnchoredKey(
-                    WildcardId::Concrete(Origin(PodClass::Signed, pay_stub_pod.pod.id())),
+                    WildcardId::Concrete(Origin {
+                        pod_class: PodClass::Signed,
+                        pod_id: pay_stub_pod.pod.id(),
+                    }),
                     "startDate".to_string(),
                 ),
                 WildcardStatementArg::Key(ak_now_minus_1y.clone()),
@@ -581,8 +610,8 @@ mod tests {
         assert_eq!(proofs[2].1[0].0, NativeOperation::EqualFromEntries as u8);
         assert_eq!(proofs[3].1[0].0, NativeOperation::EqualFromEntries as u8);
 
-        for (stmt, chain) in proofs.iter() {
-            for (op_code, inputs, output) in chain {
+        for (_stmt, chain) in proofs.iter() {
+            for (op_code, inputs, _output) in chain {
                 let op = Operation(
                     match op_code {
                         x if *x == NativeOperation::ContainsFromEntries as u8 => {

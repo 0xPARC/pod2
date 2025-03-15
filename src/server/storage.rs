@@ -1,8 +1,6 @@
 use rusqlite::{Connection, Result as SqliteResult};
-use serde::{Deserialize, Serialize};
 
 use super::types::Pod;
-use crate::{MainPod, SignedPod}; // Use Pod from types instead
 
 // Create a database wrapper
 pub struct Database {

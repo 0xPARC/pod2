@@ -14,8 +14,7 @@ use axum::{
     Router,
 };
 use serde_json::json;
-use std::fs;
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower::ServiceExt;
 
@@ -260,16 +259,19 @@ async fn test_validate_statement() -> Result<(), Box<dyn std::error::Error>> {
         let pod = signed_pod_builder.sign(&mut signer)?;
 
         // Create a statement that checks if the pod's test_key equals "test_value"
-        let statement = Statement(
-            Predicate::Native(NativePredicate::ValueOf),
-            vec![
-                StatementArg::Key(AnchoredKey(
-                    Origin(PodClass::Signed, pod.id()),
-                    "test_key".to_string(),
-                )),
+        let statement = Statement {
+            predicate: Predicate::Native(NativePredicate::ValueOf),
+            args: vec![
+                StatementArg::Key(AnchoredKey {
+                    origin: Origin {
+                        pod_id: pod.id(),
+                        pod_class: PodClass::Signed,
+                    },
+                    key: "test_key".to_string(),
+                }),
                 StatementArg::Literal(Value::String("test_value".to_string())),
             ],
-        );
+        };
 
         let validate_req = Request::builder()
             .method("POST")
@@ -331,13 +333,19 @@ async fn test_validate_statements() -> Result<(), Box<dyn std::error::Error>> {
         // Create a statement that checks if the pod's test_key equals "test_value"
         let statement = FrontendWildcardStatement::Equal(
             WildcardAnchoredKey(
-                WildcardId::Concrete(Origin(PodClass::Signed, pod.id())),
+                WildcardId::Concrete(Origin {
+                    pod_id: pod.id(),
+                    pod_class: PodClass::Signed,
+                }),
                 "test_key".to_string(),
             ),
-            WildcardStatementArg::Key(AnchoredKey(
-                Origin(PodClass::Signed, pod.id()),
-                "test_key".to_string(),
-            )),
+            WildcardStatementArg::Key(AnchoredKey {
+                origin: Origin {
+                    pod_id: pod.id(),
+                    pod_class: PodClass::Signed,
+                },
+                key: "test_key".to_string(),
+            }),
         );
         println!(
             "DEBUG test_validate_statements - Created statement: {:?}",
@@ -380,14 +388,7 @@ async fn test_validate_statements() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn test_frontend_wildcard_statement_deserialization() {
-    use crate::frontend::{AnchoredKey, Origin, PodClass};
-    use crate::middleware::hash_str;
-    use crate::prover::types::{
-        FrontendWildcardStatement, WildcardAnchoredKey, WildcardId, WildcardStatementArg,
-    };
-
-    // Create a valid PodId using hash_str
-    let pod_id = hash_str("test_pod_id");
+    use crate::prover::types::FrontendWildcardStatement;
 
     let json = r#"{
         "Equal": [
@@ -440,14 +441,20 @@ fn test_frontend_wildcard_statement_serialization() {
     };
 
     // Create a concrete origin
-    let origin = Origin(PodClass::Signed, PodId(hash_str("1234567890abcdef")));
+    let origin = Origin {
+        pod_id: PodId(hash_str("1234567890abcdef")),
+        pod_class: PodClass::Signed,
+    };
 
     // Create a wildcard anchored key
     let wildcard_key =
         WildcardAnchoredKey(WildcardId::Concrete(origin.clone()), "test_key".to_string());
 
     // Create a concrete anchored key for the second argument
-    let concrete_key = AnchoredKey(origin, "test_key".to_string());
+    let concrete_key = AnchoredKey {
+        origin,
+        key: "test_key".to_string(),
+    };
 
     // Create the statement
     let statement =

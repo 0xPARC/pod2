@@ -1,4 +1,7 @@
-use axum::{routing::post, Router};
+use axum::{
+    routing::{get, post},
+    Router,
+};
 use axum_server::bind;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -43,6 +46,7 @@ pub async fn start_server() -> Result<(), Box<dyn std::error::Error>> {
             "/api/validate-statements",
             post(handlers::validate_statements),
         )
+        .route("/api/get-schemas", get(handlers::get_schemas))
         .layer(cors)
         .with_state(state);
 

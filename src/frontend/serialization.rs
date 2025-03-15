@@ -17,6 +17,7 @@ use super::{MainPod, SignedPod};
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct SignedPodHelper {
+    id: String,
     entries: HashMap<String, Value>,
     proof: String,
     pod_class: String,
@@ -49,6 +50,7 @@ impl TryFrom<SignedPodHelper> for SignedPod {
 impl From<SignedPod> for SignedPodHelper {
     fn from(pod: SignedPod) -> Self {
         SignedPodHelper {
+            id: format!("{:x}", pod.pod.id()),
             entries: pod.kvs,
             proof: pod.pod.serialized_proof(),
             pod_class: "Signed".to_string(),
@@ -63,6 +65,7 @@ pub struct MainPodHelper {
     proof: String,
     pod_class: String,
     pod_type: String,
+    id: String,
 }
 
 impl TryFrom<MainPodHelper> for MainPod {
@@ -92,6 +95,7 @@ impl TryFrom<MainPodHelper> for MainPod {
 impl From<MainPod> for MainPodHelper {
     fn from(pod: MainPod) -> Self {
         MainPodHelper {
+            id: format!("{:x}", pod.pod.id()),
             public_statements: pod.public_statements,
             proof: pod.pod.serialized_proof(),
             pod_class: "Main".to_string(),

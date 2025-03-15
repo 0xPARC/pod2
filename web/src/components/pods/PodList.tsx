@@ -13,6 +13,16 @@ import { TrashIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { ImportPodDialog } from "./ImportPodDialog";
 import { toast } from "sonner";
 import { useNavigate } from "@tanstack/react-router";
+import { formatStatement } from "@/lib/statement-display";
+
+interface ApiError {
+  response?: {
+    data?: {
+      error?: string;
+    };
+  };
+  message: string;
+}
 
 export function PodList() {
   const navigate = useNavigate();
@@ -45,9 +55,11 @@ export function PodList() {
       await api.deletePod(id);
       await loadPods(); // Refresh the list
       toast.success("POD deleted successfully");
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      const errorMessage = err.response?.data?.error || "Failed to delete POD";
+      const apiError = err as ApiError;
+      const errorMessage =
+        apiError.response?.data?.error || "Failed to delete POD";
       toast.error(errorMessage);
     }
   }
@@ -101,19 +113,17 @@ export function PodList() {
             <>
               <TableRow key={pod.id}>
                 <TableCell>
-                  {pod.pod_class === "Signed" && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => toggleExpand(pod.id)}
-                    >
-                      {expandedPods.has(pod.id) ? (
-                        <ChevronDownIcon className="w-4 h-4" />
-                      ) : (
-                        <ChevronRightIcon className="w-4 h-4" />
-                      )}
-                    </Button>
-                  )}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => toggleExpand(pod.id)}
+                  >
+                    {expandedPods.has(pod.id) ? (
+                      <ChevronDownIcon className="w-4 h-4" />
+                    ) : (
+                      <ChevronRightIcon className="w-4 h-4" />
+                    )}
+                  </Button>
                 </TableCell>
                 <TableCell className="font-mono">{pod.id}</TableCell>
                 <TableCell>{pod.pod_class}</TableCell>
@@ -125,7 +135,11 @@ export function PodList() {
                       </div>
                     </div>
                   ) : (
-                    <div>Main POD</div>
+                    <div>
+                      <div className="text-sm text-gray-500">
+                        {pod.public_statements.length} public statements
+                      </div>
+                    </div>
                   )}
                 </TableCell>
                 <TableCell>
@@ -138,24 +152,42 @@ export function PodList() {
                   </Button>
                 </TableCell>
               </TableRow>
-              {pod.pod_class === "Signed" && expandedPods.has(pod.id) && (
+              {expandedPods.has(pod.id) && (
                 <TableRow>
                   <TableCell colSpan={5}>
                     <div className="bg-gray-50 p-4 rounded-lg">
                       <div className="space-y-2">
-                        {Object.entries(pod.entries)
-                          .sort(([keyA], [keyB]) => keyA.localeCompare(keyB))
-                          .map(([key, value]) => (
-                            <div
-                              key={key}
-                              className="flex items-center space-x-2"
-                            >
-                              <span className="font-medium">{key}:</span>
-                              <span className="text-gray-600">
-                                {JSON.stringify(value)}
-                              </span>
-                            </div>
-                          ))}
+                        {pod.pod_class === "Signed"
+                          ? // Signed Pod expanded view
+                            Object.entries(pod.entries)
+                              .sort(([keyA], [keyB]) =>
+                                keyA.localeCompare(keyB)
+                              )
+                              .map(([key, value]) => (
+                                <div
+                                  key={key}
+                                  className="flex items-center space-x-2"
+                                >
+                                  <span className="font-medium">{key}:</span>
+                                  <span className="text-gray-600">
+                                    {JSON.stringify(value)}
+                                  </span>
+                                </div>
+                              ))
+                          : // Main Pod expanded view
+                            pod.public_statements.map((statement, index) => (
+                              <div
+                                key={index}
+                                className="flex items-start space-x-2"
+                              >
+                                <span className="font-medium">
+                                  Statement {index + 1}:
+                                </span>
+                                <span className="font-mono text-gray-600">
+                                  {formatStatement(statement)}
+                                </span>
+                              </div>
+                            ))}
                       </div>
                     </div>
                   </TableCell>

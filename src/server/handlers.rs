@@ -2,12 +2,15 @@ use super::{error::ServerError, types::*};
 use crate::{
     backends::plonky2::{mock_main::MockProver, mock_signed::MockSigner},
     frontend::{
-        MainPod, MainPodBuilder, Operation, OperationArg, SignedPod, SignedPodBuilder, StatementArg,
+        serialization::{MainPodHelper, SignedPodHelper},
+        MainPod, MainPodBuilder, Operation, OperationArg, SignedPod, SignedPodBuilder,
+        StatementArg,
     },
     middleware::{NativeOperation, OperationType, Params, PodId},
-    prover::engine::DeductionEngine,
+    prover::{engine::DeductionEngine, types::FrontendWildcardStatement},
 };
 use axum::Json;
+use serde_json::{self, json};
 use std::collections::HashSet;
 
 pub async fn list_pods(state: StateExtractor) -> Result<Json<Vec<Pod>>, ServerError> {
@@ -128,9 +131,9 @@ pub async fn create_main_pod(
                 // Extract pod IDs before moving op
                 for arg in op.1.iter() {
                     if let OperationArg::Statement(stmt) = arg {
-                        for stmt_arg in &stmt.1 {
+                        for stmt_arg in &stmt.args {
                             if let StatementArg::Key(key) = stmt_arg {
-                                pod_ids.insert(key.0 .1);
+                                pod_ids.insert(key.origin.pod_id);
                             }
                         }
                     }
@@ -231,4 +234,15 @@ pub async fn validate_statements(
 
     // Return true only if we found proofs for all statements
     Ok(Json(proofs.len() == req.statements.len()))
+}
+
+pub async fn get_schemas() -> Result<Json<serde_json::Value>, ServerError> {
+    let schemas = json!({
+        "SignedPod": schemars::schema_for!(SignedPodHelper),
+        "MainPod": schemars::schema_for!(MainPodHelper),
+        "FrontendWildcardStatement": schemars::schema_for!(FrontendWildcardStatement),
+        // Add any other schemas you want to expose
+    });
+
+    Ok(Json(schemas))
 }
