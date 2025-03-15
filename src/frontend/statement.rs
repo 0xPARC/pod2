@@ -20,7 +20,29 @@ impl fmt::Display for StatementArg {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(into = "StatementSerdeHelper", from = "StatementSerdeHelper")]
 pub struct Statement(pub Predicate, pub Vec<StatementArg>);
+
+#[derive(Serialize, Deserialize)]
+struct StatementSerdeHelper {
+    predicate: Predicate,
+    args: Vec<StatementArg>,
+}
+
+impl From<Statement> for StatementSerdeHelper {
+    fn from(statement: Statement) -> Self {
+        StatementSerdeHelper {
+            predicate: statement.0,
+            args: statement.1,
+        }
+    }
+}
+
+impl From<StatementSerdeHelper> for Statement {
+    fn from(helper: StatementSerdeHelper) -> Self {
+        Statement(helper.predicate, helper.args)
+    }
+}
 
 impl From<(&SignedPod, &str)> for Statement {
     fn from((pod, key): (&SignedPod, &str)) -> Self {

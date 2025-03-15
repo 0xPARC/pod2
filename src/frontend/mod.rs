@@ -34,7 +34,29 @@ pub enum PodClass {
 
 // An Origin, which represents a reference to an ancestor POD.
 #[derive(Clone, Debug, PartialEq, Eq, h::Hash, Default, Serialize, Deserialize)]
+#[serde(into = "OriginSerdeHelper", from = "OriginSerdeHelper")]
 pub struct Origin(pub PodClass, pub PodId);
+
+#[derive(Serialize, Deserialize)]
+struct OriginSerdeHelper {
+    pod_class: PodClass,
+    pod_id: PodId,
+}
+
+impl From<Origin> for OriginSerdeHelper {
+    fn from(origin: Origin) -> Self {
+        OriginSerdeHelper {
+            pod_class: origin.0,
+            pod_id: origin.1,
+        }
+    }
+}
+
+impl From<OriginSerdeHelper> for Origin {
+    fn from(helper: OriginSerdeHelper) -> Self {
+        Origin(helper.pod_class, helper.pod_id)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Value {
@@ -239,11 +261,38 @@ impl SignedPod {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, h::Hash, Serialize, Deserialize)]
+#[serde(into = "AnchoredKeySerdeHelper", from = "AnchoredKeySerdeHelper")]
 pub struct AnchoredKey(pub Origin, pub String);
 
 impl From<AnchoredKey> for middleware::AnchoredKey {
     fn from(ak: AnchoredKey) -> Self {
         middleware::AnchoredKey(ak.0 .1, hash_str(&ak.1))
+    }
+}
+
+// Tuple structs get serialized to bare JSON arrays, which is not very
+// user-friendly. This helper struct allows us to serialize AnchoredKeys
+// into a structure with named fields.
+#[derive(Serialize, Deserialize)]
+struct AnchoredKeySerdeHelper {
+    origin: Origin,
+    key: String,
+}
+
+// Convert from AnchoredKey to the helper for serialization
+impl From<AnchoredKey> for AnchoredKeySerdeHelper {
+    fn from(ak: AnchoredKey) -> Self {
+        AnchoredKeySerdeHelper {
+            origin: ak.0,
+            key: ak.1,
+        }
+    }
+}
+
+// Convert from the helper back to AnchoredKey for deserialization
+impl From<AnchoredKeySerdeHelper> for AnchoredKey {
+    fn from(helper: AnchoredKeySerdeHelper) -> Self {
+        AnchoredKey(helper.origin, helper.key)
     }
 }
 
