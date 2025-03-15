@@ -1,7 +1,9 @@
 use anyhow::{anyhow, Result};
+use base64::prelude::*;
 use itertools::Itertools;
 use plonky2::hash::poseidon::PoseidonHash;
 use plonky2::plonk::config::Hasher;
+use serde::{Deserialize, Serialize};
 use std::any::Any;
 use std::fmt;
 
@@ -26,14 +28,14 @@ impl PodProver for MockProver {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MockMainPod {
     params: Params,
     id: PodId,
-    input_signed_pods: Vec<Box<dyn Pod>>,
-    input_main_pods: Vec<Box<dyn Pod>>,
+    //   input_signed_pods: Vec<Box<dyn Pod>>,
+    //   input_main_pods: Vec<Box<dyn Pod>>,
     // New statements introduced by this pod
-    input_statements: Vec<Statement>,
+    //   input_statements: Vec<Statement>,
     public_statements: Vec<Statement>,
     operations: Vec<Operation>,
     // All statements (inherited + new)
@@ -331,9 +333,9 @@ impl MockMainPod {
         Ok(Self {
             params: params.clone(),
             id,
-            input_signed_pods,
-            input_main_pods,
-            input_statements,
+            //  input_signed_pods,
+            //  input_main_pods,
+            //  input_statements,
             public_statements,
             statements,
             operations,
@@ -467,6 +469,10 @@ impl Pod for MockMainPod {
 
     fn into_any(self: Box<Self>) -> Box<dyn Any> {
         self
+    }
+
+    fn serialized_proof(&self) -> String {
+        BASE64_STANDARD.encode(serde_json::to_string(self).unwrap())
     }
 }
 

@@ -1,5 +1,7 @@
 use anyhow::{anyhow, Result};
 use plonky2::field::types::Field;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use strum_macros::FromRepr;
 
@@ -9,7 +11,7 @@ pub const KEY_SIGNER: &str = "_signer";
 pub const KEY_TYPE: &str = "_type";
 pub const STATEMENT_ARG_F_LEN: usize = 8;
 
-#[derive(Clone, Copy, Debug, FromRepr, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, FromRepr, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum NativePredicate {
     None = 0,
     ValueOf = 1,
@@ -214,7 +216,7 @@ impl fmt::Display for Statement {
 }
 
 /// Statement argument type. Useful for statement decompositions.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StatementArg {
     None,
     Literal(Value),

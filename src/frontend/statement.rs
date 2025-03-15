@@ -1,12 +1,14 @@
+use super::{AnchoredKey, AnchoredKeySerdeHelper, SignedPod, Value};
+use crate::middleware::{self, NativePredicate, Predicate};
 use anyhow::{anyhow, Result};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
-use super::{AnchoredKey, SignedPod, Value};
-use crate::middleware::{self, NativePredicate, Predicate};
-
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum StatementArg {
     Literal(Value),
+    #[schemars(with = "AnchoredKeySerdeHelper")]
     Key(AnchoredKey),
 }
 
@@ -19,8 +21,31 @@ impl fmt::Display for StatementArg {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(into = "StatementSerdeHelper", from = "StatementSerdeHelper")]
 pub struct Statement(pub Predicate, pub Vec<StatementArg>);
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "Statement")]
+pub struct StatementSerdeHelper {
+    predicate: Predicate,
+    args: Vec<StatementArg>,
+}
+
+impl From<Statement> for StatementSerdeHelper {
+    fn from(statement: Statement) -> Self {
+        StatementSerdeHelper {
+            predicate: statement.0,
+            args: statement.1,
+        }
+    }
+}
+
+impl From<StatementSerdeHelper> for Statement {
+    fn from(helper: StatementSerdeHelper) -> Self {
+        Statement(helper.predicate, helper.args)
+    }
+}
 
 impl From<(&SignedPod, &str)> for Statement {
     fn from((pod, key): (&SignedPod, &str)) -> Self {

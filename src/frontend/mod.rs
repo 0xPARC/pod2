@@ -1,29 +1,32 @@
 //! The frontend includes the user-level abstractions and user-friendly types to define and work
 //! with Pods.
 
+use crate::frontend::serialization::*;
+use crate::middleware::{
+    self, hash_str, Hash, MainPodInputs, NativeOperation, NativePredicate, Params, PodId,
+    PodProver, PodSigner, SELF,
+};
+use crate::middleware::{OperationType, Predicate, KEY_SIGNER, KEY_TYPE};
 use anyhow::{anyhow, Error, Result};
+use containers::{Array, Dictionary, Set};
 use itertools::Itertools;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::convert::From;
 use std::{fmt, hash as h};
 
-use crate::middleware::{
-    self,
-    containers::{Array, Dictionary, Set},
-    hash_str, Hash, MainPodInputs, NativeOperation, NativePredicate, Params, PodId, PodProver,
-    PodSigner, SELF,
-};
-use crate::middleware::{OperationType, Predicate, KEY_SIGNER, KEY_TYPE};
-
+pub mod containers;
 mod custom;
 mod operation;
+pub mod serialization;
 mod statement;
 pub use custom::*;
 pub use operation::*;
 pub use statement::*;
 
 /// This type is just for presentation purposes.
-#[derive(Clone, Debug, Default, h::Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, h::Hash, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum PodClass {
     #[default]
     Signed,
@@ -31,18 +34,57 @@ pub enum PodClass {
 }
 
 // An Origin, which represents a reference to an ancestor POD.
-#[derive(Clone, Debug, PartialEq, Eq, h::Hash, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, h::Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(into = "OriginSerdeHelper", from = "OriginSerdeHelper")]
 pub struct Origin(pub PodClass, pub PodId);
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "Origin")]
+struct OriginSerdeHelper {
+    pod_class: PodClass,
+    pod_id: PodId,
+}
+
+impl From<Origin> for OriginSerdeHelper {
+    fn from(origin: Origin) -> Self {
+        OriginSerdeHelper {
+            pod_class: origin.0,
+            pod_id: origin.1,
+        }
+    }
+}
+
+impl From<OriginSerdeHelper> for Origin {
+    fn from(helper: OriginSerdeHelper) -> Self {
+        Origin(helper.pod_class, helper.pod_id)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Value {
-    String(String),
-    Int(i64),
-    Bool(bool),
-    Dictionary(Dictionary),
+    // Serde cares about the order of the enum variants, with untagged variants
+    // appearing at the end.
+    // Variants without "untagged" will be serialized as "tagged" values by
+    // default, meaning that a Set appears in JSON as {"Set":[...]}
+    // and not as [...]
+    // Arrays, Strings and Booleans are untagged, as there is a natural JSON
+    // representation for them that is unambiguous to deserialize and is fully
+    // compatible with the semantics of the POD types.
+    // As JSON integers do not specify precision, and JavaScript is limited to
+    // 53-bit precision for integers, integers are represented as tagged
+    // strings, with a custom serializer and deserializer.
     Set(Set),
-    Array(Array),
+    Dictionary(Dictionary),
+    #[serde(serialize_with = "serialize_i64", deserialize_with = "deserialize_i64")]
+    Int(i64),
+    // Uses the serialization for middleware::Value:
     Raw(middleware::Value),
+    #[serde(untagged)]
+    Array(Array),
+    #[serde(untagged)]
+    String(String),
+    #[serde(untagged)]
+    Bool(bool),
 }
 
 impl From<&str> for Value {
@@ -69,9 +111,9 @@ impl From<&Value> for middleware::Value {
             Value::String(s) => hash_str(s).value(),
             Value::Int(v) => middleware::Value::from(*v),
             Value::Bool(b) => middleware::Value::from(*b as i64),
-            Value::Dictionary(d) => d.commitment().value(),
-            Value::Set(s) => s.commitment().value(),
-            Value::Array(a) => a.commitment().value(),
+            Value::Dictionary(d) => d.middleware_dict().commitment().value(),
+            Value::Set(s) => s.middleware_set().commitment().value(),
+            Value::Array(a) => a.middleware_array().commitment().value(),
             Value::Raw(v) => *v,
         }
     }
@@ -100,9 +142,9 @@ impl fmt::Display for Value {
             Value::String(s) => write!(f, "\"{}\"", s),
             Value::Int(v) => write!(f, "{}", v),
             Value::Bool(b) => write!(f, "{}", b),
-            Value::Dictionary(d) => write!(f, "dict:{}", d.commitment()),
-            Value::Set(s) => write!(f, "set:{}", s.commitment()),
-            Value::Array(a) => write!(f, "arr:{}", a.commitment()),
+            Value::Dictionary(d) => write!(f, "dict:{}", d.middleware_dict().commitment()),
+            Value::Set(s) => write!(f, "set:{}", s.middleware_set().commitment()),
+            Value::Array(a) => write!(f, "arr:{}", a.middleware_array().commitment()),
             Value::Raw(v) => write!(f, "{}", v),
         }
     }
@@ -172,7 +214,8 @@ impl SignedPodBuilder {
 
 /// SignedPod is a wrapper on top of backend::SignedPod, which additionally stores the
 /// string<-->hash relation of the keys.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "SignedPodHelper", into = "SignedPodHelper")]
 pub struct SignedPod {
     pub pod: Box<dyn middleware::Pod>,
     /// Key-value pairs as represented in the frontend. These should
@@ -220,12 +263,44 @@ impl SignedPod {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, h::Hash)]
-pub struct AnchoredKey(pub Origin, pub String);
+#[derive(Clone, Debug, PartialEq, Eq, h::Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(into = "AnchoredKeySerdeHelper", from = "AnchoredKeySerdeHelper")]
+pub struct AnchoredKey(
+    #[schemars(with = "OriginSerdeHelper")] pub Origin,
+    pub String,
+);
 
 impl From<AnchoredKey> for middleware::AnchoredKey {
     fn from(ak: AnchoredKey) -> Self {
         middleware::AnchoredKey(ak.0 .1, hash_str(&ak.1))
+    }
+}
+
+// Tuple structs get serialized to bare JSON arrays, which is not very
+// user-friendly. This helper struct allows us to serialize AnchoredKeys
+// into a structure with named fields.
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "AnchoredKey")]
+pub struct AnchoredKeySerdeHelper {
+    #[schemars(with = "OriginSerdeHelper")]
+    origin: Origin,
+    key: String,
+}
+
+// Convert from AnchoredKey to the helper for serialization
+impl From<AnchoredKey> for AnchoredKeySerdeHelper {
+    fn from(ak: AnchoredKey) -> Self {
+        AnchoredKeySerdeHelper {
+            origin: ak.0,
+            key: ak.1,
+        }
+    }
+}
+
+// Convert from the helper back to AnchoredKey for deserialization
+impl From<AnchoredKeySerdeHelper> for AnchoredKey {
+    fn from(helper: AnchoredKeySerdeHelper) -> Self {
+        AnchoredKey(helper.origin, helper.key)
     }
 }
 
@@ -740,7 +815,8 @@ impl MainPodBuilder {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "MainPodHelper", into = "MainPodHelper")]
 pub struct MainPod {
     pub pod: Box<dyn middleware::Pod>,
     pub public_statements: Vec<Statement>,

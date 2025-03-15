@@ -1,10 +1,10 @@
-use anyhow::Result;
-use std::fmt;
-
 use super::Statement;
 use crate::middleware::{self, OperationType};
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use std::fmt;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperationArg {
     None,
     Index(usize),
@@ -16,7 +16,7 @@ impl OperationArg {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Operation(pub OperationType, pub Vec<OperationArg>);
 
 impl Operation {
