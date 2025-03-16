@@ -2,7 +2,6 @@ use rusqlite::{Connection, Result as SqliteResult};
 
 use super::types::Pod;
 
-// Create a database wrapper
 pub struct Database {
     conn: Connection,
 }

@@ -403,18 +403,18 @@ pub enum WildcardStatement {
     ),
     SumOf(
         #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
-        #[schemars(with = "AnchoredKeySerdeHelper")] AnchoredKey,
-        #[schemars(with = "AnchoredKeySerdeHelper")] AnchoredKey,
+        AnchoredKey,
+        AnchoredKey,
     ),
     ProductOf(
         #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
-        #[schemars(with = "AnchoredKeySerdeHelper")] AnchoredKey,
-        #[schemars(with = "AnchoredKeySerdeHelper")] AnchoredKey,
+        AnchoredKey,
+        AnchoredKey,
     ),
     MaxOf(
         #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
-        #[schemars(with = "AnchoredKeySerdeHelper")] AnchoredKey,
-        #[schemars(with = "AnchoredKeySerdeHelper")] AnchoredKey,
+        AnchoredKey,
+        AnchoredKey,
     ),
 }
 

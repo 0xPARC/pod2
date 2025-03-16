@@ -192,8 +192,13 @@ impl DeductionEngine {
                 let op1_key = match op1 {
                     WildcardStatementArg::Key(key) => key,
                     WildcardStatementArg::Literal(v) => {
-                        let new_ak =
-                            AnchoredKey(Origin(PodClass::Main, SELF), "value_of_sum1".to_string());
+                        let new_ak = AnchoredKey {
+                            origin: Origin {
+                                pod_class: PodClass::Main,
+                                pod_id: SELF,
+                            },
+                            key: "value_of_sum1".to_string(),
+                        };
                         self.add_fact(ProvableStatement::ValueOf(new_ak.clone(), v));
                         new_ak
                     }
@@ -201,8 +206,13 @@ impl DeductionEngine {
                 let op2_key = match op2 {
                     WildcardStatementArg::Key(key) => key,
                     WildcardStatementArg::Literal(v) => {
-                        let new_ak =
-                            AnchoredKey(Origin(PodClass::Main, SELF), "value_of_sum2".to_string());
+                        let new_ak = AnchoredKey {
+                            origin: Origin {
+                                pod_class: PodClass::Main,
+                                pod_id: SELF,
+                            },
+                            key: "value_of_sum2".to_string(),
+                        };
                         self.add_fact(ProvableStatement::ValueOf(new_ak.clone(), v));
                         new_ak
                     }
@@ -213,8 +223,13 @@ impl DeductionEngine {
                 let op1_key = match op1 {
                     WildcardStatementArg::Key(key) => key,
                     WildcardStatementArg::Literal(v) => {
-                        let new_ak =
-                            AnchoredKey(Origin(PodClass::Main, SELF), "value_of_prod1".to_string());
+                        let new_ak = AnchoredKey {
+                            origin: Origin {
+                                pod_class: PodClass::Main,
+                                pod_id: SELF,
+                            },
+                            key: "value_of_prod1".to_string(),
+                        };
                         self.add_fact(ProvableStatement::ValueOf(new_ak.clone(), v));
                         new_ak
                     }
@@ -222,8 +237,13 @@ impl DeductionEngine {
                 let op2_key = match op2 {
                     WildcardStatementArg::Key(key) => key,
                     WildcardStatementArg::Literal(v) => {
-                        let new_ak =
-                            AnchoredKey(Origin(PodClass::Main, SELF), "value_of_prod2".to_string());
+                        let new_ak = AnchoredKey {
+                            origin: Origin {
+                                pod_class: PodClass::Main,
+                                pod_id: SELF,
+                            },
+                            key: "value_of_prod2".to_string(),
+                        };
                         self.add_fact(ProvableStatement::ValueOf(new_ak.clone(), v));
                         new_ak
                     }
@@ -234,8 +254,13 @@ impl DeductionEngine {
                 let op1_key = match op1 {
                     WildcardStatementArg::Key(key) => key,
                     WildcardStatementArg::Literal(v) => {
-                        let new_ak =
-                            AnchoredKey(Origin(PodClass::Main, SELF), "value_of_max1".to_string());
+                        let new_ak = AnchoredKey {
+                            origin: Origin {
+                                pod_class: PodClass::Main,
+                                pod_id: SELF,
+                            },
+                            key: "value_of_max1".to_string(),
+                        };
                         self.add_fact(ProvableStatement::ValueOf(new_ak.clone(), v));
                         new_ak
                     }
@@ -243,8 +268,13 @@ impl DeductionEngine {
                 let op2_key = match op2 {
                     WildcardStatementArg::Key(key) => key,
                     WildcardStatementArg::Literal(v) => {
-                        let new_ak =
-                            AnchoredKey(Origin(PodClass::Main, SELF), "value_of_max2".to_string());
+                        let new_ak = AnchoredKey {
+                            origin: Origin {
+                                pod_class: PodClass::Main,
+                                pod_id: SELF,
+                            },
+                            key: "value_of_max2".to_string(),
+                        };
                         self.add_fact(ProvableStatement::ValueOf(new_ak.clone(), v));
                         new_ak
                     }
