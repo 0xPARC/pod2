@@ -15,18 +15,6 @@ type SerializedValue =
   | ArrayValue
   | string;
 
-interface SerializedPod {
-  entries: {
-    _type: RawValue;
-    [key: string]: SerializedValue;
-    _signer: RawValue;
-  };
-  id: string;
-  proof: string;
-  pod_class: "Signed";
-  pod_type: "Mock";
-}
-
 // Constants for i64 limits in Rust
 const I64_MIN = -9223372036854775808n;
 const I64_MAX = 9223372036854775807n;

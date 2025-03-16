@@ -55,19 +55,6 @@ function generateId() {
   return Math.random().toString(36).substring(2, 9);
 }
 
-type CollectionType = "array" | "set" | "dictionary";
-
-function CollectionIcon({ type }: { type: CollectionType }) {
-  switch (type) {
-    case "array":
-      return <List className="h-4 w-4" />;
-    case "set":
-      return <Hash className="h-4 w-4" />;
-    case "dictionary":
-      return <Database className="h-4 w-4" />;
-  }
-}
-
 export function TreeNodeEditor({
   node,
   onUpdate,

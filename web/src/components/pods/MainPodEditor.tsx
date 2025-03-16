@@ -17,7 +17,8 @@ import {
   isSignedPod,
   TreeNode,
   KeyValue,
-  isKeyValue
+  isKeyValue,
+  ValueType
 } from "@/lib/api";
 import { useDebounce } from "@/lib/hooks/useDebounce";
 import { useNavigate } from "@tanstack/react-router";
@@ -40,6 +41,38 @@ function TreeNodeEditor({
       />
     </div>
   );
+}
+
+function truncatePodId(id: string): string {
+  return id.slice(0, 8);
+}
+
+function formatPodValue(value: ValueType | undefined): string {
+  if (!value) return "N/A";
+
+  console.log("Formatting pod value:", value); // Debug log
+
+  // Each value should only have one key according to the schema
+  const type = Object.keys(value)[0] as keyof ValueType;
+
+  switch (type) {
+    case "Array":
+      return "Array";
+    case "Set":
+      return "Set";
+    case "Dictionary":
+      return "Dictionary";
+    case "Int":
+      return value.Int?.toString() || "N/A";
+    case "String":
+      return `"${value.String}"`;
+    case "Bool":
+      return value.Bool?.toString() || "N/A";
+    case "Raw":
+      return value.Raw || "N/A";
+    default:
+      return "N/A";
+  }
 }
 
 export function MainPodEditor() {
@@ -65,12 +98,32 @@ export function MainPodEditor() {
 
     // Check second argument
     if (statement.secondArg.type === "key") {
-      return !!(
-        statement.secondArg.value.podId && statement.secondArg.value.key
-      );
+      if (!(statement.secondArg.value.podId && statement.secondArg.value.key)) {
+        return false;
+      }
     } else {
-      return statement.secondArg.value.value !== "";
+      if (statement.secondArg.value.value === "") {
+        return false;
+      }
     }
+
+    // Check third argument for three-arg statements
+    if (isThreeArgStatement(statement.type)) {
+      if (!statement.thirdArg) return false;
+      if (statement.thirdArg.type === "key") {
+        return !!(
+          statement.thirdArg.value.podId && statement.thirdArg.value.key
+        );
+      } else {
+        return statement.thirdArg.value.value !== "";
+      }
+    }
+
+    return true;
+  }
+
+  function isThreeArgStatement(type: StatementType): boolean {
+    return type === "MaxOf" || type === "ProductOf" || type === "SumOf";
   }
 
   // Validate statements when they change
@@ -117,7 +170,22 @@ export function MainPodEditor() {
   }
 
   function handleStatementTypeChange(id: string, type: StatementType) {
-    setStatements(statements.map((s) => (s.id === id ? { ...s, type } : s)));
+    setStatements(
+      statements.map((s) => {
+        if (s.id === id) {
+          const updatedStatement = { ...s, type };
+          // Initialize third argument for three-argument statements
+          if (isThreeArgStatement(type) && !updatedStatement.thirdArg) {
+            updatedStatement.thirdArg = {
+              type: "key",
+              value: { podId: "", podClass: "Signed", key: "" }
+            };
+          }
+          return updatedStatement;
+        }
+        return s;
+      })
+    );
   }
 
   function handleFirstArgChange(
@@ -200,6 +268,65 @@ export function MainPodEditor() {
     );
   }
 
+  function handleThirdArgTypeChange(id: string, type: "key" | "literal") {
+    setStatements(
+      statements.map((s) =>
+        s.id === id
+          ? {
+              ...s,
+              thirdArg:
+                type === "key"
+                  ? {
+                      type: "key",
+                      value: { podId: "", podClass: "Signed", key: "" }
+                    }
+                  : {
+                      type: "literal",
+                      value: {
+                        id: crypto.randomUUID(),
+                        key: "",
+                        type: "string",
+                        value: ""
+                      }
+                    }
+            }
+          : s
+      )
+    );
+  }
+
+  function handleThirdArgAnchoredKeyChange(id: string, arg: KeyValue) {
+    setStatements(
+      statements.map((s) =>
+        s.id === id && s.thirdArg?.type === "key"
+          ? {
+              ...s,
+              thirdArg: {
+                type: "key",
+                value: arg
+              }
+            }
+          : s
+      )
+    );
+  }
+
+  function handleThirdArgLiteralChange(id: string, node: TreeNode) {
+    setStatements(
+      statements.map((s) =>
+        s.id === id && s.thirdArg?.type === "literal"
+          ? {
+              ...s,
+              thirdArg: {
+                type: "literal",
+                value: node
+              }
+            }
+          : s
+      )
+    );
+  }
+
   async function handleCreateMainPod() {
     try {
       await api.createMainPod(statements);
@@ -265,6 +392,9 @@ export function MainPodEditor() {
                           <SelectItem value="NotContains">
                             NotContains
                           </SelectItem>
+                          <SelectItem value="MaxOf">MaxOf</SelectItem>
+                          <SelectItem value="ProductOf">ProductOf</SelectItem>
+                          <SelectItem value="SumOf">SumOf</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -313,12 +443,13 @@ export function MainPodEditor() {
                         {pods.map(
                           (pod) =>
                             isSignedPod(pod) &&
-                            Object.entries(pod.entries).map(([key]) => (
+                            Object.entries(pod.entries).map(([key, value]) => (
                               <SelectItem
                                 key={`${pod.id}:${key}`}
                                 value={`${pod.id}:${key}`}
                               >
-                                {pod.id}.{key}
+                                {truncatePodId(pod.id)}.{key} ={" "}
+                                {formatPodValue(value)}
                               </SelectItem>
                             ))
                         )}
@@ -396,14 +527,17 @@ export function MainPodEditor() {
                             {pods.map(
                               (pod) =>
                                 isSignedPod(pod) &&
-                                Object.entries(pod.entries).map(([key]) => (
-                                  <SelectItem
-                                    key={`${pod.id}:${key}`}
-                                    value={`${pod.id}:${key}`}
-                                  >
-                                    {pod.id}.{key}
-                                  </SelectItem>
-                                ))
+                                Object.entries(pod.entries).map(
+                                  ([key, value]) => (
+                                    <SelectItem
+                                      key={`${pod.id}:${key}`}
+                                      value={`${pod.id}:${key}`}
+                                    >
+                                      {truncatePodId(pod.id)}.{key} ={" "}
+                                      {formatPodValue(value)}
+                                    </SelectItem>
+                                  )
+                                )
                             )}
                           </SelectContent>
                         </Select>
@@ -450,6 +584,116 @@ export function MainPodEditor() {
                       </div>
                     )}
                   </div>
+
+                  {isThreeArgStatement(statement.type) && (
+                    <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium">
+                          Third Argument
+                        </span>
+                      </div>
+                      <Select
+                        value={statement.thirdArg?.type || "key"}
+                        onValueChange={(value) =>
+                          handleThirdArgTypeChange(
+                            statement.id,
+                            value as "key" | "literal"
+                          )
+                        }
+                      >
+                        <SelectTrigger className="w-[180px]">
+                          <SelectValue placeholder="Select type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="key">Anchored Key</SelectItem>
+                          <SelectItem value="literal">Literal Value</SelectItem>
+                        </SelectContent>
+                      </Select>
+
+                      {statement.thirdArg?.type === "key" && (
+                        <>
+                          <Select
+                            value={
+                              statement.thirdArg.type === "key"
+                                ? `${statement.thirdArg.value.podId}:${statement.thirdArg.value.key}`
+                                : ""
+                            }
+                            onValueChange={(value) => {
+                              const [podId, key] = value.split(":");
+                              const pod = pods.find((p) => p.id === podId);
+                              if (pod) {
+                                handleThirdArgAnchoredKeyChange(statement.id, {
+                                  podId,
+                                  podClass: pod.pod_class,
+                                  key
+                                });
+                              }
+                            }}
+                          >
+                            <SelectTrigger className="w-[180px]">
+                              <SelectValue placeholder="Select key" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {pods.map(
+                                (pod) =>
+                                  isSignedPod(pod) &&
+                                  Object.entries(pod.entries).map(
+                                    ([key, value]) => (
+                                      <SelectItem
+                                        key={`${pod.id}:${key}`}
+                                        value={`${pod.id}:${key}`}
+                                      >
+                                        {truncatePodId(pod.id)}.{key} ={" "}
+                                        {formatPodValue(value)}
+                                      </SelectItem>
+                                    )
+                                  )
+                              )}
+                            </SelectContent>
+                          </Select>
+                          {statement.thirdArg.type === "key" &&
+                            statement.thirdArg.value.podId &&
+                            statement.thirdArg.value.key && (
+                              <span className="text-sm text-muted-foreground">
+                                {(() => {
+                                  const pod = pods.find(
+                                    (p) =>
+                                      statement.thirdArg?.type === "key" &&
+                                      p.id === statement.thirdArg.value.podId
+                                  );
+                                  if (isSignedPod(pod)) {
+                                    return (
+                                      pod.entries[
+                                        statement.thirdArg.value.key
+                                      ]?.toString() || "N/A"
+                                    );
+                                  }
+                                  return "N/A";
+                                })()}
+                              </span>
+                            )}
+                        </>
+                      )}
+
+                      {statement.thirdArg?.type === "literal" && (
+                        <div className="flex-1">
+                          <TreeNodeEditor
+                            node={
+                              statement.thirdArg.value || {
+                                id: crypto.randomUUID(),
+                                key: "",
+                                type: "string",
+                                value: ""
+                              }
+                            }
+                            onUpdate={(node) =>
+                              handleThirdArgLiteralChange(statement.id, node)
+                            }
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>

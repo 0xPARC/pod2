@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
 // Core value types
-interface ValueType {
+export interface ValueType {
   String?: string;
   Int?: number;
   Bool?: boolean;
@@ -39,6 +39,23 @@ const ValueSchema: z.ZodType<ValueType> = z.union([
 
 // Helper function to convert raw values to ValueSchema format
 function convertToValueType(value: unknown): ValueType {
+  // If it's already a ValueType (has exactly one key from the ValueType interface), return as is
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const keys = Object.keys(value as object);
+    const validValueTypeKeys = [
+      "String",
+      "Int",
+      "Bool",
+      "Raw",
+      "Array",
+      "Set",
+      "Dictionary"
+    ];
+    if (keys.length === 1 && validValueTypeKeys.includes(keys[0])) {
+      return value as ValueType;
+    }
+  }
+
   if (typeof value === "string") {
     return { String: value };
   } else if (typeof value === "number" && Number.isInteger(value)) {
@@ -56,18 +73,6 @@ function convertToValueType(value: unknown): ValueType {
   }
   throw new Error(`Unsupported value type: ${typeof value}`);
 }
-
-// Remove or comment out the OriginSchema since it's no longer used
-// const OriginSchema = z.object({
-//   pod_class: z.enum(["Signed", "Main"]),
-//   pod_id: z.string().regex(/^[0-9a-fA-F]{64}$/)
-// });
-
-// Remove or comment out the AnchoredKeySchema since it's no longer used
-// const AnchoredKeySchema = z.object({
-//   origin: OriginSchema,
-//   key: z.string()
-// });
 
 const StatementArgSchema = z.union([
   z.object({
@@ -220,13 +225,19 @@ export interface EditorStatement {
   id: string;
   type: StatementType;
   firstArg: {
-    wildcardId: {
-      type: "concrete" | "named";
-      value: string;
-    };
+    wildcardId: { type: "concrete" | "named"; value: string };
     key: string;
   };
   secondArg:
+    | {
+        type: "key";
+        value: KeyValue;
+      }
+    | {
+        type: "literal";
+        value: TreeNode;
+      };
+  thirdArg?:
     | {
         type: "key";
         value: KeyValue;
@@ -375,6 +386,21 @@ export interface FrontendWildcardStatement {
     | undefined;
 }
 
+interface WildcardStatementArg {
+  Key?: {
+    origin: {
+      pod_class: "Signed";
+      pod_id: string;
+    };
+    key: string;
+  };
+  Literal?: {
+    String?: string;
+    Int?: number;
+    Bool?: boolean;
+  };
+}
+
 const API_BASE = "http://localhost:3000/api";
 
 const axiosInstance = axios.create({
@@ -423,37 +449,20 @@ class ApiClient {
         key: statement.firstArg.key
       };
 
-      const secondArg =
-        statement.secondArg.type === "key"
-          ? {
-              Key: {
-                origin: {
-                  pod_class: "Signed" as const,
-                  pod_id: statement.secondArg.value.podId
-                },
-                key: statement.secondArg.value.key
-              }
-            }
-          : {
-              Literal: (() => {
-                const val = statement.secondArg.value.value;
-                if (typeof val === "string") {
-                  return { String: val };
-                } else if (typeof val === "number") {
-                  return { Int: val };
-                } else if (typeof val === "boolean") {
-                  return { Bool: val };
-                }
-                throw new Error(`Unsupported literal type: ${typeof val}`);
-              })()
-            };
+      const secondArg = transformArg(statement.secondArg);
 
-      // Create the statement object with the correct variant
-      const validationStatement: FrontendWildcardStatement = {
+      // For three-argument statements, include the third argument
+      if (isThreeArgStatement(statement.type) && statement.thirdArg) {
+        const thirdArg = transformArg(statement.thirdArg);
+        return {
+          [statement.type]: [firstArg, secondArg, thirdArg]
+        };
+      }
+
+      // For two-argument statements
+      return {
         [statement.type]: [firstArg, secondArg]
       };
-
-      return validationStatement;
     });
 
     const { data } = await axiosInstance.post("/create-main-pod", {
@@ -495,37 +504,20 @@ class ApiClient {
         key: statement.firstArg.key
       };
 
-      const secondArg =
-        statement.secondArg.type === "key"
-          ? {
-              Key: {
-                origin: {
-                  pod_class: "Signed" as const,
-                  pod_id: statement.secondArg.value.podId
-                },
-                key: statement.secondArg.value.key
-              }
-            }
-          : {
-              Literal: (() => {
-                const val = statement.secondArg.value.value;
-                if (typeof val === "string") {
-                  return { String: val };
-                } else if (typeof val === "number") {
-                  return { Int: val };
-                } else if (typeof val === "boolean") {
-                  return { Bool: val };
-                }
-                throw new Error(`Unsupported literal type: ${typeof val}`);
-              })()
-            };
+      const secondArg = transformArg(statement.secondArg);
 
-      // Create the statement object with the correct variant
-      const validationStatement: FrontendWildcardStatement = {
+      // For three-argument statements, include the third argument
+      if (isThreeArgStatement(statement.type) && statement.thirdArg) {
+        const thirdArg = transformArg(statement.thirdArg);
+        return {
+          [statement.type]: [firstArg, secondArg, thirdArg]
+        };
+      }
+
+      // For two-argument statements
+      return {
         [statement.type]: [firstArg, secondArg]
       };
-
-      return validationStatement;
     });
 
     const { data } = await axiosInstance.post("/validate-statements", {
@@ -658,4 +650,38 @@ export function formatStatement(statement: Statement): string {
     .map(formatStatementArg)
     .filter((arg) => arg !== "");
   return `${predicate.value}(${formattedArgs.join(", ")})`;
+}
+
+function transformArg(
+  arg: NonNullable<EditorStatement["secondArg"] | EditorStatement["thirdArg"]>
+): WildcardStatementArg {
+  if (arg.type === "key") {
+    return {
+      Key: {
+        origin: {
+          pod_class: "Signed" as const,
+          pod_id: arg.value.podId
+        },
+        key: arg.value.key
+      }
+    };
+  } else {
+    return {
+      Literal: (() => {
+        const val = arg.value.value;
+        if (typeof val === "string") {
+          return { String: val };
+        } else if (typeof val === "number") {
+          return { Int: val };
+        } else if (typeof val === "boolean") {
+          return { Bool: val };
+        }
+        throw new Error(`Unsupported literal type: ${typeof val}`);
+      })()
+    };
+  }
+}
+
+function isThreeArgStatement(type: StatementType): boolean {
+  return type === "MaxOf" || type === "ProductOf" || type === "SumOf";
 }
