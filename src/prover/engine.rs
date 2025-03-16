@@ -1,34 +1,19 @@
 use super::types::*;
-use crate::frontend::{AnchoredKey, Origin, PodClass};
-use crate::middleware::{hash_str, NativeOperation, Value as MiddlewareValue, SELF};
+use crate::frontend::{AnchoredKey, Origin, PodClass, Value};
+use crate::middleware::{NativeOperation, SELF};
 use crate::SignedPod;
 use ascent::ascent;
 
 use super::types::WildcardStatement;
 
-// Helper function to convert HashableValue to Value
-fn to_value(hv: &ProvableValue) -> MiddlewareValue {
-    match hv {
-        ProvableValue::Int(i) => MiddlewareValue::from(*i),
-        ProvableValue::String(s) => MiddlewareValue::from(hash_str(s)),
-        ProvableValue::Bool(b) => MiddlewareValue::from(if *b { 1i64 } else { 0i64 }),
-        ProvableValue::Array(arr) => arr.middleware_array().commitment().value(),
-        ProvableValue::Set(set) => set.middleware_set().commitment().value(),
-        ProvableValue::Dictionary(dict) => dict.middleware_dict().commitment().value(),
-        ProvableValue::Raw(r) => *r,
-    }
-}
-
-// Helper function to check if one value contains another
 // Supports arrays and sets, returns false for other types
-fn check_contains(container: &ProvableValue, contained: &ProvableValue) -> bool {
+fn check_contains(container: &Value, contained: &Value) -> bool {
     match (container, contained) {
         // For arrays, check if the contained value is an element
-        (ProvableValue::Array(arr), value) => {
-            let value = to_value(value);
+        (Value::Array(arr), value) => {
             // Check each element in the array using the iterator
             for (_, elem) in arr.middleware_array().iter() {
-                if elem == &value {
+                if elem == &value.into() {
                     return true;
                 }
             }
@@ -36,10 +21,10 @@ fn check_contains(container: &ProvableValue, contained: &ProvableValue) -> bool 
         }
 
         // For sets, check if the contained value is a member
-        (ProvableValue::Set(set), value) => {
-            let value = to_value(value);
-            set.middleware_set().contains(&value).unwrap_or(false)
-        }
+        (Value::Set(set), value) => set
+            .middleware_set()
+            .contains(&value.into())
+            .unwrap_or(false),
 
         // For other types, containment is not defined
         _ => false,
@@ -401,7 +386,7 @@ ascent! {
     relation known_statement(ProvableStatement);  // Statements we know to be true
     relation target_statement(WildcardStatement);  // The statement we're trying to prove
     relation can_prove(ProvableStatement, DeductionChain);  // Statements we can prove with their proof chains
-    relation known_value(AnchoredKey, ProvableValue);  // Values we know for specific keys
+    relation known_value(AnchoredKey, Value);  // Values we know for specific keys
     relation known_equal(AnchoredKey, AnchoredKey);  // Known equality relationships
     relation known_gt(AnchoredKey, AnchoredKey);  // Known greater-than relationships
     relation known_lt(AnchoredKey, AnchoredKey);  // Known less-than relationships
@@ -596,8 +581,8 @@ ascent! {
         known_value(found_key, v1),
         known_value(match_key, v2),
         if wild_key.matches(&found_key) && match_key == concrete_key,
-        if let ProvableValue::Int(i1) = v1,
-        if let ProvableValue::Int(i2) = v2,
+        if let Value::Int(i1) = v1,
+        if let Value::Int(i2) = v2,
         if i1 > i2,
         let x = found_key.clone(),
         let y = match_key.clone(),
@@ -629,8 +614,8 @@ ascent! {
         known_value(found_key, v1),
         known_value(match_key, v2),
         if wild_key.matches(&found_key) && match_key == concrete_key,
-        if let ProvableValue::Int(i1) = v1,
-        if let ProvableValue::Int(i2) = v2,
+        if let Value::Int(i1) = v1,
+        if let Value::Int(i2) = v2,
         if i1 < i2,
         let x = found_key.clone(),
         let y = match_key.clone(),
@@ -768,7 +753,7 @@ ascent! {
         known_value(found_op2, v3),
         if result_key.matches(&found_result),
         if operand1_key == found_op1 && operand2_key == found_op2,
-        if let (ProvableValue::Int(result_val), ProvableValue::Int(op1_val), ProvableValue::Int(op2_val)) = (v1, v2, v3),
+        if let (Value::Int(result_val), Value::Int(op1_val), Value::Int(op2_val)) = (v1, v2, v3),
         if *result_val == *op1_val + *op2_val,
         let result = found_result.clone(),
         let op1 = found_op1.clone(),
@@ -792,7 +777,7 @@ ascent! {
         known_value(found_op2, v3),
         if result_key.matches(&found_result),
         if operand1_key == found_op1 && operand2_key == found_op2,
-        if let (ProvableValue::Int(result_val), ProvableValue::Int(op1_val), ProvableValue::Int(op2_val)) = (v1, v2, v3),
+        if let (Value::Int(result_val), Value::Int(op1_val), Value::Int(op2_val)) = (v1, v2, v3),
         if *result_val == *op1_val * *op2_val,
         let result = found_result.clone(),
         let op1 = found_op1.clone(),
@@ -816,7 +801,7 @@ ascent! {
         known_value(found_op2, v3),
         if result_key.matches(&found_result),
         if operand1_key == found_op1 && operand2_key == found_op2,
-        if let (ProvableValue::Int(result_val), ProvableValue::Int(op1_val), ProvableValue::Int(op2_val)) = (v1, v2, v3),
+        if let (Value::Int(result_val), Value::Int(op1_val), Value::Int(op2_val)) = (v1, v2, v3),
         if *result_val == std::cmp::max(*op1_val, *op2_val),
         let result = found_result.clone(),
         let op1 = found_op1.clone(),

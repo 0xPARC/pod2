@@ -1,6 +1,5 @@
-use crate::frontend::containers::{Array, Dictionary, Set};
 use crate::frontend::{self, AnchoredKey, Origin, Value};
-use crate::middleware::{self, hash_str, NativeOperation, NativePredicate, Predicate};
+use crate::middleware::{NativeOperation, NativePredicate, Predicate};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -9,7 +8,7 @@ use std::hash::{Hash, Hasher};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ProvableStatement {
-    ValueOf(AnchoredKey, ProvableValue),
+    ValueOf(AnchoredKey, Value),
     Equal(AnchoredKey, AnchoredKey),
     NotEqual(AnchoredKey, AnchoredKey),
     Gt(AnchoredKey, AnchoredKey),
@@ -101,73 +100,20 @@ impl From<ProvableStatement> for frontend::Statement {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub enum ProvableValue {
-    String(String),
-    Int(i64),
-    Bool(bool),
-    Dictionary(Dictionary),
-    Set(Set),
-    Array(Array),
-    Raw(middleware::Value),
-}
-
-impl From<Value> for ProvableValue {
-    fn from(value: Value) -> Self {
-        match value {
-            Value::String(s) => ProvableValue::String(s),
-            Value::Int(i) => ProvableValue::Int(i),
-            Value::Bool(b) => ProvableValue::Bool(b),
-            Value::Dictionary(d) => ProvableValue::Dictionary(d),
-            Value::Set(s) => ProvableValue::Set(s),
-            Value::Array(a) => ProvableValue::Array(a),
-            Value::Raw(r) => ProvableValue::Raw(r),
-        }
-    }
-}
-
-impl From<ProvableValue> for frontend::Value {
-    fn from(value: ProvableValue) -> Self {
-        match value {
-            ProvableValue::String(s) => frontend::Value::String(s),
-            ProvableValue::Int(i) => frontend::Value::Int(i),
-            ProvableValue::Bool(b) => frontend::Value::Bool(b),
-            ProvableValue::Dictionary(d) => frontend::Value::Dictionary(d),
-            ProvableValue::Set(s) => frontend::Value::Set(s),
-            ProvableValue::Array(a) => frontend::Value::Array(a),
-            ProvableValue::Raw(r) => frontend::Value::Raw(r),
-        }
-    }
-}
-
-impl From<ProvableValue> for middleware::Value {
-    fn from(value: ProvableValue) -> Self {
-        match value {
-            ProvableValue::String(s) => hash_str(&s).value(),
-            ProvableValue::Int(v) => middleware::Value::from(v),
-            ProvableValue::Bool(b) => middleware::Value::from(b as i64),
-            ProvableValue::Dictionary(d) => d.middleware_dict().commitment().value(),
-            ProvableValue::Set(s) => s.middleware_set().commitment().value(),
-            ProvableValue::Array(a) => a.middleware_array().commitment().value(),
-            ProvableValue::Raw(v) => v,
-        }
-    }
-}
-
-impl Hash for ProvableValue {
+impl Hash for Value {
     fn hash<H: Hasher>(&self, state: &mut H) {
         // Hash the discriminant first
         std::mem::discriminant(self).hash(state);
 
         // Hash the inner values only for types that implement Hash
         match self {
-            ProvableValue::String(s) => s.hash(state),
-            ProvableValue::Int(i) => i.hash(state),
-            ProvableValue::Bool(b) => b.hash(state),
-            ProvableValue::Dictionary(d) => d.middleware_dict().commitment().hash(state),
-            ProvableValue::Set(s) => s.middleware_set().commitment().hash(state),
-            ProvableValue::Array(a) => a.middleware_array().commitment().hash(state),
-            ProvableValue::Raw(r) => r.hash(state),
+            Value::String(s) => s.hash(state),
+            Value::Int(i) => i.hash(state),
+            Value::Bool(b) => b.hash(state),
+            Value::Dictionary(d) => d.middleware_dict().commitment().hash(state),
+            Value::Set(s) => s.middleware_set().commitment().hash(state),
+            Value::Array(a) => a.middleware_array().commitment().hash(state),
+            Value::Raw(r) => r.hash(state),
         }
     }
 }
@@ -178,20 +124,6 @@ pub type DeductionChain = Vec<DeductionStep>;
 // Helper function to format AnchoredKey
 fn format_anchored_key(ak: &AnchoredKey) -> String {
     format!("{}:{}", ak.origin.pod_id.to_string(), ak.key) // Show both origin ID and key
-}
-
-impl fmt::Display for ProvableValue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ProvableValue::String(s) => write!(f, "{}", s),
-            ProvableValue::Int(i) => write!(f, "{}", i),
-            ProvableValue::Bool(b) => write!(f, "{}", b),
-            ProvableValue::Dictionary(d) => write!(f, "{:?}", d),
-            ProvableValue::Set(s) => write!(f, "{:?}", s),
-            ProvableValue::Array(a) => write!(f, "{:?}", a),
-            ProvableValue::Raw(r) => write!(f, "{:?}", r),
-        }
-    }
 }
 
 impl fmt::Display for ProvableStatement {
@@ -321,7 +253,7 @@ impl From<WildcardAnchoredKeySerdeHelper> for WildcardAnchoredKey {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum WildcardStatementArg {
-    Literal(ProvableValue),
+    Literal(Value),
     Key(AnchoredKey),
 }
 
@@ -375,7 +307,7 @@ pub enum FrontendWildcardStatement {
 pub enum WildcardStatement {
     ValueOf(
         #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
-        ProvableValue,
+        Value,
     ),
     Equal(
         #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,

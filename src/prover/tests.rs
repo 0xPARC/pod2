@@ -13,7 +13,7 @@ mod tests {
 
     use crate::{
         prover::engine::DeductionEngine,
-        prover::types::{ProvableStatement, ProvableValue, WildcardAnchoredKey, WildcardId},
+        prover::types::{ProvableStatement, WildcardAnchoredKey, WildcardId},
     };
 
     fn make_signed_origin(id: &str) -> Origin {
@@ -85,11 +85,11 @@ mod tests {
         // Add some values
         engine.add_fact(ProvableStatement::ValueOf(
             make_anchored_key("X", "value"),
-            ProvableValue::Int(10),
+            Value::Int(10),
         ));
         engine.add_fact(ProvableStatement::ValueOf(
             make_anchored_key("Y", "value"),
-            ProvableValue::Int(5),
+            Value::Int(5),
         ));
 
         // Add a direct GT statement
@@ -145,11 +145,11 @@ mod tests {
         // Add some values
         engine.add_fact(ProvableStatement::ValueOf(
             make_anchored_key("X", "value"),
-            ProvableValue::Int(5),
+            Value::Int(5),
         ));
         engine.add_fact(ProvableStatement::ValueOf(
             make_anchored_key("Y", "value"),
-            ProvableValue::Int(10),
+            Value::Int(10),
         ));
 
         // Add a direct LT statement
@@ -323,11 +323,11 @@ mod tests {
 
         engine.add_fact(ProvableStatement::ValueOf(
             make_anchored_key("X", "value"),
-            ProvableValue::Array(arr),
+            Value::Array(arr),
         ));
         engine.add_fact(ProvableStatement::ValueOf(
             make_anchored_key("Y", "value"),
-            ProvableValue::Int(2),
+            Value::Int(2),
         ));
 
         // Add a direct Contains statement
@@ -389,12 +389,12 @@ mod tests {
 
         engine.add_fact(ProvableStatement::ValueOf(
             make_anchored_key("X", "value"),
-            ProvableValue::Array(arr),
+            Value::Array(arr),
         ));
         // Add a value that is NOT in the array
         engine.add_fact(ProvableStatement::ValueOf(
             make_anchored_key("Y", "value"),
-            ProvableValue::Int(4),
+            Value::Int(4),
         ));
 
         // Try to prove that X contains Y (which should be impossible)
@@ -422,11 +422,11 @@ mod tests {
         ));
         engine.add_fact(ProvableStatement::ValueOf(
             make_anchored_key("b", "value"),
-            ProvableValue::Int(10),
+            Value::Int(10),
         ));
         engine.add_fact(ProvableStatement::ValueOf(
             make_anchored_key("c", "value"),
-            ProvableValue::Int(10),
+            Value::Int(10),
         ));
         engine.add_fact(ProvableStatement::Equal(
             make_anchored_key("c", "value"),
@@ -526,7 +526,7 @@ mod tests {
         let ak_now_minus_18y = if let StatementArg::Key(ak) = &stmt.args[0] {
             engine.add_fact(ProvableStatement::ValueOf(
                 ak.clone(),
-                ProvableValue::Int(now_minus_18y),
+                Value::Int(now_minus_18y),
             ));
             ak.clone()
         } else {
@@ -537,7 +537,7 @@ mod tests {
         let ak_now_minus_1y = if let StatementArg::Key(ak) = &stmt.args[0] {
             engine.add_fact(ProvableStatement::ValueOf(
                 ak.clone(),
-                ProvableValue::Int(now_minus_1y),
+                Value::Int(now_minus_1y),
             ));
             ak.clone()
         } else {
@@ -673,23 +673,23 @@ mod tests {
         // Add some values
         engine.add_fact(ProvableStatement::ValueOf(
             make_anchored_key("X", "value"),
-            ProvableValue::Int(10),
+            Value::Int(10),
         ));
         engine.add_fact(ProvableStatement::ValueOf(
             make_anchored_key("Y", "value"),
-            ProvableValue::Int(5),
+            Value::Int(5),
         ));
         engine.add_fact(ProvableStatement::ValueOf(
             make_anchored_key("Z", "value"),
-            ProvableValue::Int(15),
+            Value::Int(15),
         ));
         engine.add_fact(ProvableStatement::ValueOf(
             make_anchored_key("P", "value"),
-            ProvableValue::Int(50),
+            Value::Int(50),
         ));
         engine.add_fact(ProvableStatement::ValueOf(
             make_anchored_key("M", "value"),
-            ProvableValue::Int(10),
+            Value::Int(10),
         ));
 
         // Test SumOf
@@ -720,23 +720,23 @@ mod tests {
         // Re-add the values since we reset
         engine.add_fact(ProvableStatement::ValueOf(
             make_anchored_key("X", "value"),
-            ProvableValue::Int(10),
+            Value::Int(10),
         ));
         engine.add_fact(ProvableStatement::ValueOf(
             make_anchored_key("Y", "value"),
-            ProvableValue::Int(5),
+            Value::Int(5),
         ));
         engine.add_fact(ProvableStatement::ValueOf(
             make_anchored_key("Z", "value"),
-            ProvableValue::Int(15),
+            Value::Int(15),
         ));
         engine.add_fact(ProvableStatement::ValueOf(
             make_anchored_key("P", "value"),
-            ProvableValue::Int(50),
+            Value::Int(50),
         ));
         engine.add_fact(ProvableStatement::ValueOf(
             make_anchored_key("M", "value"),
-            ProvableValue::Int(10),
+            Value::Int(10),
         ));
 
         // Test ProductOf
@@ -767,23 +767,23 @@ mod tests {
         // Re-add the values since we reset
         engine.add_fact(ProvableStatement::ValueOf(
             make_anchored_key("X", "value"),
-            ProvableValue::Int(10),
+            Value::Int(10),
         ));
         engine.add_fact(ProvableStatement::ValueOf(
             make_anchored_key("Y", "value"),
-            ProvableValue::Int(5),
+            Value::Int(5),
         ));
         engine.add_fact(ProvableStatement::ValueOf(
             make_anchored_key("Z", "value"),
-            ProvableValue::Int(15),
+            Value::Int(15),
         ));
         engine.add_fact(ProvableStatement::ValueOf(
             make_anchored_key("P", "value"),
-            ProvableValue::Int(50),
+            Value::Int(50),
         ));
         engine.add_fact(ProvableStatement::ValueOf(
             make_anchored_key("M", "value"),
-            ProvableValue::Int(10),
+            Value::Int(10),
         ));
 
         // Test MaxOf
