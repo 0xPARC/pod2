@@ -16,7 +16,6 @@ import {
   StatementType,
   isSignedPod,
   TreeNode,
-  isTreeNode,
   KeyValue,
   isKeyValue
 } from "@/lib/api";
@@ -27,14 +26,10 @@ import { toast } from "sonner";
 // Simple TreeNodeEditor component
 function TreeNodeEditor({
   node,
-  onUpdate,
-  onDelete,
-  onAddChild
+  onUpdate
 }: {
   node: TreeNode;
   onUpdate: (node: TreeNode) => void;
-  onDelete: () => void;
-  onAddChild: () => void;
 }) {
   return (
     <div>
@@ -270,9 +265,6 @@ export function MainPodEditor() {
                           <SelectItem value="NotContains">
                             NotContains
                           </SelectItem>
-                          <SelectItem value="SumOf">SumOf</SelectItem>
-                          <SelectItem value="ProductOf">ProductOf</SelectItem>
-                          <SelectItem value="MaxOf">MaxOf</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -321,7 +313,7 @@ export function MainPodEditor() {
                         {pods.map(
                           (pod) =>
                             isSignedPod(pod) &&
-                            Object.entries(pod.entries).map(([key, value]) => (
+                            Object.entries(pod.entries).map(([key]) => (
                               <SelectItem
                                 key={`${pod.id}:${key}`}
                                 value={`${pod.id}:${key}`}
@@ -404,16 +396,14 @@ export function MainPodEditor() {
                             {pods.map(
                               (pod) =>
                                 isSignedPod(pod) &&
-                                Object.entries(pod.entries).map(
-                                  ([key, value]) => (
-                                    <SelectItem
-                                      key={`${pod.id}:${key}`}
-                                      value={`${pod.id}:${key}`}
-                                    >
-                                      {pod.id}.{key}
-                                    </SelectItem>
-                                  )
-                                )
+                                Object.entries(pod.entries).map(([key]) => (
+                                  <SelectItem
+                                    key={`${pod.id}:${key}`}
+                                    value={`${pod.id}:${key}`}
+                                  >
+                                    {pod.id}.{key}
+                                  </SelectItem>
+                                ))
                             )}
                           </SelectContent>
                         </Select>
@@ -456,8 +446,6 @@ export function MainPodEditor() {
                           onUpdate={(node) =>
                             handleSecondArgLiteralChange(statement.id, node)
                           }
-                          onDelete={() => {}}
-                          onAddChild={() => {}}
                         />
                       </div>
                     )}
