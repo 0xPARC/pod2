@@ -665,4 +665,147 @@ mod tests {
             engine.print_proof(stmt.clone(), chain.clone());
         }
     }
+
+    #[test]
+    fn test_arithmetic_operations() {
+        let mut engine = DeductionEngine::new();
+
+        // Add some values
+        engine.add_fact(ProvableStatement::ValueOf(
+            make_anchored_key("X", "value"),
+            ProvableValue::Int(10),
+        ));
+        engine.add_fact(ProvableStatement::ValueOf(
+            make_anchored_key("Y", "value"),
+            ProvableValue::Int(5),
+        ));
+        engine.add_fact(ProvableStatement::ValueOf(
+            make_anchored_key("Z", "value"),
+            ProvableValue::Int(15),
+        ));
+        engine.add_fact(ProvableStatement::ValueOf(
+            make_anchored_key("P", "value"),
+            ProvableValue::Int(50),
+        ));
+        engine.add_fact(ProvableStatement::ValueOf(
+            make_anchored_key("M", "value"),
+            ProvableValue::Int(10),
+        ));
+
+        // Test SumOf
+        let target = FrontendWildcardStatement::SumOf(
+            WildcardAnchoredKey(WildcardId::Named("sum".to_string()), "value".to_string()),
+            WildcardStatementArg::Key(make_anchored_key("X", "value")),
+            WildcardStatementArg::Key(make_anchored_key("Y", "value")),
+        );
+        engine.set_target(target.clone());
+
+        let proofs = engine.prove();
+        assert!(
+            !proofs.is_empty(),
+            "Should find Z = X + Y through value comparison"
+        );
+        let (stmt, chain) = &proofs[0];
+        engine.print_proof(stmt.clone(), chain.clone());
+        assert_eq!(chain.len(), 1, "Should use SumOf");
+        assert_eq!(
+            chain[0].0,
+            NativeOperation::SumOf as u8,
+            "Should use SumOf operation"
+        );
+
+        // Reset engine before testing ProductOf
+        engine.reset();
+
+        // Re-add the values since we reset
+        engine.add_fact(ProvableStatement::ValueOf(
+            make_anchored_key("X", "value"),
+            ProvableValue::Int(10),
+        ));
+        engine.add_fact(ProvableStatement::ValueOf(
+            make_anchored_key("Y", "value"),
+            ProvableValue::Int(5),
+        ));
+        engine.add_fact(ProvableStatement::ValueOf(
+            make_anchored_key("Z", "value"),
+            ProvableValue::Int(15),
+        ));
+        engine.add_fact(ProvableStatement::ValueOf(
+            make_anchored_key("P", "value"),
+            ProvableValue::Int(50),
+        ));
+        engine.add_fact(ProvableStatement::ValueOf(
+            make_anchored_key("M", "value"),
+            ProvableValue::Int(10),
+        ));
+
+        // Test ProductOf
+        let target = FrontendWildcardStatement::ProductOf(
+            WildcardAnchoredKey(WildcardId::Named("prod".to_string()), "value".to_string()),
+            WildcardStatementArg::Key(make_anchored_key("X", "value")),
+            WildcardStatementArg::Key(make_anchored_key("Y", "value")),
+        );
+        engine.set_target(target.clone());
+
+        let proofs = engine.prove();
+        assert!(
+            !proofs.is_empty(),
+            "Should find P = X * Y through value comparison"
+        );
+        let (stmt, chain) = &proofs[0];
+        engine.print_proof(stmt.clone(), chain.clone());
+        assert_eq!(chain.len(), 1, "Should use ProductOf");
+        assert_eq!(
+            chain[0].0,
+            NativeOperation::ProductOf as u8,
+            "Should use ProductOf operation"
+        );
+
+        // Reset engine before testing MaxOf
+        engine.reset();
+
+        // Re-add the values since we reset
+        engine.add_fact(ProvableStatement::ValueOf(
+            make_anchored_key("X", "value"),
+            ProvableValue::Int(10),
+        ));
+        engine.add_fact(ProvableStatement::ValueOf(
+            make_anchored_key("Y", "value"),
+            ProvableValue::Int(5),
+        ));
+        engine.add_fact(ProvableStatement::ValueOf(
+            make_anchored_key("Z", "value"),
+            ProvableValue::Int(15),
+        ));
+        engine.add_fact(ProvableStatement::ValueOf(
+            make_anchored_key("P", "value"),
+            ProvableValue::Int(50),
+        ));
+        engine.add_fact(ProvableStatement::ValueOf(
+            make_anchored_key("M", "value"),
+            ProvableValue::Int(10),
+        ));
+
+        // Test MaxOf
+        let target = FrontendWildcardStatement::MaxOf(
+            WildcardAnchoredKey(WildcardId::Named("max".to_string()), "value".to_string()),
+            WildcardStatementArg::Key(make_anchored_key("X", "value")),
+            WildcardStatementArg::Key(make_anchored_key("Y", "value")),
+        );
+        engine.set_target(target.clone());
+
+        let proofs = engine.prove();
+        assert!(
+            !proofs.is_empty(),
+            "Should find M = max(X, Y) through value comparison"
+        );
+        let (stmt, chain) = &proofs[0];
+        engine.print_proof(stmt.clone(), chain.clone());
+        assert_eq!(chain.len(), 1, "Should use MaxOf");
+        assert_eq!(
+            chain[0].0,
+            NativeOperation::MaxOf as u8,
+            "Should use MaxOf operation"
+        );
+    }
 }

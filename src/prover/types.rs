@@ -354,6 +354,21 @@ pub enum FrontendWildcardStatement {
         #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
         WildcardStatementArg,
     ),
+    SumOf(
+        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
+        WildcardStatementArg,
+        WildcardStatementArg,
+    ),
+    ProductOf(
+        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
+        WildcardStatementArg,
+        WildcardStatementArg,
+    ),
+    MaxOf(
+        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
+        WildcardStatementArg,
+        WildcardStatementArg,
+    ),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, JsonSchema)]
@@ -385,6 +400,21 @@ pub enum WildcardStatement {
     NotContains(
         #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
         AnchoredKey,
+    ),
+    SumOf(
+        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
+        #[schemars(with = "AnchoredKeySerdeHelper")] AnchoredKey,
+        #[schemars(with = "AnchoredKeySerdeHelper")] AnchoredKey,
+    ),
+    ProductOf(
+        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
+        #[schemars(with = "AnchoredKeySerdeHelper")] AnchoredKey,
+        #[schemars(with = "AnchoredKeySerdeHelper")] AnchoredKey,
+    ),
+    MaxOf(
+        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
+        #[schemars(with = "AnchoredKeySerdeHelper")] AnchoredKey,
+        #[schemars(with = "AnchoredKeySerdeHelper")] AnchoredKey,
     ),
 }
 

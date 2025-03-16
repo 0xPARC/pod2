@@ -188,6 +188,69 @@ impl DeductionEngine {
                     panic!("Invalid wildcard statement argument");
                 }
             }
+            FrontendWildcardStatement::SumOf(result, op1, op2) => {
+                let op1_key = match op1 {
+                    WildcardStatementArg::Key(key) => key,
+                    WildcardStatementArg::Literal(v) => {
+                        let new_ak =
+                            AnchoredKey(Origin(PodClass::Main, SELF), "value_of_sum1".to_string());
+                        self.add_fact(ProvableStatement::ValueOf(new_ak.clone(), v));
+                        new_ak
+                    }
+                };
+                let op2_key = match op2 {
+                    WildcardStatementArg::Key(key) => key,
+                    WildcardStatementArg::Literal(v) => {
+                        let new_ak =
+                            AnchoredKey(Origin(PodClass::Main, SELF), "value_of_sum2".to_string());
+                        self.add_fact(ProvableStatement::ValueOf(new_ak.clone(), v));
+                        new_ak
+                    }
+                };
+                WildcardStatement::SumOf(result, op1_key, op2_key)
+            }
+            FrontendWildcardStatement::ProductOf(result, op1, op2) => {
+                let op1_key = match op1 {
+                    WildcardStatementArg::Key(key) => key,
+                    WildcardStatementArg::Literal(v) => {
+                        let new_ak =
+                            AnchoredKey(Origin(PodClass::Main, SELF), "value_of_prod1".to_string());
+                        self.add_fact(ProvableStatement::ValueOf(new_ak.clone(), v));
+                        new_ak
+                    }
+                };
+                let op2_key = match op2 {
+                    WildcardStatementArg::Key(key) => key,
+                    WildcardStatementArg::Literal(v) => {
+                        let new_ak =
+                            AnchoredKey(Origin(PodClass::Main, SELF), "value_of_prod2".to_string());
+                        self.add_fact(ProvableStatement::ValueOf(new_ak.clone(), v));
+                        new_ak
+                    }
+                };
+                WildcardStatement::ProductOf(result, op1_key, op2_key)
+            }
+            FrontendWildcardStatement::MaxOf(result, op1, op2) => {
+                let op1_key = match op1 {
+                    WildcardStatementArg::Key(key) => key,
+                    WildcardStatementArg::Literal(v) => {
+                        let new_ak =
+                            AnchoredKey(Origin(PodClass::Main, SELF), "value_of_max1".to_string());
+                        self.add_fact(ProvableStatement::ValueOf(new_ak.clone(), v));
+                        new_ak
+                    }
+                };
+                let op2_key = match op2 {
+                    WildcardStatementArg::Key(key) => key,
+                    WildcardStatementArg::Literal(v) => {
+                        let new_ak =
+                            AnchoredKey(Origin(PodClass::Main, SELF), "value_of_max2".to_string());
+                        self.add_fact(ProvableStatement::ValueOf(new_ak.clone(), v));
+                        new_ak
+                    }
+                };
+                WildcardStatement::MaxOf(result, op1_key, op2_key)
+            }
         };
         self.prog.target_statement = vec![(target,)];
     }
@@ -315,7 +378,8 @@ ascent! {
     relation known_neq(AnchoredKey, AnchoredKey);  // Known not-equal relationships
     relation known_contains(AnchoredKey, AnchoredKey);  // Known contains relationships
     relation reachable_equal(AnchoredKey, AnchoredKey, DeductionChain);  // Equality relationships we can prove through chains
-    relation connected_to_target(AnchoredKey, AnchoredKey, DeductionChain);  // Chains that connect to our target statement
+    relation connected_to_target2(AnchoredKey, AnchoredKey, DeductionChain);  // Chains that connect to our target statement (2 operands)
+    relation connected_to_target3(AnchoredKey, AnchoredKey, AnchoredKey, DeductionChain);  // Chains that connect to our target statement (3 operands)
 
     // Base case: directly match known statements with wildcard targets
     can_prove(stmt, chain) <--
@@ -331,7 +395,7 @@ ascent! {
     can_prove(stmt, chain) <--
         target_statement(target_stmt),
         if let WildcardStatement::Equal(wild_key, concrete_key) = target_stmt,
-        connected_to_target(found_key, _, chain),
+        connected_to_target2(found_key, match_key, chain),
         if wild_key.matches(&found_key),
         let stmt = ProvableStatement::Equal(found_key.clone(), concrete_key.clone());
 
@@ -339,7 +403,7 @@ ascent! {
     can_prove(stmt, chain) <--
         target_statement(target_stmt),
         if let WildcardStatement::Gt(wild_key, concrete_key) = target_stmt,
-        connected_to_target(found_key, _, chain),
+        connected_to_target2(found_key, match_key, chain),
         if wild_key.matches(&found_key),
         let stmt = ProvableStatement::Gt(found_key.clone(), concrete_key.clone());
 
@@ -347,7 +411,7 @@ ascent! {
     can_prove(stmt, chain) <--
         target_statement(target_stmt),
         if let WildcardStatement::Lt(wild_key, concrete_key) = target_stmt,
-        connected_to_target(found_key, _, chain),
+        connected_to_target2(found_key, match_key, chain),
         if wild_key.matches(&found_key),
         let stmt = ProvableStatement::Lt(found_key.clone(), concrete_key.clone());
 
@@ -355,7 +419,7 @@ ascent! {
     can_prove(stmt, chain) <--
         target_statement(target_stmt),
         if let WildcardStatement::NotEqual(wild_key, concrete_key) = target_stmt,
-        connected_to_target(found_key, _, chain),
+        connected_to_target2(found_key, match_key, chain),
         if wild_key.matches(&found_key),
         let stmt = ProvableStatement::NotEqual(found_key.clone(), concrete_key.clone());
 
@@ -363,7 +427,7 @@ ascent! {
     can_prove(stmt, chain) <--
         target_statement(target_stmt),
         if let WildcardStatement::Contains(wild_key, concrete_key) = target_stmt,
-        connected_to_target(found_key, _, chain),
+        connected_to_target2(found_key, match_key, chain),
         if wild_key.matches(&found_key),
         let stmt = ProvableStatement::Contains(found_key.clone(), concrete_key.clone());
 
@@ -371,9 +435,31 @@ ascent! {
     can_prove(stmt, chain) <--
         target_statement(target_stmt),
         if let WildcardStatement::NotContains(wild_key, concrete_key) = target_stmt,
-        connected_to_target(found_key, _, chain),
+        connected_to_target2(found_key, match_key, chain),
         if wild_key.matches(&found_key),
         let stmt = ProvableStatement::NotContains(found_key.clone(), concrete_key.clone());
+
+    // Prove arithmetic relationships through chains
+    can_prove(stmt, chain) <--
+        target_statement(target_stmt),
+        if let WildcardStatement::SumOf(result_key, op1_key, op2_key) = target_stmt,
+        connected_to_target3(found_result, found_op1, found_op2, chain),
+        if result_key.matches(&found_result),
+        let stmt = ProvableStatement::SumOf(found_result.clone(), op1_key.clone(), op2_key.clone());
+
+    can_prove(stmt, chain) <--
+        target_statement(target_stmt),
+        if let WildcardStatement::ProductOf(result_key, op1_key, op2_key) = target_stmt,
+        connected_to_target3(found_result, found_op1, found_op2, chain),
+        if result_key.matches(&found_result),
+        let stmt = ProvableStatement::ProductOf(found_result.clone(), op1_key.clone(), op2_key.clone());
+
+    can_prove(stmt, chain) <--
+        target_statement(target_stmt),
+        if let WildcardStatement::MaxOf(result_key, op1_key, op2_key) = target_stmt,
+        connected_to_target3(found_result, found_op1, found_op2, chain),
+        if result_key.matches(&found_result),
+        let stmt = ProvableStatement::MaxOf(found_result.clone(), op1_key.clone(), op2_key.clone());
 
     // Extract value assignments from known statements
     known_value(ak, v) <--
@@ -447,14 +533,14 @@ ascent! {
         };
 
     // Find chains that connect to our target key for equality statements
-    connected_to_target(x, y, chain) <--
+    connected_to_target2(x, y, chain) <--
         target_statement(stmt),
         if let WildcardStatement::Equal(wild_key, concrete_key) = stmt,
         reachable_equal(x, y, chain),
         if y == concrete_key;
 
     // Prove equality from values (if two keys have the same value, they're equal)
-    connected_to_target(x, y, chain) <--
+    connected_to_target2(x, y, chain) <--
         target_statement(stmt),
         if let WildcardStatement::Equal(wild_key, concrete_key) = stmt,
         known_value(found_key, v1),
@@ -474,7 +560,7 @@ ascent! {
 
     // Find chains for greater-than relationships:
     // 1. Direct value comparisons (e.g., 10 > 5)
-    connected_to_target(x, y, chain) <--
+    connected_to_target2(x, y, chain) <--
         target_statement(stmt),
         if let WildcardStatement::Gt(wild_key, concrete_key) = stmt,
         known_value(found_key, v1),
@@ -495,7 +581,7 @@ ascent! {
         )];
 
     // 2. Existing greater-than statements
-    connected_to_target(x, y, chain) <--
+    connected_to_target2(x, y, chain) <--
         target_statement(stmt),
         if let WildcardStatement::Gt(wild_key, concrete_key) = stmt,
         known_statement(known_stmt),
@@ -507,7 +593,7 @@ ascent! {
 
     // Find chains for less-than relationships:
     // 1. Direct value comparisons (e.g., 5 < 10)
-    connected_to_target(x, y, chain) <--
+    connected_to_target2(x, y, chain) <--
         target_statement(stmt),
         if let WildcardStatement::Lt(wild_key, concrete_key) = stmt,
         known_value(found_key, v1),
@@ -528,7 +614,7 @@ ascent! {
         )];
 
     // 2. Existing less-than statements
-    connected_to_target(x, y, chain) <--
+    connected_to_target2(x, y, chain) <--
         target_statement(stmt),
         if let WildcardStatement::Lt(wild_key, concrete_key) = stmt,
         known_statement(known_stmt),
@@ -540,7 +626,7 @@ ascent! {
 
     // Find chains for not-equal relationships:
     // 1. Converting greater-than to not-equal (if a > b, then a ≠ b)
-    connected_to_target(x, y, chain) <--
+    connected_to_target2(x, y, chain) <--
         target_statement(stmt),
         if let WildcardStatement::NotEqual(wild_key, concrete_key) = stmt,
         known_statement(known_stmt),
@@ -555,7 +641,7 @@ ascent! {
         )];
 
     // 2. Converting less-than to not-equal (if a < b, then a ≠ b)
-    connected_to_target(x, y, chain) <--
+    connected_to_target2(x, y, chain) <--
         target_statement(stmt),
         if let WildcardStatement::NotEqual(wild_key, concrete_key) = stmt,
         known_statement(known_stmt),
@@ -570,7 +656,7 @@ ascent! {
         )];
 
     // 3. Existing not-equal statements
-    connected_to_target(x, y, chain) <--
+    connected_to_target2(x, y, chain) <--
         target_statement(stmt),
         if let WildcardStatement::NotEqual(wild_key, concrete_key) = stmt,
         known_statement(known_stmt),
@@ -582,7 +668,7 @@ ascent! {
 
     // Find chains for contains relationships:
     // 1. Direct value comparisons (checking if a value is in an array or set)
-    connected_to_target(x, y, chain) <--
+    connected_to_target2(x, y, chain) <--
         target_statement(stmt),
         if let WildcardStatement::Contains(wild_key, concrete_key) = stmt,
         known_value(found_key, v1),
@@ -601,7 +687,7 @@ ascent! {
         )];
 
     // 2. Existing contains statements
-    connected_to_target(x, y, chain) <--
+    connected_to_target2(x, y, chain) <--
         target_statement(stmt),
         if let WildcardStatement::Contains(wild_key, concrete_key) = stmt,
         known_statement(known_stmt),
@@ -613,7 +699,7 @@ ascent! {
 
     // Find chains for not-contains relationships:
     // 1. Direct value comparisons (checking if a value is not in an array or set)
-    connected_to_target(x, y, chain) <--
+    connected_to_target2(x, y, chain) <--
         target_statement(stmt),
         if let WildcardStatement::NotContains(wild_key, concrete_key) = stmt,
         known_value(found_key, v1),
@@ -632,7 +718,7 @@ ascent! {
         )];
 
     // 2. Existing not-contains statements
-    connected_to_target(x, y, chain) <--
+    connected_to_target2(x, y, chain) <--
         target_statement(stmt),
         if let WildcardStatement::NotContains(wild_key, concrete_key) = stmt,
         known_statement(known_stmt),
@@ -641,4 +727,77 @@ ascent! {
         let x = found_key.clone(),
         let y = match_key.clone(),
         let chain = vec![];
+
+    // Find chains for arithmetic operations:
+    // 1. Direct value comparisons for sum relationships
+    connected_to_target3(result, op1, op2, chain) <--
+        target_statement(stmt),
+        if let WildcardStatement::SumOf(result_key, operand1_key, operand2_key) = stmt,
+        known_value(found_result, v1),
+        known_value(found_op1, v2),
+        known_value(found_op2, v3),
+        if result_key.matches(&found_result),
+        if operand1_key == found_op1 && operand2_key == found_op2,
+        if let (ProvableValue::Int(result_val), ProvableValue::Int(op1_val), ProvableValue::Int(op2_val)) = (v1, v2, v3),
+        if *result_val == *op1_val + *op2_val,
+        let result = found_result.clone(),
+        let op1 = found_op1.clone(),
+        let op2 = found_op2.clone(),
+        let chain = vec![(
+            NativeOperation::SumOf as u8,
+            vec![
+                ProvableStatement::ValueOf(result.clone(), v1.clone()),
+                ProvableStatement::ValueOf(op1.clone(), v2.clone()),
+                ProvableStatement::ValueOf(op2.clone(), v3.clone())
+            ],
+            ProvableStatement::SumOf(result.clone(), op1.clone(), op2.clone())
+        )];
+
+    // 2. Direct value comparisons for product relationships
+    connected_to_target3(result, op1, op2, chain) <--
+        target_statement(stmt),
+        if let WildcardStatement::ProductOf(result_key, operand1_key, operand2_key) = stmt,
+        known_value(found_result, v1),
+        known_value(found_op1, v2),
+        known_value(found_op2, v3),
+        if result_key.matches(&found_result),
+        if operand1_key == found_op1 && operand2_key == found_op2,
+        if let (ProvableValue::Int(result_val), ProvableValue::Int(op1_val), ProvableValue::Int(op2_val)) = (v1, v2, v3),
+        if *result_val == *op1_val * *op2_val,
+        let result = found_result.clone(),
+        let op1 = found_op1.clone(),
+        let op2 = found_op2.clone(),
+        let chain = vec![(
+            NativeOperation::ProductOf as u8,
+            vec![
+                ProvableStatement::ValueOf(result.clone(), v1.clone()),
+                ProvableStatement::ValueOf(op1.clone(), v2.clone()),
+                ProvableStatement::ValueOf(op2.clone(), v3.clone())
+            ],
+            ProvableStatement::ProductOf(result.clone(), op1.clone(), op2.clone())
+        )];
+
+    // 3. Direct value comparisons for max relationships
+    connected_to_target3(result, op1, op2, chain) <--
+        target_statement(stmt),
+        if let WildcardStatement::MaxOf(result_key, operand1_key, operand2_key) = stmt,
+        known_value(found_result, v1),
+        known_value(found_op1, v2),
+        known_value(found_op2, v3),
+        if result_key.matches(&found_result),
+        if operand1_key == found_op1 && operand2_key == found_op2,
+        if let (ProvableValue::Int(result_val), ProvableValue::Int(op1_val), ProvableValue::Int(op2_val)) = (v1, v2, v3),
+        if *result_val == std::cmp::max(*op1_val, *op2_val),
+        let result = found_result.clone(),
+        let op1 = found_op1.clone(),
+        let op2 = found_op2.clone(),
+        let chain = vec![(
+            NativeOperation::MaxOf as u8,
+            vec![
+                ProvableStatement::ValueOf(result.clone(), v1.clone()),
+                ProvableStatement::ValueOf(op1.clone(), v2.clone()),
+                ProvableStatement::ValueOf(op2.clone(), v3.clone())
+            ],
+            ProvableStatement::MaxOf(result.clone(), op1.clone(), op2.clone())
+        )];
 }
