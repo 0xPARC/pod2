@@ -5,7 +5,7 @@ use crate::frontend::{
 };
 use crate::middleware::{NativePredicate, Params, PodId, Predicate};
 use crate::prover::types::{
-    WildcardTargetStatement, WildcardAnchoredKey, WildcardId, WildcardStatementArg,
+    WildcardAnchoredKey, WildcardId, WildcardStatementArg, WildcardTargetStatement,
 };
 use axum::{
     body::Body,
@@ -332,13 +332,13 @@ async fn test_validate_statements() -> Result<(), Box<dyn std::error::Error>> {
 
         // Create a statement that checks if the pod's test_key equals "test_value"
         let statement = WildcardTargetStatement::Equal(
-            WildcardAnchoredKey(
-                WildcardId::Concrete(Origin {
+            WildcardAnchoredKey {
+                wildcard_id: WildcardId::Concrete(Origin {
                     pod_id: pod.id(),
                     pod_class: PodClass::Signed,
                 }),
-                "test_key".to_string(),
-            ),
+                key: "test_key".to_string(),
+            },
             WildcardStatementArg::Key(AnchoredKey {
                 origin: Origin {
                     pod_id: pod.id(),
@@ -391,27 +391,28 @@ fn test_frontend_wildcard_statement_deserialization() {
     use crate::prover::types::WildcardTargetStatement;
 
     let json = r#"{
-        "Equal": [
-            [
-                {
-                    "Concrete": [
-                        "Signed",
-                        "5e7973ac718ad29817adf29a28ebe67e87ae945474ba3d1bdc903b7ff0e89f8a"
-                    ]
-                },
-                "test_key"
-            ],
-            {
-                "Key": [
-                    [
-                        "Signed",
-                        "5e7973ac718ad29817adf29a28ebe67e87ae945474ba3d1bdc903b7ff0e89f8a"
-                    ],
-                    "test_key"
-                ]
-            }
-        ]
-    }"#;
+  "Equal": [
+    {
+      "wildcard_id": {
+        "type": "Concrete",
+        "value": {
+          "pod_class": "Signed",
+          "pod_id": "5e7973ac718ad29817adf29a28ebe67e87ae945474ba3d1bdc903b7ff0e89f8a"
+        }
+      },
+      "key": "test_key"
+    },
+    {
+      "Key": {
+        "origin": {
+          "pod_class": "Signed",
+          "pod_id": "5e7973ac718ad29817adf29a28ebe67e87ae945474ba3d1bdc903b7ff0e89f8a"
+        },
+        "key": "test_key"
+      }
+    }
+  ]
+}"#;
 
     let result = serde_json::from_str::<WildcardTargetStatement>(json);
     match result {
@@ -437,7 +438,7 @@ fn test_frontend_wildcard_statement_serialization() {
     use crate::frontend::{AnchoredKey, Origin, PodClass};
     use crate::middleware::hash_str;
     use crate::prover::types::{
-        WildcardTargetStatement, WildcardAnchoredKey, WildcardId, WildcardStatementArg,
+        WildcardAnchoredKey, WildcardId, WildcardStatementArg, WildcardTargetStatement,
     };
 
     // Create a concrete origin
@@ -447,8 +448,10 @@ fn test_frontend_wildcard_statement_serialization() {
     };
 
     // Create a wildcard anchored key
-    let wildcard_key =
-        WildcardAnchoredKey(WildcardId::Concrete(origin.clone()), "test_key".to_string());
+    let wildcard_key = WildcardAnchoredKey {
+        wildcard_id: WildcardId::Concrete(origin.clone()),
+        key: "test_key".to_string(),
+    };
 
     // Create a concrete anchored key for the second argument
     let concrete_key = AnchoredKey {

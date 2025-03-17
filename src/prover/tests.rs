@@ -57,7 +57,10 @@ mod tests {
 
         // Try to prove X = W
         engine.set_target(WildcardTargetStatement::Equal(
-            WildcardAnchoredKey(WildcardId::Named("X".to_string()), "X".to_string()),
+            WildcardAnchoredKey {
+                wildcard_id: WildcardId::Named("X".to_string()),
+                key: "X".to_string(),
+            },
             WildcardStatementArg::Key(make_anchored_key("W", "W")),
         ));
 
@@ -100,7 +103,10 @@ mod tests {
 
         // Test case 1: Find GT through value comparison
         let target = WildcardTargetStatement::Gt(
-            WildcardAnchoredKey(WildcardId::Named("n".to_string()), "value".to_string()),
+            WildcardAnchoredKey {
+                wildcard_id: WildcardId::Named("n".to_string()),
+                key: "value".to_string(),
+            },
             WildcardStatementArg::Key(make_anchored_key("Y", "value")),
         );
         engine.set_target(target.clone());
@@ -160,7 +166,10 @@ mod tests {
 
         // Test case 1: Find LT through value comparison
         let target = WildcardTargetStatement::Lt(
-            WildcardAnchoredKey(WildcardId::Named("n".to_string()), "value".to_string()),
+            WildcardAnchoredKey {
+                wildcard_id: WildcardId::Named("n".to_string()),
+                key: "value".to_string(),
+            },
             WildcardStatementArg::Key(make_anchored_key("Y", "value")),
         );
         engine.set_target(target.clone());
@@ -216,7 +225,10 @@ mod tests {
 
         // Test case 1: Find NEq through GT conversion
         let target = WildcardTargetStatement::NotEqual(
-            WildcardAnchoredKey(WildcardId::Named("n".to_string()), "value".to_string()),
+            WildcardAnchoredKey {
+                wildcard_id: WildcardId::Named("n".to_string()),
+                key: "value".to_string(),
+            },
             WildcardStatementArg::Key(make_anchored_key("Y", "value")),
         );
         engine.set_target(target.clone());
@@ -272,7 +284,10 @@ mod tests {
 
         // Test case 1: Find NEq through LT conversion
         let target = WildcardTargetStatement::NotEqual(
-            WildcardAnchoredKey(WildcardId::Named("n".to_string()), "value".to_string()),
+            WildcardAnchoredKey {
+                wildcard_id: WildcardId::Named("n".to_string()),
+                key: "value".to_string(),
+            },
             WildcardStatementArg::Key(make_anchored_key("Y", "value")),
         );
         engine.set_target(target.clone());
@@ -338,7 +353,10 @@ mod tests {
 
         // Test case 1: Find Contains through value comparison
         let target = WildcardTargetStatement::Contains(
-            WildcardAnchoredKey(WildcardId::Named("n".to_string()), "value".to_string()),
+            WildcardAnchoredKey {
+                wildcard_id: WildcardId::Named("n".to_string()),
+                key: "value".to_string(),
+            },
             WildcardStatementArg::Key(make_anchored_key("Y", "value")),
         );
         engine.set_target(target.clone());
@@ -399,7 +417,10 @@ mod tests {
 
         // Try to prove that X contains Y (which should be impossible)
         let target = WildcardTargetStatement::Contains(
-            WildcardAnchoredKey(WildcardId::Named("n".to_string()), "value".to_string()),
+            WildcardAnchoredKey {
+                wildcard_id: WildcardId::Named("n".to_string()),
+                key: "value".to_string(),
+            },
             WildcardStatementArg::Key(make_anchored_key("Y", "value")),
         );
         engine.set_target(target.clone());
@@ -436,18 +457,18 @@ mod tests {
         let targets = vec![
             // First prove b = c (because they have the same value)
             WildcardTargetStatement::Equal(
-                WildcardAnchoredKey(
-                    WildcardId::Concrete(make_signed_origin("b")),
-                    "value".to_string(),
-                ),
+                WildcardAnchoredKey {
+                    wildcard_id: WildcardId::Concrete(make_signed_origin("b")),
+                    key: "value".to_string(),
+                },
                 WildcardStatementArg::Key(make_anchored_key("c", "value")),
             ),
             // Then we can prove a = d (using the chain a = b = c = d)
             WildcardTargetStatement::Equal(
-                WildcardAnchoredKey(
-                    WildcardId::Concrete(make_signed_origin("a")),
-                    "value".to_string(),
-                ),
+                WildcardAnchoredKey {
+                    wildcard_id: WildcardId::Concrete(make_signed_origin("a")),
+                    key: "value".to_string(),
+                },
                 WildcardStatementArg::Key(make_anchored_key("d", "value")),
             ),
         ];
@@ -467,8 +488,8 @@ mod tests {
                 assert_eq!(k1.key, "value");
                 assert_eq!(k2.key, "value");
                 println!("First proof keys: {} = {}", k1.key, k2.key);
-                assert_eq!(k1.key, hash_str("b").to_string());
-                assert_eq!(k2.key, hash_str("c").to_string());
+                assert_eq!(k1.origin.pod_id, make_signed_origin("b").pod_id);
+                assert_eq!(k2.origin.pod_id, make_signed_origin("c").pod_id);
             }
             _ => panic!("First proof should be Equal statement"),
         }
@@ -479,8 +500,8 @@ mod tests {
                 assert_eq!(k1.key, "value");
                 assert_eq!(k2.key, "value");
                 println!("Second proof keys: {} = {}", k1.key, k2.key);
-                assert_eq!(k1.key, hash_str("a").to_string());
-                assert_eq!(k2.key, hash_str("d").to_string());
+                assert_eq!(k1.origin.pod_id, make_signed_origin("a").pod_id);
+                assert_eq!(k2.origin.pod_id, make_signed_origin("d").pod_id);
             }
             _ => panic!("Second proof should be Equal statement"),
         }
@@ -546,13 +567,13 @@ mod tests {
 
         let targets = vec![
             WildcardTargetStatement::NotContains(
-                WildcardAnchoredKey(
-                    WildcardId::Concrete(Origin {
+                WildcardAnchoredKey {
+                    wildcard_id: WildcardId::Concrete(Origin {
                         pod_class: PodClass::Signed,
                         pod_id: sanction_list_pod.pod.id(),
                     }),
-                    "sanctionList".to_string(),
-                ),
+                    key: "sanctionList".to_string(),
+                },
                 WildcardStatementArg::Key(AnchoredKey {
                     origin: Origin {
                         pod_class: PodClass::Signed,
@@ -562,23 +583,23 @@ mod tests {
                 }),
             ),
             WildcardTargetStatement::Lt(
-                WildcardAnchoredKey(
-                    WildcardId::Concrete(Origin {
+                WildcardAnchoredKey {
+                    wildcard_id: WildcardId::Concrete(Origin {
                         pod_class: PodClass::Signed,
                         pod_id: gov_id_pod.pod.id(),
                     }),
-                    "dateOfBirth".to_string(),
-                ),
+                    key: "dateOfBirth".to_string(),
+                },
                 WildcardStatementArg::Key(ak_now_minus_18y.clone()),
             ),
             WildcardTargetStatement::Equal(
-                WildcardAnchoredKey(
-                    WildcardId::Concrete(Origin {
+                WildcardAnchoredKey {
+                    wildcard_id: WildcardId::Concrete(Origin {
                         pod_class: PodClass::Signed,
                         pod_id: pay_stub_pod.pod.id(),
                     }),
-                    "socialSecurityNumber".to_string(),
-                ),
+                    key: "socialSecurityNumber".to_string(),
+                },
                 WildcardStatementArg::Key(AnchoredKey {
                     origin: Origin {
                         pod_class: PodClass::Signed,
@@ -588,13 +609,13 @@ mod tests {
                 }),
             ),
             WildcardTargetStatement::Equal(
-                WildcardAnchoredKey(
-                    WildcardId::Concrete(Origin {
+                WildcardAnchoredKey {
+                    wildcard_id: WildcardId::Concrete(Origin {
                         pod_class: PodClass::Signed,
                         pod_id: pay_stub_pod.pod.id(),
                     }),
-                    "startDate".to_string(),
-                ),
+                    key: "startDate".to_string(),
+                },
                 WildcardStatementArg::Key(ak_now_minus_1y.clone()),
             ),
         ];
@@ -694,7 +715,10 @@ mod tests {
 
         // Test SumOf
         let target = WildcardTargetStatement::SumOf(
-            WildcardAnchoredKey(WildcardId::Named("sum".to_string()), "value".to_string()),
+            WildcardAnchoredKey {
+                wildcard_id: WildcardId::Named("sum".to_string()),
+                key: "value".to_string(),
+            },
             WildcardStatementArg::Key(make_anchored_key("X", "value")),
             WildcardStatementArg::Key(make_anchored_key("Y", "value")),
         );
@@ -741,7 +765,10 @@ mod tests {
 
         // Test ProductOf
         let target = WildcardTargetStatement::ProductOf(
-            WildcardAnchoredKey(WildcardId::Named("prod".to_string()), "value".to_string()),
+            WildcardAnchoredKey {
+                wildcard_id: WildcardId::Named("prod".to_string()),
+                key: "value".to_string(),
+            },
             WildcardStatementArg::Key(make_anchored_key("X", "value")),
             WildcardStatementArg::Key(make_anchored_key("Y", "value")),
         );
@@ -788,7 +815,10 @@ mod tests {
 
         // Test MaxOf
         let target = WildcardTargetStatement::MaxOf(
-            WildcardAnchoredKey(WildcardId::Named("max".to_string()), "value".to_string()),
+            WildcardAnchoredKey {
+                wildcard_id: WildcardId::Named("max".to_string()),
+                key: "value".to_string(),
+            },
             WildcardStatementArg::Key(make_anchored_key("X", "value")),
             WildcardStatementArg::Key(make_anchored_key("Y", "value")),
         );
@@ -841,13 +871,13 @@ mod tests {
         engine.add_main_pod(kyc);
 
         engine.set_target(WildcardTargetStatement::Equal(
-            WildcardAnchoredKey(
-                WildcardId::Concrete(Origin {
+            WildcardAnchoredKey {
+                wildcard_id: WildcardId::Concrete(Origin {
                     pod_class: PodClass::Signed,
                     pod_id: gov_id.pod.id(),
                 }),
-                "socialSecurityNumber".to_string(),
-            ),
+                key: "socialSecurityNumber".to_string(),
+            },
             WildcardStatementArg::Key(AnchoredKey {
                 origin: Origin {
                     pod_class: PodClass::Signed,

@@ -250,10 +250,13 @@ impl SignedPod {
         self.kvs()
             .get(&hash)
             .ok_or(anyhow!("Key not found: {}", key))?;
-        Ok(AnchoredKey(
-            Origin(PodClass::Signed, self.id()),
-            key.to_string(),
-        ))
+        Ok(AnchoredKey {
+            origin: Origin {
+                pod_class: PodClass::Signed,
+                pod_id: self.id(),
+            },
+            key: key.to_string(),
+        })
     }
 }
 

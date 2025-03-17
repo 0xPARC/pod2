@@ -339,32 +339,9 @@ pub enum WildcardId {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(
-    into = "WildcardAnchoredKeySerdeHelper",
-    from = "WildcardAnchoredKeySerdeHelper"
-)]
-pub struct WildcardAnchoredKey(pub WildcardId, pub String);
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[schemars(rename = "WildcardAnchoredKey")]
-pub struct WildcardAnchoredKeySerdeHelper {
+pub struct WildcardAnchoredKey {
     pub wildcard_id: WildcardId,
     pub key: String,
-}
-
-impl From<WildcardAnchoredKey> for WildcardAnchoredKeySerdeHelper {
-    fn from(key: WildcardAnchoredKey) -> Self {
-        WildcardAnchoredKeySerdeHelper {
-            wildcard_id: key.0,
-            key: key.1,
-        }
-    }
-}
-
-impl From<WildcardAnchoredKeySerdeHelper> for WildcardAnchoredKey {
-    fn from(helper: WildcardAnchoredKeySerdeHelper) -> Self {
-        WildcardAnchoredKey(helper.wildcard_id, helper.key)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -375,42 +352,24 @@ pub enum WildcardStatementArg {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum WildcardTargetStatement {
-    Equal(
-        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
-        WildcardStatementArg,
-    ),
-    NotEqual(
-        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
-        WildcardStatementArg,
-    ),
-    Gt(
-        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
-        WildcardStatementArg,
-    ),
-    Lt(
-        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
-        WildcardStatementArg,
-    ),
-    Contains(
-        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
-        WildcardStatementArg,
-    ),
-    NotContains(
-        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
-        WildcardStatementArg,
-    ),
+    Equal(WildcardAnchoredKey, WildcardStatementArg),
+    NotEqual(WildcardAnchoredKey, WildcardStatementArg),
+    Gt(WildcardAnchoredKey, WildcardStatementArg),
+    Lt(WildcardAnchoredKey, WildcardStatementArg),
+    Contains(WildcardAnchoredKey, WildcardStatementArg),
+    NotContains(WildcardAnchoredKey, WildcardStatementArg),
     SumOf(
-        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
+        WildcardAnchoredKey,
         WildcardStatementArg,
         WildcardStatementArg,
     ),
     ProductOf(
-        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
+        WildcardAnchoredKey,
         WildcardStatementArg,
         WildcardStatementArg,
     ),
     MaxOf(
-        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
+        WildcardAnchoredKey,
         WildcardStatementArg,
         WildcardStatementArg,
     ),
@@ -418,59 +377,32 @@ pub enum WildcardTargetStatement {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, JsonSchema)]
 pub enum WildcardStatement {
-    ValueOf(
-        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
-        Value,
-    ),
-    Equal(
-        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
-        AnchoredKey,
-    ),
-    NotEqual(
-        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
-        AnchoredKey,
-    ),
-    Gt(
-        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
-        AnchoredKey,
-    ),
-    Lt(
-        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
-        AnchoredKey,
-    ),
-    Contains(
-        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
-        AnchoredKey,
-    ),
-    NotContains(
-        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
-        AnchoredKey,
-    ),
-    SumOf(
-        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
-        AnchoredKey,
-        AnchoredKey,
-    ),
-    ProductOf(
-        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
-        AnchoredKey,
-        AnchoredKey,
-    ),
-    MaxOf(
-        #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
-        AnchoredKey,
-        AnchoredKey,
-    ),
+    ValueOf(WildcardAnchoredKey, Value),
+    Equal(WildcardAnchoredKey, AnchoredKey),
+    NotEqual(WildcardAnchoredKey, AnchoredKey),
+    Gt(WildcardAnchoredKey, AnchoredKey),
+    Lt(WildcardAnchoredKey, AnchoredKey),
+    Contains(WildcardAnchoredKey, AnchoredKey),
+    NotContains(WildcardAnchoredKey, AnchoredKey),
+    SumOf(WildcardAnchoredKey, AnchoredKey, AnchoredKey),
+    ProductOf(WildcardAnchoredKey, AnchoredKey, AnchoredKey),
+    MaxOf(WildcardAnchoredKey, AnchoredKey, AnchoredKey),
 }
 
 // Helper methods for WildcardAnchoredKey
 impl WildcardAnchoredKey {
     pub fn concrete(origin: Origin, key: String) -> Self {
-        Self(WildcardId::Concrete(origin), key)
+        Self {
+            wildcard_id: WildcardId::Concrete(origin),
+            key,
+        }
     }
 
     pub fn wildcard(key: String, name: impl Into<String>) -> Self {
-        Self(WildcardId::Named(name.into()), key)
+        Self {
+            wildcard_id: WildcardId::Named(name.into()),
+            key,
+        }
     }
 
     pub fn matches(&self, concrete: &AnchoredKey) -> bool {
@@ -478,8 +410,8 @@ impl WildcardAnchoredKey {
             "Matching wildcard {:?} against concrete key {:?}",
             self, concrete
         );
-        let result = if let WildcardId::Concrete(origin) = &self.0 {
-            let matches = *origin == concrete.origin && self.1 == concrete.key;
+        let result = if let WildcardId::Concrete(origin) = &self.wildcard_id {
+            let matches = *origin == concrete.origin && self.key == concrete.key;
             println!(
                 "  Concrete match: origin {} == {} ? {}",
                 origin.pod_id.to_string(),
@@ -487,11 +419,11 @@ impl WildcardAnchoredKey {
                 matches
             );
             matches
-        } else if let WildcardId::Named(_) = &self.0 {
-            let matches = self.1 == concrete.key;
+        } else if let WildcardId::Named(_) = &self.wildcard_id {
+            let matches = self.key == concrete.key;
             println!(
                 "  Named match: key {} == {} ? {}",
-                self.1, concrete.key, matches
+                self.key, concrete.key, matches
             );
             matches
         } else {
