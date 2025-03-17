@@ -214,10 +214,6 @@ mod tests {
 
     #[test]
     fn test_serialized_signed_pod() {
-        let mut entries = HashMap::new();
-        entries.insert("name".to_string(), Value::String("test".to_string()));
-        entries.insert("age".to_string(), Value::Int(30));
-
         let mut signer = MockSigner { pk: "test".into() };
         let mut builder = SignedPodBuilder::new(&Params::default());
         builder.insert("name", "test");
