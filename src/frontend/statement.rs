@@ -1,4 +1,4 @@
-use super::{AnchoredKey, AnchoredKeySerdeHelper, SignedPod, Value};
+use super::{AnchoredKey, SignedPod, Value};
 use crate::middleware::{self, NativePredicate, Predicate};
 use anyhow::{anyhow, Result};
 use schemars::JsonSchema;
@@ -8,7 +8,6 @@ use std::fmt;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum StatementArg {
     Literal(Value),
-    #[schemars(with = "AnchoredKeySerdeHelper")]
     Key(AnchoredKey),
 }
 
@@ -16,35 +15,15 @@ impl fmt::Display for StatementArg {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Literal(v) => write!(f, "{}", v),
-            Self::Key(r) => write!(f, "{}.{}", r.0 .1, r.1),
+            Self::Key(r) => write!(f, "{}.{}", r.origin.pod_id, r.key),
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(into = "StatementSerdeHelper", from = "StatementSerdeHelper")]
-pub struct Statement(pub Predicate, pub Vec<StatementArg>);
-
-#[derive(Serialize, Deserialize, JsonSchema)]
-#[schemars(rename = "Statement")]
-pub struct StatementSerdeHelper {
-    predicate: Predicate,
-    args: Vec<StatementArg>,
-}
-
-impl From<Statement> for StatementSerdeHelper {
-    fn from(statement: Statement) -> Self {
-        StatementSerdeHelper {
-            predicate: statement.0,
-            args: statement.1,
-        }
-    }
-}
-
-impl From<StatementSerdeHelper> for Statement {
-    fn from(helper: StatementSerdeHelper) -> Self {
-        Statement(helper.predicate, helper.args)
-    }
+pub struct Statement {
+    pub predicate: Predicate,
+    pub args: Vec<StatementArg>,
 }
 
 impl From<(&SignedPod, &str)> for Statement {
@@ -55,13 +34,16 @@ impl From<(&SignedPod, &str)> for Statement {
             .get(key)
             .cloned()
             .unwrap_or_else(|| panic!("Key {} is not present in POD: {}", key, pod));
-        Statement(
-            Predicate::Native(NativePredicate::ValueOf),
-            vec![
-                StatementArg::Key(AnchoredKey(pod.origin(), key.to_string())),
+        Statement {
+            predicate: Predicate::Native(NativePredicate::ValueOf),
+            args: vec![
+                StatementArg::Key(AnchoredKey {
+                    origin: pod.origin(),
+                    key: key.to_string(),
+                }),
                 StatementArg::Literal(value),
             ],
-        )
+        }
     }
 }
 
@@ -72,11 +54,11 @@ impl TryFrom<Statement> for middleware::Statement {
         type NP = NativePredicate;
         type SA = StatementArg;
         let args = (
-            s.1.first().cloned(),
-            s.1.get(1).cloned(),
-            s.1.get(2).cloned(),
+            s.args.first().cloned(),
+            s.args.get(1).cloned(),
+            s.args.get(2).cloned(),
         );
-        Ok(match &s.0 {
+        Ok(match &s.predicate {
             Predicate::Native(np) => match (np, args) {
                 (NP::None, (None, None, None)) => MS::None,
                 (NP::ValueOf, (Some(SA::Key(ak)), Some(StatementArg::Literal(v)), None)) => {
@@ -113,7 +95,8 @@ impl TryFrom<Statement> for middleware::Statement {
             },
             Predicate::Custom(cpr) => MS::Custom(
                 cpr.clone(),
-                s.1.iter()
+                s.args
+                    .iter()
                     .map(|arg| match arg {
                         StatementArg::Key(ak) => Ok(ak.clone().into()),
                         _ => Err(anyhow!("Invalid statement arg: {}", arg)),
@@ -127,8 +110,8 @@ impl TryFrom<Statement> for middleware::Statement {
 
 impl fmt::Display for Statement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?} ", self.0)?;
-        for (i, arg) in self.1.iter().enumerate() {
+        write!(f, "{:?} ", self.predicate)?;
+        for (i, arg) in self.args.iter().enumerate() {
             if i != 0 {
                 write!(f, " ")?;
             }
