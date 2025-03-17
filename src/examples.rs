@@ -260,7 +260,8 @@ pub fn great_boy_pod_builder(
             great_boy.pub_op(op!(
                 contains,
                 good_boy_issuers,
-                (good_boy_pods[good_boy_idx * 2 + issuer_idx], KEY_SIGNER)
+                (good_boy_pods[good_boy_idx * 2 + issuer_idx], KEY_SIGNER),
+                0
             ))?;
             // Each good boy has 2 good boy pods
             great_boy.pub_op(op!(
