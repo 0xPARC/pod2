@@ -3,7 +3,13 @@ use std::fmt;
 use anyhow::{anyhow, Result};
 
 use super::{CustomPredicateRef, NativePredicate, Statement, StatementArg};
-use crate::middleware::{AnchoredKey, Params, Predicate, Value, SELF};
+use crate::{
+    constants::MAX_DEPTH,
+    middleware::{
+        hash_fields, keypath, kv_hash, AnchoredKey, Hash, Params, Predicate, Value, EMPTY, SELF,
+        VALUE_SIZE,
+    },
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OperationType {
@@ -25,9 +31,14 @@ pub enum NativeOperation {
     LtToNotEqual = 9,
     ContainsFromEntries = 10,
     NotContainsFromEntries = 11,
-    SumOf = 13,
-    ProductOf = 14,
-    MaxOf = 15,
+    BranchesFromEntries = 12,
+    LeafFromEntries = 13,
+    GoesLeft = 14,
+    GoesRight = 15,
+    IsNullTree = 16,
+    SumOf = 17,
+    ProductOf = 18,
+    MaxOf = 19,
 }
 
 impl OperationType {
@@ -59,6 +70,15 @@ impl OperationType {
                 NativeOperation::NotContainsFromEntries => {
                     Some(Predicate::Native(NativePredicate::NotContains))
                 }
+                NativeOperation::BranchesFromEntries => {
+                    Some(Predicate::Native(NativePredicate::Branches))
+                }
+                NativeOperation::LeafFromEntries => Some(Predicate::Native(NativePredicate::Leaf)),
+
+                NativeOperation::IsNullTree => Some(Predicate::Native(NativePredicate::IsNullTree)),
+                NativeOperation::GoesLeft => Some(Predicate::Native(NativePredicate::GoesLeft)),
+                NativeOperation::GoesRight => Some(Predicate::Native(NativePredicate::GoesRight)),
+
                 NativeOperation::SumOf => Some(Predicate::Native(NativePredicate::SumOf)),
                 NativeOperation::ProductOf => Some(Predicate::Native(NativePredicate::ProductOf)),
                 NativeOperation::MaxOf => Some(Predicate::Native(NativePredicate::MaxOf)),
@@ -83,6 +103,11 @@ pub enum Operation {
     LtToNotEqual(Statement),
     ContainsFromEntries(Statement, Statement),
     NotContainsFromEntries(Statement, Statement),
+    BranchesFromEntries(Statement, Statement, Statement),
+    LeafFromEntries(Statement, Statement, Statement),
+    IsNullTree(Statement),
+    GoesLeft(Statement, Statement),
+    GoesRight(Statement, Statement),
     SumOf(Statement, Statement, Statement),
     ProductOf(Statement, Statement, Statement),
     MaxOf(Statement, Statement, Statement),
@@ -106,6 +131,11 @@ impl Operation {
             Self::LtToNotEqual(_) => OT::Native(LtToNotEqual),
             Self::ContainsFromEntries(_, _) => OT::Native(ContainsFromEntries),
             Self::NotContainsFromEntries(_, _) => OT::Native(NotContainsFromEntries),
+            Self::BranchesFromEntries(_, _, _) => OT::Native(BranchesFromEntries),
+            Self::LeafFromEntries(_, _, _) => OT::Native(LeafFromEntries),
+            Self::IsNullTree(_) => OT::Native(IsNullTree),
+            Self::GoesLeft(_, _) => OT::Native(GoesLeft),
+            Self::GoesRight(_, _) => OT::Native(GoesRight),
             Self::SumOf(_, _, _) => OT::Native(SumOf),
             Self::ProductOf(_, _, _) => OT::Native(ProductOf),
             Self::MaxOf(_, _, _) => OT::Native(MaxOf),
@@ -127,6 +157,11 @@ impl Operation {
             Self::LtToNotEqual(s) => vec![s],
             Self::ContainsFromEntries(s1, s2) => vec![s1, s2],
             Self::NotContainsFromEntries(s1, s2) => vec![s1, s2],
+            Self::BranchesFromEntries(s1, s2, s3) => vec![s1, s2, s3],
+            Self::LeafFromEntries(s1, s2, s3) => vec![s1, s2, s3],
+            Self::IsNullTree(s) => vec![s],
+            Self::GoesLeft(s1, s2) => vec![s1, s2],
+            Self::GoesRight(s1, s2) => vec![s1, s2],
             Self::SumOf(s1, s2, s3) => vec![s1, s2, s3],
             Self::ProductOf(s1, s2, s3) => vec![s1, s2, s3],
             Self::MaxOf(s1, s2, s3) => vec![s1, s2, s3],
@@ -160,6 +195,15 @@ impl Operation {
                 (NO::NotContainsFromEntries, (Some(s1), Some(s2), None), 2) => {
                     Self::NotContainsFromEntries(s1, s2)
                 }
+                (NO::BranchesFromEntries, (Some(s1), Some(s2), Some(s3)), 3) => {
+                    Self::BranchesFromEntries(s1, s2, s3)
+                }
+                (NO::LeafFromEntries, (Some(s1), Some(s2), Some(s3)), 3) => {
+                    Self::LeafFromEntries(s1, s2, s3)
+                }
+                (NO::IsNullTree, (Some(s), None, None), 1) => Self::IsNullTree(s),
+                (NO::GoesLeft, (Some(s1), Some(s2), None), 2) => Self::GoesLeft(s1, s2),
+                (NO::GoesRight, (Some(s1), Some(s2), None), 2) => Self::GoesRight(s1, s2),
                 (NO::SumOf, (Some(s1), Some(s2), Some(s3)), 3) => Self::SumOf(s1, s2, s3),
                 (NO::ProductOf, (Some(s1), Some(s2), Some(s3)), 3) => Self::ProductOf(s1, s2, s3),
                 (NO::MaxOf, (Some(s1), Some(s2), Some(s3)), 3) => Self::MaxOf(s1, s2, s3),
@@ -172,6 +216,7 @@ impl Operation {
             OperationType::Custom(cpr) => Self::Custom(cpr, args.to_vec()),
         })
     }
+
     /// Gives the output statement of the given operation, where determined
     /// A ValueOf statement is not determined by the NewEntry operation, so returns Ok(None)
     /// The outer Result is error handling
@@ -183,130 +228,133 @@ impl Operation {
             Self::None => Some(vec![]),
             Self::NewEntry => Option::None,
             Self::CopyStatement(s1) => Some(s1.args()),
-            Self::EqualFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) => {
-                if v1 == v2 {
-                    Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
-                } else {
-                    return Err(anyhow!("Invalid operation"));
-                }
+            Self::EqualFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) if v1 == v2 => {
+                Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
             }
-            Self::EqualFromEntries(_, _) => {
-                return Err(anyhow!("Invalid operation"));
+            Self::NotEqualFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) if v1 != v2 => {
+                Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
             }
-            Self::NotEqualFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) => {
-                if v1 != v2 {
-                    Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
-                } else {
-                    return Err(anyhow!("Invalid operation"));
-                }
+            Self::GtFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) if v1 > v2 => {
+                Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
             }
-            Self::NotEqualFromEntries(_, _) => {
-                return Err(anyhow!("Invalid operation"));
+            Self::LtFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) if v1 < v2 => {
+                Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
             }
-            Self::GtFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) => {
-                if v1 > v2 {
-                    Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
-                } else {
-                    return Err(anyhow!("Invalid operation"));
-                }
-            }
-            Self::GtFromEntries(_, _) => {
-                return Err(anyhow!("Invalid operation"));
-            }
-            Self::LtFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) => {
-                if v1 < v2 {
-                    Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
-                } else {
-                    return Err(anyhow!("Invalid operation"));
-                }
-            }
-            Self::LtFromEntries(_, _) => {
-                return Err(anyhow!("Invalid operation"));
-            }
-            Self::TransitiveEqualFromStatements(Equal(ak1, ak2), Equal(ak3, ak4)) => {
-                if ak2 == ak3 {
-                    Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak3)])
-                } else {
-                    return Err(anyhow!("Invalid operation"));
-                }
-            }
-            Self::TransitiveEqualFromStatements(_, _) => {
-                return Err(anyhow!("Invalid operation"));
+            Self::TransitiveEqualFromStatements(Equal(ak1, ak2), Equal(ak3, ak4)) if ak2 == ak3 => {
+                Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak4)])
             }
             Self::GtToNotEqual(Gt(ak1, ak2)) => {
                 Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
             }
-            Self::GtToNotEqual(_) => {
-                return Err(anyhow!("Invalid operation"));
-            }
             Self::LtToNotEqual(Gt(ak1, ak2)) => {
                 Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
-            }
-            Self::LtToNotEqual(_) => {
-                return Err(anyhow!("Invalid operation"));
             }
             Self::ContainsFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) =>
             /* TODO */
             {
                 Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
             }
-            Self::ContainsFromEntries(_, _) => {
-                return Err(anyhow!("Invalid operation"));
-            }
             Self::NotContainsFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) =>
             /* TODO */
             {
                 Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
             }
-            Self::NotContainsFromEntries(_, _) => {
-                return Err(anyhow!("Invalid operation"));
+            Self::BranchesFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3))
+                if Hash::from(*v1) == hash_fields(&[v2.0, v3.0].concat()) =>
+            {
+                Some(vec![
+                    StatementArg::Key(*ak1),
+                    StatementArg::Key(*ak2),
+                    StatementArg::Key(*ak3),
+                ])
             }
-            Self::SumOf(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3)) => {
-                let v1: i64 = (*v1).try_into()?;
-                let v2: i64 = (*v2).try_into()?;
-                let v3: i64 = (*v3).try_into()?;
-                if v1 == v2 + v3 {
-                    Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
-                } else {
-                    return Err(anyhow!("Invalid operation"));
-                }
+            Self::LeafFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3))
+                if Hash::from(*v1) == kv_hash(v2, Some(*v3)) =>
+            {
+                Some(vec![
+                    StatementArg::Key(*ak1),
+                    StatementArg::Key(*ak2),
+                    StatementArg::Key(*ak3),
+                ])
             }
-            Self::SumOf(_, _, _) => {
-                return Err(anyhow!("Invalid operation"));
+            Self::IsNullTree(ValueOf(ak, v)) if v == &EMPTY => Some(vec![StatementArg::Key(*ak)]),
+            Self::GoesLeft(ValueOf(ak, key), ValueOf(_, depth))
+                if ({
+                    let depth_index = <Value as TryInto<i64>>::try_into(*depth)? as usize;
+                    let key_bits = keypath(MAX_DEPTH, *key)?;
+                    !key_bits[depth_index]
+                }) =>
+            {
+                Some(vec![StatementArg::Key(*ak), StatementArg::Literal(*depth)])
             }
-            Self::ProductOf(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3)) => {
-                let v1: i64 = (*v1).try_into()?;
-                let v2: i64 = (*v2).try_into()?;
-                let v3: i64 = (*v3).try_into()?;
-                if v1 == v2 * v3 {
-                    Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
-                } else {
-                    return Err(anyhow!("Invalid operation"));
-                }
+            Self::GoesRight(ValueOf(ak, key), ValueOf(_, depth))
+                if {
+                    let depth_index = <Value as TryInto<i64>>::try_into(*depth)? as usize;
+                    let key_bits = keypath(MAX_DEPTH, *key)?;
+                    key_bits[depth_index]
+                } =>
+            {
+                Some(vec![StatementArg::Key(*ak), StatementArg::Literal(*depth)])
             }
-            Self::ProductOf(_, _, _) => {
-                return Err(anyhow!("Invalid operation"));
+            Self::SumOf(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3))
+                if {
+                    let v1: i64 = (*v1).try_into()?;
+                    let v2: i64 = (*v2).try_into()?;
+                    let v3: i64 = (*v3).try_into()?;
+                    v1 == v2 + v3
+                } =>
+            {
+                Some(vec![
+                    StatementArg::Key(*ak1),
+                    StatementArg::Key(*ak2),
+                    StatementArg::Key(*ak3),
+                ])
             }
-            Self::MaxOf(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3)) => {
-                let v1: i64 = (*v1).try_into()?;
-                let v2: i64 = (*v2).try_into()?;
-                let v3: i64 = (*v3).try_into()?;
-                if v1 == std::cmp::max(v2, v3) {
-                    Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
-                } else {
-                    return Err(anyhow!("Invalid operation"));
-                }
+            Self::ProductOf(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3))
+                if ({
+                    let v1: i64 = (*v1).try_into()?;
+                    let v2: i64 = (*v2).try_into()?;
+                    let v3: i64 = (*v3).try_into()?;
+                    v1 == v2 * v3
+                }) =>
+            {
+                Some(vec![
+                    StatementArg::Key(*ak1),
+                    StatementArg::Key(*ak2),
+                    StatementArg::Key(*ak3),
+                ])
             }
-            Self::MaxOf(_, _, _) => {
-                return Err(anyhow!("Invalid operation"));
+            Self::MaxOf(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3))
+                if ({
+                    let v1: i64 = (*v1).try_into()?;
+                    let v2: i64 = (*v2).try_into()?;
+                    let v3: i64 = (*v3).try_into()?;
+                    v1 == std::cmp::max(v2, v3)
+                }) =>
+            {
+                Some(vec![
+                    StatementArg::Key(*ak1),
+                    StatementArg::Key(*ak2),
+                    StatementArg::Key(*ak3),
+                ])
             }
             Self::Custom(_, _) => todo!(),
+            _ => return Err(anyhow!("Invalid operation: {}", self)),
         };
 
         let x: Option<Result<Statement>> = pred
             .zip(st_args)
             .map(|(pred, st_args)| Statement::from_args(pred, st_args));
         x.transpose()
+    }
+    /// Checks the given operation against a statement, and prints information if the check does not pass
+    pub fn check_and_print(&self, params: &Params, output_statement: &Statement) -> Result<bool> {
+        let valid: bool = self.check(params, output_statement)?;
+        if !valid {
+            println!("Check failed on the following statement");
+            println!("{}", output_statement);
+        }
+        Ok(valid)
     }
     /// Checks the given operation against a statement.
     pub fn check(&self, _params: &Params, output_statement: &Statement) -> Result<bool> {
@@ -336,6 +384,31 @@ impl Operation {
             /* TODO */
             {
                 Ok(true)
+            }
+            (
+                Self::BranchesFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3)),
+                Branches(ak4, ak5, ak6),
+            ) => Ok(Hash::from(*v1) == hash_fields(&[v2.0, v3.0].concat())
+                && ak1 == ak4
+                && ak2 == ak5
+                && ak3 == ak6),
+            (
+                Self::LeafFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3)),
+                Leaf(ak4, ak5, ak6),
+            ) => Ok(Hash::from(*v1) == kv_hash(v2, Some(*v3))
+                && ak1 == ak4
+                && ak2 == ak5
+                && ak3 == ak6),
+            (Self::IsNullTree(ValueOf(ak1, v)), IsNullTree(ak2)) => Ok(v == &EMPTY && ak1 == ak2),
+            (Self::GoesLeft(ValueOf(ak1, key), ValueOf(_, depth)), GoesLeft(ak2, d)) => {
+                let depth_index = <Value as TryInto<i64>>::try_into(*depth)? as usize;
+                let key_bits = keypath(MAX_DEPTH, *key)?;
+                Ok(!key_bits[depth_index] && ak1 == ak2 && depth == d)
+            }
+            (Self::GoesRight(ValueOf(ak1, key), ValueOf(_, depth)), GoesRight(ak2, d)) => {
+                let depth_index = <Value as TryInto<i64>>::try_into(*depth)? as usize;
+                let key_bits = keypath(MAX_DEPTH, *key)?;
+                Ok(key_bits[depth_index] && ak1 == ak2 && depth == d)
             }
             (
                 Self::TransitiveEqualFromStatements(Equal(ak1, ak2), Equal(ak3, ak4)),

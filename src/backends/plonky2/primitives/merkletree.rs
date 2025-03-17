@@ -1,20 +1,20 @@
 //! Module that implements the MerkleTree specified at
 //! https://0xparc.github.io/pod2/merkletree.html .
 use anyhow::{anyhow, Result};
-use plonky2::field::goldilocks_field::GoldilocksField;
 use std::collections::HashMap;
 use std::fmt;
 use std::iter::IntoIterator;
 
 use crate::backends::counter;
 use crate::backends::plonky2::basetypes::{hash_fields, Hash, Value, F, NULL};
+use crate::middleware::{keypath, kv_hash};
 
 /// Implements the MerkleTree specified at
 /// https://0xparc.github.io/pod2/merkletree.html
 #[derive(Clone, Debug)]
 pub struct MerkleTree {
-    max_depth: usize,
-    root: Node,
+    pub max_depth: usize,
+    pub root: Node,
 }
 
 impl MerkleTree {
@@ -174,14 +174,6 @@ impl MerkleTree {
     }
 }
 
-/// Hash function for key-value pairs. Different branch pair hashes to
-/// mitigate fake proofs.
-pub fn kv_hash(key: &Value, value: Option<Value>) -> Hash {
-    value
-        .map(|v| hash_fields(&[key.0.to_vec(), v.0.to_vec(), vec![GoldilocksField(1)]].concat()))
-        .unwrap_or(Hash([GoldilocksField(0); 4]))
-}
-
 impl<'a> IntoIterator for &'a MerkleTree {
     type Item = (&'a Value, &'a Value);
     type IntoIter = Iter<'a>;
@@ -256,7 +248,7 @@ impl MerkleProof {
 }
 
 #[derive(Clone, Debug)]
-enum Node {
+pub enum Node {
     None,
     Leaf(Leaf),
     Intermediate(Intermediate),
@@ -293,7 +285,7 @@ impl fmt::Display for Node {
 }
 
 impl Node {
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         match self {
             Self::None => true,
             Self::Leaf(_l) => false,
@@ -307,11 +299,35 @@ impl Node {
             Self::Intermediate(n) => n.compute_hash(),
         }
     }
-    fn hash(&self) -> Hash {
+    pub fn hash(&self) -> Hash {
         match self {
             Self::None => NULL,
             Self::Leaf(l) => l.hash(),
             Self::Intermediate(n) => n.hash(),
+        }
+    }
+
+    pub fn left(&self) -> Option<&Box<Node>> {
+        match self {
+            Self::None => None,
+            Self::Leaf(_l) => None,
+            Self::Intermediate(Intermediate {
+                hash: _h,
+                left: l, 
+                right: _r
+            }) => Some(l),
+        }
+    }
+
+    pub fn right(&self) -> Option<&Box<Node>> {
+        match self {
+            Self::None => None,
+            Self::Leaf(_l) => None,
+            Self::Intermediate(Intermediate {
+                hash: _h,
+                left: _l, 
+                right: r
+            }) => Some(r),
         }
     }
 
@@ -511,30 +527,6 @@ impl Leaf {
     fn hash(&self) -> Hash {
         self.hash.unwrap()
     }
-}
-
-// NOTE 1: think if maybe the length of the returned vector can be <256
-// (8*bytes.len()), so that we can do fewer iterations. For example, if the
-// tree.max_depth is set to 20, we just need 20 iterations of the loop, not 256.
-// NOTE 2: which approach do we take with keys that are longer than the
-// max-depth? ie, what happens when two keys share the same path for more bits
-// than the max_depth?
-/// returns the path of the given key
-fn keypath(max_depth: usize, k: Value) -> Result<Vec<bool>> {
-    let bytes = k.to_bytes();
-    if max_depth > 8 * bytes.len() {
-        // note that our current keys are of Value type, which are 4 Goldilocks
-        // field elements, ie ~256 bits, therefore the max_depth can not be
-        // bigger than 256.
-        return Err(anyhow!(
-            "key to short (key length: {}) for the max_depth: {}",
-            8 * bytes.len(),
-            max_depth
-        ));
-    }
-    Ok((0..max_depth)
-        .map(|n| bytes[n / 8] & (1 << (n % 8)) != 0)
-        .collect())
 }
 
 pub struct Iter<'a> {
