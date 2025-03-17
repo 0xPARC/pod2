@@ -7,7 +7,7 @@ use std::fmt;
 use std::iter::IntoIterator;
 
 use crate::backends::counter;
-use crate::backends::plonky2::basetypes::{hash_fields, Hash, Value, F, NULL};
+use crate::backends::plonky2::basetypes::{hash_fields, Hash, Value, EMPTY_HASH, F};
 
 // mod merkletree_circuit;
 pub use super::merkletree_circuit::*;
@@ -182,7 +182,7 @@ impl MerkleTree {
 pub fn kv_hash(key: &Value, value: Option<Value>) -> Hash {
     value
         .map(|v| hash_fields(&[key.0.to_vec(), v.0.to_vec(), vec![GoldilocksField(1)]].concat()))
-        .unwrap_or(NULL)
+        .unwrap_or(EMPTY_HASH)
 }
 
 impl<'a> IntoIterator for &'a MerkleTree {
@@ -305,14 +305,14 @@ impl Node {
     }
     fn compute_hash(&mut self) -> Hash {
         match self {
-            Self::None => NULL,
+            Self::None => EMPTY_HASH,
             Self::Leaf(l) => l.compute_hash(),
             Self::Intermediate(n) => n.compute_hash(),
         }
     }
     fn hash(&self) -> Hash {
         match self {
-            Self::None => NULL,
+            Self::None => EMPTY_HASH,
             Self::Leaf(l) => l.hash(),
             Self::Intermediate(n) => n.hash(),
         }
@@ -475,8 +475,8 @@ impl Intermediate {
     }
     fn compute_hash(&mut self) -> Hash {
         if self.left.clone().is_empty() && self.right.clone().is_empty() {
-            self.hash = Some(NULL);
-            return NULL;
+            self.hash = Some(EMPTY_HASH);
+            return EMPTY_HASH;
         }
         let l_hash = self.left.compute_hash();
         let r_hash = self.right.compute_hash();

@@ -8,7 +8,7 @@ use crate::constants::MAX_DEPTH;
 #[cfg(feature = "backend_plonky2")]
 use crate::backends::plonky2::primitives::merkletree::{Iter as TreeIter, MerkleProof, MerkleTree};
 
-use super::basetypes::{hash_value, Hash, Value, EMPTY};
+use super::basetypes::{hash_value, Hash, Value, EMPTY_VALUE};
 
 /// Dictionary: the user original keys and values are hashed to be used in the leaf.
 ///    leaf.key=hash(original_key)
@@ -78,7 +78,7 @@ impl Set {
             .iter()
             .map(|e| {
                 let h = hash_value(e);
-                (Value::from(h), EMPTY)
+                (Value::from(h), EMPTY_VALUE)
             })
             .collect();
         Ok(Self {
@@ -99,7 +99,7 @@ impl Set {
         self.mt.prove_nonexistence(value)
     }
     pub fn verify(root: Hash, proof: &MerkleProof, value: &Value) -> Result<()> {
-        MerkleTree::verify(MAX_DEPTH, root, proof, value, &EMPTY)
+        MerkleTree::verify(MAX_DEPTH, root, proof, value, &EMPTY_VALUE)
     }
     pub fn verify_nonexistence(root: Hash, proof: &MerkleProof, value: &Value) -> Result<()> {
         MerkleTree::verify_nonexistence(MAX_DEPTH, root, proof, value)

@@ -137,6 +137,10 @@ Since leaf positions are deterministic based on the key, the same approach is us
 
 For the current use cases, we don't need to prove that the key exists but the value is different on that leaf, so we only use the option 1.
 
+There are 2 cases to have into account when dealing with non-inclusion proofs:
+- case i) the expected leaf does not exist.
+- case ii) the expected leaf does exist in the tree, but it has a different `key`.
+
 
 ## Encoding
 > TODO: how key-values, nodes, merkle-proofs, ... are encoded.

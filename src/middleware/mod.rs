@@ -23,7 +23,7 @@ impl fmt::Display for PodId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if *self == SELF {
             write!(f, "self")
-        } else if self.0 == NULL {
+        } else if self.0 == EMPTY_HASH {
             write!(f, "null")
         } else {
             write!(f, "{}", self.0)
@@ -185,7 +185,7 @@ impl Pod for NonePod {
         true
     }
     fn id(&self) -> PodId {
-        PodId(NULL)
+        PodId(EMPTY_HASH)
     }
     fn pub_statements(&self) -> Vec<Statement> {
         Vec::new()
