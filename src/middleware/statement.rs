@@ -125,7 +125,9 @@ impl Statement {
                 }
             }
             Native(NativePredicate::Contains) => {
-                if let (StatementArg::Key(a0), StatementArg::Key(a1), StatementArg::Key(a2)) = (args[0], args[1], args[2]) {
+                if let (StatementArg::Key(a0), StatementArg::Key(a1), StatementArg::Key(a2)) =
+                    (args[0], args[1], args[2])
+                {
                     Ok(Self::Contains(a0, a1, a2))
                 } else {
                     Err(anyhow!("Incorrect statement args"))

@@ -22,7 +22,7 @@ pub enum NativePredicate {
     DictNotContains = 12,
     SetContains = 13,
     SetNotContains = 14,
-    ArrayContains = 15,   // there is no ArrayNotContains
+    ArrayContains = 15, // there is no ArrayNotContains
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -1168,7 +1168,7 @@ pub mod tests {
         my_dict_kvs.insert(BeValue::from(&"b".into()), BeValue::from(&2.into()));
         my_dict_kvs.insert(BeValue::from(&"c".into()), BeValue::from(&3.into()));
         let my_dict_as_mt = MerkleTree::new(5, &my_dict_kvs).unwrap();
-        let dict = Value::Dictionary(Dictionary{mt: my_dict_as_mt});
+        let dict = Value::Dictionary(Dictionary { mt: my_dict_as_mt });
         builder.insert("dict", dict);
 
         let mut signer = MockSigner {
@@ -1182,18 +1182,18 @@ pub mod tests {
         let st1 = builder.op(true, op!(new_entry, ("key", "a"))).unwrap();
         let st2 = builder.literal(false, &Value::Int(1)).unwrap();
 
-        builder.pub_op(
-            Operation(
+        builder
+            .pub_op(Operation(
                 // OperationType
                 OperationType::Native(NativeOperation::ContainsFromEntries),
                 // Vec<OperationArg>
                 vec![
-                    OperationArg::Statement(st0), 
-                    OperationArg::Statement(st1), 
-                    OperationArg::Statement(st2), 
-                ]
-            )
-        ).unwrap();
+                    OperationArg::Statement(st0),
+                    OperationArg::Statement(st1),
+                    OperationArg::Statement(st2),
+                ],
+            ))
+            .unwrap();
         let mut main_prover = MockProver {};
         let main_pod = builder.prove(&mut main_prover, &params).unwrap();
 
