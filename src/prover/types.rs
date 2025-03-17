@@ -100,6 +100,122 @@ impl From<ProvableStatement> for frontend::Statement {
     }
 }
 
+impl From<frontend::Statement> for ProvableStatement {
+    fn from(stmt: frontend::Statement) -> Self {
+        match stmt.predicate {
+            Predicate::Native(NativePredicate::ValueOf) => {
+                if let (frontend::StatementArg::Key(key), frontend::StatementArg::Literal(value)) =
+                    (stmt.args[0].clone(), stmt.args[1].clone())
+                {
+                    ProvableStatement::ValueOf(key.into(), value.into())
+                } else {
+                    panic!("Invalid arguments for ValueOf statement")
+                }
+            }
+            Predicate::Native(NativePredicate::Equal) => {
+                if let (frontend::StatementArg::Key(key1), frontend::StatementArg::Key(key2)) =
+                    (stmt.args[0].clone(), stmt.args[1].clone())
+                {
+                    ProvableStatement::Equal(key1.into(), key2.into())
+                } else {
+                    panic!("Invalid arguments for Equal statement")
+                }
+            }
+            Predicate::Native(NativePredicate::NotEqual) => {
+                if let (frontend::StatementArg::Key(key1), frontend::StatementArg::Key(key2)) =
+                    (stmt.args[0].clone(), stmt.args[1].clone())
+                {
+                    ProvableStatement::NotEqual(key1.into(), key2.into())
+                } else {
+                    panic!("Invalid arguments for NotEqual statement")
+                }
+            }
+            Predicate::Native(NativePredicate::Gt) => {
+                if let (frontend::StatementArg::Key(key1), frontend::StatementArg::Key(key2)) =
+                    (stmt.args[0].clone(), stmt.args[1].clone())
+                {
+                    ProvableStatement::Gt(key1.into(), key2.into())
+                } else {
+                    panic!("Invalid arguments for Gt statement")
+                }
+            }
+            Predicate::Native(NativePredicate::Lt) => {
+                if let (frontend::StatementArg::Key(key1), frontend::StatementArg::Key(key2)) =
+                    (stmt.args[0].clone(), stmt.args[1].clone())
+                {
+                    ProvableStatement::Lt(key1.into(), key2.into())
+                } else {
+                    panic!("Invalid arguments for Lt statement")
+                }
+            }
+            Predicate::Native(NativePredicate::Contains) => {
+                if let (frontend::StatementArg::Key(key1), frontend::StatementArg::Key(key2)) =
+                    (stmt.args[0].clone(), stmt.args[1].clone())
+                {
+                    ProvableStatement::Contains(key1.into(), key2.into())
+                } else {
+                    panic!("Invalid arguments for Contains statement")
+                }
+            }
+            Predicate::Native(NativePredicate::NotContains) => {
+                if let (frontend::StatementArg::Key(key1), frontend::StatementArg::Key(key2)) =
+                    (stmt.args[0].clone(), stmt.args[1].clone())
+                {
+                    ProvableStatement::NotContains(key1.into(), key2.into())
+                } else {
+                    panic!("Invalid arguments for NotContains statement")
+                }
+            }
+            Predicate::Native(NativePredicate::SumOf) => {
+                if let (
+                    frontend::StatementArg::Key(key1),
+                    frontend::StatementArg::Key(key2),
+                    frontend::StatementArg::Key(key3),
+                ) = (
+                    stmt.args[0].clone(),
+                    stmt.args[1].clone(),
+                    stmt.args[2].clone(),
+                ) {
+                    ProvableStatement::SumOf(key1.into(), key2.into(), key3.into())
+                } else {
+                    panic!("Invalid arguments for SumOf statement")
+                }
+            }
+            Predicate::Native(NativePredicate::ProductOf) => {
+                if let (
+                    frontend::StatementArg::Key(key1),
+                    frontend::StatementArg::Key(key2),
+                    frontend::StatementArg::Key(key3),
+                ) = (
+                    stmt.args[0].clone(),
+                    stmt.args[1].clone(),
+                    stmt.args[2].clone(),
+                ) {
+                    ProvableStatement::ProductOf(key1.into(), key2.into(), key3.into())
+                } else {
+                    panic!("Invalid arguments for ProductOf statement")
+                }
+            }
+            Predicate::Native(NativePredicate::MaxOf) => {
+                if let (
+                    frontend::StatementArg::Key(key1),
+                    frontend::StatementArg::Key(key2),
+                    frontend::StatementArg::Key(key3),
+                ) = (
+                    stmt.args[0].clone(),
+                    stmt.args[1].clone(),
+                    stmt.args[2].clone(),
+                ) {
+                    ProvableStatement::MaxOf(key1.into(), key2.into(), key3.into())
+                } else {
+                    panic!("Invalid arguments for MaxOf statement")
+                }
+            }
+            _ => panic!("Cannot convert non-native statement to ProvableStatement"),
+        }
+    }
+}
+
 impl Hash for Value {
     fn hash<H: Hasher>(&self, state: &mut H) {
         // Hash the discriminant first
@@ -123,7 +239,7 @@ pub type DeductionChain = Vec<DeductionStep>;
 
 // Helper function to format AnchoredKey
 fn format_anchored_key(ak: &AnchoredKey) -> String {
-    format!("{}:{}", ak.origin.pod_id.to_string(), ak.key) // Show both origin ID and key
+    format!("{:x}:{}", ak.origin.pod_id, ak.key) // Show both origin ID and key
 }
 
 impl fmt::Display for ProvableStatement {
@@ -257,11 +373,8 @@ pub enum WildcardStatementArg {
     Key(AnchoredKey),
 }
 
-// This is somewhat ugly but we're having to mirror some of the frontend/middleware
-// type distinctions to get this to work. Probably there is a better way to do this.
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-pub enum FrontendWildcardStatement {
+pub enum WildcardTargetStatement {
     Equal(
         #[schemars(with = "WildcardAnchoredKeySerdeHelper")] WildcardAnchoredKey,
         WildcardStatementArg,

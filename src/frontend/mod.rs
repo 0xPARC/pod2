@@ -245,6 +245,16 @@ impl SignedPod {
             .map(|(middleware::AnchoredKey(_, k), v)| (k, v))
             .collect()
     }
+    pub fn get_anchored_key(&self, key: &str) -> Result<AnchoredKey> {
+        let hash = hash_str(key);
+        self.kvs()
+            .get(&hash)
+            .ok_or(anyhow!("Key not found: {}", key))?;
+        Ok(AnchoredKey(
+            Origin(PodClass::Signed, self.id()),
+            key.to_string(),
+        ))
+    }
 }
 
 // Implement Send and Sync for SignedPod

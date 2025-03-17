@@ -7,7 +7,7 @@ use crate::{
         StatementArg,
     },
     middleware::{NativeOperation, OperationType, Params, PodId},
-    prover::{engine::DeductionEngine, types::FrontendWildcardStatement},
+    prover::{engine::DeductionEngine, types::WildcardTargetStatement},
 };
 use axum::Json;
 use serde_json::{self, json};
@@ -83,8 +83,11 @@ pub async fn create_main_pod(
         .map_err(|e| ServerError::DatabaseError(e.to_string()))?;
 
     for pod in pods {
-        if let Pod::Signed(signed_pod) = pod {
+        if let Pod::Signed(signed_pod) = pod.clone() {
             engine.add_signed_pod(signed_pod);
+        }
+        if let Pod::Main(main_pod) = pod {
+            engine.add_main_pod(main_pod);
         }
     }
 
@@ -145,10 +148,12 @@ pub async fn create_main_pod(
 
         for pod_id in pod_ids {
             let id_string = format!("{:x}", pod_id);
-            if let Ok(Some(Pod::Signed(pod))) = state.db.get_pod(&id_string) {
+
+            let pod = state.db.get_pod(&id_string);
+
+            if let Ok(Some(Pod::Signed(pod))) = pod {
                 builder.add_signed_pod(&pod);
-            }
-            if let Ok(Some(Pod::Main(pod))) = state.db.get_pod(&id_string) {
+            } else if let Ok(Some(Pod::Main(pod))) = pod {
                 builder.add_main_pod(pod);
             }
         }
@@ -225,8 +230,11 @@ pub async fn validate_statements(
         .map_err(|e| ServerError::DatabaseError(e.to_string()))?;
 
     for pod in pods {
-        if let Pod::Signed(signed_pod) = pod {
+        if let Pod::Signed(signed_pod) = pod.clone() {
             engine.add_signed_pod(signed_pod);
+        }
+        if let Pod::Main(main_pod) = pod {
+            engine.add_main_pod(main_pod);
         }
     }
 
@@ -240,7 +248,7 @@ pub async fn get_schemas() -> Result<Json<serde_json::Value>, ServerError> {
     let schemas = json!({
         "SignedPod": schemars::schema_for!(SignedPodHelper),
         "MainPod": schemars::schema_for!(MainPodHelper),
-        "FrontendWildcardStatement": schemars::schema_for!(FrontendWildcardStatement),
+        "FrontendWildcardStatement": schemars::schema_for!(WildcardTargetStatement),
         // Add any other schemas you want to expose
     });
 

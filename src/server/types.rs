@@ -5,7 +5,7 @@ use tokio::sync::Mutex;
 
 use crate::{
     frontend::{MainPod, SignedPod, Statement},
-    prover::types::FrontendWildcardStatement,
+    prover::types::WildcardTargetStatement,
 };
 
 use super::storage;
@@ -32,7 +32,7 @@ pub struct CreateSignedPodRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct CreateMainPodRequest {
-    pub statements: Vec<FrontendWildcardStatement>,
+    pub statements: Vec<WildcardTargetStatement>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,7 +52,7 @@ pub struct ValidateStatementRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct ValidateStatementsRequest {
-    pub statements: Vec<FrontendWildcardStatement>,
+    pub statements: Vec<WildcardTargetStatement>,
 }
 
 // Server state

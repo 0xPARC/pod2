@@ -5,7 +5,7 @@ use crate::frontend::{
 };
 use crate::middleware::{NativePredicate, Params, PodId, Predicate};
 use crate::prover::types::{
-    FrontendWildcardStatement, WildcardAnchoredKey, WildcardId, WildcardStatementArg,
+    WildcardTargetStatement, WildcardAnchoredKey, WildcardId, WildcardStatementArg,
 };
 use axum::{
     body::Body,
@@ -331,7 +331,7 @@ async fn test_validate_statements() -> Result<(), Box<dyn std::error::Error>> {
         println!("DEBUG test_validate_statements - Pod imported successfully");
 
         // Create a statement that checks if the pod's test_key equals "test_value"
-        let statement = FrontendWildcardStatement::Equal(
+        let statement = WildcardTargetStatement::Equal(
             WildcardAnchoredKey(
                 WildcardId::Concrete(Origin {
                     pod_id: pod.id(),
@@ -388,7 +388,7 @@ async fn test_validate_statements() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn test_frontend_wildcard_statement_deserialization() {
-    use crate::prover::types::FrontendWildcardStatement;
+    use crate::prover::types::WildcardTargetStatement;
 
     let json = r#"{
         "Equal": [
@@ -413,12 +413,12 @@ fn test_frontend_wildcard_statement_deserialization() {
         ]
     }"#;
 
-    let result = serde_json::from_str::<FrontendWildcardStatement>(json);
+    let result = serde_json::from_str::<WildcardTargetStatement>(json);
     match result {
         Ok(stmt) => {
             println!("Successfully deserialized: {:?}", stmt);
             match stmt {
-                FrontendWildcardStatement::Equal(key, arg) => {
+                WildcardTargetStatement::Equal(key, arg) => {
                     println!("First arg: {:?}", key);
                     println!("Second arg: {:?}", arg);
                 }
@@ -437,7 +437,7 @@ fn test_frontend_wildcard_statement_serialization() {
     use crate::frontend::{AnchoredKey, Origin, PodClass};
     use crate::middleware::hash_str;
     use crate::prover::types::{
-        FrontendWildcardStatement, WildcardAnchoredKey, WildcardId, WildcardStatementArg,
+        WildcardTargetStatement, WildcardAnchoredKey, WildcardId, WildcardStatementArg,
     };
 
     // Create a concrete origin
@@ -458,14 +458,14 @@ fn test_frontend_wildcard_statement_serialization() {
 
     // Create the statement
     let statement =
-        FrontendWildcardStatement::Equal(wildcard_key, WildcardStatementArg::Key(concrete_key));
+        WildcardTargetStatement::Equal(wildcard_key, WildcardStatementArg::Key(concrete_key));
 
     // Serialize to JSON
     let json = serde_json::to_string_pretty(&statement).unwrap();
     println!("Serialized JSON:\n{}", json);
 
     // Try to deserialize it back
-    let result = serde_json::from_str::<FrontendWildcardStatement>(&json);
+    let result = serde_json::from_str::<WildcardTargetStatement>(&json);
     match result {
         Ok(stmt) => {
             println!("Successfully deserialized: {:?}", stmt);

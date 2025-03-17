@@ -1,7 +1,7 @@
 use super::types::*;
 use crate::frontend::{AnchoredKey, Origin, PodClass, Value};
 use crate::middleware::{NativeOperation, SELF};
-use crate::SignedPod;
+use crate::{MainPod, SignedPod};
 use ascent::ascent;
 
 use super::types::WildcardStatement;
@@ -53,6 +53,7 @@ impl DeductionEngine {
         self.prog.known_statement.push((fact,));
     }
 
+    // All all of the statements from a signed pod
     pub fn add_signed_pod(&mut self, pod: SignedPod) {
         for (key, value) in pod.kvs {
             self.add_fact(ProvableStatement::ValueOf(
@@ -68,10 +69,17 @@ impl DeductionEngine {
         }
     }
 
+    // Add all of the statements from a main pod
+    pub fn add_main_pod(&mut self, pod: MainPod) {
+        for stmt in pod.public_statements {
+            self.add_fact(stmt.into());
+        }
+    }
+
     // Set the target statement we're trying to prove
-    pub fn set_target(&mut self, target: FrontendWildcardStatement) {
+    pub fn set_target(&mut self, target: WildcardTargetStatement) {
         let target = match target {
-            FrontendWildcardStatement::Equal(ak, arg) => {
+            WildcardTargetStatement::Equal(ak, arg) => {
                 if let WildcardStatementArg::Key(key) = arg {
                     WildcardStatement::Equal(ak, key)
                 } else if let WildcardStatementArg::Literal(v) = arg {
@@ -88,7 +96,7 @@ impl DeductionEngine {
                     panic!("Invalid wildcard statement argument");
                 }
             }
-            FrontendWildcardStatement::NotEqual(ak, arg) => {
+            WildcardTargetStatement::NotEqual(ak, arg) => {
                 if let WildcardStatementArg::Key(key) = arg {
                     WildcardStatement::NotEqual(ak, key)
                 } else if let WildcardStatementArg::Literal(v) = arg {
@@ -105,7 +113,7 @@ impl DeductionEngine {
                     panic!("Invalid wildcard statement argument");
                 }
             }
-            FrontendWildcardStatement::Gt(ak, arg) => {
+            WildcardTargetStatement::Gt(ak, arg) => {
                 if let WildcardStatementArg::Key(key) = arg {
                     WildcardStatement::Gt(ak, key)
                 } else if let WildcardStatementArg::Literal(v) = arg {
@@ -122,7 +130,7 @@ impl DeductionEngine {
                     panic!("Invalid wildcard statement argument");
                 }
             }
-            FrontendWildcardStatement::Lt(ak, arg) => {
+            WildcardTargetStatement::Lt(ak, arg) => {
                 if let WildcardStatementArg::Key(key) = arg {
                     WildcardStatement::Lt(ak, key)
                 } else if let WildcardStatementArg::Literal(v) = arg {
@@ -139,7 +147,7 @@ impl DeductionEngine {
                     panic!("Invalid wildcard statement argument");
                 }
             }
-            FrontendWildcardStatement::Contains(ak, arg) => {
+            WildcardTargetStatement::Contains(ak, arg) => {
                 if let WildcardStatementArg::Key(key) = arg {
                     WildcardStatement::Contains(ak, key)
                 } else if let WildcardStatementArg::Literal(v) = arg {
@@ -156,7 +164,7 @@ impl DeductionEngine {
                     panic!("Invalid wildcard statement argument");
                 }
             }
-            FrontendWildcardStatement::NotContains(ak, arg) => {
+            WildcardTargetStatement::NotContains(ak, arg) => {
                 if let WildcardStatementArg::Key(key) = arg {
                     WildcardStatement::NotContains(ak, key)
                 } else if let WildcardStatementArg::Literal(v) = arg {
@@ -173,7 +181,7 @@ impl DeductionEngine {
                     panic!("Invalid wildcard statement argument");
                 }
             }
-            FrontendWildcardStatement::SumOf(result, op1, op2) => {
+            WildcardTargetStatement::SumOf(result, op1, op2) => {
                 let op1_key = match op1 {
                     WildcardStatementArg::Key(key) => key,
                     WildcardStatementArg::Literal(v) => {
@@ -204,7 +212,7 @@ impl DeductionEngine {
                 };
                 WildcardStatement::SumOf(result, op1_key, op2_key)
             }
-            FrontendWildcardStatement::ProductOf(result, op1, op2) => {
+            WildcardTargetStatement::ProductOf(result, op1, op2) => {
                 let op1_key = match op1 {
                     WildcardStatementArg::Key(key) => key,
                     WildcardStatementArg::Literal(v) => {
@@ -235,7 +243,7 @@ impl DeductionEngine {
                 };
                 WildcardStatement::ProductOf(result, op1_key, op2_key)
             }
-            FrontendWildcardStatement::MaxOf(result, op1, op2) => {
+            WildcardTargetStatement::MaxOf(result, op1, op2) => {
                 let op1_key = match op1 {
                     WildcardStatementArg::Key(key) => key,
                     WildcardStatementArg::Literal(v) => {
@@ -299,7 +307,7 @@ impl DeductionEngine {
 
     pub fn prove_multiple(
         &mut self,
-        targets: Vec<FrontendWildcardStatement>,
+        targets: Vec<WildcardTargetStatement>,
     ) -> Vec<(ProvableStatement, DeductionChain)> {
         let mut all_proofs = Vec::new();
         let mut remaining_targets = targets;

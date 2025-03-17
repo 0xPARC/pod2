@@ -2,13 +2,13 @@
 mod tests {
     use crate::{
         backends::plonky2::{mock_main::MockProver, mock_signed::MockSigner},
-        examples::zu_kyc_sign_pod_builders,
+        examples::{zu_kyc_pod_builder, zu_kyc_sign_pod_builders},
         frontend::{
             containers::Array as FrontendArray, AnchoredKey, MainPodBuilder, Operation,
             OperationArg, Origin, PodClass, StatementArg, Value,
         },
-        middleware::{self, hash_str, NativeOperation, OperationType, PodId},
-        prover::types::{FrontendWildcardStatement, WildcardStatementArg},
+        middleware::{self, hash_str, NativeOperation, OperationType, Params, PodId},
+        prover::types::{WildcardStatementArg, WildcardTargetStatement},
     };
 
     use crate::{
@@ -56,7 +56,7 @@ mod tests {
         ));
 
         // Try to prove X = W
-        engine.set_target(FrontendWildcardStatement::Equal(
+        engine.set_target(WildcardTargetStatement::Equal(
             WildcardAnchoredKey(WildcardId::Named("X".to_string()), "X".to_string()),
             WildcardStatementArg::Key(make_anchored_key("W", "W")),
         ));
@@ -99,7 +99,7 @@ mod tests {
         ));
 
         // Test case 1: Find GT through value comparison
-        let target = FrontendWildcardStatement::Gt(
+        let target = WildcardTargetStatement::Gt(
             WildcardAnchoredKey(WildcardId::Named("n".to_string()), "value".to_string()),
             WildcardStatementArg::Key(make_anchored_key("Y", "value")),
         );
@@ -159,7 +159,7 @@ mod tests {
         ));
 
         // Test case 1: Find LT through value comparison
-        let target = FrontendWildcardStatement::Lt(
+        let target = WildcardTargetStatement::Lt(
             WildcardAnchoredKey(WildcardId::Named("n".to_string()), "value".to_string()),
             WildcardStatementArg::Key(make_anchored_key("Y", "value")),
         );
@@ -215,7 +215,7 @@ mod tests {
         ));
 
         // Test case 1: Find NEq through GT conversion
-        let target = FrontendWildcardStatement::NotEqual(
+        let target = WildcardTargetStatement::NotEqual(
             WildcardAnchoredKey(WildcardId::Named("n".to_string()), "value".to_string()),
             WildcardStatementArg::Key(make_anchored_key("Y", "value")),
         );
@@ -271,7 +271,7 @@ mod tests {
         ));
 
         // Test case 1: Find NEq through LT conversion
-        let target = FrontendWildcardStatement::NotEqual(
+        let target = WildcardTargetStatement::NotEqual(
             WildcardAnchoredKey(WildcardId::Named("n".to_string()), "value".to_string()),
             WildcardStatementArg::Key(make_anchored_key("Y", "value")),
         );
@@ -337,7 +337,7 @@ mod tests {
         ));
 
         // Test case 1: Find Contains through value comparison
-        let target = FrontendWildcardStatement::Contains(
+        let target = WildcardTargetStatement::Contains(
             WildcardAnchoredKey(WildcardId::Named("n".to_string()), "value".to_string()),
             WildcardStatementArg::Key(make_anchored_key("Y", "value")),
         );
@@ -398,7 +398,7 @@ mod tests {
         ));
 
         // Try to prove that X contains Y (which should be impossible)
-        let target = FrontendWildcardStatement::Contains(
+        let target = WildcardTargetStatement::Contains(
             WildcardAnchoredKey(WildcardId::Named("n".to_string()), "value".to_string()),
             WildcardStatementArg::Key(make_anchored_key("Y", "value")),
         );
@@ -435,7 +435,7 @@ mod tests {
 
         let targets = vec![
             // First prove b = c (because they have the same value)
-            FrontendWildcardStatement::Equal(
+            WildcardTargetStatement::Equal(
                 WildcardAnchoredKey(
                     WildcardId::Concrete(make_signed_origin("b")),
                     "value".to_string(),
@@ -443,7 +443,7 @@ mod tests {
                 WildcardStatementArg::Key(make_anchored_key("c", "value")),
             ),
             // Then we can prove a = d (using the chain a = b = c = d)
-            FrontendWildcardStatement::Equal(
+            WildcardTargetStatement::Equal(
                 WildcardAnchoredKey(
                     WildcardId::Concrete(make_signed_origin("a")),
                     "value".to_string(),
@@ -545,7 +545,7 @@ mod tests {
         };
 
         let targets = vec![
-            FrontendWildcardStatement::NotContains(
+            WildcardTargetStatement::NotContains(
                 WildcardAnchoredKey(
                     WildcardId::Concrete(Origin {
                         pod_class: PodClass::Signed,
@@ -561,7 +561,7 @@ mod tests {
                     key: "idNumber".to_string(),
                 }),
             ),
-            FrontendWildcardStatement::Lt(
+            WildcardTargetStatement::Lt(
                 WildcardAnchoredKey(
                     WildcardId::Concrete(Origin {
                         pod_class: PodClass::Signed,
@@ -571,7 +571,7 @@ mod tests {
                 ),
                 WildcardStatementArg::Key(ak_now_minus_18y.clone()),
             ),
-            FrontendWildcardStatement::Equal(
+            WildcardTargetStatement::Equal(
                 WildcardAnchoredKey(
                     WildcardId::Concrete(Origin {
                         pod_class: PodClass::Signed,
@@ -587,7 +587,7 @@ mod tests {
                     key: "socialSecurityNumber".to_string(),
                 }),
             ),
-            FrontendWildcardStatement::Equal(
+            WildcardTargetStatement::Equal(
                 WildcardAnchoredKey(
                     WildcardId::Concrete(Origin {
                         pod_class: PodClass::Signed,
@@ -693,7 +693,7 @@ mod tests {
         ));
 
         // Test SumOf
-        let target = FrontendWildcardStatement::SumOf(
+        let target = WildcardTargetStatement::SumOf(
             WildcardAnchoredKey(WildcardId::Named("sum".to_string()), "value".to_string()),
             WildcardStatementArg::Key(make_anchored_key("X", "value")),
             WildcardStatementArg::Key(make_anchored_key("Y", "value")),
@@ -740,7 +740,7 @@ mod tests {
         ));
 
         // Test ProductOf
-        let target = FrontendWildcardStatement::ProductOf(
+        let target = WildcardTargetStatement::ProductOf(
             WildcardAnchoredKey(WildcardId::Named("prod".to_string()), "value".to_string()),
             WildcardStatementArg::Key(make_anchored_key("X", "value")),
             WildcardStatementArg::Key(make_anchored_key("Y", "value")),
@@ -787,7 +787,7 @@ mod tests {
         ));
 
         // Test MaxOf
-        let target = FrontendWildcardStatement::MaxOf(
+        let target = WildcardTargetStatement::MaxOf(
             WildcardAnchoredKey(WildcardId::Named("max".to_string()), "value".to_string()),
             WildcardStatementArg::Key(make_anchored_key("X", "value")),
             WildcardStatementArg::Key(make_anchored_key("Y", "value")),
@@ -807,5 +807,57 @@ mod tests {
             NativeOperation::MaxOf as u8,
             "Should use MaxOf operation"
         );
+    }
+
+    #[test]
+    fn test_recursive_proof() {
+        let mut engine = DeductionEngine::new();
+
+        // Build standard ZuKYC Main Pod
+        let params = Params::default();
+        let (gov_id, pay_stub, sanction_list) = zu_kyc_sign_pod_builders(&params);
+
+        let mut signer = MockSigner {
+            pk: "ZooGov".into(),
+        };
+        let gov_id = gov_id.sign(&mut signer).unwrap();
+
+        let mut signer = MockSigner {
+            pk: "ZooDeel".into(),
+        };
+        let pay_stub = pay_stub.sign(&mut signer).unwrap();
+
+        let mut signer = MockSigner {
+            pk: "ZooOFAC".into(),
+        };
+        let sanction_list = sanction_list.sign(&mut signer).unwrap();
+
+        let kyc_builder = zu_kyc_pod_builder(&params, &gov_id, &pay_stub, &sanction_list).unwrap();
+
+        // prove kyc with MockProver and print it
+        let mut prover = MockProver {};
+        let kyc = kyc_builder.prove(&mut prover, &params).unwrap();
+
+        engine.add_main_pod(kyc);
+
+        engine.set_target(WildcardTargetStatement::Equal(
+            WildcardAnchoredKey(
+                WildcardId::Concrete(Origin {
+                    pod_class: PodClass::Signed,
+                    pod_id: gov_id.pod.id(),
+                }),
+                "socialSecurityNumber".to_string(),
+            ),
+            WildcardStatementArg::Key(AnchoredKey {
+                origin: Origin {
+                    pod_class: PodClass::Signed,
+                    pod_id: pay_stub.pod.id(),
+                },
+                key: "socialSecurityNumber".to_string(),
+            }),
+        ));
+
+        let proofs = engine.prove();
+        assert!(!proofs.is_empty(), "Should be able to prove");
     }
 }
