@@ -8,7 +8,6 @@ use crate::backends::plonky2::mock_main::MockMainPod;
 use crate::backends::plonky2::mock_signed::MockSignedPod;
 use crate::frontend::containers::Dictionary;
 use crate::frontend::Statement;
-use crate::frontend::StatementSerdeHelper;
 use crate::middleware::{PodId, F};
 use crate::middleware::{HASH_SIZE, VALUE_SIZE};
 use plonky2::field::types::Field;
@@ -60,7 +59,6 @@ impl From<SignedPod> for SignedPodHelper {
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct MainPodHelper {
-    #[schemars(with = "Vec<StatementSerdeHelper>")]
     public_statements: Vec<Statement>,
     proof: String,
     pod_class: String,
