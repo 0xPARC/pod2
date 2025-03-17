@@ -17,9 +17,11 @@ use crate::middleware::{OperationType, Predicate, KEY_SIGNER, KEY_TYPE};
 
 mod custom;
 mod operation;
+mod predicate;
 mod statement;
 pub use custom::*;
 pub use operation::*;
+pub use predicate::*;
 pub use statement::*;
 
 /// This type is just for presentation purposes.

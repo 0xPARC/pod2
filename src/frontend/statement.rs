@@ -1,8 +1,9 @@
 use anyhow::{anyhow, Result};
 use std::fmt;
 
-use super::{AnchoredKey, SignedPod, Value};
-use crate::middleware::{self, NativePredicate, Predicate};
+use super::{AnchoredKey, NativePredicate, Predicate, SignedPod, Value};
+//use crate::middleware::{self, NativePredicate, Predicate};
+use crate::middleware;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StatementArg {
