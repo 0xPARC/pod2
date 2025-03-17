@@ -938,8 +938,10 @@ pub mod build_utils {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::backends::plonky2::basetypes;
     use crate::backends::plonky2::mock_main::MockProver;
     use crate::backends::plonky2::mock_signed::MockSigner;
+    use crate::backends::plonky2::primitives::merkletree::MerkleTree;
     use crate::examples::{
         eth_dos_pod_builder, eth_friend_signed_pod_builder, great_boy_pod_full_flow,
         tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_sign_pod_builders,
@@ -1151,5 +1153,48 @@ pub mod tests {
 
         println!("{}", builder);
         println!("{}", false_pod);
+    }
+
+    #[test]
+    fn test_dictionaries() {
+        let params = Params::default();
+        let mut builder = SignedPodBuilder::new(&params);
+
+        type BeValue = basetypes::Value;
+        let mut my_dict_kvs: HashMap<BeValue, BeValue> = HashMap::new();
+        my_dict_kvs.insert(BeValue::from(&"a".into()), BeValue::from(&1.into()));
+        my_dict_kvs.insert(BeValue::from(&"b".into()), BeValue::from(&2.into()));
+        my_dict_kvs.insert(BeValue::from(&"c".into()), BeValue::from(&3.into()));
+        let my_dict_as_mt = MerkleTree::new(5, &my_dict_kvs).unwrap();
+        let dict = Value::Dictionary(Dictionary{mt: my_dict_as_mt});
+        builder.insert("dict", dict);
+
+        let mut signer = MockSigner {
+            pk: "signer".into(),
+        };
+        let pod = builder.sign(&mut signer).unwrap();
+
+        let mut builder = MainPodBuilder::new(&params);
+        builder.add_signed_pod(&pod);
+        let st0 = Statement::from((&pod, "dict"));
+        let st1 = builder.op(true, op!(new_entry, ("key", "a"))).unwrap();
+        let st2 = builder.literal(false, &Value::Int(1)).unwrap();
+
+        builder.pub_op(
+            Operation(
+                // OperationType
+                OperationType::Native(NativeOperation::ContainsFromEntries),
+                // Vec<OperationArg>
+                vec![
+                    OperationArg::Statement(st0), 
+                    OperationArg::Statement(st1), 
+                    OperationArg::Statement(st2), 
+                ]
+            )
+        ).unwrap();
+        let mut main_prover = MockProver {};
+        let main_pod = builder.prove(&mut main_prover, &params).unwrap();
+
+        println!("{}", main_pod);
     }
 }
