@@ -395,6 +395,7 @@ ascent! {
     relation target_statement(WildcardStatement);  // The statement we're trying to prove
     relation can_prove(ProvableStatement, DeductionChain);  // Statements we can prove with their proof chains
     relation known_value(AnchoredKey, Value);  // Values we know for specific keys
+    relation known_int_value(AnchoredKey, Value);  // Values we know to be integers
     relation known_equal(AnchoredKey, AnchoredKey);  // Known equality relationships
     relation known_gt(AnchoredKey, AnchoredKey);  // Known greater-than relationships
     relation known_lt(AnchoredKey, AnchoredKey);  // Known less-than relationships
@@ -488,6 +489,10 @@ ascent! {
     known_value(ak, v) <--
         known_statement(stmt),
         if let ProvableStatement::ValueOf(ak, v) = stmt;
+
+    known_int_value(ak, v) <--
+        known_value(ak, v),
+        if let Value::Int(_) = v;
 
     // Extract equality relationships from known statements
     known_equal(ak1, ak2) <--
@@ -586,8 +591,8 @@ ascent! {
     connected_to_target2(x, y, chain) <--
         target_statement(stmt),
         if let WildcardStatement::Gt(wild_key, concrete_key) = stmt,
-        known_value(found_key, v1),
-        known_value(match_key, v2),
+        known_int_value(found_key, v1),
+        known_int_value(match_key, v2),
         if wild_key.matches(&found_key) && match_key == concrete_key,
         if let Value::Int(i1) = v1,
         if let Value::Int(i2) = v2,
@@ -619,8 +624,8 @@ ascent! {
     connected_to_target2(x, y, chain) <--
         target_statement(stmt),
         if let WildcardStatement::Lt(wild_key, concrete_key) = stmt,
-        known_value(found_key, v1),
-        known_value(match_key, v2),
+        known_int_value(found_key, v1),
+        known_int_value(match_key, v2),
         if wild_key.matches(&found_key) && match_key == concrete_key,
         if let Value::Int(i1) = v1,
         if let Value::Int(i2) = v2,
@@ -756,9 +761,9 @@ ascent! {
     connected_to_target3(result, op1, op2, chain) <--
         target_statement(stmt),
         if let WildcardStatement::SumOf(result_key, operand1_key, operand2_key) = stmt,
-        known_value(found_result, v1),
-        known_value(found_op1, v2),
-        known_value(found_op2, v3),
+        known_int_value(found_result, v1),
+        known_int_value(found_op1, v2),
+        known_int_value(found_op2, v3),
         if result_key.matches(&found_result),
         if operand1_key == found_op1 && operand2_key == found_op2,
         if let (Value::Int(result_val), Value::Int(op1_val), Value::Int(op2_val)) = (v1, v2, v3),
@@ -780,9 +785,9 @@ ascent! {
     connected_to_target3(result, op1, op2, chain) <--
         target_statement(stmt),
         if let WildcardStatement::ProductOf(result_key, operand1_key, operand2_key) = stmt,
-        known_value(found_result, v1),
-        known_value(found_op1, v2),
-        known_value(found_op2, v3),
+        known_int_value(found_result, v1),
+        known_int_value(found_op1, v2),
+        known_int_value(found_op2, v3),
         if result_key.matches(&found_result),
         if operand1_key == found_op1 && operand2_key == found_op2,
         if let (Value::Int(result_val), Value::Int(op1_val), Value::Int(op2_val)) = (v1, v2, v3),
@@ -804,9 +809,9 @@ ascent! {
     connected_to_target3(result, op1, op2, chain) <--
         target_statement(stmt),
         if let WildcardStatement::MaxOf(result_key, operand1_key, operand2_key) = stmt,
-        known_value(found_result, v1),
-        known_value(found_op1, v2),
-        known_value(found_op2, v3),
+        known_int_value(found_result, v1),
+        known_int_value(found_op1, v2),
+        known_int_value(found_op2, v3),
         if result_key.matches(&found_result),
         if operand1_key == found_op1 && operand2_key == found_op2,
         if let (Value::Int(result_val), Value::Int(op1_val), Value::Int(op2_val)) = (v1, v2, v3),
