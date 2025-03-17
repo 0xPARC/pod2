@@ -34,7 +34,6 @@ pub struct MerkleProofCircuit<const MAX_DEPTH: usize> {
     value: Vec<Target>,
     existence: BoolTarget,
     siblings: Vec<HashOutTarget>,
-    siblings_selectors: Vec<BoolTarget>,
 }
 
 impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
@@ -48,19 +47,14 @@ impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
         let existence = builder.add_virtual_bool_target_safe();
         // siblings are padded
         let siblings = builder.add_virtual_hashes(MAX_DEPTH);
-        let siblings_selectors = (0..MAX_DEPTH)
-            .map(|_| builder.add_virtual_bool_target_safe())
-            .collect();
 
-        let h =
-            Self::compute_root_from_leaf(builder, &key, &value, &siblings, &siblings_selectors)?;
+        let h = Self::compute_root_from_leaf(builder, &key, &value, &siblings)?;
         builder.connect_hashes(h, root);
 
         Ok(Self {
             existence,
             root,
             siblings,
-            siblings_selectors,
             key,
             value,
         })
@@ -80,24 +74,13 @@ impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
         pw.set_target_arr(&self.value, &value.0.to_vec())?;
         pw.set_bool_target(self.existence, proof.existence)?;
 
-        // pad siblings
+        // pad siblings with zeros to length MAX_DEPTH
         let mut siblings = proof.siblings.clone();
         siblings.resize(MAX_DEPTH, NULL);
         assert_eq!(self.siblings.len(), siblings.len());
 
         for (i, sibling) in siblings.iter().enumerate() {
             pw.set_hash_target(self.siblings[i], HashOut::from_vec(sibling.0.to_vec()));
-        }
-        // The given `siblings` can have length <= MAX_DEPTH, the
-        // `siblings_selectors` are used to indicate when the `siblings` exist
-        // or if it is padded.
-        // `siblings_selectors` are set to `1` when the given siblings exist,
-        // and to `0` when the given siblings don't exist.
-        for i in 0..proof.siblings.len() {
-            pw.set_bool_target(self.siblings_selectors[i], true)?;
-        }
-        for i in proof.siblings.len()..MAX_DEPTH {
-            pw.set_bool_target(self.siblings_selectors[i], false)?;
         }
 
         Ok(())
@@ -108,10 +91,30 @@ impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
         key: &Vec<Target>,
         value: &Vec<Target>,
         siblings: &Vec<HashOutTarget>,
-        siblings_selectors: &Vec<BoolTarget>,
     ) -> Result<HashOutTarget> {
-        assert!(siblings.len() / HASH_SIZE < MAX_DEPTH);
-        assert_eq!(siblings_selectors.len(), MAX_DEPTH);
+        assert!(siblings.len() <= MAX_DEPTH);
+        // Convenience constants
+        let zero = builder.zero();
+        let one = builder.one();
+
+        // Generate/constrain sibling selectors
+        let sibling_selectors = siblings
+            .iter()
+            .rev()
+            .scan(zero, |cur_selector, sibling| {
+                let sibling_is_empty = sibling.elements.iter().fold(builder._true(), |acc, x| {
+                    let x_is_zero = builder.is_equal(*x, zero);
+                    builder.and(acc, x_is_zero)
+                });
+                // If there is a sibling, the selector is true, else retain the
+                // current selector
+                *cur_selector = builder.select(sibling_is_empty, *cur_selector, one);
+                Some(BoolTarget::new_unsafe(*cur_selector))
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>();
 
         // get key's path
         let path = Self::keypath_target(builder, key);
@@ -119,7 +122,10 @@ impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
         let mut h = Self::kv_hash_target(builder, key, value);
 
         let one: Target = builder.one(); // constant in-circuit
-        for (i, sibling) in siblings.iter().enumerate().rev() {
+        for (i, (sibling, selector)) in std::iter::zip(siblings, &sibling_selectors)
+            .enumerate()
+            .rev()
+        {
             // to compute the hash, we want to do the following 3 steps:
             //     Let s := path[i], then
             //     input_1 = sibling * s + h * (1-s)
@@ -156,8 +162,8 @@ impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
 
             let new_h = builder.hash_n_to_hash_no_pad::<PoseidonHash>([input_1, input_2].concat());
 
-            // Let s := siblings_selectors[i], then h = new_h * s + h * (1-s)
-            let s: Target = siblings_selectors[i].target;
+            // Let s := sibling_selectors[i], then h = new_h * s + h * (1-s)
+            let s: Target = selector.target;
             let s_inv: Target = builder.sub(one, s);
             let new_h_s: Vec<Target> = new_h.elements.iter().map(|e| builder.mul(*e, s)).collect();
             let h_s: Vec<Target> = h.elements.iter().map(|e| builder.mul(*e, s_inv)).collect();
