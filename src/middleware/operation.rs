@@ -81,7 +81,7 @@ pub enum Operation {
     TransitiveEqualFromStatements(Statement, Statement),
     GtToNotEqual(Statement),
     LtToNotEqual(Statement),
-    ContainsFromEntries(Statement, Statement),
+    ContainsFromEntries(Statement, Statement, Statement),
     NotContainsFromEntries(Statement, Statement),
     SumOf(Statement, Statement, Statement),
     ProductOf(Statement, Statement, Statement),
@@ -104,7 +104,7 @@ impl Operation {
             Self::TransitiveEqualFromStatements(_, _) => OT::Native(TransitiveEqualFromStatements),
             Self::GtToNotEqual(_) => OT::Native(GtToNotEqual),
             Self::LtToNotEqual(_) => OT::Native(LtToNotEqual),
-            Self::ContainsFromEntries(_, _) => OT::Native(ContainsFromEntries),
+            Self::ContainsFromEntries(_, _, _) => OT::Native(ContainsFromEntries),
             Self::NotContainsFromEntries(_, _) => OT::Native(NotContainsFromEntries),
             Self::SumOf(_, _, _) => OT::Native(SumOf),
             Self::ProductOf(_, _, _) => OT::Native(ProductOf),
@@ -125,7 +125,7 @@ impl Operation {
             Self::TransitiveEqualFromStatements(s1, s2) => vec![s1, s2],
             Self::GtToNotEqual(s) => vec![s],
             Self::LtToNotEqual(s) => vec![s],
-            Self::ContainsFromEntries(s1, s2) => vec![s1, s2],
+            Self::ContainsFromEntries(s1, s2, s3) => vec![s1, s2, s3],
             Self::NotContainsFromEntries(s1, s2) => vec![s1, s2],
             Self::SumOf(s1, s2, s3) => vec![s1, s2, s3],
             Self::ProductOf(s1, s2, s3) => vec![s1, s2, s3],
@@ -154,8 +154,8 @@ impl Operation {
                 }
                 (NO::GtFromEntries, (Some(s1), Some(s2), None), 2) => Self::GtFromEntries(s1, s2),
                 (NO::LtFromEntries, (Some(s1), Some(s2), None), 2) => Self::LtFromEntries(s1, s2),
-                (NO::ContainsFromEntries, (Some(s1), Some(s2), None), 2) => {
-                    Self::ContainsFromEntries(s1, s2)
+                (NO::ContainsFromEntries, (Some(s1), Some(s2), Some(s3)), 3) => {
+                    Self::ContainsFromEntries(s1, s2, s3)
                 }
                 (NO::NotContainsFromEntries, (Some(s1), Some(s2), None), 2) => {
                     Self::NotContainsFromEntries(s1, s2)
@@ -245,12 +245,12 @@ impl Operation {
             Self::LtToNotEqual(_) => {
                 return Err(anyhow!("Invalid operation"));
             }
-            Self::ContainsFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) =>
+            Self::ContainsFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3)) =>
             /* TODO */
             {
                 Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
             }
-            Self::ContainsFromEntries(_, _) => {
+            Self::ContainsFromEntries(_, _, _) => {
                 return Err(anyhow!("Invalid operation"));
             }
             Self::NotContainsFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) =>
@@ -327,7 +327,7 @@ impl Operation {
             (Self::LtFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)), Lt(ak3, ak4)) => {
                 Ok(v1 < v2 && ak3 == ak1 && ak4 == ak2)
             }
-            (Self::ContainsFromEntries(_, _), Contains(_, _)) =>
+            (Self::ContainsFromEntries(_, _, _), Contains(_, _, _)) =>
             /* TODO */
             {
                 Ok(true)
