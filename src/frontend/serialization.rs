@@ -1,12 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use base64::prelude::*;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 
 use crate::backends::plonky2::mock_main::MockMainPod;
 use crate::backends::plonky2::mock_signed::MockSignedPod;
-use crate::frontend::containers::{Array, Dictionary, Set};
+use crate::frontend::containers::Dictionary;
 use crate::frontend::Statement;
 use crate::middleware::{PodId, F};
 use crate::middleware::{HASH_SIZE, VALUE_SIZE};
@@ -179,6 +179,19 @@ where
     D: serde::Deserializer<'de>,
 {
     deserialize_field_tuple::<D, VALUE_SIZE>(deserializer)
+}
+
+// HashMap is not ordered, but we want our dictionaries to be ordered
+// by key for serialization, so we turn HashMaps into BTreeMaps.
+pub fn ordered_map<S, K: Ord + Serialize, V: Serialize>(
+    value: &HashMap<K, V>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let ordered: BTreeMap<_, _> = value.iter().collect();
+    ordered.serialize(serializer)
 }
 
 #[cfg(test)]

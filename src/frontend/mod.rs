@@ -201,6 +201,7 @@ pub struct SignedPod {
     /// Key-value pairs as represented in the frontend. These should
     /// correspond to the entries of `pod.kvs()` after hashing and
     /// replacing each key with its corresponding anchored key.
+    #[serde(serialize_with = "ordered_map")]
     pub kvs: HashMap<String, Value>,
 }
 
