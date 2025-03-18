@@ -4,6 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::Value;
+use crate::frontend::serialization::ordered_map;
 use crate::middleware::{
     containers::{
         Array as MiddlewareArray, Dictionary as MiddlewareDictionary, Set as MiddlewareSet,
@@ -43,7 +44,10 @@ impl<'de> Deserialize<'de> for Set {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(transparent)]
-pub struct Dictionary(HashMap<String, Value>, #[serde(skip)] MiddlewareDictionary);
+pub struct Dictionary(
+    #[serde(serialize_with = "ordered_map")] HashMap<String, Value>,
+    #[serde(skip)] MiddlewareDictionary,
+);
 
 impl Dictionary {
     pub fn new(values: HashMap<String, Value>) -> Self {
