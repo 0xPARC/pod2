@@ -30,9 +30,9 @@ pub type Proof = Plonky2Proof<F, PoseidonGoldilocksConfig, D>;
 pub const HASH_SIZE: usize = 4;
 pub const VALUE_SIZE: usize = 4;
 
-pub const EMPTY: Value = Value([F::ZERO, F::ZERO, F::ZERO, F::ZERO]);
+pub const EMPTY_VALUE: Value = Value([F::ZERO, F::ZERO, F::ZERO, F::ZERO]);
 pub const SELF_ID_HASH: Hash = Hash([F::ONE, F::ZERO, F::ZERO, F::ZERO]);
-pub const NULL: Hash = Hash([F::ZERO, F::ZERO, F::ZERO, F::ZERO]);
+pub const EMPTY_HASH: Hash = Hash([F::ZERO, F::ZERO, F::ZERO, F::ZERO]);
 
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]
 pub struct Value(pub [F; VALUE_SIZE]);

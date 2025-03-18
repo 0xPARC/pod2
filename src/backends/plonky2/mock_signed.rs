@@ -110,7 +110,7 @@ pub mod tests {
     use super::*;
     use crate::constants::MAX_DEPTH;
     use crate::frontend;
-    use crate::middleware::{self, F, NULL};
+    use crate::middleware::{self, EMPTY_HASH, F};
 
     #[test]
     fn test_mock_signed_0() -> Result<()> {
@@ -137,7 +137,7 @@ pub mod tests {
         assert!(!bad_pod.verify());
 
         let mut bad_pod = pod.clone();
-        let bad_kv = (hash_str(KEY_SIGNER).into(), Value(PodId(NULL).0 .0));
+        let bad_kv = (hash_str(KEY_SIGNER).into(), Value(PodId(EMPTY_HASH).0 .0));
         let bad_kvs_mt = &bad_pod
             .kvs()
             .into_iter()
