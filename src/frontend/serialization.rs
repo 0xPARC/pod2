@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::backends::plonky2::mock_main::MockMainPod;
 use crate::backends::plonky2::mock_signed::MockSignedPod;
-use crate::frontend::containers::Dictionary;
+use crate::frontend::containers::{Array, Dictionary, Set};
 use crate::frontend::Statement;
 use crate::middleware::{PodId, F};
 use crate::middleware::{HASH_SIZE, VALUE_SIZE};
@@ -197,21 +197,46 @@ mod tests {
 
     #[test]
     fn test_value_serialization() {
+        // Pairs of values and their expected serialized representations
         let values = vec![
-            Value::String("hello".to_string()),
-            Value::Int(42),
-            Value::Bool(true),
+            (Value::String("hello".to_string()), "\"hello\""),
+            (Value::Int(42), "{\"Int\":\"42\"}"),
+            (Value::Bool(true), "true"),
+            (
+                Value::Array(Array::new(vec![
+                    Value::String("foo".to_string()),
+                    Value::Bool(false),
+                ])),
+                "[\"foo\",false]",
+            ),
+            (
+                Value::Dictionary(Dictionary::new(HashMap::from([
+                    ("foo".to_string(), Value::Int(123)),
+                    ("bar".to_string(), Value::String("baz".to_string())),
+                ]))),
+                "{\"Dictionary\":{\"bar\":\"baz\",\"foo\":{\"Int\":\"123\"}}}",
+            ),
+            (
+                Value::Set(Set::new(vec![
+                    Value::String("foo".to_string()),
+                    Value::String("bar".to_string()),
+                ])),
+                "{\"Set\":[\"foo\",\"bar\"]}",
+            ),
         ];
 
-        for value in values {
+        for (value, expected) in values {
             let serialized = serde_json::to_string(&value).unwrap();
+            assert_eq!(serialized, expected);
             let deserialized: Value = serde_json::from_str(&serialized).unwrap();
             assert_eq!(value, deserialized);
+            let expected_deserialized: Value = serde_json::from_str(&expected).unwrap();
+            assert_eq!(value, expected_deserialized);
         }
     }
 
     #[test]
-    fn test_serialized_signed_pod() {
+    fn test_signed_pod_serialization() {
         let mut signer = MockSigner { pk: "test".into() };
         let mut builder = SignedPodBuilder::new(&Params::default());
         builder.insert("name", "test");
@@ -285,16 +310,5 @@ mod tests {
         assert_eq!(kyc_pod.public_statements, deserialized.public_statements);
         assert_eq!(kyc_pod.pod.id(), deserialized.pod.id());
         assert_eq!(kyc_pod.pod.verify(), deserialized.pod.verify());
-    }
-
-    #[test]
-    fn test_gen_schema() {
-        let schema = schemars::schema_for!(SignedPodHelper);
-        let schema = serde_json::to_string_pretty(&schema).unwrap();
-        println!("schema: {}", schema);
-
-        let schema = schemars::schema_for!(MainPodHelper);
-        let schema = serde_json::to_string_pretty(&schema).unwrap();
-        println!("schema: {}", schema);
     }
 }
