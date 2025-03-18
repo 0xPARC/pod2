@@ -30,14 +30,14 @@ use crate::backends::plonky2::primitives::merkletree::MerkleProof;
 /// If only proofs of existence are needed, use `MerkleProofExistenceCircuit`,
 /// which requires less amount of constraints.
 pub struct MerkleProofCircuit<const MAX_DEPTH: usize> {
-    root: HashOutTarget,
-    key: Vec<Target>,
-    value: Vec<Target>,
-    existence: BoolTarget,
-    siblings: Vec<HashOutTarget>,
-    case_ii_selector: BoolTarget, // for case ii)
-    other_key: Vec<Target>,
-    other_value: Vec<Target>,
+    pub root: HashOutTarget,
+    pub key: Vec<Target>,
+    pub value: Vec<Target>,
+    pub existence: BoolTarget,
+    pub siblings: Vec<HashOutTarget>,
+    pub case_ii_selector: BoolTarget, // for case ii)
+    pub other_key: Vec<Target>,
+    pub other_value: Vec<Target>,
 }
 
 impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
