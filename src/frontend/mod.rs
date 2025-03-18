@@ -2,7 +2,9 @@
 //! with Pods.
 
 use anyhow::{anyhow, Error, Result};
+use env_logger;
 use itertools::Itertools;
+use log::error;
 use std::collections::HashMap;
 use std::convert::From;
 use std::{fmt, hash as h};
@@ -1151,5 +1153,88 @@ pub mod tests {
 
         println!("{}", builder);
         println!("{}", false_pod);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_incorrect_pod() {
+        // try to insert the same key multiple times
+        // right now this is not caught when you build the pod,
+        // but it is caught on verify
+        env_logger::init();
+
+        let params = Params::default();
+        let mut builder = MainPodBuilder::new(&params);
+        builder.insert((
+            Statement(
+                Predicate::Native(NativePredicate::ValueOf),
+                vec![
+                    StatementArg::Key(AnchoredKey(Origin(PodClass::Main, SELF), "a".into())),
+                    StatementArg::Literal(Value::Int(3)),
+                ],
+            ),
+            Operation(OperationType::Native(NativeOperation::NewEntry), vec![]),
+        ));
+        builder.insert((
+            Statement(
+                Predicate::Native(NativePredicate::ValueOf),
+                vec![
+                    StatementArg::Key(AnchoredKey(Origin(PodClass::Main, SELF), "a".into())),
+                    StatementArg::Literal(Value::Int(28)),
+                ],
+            ),
+            Operation(OperationType::Native(NativeOperation::NewEntry), vec![]),
+        ));
+
+        let mut prover = MockProver {};
+        let pod = builder.prove(&mut prover, &params).unwrap();
+        pod.pod.verify();
+
+        // try to insert a statement that doesn't follow from the operation
+        // right now the mock prover catches this when it calls compile()
+        let params = Params::default();
+        let mut builder = MainPodBuilder::new(&params);
+        let self_a = AnchoredKey(Origin(PodClass::Main, SELF), "a".into());
+        let self_b = AnchoredKey(Origin(PodClass::Main, SELF), "b".into());
+        let value_of_a = Statement(
+            Predicate::Native(NativePredicate::ValueOf),
+            vec![
+                StatementArg::Key(AnchoredKey(Origin(PodClass::Main, SELF), "a".into())),
+                StatementArg::Literal(Value::Int(3)),
+            ],
+        );
+        let value_of_b = Statement(
+            Predicate::Native(NativePredicate::ValueOf),
+            vec![
+                StatementArg::Key(AnchoredKey(Origin(PodClass::Main, SELF), "b".into())),
+                StatementArg::Literal(Value::Int(27)),
+            ],
+        );
+
+        builder.insert((
+            value_of_a.clone(),
+            Operation(OperationType::Native(NativeOperation::NewEntry), vec![]),
+        ));
+        builder.insert((
+            value_of_b.clone(),
+            Operation(OperationType::Native(NativeOperation::NewEntry), vec![]),
+        ));
+        builder.insert((
+            Statement(
+                Predicate::Native(NativePredicate::Equal),
+                vec![StatementArg::Key(self_a), StatementArg::Key(self_b)],
+            ),
+            Operation(
+                OperationType::Native(NativeOperation::EqualFromEntries),
+                vec![
+                    OperationArg::Statement(value_of_a),
+                    OperationArg::Statement(value_of_b),
+                ],
+            ),
+        ));
+
+        let mut prover = MockProver {};
+        let pod = builder.prove(&mut prover, &params).unwrap();
+        pod.pod.verify();
     }
 }

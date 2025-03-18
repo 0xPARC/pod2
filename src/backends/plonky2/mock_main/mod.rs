@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use itertools::Itertools;
+use log::error;
 use plonky2::hash::poseidon::PoseidonHash;
 use plonky2::plonk::config::Hasher;
 use std::any::Any;
@@ -430,21 +431,21 @@ impl Pod for MockMainPod {
                 self.operations[i]
                     .deref(&self.statements[..input_statement_offset + i])
                     .unwrap()
-                    .check_and_print(&self.params, &s.clone().try_into().unwrap())
+                    .check_and_log(&self.params, &s.clone().try_into().unwrap())
             })
             .collect::<Result<Vec<_>>>()
             .unwrap();
         if !ids_match {
-            println!("Verification failed: POD ID is incorrect.");
+            error!("Verification failed: POD ID is incorrect.");
         }
         if !has_type_statement {
-            println!("Verification failed: POD does not have type statement.");
+            error!("Verification failed: POD does not have type statement.");
         }
         if !value_ofs_unique {
-            println!("Verification failed: Repeated ValueOf");
+            error!("Verification failed: Repeated ValueOf");
         }
         if !statement_check.iter().all(|b| *b) {
-            println!("Verification failed: Statement did not check.")
+            error!("Verification failed: Statement did not check.")
         }
         ids_match && has_type_statement && value_ofs_unique & statement_check.into_iter().all(|b| b)
     }
