@@ -222,21 +222,24 @@ impl MockMainPod {
 
     fn find_op_arg(
         statements: &[Statement],
-        op_arg: &middleware::Statement,
+        op_arg: &middleware::OperationArg,
     ) -> Result<OperationArg> {
         match op_arg {
-            middleware::Statement::None => Ok(OperationArg::None),
-            _ => statements
-                .iter()
-                .enumerate()
-                .find_map(|(i, s)| {
-                    (&middleware::Statement::try_from(s.clone()).ok()? == op_arg).then_some(i)
-                })
-                .map(OperationArg::Index)
-                .ok_or(anyhow!(
-                    "Statement corresponding to op arg {} not found",
-                    op_arg
-                )),
+            middleware::OperationArg::Statement(s_arg) => match s_arg {
+                middleware::Statement::None => Ok(OperationArg::None),
+                _ => statements
+                    .iter()
+                    .enumerate()
+                    .find_map(|(i, s)| {
+                        (&middleware::Statement::try_from(s.clone()).ok()? == s_arg).then_some(i)
+                    })
+                    .map(OperationArg::Index)
+                    .ok_or(anyhow!(
+                        "Statement corresponding to op arg {} not found",
+                        op_arg
+                    )),
+            },
+            _ => todo!(),
         }
     }
 
@@ -285,7 +288,10 @@ impl MockMainPod {
                 Operation(
                     OperationType::Native(NativeOperation::CopyStatement),
                     // TODO
-                    vec![Self::find_op_arg(statements, &mid_arg.try_into().unwrap())?],
+                    vec![Self::find_op_arg(
+                        statements,
+                        &middleware::OperationArg::Statement(mid_arg.try_into().unwrap()),
+                    )?],
                 )
             };
             fill_pad(&mut op.1, OperationArg::None, params.max_operation_args);

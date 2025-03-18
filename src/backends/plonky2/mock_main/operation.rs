@@ -2,12 +2,17 @@ use anyhow::Result;
 use std::fmt;
 
 use super::Statement;
-use crate::middleware::{self, OperationType};
+use crate::{
+    backends::plonky2::primitives::merkletree::MerkleProof,
+    middleware::{self, OperationType},
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OperationArg {
     None,
     Index(usize),
+    // TODO: Replace with `MerkleProofIndex`.
+    MerkleProof(MerkleProof),
 }
 
 impl OperationArg {
@@ -26,9 +31,17 @@ impl Operation {
             .iter()
             .flat_map(|arg| match arg {
                 OperationArg::None => None,
-                OperationArg::Index(i) => Some(statements[*i].clone().try_into()),
+                OperationArg::Index(i) => Some(
+                    statements[*i]
+                        .clone()
+                        .try_into()
+                        .map(|s| crate::middleware::OperationArg::Statement(s)),
+                ),
+                OperationArg::MerkleProof(pf) => {
+                    Some(Ok(crate::middleware::OperationArg::MerkleProof(pf.clone())))
+                }
             })
-            .collect::<Result<Vec<crate::middleware::Statement>>>()?;
+            .collect::<Result<Vec<_>>>()?;
         middleware::Operation::op(self.0.clone(), &deref_args)
     }
 }
@@ -44,6 +57,7 @@ impl fmt::Display for Operation {
                 match arg {
                     OperationArg::None => write!(f, "none")?,
                     OperationArg::Index(i) => write!(f, "{:02}", i)?,
+                    OperationArg::MerkleProof(pf) => write!(f, "{}", pf)?,
                 }
             }
         }

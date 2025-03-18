@@ -3,12 +3,31 @@ use std::fmt;
 use anyhow::{anyhow, Result};
 
 use super::{CustomPredicateRef, NativePredicate, Statement, StatementArg};
-use crate::middleware::{AnchoredKey, Params, Predicate, Value, SELF};
+use crate::{
+    backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree},
+    middleware::{AnchoredKey, Params, Predicate, Value, SELF},
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OperationType {
     Native(NativeOperation),
     Custom(CustomPredicateRef),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OperationArg {
+    Statement(Statement),
+    MerkleProof(MerkleProof),
+}
+
+impl fmt::Display for OperationArg {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Statement(s) => write!(f, "{}", s)?,
+            Self::MerkleProof(pf) => write!(f, "merkle_proof({})", pf)?,
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,8 +100,17 @@ pub enum Operation {
     TransitiveEqualFromStatements(Statement, Statement),
     GtToNotEqual(Statement),
     LtToNotEqual(Statement),
-    ContainsFromEntries(Statement, Statement, Statement),
-    NotContainsFromEntries(Statement, Statement),
+    ContainsFromEntries(
+        /* root  */ Statement,
+        /* key   */ Statement,
+        /* value */ Statement,
+        /* proof */ MerkleProof,
+    ),
+    NotContainsFromEntries(
+        /* root  */ Statement,
+        /* key   */ Statement,
+        /* proof */ MerkleProof,
+    ),
     SumOf(Statement, Statement, Statement),
     ProductOf(Statement, Statement, Statement),
     MaxOf(Statement, Statement, Statement),
@@ -104,8 +132,8 @@ impl Operation {
             Self::TransitiveEqualFromStatements(_, _) => OT::Native(TransitiveEqualFromStatements),
             Self::GtToNotEqual(_) => OT::Native(GtToNotEqual),
             Self::LtToNotEqual(_) => OT::Native(LtToNotEqual),
-            Self::ContainsFromEntries(_, _, _) => OT::Native(ContainsFromEntries),
-            Self::NotContainsFromEntries(_, _) => OT::Native(NotContainsFromEntries),
+            Self::ContainsFromEntries(_, _, _, _) => OT::Native(ContainsFromEntries),
+            Self::NotContainsFromEntries(_, _, _) => OT::Native(NotContainsFromEntries),
             Self::SumOf(_, _, _) => OT::Native(SumOf),
             Self::ProductOf(_, _, _) => OT::Native(ProductOf),
             Self::MaxOf(_, _, _) => OT::Native(MaxOf),
@@ -113,63 +141,86 @@ impl Operation {
         }
     }
 
-    pub fn args(&self) -> Vec<Statement> {
+    pub fn args(&self) -> Vec<OperationArg> {
+        use OperationArg::{MerkleProof as MP, Statement as S};
         match self.clone() {
             Self::None => vec![],
             Self::NewEntry => vec![],
-            Self::CopyStatement(s) => vec![s],
-            Self::EqualFromEntries(s1, s2) => vec![s1, s2],
-            Self::NotEqualFromEntries(s1, s2) => vec![s1, s2],
-            Self::GtFromEntries(s1, s2) => vec![s1, s2],
-            Self::LtFromEntries(s1, s2) => vec![s1, s2],
-            Self::TransitiveEqualFromStatements(s1, s2) => vec![s1, s2],
-            Self::GtToNotEqual(s) => vec![s],
-            Self::LtToNotEqual(s) => vec![s],
-            Self::ContainsFromEntries(s1, s2, s3) => vec![s1, s2, s3],
-            Self::NotContainsFromEntries(s1, s2) => vec![s1, s2],
-            Self::SumOf(s1, s2, s3) => vec![s1, s2, s3],
-            Self::ProductOf(s1, s2, s3) => vec![s1, s2, s3],
-            Self::MaxOf(s1, s2, s3) => vec![s1, s2, s3],
-            Self::Custom(_, args) => args,
+            Self::CopyStatement(s) => vec![S(s)],
+            Self::EqualFromEntries(s1, s2) => vec![S(s1), S(s2)],
+            Self::NotEqualFromEntries(s1, s2) => vec![S(s1), S(s2)],
+            Self::GtFromEntries(s1, s2) => vec![S(s1), S(s2)],
+            Self::LtFromEntries(s1, s2) => vec![S(s1), S(s2)],
+            Self::TransitiveEqualFromStatements(s1, s2) => vec![S(s1), S(s2)],
+            Self::GtToNotEqual(s) => vec![S(s)],
+            Self::LtToNotEqual(s) => vec![S(s)],
+            Self::ContainsFromEntries(s1, s2, s3, pf) => vec![S(s1), S(s2), S(s3), MP(pf)],
+            Self::NotContainsFromEntries(s1, s2, pf) => vec![S(s1), S(s2), MP(pf)],
+            Self::SumOf(s1, s2, s3) => vec![S(s1), S(s2), S(s3)],
+            Self::ProductOf(s1, s2, s3) => vec![S(s1), S(s2), S(s3)],
+            Self::MaxOf(s1, s2, s3) => vec![S(s1), S(s2), S(s3)],
+            Self::Custom(_, args) => args.into_iter().map(|s| S(s)).collect(),
         }
     }
     /// Forms operation from op-code and arguments.
-    pub fn op(op_code: OperationType, args: &[Statement]) -> Result<Self> {
+    pub fn op(op_code: OperationType, args: &[OperationArg]) -> Result<Self> {
+        use OperationArg::{MerkleProof as MP, Statement as S};
         type NO = NativeOperation;
         let arg_tup = (
             args.first().cloned(),
             args.get(1).cloned(),
             args.get(2).cloned(),
+            args.get(3).cloned(),
         );
         Ok(match op_code {
             OperationType::Native(o) => match (o, arg_tup, args.len()) {
-                (NO::None, (None, None, None), 0) => Self::None,
-                (NO::NewEntry, (None, None, None), 0) => Self::NewEntry,
-                (NO::CopyStatement, (Some(s), None, None), 1) => Self::CopyStatement(s),
-                (NO::EqualFromEntries, (Some(s1), Some(s2), None), 2) => {
+                (NO::None, (None, None, None, None), 0) => Self::None,
+                (NO::NewEntry, (None, None, None, None), 0) => Self::NewEntry,
+                (NO::CopyStatement, (Some(S(s)), None, None, None), 1) => Self::CopyStatement(s),
+                (NO::EqualFromEntries, (Some(S(s1)), Some(S(s2)), None, None), 2) => {
                     Self::EqualFromEntries(s1, s2)
                 }
-                (NO::NotEqualFromEntries, (Some(s1), Some(s2), None), 2) => {
+                (NO::NotEqualFromEntries, (Some(S(s1)), Some(S(s2)), None, None), 2) => {
                     Self::NotEqualFromEntries(s1, s2)
                 }
-                (NO::GtFromEntries, (Some(s1), Some(s2), None), 2) => Self::GtFromEntries(s1, s2),
-                (NO::LtFromEntries, (Some(s1), Some(s2), None), 2) => Self::LtFromEntries(s1, s2),
-                (NO::ContainsFromEntries, (Some(s1), Some(s2), Some(s3)), 3) => {
-                    Self::ContainsFromEntries(s1, s2, s3)
+                (NO::GtFromEntries, (Some(S(s1)), Some(S(s2)), None, None), 2) => {
+                    Self::GtFromEntries(s1, s2)
                 }
-                (NO::NotContainsFromEntries, (Some(s1), Some(s2), None), 2) => {
-                    Self::NotContainsFromEntries(s1, s2)
+                (NO::LtFromEntries, (Some(S(s1)), Some(S(s2)), None, None), 2) => {
+                    Self::LtFromEntries(s1, s2)
                 }
-                (NO::SumOf, (Some(s1), Some(s2), Some(s3)), 3) => Self::SumOf(s1, s2, s3),
-                (NO::ProductOf, (Some(s1), Some(s2), Some(s3)), 3) => Self::ProductOf(s1, s2, s3),
-                (NO::MaxOf, (Some(s1), Some(s2), Some(s3)), 3) => Self::MaxOf(s1, s2, s3),
+                (
+                    NO::ContainsFromEntries,
+                    (Some(S(s1)), Some(S(s2)), Some(S(s3)), Some(MP(pf))),
+                    4,
+                ) => Self::ContainsFromEntries(s1, s2, s3, pf),
+                (NO::NotContainsFromEntries, (Some(S(s1)), Some(S(s2)), Some(MP(pf)), None), 3) => {
+                    Self::NotContainsFromEntries(s1, s2, pf)
+                }
+                (NO::SumOf, (Some(S(s1)), Some(S(s2)), Some(S(s3)), None), 3) => {
+                    Self::SumOf(s1, s2, s3)
+                }
+                (NO::ProductOf, (Some(S(s1)), Some(S(s2)), Some(S(s3)), None), 3) => {
+                    Self::ProductOf(s1, s2, s3)
+                }
+                (NO::MaxOf, (Some(S(s1)), Some(S(s2)), Some(S(s3)), None), 3) => {
+                    Self::MaxOf(s1, s2, s3)
+                }
                 _ => Err(anyhow!(
                     "Ill-formed operation {:?} with arguments {:?}.",
                     op_code,
                     args
                 ))?,
             },
-            OperationType::Custom(cpr) => Self::Custom(cpr, args.to_vec()),
+            OperationType::Custom(cpr) => Self::Custom(
+                cpr,
+                args.iter()
+                    .map(|a| match a {
+                        S(s) => Ok(s.clone()),
+                        _ => Err(anyhow!("Invalid argument to custom operation: {:?}", a)),
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            ),
         })
     }
     /// Gives the output statement of the given operation, where determined
@@ -245,20 +296,25 @@ impl Operation {
             Self::LtToNotEqual(_) => {
                 return Err(anyhow!("Invalid operation"));
             }
-            Self::ContainsFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3)) =>
-            /* TODO */
+            Self::ContainsFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3), pf)
+                if MerkleTree::verify(pf.siblings.len(), (*v1).into(), &pf, v2, v3)? == () =>
             {
-                Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
+                Some(vec![
+                    StatementArg::Key(*ak1),
+                    StatementArg::Key(*ak2),
+                    StatementArg::Key(*ak3),
+                ])
             }
-            Self::ContainsFromEntries(_, _, _) => {
+            Self::ContainsFromEntries(_, _, _, _) => {
                 return Err(anyhow!("Invalid operation"));
             }
-            Self::NotContainsFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) =>
-            /* TODO */
+            Self::NotContainsFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2), pf)
+                if MerkleTree::verify_nonexistence(pf.siblings.len(), (*v1).into(), &pf, v2)?
+                    == () =>
             {
                 Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
             }
-            Self::NotContainsFromEntries(_, _) => {
+            Self::NotContainsFromEntries(_, _, _) => {
                 return Err(anyhow!("Invalid operation"));
             }
             Self::SumOf(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3)) => {
@@ -327,12 +383,12 @@ impl Operation {
             (Self::LtFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)), Lt(ak3, ak4)) => {
                 Ok(v1 < v2 && ak3 == ak1 && ak4 == ak2)
             }
-            (Self::ContainsFromEntries(_, _, _), Contains(_, _, _)) =>
+            (Self::ContainsFromEntries(_, _, _, _), Contains(_, _, _)) =>
             /* TODO */
             {
                 Ok(true)
             }
-            (Self::NotContainsFromEntries(_, _), NotContains(_, _)) =>
+            (Self::NotContainsFromEntries(_, _, _), NotContains(_, _)) =>
             /* TODO */
             {
                 Ok(true)
