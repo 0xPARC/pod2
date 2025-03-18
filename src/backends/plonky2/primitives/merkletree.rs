@@ -1,7 +1,7 @@
 //! Module that implements the MerkleTree specified at
 //! https://0xparc.github.io/pod2/merkletree.html .
 use anyhow::{anyhow, Result};
-use plonky2::field::goldilocks_field::GoldilocksField;
+use plonky2::field::types::Field;
 use std::collections::HashMap;
 use std::fmt;
 use std::iter::IntoIterator;
@@ -181,7 +181,7 @@ impl MerkleTree {
 /// mitigate fake proofs.
 pub fn kv_hash(key: &Value, value: Option<Value>) -> Hash {
     value
-        .map(|v| hash_fields(&[key.0.to_vec(), v.0.to_vec(), vec![GoldilocksField(1)]].concat()))
+        .map(|v| hash_fields(&[key.0.to_vec(), v.0.to_vec(), vec![F::ONE]].concat()))
         .unwrap_or(EMPTY_HASH)
 }
 
@@ -247,11 +247,12 @@ impl MerkleProof {
         let path = keypath(max_depth, *key)?;
         let mut h = kv_hash(key, value);
         for (i, sibling) in self.siblings.iter().enumerate().rev() {
-            let input: Vec<F> = if path[i] {
+            let mut input: Vec<F> = if path[i] {
                 [sibling.0, h.0].concat()
             } else {
                 [h.0, sibling.0].concat()
             };
+            input.push(F::TWO);
             h = hash_fields(&input);
         }
         Ok(h)
@@ -363,7 +364,7 @@ impl Node {
     }
 
     // adds the leaf at the tree from the current node (self), without computing any hash
-    fn add_leaf(&mut self, lvl: usize, max_depth: usize, leaf: Leaf) -> Result<()> {
+    pub(crate) fn add_leaf(&mut self, lvl: usize, max_depth: usize, leaf: Leaf) -> Result<()> {
         counter::count_tree_insert();
 
         if lvl >= max_depth {
@@ -480,7 +481,7 @@ impl Intermediate {
         }
         let l_hash = self.left.compute_hash();
         let r_hash = self.right.compute_hash();
-        let input: Vec<F> = [l_hash.0, r_hash.0].concat();
+        let input: Vec<F> = [l_hash.0.to_vec(), r_hash.0.to_vec(), vec![F::TWO]].concat();
         let h = hash_fields(&input);
         self.hash = Some(h);
         h

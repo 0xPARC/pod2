@@ -31,7 +31,6 @@ impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
     /// creates the targets and defines the logic of the circuit
     pub fn add_targets(builder: &mut CircuitBuilder<F, D>) -> Result<Self> {
         // create the targets
-        let root = builder.add_virtual_hash();
         let key = builder.add_virtual_targets(VALUE_SIZE);
         let value = builder.add_virtual_targets(VALUE_SIZE);
         // from proof struct:
@@ -101,11 +100,10 @@ impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
 
         // compute the root for the given siblings and the computed leaf_hash
         // (this is for the three cases (existence, non-existence case i, and
-        // non-existence case ii)
-        let computed_root = Self::compute_root_from_leaf(builder, &path, &leaf_hash, &siblings)?;
-        // ensure that the computed root matches the given root (which is a
-        // public input)
-        builder.connect_hashes(computed_root, root);
+        // non-existence case ii).
+        // This root will be assigned in the `set_targets` method, and it is a
+        // public input.
+        let root = Self::compute_root_from_leaf(builder, &path, &leaf_hash, &siblings)?;
 
         Ok(Self {
             existence,
@@ -164,10 +162,11 @@ impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
         leaf_hash: &HashOutTarget,
         siblings: &Vec<HashOutTarget>,
     ) -> Result<HashOutTarget> {
-        assert!(siblings.len() <= MAX_DEPTH);
+        assert_eq!(siblings.len(), MAX_DEPTH);
         // Convenience constants
         let zero = builder.zero();
         let one = builder.one();
+        let two = builder.two();
 
         // Generate/constrain sibling selectors
         let sibling_selectors = siblings
@@ -205,7 +204,8 @@ impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
             let input_2: Vec<Target> = (0..4)
                 .map(|j| builder.select(path[i], h.elements[j], sibling.elements[j]))
                 .collect();
-            let new_h = builder.hash_n_to_hash_no_pad::<PoseidonHash>([input_1, input_2].concat());
+            let new_h = builder
+                .hash_n_to_hash_no_pad::<PoseidonHash>([input_1, input_2, vec![two]].concat());
 
             let h_targ: Vec<Target> = (0..4)
                 .map(|j| builder.select(*selector, new_h.elements[j], h.elements[j]))
@@ -478,6 +478,47 @@ pub mod tests {
         let data = builder.build::<C>();
         let proof = data.prove(pw)?;
         data.verify(proof)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_wrong_witness() -> Result<()> {
+        let mut kvs: HashMap<Value, Value> = HashMap::new();
+        for i in 0..10 {
+            kvs.insert(Value::from(i), Value::from(i));
+        }
+        const MD: usize = 16;
+        let tree = MerkleTree::new(MD, &kvs)?;
+
+        let key = Value::from(3);
+        let (value, proof) = tree.prove(&key)?;
+
+        // build another tree with an extra key-value, so that it has a
+        // different root
+        kvs.insert(Value::from(100), Value::from(100));
+        let tree2 = MerkleTree::new(MD, &kvs)?;
+
+        MerkleTree::verify(MD, tree.root(), &proof, &key, &value)?;
+        assert_eq!(
+            MerkleTree::verify(MD, tree2.root(), &proof, &key, &value)
+                .unwrap_err()
+                .to_string(),
+            "proof of inclusion does not verify"
+        );
+
+        // circuit
+        let config = CircuitConfig::standard_recursion_config();
+        let mut builder = CircuitBuilder::<F, D>::new(config);
+        let mut pw = PartialWitness::<F>::new();
+
+        let targets = MerkleProofCircuit::<MD>::add_targets(&mut builder)?;
+        targets.set_targets(&mut pw, true, tree2.root(), proof, key, value)?;
+
+        // generate proof, expecting it to fail (since we're using the wrong
+        // root)
+        let data = builder.build::<C>();
+        assert!(data.prove(pw).is_err());
 
         Ok(())
     }
