@@ -35,6 +35,6 @@
 /// then the Value, Hash and F types would come from the plonky3 backend.
 #[cfg(feature = "backend_plonky2")]
 pub use crate::backends::plonky2::basetypes::{
-    hash_fields, hash_str, hash_value, Hash, Value, EMPTY, F, HASH_SIZE, NULL, SELF_ID_HASH,
-    VALUE_SIZE,
+    hash_fields, hash_str, hash_value, Hash, Value, EMPTY_HASH, EMPTY_VALUE, F, HASH_SIZE,
+    SELF_ID_HASH, VALUE_SIZE,
 };
