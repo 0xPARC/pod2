@@ -1236,7 +1236,7 @@ pub mod tests {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SignedPodValues(pub HashMap<String, Value>);
+pub struct SignedPodValues(#[serde(serialize_with = "ordered_map")] pub HashMap<String, Value>);
 
 impl SignedPodValues {
     pub fn new() -> Self {
