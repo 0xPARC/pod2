@@ -79,11 +79,9 @@ impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
 
         // define the case_i_selector as true when both existence and
         // case_ii_selector are false:
-        //     case_i_selector = (1 - existence) * (1 - case_ii_selector)
-        let one = builder.one();
-        let existence_inv = builder.sub(one, existence.target);
-        let case_ii_inv = builder.sub(one, case_ii_selector.target);
-        let case_i_selector = BoolTarget::new_unsafe(builder.mul(existence_inv, case_ii_inv));
+        let not_existence = builder.not(existence);
+        let not_case_ii_selector = builder.not(case_ii_selector);
+        let case_i_selector = builder.and(not_existence, not_case_ii_selector);
 
         // use (key,value) or (other_key, other_value) depending if it's a proof
         // of existence or of non-existence, ie:
@@ -141,8 +139,8 @@ impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
         value: Value,
     ) -> Result<()> {
         pw.set_hash_target(self.root, HashOut::from_vec(root.0.to_vec()))?;
-        pw.set_target_arr(&self.key, &key.0.to_vec())?;
-        pw.set_target_arr(&self.value, &value.0.to_vec())?;
+        pw.set_target_arr(&self.key, &key.0)?;
+        pw.set_target_arr(&self.value, &value.0)?;
         pw.set_bool_target(self.existence, existence)?;
 
         // pad siblings with zeros to length MAX_DEPTH
@@ -154,16 +152,19 @@ impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
             pw.set_hash_target(self.siblings[i], HashOut::from_vec(sibling.0.to_vec()))?;
         }
 
-        if !existence && proof.other_leaf.is_some() {
-            // non-existence case ii) expected leaf does exist but it has a different key
-            pw.set_bool_target(self.case_ii_selector, true)?;
-            pw.set_target_arr(&self.other_key, &proof.other_leaf.unwrap().0 .0.to_vec())?;
-            pw.set_target_arr(&self.other_value, &proof.other_leaf.unwrap().1 .0.to_vec())?;
-        } else {
-            // existence & non-existence case i) expected leaf does not exist
-            pw.set_bool_target(self.case_ii_selector, false)?;
-            pw.set_target_arr(&self.other_key, &EMPTY_VALUE.0.to_vec())?;
-            pw.set_target_arr(&self.other_value, &EMPTY_VALUE.0.to_vec())?;
+        match proof.other_leaf {
+            Some((k, v)) if !existence => {
+                // non-existence case ii) expected leaf does exist but it has a different key
+                pw.set_bool_target(self.case_ii_selector, true)?;
+                pw.set_target_arr(&self.other_key, &k.0)?;
+                pw.set_target_arr(&self.other_value, &v.0)?;
+            }
+            _ => {
+                // existence & non-existence case i) expected leaf does not exist
+                pw.set_bool_target(self.case_ii_selector, false)?;
+                pw.set_target_arr(&self.other_key, &EMPTY_VALUE.0)?;
+                pw.set_target_arr(&self.other_value, &EMPTY_VALUE.0)?;
+            }
         }
 
         Ok(())
@@ -217,8 +218,8 @@ impl<const MAX_DEPTH: usize> MerkleProofExistenceCircuit<MAX_DEPTH> {
         value: Value,
     ) -> Result<()> {
         pw.set_hash_target(self.root, HashOut::from_vec(root.0.to_vec()))?;
-        pw.set_target_arr(&self.key, &key.0.to_vec())?;
-        pw.set_target_arr(&self.value, &value.0.to_vec())?;
+        pw.set_target_arr(&self.key, &key.0)?;
+        pw.set_target_arr(&self.value, &value.0)?;
 
         // pad siblings with zeros to length MAX_DEPTH
         let mut siblings = proof.siblings.clone();
@@ -377,7 +378,7 @@ pub mod tests {
             }
 
             // assign the input values to the targets
-            pw.set_target_arr(&key_targ, &key.0.to_vec())?;
+            pw.set_target_arr(&key_targ, &key.0)?;
             for i in 0..MD {
                 pw.set_bool_target(expected_path_targ[i], expected_path[i])?;
             }
@@ -410,8 +411,8 @@ pub mod tests {
             builder.connect_hashes(computed_h, h_targ);
 
             // assign the input values to the targets
-            pw.set_target_arr(&key_targ, &key.0.to_vec())?;
-            pw.set_target_arr(&value_targ, &value.0.to_vec())?;
+            pw.set_target_arr(&key_targ, &key.0)?;
+            pw.set_target_arr(&value_targ, &value.0)?;
             pw.set_hash_target(h_targ, HashOut::from_vec(h.0.to_vec()))?;
 
             // generate & verify proof
