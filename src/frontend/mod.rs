@@ -826,10 +826,14 @@ impl MainPodCompiler {
     fn compile_op(&self, op: &Operation) -> Result<middleware::Operation> {
         // TODO
         let mop_code: OperationType = op.0.clone();
+        // TODO: Take Merkle proof into account.
         let mop_args =
             op.1.iter()
-                .flat_map(|arg| self.compile_op_arg(arg).map(|s| Ok(s.try_into()?)))
-                .collect::<Result<Vec<middleware::Statement>>>()?;
+                .flat_map(|arg| {
+                    self.compile_op_arg(arg)
+                        .map(|s| Ok(middleware::OperationArg::Statement(s.try_into()?)))
+                })
+                .collect::<Result<Vec<_>>>()?;
         middleware::Operation::op(mop_code, &mop_args)
     }
 
