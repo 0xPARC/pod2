@@ -207,7 +207,7 @@ impl fmt::Display for MerkleTree {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MerkleProof {
     // note: currently we don't use the `_existence` field, we would use if we merge the methods
     // `verify` and `verify_nonexistence` into a single one
