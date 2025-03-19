@@ -444,8 +444,6 @@ impl MainPodBuilder {
                         return Err(anyhow!("Invalid arguments to lt-to-neq operation"));
                     }
                 },
-                ContainsFromEntries => self.op_args_entries(public, args)?,
-                NotContainsFromEntries => self.op_args_entries(public, args)?,
                 SumOf => match (args[0].clone(), args[1].clone(), args[2].clone()) {
                     (
                         OperationArg::Statement(Statement(
@@ -1061,12 +1059,6 @@ pub mod build_utils {
             crate::op_args!($($arg),*)) };
         (lt_to_ne, $($arg:expr),+) => { crate::frontend::Operation(
             crate::frontend::OperationType::Native(crate::frontend::NativeOperation::LtToNotEqual),
-            crate::op_args!($($arg),*)) };
-        (contains, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::ContainsFromEntries),
-            crate::op_args!($($arg),*)) };
-        (not_contains, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::NotContainsFromEntries),
             crate::op_args!($($arg),*)) };
         (sum_of, $($arg:expr),+) => { crate::frontend::Operation(
             crate::frontend::OperationType::Native(crate::frontend::NativeOperation::SumOf),

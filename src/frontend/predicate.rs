@@ -13,8 +13,6 @@ pub enum NativePredicate {
     NotEqual = 3,
     Gt = 4,
     Lt = 5,
-    Contains = 6,
-    NotContains = 7,
     SumOf = 8,
     ProductOf = 9,
     MaxOf = 10,

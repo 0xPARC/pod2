@@ -94,8 +94,6 @@ pub enum NativeOperation {
     TransitiveEqualFromStatements = 7,
     GtToNotEqual = 8,
     LtToNotEqual = 9,
-    ContainsFromEntries = 10,
-    NotContainsFromEntries = 11,
     SumOf = 13,
     ProductOf = 14,
     MaxOf = 15,
@@ -126,10 +124,6 @@ impl TryFrom<OperationType> for middleware::OperationType {
             }
             FeOT::Native(FeNO::GtToNotEqual) => MwOT::Native(MwNO::GtToNotEqual),
             FeOT::Native(FeNO::LtToNotEqual) => MwOT::Native(MwNO::LtToNotEqual),
-            FeOT::Native(FeNO::ContainsFromEntries) => MwOT::Native(MwNO::ContainsFromEntries),
-            FeOT::Native(FeNO::NotContainsFromEntries) => {
-                MwOT::Native(MwNO::NotContainsFromEntries)
-            }
             FeOT::Native(FeNO::SumOf) => MwOT::Native(MwNO::SumOf),
             FeOT::Native(FeNO::ProductOf) => MwOT::Native(MwNO::ProductOf),
             FeOT::Native(FeNO::MaxOf) => MwOT::Native(MwNO::MaxOf),
@@ -171,12 +165,6 @@ impl OperationType {
                 }
                 NativeOperation::GtToNotEqual => Some(Predicate::Native(NativePredicate::NotEqual)),
                 NativeOperation::LtToNotEqual => Some(Predicate::Native(NativePredicate::NotEqual)),
-                NativeOperation::ContainsFromEntries => {
-                    Some(Predicate::Native(NativePredicate::Contains))
-                }
-                NativeOperation::NotContainsFromEntries => {
-                    Some(Predicate::Native(NativePredicate::NotContains))
-                }
                 NativeOperation::SumOf => Some(Predicate::Native(NativePredicate::SumOf)),
                 NativeOperation::ProductOf => Some(Predicate::Native(NativePredicate::ProductOf)),
                 NativeOperation::MaxOf => Some(Predicate::Native(NativePredicate::MaxOf)),

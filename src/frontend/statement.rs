@@ -96,12 +96,6 @@ impl TryFrom<Statement> for middleware::Statement {
                 (NP::Lt, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None)) => {
                     MS::Lt(ak1.into(), ak2.into())
                 }
-                (NP::Contains, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), Some(SA::Key(ak3)))) => {
-                    MS::Contains(ak1.into(), ak2.into(), ak3.into())
-                }
-                (NP::NotContains, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None)) => {
-                    MS::NotContains(ak1.into(), ak2.into())
-                }
                 (NP::SumOf, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), Some(SA::Key(ak3)))) => {
                     MS::SumOf(ak1.into(), ak2.into(), ak3.into())
                 }
