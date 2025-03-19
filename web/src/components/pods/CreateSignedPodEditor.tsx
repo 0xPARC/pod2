@@ -25,31 +25,10 @@ import {
   DropResult
 } from "@hello-pangea/dnd";
 import { serializePodTree, numberToString } from "@/lib/pod-serialization";
-
-export type ValueType =
-  | "string"
-  | "integer"
-  | "boolean"
-  | "array"
-  | "set"
-  | "dictionary";
-
-type PrimitiveValue = string | number | boolean;
-type ArrayValue = PrimitiveValue[];
-type SetValue = Set<PrimitiveValue>;
-type DictionaryValue = Record<string, PrimitiveValue | ArrayValue | SetValue>;
-type PodValue = PrimitiveValue | ArrayValue | SetValue | DictionaryValue;
-
-export interface TreeNode {
-  id: string;
-  key: string;
-  type: ValueType;
-  value: PodValue;
-  children?: TreeNode[];
-}
+import { TreeNode, ValueType } from "@/lib/types";
 
 function generateId() {
-  return Math.random().toString(36).substring(2, 9);
+  return crypto.randomUUID();
 }
 
 export function TreeNodeEditor({
@@ -58,7 +37,9 @@ export function TreeNodeEditor({
   onDelete,
   onAddChild,
   level = 0,
-  parentType
+  parentType,
+  hideKey = false,
+  hideDelete = false
 }: {
   node: TreeNode;
   onUpdate: (node: TreeNode) => void;
@@ -66,37 +47,45 @@ export function TreeNodeEditor({
   onAddChild: () => void;
   level?: number;
   parentType?: ValueType;
+  hideKey?: boolean;
+  hideDelete?: boolean;
 }) {
   const [isExpanded, setIsExpanded] = useState(true);
   const hasChildren =
-    node.type === "array" || node.type === "set" || node.type === "dictionary";
+    node.type === ValueType.Array ||
+    node.type === ValueType.Set ||
+    node.type === ValueType.Dictionary;
 
   // Show key input if:
   // 1. This is a dictionary child (parent is dictionary)
   // 2. This is a top-level item (no parent)
-  const shouldShowKey = parentType === "dictionary" || !parentType;
+  // 3. Keys are not hidden
+  const shouldShowKey =
+    (parentType === ValueType.Dictionary || !parentType) && !hideKey;
 
   function handleTypeChange(type: ValueType) {
     onUpdate({
       ...node,
       type,
       value:
-        type === "array"
+        type === ValueType.Array
           ? []
-          : type === "set"
-          ? new Set()
-          : type === "dictionary"
-          ? {}
-          : "",
+          : type === ValueType.Set
+            ? new Set()
+            : type === ValueType.Dictionary
+              ? {}
+              : "",
       children:
-        type === "array" || type === "set" || type === "dictionary"
+        type === ValueType.Array ||
+        type === ValueType.Set ||
+        type === ValueType.Dictionary
           ? []
           : undefined
     });
   }
 
   const handleValueChange = (value: string) => {
-    if (node.type === "integer") {
+    if (node.type === ValueType.Int) {
       try {
         // This will validate the number is within i64 bounds
         numberToString(value);
@@ -156,16 +145,16 @@ export function TreeNodeEditor({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="string">String</SelectItem>
-            <SelectItem value="integer">Integer</SelectItem>
-            <SelectItem value="boolean">Boolean</SelectItem>
-            <SelectItem value="array">Array</SelectItem>
-            <SelectItem value="set">Set</SelectItem>
-            <SelectItem value="dictionary">Dictionary</SelectItem>
+            <SelectItem value={ValueType.String}>String</SelectItem>
+            <SelectItem value={ValueType.Int}>Integer</SelectItem>
+            <SelectItem value={ValueType.Bool}>Boolean</SelectItem>
+            <SelectItem value={ValueType.Array}>Array</SelectItem>
+            <SelectItem value={ValueType.Set}>Set</SelectItem>
+            <SelectItem value={ValueType.Dictionary}>Dictionary</SelectItem>
           </SelectContent>
         </Select>
         {!hasChildren &&
-          (node.type === "boolean" ? (
+          (node.type === ValueType.Bool ? (
             <Select
               value={String(node.value)}
               onValueChange={(value) => handleValueChange(value)}
@@ -180,21 +169,25 @@ export function TreeNodeEditor({
             </Select>
           ) : (
             <Input
-              placeholder={node.type === "integer" ? "Integer (i64)" : "Value"}
+              placeholder={
+                node.type === ValueType.Int ? "Integer (i64)" : "Value"
+              }
               value={String(node.value)}
               onChange={(e) => handleValueChange(e.target.value)}
               className="w-48"
-              type={node.type === "integer" ? "text" : "text"}
+              type={node.type === ValueType.Int ? "text" : "text"}
             />
           ))}
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onDelete}
-          aria-label="Delete"
-        >
-          <Trash2 className="h-4 w-4" />
-        </Button>
+        {!hideDelete && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onDelete}
+            aria-label="Delete"
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        )}
         {hasChildren && (
           <Button variant="ghost" size="icon" onClick={onAddChild}>
             <Plus className="h-4 w-4" />
@@ -203,7 +196,7 @@ export function TreeNodeEditor({
       </div>
       {hasChildren && isExpanded && node.children && (
         <div className="space-y-2 pl-4">
-          {node.type === "array" && node.children ? (
+          {node.type === ValueType.Array && node.children ? (
             <DragDropContext onDragEnd={handleDragEnd}>
               <Droppable droppableId={node.id}>
                 {(provided) => (
@@ -248,7 +241,7 @@ export function TreeNodeEditor({
                                 const newChild: TreeNode = {
                                   id: generateId(),
                                   key: "",
-                                  type: "string",
+                                  type: ValueType.String,
                                   value: ""
                                 };
                                 onUpdate({
@@ -289,7 +282,7 @@ export function TreeNodeEditor({
                   const newChild: TreeNode = {
                     id: generateId(),
                     key: "",
-                    type: "string",
+                    type: ValueType.String,
                     value: ""
                   };
                   onUpdate({
@@ -333,7 +326,7 @@ export function CreateSignedPodEditor() {
     const newNode: TreeNode = {
       id: generateId(),
       key: "",
-      type: "string",
+      type: ValueType.String,
       value: ""
     };
     setNodes([...nodes, newNode]);
@@ -389,7 +382,7 @@ export function CreateSignedPodEditor() {
                     const newChild: TreeNode = {
                       id: generateId(),
                       key: "",
-                      type: "string",
+                      type: ValueType.String,
                       value: ""
                     };
                     setNodes(

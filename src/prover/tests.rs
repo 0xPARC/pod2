@@ -75,7 +75,7 @@ mod tests {
         let (op_code, inputs, _) = &chain[0];
         assert_eq!(
             *op_code,
-            NativeOperation::TransitiveEqualFromStatements as u8,
+            NativeOperation::TransitiveEqualFromStatements,
             "Should use TransitiveEqualFromStatements operation"
         );
         assert_eq!(inputs.len(), 2, "Should use exactly three input statements");
@@ -124,7 +124,7 @@ mod tests {
         assert_eq!(chain.len(), 1, "Should use GtFromEntries");
         assert_eq!(
             chain[0].0,
-            NativeOperation::GtFromEntries as u8,
+            NativeOperation::GtFromEntries,
             "Should use GtFromEntries operation"
         );
 
@@ -187,7 +187,7 @@ mod tests {
         assert_eq!(chain.len(), 1, "Should use LtFromEntries");
         assert_eq!(
             chain[0].0,
-            NativeOperation::LtFromEntries as u8,
+            NativeOperation::LtFromEntries,
             "Should use LtFromEntries operation"
         );
 
@@ -246,7 +246,7 @@ mod tests {
         assert_eq!(chain.len(), 1, "Should use GtToNotEqual");
         assert_eq!(
             chain[0].0,
-            NativeOperation::GtToNotEqual as u8,
+            NativeOperation::GtToNotEqual,
             "Should use GtToNotEqual operation"
         );
 
@@ -305,7 +305,7 @@ mod tests {
         assert_eq!(chain.len(), 1, "Should use LtToNotEqual");
         assert_eq!(
             chain[0].0,
-            NativeOperation::LtToNotEqual as u8,
+            NativeOperation::LtToNotEqual,
             "Should use LtToNotEqual operation"
         );
 
@@ -374,7 +374,7 @@ mod tests {
         assert_eq!(chain.len(), 1, "Should use ContainsFromEntries");
         assert_eq!(
             chain[0].0,
-            NativeOperation::ContainsFromEntries as u8,
+            NativeOperation::ContainsFromEntries,
             "Should use ContainsFromEntries operation"
         );
 
@@ -623,43 +623,40 @@ mod tests {
         let proofs = engine.prove_multiple(targets);
 
         assert_eq!(proofs.len(), 4, "Should prove all statements");
-        assert_eq!(
-            proofs[0].1[0].0,
-            NativeOperation::NotContainsFromEntries as u8
-        );
-        assert_eq!(proofs[1].1[0].0, NativeOperation::LtFromEntries as u8);
-        assert_eq!(proofs[2].1[0].0, NativeOperation::EqualFromEntries as u8);
-        assert_eq!(proofs[3].1[0].0, NativeOperation::EqualFromEntries as u8);
+        assert_eq!(proofs[0].1[0].0, NativeOperation::NotContainsFromEntries);
+        assert_eq!(proofs[1].1[0].0, NativeOperation::LtFromEntries);
+        assert_eq!(proofs[2].1[0].0, NativeOperation::EqualFromEntries);
+        assert_eq!(proofs[3].1[0].0, NativeOperation::EqualFromEntries);
 
         for (_stmt, chain) in proofs.iter() {
             for (op_code, inputs, _output) in chain {
                 let op = Operation(
                     match op_code {
-                        x if *x == NativeOperation::ContainsFromEntries as u8 => {
+                        x if *x == NativeOperation::ContainsFromEntries => {
                             OperationType::Native(NativeOperation::ContainsFromEntries)
                         }
-                        x if *x == NativeOperation::NotContainsFromEntries as u8 => {
+                        x if *x == NativeOperation::NotContainsFromEntries => {
                             OperationType::Native(NativeOperation::NotContainsFromEntries)
                         }
-                        x if *x == NativeOperation::EqualFromEntries as u8 => {
+                        x if *x == NativeOperation::EqualFromEntries => {
                             OperationType::Native(NativeOperation::EqualFromEntries)
                         }
-                        x if *x == NativeOperation::LtFromEntries as u8 => {
+                        x if *x == NativeOperation::LtFromEntries => {
                             OperationType::Native(NativeOperation::LtFromEntries)
                         }
-                        x if *x == NativeOperation::GtFromEntries as u8 => {
+                        x if *x == NativeOperation::GtFromEntries => {
                             OperationType::Native(NativeOperation::GtFromEntries)
                         }
-                        x if *x == NativeOperation::SumOf as u8 => {
+                        x if *x == NativeOperation::SumOf => {
                             OperationType::Native(NativeOperation::SumOf)
                         }
-                        x if *x == NativeOperation::ProductOf as u8 => {
+                        x if *x == NativeOperation::ProductOf => {
                             OperationType::Native(NativeOperation::ProductOf)
                         }
-                        x if *x == NativeOperation::MaxOf as u8 => {
+                        x if *x == NativeOperation::MaxOf => {
                             OperationType::Native(NativeOperation::MaxOf)
                         }
-                        _ => panic!("Unknown operation code: {}", op_code),
+                        _ => panic!("Unknown operation code: {:?}", op_code),
                     },
                     inputs
                         .iter()
@@ -734,7 +731,7 @@ mod tests {
         assert_eq!(chain.len(), 1, "Should use SumOf");
         assert_eq!(
             chain[0].0,
-            NativeOperation::SumOf as u8,
+            NativeOperation::SumOf,
             "Should use SumOf operation"
         );
 
@@ -784,7 +781,7 @@ mod tests {
         assert_eq!(chain.len(), 1, "Should use ProductOf");
         assert_eq!(
             chain[0].0,
-            NativeOperation::ProductOf as u8,
+            NativeOperation::ProductOf,
             "Should use ProductOf operation"
         );
 
@@ -834,7 +831,7 @@ mod tests {
         assert_eq!(chain.len(), 1, "Should use MaxOf");
         assert_eq!(
             chain[0].0,
-            NativeOperation::MaxOf as u8,
+            NativeOperation::MaxOf,
             "Should use MaxOf operation"
         );
     }

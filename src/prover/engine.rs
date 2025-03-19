@@ -295,7 +295,7 @@ impl DeductionEngine {
         println!("\nProof steps:");
         for (step, (op_code, inputs, output)) in chain.iter().enumerate() {
             println!("\nStep {}:", step + 1);
-            println!("Operation: {}", operation_name(*op_code));
+            println!("Operation: {:?}", *op_code);
             println!("From:");
             for input in inputs {
                 println!("  - {}", input);
@@ -535,7 +535,7 @@ ascent! {
         known_value(y, v2),
         if v1 == v2,
         let chain = vec![(
-            NativeOperation::EqualFromEntries as u8,
+            NativeOperation::EqualFromEntries,
             vec![
                 ProvableStatement::ValueOf(x.clone(), v1.clone()),
                 ProvableStatement::ValueOf(y.clone(), v2.clone())
@@ -550,7 +550,7 @@ ascent! {
         let chain = {
             let mut chain = chain1.clone();
             chain.push((
-                NativeOperation::TransitiveEqualFromStatements as u8,
+                NativeOperation::TransitiveEqualFromStatements,
                 vec![
                     ProvableStatement::Equal(x.clone(), y.clone()),
                     ProvableStatement::Equal(y.clone(), z.clone())
@@ -578,7 +578,7 @@ ascent! {
         let x = found_key.clone(),
         let y = match_key.clone(),
         let chain = vec![(
-            NativeOperation::EqualFromEntries as u8,
+            NativeOperation::EqualFromEntries,
             vec![
                 ProvableStatement::ValueOf(x.clone(), v1.clone()),
                 ProvableStatement::ValueOf(y.clone(), v2.clone())
@@ -600,7 +600,7 @@ ascent! {
         let x = found_key.clone(),
         let y = match_key.clone(),
         let chain = vec![(
-            NativeOperation::GtFromEntries as u8,
+            NativeOperation::GtFromEntries,
             vec![
                 ProvableStatement::ValueOf(x.clone(), v1.clone()),
                 ProvableStatement::ValueOf(y.clone(), v2.clone())
@@ -633,7 +633,7 @@ ascent! {
         let x = found_key.clone(),
         let y = match_key.clone(),
         let chain = vec![(
-            NativeOperation::LtFromEntries as u8,
+            NativeOperation::LtFromEntries,
             vec![
                 ProvableStatement::ValueOf(x.clone(), v1.clone()),
                 ProvableStatement::ValueOf(y.clone(), v2.clone())
@@ -663,7 +663,7 @@ ascent! {
         let x = found_key.clone(),
         let y = match_key.clone(),
         let chain = vec![(
-            NativeOperation::GtToNotEqual as u8,
+            NativeOperation::GtToNotEqual,
             vec![ProvableStatement::Gt(x.clone(), y.clone())],
             ProvableStatement::NotEqual(x.clone(), y.clone())
         )];
@@ -678,7 +678,7 @@ ascent! {
         let x = found_key.clone(),
         let y = match_key.clone(),
         let chain = vec![(
-            NativeOperation::LtToNotEqual as u8,
+            NativeOperation::LtToNotEqual,
             vec![ProvableStatement::Lt(x.clone(), y.clone())],
             ProvableStatement::NotEqual(x.clone(), y.clone())
         )];
@@ -706,7 +706,7 @@ ascent! {
         let x = found_key.clone(),
         let y = match_key.clone(),
         let chain = vec![(
-            NativeOperation::ContainsFromEntries as u8,
+            NativeOperation::ContainsFromEntries,
             vec![
                 ProvableStatement::ValueOf(x.clone(), v1.clone()),
                 ProvableStatement::ValueOf(y.clone(), v2.clone())
@@ -737,7 +737,7 @@ ascent! {
         let x = found_key.clone(),
         let y = match_key.clone(),
         let chain = vec![(
-            NativeOperation::NotContainsFromEntries as u8,
+            NativeOperation::NotContainsFromEntries,
             vec![
                 ProvableStatement::ValueOf(x.clone(), v1.clone()),
                 ProvableStatement::ValueOf(y.clone(), v2.clone())
@@ -772,7 +772,7 @@ ascent! {
         let op1 = found_op1.clone(),
         let op2 = found_op2.clone(),
         let chain = vec![(
-            NativeOperation::SumOf as u8,
+            NativeOperation::SumOf,
             vec![
                 ProvableStatement::ValueOf(result.clone(), v1.clone()),
                 ProvableStatement::ValueOf(op1.clone(), v2.clone()),
@@ -796,7 +796,7 @@ ascent! {
         let op1 = found_op1.clone(),
         let op2 = found_op2.clone(),
         let chain = vec![(
-            NativeOperation::ProductOf as u8,
+            NativeOperation::ProductOf,
             vec![
                 ProvableStatement::ValueOf(result.clone(), v1.clone()),
                 ProvableStatement::ValueOf(op1.clone(), v2.clone()),
@@ -820,7 +820,7 @@ ascent! {
         let op1 = found_op1.clone(),
         let op2 = found_op2.clone(),
         let chain = vec![(
-            NativeOperation::MaxOf as u8,
+            NativeOperation::MaxOf,
             vec![
                 ProvableStatement::ValueOf(result.clone(), v1.clone()),
                 ProvableStatement::ValueOf(op1.clone(), v2.clone()),

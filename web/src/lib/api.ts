@@ -1,78 +1,32 @@
 import axios from "axios";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
+import { TreeNode } from "@/lib/types";
+import { SerializedValue } from "@/lib/pod-serialization";
 
-// Core value types
-export interface ValueType {
-  String?: string;
-  Int?: number;
-  Bool?: boolean;
-  Raw?: string;
-  Array?: ValueType[];
-  Set?: ValueType[];
-  Dictionary?: Record<string, ValueType>;
-}
+// Core value types - now imported from pod-serialization.ts
+export type ValueType = SerializedValue;
 
 const ValueSchema: z.ZodType<ValueType> = z.union([
-  z.object({
-    String: z.string()
-  }),
-  z.object({
-    Int: z.number().int()
-  }),
-  z.object({
-    Bool: z.boolean()
-  }),
   z.object({
     Raw: z.string().regex(/^[0-9a-fA-F]{64}$/)
   }),
   z.object({
-    Array: z.lazy(() => z.array(ValueSchema))
+    Int: z.string()
   }),
   z.object({
-    Set: z.lazy(() => z.array(ValueSchema))
+    Set: z.tuple([z.array(z.lazy(() => ValueSchema))])
   }),
   z.object({
-    Dictionary: z.lazy(() => z.record(z.string(), ValueSchema))
-  })
+    Dictionary: z.record(
+      z.string(),
+      z.lazy(() => ValueSchema)
+    )
+  }),
+  z.array(z.lazy(() => ValueSchema)),
+  z.string(),
+  z.boolean()
 ]);
-
-// Helper function to convert raw values to ValueSchema format
-function convertToValueType(value: unknown): ValueType {
-  // If it's already a ValueType (has exactly one key from the ValueType interface), return as is
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    const keys = Object.keys(value as object);
-    const validValueTypeKeys = [
-      "String",
-      "Int",
-      "Bool",
-      "Raw",
-      "Array",
-      "Set",
-      "Dictionary"
-    ];
-    if (keys.length === 1 && validValueTypeKeys.includes(keys[0])) {
-      return value as ValueType;
-    }
-  }
-
-  if (typeof value === "string") {
-    return { String: value };
-  } else if (typeof value === "number" && Number.isInteger(value)) {
-    return { Int: value };
-  } else if (typeof value === "boolean") {
-    return { Bool: value };
-  } else if (Array.isArray(value)) {
-    return { Array: value.map(convertToValueType) };
-  } else if (value && typeof value === "object") {
-    const dict: Record<string, ValueType> = {};
-    for (const [k, v] of Object.entries(value)) {
-      dict[k] = convertToValueType(v);
-    }
-    return { Dictionary: dict };
-  }
-  throw new Error(`Unsupported value type: ${typeof value}`);
-}
 
 const StatementArgSchema = z.union([
   z.object({
@@ -141,13 +95,7 @@ const StatementSchema = z.object({
 });
 
 const SignedPodSchema = z.object({
-  entries: z.record(z.string(), z.unknown()).transform((entries) => {
-    const converted: Record<string, ValueType> = {};
-    for (const [key, value] of Object.entries(entries)) {
-      converted[key] = convertToValueType(value);
-    }
-    return converted;
-  }),
+  entries: z.record(z.string(), ValueSchema),
   proof: z.string(),
   id: z.string().regex(/^[0-9a-fA-F]{64}$/),
   pod_class: z.literal("Signed"),
@@ -169,11 +117,19 @@ const PodSchema = z.discriminatedUnion("pod_class", [
   MainPodSchema
 ]);
 
+const ValidatedStatementsSchema = z.array(
+  z.tuple([
+    StatementSchema,
+    z.array(z.tuple([z.string(), z.array(StatementSchema), StatementSchema]))
+  ])
+);
+
 // TypeScript types derived from schemas
 export type SignedPod = z.infer<typeof SignedPodSchema>;
 export type MainPod = z.infer<typeof MainPodSchema>;
 export type Pod = z.infer<typeof PodSchema>;
 export type Statement = z.infer<typeof StatementSchema>;
+export type ValidatedStatements = z.infer<typeof ValidatedStatementsSchema>;
 
 export type StatementType =
   | "None"
@@ -187,13 +143,6 @@ export type StatementType =
   | "SumOf"
   | "ProductOf"
   | "MaxOf";
-
-export interface TreeNode {
-  id: string;
-  key: string;
-  type: string;
-  value: string | number;
-}
 
 // Helper function to check if a value is a TreeNode
 export function isTreeNode(value: unknown): value is TreeNode {
@@ -223,6 +172,16 @@ export function isKeyValue(value: unknown): value is KeyValue {
   );
 }
 
+type KeyOrLiteral =
+  | {
+      type: "key";
+      value: KeyValue;
+    }
+  | {
+      type: "literal";
+      value: SerializedValue;
+    };
+
 export interface EditorStatement {
   id: string;
   type: StatementType;
@@ -230,34 +189,8 @@ export interface EditorStatement {
     wildcardId: { type: "concrete" | "named"; value: string };
     key: string;
   };
-  secondArg:
-    | {
-        type: "key";
-        value: KeyValue;
-      }
-    | {
-        type: "literal";
-        value: TreeNode;
-      };
-  thirdArg?:
-    | {
-        type: "key";
-        value: KeyValue;
-      }
-    | {
-        type: "literal";
-        value: TreeNode;
-      };
-  predicate?: {
-    type: "Native";
-    value: NativePredicate;
-  };
-  args?: Array<{
-    type: "Key" | "Literal";
-    value: KeyValue | TreeNode;
-  }>;
-  isValid?: boolean;
-  isPending?: boolean;
+  secondArg: KeyOrLiteral;
+  thirdArg?: KeyOrLiteral;
 }
 
 export type NativePredicate =
@@ -291,12 +224,7 @@ export interface FrontendWildcardStatement {
           {
             Key:
               | { origin: { pod_class: string; pod_id: string }; key: string }
-              | {
-                  Literal:
-                    | { String: string }
-                    | { Int: number }
-                    | { Bool: boolean };
-                };
+              | { Literal: SerializedValue };
           }
         ]
       ]
@@ -308,12 +236,7 @@ export interface FrontendWildcardStatement {
           {
             Key:
               | { origin: { pod_class: string; pod_id: string }; key: string }
-              | {
-                  Literal:
-                    | { String: string }
-                    | { Int: number }
-                    | { Bool: boolean };
-                };
+              | { Literal: SerializedValue };
           }
         ]
       ]
@@ -325,12 +248,7 @@ export interface FrontendWildcardStatement {
           {
             Key:
               | { origin: { pod_class: string; pod_id: string }; key: string }
-              | {
-                  Literal:
-                    | { String: string }
-                    | { Int: number }
-                    | { Bool: boolean };
-                };
+              | { Literal: SerializedValue };
           }
         ]
       ]
@@ -342,12 +260,7 @@ export interface FrontendWildcardStatement {
           {
             Key:
               | { origin: { pod_class: string; pod_id: string }; key: string }
-              | {
-                  Literal:
-                    | { String: string }
-                    | { Int: number }
-                    | { Bool: boolean };
-                };
+              | { Literal: SerializedValue };
           }
         ]
       ]
@@ -359,12 +272,7 @@ export interface FrontendWildcardStatement {
           {
             Key:
               | { origin: { pod_class: string; pod_id: string }; key: string }
-              | {
-                  Literal:
-                    | { String: string }
-                    | { Int: number }
-                    | { Bool: boolean };
-                };
+              | { Literal: SerializedValue };
           }
         ]
       ]
@@ -376,12 +284,7 @@ export interface FrontendWildcardStatement {
           {
             Key:
               | { origin: { pod_class: string; pod_id: string }; key: string }
-              | {
-                  Literal:
-                    | { String: string }
-                    | { Int: number }
-                    | { Bool: boolean };
-                };
+              | { Literal: SerializedValue };
           }
         ]
       ]
@@ -396,11 +299,7 @@ interface WildcardStatementArg {
     };
     key: string;
   };
-  Literal?: {
-    String?: string;
-    Int?: number;
-    Bool?: boolean;
-  };
+  Literal?: SerializedValue;
 }
 
 const API_BASE = "http://localhost:3000/api";
@@ -503,14 +402,9 @@ class ApiClient {
     return PodSchema.parse(data);
   }
 
-  async validateStatement(statement: EditorStatement): Promise<boolean> {
-    const { data } = await axiosInstance.post("/validate-statement", {
-      statement
-    });
-    return z.boolean().parse(data);
-  }
-
-  async validateStatements(statements: EditorStatement[]): Promise<boolean> {
+  async validateStatements(
+    statements: EditorStatement[]
+  ): Promise<ValidatedStatements> {
     const frontendStatements = statements.map((statement) => {
       // Convert EditorStatement to FrontendWildcardStatement
       const firstArg: WildcardAnchoredKey = {
@@ -546,7 +440,7 @@ class ApiClient {
     const { data } = await axiosInstance.post("/validate-statements", {
       statements: frontendStatements
     });
-    return z.boolean().parse(data);
+    return ValidatedStatementsSchema.parse(data);
   }
 }
 
@@ -615,12 +509,6 @@ export function useImportPod() {
   });
 }
 
-export function useValidateStatement() {
-  return useMutation({
-    mutationFn: (statement: EditorStatement) => api.validateStatement(statement)
-  });
-}
-
 export function isSignedPod(pod: Pod | undefined): pod is SignedPod {
   return pod?.pod_class === "Signed";
 }
@@ -629,23 +517,19 @@ function shortenId(id: string): string {
   return id.slice(0, 6);
 }
 
-function formatValue(value: ValueType): string {
-  const type = Object.keys(value)[0] as keyof ValueType;
-  const val = value[type];
-
-  switch (type) {
-    case "Raw":
-      return `Raw:${shortenId(val as string)}`;
-    case "Array":
-      return `[${(val as ValueType[]).map(formatValue).join(", ")}]`;
-    case "Set":
-      return `{${(val as ValueType[]).map(formatValue).join(", ")}}`;
-    case "Dictionary":
-      return `{${Object.entries(val as Record<string, ValueType>)
-        .map(([k, v]) => `${k}: ${formatValue(v)}`)
-        .join(", ")}}`;
-    default:
-      return `${type}:${val}`;
+export function formatValue(value: ValueType): string {
+  if (typeof value === "string") {
+    return value;
+  } else if (typeof value === "boolean") {
+    return value.toString();
+  } else if ("Set" in value) {
+    return `{${value.Set.map(formatValue).join(", ")}}`;
+  } else if ("Dictionary" in value) {
+    return `{${Object.entries(value.Dictionary)
+      .map(([k, v]) => `${k}: ${formatValue(v)}`)
+      .join(", ")}}`;
+  } else {
+    throw new Error(`Unsupported value type: ${typeof value}`);
   }
 }
 
@@ -675,33 +559,22 @@ export function formatStatement(statement: Statement): string {
   return `${predicate.value}(${formattedArgs.join(", ")})`;
 }
 
-function transformArg(
-  arg: NonNullable<EditorStatement["secondArg"] | EditorStatement["thirdArg"]>
-): WildcardStatementArg {
-  if (arg.type === "key") {
+function transformArg(arg: {
+  type: "key" | "literal";
+  value: KeyValue | SerializedValue;
+}): WildcardStatementArg {
+  if (arg.type === "key" && isKeyValue(arg.value)) {
     return {
       Key: {
         origin: {
-          pod_class: "Signed" as const,
+          pod_class: "Signed",
           pod_id: arg.value.podId
         },
         key: arg.value.key
       }
     };
   } else {
-    return {
-      Literal: (() => {
-        const val = arg.value.value;
-        if (typeof val === "string") {
-          return { String: val };
-        } else if (typeof val === "number") {
-          return { Int: val };
-        } else if (typeof val === "boolean") {
-          return { Bool: val };
-        }
-        throw new Error(`Unsupported literal type: ${typeof val}`);
-      })()
-    };
+    return { Literal: arg.value as SerializedValue };
   }
 }
 

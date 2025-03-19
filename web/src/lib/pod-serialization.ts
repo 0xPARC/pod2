@@ -1,19 +1,20 @@
-import { TreeNode } from "@/components/pods/CreateSignedPodEditor";
+import { TreeNode, ValueType } from "./types";
 
 // Types for the serialized POD format
-type RawValue = { Raw: string };
-type IntValue = { Int: string };
-type SetValue = { Set: [string[], string] };
-type DictionaryValue = { Dictionary: Record<string, SerializedValue> };
-type ArrayValue = SerializedValue[];
+export type RawValue = { Raw: string };
+export type IntValue = { Int: string };
+export type SetValue = { Set: SerializedValue[] };
+export type DictionaryValue = { Dictionary: Record<string, SerializedValue> };
+export type ArrayValue = SerializedValue[];
 
-type SerializedValue =
+export type SerializedValue =
   | RawValue
   | IntValue
   | SetValue
   | DictionaryValue
   | ArrayValue
-  | string;
+  | string
+  | boolean;
 
 // Constants for i64 limits in Rust
 const I64_MIN = -9223372036854775808n;
@@ -42,54 +43,161 @@ export function numberToString(n: number | string): string {
   }
 }
 
-// Convert a value to its serialized format
-function serializeValue(node: TreeNode): any {
+// Convert the tree editor state to a CreateSignedPodRequest format
+export function serializePodTree(nodes: TreeNode[]): {
+  signer: string;
+  key_values: Record<string, SerializedValue>;
+} {
+  const key_values: Record<string, SerializedValue> = {};
+
+  nodes.forEach((node) => {
+    const value = node.value;
+
+    // Handle Set values
+    if (node.type === ValueType.Set && value instanceof Set) {
+      key_values[node.key] = { Set: Array.from(value) };
+    }
+    // Handle Dictionary values
+    else if (
+      node.type === ValueType.Dictionary &&
+      value &&
+      typeof value === "object" &&
+      !Array.isArray(value)
+    ) {
+      key_values[node.key] = {
+        Dictionary: value as Record<string, SerializedValue>
+      };
+    }
+    // Handle Int values
+    else if (node.type === ValueType.Int) {
+      key_values[node.key] = { Int: value.toString() };
+    }
+    // Handle Raw values
+    else if (node.type === ValueType.Raw) {
+      key_values[node.key] = { Raw: value.toString() };
+    }
+    // Handle Array values
+    else if (node.type === ValueType.Array) {
+      key_values[node.key] = value as ArrayValue;
+    }
+    // Handle String values
+    else if (node.type === ValueType.String) {
+      key_values[node.key] = value as string;
+    }
+    // Handle Bool values
+    else if (node.type === ValueType.Bool) {
+      key_values[node.key] = value as boolean;
+    }
+    // Handle all other values directly
+    else {
+      key_values[node.key] = value as SerializedValue;
+    }
+  });
+
+  return {
+    signer: "example-signer",
+    key_values
+  };
+}
+
+// Convert a TreeNode to its serialized format
+export function serializeValue(node: TreeNode): SerializedValue {
   switch (node.type) {
-    case "string":
+    case ValueType.String:
       return node.value as string;
 
-    case "integer":
+    case ValueType.Int:
       return { Int: numberToString(node.value as string) };
 
-    case "boolean":
-      return { Raw: (node.value as boolean).toString() };
+    case ValueType.Bool:
+      return node.value as boolean;
 
-    case "array":
+    case ValueType.Array:
       return (node.children || []).map((child: TreeNode) =>
         serializeValue(child)
       );
 
-    case "set":
-      const setValue = node.value as Set<string | number>;
-      const arrayValue = Array.from(setValue).map(String);
-      return { Set: [arrayValue, arrayValue[0] || ""] };
+    case ValueType.Set: {
+      const setValue = node.value as Set<SerializedValue>;
+      const arrayValue = Array.from(setValue);
+      return { Set: arrayValue };
+    }
 
-    case "dictionary":
-      const dict: Record<string, any> = {};
+    case ValueType.Dictionary: {
+      const dict: Record<string, SerializedValue> = {};
       node.children?.forEach((child: TreeNode) => {
         dict[child.key] = serializeValue(child);
       });
       return { Dictionary: dict };
+    }
+
+    case ValueType.Raw:
+      return { Raw: node.value as string };
 
     default:
       throw new Error(`Unsupported node type: ${node.type}`);
   }
 }
 
-// Convert the tree editor state to a CreateSignedPodRequest format
-export function serializePodTree(rootNodes: TreeNode[]): {
-  signer: string;
-  key_values: Record<string, any>;
-} {
-  const key_values: Record<string, any> = {};
-
-  // Add all root nodes to the key_values
-  rootNodes.forEach((node) => {
-    key_values[node.key] = serializeValue(node);
-  });
-
-  return {
-    signer: "example-signer", // TODO: Make this configurable
-    key_values
-  };
+// Convert a SerializedValue to a TreeNode
+export function deserializeValue(
+  value: SerializedValue,
+  key: string = ""
+): TreeNode {
+  if (typeof value === "string") {
+    return {
+      id: crypto.randomUUID(),
+      key,
+      type: ValueType.String,
+      value
+    };
+  } else if (typeof value === "boolean") {
+    return {
+      id: crypto.randomUUID(),
+      key,
+      type: ValueType.Bool,
+      value
+    };
+  } else if ("Int" in value) {
+    return {
+      id: crypto.randomUUID(),
+      key,
+      type: ValueType.Int,
+      value: value.Int
+    };
+  } else if ("Raw" in value) {
+    return {
+      id: crypto.randomUUID(),
+      key,
+      type: ValueType.Raw,
+      value: value.Raw
+    };
+  } else if ("Set" in value) {
+    return {
+      id: crypto.randomUUID(),
+      key,
+      type: ValueType.Set,
+      value: new Set(value.Set),
+      children: value.Set.map((v, i) => deserializeValue(v, `item${i}`))
+    };
+  } else if ("Dictionary" in value) {
+    return {
+      id: crypto.randomUUID(),
+      key,
+      type: ValueType.Dictionary,
+      value: {},
+      children: Object.entries(value.Dictionary).map(([k, v]) =>
+        deserializeValue(v, k)
+      )
+    };
+  } else if (Array.isArray(value)) {
+    return {
+      id: crypto.randomUUID(),
+      key,
+      type: ValueType.Array,
+      value: [],
+      children: value.map((v, i) => deserializeValue(v, `item${i}`))
+    };
+  }
+  throw new Error(`Unsupported value type: ${typeof value}`);
 }

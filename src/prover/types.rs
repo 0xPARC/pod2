@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum ProvableStatement {
     ValueOf(AnchoredKey, Value),
     Equal(AnchoredKey, AnchoredKey),
@@ -234,7 +234,7 @@ impl Hash for Value {
     }
 }
 
-pub type DeductionStep = (u8, Vec<ProvableStatement>, ProvableStatement);
+pub type DeductionStep = (NativeOperation, Vec<ProvableStatement>, ProvableStatement);
 pub type DeductionChain = Vec<DeductionStep>;
 
 // Helper function to format AnchoredKey
@@ -304,29 +304,6 @@ impl fmt::Display for ProvableStatement {
                 format_anchored_key(ak3)
             ),
         }
-    }
-}
-
-pub fn operation_name(op_code: u8) -> &'static str {
-    match op_code {
-        x if x == NativeOperation::None as u8 => "None",
-        x if x == NativeOperation::NewEntry as u8 => "NewEntry",
-        x if x == NativeOperation::CopyStatement as u8 => "CopyStatement",
-        x if x == NativeOperation::EqualFromEntries as u8 => "EqualFromEntries",
-        x if x == NativeOperation::NotEqualFromEntries as u8 => "NotEqualFromEntries",
-        x if x == NativeOperation::GtFromEntries as u8 => "GtFromEntries",
-        x if x == NativeOperation::LtFromEntries as u8 => "LtFromEntries",
-        x if x == NativeOperation::TransitiveEqualFromStatements as u8 => {
-            "TransitiveEqualFromStatements"
-        }
-        x if x == NativeOperation::GtToNotEqual as u8 => "GtToNotEqual",
-        x if x == NativeOperation::LtToNotEqual as u8 => "LtToNotEqual",
-        x if x == NativeOperation::ContainsFromEntries as u8 => "ContainsFromEntries",
-        x if x == NativeOperation::NotContainsFromEntries as u8 => "NotContainsFromEntries",
-        x if x == NativeOperation::SumOf as u8 => "SumOf",
-        x if x == NativeOperation::ProductOf as u8 => "ProductOf",
-        x if x == NativeOperation::MaxOf as u8 => "MaxOf",
-        _ => "Unknown Operation",
     }
 }
 

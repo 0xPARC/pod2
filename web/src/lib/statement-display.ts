@@ -1,9 +1,10 @@
 import { z } from "zod";
+import { ValueType as PodValueType } from "./types";
 
 // Core value types
 interface ValueType {
   String?: string;
-  Int?: number;
+  Int?: string;
   Bool?: boolean;
   Raw?: string;
   Array?: ValueType[];
@@ -16,7 +17,7 @@ const ValueSchema: z.ZodType<ValueType> = z.union([
     String: z.string()
   }),
   z.object({
-    Int: z.number().int()
+    Int: z.string()
   }),
   z.object({
     Bool: z.boolean()
@@ -123,14 +124,12 @@ export function formatValue(value: ValueType): string {
   switch (type) {
     case "Raw":
       return `Raw:${shortenId(val as string)}`;
-    case "Array":
-      return `[${(val as ValueType[]).map(formatValue).join(", ")}]`;
-    case "Set":
-      return `{${(val as ValueType[]).map(formatValue).join(", ")}}`;
-    case "Dictionary":
-      return `{${Object.entries(val as Record<string, ValueType>)
-        .map(([k, v]) => `${k}: ${formatValue(v)}`)
-        .join(", ")}}`;
+    case PodValueType.Array:
+      return "Array";
+    case PodValueType.Set:
+      return "Set";
+    case PodValueType.Dictionary:
+      return "Dictionary";
     default:
       return `${type}:${val}`;
   }

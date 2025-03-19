@@ -39,10 +39,6 @@ async fn setup_test_app() -> Router {
         .route("/api/delete-pod", post(handlers::delete_pod))
         .route("/api/import-pod", post(handlers::import_pod))
         .route(
-            "/api/validate-statement",
-            post(handlers::validate_statement),
-        )
-        .route(
             "/api/validate-statements",
             post(handlers::validate_statements),
         )

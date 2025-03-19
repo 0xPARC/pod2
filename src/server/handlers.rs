@@ -7,6 +7,7 @@ use crate::{
     },
     middleware::{NativeOperation, OperationType, Params},
     prover::{engine::DeductionEngine, types::WildcardTargetStatement},
+    Statement,
 };
 use axum::extract::{Json, State};
 use serde::Deserialize;
@@ -132,31 +133,31 @@ pub async fn create_main_pod(
         for (op_code, inputs, _output) in chain {
             let op = Operation(
                 match op_code {
-                    x if *x == NativeOperation::ContainsFromEntries as u8 => {
+                    x if *x == NativeOperation::ContainsFromEntries => {
                         OperationType::Native(NativeOperation::ContainsFromEntries)
                     }
-                    x if *x == NativeOperation::NotContainsFromEntries as u8 => {
+                    x if *x == NativeOperation::NotContainsFromEntries => {
                         OperationType::Native(NativeOperation::NotContainsFromEntries)
                     }
-                    x if *x == NativeOperation::EqualFromEntries as u8 => {
+                    x if *x == NativeOperation::EqualFromEntries => {
                         OperationType::Native(NativeOperation::EqualFromEntries)
                     }
-                    x if *x == NativeOperation::LtFromEntries as u8 => {
+                    x if *x == NativeOperation::LtFromEntries => {
                         OperationType::Native(NativeOperation::LtFromEntries)
                     }
-                    x if *x == NativeOperation::GtFromEntries as u8 => {
+                    x if *x == NativeOperation::GtFromEntries => {
                         OperationType::Native(NativeOperation::GtFromEntries)
                     }
-                    x if *x == NativeOperation::SumOf as u8 => {
+                    x if *x == NativeOperation::SumOf => {
                         OperationType::Native(NativeOperation::SumOf)
                     }
-                    x if *x == NativeOperation::ProductOf as u8 => {
+                    x if *x == NativeOperation::ProductOf => {
                         OperationType::Native(NativeOperation::ProductOf)
                     }
-                    x if *x == NativeOperation::MaxOf as u8 => {
+                    x if *x == NativeOperation::MaxOf => {
                         OperationType::Native(NativeOperation::MaxOf)
                     }
-                    _ => panic!("Unknown operation code: {}", op_code),
+                    _ => panic!("Unknown operation code: {:?}", op_code),
                 },
                 inputs
                     .iter()
@@ -246,17 +247,11 @@ pub async fn import_pod(
     Ok(Json(req.pod))
 }
 
-pub async fn validate_statement(
-    Json(_req): Json<ValidateStatementRequest>,
-) -> Result<Json<bool>, ServerError> {
-    // TODO: Implement actual statement validation
-    Ok(Json(true))
-}
-
 pub async fn validate_statements(
     state: StateExtractor,
     Json(req): Json<ValidateStatementsRequest>,
-) -> Result<Json<bool>, ServerError> {
+) -> Result<Json<Vec<(Statement, Vec<(NativeOperation, Vec<Statement>, Statement)>)>>, ServerError>
+{
     let state = state.lock().await;
 
     let mut engine = DeductionEngine::new();
@@ -276,8 +271,24 @@ pub async fn validate_statements(
 
     let proofs = engine.prove_multiple(req.statements.clone());
 
-    // Return true only if we found proofs for all statements
-    Ok(Json(proofs.len() == req.statements.len()))
+    // Convert ProvableStatement to frontend::Statement
+    let validated_statements = proofs
+        .into_iter()
+        .map(|(stmt, chain)| {
+            let stmt: Statement = stmt.into();
+            let chain = chain
+                .into_iter()
+                .map(|(op_code, inputs, output)| {
+                    let inputs: Vec<Statement> = inputs.into_iter().map(|i| i.into()).collect();
+                    let output: Statement = output.into();
+                    (op_code, inputs, output)
+                })
+                .collect();
+            (stmt, chain)
+        })
+        .collect();
+
+    Ok(Json(validated_statements))
 }
 
 pub async fn get_schemas() -> Result<Json<serde_json::Value>, ServerError> {
