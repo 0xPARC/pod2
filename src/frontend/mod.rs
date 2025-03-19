@@ -349,9 +349,7 @@ impl MainPodBuilder {
                     st_args.push(StatementArg::Literal(v.clone()))
                 }
                 // Merkle proofs are never arguments to statements.
-                OperationArg::MerkleProof(_) => {
-                    unreachable!()
-                }
+                OperationArg::MerkleProof(_) => (),
             };
         }
         Ok(st_args)
