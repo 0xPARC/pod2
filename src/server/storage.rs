@@ -10,17 +10,69 @@ impl Database {
     pub fn new(path: &str) -> SqliteResult<Self> {
         let conn = Connection::open(path)?;
 
-        // Create tables if they don't exist
+        // Create version table if it doesn't exist
         conn.execute(
+            "CREATE TABLE IF NOT EXISTS schema_version (
+                version INTEGER PRIMARY KEY
+            )",
+            [],
+        )?;
+
+        // Check if version exists, if not initialize it
+        let version_exists: bool =
+            conn.query_row("SELECT EXISTS(SELECT 1 FROM schema_version)", [], |row| {
+                row.get(0)
+            })?;
+
+        if !version_exists {
+            conn.execute("INSERT INTO schema_version (version) VALUES (0)", [])?;
+        }
+
+        let db = Database { conn };
+        db.run_migrations()?;
+        Ok(db)
+    }
+
+    fn run_migrations(&self) -> SqliteResult<()> {
+        let mut current_version: i64 =
+            self.conn
+                .query_row("SELECT version FROM schema_version", [], |row| row.get(0))?;
+
+        // List of migrations to apply in order
+        let migrations = vec![
+            // Migration 0 -> 1: Initial schema
             "CREATE TABLE IF NOT EXISTS pods (
                 id TEXT PRIMARY KEY,
                 pod_type TEXT NOT NULL,
                 data TEXT NOT NULL
             )",
-            [],
-        )?;
+            // Add new migrations here as needed, for example:
+            // "ALTER TABLE pods ADD COLUMN created_at TEXT"
+        ];
 
-        Ok(Database { conn })
+        let mut migrations_run = false;
+
+        // Apply any pending migrations
+        for (version, migration) in migrations.iter().enumerate() {
+            let version = version as i64 + 1;
+            if version > current_version {
+                println!("Running migration v{}...", version);
+                self.conn.execute(migration, [])?;
+                // Update the version number
+                self.conn
+                    .execute("UPDATE schema_version SET version = ?1", [version])?;
+                current_version = version;
+                migrations_run = true;
+            }
+        }
+
+        if !migrations_run {
+            println!("Database already up-to-date (v{})", current_version);
+        } else {
+            println!("Database migrated to v{}", current_version);
+        }
+
+        Ok(())
     }
 
     pub fn store_pod(&self, id: &str, pod: &Pod) -> Result<(), Box<dyn std::error::Error>> {
