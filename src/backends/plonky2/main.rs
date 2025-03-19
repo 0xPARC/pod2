@@ -1,8 +1,13 @@
 use crate::backends::plonky2::basetypes::{Hash, Value, D, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE};
+use crate::backends::plonky2::common::{
+    CircuitBuilderPod, OperationTarget, StatementTarget, ValueTarget,
+};
 use crate::backends::plonky2::mock_signed::MockSignedPod;
-use crate::backends::plonky2::primitives::merkletree::MerkleProofCircuit;
+use crate::backends::plonky2::primitives::merkletree::MerkleProofExistenceCircuit;
 use crate::backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree};
-use crate::middleware::{Operation, Params, Statement, STATEMENT_ARG_F_LEN};
+use crate::middleware::{
+    hash_str, Operation, Params, PodType, Statement, KEY_TYPE, STATEMENT_ARG_F_LEN,
+};
 use anyhow::Result;
 use itertools::Itertools;
 use plonky2::field::extension::Extendable;
@@ -21,64 +26,6 @@ use plonky2::{
 };
 use std::collections::HashMap;
 
-//
-// Common functionality to build Pod circuits with plonky2
-//
-
-#[derive(Clone)]
-struct ValueTarget {
-    pub elements: [Target; 4],
-}
-
-#[derive(Clone)]
-struct StatementTarget {
-    pub code: [Target; 6],
-    pub args: Vec<[Target; STATEMENT_ARG_F_LEN]>,
-}
-
-// TODO: Implement Operation::to_field to determine the size of each element
-#[derive(Clone)]
-struct OperationTarget {
-    pub code: [Target; 6],
-    pub args: Vec<[Target; STATEMENT_ARG_F_LEN]>,
-}
-
-pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
-    fn connect_values(&mut self, x: ValueTarget, y: ValueTarget);
-    fn add_virtual_value(&mut self) -> ValueTarget;
-    fn add_virtual_statement(&mut self, params: &Params) -> StatementTarget;
-    fn add_virtual_operation(&mut self, params: &Params) -> OperationTarget;
-}
-
-impl<F: RichField + Extendable<D>, const D: usize> CircuitBuilderPod<F, D>
-    for CircuitBuilder<F, D>
-{
-    fn connect_values(&mut self, x: ValueTarget, y: ValueTarget) {
-        for i in 0..4 {
-            self.connect(x.elements[i], y.elements[i]);
-        }
-    }
-
-    fn add_virtual_value(&mut self) -> ValueTarget {
-        ValueTarget {
-            elements: self.add_virtual_target_arr::<4>(),
-        }
-    }
-
-    fn add_virtual_statement(&mut self, params: &Params) -> StatementTarget {
-        StatementTarget {
-            code: self.add_virtual_target_arr::<6>(),
-            args: (0..params.max_statement_args)
-                .map(|_| self.add_virtual_target_arr::<STATEMENT_ARG_F_LEN>())
-                .collect(),
-        }
-    }
-
-    fn add_virtual_operation(&mut self, params: &Params) -> OperationTarget {
-        todo!()
-    }
-}
-
 const MD: usize = 32;
 
 //
@@ -91,13 +38,23 @@ struct SignedPodVerifyGate {
 
 impl SignedPodVerifyGate {
     fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<SignedPodVerifyTarget> {
+        // Verify id
         let id = builder.add_virtual_hash();
         let mut mt_proofs = Vec::new();
         for _ in 0..self.params.max_signed_pod_values {
-            let mt_proof = MerkleProofCircuit::<MD>::add_targets(builder)?;
+            let mt_proof = MerkleProofExistenceCircuit::<MD>::add_targets(builder)?;
             builder.connect_hashes(id, mt_proof.root);
             mt_proofs.push(mt_proof);
         }
+
+        // Verify type
+        let type_mt_proof = &mt_proofs[0];
+        let key_type = builder.constant_value(hash_str(KEY_TYPE).into());
+        builder.connect_values(type_mt_proof.key, key_type);
+        let value_type = builder.constant_value(Value::from(PodType::MockSigned));
+        builder.connect_values(type_mt_proof.value, value_type);
+
+        // TODO: Verify signature
 
         Ok(SignedPodVerifyTarget {
             params: self.params.clone(),
@@ -110,7 +67,8 @@ impl SignedPodVerifyGate {
 struct SignedPodVerifyTarget {
     params: Params,
     id: HashOutTarget,
-    mt_proofs: Vec<MerkleProofCircuit<MD>>,
+    // The KEY_TYPE proof must be the first one
+    mt_proofs: Vec<MerkleProofExistenceCircuit<MD>>,
 }
 
 struct SignedPodVerifyInput {
@@ -118,16 +76,10 @@ struct SignedPodVerifyInput {
 }
 
 impl SignedPodVerifyTarget {
-    fn kvs(&self) -> Vec<(HashOutTarget, ValueTarget)> {
+    fn kvs(&self) -> Vec<(ValueTarget, ValueTarget)> {
         let mut kvs = Vec::new();
         for mt_proof in &self.mt_proofs {
-            let key = HashOutTarget {
-                elements: mt_proof.key.clone().try_into().expect("4 elements"),
-            };
-            let value = ValueTarget {
-                elements: mt_proof.value.clone().try_into().expect("4 elements"),
-            };
-            kvs.push((key, value));
+            kvs.push((mt_proof.key, mt_proof.value));
         }
         // TODO: when the slot is unused, do we force the kv to be (EMPTY, EMPTY), and then from
         // it get a ValueOf((id, EMPTY), EMPTY)?  Or should we keep some boolean flags for unused
@@ -144,7 +96,7 @@ impl SignedPodVerifyTarget {
         let tree = MerkleTree::new(MD, &input.kvs)?;
         for (i, (k, v)) in input.kvs.iter().sorted_by_key(|kv| kv.0).enumerate() {
             let (_, proof) = tree.prove(&k)?;
-            self.mt_proofs[i].set_targets(pw, proof.existence, tree.root(), proof, *k, *v)?;
+            self.mt_proofs[i].set_targets(pw, tree.root(), proof, *k, *v)?;
         }
         // Padding
         for i in input.kvs.len()..self.params.max_signed_pod_values {

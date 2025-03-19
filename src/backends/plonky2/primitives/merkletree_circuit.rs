@@ -21,8 +21,12 @@ use plonky2::{
     },
     plonk::circuit_builder::CircuitBuilder,
 };
+use std::iter;
 
 use crate::backends::plonky2::basetypes::{Hash, Value, D, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE};
+use crate::backends::plonky2::common::{
+    CircuitBuilderPod, OperationTarget, StatementTarget, ValueTarget,
+};
 use crate::backends::plonky2::primitives::merkletree::MerkleProof;
 
 /// `MerkleProofCircuit` allows to verify both proofs of existence and proofs
@@ -31,29 +35,29 @@ use crate::backends::plonky2::primitives::merkletree::MerkleProof;
 /// which requires less amount of constraints.
 pub struct MerkleProofCircuit<const MAX_DEPTH: usize> {
     pub root: HashOutTarget,
-    pub key: Vec<Target>,
-    pub value: Vec<Target>,
+    pub key: ValueTarget,
+    pub value: ValueTarget,
     pub existence: BoolTarget,
     pub siblings: Vec<HashOutTarget>,
     pub case_ii_selector: BoolTarget, // for case ii)
-    pub other_key: Vec<Target>,
-    pub other_value: Vec<Target>,
+    pub other_key: ValueTarget,
+    pub other_value: ValueTarget,
 }
 
 impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
     /// creates the targets and defines the logic of the circuit
     pub fn add_targets(builder: &mut CircuitBuilder<F, D>) -> Result<Self> {
         // create the targets
-        let key = builder.add_virtual_targets(VALUE_SIZE);
-        let value = builder.add_virtual_targets(VALUE_SIZE);
+        let key = builder.add_virtual_value();
+        let value = builder.add_virtual_value();
         // from proof struct:
         let existence = builder.add_virtual_bool_target_safe();
         // siblings are padded till MAX_DEPTH length
         let siblings = builder.add_virtual_hashes(MAX_DEPTH);
 
         let case_ii_selector = builder.add_virtual_bool_target_safe();
-        let other_key = builder.add_virtual_targets(VALUE_SIZE);
-        let other_value = builder.add_virtual_targets(VALUE_SIZE);
+        let other_key = builder.add_virtual_value();
+        let other_value = builder.add_virtual_value();
 
         // We have 3 cases for when computing the Leaf's hash:
         // - existence: leaf contains the given key & value
@@ -87,12 +91,8 @@ impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
         // of existence or of non-existence, ie:
         // k = key * existence + other_key * (1-existence)
         // v = value * existence + other_value * (1-existence)
-        let k: Vec<Target> = (0..4)
-            .map(|j| builder.select(existence, key[j], other_key[j]))
-            .collect();
-        let v: Vec<Target> = (0..4)
-            .map(|j| builder.select(existence, value[j], other_value[j]))
-            .collect();
+        let k = builder.select_value(existence, key, other_key);
+        let v = builder.select_value(existence, value, other_value);
 
         // get leaf's hash for the selected k & v
         let h = kv_hash_target(builder, &k, &v);
@@ -139,8 +139,8 @@ impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
         value: Value,
     ) -> Result<()> {
         pw.set_hash_target(self.root, HashOut::from_vec(root.0.to_vec()))?;
-        pw.set_target_arr(&self.key, &key.0)?;
-        pw.set_target_arr(&self.value, &value.0)?;
+        pw.set_target_arr(&self.key.elements, &key.0)?;
+        pw.set_target_arr(&self.value.elements, &value.0)?;
         pw.set_bool_target(self.existence, existence)?;
 
         // pad siblings with zeros to length MAX_DEPTH
@@ -156,14 +156,14 @@ impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
             Some((k, v)) if !existence => {
                 // non-existence case ii) expected leaf does exist but it has a different key
                 pw.set_bool_target(self.case_ii_selector, true)?;
-                pw.set_target_arr(&self.other_key, &k.0)?;
-                pw.set_target_arr(&self.other_value, &v.0)?;
+                pw.set_target_arr(&self.other_key.elements, &k.0)?;
+                pw.set_target_arr(&self.other_value.elements, &v.0)?;
             }
             _ => {
                 // existence & non-existence case i) expected leaf does not exist
                 pw.set_bool_target(self.case_ii_selector, false)?;
-                pw.set_target_arr(&self.other_key, &EMPTY_VALUE.0)?;
-                pw.set_target_arr(&self.other_value, &EMPTY_VALUE.0)?;
+                pw.set_target_arr(&self.other_key.elements, &EMPTY_VALUE.0)?;
+                pw.set_target_arr(&self.other_value.elements, &EMPTY_VALUE.0)?;
             }
         }
 
@@ -174,18 +174,18 @@ impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
 /// `MerkleProofExistenceCircuit` allows to verify proofs of existence only. If
 /// proofs of non-existence are needed, use `MerkleProofCircuit`.
 pub struct MerkleProofExistenceCircuit<const MAX_DEPTH: usize> {
-    root: HashOutTarget,
-    key: Vec<Target>,
-    value: Vec<Target>,
-    siblings: Vec<HashOutTarget>,
+    pub root: HashOutTarget,
+    pub key: ValueTarget,
+    pub value: ValueTarget,
+    pub siblings: Vec<HashOutTarget>,
 }
 
 impl<const MAX_DEPTH: usize> MerkleProofExistenceCircuit<MAX_DEPTH> {
     /// creates the targets and defines the logic of the circuit
     pub fn add_targets(builder: &mut CircuitBuilder<F, D>) -> Result<Self> {
         // create the targets
-        let key = builder.add_virtual_targets(VALUE_SIZE);
-        let value = builder.add_virtual_targets(VALUE_SIZE);
+        let key = builder.add_virtual_value();
+        let value = builder.add_virtual_value();
         // siblings are padded till MAX_DEPTH length
         let siblings = builder.add_virtual_hashes(MAX_DEPTH);
 
@@ -218,8 +218,8 @@ impl<const MAX_DEPTH: usize> MerkleProofExistenceCircuit<MAX_DEPTH> {
         value: Value,
     ) -> Result<()> {
         pw.set_hash_target(self.root, HashOut::from_vec(root.0.to_vec()))?;
-        pw.set_target_arr(&self.key, &key.0)?;
-        pw.set_target_arr(&self.value, &value.0)?;
+        pw.set_target_arr(&self.key.elements, &key.0)?;
+        pw.set_target_arr(&self.value.elements, &value.0)?;
 
         // pad siblings with zeros to length MAX_DEPTH
         let mut siblings = proof.siblings.clone();
@@ -297,21 +297,21 @@ fn compute_root_from_leaf<const MAX_DEPTH: usize>(
 // specially to be able to test it isolated.
 fn keypath_target<const MAX_DEPTH: usize>(
     builder: &mut CircuitBuilder<F, D>,
-    key: &Vec<Target>,
+    key: &ValueTarget,
 ) -> Vec<BoolTarget> {
-    assert_eq!(key.len(), VALUE_SIZE);
-
     let n_complete_field_elems: usize = MAX_DEPTH / F::BITS;
     let n_extra_bits: usize = MAX_DEPTH - n_complete_field_elems * F::BITS;
 
     let path: Vec<BoolTarget> = key
+        .elements
         .iter()
         .take(n_complete_field_elems)
         .flat_map(|e| builder.split_le(*e, F::BITS))
         .collect();
 
     let extra_bits = if n_extra_bits > 0 {
-        let extra_bits: Vec<BoolTarget> = builder.split_le(key[n_complete_field_elems], F::BITS);
+        let extra_bits: Vec<BoolTarget> =
+            builder.split_le(key.elements[n_complete_field_elems], F::BITS);
         extra_bits[..n_extra_bits].to_vec()
         // Note: ideally we would do:
         //     let extra_bits = builder.split_le(key[n_complete_field_elems], n_extra_bits);
@@ -326,10 +326,16 @@ fn keypath_target<const MAX_DEPTH: usize>(
 
 fn kv_hash_target(
     builder: &mut CircuitBuilder<F, D>,
-    key: &Vec<Target>,
-    value: &Vec<Target>,
+    key: &ValueTarget,
+    value: &ValueTarget,
 ) -> HashOutTarget {
-    let inputs: Vec<Target> = [key.clone(), value.clone(), vec![builder.one()]].concat();
+    let inputs = key
+        .elements
+        .iter()
+        .chain(value.elements.iter())
+        .cloned()
+        .chain(iter::once(builder.one()))
+        .collect();
     builder.hash_n_to_hash_no_pad::<PoseidonHash>(inputs)
 }
 
