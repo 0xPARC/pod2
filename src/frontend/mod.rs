@@ -85,6 +85,12 @@ impl From<middleware::Value> for Value {
     }
 }
 
+impl From<middleware::Hash> for Value {
+    fn from(v: middleware::Hash) -> Self {
+        Self::Raw(v.into())
+    }
+}
+
 impl TryInto<i64> for Value {
     type Error = Error;
     fn try_into(self) -> std::result::Result<i64, Self::Error> {
@@ -995,7 +1001,9 @@ pub mod tests {
     #[test]
     fn test_front_zu_kyc() -> Result<()> {
         let params = Params::default();
-        let (gov_id, pay_stub, sanction_list) = zu_kyc_sign_pod_builders(&params);
+        let sanctions_values = ["A343434340"].map(|s| crate::middleware::Value::from(hash_str(s)));
+        let sanction_set = Set::new(&sanctions_values).unwrap();
+        let (gov_id, pay_stub, sanction_list) = zu_kyc_sign_pod_builders(&params, &sanction_set);
 
         println!("{}", gov_id);
         println!("{}", pay_stub);
@@ -1021,7 +1029,8 @@ pub mod tests {
         check_kvs(&sanction_list)?;
         println!("{}", sanction_list);
 
-        let kyc_builder = zu_kyc_pod_builder(&params, &gov_id, &pay_stub, &sanction_list)?;
+        let kyc_builder =
+            zu_kyc_pod_builder(&params, &gov_id, &pay_stub, &sanction_list, &sanction_set)?;
         println!("{}", kyc_builder);
 
         // prove kyc with MockProver and print it
@@ -1177,8 +1186,9 @@ pub mod tests {
         my_dict_kvs.insert(BeValue::from(&"b".into()), BeValue::from(&2.into()));
         my_dict_kvs.insert(BeValue::from(&"c".into()), BeValue::from(&3.into()));
         let my_dict_as_mt = MerkleTree::new(5, &my_dict_kvs).unwrap();
-        let dict = Value::Dictionary(Dictionary { mt: my_dict_as_mt });
-        builder.insert("dict", dict);
+        let dict = Dictionary { mt: my_dict_as_mt };
+        let dict_root = Value::Dictionary(dict.clone());
+        builder.insert("dict", dict_root);
 
         let mut signer = MockSigner {
             pk: "signer".into(),
@@ -1200,6 +1210,7 @@ pub mod tests {
                     OperationArg::Statement(st0),
                     OperationArg::Statement(st1),
                     OperationArg::Statement(st2),
+                    OperationArg::MerkleProof(dict.prove(&Hash::from("a").into()).unwrap().1),
                 ],
             ))
             .unwrap();
