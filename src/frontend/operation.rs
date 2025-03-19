@@ -17,7 +17,7 @@ impl fmt::Display for OperationArg {
             OperationArg::Statement(s) => write!(f, "{}", s),
             OperationArg::Literal(v) => write!(f, "{}", v),
             OperationArg::Entry(k, v) => write!(f, "({}, {})", k, v),
-            OperationArg::MerkleProof(mp) => write!(f, "{}", mp),
+            OperationArg::MerkleProof(pf) => write!(f, "merkle_proof({})", pf),
         }
     }
 }
@@ -67,6 +67,12 @@ impl From<Statement> for OperationArg {
 impl<V: Into<Value>> From<(&str, V)> for OperationArg {
     fn from((key, value): (&str, V)) -> Self {
         Self::Entry(key.to_string(), value.into())
+    }
+}
+
+impl From<MerkleProof> for OperationArg {
+    fn from(pf: MerkleProof) -> Self {
+        Self::MerkleProof(pf)
     }
 }
 

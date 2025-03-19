@@ -817,9 +817,12 @@ impl MainPodCompiler {
         self.operations.push(op);
     }
 
-    fn compile_op_arg(&self, op_arg: &OperationArg) -> Option<middleware::Statement> {
+    fn compile_op_arg(&self, op_arg: &OperationArg) -> Option<middleware::OperationArg> {
         match op_arg {
-            OperationArg::Statement(s) => self.compile_st(s).ok(),
+            OperationArg::Statement(s) => self
+                .compile_st(s)
+                .ok()
+                .map(|s| middleware::OperationArg::Statement(s)),
             OperationArg::Literal(_v) => {
                 // OperationArg::Literal is a syntax sugar for the frontend.  This is translated to
                 // a new ValueOf statement and it's key used instead.
@@ -831,8 +834,8 @@ impl MainPodCompiler {
                 // statement doesn't have any requirement on the key and value.
                 None
             }
-            OperationArg::MerkleProof(_) => {
-                unreachable!()
+            OperationArg::MerkleProof(pf) => {
+                Some(middleware::OperationArg::MerkleProof(pf.clone()))
             }
         }
     }
@@ -915,10 +918,7 @@ impl MainPodCompiler {
         // TODO: Take Merkle proof into account.
         let mop_args =
             op.1.iter()
-                .flat_map(|arg| {
-                    self.compile_op_arg(arg)
-                        .map(|s| Ok(middleware::OperationArg::Statement(s.try_into()?)))
-                })
+                .flat_map(|arg| self.compile_op_arg(arg).map(|op_arg| Ok(op_arg)))
                 .collect::<Result<Vec<_>>>()?;
         middleware::Operation::op(mop_code, &mop_args)
     }
