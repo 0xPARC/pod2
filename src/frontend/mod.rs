@@ -858,6 +858,19 @@ impl MainPodCompiler {
         }
     }
 
+    // Returns the existing ValueOf statement where it was first introduced,
+    // or None if it does not exist.
+    fn get_literal<V: Clone + Into<middleware::Value>>(
+        &self,
+        val: V,
+    ) -> Option<&middleware::Statement> {
+        let val: middleware::Value = val.into();
+        match self.literals.get(&val) {
+            Some(idx) => Some(&self.statements[*idx]),
+            None => None,
+        }
+    }
+
     // This function handles cases where one frontend statement
     // compiles to multiple middleware statements.
     // For example: DictContains(x, y) on the frontend compiles to:
@@ -905,11 +918,43 @@ impl MainPodCompiler {
         }
     }
 
-    fn compile_st(
+    // If the frontend statement `st` compiles to a single middleware statement,
+    // returns that middleware statement.
+    // If it compiles to multiple middlewarestatements, returns StatementConversionError.
+    // This is only a helper method within compile_st_op().
+    // If you want to compile a statement in general, run compile_st().
+    fn compile_st_try_simple(
         &self,
         st: &Statement,
     ) -> Result<middleware::Statement, StatementConversionError> {
         st.clone().try_into()
+    }
+
+    // Compiles the frontend statement `st` to a middleware statement.
+    // This function assumes the middleware statement already exists --
+    // it should not be called from compile_st_op.
+    fn compile_st(&self, st: &Statement) -> Result<middleware::Statement> {
+        match self.compile_st_try_simple(st) {
+            Ok(s) => Ok(s),
+            Err(StatementConversionError::Error(e)) => Err(e),
+            Err(StatementConversionError::MCR(_)) => {
+                let empty_st = self
+                    .get_literal(EMPTY_VALUE)
+                    .clone()
+                    .ok_or(anyhow!("Literal value not found for empty literal."))?;
+                let empty_ak = match empty_st {
+                    middleware::Statement::ValueOf(ak, _) => ak,
+                    _ => unreachable!(),
+                };
+                let (ak1, ak2) = match (st.1.get(0).cloned(), st.1.get(1).cloned()) {
+                    (Some(StatementArg::Key(ak1)), Some(StatementArg::Key(ak2))) => (ak1, ak2),
+                    _ => Err(anyhow!("Ill-formed statement: {}", st))?,
+                };
+                let middle_st =
+                    middleware::Statement::Contains(ak1.into(), ak2.into(), empty_ak.clone());
+                Ok(middle_st)
+            }
+        }
     }
 
     fn compile_op(&self, op: &Operation) -> Result<middleware::Operation> {
@@ -924,7 +969,7 @@ impl MainPodCompiler {
     }
 
     fn compile_st_op(&mut self, st: &Statement, op: &Operation, params: &Params) -> Result<()> {
-        let middle_st_res = self.compile_st(st);
+        let middle_st_res = self.compile_st_try_simple(st);
         match middle_st_res {
             Ok(middle_st) => {
                 let middle_op = self.compile_op(op)?;

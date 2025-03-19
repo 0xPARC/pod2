@@ -42,7 +42,7 @@ impl From<(&SignedPod, &str)> for Statement {
 }
 
 #[derive(Debug)]
-struct ManualConversionRequired();
+pub struct ManualConversionRequired();
 
 impl std::fmt::Display for StatementConversionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
