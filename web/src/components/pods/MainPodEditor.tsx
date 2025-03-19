@@ -4,6 +4,7 @@ import {
   Select,
   SelectContent,
   SelectItem,
+  SelectSeparator,
   SelectTrigger,
   SelectValue
 } from "@/components/ui/select";
@@ -455,19 +456,26 @@ export function MainPodEditor() {
                         </SelectTrigger>
                         <SelectContent>
                           {pods.map(
-                            (pod) =>
-                              isSignedPod(pod) &&
-                              Object.entries(pod.entries).map(
-                                ([key, value]) => (
-                                  <SelectItem
-                                    key={`${pod.id}:${key}`}
-                                    value={`${pod.id}:${key}`}
-                                  >
-                                    {truncatePodId(pod.id)}.{key} ={" "}
-                                    {formatPodValue(value)}
-                                  </SelectItem>
+                            (pod, index) =>
+                              isSignedPod(pod) && [
+                                <>
+                                  {index > 0 && <SelectSeparator />}
+                                  <div className="text-sm py-1 px-2 bg-muted text-muted-foreground">
+                                    {truncatePodId(pod.id)}{" "}
+                                    {pod.nickname && `(${pod.nickname})`}
+                                  </div>
+                                </>,
+                                ...Object.entries(pod.entries).map(
+                                  ([key, value]) => (
+                                    <SelectItem
+                                      key={`${pod.id}:${key}`}
+                                      value={`${pod.id}:${key}`}
+                                    >
+                                      {key} = {formatPodValue(value)}
+                                    </SelectItem>
+                                  )
                                 )
-                              )
+                              ]
                           )}
                         </SelectContent>
                       </Select>
@@ -541,19 +549,26 @@ export function MainPodEditor() {
                             </SelectTrigger>
                             <SelectContent>
                               {pods.map(
-                                (pod) =>
-                                  isSignedPod(pod) &&
-                                  Object.entries(pod.entries).map(
-                                    ([key, value]) => (
-                                      <SelectItem
-                                        key={`${pod.id}:${key}`}
-                                        value={`${pod.id}:${key}`}
-                                      >
-                                        {truncatePodId(pod.id)}.{key} ={" "}
-                                        {formatPodValue(value)}
-                                      </SelectItem>
+                                (pod, index) =>
+                                  isSignedPod(pod) && [
+                                    <>
+                                      {index > 0 && <SelectSeparator />}
+                                      <div className="text-sm py-1 px-2 bg-muted text-muted-foreground">
+                                        {truncatePodId(pod.id)}{" "}
+                                        {pod.nickname && `(${pod.nickname})`}
+                                      </div>
+                                    </>,
+                                    ...Object.entries(pod.entries).map(
+                                      ([key, value]) => (
+                                        <SelectItem
+                                          key={`${pod.id}:${key}`}
+                                          value={`${pod.id}:${key}`}
+                                        >
+                                          {key} = {formatPodValue(value)}
+                                        </SelectItem>
+                                      )
                                     )
-                                  )
+                                  ]
                               )}
                             </SelectContent>
                           </Select>
