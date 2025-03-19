@@ -4,3 +4,4 @@ BA = "BA"
 Ded = "Ded" # "ANDed", it thought "Ded" should be "Dead"
 OT = "OT"
 aks = "aks" # anchored keys
+nin = "nin" # not in
