@@ -1080,6 +1080,22 @@ pub mod build_utils {
         (custom, $op:expr, $($arg:expr),+) => { $crate::frontend::Operation(
             $crate::frontend::OperationType::Custom($op),
             $crate::op_args!($($arg),*)) };
+        (dict_contains, $($arg:expr),+) => { crate::frontend::Operation(
+            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::DictContainsFromEntries),
+            crate::op_args!($($arg),*)) };
+        (dict_not_contains, $($arg:expr),+) => { crate::frontend::Operation(
+            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::DictNotContainsFromEntries),
+            crate::op_args!($($arg),*)) };
+        (set_contains, $($arg:expr),+) => { crate::frontend::Operation(
+            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::SetContainsFromEntries),
+            crate::op_args!($($arg),*)) };
+        (set_not_contains, $($arg:expr),+) => { crate::frontend::Operation(
+            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::SetNotContainsFromEntries),
+            crate::op_args!($($arg),*)) };
+        (array_contains, $($arg:expr),+) => { crate::frontend::Operation(
+            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::ArrayContainsFromEntries),
+            crate::op_args!($($arg),*)) };
+
     }
 }
 

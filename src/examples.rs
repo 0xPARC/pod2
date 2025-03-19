@@ -55,7 +55,7 @@ pub fn zu_kyc_pod_builder(
     kyc.add_signed_pod(pay_stub);
     kyc.add_signed_pod(sanction_list);
     kyc.pub_op(op!(
-        not_contains,
+        set_not_contains,
         (sanction_list, "sanctionList"),
         (gov_id, "idNumber"),
         sanction_set.prove_nonexistence(id_number_value)?
@@ -271,7 +271,7 @@ pub fn great_boy_pod_builder(
             .prove(pod_kvs.get(&KEY_SIGNER.into()).unwrap())?
             .1;
             great_boy.pub_op(op!(
-                contains,
+                dict_contains,
                 good_boy_issuers,
                 (good_boy_pods[good_boy_idx * 2 + issuer_idx], KEY_SIGNER),
                 0,
@@ -405,7 +405,7 @@ pub fn tickets_pod_builder(
     builder.pub_op(op!(eq, (signed_pod, "isConsumed"), expect_consumed))?;
     builder.pub_op(op!(eq, (signed_pod, "isRevoked"), false))?;
     builder.pub_op(op!(
-        not_contains,
+        dict_not_contains,
         blacklisted_email_dict_value,
         (signed_pod, "attendeeEmail"),
         attendee_nin_blacklist_pf
