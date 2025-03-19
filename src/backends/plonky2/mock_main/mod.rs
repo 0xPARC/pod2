@@ -16,6 +16,8 @@ mod statement;
 pub use operation::*;
 pub use statement::*;
 
+use super::primitives::merkletree::MerkleProof;
+
 pub const VALUE_TYPE: &str = "MockMainPOD";
 
 pub struct MockProver {}
@@ -38,6 +40,9 @@ pub struct MockMainPod {
     operations: Vec<Operation>,
     // All statements (inherited + new)
     statements: Vec<Statement>,
+    // All Merkle proofs
+    // TODO: Use a backend-specific representation
+    merkle_proofs: Vec<MerkleProof>,
 }
 
 impl fmt::Display for MockMainPod {
@@ -222,6 +227,7 @@ impl MockMainPod {
 
     fn find_op_arg(
         statements: &[Statement],
+        merkle_proofs: &[MerkleProof],
         op_arg: &middleware::OperationArg,
     ) -> Result<OperationArg> {
         match op_arg {
@@ -239,13 +245,22 @@ impl MockMainPod {
                         op_arg
                     )),
             },
-            _ => todo!(),
+            middleware::OperationArg::MerkleProof(pf_arg) => merkle_proofs
+                .iter()
+                .enumerate()
+                .find_map(|(i, pf)| (pf == pf_arg).then_some(i))
+                .map(OperationArg::MerkleProofIndex)
+                .ok_or(anyhow!(
+                    "Merkle proof corresponding to op arg {} not found",
+                    op_arg
+                )),
         }
     }
 
     fn process_private_statements_operations(
         params: &Params,
         statements: &[Statement],
+        merkle_proofs: &[MerkleProof],
         input_operations: &[middleware::Operation],
     ) -> Result<Vec<Operation>> {
         let mut operations = Vec::new();
@@ -257,7 +272,7 @@ impl MockMainPod {
             let mid_args = op.args();
             let mut args = mid_args
                 .iter()
-                .map(|mid_arg| Self::find_op_arg(statements, mid_arg))
+                .map(|mid_arg| Self::find_op_arg(statements, merkle_proofs, mid_arg))
                 .collect::<Result<Vec<_>>>()?;
             Self::pad_operation_args(params, &mut args);
             operations.push(Operation(op.code(), args));
@@ -272,6 +287,7 @@ impl MockMainPod {
     fn process_public_statements_operations(
         params: &Params,
         statements: &[Statement],
+        merkle_proofs: &[MerkleProof],
         mut operations: Vec<Operation>,
     ) -> Result<Vec<Operation>> {
         let offset_public_statements = statements.len() - params.max_public_statements;
@@ -290,6 +306,7 @@ impl MockMainPod {
                     // TODO
                     vec![Self::find_op_arg(
                         statements,
+                        merkle_proofs,
                         &middleware::OperationArg::Statement(mid_arg.try_into().unwrap()),
                     )?],
                 )
@@ -307,10 +324,27 @@ impl MockMainPod {
         // TODO: Insert a new public statement of ValueOf with `key=KEY_TYPE,
         // value=PodType::MockMainPod`
         let statements = Self::layout_statements(params, &inputs);
-        let operations =
-            Self::process_private_statements_operations(params, &statements, inputs.operations)?;
-        let operations =
-            Self::process_public_statements_operations(params, &statements, operations)?;
+        let merkle_proofs = inputs
+            .operations
+            .iter()
+            .flat_map(|op| match op {
+                middleware::Operation::ContainsFromEntries(_, _, _, pf) => Some(pf.clone()),
+                middleware::Operation::NotContainsFromEntries(_, _, pf) => Some(pf.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let operations = Self::process_private_statements_operations(
+            params,
+            &statements,
+            &merkle_proofs,
+            inputs.operations,
+        )?;
+        let operations = Self::process_public_statements_operations(
+            params,
+            &statements,
+            &merkle_proofs,
+            operations,
+        )?;
 
         let input_signed_pods = inputs
             .signed_pods
@@ -343,6 +377,7 @@ impl MockMainPod {
             public_statements,
             statements,
             operations,
+            merkle_proofs,
         })
     }
 
@@ -434,7 +469,10 @@ impl Pod for MockMainPod {
             .enumerate()
             .map(|(i, s)| {
                 self.operations[i]
-                    .deref(&self.statements[..input_statement_offset + i])
+                    .deref(
+                        &self.statements[..input_statement_offset + i],
+                        &self.merkle_proofs,
+                    )
                     .unwrap()
                     .check(&self.params, &s.clone().try_into().unwrap())
             })
