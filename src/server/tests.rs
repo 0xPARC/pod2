@@ -1,7 +1,7 @@
 use super::*;
 use crate::backends::plonky2::mock_signed::MockSigner;
 use crate::frontend::{
-    AnchoredKey, Origin, PodClass, SignedPod, SignedPodBuilder, Statement, StatementArg, Value,
+    AnchoredKey, Origin, PodClass, SignedPodBuilder, Statement, StatementArg, Value,
 };
 use crate::middleware::{NativePredicate, Params, PodId, Predicate};
 use crate::prover::types::{
@@ -52,7 +52,7 @@ async fn setup_test_app() -> Router {
 #[tokio::test]
 async fn test_create_and_list_pods() -> Result<(), Box<dyn std::error::Error>> {
     with_clean_state(|app| async move {
-        // Create a signed pod
+        // Create a signed pod with nickname
         let signed_pod_req = Request::builder()
             .method("POST")
             .uri("/api/create-signed-pod")
@@ -60,6 +60,7 @@ async fn test_create_and_list_pods() -> Result<(), Box<dyn std::error::Error>> {
             .body(Body::from(
                 json!({
                     "signer": "test_signer",
+                    "nickname": "test_pod",
                     "key_values": { "key": "value" }
                 })
                 .to_string(),
@@ -72,12 +73,29 @@ async fn test_create_and_list_pods() -> Result<(), Box<dyn std::error::Error>> {
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap();
-        let created_pod: SignedPod = serde_json::from_slice(&body).unwrap();
-        let created_id = format!("{:x}", created_pod.id());
-        println!(
-            "DEBUG test_create_and_list_pods - Created pod with ID: {:?}",
-            created_pod.id()
-        );
+        let created_pod: Pod = serde_json::from_slice(&body).unwrap();
+        let created_id = match &created_pod.pod {
+            PodVariant::Signed(pod) => format!("{:x}", pod.id()),
+            PodVariant::Main(_) => panic!("Expected Signed pod"),
+        };
+        assert_eq!(created_pod.nickname, Some("test_pod".to_string()));
+
+        // Create another pod without nickname
+        let signed_pod_req2 = Request::builder()
+            .method("POST")
+            .uri("/api/create-signed-pod")
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                json!({
+                    "signer": "test_signer2",
+                    "key_values": { "key2": "value2" }
+                })
+                .to_string(),
+            ))
+            .unwrap();
+
+        let response = app.clone().oneshot(signed_pod_req2).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
 
         // List pods to verify storage
         let list_req = Request::builder()
@@ -94,23 +112,81 @@ async fn test_create_and_list_pods() -> Result<(), Box<dyn std::error::Error>> {
             .await
             .unwrap();
         let pods: Vec<Pod> = serde_json::from_slice(&body).unwrap();
-        assert_eq!(pods.len(), 1);
+        assert_eq!(pods.len(), 2, "Expected 2 pods in the list");
 
-        // Verify the pod ID matches
-        match &pods[0] {
-            Pod::Signed(pod) => {
+        // Verify the pods
+        let pod_with_nickname = pods
+            .iter()
+            .find(|p| p.nickname == Some("test_pod".to_string()))
+            .unwrap();
+        let pod_without_nickname = pods.iter().find(|p| p.nickname.is_none()).unwrap();
+
+        match &pod_with_nickname.pod {
+            PodVariant::Signed(pod) => {
                 let stored_id = format!("{:x}", pod.id());
-                println!(
-                    "DEBUG test_create_and_list_pods - Stored pod ID: {:?}",
-                    pod.id()
-                );
                 assert_eq!(
                     created_id, stored_id,
                     "Created pod ID does not match stored pod ID"
                 );
             }
-            Pod::Main(_) => panic!("Expected Signed pod"),
+            PodVariant::Main(_) => panic!("Expected Signed pod"),
         }
+
+        // Verify the pod without nickname
+        match &pod_without_nickname.pod {
+            PodVariant::Signed(pod) => {
+                assert_eq!(
+                    pod.kvs.get("key2"),
+                    Some(&Value::String("value2".to_string())),
+                    "Pod without nickname has incorrect key-value pair"
+                );
+            }
+            PodVariant::Main(_) => panic!("Expected Signed pod"),
+        }
+
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn test_duplicate_nickname() -> Result<(), Box<dyn std::error::Error>> {
+    with_clean_state(|app| async move {
+        // Create first pod with nickname
+        let signed_pod_req = Request::builder()
+            .method("POST")
+            .uri("/api/create-signed-pod")
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                json!({
+                    "signer": "test_signer",
+                    "nickname": "test_pod",
+                    "key_values": { "key": "value" }
+                })
+                .to_string(),
+            ))
+            .unwrap();
+
+        let response = app.clone().oneshot(signed_pod_req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Try to create second pod with same nickname
+        let signed_pod_req = Request::builder()
+            .method("POST")
+            .uri("/api/create-signed-pod")
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                json!({
+                    "signer": "test_signer",
+                    "nickname": "test_pod",
+                    "key_values": { "key": "value" }
+                })
+                .to_string(),
+            ))
+            .unwrap();
+
+        let response = app.oneshot(signed_pod_req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
 
         Ok(())
     })
@@ -128,6 +204,7 @@ async fn test_get_and_delete_pod() -> Result<(), Box<dyn std::error::Error>> {
             .body(Body::from(
                 json!({
                     "signer": "test_signer",
+                    "nickname": "test_pod",
                     "key_values": { "key": "value" }
                 })
                 .to_string(),
@@ -140,11 +217,14 @@ async fn test_get_and_delete_pod() -> Result<(), Box<dyn std::error::Error>> {
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap();
-        let pod: SignedPod = serde_json::from_slice(&body).unwrap();
-        let pod_id = format!("{:x}", pod.id());
+        let pod: Pod = serde_json::from_slice(&body).unwrap();
+        let pod_id = match &pod.pod {
+            PodVariant::Signed(pod) => format!("{:x}", pod.id()),
+            PodVariant::Main(_) => panic!("Expected Signed pod"),
+        };
         println!(
             "DEBUG test_get_and_delete_pod - Created pod with ID: {}",
-            pod.id()
+            pod_id
         );
 
         // Get the pod
@@ -157,10 +237,20 @@ async fn test_get_and_delete_pod() -> Result<(), Box<dyn std::error::Error>> {
 
         println!(
             "DEBUG test_get_and_delete_pod - Requesting pod with ID: {}",
-            pod.id()
+            pod_id
         );
         let response = app.clone().oneshot(get_req).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let retrieved_pod: Pod = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            retrieved_pod.nickname,
+            Some("test_pod".to_string()),
+            "Retrieved pod nickname does not match"
+        );
 
         // Delete the pod
         let delete_req = Request::builder()
@@ -172,7 +262,7 @@ async fn test_get_and_delete_pod() -> Result<(), Box<dyn std::error::Error>> {
 
         println!(
             "DEBUG test_get_and_delete_pod - Deleting pod with ID: {}",
-            pod.id()
+            pod_id
         );
         let response = app.clone().oneshot(delete_req).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
@@ -187,7 +277,7 @@ async fn test_get_and_delete_pod() -> Result<(), Box<dyn std::error::Error>> {
 
         println!(
             "DEBUG test_get_and_delete_pod - Requesting deleted pod with ID: {}",
-            pod.id()
+            pod_id
         );
         let response = app.oneshot(get_req).await.unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
@@ -206,9 +296,15 @@ async fn test_import_pod() -> Result<(), Box<dyn std::error::Error>> {
         let mut signer = MockSigner {
             pk: "test_signer".into(),
         };
-        let pod = signed_pod_builder.sign(&mut signer)?;
-        let pod_id = format!("{:x}", pod.id());
-        println!("DEBUG test_import_pod - Created pod with ID: {}", pod.id());
+        let signed_pod = signed_pod_builder.sign(&mut signer)?;
+        let pod_id = format!("{:x}", signed_pod.id());
+        println!("DEBUG test_import_pod - Created pod with ID: {}", pod_id);
+
+        // Create the pod with nickname
+        let pod = Pod {
+            nickname: Some("test_pod".to_string()),
+            pod: PodVariant::Signed(signed_pod.clone()),
+        };
 
         // Import the pod
         let import_req = Request::builder()
@@ -216,14 +312,14 @@ async fn test_import_pod() -> Result<(), Box<dyn std::error::Error>> {
             .uri("/api/import-pod")
             .header("Content-Type", "application/json")
             .body(Body::from(
-                json!({ "pod": Pod::Signed(pod.clone()) }).to_string(),
+                json!({
+                    "pod": pod
+                })
+                .to_string(),
             ))
             .unwrap();
 
-        println!(
-            "DEBUG test_import_pod - Importing pod with ID: {}",
-            pod.id()
-        );
+        println!("DEBUG test_import_pod - Importing pod with ID: {}", pod_id);
         let response = app.clone().oneshot(import_req).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
 
@@ -237,10 +333,20 @@ async fn test_import_pod() -> Result<(), Box<dyn std::error::Error>> {
 
         println!(
             "DEBUG test_import_pod - Requesting imported pod with ID: {}",
-            pod.id()
+            pod_id
         );
         let response = app.oneshot(get_req).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let retrieved_pod: Pod = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            retrieved_pod.nickname,
+            Some("test_pod".to_string()),
+            "Retrieved pod nickname does not match"
+        );
 
         Ok(())
     })
@@ -315,13 +421,22 @@ async fn test_validate_statements() -> Result<(), Box<dyn std::error::Error>> {
             pod.kvs
         );
 
+        // Create the pod with no nickname
+        let pod_wrapper = Pod {
+            nickname: None,
+            pod: PodVariant::Signed(pod.clone()),
+        };
+
         // Import the pod into the server state
         let import_req = Request::builder()
             .method("POST")
             .uri("/api/import-pod")
             .header("Content-Type", "application/json")
             .body(Body::from(
-                json!({ "pod": Pod::Signed(pod.clone()) }).to_string(),
+                json!({
+                    "pod": pod_wrapper
+                })
+                .to_string(),
             ))
             .unwrap();
 

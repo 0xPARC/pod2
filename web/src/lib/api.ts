@@ -151,7 +151,8 @@ const SignedPodSchema = z.object({
   proof: z.string(),
   id: z.string().regex(/^[0-9a-fA-F]{64}$/),
   pod_class: z.literal("Signed"),
-  pod_type: z.literal("Mock")
+  pod_type: z.literal("Mock"),
+  nickname: z.string().optional()
 });
 
 const MainPodSchema = z.object({
@@ -159,7 +160,8 @@ const MainPodSchema = z.object({
   proof: z.string(),
   id: z.string().regex(/^[0-9a-fA-F]{64}$/),
   pod_class: z.literal("Main"),
-  pod_type: z.literal("Mock")
+  pod_type: z.literal("Mock"),
+  nickname: z.string().optional()
 });
 
 const PodSchema = z.discriminatedUnion("pod_class", [
@@ -194,7 +196,7 @@ export interface TreeNode {
 }
 
 // Helper function to check if a value is a TreeNode
-export function isTreeNode(value: any): value is TreeNode {
+export function isTreeNode(value: unknown): value is TreeNode {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -211,7 +213,7 @@ export interface KeyValue {
   key: string;
 }
 
-export function isKeyValue(value: any): value is KeyValue {
+export function isKeyValue(value: unknown): value is KeyValue {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -414,27 +416,32 @@ class ApiClient {
   baseUrl = API_BASE;
 
   async listPods(): Promise<Pod[]> {
-    const { data } = await axiosInstance.post("/list-pods");
+    const { data } = await axiosInstance.post<Pod[]>("/list-pods");
     return z.array(PodSchema).parse(data);
   }
 
   async getPod(id: string): Promise<Pod> {
-    const { data } = await axiosInstance.post("/get-pod", { id });
+    const { data } = await axiosInstance.get<Pod>(`/get-pod/${id}`);
     return PodSchema.parse(data);
   }
 
   async createSignedPod(
     signer: string,
-    keyValues: Record<string, unknown>
+    keyValues: Record<string, unknown>,
+    nickname?: string
   ): Promise<SignedPod> {
-    const { data } = await axiosInstance.post("/create-signed-pod", {
+    const { data } = await axiosInstance.post<SignedPod>("/create-signed-pod", {
       signer,
-      key_values: keyValues
+      key_values: keyValues,
+      nickname
     });
     return SignedPodSchema.parse(data);
   }
 
-  async createMainPod(statements: EditorStatement[]): Promise<MainPod> {
+  async createMainPod(
+    statements: EditorStatement[],
+    nickname?: string
+  ): Promise<MainPod> {
     const transformedStatements = statements.map((statement) => {
       // Convert EditorStatement to FrontendWildcardStatement format
       const firstArg: WildcardAnchoredKey = {
@@ -467,8 +474,9 @@ class ApiClient {
       };
     });
 
-    const { data } = await axiosInstance.post("/create-main-pod", {
-      statements: transformedStatements
+    const { data } = await axiosInstance.post<MainPod>("/create-main-pod", {
+      statements: transformedStatements,
+      nickname
     });
     return MainPodSchema.parse(data);
   }
@@ -484,6 +492,14 @@ class ApiClient {
 
   async exportPod(id: string): Promise<Pod> {
     const { data } = await axiosInstance.get(`/export/${id}`);
+    return PodSchema.parse(data);
+  }
+
+  async updatePodNickname(id: string, nickname: string | null): Promise<Pod> {
+    const { data } = await axiosInstance.post("/update-pod-nickname", {
+      id,
+      nickname
+    });
     return PodSchema.parse(data);
   }
 
@@ -571,8 +587,8 @@ export function useCreateSignedPod() {
 export function useCreateMainPod() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (statements: EditorStatement[]) =>
-      api.createMainPod(statements),
+    mutationFn: (statements: EditorStatement[], nickname?: string) =>
+      api.createMainPod(statements, nickname),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["pods"] });
     }

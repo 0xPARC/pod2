@@ -12,8 +12,16 @@ use super::storage;
 
 // Types matching frontend
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Pod {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nickname: Option<String>,
+    #[serde(flatten)]
+    pub pod: PodVariant,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum Pod {
+pub enum PodVariant {
     Signed(SignedPod),
     Main(MainPod),
 }
@@ -27,11 +35,15 @@ pub struct GetPodRequest {
 #[derive(Debug, Deserialize)]
 pub struct CreateSignedPodRequest {
     pub signer: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nickname: Option<String>,
     pub key_values: crate::frontend::SignedPodValues,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct CreateMainPodRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nickname: Option<String>,
     pub statements: Vec<WildcardTargetStatement>,
 }
 

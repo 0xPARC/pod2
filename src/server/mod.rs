@@ -48,6 +48,10 @@ pub async fn start_server() -> Result<(), Box<dyn std::error::Error>> {
         )
         .route("/api/get-schemas", get(handlers::get_schemas))
         .route("/api/export/:id", get(handlers::export_pod))
+        .route(
+            "/api/update-pod-nickname",
+            post(handlers::update_pod_nickname),
+        )
         .layer(cors)
         .with_state(state);
 

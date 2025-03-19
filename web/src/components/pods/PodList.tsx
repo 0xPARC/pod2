@@ -13,12 +13,20 @@ import {
   TrashIcon,
   ChevronDownIcon,
   ChevronRightIcon,
-  DownloadIcon
+  DownloadIcon,
+  CopyIcon
 } from "lucide-react";
 import { ImportPodDialog } from "./ImportPodDialog";
 import { toast } from "sonner";
 import { useNavigate } from "@tanstack/react-router";
 import { formatStatement } from "@/lib/statement-display";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger
+} from "@/components/ui/tooltip";
+import { EditableNickname } from "./EditableNickname";
 
 interface ApiError {
   response?: {
@@ -82,6 +90,16 @@ export function PodList() {
     }
   }
 
+  async function handleCopyId(id: string) {
+    try {
+      await navigator.clipboard.writeText(id);
+      toast.success("POD ID copied to clipboard");
+    } catch (err) {
+      console.error("Failed to copy:", err);
+      toast.error("Failed to copy POD ID");
+    }
+  }
+
   function toggleExpand(id: string) {
     const newExpanded = new Set(expandedPods);
     if (newExpanded.has(id)) {
@@ -121,6 +139,7 @@ export function PodList() {
           <TableRow>
             <TableHead className="w-12"></TableHead>
             <TableHead>ID</TableHead>
+            <TableHead>Nickname</TableHead>
             <TableHead>Type</TableHead>
             <TableHead>Details</TableHead>
             <TableHead className="w-24">Actions</TableHead>
@@ -143,7 +162,36 @@ export function PodList() {
                     )}
                   </Button>
                 </TableCell>
-                <TableCell className="font-mono">{pod.id}</TableCell>
+                <TableCell>
+                  <div className="flex items-center space-x-2">
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="font-mono">
+                            {pod.id.slice(0, 12) + "..."}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="font-mono">{pod.id}</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleCopyId(pod.id)}
+                    >
+                      <CopyIcon className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <EditableNickname
+                    id={pod.id}
+                    initialNickname={pod.nickname}
+                    onUpdate={loadPods}
+                  />
+                </TableCell>
                 <TableCell>{pod.pod_class}</TableCell>
                 <TableCell>
                   {pod.pod_class === "Signed" ? (

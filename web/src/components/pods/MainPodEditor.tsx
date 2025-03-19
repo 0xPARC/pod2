@@ -23,6 +23,7 @@ import {
 import { useDebounce } from "@/lib/hooks/useDebounce";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
+import { Input } from "@/components/ui/input";
 
 // Simple TreeNodeEditor component
 function TreeNodeEditor({
@@ -77,11 +78,12 @@ function formatPodValue(value: ValueType | undefined): string {
 
 export function MainPodEditor() {
   const [statements, setStatements] = useState<EditorStatement[]>([]);
-  const [validationState, setValidationState] = useState<{
-    isPending: boolean;
-    isValid?: boolean;
-  }>({ isPending: false });
+  const [nickname, setNickname] = useState<string>("");
   const [pods, setPods] = useState<Pod[]>([]);
+  const [validationState, setValidationState] = useState<{
+    isValid: boolean;
+    isPending: boolean;
+  }>({ isValid: false, isPending: false });
   const debouncedStatements = useDebounce(statements, 500);
   const navigate = useNavigate();
 
@@ -128,14 +130,12 @@ export function MainPodEditor() {
 
   // Validate statements when they change
   useEffect(() => {
+    setValidationState({ isValid: false, isPending: true });
     const validateStatements = async () => {
       if (debouncedStatements.length === 0) return;
 
       // Only validate if all statements are complete
       if (!debouncedStatements.every(isStatementComplete)) return;
-
-      // Set validation state to pending
-      setValidationState({ isPending: true });
 
       try {
         const isValid = await api.validateStatements(debouncedStatements);
@@ -360,242 +360,148 @@ export function MainPodEditor() {
 
       <div className="bg-white rounded-lg shadow p-6">
         <div className="space-y-4">
-          {statements.map((statement) => (
-            <Card key={statement.id}>
-              <CardContent className="pt-6">
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium">
-                          Statement Type
-                        </span>
-                      </div>
-                      <Select
-                        value={statement.type}
-                        onValueChange={(value) =>
-                          handleStatementTypeChange(
-                            statement.id,
-                            value as StatementType
-                          )
-                        }
-                      >
-                        <SelectTrigger className="w-[180px]">
-                          <SelectValue placeholder="Select type" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="Equal">Equal</SelectItem>
-                          <SelectItem value="NotEqual">NotEqual</SelectItem>
-                          <SelectItem value="Gt">Gt</SelectItem>
-                          <SelectItem value="Lt">Lt</SelectItem>
-                          <SelectItem value="Contains">Contains</SelectItem>
-                          <SelectItem value="NotContains">
-                            NotContains
-                          </SelectItem>
-                          <SelectItem value="MaxOf">MaxOf</SelectItem>
-                          <SelectItem value="ProductOf">ProductOf</SelectItem>
-                          <SelectItem value="SumOf">SumOf</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {validationState.isPending ? (
-                        <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-                      ) : validationState.isValid ? (
-                        <CheckCircle2 className="w-4 h-4 text-green-500" />
-                      ) : validationState.isValid === false ? (
-                        <XCircle className="w-4 h-4 text-red-500" />
-                      ) : null}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleDeleteStatement(statement.id)}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  </div>
+          <div className="space-y-2">
+            <label htmlFor="nickname" className="text-sm font-medium">
+              Nickname (optional)
+            </label>
+            <Input
+              id="nickname"
+              placeholder="Enter a nickname for this POD"
+              value={nickname}
+              onChange={(e) => setNickname(e.target.value)}
+              className="w-full"
+            />
+          </div>
 
-                  <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium">
-                        First Argument
-                      </span>
-                    </div>
-                    <Select
-                      value={`${statement.firstArg.wildcardId.value}:${statement.firstArg.key}`}
-                      onValueChange={(value) => {
-                        const [wildcardId, key] = value.split(":");
-                        const pod = pods.find((p) => p.id === wildcardId);
-                        if (pod) {
-                          handleFirstArgChange(statement.id, {
-                            podId: wildcardId,
-                            podClass: pod.pod_class,
-                            key
-                          });
-                        }
-                      }}
-                    >
-                      <SelectTrigger className="w-[180px]">
-                        <SelectValue placeholder="Select key" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {pods.map(
-                          (pod) =>
-                            isSignedPod(pod) &&
-                            Object.entries(pod.entries).map(([key, value]) => (
-                              <SelectItem
-                                key={`${pod.id}:${key}`}
-                                value={`${pod.id}:${key}`}
-                              >
-                                {truncatePodId(pod.id)}.{key} ={" "}
-                                {formatPodValue(value)}
-                              </SelectItem>
-                            ))
-                        )}
-                      </SelectContent>
-                    </Select>
-                    {statement.firstArg.wildcardId.value &&
-                      statement.firstArg.key && (
-                        <span className="text-sm text-muted-foreground">
-                          {(() => {
-                            const pod = pods.find(
-                              (p) =>
-                                p.id === statement.firstArg.wildcardId.value
-                            );
-                            if (isSignedPod(pod)) {
-                              return (
-                                pod.entries[
-                                  statement.firstArg.key
-                                ]?.toString() || "N/A"
-                              );
-                            }
-                            return "N/A";
-                          })()}
-                        </span>
-                      )}
-                  </div>
-
-                  <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium">
-                        Second Argument
-                      </span>
-                    </div>
-                    <Select
-                      value={statement.secondArg.type}
-                      onValueChange={(value) =>
-                        handleSecondArgTypeChange(
-                          statement.id,
-                          value as "key" | "literal"
-                        )
-                      }
-                    >
-                      <SelectTrigger className="w-[180px]">
-                        <SelectValue placeholder="Select type" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="key">Anchored Key</SelectItem>
-                        <SelectItem value="literal">Literal Value</SelectItem>
-                      </SelectContent>
-                    </Select>
-
-                    {statement.secondArg.type === "key" && (
-                      <>
+          <div className="space-y-4">
+            {statements.map((statement) => (
+              <Card key={statement.id}>
+                <CardContent className="pt-6">
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium">
+                            Statement Type
+                          </span>
+                        </div>
                         <Select
-                          value={
-                            isKeyValue(statement.secondArg.value)
-                              ? `${statement.secondArg.value.podId}:${statement.secondArg.value.key}`
-                              : ""
+                          value={statement.type}
+                          onValueChange={(value) =>
+                            handleStatementTypeChange(
+                              statement.id,
+                              value as StatementType
+                            )
                           }
-                          onValueChange={(value) => {
-                            const [podId, key] = value.split(":");
-                            const pod = pods.find((p) => p.id === podId);
-                            if (pod) {
-                              handleSecondArgAnchoredKeyChange(statement.id, {
-                                podId,
-                                podClass: pod.pod_class,
-                                key
-                              });
-                            }
-                          }}
                         >
                           <SelectTrigger className="w-[180px]">
-                            <SelectValue placeholder="Select key" />
+                            <SelectValue placeholder="Select type" />
                           </SelectTrigger>
                           <SelectContent>
-                            {pods.map(
-                              (pod) =>
-                                isSignedPod(pod) &&
-                                Object.entries(pod.entries).map(
-                                  ([key, value]) => (
-                                    <SelectItem
-                                      key={`${pod.id}:${key}`}
-                                      value={`${pod.id}:${key}`}
-                                    >
-                                      {truncatePodId(pod.id)}.{key} ={" "}
-                                      {formatPodValue(value)}
-                                    </SelectItem>
-                                  )
-                                )
-                            )}
+                            <SelectItem value="Equal">Equal</SelectItem>
+                            <SelectItem value="NotEqual">NotEqual</SelectItem>
+                            <SelectItem value="Gt">Gt</SelectItem>
+                            <SelectItem value="Lt">Lt</SelectItem>
+                            <SelectItem value="Contains">Contains</SelectItem>
+                            <SelectItem value="NotContains">
+                              NotContains
+                            </SelectItem>
+                            <SelectItem value="MaxOf">MaxOf</SelectItem>
+                            <SelectItem value="ProductOf">ProductOf</SelectItem>
+                            <SelectItem value="SumOf">SumOf</SelectItem>
                           </SelectContent>
                         </Select>
-                        {isKeyValue(statement.secondArg.value) &&
-                          statement.secondArg.value.podId &&
-                          statement.secondArg.value.key && (
-                            <span className="text-sm text-muted-foreground">
-                              {(() => {
-                                const pod = pods.find(
-                                  (p) =>
-                                    isKeyValue(statement.secondArg.value) &&
-                                    p.id === statement.secondArg.value.podId
-                                );
-                                if (isSignedPod(pod)) {
-                                  return (
-                                    pod.entries[
-                                      (statement.secondArg.value as KeyValue)
-                                        .key
-                                    ]?.toString() || "N/A"
-                                  );
-                                }
-                                return "N/A";
-                              })()}
-                            </span>
-                          )}
-                      </>
-                    )}
-
-                    {statement.secondArg.type === "literal" && (
-                      <div className="flex-1">
-                        <TreeNodeEditor
-                          node={
-                            statement.secondArg.value || {
-                              id: crypto.randomUUID(),
-                              key: "",
-                              type: "string",
-                              value: ""
-                            }
-                          }
-                          onUpdate={(node) =>
-                            handleSecondArgLiteralChange(statement.id, node)
-                          }
-                        />
                       </div>
-                    )}
-                  </div>
+                      <div className="flex items-center gap-2">
+                        {validationState.isPending ? (
+                          <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                        ) : validationState.isValid ? (
+                          <CheckCircle2 className="w-4 h-4 text-green-500" />
+                        ) : validationState.isValid === false ? (
+                          <XCircle className="w-4 h-4 text-red-500" />
+                        ) : null}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleDeleteStatement(statement.id)}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
 
-                  {isThreeArgStatement(statement.type) && (
                     <div className="flex items-center gap-4">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-medium">
-                          Third Argument
+                          First Argument
                         </span>
                       </div>
                       <Select
-                        value={statement.thirdArg?.type || "key"}
+                        value={`${statement.firstArg.wildcardId.value}:${statement.firstArg.key}`}
+                        onValueChange={(value) => {
+                          const [wildcardId, key] = value.split(":");
+                          const pod = pods.find((p) => p.id === wildcardId);
+                          if (pod) {
+                            handleFirstArgChange(statement.id, {
+                              podId: wildcardId,
+                              podClass: pod.pod_class,
+                              key
+                            });
+                          }
+                        }}
+                      >
+                        <SelectTrigger className="w-[180px]">
+                          <SelectValue placeholder="Select key" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {pods.map(
+                            (pod) =>
+                              isSignedPod(pod) &&
+                              Object.entries(pod.entries).map(
+                                ([key, value]) => (
+                                  <SelectItem
+                                    key={`${pod.id}:${key}`}
+                                    value={`${pod.id}:${key}`}
+                                  >
+                                    {truncatePodId(pod.id)}.{key} ={" "}
+                                    {formatPodValue(value)}
+                                  </SelectItem>
+                                )
+                              )
+                          )}
+                        </SelectContent>
+                      </Select>
+                      {statement.firstArg.wildcardId.value &&
+                        statement.firstArg.key && (
+                          <span className="text-sm text-muted-foreground">
+                            {(() => {
+                              const pod = pods.find(
+                                (p) =>
+                                  p.id === statement.firstArg.wildcardId.value
+                              );
+                              if (isSignedPod(pod)) {
+                                return (
+                                  pod.entries[
+                                    statement.firstArg.key
+                                  ]?.toString() || "N/A"
+                                );
+                              }
+                              return "N/A";
+                            })()}
+                          </span>
+                        )}
+                    </div>
+
+                    <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium">
+                          Second Argument
+                        </span>
+                      </div>
+                      <Select
+                        value={statement.secondArg.type}
                         onValueChange={(value) =>
-                          handleThirdArgTypeChange(
+                          handleSecondArgTypeChange(
                             statement.id,
                             value as "key" | "literal"
                           )
@@ -610,19 +516,19 @@ export function MainPodEditor() {
                         </SelectContent>
                       </Select>
 
-                      {statement.thirdArg?.type === "key" && (
+                      {statement.secondArg.type === "key" && (
                         <>
                           <Select
                             value={
-                              statement.thirdArg.type === "key"
-                                ? `${statement.thirdArg.value.podId}:${statement.thirdArg.value.key}`
+                              isKeyValue(statement.secondArg.value)
+                                ? `${statement.secondArg.value.podId}:${statement.secondArg.value.key}`
                                 : ""
                             }
                             onValueChange={(value) => {
                               const [podId, key] = value.split(":");
                               const pod = pods.find((p) => p.id === podId);
                               if (pod) {
-                                handleThirdArgAnchoredKeyChange(statement.id, {
+                                handleSecondArgAnchoredKeyChange(statement.id, {
                                   podId,
                                   podClass: pod.pod_class,
                                   key
@@ -651,20 +557,21 @@ export function MainPodEditor() {
                               )}
                             </SelectContent>
                           </Select>
-                          {statement.thirdArg.type === "key" &&
-                            statement.thirdArg.value.podId &&
-                            statement.thirdArg.value.key && (
+                          {isKeyValue(statement.secondArg.value) &&
+                            statement.secondArg.value.podId &&
+                            statement.secondArg.value.key && (
                               <span className="text-sm text-muted-foreground">
                                 {(() => {
                                   const pod = pods.find(
                                     (p) =>
-                                      statement.thirdArg?.type === "key" &&
-                                      p.id === statement.thirdArg.value.podId
+                                      isKeyValue(statement.secondArg.value) &&
+                                      p.id === statement.secondArg.value.podId
                                   );
                                   if (isSignedPod(pod)) {
                                     return (
                                       pod.entries[
-                                        statement.thirdArg.value.key
+                                        (statement.secondArg.value as KeyValue)
+                                          .key
                                       ]?.toString() || "N/A"
                                     );
                                   }
@@ -675,11 +582,11 @@ export function MainPodEditor() {
                         </>
                       )}
 
-                      {statement.thirdArg?.type === "literal" && (
+                      {statement.secondArg.type === "literal" && (
                         <div className="flex-1">
                           <TreeNodeEditor
                             node={
-                              statement.thirdArg.value || {
+                              statement.secondArg.value || {
                                 id: crypto.randomUUID(),
                                 key: "",
                                 type: "string",
@@ -687,17 +594,132 @@ export function MainPodEditor() {
                               }
                             }
                             onUpdate={(node) =>
-                              handleThirdArgLiteralChange(statement.id, node)
+                              handleSecondArgLiteralChange(statement.id, node)
                             }
                           />
                         </div>
                       )}
                     </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+
+                    {isThreeArgStatement(statement.type) && (
+                      <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium">
+                            Third Argument
+                          </span>
+                        </div>
+                        <Select
+                          value={statement.thirdArg?.type || "key"}
+                          onValueChange={(value) =>
+                            handleThirdArgTypeChange(
+                              statement.id,
+                              value as "key" | "literal"
+                            )
+                          }
+                        >
+                          <SelectTrigger className="w-[180px]">
+                            <SelectValue placeholder="Select type" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="key">Anchored Key</SelectItem>
+                            <SelectItem value="literal">
+                              Literal Value
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+
+                        {statement.thirdArg?.type === "key" && (
+                          <>
+                            <Select
+                              value={
+                                statement.thirdArg.type === "key"
+                                  ? `${statement.thirdArg.value.podId}:${statement.thirdArg.value.key}`
+                                  : ""
+                              }
+                              onValueChange={(value) => {
+                                const [podId, key] = value.split(":");
+                                const pod = pods.find((p) => p.id === podId);
+                                if (pod) {
+                                  handleThirdArgAnchoredKeyChange(
+                                    statement.id,
+                                    {
+                                      podId,
+                                      podClass: pod.pod_class,
+                                      key
+                                    }
+                                  );
+                                }
+                              }}
+                            >
+                              <SelectTrigger className="w-[180px]">
+                                <SelectValue placeholder="Select key" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {pods.map(
+                                  (pod) =>
+                                    isSignedPod(pod) &&
+                                    Object.entries(pod.entries).map(
+                                      ([key, value]) => (
+                                        <SelectItem
+                                          key={`${pod.id}:${key}`}
+                                          value={`${pod.id}:${key}`}
+                                        >
+                                          {truncatePodId(pod.id)}.{key} ={" "}
+                                          {formatPodValue(value)}
+                                        </SelectItem>
+                                      )
+                                    )
+                                )}
+                              </SelectContent>
+                            </Select>
+                            {statement.thirdArg.type === "key" &&
+                              statement.thirdArg.value.podId &&
+                              statement.thirdArg.value.key && (
+                                <span className="text-sm text-muted-foreground">
+                                  {(() => {
+                                    const pod = pods.find(
+                                      (p) =>
+                                        statement.thirdArg?.type === "key" &&
+                                        p.id === statement.thirdArg.value.podId
+                                    );
+                                    if (isSignedPod(pod)) {
+                                      return (
+                                        pod.entries[
+                                          statement.thirdArg.value.key
+                                        ]?.toString() || "N/A"
+                                      );
+                                    }
+                                    return "N/A";
+                                  })()}
+                                </span>
+                              )}
+                          </>
+                        )}
+
+                        {statement.thirdArg?.type === "literal" && (
+                          <div className="flex-1">
+                            <TreeNodeEditor
+                              node={
+                                statement.thirdArg.value || {
+                                  id: crypto.randomUUID(),
+                                  key: "",
+                                  type: "string",
+                                  value: ""
+                                }
+                              }
+                              onUpdate={(node) =>
+                                handleThirdArgLiteralChange(statement.id, node)
+                              }
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
         </div>
       </div>
     </div>

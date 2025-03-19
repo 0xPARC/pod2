@@ -3,15 +3,27 @@ use crate::{
     backends::plonky2::{mock_main::MockProver, mock_signed::MockSigner},
     frontend::{
         serialization::{MainPodHelper, SignedPodHelper},
-        MainPod, MainPodBuilder, Operation, OperationArg, SignedPod, SignedPodBuilder,
-        StatementArg,
+        MainPodBuilder, Operation, OperationArg, SignedPodBuilder,
     },
-    middleware::{NativeOperation, OperationType, Params, PodId},
+    middleware::{NativeOperation, OperationType, Params},
     prover::{engine::DeductionEngine, types::WildcardTargetStatement},
 };
-use axum::Json;
+use axum::extract::{Json, State};
+use serde::Deserialize;
 use serde_json::{self, json};
-use std::collections::HashSet;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+#[derive(Debug, Deserialize)]
+pub struct ValidateStatementsRequest {
+    pub statements: Vec<WildcardTargetStatement>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdatePodNicknameRequest {
+    pub id: String,
+    pub nickname: Option<String>,
+}
 
 pub async fn list_pods(state: StateExtractor) -> Result<Json<Vec<Pod>>, ServerError> {
     let state = state.lock().await;
@@ -38,137 +50,134 @@ pub async fn get_pod(
 }
 
 pub async fn create_signed_pod(
-    state: StateExtractor,
+    State(state): State<Arc<Mutex<ServerState>>>,
     Json(req): Json<CreateSignedPodRequest>,
-) -> Result<Json<SignedPod>, ServerError> {
-    let state = state.lock().await;
+) -> Result<Json<Pod>, ServerError> {
+    // Check for duplicate nickname if one is provided
+    if let Some(nickname) = &req.nickname {
+        let state = state.lock().await;
+        let existing_pods = state
+            .db
+            .list_pods()
+            .map_err(|e| ServerError::DatabaseError(e.to_string()))?;
 
-    // Create a signed pod using the frontend's builder
-    let params = Params::default();
-    let mut builder = SignedPodBuilder::new(&params);
-
-    // Add the key values to the builder
-    for (key, value) in req.key_values.iter() {
-        builder.insert(key, value.clone());
+        if existing_pods
+            .iter()
+            .any(|p| p.nickname.as_ref() == Some(nickname))
+        {
+            return Err(ServerError::DatabaseError(format!(
+                "Pod with nickname '{}' already exists",
+                nickname
+            )));
+        }
     }
 
-    // Sign the pod with the provided signer
-    let mut signer = MockSigner { pk: req.signer };
-    let pod = builder.sign(&mut signer).map_err(ServerError::from)?;
+    let mut signed_pod_builder = SignedPodBuilder::new(&Params::default());
+    for (key, value) in req.key_values.iter() {
+        signed_pod_builder.insert(key, value.clone());
+    }
+    let mut signer = MockSigner {
+        pk: req.signer.into(),
+    };
+    let signed_pod = signed_pod_builder
+        .sign(&mut signer)
+        .map_err(|e| ServerError::DatabaseError(format!("Failed to sign pod: {}", e)))?;
 
-    // Store the pod
-    let id = format!("{:x}", pod.id());
+    let pod = Pod {
+        nickname: req.nickname,
+        pod: PodVariant::Signed(signed_pod.clone()),
+    };
+
+    let id = format!("{:x}", signed_pod.id());
+    let state = state.lock().await;
     state
         .db
-        .store_pod(&id, &Pod::Signed(pod.clone()))
+        .store_pod(&id, &pod)
         .map_err(|e| ServerError::DatabaseError(e.to_string()))?;
 
     Ok(Json(pod))
 }
 
 pub async fn create_main_pod(
-    state: StateExtractor,
+    State(state): State<Arc<Mutex<ServerState>>>,
     Json(req): Json<CreateMainPodRequest>,
-) -> Result<Json<MainPod>, ServerError> {
+) -> Result<Json<Pod>, ServerError> {
+    // Validate that all referenced pods exist
     let state = state.lock().await;
-    let params = Params::default();
-    let mut builder = MainPodBuilder::new(&params);
-
-    let mut engine = DeductionEngine::new();
-
-    // Get all pods from database for validation
     let pods = state
         .db
         .list_pods()
         .map_err(|e| ServerError::DatabaseError(e.to_string()))?;
 
+    let mut engine = DeductionEngine::new();
     for pod in pods {
-        if let Pod::Signed(signed_pod) = pod.clone() {
-            engine.add_signed_pod(signed_pod);
-        }
-        if let Pod::Main(main_pod) = pod {
-            engine.add_main_pod(main_pod);
+        match pod.pod {
+            PodVariant::Signed(signed_pod) => engine.add_signed_pod(signed_pod),
+            PodVariant::Main(main_pod) => engine.add_main_pod(main_pod),
         }
     }
 
-    let proofs = engine.prove_multiple(req.statements);
+    let proofs = engine.prove_multiple(req.statements.clone());
+    if proofs.is_empty() {
+        return Err(ServerError::DatabaseError(
+            "No valid proofs found for statements".to_string(),
+        ));
+    }
 
-    if !proofs.is_empty() {
-        let mut pod_ids: HashSet<PodId> = HashSet::new();
-        for (_stmt, chain) in proofs.iter() {
-            for (op_code, inputs, _output) in chain {
-                let op = Operation(
-                    match op_code {
-                        x if *x == NativeOperation::ContainsFromEntries as u8 => {
-                            OperationType::Native(NativeOperation::ContainsFromEntries)
-                        }
-                        x if *x == NativeOperation::NotContainsFromEntries as u8 => {
-                            OperationType::Native(NativeOperation::NotContainsFromEntries)
-                        }
-                        x if *x == NativeOperation::EqualFromEntries as u8 => {
-                            OperationType::Native(NativeOperation::EqualFromEntries)
-                        }
-                        x if *x == NativeOperation::LtFromEntries as u8 => {
-                            OperationType::Native(NativeOperation::LtFromEntries)
-                        }
-                        x if *x == NativeOperation::GtFromEntries as u8 => {
-                            OperationType::Native(NativeOperation::GtFromEntries)
-                        }
-                        x if *x == NativeOperation::SumOf as u8 => {
-                            OperationType::Native(NativeOperation::SumOf)
-                        }
-                        x if *x == NativeOperation::ProductOf as u8 => {
-                            OperationType::Native(NativeOperation::ProductOf)
-                        }
-                        x if *x == NativeOperation::MaxOf as u8 => {
-                            OperationType::Native(NativeOperation::MaxOf)
-                        }
-                        _ => panic!("Unknown operation code: {}", op_code),
-                    },
-                    inputs
-                        .iter()
-                        .map(|i| OperationArg::Statement(i.clone().into()))
-                        .collect(),
-                );
-
-                // Extract pod IDs before moving op
-                for arg in op.1.iter() {
-                    if let OperationArg::Statement(stmt) = arg {
-                        for stmt_arg in &stmt.args {
-                            if let StatementArg::Key(key) = stmt_arg {
-                                pod_ids.insert(key.origin.pod_id);
-                            }
-                        }
+    let mut builder = MainPodBuilder::new(&Params::default());
+    for (_stmt, chain) in proofs.iter() {
+        for (op_code, inputs, _output) in chain {
+            let op = Operation(
+                match op_code {
+                    x if *x == NativeOperation::ContainsFromEntries as u8 => {
+                        OperationType::Native(NativeOperation::ContainsFromEntries)
                     }
-                }
-
-                builder.pub_op(op).unwrap();
-            }
-        }
-
-        for pod_id in pod_ids {
-            let id_string = format!("{:x}", pod_id);
-
-            let pod = state.db.get_pod(&id_string);
-
-            if let Ok(Some(Pod::Signed(pod))) = pod {
-                builder.add_signed_pod(&pod);
-            } else if let Ok(Some(Pod::Main(pod))) = pod {
-                builder.add_main_pod(pod);
-            }
+                    x if *x == NativeOperation::NotContainsFromEntries as u8 => {
+                        OperationType::Native(NativeOperation::NotContainsFromEntries)
+                    }
+                    x if *x == NativeOperation::EqualFromEntries as u8 => {
+                        OperationType::Native(NativeOperation::EqualFromEntries)
+                    }
+                    x if *x == NativeOperation::LtFromEntries as u8 => {
+                        OperationType::Native(NativeOperation::LtFromEntries)
+                    }
+                    x if *x == NativeOperation::GtFromEntries as u8 => {
+                        OperationType::Native(NativeOperation::GtFromEntries)
+                    }
+                    x if *x == NativeOperation::SumOf as u8 => {
+                        OperationType::Native(NativeOperation::SumOf)
+                    }
+                    x if *x == NativeOperation::ProductOf as u8 => {
+                        OperationType::Native(NativeOperation::ProductOf)
+                    }
+                    x if *x == NativeOperation::MaxOf as u8 => {
+                        OperationType::Native(NativeOperation::MaxOf)
+                    }
+                    _ => panic!("Unknown operation code: {}", op_code),
+                },
+                inputs
+                    .iter()
+                    .map(|i| OperationArg::Statement(i.clone().into()))
+                    .collect(),
+            );
+            builder.pub_op(op).unwrap();
         }
     }
 
     let mut prover = MockProver {};
-    let pod = builder
-        .prove(&mut prover, &params)
-        .map_err(ServerError::from)?;
+    let main_pod = builder
+        .prove(&mut prover, &Params::default())
+        .map_err(|e| ServerError::DatabaseError(format!("Failed to prove main pod: {}", e)))?;
 
-    // Store the pod
-    let id = format!("{:x}", pod.id());
+    let pod = Pod {
+        nickname: req.nickname,
+        pod: PodVariant::Main(main_pod.clone()),
+    };
+
+    let id = format!("{:x}", main_pod.id());
     state
         .db
-        .store_pod(&id, &Pod::Main(pod.clone()))
+        .store_pod(&id, &pod)
         .map_err(|e| ServerError::DatabaseError(e.to_string()))?;
 
     Ok(Json(pod))
@@ -195,9 +204,9 @@ pub async fn import_pod(
     Json(req): Json<ImportPodRequest>,
 ) -> Result<Json<Pod>, ServerError> {
     let state = state.lock().await;
-    let id = match &req.pod {
-        Pod::Signed(pod) => format!("{:x}", pod.id()),
-        Pod::Main(pod) => format!("{:x}", pod.id()),
+    let id = match &req.pod.pod {
+        PodVariant::Signed(pod) => format!("{:x}", pod.id()),
+        PodVariant::Main(pod) => format!("{:x}", pod.id()),
     };
 
     state
@@ -230,11 +239,9 @@ pub async fn validate_statements(
         .map_err(|e| ServerError::DatabaseError(e.to_string()))?;
 
     for pod in pods {
-        if let Pod::Signed(signed_pod) = pod.clone() {
-            engine.add_signed_pod(signed_pod);
-        }
-        if let Pod::Main(main_pod) = pod {
-            engine.add_main_pod(main_pod);
+        match pod.pod {
+            PodVariant::Signed(signed_pod) => engine.add_signed_pod(signed_pod),
+            PodVariant::Main(main_pod) => engine.add_main_pod(main_pod),
         }
     }
 
@@ -268,4 +275,50 @@ pub async fn export_pod(
         Some(pod) => Ok(Json(pod)),
         None => Err(ServerError::PodNotFound(id)),
     }
+}
+
+pub async fn update_pod_nickname(
+    state: StateExtractor,
+    Json(req): Json<UpdatePodNicknameRequest>,
+) -> Result<Json<Pod>, ServerError> {
+    let state = state.lock().await;
+
+    // Check for duplicate nickname if one is provided
+    if let Some(nickname) = &req.nickname {
+        let existing_pods = state
+            .db
+            .list_pods()
+            .map_err(|e| ServerError::DatabaseError(e.to_string()))?;
+
+        if existing_pods.iter().any(|p| {
+            let pod_id = match &p.pod {
+                PodVariant::Signed(pod) => format!("{:x}", pod.id()),
+                PodVariant::Main(pod) => format!("{:x}", pod.id()),
+            };
+            pod_id != req.id && p.nickname.as_ref() == Some(nickname)
+        }) {
+            return Err(ServerError::DatabaseError(format!(
+                "Pod with nickname '{}' already exists",
+                nickname
+            )));
+        }
+    }
+
+    // Get the existing pod
+    let mut pod = state
+        .db
+        .get_pod(&req.id)
+        .map_err(|e| ServerError::DatabaseError(e.to_string()))?
+        .ok_or_else(|| ServerError::PodNotFound(req.id.clone()))?;
+
+    // Update the nickname
+    pod.nickname = req.nickname;
+
+    // Store the updated pod
+    state
+        .db
+        .store_pod(&req.id, &pod)
+        .map_err(|e| ServerError::DatabaseError(e.to_string()))?;
+
+    Ok(Json(pod))
 }
