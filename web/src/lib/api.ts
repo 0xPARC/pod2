@@ -411,6 +411,8 @@ const axiosInstance = axios.create({
 });
 
 class ApiClient {
+  baseUrl = API_BASE;
+
   async listPods(): Promise<Pod[]> {
     const { data } = await axiosInstance.post("/list-pods");
     return z.array(PodSchema).parse(data);
@@ -477,6 +479,11 @@ class ApiClient {
 
   async importPod(pod: Pod): Promise<Pod> {
     const { data } = await axiosInstance.post("/import-pod", { pod });
+    return PodSchema.parse(data);
+  }
+
+  async exportPod(id: string): Promise<Pod> {
+    const { data } = await axiosInstance.get(`/export/${id}`);
     return PodSchema.parse(data);
   }
 

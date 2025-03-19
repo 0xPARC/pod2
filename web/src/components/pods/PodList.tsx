@@ -9,7 +9,12 @@ import {
   TableRow
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { TrashIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
+import {
+  TrashIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  DownloadIcon
+} from "lucide-react";
 import { ImportPodDialog } from "./ImportPodDialog";
 import { toast } from "sonner";
 import { useNavigate } from "@tanstack/react-router";
@@ -60,6 +65,19 @@ export function PodList() {
       const apiError = err as ApiError;
       const errorMessage =
         apiError.response?.data?.error || "Failed to delete POD";
+      toast.error(errorMessage);
+    }
+  }
+
+  async function handleExport(id: string) {
+    try {
+      // Open the export URL directly in a new tab
+      window.open(`${api.baseUrl}/export/${id}`, "_blank");
+    } catch (err: unknown) {
+      console.error(err);
+      const apiError = err as ApiError;
+      const errorMessage =
+        apiError.response?.data?.error || "Failed to export POD";
       toast.error(errorMessage);
     }
   }
@@ -143,13 +161,22 @@ export function PodList() {
                   )}
                 </TableCell>
                 <TableCell>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => handleDelete(pod.id)}
-                  >
-                    <TrashIcon className="w-4 h-4" />
-                  </Button>
+                  <div className="flex space-x-2">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleExport(pod.id)}
+                    >
+                      <DownloadIcon className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleDelete(pod.id)}
+                    >
+                      <TrashIcon className="w-4 h-4" />
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
               {expandedPods.has(pod.id) && (

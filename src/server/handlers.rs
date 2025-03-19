@@ -254,3 +254,18 @@ pub async fn get_schemas() -> Result<Json<serde_json::Value>, ServerError> {
 
     Ok(Json(schemas))
 }
+
+pub async fn export_pod(
+    state: StateExtractor,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<Pod>, ServerError> {
+    let state = state.lock().await;
+    match state
+        .db
+        .get_pod(&id)
+        .map_err(|e| ServerError::DatabaseError(e.to_string()))?
+    {
+        Some(pod) => Ok(Json(pod)),
+        None => Err(ServerError::PodNotFound(id)),
+    }
+}
