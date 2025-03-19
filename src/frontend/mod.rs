@@ -1002,7 +1002,7 @@ pub mod tests {
     fn test_front_zu_kyc() -> Result<()> {
         let params = Params::default();
         let sanctions_values = ["A343434340"].map(|s| crate::middleware::Value::from(hash_str(s)));
-        let sanction_set = Set::new(&sanctions_values).unwrap();
+        let sanction_set = Value::Set(Set::new(&sanctions_values)?);
         let (gov_id, pay_stub, sanction_list) = zu_kyc_sign_pod_builders(&params, &sanction_set);
 
         println!("{}", gov_id);
@@ -1029,8 +1029,7 @@ pub mod tests {
         check_kvs(&sanction_list)?;
         println!("{}", sanction_list);
 
-        let kyc_builder =
-            zu_kyc_pod_builder(&params, &gov_id, &pay_stub, &sanction_list, &sanction_set)?;
+        let kyc_builder = zu_kyc_pod_builder(&params, &gov_id, &pay_stub, &sanction_list)?;
         println!("{}", kyc_builder);
 
         // prove kyc with MockProver and print it

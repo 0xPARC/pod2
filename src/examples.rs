@@ -17,7 +17,7 @@ use crate::op;
 
 pub fn zu_kyc_sign_pod_builders(
     params: &Params,
-    sanction_set: &Set,
+    sanction_set: &Value,
 ) -> (SignedPodBuilder, SignedPodBuilder, SignedPodBuilder) {
     let mut gov_id = SignedPodBuilder::new(params);
     gov_id.insert("idNumber", "4242424242");
@@ -29,7 +29,7 @@ pub fn zu_kyc_sign_pod_builders(
     pay_stub.insert("startDate", 1706367566);
 
     let mut sanction_list = SignedPodBuilder::new(params);
-    sanction_list.insert("sanctionList", Value::Set(sanction_set.clone()));
+    sanction_list.insert("sanctionList", sanction_set.clone());
 
     (gov_id, pay_stub, sanction_list)
 }
@@ -39,8 +39,11 @@ pub fn zu_kyc_pod_builder(
     gov_id: &SignedPod,
     pay_stub: &SignedPod,
     sanction_list: &SignedPod,
-    sanction_set: &Set,
 ) -> Result<MainPodBuilder> {
+    let sanction_set = match sanction_list.kvs.get("sanctionList") {
+        Some(Value::Set(s)) => Ok(s),
+        _ => Err(anyhow!("Missing sanction list!")),
+    }?;
     let now_minus_18y: i64 = 1169909388;
     let now_minus_1y: i64 = 1706367566;
 
@@ -225,7 +228,7 @@ pub fn great_boy_pod_builder(
     params: &Params,
     good_boy_pods: [&SignedPod; 4],
     friend_pods: [&SignedPod; 2],
-    good_boy_issuer_dict: &Dictionary,
+    good_boy_issuers: &Value,
     receiver: &str,
 ) -> Result<MainPodBuilder> {
     // Attestment chain (issuer -> good boy -> great boy):
@@ -261,14 +264,18 @@ pub fn great_boy_pod_builder(
                 PodType::MockSigned as i64
             ))?;
             // Each good boy POD comes from a valid issuer
+            let good_boy_proof = match good_boy_issuers {
+                Value::Dictionary(dict) => Ok(dict),
+                _ => Err(anyhow!("Invalid good boy issuers!")),
+            }?
+            .prove(pod_kvs.get(&KEY_SIGNER.into()).unwrap())?
+            .1;
             great_boy.pub_op(op!(
                 contains,
-                Value::Dictionary(good_boy_issuer_dict.clone()),
+                good_boy_issuers,
                 (good_boy_pods[good_boy_idx * 2 + issuer_idx], KEY_SIGNER),
                 0,
-                good_boy_issuer_dict
-                    .prove(pod_kvs.get(&KEY_SIGNER.into()).unwrap())?
-                    .1
+                good_boy_proof
             ))?;
             // Each good boy has 2 good boy pods
             great_boy.pub_op(op!(
@@ -345,12 +352,12 @@ pub fn great_boy_pod_full_flow() -> Result<MainPodBuilder> {
     alice_friend_pods.push(friend.sign(&mut bob_signer).unwrap());
     alice_friend_pods.push(friend.sign(&mut charlie_signer).unwrap());
 
-    let good_boy_issuer_dict = Dictionary::new(
+    let good_boy_issuers = Value::Dictionary(Dictionary::new(
         &good_boy_issuers
             .into_iter()
             .map(|issuer| (crate::middleware::Hash::from(issuer), 0.into()))
             .collect(),
-    )?;
+    )?);
 
     great_boy_pod_builder(
         &params,
@@ -361,7 +368,7 @@ pub fn great_boy_pod_full_flow() -> Result<MainPodBuilder> {
             &charlie_good_boys[1],
         ],
         [&alice_friend_pods[0], &alice_friend_pods[1]],
-        &good_boy_issuer_dict,
+        &good_boy_issuers,
         alice,
     )
 }
@@ -387,14 +394,10 @@ pub fn tickets_pod_builder(
     expect_consumed: bool,
     blacklisted_emails: &Dictionary,
 ) -> Result<MainPodBuilder> {
+    let attendee_email_value = signed_pod.kvs.get("attendeeEmail").unwrap();
+    let attendee_nin_blacklist_pf =
+        blacklisted_emails.prove_nonexistence(&attendee_email_value.into())?;
     let blacklisted_email_dict_value = Value::Dictionary(blacklisted_emails.clone());
-    let attendee_email_statement: Statement = (signed_pod, "attendeeEmail").into();
-    let attendee_email_value = match attendee_email_statement.1.get(1).cloned() {
-        Some(crate::frontend::StatementArg::Literal(v)) => Ok(v),
-        _ => Err(anyhow!(
-            "Unexpected error reading attendee email from signed POD."
-        )),
-    }?;
     // Create a main pod referencing this signed pod with some statements
     let mut builder = MainPodBuilder::new(params);
     builder.add_signed_pod(signed_pod);
@@ -404,8 +407,8 @@ pub fn tickets_pod_builder(
     builder.pub_op(op!(
         not_contains,
         blacklisted_email_dict_value,
-        attendee_email_statement,
-        blacklisted_emails.prove_nonexistence(&(&attendee_email_value).into())?
+        (signed_pod, "attendeeEmail"),
+        attendee_nin_blacklist_pf
     ))?;
     Ok(builder)
 }
