@@ -823,14 +823,33 @@ impl MainPodCompiler {
         }
     }
 
-    fn compile_st(&self, st: &Statement) -> Result<middleware::Statement> {
-        let output_st = st.clone().try_into().unwrap_or(
-            |e| 
-        )
-        Ok(output_st)
+    // This function handles cases where one frontend statement
+    // compiles to multiple middleware statements.
+    // For example: DictContains(x, y) on the frontend compiles to:
+    // ValueOf(empty, EMPTY_VALUE)
+    // Contains(x, y, empty)
+    fn manual_statement_conversion(&self, st: &Statement) -> Vec<middleware::Statement> {
+        match st.0 {
+            Predicate::Native(NativePredicate::DictContains) => {
+
+            },
+            _ => unreachable!()
+        }
     }
 
-    fn compile_op(&self, op: &Operation) -> Result<middleware::Operation> {
+    fn compile_st(&self, st: &Statement) -> Result<Vec<middleware::Statement>> {
+        let output_st = st.clone().try_into().unwrap_or_else(
+            |e| {
+                match e {
+                    StatementConversionError::Error(err) => {return err;},
+                    StatementConversionError::MCR(_) => Ok(self.manual_statement_conversion(st))
+                }
+            }
+        )
+        Ok(vec![output_st])
+    }
+
+    fn compile_op(&self, op: &Operation) -> Result<Vec<middleware::Operation>> {
         // TODO
         let mop_code: middleware::OperationType = op.0.clone().try_into()?;
 
@@ -842,7 +861,7 @@ impl MainPodCompiler {
                         .map(|s| Ok(middleware::OperationArg::Statement(s.try_into()?)))
                 })
                 .collect::<Result<Vec<_>>>()?;
-        middleware::Operation::op(mop_code, &mop_args)
+        Ok(vec![middleware::Operation::op(mop_code, &mop_args)?])
     }
 
     fn compile_st_op(&mut self, st: &Statement, op: &Operation, params: &Params) -> Result<()> {

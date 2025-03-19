@@ -3,7 +3,7 @@ use std::fmt;
 
 use super::{AnchoredKey, NativePredicate, Predicate, SignedPod, Value};
 //use crate::middleware::{self, NativePredicate, Predicate};
-use crate::middleware::{self, EMPTY};
+use crate::middleware;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StatementArg {
