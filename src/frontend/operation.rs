@@ -1,13 +1,14 @@
 use std::fmt;
 
 use super::{NativePredicate, Predicate, SignedPod, Statement, Value};
-use crate::middleware;
+use crate::{backends::plonky2::primitives::merkletree::MerkleProof, middleware};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OperationArg {
     Statement(Statement),
     Literal(Value),
     Entry(String, Value),
+    MerkleProof(MerkleProof),
 }
 
 impl fmt::Display for OperationArg {
@@ -16,6 +17,7 @@ impl fmt::Display for OperationArg {
             OperationArg::Statement(s) => write!(f, "{}", s),
             OperationArg::Literal(v) => write!(f, "{}", v),
             OperationArg::Entry(k, v) => write!(f, "({}, {})", k, v),
+            OperationArg::MerkleProof(mp) => write!(f, "{}", mp),
         }
     }
 }

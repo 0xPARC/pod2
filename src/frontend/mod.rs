@@ -12,7 +12,7 @@ use crate::middleware::{
     containers::{Array, Dictionary, Set},
     hash_str, Hash, MainPodInputs, Params, PodId, PodProver, PodSigner, SELF,
 };
-use crate::middleware::{KEY_SIGNER, KEY_TYPE};
+use crate::middleware::{hash_value, EMPTY_VALUE, KEY_SIGNER, KEY_TYPE};
 
 mod custom;
 mod operation;
@@ -341,6 +341,9 @@ impl MainPodBuilder {
                         k.clone(),
                     )));
                     st_args.push(StatementArg::Literal(v.clone()))
+                }
+                OperationArg::MerkleProof(_) => {
+                    unreachable!()
                 }
             };
         }
@@ -790,6 +793,13 @@ struct MainPodCompiler {
     // Output
     statements: Vec<middleware::Statement>,
     operations: Vec<middleware::Operation>,
+    // Internal state
+    // Tracks literal constants assigned to ValueOf statements by self.literal()
+    // If `val` has been added as a literal,
+    // then `self.literals.get(&val)` returns `Some(idx)`, and
+    // then `self.statements[idx]` is the ValueOf statement
+    // where it was introduced.
+    literals: HashMap<middleware::Value, usize>,
 }
 
 impl MainPodCompiler {
@@ -798,6 +808,7 @@ impl MainPodCompiler {
             params: params.clone(),
             statements: Vec::new(),
             operations: Vec::new(),
+            literals: HashMap::new(),
         }
     }
 
@@ -820,6 +831,27 @@ impl MainPodCompiler {
                 // statement doesn't have any requirement on the key and value.
                 None
             }
+            OperationArg::MerkleProof(_) => {
+                unreachable!()
+            }
+        }
+    }
+
+    // Introduces a literal value if it hasn't been introduced,
+    // or else returns the existing ValueOf statement where it was first introduced.
+    // TODO: this might produce duplicate keys, fix
+    fn literal<V: Clone + Into<middleware::Value>>(&mut self, val: V) -> &middleware::Statement {
+        let val: middleware::Value = val.into();
+        match self.literals.get(&val) {
+            Some(idx) => &self.statements[*idx],
+            None => {
+                let ak = middleware::AnchoredKey(SELF, hash_value(&val));
+                let st = middleware::Statement::ValueOf(ak, val);
+                let op = middleware::Operation::NewEntry;
+                self.statements.push(st);
+                self.operations.push(op);
+                self.statements.last().unwrap()
+            }
         }
     }
 
@@ -828,29 +860,56 @@ impl MainPodCompiler {
     // For example: DictContains(x, y) on the frontend compiles to:
     // ValueOf(empty, EMPTY_VALUE)
     // Contains(x, y, empty)
-    fn manual_statement_conversion(&self, st: &Statement) -> Vec<middleware::Statement> {
+    fn manual_compile_st_op(&mut self, st: &Statement, op: &Operation) -> Result<()> {
         match st.0 {
             Predicate::Native(NativePredicate::DictContains) => {
-
-            },
-            _ => unreachable!()
+                let empty_st = self.literal(EMPTY_VALUE).clone();
+                let empty_ak = match empty_st {
+                    middleware::Statement::ValueOf(ak, _) => ak,
+                    _ => unreachable!(),
+                };
+                let (ak1, ak2) = match (st.1.get(0).cloned(), st.1.get(1).cloned()) {
+                    (Some(StatementArg::Key(ak1)), Some(StatementArg::Key(ak2))) => (ak1, ak2),
+                    _ => Err(anyhow!("Ill-formed statement: {}", st))?,
+                };
+                let middle_st =
+                    middleware::Statement::Contains(ak1.into(), ak2.into(), empty_ak.clone());
+                let middle_op = middleware::Operation::ContainsFromEntries(
+                    self.compile_op_arg(&op.1[0])
+                        .ok_or::<anyhow::Error>(anyhow!(
+                            "Statement compile failed in manual compile"
+                        ))?,
+                    self.compile_op_arg(&op.1[1])
+                        .ok_or::<anyhow::Error>(anyhow!(
+                            "Statement compile failed in manual compile"
+                        ))?,
+                    empty_st,
+                    match &op.1[2] {
+                        OperationArg::MerkleProof(mp) => mp.clone(),
+                        _ => {
+                            return Err(anyhow!(
+                                "Third argument to DictContainsFromEntries must be Merkle proof"
+                            ));
+                        }
+                    },
+                );
+                self.statements.push(middle_st);
+                self.operations.push(middle_op);
+                assert_eq!(self.statements.len(), self.operations.len());
+                Ok(())
+            }
+            _ => unreachable!(),
         }
     }
 
-    fn compile_st(&self, st: &Statement) -> Result<Vec<middleware::Statement>> {
-        let output_st = st.clone().try_into().unwrap_or_else(
-            |e| {
-                match e {
-                    StatementConversionError::Error(err) => {return err;},
-                    StatementConversionError::MCR(_) => Ok(self.manual_statement_conversion(st))
-                }
-            }
-        )
-        Ok(vec![output_st])
+    fn compile_st(
+        &self,
+        st: &Statement,
+    ) -> Result<middleware::Statement, StatementConversionError> {
+        st.clone().try_into()
     }
 
-    fn compile_op(&self, op: &Operation) -> Result<Vec<middleware::Operation>> {
-        // TODO
+    fn compile_op(&self, op: &Operation) -> Result<middleware::Operation> {
         let mop_code: middleware::OperationType = op.0.clone().try_into()?;
 
         // TODO: Take Merkle proof into account.
@@ -861,23 +920,29 @@ impl MainPodCompiler {
                         .map(|s| Ok(middleware::OperationArg::Statement(s.try_into()?)))
                 })
                 .collect::<Result<Vec<_>>>()?;
-        Ok(vec![middleware::Operation::op(mop_code, &mop_args)?])
+        middleware::Operation::op(mop_code, &mop_args)
     }
 
     fn compile_st_op(&mut self, st: &Statement, op: &Operation, params: &Params) -> Result<()> {
-        let middle_st = self.compile_st(st)?;
-        let middle_op = self.compile_op(op)?;
-        let is_correct = middle_op.check(params, &middle_st)?;
-        if !is_correct {
-            // todo: improve error handling
-            Err(anyhow!(
-                "Compile failed due to invalid deduction:\n {} ⇏ {}",
-                middle_op,
-                middle_st
-            ))
-        } else {
-            self.push_st_op(middle_st, middle_op);
-            Ok(())
+        let middle_st_res = self.compile_st(st);
+        match middle_st_res {
+            Ok(middle_st) => {
+                let middle_op = self.compile_op(op)?;
+                let is_correct = middle_op.check(params, &middle_st)?;
+                if !is_correct {
+                    // todo: improve error handling
+                    Err(anyhow!(
+                        "Compile failed due to invalid deduction:\n {} ⇏ {}",
+                        middle_op,
+                        middle_st
+                    ))
+                } else {
+                    self.push_st_op(middle_st, middle_op);
+                    Ok(())
+                }
+            }
+            Err(StatementConversionError::Error(e)) => Err(e),
+            Err(StatementConversionError::MCR(_)) => self.manual_compile_st_op(st, op),
         }
     }
 
