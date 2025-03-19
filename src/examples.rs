@@ -372,8 +372,16 @@ pub fn tickets_pod_builder(
     signed_pod: &SignedPod,
     expected_event_id: i64,
     expect_consumed: bool,
-    blacklisted_emails: &Value,
+    blacklisted_emails: &Dictionary,
 ) -> Result<MainPodBuilder> {
+    let blacklisted_email_root = Value::Dictionary(blacklisted_emails.clone());
+    let attendee_email_statement: Statement = (signed_pod, "attendeeEmail").into();
+    let attendee_email_value = match attendee_email_statement.1.get(1).cloned() {
+        Some(crate::frontend::StatementArg::Literal(v)) => Ok(v),
+        _ => Err(anyhow!(
+            "Unexpected error reading attendee email from signed POD."
+        )),
+    }?;
     // Create a main pod referencing this signed pod with some statements
     let mut builder = MainPodBuilder::new(params);
     builder.add_signed_pod(signed_pod);
@@ -382,8 +390,9 @@ pub fn tickets_pod_builder(
     builder.pub_op(op!(eq, (signed_pod, "isRevoked"), false))?;
     builder.pub_op(op!(
         not_contains,
-        blacklisted_emails,
-        (signed_pod, "attendeeEmail")
+        blacklisted_email_root,
+        attendee_email_statement,
+        blacklisted_emails.prove_nonexistence(&(&attendee_email_value).into())?
     ))?;
     Ok(builder)
 }
@@ -397,6 +406,6 @@ pub fn tickets_pod_full_flow() -> Result<MainPodBuilder> {
         &signed_pod,
         123,
         true,
-        &Value::Dictionary(Dictionary::new(&HashMap::new())?),
+        &Dictionary::new(&HashMap::new())?,
     )
 }
