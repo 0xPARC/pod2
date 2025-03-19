@@ -523,13 +523,16 @@ pub mod tests {
         zu_kyc_sign_pod_builders,
     };
     use crate::middleware;
+    use crate::middleware::containers::Set;
 
     #[test]
     fn test_mock_main_zu_kyc() -> Result<()> {
         let params = middleware::Params::default();
+        let sanctions_values = ["A343434340"].map(|s| crate::middleware::Value::from(hash_str(s)));
+        let sanction_set = crate::frontend::Value::Set(Set::new(&sanctions_values.to_vec())?);
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
-            zu_kyc_sign_pod_builders(&params);
+            zu_kyc_sign_pod_builders(&params, &sanction_set);
         let mut signer = MockSigner {
             pk: "ZooGov".into(),
         };
