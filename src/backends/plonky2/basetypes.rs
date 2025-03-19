@@ -38,8 +38,8 @@ pub const EMPTY_HASH: Hash = Hash([F::ZERO, F::ZERO, F::ZERO, F::ZERO]);
 pub struct Value(pub [F; VALUE_SIZE]);
 
 impl ToFields for Value {
-    fn to_fields(&self, _params: &Params) -> (Vec<F>, usize) {
-        (self.0.to_vec(), VALUE_SIZE)
+    fn to_fields(&self, _params: &Params) -> Vec<F> {
+        self.0.to_vec()
     }
 }
 
@@ -143,8 +143,8 @@ impl Hash {
 }
 
 impl ToFields for Hash {
-    fn to_fields(&self, _params: &Params) -> (Vec<F>, usize) {
-        (self.0.to_vec(), VALUE_SIZE)
+    fn to_fields(&self, _params: &Params) -> Vec<F> {
+        self.0.to_vec()
     }
 }
 

@@ -364,7 +364,7 @@ impl MockMainPod {
 pub fn hash_statements(statements: &[Statement], _params: &Params) -> middleware::Hash {
     let field_elems = statements
         .iter()
-        .flat_map(|statement| statement.clone().to_fields(_params).0)
+        .flat_map(|statement| statement.clone().to_fields(_params))
         .collect::<Vec<_>>();
     Hash(PoseidonHash::hash_no_pad(&field_elems).elements)
 }

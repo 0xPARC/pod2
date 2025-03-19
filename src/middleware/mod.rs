@@ -58,7 +58,7 @@ pub type Entry = (String, Value);
 pub struct PodId(pub Hash);
 
 impl ToFields for PodId {
-    fn to_fields(&self, params: &Params) -> (Vec<F>, usize) {
+    fn to_fields(&self, params: &Params) -> Vec<F> {
         self.0.to_fields(params)
     }
 }
@@ -211,7 +211,6 @@ pub trait PodProver {
 }
 
 pub trait ToFields {
-    /// returns Vec<F> representation of the type, and a usize indicating how many field elements
-    /// does the vector contain
-    fn to_fields(&self, params: &Params) -> (Vec<F>, usize);
+    /// returns Vec<F> representation of the type
+    fn to_fields(&self, params: &Params) -> Vec<F>;
 }

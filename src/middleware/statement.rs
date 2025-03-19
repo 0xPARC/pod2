@@ -1,9 +1,9 @@
 use anyhow::{anyhow, Result};
 use plonky2::field::types::Field;
-use std::fmt;
+use std::{fmt, iter};
 use strum_macros::FromRepr;
 
-use super::{AnchoredKey, CustomPredicateRef, Params, Predicate, ToFields, Value, F};
+use super::{AnchoredKey, CustomPredicateRef, Params, Predicate, ToFields, Value, F, VALUE_SIZE};
 
 pub const KEY_SIGNER: &str = "_signer";
 pub const KEY_TYPE: &str = "_type";
@@ -25,8 +25,8 @@ pub enum NativePredicate {
 }
 
 impl ToFields for NativePredicate {
-    fn to_fields(&self, _params: &Params) -> (Vec<F>, usize) {
-        (vec![F::from_canonical_u64(*self as u64)], 1)
+    fn to_fields(&self, _params: &Params) -> Vec<F> {
+        vec![F::from_canonical_u64(*self as u64)]
     }
 }
 
@@ -182,21 +182,10 @@ impl Statement {
 }
 
 impl ToFields for Statement {
-    fn to_fields(&self, _params: &Params) -> (Vec<F>, usize) {
-        let (native_statement_f, native_statement_f_len) = self.code().to_fields(_params);
-        let (vec_statementarg_f, vec_statementarg_f_len) = self
-            .args()
-            .into_iter()
-            .map(|statement_arg| statement_arg.to_fields(_params))
-            .fold((Vec::new(), 0), |mut acc, (f, l)| {
-                acc.0.extend(f);
-                acc.1 += l;
-                acc
-            });
-        (
-            [native_statement_f, vec_statementarg_f].concat(),
-            native_statement_f_len + vec_statementarg_f_len,
-        )
+    fn to_fields(&self, _params: &Params) -> Vec<F> {
+        let mut fields = self.code().to_fields(_params);
+        fields.extend(self.args().iter().flat_map(|arg| arg.to_fields(_params)));
+        fields
     }
 }
 
@@ -250,7 +239,7 @@ impl StatementArg {
 }
 
 impl ToFields for StatementArg {
-    fn to_fields(&self, _params: &Params) -> (Vec<F>, usize) {
+    fn to_fields(&self, _params: &Params) -> Vec<F> {
         // NOTE: current version returns always the same amount of field elements in the returned
         // vector, which means that the `None` case is padded with 8 zeroes, and the `Literal` case
         // is padded with 4 zeroes. Since the returned vector will mostly be hashed (and reproduced
@@ -261,20 +250,17 @@ impl ToFields for StatementArg {
         let f = match self {
             StatementArg::None => vec![F::ZERO; STATEMENT_ARG_F_LEN],
             StatementArg::Literal(v) => {
-                let value_f = v.0.to_vec();
-                [
-                    value_f.clone(),
-                    vec![F::ZERO; STATEMENT_ARG_F_LEN - value_f.len()],
-                ]
-                .concat()
+                v.0.into_iter()
+                    .chain(iter::repeat(F::ZERO).take(STATEMENT_ARG_F_LEN - VALUE_SIZE))
+                    .collect()
             }
             StatementArg::Key(ak) => {
-                let (podid_f, _) = ak.0.to_fields(_params);
-                let (hash_f, _) = ak.1.to_fields(_params);
-                [podid_f, hash_f].concat()
+                let mut fields = ak.0.to_fields(_params);
+                fields.extend(ak.1.to_fields(_params));
+                fields
             }
         };
         assert_eq!(f.len(), STATEMENT_ARG_F_LEN); // sanity check
-        (f, STATEMENT_ARG_F_LEN)
+        f
     }
 }
