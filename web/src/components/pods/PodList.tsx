@@ -117,7 +117,7 @@ export function PodList() {
     <div className="container mx-auto py-8">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold">PODs</h1>
-        <div className="space-x-2">
+        <div className="space-x-2 flex items-center">
           <ImportPodDialog onPodImported={loadPods} />
           <Button
             variant="outline"
