@@ -259,7 +259,25 @@ export function PodList() {
                                   Statement {index + 1}:
                                 </span>
                                 <span className="font-mono text-gray-600">
-                                  {formatStatement(statement)}
+                                  {formatStatement({
+                                    ...statement,
+                                    args: statement.args.map((arg) => {
+                                      if ("Key" in arg) {
+                                        return {
+                                          ...arg,
+                                          Key: {
+                                            ...arg.Key,
+                                            origin: {
+                                              ...arg.Key.origin,
+                                              pod_class: arg.Key.origin
+                                                .pod_class as "Signed" | "Main"
+                                            }
+                                          }
+                                        };
+                                      }
+                                      return arg;
+                                    })
+                                  })}
                                 </span>
                               </div>
                             ))}
