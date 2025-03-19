@@ -878,14 +878,14 @@ impl MainPodCompiler {
                 let middle_st =
                     middleware::Statement::Contains(ak1.into(), ak2.into(), empty_ak.clone());
                 let middle_op = middleware::Operation::ContainsFromEntries(
-                    self.compile_op_arg(&op.1[0])
-                        .ok_or::<anyhow::Error>(anyhow!(
-                            "Statement compile failed in manual compile"
-                        ))?,
-                    self.compile_op_arg(&op.1[1])
-                        .ok_or::<anyhow::Error>(anyhow!(
-                            "Statement compile failed in manual compile"
-                        ))?,
+                    match &op.1[0] {
+                        OperationArg::Statement(s) => self.compile_st(&s)?,
+                        _ => Err(anyhow!("Statement compile failed in manual compile"))?,
+                    },
+                    match &op.1[1] {
+                        OperationArg::Statement(s) => self.compile_st(&s)?,
+                        _ => Err(anyhow!("Statement compile failed in manual compile"))?,
+                    },
                     empty_st,
                     match &op.1[2] {
                         OperationArg::MerkleProof(mp) => mp.clone(),
