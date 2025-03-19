@@ -1,0 +1,22 @@
+[package]
+name = "pod2"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "pod2"
+path = "src/lib.rs"
+
+[dependencies]
+hex = { workspace = true }
+itertools = { workspace = true }
+strum = { workspace = true }
+strum_macros = { workspace = true }
+anyhow = { workspace = true }
+dyn-clone = { workspace = true }
+# enabled by features:
+plonky2 = { git = "https://github.com/0xPolygonZero/plonky2", optional = true }
+
+[features]
+default = ["backend_plonky2"]
+backend_plonky2 = ["plonky2"]

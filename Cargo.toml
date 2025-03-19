@@ -1,22 +1,13 @@
-[package]
-name = "pod2"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+resolver = "2"
+members = ["pod2"]
 
-[lib]
-name = "pod2"
-path = "src/lib.rs"
+[workspace.dependencies]
+pod2 = { path = "pod2" }
 
-[dependencies]
 hex = "0.4.3"
 itertools = "0.14.0"
 strum = "0.26"
 strum_macros = "0.26"
 anyhow = "1.0.56"
 dyn-clone = "1.0.18"
-# enabled by features:
-plonky2 = { git = "https://github.com/0xPolygonZero/plonky2", optional = true }
-
-[features]
-default = ["backend_plonky2"]
-backend_plonky2 = ["plonky2"]
