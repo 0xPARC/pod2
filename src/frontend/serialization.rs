@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use base64::prelude::*;
-use schemars::JsonSchema;
+use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize, Serializer};
 
 use crate::backends::plonky2::mock_main::MockMainPod;
@@ -196,6 +196,33 @@ where
 {
     let ordered: BTreeMap<_, _> = value.iter().collect();
     ordered.serialize(serializer)
+}
+
+pub fn transform_value_schema(schema: &mut Schema) {
+    let obj = schema.as_object_mut().unwrap();
+
+    // Get the oneOf array which contains our variant schemas
+    if let Some(one_of_container) = obj.get_mut("oneOf") {
+        if let Some(variants) = one_of_container.as_array_mut() {
+            // Add String variant (untagged)
+            variants.push(serde_json::json!({
+                "type": "string"
+            }));
+
+            // Add Boolean variant (untagged)
+            variants.push(serde_json::json!({
+                "type": "boolean"
+            }));
+
+            // Add Array variant (untagged)
+            variants.push(serde_json::json!({
+                "type": "array",
+                "items": {
+                    "$ref": "#/definitions/Value"
+                }
+            }));
+        }
+    }
 }
 
 #[cfg(test)]
