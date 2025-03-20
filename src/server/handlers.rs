@@ -3,7 +3,7 @@ use crate::{
     backends::plonky2::{mock_main::MockProver, mock_signed::MockSigner},
     frontend::{
         serialization::{MainPodHelper, SignedPodHelper},
-        MainPodBuilder, Operation, OperationArg, SignedPodBuilder,
+        MainPodBuilder, Operation, OperationArg, SignedPodBuilder, StatementArg,
     },
     middleware::{NativeOperation, OperationType, Params},
     prover::{engine::DeductionEngine, types::WildcardTargetStatement},
@@ -11,7 +11,7 @@ use crate::{
 use axum::extract::{Json, State};
 use serde::Deserialize;
 use serde_json::{self, json};
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 use tokio::sync::Mutex;
 
 #[derive(Debug, Deserialize)]
@@ -124,6 +124,9 @@ pub async fn create_main_pod(
         ));
     }
 
+    let mut added_pod_ids: HashSet<String> = HashSet::new();
+    let mut ops = Vec::new();
+
     let mut builder = MainPodBuilder::new(&Params::default());
     for (_stmt, chain) in proofs.iter() {
         for (op_code, inputs, _output) in chain {
@@ -160,7 +163,33 @@ pub async fn create_main_pod(
                     .map(|i| OperationArg::Statement(i.clone().into()))
                     .collect(),
             );
-            builder.pub_op(op).unwrap();
+            ops.push(op.clone());
+            for arg in op.1 {
+                if let OperationArg::Statement(stmt) = arg {
+                    for stmt_arg in stmt.args.iter() {
+                        if let StatementArg::Key(key) = stmt_arg {
+                            added_pod_ids.insert(format!("{:x}", key.origin.pod_id));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for op in ops {
+        // TODO not all ops should be public
+        builder.pub_op(op).unwrap();
+    }
+
+    for pod_id in added_pod_ids {
+        let pod = state.db.get_pod(&pod_id).unwrap();
+        if pod.is_none() {
+            return Err(ServerError::PodNotFound(pod_id));
+        }
+        let pod = pod.unwrap();
+        match pod.pod {
+            PodVariant::Signed(signed_pod) => builder.add_signed_pod(&signed_pod),
+            PodVariant::Main(main_pod) => builder.add_main_pod(main_pod),
         }
     }
 

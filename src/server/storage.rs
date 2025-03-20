@@ -1,4 +1,4 @@
-use rusqlite::{Connection, Result as SqliteResult};
+use rusqlite::{params, Connection, Result as SqliteResult};
 
 use super::types::{Pod, PodVariant};
 
@@ -142,13 +142,13 @@ impl Database {
             // Update existing pod, preserving created_at
             self.conn.execute(
                 "UPDATE pods SET pod_type = ?1, data = ?2, nickname = ?3 WHERE id = ?4",
-                [pod_type, &data, &pod.nickname.as_deref().unwrap_or(""), id],
+                params![pod_type, &data, &pod.nickname, id,],
             )?;
         } else {
             // Insert new pod with current timestamp
             self.conn.execute(
                 "INSERT INTO pods (id, pod_type, data, nickname, created_at) VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)",
-                [id, pod_type, &data, &pod.nickname.as_deref().unwrap_or("")],
+                params![id, pod_type, &data, &pod.nickname],
             )?;
         }
 
