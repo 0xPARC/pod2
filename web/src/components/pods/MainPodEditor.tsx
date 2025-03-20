@@ -479,25 +479,6 @@ export function MainPodEditor() {
                           )}
                         </SelectContent>
                       </Select>
-                      {statement.firstArg.wildcardId.value &&
-                        statement.firstArg.key && (
-                          <span className="text-sm text-muted-foreground">
-                            {(() => {
-                              const pod = pods.find(
-                                (p) =>
-                                  p.id === statement.firstArg.wildcardId.value
-                              );
-                              if (isSignedPod(pod)) {
-                                return (
-                                  pod.entries[
-                                    statement.firstArg.key
-                                  ]?.toString() || "N/A"
-                                );
-                              }
-                              return "N/A";
-                            })()}
-                          </span>
-                        )}
                     </div>
 
                     <div className="flex items-center gap-4">
@@ -572,28 +553,6 @@ export function MainPodEditor() {
                               )}
                             </SelectContent>
                           </Select>
-                          {isKeyValue(statement.secondArg.value) &&
-                            statement.secondArg.value.podId &&
-                            statement.secondArg.value.key && (
-                              <span className="text-sm text-muted-foreground">
-                                {(() => {
-                                  const pod = pods.find(
-                                    (p) =>
-                                      isKeyValue(statement.secondArg.value) &&
-                                      p.id === statement.secondArg.value.podId
-                                  );
-                                  if (isSignedPod(pod)) {
-                                    return (
-                                      pod.entries[
-                                        (statement.secondArg.value as KeyValue)
-                                          .key
-                                      ]?.toString() || "N/A"
-                                    );
-                                  }
-                                  return "N/A";
-                                })()}
-                              </span>
-                            )}
                         </>
                       )}
 
@@ -687,27 +646,6 @@ export function MainPodEditor() {
                                 )}
                               </SelectContent>
                             </Select>
-                            {statement.thirdArg.type === "key" &&
-                              statement.thirdArg.value.podId &&
-                              statement.thirdArg.value.key && (
-                                <span className="text-sm text-muted-foreground">
-                                  {(() => {
-                                    const pod = pods.find(
-                                      (p) =>
-                                        statement.thirdArg?.type === "key" &&
-                                        p.id === statement.thirdArg.value.podId
-                                    );
-                                    if (isSignedPod(pod)) {
-                                      return (
-                                        pod.entries[
-                                          statement.thirdArg.value.key
-                                        ]?.toString() || "N/A"
-                                      );
-                                    }
-                                    return "N/A";
-                                  })()}
-                                </span>
-                              )}
                           </>
                         )}
 
