@@ -43,6 +43,7 @@ pub struct Origin {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(transform = serialization::transform_value_schema)]
 pub enum Value {
     // Serde cares about the order of the enum variants, with untagged variants
     // appearing at the end.
@@ -55,17 +56,22 @@ pub enum Value {
     // As JSON integers do not specify precision, and JavaScript is limited to
     // 53-bit precision for integers, integers are represented as tagged
     // strings, with a custom serializer and deserializer.
+    // TAGGED TYPES:
     Set(Set),
     Dictionary(Dictionary),
     #[serde(serialize_with = "serialize_i64", deserialize_with = "deserialize_i64")]
     Int(i64),
     // Uses the serialization for middleware::Value:
     Raw(middleware::Value),
+    // UNTAGGED TYPES:
     #[serde(untagged)]
+    #[schemars(skip)]
     Array(Array),
     #[serde(untagged)]
+    #[schemars(skip)]
     String(String),
     #[serde(untagged)]
+    #[schemars(skip)]
     Bool(bool),
 }
 
