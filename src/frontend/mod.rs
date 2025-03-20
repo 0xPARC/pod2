@@ -10,16 +10,17 @@ use std::{fmt, hash as h};
 use crate::middleware::{
     self,
     containers::{Array, Dictionary, Set},
-    hash_str, Hash, MainPodInputs, NativeOperation, NativePredicate, Params, PodId, PodProver,
-    PodSigner, SELF,
+    hash_str, Hash, MainPodInputs, Params, PodId, PodProver, PodSigner, SELF,
 };
-use crate::middleware::{OperationType, Predicate, KEY_SIGNER, KEY_TYPE};
+use crate::middleware::{hash_value, EMPTY_VALUE, KEY_SIGNER, KEY_TYPE};
 
 mod custom;
 mod operation;
+mod predicate;
 mod statement;
 pub use custom::*;
 pub use operation::*;
+pub use predicate::*;
 pub use statement::*;
 
 /// This type is just for presentation purposes.
@@ -80,6 +81,12 @@ impl From<&Value> for middleware::Value {
 impl From<middleware::Value> for Value {
     fn from(v: middleware::Value) -> Self {
         Self::Raw(v)
+    }
+}
+
+impl From<middleware::Hash> for Value {
+    fn from(v: middleware::Hash) -> Self {
+        Self::Raw(v.into())
     }
 }
 
@@ -341,6 +348,8 @@ impl MainPodBuilder {
                     )));
                     st_args.push(StatementArg::Literal(v.clone()))
                 }
+                // Merkle proofs are never arguments to statements.
+                OperationArg::MerkleProof(_) => (),
             };
         }
         Ok(st_args)
@@ -354,7 +363,7 @@ impl MainPodBuilder {
         self.op(false, op)
     }
 
-    fn op(&mut self, public: bool, mut op: Operation) -> Result<Statement> {
+    fn op(&mut self, public: bool, mut op: Operation) -> Result<Statement, anyhow::Error> {
         use NativeOperation::*;
         let Operation(op_type, ref mut args) = &mut op;
         // TODO: argument type checking
@@ -435,8 +444,6 @@ impl MainPodBuilder {
                         return Err(anyhow!("Invalid arguments to lt-to-neq operation"));
                     }
                 },
-                ContainsFromEntries => self.op_args_entries(public, args)?,
-                NotContainsFromEntries => self.op_args_entries(public, args)?,
                 SumOf => match (args[0].clone(), args[1].clone(), args[2].clone()) {
                     (
                         OperationArg::Statement(Statement(
@@ -584,12 +591,17 @@ impl MainPodBuilder {
                         return Err(anyhow!("Invalid arguments to operation"));
                     }
                 },
+                DictContainsFromEntries => self.op_args_entries(public, args)?,
+                DictNotContainsFromEntries => self.op_args_entries(public, args)?,
+                SetContainsFromEntries => self.op_args_entries(public, args)?,
+                SetNotContainsFromEntries => self.op_args_entries(public, args)?,
+                ArrayContainsFromEntries => self.op_args_entries(public, args)?,
             },
             OperationType::Custom(cpr) => {
                 // All args should be statements to be pattern matched against statement templates.
                 let args = args.iter().map(
                     |a| match a {
-                        OperationArg::Statement(s) => middleware::Statement::try_from(s.clone()),
+                        OperationArg::Statement(s) => Ok(middleware::Statement::try_from(s.clone())?),
                             _ => Err(anyhow!("Invalid argument {} to operation corresponding to custom predicate {:?}.", a, cpr))
                     }
                 ).collect::<Result<Vec<_>>>()?;
@@ -784,6 +796,13 @@ struct MainPodCompiler {
     // Output
     statements: Vec<middleware::Statement>,
     operations: Vec<middleware::Operation>,
+    // Internal state
+    // Tracks literal constants assigned to ValueOf statements by self.literal()
+    // If `val` has been added as a literal,
+    // then `self.literals.get(&val)` returns `Some(idx)`, and
+    // then `self.statements[idx]` is the ValueOf statement
+    // where it was introduced.
+    literals: HashMap<middleware::Value, usize>,
 }
 
 impl MainPodCompiler {
@@ -792,6 +811,7 @@ impl MainPodCompiler {
             params: params.clone(),
             statements: Vec::new(),
             operations: Vec::new(),
+            literals: HashMap::new(),
         }
     }
 
@@ -800,9 +820,12 @@ impl MainPodCompiler {
         self.operations.push(op);
     }
 
-    fn compile_op_arg(&self, op_arg: &OperationArg) -> Option<middleware::Statement> {
+    fn compile_op_arg(&self, op_arg: &OperationArg) -> Option<middleware::OperationArg> {
         match op_arg {
-            OperationArg::Statement(s) => self.compile_st(s).ok(),
+            OperationArg::Statement(s) => self
+                .compile_st(s)
+                .ok()
+                .map(|s| middleware::OperationArg::Statement(s)),
             OperationArg::Literal(_v) => {
                 // OperationArg::Literal is a syntax sugar for the frontend.  This is translated to
                 // a new ValueOf statement and it's key used instead.
@@ -814,37 +837,160 @@ impl MainPodCompiler {
                 // statement doesn't have any requirement on the key and value.
                 None
             }
+            OperationArg::MerkleProof(pf) => {
+                Some(middleware::OperationArg::MerkleProof(pf.clone()))
+            }
         }
     }
 
-    fn compile_st(&self, st: &Statement) -> Result<middleware::Statement> {
+    // Introduces a literal value if it hasn't been introduced,
+    // or else returns the existing ValueOf statement where it was first introduced.
+    // TODO: this might produce duplicate keys, fix
+    fn literal<V: Clone + Into<middleware::Value>>(&mut self, val: V) -> &middleware::Statement {
+        let val: middleware::Value = val.into();
+        match self.literals.get(&val) {
+            Some(idx) => &self.statements[*idx],
+            None => {
+                let ak = middleware::AnchoredKey(SELF, hash_value(&val));
+                let st = middleware::Statement::ValueOf(ak, val);
+                let op = middleware::Operation::NewEntry;
+                self.statements.push(st);
+                self.operations.push(op);
+                self.statements.last().unwrap()
+            }
+        }
+    }
+
+    // Returns the existing ValueOf statement where it was first introduced,
+    // or None if it does not exist.
+    fn get_literal<V: Clone + Into<middleware::Value>>(
+        &self,
+        val: V,
+    ) -> Option<&middleware::Statement> {
+        let val: middleware::Value = val.into();
+        match self.literals.get(&val) {
+            Some(idx) => Some(&self.statements[*idx]),
+            None => None,
+        }
+    }
+
+    // This function handles cases where one frontend statement
+    // compiles to multiple middleware statements.
+    // For example: DictContains(x, y) on the frontend compiles to:
+    // ValueOf(empty, EMPTY_VALUE)
+    // Contains(x, y, empty)
+    fn manual_compile_st_op(&mut self, st: &Statement, op: &Operation) -> Result<()> {
+        match st.0 {
+            Predicate::Native(NativePredicate::DictContains) => {
+                let empty_st = self.literal(EMPTY_VALUE).clone();
+                let empty_ak = match empty_st {
+                    middleware::Statement::ValueOf(ak, _) => ak,
+                    _ => unreachable!(),
+                };
+                let (ak1, ak2) = match (st.1.get(0).cloned(), st.1.get(1).cloned()) {
+                    (Some(StatementArg::Key(ak1)), Some(StatementArg::Key(ak2))) => (ak1, ak2),
+                    _ => Err(anyhow!("Ill-formed statement: {}", st))?,
+                };
+                let middle_st =
+                    middleware::Statement::Contains(ak1.into(), ak2.into(), empty_ak.clone());
+                let middle_op = middleware::Operation::ContainsFromEntries(
+                    match &op.1[0] {
+                        OperationArg::Statement(s) => self.compile_st(&s)?,
+                        _ => Err(anyhow!("Statement compile failed in manual compile"))?,
+                    },
+                    match &op.1[1] {
+                        OperationArg::Statement(s) => self.compile_st(&s)?,
+                        _ => Err(anyhow!("Statement compile failed in manual compile"))?,
+                    },
+                    empty_st,
+                    match &op.1[2] {
+                        OperationArg::MerkleProof(mp) => mp.clone(),
+                        _ => {
+                            return Err(anyhow!(
+                                "Third argument to DictContainsFromEntries must be Merkle proof"
+                            ));
+                        }
+                    },
+                );
+                self.statements.push(middle_st);
+                self.operations.push(middle_op);
+                assert_eq!(self.statements.len(), self.operations.len());
+                Ok(())
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    // If the frontend statement `st` compiles to a single middleware statement,
+    // returns that middleware statement.
+    // If it compiles to multiple middlewarestatements, returns StatementConversionError.
+    // This is only a helper method within compile_st_op().
+    // If you want to compile a statement in general, run compile_st().
+    fn compile_st_try_simple(
+        &self,
+        st: &Statement,
+    ) -> Result<middleware::Statement, StatementConversionError> {
         st.clone().try_into()
     }
 
+    // Compiles the frontend statement `st` to a middleware statement.
+    // This function assumes the middleware statement already exists --
+    // it should not be called from compile_st_op.
+    fn compile_st(&self, st: &Statement) -> Result<middleware::Statement> {
+        match self.compile_st_try_simple(st) {
+            Ok(s) => Ok(s),
+            Err(StatementConversionError::Error(e)) => Err(e),
+            Err(StatementConversionError::MCR(_)) => {
+                let empty_st = self
+                    .get_literal(EMPTY_VALUE)
+                    .clone()
+                    .ok_or(anyhow!("Literal value not found for empty literal."))?;
+                let empty_ak = match empty_st {
+                    middleware::Statement::ValueOf(ak, _) => ak,
+                    _ => unreachable!(),
+                };
+                let (ak1, ak2) = match (st.1.get(0).cloned(), st.1.get(1).cloned()) {
+                    (Some(StatementArg::Key(ak1)), Some(StatementArg::Key(ak2))) => (ak1, ak2),
+                    _ => Err(anyhow!("Ill-formed statement: {}", st))?,
+                };
+                let middle_st =
+                    middleware::Statement::Contains(ak1.into(), ak2.into(), empty_ak.clone());
+                Ok(middle_st)
+            }
+        }
+    }
+
     fn compile_op(&self, op: &Operation) -> Result<middleware::Operation> {
-        // TODO
-        let mop_code: OperationType = op.0.clone();
+        let mop_code: middleware::OperationType = op.0.clone().try_into()?;
+
+        // TODO: Take Merkle proof into account.
         let mop_args =
             op.1.iter()
-                .flat_map(|arg| self.compile_op_arg(arg).map(|s| Ok(s.try_into()?)))
-                .collect::<Result<Vec<middleware::Statement>>>()?;
+                .flat_map(|arg| self.compile_op_arg(arg).map(|op_arg| Ok(op_arg)))
+                .collect::<Result<Vec<_>>>()?;
         middleware::Operation::op(mop_code, &mop_args)
     }
 
     fn compile_st_op(&mut self, st: &Statement, op: &Operation, params: &Params) -> Result<()> {
-        let middle_st = self.compile_st(st)?;
-        let middle_op = self.compile_op(op)?;
-        let is_correct = middle_op.check(params, &middle_st)?;
-        if !is_correct {
-            // todo: improve error handling
-            Err(anyhow!(
-                "Compile failed due to invalid deduction:\n {} ⇏ {}",
-                middle_op,
-                middle_st
-            ))
-        } else {
-            self.push_st_op(middle_st, middle_op);
-            Ok(())
+        let middle_st_res = self.compile_st_try_simple(st);
+        match middle_st_res {
+            Ok(middle_st) => {
+                let middle_op = self.compile_op(op)?;
+                let is_correct = middle_op.check(params, &middle_st)?;
+                if !is_correct {
+                    // todo: improve error handling
+                    Err(anyhow!(
+                        "Compile failed due to invalid deduction:\n {} ⇏ {}",
+                        middle_op,
+                        middle_st
+                    ))
+                } else {
+                    self.push_st_op(middle_st, middle_op);
+                    Ok(())
+                }
+            }
+            Err(StatementConversionError::Error(e)) => Err(e),
+            Err(StatementConversionError::MCR(_)) => self.manual_compile_st_op(st, op),
         }
     }
 
@@ -891,55 +1037,67 @@ pub mod build_utils {
     #[macro_export]
     macro_rules! op {
         (new_entry, ($key:expr, $value:expr)) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::NewEntry),
+            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::NewEntry),
             $crate::op_args!(($key, $value))) };
         (eq, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::EqualFromEntries),
+            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::EqualFromEntries),
             $crate::op_args!($($arg),*)) };
         (ne, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::NotEqualFromEntries),
+            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::NotEqualFromEntries),
             $crate::op_args!($($arg),*)) };
         (gt, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::GtFromEntries),
+            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::GtFromEntries),
             crate::op_args!($($arg),*)) };
         (lt, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::LtFromEntries),
+            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::LtFromEntries),
             crate::op_args!($($arg),*)) };
         (transitive_eq, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::TransitiveEqualFromStatements),
+            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::TransitiveEqualFromStatements),
             crate::op_args!($($arg),*)) };
         (gt_to_ne, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::GtToNotEqual),
+            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::GtToNotEqual),
             crate::op_args!($($arg),*)) };
         (lt_to_ne, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::LtToNotEqual),
-            crate::op_args!($($arg),*)) };
-        (contains, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::ContainsFromEntries),
-            crate::op_args!($($arg),*)) };
-        (not_contains, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::NotContainsFromEntries),
+            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::LtToNotEqual),
             crate::op_args!($($arg),*)) };
         (sum_of, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::SumOf),
+            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::SumOf),
             crate::op_args!($($arg),*)) };
         (product_of, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::ProductOf),
+            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::ProductOf),
             crate::op_args!($($arg),*)) };
         (max_of, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::MaxOf),
+            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::MaxOf),
             crate::op_args!($($arg),*)) };
         (custom, $op:expr, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Custom($op),
+            $crate::frontend::OperationType::Custom($op),
             $crate::op_args!($($arg),*)) };
+        (dict_contains, $($arg:expr),+) => { crate::frontend::Operation(
+            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::DictContainsFromEntries),
+            crate::op_args!($($arg),*)) };
+        (dict_not_contains, $($arg:expr),+) => { crate::frontend::Operation(
+            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::DictNotContainsFromEntries),
+            crate::op_args!($($arg),*)) };
+        (set_contains, $($arg:expr),+) => { crate::frontend::Operation(
+            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::SetContainsFromEntries),
+            crate::op_args!($($arg),*)) };
+        (set_not_contains, $($arg:expr),+) => { crate::frontend::Operation(
+            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::SetNotContainsFromEntries),
+            crate::op_args!($($arg),*)) };
+        (array_contains, $($arg:expr),+) => { crate::frontend::Operation(
+            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::ArrayContainsFromEntries),
+            crate::op_args!($($arg),*)) };
+
     }
 }
 
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::backends::plonky2::basetypes;
     use crate::backends::plonky2::mock_main::MockProver;
     use crate::backends::plonky2::mock_signed::MockSigner;
+    use crate::backends::plonky2::primitives::merkletree::MerkleTree;
     use crate::examples::{
         eth_dos_pod_builder, eth_friend_signed_pod_builder, great_boy_pod_full_flow,
         tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_sign_pod_builders,
@@ -948,8 +1106,12 @@ pub mod tests {
     // Check that frontend public statements agree with those
     // embedded in a MainPod.
     fn check_public_statements(pod: &MainPod) -> Result<()> {
-        std::iter::zip(pod.public_statements.clone(), pod.pod.pub_statements()).try_for_each(
-            |(fes, s)| crate::middleware::Statement::try_from(fes).map(|fes| assert_eq!(fes, s)),
+        Ok(
+            std::iter::zip(pod.public_statements.clone(), pod.pod.pub_statements()).try_for_each(
+                |(fes, s)| {
+                    crate::middleware::Statement::try_from(fes).map(|fes| assert_eq!(fes, s))
+                },
+            )?,
         )
     }
 
@@ -982,7 +1144,9 @@ pub mod tests {
     #[test]
     fn test_front_zu_kyc() -> Result<()> {
         let params = Params::default();
-        let (gov_id, pay_stub, sanction_list) = zu_kyc_sign_pod_builders(&params);
+        let sanctions_values = ["A343434340"].map(|s| crate::middleware::Value::from(hash_str(s)));
+        let sanction_set = Value::Set(Set::new(&sanctions_values)?);
+        let (gov_id, pay_stub, sanction_list) = zu_kyc_sign_pod_builders(&params, &sanction_set);
 
         println!("{}", gov_id);
         println!("{}", pay_stub);
@@ -1151,5 +1315,50 @@ pub mod tests {
 
         println!("{}", builder);
         println!("{}", false_pod);
+    }
+
+    #[test]
+    fn test_dictionaries() {
+        let params = Params::default();
+        let mut builder = SignedPodBuilder::new(&params);
+
+        type BeValue = basetypes::Value;
+        let mut my_dict_kvs: HashMap<BeValue, BeValue> = HashMap::new();
+        my_dict_kvs.insert(BeValue::from(&"a".into()), BeValue::from(&1.into()));
+        my_dict_kvs.insert(BeValue::from(&"b".into()), BeValue::from(&2.into()));
+        my_dict_kvs.insert(BeValue::from(&"c".into()), BeValue::from(&3.into()));
+        let my_dict_as_mt = MerkleTree::new(5, &my_dict_kvs).unwrap();
+        let dict = Dictionary { mt: my_dict_as_mt };
+        let dict_root = Value::Dictionary(dict.clone());
+        builder.insert("dict", dict_root);
+
+        let mut signer = MockSigner {
+            pk: "signer".into(),
+        };
+        let pod = builder.sign(&mut signer).unwrap();
+
+        let mut builder = MainPodBuilder::new(&params);
+        builder.add_signed_pod(&pod);
+        let st0 = Statement::from((&pod, "dict"));
+        let st1 = builder.op(true, op!(new_entry, ("key", "a"))).unwrap();
+        let st2 = builder.literal(false, &Value::Int(1)).unwrap();
+
+        builder
+            .pub_op(Operation(
+                // OperationType
+                OperationType::Native(NativeOperation::DictContainsFromEntries),
+                // Vec<OperationArg>
+                vec![
+                    OperationArg::Statement(st0),
+                    OperationArg::Statement(st1),
+                    OperationArg::Statement(st2),
+                    OperationArg::MerkleProof(dict.prove(&Hash::from("a").into()).unwrap().1),
+                ],
+            ))
+            .unwrap();
+        let mut main_prover = MockProver {};
+        let main_pod = builder.prove(&mut main_prover, &params).unwrap();
+
+        println!("{}", main_pod);
     }
 }

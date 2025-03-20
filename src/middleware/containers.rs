@@ -73,7 +73,7 @@ pub struct Set {
 }
 
 impl Set {
-    pub fn new(set: &Vec<Value>) -> Result<Self> {
+    pub fn new(set: &[Value]) -> Result<Self> {
         let kvs: HashMap<Value, Value> = set
             .iter()
             .map(|e| {
@@ -126,7 +126,7 @@ pub struct Array {
 }
 
 impl Array {
-    pub fn new(array: &Vec<Value>) -> Result<Self> {
+    pub fn new(array: &[Value]) -> Result<Self> {
         let kvs: HashMap<Value, Value> = array
             .iter()
             .enumerate()
