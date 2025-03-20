@@ -151,7 +151,7 @@ impl Params {
 }
 
 pub trait Pod: fmt::Debug + DynClone {
-    fn verify(&self) -> bool;
+    fn verify(&self) -> Result<()>;
     fn id(&self) -> PodId;
     fn pub_statements(&self) -> Vec<Statement>;
     /// Extract key-values from ValueOf public statements
@@ -181,8 +181,8 @@ pub trait PodSigner {
 pub struct NonePod {}
 
 impl Pod for NonePod {
-    fn verify(&self) -> bool {
-        true
+    fn verify(&self) -> Result<()> {
+        Ok(())
     }
     fn id(&self) -> PodId {
         PodId(EMPTY_HASH)

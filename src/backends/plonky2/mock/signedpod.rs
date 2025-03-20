@@ -1,8 +1,8 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use std::any::Any;
 use std::collections::HashMap;
 
-use super::primitives::merkletree::MerkleTree;
+use crate::backends::plonky2::primitives::merkletree::MerkleTree;
 use crate::constants::MAX_DEPTH;
 use crate::middleware::{
     containers::Dictionary, hash_str, AnchoredKey, Hash, Params, Pod, PodId, PodSigner, PodType,
@@ -45,44 +45,35 @@ pub struct MockSignedPod {
 }
 
 impl Pod for MockSignedPod {
-    fn verify(&self) -> bool {
+    fn verify(&self) -> Result<()> {
         // 1. Verify type
-        let value_at_type = match self.dict.get(&hash_str(KEY_TYPE).into()) {
-            Ok(v) => v,
-            Err(_) => return false,
-        };
+        let value_at_type = self.dict.get(&hash_str(KEY_TYPE).into())?;
         if Value::from(PodType::MockSigned) != value_at_type {
-            return false;
+            return Err(anyhow!("type should be Signed"));
         }
 
         // 2. Verify id
-        let mt = match MerkleTree::new(
+        let mt = MerkleTree::new(
             MAX_DEPTH,
             &self
                 .dict
                 .iter()
                 .map(|(&k, &v)| (k, v))
                 .collect::<HashMap<Value, Value>>(),
-        ) {
-            Ok(mt) => mt,
-            Err(_) => return false,
-        };
+        )?;
         let id = PodId(mt.root());
         if id != self.id {
-            return false;
+            return Err(anyhow!("id does not match"));
         }
 
         // 3. Verify signature
-        let pk_hash = match self.dict.get(&hash_str(KEY_SIGNER).into()) {
-            Ok(v) => v,
-            Err(_) => return false,
-        };
+        let pk_hash = self.dict.get(&hash_str(KEY_SIGNER).into())?;
         let signature = format!("{}_signed_by_{}", id, pk_hash);
         if signature != self.signature {
-            return false;
+            return Err(anyhow!("signature does not match"));
         }
 
-        true
+        Ok(())
     }
 
     fn id(&self) -> PodId {
@@ -124,17 +115,17 @@ pub mod tests {
         let pod = pod.sign(&mut signer).unwrap();
         let pod = pod.pod.into_any().downcast::<MockSignedPod>().unwrap();
 
-        assert!(pod.verify());
+        pod.verify()?;
         println!("id: {}", pod.id());
         println!("kvs: {:?}", pod.kvs());
 
         let mut bad_pod = pod.clone();
         bad_pod.signature = "".into();
-        assert!(!bad_pod.verify());
+        assert!(bad_pod.verify().is_err());
 
         let mut bad_pod = pod.clone();
         bad_pod.id.0 .0[0] = F::ZERO;
-        assert!(!bad_pod.verify());
+        assert!(bad_pod.verify().is_err());
 
         let mut bad_pod = pod.clone();
         let bad_kv = (hash_str(KEY_SIGNER).into(), Value(PodId(EMPTY_HASH).0 .0));
@@ -146,7 +137,7 @@ pub mod tests {
             .collect::<HashMap<Value, Value>>();
         let bad_mt = MerkleTree::new(MAX_DEPTH, bad_kvs_mt)?;
         bad_pod.dict.mt = bad_mt;
-        assert!(!bad_pod.verify());
+        assert!(bad_pod.verify().is_err());
 
         let mut bad_pod = pod.clone();
         let bad_kv = (hash_str(KEY_TYPE).into(), Value::from(0));
@@ -158,7 +149,7 @@ pub mod tests {
             .collect::<HashMap<Value, Value>>();
         let bad_mt = MerkleTree::new(MAX_DEPTH, bad_kvs_mt)?;
         bad_pod.dict.mt = bad_mt;
-        assert!(!bad_pod.verify());
+        assert!(bad_pod.verify().is_err());
 
         Ok(())
     }
