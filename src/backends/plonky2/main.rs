@@ -252,7 +252,7 @@ impl MainPodVerifyGate {
             .collect();
         let id = builder.hash_n_to_hash_no_pad::<PoseidonHash>(pub_statements_flattened);
 
-        // 3. check that all `input_statements` of type `ValueOf` with origin=SELF have unique
+        // 3. TODO check that all `input_statements` of type `ValueOf` with origin=SELF have unique
         //    keys (no duplicates)
 
         // 4. Verify type
