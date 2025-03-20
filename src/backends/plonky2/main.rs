@@ -23,6 +23,7 @@ use plonky2::{
     plonk::circuit_builder::CircuitBuilder,
 };
 use std::collections::HashMap;
+use std::iter;
 
 /// MerkleTree Max Depth
 const MD: usize = 32;
@@ -95,15 +96,21 @@ impl SignedPodVerifyTarget {
     fn set_targets(&self, pw: &mut PartialWitness<F>, input: &SignedPodVerifyInput) -> Result<()> {
         assert!(input.kvs.len() <= self.params.max_signed_pod_values);
         let tree = MerkleTree::new(MD, &input.kvs)?;
-        for (i, (k, v)) in input.kvs.iter().sorted_by_key(|kv| kv.0).enumerate() {
+
+        // First handle the type entry, then the rest of the entries, and finally pad with
+        // repetitions of the type entry (which always exists)
+        let mut kvs = input.kvs.clone();
+        let key_type = Value::from(hash_str(KEY_TYPE));
+        let value_type = kvs.remove(&key_type).expect("KEY_TYPE");
+
+        for (i, (k, v)) in iter::once((key_type, value_type))
+            .chain(kvs.into_iter().sorted_by_key(|kv| kv.0))
+            .chain(iter::repeat((key_type, value_type)))
+            .take(self.params.max_signed_pod_values)
+            .enumerate()
+        {
             let (_, proof) = tree.prove(&k)?;
-            self.mt_proofs[i].set_targets(pw, tree.root(), proof, *k, *v)?;
-        }
-        // Padding
-        for i in input.kvs.len()..self.params.max_signed_pod_values {
-            // TODO: We need to disable the proofs for the unused slots.  We could add a flag
-            // "enable" to the MerkleTree proof circuit that skips the verification when false.
-            // self.mt_proofs[i].set_targets(pw, false, EMPTY_HASH, proof, *k, *v)?;
+            self.mt_proofs[i].set_targets(pw, tree.root(), proof, k, v)?;
         }
         Ok(())
     }
@@ -336,5 +343,41 @@ impl MainPodVerifyCircuit {
         .eval(builder)?;
         builder.register_public_inputs(&main_pod.id.elements);
         Ok(main_pod)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backends::plonky2::basetypes::C;
+    use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
+
+    #[test]
+    fn test_signed_pod_verify() -> Result<()> {
+        let params = Params::default();
+
+        let config = CircuitConfig::standard_recursion_config();
+        let mut builder = CircuitBuilder::<F, D>::new(config);
+
+        let signed_pod_verify = SignedPodVerifyGate { params }.eval(&mut builder)?;
+
+        let mut pw = PartialWitness::<F>::new();
+        let kvs = [
+            (
+                Value::from(hash_str(KEY_TYPE)),
+                Value::from(PodType::MockSigned),
+            ),
+            (Value::from(hash_str("foo")), Value::from(42)),
+        ]
+        .into();
+        let input = SignedPodVerifyInput { kvs };
+        signed_pod_verify.set_targets(&mut pw, &input)?;
+
+        // generate & verify proof
+        let data = builder.build::<C>();
+        let proof = data.prove(pw)?;
+        data.verify(proof)?;
+
+        Ok(())
     }
 }
