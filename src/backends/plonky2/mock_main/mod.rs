@@ -371,10 +371,12 @@ pub fn hash_statements(statements: &[Statement], _params: &Params) -> middleware
 
 impl Pod for MockMainPod {
     fn verify(&self) -> bool {
+        // 1. TODO: Verify input pods
+
         let input_statement_offset = self.offset_input_statements();
         // get the input_statements from the self.statements
         let input_statements = &self.statements[input_statement_offset..];
-        // get the id out of the public statements, and ensure it is equal to self.id
+        // 2. get the id out of the public statements, and ensure it is equal to self.id
         let ids_match = self.id == PodId(hash_statements(&self.public_statements, &self.params));
         // find a ValueOf statement from the public statements with key=KEY_TYPE and check that the
         // value is PodType::MockMainPod
@@ -391,7 +393,7 @@ impl Pod for MockMainPod {
                     }
             })
             .is_some();
-        // check that all `input_statements` of type `ValueOf` with origin=SELF have unique keys
+        // 3. check that all `input_statements` of type `ValueOf` with origin=SELF have unique keys
         // (no duplicates)
         // TODO: Instead of doing this, do a uniqueness check when verifying the output of a
         // `NewValue` operation.
@@ -421,7 +423,9 @@ impl Pod for MockMainPod {
                 .collect::<Vec<_>>();
             !(0..key_id_pairs.len() - 1).any(|i| key_id_pairs[i + 1..].contains(&key_id_pairs[i]))
         };
-        // verify that all `input_statements` are correctly generated
+        // 4. TODO: Verify type
+
+        // 5. verify that all `input_statements` are correctly generated
         // by `self.operations` (where each operation can only access previous statements)
         let statement_check = input_statements
             .iter()

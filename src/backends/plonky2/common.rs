@@ -19,6 +19,16 @@ pub struct StatementTarget {
     pub args: Vec<[Target; STATEMENT_ARG_F_LEN]>,
 }
 
+impl StatementTarget {
+    pub fn to_flattened(&self) -> Vec<Target> {
+        self.code
+            .iter()
+            .chain(self.args.iter().flatten())
+            .cloned()
+            .collect()
+    }
+}
+
 // TODO: Implement Operation::to_field to determine the size of each element
 #[derive(Clone)]
 pub struct OperationTarget {
@@ -28,6 +38,7 @@ pub struct OperationTarget {
 
 pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     fn connect_values(&mut self, x: ValueTarget, y: ValueTarget);
+    fn connect_slice(&mut self, xs: &[Target], ys: &[Target]);
     fn add_virtual_value(&mut self) -> ValueTarget;
     fn add_virtual_statement(&mut self, params: &Params) -> StatementTarget;
     fn add_virtual_operation(&mut self, params: &Params) -> OperationTarget;
@@ -38,10 +49,15 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
 impl<F: RichField + Extendable<D>, const D: usize> CircuitBuilderPod<F, D>
     for CircuitBuilder<F, D>
 {
-    fn connect_values(&mut self, x: ValueTarget, y: ValueTarget) {
-        for i in 0..4 {
-            self.connect(x.elements[i], y.elements[i]);
+    fn connect_slice(&mut self, xs: &[Target], ys: &[Target]) {
+        assert_eq!(xs.len(), ys.len());
+        for (x, y) in xs.iter().zip(ys.iter()) {
+            self.connect(*x, *y);
         }
+    }
+
+    fn connect_values(&mut self, x: ValueTarget, y: ValueTarget) {
+        self.connect_slice(&x.elements, &y.elements);
     }
 
     fn add_virtual_value(&mut self) -> ValueTarget {

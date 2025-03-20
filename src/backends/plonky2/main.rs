@@ -6,7 +6,7 @@ use crate::backends::plonky2::mock_signed::MockSignedPod;
 use crate::backends::plonky2::primitives::merkletree::MerkleProofExistenceCircuit;
 use crate::backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree};
 use crate::middleware::{
-    hash_str, AnchoredKey, Operation, Params, PodType, Statement, KEY_TYPE, SELF,
+    hash_str, AnchoredKey, Operation, Params, PodType, Statement, ToFields, KEY_TYPE, SELF,
     STATEMENT_ARG_F_LEN,
 };
 use anyhow::Result;
@@ -39,7 +39,7 @@ struct SignedPodVerifyGate {
 
 impl SignedPodVerifyGate {
     fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<SignedPodVerifyTarget> {
-        // Verify id
+        // 2. Verify id
         let id = builder.add_virtual_hash();
         let mut mt_proofs = Vec::new();
         for _ in 0..self.params.max_signed_pod_values {
@@ -48,14 +48,14 @@ impl SignedPodVerifyGate {
             mt_proofs.push(mt_proof);
         }
 
-        // Verify type
+        // 1. Verify type
         let type_mt_proof = &mt_proofs[0];
         let key_type = builder.constant_value(hash_str(KEY_TYPE).into());
         builder.connect_values(type_mt_proof.key, key_type);
         let value_type = builder.constant_value(Value::from(PodType::MockSigned));
         builder.connect_values(type_mt_proof.value, value_type);
 
-        // TODO: Verify signature
+        // 3. TODO: Verify signature
 
         Ok(SignedPodVerifyTarget {
             params: self.params.clone(),
@@ -154,7 +154,7 @@ struct MainPodVerifyGate {
 impl MainPodVerifyGate {
     fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MainPodVerifyTarget> {
         let params = &self.params;
-        // Verify all input signed pods
+        // 1. Verify all input signed pods
         let mut signed_pods = Vec::new();
         for _ in 0..params.max_input_signed_pods {
             let signed_pod = SignedPodVerifyGate {
@@ -177,9 +177,37 @@ impl MainPodVerifyGate {
             statements.push(builder.add_virtual_statement(params));
             operations.push(builder.add_virtual_operation(params));
         }
-        let input_statements = &statements[input_statements_offset..];
 
-        // Verify input statements
+        let input_statements = &statements[input_statements_offset..];
+        let pub_statements = &input_statements[statements.len() - params.max_public_statements..];
+
+        // 2. Calculate the Pod Id from the public statements
+        let pub_statements_flattened = pub_statements
+            .iter()
+            .map(|s| s.code.iter().chain(s.args.iter().flatten()))
+            .flatten()
+            .cloned()
+            .collect();
+        let id = builder.hash_n_to_hash_no_pad::<PoseidonHash>(pub_statements_flattened);
+
+        // 3. check that all `input_statements` of type `ValueOf` with origin=SELF have unique
+        //    keys (no duplicates)
+
+        // 4. Verify type
+        let type_statement = &pub_statements[0];
+        // TODO: Store this hash in a global static with lazy init so that we don't have to
+        // compute it every time.
+        let key_type = hash_str(KEY_TYPE);
+        let expected_type_statement_flattened = builder.constants(
+            &Statement::ValueOf(AnchoredKey(SELF, key_type), Value::from(PodType::MockMain))
+                .to_fields(params),
+        );
+        builder.connect_slice(
+            &type_statement.to_flattened(),
+            &expected_type_statement_flattened,
+        );
+
+        // 5. Verify input statements
         let mut op_verifications = Vec::new();
         for (i, (st, op)) in input_statements.iter().zip(operations.iter()).enumerate() {
             let prev_statements = &statements[..input_statements_offset + i - 1];
@@ -189,23 +217,6 @@ impl MainPodVerifyGate {
             .eval(builder, st, op, prev_statements)?;
             op_verifications.push(op_verification);
         }
-
-        // Calculate the Pod Id from the public statements
-        let pub_statements = &input_statements[statements.len() - params.max_public_statements..];
-        let pub_statements_flat = pub_statements
-            .iter()
-            .map(|s| s.code.iter().chain(s.args.iter().flatten()))
-            .flatten()
-            .cloned()
-            .collect();
-        let id = builder.hash_n_to_hash_no_pad::<PoseidonHash>(pub_statements_flat);
-
-        // Verify type
-        let type_statement = &pub_statements[0];
-        // TODO: Store this hash in a global static with lazy init.
-        let key_type = hash_str(KEY_TYPE);
-        let expected_type_statement =
-            Statement::ValueOf(AnchoredKey(SELF, key_type), Value::from(PodType::MockMain));
 
         Ok(MainPodVerifyTarget {
             params: params.clone(),
