@@ -6,7 +6,8 @@ use crate::backends::plonky2::mock_signed::MockSignedPod;
 use crate::backends::plonky2::primitives::merkletree::MerkleProofExistenceCircuit;
 use crate::backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree};
 use crate::middleware::{
-    hash_str, Operation, Params, PodType, Statement, KEY_TYPE, STATEMENT_ARG_F_LEN,
+    hash_str, AnchoredKey, Operation, Params, PodType, Statement, KEY_TYPE, SELF,
+    STATEMENT_ARG_F_LEN,
 };
 use anyhow::Result;
 use itertools::Itertools;
@@ -67,7 +68,7 @@ impl SignedPodVerifyGate {
 struct SignedPodVerifyTarget {
     params: Params,
     id: HashOutTarget,
-    // The KEY_TYPE proof must be the first one
+    // The KEY_TYPE entry must be the first one
     mt_proofs: Vec<MerkleProofExistenceCircuit<MD>>,
 }
 
@@ -199,6 +200,13 @@ impl MainPodVerifyGate {
             .collect();
         let id = builder.hash_n_to_hash_no_pad::<PoseidonHash>(pub_statements_flat);
 
+        // Verify type
+        let type_statement = &pub_statements[0];
+        // TODO: Store this hash in a global static with lazy init.
+        let key_type = hash_str(KEY_TYPE);
+        let expected_type_statement =
+            Statement::ValueOf(AnchoredKey(SELF, key_type), Value::from(PodType::MockMain));
+
         Ok(MainPodVerifyTarget {
             params: params.clone(),
             id,
@@ -214,6 +222,7 @@ struct MainPodVerifyTarget {
     params: Params,
     id: HashOutTarget,
     signed_pods: Vec<SignedPodVerifyTarget>,
+    // The KEY_TYPE statement must be the first public one
     statements: Vec<StatementTarget>,
     operations: Vec<OperationTarget>,
     op_verifications: Vec<OperationVerifyTarget>,
