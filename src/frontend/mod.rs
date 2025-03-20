@@ -57,8 +57,11 @@ pub enum Value {
     // TAGGED TYPES:
     Set(Set),
     Dictionary(Dictionary),
-    #[serde(serialize_with = "serialize_i64", deserialize_with = "deserialize_i64")]
-    Int(i64),
+    Int(
+        #[serde(serialize_with = "serialize_i64", deserialize_with = "deserialize_i64")]
+        #[schemars(with = "String", regex(pattern = r"^\d+$"))]
+        i64,
+    ),
     // Uses the serialization for middleware::Value:
     Raw(middleware::Value),
     // UNTAGGED TYPES:
