@@ -33,7 +33,7 @@ pub struct VerifierParams(VerifierCircuitData<F, C, D>);
 pub struct SecretKey(Value);
 
 #[derive(Clone, Debug)]
-pub struct PublicKey(Value);
+pub struct PublicKey(pub(crate) Value);
 
 #[derive(Clone, Debug)]
 pub struct Signature(Proof);
