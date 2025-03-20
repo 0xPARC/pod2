@@ -12,6 +12,7 @@ use super::{
 pub const KEY_SIGNER: &str = "_signer";
 pub const KEY_TYPE: &str = "_type";
 pub const STATEMENT_ARG_F_LEN: usize = 8;
+pub const OPERATION_ARG_F_LEN: usize = 1;
 
 #[derive(Clone, Copy, Debug, FromRepr, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum NativePredicate {
@@ -189,10 +190,7 @@ impl ToFields for Statement {
     fn to_fields(&self, params: &Params) -> Vec<F> {
         let mut fields = self.code().to_fields(params);
         fields.extend(self.args().iter().flat_map(|arg| arg.to_fields(params)));
-        fields.resize_with(
-            2 + HASH_SIZE + STATEMENT_ARG_F_LEN * params.max_statement_args,
-            || F::ZERO,
-        );
+        fields.resize_with(params.statement_size(), || F::ZERO);
         fields
     }
 }

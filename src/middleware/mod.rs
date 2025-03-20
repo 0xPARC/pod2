@@ -119,15 +119,27 @@ impl Params {
         self.max_statements - self.max_public_statements
     }
 
-    pub fn statement_tmpl_arg_size() -> usize {
+    pub const fn statement_tmpl_arg_size() -> usize {
         2 * HASH_SIZE + 1
     }
 
-    pub fn predicate_size() -> usize {
+    pub const fn predicate_size() -> usize {
         HASH_SIZE + 2
     }
 
-    pub fn statement_tmpl_size(&self) -> usize {
+    pub const fn operation_type_size() -> usize {
+        HASH_SIZE + 2
+    }
+
+    pub fn statement_size(&self) -> usize {
+        Self::predicate_size() + STATEMENT_ARG_F_LEN * self.max_statement_args
+    }
+
+    pub fn operation_size(&self) -> usize {
+        Self::operation_type_size() + OPERATION_ARG_F_LEN * self.max_operation_args
+    }
+
+    pub const fn statement_tmpl_size(&self) -> usize {
         Self::predicate_size() + self.max_statement_args * Self::statement_tmpl_arg_size()
     }
 

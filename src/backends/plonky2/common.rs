@@ -1,9 +1,9 @@
 //! Common functionality to build Pod circuits with plonky2
 
-use crate::middleware::STATEMENT_ARG_F_LEN;
 use crate::middleware::{
     Operation, Params, Statement, StatementArg, ToFields, Value, F, HASH_SIZE, VALUE_SIZE,
 };
+use crate::middleware::{OPERATION_ARG_F_LEN, STATEMENT_ARG_F_LEN};
 use anyhow::Result;
 use plonky2::field::extension::Extendable;
 use plonky2::field::types::{Field, PrimeField64};
@@ -20,7 +20,7 @@ pub struct ValueTarget {
 
 #[derive(Clone)]
 pub struct StatementTarget {
-    pub code: [Target; HASH_SIZE + 2],
+    pub code: [Target; Params::predicate_size()],
     pub args: Vec<[Target; STATEMENT_ARG_F_LEN]>,
 }
 
@@ -56,8 +56,8 @@ impl StatementTarget {
 // TODO: Implement Operation::to_field to determine the size of each element
 #[derive(Clone)]
 pub struct OperationTarget {
-    pub code: [Target; 6],                        // TODO: Figure out the length
-    pub args: Vec<[Target; STATEMENT_ARG_F_LEN]>, // TODO: Figure out the length
+    pub code: [Target; Params::operation_type_size()],
+    pub args: Vec<[Target; OPERATION_ARG_F_LEN]>,
 }
 
 impl OperationTarget {
