@@ -1,17 +1,18 @@
 use anyhow::{anyhow, Result};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use super::{CustomPredicateRef, NativePredicate, Statement, StatementArg};
 use crate::middleware::{AnchoredKey, Params, Predicate, Value, SELF};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum OperationType {
     Native(NativeOperation),
     Custom(CustomPredicateRef),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Hash, JsonSchema)]
 pub enum NativeOperation {
     None = 0,
     NewEntry = 1,

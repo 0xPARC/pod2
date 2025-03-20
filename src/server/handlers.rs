@@ -296,6 +296,7 @@ pub async fn get_schemas() -> Result<Json<serde_json::Value>, ServerError> {
         "SignedPod": schemars::schema_for!(SignedPodHelper),
         "MainPod": schemars::schema_for!(MainPodHelper),
         "FrontendWildcardStatement": schemars::schema_for!(WildcardTargetStatement),
+        "Operation": schemars::schema_for!(Operation),
         // Add any other schemas you want to expose
     });
 
