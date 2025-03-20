@@ -27,6 +27,7 @@ use plonky2::{
 };
 use std::collections::HashMap;
 
+/// MerkleTree Max Depth
 const MD: usize = 32;
 
 //
@@ -69,6 +70,7 @@ struct SignedPodVerifyTarget {
     params: Params,
     id: HashOutTarget,
     // The KEY_TYPE entry must be the first one
+    // The KEY_SIGNER entry must be the second one
     mt_proofs: Vec<MerkleProofExistenceCircuit<MD>>,
 }
 

@@ -1,7 +1,7 @@
 //! Common functionality to build Pod circuits with plonky2
 
 use crate::middleware::STATEMENT_ARG_F_LEN;
-use crate::middleware::{Params, Value};
+use crate::middleware::{Params, Value, HASH_SIZE, VALUE_SIZE};
 use plonky2::field::extension::Extendable;
 use plonky2::field::types::PrimeField64;
 use plonky2::hash::hash_types::RichField;
@@ -10,12 +10,12 @@ use plonky2::plonk::circuit_builder::CircuitBuilder;
 
 #[derive(Copy, Clone)]
 pub struct ValueTarget {
-    pub elements: [Target; 4],
+    pub elements: [Target; VALUE_SIZE],
 }
 
 #[derive(Clone)]
 pub struct StatementTarget {
-    pub code: [Target; 6],
+    pub code: [Target; HASH_SIZE + 2],
     pub args: Vec<[Target; STATEMENT_ARG_F_LEN]>,
 }
 
@@ -62,7 +62,7 @@ impl<F: RichField + Extendable<D>, const D: usize> CircuitBuilderPod<F, D>
 
     fn add_virtual_value(&mut self) -> ValueTarget {
         ValueTarget {
-            elements: self.add_virtual_target_arr::<4>(),
+            elements: self.add_virtual_target_arr(),
         }
     }
 
