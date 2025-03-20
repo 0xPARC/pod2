@@ -377,14 +377,14 @@ pub mod tests {
             let expected_path_targ: Vec<BoolTarget> = (0..MD)
                 .map(|_| builder.add_virtual_bool_target_safe())
                 .collect();
-            let key_targ = builder.add_virtual_targets(VALUE_SIZE);
+            let key_targ = builder.add_virtual_value();
             let computed_path_targ = keypath_target::<MD>(&mut builder, &key_targ);
             for i in 0..MD {
                 builder.connect(computed_path_targ[i].target, expected_path_targ[i].target);
             }
 
             // assign the input values to the targets
-            pw.set_target_arr(&key_targ, &key.0)?;
+            pw.set_target_arr(&key_targ.elements, &key.0)?;
             for i in 0..MD {
                 pw.set_bool_target(expected_path_targ[i], expected_path[i])?;
             }
@@ -410,15 +410,15 @@ pub mod tests {
             let mut pw = PartialWitness::<F>::new();
 
             let h_targ = builder.add_virtual_hash();
-            let key_targ = builder.add_virtual_targets(VALUE_SIZE);
-            let value_targ = builder.add_virtual_targets(VALUE_SIZE);
+            let key_targ = builder.add_virtual_value();
+            let value_targ = builder.add_virtual_value();
 
             let computed_h = kv_hash_target(&mut builder, &key_targ, &value_targ);
             builder.connect_hashes(computed_h, h_targ);
 
             // assign the input values to the targets
-            pw.set_target_arr(&key_targ, &key.0)?;
-            pw.set_target_arr(&value_targ, &value.0)?;
+            pw.set_target_arr(&key_targ.elements, &key.0)?;
+            pw.set_target_arr(&value_targ.elements, &value.0)?;
             pw.set_hash_target(h_targ, HashOut::from_vec(h.0.to_vec()))?;
 
             // generate & verify proof
