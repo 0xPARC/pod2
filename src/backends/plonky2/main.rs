@@ -2,17 +2,14 @@ use crate::backends::plonky2::basetypes::{Hash, Value, D, EMPTY_HASH, EMPTY_VALU
 use crate::backends::plonky2::common::{
     CircuitBuilderPod, OperationTarget, StatementTarget, ValueTarget,
 };
-use crate::backends::plonky2::mock_signed::MockSignedPod;
 use crate::backends::plonky2::primitives::merkletree::MerkleProofExistenceCircuit;
 use crate::backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree};
 use crate::middleware::{
-    hash_str, AnchoredKey, Operation, Params, PodType, Statement, ToFields, KEY_TYPE, SELF,
-    STATEMENT_ARG_F_LEN,
+    hash_str, AnchoredKey, NativeOperation, NativePredicate, Operation, Params, PodType, Predicate,
+    Statement, StatementArg, ToFields, KEY_TYPE, SELF, STATEMENT_ARG_F_LEN,
 };
 use anyhow::Result;
 use itertools::Itertools;
-use plonky2::field::extension::Extendable;
-use plonky2::hash::hash_types::RichField;
 use plonky2::{
     field::types::Field,
     hash::{
@@ -91,6 +88,7 @@ impl SignedPodVerifyTarget {
     }
 
     fn pub_statements(&self) -> Vec<StatementTarget> {
+        // TODO: Here we need to use the self.id in the ValueOf statements
         todo!()
     }
 
@@ -131,7 +129,69 @@ impl OperationVerifyGate {
         // can reference any of the `prev_statements`.
         // The verification may require aux data which needs to be stored in the
         // `OperationVerifyTarget` so that we can set during witness generation.
+
+        // TODO: Figure out the right encoding of op.code
+        let op_none = builder.constant(F::from_canonical_u64(NativeOperation::None as u64));
+        let is_none = builder.is_equal(op.code[0], op_none);
+        let op_new_entry =
+            builder.constant(F::from_canonical_u64(NativeOperation::NewEntry as u64));
+        let is_new_entry = builder.is_equal(op.code[0], op_new_entry);
+        let op_copy_statement =
+            builder.constant(F::from_canonical_u64(NativeOperation::CopyStatement as u64));
+        let is_copy_statement = builder.is_equal(op.code[0], op_copy_statement);
+        let op_eq_from_entries = builder.constant(F::from_canonical_u64(
+            NativeOperation::EqualFromEntries as u64,
+        ));
+        let is_eq_from_entries = builder.is_equal(op.code[0], op_eq_from_entries);
+        let op_gt_from_entries =
+            builder.constant(F::from_canonical_u64(NativeOperation::GtFromEntries as u64));
+        let is_gt_from_entries = builder.is_equal(op.code[0], op_gt_from_entries);
+        let op_lt_from_entries =
+            builder.constant(F::from_canonical_u64(NativeOperation::LtFromEntries as u64));
+        let is_lt_from_entries = builder.is_equal(op.code[0], op_lt_from_entries);
+        let op_contains_from_entries = builder.constant(F::from_canonical_u64(
+            NativeOperation::ContainsFromEntries as u64,
+        ));
+        let is_contains_from_entries = builder.is_equal(op.code[0], op_contains_from_entries);
+
+        let ok = builder._true();
+        let none_ok = self.eval_none(builder, st, op);
+        let ok = builder.select_bool(is_none, none_ok, ok);
+        let new_entry_ok = self.eval_new_entry(builder, st, op);
+        let ok = builder.select_bool(is_new_entry, new_entry_ok, ok);
+
+        let _true = builder._true();
+        builder.connect(ok.target, _true.target);
+
         todo!()
+    }
+
+    fn eval_none(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        st: &StatementTarget,
+        _op: &OperationTarget,
+    ) -> BoolTarget {
+        let expected_statement_flattened =
+            builder.constants(&Statement::None.to_fields(&self.params));
+        builder.is_equal_slice(&st.to_flattened(), &expected_statement_flattened)
+    }
+
+    fn eval_new_entry(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        st: &StatementTarget,
+        _op: &OperationTarget,
+    ) -> BoolTarget {
+        let value_of_st = &Statement::ValueOf(AnchoredKey(SELF, EMPTY_HASH), EMPTY_VALUE);
+        let expected_code =
+            builder.constants(&Predicate::Native(NativePredicate::ValueOf).to_fields(&self.params));
+        let code_ok = builder.is_equal_slice(&st.code, &expected_code);
+        let expected_arg_prefix = builder.constants(
+            &StatementArg::Key(AnchoredKey(SELF, EMPTY_HASH)).to_fields(&self.params)[..VALUE_SIZE],
+        );
+        let arg_prefix_ok = builder.is_equal_slice(&st.args[0][..VALUE_SIZE], &expected_arg_prefix);
+        builder.and(code_ok, arg_prefix_ok)
     }
 }
 

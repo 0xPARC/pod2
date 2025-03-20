@@ -32,8 +32,8 @@ impl StatementTarget {
 // TODO: Implement Operation::to_field to determine the size of each element
 #[derive(Clone)]
 pub struct OperationTarget {
-    pub code: [Target; 6],
-    pub args: Vec<[Target; STATEMENT_ARG_F_LEN]>,
+    pub code: [Target; 6],                        // TODO: Figure out the length
+    pub args: Vec<[Target; STATEMENT_ARG_F_LEN]>, // TODO: Figure out the length
 }
 
 pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
@@ -43,7 +43,9 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     fn add_virtual_statement(&mut self, params: &Params) -> StatementTarget;
     fn add_virtual_operation(&mut self, params: &Params) -> OperationTarget;
     fn select_value(&mut self, b: BoolTarget, x: ValueTarget, y: ValueTarget) -> ValueTarget;
+    fn select_bool(&mut self, b: BoolTarget, x: BoolTarget, y: BoolTarget) -> BoolTarget;
     fn constant_value(&mut self, v: Value) -> ValueTarget;
+    fn is_equal_slice(&mut self, xs: &[Target], ys: &[Target]) -> BoolTarget;
 }
 
 impl<F: RichField + Extendable<D>, const D: usize> CircuitBuilderPod<F, D>
@@ -85,11 +87,24 @@ impl<F: RichField + Extendable<D>, const D: usize> CircuitBuilderPod<F, D>
         }
     }
 
+    fn select_bool(&mut self, b: BoolTarget, x: BoolTarget, y: BoolTarget) -> BoolTarget {
+        BoolTarget::new_unsafe(self.select(b, x.target, y.target))
+    }
+
     fn constant_value(&mut self, v: Value) -> ValueTarget {
         ValueTarget {
             elements: std::array::from_fn(|i| {
                 self.constant(F::from_noncanonical_u64(v.0[i].to_noncanonical_u64()))
             }),
         }
+    }
+
+    fn is_equal_slice(&mut self, xs: &[Target], ys: &[Target]) -> BoolTarget {
+        assert_eq!(xs.len(), ys.len());
+        let init = self._true();
+        xs.iter().zip(ys.iter()).fold(init, |ok, (x, y)| {
+            let is_eq = self.is_equal(*x, *y);
+            self.and(ok, is_eq)
+        })
     }
 }
