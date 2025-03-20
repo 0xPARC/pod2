@@ -12,41 +12,32 @@ import {
 } from "@/components/ui/select";
 import { Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { Statement } from "@/lib/api";
-import { ValueType } from "@/lib/types";
-import { SerializedValue } from "@/lib/pod-serialization";
+import { ValueType } from "@/lib/tree-node";
+import {
+  Statement,
+  PODValue,
+  StatementArg,
+  NativePredicateValue
+} from "@/lib/core-types";
 
 function generateId() {
   return crypto.randomUUID();
 }
-
-type NativePredicateValue =
-  | "None"
-  | "ValueOf"
-  | "Equal"
-  | "NotEqual"
-  | "Gt"
-  | "Lt"
-  | "Contains"
-  | "NotContains"
-  | "SumOf"
-  | "ProductOf"
-  | "MaxOf";
 
 function ArgumentEditor({
   value,
   onChange,
   onDelete
 }: {
-  value: Statement["args"][0];
-  onChange: (value: Statement["args"][0]) => void;
+  value: StatementArg;
+  onChange: (value: StatementArg) => void;
   onDelete: () => void;
 }) {
   const [argType, setArgType] = useState<"Key" | "Literal">(
     "Key" in value ? "Key" : "Literal"
   );
 
-  const getLiteralType = (value: Statement["args"][0]): ValueType => {
+  const getLiteralType = (value: StatementArg): ValueType => {
     if ("Literal" in value) {
       const literal = value.Literal;
       if (typeof literal === "string") return ValueType.String;
@@ -61,7 +52,7 @@ function ArgumentEditor({
     return ValueType.String;
   };
 
-  const getLiteralValue = (value: Statement["args"][0]): string => {
+  const getLiteralValue = (value: StatementArg): string => {
     if ("Literal" in value) {
       const literal = value.Literal;
       if (typeof literal === "string") return literal;
@@ -97,7 +88,7 @@ function ArgumentEditor({
   function handleLiteralTypeChange(type: ValueType) {
     setLiteralType(type);
     setLiteralValue("");
-    let defaultValue: SerializedValue;
+    let defaultValue: PODValue;
     switch (type) {
       case ValueType.Bool:
         defaultValue = false;
@@ -119,7 +110,7 @@ function ArgumentEditor({
 
   function handleLiteralValueChange(value: string) {
     setLiteralValue(value);
-    let parsedValue: SerializedValue;
+    let parsedValue: PODValue;
     try {
       switch (literalType) {
         case ValueType.Bool:
@@ -247,7 +238,7 @@ export function StatementEditor({
     });
   }
 
-  function handleArgChange(index: number, value: Statement["args"][0]) {
+  function handleArgChange(index: number, value: StatementArg) {
     const newArgs = [...statement.args];
     newArgs[index] = value;
     onUpdate({ ...statement, args: newArgs });

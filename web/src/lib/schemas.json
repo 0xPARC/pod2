@@ -73,8 +73,8 @@
             "additionalProperties": false,
             "properties": {
               "Int": {
-                "format": "int64",
-                "type": "integer"
+                "pattern": "^\\d+$",
+                "type": "string"
               }
             },
             "required": ["Int"],
@@ -91,37 +91,16 @@
             "type": "object"
           },
           {
-            "additionalProperties": false,
-            "properties": {
-              "Array": {
-                "items": {
-                  "$ref": "#/$defs/Value"
-                },
-                "type": "array"
-              }
-            },
-            "required": ["Array"],
-            "type": "object"
+            "type": "string"
           },
           {
-            "additionalProperties": false,
-            "properties": {
-              "String": {
-                "type": "string"
-              }
-            },
-            "required": ["String"],
-            "type": "object"
+            "type": "boolean"
           },
           {
-            "additionalProperties": false,
-            "properties": {
-              "Bool": {
-                "type": "boolean"
-              }
+            "items": {
+              "$ref": "#/definitions/Value"
             },
-            "required": ["Bool"],
-            "type": "object"
+            "type": "array"
           }
         ]
       },
@@ -692,8 +671,8 @@
             "additionalProperties": false,
             "properties": {
               "Int": {
-                "format": "int64",
-                "type": "integer"
+                "pattern": "^\\d+$",
+                "type": "string"
               }
             },
             "required": ["Int"],
@@ -710,37 +689,16 @@
             "type": "object"
           },
           {
-            "additionalProperties": false,
-            "properties": {
-              "Array": {
-                "items": {
-                  "$ref": "#/$defs/Value"
-                },
-                "type": "array"
-              }
-            },
-            "required": ["Array"],
-            "type": "object"
+            "type": "string"
           },
           {
-            "additionalProperties": false,
-            "properties": {
-              "String": {
-                "type": "string"
-              }
-            },
-            "required": ["String"],
-            "type": "object"
+            "type": "boolean"
           },
           {
-            "additionalProperties": false,
-            "properties": {
-              "Bool": {
-                "type": "boolean"
-              }
+            "items": {
+              "$ref": "#/definitions/Value"
             },
-            "required": ["Bool"],
-            "type": "object"
+            "type": "array"
           }
         ]
       }
@@ -769,6 +727,449 @@
     "required": ["public_statements", "proof", "pod_class", "pod_type", "id"],
     "title": "MainPodHelper",
     "type": "object"
+  },
+  "Operation": {
+    "$defs": {
+      "AnchoredKey": {
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/$defs/Origin"
+          }
+        },
+        "required": ["origin", "key"],
+        "type": "object"
+      },
+      "CustomPredicate": {
+        "properties": {
+          "args_len": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "conjunction": {
+            "description": "NOTE: fields are not public (outside of crate) to enforce the struct instantiation through\n the `::and/or` methods, which performs checks on the values.\n true for \"and\", false for \"or\"",
+            "type": "boolean"
+          },
+          "statements": {
+            "items": {
+              "$ref": "#/$defs/StatementTmpl"
+            },
+            "type": "array"
+          }
+        },
+        "required": ["conjunction", "statements", "args_len"],
+        "type": "object"
+      },
+      "CustomPredicateBatch": {
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "predicates": {
+            "items": {
+              "$ref": "#/$defs/CustomPredicate"
+            },
+            "type": "array"
+          }
+        },
+        "required": ["name", "predicates"],
+        "type": "object"
+      },
+      "CustomPredicateRef": {
+        "maxItems": 2,
+        "minItems": 2,
+        "prefixItems": [
+          {
+            "$ref": "#/$defs/CustomPredicateBatch"
+          },
+          {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          }
+        ],
+        "type": "array"
+      },
+      "Hash": {
+        "pattern": "^[0-9a-fA-F]{64}$",
+        "type": "string"
+      },
+      "HashOrWildcard": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "Hash": {
+                "$ref": "#/$defs/Hash"
+              }
+            },
+            "required": ["Hash"],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "Wildcard": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": ["Wildcard"],
+            "type": "object"
+          }
+        ]
+      },
+      "MiddlewareValue": {
+        "pattern": "^[0-9a-fA-F]{64}$",
+        "type": "string"
+      },
+      "NativeOperation": {
+        "enum": [
+          "None",
+          "NewEntry",
+          "CopyStatement",
+          "EqualFromEntries",
+          "NotEqualFromEntries",
+          "GtFromEntries",
+          "LtFromEntries",
+          "TransitiveEqualFromStatements",
+          "GtToNotEqual",
+          "LtToNotEqual",
+          "ContainsFromEntries",
+          "NotContainsFromEntries",
+          "SumOf",
+          "ProductOf",
+          "MaxOf"
+        ],
+        "type": "string"
+      },
+      "NativePredicate": {
+        "enum": [
+          "None",
+          "ValueOf",
+          "Equal",
+          "NotEqual",
+          "Gt",
+          "Lt",
+          "Contains",
+          "NotContains",
+          "SumOf",
+          "ProductOf",
+          "MaxOf"
+        ],
+        "type": "string"
+      },
+      "OperationArg": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "Statement": {
+                "$ref": "#/$defs/Statement"
+              }
+            },
+            "required": ["Statement"],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "Literal": {
+                "$ref": "#/$defs/Value"
+              }
+            },
+            "required": ["Literal"],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "Entry": {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/Value"
+                  }
+                ],
+                "type": "array"
+              }
+            },
+            "required": ["Entry"],
+            "type": "object"
+          }
+        ]
+      },
+      "OperationType": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "Native": {
+                "$ref": "#/$defs/NativeOperation"
+              }
+            },
+            "required": ["Native"],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "Custom": {
+                "$ref": "#/$defs/CustomPredicateRef"
+              }
+            },
+            "required": ["Custom"],
+            "type": "object"
+          }
+        ]
+      },
+      "Origin": {
+        "properties": {
+          "pod_class": {
+            "$ref": "#/$defs/PodClass"
+          },
+          "pod_id": {
+            "$ref": "#/$defs/PodId"
+          }
+        },
+        "required": ["pod_class", "pod_id"],
+        "type": "object"
+      },
+      "PodClass": {
+        "description": "This type is just for presentation purposes.",
+        "enum": ["Signed", "Main"],
+        "type": "string"
+      },
+      "PodId": {
+        "$ref": "#/$defs/Hash"
+      },
+      "Predicate": {
+        "oneOf": [
+          {
+            "properties": {
+              "type": {
+                "const": "Native",
+                "type": "string"
+              },
+              "value": {
+                "$ref": "#/$defs/NativePredicate"
+              }
+            },
+            "required": ["type", "value"],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "const": "BatchSelf",
+                "type": "string"
+              },
+              "value": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": ["type", "value"],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "const": "Custom",
+                "type": "string"
+              },
+              "value": {
+                "$ref": "#/$defs/CustomPredicateRef"
+              }
+            },
+            "required": ["type", "value"],
+            "type": "object"
+          }
+        ]
+      },
+      "Statement": {
+        "properties": {
+          "args": {
+            "items": {
+              "$ref": "#/$defs/StatementArg"
+            },
+            "type": "array"
+          },
+          "predicate": {
+            "$ref": "#/$defs/Predicate"
+          }
+        },
+        "required": ["predicate", "args"],
+        "type": "object"
+      },
+      "StatementArg": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "Literal": {
+                "$ref": "#/$defs/Value"
+              }
+            },
+            "required": ["Literal"],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "Key": {
+                "$ref": "#/$defs/AnchoredKey"
+              }
+            },
+            "required": ["Key"],
+            "type": "object"
+          }
+        ]
+      },
+      "StatementTmpl": {
+        "description": "Statement Template for a Custom Predicate",
+        "maxItems": 2,
+        "minItems": 2,
+        "prefixItems": [
+          {
+            "$ref": "#/$defs/Predicate"
+          },
+          {
+            "items": {
+              "$ref": "#/$defs/StatementTmplArg"
+            },
+            "type": "array"
+          }
+        ],
+        "type": "array"
+      },
+      "StatementTmplArg": {
+        "oneOf": [
+          {
+            "enum": ["None"],
+            "type": "string"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "Literal": {
+                "$ref": "#/$defs/MiddlewareValue"
+              }
+            },
+            "required": ["Literal"],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "Key": {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "$ref": "#/$defs/HashOrWildcard"
+                  },
+                  {
+                    "$ref": "#/$defs/HashOrWildcard"
+                  }
+                ],
+                "type": "array"
+              }
+            },
+            "required": ["Key"],
+            "type": "object"
+          }
+        ]
+      },
+      "Value": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "Set": {
+                "items": {
+                  "$ref": "#/$defs/Value"
+                },
+                "type": "array"
+              }
+            },
+            "required": ["Set"],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "Dictionary": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/Value"
+                },
+                "type": "object"
+              }
+            },
+            "required": ["Dictionary"],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "Int": {
+                "pattern": "^\\d+$",
+                "type": "string"
+              }
+            },
+            "required": ["Int"],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "Raw": {
+                "$ref": "#/$defs/MiddlewareValue"
+              }
+            },
+            "required": ["Raw"],
+            "type": "object"
+          },
+          {
+            "type": "string"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "items": {
+              "$ref": "#/definitions/Value"
+            },
+            "type": "array"
+          }
+        ]
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "maxItems": 2,
+    "minItems": 2,
+    "prefixItems": [
+      {
+        "$ref": "#/$defs/OperationType"
+      },
+      {
+        "items": {
+          "$ref": "#/$defs/OperationArg"
+        },
+        "type": "array"
+      }
+    ],
+    "title": "Operation",
+    "type": "array"
   },
   "SignedPod": {
     "$defs": {
@@ -808,8 +1209,8 @@
             "additionalProperties": false,
             "properties": {
               "Int": {
-                "format": "int64",
-                "type": "integer"
+                "pattern": "^\\d+$",
+                "type": "string"
               }
             },
             "required": ["Int"],
@@ -826,37 +1227,16 @@
             "type": "object"
           },
           {
-            "additionalProperties": false,
-            "properties": {
-              "Array": {
-                "items": {
-                  "$ref": "#/$defs/Value"
-                },
-                "type": "array"
-              }
-            },
-            "required": ["Array"],
-            "type": "object"
+            "type": "string"
           },
           {
-            "additionalProperties": false,
-            "properties": {
-              "String": {
-                "type": "string"
-              }
-            },
-            "required": ["String"],
-            "type": "object"
+            "type": "boolean"
           },
           {
-            "additionalProperties": false,
-            "properties": {
-              "Bool": {
-                "type": "boolean"
-              }
+            "items": {
+              "$ref": "#/definitions/Value"
             },
-            "required": ["Bool"],
-            "type": "object"
+            "type": "array"
           }
         ]
       }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatValue } from "./api";
+import { formatValue } from "./core-types";
 
 describe("Value Type Conversions", () => {
   describe("formatValue", () => {

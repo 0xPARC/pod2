@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { CreateSignedPodEditor } from "./CreateSignedPodEditor";
 import { api } from "@/lib/api";
+import { SignedPod } from "@/lib/api";
 
 // Mock the API
 vi.mock("@/lib/api", () => ({
@@ -77,7 +78,7 @@ describe("CreateSignedPodEditor", () => {
 
   it("should create a POD when clicking Create POD", async () => {
     // Mock successful API call
-    (api.createSignedPod as any).mockResolvedValueOnce({});
+    (api.createSignedPod as jest.Mock).mockResolvedValueOnce({} as SignedPod);
 
     render(<CreateSignedPodEditor />);
 
@@ -103,7 +104,9 @@ describe("CreateSignedPodEditor", () => {
 
   it("should show error toast when POD creation fails", async () => {
     // Mock failed API call
-    (api.createSignedPod as any).mockRejectedValueOnce(new Error("Failed"));
+    (api.createSignedPod as jest.Mock).mockRejectedValueOnce(
+      new Error("Failed")
+    );
 
     render(<CreateSignedPodEditor />);
 

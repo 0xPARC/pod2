@@ -1,52 +1,48 @@
 import { z } from "zod";
-import { ValueType as PodValueType } from "./types";
 
 // Core value types
-interface ValueType {
-  String?: string;
-  Int?: string;
-  Bool?: boolean;
-  Raw?: string;
-  Array?: ValueType[];
-  Set?: ValueType[];
-  Dictionary?: Record<string, ValueType>;
-}
+export type PODValue =
+  | { Raw: string }
+  | { Int: string }
+  | { Set: PODValue[] }
+  | { Dictionary: Record<string, PODValue> }
+  | PODValue[]
+  | string
+  | boolean;
 
-const ValueSchema: z.ZodType<ValueType> = z.union([
+export const ValueSchema: z.ZodType<PODValue> = z.union([
+  z.string(),
+  z.boolean(),
+  z.array(z.lazy(() => ValueSchema)),
   z.object({
-    String: z.string()
+    Raw: z.string().regex(/^[0-9a-fA-F]{64}$/)
   }),
   z.object({
     Int: z.string()
   }),
   z.object({
-    Bool: z.boolean()
+    Set: z.array(z.lazy(() => ValueSchema))
   }),
   z.object({
-    Raw: z.string().regex(/^[0-9a-fA-F]{64}$/)
-  }),
-  z.object({
-    Array: z.lazy(() => z.array(ValueSchema))
-  }),
-  z.object({
-    Set: z.lazy(() => z.array(ValueSchema))
-  }),
-  z.object({
-    Dictionary: z.lazy(() => z.record(z.string(), ValueSchema))
+    Dictionary: z.record(
+      z.string(),
+      z.lazy(() => ValueSchema)
+    )
   })
 ]);
 
-const OriginSchema = z.object({
+// Statement types
+export const OriginSchema = z.object({
   pod_class: z.enum(["Signed", "Main"]),
   pod_id: z.string().regex(/^[0-9a-fA-F]{64}$/)
 });
 
-const AnchoredKeySchema = z.object({
+export const AnchoredKeySchema = z.object({
   origin: OriginSchema,
   key: z.string()
 });
 
-const StatementArgSchema = z.union([
+export const StatementArgSchema = z.union([
   z.object({
     Key: AnchoredKeySchema
   }),
@@ -55,22 +51,26 @@ const StatementArgSchema = z.union([
   })
 ]);
 
-const PredicateSchema = z.discriminatedUnion("type", [
+export const NativePredicateSchema = z.enum([
+  "None",
+  "ValueOf",
+  "Equal",
+  "NotEqual",
+  "Gt",
+  "Lt",
+  "Contains",
+  "NotContains",
+  "SumOf",
+  "ProductOf",
+  "MaxOf"
+]);
+
+export type NativePredicateValue = z.infer<typeof NativePredicateSchema>;
+
+export const PredicateSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("Native"),
-    value: z.enum([
-      "None",
-      "ValueOf",
-      "Equal",
-      "NotEqual",
-      "Gt",
-      "Lt",
-      "Contains",
-      "NotContains",
-      "SumOf",
-      "ProductOf",
-      "MaxOf"
-    ])
+    value: NativePredicateSchema
   }),
   z.object({
     type: z.literal("BatchSelf"),
@@ -99,40 +99,33 @@ const PredicateSchema = z.discriminatedUnion("type", [
   })
 ]);
 
-const StatementSchema = z.object({
+export const StatementSchema = z.object({
   predicate: PredicateSchema,
   args: z.array(StatementArgSchema)
 });
 
 // Types derived from schemas
-export type Value = z.infer<typeof ValueSchema>;
 export type Origin = z.infer<typeof OriginSchema>;
 export type AnchoredKey = z.infer<typeof AnchoredKeySchema>;
 export type StatementArg = z.infer<typeof StatementArgSchema>;
 export type Predicate = z.infer<typeof PredicateSchema>;
 export type Statement = z.infer<typeof StatementSchema>;
 
-function shortenId(id: string): string {
+// Helper functions
+export function shortenId(id: string): string {
   return id.slice(0, 6);
 }
 
-// Display functions
-export function formatValue(value: ValueType): string {
-  const type = Object.keys(value)[0] as keyof ValueType;
-  const val = value[type];
-
-  switch (type) {
-    case "Raw":
-      return `Raw:${shortenId(val as string)}`;
-    case PodValueType.Array:
-      return "Array";
-    case PodValueType.Set:
-      return "Set";
-    case PodValueType.Dictionary:
-      return "Dictionary";
-    default:
-      return `${type}:${val}`;
-  }
+export function formatValue(value: PODValue): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "boolean") return String(value);
+  if ("Int" in value) return value.Int;
+  if ("Raw" in value) return `Raw:${shortenId(value.Raw)}`;
+  if ("Set" in value) return `Set(${value.Set.length} items)`;
+  if ("Dictionary" in value)
+    return `Dict(${Object.keys(value.Dictionary).length} items)`;
+  if (Array.isArray(value)) return `Array(${value.length} items)`;
+  return "";
 }
 
 export function formatAnchoredKey(key: AnchoredKey): string {
@@ -141,8 +134,7 @@ export function formatAnchoredKey(key: AnchoredKey): string {
 
 export function formatArg(arg: StatementArg): string {
   if ("Key" in arg) {
-    const { origin, key } = arg.Key;
-    return `${origin.pod_class}:${shortenId(origin.pod_id)}.${key}`;
+    return formatAnchoredKey(arg.Key);
   } else if ("Literal" in arg) {
     return formatValue(arg.Literal);
   }

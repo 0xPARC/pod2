@@ -1,98 +1,45 @@
 import axios from "axios";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
-import { TreeNode } from "@/lib/types";
-import { SerializedValue } from "@/lib/pod-serialization";
+import { TreeNode } from "./tree-node";
+import {
+  NativePredicateValue,
+  PODValue,
+  Statement,
+  StatementArg,
+  StatementSchema,
+  ValueSchema
+} from "./core-types";
 
-// Core value types - now imported from pod-serialization.ts
-export type ValueType = SerializedValue;
+export interface CreateSignedPodRequest {
+  signer: string;
+  key_values: Record<string, PODValue>;
+}
 
-const ValueSchema: z.ZodType<ValueType> = z.union([
-  z.object({
-    Raw: z.string().regex(/^[0-9a-fA-F]{64}$/)
-  }),
-  z.object({
-    Int: z.string()
-  }),
-  z.object({
-    Set: z.tuple([z.array(z.lazy(() => ValueSchema))])
-  }),
-  z.object({
-    Dictionary: z.record(
-      z.string(),
-      z.lazy(() => ValueSchema)
-    )
-  }),
-  z.array(z.lazy(() => ValueSchema)),
-  z.string(),
-  z.boolean()
-]);
+export interface CreateSignedPodResponse {
+  pod_id: string;
+  statements: Statement[];
+}
 
-const StatementArgSchema = z.union([
-  z.object({
-    Key: z.object({
-      origin: z.object({
-        pod_class: z.string(),
-        pod_id: z.string()
-      }),
-      key: z.string()
-    })
-  }),
-  z.object({
-    Literal: ValueSchema
-  })
-]);
+export interface GetPodResponse {
+  pod_id: string;
+  statements: Statement[];
+}
 
-type StatementArg = z.infer<typeof StatementArgSchema>;
+export interface ListPodsResponse {
+  pods: {
+    pod_id: string;
+    statements: Statement[];
+  }[];
+}
 
-const PredicateSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("Native"),
-    value: z.enum([
-      "None",
-      "ValueOf",
-      "Equal",
-      "NotEqual",
-      "Gt",
-      "Lt",
-      "Contains",
-      "NotContains",
-      "SumOf",
-      "ProductOf",
-      "MaxOf"
-    ])
-  }),
-  z.object({
-    type: z.literal("BatchSelf"),
-    value: z.number().int().nonnegative()
-  }),
-  z.object({
-    type: z.literal("Custom"),
-    value: z.tuple([
-      z.object({
-        name: z.string(),
-        predicates: z.array(
-          z.object({
-            conjunction: z.boolean(),
-            statements: z.array(
-              z.tuple([
-                z.any(), // Predicate
-                z.array(z.any()) // StatementTmplArg array
-              ])
-            ),
-            args_len: z.number().int().nonnegative()
-          })
-        )
-      }),
-      z.number().int().nonnegative()
-    ])
-  })
-]);
+export interface ErrorResponse {
+  error: string;
+}
 
-const StatementSchema = z.object({
-  predicate: PredicateSchema,
-  args: z.array(StatementArgSchema)
-});
+export function isAggregateType(type: NativePredicateValue): boolean {
+  return type === "MaxOf" || type === "ProductOf" || type === "SumOf";
+}
 
 const SignedPodSchema = z.object({
   entries: z.record(z.string(), ValueSchema),
@@ -128,21 +75,7 @@ const ValidatedStatementsSchema = z.array(
 export type SignedPod = z.infer<typeof SignedPodSchema>;
 export type MainPod = z.infer<typeof MainPodSchema>;
 export type Pod = z.infer<typeof PodSchema>;
-export type Statement = z.infer<typeof StatementSchema>;
 export type ValidatedStatements = z.infer<typeof ValidatedStatementsSchema>;
-
-export type StatementType =
-  | "None"
-  | "ValueOf"
-  | "Equal"
-  | "NotEqual"
-  | "Gt"
-  | "Lt"
-  | "Contains"
-  | "NotContains"
-  | "SumOf"
-  | "ProductOf"
-  | "MaxOf";
 
 // Helper function to check if a value is a TreeNode
 export function isTreeNode(value: unknown): value is TreeNode {
@@ -179,12 +112,12 @@ type KeyOrLiteral =
     }
   | {
       type: "literal";
-      value: SerializedValue;
+      value: PODValue;
     };
 
 export interface EditorStatement {
   id: string;
-  type: StatementType;
+  type: NativePredicateValue;
   firstArg: {
     wildcardId: { type: "concrete" | "named"; value: string };
     key: string;
@@ -192,19 +125,6 @@ export interface EditorStatement {
   secondArg: KeyOrLiteral;
   thirdArg?: KeyOrLiteral;
 }
-
-export type NativePredicate =
-  | "None"
-  | "ValueOf"
-  | "Equal"
-  | "NotEqual"
-  | "Gt"
-  | "Lt"
-  | "Contains"
-  | "NotContains"
-  | "SumOf"
-  | "ProductOf"
-  | "MaxOf";
 
 export interface WildcardId {
   type: "Concrete" | "Named";
@@ -224,7 +144,7 @@ export interface FrontendWildcardStatement {
           {
             Key:
               | { origin: { pod_class: string; pod_id: string }; key: string }
-              | { Literal: SerializedValue };
+              | { Literal: PODValue };
           }
         ]
       ]
@@ -236,7 +156,7 @@ export interface FrontendWildcardStatement {
           {
             Key:
               | { origin: { pod_class: string; pod_id: string }; key: string }
-              | { Literal: SerializedValue };
+              | { Literal: PODValue };
           }
         ]
       ]
@@ -248,7 +168,7 @@ export interface FrontendWildcardStatement {
           {
             Key:
               | { origin: { pod_class: string; pod_id: string }; key: string }
-              | { Literal: SerializedValue };
+              | { Literal: PODValue };
           }
         ]
       ]
@@ -260,7 +180,7 @@ export interface FrontendWildcardStatement {
           {
             Key:
               | { origin: { pod_class: string; pod_id: string }; key: string }
-              | { Literal: SerializedValue };
+              | { Literal: PODValue };
           }
         ]
       ]
@@ -272,7 +192,7 @@ export interface FrontendWildcardStatement {
           {
             Key:
               | { origin: { pod_class: string; pod_id: string }; key: string }
-              | { Literal: SerializedValue };
+              | { Literal: PODValue };
           }
         ]
       ]
@@ -284,7 +204,7 @@ export interface FrontendWildcardStatement {
           {
             Key:
               | { origin: { pod_class: string; pod_id: string }; key: string }
-              | { Literal: SerializedValue };
+              | { Literal: PODValue };
           }
         ]
       ]
@@ -299,7 +219,7 @@ interface WildcardStatementArg {
     };
     key: string;
   };
-  Literal?: SerializedValue;
+  Literal?: PODValue;
 }
 
 const API_BASE = "http://localhost:3000/api";
@@ -316,6 +236,7 @@ class ApiClient {
 
   async listPods(): Promise<Pod[]> {
     const { data } = await axiosInstance.post<Pod[]>("/list-pods");
+
     return z.array(PodSchema).parse(data);
   }
 
@@ -360,7 +281,7 @@ class ApiClient {
       const secondArg = transformArg(statement.secondArg);
 
       // For three-argument statements, include the third argument
-      if (isThreeArgStatement(statement.type) && statement.thirdArg) {
+      if (isAggregateType(statement.type) && statement.thirdArg) {
         const thirdArg = transformArg(statement.thirdArg);
         return {
           [statement.type]: [firstArg, secondArg, thirdArg]
@@ -424,7 +345,7 @@ class ApiClient {
       const secondArg = transformArg(statement.secondArg);
 
       // For three-argument statements, include the third argument
-      if (isThreeArgStatement(statement.type) && statement.thirdArg) {
+      if (isAggregateType(statement.type) && statement.thirdArg) {
         const thirdArg = transformArg(statement.thirdArg);
         return {
           [statement.type]: [firstArg, secondArg, thirdArg]
@@ -517,20 +438,29 @@ function shortenId(id: string): string {
   return id.slice(0, 6);
 }
 
-export function formatValue(value: ValueType): string {
+function formatValue(value: PODValue): string {
   if (typeof value === "string") {
     return value;
   } else if (typeof value === "boolean") {
     return value.toString();
   } else if ("Set" in value) {
-    return `{${value.Set.map(formatValue).join(", ")}}`;
+    const setValues = value.Set[0];
+    if (Array.isArray(setValues)) {
+      return `{${setValues.map(formatValue).join(", ")}}`;
+    }
+    return `{${formatValue(setValues)}}`;
   } else if ("Dictionary" in value) {
     return `{${Object.entries(value.Dictionary)
       .map(([k, v]) => `${k}: ${formatValue(v)}`)
       .join(", ")}}`;
-  } else {
-    throw new Error(`Unsupported value type: ${typeof value}`);
+  } else if ("Int" in value) {
+    return value.Int;
+  } else if ("Raw" in value) {
+    return value.Raw;
+  } else if (Array.isArray(value)) {
+    return `[${value.map(formatValue).join(", ")}]`;
   }
+  throw new Error(`Unsupported value type: ${typeof value}`);
 }
 
 function formatStatementArg(arg: StatementArg): string {
@@ -561,7 +491,7 @@ export function formatStatement(statement: Statement): string {
 
 function transformArg(arg: {
   type: "key" | "literal";
-  value: KeyValue | SerializedValue;
+  value: KeyValue | PODValue;
 }): WildcardStatementArg {
   if (arg.type === "key" && isKeyValue(arg.value)) {
     return {
@@ -574,10 +504,6 @@ function transformArg(arg: {
       }
     };
   } else {
-    return { Literal: arg.value as SerializedValue };
+    return { Literal: arg.value as PODValue };
   }
-}
-
-function isThreeArgStatement(type: StatementType): boolean {
-  return type === "MaxOf" || type === "ProductOf" || type === "SumOf";
 }

@@ -19,7 +19,7 @@ import {
 import { ImportPodDialog } from "./ImportPodDialog";
 import { toast } from "sonner";
 import { useNavigate } from "@tanstack/react-router";
-import { formatStatement } from "@/lib/statement-display";
+import { formatStatement } from "@/lib/core-types";
 import {
   Tooltip,
   TooltipContent,
