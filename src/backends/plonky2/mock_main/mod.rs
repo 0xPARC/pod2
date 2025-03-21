@@ -362,6 +362,15 @@ impl MockMainPod {
     fn pad_operation_args(params: &Params, args: &mut Vec<OperationArg>) {
         fill_pad(args, OperationArg::None, params.max_operation_args)
     }
+
+    pub fn deserialize(serialized: String) -> Result<Self> {
+        let proof = String::from_utf8(BASE64_STANDARD.decode(&serialized)?)
+            .map_err(|e| anyhow::anyhow!("Invalid base64 encoding: {}", e))?;
+        let pod: MockMainPod = serde_json::from_str(&proof)
+            .map_err(|e| anyhow::anyhow!("Failed to parse proof: {}", e))?;
+
+        Ok(pod)
+    }
 }
 
 pub fn hash_statements(statements: &[Statement], _params: &Params) -> middleware::Hash {

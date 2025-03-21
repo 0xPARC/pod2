@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
 
-use base64::prelude::*;
 use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize, Serializer};
 
@@ -34,7 +33,7 @@ impl TryFrom<SignedPodHelper> for SignedPod {
         let dict = Dictionary::new(helper.entries.clone())?
             .middleware_dict()
             .clone();
-        let pod = MockSignedPod::new(PodId(dict.commitment()), helper.proof, dict);
+        let pod = MockSignedPod::deserialize(PodId(dict.commitment()), helper.proof, dict);
 
         Ok(SignedPod {
             pod: Box::new(pod),
@@ -73,11 +72,8 @@ impl TryFrom<MainPodHelper> for MainPod {
             return Err(anyhow::anyhow!("pod_type is not Mock"));
         }
 
-        let proof = String::from_utf8(BASE64_STANDARD.decode(&helper.proof)?)
-            .map_err(|e| anyhow::anyhow!("Invalid base64 encoding: {}", e))?;
-
-        let pod: MockMainPod = serde_json::from_str(&proof)
-            .map_err(|e| anyhow::anyhow!("Failed to parse proof: {}", e))?;
+        let pod = MockMainPod::deserialize(helper.proof)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize proof: {}", e))?;
 
         Ok(MainPod {
             pod: Box::new(pod),
