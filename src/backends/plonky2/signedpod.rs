@@ -2,66 +2,51 @@ use anyhow::{anyhow, Result};
 use std::any::Any;
 use std::collections::HashMap;
 
-use crate::backends::plonky2::primitives::merkletree::MerkleTree;
+use super::primitives::merkletree::MerkleTree;
 use crate::constants::MAX_DEPTH;
 use crate::middleware::{
     containers::Dictionary, hash_str, AnchoredKey, Hash, Params, Pod, PodId, PodSigner, PodType,
     Statement, Value, KEY_SIGNER, KEY_TYPE,
 };
 
-pub struct MockSigner {
-    pub pk: String,
-}
+use super::primitives::signature::{PublicKey, SecretKey, Signature};
 
-impl MockSigner {
-    pub fn pubkey(&self) -> Value {
-        Value(hash_str(&self.pk).0)
-    }
-}
+pub struct Signer(SecretKey);
 
-impl PodSigner for MockSigner {
+impl PodSigner for Signer {
     fn sign(&mut self, _params: &Params, kvs: &HashMap<Hash, Value>) -> Result<Box<dyn Pod>> {
         let mut kvs = kvs.clone();
-        let pubkey = self.pubkey();
-        kvs.insert(hash_str(KEY_SIGNER), pubkey);
-        kvs.insert(hash_str(KEY_TYPE), Value::from(PodType::MockSigned));
+        let pubkey = self.0.public_key();
+        kvs.insert(hash_str(KEY_SIGNER), pubkey.0);
+        kvs.insert(hash_str(KEY_TYPE), Value::from(PodType::Signed));
 
         let dict = Dictionary::new(&kvs)?;
-        let id = PodId(dict.commitment());
-        let signature = format!("{}_signed_by_{}", id, pubkey);
-        Ok(Box::new(MockSignedPod {
-            dict,
-            id,
+        let id = Value::from(dict.commitment()); // PodId as Value
+
+        let signature: Signature = self.0.sign(id)?;
+        Ok(Box::new(SignedPod {
+            id: PodId(Hash::from(id)),
             signature,
+            dict,
         }))
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct MockSignedPod {
+pub struct SignedPod {
     id: PodId,
-    signature: String,
+    signature: Signature,
     dict: Dictionary,
 }
 
-impl MockSignedPod {
-    pub fn deserialize(id: PodId, signature: String, dict: Dictionary) -> Self {
-        Self {
-            id,
-            signature,
-            dict,
-        }
-    }
-}
-
-impl Pod for MockSignedPod {
+impl Pod for SignedPod {
     fn verify(&self) -> Result<()> {
         // 1. Verify type
         let value_at_type = self.dict.get(&hash_str(KEY_TYPE).into())?;
-        if Value::from(PodType::MockSigned) != value_at_type {
+        if Value::from(PodType::Signed) != value_at_type {
             return Err(anyhow!(
-                "type does not match, expected MockSigned ({}), found {}",
-                PodType::MockSigned,
+                "type does not match, expected Signed ({}), found {}",
+                PodType::Signed,
                 value_at_type
             ));
         }
@@ -85,15 +70,9 @@ impl Pod for MockSignedPod {
         }
 
         // 3. Verify signature
-        let pk_hash = self.dict.get(&hash_str(KEY_SIGNER).into())?;
-        let signature = format!("{}_signed_by_{}", id, pk_hash);
-        if signature != self.signature {
-            return Err(anyhow!(
-                "signature does not match, expected {}, computed {}",
-                self.id,
-                id
-            ));
-        }
+        let pk_value = self.dict.get(&hash_str(KEY_SIGNER).into())?;
+        let pk = PublicKey(pk_value);
+        self.signature.verify(&pk, Value::from(id.0))?;
 
         Ok(())
     }
@@ -115,7 +94,10 @@ impl Pod for MockSignedPod {
     }
 
     fn serialized_proof(&self) -> String {
-        self.signature.to_string()
+        let mut buffer = Vec::new();
+        use plonky2::util::serialization::Write;
+        buffer.write_proof(&self.signature.0).unwrap();
+        hex::encode(buffer)
     }
 }
 
@@ -130,23 +112,24 @@ pub mod tests {
     use crate::middleware::{self, EMPTY_HASH, F};
 
     #[test]
-    fn test_mock_signed_0() -> Result<()> {
+    fn test_signed_0() -> Result<()> {
         let params = middleware::Params::default();
         let mut pod = frontend::SignedPodBuilder::new(&params);
         pod.insert("idNumber", "4242424242");
         pod.insert("dateOfBirth", 1169909384);
         pod.insert("socialSecurityNumber", "G2121210");
 
-        let mut signer = MockSigner { pk: "Molly".into() };
+        let sk = SecretKey::new();
+        let mut signer = Signer(sk);
         let pod = pod.sign(&mut signer).unwrap();
-        let pod = pod.pod.into_any().downcast::<MockSignedPod>().unwrap();
+        let pod = pod.pod.into_any().downcast::<SignedPod>().unwrap();
 
         pod.verify()?;
         println!("id: {}", pod.id());
         println!("kvs: {:?}", pod.kvs());
 
         let mut bad_pod = pod.clone();
-        bad_pod.signature = "".into();
+        bad_pod.signature = signer.0.sign(Value::from(42_i64))?;
         assert!(bad_pod.verify().is_err());
 
         let mut bad_pod = pod.clone();
