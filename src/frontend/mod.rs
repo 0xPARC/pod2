@@ -1223,20 +1223,26 @@ pub mod tests {
         let params = Params::default();
         let mut builder = MainPodBuilder::new(&params);
         builder.insert((
-            Statement(
+            Statement::new(
                 Predicate::Native(NativePredicate::ValueOf),
                 vec![
-                    StatementArg::Key(AnchoredKey(Origin(PodClass::Main, SELF), "a".into())),
+                    StatementArg::Key(AnchoredKey::new(
+                        Origin::new(PodClass::Main, SELF),
+                        "a".into(),
+                    )),
                     StatementArg::Literal(Value::Int(3)),
                 ],
             ),
             Operation(OperationType::Native(NativeOperation::NewEntry), vec![]),
         ));
         builder.insert((
-            Statement(
+            Statement::new(
                 Predicate::Native(NativePredicate::ValueOf),
                 vec![
-                    StatementArg::Key(AnchoredKey(Origin(PodClass::Main, SELF), "a".into())),
+                    StatementArg::Key(AnchoredKey::new(
+                        Origin::new(PodClass::Main, SELF),
+                        "a".into(),
+                    )),
                     StatementArg::Literal(Value::Int(28)),
                 ],
             ),
@@ -1251,19 +1257,25 @@ pub mod tests {
         // right now the mock prover catches this when it calls compile()
         let params = Params::default();
         let mut builder = MainPodBuilder::new(&params);
-        let self_a = AnchoredKey(Origin(PodClass::Main, SELF), "a".into());
-        let self_b = AnchoredKey(Origin(PodClass::Main, SELF), "b".into());
-        let value_of_a = Statement(
+        let self_a = AnchoredKey::new(Origin::new(PodClass::Main, SELF), "a".into());
+        let self_b = AnchoredKey::new(Origin::new(PodClass::Main, SELF), "b".into());
+        let value_of_a = Statement::new(
             Predicate::Native(NativePredicate::ValueOf),
             vec![
-                StatementArg::Key(AnchoredKey(Origin(PodClass::Main, SELF), "a".into())),
+                StatementArg::Key(AnchoredKey::new(
+                    Origin::new(PodClass::Main, SELF),
+                    "a".into(),
+                )),
                 StatementArg::Literal(Value::Int(3)),
             ],
         );
-        let value_of_b = Statement(
+        let value_of_b = Statement::new(
             Predicate::Native(NativePredicate::ValueOf),
             vec![
-                StatementArg::Key(AnchoredKey(Origin(PodClass::Main, SELF), "b".into())),
+                StatementArg::Key(AnchoredKey::new(
+                    Origin::new(PodClass::Main, SELF),
+                    "b".into(),
+                )),
                 StatementArg::Literal(Value::Int(27)),
             ],
         );
@@ -1277,7 +1289,7 @@ pub mod tests {
             Operation(OperationType::Native(NativeOperation::NewEntry), vec![]),
         ));
         builder.insert((
-            Statement(
+            Statement::new(
                 Predicate::Native(NativePredicate::Equal),
                 vec![StatementArg::Key(self_a), StatementArg::Key(self_b)],
             ),
