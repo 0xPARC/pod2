@@ -115,7 +115,7 @@ pub enum Operation {
 }
 
 impl Operation {
-    pub fn predicate(&self) -> OperationType {
+    pub fn op_type(&self) -> OperationType {
         type OT = OperationType;
         use NativeOperation::*;
         match self {
@@ -202,7 +202,7 @@ impl Operation {
     /// The outer Result is error handling
     pub fn output_statement(&self) -> Result<Option<Statement>> {
         use Statement::*;
-        let pred: Option<Predicate> = self.predicate().output_predicate();
+        let pred: Option<Predicate> = self.op_type().output_predicate();
 
         let st_args: Option<Vec<StatementArg>> = match self {
             Self::None => Some(vec![]),
@@ -434,7 +434,7 @@ impl ToFields for Operation {
 impl fmt::Display for Operation {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "middleware::Operation:")?;
-        writeln!(f, "  {:?} ", self.predicate())?;
+        writeln!(f, "  {:?} ", self.op_type())?;
         for arg in self.args().iter() {
             writeln!(f, "    {}", arg)?;
         }

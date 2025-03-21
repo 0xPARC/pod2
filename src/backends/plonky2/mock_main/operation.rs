@@ -31,7 +31,7 @@ impl OperationArg {
 pub struct Operation(pub OperationType, pub Vec<OperationArg>);
 
 impl Operation {
-    pub fn code(&self) -> OperationType {
+    pub fn op_type(&self) -> OperationType {
         self.0.clone()
     }
     pub fn args(&self) -> &[OperationArg] {

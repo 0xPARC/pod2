@@ -56,7 +56,7 @@ impl Statement {
     pub fn is_none(&self) -> bool {
         self == &Self::None
     }
-    pub fn code(&self) -> Predicate {
+    pub fn predicate(&self) -> Predicate {
         use Predicate::*;
         match self {
             Self::None => Native(NativePredicate::None),
@@ -188,7 +188,7 @@ impl Statement {
 
 impl ToFields for Statement {
     fn to_fields(&self, params: &Params) -> Vec<F> {
-        let mut fields = self.code().to_fields(params);
+        let mut fields = self.predicate().to_fields(params);
         fields.extend(self.args().iter().flat_map(|arg| arg.to_fields(params)));
         fields.resize_with(params.statement_size(), || F::ZERO);
         fields
@@ -197,7 +197,7 @@ impl ToFields for Statement {
 
 impl fmt::Display for Statement {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?} ", self.code())?;
+        write!(f, "{:?} ", self.predicate())?;
         for (i, arg) in self.args().iter().enumerate() {
             if i != 0 {
                 write!(f, " ")?;

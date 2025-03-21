@@ -13,7 +13,7 @@ impl Statement {
     pub fn is_none(&self) -> bool {
         self.0 == Predicate::Native(NativePredicate::None)
     }
-    pub fn code(&self) -> Predicate {
+    pub fn predicate(&self) -> Predicate {
         self.0.clone()
     }
     /// Argument method. Trailing Nones are filtered out.
@@ -99,7 +99,7 @@ impl TryFrom<Statement> for middleware::Statement {
 
 impl From<middleware::Statement> for Statement {
     fn from(s: middleware::Statement) -> Self {
-        match s.code() {
+        match s.predicate() {
             middleware::Predicate::Native(c) => Statement(
                 middleware::Predicate::Native(c),
                 s.args().into_iter().collect(),

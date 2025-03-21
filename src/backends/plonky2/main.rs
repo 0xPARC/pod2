@@ -145,8 +145,8 @@ impl OperationVerifyGate {
         // `OperationVerifyTarget` so that we can set during witness generation.
 
         // For now only support native operations
-        builder.connect(op.code[0], one);
-        let native_op = op.code[1];
+        builder.connect(op.op_type[0], one);
+        let native_op = op.op_type[1];
 
         let mut op_flags = Vec::new();
         let op_none = builder.constant(F::from_canonical_u64(NativeOperation::None as u64));
@@ -214,14 +214,14 @@ impl OperationVerifyGate {
         _op: &OperationTarget,
     ) -> BoolTarget {
         let value_of_st = &Statement::ValueOf(AnchoredKey(SELF, EMPTY_HASH), EMPTY_VALUE);
-        let expected_code =
+        let expected_predicate =
             builder.constants(&Predicate::Native(NativePredicate::ValueOf).to_fields(&self.params));
-        let code_ok = builder.is_equal_slice(&st.code, &expected_code);
+        let predicate_ok = builder.is_equal_slice(&st.predicate, &expected_predicate);
         let expected_arg_prefix = builder.constants(
             &StatementArg::Key(AnchoredKey(SELF, EMPTY_HASH)).to_fields(&self.params)[..VALUE_SIZE],
         );
         let arg_prefix_ok = builder.is_equal_slice(&st.args[0][..VALUE_SIZE], &expected_arg_prefix);
-        builder.and(code_ok, arg_prefix_ok)
+        builder.and(predicate_ok, arg_prefix_ok)
     }
 }
 
@@ -277,7 +277,7 @@ impl MainPodVerifyGate {
         // 2. Calculate the Pod Id from the public statements
         let pub_statements_flattened = pub_statements
             .iter()
-            .map(|s| s.code.iter().chain(s.args.iter().flatten()))
+            .map(|s| s.predicate.iter().chain(s.args.iter().flatten()))
             .flatten()
             .cloned()
             .collect();

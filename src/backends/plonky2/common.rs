@@ -20,13 +20,13 @@ pub struct ValueTarget {
 
 #[derive(Clone)]
 pub struct StatementTarget {
-    pub code: [Target; Params::predicate_size()],
+    pub predicate: [Target; Params::predicate_size()],
     pub args: Vec<[Target; STATEMENT_ARG_F_LEN]>,
 }
 
 impl StatementTarget {
     pub fn to_flattened(&self) -> Vec<Target> {
-        self.code
+        self.predicate
             .iter()
             .chain(self.args.iter().flatten())
             .cloned()
@@ -39,7 +39,7 @@ impl StatementTarget {
         params: &Params,
         st: &Statement,
     ) -> Result<()> {
-        pw.set_target_arr(&self.code, &st.code().to_fields(params))?;
+        pw.set_target_arr(&self.predicate, &st.predicate().to_fields(params))?;
         for (i, arg) in st
             .args()
             .iter()
@@ -56,7 +56,7 @@ impl StatementTarget {
 // TODO: Implement Operation::to_field to determine the size of each element
 #[derive(Clone)]
 pub struct OperationTarget {
-    pub code: [Target; Params::operation_type_size()],
+    pub op_type: [Target; Params::operation_type_size()],
     pub args: Vec<[Target; OPERATION_ARG_F_LEN]>,
 }
 
@@ -67,7 +67,7 @@ impl OperationTarget {
         params: &Params,
         op: &Operation,
     ) -> Result<()> {
-        pw.set_target_arr(&self.code, &op.code().to_fields(params))?;
+        pw.set_target_arr(&self.op_type, &op.op_type().to_fields(params))?;
         for (i, arg) in op
             .args()
             .iter()
@@ -115,7 +115,7 @@ impl<F: RichField + Extendable<D>, const D: usize> CircuitBuilderPod<F, D>
 
     fn add_virtual_statement(&mut self, params: &Params) -> StatementTarget {
         StatementTarget {
-            code: self.add_virtual_target_arr(),
+            predicate: self.add_virtual_target_arr(),
             args: (0..params.max_statement_args)
                 .map(|_| self.add_virtual_target_arr())
                 .collect(),
@@ -124,7 +124,7 @@ impl<F: RichField + Extendable<D>, const D: usize> CircuitBuilderPod<F, D>
 
     fn add_virtual_operation(&mut self, params: &Params) -> OperationTarget {
         OperationTarget {
-            code: self.add_virtual_target_arr(),
+            op_type: self.add_virtual_target_arr(),
             args: (0..params.max_operation_args)
                 .map(|_| self.add_virtual_target_arr())
                 .collect(),

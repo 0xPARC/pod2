@@ -5,6 +5,7 @@ use std::{fmt, hash as h, iter, iter::zip};
 use anyhow::{anyhow, Result};
 use plonky2::field::types::Field;
 use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use super::{
     hash_fields, AnchoredKey, Hash, NativePredicate, Params, PodId, Statement, StatementArg,
@@ -12,7 +13,6 @@ use super::{
 };
 use crate::backends::plonky2::basetypes::HASH_SIZE;
 use crate::util::hashmap_insert_no_dupe;
-use serde::{Deserialize, Serialize};
 
 // BEGIN Custom 1b
 
@@ -165,7 +165,7 @@ impl StatementTmpl {
             Err(anyhow!(
                 "Cannot check self-referencing statement templates."
             ))
-        } else if self.pred() != &s.code() {
+        } else if self.pred() != &s.predicate() {
             Err(anyhow!("Type mismatch between {:?} and {}.", self, s))
         } else {
             zip(self.args(), s.args())
