@@ -382,7 +382,7 @@ pub fn hash_statements(statements: &[Statement], _params: &Params) -> middleware
 }
 
 impl Pod for MockMainPod {
-    fn verify(&self) -> bool {
+    fn verify(&self) -> Result<()> {
         // 1. TODO: Verify input pods
 
         let input_statement_offset = self.offset_input_statements();
@@ -451,18 +451,20 @@ impl Pod for MockMainPod {
             .collect::<Result<Vec<_>>>()
             .unwrap();
         if !ids_match {
-            error!("Verification failed: POD ID is incorrect.");
+            return Err(anyhow!("Verification failed: POD ID is incorrect."));
         }
         if !has_type_statement {
-            error!("Verification failed: POD does not have type statement.");
+            return Err(anyhow!(
+                "Verification failed: POD does not have type statement."
+            ));
         }
         if !value_ofs_unique {
-            error!("Verification failed: Repeated ValueOf");
+            return Err(anyhow!("Verification failed: Repeated ValueOf"));
         }
         if !statement_check.iter().all(|b| *b) {
-            error!("Verification failed: Statement did not check.")
+            return Err(anyhow!("Verification failed: Statement did not check."));
         }
-        ids_match && has_type_statement && value_ofs_unique & statement_check.into_iter().all(|b| b)
+        Ok(())
     }
     fn id(&self) -> PodId {
         self.id
@@ -505,7 +507,7 @@ impl Pod for MockMainPod {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::backends::plonky2::mock_signed::MockSigner;
+    use crate::backends::plonky2::mock::signedpod::MockSigner;
     use crate::examples::{
         great_boy_pod_full_flow, tickets_pod_full_flow, zu_kyc_pod_builder,
         zu_kyc_sign_pod_builders,
@@ -539,9 +541,9 @@ pub mod tests {
 
         println!("{:#}", pod);
 
-        assert!(pod.verify()); // TODO
-                               // println!("id: {}", pod.id());
-                               // println!("pub_statements: {:?}", pod.pub_statements());
+        pod.verify()?; // TODO
+                       // println!("id: {}", pod.id());
+                       // println!("pub_statements: {:?}", pod.pub_statements());
         Ok(())
     }
 
@@ -560,7 +562,7 @@ pub mod tests {
 
         println!("{}", pod);
 
-        assert!(pod.verify());
+        pod.verify()?;
 
         Ok(())
     }
@@ -574,7 +576,7 @@ pub mod tests {
         let pod = proof_pod.pod.into_any().downcast::<MockMainPod>().unwrap();
 
         println!("{}", pod);
-        assert!(pod.verify());
+        pod.verify()?;
 
         Ok(())
     }

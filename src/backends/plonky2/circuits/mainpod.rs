@@ -1,16 +1,3 @@
-use crate::backends::plonky2::basetypes::{Hash, Value, D, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE};
-use crate::backends::plonky2::common::{
-    CircuitBuilderPod, OperationTarget, StatementTarget, ValueTarget,
-};
-use crate::backends::plonky2::mock_main::Operation;
-use crate::backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree};
-use crate::backends::plonky2::primitives::merkletree::{
-    MerkleProofExistenceGate, MerkleProofExistenceTarget,
-};
-use crate::middleware::{
-    hash_str, AnchoredKey, NativeOperation, NativePredicate, Params, PodType, Predicate, Statement,
-    StatementArg, ToFields, KEY_TYPE, SELF, STATEMENT_ARG_F_LEN,
-};
 use anyhow::Result;
 use itertools::Itertools;
 use plonky2::{
@@ -27,6 +14,19 @@ use plonky2::{
 };
 use std::collections::HashMap;
 use std::iter;
+
+use crate::backends::plonky2::basetypes::{Hash, Value, D, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE};
+use crate::backends::plonky2::circuits::common::{
+    CircuitBuilderPod, OperationTarget, StatementTarget, ValueTarget,
+};
+use crate::backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree};
+use crate::backends::plonky2::primitives::merkletree::{
+    MerkleProofExistenceGate, MerkleProofExistenceTarget,
+};
+use crate::middleware::{
+    hash_str, AnchoredKey, NativeOperation, NativePredicate, Params, PodType, Predicate, Statement,
+    StatementArg, ToFields, KEY_TYPE, SELF, STATEMENT_ARG_F_LEN,
+};
 
 //
 // SignedPod verification
@@ -373,7 +373,7 @@ impl MainPodVerifyCircuit {
 mod tests {
     use super::*;
     use crate::backends::plonky2::basetypes::C;
-    use crate::backends::plonky2::mock_main;
+    use crate::backends::plonky2::mock::mainpod;
     use crate::middleware::OperationType;
     use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
 
@@ -407,9 +407,9 @@ mod tests {
     }
 
     fn operation_verify(
-        st: mock_main::Statement,
-        op: mock_main::Operation,
-        prev_statements: Vec<mock_main::Statement>,
+        st: mainpod::Statement,
+        op: mainpod::Operation,
+        prev_statements: Vec<mainpod::Statement>,
     ) -> Result<()> {
         let params = Params::default();
 
@@ -452,8 +452,8 @@ mod tests {
     #[test]
     fn test_operation_verify() -> Result<()> {
         // None
-        let st: mock_main::Statement = Statement::None.into();
-        let op = mock_main::Operation(OperationType::Native(NativeOperation::None), vec![]);
+        let st: mainpod::Statement = Statement::None.into();
+        let op = mainpod::Operation(OperationType::Native(NativeOperation::None), vec![]);
         let prev_statements = vec![Statement::None.into()];
         operation_verify(st, op, prev_statements)?;
 

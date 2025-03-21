@@ -4,7 +4,7 @@ use anyhow::{anyhow, Result};
 use custom::{eth_dos_batch, eth_friend_batch};
 use std::collections::HashMap;
 
-use crate::backends::plonky2::mock_signed::MockSigner;
+use crate::backends::plonky2::mock::signedpod::MockSigner;
 use crate::frontend::{
     containers::{Dictionary, Set},
     MainPodBuilder, SignedPod, SignedPodBuilder, Statement, Value,
