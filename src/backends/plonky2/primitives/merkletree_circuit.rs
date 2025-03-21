@@ -23,10 +23,8 @@ use plonky2::{
 };
 use std::iter;
 
-use crate::backends::plonky2::basetypes::{Hash, Value, D, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE};
-use crate::backends::plonky2::common::{
-    CircuitBuilderPod, OperationTarget, StatementTarget, ValueTarget,
-};
+use crate::backends::plonky2::basetypes::{Hash, Value, D, EMPTY_HASH, EMPTY_VALUE, F};
+use crate::backends::plonky2::circuits::common::{CircuitBuilderPod, ValueTarget};
 use crate::backends::plonky2::primitives::merkletree::MerkleProof;
 
 /// `MerkleProofGate` allows to verify both proofs of existence and proofs

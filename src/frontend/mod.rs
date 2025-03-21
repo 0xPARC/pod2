@@ -997,8 +997,8 @@ pub mod build_utils {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::backends::plonky2::mock_main::MockProver;
-    use crate::backends::plonky2::mock_signed::MockSigner;
+    use crate::backends::plonky2::mock::mainpod::MockProver;
+    use crate::backends::plonky2::mock::signedpod::MockSigner;
     use crate::examples::{
         eth_dos_pod_builder, eth_friend_signed_pod_builder, great_boy_pod_full_flow,
         tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_sign_pod_builders,

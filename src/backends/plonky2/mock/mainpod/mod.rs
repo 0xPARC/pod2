@@ -505,7 +505,7 @@ impl Pod for MockMainPod {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::backends::plonky2::mock_signed::MockSigner;
+    use crate::backends::plonky2::mock::signedpod::MockSigner;
     use crate::examples::{
         great_boy_pod_full_flow, tickets_pod_full_flow, zu_kyc_pod_builder,
         zu_kyc_sign_pod_builders,
