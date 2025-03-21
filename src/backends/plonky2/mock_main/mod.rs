@@ -260,7 +260,7 @@ impl MockMainPod {
                 .map(|mid_arg| Self::find_op_arg(statements, mid_arg))
                 .collect::<Result<Vec<_>>>()?;
             Self::pad_operation_args(params, &mut args);
-            operations.push(Operation(op.code(), args));
+            operations.push(Operation(op.predicate(), args));
         }
         Ok(operations)
     }
