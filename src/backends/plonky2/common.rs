@@ -8,6 +8,8 @@ use plonky2::hash::hash_types::RichField;
 use plonky2::iop::target::{BoolTarget, Target};
 use plonky2::plonk::circuit_builder::CircuitBuilder;
 
+pub const CODE_SIZE: usize = HASH_SIZE + 2;
+
 #[derive(Copy, Clone)]
 pub struct ValueTarget {
     pub elements: [Target; VALUE_SIZE],
@@ -15,7 +17,7 @@ pub struct ValueTarget {
 
 #[derive(Clone)]
 pub struct StatementTarget {
-    pub code: [Target; HASH_SIZE + 2],
+    pub code: [Target; CODE_SIZE],
     pub args: Vec<[Target; STATEMENT_ARG_F_LEN]>,
 }
 
@@ -32,8 +34,8 @@ impl StatementTarget {
 // TODO: Implement Operation::to_field to determine the size of each element
 #[derive(Clone)]
 pub struct OperationTarget {
-    pub code: [Target; 6],                        // TODO: Figure out the length
-    pub args: Vec<[Target; STATEMENT_ARG_F_LEN]>, // TODO: Figure out the length
+    pub code: [Target; CODE_SIZE], // TODO: Figure out the length
+    pub args: Vec<[Target; CODE_SIZE + STATEMENT_ARG_F_LEN]>, // TODO: Figure out the length
 }
 
 pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
@@ -46,6 +48,10 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     fn select_bool(&mut self, b: BoolTarget, x: BoolTarget, y: BoolTarget) -> BoolTarget;
     fn constant_value(&mut self, v: Value) -> ValueTarget;
     fn is_equal_slice(&mut self, xs: &[Target], ys: &[Target]) -> BoolTarget;
+
+    // Convenience methods for Boolean into-iters. Assumes these are non-empty.
+    fn all(&mut self, xs: impl IntoIterator<Item = BoolTarget>) -> BoolTarget;
+    fn any(&mut self, xs: impl IntoIterator<Item = BoolTarget>) -> BoolTarget;
 }
 
 impl<F: RichField + Extendable<D>, const D: usize> CircuitBuilderPod<F, D>
@@ -106,5 +112,17 @@ impl<F: RichField + Extendable<D>, const D: usize> CircuitBuilderPod<F, D>
             let is_eq = self.is_equal(*x, *y);
             self.and(ok, is_eq)
         })
+    }
+
+    fn all(&mut self, xs: impl IntoIterator<Item = BoolTarget>) -> BoolTarget {
+        xs.into_iter()
+            .reduce(|a, b| self.and(a, b))
+            .expect("Empty iterator")
+    }
+
+    fn any(&mut self, xs: impl IntoIterator<Item = BoolTarget>) -> BoolTarget {
+        xs.into_iter()
+            .reduce(|a, b| self.or(a, b))
+            .expect("Empty iterator")
     }
 }

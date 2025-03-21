@@ -8,7 +8,7 @@ use crate::middleware::{
     hash_str, AnchoredKey, NativeOperation, NativePredicate, Operation, Params, PodType, Predicate,
     Statement, StatementArg, ToFields, KEY_TYPE, SELF, STATEMENT_ARG_F_LEN,
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use itertools::Itertools;
 use plonky2::{
     field::types::Field,
@@ -131,34 +131,18 @@ impl OperationVerifyGate {
         // `OperationVerifyTarget` so that we can set during witness generation.
 
         // TODO: Figure out the right encoding of op.code
-        let op_none = builder.constant(F::from_canonical_u64(NativeOperation::None as u64));
-        let is_none = builder.is_equal(op.code[0], op_none);
-        let op_new_entry =
-            builder.constant(F::from_canonical_u64(NativeOperation::NewEntry as u64));
-        let is_new_entry = builder.is_equal(op.code[0], op_new_entry);
-        let op_copy_statement =
-            builder.constant(F::from_canonical_u64(NativeOperation::CopyStatement as u64));
-        let is_copy_statement = builder.is_equal(op.code[0], op_copy_statement);
-        let op_eq_from_entries = builder.constant(F::from_canonical_u64(
-            NativeOperation::EqualFromEntries as u64,
-        ));
-        let is_eq_from_entries = builder.is_equal(op.code[0], op_eq_from_entries);
-        let op_gt_from_entries =
-            builder.constant(F::from_canonical_u64(NativeOperation::GtFromEntries as u64));
-        let is_gt_from_entries = builder.is_equal(op.code[0], op_gt_from_entries);
-        let op_lt_from_entries =
-            builder.constant(F::from_canonical_u64(NativeOperation::LtFromEntries as u64));
-        let is_lt_from_entries = builder.is_equal(op.code[0], op_lt_from_entries);
-        let op_contains_from_entries = builder.constant(F::from_canonical_u64(
-            NativeOperation::ContainsFromEntries as u64,
-        ));
-        let is_contains_from_entries = builder.is_equal(op.code[0], op_contains_from_entries);
 
-        let ok = builder._true();
-        let none_ok = self.eval_none(builder, st, op);
-        let ok = builder.select_bool(is_none, none_ok, ok);
-        let new_entry_ok = self.eval_new_entry(builder, st, op);
-        let ok = builder.select_bool(is_new_entry, new_entry_ok, ok);
+        // Op checks to carry out. Each 'eval_X' should be thought of
+        // as 'eval' restricted to the op of type X, where the
+        // returned target is `false` if the input targets lie outside
+        // of the domain.
+        let op_checks = [
+            self.eval_none(builder, st, op),
+            self.eval_new_entry(builder, st, op, prev_statements),
+            self.eval_copy(builder, st, op)?,
+        ];
+
+        let ok = builder.any(op_checks);
 
         let _true = builder._true();
         builder.connect(ok.target, _true.target);
@@ -166,32 +150,164 @@ impl OperationVerifyGate {
         todo!()
     }
 
+    fn eval_contains(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        st: &StatementTarget,
+        op: &OperationTarget,
+    ) -> Result<BoolTarget> {
+        let expected_op_code = builder.constant(F::from_canonical_u64(
+            NativeOperation::ContainsFromEntries as u64,
+        ));
+        let op_code_ok = builder.is_equal(op.code[0], expected_op_code);
+
+        let expected_st_code =
+            builder.constants(&Predicate::Native(NativePredicate::Equal).to_fields(&self.params));
+        let st_code_ok = builder.is_equal_slice(&st.code, &expected_st_code);
+
+        let expected_statement_args = todo!();
+
+        let expected_statement_flattened =
+            op.args.get(0).ok_or(anyhow!("Missing op arg for copy."))?;
+        let st_ok = builder.is_equal_slice(&st.to_flattened(), expected_statement_flattened);
+
+        Ok(builder.all([op_code_ok, st_ok]))
+    }
+
+    fn eval_eq(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        st: &StatementTarget,
+        op: &OperationTarget,
+    ) -> Result<BoolTarget> {
+        let expected_op_code = builder.constant(F::from_canonical_u64(
+            NativeOperation::EqualFromEntries as u64,
+        ));
+        let op_code_ok = builder.is_equal(op.code[0], expected_op_code);
+
+        let expected_st_code =
+            builder.constants(&Predicate::Native(NativePredicate::Equal).to_fields(&self.params));
+        let st_code_ok = builder.is_equal_slice(&st.code, &expected_st_code);
+
+        let expected_statement_args = todo!();
+
+        let expected_statement_flattened =
+            op.args.get(0).ok_or(anyhow!("Missing op arg for copy."))?;
+        let st_ok = builder.is_equal_slice(&st.to_flattened(), expected_statement_flattened);
+
+        Ok(builder.all([op_code_ok, st_ok]))
+    }
+
+    fn eval_gt(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        st: &StatementTarget,
+        op: &OperationTarget,
+    ) -> Result<BoolTarget> {
+        let expected_op_code =
+            builder.constant(F::from_canonical_u64(NativeOperation::GtFromEntries as u64));
+        let op_code_ok = builder.is_equal(op.code[0], expected_op_code);
+
+        let expected_st_code =
+            builder.constants(&Predicate::Native(NativePredicate::Equal).to_fields(&self.params));
+        let st_code_ok = builder.is_equal_slice(&st.code, &expected_st_code);
+
+        let expected_statement_args = todo!();
+
+        let expected_statement_flattened =
+            op.args.get(0).ok_or(anyhow!("Missing op arg for copy."))?;
+        let st_ok = builder.is_equal_slice(&st.to_flattened(), expected_statement_flattened);
+
+        Ok(builder.all([op_code_ok, st_ok]))
+    }
+
+    fn eval_lt(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        st: &StatementTarget,
+        op: &OperationTarget,
+    ) -> Result<BoolTarget> {
+        let expected_op_code =
+            builder.constant(F::from_canonical_u64(NativeOperation::LtFromEntries as u64));
+        let op_code_ok = builder.is_equal(op.code[0], expected_op_code);
+
+        let expected_st_code =
+            builder.constants(&Predicate::Native(NativePredicate::Equal).to_fields(&self.params));
+        let st_code_ok = builder.is_equal_slice(&st.code, &expected_st_code);
+
+        let expected_statement_args = todo!();
+
+        let expected_statement_flattened =
+            op.args.get(0).ok_or(anyhow!("Missing op arg for copy."))?;
+        let st_ok = builder.is_equal_slice(&st.to_flattened(), expected_statement_flattened);
+
+        Ok(builder.all([op_code_ok, st_ok]))
+    }
+
     fn eval_none(
         &self,
         builder: &mut CircuitBuilder<F, D>,
         st: &StatementTarget,
-        _op: &OperationTarget,
+        op: &OperationTarget,
     ) -> BoolTarget {
+        let expected_op_code =
+            builder.constant(F::from_canonical_u64(NativeOperation::None as u64));
+        let op_code_ok = builder.is_equal(op.code[0], expected_op_code);
+
         let expected_statement_flattened =
             builder.constants(&Statement::None.to_fields(&self.params));
-        builder.is_equal_slice(&st.to_flattened(), &expected_statement_flattened)
+        let st_ok = builder.is_equal_slice(&st.to_flattened(), &expected_statement_flattened);
+
+        builder.all([op_code_ok, st_ok])
     }
 
     fn eval_new_entry(
         &self,
         builder: &mut CircuitBuilder<F, D>,
         st: &StatementTarget,
-        _op: &OperationTarget,
+        op: &OperationTarget,
+        prev_statements: &[StatementTarget],
     ) -> BoolTarget {
-        let value_of_st = &Statement::ValueOf(AnchoredKey(SELF, EMPTY_HASH), EMPTY_VALUE);
-        let expected_code =
+        let expected_op_code =
+            builder.constant(F::from_canonical_u64(NativeOperation::NewEntry as u64));
+        let op_code_ok = builder.is_equal(op.code[0], expected_op_code);
+
+        let expected_st_code =
             builder.constants(&Predicate::Native(NativePredicate::ValueOf).to_fields(&self.params));
-        let code_ok = builder.is_equal_slice(&st.code, &expected_code);
+        let st_code_ok = builder.is_equal_slice(&st.code, &expected_st_code);
+
         let expected_arg_prefix = builder.constants(
             &StatementArg::Key(AnchoredKey(SELF, EMPTY_HASH)).to_fields(&self.params)[..VALUE_SIZE],
         );
         let arg_prefix_ok = builder.is_equal_slice(&st.args[0][..VALUE_SIZE], &expected_arg_prefix);
-        builder.and(code_ok, arg_prefix_ok)
+
+        let dupe_check = {
+            let individual_checks = prev_statements
+                .into_iter()
+                .map(|ps| builder.is_equal_slice(&st.to_flattened(), &ps.to_flattened()))
+                .collect::<Vec<_>>();
+            builder.any(individual_checks)
+        };
+        let no_dupes_ok = builder.not(dupe_check);
+
+        builder.all([op_code_ok, st_code_ok, arg_prefix_ok, no_dupes_ok])
+    }
+
+    fn eval_copy(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        st: &StatementTarget,
+        op: &OperationTarget,
+    ) -> Result<BoolTarget> {
+        let expected_op_code =
+            builder.constant(F::from_canonical_u64(NativeOperation::CopyStatement as u64));
+        let op_code_ok = builder.is_equal(op.code[0], expected_op_code);
+
+        let expected_statement_flattened =
+            op.args.get(0).ok_or(anyhow!("Missing op arg for copy."))?;
+        let st_ok = builder.is_equal_slice(&st.to_flattened(), expected_statement_flattened);
+
+        Ok(builder.all([op_code_ok, st_ok]))
     }
 }
 
