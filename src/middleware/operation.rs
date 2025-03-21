@@ -1,7 +1,9 @@
 use anyhow::{anyhow, Result};
 use log::error;
+use plonky2::field::types::Field;
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::iter;
 
 use super::{CustomPredicateRef, NativePredicate, Statement, StatementArg, ToFields, F};
 use crate::middleware::{AnchoredKey, Params, Predicate, Value, SELF};
@@ -14,7 +16,17 @@ pub enum OperationType {
 
 impl ToFields for OperationType {
     fn to_fields(&self, params: &Params) -> Vec<F> {
-        todo!()
+        let mut fields: Vec<F> = match self {
+            Self::Native(p) => iter::once(F::from_canonical_u64(1))
+                .chain(p.to_fields(params))
+                .collect(),
+            Self::Custom(CustomPredicateRef(pb, i)) => iter::once(F::from_canonical_u64(3))
+                .chain(pb.hash(params).0)
+                .chain(iter::once(F::from_canonical_usize(*i)))
+                .collect(),
+        };
+        fields.resize_with(Params::operation_type_size(), || F::from_canonical_u64(0));
+        fields
     }
 }
 
@@ -35,6 +47,12 @@ pub enum NativeOperation {
     SumOf = 13,
     ProductOf = 14,
     MaxOf = 15,
+}
+
+impl ToFields for NativeOperation {
+    fn to_fields(&self, _params: &Params) -> Vec<F> {
+        vec![F::from_canonical_u64(*self as u64)]
+    }
 }
 
 impl OperationType {

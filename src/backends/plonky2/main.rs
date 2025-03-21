@@ -2,13 +2,14 @@ use crate::backends::plonky2::basetypes::{Hash, Value, D, EMPTY_HASH, EMPTY_VALU
 use crate::backends::plonky2::common::{
     CircuitBuilderPod, OperationTarget, StatementTarget, ValueTarget,
 };
+use crate::backends::plonky2::mock_main::Operation;
 use crate::backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree};
 use crate::backends::plonky2::primitives::merkletree::{
     MerkleProofExistenceGate, MerkleProofExistenceTarget,
 };
 use crate::middleware::{
-    hash_str, AnchoredKey, NativeOperation, NativePredicate, Operation, Params, PodType, Predicate,
-    Statement, StatementArg, ToFields, KEY_TYPE, SELF, STATEMENT_ARG_F_LEN,
+    hash_str, AnchoredKey, NativeOperation, NativePredicate, Params, PodType, Predicate, Statement,
+    StatementArg, ToFields, KEY_TYPE, SELF, STATEMENT_ARG_F_LEN,
 };
 use anyhow::Result;
 use itertools::Itertools;
@@ -134,34 +135,55 @@ impl OperationVerifyGate {
         op: &OperationTarget,
         prev_statements: &[StatementTarget],
     ) -> Result<OperationVerifyTarget> {
+        let _true = builder._true();
+        let _false = builder._false();
+        let one = builder.constant(F::ONE);
+
         // Verify that the operation `op` correctly generates the statement `st`.  The operation
         // can reference any of the `prev_statements`.
         // The verification may require aux data which needs to be stored in the
         // `OperationVerifyTarget` so that we can set during witness generation.
 
-        // TODO: Figure out the right encoding of op.code
+        // For now only support native operations
+        builder.connect(op.code[0], one);
+        let native_op = op.code[1];
+
+        let mut op_flags = Vec::new();
         let op_none = builder.constant(F::from_canonical_u64(NativeOperation::None as u64));
-        let is_none = builder.is_equal(op.code[0], op_none);
+        let is_none = builder.is_equal(native_op, op_none);
+        op_flags.push(is_none);
         let op_new_entry =
             builder.constant(F::from_canonical_u64(NativeOperation::NewEntry as u64));
-        let is_new_entry = builder.is_equal(op.code[0], op_new_entry);
+        let is_new_entry = builder.is_equal(native_op, op_new_entry);
+        op_flags.push(is_new_entry);
         let op_copy_statement =
             builder.constant(F::from_canonical_u64(NativeOperation::CopyStatement as u64));
-        let is_copy_statement = builder.is_equal(op.code[0], op_copy_statement);
+        let is_copy_statement = builder.is_equal(native_op, op_copy_statement);
+        op_flags.push(is_copy_statement);
         let op_eq_from_entries = builder.constant(F::from_canonical_u64(
             NativeOperation::EqualFromEntries as u64,
         ));
-        let is_eq_from_entries = builder.is_equal(op.code[0], op_eq_from_entries);
-        let op_gt_from_entries =
-            builder.constant(F::from_canonical_u64(NativeOperation::GtFromEntries as u64));
-        let is_gt_from_entries = builder.is_equal(op.code[0], op_gt_from_entries);
+        let is_eq_from_entries = builder.is_equal(native_op, op_eq_from_entries);
+        op_flags.push(is_eq_from_entries);
         let op_lt_from_entries =
             builder.constant(F::from_canonical_u64(NativeOperation::LtFromEntries as u64));
-        let is_lt_from_entries = builder.is_equal(op.code[0], op_lt_from_entries);
-        let op_contains_from_entries = builder.constant(F::from_canonical_u64(
-            NativeOperation::ContainsFromEntries as u64,
+        let is_lt_from_entries = builder.is_equal(native_op, op_lt_from_entries);
+        op_flags.push(is_lt_from_entries);
+        let op_not_contains_from_entries = builder.constant(F::from_canonical_u64(
+            NativeOperation::NotContainsFromEntries as u64,
         ));
-        let is_contains_from_entries = builder.is_equal(op.code[0], op_contains_from_entries);
+        let is_not_contains_from_entries =
+            builder.is_equal(native_op, op_not_contains_from_entries);
+        op_flags.push(is_not_contains_from_entries);
+
+        // One supported operation must be used.  We sum all operation flags and expect the result
+        // to be 1.  Since the flags are boolean and at most one of them is true the sum is
+        // equivalent to the OR.
+        let or_op_flags = op_flags
+            .iter()
+            .map(|b| b.target)
+            .fold(_false.target, |acc, x| builder.add(acc, x));
+        builder.connect(or_op_flags, _true.target);
 
         let ok = builder._true();
         let none_ok = self.eval_none(builder, st, op);
@@ -169,7 +191,6 @@ impl OperationVerifyGate {
         let new_entry_ok = self.eval_new_entry(builder, st, op);
         let ok = builder.select_bool(is_new_entry, new_entry_ok, ok);
 
-        let _true = builder._true();
         builder.connect(ok.target, _true.target);
 
         Ok(OperationVerifyTarget {})
@@ -214,7 +235,8 @@ struct OperationVerifyInput {
 
 impl OperationVerifyTarget {
     fn set_targets(&self, pw: &mut PartialWitness<F>, input: &OperationVerifyInput) -> Result<()> {
-        todo!()
+        // TODO
+        Ok(())
     }
 }
 
@@ -261,8 +283,7 @@ impl MainPodVerifyGate {
             .collect();
         let id = builder.hash_n_to_hash_no_pad::<PoseidonHash>(pub_statements_flattened);
 
-        // 3. TODO check that all `input_statements` of type `ValueOf` with origin=SELF have unique
-        //    keys (no duplicates)
+        // 3. TODO check that all `input_statements` of type `ValueOf` with origin=SELF have unique keys (no duplicates).  Maybe we can do this via the NewEntry operation (check that the key doesn't exist in a previous statement with ID=SELF)
 
         // 4. Verify type
         let type_statement = &pub_statements[0];
@@ -352,6 +373,8 @@ impl MainPodVerifyCircuit {
 mod tests {
     use super::*;
     use crate::backends::plonky2::basetypes::C;
+    use crate::backends::plonky2::mock_main;
+    use crate::middleware::OperationType;
     use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
 
     #[test]
@@ -384,9 +407,9 @@ mod tests {
     }
 
     fn operation_verify(
-        st: Statement,
-        op: Operation,
-        prev_statements: Vec<Statement>,
+        st: mock_main::Statement,
+        op: mock_main::Operation,
+        prev_statements: Vec<mock_main::Statement>,
     ) -> Result<()> {
         let params = Params::default();
 
@@ -429,9 +452,9 @@ mod tests {
     #[test]
     fn test_operation_verify() -> Result<()> {
         // None
-        let st = Statement::None;
-        let op = Operation::None;
-        let prev_statements = vec![Statement::None];
+        let st: mock_main::Statement = Statement::None.into();
+        let op = mock_main::Operation(OperationType::Native(NativeOperation::None), vec![]);
+        let prev_statements = vec![Statement::None.into()];
         operation_verify(st, op, prev_statements)?;
 
         Ok(())

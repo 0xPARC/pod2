@@ -1,8 +1,8 @@
 //! Common functionality to build Pod circuits with plonky2
 
-use crate::middleware::{
-    Operation, Params, Statement, StatementArg, ToFields, Value, F, HASH_SIZE, VALUE_SIZE,
-};
+use crate::backends::plonky2::mock_main::Statement;
+use crate::backends::plonky2::mock_main::{Operation, OperationArg};
+use crate::middleware::{Params, StatementArg, ToFields, Value, F, HASH_SIZE, VALUE_SIZE};
 use crate::middleware::{OPERATION_ARG_F_LEN, STATEMENT_ARG_F_LEN};
 use anyhow::Result;
 use plonky2::field::extension::Extendable;
@@ -68,7 +68,15 @@ impl OperationTarget {
         op: &Operation,
     ) -> Result<()> {
         pw.set_target_arr(&self.code, &op.code().to_fields(params))?;
-        // TODO: Arguments
+        for (i, arg) in op
+            .args()
+            .iter()
+            .chain(iter::repeat(&OperationArg::None))
+            .take(params.max_operation_args)
+            .enumerate()
+        {
+            pw.set_target_arr(&self.args[i], &arg.to_fields(params))?;
+        }
         Ok(())
     }
 }

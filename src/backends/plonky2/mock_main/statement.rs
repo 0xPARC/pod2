@@ -13,6 +13,9 @@ impl Statement {
     pub fn is_none(&self) -> bool {
         self.0 == Predicate::Native(NativePredicate::None)
     }
+    pub fn code(&self) -> Predicate {
+        self.0.clone()
+    }
     /// Argument method. Trailing Nones are filtered out.
     pub fn args(&self) -> Vec<StatementArg> {
         let maybe_last_arg_index = (0..self.1.len()).rev().find(|i| !self.1[*i].is_none());

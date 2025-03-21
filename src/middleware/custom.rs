@@ -49,9 +49,9 @@ impl fmt::Display for HashOrWildcard {
 }
 
 impl ToFields for HashOrWildcard {
-    fn to_fields(&self, _params: &Params) -> Vec<F> {
+    fn to_fields(&self, params: &Params) -> Vec<F> {
         match self {
-            HashOrWildcard::Hash(h) => h.to_fields(_params),
+            HashOrWildcard::Hash(h) => h.to_fields(params),
             HashOrWildcard::Wildcard(w) => (0..HASH_SIZE - 1)
                 .chain(iter::once(*w))
                 .map(|x| F::from_canonical_u64(x as u64))
@@ -91,7 +91,7 @@ impl StatementTmplArg {
 }
 
 impl ToFields for StatementTmplArg {
-    fn to_fields(&self, _params: &Params) -> Vec<F> {
+    fn to_fields(&self, params: &Params) -> Vec<F> {
         // None => (0, ...)
         // Literal(value) => (1, [value], 0, 0, 0, 0)
         // Key(hash_or_wildcard1, hash_or_wildcard2)
@@ -107,15 +107,15 @@ impl ToFields for StatementTmplArg {
             }
             StatementTmplArg::Literal(v) => {
                 let fields: Vec<F> = iter::once(F::from_canonical_u64(1))
-                    .chain(v.to_fields(_params))
+                    .chain(v.to_fields(params))
                     .chain(iter::repeat_with(|| F::from_canonical_u64(0)).take(HASH_SIZE))
                     .collect();
                 fields
             }
             StatementTmplArg::Key(hw1, hw2) => {
                 let fields: Vec<F> = iter::once(F::from_canonical_u64(2))
-                    .chain(hw1.to_fields(_params))
-                    .chain(hw2.to_fields(_params))
+                    .chain(hw1.to_fields(params))
+                    .chain(hw2.to_fields(params))
                     .collect();
                 fields
             }
@@ -318,8 +318,8 @@ impl ToFields for CustomPredicateBatch {
 }
 
 impl CustomPredicateBatch {
-    pub fn hash(&self, _params: &Params) -> Hash {
-        let input = self.to_fields(_params);
+    pub fn hash(&self, params: &Params) -> Hash {
+        let input = self.to_fields(params);
 
         hash_fields(&input)
     }
@@ -399,7 +399,7 @@ impl From<NativePredicate> for Predicate {
 }
 
 impl ToFields for Predicate {
-    fn to_fields(&self, _params: &Params) -> Vec<F> {
+    fn to_fields(&self, params: &Params) -> Vec<F> {
         // serialize:
         // NativePredicate(id) as (0, id, 0, 0, 0, 0) -- id: usize
         // BatchSelf(i) as (1, i, 0, 0, 0, 0) -- i: usize
@@ -410,13 +410,13 @@ impl ToFields for Predicate {
         // in every case: pad to (hash_size + 2) field elements
         let mut fields: Vec<F> = match self {
             Self::Native(p) => iter::once(F::from_canonical_u64(1))
-                .chain(p.to_fields(_params))
+                .chain(p.to_fields(params))
                 .collect(),
             Self::BatchSelf(i) => iter::once(F::from_canonical_u64(2))
                 .chain(iter::once(F::from_canonical_usize(*i)))
                 .collect(),
             Self::Custom(CustomPredicateRef(pb, i)) => iter::once(F::from_canonical_u64(3))
-                .chain(pb.hash(_params).0)
+                .chain(pb.hash(params).0)
                 .chain(iter::once(F::from_canonical_usize(*i)))
                 .collect(),
         };
