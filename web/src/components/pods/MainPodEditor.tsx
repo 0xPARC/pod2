@@ -228,7 +228,7 @@ export function MainPodEditor() {
       case ValueType.Int:
         return { Int: node.value as string };
       case ValueType.Bool:
-        return node.value as boolean;
+        return node.value ? true : false;
       case ValueType.Raw:
         return { Raw: node.value as string };
       case ValueType.Array:
@@ -332,6 +332,11 @@ export function MainPodEditor() {
   }
 
   function handleSecondArgLiteralChange(id: string, node: TreeNode) {
+    console.log({
+      id,
+      node,
+      podValue: treeNodeToPODValue(node)
+    });
     setStatements(
       statements.map((s) =>
         s.id === id
