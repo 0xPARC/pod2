@@ -66,12 +66,24 @@ impl ToFields for PodId {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PodType {
     None = 0,
     MockSigned = 1,
     MockMain = 2,
     Signed = 3,
     Main = 4,
+}
+impl fmt::Display for PodType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PodType::None => write!(f, "None"),
+            PodType::MockSigned => write!(f, "MockSigned"),
+            PodType::MockMain => write!(f, "MockMain"),
+            PodType::Signed => write!(f, "Signed"),
+            PodType::Main => write!(f, "Main"),
+        }
+    }
 }
 
 impl From<PodType> for Value {
@@ -169,7 +181,7 @@ impl Params {
 }
 
 pub trait Pod: fmt::Debug + DynClone {
-    fn verify(&self) -> bool;
+    fn verify(&self) -> Result<()>;
     fn id(&self) -> PodId;
     fn pub_statements(&self) -> Vec<Statement>;
     /// Extract key-values from ValueOf public statements
@@ -208,8 +220,8 @@ pub trait PodSigner {
 pub struct NonePod {}
 
 impl Pod for NonePod {
-    fn verify(&self) -> bool {
-        true
+    fn verify(&self) -> Result<()> {
+        Ok(())
     }
     fn id(&self) -> PodId {
         PodId(EMPTY_HASH)

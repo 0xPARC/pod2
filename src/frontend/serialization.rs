@@ -255,7 +255,7 @@ mod tests {
 
         assert_eq!(pod.kvs, deserialized.kvs);
         assert_eq!(pod.origin(), deserialized.origin());
-        assert_eq!(pod.verify(), deserialized.verify());
+        assert_eq!(pod.verify().is_ok(), deserialized.verify().is_ok());
         assert_eq!(pod.id(), deserialized.id())
     }
 
@@ -289,6 +289,9 @@ mod tests {
 
         assert_eq!(kyc_pod.public_statements, deserialized.public_statements);
         assert_eq!(kyc_pod.pod.id(), deserialized.pod.id());
-        assert_eq!(kyc_pod.pod.verify(), deserialized.pod.verify());
+        assert_eq!(
+            kyc_pod.pod.verify().is_ok(),
+            deserialized.pod.verify().is_ok()
+        );
     }
 }

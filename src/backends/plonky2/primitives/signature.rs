@@ -21,22 +21,29 @@ use plonky2::{
 
 use crate::backends::plonky2::basetypes::{Proof, Value, C, D, F, VALUE_SIZE};
 
+use lazy_static::lazy_static;
+
+lazy_static! {
+    static ref PP: ProverParams = Signature::prover_params().unwrap();
+    static ref VP: VerifierParams = Signature::verifier_params().unwrap();
+}
+
 pub struct ProverParams {
     prover: ProverCircuitData<F, C, D>,
     circuit: SignatureCircuit,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct VerifierParams(VerifierCircuitData<F, C, D>);
 
 #[derive(Clone, Debug)]
 pub struct SecretKey(Value);
 
 #[derive(Clone, Debug)]
-pub struct PublicKey(Value);
+pub struct PublicKey(pub(crate) Value);
 
 #[derive(Clone, Debug)]
-pub struct Signature(Proof);
+pub struct Signature(pub(crate) Proof);
 
 /// Implements the key generation and the computation of proof-based signatures.
 impl SecretKey {
@@ -49,14 +56,14 @@ impl SecretKey {
         PublicKey(Value(PoseidonHash::hash_no_pad(&self.0 .0).elements))
     }
 
-    pub fn sign(&self, pp: &ProverParams, msg: Value) -> Result<Signature> {
+    pub fn sign(&self, msg: Value) -> Result<Signature> {
         let pk = self.public_key();
         let s = Value(PoseidonHash::hash_no_pad(&[pk.0 .0, msg.0].concat()).elements);
 
         let mut pw = PartialWitness::<F>::new();
-        pp.circuit.set_targets(&mut pw, self.clone(), pk, msg, s)?;
+        PP.circuit.set_targets(&mut pw, self.clone(), pk, msg, s)?;
 
-        let proof = pp.prover.prove(pw)?;
+        let proof = PP.prover.prove(pw)?;
 
         Ok(Signature(proof.proof))
     }
@@ -65,15 +72,22 @@ impl SecretKey {
 /// Implements the parameters generation and the verification of proof-based
 /// signatures.
 impl Signature {
-    pub fn params() -> Result<(ProverParams, VerifierParams)> {
+    pub fn prover_params() -> Result<ProverParams> {
         let (builder, circuit) = Self::builder()?;
         let prover = builder.build_prover::<C>();
-
+        Ok(ProverParams { prover, circuit })
+    }
+    pub fn verifier_params() -> Result<VerifierParams> {
         let (builder, _) = Self::builder()?;
         let circuit_data = builder.build::<C>();
         let vp = circuit_data.verifier_data();
 
-        Ok((ProverParams { prover, circuit }, VerifierParams(vp)))
+        Ok(VerifierParams(vp))
+    }
+    pub fn params() -> Result<(ProverParams, VerifierParams)> {
+        let pp = Self::prover_params()?;
+        let vp = Self::verifier_params()?;
+        Ok((pp, vp))
     }
 
     fn builder() -> Result<(CircuitBuilder<F, D>, SignatureCircuit)> {
@@ -86,13 +100,13 @@ impl Signature {
         Ok((builder, circuit))
     }
 
-    pub fn verify(&self, vp: &VerifierParams, pk: &PublicKey, msg: Value) -> Result<()> {
+    pub fn verify(&self, pk: &PublicKey, msg: Value) -> Result<()> {
         // prepare public inputs as [pk, msg, s]
         let s = Value(PoseidonHash::hash_no_pad(&[pk.0 .0, msg.0].concat()).elements);
         let public_inputs: Vec<F> = [pk.0 .0, msg.0, s.0].concat();
 
         // verify plonky2 proof
-        vp.0.verify(ProofWithPublicInputs {
+        VP.0.verify(ProofWithPublicInputs {
             proof: self.0.clone(),
             public_inputs,
         })
@@ -171,23 +185,21 @@ pub mod tests {
     // Note: this test must be run with the `--release` flag.
     #[test]
     fn test_signature() -> Result<()> {
-        let (pp, vp) = Signature::params()?;
-
         let sk = SecretKey::new();
         let pk = sk.public_key();
 
         let msg = Value::from(42);
-        let sig = sk.sign(&pp, msg)?;
-        sig.verify(&vp, &pk, msg)?;
+        let sig = sk.sign(msg)?;
+        sig.verify(&pk, msg)?;
 
         // expect the signature verification to fail when using a different msg
-        let v = sig.verify(&vp, &pk, Value::from(24));
+        let v = sig.verify(&pk, Value::from(24));
         assert!(v.is_err(), "should fail to verify");
 
         // perform a 2nd signature over another msg and verify it
         let msg_2 = Value::from(Hash::from("message"));
-        let sig2 = sk.sign(&pp, msg_2)?;
-        sig2.verify(&vp, &pk, msg_2)?;
+        let sig2 = sk.sign(msg_2)?;
+        sig2.verify(&pk, msg_2)?;
 
         Ok(())
     }
