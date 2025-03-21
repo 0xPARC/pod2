@@ -1091,6 +1091,7 @@ pub mod tests {
             max_operation_args: 5,
             max_custom_predicate_arity: 5,
             max_custom_batch_size: 5,
+            ..Default::default()
         };
 
         let mut alice = MockSigner { pk: "Alice".into() };

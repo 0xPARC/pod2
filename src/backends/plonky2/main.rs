@@ -2,8 +2,10 @@ use crate::backends::plonky2::basetypes::{Hash, Value, D, EMPTY_HASH, EMPTY_VALU
 use crate::backends::plonky2::common::{
     CircuitBuilderPod, OperationTarget, StatementTarget, ValueTarget,
 };
-use crate::backends::plonky2::primitives::merkletree::MerkleProofExistenceCircuit;
 use crate::backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree};
+use crate::backends::plonky2::primitives::merkletree::{
+    MerkleProofExistenceGate, MerkleProofExistenceTarget,
+};
 use crate::middleware::{
     hash_str, AnchoredKey, NativeOperation, NativePredicate, Operation, Params, PodType, Predicate,
     Statement, StatementArg, ToFields, KEY_TYPE, SELF, STATEMENT_ARG_F_LEN,
@@ -25,9 +27,6 @@ use plonky2::{
 use std::collections::HashMap;
 use std::iter;
 
-/// MerkleTree Max Depth
-const MD: usize = 32;
-
 //
 // SignedPod verification
 //
@@ -42,7 +41,10 @@ impl SignedPodVerifyGate {
         let id = builder.add_virtual_hash();
         let mut mt_proofs = Vec::new();
         for _ in 0..self.params.max_signed_pod_values {
-            let mt_proof = MerkleProofExistenceCircuit::<MD>::add_targets(builder)?;
+            let mt_proof = MerkleProofExistenceGate {
+                max_depth: self.params.max_depth_mt_gate,
+            }
+            .eval(builder)?;
             builder.connect_hashes(id, mt_proof.root);
             mt_proofs.push(mt_proof);
         }
@@ -69,7 +71,7 @@ struct SignedPodVerifyTarget {
     id: HashOutTarget,
     // The KEY_TYPE entry must be the first one
     // The KEY_SIGNER entry must be the second one
-    mt_proofs: Vec<MerkleProofExistenceCircuit<MD>>,
+    mt_proofs: Vec<MerkleProofExistenceTarget>,
 }
 
 struct SignedPodVerifyInput {
@@ -95,7 +97,7 @@ impl SignedPodVerifyTarget {
 
     fn set_targets(&self, pw: &mut PartialWitness<F>, input: &SignedPodVerifyInput) -> Result<()> {
         assert!(input.kvs.len() <= self.params.max_signed_pod_values);
-        let tree = MerkleTree::new(MD, &input.kvs)?;
+        let tree = MerkleTree::new(self.params.max_depth_mt_gate, &input.kvs)?;
 
         // First handle the type entry, then the rest of the entries, and finally pad with
         // repetitions of the type entry (which always exists)
@@ -170,7 +172,7 @@ impl OperationVerifyGate {
         let _true = builder._true();
         builder.connect(ok.target, _true.target);
 
-        todo!()
+        Ok(OperationVerifyTarget {})
     }
 
     fn eval_none(
@@ -206,12 +208,12 @@ struct OperationVerifyTarget {
     // TODO
 }
 
-struct OperationVerifyInputs {
+struct OperationVerifyInput {
     // TODO
 }
 
 impl OperationVerifyTarget {
-    fn set_targets(&self, pw: &mut PartialWitness<F>, input: &OperationVerifyInputs) -> Result<()> {
+    fn set_targets(&self, pw: &mut PartialWitness<F>, input: &OperationVerifyInput) -> Result<()> {
         todo!()
     }
 }
@@ -331,12 +333,12 @@ impl MainPodVerifyTarget {
     }
 }
 
-struct MainPodVerifyCircuit {
-    params: Params,
+pub struct MainPodVerifyCircuit {
+    pub params: Params,
 }
 
 impl MainPodVerifyCircuit {
-    fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MainPodVerifyTarget> {
+    pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MainPodVerifyTarget> {
         let main_pod = MainPodVerifyGate {
             params: self.params.clone(),
         }
@@ -377,6 +379,60 @@ mod tests {
         let data = builder.build::<C>();
         let proof = data.prove(pw)?;
         data.verify(proof)?;
+
+        Ok(())
+    }
+
+    fn operation_verify(
+        st: Statement,
+        op: Operation,
+        prev_statements: Vec<Statement>,
+    ) -> Result<()> {
+        let params = Params::default();
+
+        let config = CircuitConfig::standard_recursion_config();
+        let mut builder = CircuitBuilder::<F, D>::new(config);
+
+        let st_target = builder.add_virtual_statement(&params);
+        let op_target = builder.add_virtual_operation(&params);
+        let prev_statements_target: Vec<_> = (0..prev_statements.len())
+            .map(|_| builder.add_virtual_statement(&params))
+            .collect();
+
+        let operation_verify = OperationVerifyGate {
+            params: params.clone(),
+        }
+        .eval(
+            &mut builder,
+            &st_target,
+            &op_target,
+            &prev_statements_target,
+        )?;
+
+        let mut pw = PartialWitness::<F>::new();
+        st_target.set_targets(&mut pw, &params, &st)?;
+        op_target.set_targets(&mut pw, &params, &op)?;
+        for (prev_st_target, prev_st) in prev_statements_target.iter().zip(prev_statements.iter()) {
+            prev_st_target.set_targets(&mut pw, &params, prev_st)?;
+        }
+        let input = OperationVerifyInput {};
+        operation_verify.set_targets(&mut pw, &input)?;
+
+        // generate & verify proof
+        let data = builder.build::<C>();
+        let proof = data.prove(pw)?;
+        data.verify(proof)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_operation_verify() -> Result<()> {
+        // None
+        let st = Statement::None;
+        let op = Operation::None;
+        let prev_statements = vec![Statement::None];
+        operation_verify(st, op, prev_statements)?;
 
         Ok(())
     }

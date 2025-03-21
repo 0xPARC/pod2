@@ -3,13 +3,19 @@ use log::error;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-use super::{CustomPredicateRef, NativePredicate, Statement, StatementArg};
+use super::{CustomPredicateRef, NativePredicate, Statement, StatementArg, ToFields, F};
 use crate::middleware::{AnchoredKey, Params, Predicate, Value, SELF};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperationType {
     Native(NativeOperation),
     Custom(CustomPredicateRef),
+}
+
+impl ToFields for OperationType {
+    fn to_fields(&self, params: &Params) -> Vec<F> {
+        todo!()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -398,6 +404,12 @@ impl Operation {
                 output_statement
             )),
         }
+    }
+}
+
+impl ToFields for Operation {
+    fn to_fields(&self, params: &Params) -> Vec<F> {
+        todo!()
     }
 }
 

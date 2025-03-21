@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::{fmt, iter};
 use strum_macros::FromRepr;
 
-use super::{AnchoredKey, CustomPredicateRef, Params, Predicate, ToFields, Value, F, VALUE_SIZE};
+use super::{
+    AnchoredKey, CustomPredicateRef, Params, Predicate, ToFields, Value, F, HASH_SIZE, VALUE_SIZE,
+};
 
 pub const KEY_SIGNER: &str = "_signer";
 pub const KEY_TYPE: &str = "_type";
@@ -184,9 +186,13 @@ impl Statement {
 }
 
 impl ToFields for Statement {
-    fn to_fields(&self, _params: &Params) -> Vec<F> {
-        let mut fields = self.code().to_fields(_params);
-        fields.extend(self.args().iter().flat_map(|arg| arg.to_fields(_params)));
+    fn to_fields(&self, params: &Params) -> Vec<F> {
+        let mut fields = self.code().to_fields(params);
+        fields.extend(self.args().iter().flat_map(|arg| arg.to_fields(params)));
+        fields.resize_with(
+            2 + HASH_SIZE + STATEMENT_ARG_F_LEN * params.max_statement_args,
+            || F::ZERO,
+        );
         fields
     }
 }
