@@ -2,7 +2,7 @@
 //! `backend_plonky2` feature is enabled.
 //! See src/middleware/basetypes.rs for more details.
 
-use crate::frontend::serialization::{
+use crate::middleware::serialization::{
     deserialize_hash_tuple, deserialize_value_tuple, serialize_hash_tuple, serialize_value_tuple,
 };
 use crate::middleware::{Params, ToFields};

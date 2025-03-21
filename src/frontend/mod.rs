@@ -21,7 +21,7 @@ use std::{fmt, hash as h};
 pub mod containers;
 mod custom;
 mod operation;
-pub mod serialization;
+mod serialization;
 mod statement;
 pub use custom::*;
 pub use operation::*;

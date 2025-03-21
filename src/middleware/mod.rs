@@ -5,6 +5,7 @@ mod basetypes;
 pub mod containers;
 mod custom;
 mod operation;
+pub mod serialization;
 mod statement;
 pub use basetypes::*;
 pub use custom::*;
@@ -168,6 +169,14 @@ pub trait Pod: fmt::Debug + DynClone {
     }
     // Used for downcasting
     fn into_any(self: Box<Self>) -> Box<dyn Any>;
+    // Front-end Pods keep references to middleware Pods. Most of the
+    // middleware data can be derived directly from front-end data, but the
+    // "proof" data is only created at the point of proving/signing, and
+    // cannot be reconstructed. As such, we need to serialize it whenever
+    // we serialize a front-end Pod. Since the front-end does not understand
+    // the implementation details of the middleware, this method allows the
+    // middleware to provide some serialized data that can be used to
+    // reconstruct the proof.
     fn serialized_proof(&self) -> String;
 }
 
