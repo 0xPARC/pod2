@@ -7,9 +7,9 @@ use std::collections::HashMap;
 use crate::backends::plonky2::mock_signed::MockSigner;
 use crate::frontend::{
     containers::{Dictionary, Set},
-    MainPodBuilder, Operation, OperationArg, SignedPod, SignedPodBuilder, Statement, Value,
+    MainPodBuilder, SignedPod, SignedPodBuilder, Statement, Value,
 };
-use crate::middleware::{CustomPredicateRef, NativeOperation, OperationType};
+use crate::middleware::CustomPredicateRef;
 use crate::middleware::{Params, PodType, KEY_SIGNER, KEY_TYPE};
 use crate::op;
 
@@ -32,7 +32,7 @@ pub fn zu_kyc_sign_pod_builders(
 
     sanction_list.insert(
         "sanctionList",
-        Value::Set(Set::new(sanctions_values.into())),
+        Value::Set(Set::new(sanctions_values.into()).unwrap()),
     );
 
     (gov_id, pay_stub, sanction_list)
@@ -338,7 +338,7 @@ pub fn great_boy_pod_full_flow() -> Result<MainPodBuilder> {
     alice_friend_pods.push(friend.sign(&mut bob_signer).unwrap());
     alice_friend_pods.push(friend.sign(&mut charlie_signer).unwrap());
 
-    let good_boy_issuers_dict = Value::Dictionary(Dictionary::new(HashMap::new())); // empty
+    let good_boy_issuers_dict = Value::Dictionary(Dictionary::new(HashMap::new()).unwrap()); // empty
     great_boy_pod_builder(
         &params,
         [
@@ -397,6 +397,6 @@ pub fn tickets_pod_full_flow() -> Result<MainPodBuilder> {
         &signed_pod,
         123,
         true,
-        &Value::Dictionary(Dictionary::new(HashMap::new())),
+        &Value::Dictionary(Dictionary::new(HashMap::new()).unwrap()),
     )
 }

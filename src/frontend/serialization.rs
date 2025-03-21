@@ -31,7 +31,7 @@ impl TryFrom<SignedPodHelper> for SignedPod {
             return Err(anyhow::anyhow!("pod_type is not Mock"));
         }
 
-        let dict = Dictionary::new(helper.entries.clone())
+        let dict = Dictionary::new(helper.entries.clone())?
             .middleware_dict()
             .clone();
         let pod = MockSignedPod::new(PodId(dict.commitment()), helper.proof, dict);
@@ -175,24 +175,29 @@ mod tests {
             (Value::Int(42), "{\"Int\":\"42\"}"),
             (Value::Bool(true), "true"),
             (
-                Value::Array(Array::new(vec![
-                    Value::String("foo".to_string()),
-                    Value::Bool(false),
-                ])),
+                Value::Array(
+                    Array::new(vec![Value::String("foo".to_string()), Value::Bool(false)]).unwrap(),
+                ),
                 "[\"foo\",false]",
             ),
             (
-                Value::Dictionary(Dictionary::new(HashMap::from([
-                    ("foo".to_string(), Value::Int(123)),
-                    ("bar".to_string(), Value::String("baz".to_string())),
-                ]))),
+                Value::Dictionary(
+                    Dictionary::new(HashMap::from([
+                        ("foo".to_string(), Value::Int(123)),
+                        ("bar".to_string(), Value::String("baz".to_string())),
+                    ]))
+                    .unwrap(),
+                ),
                 "{\"Dictionary\":{\"bar\":\"baz\",\"foo\":{\"Int\":\"123\"}}}",
             ),
             (
-                Value::Set(Set::new(vec![
-                    Value::String("foo".to_string()),
-                    Value::String("bar".to_string()),
-                ])),
+                Value::Set(
+                    Set::new(vec![
+                        Value::String("foo".to_string()),
+                        Value::String("bar".to_string()),
+                    ])
+                    .unwrap(),
+                ),
                 "{\"Set\":[\"foo\",\"bar\"]}",
             ),
         ];
@@ -216,27 +221,34 @@ mod tests {
         builder.insert("very_large_int", 1152921504606846976);
         builder.insert(
             "a_dict_containing_one_key",
-            Value::Dictionary(Dictionary::new(HashMap::from([
-                ("foo".to_string(), Value::Int(123)),
-                (
-                    "an_array_containing_three_ints".to_string(),
-                    Value::Array(Array::new(vec![
-                        Value::Int(1),
-                        Value::Int(2),
-                        Value::Int(3),
-                    ])),
-                ),
-                (
-                    "a_set_containing_two_strings".to_string(),
-                    Value::Set(Set::new(vec![
-                        Value::Array(Array::new(vec![
-                            Value::String("foo".to_string()),
-                            Value::String("bar".to_string()),
-                        ])),
-                        Value::String("baz".to_string()),
-                    ])),
-                ),
-            ]))),
+            Value::Dictionary(
+                Dictionary::new(HashMap::from([
+                    ("foo".to_string(), Value::Int(123)),
+                    (
+                        "an_array_containing_three_ints".to_string(),
+                        Value::Array(
+                            Array::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]).unwrap(),
+                        ),
+                    ),
+                    (
+                        "a_set_containing_two_strings".to_string(),
+                        Value::Set(
+                            Set::new(vec![
+                                Value::Array(
+                                    Array::new(vec![
+                                        Value::String("foo".to_string()),
+                                        Value::String("bar".to_string()),
+                                    ])
+                                    .unwrap(),
+                                ),
+                                Value::String("baz".to_string()),
+                            ])
+                            .unwrap(),
+                        ),
+                    ),
+                ]))
+                .unwrap(),
+            ),
         );
 
         let pod = builder.sign(&mut signer).unwrap();

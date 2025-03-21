@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use anyhow::Result;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -17,10 +18,9 @@ use crate::middleware::{
 pub struct Set(Vec<Value>, #[serde(skip)] MiddlewareSet);
 
 impl Set {
-    pub fn new(values: Vec<Value>) -> Self {
-        let set =
-            MiddlewareSet::new(&values.iter().map(|v| MiddlewareValue::from(v)).collect()).unwrap();
-        Self(values, set)
+    pub fn new(values: Vec<Value>) -> Result<Self> {
+        let set = MiddlewareSet::new(&values.iter().map(|v| MiddlewareValue::from(v)).collect())?;
+        Ok(Self(values, set))
     }
 
     pub fn middleware_set(&self) -> &MiddlewareSet {
@@ -38,7 +38,7 @@ impl<'de> Deserialize<'de> for Set {
         D: serde::Deserializer<'de>,
     {
         let values: Vec<Value> = Vec::deserialize(deserializer)?;
-        Ok(Set::new(values))
+        Set::new(values).map_err(serde::de::Error::custom)
     }
 }
 
@@ -50,15 +50,14 @@ pub struct Dictionary(
 );
 
 impl Dictionary {
-    pub fn new(values: HashMap<String, Value>) -> Self {
+    pub fn new(values: HashMap<String, Value>) -> Result<Self> {
         let dict = MiddlewareDictionary::new(
             &values
                 .iter()
                 .map(|(k, v)| (hash_str(k), MiddlewareValue::from(v)))
                 .collect::<HashMap<_, _>>(),
-        )
-        .unwrap();
-        Self(values, dict)
+        )?;
+        Ok(Self(values, dict))
     }
 
     pub fn middleware_dict(&self) -> &MiddlewareDictionary {
@@ -76,7 +75,7 @@ impl<'de> Deserialize<'de> for Dictionary {
         D: serde::Deserializer<'de>,
     {
         let values: HashMap<String, Value> = HashMap::deserialize(deserializer)?;
-        Ok(Dictionary::new(values))
+        Dictionary::new(values).map_err(serde::de::Error::custom)
     }
 }
 
@@ -85,11 +84,10 @@ impl<'de> Deserialize<'de> for Dictionary {
 pub struct Array(Vec<Value>, #[serde(skip)] MiddlewareArray);
 
 impl Array {
-    pub fn new(values: Vec<Value>) -> Self {
+    pub fn new(values: Vec<Value>) -> Result<Self> {
         let array =
-            MiddlewareArray::new(&values.iter().map(|v| MiddlewareValue::from(v)).collect())
-                .unwrap();
-        Self(values, array)
+            MiddlewareArray::new(&values.iter().map(|v| MiddlewareValue::from(v)).collect())?;
+        Ok(Self(values, array))
     }
 
     pub fn middleware_array(&self) -> &MiddlewareArray {
@@ -107,6 +105,6 @@ impl<'de> Deserialize<'de> for Array {
         D: serde::Deserializer<'de>,
     {
         let values: Vec<Value> = Vec::deserialize(deserializer)?;
-        Ok(Array::new(values))
+        Array::new(values).map_err(serde::de::Error::custom)
     }
 }
