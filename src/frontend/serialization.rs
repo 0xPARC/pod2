@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, HashMap};
 use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize, Serializer};
 
-use crate::backends::plonky2::mock_main::MockMainPod;
-use crate::backends::plonky2::mock_signed::MockSignedPod;
+use crate::backends::plonky2::mock::mainpod::MockMainPod;
+use crate::backends::plonky2::mock::signedpod::MockSignedPod;
 use crate::frontend::containers::Dictionary;
 use crate::frontend::Statement;
 use crate::middleware::PodId;
@@ -152,7 +152,7 @@ pub fn transform_value_schema(schema: &mut Schema) {
 #[cfg(test)]
 mod tests {
     use crate::{
-        backends::plonky2::{mock_main::MockProver, mock_signed::MockSigner},
+        backends::plonky2::mock::{mainpod::MockProver, signedpod::MockSigner},
         examples::{zu_kyc_pod_builder, zu_kyc_sign_pod_builders},
         frontend::{
             containers::{Array, Dictionary, Set},

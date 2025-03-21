@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::any::Any;
 use std::collections::HashMap;
 
-use super::primitives::merkletree::MerkleTree;
+use crate::backends::plonky2::primitives::merkletree::MerkleTree;
 use crate::constants::MAX_DEPTH;
 use crate::middleware::{
     containers::Dictionary, hash_str, AnchoredKey, Hash, Params, Pod, PodId, PodSigner, PodType,
