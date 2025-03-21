@@ -12,7 +12,7 @@ use crate::middleware::{
     containers::{Array, Dictionary, Set},
     hash_str, Hash, MainPodInputs, Params, PodId, PodProver, PodSigner, SELF,
 };
-use crate::middleware::{hash_value, EMPTY_VALUE, KEY_SIGNER, KEY_TYPE};
+use crate::middleware::{hash_value, OperationAux, EMPTY_VALUE, KEY_SIGNER, KEY_TYPE};
 
 mod custom;
 mod operation;
@@ -348,8 +348,6 @@ impl MainPodBuilder {
                     )));
                     st_args.push(StatementArg::Literal(v.clone()))
                 }
-                // Merkle proofs are never arguments to statements.
-                OperationArg::MerkleProof(_) => (),
             };
         }
         Ok(st_args)
@@ -365,7 +363,7 @@ impl MainPodBuilder {
 
     fn op(&mut self, public: bool, mut op: Operation) -> Result<Statement, anyhow::Error> {
         use NativeOperation::*;
-        let Operation(op_type, ref mut args) = &mut op;
+        let Operation(op_type, ref mut args, _) = &mut op;
         // TODO: argument type checking
         let pred = op_type
             .output_predicate()
@@ -673,6 +671,7 @@ impl MainPodBuilder {
             Operation(
                 OperationType::Native(NativeOperation::NewEntry),
                 vec![OperationArg::Entry(k.clone(), v)],
+                OperationAux::None,
             ),
         )
     }
@@ -820,12 +819,9 @@ impl MainPodCompiler {
         self.operations.push(op);
     }
 
-    fn compile_op_arg(&self, op_arg: &OperationArg) -> Option<middleware::OperationArg> {
+    fn compile_op_arg(&self, op_arg: &OperationArg) -> Option<middleware::Statement> {
         match op_arg {
-            OperationArg::Statement(s) => self
-                .compile_st(s)
-                .ok()
-                .map(|s| middleware::OperationArg::Statement(s)),
+            OperationArg::Statement(s) => self.compile_st(s).ok(),
             OperationArg::Literal(_v) => {
                 // OperationArg::Literal is a syntax sugar for the frontend.  This is translated to
                 // a new ValueOf statement and it's key used instead.
@@ -836,9 +832,6 @@ impl MainPodCompiler {
                 // appear in the ValueOf statement in the backend.  This is because a new ValueOf
                 // statement doesn't have any requirement on the key and value.
                 None
-            }
-            OperationArg::MerkleProof(pf) => {
-                Some(middleware::OperationArg::MerkleProof(pf.clone()))
             }
         }
     }
@@ -903,11 +896,11 @@ impl MainPodCompiler {
                         _ => Err(anyhow!("Statement compile failed in manual compile"))?,
                     },
                     empty_st,
-                    match &op.1[2] {
-                        OperationArg::MerkleProof(mp) => mp.clone(),
+                    match &op.2 {
+                        OperationAux::MerkleProof(mp) => mp.clone(),
                         _ => {
                             return Err(anyhow!(
-                                "Third argument to DictContainsFromEntries must be Merkle proof"
+                                "Auxiliary argument to DictContainsFromEntries must be Merkle proof"
                             ));
                         }
                     },
@@ -968,7 +961,7 @@ impl MainPodCompiler {
             op.1.iter()
                 .flat_map(|arg| self.compile_op_arg(arg).map(|op_arg| Ok(op_arg)))
                 .collect::<Result<Vec<_>>>()?;
-        middleware::Operation::op(mop_code, &mop_args)
+        middleware::Operation::op(mop_code, &mop_args, &op.2)
     }
 
     fn compile_st_op(&mut self, st: &Statement, op: &Operation, params: &Params) -> Result<()> {
@@ -1038,56 +1031,55 @@ pub mod build_utils {
     macro_rules! op {
         (new_entry, ($key:expr, $value:expr)) => { $crate::frontend::Operation(
             $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::NewEntry),
-            $crate::op_args!(($key, $value))) };
+            $crate::op_args!(($key, $value)), crate::middleware::OperationAux::None) };
         (eq, $($arg:expr),+) => { $crate::frontend::Operation(
             $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::EqualFromEntries),
-            $crate::op_args!($($arg),*)) };
+            $crate::op_args!($($arg),*), crate::middleware::OperationAux::None) };
         (ne, $($arg:expr),+) => { $crate::frontend::Operation(
             $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::NotEqualFromEntries),
-            $crate::op_args!($($arg),*)) };
+            $crate::op_args!($($arg),*), crate::middleware::OperationAux::None) };
         (gt, $($arg:expr),+) => { crate::frontend::Operation(
             crate::frontend::OperationType::Native(crate::frontend::NativeOperation::GtFromEntries),
-            crate::op_args!($($arg),*)) };
+            crate::op_args!($($arg),*), crate::middleware::OperationAux::None) };
         (lt, $($arg:expr),+) => { crate::frontend::Operation(
             crate::frontend::OperationType::Native(crate::frontend::NativeOperation::LtFromEntries),
-            crate::op_args!($($arg),*)) };
+            crate::op_args!($($arg),*), crate::middleware::OperationAux::None) };
         (transitive_eq, $($arg:expr),+) => { crate::frontend::Operation(
             crate::frontend::OperationType::Native(crate::frontend::NativeOperation::TransitiveEqualFromStatements),
-            crate::op_args!($($arg),*)) };
+            crate::op_args!($($arg),*), crate::middleware::OperationAux::None) };
         (gt_to_ne, $($arg:expr),+) => { crate::frontend::Operation(
             crate::frontend::OperationType::Native(crate::frontend::NativeOperation::GtToNotEqual),
-            crate::op_args!($($arg),*)) };
+            crate::op_args!($($arg),*), crate::middleware::OperationAux::None) };
         (lt_to_ne, $($arg:expr),+) => { crate::frontend::Operation(
             crate::frontend::OperationType::Native(crate::frontend::NativeOperation::LtToNotEqual),
-            crate::op_args!($($arg),*)) };
+            crate::op_args!($($arg),*), crate::middleware::OperationAux::None) };
         (sum_of, $($arg:expr),+) => { crate::frontend::Operation(
             crate::frontend::OperationType::Native(crate::frontend::NativeOperation::SumOf),
-            crate::op_args!($($arg),*)) };
+            crate::op_args!($($arg),*), crate::middleware::OperationAux::None) };
         (product_of, $($arg:expr),+) => { crate::frontend::Operation(
             crate::frontend::OperationType::Native(crate::frontend::NativeOperation::ProductOf),
-            crate::op_args!($($arg),*)) };
+            crate::op_args!($($arg),*), crate::middleware::OperationAux::None) };
         (max_of, $($arg:expr),+) => { crate::frontend::Operation(
             crate::frontend::OperationType::Native(crate::frontend::NativeOperation::MaxOf),
-            crate::op_args!($($arg),*)) };
+            crate::op_args!($($arg),*), crate::middleware::OperationAux::None) };
         (custom, $op:expr, $($arg:expr),+) => { $crate::frontend::Operation(
             $crate::frontend::OperationType::Custom($op),
-            $crate::op_args!($($arg),*)) };
-        (dict_contains, $($arg:expr),+) => { crate::frontend::Operation(
+            $crate::op_args!($($arg),*), crate::middleware::OperationAux::None) };
+        (dict_contains, $dict:expr, $key:expr, $value:expr, $aux:expr) => { crate::frontend::Operation(
             crate::frontend::OperationType::Native(crate::frontend::NativeOperation::DictContainsFromEntries),
-            crate::op_args!($($arg),*)) };
-        (dict_not_contains, $($arg:expr),+) => { crate::frontend::Operation(
+            crate::op_args!($dict, $key, $value), crate::middleware::OperationAux::MerkleProof($aux)) };
+        (dict_not_contains, $dict:expr, $key:expr, $aux:expr) => { crate::frontend::Operation(
             crate::frontend::OperationType::Native(crate::frontend::NativeOperation::DictNotContainsFromEntries),
-            crate::op_args!($($arg),*)) };
-        (set_contains, $($arg:expr),+) => { crate::frontend::Operation(
+            crate::op_args!($dict, $key), crate::middleware::OperationAux::MerkleProof($aux)) };
+        (set_contains, $set:expr, $value:expr, $aux:expr) => { crate::frontend::Operation(
             crate::frontend::OperationType::Native(crate::frontend::NativeOperation::SetContainsFromEntries),
-            crate::op_args!($($arg),*)) };
-        (set_not_contains, $($arg:expr),+) => { crate::frontend::Operation(
+            crate::op_args!($set, $value), crate::middleware::OperationAux::MerkleProof($aux)) };
+        (set_not_contains, $set:expr, $value:expr, $aux:expr) => { crate::frontend::Operation(
             crate::frontend::OperationType::Native(crate::frontend::NativeOperation::SetNotContainsFromEntries),
-            crate::op_args!($($arg),*)) };
-        (array_contains, $($arg:expr),+) => { crate::frontend::Operation(
+            crate::op_args!($set, $value), crate::middleware::OperationAux::MerkleProof($aux)) };
+        (array_contains, $array:expr, $value:expr, $aux:expr) => { crate::frontend::Operation(
             crate::frontend::OperationType::Native(crate::frontend::NativeOperation::ArrayContainsFromEntries),
-            crate::op_args!($($arg),*)) };
-
+            crate::op_args!($array, $value), crate::middleware::OperationAux::MerkleProof($aux)) };
     }
 }
 
@@ -1268,6 +1260,7 @@ pub mod tests {
                 OperationArg::from((&signed_pod, "a")),
                 OperationArg::from((&signed_pod, "b")),
             ],
+            OperationAux::None,
         );
         let st1 = builder.op(true, op_eq1).unwrap();
         let op_eq2 = Operation(
@@ -1276,12 +1269,14 @@ pub mod tests {
                 OperationArg::from((&signed_pod, "b")),
                 OperationArg::from((&signed_pod, "a")),
             ],
+            OperationAux::None,
         );
         let st2 = builder.op(true, op_eq2).unwrap();
 
         let op_eq3 = Operation(
             OperationType::Native(NativeOperation::TransitiveEqualFromStatements),
             vec![OperationArg::Statement(st1), OperationArg::Statement(st2)],
+            OperationAux::None,
         );
         let st3 = builder.op(true, op_eq3);
 
@@ -1352,8 +1347,8 @@ pub mod tests {
                     OperationArg::Statement(st0),
                     OperationArg::Statement(st1),
                     OperationArg::Statement(st2),
-                    OperationArg::MerkleProof(dict.prove(&Hash::from("a").into()).unwrap().1),
                 ],
+                OperationAux::MerkleProof(dict.prove(&Hash::from("a").into()).unwrap().1),
             ))
             .unwrap();
         let mut main_prover = MockProver {};

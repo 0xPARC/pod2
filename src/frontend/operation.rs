@@ -1,14 +1,16 @@
 use std::fmt;
 
 use super::{NativePredicate, Predicate, SignedPod, Statement, Value};
-use crate::{backends::plonky2::primitives::merkletree::MerkleProof, middleware};
+use crate::{
+    backends::plonky2::primitives::merkletree::MerkleProof,
+    middleware::{self, OperationAux},
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OperationArg {
     Statement(Statement),
     Literal(Value),
     Entry(String, Value),
-    MerkleProof(MerkleProof),
 }
 
 impl fmt::Display for OperationArg {
@@ -17,7 +19,6 @@ impl fmt::Display for OperationArg {
             OperationArg::Statement(s) => write!(f, "{}", s),
             OperationArg::Literal(v) => write!(f, "{}", v),
             OperationArg::Entry(k, v) => write!(f, "({}, {})", k, v),
-            OperationArg::MerkleProof(pf) => write!(f, "merkle_proof({})", pf),
         }
     }
 }
@@ -67,12 +68,6 @@ impl From<Statement> for OperationArg {
 impl<V: Into<Value>> From<(&str, V)> for OperationArg {
     fn from((key, value): (&str, V)) -> Self {
         Self::Entry(key.to_string(), value.into())
-    }
-}
-
-impl From<MerkleProof> for OperationArg {
-    fn from(pf: MerkleProof) -> Self {
-        Self::MerkleProof(pf)
     }
 }
 
@@ -190,7 +185,7 @@ impl OperationType {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Operation(pub OperationType, pub Vec<OperationArg>);
+pub struct Operation(pub OperationType, pub Vec<OperationArg>, pub OperationAux);
 
 impl fmt::Display for Operation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

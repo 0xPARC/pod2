@@ -227,32 +227,38 @@ impl MockMainPod {
 
     fn find_op_arg(
         statements: &[Statement],
-        merkle_proofs: &[MerkleProof],
-        op_arg: &middleware::OperationArg,
+        op_arg: &middleware::Statement,
     ) -> Result<OperationArg> {
         match op_arg {
-            middleware::OperationArg::Statement(s_arg) => match s_arg {
-                middleware::Statement::None => Ok(OperationArg::None),
-                _ => statements
-                    .iter()
-                    .enumerate()
-                    .find_map(|(i, s)| {
-                        (&middleware::Statement::try_from(s.clone()).ok()? == s_arg).then_some(i)
-                    })
-                    .map(OperationArg::Index)
-                    .ok_or(anyhow!(
-                        "Statement corresponding to op arg {} not found",
-                        op_arg
-                    )),
-            },
-            middleware::OperationArg::MerkleProof(pf_arg) => merkle_proofs
+            middleware::Statement::None => Ok(OperationArg::None),
+            _ => statements
+                .iter()
+                .enumerate()
+                .find_map(|(i, s)| {
+                    (&middleware::Statement::try_from(s.clone()).ok()? == op_arg).then_some(i)
+                })
+                .map(OperationArg::Index)
+                .ok_or(anyhow!(
+                    "Statement corresponding to op arg {} not found",
+                    op_arg
+                )),
+        }
+    }
+
+    fn find_op_aux(
+        merkle_proofs: &[MerkleProof],
+        op_aux: &middleware::OperationAux,
+    ) -> Result<OperationAux> {
+        match op_aux {
+            middleware::OperationAux::None => Ok(OperationAux::None),
+            middleware::OperationAux::MerkleProof(pf_arg) => merkle_proofs
                 .iter()
                 .enumerate()
                 .find_map(|(i, pf)| (pf == pf_arg).then_some(i))
-                .map(OperationArg::MerkleProofIndex)
+                .map(OperationAux::MerkleProofIndex)
                 .ok_or(anyhow!(
                     "Merkle proof corresponding to op arg {} not found",
-                    op_arg
+                    op_aux
                 )),
         }
     }
@@ -272,10 +278,14 @@ impl MockMainPod {
             let mid_args = op.args();
             let mut args = mid_args
                 .iter()
-                .map(|mid_arg| Self::find_op_arg(statements, merkle_proofs, mid_arg))
+                .map(|mid_arg| Self::find_op_arg(statements, mid_arg))
                 .collect::<Result<Vec<_>>>()?;
+
+            let mid_aux = op.aux();
+            let aux = Self::find_op_aux(merkle_proofs, &mid_aux)?;
+
             Self::pad_operation_args(params, &mut args);
-            operations.push(Operation(op.code(), args));
+            operations.push(Operation(op.code(), args, aux));
         }
         Ok(operations)
     }
@@ -294,21 +304,22 @@ impl MockMainPod {
         operations.push(Operation(
             OperationType::Native(NativeOperation::NewEntry),
             vec![],
+            OperationAux::None,
         ));
         for i in 0..(params.max_public_statements - 1) {
             let st = &statements[offset_public_statements + i + 1];
             let mut op = if st.is_none() {
-                Operation(OperationType::Native(NativeOperation::None), vec![])
+                Operation(
+                    OperationType::Native(NativeOperation::None),
+                    vec![],
+                    OperationAux::None,
+                )
             } else {
                 let mid_arg = st.clone();
                 Operation(
                     OperationType::Native(NativeOperation::CopyStatement),
-                    // TODO
-                    vec![Self::find_op_arg(
-                        statements,
-                        merkle_proofs,
-                        &middleware::OperationArg::Statement(mid_arg.try_into().unwrap()),
-                    )?],
+                    vec![Self::find_op_arg(statements, &mid_arg.try_into()?)?],
+                    OperationAux::None,
                 )
             };
             fill_pad(&mut op.1, OperationArg::None, params.max_operation_args);
@@ -388,7 +399,11 @@ impl MockMainPod {
     }
 
     fn operation_none(params: &Params) -> Operation {
-        let mut op = Operation(OperationType::Native(NativeOperation::None), vec![]);
+        let mut op = Operation(
+            OperationType::Native(NativeOperation::None),
+            vec![],
+            OperationAux::None,
+        );
         fill_pad(&mut op.1, OperationArg::None, params.max_operation_args);
         op
     }

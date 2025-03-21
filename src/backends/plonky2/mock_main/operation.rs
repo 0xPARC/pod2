@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use std::fmt;
 
 use super::Statement;
@@ -11,7 +11,6 @@ use crate::{
 pub enum OperationArg {
     None,
     Index(usize),
-    MerkleProofIndex(usize),
 }
 
 impl OperationArg {
@@ -21,7 +20,13 @@ impl OperationArg {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Operation(pub OperationType, pub Vec<OperationArg>);
+pub enum OperationAux {
+    None,
+    MerkleProofIndex(usize),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Operation(pub OperationType, pub Vec<OperationArg>, pub OperationAux);
 
 impl Operation {
     pub fn deref(
@@ -34,18 +39,18 @@ impl Operation {
             .iter()
             .flat_map(|arg| match arg {
                 OperationArg::None => None,
-                OperationArg::Index(i) => Some(
-                    statements[*i]
-                        .clone()
-                        .try_into()
-                        .map(|s| crate::middleware::OperationArg::Statement(s)),
-                ),
-                OperationArg::MerkleProofIndex(i) => Some(Ok(
-                    crate::middleware::OperationArg::MerkleProof(merkle_proofs[*i].clone()),
-                )),
+                OperationArg::Index(i) => Some(statements[*i].clone().try_into()),
             })
             .collect::<Result<Vec<_>>>()?;
-        middleware::Operation::op(self.0.clone(), &deref_args)
+        let deref_aux = match self.2 {
+            OperationAux::None => Ok(crate::middleware::OperationAux::None),
+            OperationAux::MerkleProofIndex(i) => merkle_proofs
+                .get(i)
+                .cloned()
+                .ok_or(anyhow!("Missing Merkle proof index {}", i))
+                .map(crate::middleware::OperationAux::MerkleProof),
+        }?;
+        middleware::Operation::op(self.0.clone(), &deref_args, &deref_aux)
     }
 }
 
@@ -60,9 +65,12 @@ impl fmt::Display for Operation {
                 match arg {
                     OperationArg::None => write!(f, "none")?,
                     OperationArg::Index(i) => write!(f, "{:02}", i)?,
-                    OperationArg::MerkleProofIndex(i) => write!(f, "merkle_proof_{:02}", i)?,
                 }
             }
+        }
+        match self.2 {
+            OperationAux::None => (),
+            OperationAux::MerkleProofIndex(i) => write!(f, "merkle_proof_{:02}", i)?,
         }
         Ok(())
     }
