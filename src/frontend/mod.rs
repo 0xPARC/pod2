@@ -42,6 +42,12 @@ pub struct Origin {
     pub pod_id: PodId,
 }
 
+impl Origin {
+    pub fn new(pod_class: PodClass, pod_id: PodId) -> Self {
+        Self { pod_class, pod_id }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[schemars(transform = serialization::transform_value_schema)]
 pub enum Value {
@@ -241,10 +247,7 @@ impl SignedPod {
         self.pod.id()
     }
     pub fn origin(&self) -> Origin {
-        Origin {
-            pod_class: PodClass::Signed,
-            pod_id: self.id(),
-        }
+        Origin::new(PodClass::Signed, self.id())
     }
     pub fn verify(&self) -> bool {
         self.pod.verify()
@@ -262,6 +265,12 @@ impl SignedPod {
 pub struct AnchoredKey {
     pub origin: Origin,
     pub key: String,
+}
+
+impl AnchoredKey {
+    pub fn new(origin: Origin, key: String) -> Self {
+        Self { origin, key }
+    }
 }
 
 impl From<AnchoredKey> for middleware::AnchoredKey {
@@ -377,13 +386,10 @@ impl MainPodBuilder {
                     st_args.push(value_of_st.args[0].clone())
                 }
                 OperationArg::Entry(k, v) => {
-                    st_args.push(StatementArg::Key(AnchoredKey {
-                        origin: Origin {
-                            pod_class: PodClass::Main,
-                            pod_id: SELF,
-                        },
-                        key: k.clone(),
-                    }));
+                    st_args.push(StatementArg::Key(AnchoredKey::new(
+                        Origin::new(PodClass::Main, SELF),
+                        k.clone(),
+                    )));
                     st_args.push(StatementArg::Literal(v.clone()))
                 }
             };
@@ -653,29 +659,24 @@ impl MainPodBuilder {
                 output_arg_values
                     .chunks(2)
                     .map(|chunk| {
-                        Ok(StatementArg::Key(AnchoredKey {
-                            origin: Origin {
-                                pod_class: self
-                                    .pod_class_table
+                        Ok(StatementArg::Key(AnchoredKey::new(
+                            Origin::new(
+                                self.pod_class_table
                                     .get(&PodId(chunk[0].into()))
                                     .cloned()
                                     .ok_or(anyhow!("Missing POD class value."))?,
-                                pod_id: PodId(chunk[0].into()),
-                            },
-                            key: self
-                                .key_table
+                                PodId(chunk[0].into()),
+                            ),
+                            self.key_table
                                 .get(&chunk[1].into())
                                 .cloned()
                                 .ok_or(anyhow!("Missing key corresponding to hash."))?,
-                        }))
+                        )))
                     })
                     .collect::<Result<Vec<_>>>()?
             }
         };
-        let st = Statement {
-            predicate: pred,
-            args: st_args,
-        };
+        let st = Statement::new(pred, st_args);
         self.operations.push(op);
         if public {
             self.public_statements.push(st.clone());
@@ -753,13 +754,10 @@ impl MainPodBuilder {
                 ) if id == pod_id && key == type_key_hash => Some(Statement {
                     predicate: Predicate::Native(NativePredicate::ValueOf),
                     args: vec![
-                        StatementArg::Key(AnchoredKey {
-                            origin: Origin {
-                                pod_class: PodClass::Main,
-                                pod_id: pod_id,
-                            },
-                            key: KEY_TYPE.to_string(),
-                        }),
+                        StatementArg::Key(AnchoredKey::new(
+                            Origin::new(PodClass::Main, pod_id),
+                            KEY_TYPE.to_string(),
+                        )),
                         StatementArg::Literal(value.into()),
                     ],
                 }),
@@ -783,20 +781,13 @@ impl MainPodBuilder {
                                     pod_id: id,
                                 },
                             key,
-                        }) if id == SELF => StatementArg::Key(AnchoredKey {
-                            origin: Origin {
-                                pod_class: class,
-                                pod_id,
-                            },
-                            key,
-                        }),
+                        }) if id == SELF => {
+                            StatementArg::Key(AnchoredKey::new(Origin::new(class, pod_id), key))
+                        }
                         _ => arg,
                     })
                     .collect();
-                Statement {
-                    predicate: s_type,
-                    args: s_args,
-                }
+                Statement::new(s_type, s_args)
             }))
             .collect();
 
@@ -835,10 +826,7 @@ impl MainPod {
         self.pod.id()
     }
     pub fn origin(&self) -> Origin {
-        Origin {
-            pod_class: PodClass::Main,
-            pod_id: self.id(),
-        }
+        Origin::new(PodClass::Main, self.id())
     }
 }
 

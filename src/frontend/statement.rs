@@ -26,6 +26,12 @@ pub struct Statement {
     pub args: Vec<StatementArg>,
 }
 
+impl Statement {
+    pub fn new(predicate: Predicate, args: Vec<StatementArg>) -> Self {
+        Self { predicate, args }
+    }
+}
+
 impl From<(&SignedPod, &str)> for Statement {
     fn from((pod, key): (&SignedPod, &str)) -> Self {
         // TODO: TryFrom.
@@ -37,10 +43,7 @@ impl From<(&SignedPod, &str)> for Statement {
         Statement {
             predicate: Predicate::Native(NativePredicate::ValueOf),
             args: vec![
-                StatementArg::Key(AnchoredKey {
-                    origin: pod.origin(),
-                    key: key.to_string(),
-                }),
+                StatementArg::Key(AnchoredKey::new(pod.origin(), key.to_string())),
                 StatementArg::Literal(value),
             ],
         }
