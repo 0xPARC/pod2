@@ -1,9 +1,12 @@
 use std::fmt;
 
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
 use super::{SignedPod, Statement, Value};
 use crate::middleware::OperationType;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum OperationArg {
     Statement(Statement),
     Literal(Value),
@@ -68,7 +71,7 @@ impl<V: Into<Value>> From<(&str, V)> for OperationArg {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Operation(pub OperationType, pub Vec<OperationArg>);
 
 impl fmt::Display for Operation {

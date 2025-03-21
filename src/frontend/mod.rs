@@ -14,7 +14,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::convert::From;
-use std::{fmt, hash as h};
+use std::{fmt, hash as h, marker::Send, marker::Sync};
 
 pub mod containers;
 mod custom;
@@ -254,7 +254,24 @@ impl SignedPod {
             .map(|(middleware::AnchoredKey(_, k), v)| (k, v))
             .collect()
     }
+    pub fn get_anchored_key(&self, key: &str) -> Result<AnchoredKey> {
+        let hash = hash_str(key);
+        self.kvs()
+            .get(&hash)
+            .ok_or(anyhow!("Key not found: {}", key))?;
+        Ok(AnchoredKey {
+            origin: Origin {
+                pod_class: PodClass::Signed,
+                pod_id: self.id(),
+            },
+            key: key.to_string(),
+        })
+    }
 }
+
+// Implement Send and Sync for SignedPod
+unsafe impl Send for SignedPod {}
+unsafe impl Sync for SignedPod {}
 
 #[derive(Clone, Debug, PartialEq, Eq, h::Hash, Serialize, Deserialize, JsonSchema)]
 pub struct AnchoredKey {
@@ -840,6 +857,10 @@ impl MainPod {
     }
 }
 
+// Implement Send and Sync for MainPod
+unsafe impl Send for MainPod {}
+unsafe impl Sync for MainPod {}
+
 struct MainPodCompilerInputs<'a> {
     // pub signed_pods: &'a [Box<dyn middleware::SignedPod>],
     // pub main_pods: &'a [Box<dyn middleware::MainPod>],
@@ -1220,5 +1241,38 @@ pub mod tests {
 
         println!("{}", builder);
         println!("{}", false_pod);
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SignedPodValues(#[serde(serialize_with = "ordered_map")] pub HashMap<String, Value>);
+
+impl SignedPodValues {
+    pub fn new() -> Self {
+        Self(HashMap::new())
+    }
+
+    pub fn insert(&mut self, key: impl Into<String>, value: impl Into<Value>) {
+        self.0.insert(key.into(), value.into());
+    }
+
+    pub fn get(&self, key: &str) -> Option<&Value> {
+        self.0.get(key)
+    }
+
+    pub fn iter(&self) -> std::collections::hash_map::Iter<'_, String, Value> {
+        self.0.iter()
+    }
+}
+
+impl From<HashMap<String, Value>> for SignedPodValues {
+    fn from(kvs: HashMap<String, Value>) -> Self {
+        Self(kvs)
+    }
+}
+
+impl Into<HashMap<String, Value>> for SignedPodValues {
+    fn into(self) -> HashMap<String, Value> {
+        self.0
     }
 }

@@ -59,6 +59,16 @@ pub type Entry = (String, Value);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
 pub struct PodId(pub Hash);
 
+impl fmt::LowerHex for PodId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{:016x}{:016x}{:016x}{:016x}",
+            self.0 .0[0].0, self.0 .0[1].0, self.0 .0[2].0, self.0 .0[3].0
+        )
+    }
+}
+
 impl ToFields for PodId {
     fn to_fields(&self, params: &Params) -> (Vec<F>, usize) {
         self.0.to_fields(params)
@@ -152,7 +162,7 @@ impl Params {
     }
 }
 
-pub trait Pod: fmt::Debug + DynClone {
+pub trait Pod: fmt::Debug + DynClone + Send + Sync {
     fn verify(&self) -> bool;
     fn id(&self) -> PodId;
     fn pub_statements(&self) -> Vec<Statement>;
