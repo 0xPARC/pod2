@@ -6,11 +6,11 @@ use std::collections::HashMap;
 
 use crate::backends::plonky2::mock_signed::MockSigner;
 use crate::frontend::{
-    MainPodBuilder, Operation, OperationArg, SignedPod, SignedPodBuilder, Statement, Value,
+    containers::{Dictionary, Set},
+    MainPodBuilder, SignedPod, SignedPodBuilder, Statement, Value,
 };
-use crate::middleware::containers::Set;
-use crate::middleware::{containers::Dictionary, Params, PodType, KEY_SIGNER, KEY_TYPE};
-use crate::middleware::{hash_str, CustomPredicateRef, NativeOperation, OperationType};
+use crate::middleware::CustomPredicateRef;
+use crate::middleware::{Params, PodType, KEY_SIGNER, KEY_TYPE};
 use crate::op;
 
 // ZuKYC
@@ -29,7 +29,12 @@ pub fn zu_kyc_sign_pod_builders(
     pay_stub.insert("startDate", 1706367566);
 
     let mut sanction_list = SignedPodBuilder::new(params);
-    sanction_list.insert("sanctionList", sanction_set.clone());
+    let sanctions_values = ["A343434340"].map(Value::from);
+
+    sanction_list.insert(
+        "sanctionList",
+        Value::Set(Set::new(sanctions_values.into()).unwrap()),
+    );
 
     (gov_id, pay_stub, sanction_list)
 }
@@ -58,7 +63,9 @@ pub fn zu_kyc_pod_builder(
         set_not_contains,
         (sanction_list, "sanctionList"),
         (gov_id, "idNumber"),
-        sanction_set.prove_nonexistence(id_number_value)?
+        sanction_set
+            .middleware_set()
+            .prove_nonexistence(id_number_value)?
     ))?;
     kyc.pub_op(op!(lt, (gov_id, "dateOfBirth"), now_minus_18y))?;
     kyc.pub_op(op!(
@@ -268,6 +275,7 @@ pub fn great_boy_pod_builder(
                 Value::Dictionary(dict) => Ok(dict),
                 _ => Err(anyhow!("Invalid good boy issuers!")),
             }?
+            .middleware_dict()
             .prove(pod_kvs.get(&KEY_SIGNER.into()).unwrap())?
             .1;
             great_boy.pub_op(op!(
@@ -353,9 +361,9 @@ pub fn great_boy_pod_full_flow() -> Result<MainPodBuilder> {
     alice_friend_pods.push(friend.sign(&mut charlie_signer).unwrap());
 
     let good_boy_issuers = Value::Dictionary(Dictionary::new(
-        &good_boy_issuers
+        good_boy_issuers
             .into_iter()
-            .map(|issuer| (crate::middleware::Hash::from(issuer), 0.into()))
+            .map(|issuer| (issuer.to_string(), 0.into()))
             .collect(),
     )?);
 
@@ -395,8 +403,9 @@ pub fn tickets_pod_builder(
     blacklisted_emails: &Dictionary,
 ) -> Result<MainPodBuilder> {
     let attendee_email_value = signed_pod.kvs.get("attendeeEmail").unwrap();
-    let attendee_nin_blacklist_pf =
-        blacklisted_emails.prove_nonexistence(&attendee_email_value.into())?;
+    let attendee_nin_blacklist_pf = blacklisted_emails
+        .middleware_dict()
+        .prove_nonexistence(&attendee_email_value.into())?;
     let blacklisted_email_dict_value = Value::Dictionary(blacklisted_emails.clone());
     // Create a main pod referencing this signed pod with some statements
     let mut builder = MainPodBuilder::new(params);
@@ -422,6 +431,6 @@ pub fn tickets_pod_full_flow() -> Result<MainPodBuilder> {
         &signed_pod,
         123,
         true,
-        &Dictionary::new(&HashMap::new())?,
+        &Dictionary::new(HashMap::new())?,
     )
 }

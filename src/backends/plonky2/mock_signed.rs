@@ -44,9 +44,19 @@ pub struct MockSignedPod {
     dict: Dictionary,
 }
 
+impl MockSignedPod {
+    pub fn deserialize(id: PodId, signature: String, dict: Dictionary) -> Self {
+        Self {
+            id,
+            signature,
+            dict,
+        }
+    }
+}
+
 impl Pod for MockSignedPod {
     fn verify(&self) -> bool {
-        // Verify type
+        // 1. Verify type
         let value_at_type = match self.dict.get(&hash_str(KEY_TYPE).into()) {
             Ok(v) => v,
             Err(_) => return false,
@@ -55,7 +65,7 @@ impl Pod for MockSignedPod {
             return false;
         }
 
-        // Verify id
+        // 2. Verify id
         let mt = match MerkleTree::new(
             MAX_DEPTH,
             &self
@@ -72,7 +82,7 @@ impl Pod for MockSignedPod {
             return false;
         }
 
-        // Verify signature
+        // 3. Verify signature
         let pk_hash = match self.dict.get(&hash_str(KEY_SIGNER).into()) {
             Ok(v) => v,
             Err(_) => return false,
@@ -99,6 +109,10 @@ impl Pod for MockSignedPod {
 
     fn into_any(self: Box<Self>) -> Box<dyn Any> {
         self
+    }
+
+    fn serialized_proof(&self) -> String {
+        self.signature.to_string()
     }
 }
 

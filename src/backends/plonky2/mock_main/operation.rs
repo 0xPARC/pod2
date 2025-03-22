@@ -1,16 +1,27 @@
-use anyhow::{anyhow, Result};
-use std::fmt;
-
 use super::Statement;
 use crate::{
     backends::plonky2::primitives::merkletree::MerkleProof,
-    middleware::{self, OperationType},
+    middleware::{self, OperationType, Params, ToFields, F},
 };
+use anyhow::{anyhow, Result};
+use plonky2::field::types::{Field, PrimeField64};
+use serde::{Deserialize, Serialize};
+use std::fmt;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperationArg {
     None,
     Index(usize),
+}
+
+impl ToFields for OperationArg {
+    fn to_fields(&self, _params: &Params) -> Vec<F> {
+        let f = match self {
+            Self::None => F::ZERO,
+            Self::Index(i) => F::from_canonical_usize(*i),
+        };
+        vec![f]
+    }
 }
 
 impl OperationArg {
@@ -19,16 +30,22 @@ impl OperationArg {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperationAux {
     None,
     MerkleProofIndex(usize),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Operation(pub OperationType, pub Vec<OperationArg>, pub OperationAux);
 
 impl Operation {
+    pub fn op_type(&self) -> OperationType {
+        self.0.clone()
+    }
+    pub fn args(&self) -> &[OperationArg] {
+        &self.1
+    }
     pub fn deref(
         &self,
         statements: &[Statement],

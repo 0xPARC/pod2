@@ -1,7 +1,10 @@
 use anyhow::{anyhow, Result};
+use base64::prelude::*;
 use itertools::Itertools;
+use log::error;
 use plonky2::hash::poseidon::PoseidonHash;
 use plonky2::plonk::config::Hasher;
+use serde::{Deserialize, Serialize};
 use std::any::Any;
 use std::fmt;
 
@@ -28,14 +31,14 @@ impl PodProver for MockProver {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MockMainPod {
     params: Params,
     id: PodId,
-    input_signed_pods: Vec<Box<dyn Pod>>,
-    input_main_pods: Vec<Box<dyn Pod>>,
+    //   input_signed_pods: Vec<Box<dyn Pod>>,
+    //   input_main_pods: Vec<Box<dyn Pod>>,
     // New statements introduced by this pod
-    input_statements: Vec<Statement>,
+    //   input_statements: Vec<Statement>,
     public_statements: Vec<Statement>,
     operations: Vec<Operation>,
     // All statements (inherited + new)
@@ -285,7 +288,7 @@ impl MockMainPod {
             let aux = Self::find_op_aux(merkle_proofs, &mid_aux)?;
 
             Self::pad_operation_args(params, &mut args);
-            operations.push(Operation(op.code(), args, aux));
+            operations.push(Operation(op.op_type(), args, aux));
         }
         Ok(operations)
     }
@@ -297,7 +300,6 @@ impl MockMainPod {
     fn process_public_statements_operations(
         params: &Params,
         statements: &[Statement],
-        merkle_proofs: &[MerkleProof],
         mut operations: Vec<Operation>,
     ) -> Result<Vec<Operation>> {
         let offset_public_statements = statements.len() - params.max_public_statements;
@@ -350,12 +352,8 @@ impl MockMainPod {
             &merkle_proofs,
             inputs.operations,
         )?;
-        let operations = Self::process_public_statements_operations(
-            params,
-            &statements,
-            &merkle_proofs,
-            operations,
-        )?;
+        let operations =
+            Self::process_public_statements_operations(params, &statements, operations)?;
 
         let input_signed_pods = inputs
             .signed_pods
@@ -382,9 +380,9 @@ impl MockMainPod {
         Ok(Self {
             params: params.clone(),
             id,
-            input_signed_pods,
-            input_main_pods,
-            input_statements,
+            //  input_signed_pods,
+            //  input_main_pods,
+            //  input_statements,
             public_statements,
             statements,
             operations,
@@ -415,22 +413,33 @@ impl MockMainPod {
     fn pad_operation_args(params: &Params, args: &mut Vec<OperationArg>) {
         fill_pad(args, OperationArg::None, params.max_operation_args)
     }
+
+    pub fn deserialize(serialized: String) -> Result<Self> {
+        let proof = String::from_utf8(BASE64_STANDARD.decode(&serialized)?)
+            .map_err(|e| anyhow::anyhow!("Invalid base64 encoding: {}", e))?;
+        let pod: MockMainPod = serde_json::from_str(&proof)
+            .map_err(|e| anyhow::anyhow!("Failed to parse proof: {}", e))?;
+
+        Ok(pod)
+    }
 }
 
 pub fn hash_statements(statements: &[Statement], _params: &Params) -> middleware::Hash {
     let field_elems = statements
         .iter()
-        .flat_map(|statement| statement.clone().to_fields(_params).0)
+        .flat_map(|statement| statement.clone().to_fields(_params))
         .collect::<Vec<_>>();
     Hash(PoseidonHash::hash_no_pad(&field_elems).elements)
 }
 
 impl Pod for MockMainPod {
     fn verify(&self) -> bool {
+        // 1. TODO: Verify input pods
+
         let input_statement_offset = self.offset_input_statements();
         // get the input_statements from the self.statements
         let input_statements = &self.statements[input_statement_offset..];
-        // get the id out of the public statements, and ensure it is equal to self.id
+        // 2. get the id out of the public statements, and ensure it is equal to self.id
         let ids_match = self.id == PodId(hash_statements(&self.public_statements, &self.params));
         // find a ValueOf statement from the public statements with key=KEY_TYPE and check that the
         // value is PodType::MockMainPod
@@ -447,7 +456,7 @@ impl Pod for MockMainPod {
                     }
             })
             .is_some();
-        // check that all `input_statements` of type `ValueOf` with origin=SELF have unique keys
+        // 3. check that all `input_statements` of type `ValueOf` with origin=SELF have unique keys
         // (no duplicates)
         // TODO: Instead of doing this, do a uniqueness check when verifying the output of a
         // `NewValue` operation.
@@ -477,7 +486,9 @@ impl Pod for MockMainPod {
                 .collect::<Vec<_>>();
             !(0..key_id_pairs.len() - 1).any(|i| key_id_pairs[i + 1..].contains(&key_id_pairs[i]))
         };
-        // verify that all `input_statements` are correctly generated
+        // 4. TODO: Verify type
+
+        // 5. verify that all `input_statements` are correctly generated
         // by `self.operations` (where each operation can only access previous statements)
         let statement_check = input_statements
             .iter()
@@ -489,10 +500,22 @@ impl Pod for MockMainPod {
                         &self.merkle_proofs,
                     )
                     .unwrap()
-                    .check(&self.params, &s.clone().try_into().unwrap())
+                    .check_and_log(&self.params, &s.clone().try_into().unwrap())
             })
             .collect::<Result<Vec<_>>>()
             .unwrap();
+        if !ids_match {
+            error!("Verification failed: POD ID is incorrect.");
+        }
+        if !has_type_statement {
+            error!("Verification failed: POD does not have type statement.");
+        }
+        if !value_ofs_unique {
+            error!("Verification failed: Repeated ValueOf");
+        }
+        if !statement_check.iter().all(|b| *b) {
+            error!("Verification failed: Statement did not check.")
+        }
         ids_match && has_type_statement && value_ofs_unique & statement_check.into_iter().all(|b| b)
     }
     fn id(&self) -> PodId {
@@ -527,6 +550,10 @@ impl Pod for MockMainPod {
     fn into_any(self: Box<Self>) -> Box<dyn Any> {
         self
     }
+
+    fn serialized_proof(&self) -> String {
+        BASE64_STANDARD.encode(serde_json::to_string(self).unwrap())
+    }
 }
 
 #[cfg(test)]
@@ -543,8 +570,10 @@ pub mod tests {
     #[test]
     fn test_mock_main_zu_kyc() -> Result<()> {
         let params = middleware::Params::default();
-        let sanctions_values = ["A343434340"].map(|s| crate::middleware::Value::from(hash_str(s)));
-        let sanction_set = crate::frontend::Value::Set(Set::new(&sanctions_values.to_vec())?);
+        let sanctions_values = ["A343434340"].map(|s| crate::frontend::Value::from(s));
+        let sanction_set = crate::frontend::Value::Set(crate::frontend::containers::Set::new(
+            sanctions_values.to_vec(),
+        )?);
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params, &sanction_set);

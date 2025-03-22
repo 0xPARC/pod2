@@ -1,14 +1,17 @@
-use std::fmt;
-
 use anyhow::{anyhow, Result};
+use log::error;
+use plonky2::field::types::Field;
+use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::iter;
 
-use super::{CustomPredicateRef, NativePredicate, Statement, StatementArg};
+use super::{CustomPredicateRef, NativePredicate, Statement, StatementArg, ToFields, F};
 use crate::{
     backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree},
     middleware::{AnchoredKey, Params, Predicate, Value, SELF},
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperationType {
     Native(NativeOperation),
     Custom(CustomPredicateRef),
@@ -30,7 +33,23 @@ impl fmt::Display for OperationAux {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+impl ToFields for OperationType {
+    fn to_fields(&self, params: &Params) -> Vec<F> {
+        let mut fields: Vec<F> = match self {
+            Self::Native(p) => iter::once(F::from_canonical_u64(1))
+                .chain(p.to_fields(params))
+                .collect(),
+            Self::Custom(CustomPredicateRef(pb, i)) => iter::once(F::from_canonical_u64(3))
+                .chain(pb.hash(params).0)
+                .chain(iter::once(F::from_canonical_usize(*i)))
+                .collect(),
+        };
+        fields.resize_with(Params::operation_type_size(), || F::from_canonical_u64(0));
+        fields
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NativeOperation {
     None = 0,
     NewEntry = 1,
@@ -47,6 +66,12 @@ pub enum NativeOperation {
     SumOf = 13,
     ProductOf = 14,
     MaxOf = 15,
+}
+
+impl ToFields for NativeOperation {
+    fn to_fields(&self, _params: &Params) -> Vec<F> {
+        vec![F::from_canonical_u64(*self as u64)]
+    }
 }
 
 impl OperationType {
@@ -118,7 +143,7 @@ pub enum Operation {
 }
 
 impl Operation {
-    pub fn code(&self) -> OperationType {
+    pub fn op_type(&self) -> OperationType {
         type OT = OperationType;
         use NativeOperation::*;
         match self {
@@ -228,7 +253,7 @@ impl Operation {
     /// The outer Result is error handling
     pub fn output_statement(&self) -> Result<Option<Statement>> {
         use Statement::*;
-        let pred: Option<Predicate> = self.code().output_predicate();
+        let pred: Option<Predicate> = self.op_type().output_predicate();
 
         let st_args: Option<Vec<StatementArg>> = match self {
             Self::None => Some(vec![]),
@@ -364,6 +389,15 @@ impl Operation {
             .map(|(pred, st_args)| Statement::from_args(pred, st_args));
         x.transpose()
     }
+    /// Checks the given operation against a statement, and prints information if the check does not pass
+    pub fn check_and_log(&self, params: &Params, output_statement: &Statement) -> Result<bool> {
+        let valid: bool = self.check(params, output_statement)?;
+        if !valid {
+            error!("Check failed on the following statement");
+            error!("{}", output_statement);
+        }
+        Ok(valid)
+    }
     /// Checks the given operation against a statement.
     pub fn check(&self, _params: &Params, output_statement: &Statement) -> Result<bool> {
         use Statement::*;
@@ -447,10 +481,16 @@ impl Operation {
     }
 }
 
+impl ToFields for Operation {
+    fn to_fields(&self, params: &Params) -> Vec<F> {
+        todo!()
+    }
+}
+
 impl fmt::Display for Operation {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "middleware::Operation:")?;
-        writeln!(f, "  {:?} ", self.code())?;
+        writeln!(f, "  {:?} ", self.op_type())?;
         for arg in self.args().iter() {
             writeln!(f, "    {}", arg)?;
         }

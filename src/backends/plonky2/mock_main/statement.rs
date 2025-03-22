@@ -1,16 +1,20 @@
 use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use crate::middleware::{
     self, AnchoredKey, NativePredicate, Params, Predicate, StatementArg, ToFields,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Statement(pub Predicate, pub Vec<StatementArg>);
 
 impl Statement {
     pub fn is_none(&self) -> bool {
         self.0 == Predicate::Native(NativePredicate::None)
+    }
+    pub fn predicate(&self) -> Predicate {
+        self.0.clone()
     }
     /// Argument method. Trailing Nones are filtered out.
     pub fn args(&self) -> Vec<StatementArg> {
@@ -23,22 +27,10 @@ impl Statement {
 }
 
 impl ToFields for Statement {
-    fn to_fields(&self, _params: &Params) -> (Vec<middleware::F>, usize) {
-        let (native_statement_f, native_statement_f_len) = self.0.to_fields(_params);
-        let (vec_statementarg_f, vec_statementarg_f_len) = self
-            .1
-            .clone()
-            .into_iter()
-            .map(|statement_arg| statement_arg.to_fields(_params))
-            .fold((Vec::new(), 0), |mut acc, (f, l)| {
-                acc.0.extend(f);
-                acc.1 += l;
-                acc
-            });
-        (
-            [native_statement_f, vec_statementarg_f].concat(),
-            native_statement_f_len + vec_statementarg_f_len,
-        )
+    fn to_fields(&self, _params: &Params) -> Vec<middleware::F> {
+        let mut fields = self.0.to_fields(_params);
+        fields.extend(self.1.iter().flat_map(|arg| arg.to_fields(_params)));
+        fields
     }
 }
 
@@ -107,7 +99,7 @@ impl TryFrom<Statement> for middleware::Statement {
 
 impl From<middleware::Statement> for Statement {
     fn from(s: middleware::Statement) -> Self {
-        match s.code() {
+        match s.predicate() {
             middleware::Predicate::Native(c) => Statement(
                 middleware::Predicate::Native(c),
                 s.args().into_iter().collect(),

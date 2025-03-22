@@ -21,39 +21,48 @@ use plonky2::{
     },
     plonk::circuit_builder::CircuitBuilder,
 };
+use std::iter;
 
 use crate::backends::plonky2::basetypes::{Hash, Value, D, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE};
+use crate::backends::plonky2::common::{
+    CircuitBuilderPod, OperationTarget, StatementTarget, ValueTarget,
+};
 use crate::backends::plonky2::primitives::merkletree::MerkleProof;
 
-/// `MerkleProofCircuit` allows to verify both proofs of existence and proofs
+/// `MerkleProofGate` allows to verify both proofs of existence and proofs
 /// non-existence with the same circuit.
-/// If only proofs of existence are needed, use `MerkleProofExistenceCircuit`,
+/// If only proofs of existence are needed, use `MerkleProofExistenceGate`,
 /// which requires less amount of constraints.
-pub struct MerkleProofCircuit<const MAX_DEPTH: usize> {
-    root: HashOutTarget,
-    key: Vec<Target>,
-    value: Vec<Target>,
-    existence: BoolTarget,
-    siblings: Vec<HashOutTarget>,
-    case_ii_selector: BoolTarget, // for case ii)
-    other_key: Vec<Target>,
-    other_value: Vec<Target>,
+pub struct MerkleProofGate {
+    pub max_depth: usize,
 }
 
-impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
+pub struct MerkleProofTarget {
+    max_depth: usize,
+    pub root: HashOutTarget,
+    pub key: ValueTarget,
+    pub value: ValueTarget,
+    pub existence: BoolTarget,
+    pub siblings: Vec<HashOutTarget>,
+    pub case_ii_selector: BoolTarget, // for case ii)
+    pub other_key: ValueTarget,
+    pub other_value: ValueTarget,
+}
+
+impl MerkleProofGate {
     /// creates the targets and defines the logic of the circuit
-    pub fn add_targets(builder: &mut CircuitBuilder<F, D>) -> Result<Self> {
+    pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MerkleProofTarget> {
         // create the targets
-        let key = builder.add_virtual_targets(VALUE_SIZE);
-        let value = builder.add_virtual_targets(VALUE_SIZE);
+        let key = builder.add_virtual_value();
+        let value = builder.add_virtual_value();
         // from proof struct:
         let existence = builder.add_virtual_bool_target_safe();
-        // siblings are padded till MAX_DEPTH length
-        let siblings = builder.add_virtual_hashes(MAX_DEPTH);
+        // siblings are padded till max_depth length
+        let siblings = builder.add_virtual_hashes(self.max_depth);
 
         let case_ii_selector = builder.add_virtual_bool_target_safe();
-        let other_key = builder.add_virtual_targets(VALUE_SIZE);
-        let other_value = builder.add_virtual_targets(VALUE_SIZE);
+        let other_key = builder.add_virtual_value();
+        let other_value = builder.add_virtual_value();
 
         // We have 3 cases for when computing the Leaf's hash:
         // - existence: leaf contains the given key & value
@@ -87,12 +96,8 @@ impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
         // of existence or of non-existence, ie:
         // k = key * existence + other_key * (1-existence)
         // v = value * existence + other_value * (1-existence)
-        let k: Vec<Target> = (0..4)
-            .map(|j| builder.select(existence, key[j], other_key[j]))
-            .collect();
-        let v: Vec<Target> = (0..4)
-            .map(|j| builder.select(existence, value[j], other_value[j]))
-            .collect();
+        let k = builder.select_value(existence, key, other_key);
+        let v = builder.select_value(existence, value, other_value);
 
         // get leaf's hash for the selected k & v
         let h = kv_hash_target(builder, &k, &v);
@@ -107,16 +112,17 @@ impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
         );
 
         // get key's path
-        let path = keypath_target::<MAX_DEPTH>(builder, &key);
+        let path = keypath_target(self.max_depth, builder, &key);
 
         // compute the root for the given siblings and the computed leaf_hash
         // (this is for the three cases (existence, non-existence case i, and
         // non-existence case ii).
         // This root will be assigned in the `set_targets` method, and it is a
         // public input.
-        let root = compute_root_from_leaf::<MAX_DEPTH>(builder, &path, &leaf_hash, &siblings)?;
+        let root = compute_root_from_leaf(self.max_depth, builder, &path, &leaf_hash, &siblings)?;
 
-        Ok(Self {
+        Ok(MerkleProofTarget {
+            max_depth: self.max_depth,
             existence,
             root,
             siblings,
@@ -127,7 +133,9 @@ impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
             other_value,
         })
     }
+}
 
+impl MerkleProofTarget {
     /// assigns the given values to the targets
     pub fn set_targets(
         &self,
@@ -139,13 +147,13 @@ impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
         value: Value,
     ) -> Result<()> {
         pw.set_hash_target(self.root, HashOut::from_vec(root.0.to_vec()))?;
-        pw.set_target_arr(&self.key, &key.0)?;
-        pw.set_target_arr(&self.value, &value.0)?;
+        pw.set_target_arr(&self.key.elements, &key.0)?;
+        pw.set_target_arr(&self.value.elements, &value.0)?;
         pw.set_bool_target(self.existence, existence)?;
 
-        // pad siblings with zeros to length MAX_DEPTH
+        // pad siblings with zeros to length max_depth
         let mut siblings = proof.siblings.clone();
-        siblings.resize(MAX_DEPTH, EMPTY_HASH);
+        siblings.resize(self.max_depth, EMPTY_HASH);
         assert_eq!(self.siblings.len(), siblings.len());
 
         for (i, sibling) in siblings.iter().enumerate() {
@@ -156,14 +164,14 @@ impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
             Some((k, v)) if !existence => {
                 // non-existence case ii) expected leaf does exist but it has a different key
                 pw.set_bool_target(self.case_ii_selector, true)?;
-                pw.set_target_arr(&self.other_key, &k.0)?;
-                pw.set_target_arr(&self.other_value, &v.0)?;
+                pw.set_target_arr(&self.other_key.elements, &k.0)?;
+                pw.set_target_arr(&self.other_value.elements, &v.0)?;
             }
             _ => {
                 // existence & non-existence case i) expected leaf does not exist
                 pw.set_bool_target(self.case_ii_selector, false)?;
-                pw.set_target_arr(&self.other_key, &EMPTY_VALUE.0)?;
-                pw.set_target_arr(&self.other_value, &EMPTY_VALUE.0)?;
+                pw.set_target_arr(&self.other_key.elements, &EMPTY_VALUE.0)?;
+                pw.set_target_arr(&self.other_value.elements, &EMPTY_VALUE.0)?;
             }
         }
 
@@ -173,41 +181,49 @@ impl<const MAX_DEPTH: usize> MerkleProofCircuit<MAX_DEPTH> {
 
 /// `MerkleProofExistenceCircuit` allows to verify proofs of existence only. If
 /// proofs of non-existence are needed, use `MerkleProofCircuit`.
-pub struct MerkleProofExistenceCircuit<const MAX_DEPTH: usize> {
-    root: HashOutTarget,
-    key: Vec<Target>,
-    value: Vec<Target>,
-    siblings: Vec<HashOutTarget>,
+pub struct MerkleProofExistenceGate {
+    pub max_depth: usize,
 }
 
-impl<const MAX_DEPTH: usize> MerkleProofExistenceCircuit<MAX_DEPTH> {
+pub struct MerkleProofExistenceTarget {
+    max_depth: usize,
+    pub root: HashOutTarget,
+    pub key: ValueTarget,
+    pub value: ValueTarget,
+    pub siblings: Vec<HashOutTarget>,
+}
+
+impl MerkleProofExistenceGate {
     /// creates the targets and defines the logic of the circuit
-    pub fn add_targets(builder: &mut CircuitBuilder<F, D>) -> Result<Self> {
+    pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MerkleProofExistenceTarget> {
         // create the targets
-        let key = builder.add_virtual_targets(VALUE_SIZE);
-        let value = builder.add_virtual_targets(VALUE_SIZE);
-        // siblings are padded till MAX_DEPTH length
-        let siblings = builder.add_virtual_hashes(MAX_DEPTH);
+        let key = builder.add_virtual_value();
+        let value = builder.add_virtual_value();
+        // siblings are padded till max_depth length
+        let siblings = builder.add_virtual_hashes(self.max_depth);
 
         // get leaf's hash for the selected k & v
         let leaf_hash = kv_hash_target(builder, &key, &value);
 
         // get key's path
-        let path = keypath_target::<MAX_DEPTH>(builder, &key);
+        let path = keypath_target(self.max_depth, builder, &key);
 
         // compute the root for the given siblings and the computed leaf_hash.
         // This root will be assigned in the `set_targets` method, and it is a
         // public input.
-        let root = compute_root_from_leaf::<MAX_DEPTH>(builder, &path, &leaf_hash, &siblings)?;
+        let root = compute_root_from_leaf(self.max_depth, builder, &path, &leaf_hash, &siblings)?;
 
-        Ok(Self {
+        Ok(MerkleProofExistenceTarget {
+            max_depth: self.max_depth,
             root,
             siblings,
             key,
             value,
         })
     }
+}
 
+impl MerkleProofExistenceTarget {
     /// assigns the given values to the targets
     pub fn set_targets(
         &self,
@@ -218,12 +234,12 @@ impl<const MAX_DEPTH: usize> MerkleProofExistenceCircuit<MAX_DEPTH> {
         value: Value,
     ) -> Result<()> {
         pw.set_hash_target(self.root, HashOut::from_vec(root.0.to_vec()))?;
-        pw.set_target_arr(&self.key, &key.0)?;
-        pw.set_target_arr(&self.value, &value.0)?;
+        pw.set_target_arr(&self.key.elements, &key.0)?;
+        pw.set_target_arr(&self.value.elements, &value.0)?;
 
-        // pad siblings with zeros to length MAX_DEPTH
+        // pad siblings with zeros to length max_depth
         let mut siblings = proof.siblings.clone();
-        siblings.resize(MAX_DEPTH, EMPTY_HASH);
+        siblings.resize(self.max_depth, EMPTY_HASH);
         assert_eq!(self.siblings.len(), siblings.len());
 
         for (i, sibling) in siblings.iter().enumerate() {
@@ -234,13 +250,14 @@ impl<const MAX_DEPTH: usize> MerkleProofExistenceCircuit<MAX_DEPTH> {
     }
 }
 
-fn compute_root_from_leaf<const MAX_DEPTH: usize>(
+fn compute_root_from_leaf(
+    max_depth: usize,
     builder: &mut CircuitBuilder<F, D>,
     path: &Vec<BoolTarget>,
     leaf_hash: &HashOutTarget,
     siblings: &Vec<HashOutTarget>,
 ) -> Result<HashOutTarget> {
-    assert_eq!(siblings.len(), MAX_DEPTH);
+    assert_eq!(siblings.len(), max_depth);
     // Convenience constants
     let zero = builder.zero();
     let one = builder.one();
@@ -295,23 +312,24 @@ fn compute_root_from_leaf<const MAX_DEPTH: usize>(
 
 // Note: this logic is in its own method for easy of reusability but
 // specially to be able to test it isolated.
-fn keypath_target<const MAX_DEPTH: usize>(
+fn keypath_target(
+    max_depth: usize,
     builder: &mut CircuitBuilder<F, D>,
-    key: &Vec<Target>,
+    key: &ValueTarget,
 ) -> Vec<BoolTarget> {
-    assert_eq!(key.len(), VALUE_SIZE);
-
-    let n_complete_field_elems: usize = MAX_DEPTH / F::BITS;
-    let n_extra_bits: usize = MAX_DEPTH - n_complete_field_elems * F::BITS;
+    let n_complete_field_elems: usize = max_depth / F::BITS;
+    let n_extra_bits: usize = max_depth - n_complete_field_elems * F::BITS;
 
     let path: Vec<BoolTarget> = key
+        .elements
         .iter()
         .take(n_complete_field_elems)
         .flat_map(|e| builder.split_le(*e, F::BITS))
         .collect();
 
     let extra_bits = if n_extra_bits > 0 {
-        let extra_bits: Vec<BoolTarget> = builder.split_le(key[n_complete_field_elems], F::BITS);
+        let extra_bits: Vec<BoolTarget> =
+            builder.split_le(key.elements[n_complete_field_elems], F::BITS);
         extra_bits[..n_extra_bits].to_vec()
         // Note: ideally we would do:
         //     let extra_bits = builder.split_le(key[n_complete_field_elems], n_extra_bits);
@@ -326,10 +344,16 @@ fn keypath_target<const MAX_DEPTH: usize>(
 
 fn kv_hash_target(
     builder: &mut CircuitBuilder<F, D>,
-    key: &Vec<Target>,
-    value: &Vec<Target>,
+    key: &ValueTarget,
+    value: &ValueTarget,
 ) -> HashOutTarget {
-    let inputs: Vec<Target> = [key.clone(), value.clone(), vec![builder.one()]].concat();
+    let inputs = key
+        .elements
+        .iter()
+        .chain(value.elements.iter())
+        .cloned()
+        .chain(iter::once(builder.one()))
+        .collect();
     builder.hash_n_to_hash_no_pad::<PoseidonHash>(inputs)
 }
 
@@ -345,41 +369,35 @@ pub mod tests {
 
     #[test]
     fn test_keypath() -> Result<()> {
-        test_keypath_opt::<10>()?;
-        test_keypath_opt::<16>()?;
-        test_keypath_opt::<32>()?;
-        test_keypath_opt::<40>()?;
-        test_keypath_opt::<64>()?;
-        test_keypath_opt::<128>()?;
-        test_keypath_opt::<130>()?;
-        test_keypath_opt::<250>()?;
-        test_keypath_opt::<256>()?;
+        for max_depth in [10, 16, 32, 40, 64, 128, 130, 250, 256] {
+            test_keypath_opt(max_depth)?;
+        }
         Ok(())
     }
 
-    fn test_keypath_opt<const MD: usize>() -> Result<()> {
+    fn test_keypath_opt(max_depth: usize) -> Result<()> {
         for i in 0..5 {
             let config = CircuitConfig::standard_recursion_config();
             let mut builder = CircuitBuilder::<F, D>::new(config);
             let mut pw = PartialWitness::<F>::new();
 
             let key = Value::from(hash_value(&Value::from(i)));
-            let expected_path = keypath(MD, key)?;
+            let expected_path = keypath(max_depth, key)?;
 
             // small circuit logic to check
             // expected_path_targ==keypath_target(key_targ)
-            let expected_path_targ: Vec<BoolTarget> = (0..MD)
+            let expected_path_targ: Vec<BoolTarget> = (0..max_depth)
                 .map(|_| builder.add_virtual_bool_target_safe())
                 .collect();
-            let key_targ = builder.add_virtual_targets(VALUE_SIZE);
-            let computed_path_targ = keypath_target::<MD>(&mut builder, &key_targ);
-            for i in 0..MD {
+            let key_targ = builder.add_virtual_value();
+            let computed_path_targ = keypath_target(max_depth, &mut builder, &key_targ);
+            for i in 0..max_depth {
                 builder.connect(computed_path_targ[i].target, expected_path_targ[i].target);
             }
 
             // assign the input values to the targets
-            pw.set_target_arr(&key_targ, &key.0)?;
-            for i in 0..MD {
+            pw.set_target_arr(&key_targ.elements, &key.0)?;
+            for i in 0..max_depth {
                 pw.set_bool_target(expected_path_targ[i], expected_path[i])?;
             }
 
@@ -404,15 +422,15 @@ pub mod tests {
             let mut pw = PartialWitness::<F>::new();
 
             let h_targ = builder.add_virtual_hash();
-            let key_targ = builder.add_virtual_targets(VALUE_SIZE);
-            let value_targ = builder.add_virtual_targets(VALUE_SIZE);
+            let key_targ = builder.add_virtual_value();
+            let value_targ = builder.add_virtual_value();
 
             let computed_h = kv_hash_target(&mut builder, &key_targ, &value_targ);
             builder.connect_hashes(computed_h, h_targ);
 
             // assign the input values to the targets
-            pw.set_target_arr(&key_targ, &key.0)?;
-            pw.set_target_arr(&value_targ, &value.0)?;
+            pw.set_target_arr(&key_targ.elements, &key.0)?;
+            pw.set_target_arr(&value_targ.elements, &value.0)?;
             pw.set_hash_target(h_targ, HashOut::from_vec(h.0.to_vec()))?;
 
             // generate & verify proof
@@ -425,40 +443,28 @@ pub mod tests {
 
     #[test]
     fn test_merkleproof_verify_existence() -> Result<()> {
-        test_merkleproof_verify_opt::<10>(true)?;
-        test_merkleproof_verify_opt::<16>(true)?;
-        test_merkleproof_verify_opt::<32>(true)?;
-        test_merkleproof_verify_opt::<40>(true)?;
-        test_merkleproof_verify_opt::<64>(true)?;
-        test_merkleproof_verify_opt::<128>(true)?;
-        test_merkleproof_verify_opt::<130>(true)?;
-        test_merkleproof_verify_opt::<250>(true)?;
-        test_merkleproof_verify_opt::<256>(true)?;
+        for max_depth in [10, 16, 32, 40, 64, 128, 130, 250, 256] {
+            test_merkleproof_verify_opt(max_depth, true)?;
+        }
         Ok(())
     }
 
     #[test]
     fn test_merkleproof_verify_nonexistence() -> Result<()> {
-        test_merkleproof_verify_opt::<10>(false)?;
-        test_merkleproof_verify_opt::<16>(false)?;
-        test_merkleproof_verify_opt::<32>(false)?;
-        test_merkleproof_verify_opt::<40>(false)?;
-        test_merkleproof_verify_opt::<64>(false)?;
-        test_merkleproof_verify_opt::<128>(false)?;
-        test_merkleproof_verify_opt::<130>(false)?;
-        test_merkleproof_verify_opt::<250>(false)?;
-        test_merkleproof_verify_opt::<256>(false)?;
+        for max_depth in [10, 16, 32, 40, 64, 128, 130, 250, 256] {
+            test_merkleproof_verify_opt(max_depth, false)?;
+        }
         Ok(())
     }
 
     // test logic to be reused both by the existence & nonexistence tests
-    fn test_merkleproof_verify_opt<const MD: usize>(existence: bool) -> Result<()> {
+    fn test_merkleproof_verify_opt(max_depth: usize, existence: bool) -> Result<()> {
         let mut kvs: HashMap<Value, Value> = HashMap::new();
         for i in 0..10 {
             kvs.insert(Value::from(hash_value(&Value::from(i))), Value::from(i));
         }
 
-        let tree = MerkleTree::new(MD, &kvs)?;
+        let tree = MerkleTree::new(max_depth, &kvs)?;
 
         let (key, value, proof) = if existence {
             let key = Value::from(hash_value(&Value::from(5)));
@@ -472,9 +478,9 @@ pub mod tests {
         assert_eq!(proof.existence, existence);
 
         if existence {
-            MerkleTree::verify(MD, tree.root(), &proof, &key, &value)?;
+            MerkleTree::verify(max_depth, tree.root(), &proof, &key, &value)?;
         } else {
-            MerkleTree::verify_nonexistence(MD, tree.root(), &proof, &key)?;
+            MerkleTree::verify_nonexistence(max_depth, tree.root(), &proof, &key)?;
         }
 
         // circuit
@@ -482,7 +488,7 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = MerkleProofCircuit::<MD>::add_targets(&mut builder)?;
+        let targets = MerkleProofGate { max_depth }.eval(&mut builder)?;
         targets.set_targets(&mut pw, existence, tree.root(), proof, key, value)?;
 
         // generate & verify proof
@@ -495,39 +501,33 @@ pub mod tests {
 
     #[test]
     fn test_merkleproof_only_existence_verify() -> Result<()> {
-        test_merkleproof_only_existence_verify_opt::<10>()?;
-        test_merkleproof_only_existence_verify_opt::<16>()?;
-        test_merkleproof_only_existence_verify_opt::<32>()?;
-        test_merkleproof_only_existence_verify_opt::<40>()?;
-        test_merkleproof_only_existence_verify_opt::<64>()?;
-        test_merkleproof_only_existence_verify_opt::<128>()?;
-        test_merkleproof_only_existence_verify_opt::<130>()?;
-        test_merkleproof_only_existence_verify_opt::<250>()?;
-        test_merkleproof_only_existence_verify_opt::<256>()?;
+        for max_depth in [10, 16, 32, 40, 64, 128, 130, 250, 256] {
+            test_merkleproof_only_existence_verify_opt(max_depth)?;
+        }
         Ok(())
     }
 
-    fn test_merkleproof_only_existence_verify_opt<const MD: usize>() -> Result<()> {
+    fn test_merkleproof_only_existence_verify_opt(max_depth: usize) -> Result<()> {
         let mut kvs: HashMap<Value, Value> = HashMap::new();
         for i in 0..10 {
             kvs.insert(Value::from(hash_value(&Value::from(i))), Value::from(i));
         }
 
-        let tree = MerkleTree::new(MD, &kvs)?;
+        let tree = MerkleTree::new(max_depth, &kvs)?;
 
         let key = Value::from(hash_value(&Value::from(5)));
         let (value, proof) = tree.prove(&key)?;
         assert_eq!(value, Value::from(5));
         assert_eq!(proof.existence, true);
 
-        MerkleTree::verify(MD, tree.root(), &proof, &key, &value)?;
+        MerkleTree::verify(max_depth, tree.root(), &proof, &key, &value)?;
 
         // circuit
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = MerkleProofExistenceCircuit::<MD>::add_targets(&mut builder)?;
+        let targets = MerkleProofExistenceGate { max_depth }.eval(&mut builder)?;
         targets.set_targets(&mut pw, tree.root(), proof, key, value)?;
 
         // generate & verify proof
@@ -558,19 +558,19 @@ pub mod tests {
         kvs.insert(Value::from(5), Value::from(1005));
         kvs.insert(Value::from(13), Value::from(1013));
 
-        const MD: usize = 5;
-        let tree = MerkleTree::new(MD, &kvs)?;
+        let max_depth = 5;
+        let tree = MerkleTree::new(max_depth, &kvs)?;
         // existence
-        test_merkletree_edgecase_opt::<MD>(&tree, Value::from(5))?;
+        test_merkletree_edgecase_opt(max_depth, &tree, Value::from(5))?;
         // non-existence case i) expected leaf does not exist
-        test_merkletree_edgecase_opt::<MD>(&tree, Value::from(1))?;
+        test_merkletree_edgecase_opt(max_depth, &tree, Value::from(1))?;
         // non-existence case ii) expected leaf does exist but it has a different 'key'
-        test_merkletree_edgecase_opt::<MD>(&tree, Value::from(21))?;
+        test_merkletree_edgecase_opt(max_depth, &tree, Value::from(21))?;
 
         Ok(())
     }
 
-    fn test_merkletree_edgecase_opt<const MD: usize>(tree: &MerkleTree, key: Value) -> Result<()> {
+    fn test_merkletree_edgecase_opt(max_depth: usize, tree: &MerkleTree, key: Value) -> Result<()> {
         let contains = tree.contains(&key)?;
         // generate merkleproof
         let (value, proof) = if contains {
@@ -584,9 +584,9 @@ pub mod tests {
 
         // verify the proof (non circuit)
         if proof.existence {
-            MerkleTree::verify(MD, tree.root(), &proof, &key, &value)?;
+            MerkleTree::verify(max_depth, tree.root(), &proof, &key, &value)?;
         } else {
-            MerkleTree::verify_nonexistence(MD, tree.root(), &proof, &key)?;
+            MerkleTree::verify_nonexistence(max_depth, tree.root(), &proof, &key)?;
         }
 
         // circuit
@@ -594,7 +594,7 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = MerkleProofCircuit::<MD>::add_targets(&mut builder)?;
+        let targets = MerkleProofGate { max_depth }.eval(&mut builder)?;
         targets.set_targets(&mut pw, proof.existence, tree.root(), proof, key, value)?;
 
         // generate & verify proof
@@ -611,8 +611,8 @@ pub mod tests {
         for i in 0..10 {
             kvs.insert(Value::from(i), Value::from(i));
         }
-        const MD: usize = 16;
-        let tree = MerkleTree::new(MD, &kvs)?;
+        let max_depth = 16;
+        let tree = MerkleTree::new(max_depth, &kvs)?;
 
         let key = Value::from(3);
         let (value, proof) = tree.prove(&key)?;
@@ -620,11 +620,11 @@ pub mod tests {
         // build another tree with an extra key-value, so that it has a
         // different root
         kvs.insert(Value::from(100), Value::from(100));
-        let tree2 = MerkleTree::new(MD, &kvs)?;
+        let tree2 = MerkleTree::new(max_depth, &kvs)?;
 
-        MerkleTree::verify(MD, tree.root(), &proof, &key, &value)?;
+        MerkleTree::verify(max_depth, tree.root(), &proof, &key, &value)?;
         assert_eq!(
-            MerkleTree::verify(MD, tree2.root(), &proof, &key, &value)
+            MerkleTree::verify(max_depth, tree2.root(), &proof, &key, &value)
                 .unwrap_err()
                 .to_string(),
             "proof of inclusion does not verify"
@@ -635,7 +635,7 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = MerkleProofCircuit::<MD>::add_targets(&mut builder)?;
+        let targets = MerkleProofGate { max_depth }.eval(&mut builder)?;
         targets.set_targets(&mut pw, true, tree2.root(), proof, key, value)?;
 
         // generate proof, expecting it to fail (since we're using the wrong
