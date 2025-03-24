@@ -137,10 +137,26 @@ impl OperationVerifyGate {
     ) -> Result<OperationVerifyTarget> {
         let _true = builder._true();
         let _false = builder._false();
-        let one = builder.constant(F::ONE);
 
         // Verify that the operation `op` correctly generates the statement `st`.  The operation
         // can reference any of the `prev_statements`.
+        let resolved_op_args = op
+            .args
+            .iter()
+            .flatten()
+            .map(|&i| {
+                StatementTarget::from_flattened(
+                    builder.matrix_row_ref(
+                        &prev_statements
+                            .iter()
+                            .map(|st_targ| st_targ.to_flattened())
+                            .collect::<Vec<_>>(),
+                        i,
+                    ),
+                )
+            })
+            .collect::<Vec<_>>();
+
         // The verification may require aux data which needs to be stored in the
         // `OperationVerifyTarget` so that we can set during witness generation.
 
@@ -152,9 +168,10 @@ impl OperationVerifyGate {
         let op_checks = [
             self.eval_none(builder, st, op),
             self.eval_new_entry(builder, st, op, prev_statements),
-            self.eval_copy(builder, st, op)?,
+            self.eval_copy(builder, st, op, &resolved_op_args)?,
         ];
 
+        // TODO: Replace with `assert_any`.
         let ok = builder.any(op_checks);
 
         builder.connect(ok.target, _true.target);
@@ -171,11 +188,11 @@ impl OperationVerifyGate {
         let expected_op_code = builder.constant(F::from_canonical_u64(
             NativeOperation::ContainsFromEntries as u64,
         ));
-        let op_code_ok = builder.is_equal(op.code[0], expected_op_code);
+        let op_code_ok = builder.is_equal(op.op_type[1], expected_op_code);
 
         let expected_st_code =
             builder.constants(&Predicate::Native(NativePredicate::Equal).to_fields(&self.params));
-        let st_code_ok = builder.is_equal_slice(&st.code, &expected_st_code);
+        let st_code_ok = builder.is_equal_slice(&st.predicate, &expected_st_code);
 
         let expected_statement_args = todo!();
 
@@ -195,11 +212,11 @@ impl OperationVerifyGate {
         let expected_op_code = builder.constant(F::from_canonical_u64(
             NativeOperation::EqualFromEntries as u64,
         ));
-        let op_code_ok = builder.is_equal(op.code[0], expected_op_code);
+        let op_code_ok = builder.is_equal(op.op_type[1], expected_op_code);
 
         let expected_st_code =
             builder.constants(&Predicate::Native(NativePredicate::Equal).to_fields(&self.params));
-        let st_code_ok = builder.is_equal_slice(&st.code, &expected_st_code);
+        let st_code_ok = builder.is_equal_slice(&st.predicate, &expected_st_code);
 
         let expected_statement_args = todo!();
 
@@ -218,11 +235,11 @@ impl OperationVerifyGate {
     ) -> Result<BoolTarget> {
         let expected_op_code =
             builder.constant(F::from_canonical_u64(NativeOperation::GtFromEntries as u64));
-        let op_code_ok = builder.is_equal(op.code[0], expected_op_code);
+        let op_code_ok = builder.is_equal(op.op_type[1], expected_op_code);
 
         let expected_st_code =
             builder.constants(&Predicate::Native(NativePredicate::Equal).to_fields(&self.params));
-        let st_code_ok = builder.is_equal_slice(&st.code, &expected_st_code);
+        let st_code_ok = builder.is_equal_slice(&st.predicate, &expected_st_code);
 
         let expected_statement_args = todo!();
 
@@ -241,11 +258,11 @@ impl OperationVerifyGate {
     ) -> Result<BoolTarget> {
         let expected_op_code =
             builder.constant(F::from_canonical_u64(NativeOperation::LtFromEntries as u64));
-        let op_code_ok = builder.is_equal(op.code[0], expected_op_code);
+        let op_code_ok = builder.is_equal(op.op_type[1], expected_op_code);
 
         let expected_st_code =
             builder.constants(&Predicate::Native(NativePredicate::Equal).to_fields(&self.params));
-        let st_code_ok = builder.is_equal_slice(&st.code, &expected_st_code);
+        let st_code_ok = builder.is_equal_slice(&st.predicate, &expected_st_code);
 
         let expected_statement_args = todo!();
 
@@ -264,7 +281,7 @@ impl OperationVerifyGate {
     ) -> BoolTarget {
         let expected_op_code =
             builder.constant(F::from_canonical_u64(NativeOperation::None as u64));
-        let op_code_ok = builder.is_equal(op.code[0], expected_op_code);
+        let op_code_ok = builder.is_equal(op.op_type[1], expected_op_code);
 
         let expected_statement_flattened =
             builder.constants(&Statement::None.to_fields(&self.params));
@@ -282,11 +299,11 @@ impl OperationVerifyGate {
     ) -> BoolTarget {
         let expected_op_code =
             builder.constant(F::from_canonical_u64(NativeOperation::NewEntry as u64));
-        let op_code_ok = builder.is_equal(op.code[0], expected_op_code);
+        let op_code_ok = builder.is_equal(op.op_type[1], expected_op_code);
 
         let expected_st_code =
             builder.constants(&Predicate::Native(NativePredicate::ValueOf).to_fields(&self.params));
-        let st_code_ok = builder.is_equal_slice(&st.code, &expected_st_code);
+        let st_code_ok = builder.is_equal_slice(&st.predicate, &expected_st_code);
 
         let expected_arg_prefix = builder.constants(
             &StatementArg::Key(AnchoredKey(SELF, EMPTY_HASH)).to_fields(&self.params)[..VALUE_SIZE],
@@ -310,13 +327,13 @@ impl OperationVerifyGate {
         builder: &mut CircuitBuilder<F, D>,
         st: &StatementTarget,
         op: &OperationTarget,
+        resolved_op_args: &[StatementTarget],
     ) -> Result<BoolTarget> {
         let expected_op_code =
             builder.constant(F::from_canonical_u64(NativeOperation::CopyStatement as u64));
-        let op_code_ok = builder.is_equal(op.code[0], expected_op_code);
+        let op_code_ok = builder.is_equal(op.op_type[1], expected_op_code);
 
-        let expected_statement_flattened =
-            op.args.get(0).ok_or(anyhow!("Missing op arg for copy."))?;
+        let expected_statement_flattened = &resolved_op_args[0].to_flattened();
         let st_ok = builder.is_equal_slice(&st.to_flattened(), expected_statement_flattened);
 
         Ok(builder.all([op_code_ok, st_ok]))
@@ -470,8 +487,8 @@ impl MainPodVerifyCircuit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backends::plonky2::basetypes::C;
     use crate::backends::plonky2::mock_main;
+    use crate::backends::plonky2::{basetypes::C, mock_main::OperationArg};
     use crate::middleware::OperationType;
     use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
 
@@ -553,6 +570,13 @@ mod tests {
         let st: mock_main::Statement = Statement::None.into();
         let op = mock_main::Operation(OperationType::Native(NativeOperation::None), vec![]);
         let prev_statements = vec![Statement::None.into()];
+        operation_verify(st.clone(), op, prev_statements.clone())?;
+
+        // Copy
+        let op = mock_main::Operation(
+            OperationType::Native(NativeOperation::CopyStatement),
+            vec![OperationArg::Index(0)],
+        );
         operation_verify(st, op, prev_statements)?;
 
         Ok(())

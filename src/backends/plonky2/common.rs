@@ -11,7 +11,7 @@ use plonky2::hash::hash_types::RichField;
 use plonky2::iop::target::{BoolTarget, Target};
 use plonky2::iop::witness::{PartialWitness, WitnessWrite};
 use plonky2::plonk::circuit_builder::CircuitBuilder;
-use std::iter;
+use std::{array, iter};
 
 pub const CODE_SIZE: usize = HASH_SIZE + 2;
 
@@ -33,6 +33,20 @@ impl StatementTarget {
             .chain(self.args.iter().flatten())
             .cloned()
             .collect()
+    }
+
+    pub fn from_flattened(v: Vec<Target>) -> Self {
+        let num_args = (v.len() - Params::predicate_size()) / STATEMENT_ARG_F_LEN;
+        assert_eq!(
+            v.len(),
+            Params::predicate_size() + num_args * STATEMENT_ARG_F_LEN
+        );
+        let predicate: [Target; Params::predicate_size()] = array::from_fn(|i| v[i]);
+        let args = (0..num_args)
+            .map(|i| array::from_fn(|j| v[Params::predicate_size() + i * STATEMENT_ARG_F_LEN + j]))
+            .collect();
+
+        Self { predicate, args }
     }
 
     pub fn set_targets(
@@ -93,6 +107,10 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     fn select_bool(&mut self, b: BoolTarget, x: BoolTarget, y: BoolTarget) -> BoolTarget;
     fn constant_value(&mut self, v: Value) -> ValueTarget;
     fn is_equal_slice(&mut self, xs: &[Target], ys: &[Target]) -> BoolTarget;
+
+    // Convenience methods for randomly accessing vector elements and rows of matrices.
+    fn vector_ref(&mut self, v: &[Target], i: Target) -> Target;
+    fn matrix_row_ref(&mut self, m: &[Vec<Target>], i: Target) -> Vec<Target>;
 
     // Convenience methods for Boolean into-iters. Assumes these are non-empty.
     fn all(&mut self, xs: impl IntoIterator<Item = BoolTarget>) -> BoolTarget;
@@ -162,6 +180,26 @@ impl<F: RichField + Extendable<D>, const D: usize> CircuitBuilderPod<F, D>
             let is_eq = self.is_equal(*x, *y);
             self.and(ok, is_eq)
         })
+    }
+
+    // TODO: Revisit this when we need more than 64 statements.
+    fn vector_ref(&mut self, v: &[Target], i: Target) -> Target {
+        self.random_access(i, v.to_vec())
+    }
+
+    fn matrix_row_ref(&mut self, m: &[Vec<Target>], i: Target) -> Vec<Target> {
+        let num_rows = m.len();
+        let num_columns = m
+            .get(0)
+            .map(|row| {
+                let row_len = row.len();
+                assert!(m.iter().all(|row| row.len() == row_len));
+                row_len
+            })
+            .unwrap_or(0);
+        (0..num_columns)
+            .map(|j| self.vector_ref(&(0..num_rows).map(|i| m[i][j]).collect::<Vec<_>>(), i))
+            .collect()
     }
 
     fn all(&mut self, xs: impl IntoIterator<Item = BoolTarget>) -> BoolTarget {
