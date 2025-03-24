@@ -24,9 +24,11 @@ use crate::backends::plonky2::primitives::merkletree::{
     MerkleProofExistenceGate, MerkleProofExistenceTarget,
 };
 use crate::middleware::{
-    hash_str, AnchoredKey, NativeOperation, NativePredicate, Params, PodType, Predicate, Statement,
-    StatementArg, ToFields, KEY_TYPE, SELF, STATEMENT_ARG_F_LEN,
+    hash_str, AnchoredKey, NativeOperation, NativePredicate, Params, PodId, PodType, Predicate,
+    Statement, StatementArg, ToFields, KEY_SIGNER, KEY_TYPE, SELF, STATEMENT_ARG_F_LEN,
 };
+
+use super::common::StatementArgTarget;
 
 //
 // SignedPod verification
@@ -58,6 +60,10 @@ impl SignedPodVerifyGate {
         builder.connect_values(type_mt_proof.value, value_type);
 
         // 3. TODO: Verify signature
+        let signer_mt_proof = &mt_proofs[1];
+        let key_signer = builder.constant_value(hash_str(KEY_SIGNER).into());
+        builder.connect_values(signer_mt_proof.key, key_signer);
+        let value_signer = signer_mt_proof.value;
 
         Ok(SignedPodVerifyTarget {
             params: self.params.clone(),
@@ -75,8 +81,8 @@ struct SignedPodVerifyTarget {
     mt_proofs: Vec<MerkleProofExistenceTarget>,
 }
 
-struct SignedPodVerifyInput {
-    kvs: HashMap<Value, Value>,
+pub struct SignedPodVerifyInput {
+    pub kvs: HashMap<Value, Value>,
 }
 
 impl SignedPodVerifyTarget {
@@ -85,15 +91,28 @@ impl SignedPodVerifyTarget {
         for mt_proof in &self.mt_proofs {
             kvs.push((mt_proof.key, mt_proof.value));
         }
-        // TODO: when the slot is unused, do we force the kv to be (EMPTY, EMPTY), and then from
-        // it get a ValueOf((id, EMPTY), EMPTY)?  Or should we keep some boolean flags for unused
-        // slots and translate them to Statement::None instead?
         kvs
     }
 
-    fn pub_statements(&self) -> Vec<StatementTarget> {
-        // TODO: Here we need to use the self.id in the ValueOf statements
-        todo!()
+    fn pub_statements(&self, builder: &mut CircuitBuilder<F, D>) -> Vec<StatementTarget> {
+        let mut statements = Vec::new();
+        let predicate: [Target; Params::predicate_size()] = builder
+            .constants(&Predicate::Native(NativePredicate::ValueOf).to_fields(&self.params))
+            .try_into()
+            .expect("size predicate_size");
+        let self_id = builder.constant_value(SELF.0.into());
+        for mt_proof in &self.mt_proofs {
+            let args = vec![
+                StatementArgTarget::anchored_key(builder, &self_id, &mt_proof.key),
+                StatementArgTarget::literal(builder, &mt_proof.value),
+            ];
+            let statement = StatementTarget {
+                predicate: predicate.clone(),
+                args,
+            };
+            statements.push(statement);
+        }
+        statements
     }
 
     fn set_targets(&self, pw: &mut PartialWitness<F>, input: &SignedPodVerifyInput) -> Result<()> {
@@ -380,7 +399,7 @@ impl MainPodVerifyGate {
         // Build the statement array
         let mut statements = Vec::new();
         for signed_pod in &signed_pods {
-            statements.extend_from_slice(signed_pod.pub_statements().as_slice());
+            statements.extend_from_slice(signed_pod.pub_statements(builder).as_slice());
         }
 
         // Add the input (private and public) statements and corresponding operations
@@ -392,12 +411,17 @@ impl MainPodVerifyGate {
         }
 
         let input_statements = &statements[input_statements_offset..];
-        let pub_statements = &input_statements[statements.len() - params.max_public_statements..];
+        let pub_statements =
+            &input_statements[input_statements.len() - params.max_public_statements..];
 
         // 2. Calculate the Pod Id from the public statements
         let pub_statements_flattened = pub_statements
             .iter()
-            .map(|s| s.predicate.iter().chain(s.args.iter().flatten()))
+            .map(|s| {
+                s.predicate
+                    .iter()
+                    .chain(s.args.iter().flat_map(|a| &a.elements))
+            })
             .flatten()
             .cloned()
             .collect();
@@ -441,7 +465,7 @@ impl MainPodVerifyGate {
     }
 }
 
-struct MainPodVerifyTarget {
+pub struct MainPodVerifyTarget {
     params: Params,
     id: HashOutTarget,
     signed_pods: Vec<SignedPodVerifyTarget>,
@@ -451,12 +475,16 @@ struct MainPodVerifyTarget {
     op_verifications: Vec<OperationVerifyTarget>,
 }
 
-struct MainPodVerifyInput {
-    signed_pods: Vec<SignedPodVerifyInput>,
+pub struct MainPodVerifyInput {
+    pub signed_pods: Vec<SignedPodVerifyInput>,
 }
 
 impl MainPodVerifyTarget {
-    fn set_targets(&self, pw: &mut PartialWitness<F>, input: &MainPodVerifyInput) -> Result<()> {
+    pub fn set_targets(
+        &self,
+        pw: &mut PartialWitness<F>,
+        input: &MainPodVerifyInput,
+    ) -> Result<()> {
         assert!(input.signed_pods.len() <= self.params.max_input_signed_pods);
         for (i, signed_pod) in input.signed_pods.iter().enumerate() {
             self.signed_pods[i].set_targets(pw, signed_pod)?;
@@ -492,8 +520,8 @@ impl MainPodVerifyCircuit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backends::plonky2::{basetypes::C, mock::mainpod::OperationArg};
     use crate::backends::plonky2::mock::mainpod;
+    use crate::backends::plonky2::{basetypes::C, mock::mainpod::OperationArg};
     use crate::middleware::{OperationType, PodId};
     use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
 

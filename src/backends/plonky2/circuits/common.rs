@@ -4,10 +4,10 @@ use crate::backends::plonky2::basetypes::D;
 use crate::backends::plonky2::mock::mainpod::Statement;
 use crate::backends::plonky2::mock::mainpod::{Operation, OperationArg};
 use crate::middleware::{
-    NativeOperation, NativePredicate, Params, Predicate, StatementArg, ToFields,
-    Value, F, HASH_SIZE, VALUE_SIZE,
+    NativeOperation, NativePredicate, Params, Params, Predicate, StatementArg, StatementArg,
+    ToFields, ToFields, Value, Value, EMPTY_VALUE, F, F, HASH_SIZE, HASH_SIZE, OPERATION_ARG_F_LEN,
+    OPERATION_ARG_F_LEN, STATEMENT_ARG_F_LEN, STATEMENT_ARG_F_LEN, VALUE_SIZE, VALUE_SIZE,
 };
-use crate::middleware::{OPERATION_ARG_F_LEN, STATEMENT_ARG_F_LEN};
 use anyhow::Result;
 use plonky2::field::extension::Extendable;
 use plonky2::field::types::{Field, PrimeField64};
@@ -56,9 +56,54 @@ impl ValueTarget {
 }
 
 #[derive(Clone)]
+pub struct StatementArgTarget {
+    pub elements: [Target; STATEMENT_ARG_F_LEN],
+}
+
+impl StatementArgTarget {
+    pub fn set_targets(
+        &self,
+        pw: &mut PartialWitness<F>,
+        params: &Params,
+        arg: &StatementArg,
+    ) -> Result<()> {
+        pw.set_target_arr(&self.elements, &arg.to_fields(params))
+    }
+
+    fn new(first: ValueTarget, second: ValueTarget) -> Self {
+        let elements: Vec<_> = first
+            .elements
+            .into_iter()
+            .chain(second.elements.into_iter())
+            .collect();
+        StatementArgTarget {
+            elements: elements.try_into().expect("size STATEMENT_ARG_F_LEN"),
+        }
+    }
+
+    pub fn none(builder: &mut CircuitBuilder<F, D>) -> Self {
+        let empty = builder.constant_value(EMPTY_VALUE);
+        Self::new(empty.clone(), empty)
+    }
+
+    pub fn literal(builder: &mut CircuitBuilder<F, D>, value: &ValueTarget) -> Self {
+        let empty = builder.constant_value(EMPTY_VALUE);
+        Self::new(value.clone(), empty)
+    }
+
+    pub fn anchored_key(
+        _builder: &mut CircuitBuilder<F, D>,
+        pod_id: &ValueTarget,
+        key: &ValueTarget,
+    ) -> Self {
+        Self::new(pod_id.clone(), key.clone())
+    }
+}
+
+#[derive(Clone)]
 pub struct StatementTarget {
     pub predicate: [Target; Params::predicate_size()],
-    pub args: Vec<[Target; STATEMENT_ARG_F_LEN]>,
+    pub args: Vec<StatementArgTarget>,
 }
 
 impl StatementTarget {
@@ -84,7 +129,7 @@ impl StatementTarget {
     pub fn to_flattened(&self) -> Vec<Target> {
         self.predicate
             .iter()
-            .chain(self.args.iter().flatten())
+            .chain(self.args.iter().flat_map(|arg| &arg.elements))
             .cloned()
             .collect()
     }
@@ -117,7 +162,7 @@ impl StatementTarget {
             .take(params.max_statement_args)
             .enumerate()
         {
-            pw.set_target_arr(&self.args[i], &arg.to_fields(params))?;
+            self.args[i].set_targets(pw, params, arg)?;
         }
         Ok(())
     }
@@ -221,7 +266,9 @@ impl<F: RichField + Extendable<D>, const D: usize> CircuitBuilderPod<F, D>
         StatementTarget {
             predicate: self.add_virtual_target_arr(),
             args: (0..params.max_statement_args)
-                .map(|_| self.add_virtual_target_arr())
+                .map(|_| StatementArgTarget {
+                    elements: self.add_virtual_target_arr(),
+                })
                 .collect(),
         }
     }
