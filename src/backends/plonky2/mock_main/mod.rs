@@ -1,7 +1,10 @@
 use anyhow::{anyhow, Result};
+use base64::prelude::*;
 use itertools::Itertools;
+use log::error;
 use plonky2::hash::poseidon::PoseidonHash;
 use plonky2::plonk::config::Hasher;
+use serde::{Deserialize, Serialize};
 use std::any::Any;
 use std::fmt;
 
@@ -26,14 +29,14 @@ impl PodProver for MockProver {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MockMainPod {
     params: Params,
     id: PodId,
-    input_signed_pods: Vec<Box<dyn Pod>>,
-    input_main_pods: Vec<Box<dyn Pod>>,
+    //   input_signed_pods: Vec<Box<dyn Pod>>,
+    //   input_main_pods: Vec<Box<dyn Pod>>,
     // New statements introduced by this pod
-    input_statements: Vec<Statement>,
+    //   input_statements: Vec<Statement>,
     public_statements: Vec<Statement>,
     operations: Vec<Operation>,
     // All statements (inherited + new)
@@ -257,7 +260,7 @@ impl MockMainPod {
                 .map(|mid_arg| Self::find_op_arg(statements, mid_arg))
                 .collect::<Result<Vec<_>>>()?;
             Self::pad_operation_args(params, &mut args);
-            operations.push(Operation(op.code(), args));
+            operations.push(Operation(op.op_type(), args));
         }
         Ok(operations)
     }
@@ -331,9 +334,9 @@ impl MockMainPod {
         Ok(Self {
             params: params.clone(),
             id,
-            input_signed_pods,
-            input_main_pods,
-            input_statements,
+            //  input_signed_pods,
+            //  input_main_pods,
+            //  input_statements,
             public_statements,
             statements,
             operations,
@@ -358,6 +361,15 @@ impl MockMainPod {
 
     fn pad_operation_args(params: &Params, args: &mut Vec<OperationArg>) {
         fill_pad(args, OperationArg::None, params.max_operation_args)
+    }
+
+    pub fn deserialize(serialized: String) -> Result<Self> {
+        let proof = String::from_utf8(BASE64_STANDARD.decode(&serialized)?)
+            .map_err(|e| anyhow::anyhow!("Invalid base64 encoding: {}", e))?;
+        let pod: MockMainPod = serde_json::from_str(&proof)
+            .map_err(|e| anyhow::anyhow!("Failed to parse proof: {}", e))?;
+
+        Ok(pod)
     }
 }
 
@@ -434,10 +446,22 @@ impl Pod for MockMainPod {
                 self.operations[i]
                     .deref(&self.statements[..input_statement_offset + i])
                     .unwrap()
-                    .check(&self.params, &s.clone().try_into().unwrap())
+                    .check_and_log(&self.params, &s.clone().try_into().unwrap())
             })
             .collect::<Result<Vec<_>>>()
             .unwrap();
+        if !ids_match {
+            error!("Verification failed: POD ID is incorrect.");
+        }
+        if !has_type_statement {
+            error!("Verification failed: POD does not have type statement.");
+        }
+        if !value_ofs_unique {
+            error!("Verification failed: Repeated ValueOf");
+        }
+        if !statement_check.iter().all(|b| *b) {
+            error!("Verification failed: Statement did not check.")
+        }
         ids_match && has_type_statement && value_ofs_unique & statement_check.into_iter().all(|b| b)
     }
     fn id(&self) -> PodId {
@@ -471,6 +495,10 @@ impl Pod for MockMainPod {
 
     fn into_any(self: Box<Self>) -> Box<dyn Any> {
         self
+    }
+
+    fn serialized_proof(&self) -> String {
+        BASE64_STANDARD.encode(serde_json::to_string(self).unwrap())
     }
 }
 

@@ -5,14 +5,17 @@ mod basetypes;
 pub mod containers;
 mod custom;
 mod operation;
+pub mod serialization;
 mod statement;
 pub use basetypes::*;
 pub use custom::*;
 pub use operation::*;
+use schemars::JsonSchema;
 pub use statement::*;
 
 use anyhow::Result;
 use dyn_clone::DynClone;
+use serde::{Deserialize, Serialize};
 use std::any::Any;
 use std::collections::HashMap;
 use std::fmt;
@@ -32,7 +35,7 @@ impl fmt::Display for PodId {
 }
 
 /// AnchoredKey is a tuple containing (OriginId: PodId, key: Hash)
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AnchoredKey(pub PodId, pub Hash);
 
 impl AnchoredKey {
@@ -54,7 +57,7 @@ impl fmt::Display for AnchoredKey {
 /// An entry consists of a key-value pair.
 pub type Entry = (String, Value);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
 pub struct PodId(pub Hash);
 
 impl ToFields for PodId {
@@ -77,7 +80,7 @@ impl From<PodType> for Value {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Params {
     pub max_input_signed_pods: usize,
     pub max_input_main_pods: usize,
@@ -90,6 +93,8 @@ pub struct Params {
     // in a custom predicate
     pub max_custom_predicate_arity: usize,
     pub max_custom_batch_size: usize,
+    // maximum depth for merkle tree gates
+    pub max_depth_mt_gate: usize,
 }
 
 impl Default for Params {
@@ -104,6 +109,7 @@ impl Default for Params {
             max_operation_args: 5,
             max_custom_predicate_arity: 5,
             max_custom_batch_size: 5,
+            max_depth_mt_gate: 32,
         }
     }
 }
@@ -113,15 +119,27 @@ impl Params {
         self.max_statements - self.max_public_statements
     }
 
-    pub fn statement_tmpl_arg_size() -> usize {
+    pub const fn statement_tmpl_arg_size() -> usize {
         2 * HASH_SIZE + 1
     }
 
-    pub fn predicate_size() -> usize {
+    pub const fn predicate_size() -> usize {
         HASH_SIZE + 2
     }
 
-    pub fn statement_tmpl_size(&self) -> usize {
+    pub const fn operation_type_size() -> usize {
+        HASH_SIZE + 2
+    }
+
+    pub fn statement_size(&self) -> usize {
+        Self::predicate_size() + STATEMENT_ARG_F_LEN * self.max_statement_args
+    }
+
+    pub fn operation_size(&self) -> usize {
+        Self::operation_type_size() + OPERATION_ARG_F_LEN * self.max_operation_args
+    }
+
+    pub const fn statement_tmpl_size(&self) -> usize {
         Self::predicate_size() + self.max_statement_args * Self::statement_tmpl_arg_size()
     }
 
@@ -166,6 +184,15 @@ pub trait Pod: fmt::Debug + DynClone {
     }
     // Used for downcasting
     fn into_any(self: Box<Self>) -> Box<dyn Any>;
+    // Front-end Pods keep references to middleware Pods. Most of the
+    // middleware data can be derived directly from front-end data, but the
+    // "proof" data is only created at the point of proving/signing, and
+    // cannot be reconstructed. As such, we need to serialize it whenever
+    // we serialize a front-end Pod. Since the front-end does not understand
+    // the implementation details of the middleware, this method allows the
+    // middleware to provide some serialized data that can be used to
+    // reconstruct the proof.
+    fn serialized_proof(&self) -> String;
 }
 
 // impl Clone for Box<dyn SignedPod>
@@ -192,6 +219,9 @@ impl Pod for NonePod {
     }
     fn into_any(self: Box<Self>) -> Box<dyn Any> {
         self
+    }
+    fn serialized_proof(&self) -> String {
+        "".to_string()
     }
 }
 

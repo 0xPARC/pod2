@@ -44,6 +44,16 @@ pub struct MockSignedPod {
     dict: Dictionary,
 }
 
+impl MockSignedPod {
+    pub fn deserialize(id: PodId, signature: String, dict: Dictionary) -> Self {
+        Self {
+            id,
+            signature,
+            dict,
+        }
+    }
+}
+
 impl Pod for MockSignedPod {
     fn verify(&self) -> bool {
         // 1. Verify type
@@ -99,6 +109,10 @@ impl Pod for MockSignedPod {
 
     fn into_any(self: Box<Self>) -> Box<dyn Any> {
         self
+    }
+
+    fn serialized_proof(&self) -> String {
+        self.signature.to_string()
     }
 }
 

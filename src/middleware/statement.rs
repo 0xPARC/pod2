@@ -1,15 +1,20 @@
 use anyhow::{anyhow, Result};
 use plonky2::field::types::Field;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::{fmt, iter};
 use strum_macros::FromRepr;
 
-use super::{AnchoredKey, CustomPredicateRef, Params, Predicate, ToFields, Value, F, VALUE_SIZE};
+use super::{
+    AnchoredKey, CustomPredicateRef, Params, Predicate, ToFields, Value, F, HASH_SIZE, VALUE_SIZE,
+};
 
 pub const KEY_SIGNER: &str = "_signer";
 pub const KEY_TYPE: &str = "_type";
 pub const STATEMENT_ARG_F_LEN: usize = 8;
+pub const OPERATION_ARG_F_LEN: usize = 1;
 
-#[derive(Clone, Copy, Debug, FromRepr, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, FromRepr, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum NativePredicate {
     None = 0,
     ValueOf = 1,
@@ -51,7 +56,7 @@ impl Statement {
     pub fn is_none(&self) -> bool {
         self == &Self::None
     }
-    pub fn code(&self) -> Predicate {
+    pub fn predicate(&self) -> Predicate {
         use Predicate::*;
         match self {
             Self::None => Native(NativePredicate::None),
@@ -182,16 +187,17 @@ impl Statement {
 }
 
 impl ToFields for Statement {
-    fn to_fields(&self, _params: &Params) -> Vec<F> {
-        let mut fields = self.code().to_fields(_params);
-        fields.extend(self.args().iter().flat_map(|arg| arg.to_fields(_params)));
+    fn to_fields(&self, params: &Params) -> Vec<F> {
+        let mut fields = self.predicate().to_fields(params);
+        fields.extend(self.args().iter().flat_map(|arg| arg.to_fields(params)));
+        fields.resize_with(params.statement_size(), || F::ZERO);
         fields
     }
 }
 
 impl fmt::Display for Statement {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?} ", self.code())?;
+        write!(f, "{:?} ", self.predicate())?;
         for (i, arg) in self.args().iter().enumerate() {
             if i != 0 {
                 write!(f, " ")?;
@@ -203,7 +209,7 @@ impl fmt::Display for Statement {
 }
 
 /// Statement argument type. Useful for statement decompositions.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StatementArg {
     None,
     Literal(Value),

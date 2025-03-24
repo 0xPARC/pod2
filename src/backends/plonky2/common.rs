@@ -1,12 +1,17 @@
 //! Common functionality to build Pod circuits with plonky2
 
-use crate::middleware::STATEMENT_ARG_F_LEN;
-use crate::middleware::{Params, Value, HASH_SIZE, VALUE_SIZE};
+use crate::backends::plonky2::mock_main::Statement;
+use crate::backends::plonky2::mock_main::{Operation, OperationArg};
+use crate::middleware::{Params, StatementArg, ToFields, Value, F, HASH_SIZE, VALUE_SIZE};
+use crate::middleware::{OPERATION_ARG_F_LEN, STATEMENT_ARG_F_LEN};
+use anyhow::Result;
 use plonky2::field::extension::Extendable;
-use plonky2::field::types::PrimeField64;
+use plonky2::field::types::{Field, PrimeField64};
 use plonky2::hash::hash_types::RichField;
 use plonky2::iop::target::{BoolTarget, Target};
+use plonky2::iop::witness::{PartialWitness, WitnessWrite};
 use plonky2::plonk::circuit_builder::CircuitBuilder;
+use std::iter;
 
 pub const CODE_SIZE: usize = HASH_SIZE + 2;
 
@@ -17,25 +22,65 @@ pub struct ValueTarget {
 
 #[derive(Clone)]
 pub struct StatementTarget {
-    pub code: [Target; CODE_SIZE],
+    pub predicate: [Target; Params::predicate_size()],
     pub args: Vec<[Target; STATEMENT_ARG_F_LEN]>,
 }
 
 impl StatementTarget {
     pub fn to_flattened(&self) -> Vec<Target> {
-        self.code
+        self.predicate
             .iter()
             .chain(self.args.iter().flatten())
             .cloned()
             .collect()
+    }
+
+    pub fn set_targets(
+        &self,
+        pw: &mut PartialWitness<F>,
+        params: &Params,
+        st: &Statement,
+    ) -> Result<()> {
+        pw.set_target_arr(&self.predicate, &st.predicate().to_fields(params))?;
+        for (i, arg) in st
+            .args()
+            .iter()
+            .chain(iter::repeat(&StatementArg::None))
+            .take(params.max_statement_args)
+            .enumerate()
+        {
+            pw.set_target_arr(&self.args[i], &arg.to_fields(params))?;
+        }
+        Ok(())
     }
 }
 
 // TODO: Implement Operation::to_field to determine the size of each element
 #[derive(Clone)]
 pub struct OperationTarget {
-    pub code: [Target; CODE_SIZE], // TODO: Figure out the length
-    pub args: Vec<[Target; CODE_SIZE + STATEMENT_ARG_F_LEN]>, // TODO: Figure out the length
+    pub op_type: [Target; Params::operation_type_size()],
+    pub args: Vec<[Target; OPERATION_ARG_F_LEN]>,
+}
+
+impl OperationTarget {
+    pub fn set_targets(
+        &self,
+        pw: &mut PartialWitness<F>,
+        params: &Params,
+        op: &Operation,
+    ) -> Result<()> {
+        pw.set_target_arr(&self.op_type, &op.op_type().to_fields(params))?;
+        for (i, arg) in op
+            .args()
+            .iter()
+            .chain(iter::repeat(&OperationArg::None))
+            .take(params.max_operation_args)
+            .enumerate()
+        {
+            pw.set_target_arr(&self.args[i], &arg.to_fields(params))?;
+        }
+        Ok(())
+    }
 }
 
 pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
@@ -76,15 +121,20 @@ impl<F: RichField + Extendable<D>, const D: usize> CircuitBuilderPod<F, D>
 
     fn add_virtual_statement(&mut self, params: &Params) -> StatementTarget {
         StatementTarget {
-            code: self.add_virtual_target_arr::<6>(),
+            predicate: self.add_virtual_target_arr(),
             args: (0..params.max_statement_args)
-                .map(|_| self.add_virtual_target_arr::<STATEMENT_ARG_F_LEN>())
+                .map(|_| self.add_virtual_target_arr())
                 .collect(),
         }
     }
 
     fn add_virtual_operation(&mut self, params: &Params) -> OperationTarget {
-        todo!()
+        OperationTarget {
+            op_type: self.add_virtual_target_arr(),
+            args: (0..params.max_operation_args)
+                .map(|_| self.add_virtual_target_arr())
+                .collect(),
+        }
     }
 
     fn select_value(&mut self, b: BoolTarget, x: ValueTarget, y: ValueTarget) -> ValueTarget {

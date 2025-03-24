@@ -1,13 +1,24 @@
+use super::Statement;
+use crate::middleware::{self, OperationType, Params, ToFields, F};
 use anyhow::Result;
+use plonky2::field::types::{Field, PrimeField64};
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
-use super::Statement;
-use crate::middleware::{self, OperationType};
-
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperationArg {
     None,
     Index(usize),
+}
+
+impl ToFields for OperationArg {
+    fn to_fields(&self, _params: &Params) -> Vec<F> {
+        let f = match self {
+            Self::None => F::ZERO,
+            Self::Index(i) => F::from_canonical_usize(*i),
+        };
+        vec![f]
+    }
 }
 
 impl OperationArg {
@@ -16,10 +27,16 @@ impl OperationArg {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Operation(pub OperationType, pub Vec<OperationArg>);
 
 impl Operation {
+    pub fn op_type(&self) -> OperationType {
+        self.0.clone()
+    }
+    pub fn args(&self) -> &[OperationArg] {
+        &self.1
+    }
     pub fn deref(&self, statements: &[Statement]) -> Result<crate::middleware::Operation> {
         let deref_args = self
             .1
