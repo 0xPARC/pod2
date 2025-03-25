@@ -5,11 +5,11 @@ use custom::{eth_dos_batch, eth_friend_batch};
 use std::collections::HashMap;
 
 use crate::backends::plonky2::mock::signedpod::MockSigner;
+use crate::frontend::CustomPredicateRef;
 use crate::frontend::{
     containers::{Dictionary, Set},
     MainPodBuilder, SignedPod, SignedPodBuilder, Statement, Value,
 };
-use crate::middleware::CustomPredicateRef;
 use crate::middleware::{Params, PodType, KEY_SIGNER, KEY_TYPE};
 use crate::op;
 
