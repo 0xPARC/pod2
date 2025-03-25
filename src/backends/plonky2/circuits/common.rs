@@ -25,17 +25,13 @@ pub struct ValueTarget {
 }
 
 impl ValueTarget {
-    pub fn zero<F: RichField + Extendable<D>, const D: usize>(
-        builder: &mut CircuitBuilder<F, D>,
-    ) -> Self {
+    pub fn zero(builder: &mut CircuitBuilder<F, D>) -> Self {
         Self {
             elements: [builder.zero(); VALUE_SIZE],
         }
     }
 
-    pub fn one<F: RichField + Extendable<D>, const D: usize>(
-        builder: &mut CircuitBuilder<F, D>,
-    ) -> Self {
+    pub fn one(builder: &mut CircuitBuilder<F, D>) -> Self {
         Self {
             elements: array::from_fn(|i| {
                 if i == 0 {
@@ -80,27 +76,6 @@ impl StatementTarget {
                 )
                 .collect(),
         }
-    }
-    pub fn to_flattened(&self) -> Vec<Target> {
-        self.predicate
-            .iter()
-            .chain(self.args.iter().flatten())
-            .cloned()
-            .collect()
-    }
-
-    pub fn from_flattened(v: Vec<Target>) -> Self {
-        let num_args = (v.len() - Params::predicate_size()) / STATEMENT_ARG_F_LEN;
-        assert_eq!(
-            v.len(),
-            Params::predicate_size() + num_args * STATEMENT_ARG_F_LEN
-        );
-        let predicate: [Target; Params::predicate_size()] = array::from_fn(|i| v[i]);
-        let args = (0..num_args)
-            .map(|i| array::from_fn(|j| v[Params::predicate_size() + i * STATEMENT_ARG_F_LEN + j]))
-            .collect();
-
-        Self { predicate, args }
     }
 
     pub fn set_targets(
@@ -165,8 +140,42 @@ impl OperationTarget {
         builder: &mut CircuitBuilder<F, D>,
         t: NativeOperation,
     ) -> BoolTarget {
+        let one = builder.one();
+        let op_is_native = builder.is_equal(self.op_type[0], one);
         let op_code = builder.constant(F::from_canonical_u64(t as u64));
-        builder.is_equal(self.op_type[1], op_code)
+        let op_code_matches = builder.is_equal(self.op_type[1], op_code);
+        builder.and(op_is_native, op_code_matches)
+    }
+}
+
+/// Trait for target structs that may be converted to and from vectors
+/// of targets.
+pub trait Flattenable {
+    fn flatten(&self) -> Vec<Target>;
+    fn from_flattened(vs: &[Target]) -> Self;
+}
+
+impl Flattenable for StatementTarget {
+    fn flatten(&self) -> Vec<Target> {
+        self.predicate
+            .iter()
+            .chain(self.args.iter().flatten())
+            .cloned()
+            .collect()
+    }
+
+    fn from_flattened(v: &[Target]) -> Self {
+        let num_args = (v.len() - Params::predicate_size()) / STATEMENT_ARG_F_LEN;
+        assert_eq!(
+            v.len(),
+            Params::predicate_size() + num_args * STATEMENT_ARG_F_LEN
+        );
+        let predicate: [Target; Params::predicate_size()] = array::from_fn(|i| v[i]);
+        let args = (0..num_args)
+            .map(|i| array::from_fn(|j| v[Params::predicate_size() + i * STATEMENT_ARG_F_LEN + j]))
+            .collect();
+
+        Self { predicate, args }
     }
 }
 
@@ -183,23 +192,24 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
 
     // Convenience methods for checking values.
     /// Checks whether `xs` is right-padded with 0s so as to represent a `Value`.
-    fn is_value(&mut self, xs: &[Target]) -> BoolTarget;
+    fn statement_arg_is_value(&mut self, xs: &[Target]) -> BoolTarget;
     /// Checks whether `x < y` if `b` is true. This involves checking
     /// that `x` and `y` each consist of two `u32` limbs.
     fn assert_less_if(&mut self, b: BoolTarget, x: ValueTarget, y: ValueTarget);
 
-    // Convenience methods for randomly accessing vector elements and rows of matrices.
-    fn vector_ref(&mut self, v: &[Target], i: Target) -> Target;
-    fn matrix_row_ref(&mut self, m: &[Vec<Target>], i: Target) -> Vec<Target>;
+    // Convenience methods for accessing and connecting elements of
+    // (vectors of) flattenables.
+    fn vec_ref<T: Flattenable>(&mut self, ts: &[T], i: Target) -> T;
+    fn select_flattenable<T: Flattenable>(&mut self, b: BoolTarget, x: &T, y: &T) -> T;
+    fn connect_flattenable<T: Flattenable>(&mut self, xs: &T, ys: &T);
+    fn is_equal_flattenable<T: Flattenable>(&mut self, xs: &T, ys: &T) -> BoolTarget;
 
     // Convenience methods for Boolean into-iters.
     fn all(&mut self, xs: impl IntoIterator<Item = BoolTarget>) -> BoolTarget;
     fn any(&mut self, xs: impl IntoIterator<Item = BoolTarget>) -> BoolTarget;
 }
 
-impl<F: RichField + Extendable<D>, const D: usize> CircuitBuilderPod<F, D>
-    for CircuitBuilder<F, D>
-{
+impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
     fn connect_slice(&mut self, xs: &[Target], ys: &[Target]) {
         assert_eq!(xs.len(), ys.len());
         for (x, y) in xs.iter().zip(ys.iter()) {
@@ -262,7 +272,7 @@ impl<F: RichField + Extendable<D>, const D: usize> CircuitBuilderPod<F, D>
         })
     }
 
-    fn is_value(&mut self, xs: &[Target]) -> BoolTarget {
+    fn statement_arg_is_value(&mut self, xs: &[Target]) -> BoolTarget {
         let zeros = iter::repeat(self.zero())
             .take(STATEMENT_ARG_F_LEN - VALUE_SIZE)
             .collect::<Vec<_>>();
@@ -306,24 +316,54 @@ impl<F: RichField + Extendable<D>, const D: usize> CircuitBuilderPod<F, D>
         assert_limb_lt(self, lhs, rhs);
     }
 
-    // TODO: Revisit this when we need more than 64 statements.
-    fn vector_ref(&mut self, v: &[Target], i: Target) -> Target {
-        self.random_access(i, v.to_vec())
+    fn vec_ref<T: Flattenable>(&mut self, ts: &[T], i: Target) -> T {
+        // TODO: Revisit this when we need more than 64 statements.
+        let vector_ref = |builder: &mut CircuitBuilder<F, D>, v: &[Target], i| {
+            assert!(v.len() <= 64);
+            builder.random_access(i, v.to_vec())
+        };
+        let matrix_row_ref = |builder: &mut CircuitBuilder<F, D>, m: &[Vec<Target>], i| {
+            let num_rows = m.len();
+            let num_columns = m
+                .get(0)
+                .map(|row| {
+                    let row_len = row.len();
+                    assert!(m.iter().all(|row| row.len() == row_len));
+                    row_len
+                })
+                .unwrap_or(0);
+            (0..num_columns)
+                .map(|j| {
+                    vector_ref(
+                        builder,
+                        &(0..num_rows).map(|i| m[i][j]).collect::<Vec<_>>(),
+                        i,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let flattened_ts = ts.iter().map(|t| t.flatten()).collect::<Vec<_>>();
+        T::from_flattened(&matrix_row_ref(self, &flattened_ts, i))
     }
 
-    fn matrix_row_ref(&mut self, m: &[Vec<Target>], i: Target) -> Vec<Target> {
-        let num_rows = m.len();
-        let num_columns = m
-            .get(0)
-            .map(|row| {
-                let row_len = row.len();
-                assert!(m.iter().all(|row| row.len() == row_len));
-                row_len
-            })
-            .unwrap_or(0);
-        (0..num_columns)
-            .map(|j| self.vector_ref(&(0..num_rows).map(|i| m[i][j]).collect::<Vec<_>>(), i))
-            .collect()
+    fn select_flattenable<T: Flattenable>(&mut self, b: BoolTarget, x: &T, y: &T) -> T {
+        let flattened_x = x.flatten();
+        let flattened_y = y.flatten();
+
+        T::from_flattened(
+            &iter::zip(flattened_x, flattened_y)
+                .map(|(x, y)| self.select(b, x, y))
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    fn connect_flattenable<T: Flattenable>(&mut self, xs: &T, ys: &T) {
+        self.connect_slice(&xs.flatten(), &ys.flatten())
+    }
+
+    fn is_equal_flattenable<T: Flattenable>(&mut self, xs: &T, ys: &T) -> BoolTarget {
+        self.is_equal_slice(&xs.flatten(), &ys.flatten())
     }
 
     fn all(&mut self, xs: impl IntoIterator<Item = BoolTarget>) -> BoolTarget {
