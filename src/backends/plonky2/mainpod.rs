@@ -17,7 +17,7 @@ use crate::backends::plonky2::circuits::mainpod::{
     MainPodVerifyCircuit, MainPodVerifyInput, SignedPodVerifyInput,
 };
 // TODO: Move the shared components between MockMainPod and MainPod to a common place.
-use crate::backends::plonky2::mock::mainpod::{hash_statements, Operation, Statement};
+use crate::backends::plonky2::mock::mainpod::{hash_statements, MockMainPod, Operation, Statement};
 use crate::middleware::{
     self, hash_str, AnchoredKey, MainPodInputs, NativeOperation, NativePredicate, NonePod,
     OperationType, Params, Pod, PodId, PodProver, Predicate, StatementArg, ToFields, KEY_TYPE,
@@ -27,6 +27,7 @@ use crate::middleware::{
 pub struct Prover {}
 
 impl PodProver for Prover {
+    // TODO: Be consistent on where we apply the padding, here, or in the set_targets?
     fn prove(&mut self, params: &Params, inputs: MainPodInputs) -> Result<Box<dyn Pod>> {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
@@ -44,8 +45,28 @@ impl PodProver for Prover {
                 kvs: p.kvs().iter().map(|(ak, v)| (ak.1.into(), *v)).collect(),
             })
             .collect();
+
+        // TODO: Move these methods from the mock main pod to a common place
+        let statements = MockMainPod::layout_statements(params, &inputs);
+        let operations = MockMainPod::process_private_statements_operations(
+            params,
+            &statements,
+            inputs.operations,
+        )
+        .unwrap();
+        let operations =
+            MockMainPod::process_public_statements_operations(params, &statements, operations)
+                .unwrap();
+
+        let public_statements =
+            statements[statements.len() - params.max_public_statements..].to_vec();
+        // get the id out of the public statements
+        let id: PodId = PodId(hash_statements(&public_statements, params));
+
         let input = MainPodVerifyInput {
             signed_pods: signed_pods_input,
+            statements: statements[statements.len() - params.max_statements..].to_vec(),
+            operations,
         };
         main_pod.set_targets(&mut pw, &input)?;
 
@@ -55,8 +76,8 @@ impl PodProver for Prover {
 
         Ok(Box::new(MainPod {
             params: params.clone(),
-            id: todo!(),
-            public_statements: todo!(),
+            id,
+            public_statements,
             proof,
         }))
     }
@@ -168,9 +189,7 @@ pub mod tests {
         let kyc_pod = kyc_builder.prove(&mut prover, &params)?;
         let pod = kyc_pod.pod.into_any().downcast::<MainPod>().unwrap();
 
-        assert!(pod.verify()); // TODO
-                               // println!("id: {}", pod.id());
-                               // println!("pub_statements: {:?}", pod.pub_statements());
+        assert!(pod.verify());
         Ok(())
     }
 }

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use itertools::Itertools;
+use itertools::{zip_eq, Itertools};
 use plonky2::{
     field::types::Field,
     hash::{
@@ -19,13 +19,14 @@ use crate::backends::plonky2::basetypes::{Hash, Value, D, EMPTY_HASH, EMPTY_VALU
 use crate::backends::plonky2::circuits::common::{
     CircuitBuilderPod, OperationTarget, StatementTarget, ValueTarget,
 };
+use crate::backends::plonky2::mock::mainpod;
 use crate::backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree};
 use crate::backends::plonky2::primitives::merkletree::{
     MerkleProofExistenceGate, MerkleProofExistenceTarget,
 };
 use crate::middleware::{
-    hash_str, AnchoredKey, NativeOperation, NativePredicate, Params, PodId, PodType, Predicate,
-    Statement, StatementArg, ToFields, KEY_SIGNER, KEY_TYPE, SELF, STATEMENT_ARG_F_LEN,
+    hash_str, AnchoredKey, NativeOperation, NativePredicate, Operation, Params, PodId, PodType,
+    Predicate, Statement, StatementArg, ToFields, KEY_SIGNER, KEY_TYPE, SELF, STATEMENT_ARG_F_LEN,
 };
 
 use super::common::StatementArgTarget;
@@ -119,13 +120,17 @@ impl SignedPodVerifyTarget {
         assert!(input.kvs.len() <= self.params.max_signed_pod_values);
         let tree = MerkleTree::new(self.params.max_depth_mt_gate, &input.kvs)?;
 
-        // First handle the type entry, then the rest of the entries, and finally pad with
-        // repetitions of the type entry (which always exists)
+        // First handle the type entry, then the signer etrny, then the rest of the
+        // entries, and finally pad with repetitions of the type entry (which always
+        // exists)
         let mut kvs = input.kvs.clone();
         let key_type = Value::from(hash_str(KEY_TYPE));
         let value_type = kvs.remove(&key_type).expect("KEY_TYPE");
+        let key_signer = Value::from(hash_str(KEY_SIGNER));
+        let value_signer = kvs.remove(&key_signer).expect("KEY_SIGNER");
 
         for (i, (k, v)) in iter::once((key_type, value_type))
+            .chain(iter::once((key_signer, value_signer)))
             .chain(kvs.into_iter().sorted_by_key(|kv| kv.0))
             .chain(iter::repeat((key_type, value_type)))
             .take(self.params.max_signed_pod_values)
@@ -477,6 +482,8 @@ pub struct MainPodVerifyTarget {
 
 pub struct MainPodVerifyInput {
     pub signed_pods: Vec<SignedPodVerifyInput>,
+    pub statements: Vec<mainpod::Statement>,
+    pub operations: Vec<mainpod::Operation>,
 }
 
 impl MainPodVerifyTarget {
@@ -490,9 +497,14 @@ impl MainPodVerifyTarget {
             self.signed_pods[i].set_targets(pw, signed_pod)?;
         }
         // Padding
+        // TODO: Instead of using an input for padding, use a canonical minimal SignedPod
+        let pad_pod = &input.signed_pods[0];
         for i in input.signed_pods.len()..self.params.max_input_signed_pods {
-            // TODO: We need to disable the verification for the unused slots.
-            // self.signed_pods[i].set_targets(pw, signed_pod)?;
+            self.signed_pods[i].set_targets(pw, pad_pod)?;
+        }
+        for (i, (st, op)) in zip_eq(&input.statements, &input.operations).enumerate() {
+            self.statements[i].set_targets(pw, &self.params, st);
+            self.operations[i].set_targets(pw, &self.params, op);
         }
         // TODO: set_targets for:
         // - statements
