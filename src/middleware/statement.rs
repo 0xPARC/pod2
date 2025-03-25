@@ -9,7 +9,9 @@ use super::{
     AnchoredKey, CustomPredicateRef, Params, Predicate, ToFields, Value, F, HASH_SIZE, VALUE_SIZE,
 };
 
+// hash(KEY_SIGNER) = [2145458785152392366, 15113074911296146791, 15323228995597834291, 11804480340100333725]
 pub const KEY_SIGNER: &str = "_signer";
+// hash(KEY_TYPE) = [17948789436443445142, 12513915140657440811, 15878361618879468769, 938231894693848619]
 pub const KEY_TYPE: &str = "_type";
 pub const STATEMENT_ARG_F_LEN: usize = 8;
 pub const OPERATION_ARG_F_LEN: usize = 1;
@@ -268,5 +270,19 @@ impl ToFields for StatementArg {
         };
         assert_eq!(f.len(), STATEMENT_ARG_F_LEN); // sanity check
         f
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::middleware::hash_str;
+
+    #[test]
+    fn test_print_special_keys() {
+        let key = hash_str(KEY_SIGNER);
+        println!("hash(KEY_SIGNER) = {:?}", key);
+        let key = hash_str(KEY_TYPE);
+        println!("hash(KEY_TYPE) = {:?}", key);
     }
 }
