@@ -1,8 +1,12 @@
 //! Common functionality to build Pod circuits with plonky2
 
+use crate::backends::plonky2::basetypes::D;
 use crate::backends::plonky2::mock_main::Statement;
 use crate::backends::plonky2::mock_main::{Operation, OperationArg};
-use crate::middleware::{Params, StatementArg, ToFields, Value, F, HASH_SIZE, VALUE_SIZE};
+use crate::middleware::{
+    NativeOperation, NativePredicate, OperationType, Params, Predicate, StatementArg, ToFields,
+    Value, F, HASH_SIZE, VALUE_SIZE,
+};
 use crate::middleware::{OPERATION_ARG_F_LEN, STATEMENT_ARG_F_LEN};
 use anyhow::Result;
 use plonky2::field::extension::Extendable;
@@ -20,6 +24,37 @@ pub struct ValueTarget {
     pub elements: [Target; VALUE_SIZE],
 }
 
+impl ValueTarget {
+    pub fn zero<F: RichField + Extendable<D>, const D: usize>(
+        builder: &mut CircuitBuilder<F, D>,
+    ) -> Self {
+        Self {
+            elements: [builder.zero(); VALUE_SIZE],
+        }
+    }
+
+    pub fn one<F: RichField + Extendable<D>, const D: usize>(
+        builder: &mut CircuitBuilder<F, D>,
+    ) -> Self {
+        Self {
+            elements: array::from_fn(|i| {
+                if i == 0 {
+                    builder.one()
+                } else {
+                    builder.zero()
+                }
+            }),
+        }
+    }
+
+    pub fn from_slice(xs: &[Target]) -> Self {
+        assert_eq!(xs.len(), VALUE_SIZE);
+        Self {
+            elements: array::from_fn(|i| xs[i]),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct StatementTarget {
     pub predicate: [Target; Params::predicate_size()],
@@ -27,6 +62,25 @@ pub struct StatementTarget {
 }
 
 impl StatementTarget {
+    pub fn new_native(
+        builder: &mut CircuitBuilder<F, D>,
+        params: &Params,
+        predicate: NativePredicate,
+        args: &[[Target; STATEMENT_ARG_F_LEN]],
+    ) -> Self {
+        let predicate_vec = builder.constants(&Predicate::Native(predicate).to_fields(params));
+        Self {
+            predicate: array::from_fn(|i| predicate_vec[i]),
+            args: args
+                .iter()
+                .map(|arg| *arg)
+                .chain(
+                    iter::repeat([builder.zero(); STATEMENT_ARG_F_LEN])
+                        .take(params.max_statement_args - args.len()),
+                )
+                .collect(),
+        }
+    }
     pub fn to_flattened(&self) -> Vec<Target> {
         self.predicate
             .iter()
@@ -67,6 +121,16 @@ impl StatementTarget {
         }
         Ok(())
     }
+
+    pub fn has_native_type(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        params: &Params,
+        t: NativePredicate,
+    ) -> BoolTarget {
+        let st_code = builder.constants(&Predicate::Native(t).to_fields(params));
+        builder.is_equal_slice(&self.predicate, &st_code)
+    }
 }
 
 // TODO: Implement Operation::to_field to determine the size of each element
@@ -95,6 +159,15 @@ impl OperationTarget {
         }
         Ok(())
     }
+
+    pub fn has_native_type(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        t: NativeOperation,
+    ) -> BoolTarget {
+        let op_code = builder.constant(F::from_canonical_u64(t as u64));
+        builder.is_equal(self.op_type[1], op_code)
+    }
 }
 
 pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
@@ -108,11 +181,18 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     fn constant_value(&mut self, v: Value) -> ValueTarget;
     fn is_equal_slice(&mut self, xs: &[Target], ys: &[Target]) -> BoolTarget;
 
+    // Convenience methods for checking values.
+    /// Checks whether `xs` is right-padded with 0s so as to represent a `Value`.
+    fn is_value(&mut self, xs: &[Target]) -> BoolTarget;
+    /// Checks whether `x < y` if `b` is true. This involves checking
+    /// that `x` and `y` each consist of two `u32` limbs.
+    fn assert_less_if(&mut self, b: BoolTarget, x: ValueTarget, y: ValueTarget);
+
     // Convenience methods for randomly accessing vector elements and rows of matrices.
     fn vector_ref(&mut self, v: &[Target], i: Target) -> Target;
     fn matrix_row_ref(&mut self, m: &[Vec<Target>], i: Target) -> Vec<Target>;
 
-    // Convenience methods for Boolean into-iters. Assumes these are non-empty.
+    // Convenience methods for Boolean into-iters.
     fn all(&mut self, xs: impl IntoIterator<Item = BoolTarget>) -> BoolTarget;
     fn any(&mut self, xs: impl IntoIterator<Item = BoolTarget>) -> BoolTarget;
 }
@@ -182,6 +262,50 @@ impl<F: RichField + Extendable<D>, const D: usize> CircuitBuilderPod<F, D>
         })
     }
 
+    fn is_value(&mut self, xs: &[Target]) -> BoolTarget {
+        let zeros = iter::repeat(self.zero())
+            .take(STATEMENT_ARG_F_LEN - VALUE_SIZE)
+            .collect::<Vec<_>>();
+        self.is_equal_slice(&xs[VALUE_SIZE..], &zeros)
+    }
+
+    fn assert_less_if(&mut self, b: BoolTarget, x: ValueTarget, y: ValueTarget) {
+        const NUM_BITS: usize = 32;
+
+        // LEq assertion with 32-bit range check.
+        let assert_limb_lt = |builder: &mut Self, x, y| {
+            // Check that targets fit within `NUM_BITS` bits.
+            builder.range_check(x, NUM_BITS);
+            builder.range_check(y, NUM_BITS);
+            // Check that `y-1-x` fits within `NUM_BITS` bits.
+            let one = builder.one();
+            let y_minus_one = builder.sub(y, one);
+            let expr = builder.sub(y_minus_one, x);
+            builder.range_check(expr, NUM_BITS);
+        };
+
+        // If b is false, replace `x` and `y` with dummy values.
+        let zero = ValueTarget::zero(self);
+        let one = ValueTarget::one(self);
+        let x = self.select_value(b, x, zero);
+        let y = self.select_value(b, y, one);
+
+        // `x` and `y` should only have two limbs each.
+        x.elements
+            .into_iter()
+            .skip(2)
+            .for_each(|l| self.assert_zero(l));
+        y.elements
+            .into_iter()
+            .skip(2)
+            .for_each(|l| self.assert_zero(l));
+
+        let big_limbs_eq = self.is_equal(x.elements[1], y.elements[1]);
+        let lhs = self.select(big_limbs_eq, x.elements[0], x.elements[1]);
+        let rhs = self.select(big_limbs_eq, y.elements[0], y.elements[1]);
+        assert_limb_lt(self, lhs, rhs);
+    }
+
     // TODO: Revisit this when we need more than 64 statements.
     fn vector_ref(&mut self, v: &[Target], i: Target) -> Target {
         self.random_access(i, v.to_vec())
@@ -205,12 +329,12 @@ impl<F: RichField + Extendable<D>, const D: usize> CircuitBuilderPod<F, D>
     fn all(&mut self, xs: impl IntoIterator<Item = BoolTarget>) -> BoolTarget {
         xs.into_iter()
             .reduce(|a, b| self.and(a, b))
-            .expect("Empty iterator")
+            .unwrap_or(self._true())
     }
 
     fn any(&mut self, xs: impl IntoIterator<Item = BoolTarget>) -> BoolTarget {
         xs.into_iter()
             .reduce(|a, b| self.or(a, b))
-            .expect("Empty iterator")
+            .unwrap_or(self._false())
     }
 }
