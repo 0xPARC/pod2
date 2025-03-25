@@ -1,10 +1,10 @@
 //! Common functionality to build Pod circuits with plonky2
 
 use crate::backends::plonky2::basetypes::D;
-use crate::backends::plonky2::mock_main::Statement;
-use crate::backends::plonky2::mock_main::{Operation, OperationArg};
+use crate::backends::plonky2::mock::mainpod::Statement;
+use crate::backends::plonky2::mock::mainpod::{Operation, OperationArg};
 use crate::middleware::{
-    NativeOperation, NativePredicate, OperationType, Params, Predicate, StatementArg, ToFields,
+    NativeOperation, NativePredicate, Params, Predicate, StatementArg, ToFields,
     Value, F, HASH_SIZE, VALUE_SIZE,
 };
 use crate::middleware::{OPERATION_ARG_F_LEN, STATEMENT_ARG_F_LEN};

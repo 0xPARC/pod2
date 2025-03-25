@@ -1,16 +1,4 @@
-use crate::backends::plonky2::basetypes::{Hash, Value, D, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE};
-use crate::backends::plonky2::common::{
-    CircuitBuilderPod, OperationTarget, StatementTarget, ValueTarget,
-};
-use crate::backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree};
-use crate::backends::plonky2::primitives::merkletree::{
-    MerkleProofExistenceGate, MerkleProofExistenceTarget,
-};
-use crate::middleware::{
-    hash_str, AnchoredKey, NativeOperation, NativePredicate, Params, PodType, Statement,
-    StatementArg, ToFields, KEY_TYPE, SELF, STATEMENT_ARG_F_LEN,
-};
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use itertools::Itertools;
 use plonky2::{
     field::types::Field,
@@ -26,6 +14,19 @@ use plonky2::{
 };
 use std::collections::HashMap;
 use std::iter;
+
+use crate::backends::plonky2::basetypes::{Hash, Value, D, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE};
+use crate::backends::plonky2::circuits::common::{
+    CircuitBuilderPod, OperationTarget, StatementTarget, ValueTarget,
+};
+use crate::backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree};
+use crate::backends::plonky2::primitives::merkletree::{
+    MerkleProofExistenceGate, MerkleProofExistenceTarget,
+};
+use crate::middleware::{
+    hash_str, AnchoredKey, NativeOperation, NativePredicate, Params, PodType, Predicate, Statement,
+    StatementArg, ToFields, KEY_TYPE, SELF, STATEMENT_ARG_F_LEN,
+};
 
 //
 // SignedPod verification
@@ -491,8 +492,8 @@ impl MainPodVerifyCircuit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backends::plonky2::mock_main;
-    use crate::backends::plonky2::{basetypes::C, mock_main::OperationArg};
+    use crate::backends::plonky2::{basetypes::C, mock::mainpod::OperationArg};
+    use crate::backends::plonky2::mock::mainpod;
     use crate::middleware::{OperationType, PodId};
     use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
 
@@ -526,9 +527,9 @@ mod tests {
     }
 
     fn operation_verify(
-        st: mock_main::Statement,
-        op: mock_main::Operation,
-        prev_statements: Vec<mock_main::Statement>,
+        st: mainpod::Statement,
+        op: mainpod::Operation,
+        prev_statements: Vec<mainpod::Statement>,
     ) -> Result<()> {
         let params = Params::default();
 
@@ -571,36 +572,36 @@ mod tests {
     #[test]
     fn test_operation_verify() -> Result<()> {
         // None
-        let st: mock_main::Statement = Statement::None.into();
-        let op = mock_main::Operation(OperationType::Native(NativeOperation::None), vec![]);
+        let st: mainpod::Statement = Statement::None.into();
+        let op = mainpod::Operation(OperationType::Native(NativeOperation::None), vec![]);
         let prev_statements = vec![Statement::None.into()];
         operation_verify(st.clone(), op, prev_statements.clone())?;
 
         // NewEntry
-        let st1: mock_main::Statement =
+        let st1: mainpod::Statement =
             Statement::ValueOf(AnchoredKey(SELF, "hello".into()), 55.into()).into();
-        let op = mock_main::Operation(OperationType::Native(NativeOperation::NewEntry), vec![]);
+        let op = mainpod::Operation(OperationType::Native(NativeOperation::NewEntry), vec![]);
         operation_verify(st1.clone(), op, vec![])?;
 
         // Copy
-        let op = mock_main::Operation(
+        let op = mainpod::Operation(
             OperationType::Native(NativeOperation::CopyStatement),
             vec![OperationArg::Index(0)],
         );
         operation_verify(st, op, prev_statements)?;
 
         // Eq
-        let st2: mock_main::Statement = Statement::ValueOf(
+        let st2: mainpod::Statement = Statement::ValueOf(
             AnchoredKey(PodId(Value::from(75).into()), "hello".into()),
             55.into(),
         )
         .into();
-        let st: mock_main::Statement = Statement::Equal(
+        let st: mainpod::Statement = Statement::Equal(
             AnchoredKey(SELF, "hello".into()),
             AnchoredKey(PodId(Value::from(75).into()), "hello".into()),
         )
         .into();
-        let op = mock_main::Operation(
+        let op = mainpod::Operation(
             OperationType::Native(NativeOperation::EqualFromEntries),
             vec![OperationArg::Index(0), OperationArg::Index(1)],
         );
@@ -608,17 +609,17 @@ mod tests {
         operation_verify(st, op, prev_statements)?;
 
         // Lt
-        let st2: mock_main::Statement = Statement::ValueOf(
+        let st2: mainpod::Statement = Statement::ValueOf(
             AnchoredKey(PodId(Value::from(88).into()), "hello".into()),
             56.into(),
         )
         .into();
-        let st: mock_main::Statement = Statement::Lt(
+        let st: mainpod::Statement = Statement::Lt(
             AnchoredKey(SELF, "hello".into()),
             AnchoredKey(PodId(Value::from(88).into()), "hello".into()),
         )
         .into();
-        let op = mock_main::Operation(
+        let op = mainpod::Operation(
             OperationType::Native(NativeOperation::LtFromEntries),
             vec![OperationArg::Index(0), OperationArg::Index(1)],
         );
