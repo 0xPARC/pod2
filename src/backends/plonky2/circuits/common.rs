@@ -4,9 +4,8 @@ use crate::backends::plonky2::basetypes::D;
 use crate::backends::plonky2::mock::mainpod::Statement;
 use crate::backends::plonky2::mock::mainpod::{Operation, OperationArg};
 use crate::middleware::{
-    NativeOperation, NativePredicate, Params, Params, Predicate, StatementArg, StatementArg,
-    ToFields, ToFields, Value, Value, EMPTY_VALUE, F, F, HASH_SIZE, HASH_SIZE, OPERATION_ARG_F_LEN,
-    OPERATION_ARG_F_LEN, STATEMENT_ARG_F_LEN, STATEMENT_ARG_F_LEN, VALUE_SIZE, VALUE_SIZE,
+    NativeOperation, NativePredicate, Params, Predicate, StatementArg, ToFields, Value,
+    EMPTY_VALUE, F, HASH_SIZE, OPERATION_ARG_F_LEN, STATEMENT_ARG_F_LEN, VALUE_SIZE,
 };
 use anyhow::Result;
 use plonky2::field::extension::Extendable;
