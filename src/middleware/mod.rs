@@ -105,8 +105,8 @@ pub struct Params {
     // in a custom predicate
     pub max_custom_predicate_arity: usize,
     pub max_custom_batch_size: usize,
-    // maximum depth for merkle tree gates
-    pub max_depth_mt_gate: usize,
+    // maximum depth for merkle tree gadget
+    pub max_depth_mt_gadget: usize,
 }
 
 impl Default for Params {
@@ -121,7 +121,7 @@ impl Default for Params {
             max_operation_args: 5,
             max_custom_predicate_arity: 5,
             max_custom_batch_size: 5,
-            max_depth_mt_gate: 32,
+            max_depth_mt_gadget: 32,
         }
     }
 }

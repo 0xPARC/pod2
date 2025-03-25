@@ -24,11 +24,11 @@ use crate::backends::plonky2::circuits::common::{CircuitBuilderPod, ValueTarget}
 use crate::backends::plonky2::primitives::signature::{PublicKey, Signature};
 
 lazy_static! {
-    // SignatureGate VerifierCircuitData
-    pub static ref S_VD: VerifierCircuitData<F,C,D> = SignatureGate::verifier_data().unwrap();
+    /// SignatureVerifyGadget VerifierCircuitData
+    pub static ref S_VD: VerifierCircuitData<F,C,D> = SignatureVerifyGadget::verifier_data().unwrap();
 }
 
-pub struct SignatureGate {}
+pub struct SignatureVerifyGadget {}
 pub struct SignatureTarget {
     // verifier_data of the SignatureInternalCircuit
     verifier_data_targ: VerifierCircuitTarget,
@@ -37,19 +37,19 @@ pub struct SignatureTarget {
     proof: ProofWithPublicInputsTarget<D>,
 }
 
-impl SignatureGate {
+impl SignatureVerifyGadget {
     pub fn verifier_data() -> Result<VerifierCircuitData<F, C, D>> {
         // notice that we use the 'zk' config
         let config = CircuitConfig::standard_recursion_zk_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
-        let circuit = SignatureGate {}.eval(&mut builder)?;
+        let circuit = SignatureVerifyGadget {}.eval(&mut builder)?;
 
         let circuit_data = builder.build::<C>();
         Ok(circuit_data.verifier_data())
     }
 }
 
-impl SignatureGate {
+impl SignatureVerifyGadget {
     /// creates the targets and defines the logic of the circuit
     pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<SignatureTarget> {
         let selector = builder.add_virtual_bool_target_safe();
@@ -63,9 +63,10 @@ impl SignatureGate {
 
         let proof_targ = builder.add_virtual_proof_with_pis(&common_data);
         builder.verify_proof::<C>(&proof_targ, &verifier_data_targ, &common_data);
-        // NOTE: we would use the `conditional_verify...` method, but since we're using the
-        // `standard_recursion_zk_config` (with zk), internally it fails to generate the
-        // `dummy_circuit`. So for the moment we use `verify_proof` (not-conditional).
+        // NOTE: we would use the `conditional_verify_proof_or_dummy` method,
+        // but since we're using the `standard_recursion_zk_config` (with zk),
+        // internally it fails to generate the `dummy_circuit`. So for the
+        // moment we use `verify_proof` (not-conditional).
         // builder.conditionally_verify_proof_or_dummy::<C>(
         //     selector,
         //     &proof_targ,
@@ -138,7 +139,7 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = SignatureGate {}.eval(&mut builder)?;
+        let targets = SignatureVerifyGadget {}.eval(&mut builder)?;
         targets.set_targets(&mut pw, true, pk, msg, sig)?;
 
         // generate & verify proof
