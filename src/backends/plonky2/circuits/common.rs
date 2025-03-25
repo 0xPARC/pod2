@@ -4,8 +4,8 @@ use crate::backends::plonky2::basetypes::D;
 use crate::backends::plonky2::mock::mainpod::Statement;
 use crate::backends::plonky2::mock::mainpod::{Operation, OperationArg};
 use crate::middleware::{
-    NativeOperation, NativePredicate, Params, Predicate, StatementArg, ToFields,
-    Value, F, HASH_SIZE, VALUE_SIZE,
+    NativeOperation, NativePredicate, Params, Predicate, StatementArg, ToFields, Value, F,
+    HASH_SIZE, VALUE_SIZE,
 };
 use crate::middleware::{OPERATION_ARG_F_LEN, STATEMENT_ARG_F_LEN};
 use anyhow::Result;
@@ -272,7 +272,7 @@ impl<F: RichField + Extendable<D>, const D: usize> CircuitBuilderPod<F, D>
     fn assert_less_if(&mut self, b: BoolTarget, x: ValueTarget, y: ValueTarget) {
         const NUM_BITS: usize = 32;
 
-        // LEq assertion with 32-bit range check.
+        // Lt assertion with 32-bit range check.
         let assert_limb_lt = |builder: &mut Self, x, y| {
             // Check that targets fit within `NUM_BITS` bits.
             builder.range_check(x, NUM_BITS);

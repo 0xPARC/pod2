@@ -19,13 +19,13 @@ use crate::backends::plonky2::basetypes::{Hash, Value, D, EMPTY_HASH, EMPTY_VALU
 use crate::backends::plonky2::circuits::common::{
     CircuitBuilderPod, OperationTarget, StatementTarget, ValueTarget,
 };
-use crate::backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree};
+use crate::backends::plonky2::primitives::merkletree::MerkleTree;
 use crate::backends::plonky2::primitives::merkletree::{
     MerkleProofExistenceGate, MerkleProofExistenceTarget,
 };
 use crate::middleware::{
-    hash_str, AnchoredKey, NativeOperation, NativePredicate, Params, PodType, Predicate, Statement,
-    StatementArg, ToFields, KEY_TYPE, SELF, STATEMENT_ARG_F_LEN,
+    hash_str, AnchoredKey, NativeOperation, NativePredicate, Params, PodType, Statement,
+    StatementArg, ToFields, KEY_TYPE, SELF,
 };
 
 //
@@ -319,7 +319,11 @@ impl OperationVerifyGate {
         let dupe_check = {
             let individual_checks = prev_statements
                 .into_iter()
-                .map(|ps| builder.is_equal_slice(&st.args[0], &ps.args[0]))
+                .map(|ps| {
+                    let same_predicate = builder.is_equal_slice(&st.predicate, &ps.predicate);
+                    let same_anchored_key = builder.is_equal_slice(&st.args[0], &ps.args[0]);
+                    builder.and(same_predicate, same_anchored_key)
+                })
                 .collect::<Vec<_>>();
             builder.any(individual_checks)
         };
@@ -492,8 +496,8 @@ impl MainPodVerifyCircuit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backends::plonky2::{basetypes::C, mock::mainpod::OperationArg};
     use crate::backends::plonky2::mock::mainpod;
+    use crate::backends::plonky2::{basetypes::C, mock::mainpod::OperationArg};
     use crate::middleware::{OperationType, PodId};
     use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
 
