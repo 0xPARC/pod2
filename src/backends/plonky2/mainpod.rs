@@ -70,6 +70,12 @@ impl PodProver for Prover {
         };
         main_pod.set_targets(&mut pw, &input)?;
 
+        for (target, name) in &builder.target_names {
+            if let Some(v) = pw.target_values.get(target) {
+                println!("DBG {}={}", name, v);
+            }
+        }
+
         // generate & verify proof
         let data = builder.build::<C>();
         let proof = data.prove(pw)?;
@@ -193,6 +199,14 @@ pub mod tests {
             (pay_stub, "socialSecurityNumber")
         ))?;
         // NOTE: Failing
+        let start_date_st = kyc.pub_op(frontend::Operation(
+            OperationType::Native(NativeOperation::NewEntry),
+            vec![frontend::OperationArg::Entry(
+                "startDate".to_string(),
+                now_minus_1y.into(),
+            )],
+        ))?;
+        kyc.pub_op(op!(eq, (pay_stub, "startDate"), start_date_st))?;
         // kyc.pub_op(op!(eq, (pay_stub, "startDate"), now_minus_1y))?;
 
         Ok(kyc)

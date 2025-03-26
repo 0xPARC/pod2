@@ -268,8 +268,8 @@ impl OperationVerifyGate {
             op_code_ok,
             op_arg_types_ok,
             op_arg_range_ok,
-            op_args_eq,
-            st_ok,
+            op_args_eq, // FAILING
+            st_ok,      // FAILING
         ])
     }
 
@@ -642,6 +642,28 @@ mod tests {
     }
 
     #[test]
+    fn test_operation_verify_eq_from_entries() -> Result<()> {
+        let st1: mainpod::Statement =
+            Statement::ValueOf(AnchoredKey(SELF, "hello".into()), 55.into()).into();
+        let st2: mainpod::Statement = Statement::ValueOf(
+            AnchoredKey(PodId(Value::from(75).into()), "world".into()),
+            55.into(),
+        )
+        .into();
+        let st: mainpod::Statement = Statement::Equal(
+            AnchoredKey(SELF, "hello".into()),
+            AnchoredKey(PodId(Value::from(75).into()), "world".into()),
+        )
+        .into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::EqualFromEntries),
+            vec![OperationArg::Index(0), OperationArg::Index(1)],
+        );
+        let prev_statements = vec![st1.clone(), st2];
+        operation_verify(st, op, prev_statements)
+    }
+
+    #[test]
     fn test_operation_verify() -> Result<()> {
         // None
         let st: mainpod::Statement = Statement::None.into();
@@ -672,13 +694,13 @@ mod tests {
 
         // Eq
         let st2: mainpod::Statement = Statement::ValueOf(
-            AnchoredKey(PodId(Value::from(75).into()), "hello".into()),
+            AnchoredKey(PodId(Value::from(75).into()), "world".into()),
             55.into(),
         )
         .into();
         let st: mainpod::Statement = Statement::Equal(
             AnchoredKey(SELF, "hello".into()),
-            AnchoredKey(PodId(Value::from(75).into()), "hello".into()),
+            AnchoredKey(PodId(Value::from(75).into()), "world".into()),
         )
         .into();
         let op = mainpod::Operation(

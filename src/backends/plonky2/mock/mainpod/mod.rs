@@ -469,6 +469,7 @@ impl Pod for MockMainPod {
     }
     fn pub_statements(&self) -> Vec<middleware::Statement> {
         // return the public statements, where when origin=SELF is replaced by origin=self.id()
+        // By convention we expect the KEY_TYPE to be the first statement
         self.statements
             .iter()
             .skip(self.offset_public_statements())
