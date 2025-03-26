@@ -580,6 +580,10 @@ mod tests {
                 Value::from(hash_str(KEY_TYPE)),
                 Value::from(PodType::MockSigned),
             ),
+            (
+                Value::from(hash_str(KEY_SIGNER)),
+                Value::from(hash_str("TODO")),
+            ),
             (Value::from(hash_str("foo")), Value::from(42)),
         ]
         .into();
