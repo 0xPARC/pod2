@@ -6,16 +6,15 @@ use crate::middleware::{
     self, hash_str, Hash, MainPodInputs, NativeOperation, NativePredicate, Params, PodId,
     PodProver, PodSigner, SELF,
 };
-use crate::middleware::{OperationType, Predicate, KEY_SIGNER, KEY_TYPE};
+use crate::middleware::{KEY_SIGNER, KEY_TYPE};
 use anyhow::{anyhow, Error, Result};
 use containers::{Array, Dictionary, Set};
-use env_logger;
 use itertools::Itertools;
-use log::error;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::convert::From;
+use std::hash::Hasher;
 use std::{fmt, hash as h};
 
 pub mod containers;
@@ -24,6 +23,7 @@ mod operation;
 mod serialization;
 mod statement;
 pub use custom::*;
+pub use custom::{CustomPredicateRef, Predicate};
 pub use operation::*;
 pub use statement::*;
 
@@ -82,6 +82,24 @@ pub enum Value {
     #[serde(untagged)]
     #[schemars(skip)]
     Bool(bool),
+}
+
+impl h::Hash for Value {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // Hash the discriminant first
+        std::mem::discriminant(self).hash(state);
+
+        // Hash the inner values only for types that implement Hash
+        match self {
+            Value::String(s) => s.hash(state),
+            Value::Int(i) => i.hash(state),
+            Value::Bool(b) => b.hash(state),
+            Value::Dictionary(d) => d.middleware_dict().commitment().hash(state),
+            Value::Set(s) => s.middleware_set().commitment().hash(state),
+            Value::Array(a) => a.middleware_array().commitment().hash(state),
+            Value::Raw(r) => r.hash(state),
+        }
+    }
 }
 
 impl From<&str> for Value {
@@ -640,7 +658,7 @@ impl MainPodBuilder {
                 // All args should be statements to be pattern matched against statement templates.
                 let args = args.iter().map(
                     |a| match a {
-                        OperationArg::Statement(s) => middleware::Statement::try_from(s.clone()),
+                        OperationArg::Statement(s) => Ok(s.clone()),
                             _ => Err(anyhow!("Invalid argument {} to operation corresponding to custom predicate {:?}.", a, cpr))
                     }
                 ).collect::<Result<Vec<_>>>()?;
@@ -662,13 +680,22 @@ impl MainPodBuilder {
                         Ok(StatementArg::Key(AnchoredKey::new(
                             Origin::new(
                                 self.pod_class_table
-                                    .get(&PodId(chunk[0].into()))
+                                    .get(&PodId(match chunk[0] {
+                                        Value::Raw(v) => v.try_into()?,
+                                        _ => return Err(anyhow!("Invalid POD class value.")),
+                                    }))
                                     .cloned()
                                     .ok_or(anyhow!("Missing POD class value."))?,
-                                PodId(chunk[0].into()),
+                                PodId(match chunk[0] {
+                                    Value::Raw(v) => v.try_into()?,
+                                    _ => return Err(anyhow!("Invalid POD class value.")),
+                                }),
                             ),
                             self.key_table
-                                .get(&chunk[1].into())
+                                .get(&match &chunk[1] {
+                                    Value::String(s) => hash_str(s.as_str()),
+                                    _ => return Err(anyhow!("Invalid key value.")),
+                                })
                                 .cloned()
                                 .ok_or(anyhow!("Missing key corresponding to hash."))?,
                         )))
@@ -887,7 +914,7 @@ impl MainPodCompiler {
             op.1.iter()
                 .flat_map(|arg| self.compile_op_arg(arg).map(|s| Ok(s.try_into()?)))
                 .collect::<Result<Vec<middleware::Statement>>>()?;
-        middleware::Operation::op(mop_code, &mop_args)
+        middleware::Operation::op(mop_code.into(), &mop_args)
     }
 
     fn compile_st_op(&mut self, st: &Statement, op: &Operation, params: &Params) -> Result<()> {
@@ -950,46 +977,46 @@ pub mod build_utils {
     #[macro_export]
     macro_rules! op {
         (new_entry, ($key:expr, $value:expr)) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::NewEntry),
+            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::NewEntry),
             $crate::op_args!(($key, $value))) };
         (eq, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::EqualFromEntries),
+            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::EqualFromEntries),
             $crate::op_args!($($arg),*)) };
         (ne, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::NotEqualFromEntries),
+            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::NotEqualFromEntries),
             $crate::op_args!($($arg),*)) };
         (gt, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::GtFromEntries),
+            crate::frontend::OperationType::Native(crate::middleware::NativeOperation::GtFromEntries),
             crate::op_args!($($arg),*)) };
         (lt, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::LtFromEntries),
+            crate::frontend::OperationType::Native(crate::middleware::NativeOperation::LtFromEntries),
             crate::op_args!($($arg),*)) };
         (transitive_eq, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::TransitiveEqualFromStatements),
+            crate::frontend::OperationType::Native(crate::middleware::NativeOperation::TransitiveEqualFromStatements),
             crate::op_args!($($arg),*)) };
         (gt_to_ne, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::GtToNotEqual),
+            crate::frontend::OperationType::Native(crate::middleware::NativeOperation::GtToNotEqual),
             crate::op_args!($($arg),*)) };
         (lt_to_ne, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::LtToNotEqual),
+            crate::frontend::OperationType::Native(crate::middleware::NativeOperation::LtToNotEqual),
             crate::op_args!($($arg),*)) };
         (contains, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::ContainsFromEntries),
+            crate::frontend::OperationType::Native(crate::middleware::NativeOperation::ContainsFromEntries),
             crate::op_args!($($arg),*)) };
         (not_contains, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::NotContainsFromEntries),
+            crate::frontend::OperationType::Native(crate::middleware::NativeOperation::NotContainsFromEntries),
             crate::op_args!($($arg),*)) };
         (sum_of, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::SumOf),
+            crate::frontend::OperationType::Native(crate::middleware::NativeOperation::SumOf),
             crate::op_args!($($arg),*)) };
         (product_of, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::ProductOf),
+            crate::frontend::OperationType::Native(crate::middleware::NativeOperation::ProductOf),
             crate::op_args!($($arg),*)) };
         (max_of, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::middleware::OperationType::Native(crate::middleware::NativeOperation::MaxOf),
+            crate::frontend::OperationType::Native(crate::middleware::NativeOperation::MaxOf),
             crate::op_args!($($arg),*)) };
         (custom, $op:expr, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Custom($op),
+            $crate::frontend::OperationType::Custom($op),
             $crate::op_args!($($arg),*)) };
     }
 }
@@ -1179,7 +1206,7 @@ pub mod tests {
             OperationType::Native(NativeOperation::TransitiveEqualFromStatements),
             vec![OperationArg::Statement(st1), OperationArg::Statement(st2)],
         );
-        let st3 = builder.op(true, op_eq3);
+        builder.op(true, op_eq3).unwrap();
 
         let mut prover = MockProver {};
         let pod = builder.prove(&mut prover, &params).unwrap();

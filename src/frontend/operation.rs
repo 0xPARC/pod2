@@ -1,7 +1,9 @@
 use std::fmt;
 
-use super::{SignedPod, Statement, Value};
-use crate::middleware::OperationType;
+use serde::{Deserialize, Serialize};
+
+use super::{CustomPredicateRef, Predicate, SignedPod, Statement, Value};
+use crate::middleware::{self, NativeOperation, NativePredicate};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OperationArg {
@@ -65,6 +67,59 @@ impl From<Statement> for OperationArg {
 impl<V: Into<Value>> From<(&str, V)> for OperationArg {
     fn from((key, value): (&str, V)) -> Self {
         Self::Entry(key.to_string(), value.into())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OperationType {
+    Native(NativeOperation),
+    Custom(CustomPredicateRef),
+}
+
+impl From<OperationType> for middleware::OperationType {
+    fn from(ot: OperationType) -> middleware::OperationType {
+        match ot {
+            OperationType::Custom(cpr) => middleware::OperationType::Custom(cpr.into()),
+            OperationType::Native(op) => middleware::OperationType::Native(op),
+        }
+    }
+}
+
+impl OperationType {
+    /// Gives the type of predicate that the operation will output, if known.
+    /// CopyStatement may output any predicate (it will match the statement copied),
+    /// so output_predicate returns None on CopyStatement.
+    pub fn output_predicate(&self) -> Option<Predicate> {
+        match self {
+            OperationType::Native(native_op) => match native_op {
+                NativeOperation::None => Some(Predicate::Native(NativePredicate::None)),
+                NativeOperation::NewEntry => Some(Predicate::Native(NativePredicate::ValueOf)),
+                NativeOperation::CopyStatement => None,
+                NativeOperation::EqualFromEntries => {
+                    Some(Predicate::Native(NativePredicate::Equal))
+                }
+                NativeOperation::NotEqualFromEntries => {
+                    Some(Predicate::Native(NativePredicate::NotEqual))
+                }
+                NativeOperation::GtFromEntries => Some(Predicate::Native(NativePredicate::Gt)),
+                NativeOperation::LtFromEntries => Some(Predicate::Native(NativePredicate::Lt)),
+                NativeOperation::TransitiveEqualFromStatements => {
+                    Some(Predicate::Native(NativePredicate::Equal))
+                }
+                NativeOperation::GtToNotEqual => Some(Predicate::Native(NativePredicate::NotEqual)),
+                NativeOperation::LtToNotEqual => Some(Predicate::Native(NativePredicate::NotEqual)),
+                NativeOperation::ContainsFromEntries => {
+                    Some(Predicate::Native(NativePredicate::Contains))
+                }
+                NativeOperation::NotContainsFromEntries => {
+                    Some(Predicate::Native(NativePredicate::NotContains))
+                }
+                NativeOperation::SumOf => Some(Predicate::Native(NativePredicate::SumOf)),
+                NativeOperation::ProductOf => Some(Predicate::Native(NativePredicate::ProductOf)),
+                NativeOperation::MaxOf => Some(Predicate::Native(NativePredicate::MaxOf)),
+            },
+            OperationType::Custom(cpr) => Some(Predicate::Custom(cpr.clone())),
+        }
     }
 }
 

@@ -1,5 +1,6 @@
 use super::{AnchoredKey, SignedPod, Value};
-use crate::middleware::{self, NativePredicate, Predicate};
+use crate::frontend::Predicate;
+use crate::middleware::{self, NativePredicate};
 use anyhow::{anyhow, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -97,7 +98,7 @@ impl TryFrom<Statement> for middleware::Statement {
                 _ => Err(anyhow!("Ill-formed statement: {}", s))?,
             },
             Predicate::Custom(cpr) => MS::Custom(
-                cpr.clone(),
+                cpr.clone().into(),
                 s.args
                     .iter()
                     .map(|arg| match arg {

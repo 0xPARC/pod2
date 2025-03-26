@@ -3,11 +3,11 @@ use std::sync::Arc;
 use anyhow::Result;
 
 use crate::{
-    frontend::{literal, CustomPredicateBatchBuilder, StatementTmplBuilder},
-    middleware::{
-        CustomPredicateBatch, CustomPredicateRef, NativePredicate, Params, PodType, Predicate,
-        KEY_SIGNER, KEY_TYPE,
+    frontend::{
+        literal, CustomPredicateBatch, CustomPredicateBatchBuilder, CustomPredicateRef, Predicate,
+        StatementTmplBuilder, Value,
     },
+    middleware::{self, NativePredicate, Params, PodType, KEY_SIGNER, KEY_TYPE},
 };
 
 use NativePredicate as NP;
@@ -27,7 +27,7 @@ pub fn eth_friend_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
             // there is an attestation pod that's a SignedPod
             STB::new(NP::ValueOf)
                 .arg(("attestation_pod", literal(KEY_TYPE)))
-                .arg(PodType::MockSigned), // TODO
+                .arg(Value::from(middleware::Value::from(PodType::MockSigned))), // TODO
             // the attestation pod is signed by (src_or, src_key)
             STB::new(NP::Equal)
                 .arg(("attestation_pod", literal(KEY_SIGNER)))
@@ -45,7 +45,7 @@ pub fn eth_friend_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
 
 /// Instantiates an ETHDoS batch
 pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
-    let eth_friend = Predicate::Custom(CustomPredicateRef(eth_friend_batch(params)?, 0));
+    let eth_friend = Predicate::Custom(CustomPredicateRef::new(eth_friend_batch(params)?, 0));
     let mut builder = CustomPredicateBatchBuilder::new("eth_dos_distance_base".into());
 
     // eth_dos_distance_base(src_or, src_key, dst_or, dst_key, distance_or, distance_key) = and<
