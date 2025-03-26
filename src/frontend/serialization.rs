@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, HashMap};
 use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize, Serializer};
 
-use crate::backends::plonky2::mock_main::MockMainPod;
-use crate::backends::plonky2::mock_signed::MockSignedPod;
+use crate::backends::plonky2::mock::mainpod::MockMainPod;
+use crate::backends::plonky2::mock::signedpod::MockSignedPod;
 use crate::frontend::containers::Dictionary;
 use crate::frontend::Statement;
 use crate::middleware::PodId;
@@ -154,7 +154,7 @@ mod tests {
     use anyhow::Result;
 
     use crate::{
-        backends::plonky2::{mock_main::MockProver, mock_signed::MockSigner},
+        backends::plonky2::mock::{mainpod::MockProver, signedpod::MockSigner},
         examples::{zu_kyc_pod_builder, zu_kyc_sign_pod_builders},
         frontend::{
             containers::{Array, Dictionary, Set},
@@ -257,7 +257,7 @@ mod tests {
 
         assert_eq!(pod.kvs, deserialized.kvs);
         assert_eq!(pod.origin(), deserialized.origin());
-        assert_eq!(pod.verify(), deserialized.verify());
+        assert_eq!(pod.verify().is_ok(), deserialized.verify().is_ok());
         assert_eq!(pod.id(), deserialized.id())
     }
 
@@ -293,7 +293,7 @@ mod tests {
 
         assert_eq!(kyc_pod.public_statements, deserialized.public_statements);
         assert_eq!(kyc_pod.pod.id(), deserialized.pod.id());
-        assert_eq!(kyc_pod.pod.verify(), deserialized.pod.verify());
+        assert_eq!(kyc_pod.pod.verify()?, deserialized.pod.verify()?);
 
         Ok(())
     }

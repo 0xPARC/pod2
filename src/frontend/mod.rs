@@ -258,7 +258,7 @@ impl SignedPod {
     pub fn origin(&self) -> Origin {
         Origin::new(PodClass::Signed, self.id())
     }
-    pub fn verify(&self) -> bool {
+    pub fn verify(&self) -> Result<()> {
         self.pod.verify()
     }
     pub fn kvs(&self) -> HashMap<Hash, middleware::Value> {
@@ -821,7 +821,7 @@ pub struct MainPod {
 impl fmt::Display for MainPod {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "MainPod: {}", self.pod.id())?;
-        writeln!(f, "  valid?  {}", self.pod.verify())?;
+        writeln!(f, "  valid?  {}", self.pod.verify().is_ok())?;
         writeln!(f, "  statements:")?;
         for st in &self.pod.pub_statements() {
             writeln!(f, "    - {}", st)?;
@@ -1148,8 +1148,8 @@ pub mod build_utils {
 pub mod tests {
     use super::*;
     use crate::backends::plonky2::basetypes;
-    use crate::backends::plonky2::mock_main::MockProver;
-    use crate::backends::plonky2::mock_signed::MockSigner;
+    use crate::backends::plonky2::mock::mainpod::MockProver;
+    use crate::backends::plonky2::mock::signedpod::MockSigner;
     use crate::backends::plonky2::primitives::merkletree::MerkleTree;
     use crate::examples::{
         eth_dos_pod_builder, eth_friend_signed_pod_builder, great_boy_pod_full_flow,
