@@ -29,7 +29,7 @@ lazy_static! {
 }
 
 pub struct SignatureVerifyGadget {}
-pub struct SignatureTarget {
+pub struct SignatureVerifyTarget {
     // verifier_data of the SignatureInternalCircuit
     verifier_data_targ: VerifierCircuitTarget,
     selector: BoolTarget,
@@ -53,7 +53,7 @@ impl SignatureVerifyGadget {
 
 impl SignatureVerifyGadget {
     /// creates the targets and defines the logic of the circuit
-    pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<SignatureTarget> {
+    pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<SignatureVerifyTarget> {
         let selector = builder.add_virtual_bool_target_safe();
 
         let common_data = super::signature::VP.0.common.clone();
@@ -81,7 +81,7 @@ impl SignatureVerifyGadget {
             &common_data,
         );
 
-        Ok(SignatureTarget {
+        Ok(SignatureVerifyTarget {
             selector,
             proof: proof_targ,
             pk: pk_targ,
@@ -91,7 +91,7 @@ impl SignatureVerifyGadget {
     }
 }
 
-impl SignatureTarget {
+impl SignatureVerifyTarget {
     /// assigns the given values to the targets
     pub fn set_targets(
         &self,
