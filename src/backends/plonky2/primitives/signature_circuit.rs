@@ -20,7 +20,9 @@ use plonky2::{
 };
 
 use super::signature::{PublicKey, SecretKey, Signature, DUMMY_PUBLIC_INPUTS, DUMMY_SIGNATURE};
-use crate::backends::plonky2::basetypes::{Hash, Proof, Value, C, D, EMPTY_HASH, EMPTY_VALUE, F};
+use crate::backends::plonky2::basetypes::{
+    Hash, Proof, Value, C, D, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE,
+};
 use crate::backends::plonky2::circuits::common::{CircuitBuilderPod, ValueTarget};
 
 lazy_static! {
@@ -34,6 +36,7 @@ pub struct SignatureVerifyTarget {
     verifier_data_targ: VerifierCircuitTarget,
     selector: BoolTarget,
     pk: ValueTarget,
+    msg: ValueTarget,
     // proof of the SignatureInternalCircuit (=signature::Signature.0)
     proof: ProofWithPublicInputsTarget<D>,
     dummy_proof: ProofWithPublicInputsTarget<D>,
@@ -58,12 +61,30 @@ impl SignatureVerifyGadget {
 
         let common_data = super::signature::VP.0.common.clone();
 
+        // targets related to the 'public inputs' for the verification of the
+        // `SignatureInternalCircuit` proof.
         let pk_targ = builder.add_virtual_value();
+        let msg_targ = builder.add_virtual_value();
+        let inp: Vec<Target> = [pk_targ.elements.to_vec(), msg_targ.elements.to_vec()].concat();
+        let s_targ = builder.hash_n_to_hash_no_pad::<PoseidonHash>(inp);
 
         let verifier_data_targ =
             builder.add_virtual_verifier_data(common_data.config.fri_config.cap_height);
 
         let proof_targ = builder.add_virtual_proof_with_pis(&common_data);
+
+        // connect the {pk, msg, s} with the proof_targ.public_inputs
+        for i in 0..VALUE_SIZE {
+            builder.connect(pk_targ.elements[i], proof_targ.public_inputs[i]);
+            builder.connect(
+                msg_targ.elements[i],
+                proof_targ.public_inputs[VALUE_SIZE + i],
+            );
+            builder.connect(
+                s_targ.elements[i],
+                proof_targ.public_inputs[(2 * VALUE_SIZE) + i],
+            );
+        }
 
         // NOTE: we would use the `conditional_verify_proof_or_dummy` method,
         // but since we're using the `standard_recursion_zk_config` (with zk),
@@ -82,10 +103,11 @@ impl SignatureVerifyGadget {
         );
 
         Ok(SignatureVerifyTarget {
-            selector,
-            proof: proof_targ,
-            pk: pk_targ,
             verifier_data_targ,
+            selector,
+            pk: pk_targ,
+            msg: msg_targ,
+            proof: proof_targ,
             dummy_proof: dummy_proof_targ,
         })
     }
@@ -103,6 +125,7 @@ impl SignatureVerifyTarget {
     ) -> Result<()> {
         pw.set_bool_target(self.selector, selector)?;
         pw.set_target_arr(&self.pk.elements, &pk.0 .0)?;
+        pw.set_target_arr(&self.msg.elements, &msg.0)?;
 
         // note that this hash is checked again in-circuit at the `SignatureInternalCircuit`
         let s = Value(PoseidonHash::hash_no_pad(&[pk.0 .0, msg.0].concat()).elements);
