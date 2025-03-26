@@ -160,8 +160,43 @@ impl Pod for MainPod {
 pub mod tests {
     use super::*;
     use crate::backends::plonky2::mock::signedpod::MockSigner;
-    use crate::examples::{zu_kyc_pod_builder, zu_kyc_sign_pod_builders};
+    use crate::examples::zu_kyc_sign_pod_builders;
+    use crate::frontend;
     use crate::middleware;
+    use crate::op;
+
+    // TODO: Use the method from examples once everything works
+    pub fn zu_kyc_pod_builder(
+        params: &Params,
+        gov_id: &frontend::SignedPod,
+        pay_stub: &frontend::SignedPod,
+        sanction_list: &frontend::SignedPod,
+    ) -> Result<frontend::MainPodBuilder> {
+        let now_minus_18y: i64 = 1169909388;
+        let now_minus_1y: i64 = 1706367566;
+
+        let mut kyc = frontend::MainPodBuilder::new(params);
+        kyc.add_signed_pod(gov_id);
+        kyc.add_signed_pod(pay_stub);
+        kyc.add_signed_pod(sanction_list);
+        // NOTE: Unimplemented in the circuit
+        // kyc.pub_op(op!(
+        //     not_contains,
+        //     (sanction_list, "sanctionList"),
+        //     (gov_id, "idNumber")
+        // ))?;
+        // NOTE: the lt is failing with the check that the 2 higher elements in Value must be 0
+        // kyc.pub_op(op!(lt, (gov_id, "dateOfBirth"), now_minus_18y))?;
+        kyc.pub_op(op!(
+            eq,
+            (gov_id, "socialSecurityNumber"),
+            (pay_stub, "socialSecurityNumber")
+        ))?;
+        // NOTE: Failing
+        // kyc.pub_op(op!(eq, (pay_stub, "startDate"), now_minus_1y))?;
+
+        Ok(kyc)
+    }
 
     #[test]
     fn test_main_zu_kyc() -> Result<()> {

@@ -120,20 +120,6 @@ impl StatementTarget {
         }
     }
 
-    // pub fn from_flattened(v: Vec<Target>) -> Self {
-    //     let num_args = (v.len() - Params::predicate_size()) / STATEMENT_ARG_F_LEN;
-    //     assert_eq!(
-    //         v.len(),
-    //         Params::predicate_size() + num_args * STATEMENT_ARG_F_LEN
-    //     );
-    //     let predicate: [Target; Params::predicate_size()] = array::from_fn(|i| v[i]);
-    //     let args = (0..num_args)
-    //         .map(|i| array::from_fn(|j| v[Params::predicate_size() + i * STATEMENT_ARG_F_LEN + j]))
-    //         .collect();
-
-    //     Self { predicate, args }
-    // }
-
     pub fn set_targets(
         &self,
         pw: &mut PartialWitness<F>,
