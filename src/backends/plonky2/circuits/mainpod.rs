@@ -30,6 +30,7 @@ use crate::middleware::{
 };
 
 use super::common::StatementArgTarget;
+use super::common::Flattenable;
 
 //
 // SignedPod verification
@@ -171,6 +172,7 @@ impl OperationVerifyGate {
             op.args
                 .iter()
                 .flatten()
+<<<<<<< HEAD
                 .map(|&i| {
                     StatementTarget::from_flattened(
                         builder.matrix_row_ref(
@@ -182,6 +184,9 @@ impl OperationVerifyGate {
                         ),
                     )
                 })
+=======
+                .map(|&i| builder.vec_ref(prev_statements, i))
+>>>>>>> main
                 .collect::<Vec<_>>()
         };
 
@@ -204,8 +209,8 @@ impl OperationVerifyGate {
             } else {
                 vec![
                     self.eval_copy(builder, st, op, &resolved_op_args)?,
-                    self.eval_eq(builder, st, op, &resolved_op_args),
-                    self.eval_lt(builder, st, op, &resolved_op_args),
+                    self.eval_eq_from_entries(builder, st, op, &resolved_op_args),
+                    self.eval_lt_from_entries(builder, st, op, &resolved_op_args),
                 ]
             },
         ]
@@ -218,7 +223,7 @@ impl OperationVerifyGate {
         Ok(OperationVerifyTarget {})
     }
 
-    fn eval_eq(
+    fn eval_eq_from_entries(
         &self,
         builder: &mut CircuitBuilder<F, D>,
         st: &StatementTarget,
@@ -239,7 +244,10 @@ impl OperationVerifyGate {
         // `STATEMENT_ARG_F_LEN - VALUE_SIZE` slots of each being 0.
         let arg1_value = resolved_op_args[0].args[1];
         let arg2_value = resolved_op_args[1].args[1];
-        let op_arg_range_checks = [builder.is_value(&arg1_value), builder.is_value(&arg2_value)];
+        let op_arg_range_checks = [
+            builder.statement_arg_is_value(&arg1_value),
+            builder.statement_arg_is_value(&arg2_value),
+        ];
         let op_arg_range_ok = builder.all(op_arg_range_checks);
         let op_args_eq =
             builder.is_equal_slice(&arg1_value[..VALUE_SIZE], &arg2_value[..VALUE_SIZE]);
@@ -252,7 +260,7 @@ impl OperationVerifyGate {
             NativePredicate::Equal,
             &[arg1_key, arg2_key],
         );
-        let st_ok = builder.is_equal_slice(&st.to_flattened(), &expected_statement.to_flattened());
+        let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
         builder.all([
             op_code_ok,
@@ -263,7 +271,7 @@ impl OperationVerifyGate {
         ])
     }
 
-    fn eval_lt(
+    fn eval_lt_from_entries(
         &self,
         builder: &mut CircuitBuilder<F, D>,
         st: &StatementTarget,
@@ -287,7 +295,7 @@ impl OperationVerifyGate {
         let arg2_value = resolved_op_args[1].args[1];
         let op_arg_range_checks = [&arg1_value, &arg2_value]
             .into_iter()
-            .map(|x| builder.is_value(x))
+            .map(|x| builder.statement_arg_is_value(x))
             .collect::<Vec<_>>();
         let op_arg_range_ok = builder.all(op_arg_range_checks);
         builder.assert_less_if(
@@ -304,7 +312,7 @@ impl OperationVerifyGate {
             NativePredicate::Lt,
             &[arg1_key, arg2_key],
         );
-        let st_ok = builder.is_equal_slice(&st.to_flattened(), &expected_statement.to_flattened());
+        let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
         builder.all([op_code_ok, op_arg_types_ok, op_arg_range_ok, st_ok])
     }
@@ -317,9 +325,9 @@ impl OperationVerifyGate {
     ) -> BoolTarget {
         let op_code_ok = op.has_native_type(builder, NativeOperation::None);
 
-        let expected_statement_flattened =
-            builder.constants(&Statement::None.to_fields(&self.params));
-        let st_ok = builder.is_equal_slice(&st.to_flattened(), &expected_statement_flattened);
+        let expected_statement =
+            StatementTarget::new_native(builder, &self.params, NativePredicate::None, &[]);
+        let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
         builder.all([op_code_ok, st_ok])
     }
@@ -343,7 +351,11 @@ impl OperationVerifyGate {
         let dupe_check = {
             let individual_checks = prev_statements
                 .into_iter()
-                .map(|ps| builder.is_equal_slice(&st.args[0], &ps.args[0]))
+                .map(|ps| {
+                    let same_predicate = builder.is_equal_slice(&st.predicate, &ps.predicate);
+                    let same_anchored_key = builder.is_equal_slice(&st.args[0], &ps.args[0]);
+                    builder.and(same_predicate, same_anchored_key)
+                })
                 .collect::<Vec<_>>();
             builder.any(individual_checks)
         };
@@ -362,8 +374,8 @@ impl OperationVerifyGate {
     ) -> Result<BoolTarget> {
         let op_code_ok = op.has_native_type(builder, NativeOperation::CopyStatement);
 
-        let expected_statement_flattened = &resolved_op_args[0].to_flattened();
-        let st_ok = builder.is_equal_slice(&st.to_flattened(), expected_statement_flattened);
+        let expected_statement = &resolved_op_args[0];
+        let st_ok = builder.is_equal_flattenable(st, expected_statement);
 
         Ok(builder.all([op_code_ok, st_ok]))
     }
@@ -439,14 +451,13 @@ impl MainPodVerifyGate {
         // TODO: Store this hash in a global static with lazy init so that we don't have to
         // compute it every time.
         let key_type = hash_str(KEY_TYPE);
-        let expected_type_statement_flattened = builder.constants(
-            &Statement::ValueOf(AnchoredKey(SELF, key_type), Value::from(PodType::MockMain))
-                .to_fields(params),
+        let expected_type_statement = StatementTarget::from_flattened(
+            &builder.constants(
+                &Statement::ValueOf(AnchoredKey(SELF, key_type), Value::from(PodType::MockMain))
+                    .to_fields(params),
+            ),
         );
-        builder.connect_slice(
-            &type_statement.to_flattened(),
-            &expected_type_statement_flattened,
-        );
+        builder.connect_flattenable(type_statement, &expected_type_statement);
 
         // 5. Verify input statements
         let mut op_verifications = Vec::new();
