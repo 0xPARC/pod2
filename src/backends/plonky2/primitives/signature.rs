@@ -27,6 +27,12 @@ lazy_static! {
     pub static ref PP: ProverParams = Signature::prover_params().unwrap();
     /// Signature verifier parameters
     pub static ref VP: VerifierParams = Signature::verifier_params().unwrap();
+
+    /// DUMMY_SIGNATURE is used for conditionals where we want to use a `selector` to enable or
+    /// disable signature verification.
+    pub static ref DUMMY_SIGNATURE: Signature = dummy_signature().unwrap();
+    /// DUMMY_PUBLIC_INPUTS accompanies the DUMMY_SIGNATURE.
+    pub static ref DUMMY_PUBLIC_INPUTS: Vec<F> = dummy_public_inputs().unwrap();
 }
 
 pub struct ProverParams {
@@ -38,7 +44,7 @@ pub struct ProverParams {
 pub struct VerifierParams(pub(crate) VerifierCircuitData<F, C, D>);
 
 #[derive(Clone, Debug)]
-pub struct SecretKey(Value);
+pub struct SecretKey(pub(crate) Value);
 
 #[derive(Clone, Debug)]
 pub struct PublicKey(pub(crate) Value);
@@ -114,6 +120,20 @@ impl Signature {
     }
 }
 
+fn dummy_public_inputs() -> Result<Vec<F>> {
+    let sk = SecretKey(Value::from(0));
+    let pk = sk.public_key();
+    let msg = Value::from(0);
+    let s = Value(PoseidonHash::hash_no_pad(&[pk.0 .0, msg.0].concat()).elements);
+    Ok([pk.0 .0, msg.0, s.0].concat())
+}
+
+fn dummy_signature() -> Result<Signature> {
+    let sk = SecretKey(Value::from(0));
+    let msg = Value::from(0);
+    sk.sign(msg)
+}
+
 /// The SignatureInternalCircuit implements the circuit used for the proof of
 /// the argument described at https://eprint.iacr.org/2024/1553.
 ///
@@ -183,7 +203,6 @@ pub mod tests {
 
     use super::*;
 
-    // Note: this test must be run with the `--release` flag.
     #[test]
     fn test_signature() -> Result<()> {
         let sk = SecretKey::new();
@@ -201,6 +220,16 @@ pub mod tests {
         let msg_2 = Value::from(Hash::from("message"));
         let sig2 = sk.sign(msg_2)?;
         sig2.verify(&pk, msg_2)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_dummy_signature() -> Result<()> {
+        let sk = SecretKey(Value::from(0));
+        let pk = sk.public_key();
+        let msg = Value::from(0);
+        DUMMY_SIGNATURE.clone().verify(&pk, msg)?;
 
         Ok(())
     }
