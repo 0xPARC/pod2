@@ -29,8 +29,8 @@ use crate::middleware::{
     Predicate, Statement, StatementArg, ToFields, KEY_SIGNER, KEY_TYPE, SELF, STATEMENT_ARG_F_LEN,
 };
 
-use super::common::StatementArgTarget;
 use super::common::Flattenable;
+use super::common::StatementArgTarget;
 
 //
 // SignedPod verification
@@ -172,21 +172,7 @@ impl OperationVerifyGate {
             op.args
                 .iter()
                 .flatten()
-<<<<<<< HEAD
-                .map(|&i| {
-                    StatementTarget::from_flattened(
-                        builder.matrix_row_ref(
-                            &prev_statements
-                                .iter()
-                                .map(|st_targ| st_targ.to_flattened())
-                                .collect::<Vec<_>>(),
-                            i,
-                        ),
-                    )
-                })
-=======
                 .map(|&i| builder.vec_ref(prev_statements, i))
->>>>>>> main
                 .collect::<Vec<_>>()
         };
 
@@ -242,18 +228,20 @@ impl OperationVerifyGate {
 
         // The values embedded in the op args must match, the last
         // `STATEMENT_ARG_F_LEN - VALUE_SIZE` slots of each being 0.
-        let arg1_value = resolved_op_args[0].args[1];
-        let arg2_value = resolved_op_args[1].args[1];
+        let arg1_value = &resolved_op_args[0].args[1];
+        let arg2_value = &resolved_op_args[1].args[1];
         let op_arg_range_checks = [
-            builder.statement_arg_is_value(&arg1_value),
-            builder.statement_arg_is_value(&arg2_value),
+            builder.statement_arg_is_value(arg1_value),
+            builder.statement_arg_is_value(arg2_value),
         ];
         let op_arg_range_ok = builder.all(op_arg_range_checks);
-        let op_args_eq =
-            builder.is_equal_slice(&arg1_value[..VALUE_SIZE], &arg2_value[..VALUE_SIZE]);
+        let op_args_eq = builder.is_equal_slice(
+            &arg1_value.elements[..VALUE_SIZE],
+            &arg2_value.elements[..VALUE_SIZE],
+        );
 
-        let arg1_key = resolved_op_args[0].args[0];
-        let arg2_key = resolved_op_args[1].args[0];
+        let arg1_key = resolved_op_args[0].args[0].clone();
+        let arg2_key = resolved_op_args[1].args[0].clone();
         let expected_statement = StatementTarget::new_native(
             builder,
             &self.params,
@@ -291,21 +279,21 @@ impl OperationVerifyGate {
         // The values embedded in the op args must satisfy `<`, the
         // last `STATEMENT_ARG_F_LEN - VALUE_SIZE` slots of each being
         // 0.
-        let arg1_value = resolved_op_args[0].args[1];
-        let arg2_value = resolved_op_args[1].args[1];
-        let op_arg_range_checks = [&arg1_value, &arg2_value]
+        let arg1_value = &resolved_op_args[0].args[1];
+        let arg2_value = &resolved_op_args[1].args[1];
+        let op_arg_range_checks = [arg1_value, arg2_value]
             .into_iter()
             .map(|x| builder.statement_arg_is_value(x))
             .collect::<Vec<_>>();
         let op_arg_range_ok = builder.all(op_arg_range_checks);
         builder.assert_less_if(
             op_code_ok,
-            ValueTarget::from_slice(&arg1_value[..VALUE_SIZE]),
-            ValueTarget::from_slice(&arg2_value[..VALUE_SIZE]),
+            ValueTarget::from_slice(&arg1_value.elements[..VALUE_SIZE]),
+            ValueTarget::from_slice(&arg2_value.elements[..VALUE_SIZE]),
         );
 
-        let arg1_key = resolved_op_args[0].args[0];
-        let arg2_key = resolved_op_args[1].args[0];
+        let arg1_key = resolved_op_args[0].args[0].clone();
+        let arg2_key = resolved_op_args[1].args[0].clone();
         let expected_statement = StatementTarget::new_native(
             builder,
             &self.params,
@@ -346,14 +334,16 @@ impl OperationVerifyGate {
         let expected_arg_prefix = builder.constants(
             &StatementArg::Key(AnchoredKey(SELF, EMPTY_HASH)).to_fields(&self.params)[..VALUE_SIZE],
         );
-        let arg_prefix_ok = builder.is_equal_slice(&st.args[0][..VALUE_SIZE], &expected_arg_prefix);
+        let arg_prefix_ok =
+            builder.is_equal_slice(&st.args[0].elements[..VALUE_SIZE], &expected_arg_prefix);
 
         let dupe_check = {
             let individual_checks = prev_statements
                 .into_iter()
                 .map(|ps| {
                     let same_predicate = builder.is_equal_slice(&st.predicate, &ps.predicate);
-                    let same_anchored_key = builder.is_equal_slice(&st.args[0], &ps.args[0]);
+                    let same_anchored_key =
+                        builder.is_equal_slice(&st.args[0].elements, &ps.args[0].elements);
                     builder.and(same_predicate, same_anchored_key)
                 })
                 .collect::<Vec<_>>();

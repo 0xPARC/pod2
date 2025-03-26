@@ -106,35 +106,33 @@ impl StatementTarget {
         builder: &mut CircuitBuilder<F, D>,
         params: &Params,
         predicate: NativePredicate,
-        args: &[[Target; STATEMENT_ARG_F_LEN]],
+        args: &[StatementArgTarget],
     ) -> Self {
         let predicate_vec = builder.constants(&Predicate::Native(predicate).to_fields(params));
         Self {
             predicate: array::from_fn(|i| predicate_vec[i]),
             args: args
                 .iter()
-                .map(|arg| *arg)
-                .chain(
-                    iter::repeat([builder.zero(); STATEMENT_ARG_F_LEN])
-                        .take(params.max_statement_args - args.len()),
-                )
+                .cloned()
+                .chain(iter::repeat_with(|| StatementArgTarget::none(builder)))
+                .take(params.max_statement_args)
                 .collect(),
         }
     }
 
-    pub fn from_flattened(v: Vec<Target>) -> Self {
-        let num_args = (v.len() - Params::predicate_size()) / STATEMENT_ARG_F_LEN;
-        assert_eq!(
-            v.len(),
-            Params::predicate_size() + num_args * STATEMENT_ARG_F_LEN
-        );
-        let predicate: [Target; Params::predicate_size()] = array::from_fn(|i| v[i]);
-        let args = (0..num_args)
-            .map(|i| array::from_fn(|j| v[Params::predicate_size() + i * STATEMENT_ARG_F_LEN + j]))
-            .collect();
+    // pub fn from_flattened(v: Vec<Target>) -> Self {
+    //     let num_args = (v.len() - Params::predicate_size()) / STATEMENT_ARG_F_LEN;
+    //     assert_eq!(
+    //         v.len(),
+    //         Params::predicate_size() + num_args * STATEMENT_ARG_F_LEN
+    //     );
+    //     let predicate: [Target; Params::predicate_size()] = array::from_fn(|i| v[i]);
+    //     let args = (0..num_args)
+    //         .map(|i| array::from_fn(|j| v[Params::predicate_size() + i * STATEMENT_ARG_F_LEN + j]))
+    //         .collect();
 
-        Self { predicate, args }
-    }
+    //     Self { predicate, args }
+    // }
 
     pub fn set_targets(
         &self,
@@ -217,7 +215,7 @@ impl Flattenable for StatementTarget {
     fn flatten(&self) -> Vec<Target> {
         self.predicate
             .iter()
-            .chain(self.args.iter().flatten())
+            .chain(self.args.iter().flat_map(|a| &a.elements))
             .cloned()
             .collect()
     }
@@ -230,7 +228,11 @@ impl Flattenable for StatementTarget {
         );
         let predicate: [Target; Params::predicate_size()] = array::from_fn(|i| v[i]);
         let args = (0..num_args)
-            .map(|i| array::from_fn(|j| v[Params::predicate_size() + i * STATEMENT_ARG_F_LEN + j]))
+            .map(|i| StatementArgTarget {
+                elements: array::from_fn(|j| {
+                    v[Params::predicate_size() + i * STATEMENT_ARG_F_LEN + j]
+                }),
+            })
             .collect();
 
         Self { predicate, args }
@@ -250,7 +252,7 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
 
     // Convenience methods for checking values.
     /// Checks whether `xs` is right-padded with 0s so as to represent a `Value`.
-    fn statement_arg_is_value(&mut self, xs: &[Target]) -> BoolTarget;
+    fn statement_arg_is_value(&mut self, arg: &StatementArgTarget) -> BoolTarget;
     /// Checks whether `x < y` if `b` is true. This involves checking
     /// that `x` and `y` each consist of two `u32` limbs.
     fn assert_less_if(&mut self, b: BoolTarget, x: ValueTarget, y: ValueTarget);
@@ -332,11 +334,11 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
         })
     }
 
-    fn statement_arg_is_value(&mut self, xs: &[Target]) -> BoolTarget {
+    fn statement_arg_is_value(&mut self, arg: &StatementArgTarget) -> BoolTarget {
         let zeros = iter::repeat(self.zero())
             .take(STATEMENT_ARG_F_LEN - VALUE_SIZE)
             .collect::<Vec<_>>();
-        self.is_equal_slice(&xs[VALUE_SIZE..], &zeros)
+        self.is_equal_slice(&arg.elements[VALUE_SIZE..], &zeros)
     }
 
     fn assert_less_if(&mut self, b: BoolTarget, x: ValueTarget, y: ValueTarget) {

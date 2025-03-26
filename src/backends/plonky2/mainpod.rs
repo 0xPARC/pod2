@@ -92,31 +92,30 @@ pub struct MainPod {
 }
 
 impl Pod for MainPod {
-    fn verify(&self) -> bool {
+    fn verify(&self) -> Result<()> {
         // 2. get the id out of the public statements
         let id: PodId = PodId(hash_statements(&self.public_statements, &self.params));
         if id != self.id {
-            return false;
+            return Err(anyhow!(
+                "id does not match, expected {}, computed {}",
+                self.id,
+                id
+            ));
         }
 
         // 1, 3, 4, 5 verification via the zkSNARK proof
         // TODO: cache these artefacts
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
-        let main_pod = MainPodVerifyCircuit {
+        let _main_pod = MainPodVerifyCircuit {
             params: self.params.clone(),
         }
         .eval(&mut builder)
         .unwrap();
 
         let data = builder.build::<C>();
-        match data.verify(self.proof.clone()) {
-            Ok(_) => true,
-            Err(e) => {
-                error!("MainPod.verify failure: {:?}", e);
-                false
-            }
-        }
+        data.verify(self.proof.clone())
+            .map_err(|e| anyhow!("MainPod proof verification failure: {:?}", e))
     }
 
     fn id(&self) -> PodId {
@@ -189,7 +188,6 @@ pub mod tests {
         let kyc_pod = kyc_builder.prove(&mut prover, &params)?;
         let pod = kyc_pod.pod.into_any().downcast::<MainPod>().unwrap();
 
-        assert!(pod.verify());
-        Ok(())
+        pod.verify()
     }
 }
