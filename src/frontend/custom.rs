@@ -131,7 +131,10 @@ impl From<Predicate> for middleware::Predicate {
         match v {
             Predicate::Native(p) => p.into(),
             Predicate::BatchSelf(i) => middleware::Predicate::BatchSelf(i),
-            Predicate::Custom(CustomPredicateRef(pb, i)) => {
+            Predicate::Custom(CustomPredicateRef {
+                batch: pb,
+                index: i,
+            }) => {
                 let cpb: middleware::CustomPredicateBatch = Arc::unwrap_or_clone(pb).into();
                 middleware::Predicate::Custom(middleware::CustomPredicateRef(Arc::new(cpb), i))
             }
@@ -144,31 +147,40 @@ impl fmt::Display for Predicate {
         match self {
             Self::Native(p) => write!(f, "{:?}", p),
             Self::BatchSelf(i) => write!(f, "self.{}", i),
-            Self::Custom(CustomPredicateRef(pb, i)) => write!(f, "{}.{}", pb.name, i),
+            Self::Custom(CustomPredicateRef { batch, index }) => {
+                write!(f, "{}.{}", batch.name, index)
+            }
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct CustomPredicateRef(pub Arc<CustomPredicateBatch>, pub usize);
+pub struct CustomPredicateRef {
+    pub batch: Arc<CustomPredicateBatch>,
+    pub index: usize,
+}
 
 impl From<CustomPredicateRef> for middleware::CustomPredicateRef {
     fn from(v: CustomPredicateRef) -> Self {
-        let cpb: middleware::CustomPredicateBatch = Arc::unwrap_or_clone(v.0).into();
-        middleware::CustomPredicateRef(Arc::new(cpb), v.1)
+        let cpb: middleware::CustomPredicateBatch = Arc::unwrap_or_clone(v.batch).into();
+        middleware::CustomPredicateRef(Arc::new(cpb), v.index)
     }
 }
 
 impl CustomPredicateRef {
+    pub fn new(batch: Arc<CustomPredicateBatch>, index: usize) -> Self {
+        Self { batch, index }
+    }
+
     pub fn arg_len(&self) -> usize {
-        self.0.predicates[self.1].args_len
+        self.batch.predicates[self.index].args_len
     }
     pub fn match_against(&self, statements: &[Statement]) -> Result<HashMap<usize, Value>> {
         let mut bindings = HashMap::new();
         // Single out custom predicate, replacing batch-self
         // references with custom predicate references.
         let custom_predicate = {
-            let cp = &Arc::unwrap_or_clone(self.0.clone()).predicates[self.1];
+            let cp = &Arc::unwrap_or_clone(self.batch.clone()).predicates[self.index];
             CustomPredicate {
                 conjunction: cp.conjunction,
                 statements: cp
@@ -177,9 +189,9 @@ impl CustomPredicateRef {
                     .map(|StatementTmpl(p, args)| {
                         StatementTmpl(
                             match p {
-                                Predicate::BatchSelf(i) => {
-                                    Predicate::Custom(CustomPredicateRef(self.0.clone(), *i))
-                                }
+                                Predicate::BatchSelf(i) => Predicate::Custom(
+                                    CustomPredicateRef::new(self.batch.clone(), *i),
+                                ),
                                 _ => p.clone(),
                             },
                             args.to_vec(),
@@ -526,7 +538,7 @@ mod tests {
         let eth_friend = eth_friend_batch(&params)?;
 
         // This batch only has 1 predicate, so we pick it already for convenience
-        let eth_friend = Predicate::Custom(CustomPredicateRef(eth_friend, 0));
+        let eth_friend = Predicate::Custom(CustomPredicateRef::new(eth_friend, 0));
 
         let eth_dos_batch = eth_dos_batch(&params)?;
         let eth_dos_batch_mw: middleware::CustomPredicateBatch =

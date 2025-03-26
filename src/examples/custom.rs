@@ -45,7 +45,7 @@ pub fn eth_friend_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
 
 /// Instantiates an ETHDoS batch
 pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
-    let eth_friend = Predicate::Custom(CustomPredicateRef(eth_friend_batch(params)?, 0));
+    let eth_friend = Predicate::Custom(CustomPredicateRef::new(eth_friend_batch(params)?, 0));
     let mut builder = CustomPredicateBatchBuilder::new("eth_dos_distance_base".into());
 
     // eth_dos_distance_base(src_or, src_key, dst_or, dst_key, distance_or, distance_key) = and<
