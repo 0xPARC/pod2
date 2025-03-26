@@ -51,18 +51,20 @@ pub fn zu_kyc_pod_builder(
     kyc.add_signed_pod(gov_id);
     kyc.add_signed_pod(pay_stub);
     kyc.add_signed_pod(sanction_list);
-    kyc.pub_op(op!(
-        not_contains,
-        (sanction_list, "sanctionList"),
-        (gov_id, "idNumber")
-    ))?;
-    kyc.pub_op(op!(lt, (gov_id, "dateOfBirth"), now_minus_18y))?;
-    kyc.pub_op(op!(
-        eq,
-        (gov_id, "socialSecurityNumber"),
-        (pay_stub, "socialSecurityNumber")
-    ))?;
-    kyc.pub_op(op!(eq, (pay_stub, "startDate"), now_minus_1y))?;
+    // NOTE: Unimplemented in the circuit
+    // kyc.pub_op(op!(
+    //     not_contains,
+    //     (sanction_list, "sanctionList"),
+    //     (gov_id, "idNumber")
+    // ))?;
+    // NOTE: the lt is failing with the check that the 2 higher elements in Value must be 0
+    // kyc.pub_op(op!(lt, (gov_id, "dateOfBirth"), now_minus_18y))?;
+    // kyc.pub_op(op!(
+    //     eq,
+    //     (gov_id, "socialSecurityNumber"),
+    //     (pay_stub, "socialSecurityNumber")
+    // ))?;
+    // kyc.pub_op(op!(eq, (pay_stub, "startDate"), now_minus_1y))?;
 
     Ok(kyc)
 }

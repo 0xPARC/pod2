@@ -44,7 +44,7 @@ impl PodProver for Prover {
                 // TODO: downcast the pod into `SignedPod`
                 kvs: p.kvs().iter().map(|(ak, v)| (ak.1.into(), *v)).collect(),
             })
-            .collect();
+            .collect_vec();
 
         // TODO: Move these methods from the mock main pod to a common place
         let statements = MockMainPod::layout_statements(params, &inputs);
@@ -165,7 +165,12 @@ pub mod tests {
 
     #[test]
     fn test_main_zu_kyc() -> Result<()> {
-        let params = middleware::Params::default();
+        let params = middleware::Params {
+            // Currently the circuit uses random access that only supports vectors of length 64.
+            // With max_input_main_pods=3 we need random access to a vector of length 73.
+            max_input_main_pods: 1,
+            ..Default::default()
+        };
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params);

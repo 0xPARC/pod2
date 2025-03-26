@@ -59,7 +59,7 @@ impl fmt::Display for MockMainPod {
             }
             if (i >= offset_input_main_pods)
                 && (i < offset_input_statements)
-                && (i % self.params.max_public_statements == 0)
+                && ((i - offset_input_main_pods) % self.params.max_public_statements == 0)
             {
                 writeln!(
                     f,

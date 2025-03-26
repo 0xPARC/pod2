@@ -96,18 +96,32 @@ impl SignedPodVerifyTarget {
         kvs
     }
 
-    fn pub_statements(&self, builder: &mut CircuitBuilder<F, D>) -> Vec<StatementTarget> {
+    fn pub_statements(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        self_id: bool,
+    ) -> Vec<StatementTarget> {
         let mut statements = Vec::new();
         let predicate: [Target; Params::predicate_size()] = builder
             .constants(&Predicate::Native(NativePredicate::ValueOf).to_fields(&self.params))
             .try_into()
             .expect("size predicate_size");
-        let self_id = builder.constant_value(SELF.0.into());
+        let pod_id = if self_id {
+            builder.constant_value(SELF.0.into())
+        } else {
+            ValueTarget {
+                elements: self.id.elements,
+            }
+        };
         for mt_proof in &self.mt_proofs {
-            let args = vec![
-                StatementArgTarget::anchored_key(builder, &self_id, &mt_proof.key),
+            let args = [
+                StatementArgTarget::anchored_key(builder, &pod_id, &mt_proof.key),
                 StatementArgTarget::literal(builder, &mt_proof.value),
-            ];
+            ]
+            .into_iter()
+            .chain(iter::repeat_with(|| StatementArgTarget::none(builder)))
+            .take(self.params.max_statement_args)
+            .collect();
             let statement = StatementTarget {
                 predicate: predicate.clone(),
                 args,
@@ -340,7 +354,8 @@ impl OperationVerifyGate {
         let dupe_check = {
             let individual_checks = prev_statements
                 .into_iter()
-                .map(|ps| {
+                .enumerate()
+                .map(|(i, ps)| {
                     let same_predicate = builder.is_equal_slice(&st.predicate, &ps.predicate);
                     let same_anchored_key =
                         builder.is_equal_slice(&st.args[0].elements, &ps.args[0].elements);
@@ -406,7 +421,22 @@ impl MainPodVerifyGate {
         // Build the statement array
         let mut statements = Vec::new();
         for signed_pod in &signed_pods {
-            statements.extend_from_slice(signed_pod.pub_statements(builder).as_slice());
+            statements.extend_from_slice(signed_pod.pub_statements(builder, false).as_slice());
+        }
+        debug_assert_eq!(
+            statements.len(),
+            self.params.max_input_signed_pods * self.params.max_signed_pod_values
+        );
+        // TODO: Fill with input main pods
+        for _main_pod in 0..self.params.max_input_main_pods {
+            for _statement in 0..self.params.max_public_statements {
+                statements.push(StatementTarget::new_native(
+                    builder,
+                    &self.params,
+                    NativePredicate::None,
+                    &[],
+                ))
+            }
         }
 
         // Add the input (private and public) statements and corresponding operations
@@ -452,7 +482,7 @@ impl MainPodVerifyGate {
         // 5. Verify input statements
         let mut op_verifications = Vec::new();
         for (i, (st, op)) in input_statements.iter().zip(operations.iter()).enumerate() {
-            let prev_statements = &statements[..input_statements_offset + i - 1];
+            let prev_statements = &statements[..input_statements_offset + i];
             let op_verification = OperationVerifyGate {
                 params: params.clone(),
             }
@@ -503,14 +533,11 @@ impl MainPodVerifyTarget {
         for i in input.signed_pods.len()..self.params.max_input_signed_pods {
             self.signed_pods[i].set_targets(pw, pad_pod)?;
         }
+        assert_eq!(input.statements.len(), self.params.max_statements);
         for (i, (st, op)) in zip_eq(&input.statements, &input.operations).enumerate() {
-            self.statements[i].set_targets(pw, &self.params, st);
-            self.operations[i].set_targets(pw, &self.params, op);
+            self.statements[i].set_targets(pw, &self.params, st)?;
+            self.operations[i].set_targets(pw, &self.params, op)?;
         }
-        // TODO: set_targets for:
-        // - statements
-        // - operations
-        // - op_verifications
         Ok(())
     }
 }
@@ -621,14 +648,22 @@ mod tests {
         // NewEntry
         let st1: mainpod::Statement =
             Statement::ValueOf(AnchoredKey(SELF, "hello".into()), 55.into()).into();
+        let st2: mainpod::Statement = Statement::ValueOf(
+            AnchoredKey(PodId(Value::from(75).into()), "hello".into()),
+            55.into(),
+        )
+        .into();
+        let prev_statements = vec![st2];
         let op = mainpod::Operation(OperationType::Native(NativeOperation::NewEntry), vec![]);
-        operation_verify(st1.clone(), op, vec![])?;
+        operation_verify(st1.clone(), op, prev_statements.clone())?;
 
         // Copy
+        let st: mainpod::Statement = Statement::None.into();
         let op = mainpod::Operation(
             OperationType::Native(NativeOperation::CopyStatement),
             vec![OperationArg::Index(0)],
         );
+        let prev_statements = vec![Statement::None.into()];
         operation_verify(st, op, prev_statements)?;
 
         // Eq
