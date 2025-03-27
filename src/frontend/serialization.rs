@@ -151,6 +151,9 @@ pub fn transform_value_schema(schema: &mut Schema) {
 
 #[cfg(test)]
 mod tests {
+    use schemars::generate::SchemaSettings;
+    use serde_json::json;
+
     use crate::{
         backends::plonky2::mock::{mainpod::MockProver, signedpod::MockSigner},
         examples::{zu_kyc_pod_builder, zu_kyc_sign_pod_builders},
@@ -293,5 +296,13 @@ mod tests {
             kyc_pod.pod.verify().is_ok(),
             deserialized.pod.verify().is_ok()
         );
+    }
+
+    #[test]
+    fn test_schema() {
+        let generator = SchemaSettings::draft07().into_generator();
+        let schema = generator.into_root_schema_for::<MainPodHelper>();
+
+        println!("{}", serde_json::to_string(&schema).unwrap());
     }
 }

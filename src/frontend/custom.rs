@@ -20,8 +20,19 @@ pub enum KeyOrWildcardStr {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, h::Hash, Serialize, Deserialize, JsonSchema)]
-pub struct IndexedWildcard(String, usize);
+pub struct IndexedWildcard {
+    wildcard: String,
+    index: usize,
+}
+
+impl IndexedWildcard {
+    pub fn new(wildcard: String, index: usize) -> Self {
+        Self { wildcard, index }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, h::Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", content = "value")]
 /// Represents a key or resolved wildcard
 pub enum KeyOrWildcard {
     Key(String),
@@ -35,7 +46,7 @@ impl KeyOrWildcard {
     pub fn match_against(&self, v: &Value) -> Result<Option<(usize, Value)>> {
         match self {
             KeyOrWildcard::Key(k) if Value::from(k.as_str()) == *v => Ok(None),
-            KeyOrWildcard::Wildcard(i) => Ok(Some((i.1, v.clone()))),
+            KeyOrWildcard::Wildcard(i) => Ok(Some((i.index, v.clone()))),
             _ => Err(anyhow!(
                 "Failed to match key or wildcard {} against value {}.",
                 self,
@@ -49,7 +60,7 @@ impl From<KeyOrWildcard> for middleware::HashOrWildcard {
     fn from(v: KeyOrWildcard) -> Self {
         match v {
             KeyOrWildcard::Key(k) => middleware::HashOrWildcard::Hash(hash_str(&k)),
-            KeyOrWildcard::Wildcard(n) => middleware::HashOrWildcard::Wildcard(n.1),
+            KeyOrWildcard::Wildcard(n) => middleware::HashOrWildcard::Wildcard(n.index),
         }
     }
 }
@@ -57,7 +68,7 @@ impl fmt::Display for KeyOrWildcard {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::Key(k) => write!(f, "{}", k),
-            Self::Wildcard(n) => write!(f, "*{}", n.0),
+            Self::Wildcard(n) => write!(f, "*{}", n.wildcard),
         }
     }
 }
@@ -186,16 +197,14 @@ impl CustomPredicateRef {
                 statements: cp
                     .statements
                     .iter()
-                    .map(|StatementTmpl(p, args)| {
-                        StatementTmpl(
-                            match p {
-                                Predicate::BatchSelf(i) => Predicate::Custom(
-                                    CustomPredicateRef::new(self.batch.clone(), *i),
-                                ),
-                                _ => p.clone(),
-                            },
-                            args.to_vec(),
-                        )
+                    .map(|StatementTmpl { pred: p, args }| StatementTmpl {
+                        pred: match p {
+                            Predicate::BatchSelf(i) => {
+                                Predicate::Custom(CustomPredicateRef::new(self.batch.clone(), *i))
+                            }
+                            _ => p.clone(),
+                        },
+                        args: args.to_vec(),
                     })
                     .collect(),
                 args_len: cp.args_len,
@@ -293,8 +302,8 @@ impl fmt::Display for CustomPredicate {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "{}<", if self.conjunction { "and" } else { "or" })?;
         for st in &self.statements {
-            write!(f, "  {}", st.0)?;
-            for (i, arg) in st.1.iter().enumerate() {
+            write!(f, "  {}", st.pred)?;
+            for (i, arg) in st.args.iter().enumerate() {
                 if i != 0 {
                     write!(f, ", ")?;
                 }
@@ -315,9 +324,11 @@ impl fmt::Display for CustomPredicate {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, h::Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", content = "value")]
 pub enum StatementTmplArg {
     None,
     Literal(Value),
+    //  #[schemars(with = "Vec<KeyOrWildcard>")]
     Key(KeyOrWildcard, KeyOrWildcard),
 }
 
@@ -363,21 +374,30 @@ impl StatementTmplBuilder {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct StatementTmpl(pub Predicate, pub Vec<StatementTmplArg>);
+pub struct StatementTmpl {
+    pub pred: Predicate,
+    pub args: Vec<StatementTmplArg>,
+}
 
 impl StatementTmpl {
     pub fn pred(&self) -> &Predicate {
-        &self.0
+        &self.pred
     }
     pub fn args(&self) -> &[StatementTmplArg] {
-        &self.1
+        &self.args
     }
     /// Matches a statement template against a statement, returning
     /// the variable bindings as an association list. Returns an error
     /// if there is type or argument mismatch.
     pub fn match_against(&self, s: &Statement) -> Result<Vec<(usize, Value)>> {
         type P = Predicate;
-        if matches!(self, Self(P::BatchSelf(_), _)) {
+        if matches!(
+            self,
+            Self {
+                pred: P::BatchSelf(_),
+                args: _
+            }
+        ) {
             Err(anyhow!(
                 "Cannot check self-referencing statement templates."
             ))
@@ -394,7 +414,10 @@ impl StatementTmpl {
 
 impl From<StatementTmpl> for middleware::StatementTmpl {
     fn from(v: StatementTmpl) -> Self {
-        middleware::StatementTmpl(v.0.into(), v.1.into_iter().map(|a| a.into()).collect())
+        middleware::StatementTmpl(
+            v.pred.into(),
+            v.args.into_iter().map(|a| a.into()).collect(),
+        )
     }
 }
 
@@ -488,7 +511,10 @@ impl CustomPredicateBatchBuilder {
                         ),
                     })
                     .collect();
-                StatementTmpl(sb.predicate.clone(), args)
+                StatementTmpl {
+                    pred: sb.predicate.clone(),
+                    args,
+                }
             })
             .collect();
         let custom_predicate = CustomPredicate::new(params, conjunction, statements, args.len())?;
@@ -511,7 +537,7 @@ fn resolve_wildcard(args: &[&str], priv_args: &[&str], v: &KeyOrWildcardStr) -> 
             args.iter()
                 .chain(priv_args.iter())
                 .enumerate()
-                .find_map(|(i, name)| (&s == name).then_some(IndexedWildcard(s.clone(), i)))
+                .find_map(|(i, name)| (&s == name).then_some(IndexedWildcard::new(s.clone(), i)))
                 .unwrap(),
         ),
     }
