@@ -21,7 +21,7 @@ use crate::backends::plonky2::circuits::common::{
 };
 use crate::backends::plonky2::primitives::merkletree::MerkleTree;
 use crate::backends::plonky2::primitives::merkletree::{
-    MerkleProofExistenceGate, MerkleProofExistenceTarget,
+    MerkleProofExistenceGadget, MerkleProofExistenceTarget,
 };
 use crate::middleware::{
     hash_str, AnchoredKey, NativeOperation, NativePredicate, Params, PodType, Statement,
@@ -34,18 +34,18 @@ use super::common::Flattenable;
 // SignedPod verification
 //
 
-struct SignedPodVerifyGate {
+struct SignedPodVerifyGadget {
     params: Params,
 }
 
-impl SignedPodVerifyGate {
+impl SignedPodVerifyGadget {
     fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<SignedPodVerifyTarget> {
         // 2. Verify id
         let id = builder.add_virtual_hash();
         let mut mt_proofs = Vec::new();
         for _ in 0..self.params.max_signed_pod_values {
-            let mt_proof = MerkleProofExistenceGate {
-                max_depth: self.params.max_depth_mt_gate,
+            let mt_proof = MerkleProofExistenceGadget {
+                max_depth: self.params.max_depth_mt_gadget,
             }
             .eval(builder)?;
             builder.connect_hashes(id, mt_proof.root);
@@ -100,7 +100,7 @@ impl SignedPodVerifyTarget {
 
     fn set_targets(&self, pw: &mut PartialWitness<F>, input: &SignedPodVerifyInput) -> Result<()> {
         assert!(input.kvs.len() <= self.params.max_signed_pod_values);
-        let tree = MerkleTree::new(self.params.max_depth_mt_gate, &input.kvs)?;
+        let tree = MerkleTree::new(self.params.max_depth_mt_gadget, &input.kvs)?;
 
         // First handle the type entry, then the rest of the entries, and finally pad with
         // repetitions of the type entry (which always exists)
@@ -125,11 +125,11 @@ impl SignedPodVerifyTarget {
 // MainPod verification
 //
 
-struct OperationVerifyGate {
+struct OperationVerifyGadget {
     params: Params,
 }
 
-impl OperationVerifyGate {
+impl OperationVerifyGadget {
     fn eval(
         &self,
         builder: &mut CircuitBuilder<F, D>,
@@ -359,17 +359,17 @@ impl OperationVerifyTarget {
     }
 }
 
-struct MainPodVerifyGate {
+struct MainPodVerifyGadget {
     params: Params,
 }
 
-impl MainPodVerifyGate {
+impl MainPodVerifyGadget {
     fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MainPodVerifyTarget> {
         let params = &self.params;
         // 1. Verify all input signed pods
         let mut signed_pods = Vec::new();
         for _ in 0..params.max_input_signed_pods {
-            let signed_pod = SignedPodVerifyGate {
+            let signed_pod = SignedPodVerifyGadget {
                 params: params.clone(),
             }
             .eval(builder)?;
@@ -421,7 +421,7 @@ impl MainPodVerifyGate {
         let mut op_verifications = Vec::new();
         for (i, (st, op)) in input_statements.iter().zip(operations.iter()).enumerate() {
             let prev_statements = &statements[..input_statements_offset + i - 1];
-            let op_verification = OperationVerifyGate {
+            let op_verification = OperationVerifyGadget {
                 params: params.clone(),
             }
             .eval(builder, st, op, prev_statements)?;
@@ -478,7 +478,7 @@ pub struct MainPodVerifyCircuit {
 
 impl MainPodVerifyCircuit {
     pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MainPodVerifyTarget> {
-        let main_pod = MainPodVerifyGate {
+        let main_pod = MainPodVerifyGadget {
             params: self.params.clone(),
         }
         .eval(builder)?;
@@ -505,7 +505,7 @@ mod tests {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
 
-        let signed_pod_verify = SignedPodVerifyGate { params }.eval(&mut builder)?;
+        let signed_pod_verify = SignedPodVerifyGadget { params }.eval(&mut builder)?;
 
         let mut pw = PartialWitness::<F>::new();
         let kvs = [
@@ -543,7 +543,7 @@ mod tests {
             .map(|_| builder.add_virtual_statement(&params))
             .collect();
 
-        let operation_verify = OperationVerifyGate {
+        let operation_verify = OperationVerifyGadget {
             params: params.clone(),
         }
         .eval(
