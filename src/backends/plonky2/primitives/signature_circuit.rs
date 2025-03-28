@@ -34,7 +34,8 @@ pub struct SignatureVerifyGadget {}
 pub struct SignatureVerifyTarget {
     // verifier_data of the SignatureInternalCircuit
     verifier_data_targ: VerifierCircuitTarget,
-    selector: BoolTarget,
+    // `enabled` determines if the signature verification is enabled
+    enabled: BoolTarget,
     pk: ValueTarget,
     msg: ValueTarget,
     // proof of the SignatureInternalCircuit (=signature::Signature.0)
@@ -56,7 +57,7 @@ impl SignatureVerifyGadget {
 impl SignatureVerifyGadget {
     /// creates the targets and defines the logic of the circuit
     pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<SignatureVerifyTarget> {
-        let selector = builder.add_virtual_bool_target_safe();
+        let enabled = builder.add_virtual_bool_target_safe();
 
         let common_data = super::signature::VP.0.common.clone();
 
@@ -108,7 +109,7 @@ impl SignatureVerifyGadget {
 
         Ok(SignatureVerifyTarget {
             verifier_data_targ,
-            selector,
+            enabled,
             pk: pk_targ,
             msg: msg_targ,
             proof: proof_targ,
@@ -121,12 +122,12 @@ impl SignatureVerifyTarget {
     pub fn set_targets(
         &self,
         pw: &mut PartialWitness<F>,
-        selector: bool,
+        enabled: bool,
         pk: PublicKey,
         msg: Value,
         signature: Signature,
     ) -> Result<()> {
-        pw.set_bool_target(self.selector, selector)?;
+        pw.set_bool_target(self.enabled, enabled)?;
         pw.set_target_arr(&self.pk.elements, &pk.0 .0)?;
         pw.set_target_arr(&self.msg.elements, &msg.0)?;
 
@@ -220,20 +221,20 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
         let targets = SignatureVerifyGadget {}.eval(&mut builder)?;
-        targets.set_targets(&mut pw, true, pk.clone(), msg, sig.clone())?; // selector=true
+        targets.set_targets(&mut pw, true, pk.clone(), msg, sig.clone())?; // enabled=true
 
         // generate proof, and expect it to fail
         let data = builder.build::<C>();
         assert!(data.prove(pw).is_err()); // expect prove to fail
 
         // build the circuit again, but now disable the selector that disables
-        // the in-circuit signature verification
+        // the in-circuit signature verification (ie. `enabled=false`)
         let config = CircuitConfig::standard_recursion_zk_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
         let targets = SignatureVerifyGadget {}.eval(&mut builder)?;
-        targets.set_targets(&mut pw, false, pk, msg, sig)?; // selector=false
+        targets.set_targets(&mut pw, false, pk, msg, sig)?; // enabled=false
 
         // generate & verify proof
         let data = builder.build::<C>();
