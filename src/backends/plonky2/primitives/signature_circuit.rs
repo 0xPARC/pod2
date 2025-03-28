@@ -35,9 +35,9 @@ pub struct SignatureVerifyTarget {
     // verifier_data of the SignatureInternalCircuit
     verifier_data_targ: VerifierCircuitTarget,
     // `enabled` determines if the signature verification is enabled
-    enabled: BoolTarget,
-    pk: ValueTarget,
-    msg: ValueTarget,
+    pub(crate) enabled: BoolTarget,
+    pub(crate) pk: ValueTarget,
+    pub(crate) msg: ValueTarget,
     // proof of the SignatureInternalCircuit (=signature::Signature.0)
     proof: ProofWithPublicInputsTarget<D>,
     dummy_proof: ProofWithPublicInputsTarget<D>,

@@ -23,7 +23,7 @@ use plonky2::{
 };
 use std::iter;
 
-use crate::backends::plonky2::basetypes::{Hash, Value, D, EMPTY_HASH, EMPTY_VALUE, F};
+use crate::backends::plonky2::basetypes::{Hash, Value, D, EMPTY_HASH, EMPTY_VALUE, F, HASH_SIZE};
 use crate::backends::plonky2::circuits::common::{CircuitBuilderPod, ValueTarget};
 use crate::backends::plonky2::primitives::merkletree::MerkleProof;
 
@@ -107,7 +107,7 @@ impl MerkleProofGadget {
         // previously computed hash h.
         let empty_hash = builder.constant_hash(HashOut::from(EMPTY_HASH.0));
         let leaf_hash = HashOutTarget::from_vec(
-            (0..4)
+            (0..HASH_SIZE)
                 .map(|j| builder.select(case_i_selector, empty_hash.elements[j], h.elements[j]))
                 .collect(),
         );
@@ -123,13 +123,13 @@ impl MerkleProofGadget {
 
         // check that obtained_root==root (from inputs), when enabled==true
         let zero = builder.zero();
-        let expected_root: Vec<Target> = (0..4)
+        let expected_root: Vec<Target> = (0..HASH_SIZE)
             .map(|j| builder.select(enabled, root.elements[j], zero))
             .collect();
-        let computed_root: Vec<Target> = (0..4)
+        let computed_root: Vec<Target> = (0..HASH_SIZE)
             .map(|j| builder.select(enabled, obtained_root.elements[j], zero))
             .collect();
-        for j in 0..4 {
+        for j in 0..HASH_SIZE {
             builder.connect(computed_root[j], expected_root[j]);
         }
 
@@ -233,13 +233,13 @@ impl MerkleProofExistenceGadget {
 
         // check that obtained_root==root (from inputs), when enabled==true
         let zero = builder.zero();
-        let expected_root: Vec<Target> = (0..4)
+        let expected_root: Vec<Target> = (0..HASH_SIZE)
             .map(|j| builder.select(enabled, root.elements[j], zero))
             .collect();
-        let computed_root: Vec<Target> = (0..4)
+        let computed_root: Vec<Target> = (0..HASH_SIZE)
             .map(|j| builder.select(enabled, obtained_root.elements[j], zero))
             .collect();
-        for j in 0..4 {
+        for j in 0..HASH_SIZE {
             builder.connect(computed_root[j], expected_root[j]);
         }
 
@@ -266,6 +266,8 @@ impl MerkleProofExistenceTarget {
         key: Value,
         value: Value,
     ) -> Result<()> {
+        assert!(proof.existence); // sanity check
+
         pw.set_bool_target(self.enabled, enabled)?;
         pw.set_hash_target(self.root, HashOut::from_vec(root.0.to_vec()))?;
         pw.set_target_arr(&self.key.elements, &key.0)?;
@@ -327,16 +329,16 @@ fn compute_root_from_leaf(
         //     input_2 = sibling * (1-s) + h * s = select(s, h, sibling)
         //     new_h = hash([input_1, input_2])
         // TODO explore if to group multiple muls in a single gate
-        let input_1: Vec<Target> = (0..4)
+        let input_1: Vec<Target> = (0..HASH_SIZE)
             .map(|j| builder.select(path[i], sibling.elements[j], h.elements[j]))
             .collect();
-        let input_2: Vec<Target> = (0..4)
+        let input_2: Vec<Target> = (0..HASH_SIZE)
             .map(|j| builder.select(path[i], h.elements[j], sibling.elements[j]))
             .collect();
         let new_h =
             builder.hash_n_to_hash_no_pad::<PoseidonHash>([input_1, input_2, vec![two]].concat());
 
-        let h_targ: Vec<Target> = (0..4)
+        let h_targ: Vec<Target> = (0..HASH_SIZE)
             .map(|j| builder.select(*selector, new_h.elements[j], h.elements[j]))
             .collect();
         h = HashOutTarget::from_vec(h_targ);
