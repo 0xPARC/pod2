@@ -35,9 +35,9 @@ pub struct SignatureVerifyTarget {
     // verifier_data of the SignatureInternalCircuit
     verifier_data_targ: VerifierCircuitTarget,
     // `enabled` determines if the signature verification is enabled
-    enabled: BoolTarget,
-    pk: ValueTarget,
-    msg: ValueTarget,
+    pub(crate) enabled: BoolTarget,
+    pub(crate) pk: ValueTarget,
+    pub(crate) msg: ValueTarget,
     // proof of the SignatureInternalCircuit (=signature::Signature.0)
     proof: ProofWithPublicInputsTarget<D>,
 }
@@ -84,10 +84,10 @@ impl SignatureVerifyGadget {
             builder.constant_value(Value(dummy_pi[VALUE_SIZE * 2..].try_into().unwrap()));
 
         // connect the {pk, msg, s} with the proof_targ.public_inputs conditionally
-        let pk_targ_connect = builder.select_value(selector, pk_targ, pk_targ_dummy);
-        let msg_targ_connect = builder.select_value(selector, msg_targ, msg_targ_dummy);
+        let pk_targ_connect = builder.select_value(enabled, pk_targ, pk_targ_dummy);
+        let msg_targ_connect = builder.select_value(enabled, msg_targ, msg_targ_dummy);
         let s_targ_connect = builder.select_value(
-            selector,
+            enabled,
             ValueTarget {
                 elements: s_targ.elements,
             },
@@ -135,7 +135,7 @@ impl SignatureVerifyTarget {
         let s = Value(PoseidonHash::hash_no_pad(&[pk.0 .0, msg.0].concat()).elements);
         let public_inputs: Vec<F> = [pk.0 .0, msg.0, s.0].concat();
 
-        if selector {
+        if enabled {
             pw.set_proof_with_pis_target(
                 &self.proof,
                 &ProofWithPublicInputs {
@@ -227,8 +227,9 @@ pub mod tests {
         let data = builder.build::<C>();
         assert!(data.prove(pw).is_err()); // expect prove to fail
 
-        // build the circuit again, but now disable the selector that disables
-        // the in-circuit signature verification (ie. `enabled=false`)
+        // build the circuit again, but now disable the selector ('enabled')
+        // that disables the in-circuit signature verification (ie.
+        // `enabled=false`)
         let config = CircuitConfig::standard_recursion_zk_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();

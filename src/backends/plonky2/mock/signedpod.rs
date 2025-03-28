@@ -56,17 +56,7 @@ impl MockSignedPod {
 
 impl Pod for MockSignedPod {
     fn verify(&self) -> Result<()> {
-        // 1. Verify type
-        let value_at_type = self.dict.get(&hash_str(KEY_TYPE).into())?;
-        if Value::from(PodType::MockSigned) != value_at_type {
-            return Err(anyhow!(
-                "type does not match, expected MockSigned ({}), found {}",
-                PodType::MockSigned,
-                value_at_type
-            ));
-        }
-
-        // 2. Verify id
+        // 1. Verify id
         let mt = MerkleTree::new(
             MAX_DEPTH,
             &self
@@ -81,6 +71,16 @@ impl Pod for MockSignedPod {
                 "id does not match, expected {}, computed {}",
                 self.id,
                 id
+            ));
+        }
+
+        // 2. Verify type
+        let value_at_type = self.dict.get(&hash_str(KEY_TYPE).into())?;
+        if Value::from(PodType::MockSigned) != value_at_type {
+            return Err(anyhow!(
+                "type does not match, expected MockSigned ({}), found {}",
+                PodType::MockSigned,
+                value_at_type
             ));
         }
 

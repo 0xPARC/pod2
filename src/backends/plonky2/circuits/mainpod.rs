@@ -23,6 +23,7 @@ use crate::backends::plonky2::primitives::merkletree::MerkleTree;
 use crate::backends::plonky2::primitives::merkletree::{
     MerkleProofExistenceGadget, MerkleProofExistenceTarget,
 };
+use crate::backends::plonky2::signedpod::SignedPod;
 use crate::middleware::{
     hash_str, AnchoredKey, NativeOperation, NativePredicate, Params, PodType, Statement,
     StatementArg, ToFields, KEY_TYPE, SELF,
@@ -30,7 +31,7 @@ use crate::middleware::{
 
 use super::{
     common::Flattenable,
-    signedpod::{SignedPodVerifyGadget, SignedPodVerifyInput, SignedPodVerifyTarget},
+    signedpod::{SignedPodVerifyGadget, SignedPodVerifyTarget},
 };
 
 //
@@ -362,7 +363,7 @@ struct MainPodVerifyTarget {
 }
 
 struct MainPodVerifyInput {
-    signed_pods: Vec<SignedPodVerifyInput>,
+    signed_pods: Vec<SignedPod>,
 }
 
 impl MainPodVerifyTarget {
@@ -401,6 +402,8 @@ impl MainPodVerifyCircuit {
 
 #[cfg(test)]
 mod tests {
+    use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
+
     use super::*;
     use crate::backends::plonky2::mock::mainpod;
     use crate::backends::plonky2::{
@@ -408,7 +411,6 @@ mod tests {
         mock::mainpod::{OperationArg, OperationAux},
     };
     use crate::middleware::{OperationType, PodId};
-    use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
 
     fn operation_verify(
         st: mainpod::Statement,

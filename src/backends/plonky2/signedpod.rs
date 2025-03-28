@@ -11,7 +11,7 @@ use crate::middleware::{
 
 use super::primitives::signature::{PublicKey, SecretKey, Signature};
 
-pub struct Signer(SecretKey);
+pub struct Signer(pub SecretKey);
 
 impl PodSigner for Signer {
     fn sign(&mut self, _params: &Params, kvs: &HashMap<Hash, Value>) -> Result<Box<dyn Pod>> {
@@ -34,9 +34,9 @@ impl PodSigner for Signer {
 
 #[derive(Clone, Debug)]
 pub struct SignedPod {
-    id: PodId,
-    signature: Signature,
-    dict: Dictionary,
+    pub id: PodId,
+    pub signature: Signature,
+    pub dict: Dictionary,
 }
 
 impl Pod for SignedPod {
