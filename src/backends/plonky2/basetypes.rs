@@ -58,6 +58,14 @@ impl ToFields for Value {
 }
 
 impl Value {
+    pub fn from_vec(v: Vec<F>) -> Result<Self> {
+        assert_eq!(v.len(), VALUE_SIZE);
+        Ok(Value([v[0], v[1], v[2], v[3]]))
+    }
+    pub fn from_slice(v: &[F]) -> Result<Self> {
+        assert_eq!(v.len(), VALUE_SIZE);
+        Ok(Value([v[0], v[1], v[2], v[3]]))
+    }
     pub fn to_bytes(self) -> Vec<u8> {
         self.0
             .iter()

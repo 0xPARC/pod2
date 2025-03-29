@@ -39,7 +39,7 @@ pub struct SignatureVerifyTarget {
     msg: ValueTarget,
     // proof of the SignatureInternalCircuit (=signature::Signature.0)
     proof: ProofWithPublicInputsTarget<D>,
-    dummy_proof: ProofWithPublicInputsTarget<D>,
+    // dummy_proof: ProofWithPublicInputsTarget<D>, // WIP
 }
 
 impl SignatureVerifyGadget {
@@ -56,7 +56,7 @@ impl SignatureVerifyGadget {
 
 impl SignatureVerifyGadget {
     /// creates the targets and defines the logic of the circuit
-    pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<SignatureVerifyTarget> {
+    pub fn eval_OLD(&self, builder: &mut CircuitBuilder<F, D>) -> Result<SignatureVerifyTarget> {
         let selector = builder.add_virtual_bool_target_safe();
 
         let common_data = super::signature::VP.0.common.clone();
@@ -108,7 +108,63 @@ impl SignatureVerifyGadget {
             pk: pk_targ,
             msg: msg_targ,
             proof: proof_targ,
-            dummy_proof: dummy_proof_targ,
+            // dummy_proof: dummy_proof_targ, // WIP
+        })
+    }
+    /// creates the targets and defines the logic of the circuit
+    pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<SignatureVerifyTarget> {
+        let selector = builder.add_virtual_bool_target_safe();
+
+        let common_data = super::signature::VP.0.common.clone();
+
+        // targets related to the 'public inputs' for the verification of the
+        // `SignatureInternalCircuit` proof.
+        let pk_targ = builder.add_virtual_value();
+        let msg_targ = builder.add_virtual_value();
+        let inp: Vec<Target> = [pk_targ.elements.to_vec(), msg_targ.elements.to_vec()].concat();
+        let s_targ = builder.hash_n_to_hash_no_pad::<PoseidonHash>(inp);
+
+        let verifier_data_targ =
+            builder.add_virtual_verifier_data(common_data.config.fri_config.cap_height);
+
+        let proof_targ = builder.add_virtual_proof_with_pis(&common_data);
+
+        // let pk_targ_dummy = builder.constant_value(Value::from(PK_DUMMY));
+        let dummy_pk = Value::from_slice(&DUMMY_PUBLIC_INPUTS[0..4])?;
+        let dummy_msg = Value::from_slice(&DUMMY_PUBLIC_INPUTS[4..8])?;
+        let dummy_s = Value::from_slice(&DUMMY_PUBLIC_INPUTS[8..12])?;
+        let pk_targ_dummy = builder.constant_value(dummy_pk);
+        let msg_targ_dummy = builder.constant_value(dummy_msg);
+        let s_targ_dummy = builder.constant_value(dummy_s);
+
+        // connect the {pk, msg, s} with the proof_targ.public_inputs conditionally
+        let pk_targ_connect = builder.select_value(selector, pk_targ, pk_targ_dummy);
+        let msg_targ_connect = builder.select_value(selector, msg_targ, msg_targ_dummy);
+        let s_targ_connect = builder.select_value(
+            selector,
+            ValueTarget::from_slice(&s_targ.elements),
+            s_targ_dummy,
+        );
+        for i in 0..VALUE_SIZE {
+            builder.connect(pk_targ_connect.elements[i], proof_targ.public_inputs[i]);
+            builder.connect(
+                msg_targ_connect.elements[i],
+                proof_targ.public_inputs[VALUE_SIZE + i],
+            );
+            builder.connect(
+                s_targ_connect.elements[i],
+                proof_targ.public_inputs[(2 * VALUE_SIZE) + i],
+            );
+        }
+
+        builder.verify_proof::<C>(&proof_targ, &verifier_data_targ, &common_data);
+
+        Ok(SignatureVerifyTarget {
+            verifier_data_targ,
+            selector,
+            pk: pk_targ,
+            msg: msg_targ,
+            proof: proof_targ,
         })
     }
 }
@@ -139,13 +195,14 @@ impl SignatureVerifyTarget {
             },
         )?;
 
-        pw.set_proof_with_pis_target(
-            &self.dummy_proof,
-            &ProofWithPublicInputs {
-                proof: DUMMY_SIGNATURE.0.clone(),
-                public_inputs: DUMMY_PUBLIC_INPUTS.clone(),
-            },
-        )?;
+        // WIP
+        // pw.set_proof_with_pis_target(
+        //     &self.dummy_proof,
+        //     &ProofWithPublicInputs {
+        //         proof: DUMMY_SIGNATURE.0.clone(),
+        //         public_inputs: DUMMY_PUBLIC_INPUTS.clone(),
+        //     },
+        // )?;
 
         pw.set_verifier_data_target(
             &self.verifier_data_targ,
