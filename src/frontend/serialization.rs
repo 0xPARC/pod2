@@ -154,7 +154,6 @@ pub fn transform_value_schema(schema: &mut Schema) {
 #[cfg(test)]
 mod tests {
     use schemars::generate::SchemaSettings;
-    use serde_json::json;
 
     use crate::{
         backends::plonky2::mock::{mainpod::MockProver, signedpod::MockSigner},

@@ -5,9 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::{fmt, iter};
 use strum_macros::FromRepr;
 
-use super::{
-    AnchoredKey, CustomPredicateRef, Params, Predicate, ToFields, Value, F, HASH_SIZE, VALUE_SIZE,
-};
+use super::{AnchoredKey, CustomPredicateRef, Params, Predicate, ToFields, Value, F, VALUE_SIZE};
 
 pub const KEY_SIGNER: &str = "_signer";
 pub const KEY_TYPE: &str = "_type";

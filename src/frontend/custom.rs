@@ -208,6 +208,7 @@ impl CustomPredicateRef {
                     })
                     .collect(),
                 args_len: cp.args_len,
+                name: cp.name.to_string(),
             }
         };
         match custom_predicate.conjunction {
@@ -262,20 +263,32 @@ pub struct CustomPredicate {
     pub(crate) args_len: usize,
     // TODO: Add private args length?
     // TODO: Add args type information?
+    pub(crate) name: String,
 }
 
 impl CustomPredicate {
-    pub fn and(params: &Params, statements: Vec<StatementTmpl>, args_len: usize) -> Result<Self> {
-        Self::new(params, true, statements, args_len)
+    pub fn and(
+        params: &Params,
+        statements: Vec<StatementTmpl>,
+        args_len: usize,
+        name: &str,
+    ) -> Result<Self> {
+        Self::new(params, true, statements, args_len, name)
     }
-    pub fn or(params: &Params, statements: Vec<StatementTmpl>, args_len: usize) -> Result<Self> {
-        Self::new(params, false, statements, args_len)
+    pub fn or(
+        params: &Params,
+        statements: Vec<StatementTmpl>,
+        args_len: usize,
+        name: &str,
+    ) -> Result<Self> {
+        Self::new(params, false, statements, args_len, name)
     }
     pub fn new(
         params: &Params,
         conjunction: bool,
         statements: Vec<StatementTmpl>,
         args_len: usize,
+        name: &str,
     ) -> Result<Self> {
         if statements.len() > params.max_custom_predicate_arity {
             return Err(anyhow!("Custom predicate depends on too many statements"));
@@ -285,6 +298,7 @@ impl CustomPredicate {
             conjunction,
             statements,
             args_len,
+            name: name.to_string(),
         })
     }
 }
@@ -473,8 +487,9 @@ impl CustomPredicateBatchBuilder {
         args: &[&str],
         priv_args: &[&str],
         sts: &[StatementTmplBuilder],
+        name: &str,
     ) -> Result<Predicate> {
-        self.predicate(params, true, args, priv_args, sts)
+        self.predicate(params, true, args, priv_args, sts, name)
     }
 
     pub fn predicate_or(
@@ -483,8 +498,9 @@ impl CustomPredicateBatchBuilder {
         args: &[&str],
         priv_args: &[&str],
         sts: &[StatementTmplBuilder],
+        name: &str,
     ) -> Result<Predicate> {
-        self.predicate(params, false, args, priv_args, sts)
+        self.predicate(params, false, args, priv_args, sts, name)
     }
 
     /// creates the custom predicate from the given input, adds it to the
@@ -496,6 +512,7 @@ impl CustomPredicateBatchBuilder {
         args: &[&str],
         priv_args: &[&str],
         sts: &[StatementTmplBuilder],
+        name: &str,
     ) -> Result<Predicate> {
         let statements = sts
             .iter()
@@ -517,7 +534,8 @@ impl CustomPredicateBatchBuilder {
                 }
             })
             .collect();
-        let custom_predicate = CustomPredicate::new(params, conjunction, statements, args.len())?;
+        let custom_predicate =
+            CustomPredicate::new(params, conjunction, statements, args.len(), name)?;
         self.predicates.push(custom_predicate);
         Ok(Predicate::BatchSelf(self.predicates.len() - 1))
     }

@@ -37,6 +37,7 @@ pub fn eth_friend_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
                 .arg(("attestation_pod", literal("attestation")))
                 .arg(("dst_ori", "dst_key")),
         ],
+        "eth_friend",
     )?;
 
     println!("a.0. eth_friend = {}", builder.predicates.last().unwrap());
@@ -74,6 +75,7 @@ pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
                 .arg(("distance_ori", "distance_key"))
                 .arg(0),
         ],
+        "eth_dos_distance_base",
     )?;
     println!(
         "b.0. eth_dos_distance_base = {}",
@@ -119,6 +121,7 @@ pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
                 .arg(("intermed_ori", "intermed_key"))
                 .arg(("dst_ori", "dst_key")),
         ],
+        "eth_dos_distance_ind",
     )?;
 
     println!(
@@ -147,6 +150,7 @@ pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
                 .arg(("dst_ori", "dst_key"))
                 .arg(("distance_ori", "distance_key")),
         ],
+        "eth_dos_distance",
     )?;
 
     println!(
