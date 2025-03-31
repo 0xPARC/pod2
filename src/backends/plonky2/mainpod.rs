@@ -51,17 +51,13 @@ impl PodProver for Prover {
         let operations = MockMainPod::process_private_statements_operations(
             params,
             &statements,
-            &[], // TODO: fill in the merkle proofs
+            &[], // TODO: fill in the merkle proofs for Contains/NotContains ops
             inputs.operations,
         )
         .unwrap();
         let operations =
             MockMainPod::process_public_statements_operations(params, &statements, operations)
                 .unwrap();
-
-        // for (i, op) in statements.iter().enumerate() {
-        //     println!("DBG st {}: {:?}", i, op);
-        // }
 
         let public_statements =
             statements[statements.len() - params.max_public_statements..].to_vec();
@@ -74,12 +70,6 @@ impl PodProver for Prover {
             operations,
         };
         main_pod.set_targets(&mut pw, &input)?;
-
-        // for (target, name) in &builder.target_names {
-        //     if let Some(v) = pw.target_values.get(target) {
-        //         println!("DBG {}={}", name, v);
-        //     }
-        // }
 
         // generate & verify proof
         let data = builder.build::<C>();

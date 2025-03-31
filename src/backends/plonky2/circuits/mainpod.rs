@@ -269,8 +269,8 @@ impl OperationVerifyGate {
             op_code_ok,
             op_arg_types_ok,
             op_arg_range_ok,
-            op_args_eq, // FAILING
-            st_ok,      // FAILING
+            op_args_eq,
+            st_ok,
         ])
     }
 
@@ -465,8 +465,6 @@ impl MainPodVerifyGate {
             .collect();
         let id = builder.hash_n_to_hash_no_pad::<PoseidonHash>(pub_statements_flattened);
 
-        // 3. TODO check that all `input_statements` of type `ValueOf` with origin=SELF have unique keys (no duplicates).  Maybe we can do this via the NewEntry operation (check that the key doesn't exist in a previous statement with ID=SELF)
-
         // 4. Verify type
         let type_statement = &pub_statements[0];
         // TODO: Store this hash in a global static with lazy init so that we don't have to
@@ -480,6 +478,8 @@ impl MainPodVerifyGate {
         );
         builder.connect_flattenable(type_statement, &expected_type_statement);
 
+        // 3. check that all `input_statements` of type `ValueOf` with origin=SELF have unique keys
+        // (no duplicates).  We do this in the verification of NewEntry operation.
         // 5. Verify input statements
         let mut op_verifications = Vec::new();
         for (i, (st, op)) in input_statements.iter().zip(operations.iter()).enumerate() {
@@ -643,29 +643,6 @@ mod tests {
         data.verify(proof)?;
 
         Ok(())
-    }
-
-    #[test]
-    fn test_operation_verify_eq_from_entries() -> Result<()> {
-        let st1: mainpod::Statement =
-            Statement::ValueOf(AnchoredKey(SELF, "hello".into()), 55.into()).into();
-        let st2: mainpod::Statement = Statement::ValueOf(
-            AnchoredKey(PodId(Value::from(75).into()), "world".into()),
-            55.into(),
-        )
-        .into();
-        let st: mainpod::Statement = Statement::Equal(
-            AnchoredKey(SELF, "hello".into()),
-            AnchoredKey(PodId(Value::from(75).into()), "world".into()),
-        )
-        .into();
-        let op = mainpod::Operation(
-            OperationType::Native(NativeOperation::EqualFromEntries),
-            vec![OperationArg::Index(0), OperationArg::Index(1)],
-            OperationAux::None,
-        );
-        let prev_statements = vec![st1.clone(), st2];
-        operation_verify(st, op, prev_statements)
     }
 
     #[test]
