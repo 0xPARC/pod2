@@ -46,8 +46,12 @@ pub enum Statement {
     NotEqual(AnchoredKey, AnchoredKey),
     Gt(AnchoredKey, AnchoredKey),
     Lt(AnchoredKey, AnchoredKey),
-    Contains(AnchoredKey, AnchoredKey),
-    NotContains(AnchoredKey, AnchoredKey),
+    Contains(
+        /* root  */ AnchoredKey,
+        /* key   */ AnchoredKey,
+        /* value */ AnchoredKey,
+    ),
+    NotContains(/* root  */ AnchoredKey, /* key   */ AnchoredKey),
     SumOf(AnchoredKey, AnchoredKey, AnchoredKey),
     ProductOf(AnchoredKey, AnchoredKey, AnchoredKey),
     MaxOf(AnchoredKey, AnchoredKey, AnchoredKey),
@@ -67,7 +71,7 @@ impl Statement {
             Self::NotEqual(_, _) => Native(NativePredicate::NotEqual),
             Self::Gt(_, _) => Native(NativePredicate::Gt),
             Self::Lt(_, _) => Native(NativePredicate::Lt),
-            Self::Contains(_, _) => Native(NativePredicate::Contains),
+            Self::Contains(_, _, _) => Native(NativePredicate::Contains),
             Self::NotContains(_, _) => Native(NativePredicate::NotContains),
             Self::SumOf(_, _, _) => Native(NativePredicate::SumOf),
             Self::ProductOf(_, _, _) => Native(NativePredicate::ProductOf),
@@ -84,7 +88,7 @@ impl Statement {
             Self::NotEqual(ak1, ak2) => vec![Key(ak1), Key(ak2)],
             Self::Gt(ak1, ak2) => vec![Key(ak1), Key(ak2)],
             Self::Lt(ak1, ak2) => vec![Key(ak1), Key(ak2)],
-            Self::Contains(ak1, ak2) => vec![Key(ak1), Key(ak2)],
+            Self::Contains(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
             Self::NotContains(ak1, ak2) => vec![Key(ak1), Key(ak2)],
             Self::SumOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
             Self::ProductOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
@@ -132,8 +136,10 @@ impl Statement {
                 }
             }
             Native(NativePredicate::Contains) => {
-                if let (StatementArg::Key(a0), StatementArg::Key(a1)) = (args[0], args[1]) {
-                    Ok(Self::Contains(a0, a1))
+                if let (StatementArg::Key(a0), StatementArg::Key(a1), StatementArg::Key(a2)) =
+                    (args[0], args[1], args[2])
+                {
+                    Ok(Self::Contains(a0, a1, a2))
                 } else {
                     Err(anyhow!("Incorrect statement args"))
                 }

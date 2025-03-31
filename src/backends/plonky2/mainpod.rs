@@ -51,12 +51,17 @@ impl PodProver for Prover {
         let operations = MockMainPod::process_private_statements_operations(
             params,
             &statements,
+            &[], // TODO: fill in the merkle proofs
             inputs.operations,
         )
         .unwrap();
         let operations =
             MockMainPod::process_public_statements_operations(params, &statements, operations)
                 .unwrap();
+
+        // for (i, op) in statements.iter().enumerate() {
+        //     println!("DBG st {}: {:?}", i, op);
+        // }
 
         let public_statements =
             statements[statements.len() - params.max_public_statements..].to_vec();
@@ -70,11 +75,11 @@ impl PodProver for Prover {
         };
         main_pod.set_targets(&mut pw, &input)?;
 
-        for (target, name) in &builder.target_names {
-            if let Some(v) = pw.target_values.get(target) {
-                println!("DBG {}={}", name, v);
-            }
-        }
+        // for (target, name) in &builder.target_names {
+        //     if let Some(v) = pw.target_values.get(target) {
+        //         println!("DBG {}={}", name, v);
+        //     }
+        // }
 
         // generate & verify proof
         let data = builder.build::<C>();
@@ -165,6 +170,7 @@ impl Pod for MainPod {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::backends::plonky2::mock::mainpod::{MockProver, OperationAux};
     use crate::backends::plonky2::mock::signedpod::MockSigner;
     use crate::examples::zu_kyc_sign_pod_builders;
     use crate::frontend;
@@ -191,23 +197,22 @@ pub mod tests {
         //     (sanction_list, "sanctionList"),
         //     (gov_id, "idNumber")
         // ))?;
-        // NOTE: the lt is failing with the check that the 2 higher elements in Value must be 0
-        // kyc.pub_op(op!(lt, (gov_id, "dateOfBirth"), now_minus_18y))?;
+        kyc.pub_op(op!(lt, (gov_id, "dateOfBirth"), now_minus_18y))?;
         kyc.pub_op(op!(
             eq,
             (gov_id, "socialSecurityNumber"),
             (pay_stub, "socialSecurityNumber")
         ))?;
-        // NOTE: Failing
         let start_date_st = kyc.pub_op(frontend::Operation(
-            OperationType::Native(NativeOperation::NewEntry),
+            frontend::OperationType::Native(frontend::NativeOperation::NewEntry),
             vec![frontend::OperationArg::Entry(
                 "startDate".to_string(),
                 now_minus_1y.into(),
             )],
+            middleware::OperationAux::None,
         ))?;
         kyc.pub_op(op!(eq, (pay_stub, "startDate"), start_date_st))?;
-        // kyc.pub_op(op!(eq, (pay_stub, "startDate"), now_minus_1y))?;
+        kyc.pub_op(op!(eq, (pay_stub, "startDate"), now_minus_1y))?;
 
         Ok(kyc)
     }
@@ -221,8 +226,10 @@ pub mod tests {
             ..Default::default()
         };
 
+        let sanctions_values = vec!["A343434340".into()];
+        let sanction_set = frontend::Value::Set(frontend::containers::Set::new(sanctions_values)?);
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
-            zu_kyc_sign_pod_builders(&params);
+            zu_kyc_sign_pod_builders(&params, &sanction_set);
         let mut signer = MockSigner {
             pk: "ZooGov".into(),
         };
@@ -243,5 +250,48 @@ pub mod tests {
         let pod = kyc_pod.pod.into_any().downcast::<MainPod>().unwrap();
 
         pod.verify()
+    }
+
+    #[test]
+    fn test_mini_0() {
+        let params = middleware::Params {
+            max_input_signed_pods: 1,
+            max_input_main_pods: 1,
+            max_signed_pod_values: 6,
+            max_statements: 8,
+            max_public_statements: 4,
+            ..Default::default()
+        };
+
+        let mut gov_id_builder = frontend::SignedPodBuilder::new(&params);
+        gov_id_builder.insert("idNumber", "4242424242");
+        gov_id_builder.insert("dateOfBirth", 1169909384);
+        gov_id_builder.insert("socialSecurityNumber", "G2121210");
+        let mut signer = MockSigner {
+            pk: "ZooGov".into(),
+        };
+        let gov_id = gov_id_builder.sign(&mut signer).unwrap();
+        let now_minus_18y: i64 = 1169909388;
+        let mut kyc_builder = frontend::MainPodBuilder::new(&params);
+        kyc_builder.add_signed_pod(&gov_id);
+        kyc_builder
+            .pub_op(op!(lt, (&gov_id, "dateOfBirth"), now_minus_18y))
+            .unwrap();
+
+        println!("{}", kyc_builder);
+        println!();
+
+        // Mock
+        let mut prover = MockProver {};
+        let kyc_pod = kyc_builder.prove(&mut prover, &params).unwrap();
+        let pod = kyc_pod.pod.into_any().downcast::<MockMainPod>().unwrap();
+        pod.verify().unwrap();
+        println!("{:#}", pod);
+
+        // Real
+        let mut prover = Prover {};
+        let kyc_pod = kyc_builder.prove(&mut prover, &params).unwrap();
+        let pod = kyc_pod.pod.into_any().downcast::<MainPod>().unwrap();
+        pod.verify().unwrap()
     }
 }

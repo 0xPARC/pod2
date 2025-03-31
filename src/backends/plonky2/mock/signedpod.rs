@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use itertools::Itertools;
 use std::any::Any;
 use std::collections::HashMap;
 
@@ -112,7 +113,7 @@ impl Pod for MockSignedPod {
         let value_signer = kvs.remove(&key_signer).expect("KEY_SIGNER");
         [(&key_type, value_type), (&key_signer, value_signer)]
             .into_iter()
-            .chain(kvs.into_iter())
+            .chain(kvs.into_iter().sorted_by_key(|kv| kv.0))
             .map(|(k, v)| Statement::ValueOf(AnchoredKey(id, Hash(k.0)), *v))
             .collect()
     }

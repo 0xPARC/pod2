@@ -151,6 +151,7 @@ impl SignedPodVerifyTarget {
             .take(self.params.max_signed_pod_values)
             .enumerate()
         {
+            // println!("DBG signed_pod st {} {:?} {:?}", i, k, v);
             let (_, proof) = tree.prove(&k)?;
             self.mt_proofs[i].set_targets(pw, tree.root(), proof, k, v)?;
         }
@@ -561,7 +562,10 @@ impl MainPodVerifyCircuit {
 mod tests {
     use super::*;
     use crate::backends::plonky2::mock::mainpod;
-    use crate::backends::plonky2::{basetypes::C, mock::mainpod::OperationArg};
+    use crate::backends::plonky2::{
+        basetypes::C,
+        mock::mainpod::{OperationArg, OperationAux},
+    };
     use crate::middleware::{OperationType, PodId};
     use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
 
@@ -658,6 +662,7 @@ mod tests {
         let op = mainpod::Operation(
             OperationType::Native(NativeOperation::EqualFromEntries),
             vec![OperationArg::Index(0), OperationArg::Index(1)],
+            OperationAux::None,
         );
         let prev_statements = vec![st1.clone(), st2];
         operation_verify(st, op, prev_statements)
@@ -667,7 +672,11 @@ mod tests {
     fn test_operation_verify() -> Result<()> {
         // None
         let st: mainpod::Statement = Statement::None.into();
-        let op = mainpod::Operation(OperationType::Native(NativeOperation::None), vec![]);
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::None),
+            vec![],
+            OperationAux::None,
+        );
         let prev_statements = vec![Statement::None.into()];
         operation_verify(st.clone(), op, prev_statements.clone())?;
 
@@ -680,7 +689,11 @@ mod tests {
         )
         .into();
         let prev_statements = vec![st2];
-        let op = mainpod::Operation(OperationType::Native(NativeOperation::NewEntry), vec![]);
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::NewEntry),
+            vec![],
+            OperationAux::None,
+        );
         operation_verify(st1.clone(), op, prev_statements.clone())?;
 
         // Copy
@@ -688,6 +701,7 @@ mod tests {
         let op = mainpod::Operation(
             OperationType::Native(NativeOperation::CopyStatement),
             vec![OperationArg::Index(0)],
+            OperationAux::None,
         );
         let prev_statements = vec![Statement::None.into()];
         operation_verify(st, op, prev_statements)?;
@@ -706,6 +720,7 @@ mod tests {
         let op = mainpod::Operation(
             OperationType::Native(NativeOperation::EqualFromEntries),
             vec![OperationArg::Index(0), OperationArg::Index(1)],
+            OperationAux::None,
         );
         let prev_statements = vec![st1.clone(), st2];
         operation_verify(st, op, prev_statements)?;
@@ -724,6 +739,7 @@ mod tests {
         let op = mainpod::Operation(
             OperationType::Native(NativeOperation::LtFromEntries),
             vec![OperationArg::Index(0), OperationArg::Index(1)],
+            OperationAux::None,
         );
         let prev_statements = vec![st1.clone(), st2];
         operation_verify(st, op, prev_statements)?;
