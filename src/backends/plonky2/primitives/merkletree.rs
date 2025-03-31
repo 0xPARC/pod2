@@ -10,7 +10,6 @@ use std::iter::IntoIterator;
 use crate::backends::counter;
 use crate::backends::plonky2::basetypes::{hash_fields, Hash, Value, EMPTY_HASH, F};
 
-// mod merkletree_circuit;
 pub use super::merkletree_circuit::*;
 
 /// Implements the MerkleTree specified at

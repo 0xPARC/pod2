@@ -27,11 +27,11 @@ use crate::backends::plonky2::basetypes::{Hash, Value, D, EMPTY_HASH, EMPTY_VALU
 use crate::backends::plonky2::circuits::common::{CircuitBuilderPod, ValueTarget};
 use crate::backends::plonky2::primitives::merkletree::MerkleProof;
 
-/// `MerkleProofGate` allows to verify both proofs of existence and proofs
+/// `MerkleProofGadget` allows to verify both proofs of existence and proofs
 /// non-existence with the same circuit.
-/// If only proofs of existence are needed, use `MerkleProofExistenceGate`,
+/// If only proofs of existence are needed, use `MerkleProofExistenceGadget`,
 /// which requires less amount of constraints.
-pub struct MerkleProofGate {
+pub struct MerkleProofGadget {
     pub max_depth: usize,
 }
 
@@ -47,7 +47,7 @@ pub struct MerkleProofTarget {
     pub other_value: ValueTarget,
 }
 
-impl MerkleProofGate {
+impl MerkleProofGadget {
     /// creates the targets and defines the logic of the circuit
     pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MerkleProofTarget> {
         // create the targets
@@ -179,7 +179,7 @@ impl MerkleProofTarget {
 
 /// `MerkleProofExistenceCircuit` allows to verify proofs of existence only. If
 /// proofs of non-existence are needed, use `MerkleProofCircuit`.
-pub struct MerkleProofExistenceGate {
+pub struct MerkleProofExistenceGadget {
     pub max_depth: usize,
 }
 
@@ -191,7 +191,7 @@ pub struct MerkleProofExistenceTarget {
     pub siblings: Vec<HashOutTarget>,
 }
 
-impl MerkleProofExistenceGate {
+impl MerkleProofExistenceGadget {
     /// creates the targets and defines the logic of the circuit
     pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MerkleProofExistenceTarget> {
         // create the targets
@@ -486,7 +486,7 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = MerkleProofGate { max_depth }.eval(&mut builder)?;
+        let targets = MerkleProofGadget { max_depth }.eval(&mut builder)?;
         targets.set_targets(&mut pw, existence, tree.root(), proof, key, value)?;
 
         // generate & verify proof
@@ -525,7 +525,7 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = MerkleProofExistenceGate { max_depth }.eval(&mut builder)?;
+        let targets = MerkleProofExistenceGadget { max_depth }.eval(&mut builder)?;
         targets.set_targets(&mut pw, tree.root(), proof, key, value)?;
 
         // generate & verify proof
@@ -592,7 +592,7 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = MerkleProofGate { max_depth }.eval(&mut builder)?;
+        let targets = MerkleProofGadget { max_depth }.eval(&mut builder)?;
         targets.set_targets(&mut pw, proof.existence, tree.root(), proof, key, value)?;
 
         // generate & verify proof
@@ -633,7 +633,7 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = MerkleProofGate { max_depth }.eval(&mut builder)?;
+        let targets = MerkleProofGadget { max_depth }.eval(&mut builder)?;
         targets.set_targets(&mut pw, true, tree2.root(), proof, key, value)?;
 
         // generate proof, expecting it to fail (since we're using the wrong
