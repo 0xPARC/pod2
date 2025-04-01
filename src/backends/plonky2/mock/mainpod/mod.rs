@@ -307,7 +307,6 @@ impl MockMainPod {
                         .try_into()
                         .ok()
                         .and_then(|mid_pf: merkletree::MerkleProof| {
-                            println!("{:?}\n {:?}", mid_pf, pf_arg);
                             (&mid_pf == pf_arg).then_some(i)
                         })
                 })
