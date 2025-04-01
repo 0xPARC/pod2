@@ -574,6 +574,12 @@ pub mod tests {
         let targets = MerkleProofExistenceGadget { max_depth }.eval(&mut builder)?;
         targets.set_targets(&mut pw, true, tree.root(), proof, key, value)?;
 
+        println!(
+            "MerkleProofExistenceGadget<max_depth={}>: {}",
+            max_depth,
+            builder.num_gates()
+        );
+
         // generate & verify proof
         let data = builder.build::<C>();
         let proof = data.prove(pw)?;

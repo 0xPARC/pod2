@@ -226,6 +226,8 @@ pub mod tests {
         // set the signed_pod as target values for the circuit
         signed_pod_verify.set_targets(&mut pw, &signed_pod)?;
 
+        println!("DBG SignedPodVerifyGadget.rows = {}", builder.num_gates());
+
         // generate & verify proof
         let data = builder.build::<C>();
         let proof = data.prove(pw)?;

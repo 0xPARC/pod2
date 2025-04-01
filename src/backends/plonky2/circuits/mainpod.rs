@@ -44,6 +44,7 @@ impl OperationVerifyGadget {
         // Verify that the operation `op` correctly generates the statement `st`.  The operation
         // can reference any of the `prev_statements`.
         // TODO: Clean this up.
+        let num_gates = builder.num_gates();
         let resolved_op_args = if prev_statements.len() == 0 {
             vec![]
         } else {
@@ -53,6 +54,11 @@ impl OperationVerifyGadget {
                 .map(|&i| builder.vec_ref(prev_statements, i))
                 .collect::<Vec<_>>()
         };
+        let num_gates_new = builder.num_gates();
+        println!(
+            "- OperationVerifyGadget.prev_st_vec_ref>: {}",
+            num_gates_new - num_gates
+        );
 
         // The verification may require aux data which needs to be stored in the
         // `OperationVerifyTarget` so that we can set during witness generation.
@@ -345,12 +351,20 @@ impl MainPodVerifyGadget {
         // (no duplicates).  We do this in the verification of NewEntry operation.
         // 5. Verify input statements
         let mut op_verifications = Vec::new();
+        let mut num_gates = builder.num_gates();
         for (i, (st, op)) in input_statements.iter().zip(operations.iter()).enumerate() {
             let prev_statements = &statements[..input_statements_offset + i];
             let op_verification = OperationVerifyGadget {
                 params: params.clone(),
             }
             .eval(builder, st, op, prev_statements)?;
+            let num_gates_new = builder.num_gates();
+            println!(
+                "- OperationVerifyGadget<prev_len={}>: {}",
+                prev_statements.len(),
+                num_gates_new - num_gates
+            );
+            num_gates = num_gates_new;
             op_verifications.push(op_verification);
         }
 
@@ -417,6 +431,8 @@ impl MainPodVerifyCircuit {
         }
         .eval(builder)?;
         builder.register_public_inputs(&main_pod.id.elements);
+
+        println!("DBG MainPodVerifyCircuit.rows = {}", builder.num_gates());
         Ok(main_pod)
     }
 }
