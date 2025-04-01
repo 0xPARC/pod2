@@ -227,6 +227,52 @@ impl MockMainPod {
         statements
     }
 
+    /// Extracts and pads Merkle proofs from Contains/NotContains ops.
+    pub(crate) fn extract_merkle_proofs(
+        params: &Params,
+        operations: &[middleware::Operation],
+    ) -> Result<Vec<MerkleProof>> {
+        let mut merkle_proofs = operations
+            .iter()
+            .flat_map(|op| match op {
+                middleware::Operation::ContainsFromEntries(
+                    middleware::Statement::ValueOf(_, root),
+                    middleware::Statement::ValueOf(_, key),
+                    middleware::Statement::ValueOf(_, value),
+                    pf,
+                ) => Some(MerkleProof::try_from_middleware(
+                    params,
+                    root,
+                    key,
+                    Some(value),
+                    pf,
+                )),
+                middleware::Operation::NotContainsFromEntries(
+                    middleware::Statement::ValueOf(_, root),
+                    middleware::Statement::ValueOf(_, key),
+                    pf,
+                ) => Some(MerkleProof::try_from_middleware(
+                    params, root, key, None, pf,
+                )),
+                _ => None,
+            })
+            .collect::<Result<Vec<_>>>()?;
+        if merkle_proofs.len() > params.max_merkle_proofs {
+            return Err(anyhow!(
+                "The number of required Merkle proofs ({}) exceeds the maximum number ({}).",
+                merkle_proofs.len(),
+                params.max_merkle_proofs
+            ));
+        } else {
+            fill_pad(
+                &mut merkle_proofs,
+                MerkleProof::empty(params.max_depth_mt_gadget),
+                params.max_merkle_proofs,
+            );
+            Ok(merkle_proofs)
+        }
+    }
+
     fn find_op_arg(
         statements: &[Statement],
         op_arg: &middleware::Statement,
@@ -345,39 +391,8 @@ impl MockMainPod {
         // value=PodType::MockMainPod`
         let statements = Self::layout_statements(params, &inputs);
         // Extract Merkle proofs and pad.
-        let merkle_proofs = inputs
-            .operations
-            .iter()
-            .flat_map(|op| match op {
-                middleware::Operation::ContainsFromEntries(
-                    middleware::Statement::ValueOf(_, root),
-                    middleware::Statement::ValueOf(_, key),
-                    middleware::Statement::ValueOf(_, value),
-                    pf,
-                ) => Some(MerkleProof::try_from_middleware(
-                    params,
-                    root,
-                    key,
-                    Some(value),
-                    pf,
-                )),
-                middleware::Operation::NotContainsFromEntries(
-                    middleware::Statement::ValueOf(_, root),
-                    middleware::Statement::ValueOf(_, key),
-                    pf,
-                ) => Some(MerkleProof::try_from_middleware(
-                    params, root, key, None, pf,
-                )),
-                _ => None,
-            })
-            .collect::<Result<Vec<_>>>()?;
-        if merkle_proofs.len() > params.max_merkle_proofs {
-            return Err(anyhow!(
-                "The number of required Merkle proofs ({}) exceeds the maximum number ({}).",
-                merkle_proofs.len(),
-                params.max_merkle_proofs
-            ));
-        }
+        let merkle_proofs = Self::extract_merkle_proofs(params, &inputs.operations)?;
+
         let operations = Self::process_private_statements_operations(
             params,
             &statements,

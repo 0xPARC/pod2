@@ -36,7 +36,7 @@ pub struct MerkleProofGadget {
 }
 
 pub struct MerkleProofTarget {
-    max_depth: usize,
+    pub(crate) max_depth: usize,
     // `enabled` determines if the merkleproof verification is enabled
     pub(crate) enabled: BoolTarget,
     pub(crate) root: HashOutTarget,

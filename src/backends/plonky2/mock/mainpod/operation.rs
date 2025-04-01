@@ -1,6 +1,6 @@
 use super::Statement;
 use crate::{
-    backends::plonky2::primitives::merkletree,
+    backends::plonky2::primitives::merkletree::{self, kv_hash},
     middleware::{self, Hash, OperationType, Params, ToFields, Value, EMPTY_HASH, EMPTY_VALUE, F},
 };
 use anyhow::{anyhow, Result};
@@ -36,6 +36,16 @@ pub enum OperationAux {
     MerkleProofIndex(usize),
 }
 
+impl ToFields for OperationAux {
+    fn to_fields(&self, _params: &Params) -> Vec<F> {
+        let f = match self {
+            Self::None => F::ZERO,
+            Self::MerkleProofIndex(i) => F::from_canonical_usize(*i),
+        };
+        vec![f]
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MerkleProof {
     pub enabled: bool,
@@ -50,6 +60,20 @@ pub struct MerkleProof {
 }
 
 impl MerkleProof {
+    // TODO: Use `enabled` flag.
+    pub fn empty(max_depth: usize) -> Self {
+        Self {
+            enabled: true,
+            root: kv_hash(&EMPTY_VALUE, Some(EMPTY_VALUE)),
+            key: Value::from(1),
+            value: EMPTY_VALUE,
+            existence: false,
+            siblings: iter::repeat(EMPTY_HASH).take(max_depth).collect(),
+            case_ii_selector: true,
+            other_key: EMPTY_VALUE,
+            other_value: EMPTY_VALUE,
+        }
+    }
     pub fn try_from_middleware(
         params: &Params,
         root: &Value,
@@ -136,6 +160,9 @@ impl Operation {
     }
     pub fn args(&self) -> &[OperationArg] {
         &self.1
+    }
+    pub fn aux(&self) -> &OperationAux {
+        &self.2
     }
     pub fn deref(
         &self,

@@ -23,6 +23,8 @@ use crate::middleware::{
     SELF,
 };
 
+use super::mock::mainpod::MerkleProof;
+
 pub struct Prover {}
 
 impl PodProver for Prover {
@@ -47,12 +49,14 @@ impl PodProver for Prover {
             })
             .collect_vec();
 
+        let merkle_proofs = MockMainPod::extract_merkle_proofs(params, &inputs.operations)?;
+
         // TODO: Move these methods from the mock main pod to a common place
         let statements = MockMainPod::layout_statements(params, &inputs);
         let operations = MockMainPod::process_private_statements_operations(
             params,
             &statements,
-            &[], // TODO: fill in the merkle proofs for Contains/NotContains ops
+            &merkle_proofs, // TODO: fill in the merkle proofs for Contains/NotContains ops
             inputs.operations,
         )?;
         let operations =
@@ -67,6 +71,7 @@ impl PodProver for Prover {
             signed_pods: signed_pods_input,
             statements: statements[statements.len() - params.max_statements..].to_vec(),
             operations,
+            merkle_proofs,
         };
         main_pod.set_targets(&mut pw, &input)?;
 
@@ -173,19 +178,28 @@ pub mod tests {
         pay_stub: &frontend::SignedPod,
         sanction_list: &frontend::SignedPod,
     ) -> Result<frontend::MainPodBuilder> {
+        let sanction_set = match sanction_list.kvs.get("sanctionList") {
+            Some(frontend::Value::Set(s)) => Ok(s),
+            _ => Err(anyhow!("Missing sanction list!")),
+        }?;
         let now_minus_18y: i64 = 1169909388;
         let now_minus_1y: i64 = 1706367566;
+
+        let gov_id_kvs = gov_id.kvs();
+        let id_number_value = gov_id_kvs.get(&"idNumber".into()).unwrap();
 
         let mut kyc = frontend::MainPodBuilder::new(params);
         kyc.add_signed_pod(gov_id);
         kyc.add_signed_pod(pay_stub);
         kyc.add_signed_pod(sanction_list);
-        // NOTE: Unimplemented in the circuit
-        // kyc.pub_op(op!(
-        //     not_contains,
-        //     (sanction_list, "sanctionList"),
-        //     (gov_id, "idNumber")
-        // ))?;
+        kyc.pub_op(op!(
+            set_not_contains,
+            (sanction_list, "sanctionList"),
+            (gov_id, "idNumber"),
+            sanction_set
+                .middleware_set()
+                .prove_nonexistence(id_number_value)?
+        ))?;
         kyc.pub_op(op!(lt, (gov_id, "dateOfBirth"), now_minus_18y))?;
         kyc.pub_op(op!(
             eq,

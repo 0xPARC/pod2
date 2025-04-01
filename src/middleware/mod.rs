@@ -20,6 +20,8 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::fmt;
 
+use crate::backends::plonky2::primitives::merkletree::MerkleProof;
+
 pub const SELF: PodId = PodId(SELF_ID_HASH);
 
 impl fmt::Display for PodId {
@@ -101,11 +103,12 @@ pub struct Params {
     pub max_public_statements: usize,
     pub max_statement_args: usize,
     pub max_operation_args: usize,
-    pub max_merkle_proofs: usize,
     // max number of statements that can be ANDed or ORed together
     // in a custom predicate
     pub max_custom_predicate_arity: usize,
     pub max_custom_batch_size: usize,
+    // maximum number of merkle proofs
+    pub max_merkle_proofs: usize,
     // maximum depth for merkle tree gadget
     pub max_depth_mt_gadget: usize,
 }

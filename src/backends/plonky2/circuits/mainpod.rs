@@ -6,12 +6,16 @@ use plonky2::{
     plonk::circuit_builder::CircuitBuilder,
 };
 
-use crate::backends::plonky2::basetypes::{Value, D, EMPTY_HASH, F, VALUE_SIZE};
 use crate::backends::plonky2::circuits::common::{
     CircuitBuilderPod, OperationTarget, StatementTarget, ValueTarget,
 };
 use crate::backends::plonky2::mock::mainpod;
 use crate::backends::plonky2::signedpod::SignedPod;
+use crate::backends::plonky2::{
+    basetypes::{Value, D, EMPTY_HASH, F, VALUE_SIZE},
+    mock::mainpod::MerkleProof,
+    primitives::merkletree::{MerkleProofGadget, MerkleProofTarget},
+};
 use crate::middleware::{
     hash_str, AnchoredKey, NativeOperation, NativePredicate, Params, PodType, Statement,
     StatementArg, ToFields, KEY_TYPE, SELF,
@@ -37,6 +41,7 @@ impl OperationVerifyGadget {
         st: &StatementTarget,
         op: &OperationTarget,
         prev_statements: &[StatementTarget],
+        merkle_proofs: &[MerkleProofTarget],
     ) -> Result<OperationVerifyTarget> {
         let _true = builder._true();
         let _false = builder._false();
@@ -54,6 +59,11 @@ impl OperationVerifyGadget {
                 .collect::<Vec<_>>()
         };
 
+        // Certain operations (Contains/NotContains) will refer to one
+        // of the provided Merkle proofs (if any).
+        // TODO: Could `merkle_proofs` be empty?
+        let resolved_merkle_proof = builder.vec_ref(merkle_proofs, op.aux[0]);
+
         // The verification may require aux data which needs to be stored in the
         // `OperationVerifyTarget` so that we can set during witness generation.
 
@@ -66,6 +76,13 @@ impl OperationVerifyGadget {
             vec![
                 self.eval_none(builder, st, op),
                 self.eval_new_entry(builder, st, op, prev_statements),
+                self.eval_not_contains_from_entries(
+                    builder,
+                    st,
+                    op,
+                    resolved_merkle_proof,
+                    &resolved_op_args,
+                ),
             ],
             // Skip these if there are no resolved op args
             if resolved_op_args.len() == 0 {
@@ -85,6 +102,74 @@ impl OperationVerifyGadget {
         builder.connect(ok.target, _true.target);
 
         Ok(OperationVerifyTarget {})
+    }
+
+    fn eval_not_contains_from_entries(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        st: &StatementTarget,
+        op: &OperationTarget,
+        resolved_merkle_proof: MerkleProofTarget,
+        resolved_op_args: &[StatementTarget],
+    ) -> BoolTarget {
+        let op_code_ok = op.has_native_type(builder, NativeOperation::NotContainsFromEntries);
+
+        // Expect 2 op args of type `ValueOf`.
+        let op_arg_type_checks = resolved_op_args
+            .iter()
+            .take(2)
+            .map(|op_arg| op_arg.has_native_type(builder, &self.params, NativePredicate::ValueOf))
+            .collect::<Vec<_>>();
+        let op_arg_types_ok = builder.all(op_arg_type_checks);
+
+        // The values embedded in the op args must be values, i.e. the
+        // last `STATEMENT_ARG_F_LEN - VALUE_SIZE` slots of each being
+        // 0.
+        let merkle_root_arg = &resolved_op_args[0].args[1];
+        let key_arg = &resolved_op_args[1].args[1];
+        let op_arg_range_checks = [
+            builder.statement_arg_is_value(merkle_root_arg),
+            builder.statement_arg_is_value(key_arg),
+        ];
+        let op_arg_range_ok = builder.all(op_arg_range_checks);
+
+        // Check Merkle proof (verified elsewhere) against op args.
+        let merkle_proof_checks = [
+            /* The supplied Merkle proof must be enabled. */
+            resolved_merkle_proof.enabled,
+            /* ...and it must be a nonexistence proof. */
+            builder.not(resolved_merkle_proof.existence),
+            /* ...for the root-key pair in the resolved op args. */
+            builder.is_equal_slice(
+                &merkle_root_arg.elements[..VALUE_SIZE],
+                &resolved_merkle_proof.root.elements,
+            ),
+            builder.is_equal_slice(
+                &key_arg.elements[..VALUE_SIZE],
+                &resolved_merkle_proof.key.elements,
+            ),
+        ];
+
+        let merkle_proof_ok = builder.all(merkle_proof_checks);
+
+        // Check output statement
+        let arg1_key = resolved_op_args[0].args[0].clone();
+        let arg2_key = resolved_op_args[1].args[0].clone();
+        let expected_statement = StatementTarget::new_native(
+            builder,
+            &self.params,
+            NativePredicate::NotContains,
+            &[arg1_key, arg2_key],
+        );
+        let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+
+        builder.all([
+            op_code_ok,
+            op_arg_types_ok,
+            op_arg_range_ok,
+            merkle_proof_ok,
+            st_ok,
+        ])
     }
 
     fn eval_eq_from_entries(
@@ -315,6 +400,14 @@ impl MainPodVerifyGadget {
         let pub_statements =
             &input_statements[input_statements.len() - params.max_public_statements..];
 
+        // Add Merkle proof targets
+        let mp_gadget = MerkleProofGadget {
+            max_depth: params.max_depth_mt_gadget,
+        };
+        let merkle_proofs: Vec<_> = (0..params.max_merkle_proofs)
+            .map(|_| mp_gadget.eval(builder))
+            .collect::<Result<_>>()?;
+
         // 2. Calculate the Pod Id from the public statements
         let pub_statements_flattened = pub_statements
             .iter()
@@ -350,7 +443,7 @@ impl MainPodVerifyGadget {
             let op_verification = OperationVerifyGadget {
                 params: params.clone(),
             }
-            .eval(builder, st, op, prev_statements)?;
+            .eval(builder, st, op, prev_statements, &merkle_proofs)?;
             op_verifications.push(op_verification);
         }
 
@@ -360,6 +453,7 @@ impl MainPodVerifyGadget {
             signed_pods,
             statements: input_statements.to_vec(),
             operations,
+            merkle_proofs,
             op_verifications,
         })
     }
@@ -372,6 +466,7 @@ pub struct MainPodVerifyTarget {
     // The KEY_TYPE statement must be the first public one
     statements: Vec<StatementTarget>,
     operations: Vec<OperationTarget>,
+    merkle_proofs: Vec<MerkleProofTarget>,
     op_verifications: Vec<OperationVerifyTarget>,
 }
 
@@ -379,6 +474,7 @@ pub struct MainPodVerifyInput {
     pub signed_pods: Vec<SignedPod>,
     pub statements: Vec<mainpod::Statement>,
     pub operations: Vec<mainpod::Operation>,
+    pub merkle_proofs: Vec<MerkleProof>,
 }
 
 impl MainPodVerifyTarget {
@@ -402,6 +498,19 @@ impl MainPodVerifyTarget {
             self.statements[i].set_targets(pw, &self.params, st)?;
             self.operations[i].set_targets(pw, &self.params, op)?;
         }
+        assert_eq!(input.merkle_proofs.len(), self.params.max_merkle_proofs);
+        for (i, mp) in input.merkle_proofs.iter().enumerate() {
+            assert_eq!(mp.siblings.len(), self.params.max_depth_mt_gadget);
+            self.merkle_proofs[i].set_targets(
+                pw,
+                mp.enabled,
+                mp.existence,
+                mp.root,
+                mp.clone().try_into()?,
+                mp.key,
+                mp.value,
+            )?;
+        }
         Ok(())
     }
 }
@@ -423,6 +532,7 @@ impl MainPodVerifyCircuit {
 
 #[cfg(test)]
 mod tests {
+    use plonky2::hash::merkle_proofs;
     use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
 
     use super::*;
@@ -437,8 +547,12 @@ mod tests {
         st: mainpod::Statement,
         op: mainpod::Operation,
         prev_statements: Vec<mainpod::Statement>,
+        merkle_proofs: Vec<mainpod::MerkleProof>,
     ) -> Result<()> {
         let params = Params::default();
+        let mp_gadget = MerkleProofGadget {
+            max_depth: params.max_depth_mt_gadget,
+        };
 
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
@@ -448,6 +562,10 @@ mod tests {
         let prev_statements_target: Vec<_> = (0..prev_statements.len())
             .map(|_| builder.add_virtual_statement(&params))
             .collect();
+        let merkle_proofs_target: Vec<_> = merkle_proofs
+            .iter()
+            .map(|_| mp_gadget.eval(&mut builder))
+            .collect::<Result<_>>()?;
 
         let operation_verify = OperationVerifyGadget {
             params: params.clone(),
@@ -457,6 +575,7 @@ mod tests {
             &st_target,
             &op_target,
             &prev_statements_target,
+            &merkle_proofs_target,
         )?;
 
         let mut pw = PartialWitness::<F>::new();
@@ -464,6 +583,19 @@ mod tests {
         op_target.set_targets(&mut pw, &params, &op)?;
         for (prev_st_target, prev_st) in prev_statements_target.iter().zip(prev_statements.iter()) {
             prev_st_target.set_targets(&mut pw, &params, prev_st)?;
+        }
+        for (merkle_proof_target, merkle_proof) in
+            merkle_proofs_target.iter().zip(merkle_proofs.iter())
+        {
+            merkle_proof_target.set_targets(
+                &mut pw,
+                merkle_proof.enabled,
+                merkle_proof.existence,
+                merkle_proof.root,
+                merkle_proof.clone().try_into()?,
+                merkle_proof.key,
+                merkle_proof.value,
+            )?
         }
         let input = OperationVerifyInput {};
         operation_verify.set_targets(&mut pw, &input)?;
@@ -486,7 +618,13 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![Statement::None.into()];
-        operation_verify(st.clone(), op, prev_statements.clone())?;
+        let merkle_proofs = vec![MerkleProof::empty(32)];
+        operation_verify(
+            st.clone(),
+            op,
+            prev_statements.clone(),
+            merkle_proofs.clone(),
+        )?;
 
         // NewEntry
         let st1: mainpod::Statement =
@@ -502,7 +640,12 @@ mod tests {
             vec![],
             OperationAux::None,
         );
-        operation_verify(st1.clone(), op, prev_statements.clone())?;
+        operation_verify(
+            st1.clone(),
+            op,
+            prev_statements.clone(),
+            merkle_proofs.clone(),
+        )?;
 
         // Copy
         let st: mainpod::Statement = Statement::None.into();
@@ -512,7 +655,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![Statement::None.into()];
-        operation_verify(st, op, prev_statements)?;
+        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
 
         // Eq
         let st2: mainpod::Statement = Statement::ValueOf(
@@ -531,7 +674,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1.clone(), st2];
-        operation_verify(st, op, prev_statements)?;
+        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
 
         // Lt
         let st2: mainpod::Statement = Statement::ValueOf(
@@ -550,7 +693,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1.clone(), st2];
-        operation_verify(st, op, prev_statements)?;
+        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
 
         Ok(())
     }
