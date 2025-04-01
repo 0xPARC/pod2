@@ -9,7 +9,7 @@ use std::any::Any;
 use std::fmt;
 
 use crate::{
-    backends::plonky2::primitives::merkletree::MerkleProof,
+    backends::plonky2::primitives::merkletree,
     middleware::{
         self, hash_str, AnchoredKey, Hash, MainPodInputs, NativeOperation, NativePredicate,
         NonePod, OperationType, Params, Pod, PodId, PodProver, PodType, Predicate, StatementArg,
@@ -256,7 +256,15 @@ impl MockMainPod {
             middleware::OperationAux::MerkleProof(pf_arg) => merkle_proofs
                 .iter()
                 .enumerate()
-                .find_map(|(i, pf)| (pf == pf_arg).then_some(i))
+                .find_map(|(i, pf)| {
+                    pf.clone()
+                        .try_into()
+                        .ok()
+                        .and_then(|mid_pf: merkletree::MerkleProof| {
+                            println!("{:?}\n {:?}", mid_pf, pf_arg);
+                            (&mid_pf == pf_arg).then_some(i)
+                        })
+                })
                 .map(OperationAux::MerkleProofIndex)
                 .ok_or(anyhow!(
                     "Merkle proof corresponding to op arg {} not found",
@@ -336,15 +344,40 @@ impl MockMainPod {
         // TODO: Insert a new public statement of ValueOf with `key=KEY_TYPE,
         // value=PodType::MockMainPod`
         let statements = Self::layout_statements(params, &inputs);
+        // Extract Merkle proofs and pad.
         let merkle_proofs = inputs
             .operations
             .iter()
             .flat_map(|op| match op {
-                middleware::Operation::ContainsFromEntries(_, _, _, pf) => Some(pf.clone()),
-                middleware::Operation::NotContainsFromEntries(_, _, pf) => Some(pf.clone()),
+                middleware::Operation::ContainsFromEntries(
+                    middleware::Statement::ValueOf(_, root),
+                    middleware::Statement::ValueOf(_, key),
+                    middleware::Statement::ValueOf(_, value),
+                    pf,
+                ) => Some(MerkleProof::try_from_middleware(
+                    params,
+                    root,
+                    key,
+                    Some(value),
+                    pf,
+                )),
+                middleware::Operation::NotContainsFromEntries(
+                    middleware::Statement::ValueOf(_, root),
+                    middleware::Statement::ValueOf(_, key),
+                    pf,
+                ) => Some(MerkleProof::try_from_middleware(
+                    params, root, key, None, pf,
+                )),
                 _ => None,
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>>>()?;
+        if merkle_proofs.len() > params.max_merkle_proofs {
+            return Err(anyhow!(
+                "The number of required Merkle proofs ({}) exceeds the maximum number ({}).",
+                merkle_proofs.len(),
+                params.max_merkle_proofs
+            ));
+        }
         let operations = Self::process_private_statements_operations(
             params,
             &statements,
