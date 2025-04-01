@@ -54,11 +54,9 @@ impl PodProver for Prover {
             &statements,
             &[], // TODO: fill in the merkle proofs for Contains/NotContains ops
             inputs.operations,
-        )
-        .unwrap();
+        )?;
         let operations =
-            MockMainPod::process_public_statements_operations(params, &statements, operations)
-                .unwrap();
+            MockMainPod::process_public_statements_operations(params, &statements, operations)?;
 
         let public_statements =
             statements[statements.len() - params.max_public_statements..].to_vec();
@@ -112,8 +110,7 @@ impl Pod for MainPod {
         let _main_pod = MainPodVerifyCircuit {
             params: self.params.clone(),
         }
-        .eval(&mut builder)
-        .unwrap();
+        .eval(&mut builder)?;
 
         let data = builder.build::<C>();
         data.verify(self.proof.clone())
