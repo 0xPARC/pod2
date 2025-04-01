@@ -1,163 +1,26 @@
 use anyhow::Result;
-use itertools::{zip_eq, Itertools};
+use itertools::zip_eq;
 use plonky2::{
-    field::types::Field,
-    hash::{
-        hash_types::{HashOut, HashOutTarget},
-        poseidon::PoseidonHash,
-    },
-    iop::{
-        target::{BoolTarget, Target},
-        witness::{PartialWitness, WitnessWrite},
-    },
+    hash::{hash_types::HashOutTarget, poseidon::PoseidonHash},
+    iop::{target::BoolTarget, witness::PartialWitness},
     plonk::circuit_builder::CircuitBuilder,
 };
-use std::collections::HashMap;
-use std::iter;
 
-use crate::backends::plonky2::basetypes::{Hash, Value, D, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE};
+use crate::backends::plonky2::basetypes::{Value, D, EMPTY_HASH, F, VALUE_SIZE};
 use crate::backends::plonky2::circuits::common::{
     CircuitBuilderPod, OperationTarget, StatementTarget, ValueTarget,
 };
 use crate::backends::plonky2::mock::mainpod;
-use crate::backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree};
-use crate::backends::plonky2::primitives::merkletree::{
-    MerkleProofExistenceGadget, MerkleProofExistenceTarget,
-};
+use crate::backends::plonky2::signedpod::SignedPod;
 use crate::middleware::{
-    hash_str, AnchoredKey, NativeOperation, NativePredicate, Operation, Params, PodId, PodType,
-    Predicate, Statement, StatementArg, ToFields, KEY_SIGNER, KEY_TYPE, SELF, STATEMENT_ARG_F_LEN,
+    hash_str, AnchoredKey, NativeOperation, NativePredicate, Params, PodType, Statement,
+    StatementArg, ToFields, KEY_TYPE, SELF,
 };
 
-use super::common::Flattenable;
-use super::common::StatementArgTarget;
-
-//
-// SignedPod verification
-//
-
-struct SignedPodVerifyGadget {
-    params: Params,
-}
-
-impl SignedPodVerifyGadget {
-    fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<SignedPodVerifyTarget> {
-        // 2. Verify id
-        let id = builder.add_virtual_hash();
-        let mut mt_proofs = Vec::new();
-        for _ in 0..self.params.max_signed_pod_values {
-            let mt_proof = MerkleProofExistenceGadget {
-                max_depth: self.params.max_depth_mt_gadget,
-            }
-            .eval(builder)?;
-            builder.connect_hashes(id, mt_proof.root);
-            mt_proofs.push(mt_proof);
-        }
-
-        // 1. Verify type
-        let type_mt_proof = &mt_proofs[0];
-        let key_type = builder.constant_value(hash_str(KEY_TYPE).into());
-        builder.connect_values(type_mt_proof.key, key_type);
-        let value_type = builder.constant_value(Value::from(PodType::MockSigned));
-        builder.connect_values(type_mt_proof.value, value_type);
-
-        // 3. TODO: Verify signature
-        let signer_mt_proof = &mt_proofs[1];
-        let key_signer = builder.constant_value(hash_str(KEY_SIGNER).into());
-        builder.connect_values(signer_mt_proof.key, key_signer);
-        let value_signer = signer_mt_proof.value;
-
-        Ok(SignedPodVerifyTarget {
-            params: self.params.clone(),
-            id,
-            mt_proofs,
-        })
-    }
-}
-
-struct SignedPodVerifyTarget {
-    params: Params,
-    id: HashOutTarget,
-    // The KEY_TYPE entry must be the first one
-    // The KEY_SIGNER entry must be the second one
-    mt_proofs: Vec<MerkleProofExistenceTarget>,
-}
-
-pub struct SignedPodVerifyInput {
-    pub kvs: HashMap<Value, Value>,
-}
-
-impl SignedPodVerifyTarget {
-    fn kvs(&self) -> Vec<(ValueTarget, ValueTarget)> {
-        let mut kvs = Vec::new();
-        for mt_proof in &self.mt_proofs {
-            kvs.push((mt_proof.key, mt_proof.value));
-        }
-        kvs
-    }
-
-    fn pub_statements(
-        &self,
-        builder: &mut CircuitBuilder<F, D>,
-        self_id: bool,
-    ) -> Vec<StatementTarget> {
-        let mut statements = Vec::new();
-        let predicate: [Target; Params::predicate_size()] = builder
-            .constants(&Predicate::Native(NativePredicate::ValueOf).to_fields(&self.params))
-            .try_into()
-            .expect("size predicate_size");
-        let pod_id = if self_id {
-            builder.constant_value(SELF.0.into())
-        } else {
-            ValueTarget {
-                elements: self.id.elements,
-            }
-        };
-        for mt_proof in &self.mt_proofs {
-            let args = [
-                StatementArgTarget::anchored_key(builder, &pod_id, &mt_proof.key),
-                StatementArgTarget::literal(builder, &mt_proof.value),
-            ]
-            .into_iter()
-            .chain(iter::repeat_with(|| StatementArgTarget::none(builder)))
-            .take(self.params.max_statement_args)
-            .collect();
-            let statement = StatementTarget {
-                predicate: predicate.clone(),
-                args,
-            };
-            statements.push(statement);
-        }
-        statements
-    }
-
-    fn set_targets(&self, pw: &mut PartialWitness<F>, input: &SignedPodVerifyInput) -> Result<()> {
-        assert!(input.kvs.len() <= self.params.max_signed_pod_values);
-        let tree = MerkleTree::new(self.params.max_depth_mt_gadget, &input.kvs)?;
-
-        // First handle the type entry, then the signer etrny, then the rest of the
-        // entries, and finally pad with repetitions of the type entry (which always
-        // exists)
-        let mut kvs = input.kvs.clone();
-        let key_type = Value::from(hash_str(KEY_TYPE));
-        let value_type = kvs.remove(&key_type).expect("KEY_TYPE");
-        let key_signer = Value::from(hash_str(KEY_SIGNER));
-        let value_signer = kvs.remove(&key_signer).expect("KEY_SIGNER");
-
-        for (i, (k, v)) in iter::once((key_type, value_type))
-            .chain(iter::once((key_signer, value_signer)))
-            .chain(kvs.into_iter().sorted_by_key(|kv| kv.0))
-            .chain(iter::repeat((key_type, value_type)))
-            .take(self.params.max_signed_pod_values)
-            .enumerate()
-        {
-            // println!("DBG signed_pod st {} {:?} {:?}", i, k, v);
-            let (_, proof) = tree.prove(&k)?;
-            self.mt_proofs[i].set_targets(pw, tree.root(), proof, k, v)?;
-        }
-        Ok(())
-    }
-}
+use super::{
+    common::Flattenable,
+    signedpod::{SignedPodVerifyGadget, SignedPodVerifyTarget},
+};
 
 //
 // MainPod verification
@@ -513,7 +376,7 @@ pub struct MainPodVerifyTarget {
 }
 
 pub struct MainPodVerifyInput {
-    pub signed_pods: Vec<SignedPodVerifyInput>,
+    pub signed_pods: Vec<SignedPod>,
     pub statements: Vec<mainpod::Statement>,
     pub operations: Vec<mainpod::Operation>,
 }
@@ -560,6 +423,8 @@ impl MainPodVerifyCircuit {
 
 #[cfg(test)]
 mod tests {
+    use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
+
     use super::*;
     use crate::backends::plonky2::mock::mainpod;
     use crate::backends::plonky2::{
@@ -567,40 +432,6 @@ mod tests {
         mock::mainpod::{OperationArg, OperationAux},
     };
     use crate::middleware::{OperationType, PodId};
-    use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
-
-    #[test]
-    fn test_signed_pod_verify() -> Result<()> {
-        let params = Params::default();
-
-        let config = CircuitConfig::standard_recursion_config();
-        let mut builder = CircuitBuilder::<F, D>::new(config);
-
-        let signed_pod_verify = SignedPodVerifyGadget { params }.eval(&mut builder)?;
-
-        let mut pw = PartialWitness::<F>::new();
-        let kvs = [
-            (
-                Value::from(hash_str(KEY_TYPE)),
-                Value::from(PodType::MockSigned),
-            ),
-            (
-                Value::from(hash_str(KEY_SIGNER)),
-                Value::from(hash_str("TODO")),
-            ),
-            (Value::from(hash_str("foo")), Value::from(42)),
-        ]
-        .into();
-        let input = SignedPodVerifyInput { kvs };
-        signed_pod_verify.set_targets(&mut pw, &input)?;
-
-        // generate & verify proof
-        let data = builder.build::<C>();
-        let proof = data.prove(pw)?;
-        data.verify(proof)?;
-
-        Ok(())
-    }
 
     fn operation_verify(
         st: mainpod::Statement,

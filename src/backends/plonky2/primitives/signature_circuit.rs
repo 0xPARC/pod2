@@ -34,9 +34,10 @@ pub struct SignatureVerifyGadget {}
 pub struct SignatureVerifyTarget {
     // verifier_data of the SignatureInternalCircuit
     verifier_data_targ: VerifierCircuitTarget,
-    selector: BoolTarget,
-    pk: ValueTarget,
-    msg: ValueTarget,
+    // `enabled` determines if the signature verification is enabled
+    pub(crate) enabled: BoolTarget,
+    pub(crate) pk: ValueTarget,
+    pub(crate) msg: ValueTarget,
     // proof of the SignatureInternalCircuit (=signature::Signature.0)
     proof: ProofWithPublicInputsTarget<D>,
 }
@@ -56,7 +57,7 @@ impl SignatureVerifyGadget {
 impl SignatureVerifyGadget {
     /// creates the targets and defines the logic of the circuit
     pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<SignatureVerifyTarget> {
-        let selector = builder.add_virtual_bool_target_safe();
+        let enabled = builder.add_virtual_bool_target_safe();
 
         let common_data = super::signature::VP.0.common.clone();
 
@@ -83,10 +84,10 @@ impl SignatureVerifyGadget {
             builder.constant_value(Value(dummy_pi[VALUE_SIZE * 2..].try_into().unwrap()));
 
         // connect the {pk, msg, s} with the proof_targ.public_inputs conditionally
-        let pk_targ_connect = builder.select_value(selector, pk_targ, pk_targ_dummy);
-        let msg_targ_connect = builder.select_value(selector, msg_targ, msg_targ_dummy);
+        let pk_targ_connect = builder.select_value(enabled, pk_targ, pk_targ_dummy);
+        let msg_targ_connect = builder.select_value(enabled, msg_targ, msg_targ_dummy);
         let s_targ_connect = builder.select_value(
-            selector,
+            enabled,
             ValueTarget {
                 elements: s_targ.elements,
             },
@@ -108,7 +109,7 @@ impl SignatureVerifyGadget {
 
         Ok(SignatureVerifyTarget {
             verifier_data_targ,
-            selector,
+            enabled,
             pk: pk_targ,
             msg: msg_targ,
             proof: proof_targ,
@@ -121,12 +122,12 @@ impl SignatureVerifyTarget {
     pub fn set_targets(
         &self,
         pw: &mut PartialWitness<F>,
-        selector: bool,
+        enabled: bool,
         pk: PublicKey,
         msg: Value,
         signature: Signature,
     ) -> Result<()> {
-        pw.set_bool_target(self.selector, selector)?;
+        pw.set_bool_target(self.enabled, enabled)?;
         pw.set_target_arr(&self.pk.elements, &pk.0 .0)?;
         pw.set_target_arr(&self.msg.elements, &msg.0)?;
 
@@ -134,7 +135,7 @@ impl SignatureVerifyTarget {
         let s = Value(PoseidonHash::hash_no_pad(&[pk.0 .0, msg.0].concat()).elements);
         let public_inputs: Vec<F> = [pk.0 .0, msg.0, s.0].concat();
 
-        if selector {
+        if enabled {
             pw.set_proof_with_pis_target(
                 &self.proof,
                 &ProofWithPublicInputs {
@@ -220,20 +221,21 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
         let targets = SignatureVerifyGadget {}.eval(&mut builder)?;
-        targets.set_targets(&mut pw, true, pk.clone(), msg, sig.clone())?; // selector=true
+        targets.set_targets(&mut pw, true, pk.clone(), msg, sig.clone())?; // enabled=true
 
         // generate proof, and expect it to fail
         let data = builder.build::<C>();
         assert!(data.prove(pw).is_err()); // expect prove to fail
 
-        // build the circuit again, but now disable the selector that disables
-        // the in-circuit signature verification
+        // build the circuit again, but now disable the selector ('enabled')
+        // that disables the in-circuit signature verification (ie.
+        // `enabled=false`)
         let config = CircuitConfig::standard_recursion_zk_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
         let targets = SignatureVerifyGadget {}.eval(&mut builder)?;
-        targets.set_targets(&mut pw, false, pk, msg, sig)?; // selector=false
+        targets.set_targets(&mut pw, false, pk, msg, sig)?; // enabled=false
 
         // generate & verify proof
         let data = builder.build::<C>();

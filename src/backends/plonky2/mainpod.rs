@@ -13,9 +13,8 @@ use std::any::Any;
 use std::fmt;
 
 use crate::backends::plonky2::basetypes::{Hash, Value, D, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE};
-use crate::backends::plonky2::circuits::mainpod::{
-    MainPodVerifyCircuit, MainPodVerifyInput, SignedPodVerifyInput,
-};
+use crate::backends::plonky2::circuits::mainpod::{MainPodVerifyCircuit, MainPodVerifyInput};
+use crate::backends::plonky2::signedpod::SignedPod;
 // TODO: Move the shared components between MockMainPod and MainPod to a common place.
 use crate::backends::plonky2::mock::mainpod::{hash_statements, MockMainPod, Operation, Statement};
 use crate::middleware::{
@@ -37,12 +36,14 @@ impl PodProver for Prover {
         .eval(&mut builder)?;
 
         let mut pw = PartialWitness::<F>::new();
-        let signed_pods_input = inputs
+        let signed_pods_input: Vec<SignedPod> = inputs
             .signed_pods
             .iter()
-            .map(|p| SignedPodVerifyInput {
-                // TODO: downcast the pod into `SignedPod`
-                kvs: p.kvs().iter().map(|(ak, v)| (ak.1.into(), *v)).collect(),
+            .map(|p| {
+                let p: Box<dyn middleware::Pod> = (*p).clone();
+                *p.into_any()
+                    .downcast::<SignedPod>()
+                    .expect("type SignedPod")
             })
             .collect_vec();
 
@@ -161,7 +162,8 @@ impl Pod for MainPod {
 pub mod tests {
     use super::*;
     use crate::backends::plonky2::mock::mainpod::{MockProver, OperationAux};
-    use crate::backends::plonky2::mock::signedpod::MockSigner;
+    use crate::backends::plonky2::primitives::signature::SecretKey;
+    use crate::backends::plonky2::signedpod::Signer;
     use crate::examples::zu_kyc_sign_pod_builders;
     use crate::frontend;
     use crate::middleware;
@@ -220,17 +222,11 @@ pub mod tests {
         let sanction_set = frontend::Value::Set(frontend::containers::Set::new(sanctions_values)?);
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params, &sanction_set);
-        let mut signer = MockSigner {
-            pk: "ZooGov".into(),
-        };
+        let mut signer = Signer(SecretKey(Value::from(1)));
         let gov_id_pod = gov_id_builder.sign(&mut signer)?;
-        let mut signer = MockSigner {
-            pk: "ZooDeel".into(),
-        };
+        let mut signer = Signer(SecretKey(Value::from(2)));
         let pay_stub_pod = pay_stub_builder.sign(&mut signer)?;
-        let mut signer = MockSigner {
-            pk: "ZooOFAC".into(),
-        };
+        let mut signer = Signer(SecretKey(Value::from(3)));
         let sanction_list_pod = sanction_list_builder.sign(&mut signer)?;
         let kyc_builder =
             zu_kyc_pod_builder(&params, &gov_id_pod, &pay_stub_pod, &sanction_list_pod)?;
@@ -257,9 +253,7 @@ pub mod tests {
         gov_id_builder.insert("idNumber", "4242424242");
         gov_id_builder.insert("dateOfBirth", 1169909384);
         gov_id_builder.insert("socialSecurityNumber", "G2121210");
-        let mut signer = MockSigner {
-            pk: "ZooGov".into(),
-        };
+        let mut signer = Signer(SecretKey(Value::from(42)));
         let gov_id = gov_id_builder.sign(&mut signer).unwrap();
         let now_minus_18y: i64 = 1169909388;
         let mut kyc_builder = frontend::MainPodBuilder::new(&params);
