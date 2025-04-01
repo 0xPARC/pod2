@@ -60,6 +60,10 @@ statement loan_check(receiver: PubKey):
          - gt(paystub.issue_date, NOW_MINUS_7D) # issue_date is less than 7d old
          # Annual salary is at least $20,000
          - gt(paystub.annual_salary, 20000)
+         # Private key knowledge
+         - hash(0, sk, gov_id.pk)
+         # Nullifier
+         - hash("ZooKyc", sk, nullifier)
 ```
 
 ## ZuKYC (simplified for P1)

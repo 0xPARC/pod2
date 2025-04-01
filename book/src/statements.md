@@ -35,6 +35,7 @@ The following table summarises the natively-supported statements, where we write
 | 8    | `SumOf`       | `ak1`, `ak2`, `ak3` | `value_of(ak1) = value_of(ak2) + value_of(ak3)`                   |
 | 9    | `ProductOf`   | `ak1`, `ak2`, `ak3` | `value_of(ak1) = value_of(ak2) * value_of(ak3)`                   |
 | 10   | `MaxOf`       | `ak1`, `ak2`, `ak3` | `value_of(ak1) = max(value_of(ak2), value_of(ak3))`               |
+| 11   | `HashOf`      | `ak1`, `ak2`, `ak3` | `value_of(ak1) = hash(value_of(ak2), value_of(ak3))`              |
 
 ### Frontend statements
 
@@ -62,6 +63,8 @@ AnchoredKey::Integer)
 ProductOf(prod: AnchoredKey::Integer, arg1: AnchoredKey::Integer, arg2: AnchoredKey::Integer)
 
 MaxOf(max: AnchoredKey::Integer, arg1: AnchoredKey::Integer, arg2: AnchoredKey::Integer)
+
+HashOf(ak1: AnchoredKey::Raw, arg1: AnchoredKey::Raw, arg2: AnchoredKey::Raw)
 ```
 
 The following statements relate to Merkle trees and compound types; they are explained in detail on a [separate page](./merklestatements.md).
@@ -95,10 +98,6 @@ ContainsValue(root: AnchoredKey::Array, value: AnchoredKey)
 
 
 In the future, we may also reserve statement IDs for "precompiles" such as:
-```
-PoseidonHashOf(A.hash, B.preimage) // perhaps a hash_of predicate can be parametrized by an enum representing the hash scheme; rather than having a bunch of specific things like SHA256_hash_of and poseidon_hash_of etc.
-```
-
 ```
 EcdsaPrivToPubOf(A.pubkey, B.privkey)
 ```
