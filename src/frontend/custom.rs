@@ -447,11 +447,7 @@ impl StatementTmplArg {
             (
                 Self::Key(tmpl_o, tmpl_k),
                 StatementArg::Key(AnchoredKey {
-                    origin:
-                        Origin {
-                            pod_id: PodId(o),
-                            pod_class: _,
-                        },
+                    origin: Origin { pod_id: PodId(o) },
                     key: k,
                 }),
             ) => {

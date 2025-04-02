@@ -38,13 +38,12 @@ pub enum PodClass {
 // An Origin, which represents a reference to an ancestor POD.
 #[derive(Clone, Debug, PartialEq, Eq, h::Hash, Default, Serialize, Deserialize, JsonSchema)]
 pub struct Origin {
-    pub pod_class: PodClass,
     pub pod_id: PodId,
 }
 
 impl Origin {
-    pub fn new(pod_class: PodClass, pod_id: PodId) -> Self {
-        Self { pod_class, pod_id }
+    pub fn new(pod_id: PodId) -> Self {
+        Self { pod_id }
     }
 }
 
@@ -265,7 +264,7 @@ impl SignedPod {
         self.pod.id()
     }
     pub fn origin(&self) -> Origin {
-        Origin::new(PodClass::Signed, self.id())
+        Origin::new(self.id())
     }
     pub fn verify(&self) -> Result<()> {
         self.pod.verify()
@@ -308,7 +307,6 @@ pub struct MainPodBuilder {
     // Internal state
     const_cnt: usize,
     key_table: HashMap<Hash, String>,
-    pod_class_table: HashMap<PodId, PodClass>,
 }
 
 impl fmt::Display for MainPodBuilder {
@@ -343,7 +341,6 @@ impl MainPodBuilder {
             public_statements: Vec::new(),
             const_cnt: 0,
             key_table: HashMap::new(),
-            pod_class_table: HashMap::from_iter([(SELF, PodClass::Main)]),
         }
     }
     pub fn add_signed_pod(&mut self, pod: &SignedPod) {
@@ -352,25 +349,19 @@ impl MainPodBuilder {
         pod.kvs.iter().for_each(|(key, _)| {
             self.key_table.insert(hash_str(key), key.clone());
         });
-        // Add POD class to POD class table.
-        self.pod_class_table.insert(pod.id(), PodClass::Signed);
     }
     pub fn add_main_pod(&mut self, pod: MainPod) {
-        // Add POD class to POD class table.
-        self.pod_class_table.insert(pod.id(), PodClass::Main);
         // Add key-hash and POD ID-class correspondences to tables.
         pod.public_statements
             .iter()
             .flat_map(|s| &s.args)
             .flat_map(|arg| match arg {
-                StatementArg::Key(AnchoredKey {
-                    origin: Origin { pod_class, pod_id },
-                    key,
-                }) => Some((*pod_id, pod_class.clone(), hash_str(key), key.clone())),
+                StatementArg::Key(AnchoredKey { origin: _, key }) => {
+                    Some((hash_str(key), key.clone()))
+                }
                 _ => None,
             })
-            .for_each(|(pod_id, pod_class, hash, key)| {
-                self.pod_class_table.insert(pod_id, pod_class);
+            .for_each(|(hash, key)| {
                 self.key_table.insert(hash, key);
             });
         self.input_main_pods.push(pod);
@@ -405,7 +396,7 @@ impl MainPodBuilder {
                 }
                 OperationArg::Entry(k, v) => {
                     st_args.push(StatementArg::Key(AnchoredKey::new(
-                        Origin::new(PodClass::Main, SELF),
+                        Origin::new(SELF),
                         k.clone(),
                     )));
                     st_args.push(StatementArg::Literal(v.clone()))
@@ -678,19 +669,10 @@ impl MainPodBuilder {
                     .chunks(2)
                     .map(|chunk| {
                         Ok(StatementArg::Key(AnchoredKey::new(
-                            Origin::new(
-                                self.pod_class_table
-                                    .get(&PodId(match chunk[0] {
-                                        Value::Raw(v) => v.try_into()?,
-                                        _ => return Err(anyhow!("Invalid POD class value.")),
-                                    }))
-                                    .cloned()
-                                    .ok_or(anyhow!("Missing POD class value."))?,
-                                PodId(match chunk[0] {
-                                    Value::Raw(v) => v.try_into()?,
-                                    _ => return Err(anyhow!("Invalid POD class value.")),
-                                }),
-                            ),
+                            Origin::new(PodId(match chunk[0] {
+                                Value::Raw(v) => v.try_into()?,
+                                _ => return Err(anyhow!("Invalid POD class value.")),
+                            })),
                             self.key_table
                                 .get(&match &chunk[1] {
                                     Value::String(s) => hash_str(s.as_str()),
@@ -782,7 +764,7 @@ impl MainPodBuilder {
                     predicate: Predicate::Native(NativePredicate::ValueOf),
                     args: vec![
                         StatementArg::Key(AnchoredKey::new(
-                            Origin::new(PodClass::Main, pod_id),
+                            Origin::new(pod_id),
                             KEY_TYPE.to_string(),
                         )),
                         StatementArg::Literal(value.into()),
@@ -802,14 +784,10 @@ impl MainPodBuilder {
                     .into_iter()
                     .map(|arg| match arg {
                         StatementArg::Key(AnchoredKey {
-                            origin:
-                                Origin {
-                                    pod_class: class,
-                                    pod_id: id,
-                                },
+                            origin: Origin { pod_id: id },
                             key,
                         }) if id == SELF => {
-                            StatementArg::Key(AnchoredKey::new(Origin::new(class, pod_id), key))
+                            StatementArg::Key(AnchoredKey::new(Origin::new(pod_id), key))
                         }
                         _ => arg,
                     })
@@ -853,7 +831,7 @@ impl MainPod {
         self.pod.id()
     }
     pub fn origin(&self) -> Origin {
-        Origin::new(PodClass::Main, self.id())
+        Origin::new(self.id())
     }
 }
 
@@ -1254,10 +1232,7 @@ pub mod tests {
             Statement::new(
                 Predicate::Native(NativePredicate::ValueOf),
                 vec![
-                    StatementArg::Key(AnchoredKey::new(
-                        Origin::new(PodClass::Main, SELF),
-                        "a".into(),
-                    )),
+                    StatementArg::Key(AnchoredKey::new(Origin::new(SELF), "a".into())),
                     StatementArg::Literal(Value::Int(3)),
                 ],
             ),
@@ -1267,10 +1242,7 @@ pub mod tests {
             Statement::new(
                 Predicate::Native(NativePredicate::ValueOf),
                 vec![
-                    StatementArg::Key(AnchoredKey::new(
-                        Origin::new(PodClass::Main, SELF),
-                        "a".into(),
-                    )),
+                    StatementArg::Key(AnchoredKey::new(Origin::new(SELF), "a".into())),
                     StatementArg::Literal(Value::Int(28)),
                 ],
             ),
@@ -1285,25 +1257,19 @@ pub mod tests {
         // right now the mock prover catches this when it calls compile()
         let params = Params::default();
         let mut builder = MainPodBuilder::new(&params);
-        let self_a = AnchoredKey::new(Origin::new(PodClass::Main, SELF), "a".into());
-        let self_b = AnchoredKey::new(Origin::new(PodClass::Main, SELF), "b".into());
+        let self_a = AnchoredKey::new(Origin::new(SELF), "a".into());
+        let self_b = AnchoredKey::new(Origin::new(SELF), "b".into());
         let value_of_a = Statement::new(
             Predicate::Native(NativePredicate::ValueOf),
             vec![
-                StatementArg::Key(AnchoredKey::new(
-                    Origin::new(PodClass::Main, SELF),
-                    "a".into(),
-                )),
+                StatementArg::Key(self_a.clone()),
                 StatementArg::Literal(Value::Int(3)),
             ],
         );
         let value_of_b = Statement::new(
             Predicate::Native(NativePredicate::ValueOf),
             vec![
-                StatementArg::Key(AnchoredKey::new(
-                    Origin::new(PodClass::Main, SELF),
-                    "b".into(),
-                )),
+                StatementArg::Key(self_b.clone()),
                 StatementArg::Literal(Value::Int(27)),
             ],
         );
