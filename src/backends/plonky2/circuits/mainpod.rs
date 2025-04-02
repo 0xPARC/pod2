@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use itertools::zip_eq;
 use plonky2::{
     hash::{hash_types::HashOutTarget, poseidon::PoseidonHash},
@@ -6,9 +6,6 @@ use plonky2::{
     plonk::circuit_builder::CircuitBuilder,
 };
 
-use crate::backends::plonky2::circuits::common::{
-    CircuitBuilderPod, OperationTarget, StatementTarget, ValueTarget,
-};
 use crate::backends::plonky2::mock::mainpod;
 use crate::backends::plonky2::signedpod::SignedPod;
 use crate::backends::plonky2::{
@@ -19,6 +16,13 @@ use crate::backends::plonky2::{
 use crate::middleware::{
     hash_str, AnchoredKey, NativeOperation, NativePredicate, Params, PodType, Statement,
     StatementArg, ToFields, KEY_TYPE, SELF,
+};
+use crate::{
+    backends::plonky2::{
+        circuits::common::{CircuitBuilderPod, OperationTarget, StatementTarget, ValueTarget},
+        primitives::merkletree,
+    },
+    middleware,
 };
 
 use super::{
@@ -61,8 +65,8 @@ impl OperationVerifyGadget {
 
         // Certain operations (Contains/NotContains) will refer to one
         // of the provided Merkle proofs (if any).
-        // TODO: Could `merkle_proofs` be empty?
-        let resolved_merkle_proof = builder.vec_ref(merkle_proofs, op.aux[0]);
+        let resolved_merkle_proof =
+            (merkle_proofs.len() > 0).then(|| builder.vec_ref(merkle_proofs, op.aux[0]));
 
         // The verification may require aux data which needs to be stored in the
         // `OperationVerifyTarget` so that we can set during witness generation.
@@ -109,67 +113,75 @@ impl OperationVerifyGadget {
         builder: &mut CircuitBuilder<F, D>,
         st: &StatementTarget,
         op: &OperationTarget,
-        resolved_merkle_proof: MerkleProofTarget,
+        resolved_merkle_proof: Option<MerkleProofTarget>,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
-        let op_code_ok = op.has_native_type(builder, NativeOperation::NotContainsFromEntries);
+        match resolved_merkle_proof {
+            None => builder._false(),
+            Some(resolved_merkle_proof) => {
+                let op_code_ok =
+                    op.has_native_type(builder, NativeOperation::NotContainsFromEntries);
 
-        // Expect 2 op args of type `ValueOf`.
-        let op_arg_type_checks = resolved_op_args
-            .iter()
-            .take(2)
-            .map(|op_arg| op_arg.has_native_type(builder, &self.params, NativePredicate::ValueOf))
-            .collect::<Vec<_>>();
-        let op_arg_types_ok = builder.all(op_arg_type_checks);
+                // Expect 2 op args of type `ValueOf`.
+                let op_arg_type_checks = resolved_op_args
+                    .iter()
+                    .take(2)
+                    .map(|op_arg| {
+                        op_arg.has_native_type(builder, &self.params, NativePredicate::ValueOf)
+                    })
+                    .collect::<Vec<_>>();
+                let op_arg_types_ok = builder.all(op_arg_type_checks);
 
-        // The values embedded in the op args must be values, i.e. the
-        // last `STATEMENT_ARG_F_LEN - VALUE_SIZE` slots of each being
-        // 0.
-        let merkle_root_arg = &resolved_op_args[0].args[1];
-        let key_arg = &resolved_op_args[1].args[1];
-        let op_arg_range_checks = [
-            builder.statement_arg_is_value(merkle_root_arg),
-            builder.statement_arg_is_value(key_arg),
-        ];
-        let op_arg_range_ok = builder.all(op_arg_range_checks);
+                // The values embedded in the op args must be values, i.e. the
+                // last `STATEMENT_ARG_F_LEN - VALUE_SIZE` slots of each being
+                // 0.
+                let merkle_root_arg = &resolved_op_args[0].args[1];
+                let key_arg = &resolved_op_args[1].args[1];
+                let op_arg_range_checks = [
+                    builder.statement_arg_is_value(merkle_root_arg),
+                    builder.statement_arg_is_value(key_arg),
+                ];
+                let op_arg_range_ok = builder.all(op_arg_range_checks);
 
-        // Check Merkle proof (verified elsewhere) against op args.
-        let merkle_proof_checks = [
-            /* The supplied Merkle proof must be enabled. */
-            resolved_merkle_proof.enabled,
-            /* ...and it must be a nonexistence proof. */
-            builder.not(resolved_merkle_proof.existence),
-            /* ...for the root-key pair in the resolved op args. */
-            builder.is_equal_slice(
-                &merkle_root_arg.elements[..VALUE_SIZE],
-                &resolved_merkle_proof.root.elements,
-            ),
-            builder.is_equal_slice(
-                &key_arg.elements[..VALUE_SIZE],
-                &resolved_merkle_proof.key.elements,
-            ),
-        ];
+                // Check Merkle proof (verified elsewhere) against op args.
+                let merkle_proof_checks = [
+                    /* The supplied Merkle proof must be enabled. */
+                    resolved_merkle_proof.enabled,
+                    /* ...and it must be a nonexistence proof. */
+                    builder.not(resolved_merkle_proof.existence),
+                    /* ...for the root-key pair in the resolved op args. */
+                    builder.is_equal_slice(
+                        &merkle_root_arg.elements[..VALUE_SIZE],
+                        &resolved_merkle_proof.root.elements,
+                    ),
+                    builder.is_equal_slice(
+                        &key_arg.elements[..VALUE_SIZE],
+                        &resolved_merkle_proof.key.elements,
+                    ),
+                ];
 
-        let merkle_proof_ok = builder.all(merkle_proof_checks);
+                let merkle_proof_ok = builder.all(merkle_proof_checks);
 
-        // Check output statement
-        let arg1_key = resolved_op_args[0].args[0].clone();
-        let arg2_key = resolved_op_args[1].args[0].clone();
-        let expected_statement = StatementTarget::new_native(
-            builder,
-            &self.params,
-            NativePredicate::NotContains,
-            &[arg1_key, arg2_key],
-        );
-        let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+                // Check output statement
+                let arg1_key = resolved_op_args[0].args[0].clone();
+                let arg2_key = resolved_op_args[1].args[0].clone();
+                let expected_statement = StatementTarget::new_native(
+                    builder,
+                    &self.params,
+                    NativePredicate::NotContains,
+                    &[arg1_key, arg2_key],
+                );
+                let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-        builder.all([
-            op_code_ok,
-            op_arg_types_ok,
-            op_arg_range_ok,
-            merkle_proof_ok,
-            st_ok,
-        ])
+                builder.all([
+                    op_code_ok,
+                    op_arg_types_ok,
+                    op_arg_range_ok,
+                    merkle_proof_ok,
+                    st_ok,
+                ])
+            }
+        }
     }
 
     fn eval_eq_from_entries(
@@ -506,7 +518,11 @@ impl MainPodVerifyTarget {
                 mp.enabled,
                 mp.existence,
                 mp.root,
-                mp.clone().try_into()?,
+                mp.clone().try_into().unwrap_or(merkletree::MerkleProof {
+                    existence: mp.existence,
+                    siblings: mp.siblings.clone(),
+                    other_leaf: None,
+                }),
                 mp.key,
                 mp.value,
             )?;
@@ -618,7 +634,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![Statement::None.into()];
-        let merkle_proofs = vec![MerkleProof::empty(32)];
+        let merkle_proofs = vec![];
         operation_verify(
             st.clone(),
             op,

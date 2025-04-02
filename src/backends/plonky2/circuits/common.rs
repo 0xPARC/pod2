@@ -222,9 +222,9 @@ impl Flattenable for MerkleProofTarget {
     fn from_flattened(v: &[Target]) -> Self {
         let siblings_len = v.len() - 3 - NUM_HASH_OUT_ELTS - 4 * VALUE_SIZE;
         assert!(siblings_len % NUM_HASH_OUT_ELTS == 0);
+        let max_depth = siblings_len / NUM_HASH_OUT_ELTS;
         Self {
-            // TODO!
-            max_depth: 0,
+            max_depth,
             enabled: BoolTarget::new_unsafe(v[0]),
             root: HashOutTarget::from_vec((&v[1..1 + NUM_HASH_OUT_ELTS]).to_vec()),
             key: ValueTarget::from_slice(

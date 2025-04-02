@@ -63,13 +63,13 @@ impl MerkleProof {
     // TODO: Use `enabled` flag.
     pub fn empty(max_depth: usize) -> Self {
         Self {
-            enabled: true,
-            root: kv_hash(&EMPTY_VALUE, Some(EMPTY_VALUE)),
+            enabled: false,
+            root: EMPTY_HASH,
             key: Value::from(1),
             value: EMPTY_VALUE,
             existence: false,
             siblings: iter::repeat(EMPTY_HASH).take(max_depth).collect(),
-            case_ii_selector: true,
+            case_ii_selector: false,
             other_key: EMPTY_VALUE,
             other_value: EMPTY_VALUE,
         }
