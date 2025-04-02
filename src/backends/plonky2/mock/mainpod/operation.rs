@@ -47,7 +47,7 @@ impl ToFields for OperationAux {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MerkleProof {
+pub struct MerkleClaimAndProof {
     pub enabled: bool,
     pub root: Hash,
     pub key: Value,
@@ -59,8 +59,7 @@ pub struct MerkleProof {
     pub other_value: Value,
 }
 
-impl MerkleProof {
-    // TODO: Use `enabled` flag.
+impl MerkleClaimAndProof {
     pub fn empty(max_depth: usize) -> Self {
         Self {
             enabled: false,
@@ -110,9 +109,9 @@ impl MerkleProof {
     }
 }
 
-impl TryFrom<MerkleProof> for merkletree::MerkleProof {
+impl TryFrom<MerkleClaimAndProof> for merkletree::MerkleProof {
     type Error = anyhow::Error;
-    fn try_from(mp: MerkleProof) -> Result<Self> {
+    fn try_from(mp: MerkleClaimAndProof) -> Result<Self> {
         match mp.enabled {
             false => Err(anyhow!("Not a valid Merkle proof.")),
             true => {
@@ -142,7 +141,7 @@ impl TryFrom<MerkleProof> for merkletree::MerkleProof {
     }
 }
 
-impl fmt::Display for MerkleProof {
+impl fmt::Display for MerkleClaimAndProof {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match merkletree::MerkleProof::try_from(self.clone()) {
             Err(_) => write!(f, "∅"),
@@ -167,7 +166,7 @@ impl Operation {
     pub fn deref(
         &self,
         statements: &[Statement],
-        merkle_proofs: &[MerkleProof],
+        merkle_proofs: &[MerkleClaimAndProof],
     ) -> Result<crate::middleware::Operation> {
         let deref_args = self
             .1

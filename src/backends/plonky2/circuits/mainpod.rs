@@ -10,8 +10,8 @@ use crate::backends::plonky2::mock::mainpod;
 use crate::backends::plonky2::signedpod::SignedPod;
 use crate::backends::plonky2::{
     basetypes::{Value, D, EMPTY_HASH, F, VALUE_SIZE},
-    mock::mainpod::MerkleProof,
-    primitives::merkletree::{MerkleProofGadget, MerkleProofTarget},
+    mock::mainpod::MerkleClaimAndProof,
+    primitives::merkletree::{MerkleClaimAndProofTarget, MerkleProofGadget},
 };
 use crate::middleware::{
     hash_str, AnchoredKey, NativeOperation, NativePredicate, Params, PodType, Statement,
@@ -26,7 +26,7 @@ use crate::{
 };
 
 use super::{
-    common::Flattenable,
+    common::{Flattenable, MerkleClaimTarget},
     signedpod::{SignedPodVerifyGadget, SignedPodVerifyTarget},
 };
 
@@ -45,7 +45,7 @@ impl OperationVerifyGadget {
         st: &StatementTarget,
         op: &OperationTarget,
         prev_statements: &[StatementTarget],
-        merkle_proofs: &[MerkleProofTarget],
+        merkle_claims: &[MerkleClaimTarget],
     ) -> Result<OperationVerifyTarget> {
         let _true = builder._true();
         let _false = builder._false();
@@ -64,9 +64,10 @@ impl OperationVerifyGadget {
         };
 
         // Certain operations (Contains/NotContains) will refer to one
-        // of the provided Merkle proofs (if any).
-        let resolved_merkle_proof =
-            (merkle_proofs.len() > 0).then(|| builder.vec_ref(merkle_proofs, op.aux[0]));
+        // of the provided Merkle proofs (if any). These proofs have already
+        // been verified, so we need only look up the claim.
+        let resolved_merkle_claim =
+            (merkle_claims.len() > 0).then(|| builder.vec_ref(merkle_claims, op.aux[0]));
 
         // The verification may require aux data which needs to be stored in the
         // `OperationVerifyTarget` so that we can set during witness generation.
@@ -80,13 +81,6 @@ impl OperationVerifyGadget {
             vec![
                 self.eval_none(builder, st, op),
                 self.eval_new_entry(builder, st, op, prev_statements),
-                self.eval_not_contains_from_entries(
-                    builder,
-                    st,
-                    op,
-                    resolved_merkle_proof,
-                    &resolved_op_args,
-                ),
             ],
             // Skip these if there are no resolved op args
             if resolved_op_args.len() == 0 {
@@ -97,6 +91,18 @@ impl OperationVerifyGadget {
                     self.eval_eq_from_entries(builder, st, op, &resolved_op_args),
                     self.eval_lt_from_entries(builder, st, op, &resolved_op_args),
                 ]
+            },
+            // Skip these if there are no resolved Merkle claims
+            if let Some(resolved_merkle_claim) = resolved_merkle_claim {
+                vec![self.eval_not_contains_from_entries(
+                    builder,
+                    st,
+                    op,
+                    resolved_merkle_claim,
+                    &resolved_op_args,
+                )]
+            } else {
+                vec![]
             },
         ]
         .concat();
@@ -113,75 +119,67 @@ impl OperationVerifyGadget {
         builder: &mut CircuitBuilder<F, D>,
         st: &StatementTarget,
         op: &OperationTarget,
-        resolved_merkle_proof: Option<MerkleProofTarget>,
+        resolved_merkle_claim: MerkleClaimTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
-        match resolved_merkle_proof {
-            None => builder._false(),
-            Some(resolved_merkle_proof) => {
-                let op_code_ok =
-                    op.has_native_type(builder, NativeOperation::NotContainsFromEntries);
+        let op_code_ok = op.has_native_type(builder, NativeOperation::NotContainsFromEntries);
 
-                // Expect 2 op args of type `ValueOf`.
-                let op_arg_type_checks = resolved_op_args
-                    .iter()
-                    .take(2)
-                    .map(|op_arg| {
-                        op_arg.has_native_type(builder, &self.params, NativePredicate::ValueOf)
-                    })
-                    .collect::<Vec<_>>();
-                let op_arg_types_ok = builder.all(op_arg_type_checks);
+        // Expect 2 op args of type `ValueOf`.
+        let op_arg_type_checks = resolved_op_args
+            .iter()
+            .take(2)
+            .map(|op_arg| op_arg.has_native_type(builder, &self.params, NativePredicate::ValueOf))
+            .collect::<Vec<_>>();
+        let op_arg_types_ok = builder.all(op_arg_type_checks);
 
-                // The values embedded in the op args must be values, i.e. the
-                // last `STATEMENT_ARG_F_LEN - VALUE_SIZE` slots of each being
-                // 0.
-                let merkle_root_arg = &resolved_op_args[0].args[1];
-                let key_arg = &resolved_op_args[1].args[1];
-                let op_arg_range_checks = [
-                    builder.statement_arg_is_value(merkle_root_arg),
-                    builder.statement_arg_is_value(key_arg),
-                ];
-                let op_arg_range_ok = builder.all(op_arg_range_checks);
+        // The values embedded in the op args must be values, i.e. the
+        // last `STATEMENT_ARG_F_LEN - VALUE_SIZE` slots of each being
+        // 0.
+        let merkle_root_arg = &resolved_op_args[0].args[1];
+        let key_arg = &resolved_op_args[1].args[1];
+        let op_arg_range_checks = [
+            builder.statement_arg_is_value(merkle_root_arg),
+            builder.statement_arg_is_value(key_arg),
+        ];
+        let op_arg_range_ok = builder.all(op_arg_range_checks);
 
-                // Check Merkle proof (verified elsewhere) against op args.
-                let merkle_proof_checks = [
-                    /* The supplied Merkle proof must be enabled. */
-                    resolved_merkle_proof.enabled,
-                    /* ...and it must be a nonexistence proof. */
-                    builder.not(resolved_merkle_proof.existence),
-                    /* ...for the root-key pair in the resolved op args. */
-                    builder.is_equal_slice(
-                        &merkle_root_arg.elements[..VALUE_SIZE],
-                        &resolved_merkle_proof.root.elements,
-                    ),
-                    builder.is_equal_slice(
-                        &key_arg.elements[..VALUE_SIZE],
-                        &resolved_merkle_proof.key.elements,
-                    ),
-                ];
+        // Check Merkle proof (verified elsewhere) against op args.
+        let merkle_proof_checks = [
+            /* The supplied Merkle proof must be enabled. */
+            resolved_merkle_claim.enabled,
+            /* ...and it must be a nonexistence proof. */
+            builder.not(resolved_merkle_claim.existence),
+            /* ...for the root-key pair in the resolved op args. */
+            builder.is_equal_slice(
+                &merkle_root_arg.elements[..VALUE_SIZE],
+                &resolved_merkle_claim.root.elements,
+            ),
+            builder.is_equal_slice(
+                &key_arg.elements[..VALUE_SIZE],
+                &resolved_merkle_claim.key.elements,
+            ),
+        ];
 
-                let merkle_proof_ok = builder.all(merkle_proof_checks);
+        let merkle_proof_ok = builder.all(merkle_proof_checks);
 
-                // Check output statement
-                let arg1_key = resolved_op_args[0].args[0].clone();
-                let arg2_key = resolved_op_args[1].args[0].clone();
-                let expected_statement = StatementTarget::new_native(
-                    builder,
-                    &self.params,
-                    NativePredicate::NotContains,
-                    &[arg1_key, arg2_key],
-                );
-                let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+        // Check output statement
+        let arg1_key = resolved_op_args[0].args[0].clone();
+        let arg2_key = resolved_op_args[1].args[0].clone();
+        let expected_statement = StatementTarget::new_native(
+            builder,
+            &self.params,
+            NativePredicate::NotContains,
+            &[arg1_key, arg2_key],
+        );
+        let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-                builder.all([
-                    op_code_ok,
-                    op_arg_types_ok,
-                    op_arg_range_ok,
-                    merkle_proof_ok,
-                    st_ok,
-                ])
-            }
-        }
+        builder.all([
+            op_code_ok,
+            op_arg_types_ok,
+            op_arg_range_ok,
+            merkle_proof_ok,
+            st_ok,
+        ])
     }
 
     fn eval_eq_from_entries(
@@ -412,13 +410,18 @@ impl MainPodVerifyGadget {
         let pub_statements =
             &input_statements[input_statements.len() - params.max_public_statements..];
 
-        // Add Merkle proof targets
+        // Add Merkle claim/proof targets
         let mp_gadget = MerkleProofGadget {
             max_depth: params.max_depth_mt_gadget,
         };
         let merkle_proofs: Vec<_> = (0..params.max_merkle_proofs)
             .map(|_| mp_gadget.eval(builder))
             .collect::<Result<_>>()?;
+        let merkle_claims: Vec<_> = merkle_proofs
+            .clone()
+            .into_iter()
+            .map(|pf| pf.into())
+            .collect();
 
         // 2. Calculate the Pod Id from the public statements
         let pub_statements_flattened = pub_statements
@@ -455,7 +458,7 @@ impl MainPodVerifyGadget {
             let op_verification = OperationVerifyGadget {
                 params: params.clone(),
             }
-            .eval(builder, st, op, prev_statements, &merkle_proofs)?;
+            .eval(builder, st, op, prev_statements, &merkle_claims)?;
             op_verifications.push(op_verification);
         }
 
@@ -478,7 +481,7 @@ pub struct MainPodVerifyTarget {
     // The KEY_TYPE statement must be the first public one
     statements: Vec<StatementTarget>,
     operations: Vec<OperationTarget>,
-    merkle_proofs: Vec<MerkleProofTarget>,
+    merkle_proofs: Vec<MerkleClaimAndProofTarget>,
     op_verifications: Vec<OperationVerifyTarget>,
 }
 
@@ -486,7 +489,7 @@ pub struct MainPodVerifyInput {
     pub signed_pods: Vec<SignedPod>,
     pub statements: Vec<mainpod::Statement>,
     pub operations: Vec<mainpod::Operation>,
-    pub merkle_proofs: Vec<MerkleProof>,
+    pub merkle_proofs: Vec<MerkleClaimAndProof>,
 }
 
 impl MainPodVerifyTarget {
@@ -549,7 +552,6 @@ impl MainPodVerifyCircuit {
 #[cfg(test)]
 mod tests {
     use merkletree::MerkleTree;
-    use plonky2::hash::merkle_proofs;
     use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
 
     use super::*;
@@ -564,7 +566,7 @@ mod tests {
         st: mainpod::Statement,
         op: mainpod::Operation,
         prev_statements: Vec<mainpod::Statement>,
-        merkle_proofs: Vec<mainpod::MerkleProof>,
+        merkle_proofs: Vec<mainpod::MerkleClaimAndProof>,
     ) -> Result<()> {
         let params = Params::default();
         let mp_gadget = MerkleProofGadget {
@@ -583,6 +585,11 @@ mod tests {
             .iter()
             .map(|_| mp_gadget.eval(&mut builder))
             .collect::<Result<_>>()?;
+        let merkle_claims_target: Vec<_> = merkle_proofs_target
+            .clone()
+            .into_iter()
+            .map(|pf| pf.into())
+            .collect();
 
         let operation_verify = OperationVerifyGadget {
             params: params.clone(),
@@ -592,7 +599,7 @@ mod tests {
             &st_target,
             &op_target,
             &prev_statements_target,
-            &merkle_proofs_target,
+            &merkle_claims_target,
         )?;
 
         let mut pw = PartialWitness::<F>::new();
@@ -741,7 +748,7 @@ mod tests {
             OperationAux::MerkleProofIndex(0),
         );
 
-        let merkle_proofs = vec![mainpod::MerkleProof::try_from_middleware(
+        let merkle_proofs = vec![mainpod::MerkleClaimAndProof::try_from_middleware(
             &params, &root, &key, None, &no_key_pf,
         )?];
         let prev_statements = vec![root_st, key_st];

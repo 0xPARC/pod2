@@ -44,7 +44,7 @@ pub struct MockMainPod {
     statements: Vec<Statement>,
     // All Merkle proofs
     // TODO: Use a backend-specific representation
-    merkle_proofs: Vec<MerkleProof>,
+    merkle_proofs: Vec<MerkleClaimAndProof>,
 }
 
 impl fmt::Display for MockMainPod {
@@ -231,7 +231,7 @@ impl MockMainPod {
     pub(crate) fn extract_merkle_proofs(
         params: &Params,
         operations: &[middleware::Operation],
-    ) -> Result<Vec<MerkleProof>> {
+    ) -> Result<Vec<MerkleClaimAndProof>> {
         let mut merkle_proofs = operations
             .iter()
             .flat_map(|op| match op {
@@ -240,7 +240,7 @@ impl MockMainPod {
                     middleware::Statement::ValueOf(_, key),
                     middleware::Statement::ValueOf(_, value),
                     pf,
-                ) => Some(MerkleProof::try_from_middleware(
+                ) => Some(MerkleClaimAndProof::try_from_middleware(
                     params,
                     root,
                     key,
@@ -251,7 +251,7 @@ impl MockMainPod {
                     middleware::Statement::ValueOf(_, root),
                     middleware::Statement::ValueOf(_, key),
                     pf,
-                ) => Some(MerkleProof::try_from_middleware(
+                ) => Some(MerkleClaimAndProof::try_from_middleware(
                     params, root, key, None, pf,
                 )),
                 _ => None,
@@ -266,7 +266,7 @@ impl MockMainPod {
         } else {
             fill_pad(
                 &mut merkle_proofs,
-                MerkleProof::empty(params.max_depth_mt_gadget),
+                MerkleClaimAndProof::empty(params.max_depth_mt_gadget),
                 params.max_merkle_proofs,
             );
             Ok(merkle_proofs)
@@ -294,7 +294,7 @@ impl MockMainPod {
     }
 
     fn find_op_aux(
-        merkle_proofs: &[MerkleProof],
+        merkle_proofs: &[MerkleClaimAndProof],
         op_aux: &middleware::OperationAux,
     ) -> Result<OperationAux> {
         match op_aux {
@@ -321,7 +321,7 @@ impl MockMainPod {
     pub(crate) fn process_private_statements_operations(
         params: &Params,
         statements: &[Statement],
-        merkle_proofs: &[MerkleProof],
+        merkle_proofs: &[MerkleClaimAndProof],
         input_operations: &[middleware::Operation],
     ) -> Result<Vec<Operation>> {
         let mut operations = Vec::new();

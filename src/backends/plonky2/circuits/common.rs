@@ -3,7 +3,7 @@
 use crate::backends::plonky2::basetypes::D;
 use crate::backends::plonky2::mock::mainpod::Statement;
 use crate::backends::plonky2::mock::mainpod::{Operation, OperationArg};
-use crate::backends::plonky2::primitives::merkletree::MerkleProofTarget;
+use crate::backends::plonky2::primitives::merkletree::MerkleClaimAndProofTarget;
 use crate::middleware::{
     NativeOperation, NativePredicate, Params, Predicate, StatementArg, ToFields, Value,
     EMPTY_VALUE, F, HASH_SIZE, OPERATION_ARG_F_LEN, OPERATION_AUX_F_LEN, STATEMENT_ARG_F_LEN,
@@ -201,7 +201,30 @@ pub trait Flattenable {
     fn from_flattened(vs: &[Target]) -> Self;
 }
 
-impl Flattenable for MerkleProofTarget {
+/// For the purpose of op verification, we need only look up the
+/// Merkle claim rather than the Merkle proof since it is verified
+/// elsewhere.
+pub struct MerkleClaimTarget {
+    pub(crate) enabled: BoolTarget,
+    pub(crate) root: HashOutTarget,
+    pub(crate) key: ValueTarget,
+    pub(crate) value: ValueTarget,
+    pub(crate) existence: BoolTarget,
+}
+
+impl From<MerkleClaimAndProofTarget> for MerkleClaimTarget {
+    fn from(pf: MerkleClaimAndProofTarget) -> Self {
+        Self {
+            enabled: pf.enabled,
+            root: pf.root,
+            key: pf.key,
+            value: pf.value,
+            existence: pf.existence,
+        }
+    }
+}
+
+impl Flattenable for MerkleClaimTarget {
     fn flatten(&self) -> Vec<Target> {
         [
             vec![self.enabled.target],
@@ -209,47 +232,21 @@ impl Flattenable for MerkleProofTarget {
             self.key.elements.to_vec(),
             self.value.elements.to_vec(),
             vec![self.existence.target],
-            self.siblings
-                .iter()
-                .flat_map(|s| s.elements.to_vec())
-                .collect(),
-            vec![self.case_ii_selector.target],
-            self.other_key.elements.to_vec(),
-            self.other_value.elements.to_vec(),
         ]
         .concat()
     }
-    fn from_flattened(v: &[Target]) -> Self {
-        let siblings_len = v.len() - 3 - NUM_HASH_OUT_ELTS - 4 * VALUE_SIZE;
-        assert!(siblings_len % NUM_HASH_OUT_ELTS == 0);
-        let max_depth = siblings_len / NUM_HASH_OUT_ELTS;
+
+    fn from_flattened(vs: &[Target]) -> Self {
         Self {
-            max_depth,
-            enabled: BoolTarget::new_unsafe(v[0]),
-            root: HashOutTarget::from_vec((&v[1..1 + NUM_HASH_OUT_ELTS]).to_vec()),
+            enabled: BoolTarget::new_unsafe(vs[0]),
+            root: HashOutTarget::from_vec((&vs[1..1 + NUM_HASH_OUT_ELTS]).to_vec()),
             key: ValueTarget::from_slice(
-                &v[1 + NUM_HASH_OUT_ELTS..1 + NUM_HASH_OUT_ELTS + VALUE_SIZE],
+                &vs[1 + NUM_HASH_OUT_ELTS..1 + NUM_HASH_OUT_ELTS + VALUE_SIZE],
             ),
             value: ValueTarget::from_slice(
-                &v[1 + NUM_HASH_OUT_ELTS + VALUE_SIZE..1 + NUM_HASH_OUT_ELTS + 2 * VALUE_SIZE],
+                &vs[1 + NUM_HASH_OUT_ELTS + VALUE_SIZE..1 + NUM_HASH_OUT_ELTS + 2 * VALUE_SIZE],
             ),
-            existence: BoolTarget::new_unsafe(v[1 + NUM_HASH_OUT_ELTS + 2 * VALUE_SIZE]),
-            siblings: v[2 + NUM_HASH_OUT_ELTS + 2 * VALUE_SIZE
-                ..2 + NUM_HASH_OUT_ELTS + 2 * VALUE_SIZE + siblings_len]
-                .chunks(NUM_HASH_OUT_ELTS)
-                .map(|chunk| HashOutTarget::from_vec(chunk.to_vec()))
-                .collect(),
-            case_ii_selector: BoolTarget::new_unsafe(
-                v[2 + NUM_HASH_OUT_ELTS + 2 * VALUE_SIZE + siblings_len],
-            ),
-            other_key: ValueTarget::from_slice(
-                &v[3 + NUM_HASH_OUT_ELTS + 2 * VALUE_SIZE + siblings_len
-                    ..3 + NUM_HASH_OUT_ELTS + 3 * VALUE_SIZE + siblings_len],
-            ),
-            other_value: ValueTarget::from_slice(
-                &v[3 + NUM_HASH_OUT_ELTS + 3 * VALUE_SIZE + siblings_len
-                    ..3 + NUM_HASH_OUT_ELTS + 4 * VALUE_SIZE + siblings_len],
-            ),
+            existence: BoolTarget::new_unsafe(vs[1 + NUM_HASH_OUT_ELTS + 2 * VALUE_SIZE]),
         }
     }
 }

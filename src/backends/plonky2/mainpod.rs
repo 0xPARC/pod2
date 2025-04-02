@@ -23,7 +23,7 @@ use crate::middleware::{
     SELF,
 };
 
-use super::mock::mainpod::MerkleProof;
+use super::mock::mainpod::MerkleClaimAndProof;
 
 pub struct Prover {}
 
