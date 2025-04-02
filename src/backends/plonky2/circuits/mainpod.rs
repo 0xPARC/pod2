@@ -548,6 +548,7 @@ impl MainPodVerifyCircuit {
 
 #[cfg(test)]
 mod tests {
+    use merkletree::MerkleTree;
     use plonky2::hash::merkle_proofs;
     use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
 
@@ -626,6 +627,8 @@ mod tests {
 
     #[test]
     fn test_operation_verify() -> Result<()> {
+        let params = Params::default();
+
         // None
         let st: mainpod::Statement = Statement::None.into();
         let op = mainpod::Operation(
@@ -709,6 +712,39 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1.clone(), st2];
+        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+
+        // NotContainsFromEntries
+        let kvs = [
+            (1.into(), 55.into()),
+            (2.into(), 88.into()),
+            (175.into(), 0.into()),
+        ]
+        .into_iter()
+        .collect();
+        let mt = MerkleTree::new(params.max_depth_mt_gadget, &kvs)?;
+
+        let root = mt.root().into();
+        let root_ak = AnchoredKey(PodId(Value::from(88).into()), "merkle root".into());
+
+        let key = 5.into();
+        let key_ak = AnchoredKey(PodId(Value::from(88).into()), "key".into());
+
+        let no_key_pf = mt.prove_nonexistence(&key)?;
+
+        let root_st: mainpod::Statement = Statement::ValueOf(root_ak, root).into();
+        let key_st: mainpod::Statement = Statement::ValueOf(key_ak, key).into();
+        let st: mainpod::Statement = Statement::NotContains(root_ak, key_ak).into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::NotContainsFromEntries),
+            vec![OperationArg::Index(0), OperationArg::Index(1)],
+            OperationAux::MerkleProofIndex(0),
+        );
+
+        let merkle_proofs = vec![mainpod::MerkleProof::try_from_middleware(
+            &params, &root, &key, None, &no_key_pf,
+        )?];
+        let prev_statements = vec![root_st, key_st];
         operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
 
         Ok(())
