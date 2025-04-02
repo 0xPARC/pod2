@@ -177,7 +177,7 @@ impl OperationTarget {
         {
             pw.set_target_arr(&self.args[i], &arg.to_fields(params))?;
         }
-        pw.set_target_arr(&self.aux, &op.aux().to_fields(params));
+        pw.set_target_arr(&self.aux, &op.aux().to_fields(params))?;
         Ok(())
     }
 
