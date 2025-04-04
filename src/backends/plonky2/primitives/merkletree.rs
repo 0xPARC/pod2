@@ -2,6 +2,7 @@
 //! https://0xparc.github.io/pod2/merkletree.html .
 use anyhow::{anyhow, Result};
 use plonky2::field::types::Field;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 use std::iter::IntoIterator;
@@ -9,7 +10,6 @@ use std::iter::IntoIterator;
 use crate::backends::counter;
 use crate::backends::plonky2::basetypes::{hash_fields, Hash, Value, EMPTY_HASH, F};
 
-// mod merkletree_circuit;
 pub use super::merkletree_circuit::*;
 
 /// Implements the MerkleTree specified at
@@ -207,7 +207,7 @@ impl fmt::Display for MerkleTree {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MerkleProof {
     // note: currently we don't use the `_existence` field, we would use if we merge the methods
     // `verify` and `verify_nonexistence` into a single one

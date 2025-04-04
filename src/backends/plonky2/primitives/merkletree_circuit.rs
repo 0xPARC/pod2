@@ -23,34 +23,37 @@ use plonky2::{
 };
 use std::iter;
 
-use crate::backends::plonky2::basetypes::{Hash, Value, D, EMPTY_HASH, EMPTY_VALUE, F};
+use crate::backends::plonky2::basetypes::{Hash, Value, D, EMPTY_HASH, EMPTY_VALUE, F, HASH_SIZE};
 use crate::backends::plonky2::circuits::common::{CircuitBuilderPod, ValueTarget};
 use crate::backends::plonky2::primitives::merkletree::MerkleProof;
 
-/// `MerkleProofGate` allows to verify both proofs of existence and proofs
+/// `MerkleProofGadget` allows to verify both proofs of existence and proofs
 /// non-existence with the same circuit.
-/// If only proofs of existence are needed, use `MerkleProofExistenceGate`,
+/// If only proofs of existence are needed, use `MerkleProofExistenceGadget`,
 /// which requires less amount of constraints.
-pub struct MerkleProofGate {
+pub struct MerkleProofGadget {
     pub max_depth: usize,
 }
 
 pub struct MerkleProofTarget {
     max_depth: usize,
-    pub root: HashOutTarget,
-    pub key: ValueTarget,
-    pub value: ValueTarget,
-    pub existence: BoolTarget,
-    pub siblings: Vec<HashOutTarget>,
-    pub case_ii_selector: BoolTarget, // for case ii)
-    pub other_key: ValueTarget,
-    pub other_value: ValueTarget,
+    // `enabled` determines if the merkleproof verification is enabled
+    pub(crate) enabled: BoolTarget,
+    pub(crate) root: HashOutTarget,
+    pub(crate) key: ValueTarget,
+    pub(crate) value: ValueTarget,
+    pub(crate) existence: BoolTarget,
+    pub(crate) siblings: Vec<HashOutTarget>,
+    pub(crate) case_ii_selector: BoolTarget, // for case ii)
+    pub(crate) other_key: ValueTarget,
+    pub(crate) other_value: ValueTarget,
 }
 
-impl MerkleProofGate {
+impl MerkleProofGadget {
     /// creates the targets and defines the logic of the circuit
     pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MerkleProofTarget> {
-        // create the targets
+        let enabled = builder.add_virtual_bool_target_safe();
+        let root = builder.add_virtual_hash();
         let key = builder.add_virtual_value();
         let value = builder.add_virtual_value();
         // from proof struct:
@@ -104,7 +107,7 @@ impl MerkleProofGate {
         // previously computed hash h.
         let empty_hash = builder.constant_hash(HashOut::from(EMPTY_HASH.0));
         let leaf_hash = HashOutTarget::from_vec(
-            (0..4)
+            (0..HASH_SIZE)
                 .map(|j| builder.select(case_i_selector, empty_hash.elements[j], h.elements[j]))
                 .collect(),
         );
@@ -115,12 +118,24 @@ impl MerkleProofGate {
         // compute the root for the given siblings and the computed leaf_hash
         // (this is for the three cases (existence, non-existence case i, and
         // non-existence case ii).
-        // This root will be assigned in the `set_targets` method, and it is a
-        // public input.
-        let root = compute_root_from_leaf(self.max_depth, builder, &path, &leaf_hash, &siblings)?;
+        let obtained_root =
+            compute_root_from_leaf(self.max_depth, builder, &path, &leaf_hash, &siblings)?;
+
+        // check that obtained_root==root (from inputs), when enabled==true
+        let zero = builder.zero();
+        let expected_root: Vec<Target> = (0..HASH_SIZE)
+            .map(|j| builder.select(enabled, root.elements[j], zero))
+            .collect();
+        let computed_root: Vec<Target> = (0..HASH_SIZE)
+            .map(|j| builder.select(enabled, obtained_root.elements[j], zero))
+            .collect();
+        for j in 0..HASH_SIZE {
+            builder.connect(computed_root[j], expected_root[j]);
+        }
 
         Ok(MerkleProofTarget {
             max_depth: self.max_depth,
+            enabled,
             existence,
             root,
             siblings,
@@ -138,12 +153,15 @@ impl MerkleProofTarget {
     pub fn set_targets(
         &self,
         pw: &mut PartialWitness<F>,
+        // `enabled` determines if the merkleproof verification is enabled
+        enabled: bool,
         existence: bool,
         root: Hash,
         proof: MerkleProof,
         key: Value,
         value: Value,
     ) -> Result<()> {
+        pw.set_bool_target(self.enabled, enabled)?;
         pw.set_hash_target(self.root, HashOut::from_vec(root.0.to_vec()))?;
         pw.set_target_arr(&self.key.elements, &key.0)?;
         pw.set_target_arr(&self.value.elements, &value.0)?;
@@ -179,22 +197,25 @@ impl MerkleProofTarget {
 
 /// `MerkleProofExistenceCircuit` allows to verify proofs of existence only. If
 /// proofs of non-existence are needed, use `MerkleProofCircuit`.
-pub struct MerkleProofExistenceGate {
+pub struct MerkleProofExistenceGadget {
     pub max_depth: usize,
 }
 
 pub struct MerkleProofExistenceTarget {
     max_depth: usize,
-    pub root: HashOutTarget,
-    pub key: ValueTarget,
-    pub value: ValueTarget,
-    pub siblings: Vec<HashOutTarget>,
+    // `enabled` determines if the merkleproof verification is enabled
+    pub(crate) enabled: BoolTarget,
+    pub(crate) root: HashOutTarget,
+    pub(crate) key: ValueTarget,
+    pub(crate) value: ValueTarget,
+    pub(crate) siblings: Vec<HashOutTarget>,
 }
 
-impl MerkleProofExistenceGate {
+impl MerkleProofExistenceGadget {
     /// creates the targets and defines the logic of the circuit
     pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MerkleProofExistenceTarget> {
-        // create the targets
+        let enabled = builder.add_virtual_bool_target_safe();
+        let root = builder.add_virtual_hash();
         let key = builder.add_virtual_value();
         let value = builder.add_virtual_value();
         // siblings are padded till max_depth length
@@ -207,12 +228,24 @@ impl MerkleProofExistenceGate {
         let path = keypath_target(self.max_depth, builder, &key);
 
         // compute the root for the given siblings and the computed leaf_hash.
-        // This root will be assigned in the `set_targets` method, and it is a
-        // public input.
-        let root = compute_root_from_leaf(self.max_depth, builder, &path, &leaf_hash, &siblings)?;
+        let obtained_root =
+            compute_root_from_leaf(self.max_depth, builder, &path, &leaf_hash, &siblings)?;
+
+        // check that obtained_root==root (from inputs), when enabled==true
+        let zero = builder.zero();
+        let expected_root: Vec<Target> = (0..HASH_SIZE)
+            .map(|j| builder.select(enabled, root.elements[j], zero))
+            .collect();
+        let computed_root: Vec<Target> = (0..HASH_SIZE)
+            .map(|j| builder.select(enabled, obtained_root.elements[j], zero))
+            .collect();
+        for j in 0..HASH_SIZE {
+            builder.connect(computed_root[j], expected_root[j]);
+        }
 
         Ok(MerkleProofExistenceTarget {
             max_depth: self.max_depth,
+            enabled,
             root,
             siblings,
             key,
@@ -226,11 +259,16 @@ impl MerkleProofExistenceTarget {
     pub fn set_targets(
         &self,
         pw: &mut PartialWitness<F>,
+        // `enabled` determines if the merkleproof verification is enabled
+        enabled: bool,
         root: Hash,
         proof: MerkleProof,
         key: Value,
         value: Value,
     ) -> Result<()> {
+        assert!(proof.existence); // sanity check
+
+        pw.set_bool_target(self.enabled, enabled)?;
         pw.set_hash_target(self.root, HashOut::from_vec(root.0.to_vec()))?;
         pw.set_target_arr(&self.key.elements, &key.0)?;
         pw.set_target_arr(&self.value.elements, &value.0)?;
@@ -291,16 +329,16 @@ fn compute_root_from_leaf(
         //     input_2 = sibling * (1-s) + h * s = select(s, h, sibling)
         //     new_h = hash([input_1, input_2])
         // TODO explore if to group multiple muls in a single gate
-        let input_1: Vec<Target> = (0..4)
+        let input_1: Vec<Target> = (0..HASH_SIZE)
             .map(|j| builder.select(path[i], sibling.elements[j], h.elements[j]))
             .collect();
-        let input_2: Vec<Target> = (0..4)
+        let input_2: Vec<Target> = (0..HASH_SIZE)
             .map(|j| builder.select(path[i], h.elements[j], sibling.elements[j]))
             .collect();
         let new_h =
             builder.hash_n_to_hash_no_pad::<PoseidonHash>([input_1, input_2, vec![two]].concat());
 
-        let h_targ: Vec<Target> = (0..4)
+        let h_targ: Vec<Target> = (0..HASH_SIZE)
             .map(|j| builder.select(*selector, new_h.elements[j], h.elements[j]))
             .collect();
         h = HashOutTarget::from_vec(h_targ);
@@ -486,8 +524,16 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = MerkleProofGate { max_depth }.eval(&mut builder)?;
-        targets.set_targets(&mut pw, existence, tree.root(), proof, key, value)?;
+        let targets = MerkleProofGadget { max_depth }.eval(&mut builder)?;
+        targets.set_targets(
+            &mut pw,
+            true, // verification enabled
+            existence,
+            tree.root(),
+            proof,
+            key,
+            value,
+        )?;
 
         // generate & verify proof
         let data = builder.build::<C>();
@@ -525,8 +571,8 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = MerkleProofExistenceGate { max_depth }.eval(&mut builder)?;
-        targets.set_targets(&mut pw, tree.root(), proof, key, value)?;
+        let targets = MerkleProofExistenceGadget { max_depth }.eval(&mut builder)?;
+        targets.set_targets(&mut pw, true, tree.root(), proof, key, value)?;
 
         // generate & verify proof
         let data = builder.build::<C>();
@@ -592,8 +638,16 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = MerkleProofGate { max_depth }.eval(&mut builder)?;
-        targets.set_targets(&mut pw, proof.existence, tree.root(), proof, key, value)?;
+        let targets = MerkleProofGadget { max_depth }.eval(&mut builder)?;
+        targets.set_targets(
+            &mut pw,
+            true, // verification enabled
+            proof.existence,
+            tree.root(),
+            proof,
+            key,
+            value,
+        )?;
 
         // generate & verify proof
         let data = builder.build::<C>();
@@ -633,13 +687,44 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = MerkleProofGate { max_depth }.eval(&mut builder)?;
-        targets.set_targets(&mut pw, true, tree2.root(), proof, key, value)?;
+        let targets = MerkleProofGadget { max_depth }.eval(&mut builder)?;
+        targets.set_targets(
+            &mut pw,
+            true, // verification enabled
+            true, // proof of existence
+            tree2.root(),
+            proof.clone(),
+            key,
+            value,
+        )?;
 
         // generate proof, expecting it to fail (since we're using the wrong
         // root)
         let data = builder.build::<C>();
         assert!(data.prove(pw).is_err());
+
+        // Now generate a new proof, using `enabled=false`, which should pass the verification
+        // despite containing 'wrong' witness.
+        let config = CircuitConfig::standard_recursion_config();
+        let mut builder = CircuitBuilder::<F, D>::new(config);
+        let mut pw = PartialWitness::<F>::new();
+
+        let targets = MerkleProofGadget { max_depth }.eval(&mut builder)?;
+        targets.set_targets(
+            &mut pw,
+            false, // verification disabled
+            true,  // proof of existence
+            tree2.root(),
+            proof,
+            key,
+            value,
+        )?;
+
+        // generate proof, should pass despite using wrong witness, since the
+        // `enabled=false`
+        let data = builder.build::<C>();
+        let proof = data.prove(pw)?;
+        data.verify(proof)?;
 
         Ok(())
     }

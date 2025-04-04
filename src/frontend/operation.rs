@@ -2,8 +2,8 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use super::{CustomPredicateRef, Predicate, SignedPod, Statement, Value};
-use crate::middleware::{self, NativeOperation, NativePredicate};
+use super::{CustomPredicateRef, NativePredicate, Predicate, SignedPod, Statement, Value};
+use crate::middleware::{self, OperationAux};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OperationArg {
@@ -76,12 +76,63 @@ pub enum OperationType {
     Custom(CustomPredicateRef),
 }
 
-impl From<OperationType> for middleware::OperationType {
-    fn from(ot: OperationType) -> middleware::OperationType {
-        match ot {
-            OperationType::Custom(cpr) => middleware::OperationType::Custom(cpr.into()),
-            OperationType::Native(op) => middleware::OperationType::Native(op),
-        }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NativeOperation {
+    None = 0,
+    NewEntry = 1,
+    CopyStatement = 2,
+    EqualFromEntries = 3,
+    NotEqualFromEntries = 4,
+    GtFromEntries = 5,
+    LtFromEntries = 6,
+    TransitiveEqualFromStatements = 7,
+    GtToNotEqual = 8,
+    LtToNotEqual = 9,
+    SumOf = 13,
+    ProductOf = 14,
+    MaxOf = 15,
+    DictContainsFromEntries = 16,
+    DictNotContainsFromEntries = 17,
+    SetContainsFromEntries = 18,
+    SetNotContainsFromEntries = 19,
+    ArrayContainsFromEntries = 20,
+}
+
+impl TryFrom<OperationType> for middleware::OperationType {
+    type Error = anyhow::Error;
+    fn try_from(fe_ot: OperationType) -> Result<Self, Self::Error> {
+        type FeOT = OperationType;
+        type FeNO = NativeOperation;
+        type MwOT = middleware::OperationType;
+        type MwNO = middleware::NativeOperation;
+        let mw_ot = match fe_ot {
+            FeOT::Native(FeNO::None) => MwOT::Native(MwNO::None),
+            FeOT::Native(FeNO::NewEntry) => MwOT::Native(MwNO::NewEntry),
+            FeOT::Native(FeNO::CopyStatement) => MwOT::Native(MwNO::CopyStatement),
+            FeOT::Native(FeNO::EqualFromEntries) => MwOT::Native(MwNO::EqualFromEntries),
+            FeOT::Native(FeNO::NotEqualFromEntries) => MwOT::Native(MwNO::NotEqualFromEntries),
+            FeOT::Native(FeNO::GtFromEntries) => MwOT::Native(MwNO::GtFromEntries),
+            FeOT::Native(FeNO::LtFromEntries) => MwOT::Native(MwNO::LtFromEntries),
+            FeOT::Native(FeNO::TransitiveEqualFromStatements) => {
+                MwOT::Native(MwNO::TransitiveEqualFromStatements)
+            }
+            FeOT::Native(FeNO::GtToNotEqual) => MwOT::Native(MwNO::GtToNotEqual),
+            FeOT::Native(FeNO::LtToNotEqual) => MwOT::Native(MwNO::LtToNotEqual),
+            FeOT::Native(FeNO::SumOf) => MwOT::Native(MwNO::SumOf),
+            FeOT::Native(FeNO::ProductOf) => MwOT::Native(MwNO::ProductOf),
+            FeOT::Native(FeNO::MaxOf) => MwOT::Native(MwNO::MaxOf),
+            FeOT::Native(FeNO::DictContainsFromEntries) => MwOT::Native(MwNO::ContainsFromEntries),
+            FeOT::Native(FeNO::DictNotContainsFromEntries) => {
+                MwOT::Native(MwNO::NotContainsFromEntries)
+            }
+            FeOT::Native(FeNO::SetContainsFromEntries) => MwOT::Native(MwNO::ContainsFromEntries),
+            FeOT::Native(FeNO::SetNotContainsFromEntries) => {
+                MwOT::Native(MwNO::NotContainsFromEntries)
+            }
+            FeOT::Native(FeNO::ArrayContainsFromEntries) => MwOT::Native(MwNO::ContainsFromEntries),
+            FeOT::Custom(mw_cpr) => MwOT::Custom(mw_cpr.into()),
+        };
+        Ok(mw_ot)
     }
 }
 
@@ -108,15 +159,24 @@ impl OperationType {
                 }
                 NativeOperation::GtToNotEqual => Some(Predicate::Native(NativePredicate::NotEqual)),
                 NativeOperation::LtToNotEqual => Some(Predicate::Native(NativePredicate::NotEqual)),
-                NativeOperation::ContainsFromEntries => {
-                    Some(Predicate::Native(NativePredicate::Contains))
-                }
-                NativeOperation::NotContainsFromEntries => {
-                    Some(Predicate::Native(NativePredicate::NotContains))
-                }
                 NativeOperation::SumOf => Some(Predicate::Native(NativePredicate::SumOf)),
                 NativeOperation::ProductOf => Some(Predicate::Native(NativePredicate::ProductOf)),
                 NativeOperation::MaxOf => Some(Predicate::Native(NativePredicate::MaxOf)),
+                NativeOperation::DictContainsFromEntries => {
+                    Some(Predicate::Native(NativePredicate::DictContains))
+                }
+                NativeOperation::DictNotContainsFromEntries => {
+                    Some(Predicate::Native(NativePredicate::DictNotContains))
+                }
+                NativeOperation::SetContainsFromEntries => {
+                    Some(Predicate::Native(NativePredicate::SetContains))
+                }
+                NativeOperation::SetNotContainsFromEntries => {
+                    Some(Predicate::Native(NativePredicate::SetNotContains))
+                }
+                NativeOperation::ArrayContainsFromEntries => {
+                    Some(Predicate::Native(NativePredicate::ArrayContains))
+                }
             },
             OperationType::Custom(cpr) => Some(Predicate::Custom(cpr.clone())),
         }
@@ -124,7 +184,7 @@ impl OperationType {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Operation(pub OperationType, pub Vec<OperationArg>);
+pub struct Operation(pub OperationType, pub Vec<OperationArg>, pub OperationAux);
 
 impl fmt::Display for Operation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

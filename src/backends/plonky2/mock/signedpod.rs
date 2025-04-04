@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use itertools::Itertools;
 use std::any::Any;
 use std::collections::HashMap;
 
@@ -56,17 +57,7 @@ impl MockSignedPod {
 
 impl Pod for MockSignedPod {
     fn verify(&self) -> Result<()> {
-        // 1. Verify type
-        let value_at_type = self.dict.get(&hash_str(KEY_TYPE).into())?;
-        if Value::from(PodType::MockSigned) != value_at_type {
-            return Err(anyhow!(
-                "type does not match, expected MockSigned ({}), found {}",
-                PodType::MockSigned,
-                value_at_type
-            ));
-        }
-
-        // 2. Verify id
+        // 1. Verify id
         let mt = MerkleTree::new(
             MAX_DEPTH,
             &self
@@ -81,6 +72,16 @@ impl Pod for MockSignedPod {
                 "id does not match, expected {}, computed {}",
                 self.id,
                 id
+            ));
+        }
+
+        // 2. Verify type
+        let value_at_type = self.dict.get(&hash_str(KEY_TYPE).into())?;
+        if Value::from(PodType::MockSigned) != value_at_type {
+            return Err(anyhow!(
+                "type does not match, expected MockSigned ({}), found {}",
+                PodType::MockSigned,
+                value_at_type
             ));
         }
 
@@ -104,8 +105,15 @@ impl Pod for MockSignedPod {
 
     fn pub_statements(&self) -> Vec<Statement> {
         let id = self.id();
-        self.dict
-            .iter()
+        // By convention we put the KEY_TYPE first and KEY_SIGNER second
+        let mut kvs: HashMap<_, _> = self.dict.iter().collect();
+        let key_type = Value::from(hash_str(KEY_TYPE));
+        let value_type = kvs.remove(&key_type).expect("KEY_TYPE");
+        let key_signer = Value::from(hash_str(KEY_SIGNER));
+        let value_signer = kvs.remove(&key_signer).expect("KEY_SIGNER");
+        [(&key_type, value_type), (&key_signer, value_signer)]
+            .into_iter()
+            .chain(kvs.into_iter().sorted_by_key(|kv| kv.0))
             .map(|(k, v)| Statement::ValueOf(AnchoredKey(id, Hash(k.0)), *v))
             .collect()
     }

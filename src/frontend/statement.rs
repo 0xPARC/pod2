@@ -1,6 +1,6 @@
-use super::{AnchoredKey, SignedPod, Value};
+use super::{AnchoredKey, NativePredicate, SignedPod, Value};
 use crate::frontend::Predicate;
-use crate::middleware::{self, NativePredicate};
+use crate::middleware;
 use anyhow::{anyhow, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -51,9 +51,35 @@ impl From<(&SignedPod, &str)> for Statement {
     }
 }
 
+#[derive(Debug)]
+pub struct ManualConversionRequired();
+
+impl std::fmt::Display for StatementConversionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Statement conversion error: statement conversion must be implemented manually."
+        )
+    }
+}
+
+impl std::error::Error for StatementConversionError {}
+
+#[derive(Debug)]
+pub enum StatementConversionError {
+    MCR(ManualConversionRequired),
+    Error(anyhow::Error),
+}
+
+impl From<anyhow::Error> for StatementConversionError {
+    fn from(value: anyhow::Error) -> Self {
+        Self::Error(value)
+    }
+}
+
 impl TryFrom<Statement> for middleware::Statement {
-    type Error = anyhow::Error;
-    fn try_from(s: Statement) -> Result<Self> {
+    type Error = StatementConversionError;
+    fn try_from(s: Statement) -> Result<Self, StatementConversionError> {
         type MS = middleware::Statement;
         type NP = NativePredicate;
         type SA = StatementArg;
@@ -80,12 +106,6 @@ impl TryFrom<Statement> for middleware::Statement {
                 (NP::Lt, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None)) => {
                     MS::Lt(ak1.into(), ak2.into())
                 }
-                (NP::Contains, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None)) => {
-                    MS::Contains(ak1.into(), ak2.into())
-                }
-                (NP::NotContains, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None)) => {
-                    MS::NotContains(ak1.into(), ak2.into())
-                }
                 (NP::SumOf, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), Some(SA::Key(ak3)))) => {
                     MS::SumOf(ak1.into(), ak2.into(), ak3.into())
                 }
@@ -94,6 +114,19 @@ impl TryFrom<Statement> for middleware::Statement {
                 }
                 (NP::MaxOf, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), Some(SA::Key(ak3)))) => {
                     MS::MaxOf(ak1.into(), ak2.into(), ak3.into())
+                }
+                (
+                    NP::DictContains,
+                    (Some(SA::Key(ak1)), Some(SA::Key(ak2)), Some(SA::Key(ak3))),
+                ) => MS::Contains(ak1.into(), ak2.into(), ak3.into()),
+                (NP::DictNotContains, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None)) => {
+                    MS::NotContains(ak1.into(), ak2.into())
+                }
+                (NP::SetContains, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None)) => {
+                    return Err(StatementConversionError::MCR(ManualConversionRequired()));
+                }
+                (NP::SetNotContains, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None)) => {
+                    MS::NotContains(ak1.into(), ak2.into())
                 }
                 _ => Err(anyhow!("Ill-formed statement: {}", s))?,
             },

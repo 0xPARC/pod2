@@ -8,18 +8,19 @@ use serde::{Deserialize, Serialize};
 use std::any::Any;
 use std::fmt;
 
-use crate::middleware::{
-    self, hash_str, AnchoredKey, Hash, MainPodInputs, NativeOperation, NativePredicate, NonePod,
-    OperationType, Params, Pod, PodId, PodProver, Predicate, StatementArg, ToFields, KEY_TYPE,
-    SELF,
+use crate::{
+    backends::plonky2::primitives::merkletree::MerkleProof,
+    middleware::{
+        self, hash_str, AnchoredKey, Hash, MainPodInputs, NativeOperation, NativePredicate,
+        NonePod, OperationType, Params, Pod, PodId, PodProver, PodType, Predicate, StatementArg,
+        ToFields, KEY_TYPE, SELF,
+    },
 };
 
 mod operation;
 mod statement;
 pub use operation::*;
 pub use statement::*;
-
-pub const VALUE_TYPE: &str = "MockMainPOD";
 
 pub struct MockProver {}
 
@@ -41,6 +42,9 @@ pub struct MockMainPod {
     operations: Vec<Operation>,
     // All statements (inherited + new)
     statements: Vec<Statement>,
+    // All Merkle proofs
+    // TODO: Use a backend-specific representation
+    merkle_proofs: Vec<MerkleProof>,
 }
 
 impl fmt::Display for MockMainPod {
@@ -61,7 +65,7 @@ impl fmt::Display for MockMainPod {
             }
             if (i >= offset_input_main_pods)
                 && (i < offset_input_statements)
-                && (i % self.params.max_public_statements == 0)
+                && ((i - offset_input_main_pods) % self.params.max_public_statements == 0)
             {
                 writeln!(
                     f,
@@ -110,7 +114,7 @@ fn fmt_statement_index(
     Ok(())
 }
 
-fn fill_pad<T: Clone>(v: &mut Vec<T>, pad_value: T, len: usize) {
+pub fn fill_pad<T: Clone>(v: &mut Vec<T>, pad_value: T, len: usize) {
     if v.len() > len {
         panic!("length exceeded");
     }
@@ -147,7 +151,7 @@ impl MockMainPod {
 
     /// Returns the statements from the given MainPodInputs, padding to the
     /// respective max lengths defined at the given Params.
-    fn layout_statements(params: &Params, inputs: &MainPodInputs) -> Vec<Statement> {
+    pub(crate) fn layout_statements(params: &Params, inputs: &MainPodInputs) -> Vec<Statement> {
         let mut statements = Vec::new();
 
         // Input signed pods region
@@ -203,7 +207,7 @@ impl MockMainPod {
         assert!(inputs.public_statements.len() < params.max_public_statements);
         let mut type_st = middleware::Statement::ValueOf(
             AnchoredKey(SELF, hash_str(KEY_TYPE)),
-            middleware::Value(hash_str(VALUE_TYPE).0),
+            middleware::Value::from(PodType::MockMain),
         )
         .into();
         Self::pad_statement(params, &mut type_st);
@@ -243,9 +247,28 @@ impl MockMainPod {
         }
     }
 
-    fn process_private_statements_operations(
+    fn find_op_aux(
+        merkle_proofs: &[MerkleProof],
+        op_aux: &middleware::OperationAux,
+    ) -> Result<OperationAux> {
+        match op_aux {
+            middleware::OperationAux::None => Ok(OperationAux::None),
+            middleware::OperationAux::MerkleProof(pf_arg) => merkle_proofs
+                .iter()
+                .enumerate()
+                .find_map(|(i, pf)| (pf == pf_arg).then_some(i))
+                .map(OperationAux::MerkleProofIndex)
+                .ok_or(anyhow!(
+                    "Merkle proof corresponding to op arg {} not found",
+                    op_aux
+                )),
+        }
+    }
+
+    pub(crate) fn process_private_statements_operations(
         params: &Params,
         statements: &[Statement],
+        merkle_proofs: &[MerkleProof],
         input_operations: &[middleware::Operation],
     ) -> Result<Vec<Operation>> {
         let mut operations = Vec::new();
@@ -259,8 +282,12 @@ impl MockMainPod {
                 .iter()
                 .map(|mid_arg| Self::find_op_arg(statements, mid_arg))
                 .collect::<Result<Vec<_>>>()?;
+
+            let mid_aux = op.aux();
+            let aux = Self::find_op_aux(merkle_proofs, &mid_aux)?;
+
             Self::pad_operation_args(params, &mut args);
-            operations.push(Operation(op.op_type(), args));
+            operations.push(Operation(op.op_type(), args, aux));
         }
         Ok(operations)
     }
@@ -269,7 +296,7 @@ impl MockMainPod {
     // previous statements, so we fill in the operations accordingly.
     /// This method assumes that the given `statements` array has been padded to
     /// `params.max_statements`.
-    fn process_public_statements_operations(
+    pub(crate) fn process_public_statements_operations(
         params: &Params,
         statements: &[Statement],
         mut operations: Vec<Operation>,
@@ -278,17 +305,22 @@ impl MockMainPod {
         operations.push(Operation(
             OperationType::Native(NativeOperation::NewEntry),
             vec![],
+            OperationAux::None,
         ));
         for i in 0..(params.max_public_statements - 1) {
             let st = &statements[offset_public_statements + i + 1];
             let mut op = if st.is_none() {
-                Operation(OperationType::Native(NativeOperation::None), vec![])
+                Operation(
+                    OperationType::Native(NativeOperation::None),
+                    vec![],
+                    OperationAux::None,
+                )
             } else {
                 let mid_arg = st.clone();
                 Operation(
                     OperationType::Native(NativeOperation::CopyStatement),
-                    // TODO
-                    vec![Self::find_op_arg(statements, &mid_arg.try_into().unwrap())?],
+                    vec![Self::find_op_arg(statements, &mid_arg.try_into()?)?],
+                    OperationAux::None,
                 )
             };
             fill_pad(&mut op.1, OperationArg::None, params.max_operation_args);
@@ -304,8 +336,21 @@ impl MockMainPod {
         // TODO: Insert a new public statement of ValueOf with `key=KEY_TYPE,
         // value=PodType::MockMainPod`
         let statements = Self::layout_statements(params, &inputs);
-        let operations =
-            Self::process_private_statements_operations(params, &statements, inputs.operations)?;
+        let merkle_proofs = inputs
+            .operations
+            .iter()
+            .flat_map(|op| match op {
+                middleware::Operation::ContainsFromEntries(_, _, _, pf) => Some(pf.clone()),
+                middleware::Operation::NotContainsFromEntries(_, _, pf) => Some(pf.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let operations = Self::process_private_statements_operations(
+            params,
+            &statements,
+            &merkle_proofs,
+            inputs.operations,
+        )?;
         let operations =
             Self::process_public_statements_operations(params, &statements, operations)?;
 
@@ -340,6 +385,7 @@ impl MockMainPod {
             public_statements,
             statements,
             operations,
+            merkle_proofs,
         })
     }
 
@@ -350,7 +396,11 @@ impl MockMainPod {
     }
 
     fn operation_none(params: &Params) -> Operation {
-        let mut op = Operation(OperationType::Native(NativeOperation::None), vec![]);
+        let mut op = Operation(
+            OperationType::Native(NativeOperation::None),
+            vec![],
+            OperationAux::None,
+        );
         fill_pad(&mut op.1, OperationArg::None, params.max_operation_args);
         op
     }
@@ -444,7 +494,10 @@ impl Pod for MockMainPod {
             .enumerate()
             .map(|(i, s)| {
                 self.operations[i]
-                    .deref(&self.statements[..input_statement_offset + i])
+                    .deref(
+                        &self.statements[..input_statement_offset + i],
+                        &self.merkle_proofs,
+                    )
                     .unwrap()
                     .check_and_log(&self.params, &s.clone().try_into().unwrap())
             })
@@ -471,6 +524,7 @@ impl Pod for MockMainPod {
     }
     fn pub_statements(&self) -> Vec<middleware::Statement> {
         // return the public statements, where when origin=SELF is replaced by origin=self.id()
+        // By convention we expect the KEY_TYPE to be the first statement
         self.statements
             .iter()
             .skip(self.offset_public_statements())
@@ -513,13 +567,18 @@ pub mod tests {
         zu_kyc_sign_pod_builders,
     };
     use crate::middleware;
+    use crate::middleware::containers::Set;
 
     #[test]
     fn test_mock_main_zu_kyc() -> Result<()> {
         let params = middleware::Params::default();
+        let sanctions_values = ["A343434340"].map(|s| crate::frontend::Value::from(s));
+        let sanction_set = crate::frontend::Value::Set(crate::frontend::containers::Set::new(
+            sanctions_values.to_vec(),
+        )?);
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
-            zu_kyc_sign_pod_builders(&params);
+            zu_kyc_sign_pod_builders(&params, &sanction_set);
         let mut signer = MockSigner {
             pk: "ZooGov".into(),
         };

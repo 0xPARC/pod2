@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use itertools::Itertools;
 use std::any::Any;
 use std::collections::HashMap;
 
@@ -11,7 +12,7 @@ use crate::middleware::{
 
 use super::primitives::signature::{PublicKey, SecretKey, Signature};
 
-pub struct Signer(SecretKey);
+pub struct Signer(pub SecretKey);
 
 impl PodSigner for Signer {
     fn sign(&mut self, _params: &Params, kvs: &HashMap<Hash, Value>) -> Result<Box<dyn Pod>> {
@@ -34,9 +35,9 @@ impl PodSigner for Signer {
 
 #[derive(Clone, Debug)]
 pub struct SignedPod {
-    id: PodId,
-    signature: Signature,
-    dict: Dictionary,
+    pub id: PodId,
+    pub signature: Signature,
+    pub dict: Dictionary,
 }
 
 impl Pod for SignedPod {
@@ -83,8 +84,15 @@ impl Pod for SignedPod {
 
     fn pub_statements(&self) -> Vec<Statement> {
         let id = self.id();
-        self.dict
-            .iter()
+        // By convention we put the KEY_TYPE first and KEY_SIGNER second
+        let mut kvs: HashMap<_, _> = self.dict.iter().collect();
+        let key_type = Value::from(hash_str(KEY_TYPE));
+        let value_type = kvs.remove(&key_type).expect("KEY_TYPE");
+        let key_signer = Value::from(hash_str(KEY_SIGNER));
+        let value_signer = kvs.remove(&key_signer).expect("KEY_SIGNER");
+        [(&key_type, value_type), (&key_signer, value_signer)]
+            .into_iter()
+            .chain(kvs.into_iter().sorted_by_key(|kv| kv.0))
             .map(|(k, v)| Statement::ValueOf(AnchoredKey(id, Hash(k.0)), *v))
             .collect()
     }
@@ -119,6 +127,7 @@ pub mod tests {
         pod.insert("dateOfBirth", 1169909384);
         pod.insert("socialSecurityNumber", "G2121210");
 
+        // TODO: Use a deterministic secret key to get deterministic tests
         let sk = SecretKey::new();
         let mut signer = Signer(sk);
         let pod = pod.sign(&mut signer).unwrap();

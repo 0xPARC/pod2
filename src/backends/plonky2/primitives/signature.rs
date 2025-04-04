@@ -1,6 +1,7 @@
 //! Proof-based signatures using Plonky2 proofs, following
 //! https://eprint.iacr.org/2024/1553 .
 use anyhow::Result;
+use lazy_static::lazy_static;
 use plonky2::{
     field::types::Sample,
     hash::{
@@ -21,23 +22,31 @@ use plonky2::{
 
 use crate::backends::plonky2::basetypes::{Proof, Value, C, D, F, VALUE_SIZE};
 
-use lazy_static::lazy_static;
+pub use super::signature_circuit::*;
 
 lazy_static! {
-    static ref PP: ProverParams = Signature::prover_params().unwrap();
-    static ref VP: VerifierParams = Signature::verifier_params().unwrap();
+    /// Signature prover parameters
+    pub static ref PP: ProverParams = Signature::prover_params().unwrap();
+    /// Signature verifier parameters
+    pub static ref VP: VerifierParams = Signature::verifier_params().unwrap();
+
+    /// DUMMY_SIGNATURE is used for conditionals where we want to use a `selector` to enable or
+    /// disable signature verification.
+    pub static ref DUMMY_SIGNATURE: Signature = dummy_signature().unwrap();
+    /// DUMMY_PUBLIC_INPUTS accompanies the DUMMY_SIGNATURE.
+    pub static ref DUMMY_PUBLIC_INPUTS: Vec<F> = dummy_public_inputs().unwrap();
 }
 
 pub struct ProverParams {
     prover: ProverCircuitData<F, C, D>,
-    circuit: SignatureCircuit,
+    circuit: SignatureInternalCircuit,
 }
 
 #[derive(Clone, Debug)]
-pub struct VerifierParams(VerifierCircuitData<F, C, D>);
+pub struct VerifierParams(pub(crate) VerifierCircuitData<F, C, D>);
 
 #[derive(Clone, Debug)]
-pub struct SecretKey(Value);
+pub struct SecretKey(pub(crate) Value);
 
 #[derive(Clone, Debug)]
 pub struct PublicKey(pub(crate) Value);
@@ -90,12 +99,12 @@ impl Signature {
         Ok((pp, vp))
     }
 
-    fn builder() -> Result<(CircuitBuilder<F, D>, SignatureCircuit)> {
+    fn builder() -> Result<(CircuitBuilder<F, D>, SignatureInternalCircuit)> {
         // notice that we use the 'zk' config
         let config = CircuitConfig::standard_recursion_zk_config();
 
         let mut builder = CircuitBuilder::<F, D>::new(config);
-        let circuit = SignatureCircuit::add_targets(&mut builder)?;
+        let circuit = SignatureInternalCircuit::add_targets(&mut builder)?;
 
         Ok((builder, circuit))
     }
@@ -113,21 +122,35 @@ impl Signature {
     }
 }
 
-/// The SignatureCircuit implements the circuit used for the proof of the
-/// argument described at https://eprint.iacr.org/2024/1553.
+fn dummy_public_inputs() -> Result<Vec<F>> {
+    let sk = SecretKey(Value::from(0));
+    let pk = sk.public_key();
+    let msg = Value::from(0);
+    let s = Value(PoseidonHash::hash_no_pad(&[pk.0 .0, msg.0].concat()).elements);
+    Ok([pk.0 .0, msg.0, s.0].concat())
+}
+
+fn dummy_signature() -> Result<Signature> {
+    let sk = SecretKey(Value::from(0));
+    let msg = Value::from(0);
+    sk.sign(msg)
+}
+
+/// The SignatureInternalCircuit implements the circuit used for the proof of
+/// the argument described at https://eprint.iacr.org/2024/1553.
 ///
 /// The circuit proves that for the given public inputs (pk, msg, s), the Prover
 /// knows the secret (sk) such that:
 /// i) pk == H(sk)
 /// ii) s == H(pk, msg)
-struct SignatureCircuit {
+struct SignatureInternalCircuit {
     sk_targ: Vec<Target>,
     pk_targ: HashOutTarget,
     msg_targ: Vec<Target>,
     s_targ: HashOutTarget,
 }
 
-impl SignatureCircuit {
+impl SignatureInternalCircuit {
     /// creates the targets and defines the logic of the circuit
     fn add_targets(builder: &mut CircuitBuilder<F, D>) -> Result<Self> {
         // create the targets
@@ -182,7 +205,6 @@ pub mod tests {
 
     use super::*;
 
-    // Note: this test must be run with the `--release` flag.
     #[test]
     fn test_signature() -> Result<()> {
         let sk = SecretKey::new();
@@ -200,6 +222,16 @@ pub mod tests {
         let msg_2 = Value::from(Hash::from("message"));
         let sig2 = sk.sign(msg_2)?;
         sig2.verify(&pk, msg_2)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_dummy_signature() -> Result<()> {
+        let sk = SecretKey(Value::from(0));
+        let pk = sk.public_key();
+        let msg = Value::from(0);
+        DUMMY_SIGNATURE.clone().verify(&pk, msg)?;
 
         Ok(())
     }

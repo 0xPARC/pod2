@@ -7,10 +7,10 @@ use std::iter::zip;
 use std::sync::Arc;
 use std::{fmt, hash as h, iter};
 
-use crate::middleware::{self, hash_str, HashOrWildcard, NativePredicate, Params, PodId, ToFields};
+use crate::middleware::{self, hash_str, HashOrWildcard, Params, PodId, ToFields};
 use crate::util::hashmap_insert_no_dupe;
 
-use super::{AnchoredKey, Origin, Statement, StatementArg, Value};
+use super::{AnchoredKey, NativePredicate, Origin, Statement, StatementArg, Value};
 
 #[derive(Clone, Debug, PartialEq, Eq, h::Hash, Serialize, Deserialize, JsonSchema)]
 /// Argument to a statement template
@@ -140,7 +140,7 @@ impl From<NativePredicate> for Predicate {
 impl From<Predicate> for middleware::Predicate {
     fn from(v: Predicate) -> Self {
         match v {
-            Predicate::Native(p) => p.into(),
+            Predicate::Native(p) => middleware::Predicate::Native(p.into()),
             Predicate::BatchSelf(i) => middleware::Predicate::BatchSelf(i),
             Predicate::Custom(CustomPredicateRef {
                 batch: pb,

@@ -24,6 +24,10 @@ serde_json = "1.0.140"
 base64 = "0.22.1"
 schemars = "1.0.0-alpha.17"
 
+# Uncomment for debugging with https://github.com/ed255/plonky2/ at branch `feat/debug`.  The repo directory needs to be checked out next to the pod2 repo directory.
+# [patch."https://github.com/0xPolygonZero/plonky2"]
+# plonky2 = { path = "../plonky2/plonky2" }
+
 [features]
 default = ["backend_plonky2"]
 backend_plonky2 = ["plonky2"]

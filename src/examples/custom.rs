@@ -4,10 +4,10 @@ use anyhow::Result;
 
 use crate::{
     frontend::{
-        literal, CustomPredicateBatch, CustomPredicateBatchBuilder, CustomPredicateRef, Predicate,
-        StatementTmplBuilder, Value,
+        literal, CustomPredicateBatch, CustomPredicateBatchBuilder, CustomPredicateRef,
+        NativePredicate, Predicate, StatementTmplBuilder, Value,
     },
-    middleware::{self, NativePredicate, Params, PodType, KEY_SIGNER, KEY_TYPE},
+    middleware::{self, Params, PodType, KEY_SIGNER, KEY_TYPE},
 };
 
 use NativePredicate as NP;

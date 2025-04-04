@@ -153,6 +153,7 @@ pub fn transform_value_schema(schema: &mut Schema) {
 
 #[cfg(test)]
 mod tests {
+    use anyhow::Result;
     use schemars::generate::SchemaSettings;
 
     use crate::{
@@ -264,11 +265,13 @@ mod tests {
     }
 
     #[test]
-    fn test_main_pod_serialization() {
+    fn test_main_pod_serialization() -> Result<()> {
         let params = middleware::Params::default();
+        let sanctions_values = vec!["A343434340".into()];
+        let sanction_set = Value::Set(Set::new(sanctions_values)?);
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
-            zu_kyc_sign_pod_builders(&params);
+            zu_kyc_sign_pod_builders(&params, &sanction_set);
         let mut signer = MockSigner {
             pk: "ZooGov".into(),
         };
@@ -293,10 +296,9 @@ mod tests {
 
         assert_eq!(kyc_pod.public_statements, deserialized.public_statements);
         assert_eq!(kyc_pod.pod.id(), deserialized.pod.id());
-        assert_eq!(
-            kyc_pod.pod.verify().is_ok(),
-            deserialized.pod.verify().is_ok()
-        );
+        assert_eq!(kyc_pod.pod.verify()?, deserialized.pod.verify()?);
+
+        Ok(())
     }
 
     #[test]

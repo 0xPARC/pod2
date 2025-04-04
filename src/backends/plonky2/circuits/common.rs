@@ -4,10 +4,9 @@ use crate::backends::plonky2::basetypes::D;
 use crate::backends::plonky2::mock::mainpod::Statement;
 use crate::backends::plonky2::mock::mainpod::{Operation, OperationArg};
 use crate::middleware::{
-    NativeOperation, NativePredicate, Params, Predicate, StatementArg, ToFields, Value, F,
-    HASH_SIZE, VALUE_SIZE,
+    NativeOperation, NativePredicate, Params, Predicate, StatementArg, ToFields, Value,
+    EMPTY_VALUE, F, HASH_SIZE, OPERATION_ARG_F_LEN, STATEMENT_ARG_F_LEN, VALUE_SIZE,
 };
-use crate::middleware::{OPERATION_ARG_F_LEN, STATEMENT_ARG_F_LEN};
 use anyhow::Result;
 use plonky2::field::extension::Extendable;
 use plonky2::field::types::{Field, PrimeField64};
@@ -52,9 +51,54 @@ impl ValueTarget {
 }
 
 #[derive(Clone)]
+pub struct StatementArgTarget {
+    pub elements: [Target; STATEMENT_ARG_F_LEN],
+}
+
+impl StatementArgTarget {
+    pub fn set_targets(
+        &self,
+        pw: &mut PartialWitness<F>,
+        params: &Params,
+        arg: &StatementArg,
+    ) -> Result<()> {
+        pw.set_target_arr(&self.elements, &arg.to_fields(params))
+    }
+
+    fn new(first: ValueTarget, second: ValueTarget) -> Self {
+        let elements: Vec<_> = first
+            .elements
+            .into_iter()
+            .chain(second.elements.into_iter())
+            .collect();
+        StatementArgTarget {
+            elements: elements.try_into().expect("size STATEMENT_ARG_F_LEN"),
+        }
+    }
+
+    pub fn none(builder: &mut CircuitBuilder<F, D>) -> Self {
+        let empty = builder.constant_value(EMPTY_VALUE);
+        Self::new(empty.clone(), empty)
+    }
+
+    pub fn literal(builder: &mut CircuitBuilder<F, D>, value: &ValueTarget) -> Self {
+        let empty = builder.constant_value(EMPTY_VALUE);
+        Self::new(value.clone(), empty)
+    }
+
+    pub fn anchored_key(
+        _builder: &mut CircuitBuilder<F, D>,
+        pod_id: &ValueTarget,
+        key: &ValueTarget,
+    ) -> Self {
+        Self::new(pod_id.clone(), key.clone())
+    }
+}
+
+#[derive(Clone)]
 pub struct StatementTarget {
     pub predicate: [Target; Params::predicate_size()],
-    pub args: Vec<[Target; STATEMENT_ARG_F_LEN]>,
+    pub args: Vec<StatementArgTarget>,
 }
 
 impl StatementTarget {
@@ -62,18 +106,16 @@ impl StatementTarget {
         builder: &mut CircuitBuilder<F, D>,
         params: &Params,
         predicate: NativePredicate,
-        args: &[[Target; STATEMENT_ARG_F_LEN]],
+        args: &[StatementArgTarget],
     ) -> Self {
         let predicate_vec = builder.constants(&Predicate::Native(predicate).to_fields(params));
         Self {
             predicate: array::from_fn(|i| predicate_vec[i]),
             args: args
                 .iter()
-                .map(|arg| *arg)
-                .chain(
-                    iter::repeat([builder.zero(); STATEMENT_ARG_F_LEN])
-                        .take(params.max_statement_args - args.len()),
-                )
+                .cloned()
+                .chain(iter::repeat_with(|| StatementArgTarget::none(builder)))
+                .take(params.max_statement_args)
                 .collect(),
         }
     }
@@ -92,7 +134,7 @@ impl StatementTarget {
             .take(params.max_statement_args)
             .enumerate()
         {
-            pw.set_target_arr(&self.args[i], &arg.to_fields(params))?;
+            self.args[i].set_targets(pw, params, arg)?;
         }
         Ok(())
     }
@@ -159,7 +201,7 @@ impl Flattenable for StatementTarget {
     fn flatten(&self) -> Vec<Target> {
         self.predicate
             .iter()
-            .chain(self.args.iter().flatten())
+            .chain(self.args.iter().flat_map(|a| &a.elements))
             .cloned()
             .collect()
     }
@@ -172,7 +214,11 @@ impl Flattenable for StatementTarget {
         );
         let predicate: [Target; Params::predicate_size()] = array::from_fn(|i| v[i]);
         let args = (0..num_args)
-            .map(|i| array::from_fn(|j| v[Params::predicate_size() + i * STATEMENT_ARG_F_LEN + j]))
+            .map(|i| StatementArgTarget {
+                elements: array::from_fn(|j| {
+                    v[Params::predicate_size() + i * STATEMENT_ARG_F_LEN + j]
+                }),
+            })
             .collect();
 
         Self { predicate, args }
@@ -192,7 +238,7 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
 
     // Convenience methods for checking values.
     /// Checks whether `xs` is right-padded with 0s so as to represent a `Value`.
-    fn statement_arg_is_value(&mut self, xs: &[Target]) -> BoolTarget;
+    fn statement_arg_is_value(&mut self, arg: &StatementArgTarget) -> BoolTarget;
     /// Checks whether `x < y` if `b` is true. This involves checking
     /// that `x` and `y` each consist of two `u32` limbs.
     fn assert_less_if(&mut self, b: BoolTarget, x: ValueTarget, y: ValueTarget);
@@ -231,7 +277,9 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
         StatementTarget {
             predicate: self.add_virtual_target_arr(),
             args: (0..params.max_statement_args)
-                .map(|_| self.add_virtual_target_arr())
+                .map(|_| StatementArgTarget {
+                    elements: self.add_virtual_target_arr(),
+                })
                 .collect(),
         }
     }
@@ -272,11 +320,11 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
         })
     }
 
-    fn statement_arg_is_value(&mut self, xs: &[Target]) -> BoolTarget {
+    fn statement_arg_is_value(&mut self, arg: &StatementArgTarget) -> BoolTarget {
         let zeros = iter::repeat(self.zero())
             .take(STATEMENT_ARG_F_LEN - VALUE_SIZE)
             .collect::<Vec<_>>();
-        self.is_equal_slice(&xs[VALUE_SIZE..], &zeros)
+        self.is_equal_slice(&arg.elements[VALUE_SIZE..], &zeros)
     }
 
     fn assert_less_if(&mut self, b: BoolTarget, x: ValueTarget, y: ValueTarget) {
