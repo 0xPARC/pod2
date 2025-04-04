@@ -35,8 +35,9 @@ pub struct MerkleProofGadget {
     pub max_depth: usize,
 }
 
-pub struct MerkleProofTarget {
-    max_depth: usize,
+#[derive(Clone)]
+pub struct MerkleClaimAndProofTarget {
+    pub(crate) max_depth: usize,
     // `enabled` determines if the merkleproof verification is enabled
     pub(crate) enabled: BoolTarget,
     pub(crate) root: HashOutTarget,
@@ -51,7 +52,7 @@ pub struct MerkleProofTarget {
 
 impl MerkleProofGadget {
     /// creates the targets and defines the logic of the circuit
-    pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MerkleProofTarget> {
+    pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MerkleClaimAndProofTarget> {
         let enabled = builder.add_virtual_bool_target_safe();
         let root = builder.add_virtual_hash();
         let key = builder.add_virtual_value();
@@ -133,7 +134,7 @@ impl MerkleProofGadget {
             builder.connect(computed_root[j], expected_root[j]);
         }
 
-        Ok(MerkleProofTarget {
+        Ok(MerkleClaimAndProofTarget {
             max_depth: self.max_depth,
             enabled,
             existence,
@@ -148,7 +149,7 @@ impl MerkleProofGadget {
     }
 }
 
-impl MerkleProofTarget {
+impl MerkleClaimAndProofTarget {
     /// assigns the given values to the targets
     pub fn set_targets(
         &self,

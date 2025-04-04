@@ -23,13 +23,21 @@ pub struct MerkleTree {
 impl MerkleTree {
     /// builds a new `MerkleTree` where the leaves contain the given key-values
     pub fn new(max_depth: usize, kvs: &HashMap<Value, Value>) -> Result<Self> {
-        let mut root = Node::Intermediate(Intermediate::empty());
+        // Construct leaves.
+        let mut leaves: Vec<_> = kvs
+            .iter()
+            .map(|(k, v)| Leaf::new(max_depth, *k, *v))
+            .collect::<Result<_>>()?;
 
-        for (k, v) in kvs.iter() {
-            let leaf = Leaf::new(max_depth, *k, *v)?;
+        // Start with a leaf or conclude with an empty node as root.
+        let mut root = leaves.pop().map(|l| Node::Leaf(l)).unwrap_or(Node::None);
+
+        // Iterate over remaining leaves (if any) and add them.
+        for leaf in leaves.into_iter() {
             root.add_leaf(0, max_depth, leaf)?;
         }
 
+        // Fill in hashes.
         let _ = root.compute_hash();
         Ok(Self { max_depth, root })
     }

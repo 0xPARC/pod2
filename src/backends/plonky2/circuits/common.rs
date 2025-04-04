@@ -3,14 +3,16 @@
 use crate::backends::plonky2::basetypes::D;
 use crate::backends::plonky2::mock::mainpod::Statement;
 use crate::backends::plonky2::mock::mainpod::{Operation, OperationArg};
+use crate::backends::plonky2::primitives::merkletree::MerkleClaimAndProofTarget;
 use crate::middleware::{
     NativeOperation, NativePredicate, Params, Predicate, StatementArg, ToFields, Value,
-    EMPTY_VALUE, F, HASH_SIZE, OPERATION_ARG_F_LEN, STATEMENT_ARG_F_LEN, VALUE_SIZE,
+    EMPTY_VALUE, F, HASH_SIZE, OPERATION_ARG_F_LEN, OPERATION_AUX_F_LEN, STATEMENT_ARG_F_LEN,
+    VALUE_SIZE,
 };
 use anyhow::Result;
 use plonky2::field::extension::Extendable;
 use plonky2::field::types::{Field, PrimeField64};
-use plonky2::hash::hash_types::RichField;
+use plonky2::hash::hash_types::{HashOutTarget, RichField, NUM_HASH_OUT_ELTS};
 use plonky2::iop::target::{BoolTarget, Target};
 use plonky2::iop::witness::{PartialWitness, WitnessWrite};
 use plonky2::plonk::circuit_builder::CircuitBuilder;
@@ -155,6 +157,7 @@ impl StatementTarget {
 pub struct OperationTarget {
     pub op_type: [Target; Params::operation_type_size()],
     pub args: Vec<[Target; OPERATION_ARG_F_LEN]>,
+    pub aux: [Target; OPERATION_AUX_F_LEN],
 }
 
 impl OperationTarget {
@@ -174,6 +177,7 @@ impl OperationTarget {
         {
             pw.set_target_arr(&self.args[i], &arg.to_fields(params))?;
         }
+        pw.set_target_arr(&self.aux, &op.aux().to_fields(params))?;
         Ok(())
     }
 
@@ -195,6 +199,56 @@ impl OperationTarget {
 pub trait Flattenable {
     fn flatten(&self) -> Vec<Target>;
     fn from_flattened(vs: &[Target]) -> Self;
+}
+
+/// For the purpose of op verification, we need only look up the
+/// Merkle claim rather than the Merkle proof since it is verified
+/// elsewhere.
+pub struct MerkleClaimTarget {
+    pub(crate) enabled: BoolTarget,
+    pub(crate) root: HashOutTarget,
+    pub(crate) key: ValueTarget,
+    pub(crate) value: ValueTarget,
+    pub(crate) existence: BoolTarget,
+}
+
+impl From<MerkleClaimAndProofTarget> for MerkleClaimTarget {
+    fn from(pf: MerkleClaimAndProofTarget) -> Self {
+        Self {
+            enabled: pf.enabled,
+            root: pf.root,
+            key: pf.key,
+            value: pf.value,
+            existence: pf.existence,
+        }
+    }
+}
+
+impl Flattenable for MerkleClaimTarget {
+    fn flatten(&self) -> Vec<Target> {
+        [
+            vec![self.enabled.target],
+            self.root.elements.to_vec(),
+            self.key.elements.to_vec(),
+            self.value.elements.to_vec(),
+            vec![self.existence.target],
+        ]
+        .concat()
+    }
+
+    fn from_flattened(vs: &[Target]) -> Self {
+        Self {
+            enabled: BoolTarget::new_unsafe(vs[0]),
+            root: HashOutTarget::from_vec((&vs[1..1 + NUM_HASH_OUT_ELTS]).to_vec()),
+            key: ValueTarget::from_slice(
+                &vs[1 + NUM_HASH_OUT_ELTS..1 + NUM_HASH_OUT_ELTS + VALUE_SIZE],
+            ),
+            value: ValueTarget::from_slice(
+                &vs[1 + NUM_HASH_OUT_ELTS + VALUE_SIZE..1 + NUM_HASH_OUT_ELTS + 2 * VALUE_SIZE],
+            ),
+            existence: BoolTarget::new_unsafe(vs[1 + NUM_HASH_OUT_ELTS + 2 * VALUE_SIZE]),
+        }
+    }
 }
 
 impl Flattenable for StatementTarget {
@@ -290,6 +344,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
             args: (0..params.max_operation_args)
                 .map(|_| self.add_virtual_target_arr())
                 .collect(),
+            aux: self.add_virtual_target_arr(),
         }
     }
 

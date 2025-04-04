@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::iter;
 
+use super::Hash;
 use super::{CustomPredicateRef, NativePredicate, Statement, StatementArg, ToFields, F};
+use crate::middleware::EMPTY_HASH;
+use crate::middleware::EMPTY_VALUE;
 use crate::{
     backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree},
     middleware::{AnchoredKey, Params, Predicate, Value, SELF},
