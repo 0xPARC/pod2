@@ -5,11 +5,11 @@ use custom::{eth_dos_batch, eth_friend_batch};
 use std::collections::HashMap;
 
 use crate::backends::plonky2::mock::signedpod::MockSigner;
+use crate::frontend::CustomPredicateRef;
 use crate::frontend::{
     containers::{Dictionary, Set},
     MainPodBuilder, SignedPod, SignedPodBuilder, Statement, Value,
 };
-use crate::middleware::CustomPredicateRef;
 use crate::middleware::{Params, PodType, KEY_SIGNER, KEY_TYPE};
 use crate::op;
 
@@ -94,11 +94,11 @@ pub fn eth_dos_pod_builder(
     bob_pubkey: &Value,
 ) -> Result<MainPodBuilder> {
     // Will need ETH friend and ETH DoS custom predicate batches.
-    let eth_friend = CustomPredicateRef(eth_friend_batch(params)?, 0);
+    let eth_friend = CustomPredicateRef::new(eth_friend_batch(params)?, 0);
     let eth_dos_batch = eth_dos_batch(params)?;
-    let eth_dos_base = CustomPredicateRef(eth_dos_batch.clone(), 0);
-    let eth_dos_ind = CustomPredicateRef(eth_dos_batch.clone(), 1);
-    let eth_dos = CustomPredicateRef(eth_dos_batch.clone(), 2);
+    let eth_dos_base = CustomPredicateRef::new(eth_dos_batch.clone(), 0);
+    let eth_dos_ind = CustomPredicateRef::new(eth_dos_batch.clone(), 1);
+    let eth_dos = CustomPredicateRef::new(eth_dos_batch.clone(), 2);
 
     // ETHDoS POD builder
     let mut alice_bob_ethdos = MainPodBuilder::new(params);

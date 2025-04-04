@@ -1,10 +1,9 @@
 use std::fmt;
 
-use super::{NativePredicate, Predicate, SignedPod, Statement, Value};
-use crate::{
-    backends::plonky2::primitives::merkletree::MerkleProof,
-    middleware::{self, OperationAux},
-};
+use serde::{Deserialize, Serialize};
+
+use super::{CustomPredicateRef, NativePredicate, Predicate, SignedPod, Statement, Value};
+use crate::middleware::{self, OperationAux};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OperationArg {
@@ -71,13 +70,13 @@ impl<V: Into<Value>> From<(&str, V)> for OperationArg {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperationType {
     Native(NativeOperation),
-    Custom(middleware::CustomPredicateRef),
+    Custom(CustomPredicateRef),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NativeOperation {
     None = 0,
     NewEntry = 1,
@@ -131,7 +130,7 @@ impl TryFrom<OperationType> for middleware::OperationType {
                 MwOT::Native(MwNO::NotContainsFromEntries)
             }
             FeOT::Native(FeNO::ArrayContainsFromEntries) => MwOT::Native(MwNO::ContainsFromEntries),
-            FeOT::Custom(mw_cpr) => MwOT::Custom(mw_cpr),
+            FeOT::Custom(mw_cpr) => MwOT::Custom(mw_cpr.into()),
         };
         Ok(mw_ot)
     }

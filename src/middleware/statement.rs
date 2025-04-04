@@ -5,9 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::{fmt, iter};
 use strum_macros::FromRepr;
 
-use super::{
-    AnchoredKey, CustomPredicateRef, Params, Predicate, ToFields, Value, F, HASH_SIZE, VALUE_SIZE,
-};
+use super::{AnchoredKey, CustomPredicateRef, Params, Predicate, ToFields, Value, F, VALUE_SIZE};
 
 // hash(KEY_SIGNER) = [2145458785152392366, 15113074911296146791, 15323228995597834291, 11804480340100333725]
 pub const KEY_SIGNER: &str = "_signer";

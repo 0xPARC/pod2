@@ -8,13 +8,12 @@ use crate::middleware::{
 use crate::middleware::{KEY_SIGNER, KEY_TYPE};
 use anyhow::{anyhow, Error, Result};
 use containers::{Array, Dictionary, Set};
-use env_logger;
 use itertools::Itertools;
-use log::error;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::convert::From;
+use std::hash::Hasher;
 use std::{fmt, hash as h};
 
 use crate::middleware::{hash_value, OperationAux, EMPTY_VALUE};
@@ -26,6 +25,7 @@ mod predicate;
 mod serialization;
 mod statement;
 pub use custom::*;
+pub use custom::{CustomPredicateRef, Predicate};
 pub use operation::*;
 pub use predicate::*;
 pub use statement::*;
@@ -41,13 +41,12 @@ pub enum PodClass {
 // An Origin, which represents a reference to an ancestor POD.
 #[derive(Clone, Debug, PartialEq, Eq, h::Hash, Default, Serialize, Deserialize, JsonSchema)]
 pub struct Origin {
-    pub pod_class: PodClass,
     pub pod_id: PodId,
 }
 
 impl Origin {
-    pub fn new(pod_class: PodClass, pod_id: PodId) -> Self {
-        Self { pod_class, pod_id }
+    pub fn new(pod_id: PodId) -> Self {
+        Self { pod_id }
     }
 }
 
@@ -85,6 +84,24 @@ pub enum Value {
     #[serde(untagged)]
     #[schemars(skip)]
     Bool(bool),
+}
+
+impl h::Hash for Value {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // Hash the discriminant first
+        std::mem::discriminant(self).hash(state);
+
+        // Hash the inner values only for types that implement Hash
+        match self {
+            Value::String(s) => s.hash(state),
+            Value::Int(i) => i.hash(state),
+            Value::Bool(b) => b.hash(state),
+            Value::Dictionary(d) => d.middleware_dict().commitment().hash(state),
+            Value::Set(s) => s.middleware_set().commitment().hash(state),
+            Value::Array(a) => a.middleware_array().commitment().hash(state),
+            Value::Raw(r) => r.hash(state),
+        }
+    }
 }
 
 impl From<&str> for Value {
@@ -256,7 +273,7 @@ impl SignedPod {
         self.pod.id()
     }
     pub fn origin(&self) -> Origin {
-        Origin::new(PodClass::Signed, self.id())
+        Origin::new(self.id())
     }
     pub fn verify(&self) -> Result<()> {
         self.pod.verify()
@@ -299,7 +316,6 @@ pub struct MainPodBuilder {
     // Internal state
     const_cnt: usize,
     key_table: HashMap<Hash, String>,
-    pod_class_table: HashMap<PodId, PodClass>,
 }
 
 impl fmt::Display for MainPodBuilder {
@@ -334,7 +350,6 @@ impl MainPodBuilder {
             public_statements: Vec::new(),
             const_cnt: 0,
             key_table: HashMap::new(),
-            pod_class_table: HashMap::from_iter([(SELF, PodClass::Main)]),
         }
     }
     pub fn add_signed_pod(&mut self, pod: &SignedPod) {
@@ -343,25 +358,19 @@ impl MainPodBuilder {
         pod.kvs.iter().for_each(|(key, _)| {
             self.key_table.insert(hash_str(key), key.clone());
         });
-        // Add POD class to POD class table.
-        self.pod_class_table.insert(pod.id(), PodClass::Signed);
     }
     pub fn add_main_pod(&mut self, pod: MainPod) {
-        // Add POD class to POD class table.
-        self.pod_class_table.insert(pod.id(), PodClass::Main);
         // Add key-hash and POD ID-class correspondences to tables.
         pod.public_statements
             .iter()
             .flat_map(|s| &s.args)
             .flat_map(|arg| match arg {
-                StatementArg::Key(AnchoredKey {
-                    origin: Origin { pod_class, pod_id },
-                    key,
-                }) => Some((*pod_id, pod_class.clone(), hash_str(key), key.clone())),
+                StatementArg::Key(AnchoredKey { origin: _, key }) => {
+                    Some((hash_str(key), key.clone()))
+                }
                 _ => None,
             })
-            .for_each(|(pod_id, pod_class, hash, key)| {
-                self.pod_class_table.insert(pod_id, pod_class);
+            .for_each(|(hash, key)| {
                 self.key_table.insert(hash, key);
             });
         self.input_main_pods.push(pod);
@@ -396,7 +405,7 @@ impl MainPodBuilder {
                 }
                 OperationArg::Entry(k, v) => {
                     st_args.push(StatementArg::Key(AnchoredKey::new(
-                        Origin::new(PodClass::Main, SELF),
+                        Origin::new(SELF),
                         k.clone(),
                     )));
                     st_args.push(StatementArg::Literal(v.clone()))
@@ -652,7 +661,7 @@ impl MainPodBuilder {
                 // All args should be statements to be pattern matched against statement templates.
                 let args = args.iter().map(
                     |a| match a {
-                        OperationArg::Statement(s) => Ok(middleware::Statement::try_from(s.clone())?),
+                        OperationArg::Statement(s) => Ok(s.clone()),
                             _ => Err(anyhow!("Invalid argument {} to operation corresponding to custom predicate {:?}.", a, cpr))
                     }
                 ).collect::<Result<Vec<_>>>()?;
@@ -672,15 +681,15 @@ impl MainPodBuilder {
                     .chunks(2)
                     .map(|chunk| {
                         Ok(StatementArg::Key(AnchoredKey::new(
-                            Origin::new(
-                                self.pod_class_table
-                                    .get(&PodId(chunk[0].into()))
-                                    .cloned()
-                                    .ok_or(anyhow!("Missing POD class value."))?,
-                                PodId(chunk[0].into()),
-                            ),
+                            Origin::new(PodId(match chunk[0] {
+                                Value::Raw(v) => v.try_into()?,
+                                _ => return Err(anyhow!("Invalid POD class value.")),
+                            })),
                             self.key_table
-                                .get(&chunk[1].into())
+                                .get(&match &chunk[1] {
+                                    Value::String(s) => hash_str(s.as_str()),
+                                    _ => return Err(anyhow!("Invalid key value.")),
+                                })
                                 .cloned()
                                 .ok_or(anyhow!("Missing key corresponding to hash."))?,
                         )))
@@ -768,7 +777,7 @@ impl MainPodBuilder {
                     predicate: Predicate::Native(NativePredicate::ValueOf),
                     args: vec![
                         StatementArg::Key(AnchoredKey::new(
-                            Origin::new(PodClass::Main, pod_id),
+                            Origin::new(pod_id),
                             KEY_TYPE.to_string(),
                         )),
                         StatementArg::Literal(value.into()),
@@ -788,14 +797,10 @@ impl MainPodBuilder {
                     .into_iter()
                     .map(|arg| match arg {
                         StatementArg::Key(AnchoredKey {
-                            origin:
-                                Origin {
-                                    pod_class: class,
-                                    pod_id: id,
-                                },
+                            origin: Origin { pod_id: id },
                             key,
                         }) if id == SELF => {
-                            StatementArg::Key(AnchoredKey::new(Origin::new(class, pod_id), key))
+                            StatementArg::Key(AnchoredKey::new(Origin::new(pod_id), key))
                         }
                         _ => arg,
                     })
@@ -839,7 +844,7 @@ impl MainPod {
         self.pod.id()
     }
     pub fn origin(&self) -> Origin {
-        Origin::new(PodClass::Main, self.id())
+        Origin::new(self.id())
     }
 }
 
@@ -1020,9 +1025,9 @@ impl MainPodCompiler {
         // TODO: Take Merkle proof into account.
         let mop_args =
             op.1.iter()
-                .flat_map(|arg| self.compile_op_arg(arg).map(|op_arg| Ok(op_arg)))
-                .collect::<Result<Vec<_>>>()?;
-        middleware::Operation::op(mop_code, &mop_args, &op.2)
+                .flat_map(|arg| self.compile_op_arg(arg).map(|s| Ok(s.try_into()?)))
+                .collect::<Result<Vec<middleware::Statement>>>()?;
+        middleware::Operation::op(mop_code.into(), &mop_args, &op.2)
     }
 
     fn compile_st_op(&mut self, st: &Statement, op: &Operation, params: &Params) -> Result<()> {
@@ -1340,7 +1345,7 @@ pub mod tests {
             vec![OperationArg::Statement(st1), OperationArg::Statement(st2)],
             OperationAux::None,
         );
-        let st3 = builder.op(true, op_eq3);
+        builder.op(true, op_eq3).unwrap();
 
         let mut prover = MockProver {};
         let pod = builder.prove(&mut prover, &params).unwrap();
@@ -1440,10 +1445,7 @@ pub mod tests {
             Statement::new(
                 Predicate::Native(NativePredicate::ValueOf),
                 vec![
-                    StatementArg::Key(AnchoredKey::new(
-                        Origin::new(PodClass::Main, SELF),
-                        "a".into(),
-                    )),
+                    StatementArg::Key(AnchoredKey::new(Origin::new(SELF), "a".into())),
                     StatementArg::Literal(Value::Int(3)),
                 ],
             ),
@@ -1457,10 +1459,7 @@ pub mod tests {
             Statement::new(
                 Predicate::Native(NativePredicate::ValueOf),
                 vec![
-                    StatementArg::Key(AnchoredKey::new(
-                        Origin::new(PodClass::Main, SELF),
-                        "a".into(),
-                    )),
+                    StatementArg::Key(AnchoredKey::new(Origin::new(SELF), "a".into())),
                     StatementArg::Literal(Value::Int(28)),
                 ],
             ),
@@ -1479,25 +1478,19 @@ pub mod tests {
         // right now the mock prover catches this when it calls compile()
         let params = Params::default();
         let mut builder = MainPodBuilder::new(&params);
-        let self_a = AnchoredKey::new(Origin::new(PodClass::Main, SELF), "a".into());
-        let self_b = AnchoredKey::new(Origin::new(PodClass::Main, SELF), "b".into());
+        let self_a = AnchoredKey::new(Origin::new(SELF), "a".into());
+        let self_b = AnchoredKey::new(Origin::new(SELF), "b".into());
         let value_of_a = Statement::new(
             Predicate::Native(NativePredicate::ValueOf),
             vec![
-                StatementArg::Key(AnchoredKey::new(
-                    Origin::new(PodClass::Main, SELF),
-                    "a".into(),
-                )),
+                StatementArg::Key(self_a.clone()),
                 StatementArg::Literal(Value::Int(3)),
             ],
         );
         let value_of_b = Statement::new(
             Predicate::Native(NativePredicate::ValueOf),
             vec![
-                StatementArg::Key(AnchoredKey::new(
-                    Origin::new(PodClass::Main, SELF),
-                    "b".into(),
-                )),
+                StatementArg::Key(self_b.clone()),
                 StatementArg::Literal(Value::Int(27)),
             ],
         );

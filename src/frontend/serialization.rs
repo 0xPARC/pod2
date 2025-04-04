@@ -12,6 +12,7 @@ use crate::middleware::PodId;
 use super::{MainPod, SignedPod, Value};
 
 #[derive(Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "SignedPod")]
 pub struct SignedPodHelper {
     entries: HashMap<String, Value>,
     proof: String,
@@ -54,6 +55,7 @@ impl From<SignedPod> for SignedPodHelper {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "MainPod")]
 pub struct MainPodHelper {
     public_statements: Vec<Statement>,
     proof: String,
@@ -152,6 +154,7 @@ pub fn transform_value_schema(schema: &mut Schema) {
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
+    use schemars::generate::SchemaSettings;
 
     use crate::{
         backends::plonky2::mock::{mainpod::MockProver, signedpod::MockSigner},
@@ -296,5 +299,18 @@ mod tests {
         assert_eq!(kyc_pod.pod.verify()?, deserialized.pod.verify()?);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_schema() {
+        let generator = SchemaSettings::draft07().into_generator();
+        let mainpod_schema = generator.clone().into_root_schema_for::<MainPodHelper>();
+        let signedpod_schema = generator.into_root_schema_for::<SignedPodHelper>();
+
+        println!("{}", serde_json::to_string_pretty(&mainpod_schema).unwrap());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&signedpod_schema).unwrap()
+        );
     }
 }
