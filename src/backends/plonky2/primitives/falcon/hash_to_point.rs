@@ -1,31 +1,39 @@
 //! Fork from https://github.com/0xPolygonMiden/crypto/tree/aa45474377e978050958958d75688e7a8d46b628/miden-crypto/src/dsa/rpo_falcon512
 //!
-use alloc::vec::Vec;
-
-use num::Zero;
-
-use super::{math::FalconFelt, Nonce, Polynomial, Rpo256, Word, MODULUS, N, ZERO};
+// use alloc::vec::Vec;
 
 // HASH-TO-POINT FUNCTIONS
 // ================================================================================================
+use core::ops::Range;
+
+use num::Zero;
+use plonky2::{
+    field::types::Field,
+    hash::{
+        hashing::PlonkyPermutation,
+        poseidon::{Poseidon, PoseidonHash, PoseidonPermutation},
+    },
+};
+
+use super::{math::FalconFelt, Nonce, Polynomial, Rpo256, Word, MODULUS, N};
+use crate::backends::plonky2::basetypes::F;
+const RATE_RANGE: Range<usize> = 4..12;
 
 /// Returns a polynomial in Z_p[x]/(phi) representing the hash of the provided message and
-/// nonce using RPO256.
-pub fn hash_to_point_rpo256(message: Word, nonce: &Nonce) -> Polynomial<FalconFelt> {
-    let mut state = [ZERO; Rpo256::STATE_WIDTH];
+/// nonce using Poseidon.
+pub fn hash_to_point_poseidon(message: Word, nonce: &Nonce) -> Polynomial<FalconFelt> {
+    let mut state: [F; <PoseidonPermutation<F> as PlonkyPermutation<F>>::WIDTH] =
+        [F::ZERO; <PoseidonPermutation<F> as PlonkyPermutation<F>>::WIDTH];
 
     // absorb the nonce into the state
     let nonce_elements = nonce.to_elements();
-    for (&n, s) in nonce_elements
-        .iter()
-        .zip(state[Rpo256::RATE_RANGE].iter_mut())
-    {
+    for (&n, s) in nonce_elements.iter().zip(state.iter_mut()) {
         *s = n;
     }
-    Rpo256::apply_permutation(&mut state);
+    state = F::poseidon(state);
 
     // absorb message into the state
-    for (&m, s) in message.iter().zip(state[Rpo256::RATE_RANGE].iter_mut()) {
+    for (&m, s) in message.0.iter().zip(state[RATE_RANGE].iter_mut()) {
         *s = m;
     }
 
@@ -33,43 +41,12 @@ pub fn hash_to_point_rpo256(message: Word, nonce: &Nonce) -> Polynomial<FalconFe
     let mut i = 0;
     let mut res = [FalconFelt::zero(); N];
     for _ in 0..64 {
-        Rpo256::apply_permutation(&mut state);
-        for a in &state[Rpo256::RATE_RANGE] {
-            res[i] = FalconFelt::new((a.as_int() % MODULUS as u64) as i16);
+        state = F::poseidon(state);
+        for a in &state[RATE_RANGE] {
+            res[i] = FalconFelt::new((a.0 % MODULUS as u64) as i16);
             i += 1;
         }
     }
 
     Polynomial::new(res.to_vec())
-}
-
-/// Returns a polynomial in Z_p[x]/(phi) representing the hash of the provided message and
-/// nonce using SHAKE256. This is the hash-to-point algorithm used in the reference implementation.
-#[allow(dead_code)]
-pub fn hash_to_point_shake256(message: &[u8], nonce: &Nonce) -> Polynomial<FalconFelt> {
-    use sha3::{
-        digest::{ExtendableOutput, Update, XofReader},
-        Shake256,
-    };
-
-    let mut data = vec![];
-    data.extend_from_slice(nonce.as_bytes());
-    data.extend_from_slice(message);
-    const K: u32 = (1u32 << 16) / MODULUS as u32;
-
-    let mut hasher = Shake256::default();
-    hasher.update(&data);
-    let mut reader = hasher.finalize_xof();
-
-    let mut coefficients: Vec<FalconFelt> = Vec::with_capacity(N);
-    while coefficients.len() != N {
-        let mut randomness = [0u8; 2];
-        reader.read(&mut randomness);
-        let t = ((randomness[0] as u32) << 8) | (randomness[1] as u32);
-        if t < K * MODULUS as u32 {
-            coefficients.push(FalconFelt::new((t % MODULUS as u32) as i16));
-        }
-    }
-
-    Polynomial { coefficients }
 }

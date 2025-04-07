@@ -1,6 +1,6 @@
 //! Fork from https://github.com/0xPolygonMiden/crypto/tree/aa45474377e978050958958d75688e7a8d46b628/miden-crypto/src/dsa/rpo_falcon512
 //!
-use alloc::{string::ToString, vec::Vec};
+// use alloc::{string::ToString, vec::Vec};
 
 use num::Complex;
 #[cfg(not(feature = "std"))]
@@ -17,8 +17,8 @@ use super::{
     },
     PubKeyPoly, PublicKey,
 };
-use crate::dsa::rpo_falcon512::{
-    hash_to_point::hash_to_point_rpo256, math::ntru_gen, SIG_NONCE_LEN, SK_LEN,
+use crate::backends::plonky2::primitives::falcon::{
+    hash_to_point::hash_to_point_poseidon, math::ntru_gen, SIG_NONCE_LEN, SK_LEN,
 };
 
 // CONSTANTS
@@ -134,7 +134,7 @@ impl SecretKey {
         let nonce = Nonce::new(nonce_bytes);
 
         let h = self.compute_pub_key_poly();
-        let c = hash_to_point_rpo256(message, &nonce);
+        let c = hash_to_point_poseidon(message, &nonce);
         let s2 = self.sign_helper(c, rng);
 
         Signature::new(nonce, h, s2)

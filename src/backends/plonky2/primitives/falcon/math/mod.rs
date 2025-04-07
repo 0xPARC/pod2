@@ -7,7 +7,7 @@
 //! 1. The [reference](https://falcon-sign.info/impl/README.txt.html) implementation by Thomas
 //!    Pornin.
 //! 2. The [Rust](https://github.com/aszepieniec/falcon-rust) implementation by Alan Szepieniec.
-use alloc::vec::Vec;
+// use alloc::vec::Vec;
 use core::ops::MulAssign;
 
 #[cfg(not(feature = "std"))]

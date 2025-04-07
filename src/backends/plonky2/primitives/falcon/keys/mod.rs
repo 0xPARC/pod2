@@ -20,10 +20,17 @@ pub(crate) use secret_key::{WIDTH_BIG_POLY_COEFFICIENT, WIDTH_SMALL_POLY_COEFFIC
 mod tests {
     use rand::SeedableRng;
     use rand_chacha::ChaCha20Rng;
-    use winter_math::FieldElement;
-    use winter_utils::{Deserializable, Serializable};
+    // use winter_math::FieldElement;
+    // use winter_utils::{Deserializable, Serializable};
+    use super::{
+        ByteReader, ByteWriter, Deserializable, DeserializationError, Felt, Serializable,
+        Signature, Word,
+    };
 
-    use crate::{dsa::rpo_falcon512::SecretKey, Word, ONE};
+    // use crate::backends::plonky2::basetypes::{Value as Word, F};
+    use crate::backends::plonky2::primitives::falcon::SecretKey;
+
+    use plonky2::field::types::Field;
 
     #[test]
     fn test_falcon_verification() {
@@ -44,14 +51,14 @@ mod tests {
         );
 
         // sign a random message
-        let message: Word = [ONE; 4];
+        let message: Word = Word([Felt::ONE; 4]);
         let signature = sk.sign_with_rng(message, &mut rng);
 
         // make sure the signature verifies correctly
         assert!(pk.verify(message, &signature));
 
         // a signature should not verify against a wrong message
-        let message2: Word = [ONE.double(); 4];
+        let message2: Word = Word([Felt::ONE.double(); 4]);
         assert!(!pk.verify(message2, &signature));
 
         // a signature should not verify against a wrong public key

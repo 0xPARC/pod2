@@ -1,12 +1,13 @@
 //! Fork from https://github.com/0xPolygonMiden/crypto/tree/aa45474377e978050958958d75688e7a8d46b628/miden-crypto/src/dsa/rpo_falcon512
 //!
-use alloc::{string::ToString, vec::Vec};
+// use alloc::{string::ToString, vec::Vec};
 use core::ops::Deref;
 
 use num::Zero;
+use plonky2::{hash::poseidon::PoseidonHash, plonk::config::Hasher};
 
 use super::{
-    hash_to_point::hash_to_point_rpo256,
+    hash_to_point::hash_to_point_poseidon,
     keys::PubKeyPoly,
     math::{FalconFelt, FastFft, Polynomial},
     ByteReader, ByteWriter, Deserializable, DeserializationError, Felt, Nonce, Rpo256,
@@ -93,12 +94,13 @@ impl Signature {
     pub fn verify(&self, message: Word, pubkey_com: Word) -> bool {
         // compute the hash of the public key polynomial
         let h_felt: Polynomial<Felt> = (&**self.pk_poly()).into();
-        let h_digest: Word = Rpo256::hash_elements(&h_felt.coefficients).into();
+        // let h_digest: Word = Rpo256::hash_elements(&h_felt.coefficients).into();
+        let h_digest = Word(PoseidonHash::hash_no_pad(&h_felt.coefficients).elements);
         if h_digest != pubkey_com {
             return false;
         }
 
-        let c = hash_to_point_rpo256(message, &self.nonce);
+        let c = hash_to_point_poseidon(message, &self.nonce);
         verify_helper(&c, &self.s2, self.pk_poly())
     }
 }

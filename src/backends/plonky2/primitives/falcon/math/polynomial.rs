@@ -1,6 +1,6 @@
 //! Fork from https://github.com/0xPolygonMiden/crypto/tree/aa45474377e978050958958d75688e7a8d46b628/miden-crypto/src/dsa/rpo_falcon512
 //!
-use alloc::vec::Vec;
+// use alloc::vec::Vec;
 use core::{
     default::Default,
     fmt::Debug,
@@ -10,8 +10,9 @@ use core::{
 use num::{One, Zero};
 
 use super::{field::FalconFelt, Inverse};
+use crate::backends::plonky2::basetypes::F as Felt;
 use crate::backends::plonky2::primitives::falcon::{MODULUS, N};
-use miden_crypto::Felt;
+use plonky2::field::types::Field;
 
 #[derive(Debug, Clone, Default)]
 pub struct Polynomial<F> {
@@ -533,7 +534,7 @@ impl From<Polynomial<FalconFelt>> for Polynomial<Felt> {
         let res: Vec<Felt> = item
             .coefficients
             .iter()
-            .map(|a| Felt::from(a.value() as u16))
+            .map(|a| Felt::from_canonical_u64(a.value() as u64))
             .collect();
         Polynomial::new(res)
     }
@@ -544,7 +545,7 @@ impl From<&Polynomial<FalconFelt>> for Polynomial<Felt> {
         let res: Vec<Felt> = item
             .coefficients
             .iter()
-            .map(|a| Felt::from(a.value() as u16))
+            .map(|a| Felt::from_canonical_u64(a.value() as u64))
             .collect();
         Polynomial::new(res)
     }
@@ -602,7 +603,7 @@ impl Polynomial<FalconFelt> {
     pub fn to_elements(&self) -> Vec<Felt> {
         self.coefficients
             .iter()
-            .map(|&a| Felt::from(a.value() as u16))
+            .map(|&a| Felt::from_canonical_u64(a.value() as u64))
             .collect()
     }
 
@@ -666,11 +667,12 @@ impl Polynomial<i16> {
 #[cfg(test)]
 mod tests {
     use super::{FalconFelt, Polynomial, N};
+    use rand::Rng;
 
     #[test]
     fn test_negacyclic_reduction() {
-        let coef1: [u8; N] = rand_utils::rand_array();
-        let coef2: [u8; N] = rand_utils::rand_array();
+        let coef1: [u8; N] = std::array::from_fn(|_| rand::thread_rng().gen());
+        let coef2: [u8; N] = std::array::from_fn(|_| rand::thread_rng().gen());
 
         let poly1 = Polynomial::new(coef1.iter().map(|&a| FalconFelt::new(a as i16)).collect());
         let poly2 = Polynomial::new(coef2.iter().map(|&a| FalconFelt::new(a as i16)).collect());

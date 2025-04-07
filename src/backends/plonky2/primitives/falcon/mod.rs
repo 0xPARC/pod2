@@ -1,10 +1,13 @@
 //! Fork from https://github.com/0xPolygonMiden/crypto/tree/aa45474377e978050958958d75688e7a8d46b628/miden-crypto/src/dsa/rpo_falcon512
 //!
-use miden_crypto::{
+pub use crate::backends::plonky2::basetypes::Value as Word;
+pub use crate::backends::plonky2::basetypes::F as Felt;
+use crate::backends::plonky2::basetypes::{Proof, Value, C, D, F, VALUE_SIZE};
+pub use miden_crypto::{
     hash::rpo::Rpo256,
     utils::{ByteReader, ByteWriter, Deserializable, DeserializationError, Serializable},
-    Felt, Word, ZERO,
 };
+use plonky2::field::types::Field;
 
 mod hash_to_point;
 mod keys;
@@ -79,14 +82,14 @@ impl Nonce {
     ///
     /// Nonce bytes are converted to field elements by taking consecutive 5 byte chunks
     /// of the nonce and interpreting them as field elements.
-    pub fn to_elements(&self) -> [Felt; NONCE_ELEMENTS] {
+    pub fn to_elements(&self) -> [F; NONCE_ELEMENTS] {
         let mut buffer = [0_u8; 8];
-        let mut result = [ZERO; 8];
+        let mut result = [F::ZERO; 8];
         for (i, bytes) in self.0.chunks(5).enumerate() {
             buffer[..5].copy_from_slice(bytes);
-            // we can safely (without overflow) create a new Felt from u64 value here since this
+            // we can safely (without overflow) create a new F from u64 value here since this
             // value contains at most 5 bytes
-            result[i] = Felt::new(u64::from_le_bytes(buffer));
+            result[i] = F::from_canonical_u64(u64::from_le_bytes(buffer));
         }
 
         result

@@ -1,6 +1,6 @@
 //! Fork from https://github.com/0xPolygonMiden/crypto/tree/aa45474377e978050958958d75688e7a8d46b628/miden-crypto/src/dsa/rpo_falcon512
 //!
-use alloc::string::ToString;
+// use alloc::string::ToString;
 use core::ops::Deref;
 
 use num::Zero;
@@ -10,7 +10,8 @@ use super::{
     ByteReader, ByteWriter, Deserializable, DeserializationError, FalconFelt, Felt, Polynomial,
     Serializable, Signature, Word,
 };
-use crate::dsa::rpo_falcon512::FALCON_ENCODING_BITS;
+use crate::backends::plonky2::primitives::falcon::FALCON_ENCODING_BITS;
+use plonky2::{hash::poseidon::PoseidonHash, plonk::config::Hasher};
 
 // PUBLIC KEY
 // ================================================================================================
@@ -38,7 +39,7 @@ impl PublicKey {
 impl From<PubKeyPoly> for PublicKey {
     fn from(pk_poly: PubKeyPoly) -> Self {
         let pk_felts: Polynomial<Felt> = pk_poly.0.into();
-        let pk_digest = Rpo256::hash_elements(&pk_felts.coefficients).into();
+        let pk_digest = Word(PoseidonHash::hash_no_pad(&pk_felts.coefficients).elements);
         Self(pk_digest)
     }
 }
