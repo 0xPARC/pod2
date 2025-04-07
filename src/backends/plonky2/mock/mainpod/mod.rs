@@ -3,7 +3,6 @@ use std::{any::Any, fmt};
 use anyhow::{anyhow, Result};
 use base64::prelude::*;
 use itertools::Itertools;
-use log::error;
 use plonky2::{hash::poseidon::PoseidonHash, plonk::config::Hasher};
 use serde::{Deserialize, Serialize};
 
@@ -614,7 +613,6 @@ pub mod tests {
             zu_kyc_sign_pod_builders,
         },
         middleware,
-        middleware::containers::Set,
     };
 
     #[test]

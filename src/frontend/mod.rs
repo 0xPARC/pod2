@@ -1154,7 +1154,6 @@ pub mod tests {
         backends::plonky2::{
             basetypes,
             mock::{mainpod::MockProver, signedpod::MockSigner},
-            primitives::merkletree::MerkleTree,
         },
         examples::{
             eth_dos_pod_builder, eth_friend_signed_pod_builder, great_boy_pod_full_flow,

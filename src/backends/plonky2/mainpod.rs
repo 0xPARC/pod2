@@ -1,30 +1,23 @@
-use std::{any::Any, fmt};
+use std::any::Any;
 
 use anyhow::{anyhow, Result};
-use base64::prelude::*;
 use itertools::Itertools;
-use log::error;
 use plonky2::{
-    hash::poseidon::PoseidonHash,
     iop::witness::PartialWitness,
     plonk::{
-        circuit_builder::CircuitBuilder, circuit_data::CircuitConfig, config::Hasher,
-        proof::ProofWithPublicInputs,
+        circuit_builder::CircuitBuilder, circuit_data::CircuitConfig, proof::ProofWithPublicInputs,
     },
 };
-use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::{
-        basetypes::{Hash, Value, C, D, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE},
+        basetypes::{C, D, F},
         circuits::mainpod::{MainPodVerifyCircuit, MainPodVerifyInput},
-        mock::mainpod::{hash_statements, MockMainPod, Operation, Statement},
+        mock::mainpod::{hash_statements, MockMainPod, Statement},
         signedpod::SignedPod,
     },
     middleware::{
-        self, hash_str, AnchoredKey, MainPodInputs, NativeOperation, NativePredicate, NonePod,
-        OperationType, Params, Pod, PodId, PodProver, Predicate, StatementArg, ToFields, KEY_TYPE,
-        SELF,
+        self, AnchoredKey, MainPodInputs, Params, Pod, PodId, PodProver, StatementArg, SELF,
     },
 };
 // TODO: Move the shared components between MockMainPod and MainPod to a common place.
@@ -169,12 +162,14 @@ pub mod tests {
     use super::*;
     use crate::{
         backends::plonky2::{
-            mock::mainpod::{MockProver, OperationAux},
+            mock::mainpod::MockProver,
             primitives::signature::SecretKey,
             signedpod::Signer,
         },
         examples::zu_kyc_sign_pod_builders,
-        frontend, middleware, op,
+        frontend, middleware,
+        middleware::Value,
+        op,
     };
 
     // TODO: Use the method from examples once everything works

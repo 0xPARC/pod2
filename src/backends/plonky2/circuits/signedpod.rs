@@ -204,7 +204,7 @@ pub mod tests {
 
     #[test]
     fn test_signed_pod_verify() -> Result<()> {
-        let mut params = Params {
+        let params = Params {
             max_signed_pod_values: 6,
             ..Default::default()
         };

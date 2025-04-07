@@ -7,7 +7,7 @@ use StatementTmplBuilder as STB;
 use crate::{
     frontend::{
         literal, CustomPredicateBatch, CustomPredicateBatchBuilder, CustomPredicateRef,
-        NativePredicate, Predicate, StatementTmplBuilder, Value,
+        NativePredicate, Predicate, StatementTmplBuilder,
     },
     middleware::{self, Params, PodType, KEY_SIGNER, KEY_TYPE},
 };

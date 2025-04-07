@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use itertools::zip_eq;
 use plonky2::{
     hash::{hash_types::HashOutTarget, poseidon::PoseidonHash},
@@ -23,7 +23,6 @@ use crate::{
         },
         signedpod::SignedPod,
     },
-    middleware,
     middleware::{
         hash_str, AnchoredKey, NativeOperation, NativePredicate, Params, PodType, Statement,
         StatementArg, ToFields, KEY_TYPE, SELF,

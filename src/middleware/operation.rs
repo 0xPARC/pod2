@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree},
     middleware::{
-        AnchoredKey, CustomPredicateRef, Hash, NativePredicate, Params, Predicate, Statement,
-        StatementArg, ToFields, Value, EMPTY_HASH, EMPTY_VALUE, F, SELF,
+        AnchoredKey, CustomPredicateRef, NativePredicate, Params, Predicate, Statement,
+        StatementArg, ToFields, Value, F, SELF,
     },
 };
 

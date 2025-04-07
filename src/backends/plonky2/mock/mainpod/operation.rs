@@ -1,13 +1,13 @@
 use std::{fmt, iter};
 
 use anyhow::{anyhow, Result};
-use plonky2::field::types::{Field, PrimeField64};
+use plonky2::field::types::Field;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::{
         mock::mainpod::Statement,
-        primitives::merkletree::{self, kv_hash},
+        primitives::merkletree::{self},
     },
     middleware::{self, Hash, OperationType, Params, ToFields, Value, EMPTY_HASH, EMPTY_VALUE, F},
 };
