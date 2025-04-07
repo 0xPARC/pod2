@@ -8,6 +8,7 @@ use plonky2::{
         circuit_builder::CircuitBuilder, circuit_data::CircuitConfig, proof::ProofWithPublicInputs,
     },
 };
+use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::{
