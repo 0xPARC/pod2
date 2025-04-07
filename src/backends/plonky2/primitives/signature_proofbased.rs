@@ -20,7 +20,7 @@ use plonky2::{
     },
 };
 
-pub use super::signature_circuit::*;
+pub use super::signature_proofbased_circuit::*;
 use crate::backends::plonky2::basetypes::{Proof, Value, C, D, F, VALUE_SIZE};
 
 lazy_static! {

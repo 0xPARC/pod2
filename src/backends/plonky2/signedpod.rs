@@ -6,7 +6,7 @@ use itertools::Itertools;
 use crate::{
     backends::plonky2::primitives::{
         merkletree::MerkleTree,
-        signature::{PublicKey, SecretKey, Signature},
+        signature_proofbased::{PublicKey, SecretKey, Signature},
     },
     constants::MAX_DEPTH,
     middleware::{
