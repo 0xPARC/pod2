@@ -56,7 +56,7 @@ impl PodProver for Prover {
         let operations = MockMainPod::process_private_statements_operations(
             params,
             &statements,
-            &merkle_proofs, // TODO: fill in the merkle proofs for Contains/NotContains ops
+            &merkle_proofs,
             inputs.operations,
         )?;
         let operations =

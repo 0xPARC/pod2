@@ -112,32 +112,30 @@ impl MerkleClaimAndProof {
 impl TryFrom<MerkleClaimAndProof> for merkletree::MerkleProof {
     type Error = anyhow::Error;
     fn try_from(mp: MerkleClaimAndProof) -> Result<Self> {
-        match mp.enabled {
-            false => Err(anyhow!("Not a valid Merkle proof.")),
-            true => {
-                let existence = mp.existence;
-                let other_leaf = if mp.case_ii_selector {
-                    Some((mp.other_key, mp.other_value))
-                } else {
-                    None
-                };
-                // Trim padding (if any).
-                let siblings = mp
-                    .siblings
-                    .into_iter()
-                    .rev()
-                    .skip_while(|s| s == &EMPTY_HASH)
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .collect();
-                Ok(merkletree::MerkleProof {
-                    existence,
-                    siblings,
-                    other_leaf,
-                })
-            }
+        if !mp.enabled {
+            return Err(anyhow!("Not a valid Merkle proof."));
         }
+        let existence = mp.existence;
+        let other_leaf = if mp.case_ii_selector {
+            Some((mp.other_key, mp.other_value))
+        } else {
+            None
+        };
+        // Trim padding (if any).
+        let siblings = mp
+            .siblings
+            .into_iter()
+            .rev()
+            .skip_while(|s| s == &EMPTY_HASH)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        Ok(merkletree::MerkleProof {
+            existence,
+            siblings,
+            other_leaf,
+        })
     }
 }
 
