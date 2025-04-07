@@ -2,24 +2,37 @@
 //! `backend_plonky2` feature is enabled.
 //! See src/middleware/basetypes.rs for more details.
 
-use crate::middleware::serialization::{
-    deserialize_hash_tuple, deserialize_value_tuple, serialize_hash_tuple, serialize_value_tuple,
+use std::{
+    cmp::{Ord, Ordering},
+    fmt,
 };
-use crate::middleware::{Params, ToFields};
+
 use anyhow::{anyhow, Error, Result};
 use hex::{FromHex, FromHexError};
-use plonky2::field::goldilocks_field::GoldilocksField;
-use plonky2::field::types::{Field, PrimeField64};
-use plonky2::hash::poseidon::PoseidonHash;
-use plonky2::plonk::config::Hasher;
-use plonky2::plonk::config::PoseidonGoldilocksConfig;
-use plonky2::plonk::proof::Proof as Plonky2Proof;
+use plonky2::{
+    field::{
+        goldilocks_field::GoldilocksField,
+        types::{Field, PrimeField64},
+    },
+    hash::poseidon::PoseidonHash,
+    plonk::{
+        config::{Hasher, PoseidonGoldilocksConfig},
+        proof::Proof as Plonky2Proof,
+    },
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::cmp::{Ord, Ordering};
-use std::fmt;
 
-use crate::backends::counter;
+use crate::{
+    backends::counter,
+    middleware::{
+        serialization::{
+            deserialize_hash_tuple, deserialize_value_tuple, serialize_hash_tuple,
+            serialize_value_tuple,
+        },
+        Params, ToFields,
+    },
+};
 
 /// F is the native field we use everywhere.  Currently it's Goldilocks from plonky2
 pub type F = GoldilocksField;

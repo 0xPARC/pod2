@@ -9,9 +9,7 @@
 //! }
 //! ```
 //!
-use std::cell::RefCell;
-use std::fmt;
-use std::thread_local;
+use std::{cell::RefCell, fmt, thread_local};
 
 thread_local! {
     static COUNTER: RefCell<Counter> = RefCell::new(Counter::new());

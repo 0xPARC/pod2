@@ -1,12 +1,16 @@
-use super::Statement;
-use crate::{
-    backends::plonky2::primitives::merkletree::{self, kv_hash},
-    middleware::{self, Hash, OperationType, Params, ToFields, Value, EMPTY_HASH, EMPTY_VALUE, F},
-};
+use std::{fmt, iter};
+
 use anyhow::{anyhow, Result};
 use plonky2::field::types::{Field, PrimeField64};
 use serde::{Deserialize, Serialize};
-use std::{fmt, iter};
+
+use crate::{
+    backends::plonky2::{
+        mock::mainpod::Statement,
+        primitives::merkletree::{self, kv_hash},
+    },
+    middleware::{self, Hash, OperationType, Params, ToFields, Value, EMPTY_HASH, EMPTY_VALUE, F},
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperationArg {

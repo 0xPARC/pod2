@@ -1,17 +1,16 @@
+use std::{fmt, iter};
+
 use anyhow::{anyhow, Result};
 use log::error;
 use plonky2::field::types::Field;
 use serde::{Deserialize, Serialize};
-use std::fmt;
-use std::iter;
 
-use super::Hash;
-use super::{CustomPredicateRef, NativePredicate, Statement, StatementArg, ToFields, F};
-use crate::middleware::EMPTY_HASH;
-use crate::middleware::EMPTY_VALUE;
 use crate::{
     backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree},
-    middleware::{AnchoredKey, Params, Predicate, Value, SELF},
+    middleware::{
+        AnchoredKey, CustomPredicateRef, Hash, NativePredicate, Params, Predicate, Statement,
+        StatementArg, ToFields, Value, EMPTY_HASH, EMPTY_VALUE, F, SELF,
+    },
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

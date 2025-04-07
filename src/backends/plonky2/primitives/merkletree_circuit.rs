@@ -8,6 +8,8 @@
 //! If only proofs of existence are needed, use `MerkleProofExistenceCircuit`,
 //! which requires less amount of constraints than `MerkleProofCircuit`.
 //!
+use std::iter;
+
 use anyhow::Result;
 use plonky2::{
     field::types::Field,
@@ -21,11 +23,12 @@ use plonky2::{
     },
     plonk::circuit_builder::CircuitBuilder,
 };
-use std::iter;
 
-use crate::backends::plonky2::basetypes::{Hash, Value, D, EMPTY_HASH, EMPTY_VALUE, F, HASH_SIZE};
-use crate::backends::plonky2::circuits::common::{CircuitBuilderPod, ValueTarget};
-use crate::backends::plonky2::primitives::merkletree::MerkleProof;
+use crate::backends::plonky2::{
+    basetypes::{Hash, Value, D, EMPTY_HASH, EMPTY_VALUE, F, HASH_SIZE},
+    circuits::common::{CircuitBuilderPod, ValueTarget},
+    primitives::merkletree::MerkleProof,
+};
 
 /// `MerkleProofGadget` allows to verify both proofs of existence and proofs
 /// non-existence with the same circuit.
@@ -396,13 +399,15 @@ fn kv_hash_target(
 
 #[cfg(test)]
 pub mod tests {
-    use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
     use std::collections::HashMap;
 
+    use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
+
     use super::*;
-    use crate::backends::plonky2::basetypes::hash_value;
-    use crate::backends::plonky2::basetypes::C;
-    use crate::backends::plonky2::primitives::merkletree::*;
+    use crate::backends::plonky2::{
+        basetypes::{hash_value, C},
+        primitives::merkletree::*,
+    };
 
     #[test]
     fn test_keypath() -> Result<()> {

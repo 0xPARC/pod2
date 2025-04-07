@@ -1,14 +1,15 @@
+use std::collections::HashMap;
+
 /// This file implements the types defined at
 /// https://0xparc.github.io/pod2/values.html#dictionary-array-set .
 use anyhow::Result;
-use std::collections::HashMap;
-
-use crate::constants::MAX_DEPTH;
 
 #[cfg(feature = "backend_plonky2")]
 use crate::backends::plonky2::primitives::merkletree::{Iter as TreeIter, MerkleProof, MerkleTree};
-
-use super::basetypes::{hash_value, Hash, Value, EMPTY_VALUE};
+use crate::{
+    constants::MAX_DEPTH,
+    middleware::basetypes::{hash_value, Hash, Value, EMPTY_VALUE},
+};
 
 /// Dictionary: the user original keys and values are hashed to be used in the leaf.
 ///    leaf.key=hash(original_key)

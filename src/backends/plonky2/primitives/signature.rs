@@ -20,9 +20,8 @@ use plonky2::{
     },
 };
 
-use crate::backends::plonky2::basetypes::{Proof, Value, C, D, F, VALUE_SIZE};
-
 pub use super::signature_circuit::*;
+use crate::backends::plonky2::basetypes::{Proof, Value, C, D, F, VALUE_SIZE};
 
 lazy_static! {
     /// Signature prover parameters
@@ -201,9 +200,8 @@ impl SignatureInternalCircuit {
 
 #[cfg(test)]
 pub mod tests {
-    use crate::backends::plonky2::basetypes::Hash;
-
     use super::*;
+    use crate::backends::plonky2::basetypes::Hash;
 
     #[test]
     fn test_signature() -> Result<()> {

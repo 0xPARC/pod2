@@ -6,28 +6,28 @@ use plonky2::{
     plonk::circuit_builder::CircuitBuilder,
 };
 
-use crate::backends::plonky2::mock::mainpod;
-use crate::backends::plonky2::signedpod::SignedPod;
-use crate::backends::plonky2::{
-    basetypes::{Value, D, EMPTY_HASH, F, VALUE_SIZE},
-    mock::mainpod::MerkleClaimAndProof,
-    primitives::merkletree::{MerkleClaimAndProofTarget, MerkleProofGadget},
-};
-use crate::middleware::{
-    hash_str, AnchoredKey, NativeOperation, NativePredicate, Params, PodType, Statement,
-    StatementArg, ToFields, KEY_TYPE, SELF,
-};
 use crate::{
     backends::plonky2::{
-        circuits::common::{CircuitBuilderPod, OperationTarget, StatementTarget, ValueTarget},
-        primitives::merkletree,
+        basetypes::{Value, D, EMPTY_HASH, F, VALUE_SIZE},
+        circuits::{
+            common::{
+                CircuitBuilderPod, Flattenable, MerkleClaimTarget, OperationTarget,
+                StatementTarget, ValueTarget,
+            },
+            signedpod::{SignedPodVerifyGadget, SignedPodVerifyTarget},
+        },
+        mock::{mainpod, mainpod::MerkleClaimAndProof},
+        primitives::{
+            merkletree,
+            merkletree::{MerkleClaimAndProofTarget, MerkleProofGadget},
+        },
+        signedpod::SignedPod,
     },
     middleware,
-};
-
-use super::{
-    common::{Flattenable, MerkleClaimTarget},
-    signedpod::{SignedPodVerifyGadget, SignedPodVerifyTarget},
+    middleware::{
+        hash_str, AnchoredKey, NativeOperation, NativePredicate, Params, PodType, Statement,
+        StatementArg, ToFields, KEY_TYPE, SELF,
+    },
 };
 
 //
@@ -555,12 +555,16 @@ mod tests {
     use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
 
     use super::*;
-    use crate::backends::plonky2::mock::mainpod;
-    use crate::backends::plonky2::{
-        basetypes::C,
-        mock::mainpod::{OperationArg, OperationAux},
+    use crate::{
+        backends::plonky2::{
+            basetypes::C,
+            mock::{
+                mainpod,
+                mainpod::{OperationArg, OperationAux},
+            },
+        },
+        middleware::{OperationType, PodId},
     };
-    use crate::middleware::{OperationType, PodId};
 
     fn operation_verify(
         st: mainpod::Statement,

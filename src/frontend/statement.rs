@@ -1,10 +1,13 @@
-use super::{AnchoredKey, NativePredicate, SignedPod, Value};
-use crate::frontend::Predicate;
-use crate::middleware;
+use std::fmt;
+
 use anyhow::{anyhow, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::fmt;
+
+use crate::{
+    frontend::{AnchoredKey, NativePredicate, Predicate, SignedPod, Value},
+    middleware,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum StatementArg {

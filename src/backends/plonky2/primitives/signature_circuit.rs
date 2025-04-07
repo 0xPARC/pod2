@@ -11,19 +11,24 @@ use plonky2::{
         target::{BoolTarget, Target},
         witness::{PartialWitness, WitnessWrite},
     },
-    plonk::circuit_builder::CircuitBuilder,
-    plonk::circuit_data::{
-        CircuitConfig, CircuitData, ProverCircuitData, VerifierCircuitData, VerifierCircuitTarget,
+    plonk::{
+        circuit_builder::CircuitBuilder,
+        circuit_data::{
+            CircuitConfig, CircuitData, ProverCircuitData, VerifierCircuitData,
+            VerifierCircuitTarget,
+        },
+        config::Hasher,
+        proof::{ProofWithPublicInputs, ProofWithPublicInputsTarget},
     },
-    plonk::config::Hasher,
-    plonk::proof::{ProofWithPublicInputs, ProofWithPublicInputsTarget},
 };
 
-use super::signature::{PublicKey, SecretKey, Signature, DUMMY_PUBLIC_INPUTS, DUMMY_SIGNATURE};
-use crate::backends::plonky2::basetypes::{
-    Hash, Proof, Value, C, D, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE,
+use crate::backends::plonky2::{
+    basetypes::{Hash, Proof, Value, C, D, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE},
+    circuits::common::{CircuitBuilderPod, ValueTarget},
+    primitives::signature::{
+        PublicKey, SecretKey, Signature, DUMMY_PUBLIC_INPUTS, DUMMY_SIGNATURE,
+    },
 };
-use crate::backends::plonky2::circuits::common::{CircuitBuilderPod, ValueTarget};
 
 lazy_static! {
     /// SignatureVerifyGadget VerifierCircuitData
@@ -164,10 +169,8 @@ impl SignatureVerifyTarget {
 
 #[cfg(test)]
 pub mod tests {
-    use crate::backends::plonky2::basetypes::Hash;
-    use crate::backends::plonky2::primitives::signature::SecretKey;
-
     use super::*;
+    use crate::backends::plonky2::{basetypes::Hash, primitives::signature::SecretKey};
 
     #[test]
     fn test_signature_gadget() -> Result<()> {

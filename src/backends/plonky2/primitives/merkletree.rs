@@ -1,16 +1,16 @@
 //! Module that implements the MerkleTree specified at
 //! https://0xparc.github.io/pod2/merkletree.html .
+use std::{collections::HashMap, fmt, iter::IntoIterator};
+
 use anyhow::{anyhow, Result};
 use plonky2::field::types::Field;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::fmt;
-use std::iter::IntoIterator;
-
-use crate::backends::counter;
-use crate::backends::plonky2::basetypes::{hash_fields, Hash, Value, EMPTY_HASH, F};
 
 pub use super::merkletree_circuit::*;
+use crate::backends::{
+    counter,
+    plonky2::basetypes::{hash_fields, Hash, Value, EMPTY_HASH, F},
+};
 
 /// Implements the MerkleTree specified at
 /// https://0xparc.github.io/pod2/merkletree.html
@@ -582,8 +582,9 @@ impl<'a> Iterator for Iter<'a> {
 
 #[cfg(test)]
 pub mod tests {
-    use itertools::Itertools;
     use std::cmp::Ordering;
+
+    use itertools::Itertools;
 
     use super::*;
 

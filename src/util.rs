@@ -1,6 +1,4 @@
-use std::collections::HashMap;
-use std::fmt::Debug;
-use std::hash::Hash;
+use std::{collections::HashMap, fmt::Debug, hash::Hash};
 
 use anyhow::{anyhow, Result};
 

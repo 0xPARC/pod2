@@ -4,13 +4,14 @@ use anyhow::Result;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::Value;
-use crate::frontend::serialization::ordered_map;
-use crate::middleware::{
-    containers::{
-        Array as MiddlewareArray, Dictionary as MiddlewareDictionary, Set as MiddlewareSet,
+use crate::{
+    frontend::{serialization::ordered_map, Value},
+    middleware::{
+        containers::{
+            Array as MiddlewareArray, Dictionary as MiddlewareDictionary, Set as MiddlewareSet,
+        },
+        hash_str, Value as MiddlewareValue,
     },
-    hash_str, Value as MiddlewareValue,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]

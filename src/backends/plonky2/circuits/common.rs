@@ -1,22 +1,33 @@
 //! Common functionality to build Pod circuits with plonky2
 
-use crate::backends::plonky2::basetypes::D;
-use crate::backends::plonky2::mock::mainpod::Statement;
-use crate::backends::plonky2::mock::mainpod::{Operation, OperationArg};
-use crate::backends::plonky2::primitives::merkletree::MerkleClaimAndProofTarget;
-use crate::middleware::{
-    NativeOperation, NativePredicate, Params, Predicate, StatementArg, ToFields, Value,
-    EMPTY_VALUE, F, HASH_SIZE, OPERATION_ARG_F_LEN, OPERATION_AUX_F_LEN, STATEMENT_ARG_F_LEN,
-    VALUE_SIZE,
-};
-use anyhow::Result;
-use plonky2::field::extension::Extendable;
-use plonky2::field::types::{Field, PrimeField64};
-use plonky2::hash::hash_types::{HashOutTarget, RichField, NUM_HASH_OUT_ELTS};
-use plonky2::iop::target::{BoolTarget, Target};
-use plonky2::iop::witness::{PartialWitness, WitnessWrite};
-use plonky2::plonk::circuit_builder::CircuitBuilder;
 use std::{array, iter};
+
+use anyhow::Result;
+use plonky2::{
+    field::{
+        extension::Extendable,
+        types::{Field, PrimeField64},
+    },
+    hash::hash_types::{HashOutTarget, RichField, NUM_HASH_OUT_ELTS},
+    iop::{
+        target::{BoolTarget, Target},
+        witness::{PartialWitness, WitnessWrite},
+    },
+    plonk::circuit_builder::CircuitBuilder,
+};
+
+use crate::{
+    backends::plonky2::{
+        basetypes::D,
+        mock::mainpod::{Operation, OperationArg, Statement},
+        primitives::merkletree::MerkleClaimAndProofTarget,
+    },
+    middleware::{
+        NativeOperation, NativePredicate, Params, Predicate, StatementArg, ToFields, Value,
+        EMPTY_VALUE, F, HASH_SIZE, OPERATION_ARG_F_LEN, OPERATION_AUX_F_LEN, STATEMENT_ARG_F_LEN,
+        VALUE_SIZE,
+    },
+};
 
 pub const CODE_SIZE: usize = HASH_SIZE + 2;
 

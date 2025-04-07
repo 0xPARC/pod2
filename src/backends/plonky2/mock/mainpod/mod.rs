@@ -1,12 +1,11 @@
+use std::{any::Any, fmt};
+
 use anyhow::{anyhow, Result};
 use base64::prelude::*;
 use itertools::Itertools;
 use log::error;
-use plonky2::hash::poseidon::PoseidonHash;
-use plonky2::plonk::config::Hasher;
+use plonky2::{hash::poseidon::PoseidonHash, plonk::config::Hasher};
 use serde::{Deserialize, Serialize};
-use std::any::Any;
-use std::fmt;
 
 use crate::{
     backends::plonky2::primitives::merkletree,
@@ -608,13 +607,15 @@ impl Pod for MockMainPod {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::backends::plonky2::mock::signedpod::MockSigner;
-    use crate::examples::{
-        great_boy_pod_full_flow, tickets_pod_full_flow, zu_kyc_pod_builder,
-        zu_kyc_sign_pod_builders,
+    use crate::{
+        backends::plonky2::mock::signedpod::MockSigner,
+        examples::{
+            great_boy_pod_full_flow, tickets_pod_full_flow, zu_kyc_pod_builder,
+            zu_kyc_sign_pod_builders,
+        },
+        middleware,
+        middleware::containers::Set,
     };
-    use crate::middleware;
-    use crate::middleware::containers::Set;
 
     #[test]
     fn test_mock_main_zu_kyc() -> Result<()> {

@@ -1,22 +1,21 @@
 //! The frontend includes the user-level abstractions and user-friendly types to define and work
 //! with Pods.
 
-use crate::frontend::serialization::*;
-use crate::middleware::{
-    self, hash_str, Hash, MainPodInputs, Params, PodId, PodProver, PodSigner, SELF,
-};
-use crate::middleware::{KEY_SIGNER, KEY_TYPE};
+use std::{collections::HashMap, convert::From, fmt, hash as h, hash::Hasher};
+
 use anyhow::{anyhow, Error, Result};
 use containers::{Array, Dictionary, Set};
 use itertools::Itertools;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::convert::From;
-use std::hash::Hasher;
-use std::{fmt, hash as h};
 
-use crate::middleware::{hash_value, OperationAux, EMPTY_VALUE};
+use crate::{
+    frontend::serialization::*,
+    middleware::{
+        self, hash_str, hash_value, Hash, MainPodInputs, OperationAux, Params, PodId, PodProver,
+        PodSigner, EMPTY_VALUE, KEY_SIGNER, KEY_TYPE, SELF,
+    },
+};
 
 pub mod containers;
 mod custom;
@@ -24,8 +23,7 @@ mod operation;
 mod predicate;
 mod serialization;
 mod statement;
-pub use custom::*;
-pub use custom::{CustomPredicateRef, Predicate};
+pub use custom::{CustomPredicateRef, Predicate, *};
 pub use operation::*;
 pub use predicate::*;
 pub use statement::*;
@@ -1152,13 +1150,16 @@ pub mod build_utils {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::backends::plonky2::basetypes;
-    use crate::backends::plonky2::mock::mainpod::MockProver;
-    use crate::backends::plonky2::mock::signedpod::MockSigner;
-    use crate::backends::plonky2::primitives::merkletree::MerkleTree;
-    use crate::examples::{
-        eth_dos_pod_builder, eth_friend_signed_pod_builder, great_boy_pod_full_flow,
-        tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_sign_pod_builders,
+    use crate::{
+        backends::plonky2::{
+            basetypes,
+            mock::{mainpod::MockProver, signedpod::MockSigner},
+            primitives::merkletree::MerkleTree,
+        },
+        examples::{
+            eth_dos_pod_builder, eth_friend_signed_pod_builder, great_boy_pod_full_flow,
+            tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_sign_pod_builders,
+        },
     };
 
     // Check that frontend public statements agree with those

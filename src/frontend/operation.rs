@@ -2,8 +2,10 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use super::{CustomPredicateRef, NativePredicate, Predicate, SignedPod, Statement, Value};
-use crate::middleware::{self, OperationAux};
+use crate::{
+    frontend::{CustomPredicateRef, NativePredicate, Predicate, SignedPod, Statement, Value},
+    middleware::{self, OperationAux},
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OperationArg {

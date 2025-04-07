@@ -1,16 +1,15 @@
 #![allow(unused)]
+use std::{collections::HashMap, fmt, hash as h, iter, iter::zip, sync::Arc};
+
 use anyhow::{anyhow, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::iter::zip;
-use std::sync::Arc;
-use std::{fmt, hash as h, iter};
 
-use crate::middleware::{self, hash_str, HashOrWildcard, Params, PodId, ToFields};
-use crate::util::hashmap_insert_no_dupe;
-
-use super::{AnchoredKey, NativePredicate, Origin, Statement, StatementArg, Value};
+use crate::{
+    frontend::{AnchoredKey, NativePredicate, Origin, Statement, StatementArg, Value},
+    middleware::{self, hash_str, HashOrWildcard, Params, PodId, ToFields},
+    util::hashmap_insert_no_dupe,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, h::Hash, Serialize, Deserialize, JsonSchema)]
 /// Argument to a statement template

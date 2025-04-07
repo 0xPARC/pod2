@@ -1,6 +1,7 @@
+use std::fmt;
+
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
 use crate::middleware::{
     self, AnchoredKey, NativePredicate, Params, Predicate, StatementArg, ToFields,

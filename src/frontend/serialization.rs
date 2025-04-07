@@ -3,13 +3,11 @@ use std::collections::{BTreeMap, HashMap};
 use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize, Serializer};
 
-use crate::backends::plonky2::mock::mainpod::MockMainPod;
-use crate::backends::plonky2::mock::signedpod::MockSignedPod;
-use crate::frontend::containers::Dictionary;
-use crate::frontend::Statement;
-use crate::middleware::PodId;
-
-use super::{MainPod, SignedPod, Value};
+use crate::{
+    backends::plonky2::mock::{mainpod::MockMainPod, signedpod::MockSignedPod},
+    frontend::{containers::Dictionary, MainPod, SignedPod, Statement, Value},
+    middleware::PodId,
+};
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[schemars(title = "SignedPod")]
@@ -156,6 +154,7 @@ mod tests {
     use anyhow::Result;
     use schemars::generate::SchemaSettings;
 
+    use super::*;
     use crate::{
         backends::plonky2::mock::{mainpod::MockProver, signedpod::MockSigner},
         examples::{zu_kyc_pod_builder, zu_kyc_sign_pod_builders},
@@ -165,8 +164,6 @@ mod tests {
         },
         middleware::{self, Params},
     };
-
-    use super::*;
 
     #[test]
     fn test_value_serialization() {

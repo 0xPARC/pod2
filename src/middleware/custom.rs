@@ -1,18 +1,18 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::{fmt, hash as h, iter, iter::zip};
+use std::{collections::HashMap, fmt, hash as h, iter, iter::zip, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use plonky2::field::types::Field;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{
-    hash_fields, AnchoredKey, Hash, NativePredicate, Params, PodId, Statement, StatementArg,
-    ToFields, Value, F,
+use crate::{
+    backends::plonky2::basetypes::HASH_SIZE,
+    middleware::{
+        hash_fields, AnchoredKey, Hash, NativePredicate, Params, PodId, Statement, StatementArg,
+        ToFields, Value, F,
+    },
+    util::hashmap_insert_no_dupe,
 };
-use crate::backends::plonky2::basetypes::HASH_SIZE;
-use crate::util::hashmap_insert_no_dupe;
 
 // BEGIN Custom 1b
 

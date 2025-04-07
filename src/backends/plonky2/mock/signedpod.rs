@@ -1,13 +1,15 @@
+use std::{any::Any, collections::HashMap};
+
 use anyhow::{anyhow, Result};
 use itertools::Itertools;
-use std::any::Any;
-use std::collections::HashMap;
 
-use crate::backends::plonky2::primitives::merkletree::MerkleTree;
-use crate::constants::MAX_DEPTH;
-use crate::middleware::{
-    containers::Dictionary, hash_str, AnchoredKey, Hash, Params, Pod, PodId, PodSigner, PodType,
-    Statement, Value, KEY_SIGNER, KEY_TYPE,
+use crate::{
+    backends::plonky2::primitives::merkletree::MerkleTree,
+    constants::MAX_DEPTH,
+    middleware::{
+        containers::Dictionary, hash_str, AnchoredKey, Hash, Params, Pod, PodId, PodSigner,
+        PodType, Statement, Value, KEY_SIGNER, KEY_TYPE,
+    },
 };
 
 pub struct MockSigner {
@@ -129,13 +131,16 @@ impl Pod for MockSignedPod {
 
 #[cfg(test)]
 pub mod tests {
-    use plonky2::field::types::Field;
     use std::iter;
 
+    use plonky2::field::types::Field;
+
     use super::*;
-    use crate::constants::MAX_DEPTH;
-    use crate::frontend;
-    use crate::middleware::{self, EMPTY_HASH, F};
+    use crate::{
+        constants::MAX_DEPTH,
+        frontend,
+        middleware::{self, EMPTY_HASH, F},
+    };
 
     #[test]
     fn test_mock_signed_0() -> Result<()> {

@@ -1,29 +1,33 @@
-use crate::backends::plonky2::basetypes::C;
+use std::{any::Any, fmt};
+
 use anyhow::{anyhow, Result};
 use base64::prelude::*;
 use itertools::Itertools;
 use log::error;
-use plonky2::hash::poseidon::PoseidonHash;
-use plonky2::iop::witness::PartialWitness;
-use plonky2::plonk::config::Hasher;
-use plonky2::plonk::proof::ProofWithPublicInputs;
-use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
-use serde::{Deserialize, Serialize};
-use std::any::Any;
-use std::fmt;
-
-use crate::backends::plonky2::basetypes::{Hash, Value, D, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE};
-use crate::backends::plonky2::circuits::mainpod::{MainPodVerifyCircuit, MainPodVerifyInput};
-use crate::backends::plonky2::signedpod::SignedPod;
-// TODO: Move the shared components between MockMainPod and MainPod to a common place.
-use crate::backends::plonky2::mock::mainpod::{hash_statements, MockMainPod, Operation, Statement};
-use crate::middleware::{
-    self, hash_str, AnchoredKey, MainPodInputs, NativeOperation, NativePredicate, NonePod,
-    OperationType, Params, Pod, PodId, PodProver, Predicate, StatementArg, ToFields, KEY_TYPE,
-    SELF,
+use plonky2::{
+    hash::poseidon::PoseidonHash,
+    iop::witness::PartialWitness,
+    plonk::{
+        circuit_builder::CircuitBuilder, circuit_data::CircuitConfig, config::Hasher,
+        proof::ProofWithPublicInputs,
+    },
 };
+use serde::{Deserialize, Serialize};
 
-use super::mock::mainpod::MerkleClaimAndProof;
+use crate::{
+    backends::plonky2::{
+        basetypes::{Hash, Value, C, D, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE},
+        circuits::mainpod::{MainPodVerifyCircuit, MainPodVerifyInput},
+        mock::mainpod::{hash_statements, MockMainPod, Operation, Statement},
+        signedpod::SignedPod,
+    },
+    middleware::{
+        self, hash_str, AnchoredKey, MainPodInputs, NativeOperation, NativePredicate, NonePod,
+        OperationType, Params, Pod, PodId, PodProver, Predicate, StatementArg, ToFields, KEY_TYPE,
+        SELF,
+    },
+};
+// TODO: Move the shared components between MockMainPod and MainPod to a common place.
 
 pub struct Prover {}
 
@@ -163,13 +167,15 @@ impl Pod for MainPod {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::backends::plonky2::mock::mainpod::{MockProver, OperationAux};
-    use crate::backends::plonky2::primitives::signature::SecretKey;
-    use crate::backends::plonky2::signedpod::Signer;
-    use crate::examples::zu_kyc_sign_pod_builders;
-    use crate::frontend;
-    use crate::middleware;
-    use crate::op;
+    use crate::{
+        backends::plonky2::{
+            mock::mainpod::{MockProver, OperationAux},
+            primitives::signature::SecretKey,
+            signedpod::Signer,
+        },
+        examples::zu_kyc_sign_pod_builders,
+        frontend, middleware, op,
+    };
 
     // TODO: Use the method from examples once everything works
     pub fn zu_kyc_pod_builder(

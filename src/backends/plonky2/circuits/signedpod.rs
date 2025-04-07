@@ -1,24 +1,29 @@
+use std::iter;
+
 use anyhow::Result;
 use itertools::Itertools;
 use plonky2::{
     hash::hash_types::{HashOut, HashOutTarget},
-    iop::target::Target,
-    iop::witness::{PartialWitness, WitnessWrite},
+    iop::{
+        target::Target,
+        witness::{PartialWitness, WitnessWrite},
+    },
     plonk::circuit_builder::CircuitBuilder,
 };
-use std::iter;
 
-use crate::backends::plonky2::{
-    basetypes::{Value, D, EMPTY_VALUE, F},
-    circuits::common::{CircuitBuilderPod, StatementArgTarget, StatementTarget, ValueTarget},
-    primitives::{
-        merkletree::{MerkleProof, MerkleProofExistenceGadget, MerkleProofExistenceTarget},
-        signature::{PublicKey, SignatureVerifyGadget, SignatureVerifyTarget},
+use crate::{
+    backends::plonky2::{
+        basetypes::{Value, D, EMPTY_VALUE, F},
+        circuits::common::{CircuitBuilderPod, StatementArgTarget, StatementTarget, ValueTarget},
+        primitives::{
+            merkletree::{MerkleProof, MerkleProofExistenceGadget, MerkleProofExistenceTarget},
+            signature::{PublicKey, SignatureVerifyGadget, SignatureVerifyTarget},
+        },
+        signedpod::SignedPod,
     },
-    signedpod::SignedPod,
-};
-use crate::middleware::{
-    hash_str, NativePredicate, Params, PodType, Predicate, ToFields, KEY_SIGNER, KEY_TYPE, SELF,
+    middleware::{
+        hash_str, NativePredicate, Params, PodType, Predicate, ToFields, KEY_SIGNER, KEY_TYPE, SELF,
+    },
 };
 
 pub struct SignedPodVerifyGadget {
@@ -188,12 +193,14 @@ pub mod tests {
     use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
 
     use super::*;
-    use crate::backends::plonky2::{
-        basetypes::C,
-        primitives::signature::SecretKey,
-        signedpod::{SignedPod, Signer},
+    use crate::{
+        backends::plonky2::{
+            basetypes::C,
+            primitives::signature::SecretKey,
+            signedpod::{SignedPod, Signer},
+        },
+        middleware::F,
     };
-    use crate::middleware::F;
 
     #[test]
     fn test_signed_pod_verify() -> Result<()> {

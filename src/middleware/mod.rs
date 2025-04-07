@@ -7,18 +7,16 @@ mod custom;
 mod operation;
 pub mod serialization;
 mod statement;
-pub use basetypes::*;
-pub use custom::*;
-pub use operation::*;
-use schemars::JsonSchema;
-pub use statement::*;
+use std::{any::Any, collections::HashMap, fmt};
 
 use anyhow::Result;
+pub use basetypes::*;
+pub use custom::*;
 use dyn_clone::DynClone;
+pub use operation::*;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::any::Any;
-use std::collections::HashMap;
-use std::fmt;
+pub use statement::*;
 
 use crate::backends::plonky2::primitives::merkletree::MerkleProof;
 

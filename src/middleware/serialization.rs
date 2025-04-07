@@ -1,7 +1,7 @@
 use plonky2::field::types::Field;
 use serde::Deserialize;
 
-use super::{F, HASH_SIZE, VALUE_SIZE};
+use crate::middleware::{F, HASH_SIZE, VALUE_SIZE};
 
 fn serialize_field_tuple<S, const N: usize>(
     value: &[F; N],
