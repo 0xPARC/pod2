@@ -20,12 +20,8 @@ pub struct Set(Vec<Value>, #[serde(skip)] MiddlewareSet);
 
 impl Set {
     pub fn new(values: Vec<Value>) -> Result<Self> {
-        let set = MiddlewareSet::new(
-            &values
-                .iter()
-                .map(|v| MiddlewareValue::from(v))
-                .collect::<Vec<_>>(),
-        )?;
+        let set =
+            MiddlewareSet::new(&values.iter().map(MiddlewareValue::from).collect::<Vec<_>>())?;
         Ok(Self(values, set))
     }
 
@@ -91,12 +87,8 @@ pub struct Array(Vec<Value>, #[serde(skip)] MiddlewareArray);
 
 impl Array {
     pub fn new(values: Vec<Value>) -> Result<Self> {
-        let array = MiddlewareArray::new(
-            &values
-                .iter()
-                .map(|v| MiddlewareValue::from(v))
-                .collect::<Vec<_>>(),
-        )?;
+        let array =
+            MiddlewareArray::new(&values.iter().map(MiddlewareValue::from).collect::<Vec<_>>())?;
         Ok(Self(values, array))
     }
 

@@ -2,7 +2,6 @@ use std::{any::Any, fmt};
 
 use anyhow::{anyhow, Result};
 use base64::prelude::*;
-use itertools::Itertools;
 use plonky2::{hash::poseidon::PoseidonHash, plonk::config::Hasher};
 use serde::{Deserialize, Serialize};
 
@@ -92,7 +91,7 @@ fn fmt_statement_index(
     op: Option<&Operation>,
     index: usize,
 ) -> fmt::Result {
-    if !(!f.alternate() && st.is_none()) {
+    if f.alternate() || !st.is_none() {
         write!(f, "    {:03}. ", index)?;
         if f.alternate() {
             write!(f, "{:#}", &st)?;
@@ -127,9 +126,6 @@ pub fn fill_pad<T: Clone>(v: &mut Vec<T>, pad_value: T, len: usize) {
 /// - private Statements
 /// - public Statements
 impl MockMainPod {
-    fn offset_input_signed_pods(&self) -> usize {
-        0
-    }
     fn offset_input_main_pods(&self) -> usize {
         self.params.max_input_signed_pods * self.params.max_signed_pod_values
     }
@@ -143,9 +139,6 @@ impl MockMainPod {
     fn pad_statement(params: &Params, s: &mut Statement) {
         fill_pad(&mut s.1, StatementArg::None, params.max_statement_args)
     }
-    fn pad_operation(params: &Params, op: &mut Operation) {
-        fill_pad(&mut op.1, OperationArg::None, params.max_operation_args)
-    }
 
     /// Returns the statements from the given MainPodInputs, padding to the
     /// respective max lengths defined at the given Params.
@@ -153,10 +146,11 @@ impl MockMainPod {
         let mut statements = Vec::new();
 
         // Input signed pods region
-        let none_sig_pod: Box<dyn Pod> = Box::new(NonePod {});
+        let none_sig_pod_box: Box<dyn Pod> = Box::new(NonePod {});
+        let none_sig_pod = none_sig_pod_box.as_ref();
         assert!(inputs.signed_pods.len() <= params.max_input_signed_pods);
         for i in 0..params.max_input_signed_pods {
-            let pod = inputs.signed_pods.get(i).copied().unwrap_or(&none_sig_pod);
+            let pod = inputs.signed_pods.get(i).unwrap_or(&none_sig_pod);
             let sts = pod.pub_statements();
             assert!(sts.len() <= params.max_signed_pod_values);
             for j in 0..params.max_signed_pod_values {
@@ -171,10 +165,11 @@ impl MockMainPod {
         }
 
         // Input main pods region
-        let none_main_pod: Box<dyn Pod> = Box::new(NonePod {});
+        let none_main_pod_box: Box<dyn Pod> = Box::new(NonePod {});
+        let none_main_pod = none_main_pod_box.as_ref();
         assert!(inputs.main_pods.len() <= params.max_input_main_pods);
         for i in 0..params.max_input_main_pods {
-            let pod = inputs.main_pods.get(i).copied().unwrap_or(&none_main_pod);
+            let pod = inputs.main_pods.get(i).copied().unwrap_or(none_main_pod);
             let sts = pod.pub_statements();
             assert!(sts.len() <= params.max_public_statements);
             for j in 0..params.max_public_statements {
@@ -256,11 +251,11 @@ impl MockMainPod {
             })
             .collect::<Result<Vec<_>>>()?;
         if merkle_proofs.len() > params.max_merkle_proofs {
-            return Err(anyhow!(
+            Err(anyhow!(
                 "The number of required Merkle proofs ({}) exceeds the maximum number ({}).",
                 merkle_proofs.len(),
                 params.max_merkle_proofs
-            ));
+            ))
         } else {
             fill_pad(
                 &mut merkle_proofs,
@@ -388,7 +383,7 @@ impl MockMainPod {
         // value=PodType::MockMainPod`
         let statements = Self::layout_statements(params, &inputs);
         // Extract Merkle proofs and pad.
-        let merkle_proofs = Self::extract_merkle_proofs(params, &inputs.operations)?;
+        let merkle_proofs = Self::extract_merkle_proofs(params, inputs.operations)?;
 
         let operations = Self::process_private_statements_operations(
             params,
@@ -399,22 +394,6 @@ impl MockMainPod {
         let operations =
             Self::process_public_statements_operations(params, &statements, operations)?;
 
-        let input_signed_pods = inputs
-            .signed_pods
-            .iter()
-            .map(|p| (*p).clone())
-            .collect_vec();
-        let input_main_pods = inputs.main_pods.iter().map(|p| (*p).clone()).collect_vec();
-        let input_statements = inputs
-            .statements
-            .iter()
-            .cloned()
-            .map(|s| {
-                let mut s = s.into();
-                Self::pad_statement(params, &mut s);
-                s
-            })
-            .collect_vec();
         let public_statements =
             statements[statements.len() - params.max_public_statements..].to_vec();
 
@@ -432,26 +411,6 @@ impl MockMainPod {
             operations,
             merkle_proofs,
         })
-    }
-
-    fn statement_none(params: &Params) -> Statement {
-        let mut args = Vec::with_capacity(params.max_statement_args);
-        Self::pad_statement_args(params, &mut args);
-        Statement(Predicate::Native(NativePredicate::None), args)
-    }
-
-    fn operation_none(params: &Params) -> Operation {
-        let mut op = Operation(
-            OperationType::Native(NativeOperation::None),
-            vec![],
-            OperationAux::None,
-        );
-        fill_pad(&mut op.1, OperationArg::None, params.max_operation_args);
-        op
-    }
-
-    fn pad_statement_args(params: &Params, args: &mut Vec<StatementArg>) {
-        fill_pad(args, StatementArg::None, params.max_statement_args)
     }
 
     fn pad_operation_args(params: &Params, args: &mut Vec<OperationArg>) {
@@ -487,19 +446,15 @@ impl Pod for MockMainPod {
         let ids_match = self.id == PodId(hash_statements(&self.public_statements, &self.params));
         // find a ValueOf statement from the public statements with key=KEY_TYPE and check that the
         // value is PodType::MockMainPod
-        let has_type_statement = self
-            .public_statements
-            .iter()
-            .find(|s| {
-                s.0 == Predicate::Native(NativePredicate::ValueOf)
-                    && !s.1.is_empty()
-                    && if let StatementArg::Key(AnchoredKey(pod_id, key_hash)) = s.1[0] {
-                        pod_id == SELF && key_hash == hash_str(KEY_TYPE)
-                    } else {
-                        false
-                    }
-            })
-            .is_some();
+        let has_type_statement = self.public_statements.iter().any(|s| {
+            s.0 == Predicate::Native(NativePredicate::ValueOf)
+                && !s.1.is_empty()
+                && if let StatementArg::Key(AnchoredKey(pod_id, key_hash)) = s.1[0] {
+                    pod_id == SELF && key_hash == hash_str(KEY_TYPE)
+                } else {
+                    false
+                }
+        });
         // 3. check that all `input_statements` of type `ValueOf` with origin=SELF have unique keys
         // (no duplicates)
         // TODO: Instead of doing this, do a uniqueness check when verifying the output of a
@@ -595,6 +550,9 @@ impl Pod for MockMainPod {
     }
 
     fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+    fn as_any(&self) -> &dyn Any {
         self
     }
 

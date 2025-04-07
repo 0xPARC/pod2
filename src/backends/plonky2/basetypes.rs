@@ -23,15 +23,12 @@ use plonky2::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    backends::counter,
-    middleware::{
-        serialization::{
-            deserialize_hash_tuple, deserialize_value_tuple, serialize_hash_tuple,
-            serialize_value_tuple,
-        },
-        Params, ToFields,
+use crate::middleware::{
+    serialization::{
+        deserialize_hash_tuple, deserialize_value_tuple, serialize_hash_tuple,
+        serialize_value_tuple,
     },
+    Params, ToFields,
 };
 
 /// F is the native field we use everywhere.  Currently it's Goldilocks from plonky2
@@ -83,10 +80,10 @@ impl Ord for Value {
     fn cmp(&self, other: &Self) -> Ordering {
         for (lhs, rhs) in self.0.iter().zip(other.0.iter()).rev() {
             let (lhs, rhs) = (lhs.to_canonical_u64(), rhs.to_canonical_u64());
-            if lhs < rhs {
-                return Ordering::Less;
-            } else if lhs > rhs {
-                return Ordering::Greater;
+            match lhs.cmp(&rhs) {
+                Ordering::Less => return Ordering::Less,
+                Ordering::Greater => return Ordering::Greater,
+                _ => {}
             }
         }
         Ordering::Equal
@@ -159,10 +156,7 @@ pub fn hash_value(input: &Value) -> Hash {
 }
 
 pub fn hash_fields(input: &[F]) -> Hash {
-    // Note: the counter counts when this method is called, but different input
-    // sizes will have different costs in-circuit.
-    counter::count_hash();
-    Hash(PoseidonHash::hash_no_pad(&input).elements)
+    Hash(PoseidonHash::hash_no_pad(input).elements)
 }
 
 impl From<Value> for Hash {

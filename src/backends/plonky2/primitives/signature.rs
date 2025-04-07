@@ -55,7 +55,7 @@ pub struct Signature(pub(crate) Proof);
 
 /// Implements the key generation and the computation of proof-based signatures.
 impl SecretKey {
-    pub fn new() -> Self {
+    pub fn new_rand() -> Self {
         // note: the `F::rand()` internally uses `rand::rngs::OsRng`
         Self(Value(std::array::from_fn(|_| F::rand())))
     }
@@ -189,9 +189,9 @@ impl SignatureInternalCircuit {
         msg: Value,
         s: Value,
     ) -> Result<()> {
-        pw.set_target_arr(&self.sk_targ, &sk.0 .0.to_vec())?;
+        pw.set_target_arr(&self.sk_targ, sk.0 .0.as_ref())?;
         pw.set_hash_target(self.pk_targ, HashOut::<F>::from_vec(pk.0 .0.to_vec()))?;
-        pw.set_target_arr(&self.msg_targ, &msg.0.to_vec())?;
+        pw.set_target_arr(&self.msg_targ, msg.0.as_ref())?;
         pw.set_hash_target(self.s_targ, HashOut::<F>::from_vec(s.0.to_vec()))?;
 
         Ok(())
@@ -205,7 +205,7 @@ pub mod tests {
 
     #[test]
     fn test_signature() -> Result<()> {
-        let sk = SecretKey::new();
+        let sk = SecretKey::new_rand();
         let pk = sk.public_key();
 
         let msg = Value::from(42);

@@ -252,10 +252,9 @@ impl From<CustomPredicateBatch> for middleware::CustomPredicateBatch {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// NOTE: fields are not public (outside of crate) to enforce the struct instantiation through
+/// the `::and/or` methods, which performs checks on the values.
 pub struct CustomPredicate {
-    /// NOTE: fields are not public (outside of crate) to enforce the struct instantiation through
-    /// the `::and/or` methods, which performs checks on the values.
-
     /// true for "and", false for "or"
     pub(crate) conjunction: bool,
     pub(crate) statements: Vec<StatementTmpl>,
@@ -550,7 +549,7 @@ fn resolve_wildcard(args: &[&str], priv_args: &[&str], v: &KeyOrWildcardStr) -> 
             args.iter()
                 .chain(priv_args.iter())
                 .enumerate()
-                .find_map(|(i, name)| (&s == name).then_some(IndexedWildcard::new(s.clone(), i)))
+                .find_map(|(i, name)| (s == name).then_some(IndexedWildcard::new(s.clone(), i)))
                 .unwrap(),
         ),
     }

@@ -7,10 +7,7 @@ use plonky2::field::types::Field;
 use serde::{Deserialize, Serialize};
 
 pub use super::merkletree_circuit::*;
-use crate::backends::{
-    counter,
-    plonky2::basetypes::{hash_fields, Hash, Value, EMPTY_HASH, F},
-};
+use crate::backends::plonky2::basetypes::{hash_fields, Hash, Value, EMPTY_HASH, F};
 
 /// Implements the MerkleTree specified at
 /// https://0xparc.github.io/pod2/merkletree.html
@@ -30,7 +27,7 @@ impl MerkleTree {
             .collect::<Result<_>>()?;
 
         // Start with a leaf or conclude with an empty node as root.
-        let mut root = leaves.pop().map(|l| Node::Leaf(l)).unwrap_or(Node::None);
+        let mut root = leaves.pop().map(Node::Leaf).unwrap_or(Node::None);
 
         // Iterate over remaining leaves (if any) and add them.
         for leaf in leaves.into_iter() {
@@ -81,8 +78,6 @@ impl MerkleTree {
     /// the tree. It returns the `value` of the leaf at the given `key`, and the
     /// `MerkleProof`.
     pub fn prove(&self, key: &Value) -> Result<(Value, MerkleProof)> {
-        counter::count_tree_proof_gen();
-
         let path = keypath(self.max_depth, *key)?;
 
         let mut siblings: Vec<Hash> = Vec::new();
@@ -108,8 +103,6 @@ impl MerkleTree {
     /// the key-value pair in the leaf reached as a result of
     /// resolving `key` as well as a `MerkleProof`.
     pub fn prove_nonexistence(&self, key: &Value) -> Result<MerkleProof> {
-        counter::count_tree_proof_gen();
-
         let path = keypath(self.max_depth, *key)?;
 
         let mut siblings: Vec<Hash> = Vec::new();
@@ -373,8 +366,6 @@ impl Node {
 
     // adds the leaf at the tree from the current node (self), without computing any hash
     pub(crate) fn add_leaf(&mut self, lvl: usize, max_depth: usize, leaf: Leaf) -> Result<()> {
-        counter::count_tree_insert();
-
         if lvl >= max_depth {
             return Err(anyhow!("max depth reached"));
         }
@@ -610,11 +601,8 @@ pub mod tests {
         let (v, proof) = tree.prove(&Value::from(13))?;
         assert_eq!(v, Value::from(1013));
         println!("{}", proof);
-        println!("after proof generation, {}", counter::counter_get());
 
-        counter::counter_reset();
         MerkleTree::verify(32, tree.root(), &proof, &key, &value)?;
-        println!("after verify, {}", counter::counter_get());
 
         // Exclusion checks
         let key = Value::from(12);

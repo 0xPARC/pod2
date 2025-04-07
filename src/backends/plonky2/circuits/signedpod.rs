@@ -108,10 +108,7 @@ impl SignedPodVerifyTarget {
             .chain(iter::repeat_with(|| StatementArgTarget::none(builder)))
             .take(self.params.max_statement_args)
             .collect();
-            let statement = StatementTarget {
-                predicate: predicate.clone(),
-                args,
-            };
+            let statement = StatementTarget { predicate, args };
             statements.push(statement);
         }
         statements
@@ -131,7 +128,7 @@ impl SignedPodVerifyTarget {
             .iter()
             .enumerate()
             .map(|(i, k)| {
-                let (v, proof) = pod.dict.prove(&k)?;
+                let (v, proof) = pod.dict.prove(k)?;
                 self.mt_proofs[i].set_targets(pw, true, pod.dict.commitment(), proof, *k, v)?;
                 Ok(v)
             })
@@ -146,7 +143,7 @@ impl SignedPodVerifyTarget {
                 continue;
             }
 
-            let (obtained_v, proof) = pod.dict.prove(&k)?;
+            let (obtained_v, proof) = pod.dict.prove(k)?;
             assert_eq!(obtained_v, *v); // sanity check
 
             self.mt_proofs[curr].set_targets(pw, true, pod.dict.commitment(), proof, *k, *v)?;
@@ -217,7 +214,7 @@ pub mod tests {
         pod.insert("idNumber", "4242424242");
         pod.insert("dateOfBirth", 1169909384);
         pod.insert("socialSecurityNumber", "G2121210");
-        let sk = SecretKey::new();
+        let sk = SecretKey::new_rand();
         let mut signer = Signer(sk);
         let pod = pod.sign(&mut signer).unwrap();
         let signed_pod = pod.pod.into_any().downcast::<SignedPod>().unwrap();

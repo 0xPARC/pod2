@@ -180,8 +180,8 @@ impl Operation {
             Self::TransitiveEqualFromStatements(s1, s2) => vec![s1, s2],
             Self::GtToNotEqual(s) => vec![s],
             Self::LtToNotEqual(s) => vec![s],
-            Self::ContainsFromEntries(s1, s2, s3, pf) => vec![s1, s2, s3],
-            Self::NotContainsFromEntries(s1, s2, pf) => vec![s1, s2],
+            Self::ContainsFromEntries(s1, s2, s3, _pf) => vec![s1, s2, s3],
+            Self::NotContainsFromEntries(s1, s2, _pf) => vec![s1, s2],
             Self::SumOf(s1, s2, s3) => vec![s1, s2, s3],
             Self::ProductOf(s1, s2, s3) => vec![s1, s2, s3],
             Self::MaxOf(s1, s2, s3) => vec![s1, s2, s3],
@@ -303,7 +303,7 @@ impl Operation {
             }
             Self::TransitiveEqualFromStatements(Equal(ak1, ak2), Equal(ak3, ak4)) => {
                 if ak2 == ak3 {
-                    Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak3)])
+                    Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak4)])
                 } else {
                     return Err(anyhow!("Invalid operation"));
                 }
@@ -324,7 +324,7 @@ impl Operation {
                 return Err(anyhow!("Invalid operation"));
             }
             Self::ContainsFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3), pf)
-                if MerkleTree::verify(pf.siblings.len(), (*v1).into(), &pf, v2, v3)? == () =>
+                if MerkleTree::verify(pf.siblings.len(), (*v1).into(), pf, v2, v3).is_ok() =>
             {
                 Some(vec![
                     StatementArg::Key(*ak1),
@@ -336,8 +336,8 @@ impl Operation {
                 return Err(anyhow!("Invalid operation"));
             }
             Self::NotContainsFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2), pf)
-                if MerkleTree::verify_nonexistence(pf.siblings.len(), (*v1).into(), &pf, v2)?
-                    == () =>
+                if MerkleTree::verify_nonexistence(pf.siblings.len(), (*v1).into(), pf, v2)
+                    .is_ok() =>
             {
                 Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
             }
@@ -349,7 +349,11 @@ impl Operation {
                 let v2: i64 = (*v2).try_into()?;
                 let v3: i64 = (*v3).try_into()?;
                 if v1 == v2 + v3 {
-                    Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
+                    Some(vec![
+                        StatementArg::Key(*ak1),
+                        StatementArg::Key(*ak2),
+                        StatementArg::Key(*ak3),
+                    ])
                 } else {
                     return Err(anyhow!("Invalid operation"));
                 }
@@ -362,7 +366,11 @@ impl Operation {
                 let v2: i64 = (*v2).try_into()?;
                 let v3: i64 = (*v3).try_into()?;
                 if v1 == v2 * v3 {
-                    Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
+                    Some(vec![
+                        StatementArg::Key(*ak1),
+                        StatementArg::Key(*ak2),
+                        StatementArg::Key(*ak3),
+                    ])
                 } else {
                     return Err(anyhow!("Invalid operation"));
                 }
@@ -375,7 +383,11 @@ impl Operation {
                 let v2: i64 = (*v2).try_into()?;
                 let v3: i64 = (*v3).try_into()?;
                 if v1 == std::cmp::max(v2, v3) {
-                    Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
+                    Some(vec![
+                        StatementArg::Key(*ak1),
+                        StatementArg::Key(*ak2),
+                        StatementArg::Key(*ak3),
+                    ])
                 } else {
                     return Err(anyhow!("Invalid operation"));
                 }
@@ -484,7 +496,7 @@ impl Operation {
 }
 
 impl ToFields for Operation {
-    fn to_fields(&self, params: &Params) -> Vec<F> {
+    fn to_fields(&self, _params: &Params) -> Vec<F> {
         todo!()
     }
 }

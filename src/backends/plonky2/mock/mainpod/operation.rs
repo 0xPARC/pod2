@@ -94,8 +94,8 @@ impl MerkleClaimAndProof {
             let (other_key, other_value) = mid_mp.other_leaf.unwrap_or((EMPTY_VALUE, EMPTY_VALUE));
             Ok(Self {
                 enabled: true,
-                root: root.clone().into(),
-                key: key.clone(),
+                root: (*root).into(),
+                key: *key,
                 value: value.cloned().unwrap_or(EMPTY_VALUE),
                 existence: mid_mp.existence,
                 siblings: mid_mp
@@ -197,7 +197,7 @@ impl fmt::Display for Operation {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?} ", self.0)?;
         for (i, arg) in self.1.iter().enumerate() {
-            if !(!f.alternate() && arg.is_none()) {
+            if f.alternate() || !arg.is_none() {
                 if i != 0 {
                     write!(f, " ")?;
                 }

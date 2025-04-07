@@ -123,6 +123,9 @@ impl Pod for MockSignedPod {
     fn into_any(self: Box<Self>) -> Box<dyn Any> {
         self
     }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 
     fn serialized_proof(&self) -> String {
         self.signature.to_string()

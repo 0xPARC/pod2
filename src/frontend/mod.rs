@@ -425,16 +425,13 @@ impl MainPodBuilder {
         use NativeOperation::*;
         let Operation(op_type, ref mut args, _) = &mut op;
         // TODO: argument type checking
-        let pred = op_type
-            .output_predicate()
-            .map(|p| Ok(p))
-            .unwrap_or_else(|| {
-                // We are dealing with a copy here.
-                match (&args).get(0) {
-                    Some(OperationArg::Statement(s)) if args.len() == 1 => Ok(s.predicate.clone()),
-                    _ => Err(anyhow!("Invalid arguments to copy operation: {:?}", args)),
-                }
-            })?;
+        let pred = op_type.output_predicate().map(Ok).unwrap_or_else(|| {
+            // We are dealing with a copy here.
+            match (args).first() {
+                Some(OperationArg::Statement(s)) if args.len() == 1 => Ok(s.predicate.clone()),
+                _ => Err(anyhow!("Invalid arguments to copy operation: {:?}", args)),
+            }
+        })?;
 
         let st_args: Vec<StatementArg> = match op_type {
             OperationType::Native(o) => match o {
@@ -644,7 +641,6 @@ impl MainPodBuilder {
                         };
                         st_args
                     }
-                    RenameContainedBy => todo!(),
                     _ => {
                         return Err(anyhow!("Invalid arguments to operation"));
                     }
@@ -680,7 +676,7 @@ impl MainPodBuilder {
                     .map(|chunk| {
                         Ok(StatementArg::Key(AnchoredKey::new(
                             Origin::new(PodId(match chunk[0] {
-                                Value::Raw(v) => v.try_into()?,
+                                Value::Raw(v) => v.into(),
                                 _ => return Err(anyhow!("Invalid POD class value.")),
                             })),
                             self.key_table
@@ -752,8 +748,16 @@ impl MainPodBuilder {
 
         let (statements, operations, public_statements) = compiler.compile(inputs, params)?;
         let inputs = MainPodInputs {
-            signed_pods: &self.input_signed_pods.iter().map(|p| &p.pod).collect_vec(),
-            main_pods: &self.input_main_pods.iter().map(|p| &p.pod).collect_vec(),
+            signed_pods: &self
+                .input_signed_pods
+                .iter()
+                .map(|p| p.pod.as_ref())
+                .collect_vec(),
+            main_pods: &self
+                .input_main_pods
+                .iter()
+                .map(|p| p.pod.as_ref())
+                .collect_vec(),
             statements: &statements,
             operations: &operations,
             public_statements: &public_statements,
@@ -948,15 +952,14 @@ impl MainPodCompiler {
                     (Some(StatementArg::Key(ak1)), Some(StatementArg::Key(ak2))) => (ak1, ak2),
                     _ => Err(anyhow!("Ill-formed statement: {}", st))?,
                 };
-                let middle_st =
-                    middleware::Statement::Contains(ak1.into(), ak2.into(), empty_ak.clone());
+                let middle_st = middleware::Statement::Contains(ak1.into(), ak2.into(), empty_ak);
                 let middle_op = middleware::Operation::ContainsFromEntries(
                     match &op.1[0] {
-                        OperationArg::Statement(s) => self.compile_st(&s)?,
+                        OperationArg::Statement(s) => self.compile_st(s)?,
                         _ => Err(anyhow!("Statement compile failed in manual compile"))?,
                     },
                     match &op.1[1] {
-                        OperationArg::Statement(s) => self.compile_st(&s)?,
+                        OperationArg::Statement(s) => self.compile_st(s)?,
                         _ => Err(anyhow!("Statement compile failed in manual compile"))?,
                     },
                     empty_st,
@@ -1000,7 +1003,6 @@ impl MainPodCompiler {
             Err(StatementConversionError::MCR(_)) => {
                 let empty_st = self
                     .get_literal(EMPTY_VALUE)
-                    .clone()
                     .ok_or(anyhow!("Literal value not found for empty literal."))?;
                 let empty_ak = match empty_st {
                     middleware::Statement::ValueOf(ak, _) => ak,
@@ -1010,8 +1012,7 @@ impl MainPodCompiler {
                     (Some(StatementArg::Key(ak1)), Some(StatementArg::Key(ak2))) => (ak1, ak2),
                     _ => Err(anyhow!("Ill-formed statement: {}", st))?,
                 };
-                let middle_st =
-                    middleware::Statement::Contains(ak1.into(), ak2.into(), empty_ak.clone());
+                let middle_st = middleware::Statement::Contains(ak1.into(), ak2.into(), *empty_ak);
                 Ok(middle_st)
             }
         }
@@ -1023,9 +1024,9 @@ impl MainPodCompiler {
         // TODO: Take Merkle proof into account.
         let mop_args =
             op.1.iter()
-                .flat_map(|arg| self.compile_op_arg(arg).map(|s| Ok(s.try_into()?)))
-                .collect::<Result<Vec<middleware::Statement>>>()?;
-        middleware::Operation::op(mop_code.into(), &mop_args, &op.2)
+                .flat_map(|arg| self.compile_op_arg(arg))
+                .collect_vec();
+        middleware::Operation::op(mop_code, &mop_args, &op.2)
     }
 
     fn compile_st_op(&mut self, st: &Statement, op: &Operation, params: &Params) -> Result<()> {
@@ -1095,55 +1096,55 @@ pub mod build_utils {
     macro_rules! op {
         (new_entry, ($key:expr, $value:expr)) => { $crate::frontend::Operation(
             $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::NewEntry),
-            $crate::op_args!(($key, $value)), crate::middleware::OperationAux::None) };
+            $crate::op_args!(($key, $value)), $crate::middleware::OperationAux::None) };
         (eq, $($arg:expr),+) => { $crate::frontend::Operation(
             $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::EqualFromEntries),
-            $crate::op_args!($($arg),*), crate::middleware::OperationAux::None) };
+            $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (ne, $($arg:expr),+) => { $crate::frontend::Operation(
             $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::NotEqualFromEntries),
-            $crate::op_args!($($arg),*), crate::middleware::OperationAux::None) };
-        (gt, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::GtFromEntries),
-            crate::op_args!($($arg),*), crate::middleware::OperationAux::None) };
-        (lt, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::LtFromEntries),
-            crate::op_args!($($arg),*), crate::middleware::OperationAux::None) };
-        (transitive_eq, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::TransitiveEqualFromStatements),
-            crate::op_args!($($arg),*), crate::middleware::OperationAux::None) };
-        (gt_to_ne, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::GtToNotEqual),
-            crate::op_args!($($arg),*), crate::middleware::OperationAux::None) };
-        (lt_to_ne, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::LtToNotEqual),
-            crate::op_args!($($arg),*), crate::middleware::OperationAux::None) };
-        (sum_of, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::SumOf),
-            crate::op_args!($($arg),*), crate::middleware::OperationAux::None) };
-        (product_of, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::ProductOf),
-            crate::op_args!($($arg),*), crate::middleware::OperationAux::None) };
-        (max_of, $($arg:expr),+) => { crate::frontend::Operation(
-            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::MaxOf),
-            crate::op_args!($($arg),*), crate::middleware::OperationAux::None) };
+            $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
+        (gt, $($arg:expr),+) => { $crate::frontend::Operation(
+            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::GtFromEntries),
+            $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
+        (lt, $($arg:expr),+) => { $crate::frontend::Operation(
+            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::LtFromEntries),
+            $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
+        (transitive_eq, $($arg:expr),+) => { $crate::frontend::Operation(
+            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::TransitiveEqualFromStatements),
+            $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
+        (gt_to_ne, $($arg:expr),+) => { $crate::frontend::Operation(
+            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::GtToNotEqual),
+            $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
+        (lt_to_ne, $($arg:expr),+) => { $crate::frontend::Operation(
+            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::LtToNotEqual),
+            $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
+        (sum_of, $($arg:expr),+) => { $crate::frontend::Operation(
+            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::SumOf),
+            $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
+        (product_of, $($arg:expr),+) => { $crate::frontend::Operation(
+            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::ProductOf),
+            $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
+        (max_of, $($arg:expr),+) => { $crate::frontend::Operation(
+            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::MaxOf),
+            $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (custom, $op:expr, $($arg:expr),+) => { $crate::frontend::Operation(
             $crate::frontend::OperationType::Custom($op),
-            $crate::op_args!($($arg),*), crate::middleware::OperationAux::None) };
-        (dict_contains, $dict:expr, $key:expr, $value:expr, $aux:expr) => { crate::frontend::Operation(
-            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::DictContainsFromEntries),
-            crate::op_args!($dict, $key, $value), crate::middleware::OperationAux::MerkleProof($aux)) };
-        (dict_not_contains, $dict:expr, $key:expr, $aux:expr) => { crate::frontend::Operation(
-            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::DictNotContainsFromEntries),
-            crate::op_args!($dict, $key), crate::middleware::OperationAux::MerkleProof($aux)) };
-        (set_contains, $set:expr, $value:expr, $aux:expr) => { crate::frontend::Operation(
-            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::SetContainsFromEntries),
-            crate::op_args!($set, $value), crate::middleware::OperationAux::MerkleProof($aux)) };
-        (set_not_contains, $set:expr, $value:expr, $aux:expr) => { crate::frontend::Operation(
-            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::SetNotContainsFromEntries),
-            crate::op_args!($set, $value), crate::middleware::OperationAux::MerkleProof($aux)) };
-        (array_contains, $array:expr, $value:expr, $aux:expr) => { crate::frontend::Operation(
-            crate::frontend::OperationType::Native(crate::frontend::NativeOperation::ArrayContainsFromEntries),
-            crate::op_args!($array, $value), crate::middleware::OperationAux::MerkleProof($aux)) };
+            $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
+        (dict_contains, $dict:expr, $key:expr, $value:expr, $aux:expr) => { $crate::frontend::Operation(
+            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::DictContainsFromEntries),
+            $crate::op_args!($dict, $key, $value), $crate::middleware::OperationAux::MerkleProof($aux)) };
+        (dict_not_contains, $dict:expr, $key:expr, $aux:expr) => { $crate::frontend::Operation(
+            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::DictNotContainsFromEntries),
+            $crate::op_args!($dict, $key), $crate::middleware::OperationAux::MerkleProof($aux)) };
+        (set_contains, $set:expr, $value:expr, $aux:expr) => { $crate::frontend::Operation(
+            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::SetContainsFromEntries),
+            $crate::op_args!($set, $value), $crate::middleware::OperationAux::MerkleProof($aux)) };
+        (set_not_contains, $set:expr, $value:expr, $aux:expr) => { $crate::frontend::Operation(
+            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::SetNotContainsFromEntries),
+            $crate::op_args!($set, $value), $crate::middleware::OperationAux::MerkleProof($aux)) };
+        (array_contains, $array:expr, $value:expr, $aux:expr) => { $crate::frontend::Operation(
+            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::ArrayContainsFromEntries),
+            $crate::op_args!($array, $value), $crate::middleware::OperationAux::MerkleProof($aux)) };
     }
 }
 

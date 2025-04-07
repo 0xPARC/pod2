@@ -39,14 +39,15 @@ impl PodProver for Prover {
             .signed_pods
             .iter()
             .map(|p| {
-                let p: Box<dyn middleware::Pod> = (*p).clone();
-                *p.into_any()
-                    .downcast::<SignedPod>()
-                    .expect("type SignedPod")
+                let p = p
+                    .as_any()
+                    .downcast_ref::<SignedPod>()
+                    .expect("type SignedPod");
+                p.clone()
             })
             .collect_vec();
 
-        let merkle_proofs = MockMainPod::extract_merkle_proofs(params, &inputs.operations)?;
+        let merkle_proofs = MockMainPod::extract_merkle_proofs(params, inputs.operations)?;
 
         // TODO: Move these methods from the mock main pod to a common place
         let statements = MockMainPod::layout_statements(params, &inputs);
@@ -149,6 +150,9 @@ impl Pod for MainPod {
     }
 
     fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+    fn as_any(&self) -> &dyn Any {
         self
     }
 

@@ -103,6 +103,9 @@ impl Pod for SignedPod {
     fn into_any(self: Box<Self>) -> Box<dyn Any> {
         self
     }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 
     fn serialized_proof(&self) -> String {
         let mut buffer = Vec::new();
@@ -134,7 +137,7 @@ pub mod tests {
         pod.insert("socialSecurityNumber", "G2121210");
 
         // TODO: Use a deterministic secret key to get deterministic tests
-        let sk = SecretKey::new();
+        let sk = SecretKey::new_rand();
         let mut signer = Signer(sk);
         let pod = pod.sign(&mut signer).unwrap();
         let pod = pod.pod.into_any().downcast::<SignedPod>().unwrap();

@@ -118,7 +118,7 @@ impl fmt::Display for Statement {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?} ", self.0)?;
         for (i, arg) in self.1.iter().enumerate() {
-            if !(!f.alternate() && arg.is_none()) {
+            if f.alternate() || !arg.is_none() {
                 if i != 0 {
                     write!(f, " ")?;
                 }

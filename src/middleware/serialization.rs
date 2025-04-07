@@ -29,11 +29,11 @@ where
     }
 
     let mut v = [F::ZERO; N];
-    for i in 0..N {
+    for (i, v_i) in v.iter_mut().enumerate() {
         let start = i * 16;
         let end = start + 16;
         let hex_part = &hex_str[start..end];
-        v[i] = F::from_canonical_u64(
+        *v_i = F::from_canonical_u64(
             u64::from_str_radix(hex_part, 16).map_err(serde::de::Error::custom)?,
         );
     }

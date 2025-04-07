@@ -45,14 +45,14 @@ impl OperationVerifyGadget {
         op: &OperationTarget,
         prev_statements: &[StatementTarget],
         merkle_claims: &[MerkleClaimTarget],
-    ) -> Result<OperationVerifyTarget> {
+    ) -> Result<()> {
         let _true = builder._true();
         let _false = builder._false();
 
         // Verify that the operation `op` correctly generates the statement `st`.  The operation
         // can reference any of the `prev_statements`.
         // TODO: Clean this up.
-        let resolved_op_args = if prev_statements.len() == 0 {
+        let resolved_op_args = if prev_statements.is_empty() {
             vec![]
         } else {
             op.args
@@ -66,7 +66,7 @@ impl OperationVerifyGadget {
         // of the provided Merkle proofs (if any). These proofs have already
         // been verified, so we need only look up the claim.
         let resolved_merkle_claim =
-            (merkle_claims.len() > 0).then(|| builder.vec_ref(merkle_claims, op.aux[0]));
+            (!merkle_claims.is_empty()).then(|| builder.vec_ref(merkle_claims, op.aux[0]));
 
         // The verification may require aux data which needs to be stored in the
         // `OperationVerifyTarget` so that we can set during witness generation.
@@ -76,13 +76,13 @@ impl OperationVerifyGadget {
         // as 'eval' restricted to the op of type X, where the
         // returned target is `false` if the input targets lie outside
         // of the domain.
-        let op_checks = vec![
+        let op_checks = [
             vec![
                 self.eval_none(builder, st, op),
                 self.eval_new_entry(builder, st, op, prev_statements),
             ],
             // Skip these if there are no resolved op args
-            if resolved_op_args.len() == 0 {
+            if resolved_op_args.is_empty() {
                 vec![]
             } else {
                 vec![
@@ -110,7 +110,7 @@ impl OperationVerifyGadget {
 
         builder.connect(ok.target, _true.target);
 
-        Ok(OperationVerifyTarget {})
+        Ok(())
     }
 
     fn eval_not_contains_from_entries(
@@ -311,9 +311,8 @@ impl OperationVerifyGadget {
 
         let dupe_check = {
             let individual_checks = prev_statements
-                .into_iter()
-                .enumerate()
-                .map(|(i, ps)| {
+                .iter()
+                .map(|ps| {
                     let same_predicate = builder.is_equal_slice(&st.predicate, &ps.predicate);
                     let same_anchored_key =
                         builder.is_equal_slice(&st.args[0].elements, &ps.args[0].elements);
@@ -341,21 +340,6 @@ impl OperationVerifyGadget {
         let st_ok = builder.is_equal_flattenable(st, expected_statement);
 
         Ok(builder.all([op_code_ok, st_ok]))
-    }
-}
-
-struct OperationVerifyTarget {
-    // TODO
-}
-
-struct OperationVerifyInput {
-    // TODO
-}
-
-impl OperationVerifyTarget {
-    fn set_targets(&self, pw: &mut PartialWitness<F>, input: &OperationVerifyInput) -> Result<()> {
-        // TODO
-        Ok(())
     }
 }
 
@@ -425,12 +409,11 @@ impl MainPodVerifyGadget {
         // 2. Calculate the Pod Id from the public statements
         let pub_statements_flattened = pub_statements
             .iter()
-            .map(|s| {
+            .flat_map(|s| {
                 s.predicate
                     .iter()
                     .chain(s.args.iter().flat_map(|a| &a.elements))
             })
-            .flatten()
             .cloned()
             .collect();
         let id = builder.hash_n_to_hash_no_pad::<PoseidonHash>(pub_statements_flattened);
@@ -451,14 +434,12 @@ impl MainPodVerifyGadget {
         // 3. check that all `input_statements` of type `ValueOf` with origin=SELF have unique keys
         // (no duplicates).  We do this in the verification of NewEntry operation.
         // 5. Verify input statements
-        let mut op_verifications = Vec::new();
         for (i, (st, op)) in input_statements.iter().zip(operations.iter()).enumerate() {
             let prev_statements = &statements[..input_statements_offset + i];
-            let op_verification = OperationVerifyGadget {
+            OperationVerifyGadget {
                 params: params.clone(),
             }
             .eval(builder, st, op, prev_statements, &merkle_claims)?;
-            op_verifications.push(op_verification);
         }
 
         Ok(MainPodVerifyTarget {
@@ -468,7 +449,6 @@ impl MainPodVerifyGadget {
             statements: input_statements.to_vec(),
             operations,
             merkle_proofs,
-            op_verifications,
         })
     }
 }
@@ -481,7 +461,6 @@ pub struct MainPodVerifyTarget {
     statements: Vec<StatementTarget>,
     operations: Vec<OperationTarget>,
     merkle_proofs: Vec<MerkleClaimAndProofTarget>,
-    op_verifications: Vec<OperationVerifyTarget>,
 }
 
 pub struct MainPodVerifyInput {
@@ -624,8 +603,6 @@ mod tests {
                 merkle_proof.value,
             )?
         }
-        let input = OperationVerifyInput {};
-        operation_verify.set_targets(&mut pw, &input)?;
 
         // generate & verify proof
         let data = builder.build::<C>();

@@ -125,7 +125,7 @@ impl TryFrom<Statement> for middleware::Statement {
                 (NP::DictNotContains, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None)) => {
                     MS::NotContains(ak1.into(), ak2.into())
                 }
-                (NP::SetContains, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None)) => {
+                (NP::SetContains, (Some(SA::Key(_)), Some(SA::Key(_)), None)) => {
                     return Err(StatementConversionError::MCR(ManualConversionRequired()));
                 }
                 (NP::SetNotContains, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None)) => {

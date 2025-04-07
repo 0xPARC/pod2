@@ -175,7 +175,7 @@ pub mod tests {
     #[test]
     fn test_signature_gadget() -> Result<()> {
         // generate a valid signature
-        let sk = SecretKey::new();
+        let sk = SecretKey::new_rand();
         let pk = sk.public_key();
         let msg = Value::from(42);
         let sig = sk.sign(msg)?;
@@ -206,7 +206,7 @@ pub mod tests {
     #[test]
     fn test_signature_gadget_disabled() -> Result<()> {
         // generate a valid signature
-        let sk = SecretKey::new();
+        let sk = SecretKey::new_rand();
         let pk = sk.public_key();
         let msg = Value::from(42);
         let sig = sk.sign(msg)?;

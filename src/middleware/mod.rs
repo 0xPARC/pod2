@@ -197,6 +197,7 @@ pub trait Pod: fmt::Debug + DynClone {
     }
     // Used for downcasting
     fn into_any(self: Box<Self>) -> Box<dyn Any>;
+    fn as_any(&self) -> &dyn Any;
     // Front-end Pods keep references to middleware Pods. Most of the
     // middleware data can be derived directly from front-end data, but the
     // "proof" data is only created at the point of proving/signing, and
@@ -233,6 +234,9 @@ impl Pod for NonePod {
     fn into_any(self: Box<Self>) -> Box<dyn Any> {
         self
     }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
     fn serialized_proof(&self) -> String {
         "".to_string()
     }
@@ -240,8 +244,8 @@ impl Pod for NonePod {
 
 #[derive(Debug)]
 pub struct MainPodInputs<'a> {
-    pub signed_pods: &'a [&'a Box<dyn Pod>],
-    pub main_pods: &'a [&'a Box<dyn Pod>],
+    pub signed_pods: &'a [&'a dyn Pod],
+    pub main_pods: &'a [&'a dyn Pod],
     pub statements: &'a [Statement],
     pub operations: &'a [Operation],
     /// Statements that need to be made public (they can come from input pods or input

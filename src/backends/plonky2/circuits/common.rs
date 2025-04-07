@@ -79,11 +79,7 @@ impl StatementArgTarget {
     }
 
     fn new(first: ValueTarget, second: ValueTarget) -> Self {
-        let elements: Vec<_> = first
-            .elements
-            .into_iter()
-            .chain(second.elements.into_iter())
-            .collect();
+        let elements: Vec<_> = first.elements.into_iter().chain(second.elements).collect();
         StatementArgTarget {
             elements: elements.try_into().expect("size STATEMENT_ARG_F_LEN"),
         }
@@ -91,12 +87,12 @@ impl StatementArgTarget {
 
     pub fn none(builder: &mut CircuitBuilder<F, D>) -> Self {
         let empty = builder.constant_value(EMPTY_VALUE);
-        Self::new(empty.clone(), empty)
+        Self::new(empty, empty)
     }
 
     pub fn literal(builder: &mut CircuitBuilder<F, D>, value: &ValueTarget) -> Self {
         let empty = builder.constant_value(EMPTY_VALUE);
-        Self::new(value.clone(), empty)
+        Self::new(*value, empty)
     }
 
     pub fn anchored_key(
@@ -104,7 +100,7 @@ impl StatementArgTarget {
         pod_id: &ValueTarget,
         key: &ValueTarget,
     ) -> Self {
-        Self::new(pod_id.clone(), key.clone())
+        Self::new(*pod_id, *key)
     }
 }
 
@@ -250,7 +246,7 @@ impl Flattenable for MerkleClaimTarget {
     fn from_flattened(vs: &[Target]) -> Self {
         Self {
             enabled: BoolTarget::new_unsafe(vs[0]),
-            root: HashOutTarget::from_vec((&vs[1..1 + NUM_HASH_OUT_ELTS]).to_vec()),
+            root: HashOutTarget::from_vec(vs[1..1 + NUM_HASH_OUT_ELTS].to_vec()),
             key: ValueTarget::from_slice(
                 &vs[1 + NUM_HASH_OUT_ELTS..1 + NUM_HASH_OUT_ELTS + VALUE_SIZE],
             ),
@@ -439,7 +435,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
         let matrix_row_ref = |builder: &mut CircuitBuilder<F, D>, m: &[Vec<Target>], i| {
             let num_rows = m.len();
             let num_columns = m
-                .get(0)
+                .first()
                 .map(|row| {
                     let row_len = row.len();
                     assert!(m.iter().all(|row| row.len() == row_len));
