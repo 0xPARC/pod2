@@ -162,9 +162,7 @@ pub mod tests {
     use super::*;
     use crate::{
         backends::plonky2::{
-            mock::mainpod::MockProver,
-            primitives::signature::SecretKey,
-            signedpod::Signer,
+            mock::mainpod::MockProver, primitives::signature::SecretKey, signedpod::Signer,
         },
         examples::zu_kyc_sign_pod_builders,
         frontend, middleware,

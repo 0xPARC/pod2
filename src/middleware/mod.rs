@@ -18,7 +18,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 pub use statement::*;
 
-
 pub const SELF: PodId = PodId(SELF_ID_HASH);
 
 impl fmt::Display for PodId {
