@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     frontend::serialization::*,
     middleware::{
-        self, hash_str, hash_value, Hash, MainPodInputs, OperationAux, Params, PodId, PodProver,
-        PodSigner, EMPTY_VALUE, KEY_SIGNER, KEY_TYPE, SELF,
+        self, hash_str, hash_value, Hash, MainPodInputs, NativeOperation, NativePredicate,
+        OperationAux, Params, PodId, PodProver, PodSigner, EMPTY_VALUE, KEY_SIGNER, KEY_TYPE, SELF,
     },
 };
 
@@ -25,7 +25,6 @@ mod serialization;
 mod statement;
 pub use custom::{CustomPredicateRef, Predicate, *};
 pub use operation::*;
-pub use predicate::*;
 pub use statement::*;
 
 /// This type is just for presentation purposes.
@@ -645,6 +644,10 @@ impl MainPodBuilder {
                         return Err(anyhow!("Invalid arguments to operation"));
                     }
                 },
+                ContainsFromEntries => self.op_args_entries(public, args)?,
+                NotContainsFromEntries => self.op_args_entries(public, args)?,
+                // NOTE: Could we remove these and assume that this function is never called with
+                // syntax sugar operations?
                 DictContainsFromEntries => self.op_args_entries(public, args)?,
                 DictNotContainsFromEntries => self.op_args_entries(public, args)?,
                 SetContainsFromEntries => self.op_args_entries(public, args)?,

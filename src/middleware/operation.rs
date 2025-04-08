@@ -68,6 +68,14 @@ pub enum NativeOperation {
     SumOf = 13,
     ProductOf = 14,
     MaxOf = 15,
+
+    // Syntactic sugar operations.  These operations are not supported by the backend.  The
+    // frontend compiler is responsible of translating these operations into the operations above.
+    DictContainsFromEntries = 1001,
+    DictNotContainsFromEntries = 1002,
+    SetContainsFromEntries = 1003,
+    SetNotContainsFromEntries = 1004,
+    ArrayContainsFromEntries = 1005,
 }
 
 impl ToFields for NativeOperation {
@@ -108,6 +116,23 @@ impl OperationType {
                 NativeOperation::SumOf => Some(Predicate::Native(NativePredicate::SumOf)),
                 NativeOperation::ProductOf => Some(Predicate::Native(NativePredicate::ProductOf)),
                 NativeOperation::MaxOf => Some(Predicate::Native(NativePredicate::MaxOf)),
+                // TODO: Could we remove these and assume that this function is never called with
+                // syntax sugar operations?
+                NativeOperation::DictContainsFromEntries => {
+                    Some(Predicate::Native(NativePredicate::Contains))
+                }
+                NativeOperation::DictNotContainsFromEntries => {
+                    Some(Predicate::Native(NativePredicate::NotContains))
+                }
+                NativeOperation::SetContainsFromEntries => {
+                    Some(Predicate::Native(NativePredicate::Contains))
+                }
+                NativeOperation::SetNotContainsFromEntries => {
+                    Some(Predicate::Native(NativePredicate::NotContains))
+                }
+                NativeOperation::ArrayContainsFromEntries => {
+                    Some(Predicate::Native(NativePredicate::Contains))
+                }
             },
             OperationType::Custom(cpr) => Some(Predicate::Custom(cpr.clone())),
         }

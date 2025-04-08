@@ -6,8 +6,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    frontend::{AnchoredKey, NativePredicate, Origin, Statement, StatementArg, Value},
-    middleware::{self, hash_str, HashOrWildcard, Params, PodId, ToFields},
+    frontend::{AnchoredKey, Origin, Statement, StatementArg, Value},
+    middleware::{self, hash_str, HashOrWildcard, NativePredicate, Params, PodId, ToFields},
     util::hashmap_insert_no_dupe,
 };
 

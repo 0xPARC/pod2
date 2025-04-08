@@ -31,6 +31,14 @@ pub enum NativePredicate {
     SumOf = 8,
     ProductOf = 9,
     MaxOf = 10,
+
+    // Syntactic sugar predicates.  These predicates are not supported by the backend.  The
+    // frontend compiler is responsible of translating these predicates into the predicates above.
+    DictContains = 1000,
+    DictNotContains = 1001,
+    SetContains = 1002,
+    SetNotContains = 1003,
+    ArrayContains = 1004, // there is no ArrayNotContains
 }
 
 impl ToFields for NativePredicate {
@@ -180,6 +188,7 @@ impl Statement {
                     Err(anyhow!("Incorrect statement args"))
                 }
             }
+            Native(np) => Err(anyhow!("Predicate {:?} is syntax sugar", np)),
             BatchSelf(_) => unreachable!(),
             Custom(cpr) => {
                 let ak_args: Result<Vec<AnchoredKey>> = args

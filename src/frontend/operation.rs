@@ -3,8 +3,8 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    frontend::{CustomPredicateRef, NativePredicate, Predicate, SignedPod, Statement, Value},
-    middleware::{self, OperationAux},
+    frontend::{CustomPredicateRef, Predicate, SignedPod, Statement, Value},
+    middleware::{self, NativeOperation, NativePredicate, OperationAux},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -78,28 +78,6 @@ pub enum OperationType {
     Custom(CustomPredicateRef),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum NativeOperation {
-    None = 0,
-    NewEntry = 1,
-    CopyStatement = 2,
-    EqualFromEntries = 3,
-    NotEqualFromEntries = 4,
-    GtFromEntries = 5,
-    LtFromEntries = 6,
-    TransitiveEqualFromStatements = 7,
-    GtToNotEqual = 8,
-    LtToNotEqual = 9,
-    SumOf = 13,
-    ProductOf = 14,
-    MaxOf = 15,
-    DictContainsFromEntries = 16,
-    DictNotContainsFromEntries = 17,
-    SetContainsFromEntries = 18,
-    SetNotContainsFromEntries = 19,
-    ArrayContainsFromEntries = 20,
-}
-
 impl TryFrom<OperationType> for middleware::OperationType {
     type Error = anyhow::Error;
     fn try_from(fe_ot: OperationType) -> Result<Self, Self::Error> {
@@ -123,6 +101,10 @@ impl TryFrom<OperationType> for middleware::OperationType {
             FeOT::Native(FeNO::SumOf) => MwOT::Native(MwNO::SumOf),
             FeOT::Native(FeNO::ProductOf) => MwOT::Native(MwNO::ProductOf),
             FeOT::Native(FeNO::MaxOf) => MwOT::Native(MwNO::MaxOf),
+            FeOT::Native(FeNO::ContainsFromEntries) => MwOT::Native(MwNO::ContainsFromEntries),
+            FeOT::Native(FeNO::NotContainsFromEntries) => {
+                MwOT::Native(MwNO::NotContainsFromEntries)
+            }
             FeOT::Native(FeNO::DictContainsFromEntries) => MwOT::Native(MwNO::ContainsFromEntries),
             FeOT::Native(FeNO::DictNotContainsFromEntries) => {
                 MwOT::Native(MwNO::NotContainsFromEntries)
@@ -164,6 +146,14 @@ impl OperationType {
                 NativeOperation::SumOf => Some(Predicate::Native(NativePredicate::SumOf)),
                 NativeOperation::ProductOf => Some(Predicate::Native(NativePredicate::ProductOf)),
                 NativeOperation::MaxOf => Some(Predicate::Native(NativePredicate::MaxOf)),
+                NativeOperation::ContainsFromEntries => {
+                    Some(Predicate::Native(NativePredicate::Contains))
+                }
+                NativeOperation::NotContainsFromEntries => {
+                    Some(Predicate::Native(NativePredicate::NotContains))
+                }
+                // TODO: Could we remove these and assume that this function is never called with
+                // syntax sugar operations?
                 NativeOperation::DictContainsFromEntries => {
                     Some(Predicate::Native(NativePredicate::DictContains))
                 }

@@ -5,8 +5,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    frontend::{AnchoredKey, NativePredicate, Predicate, SignedPod, Value},
-    middleware,
+    frontend::{AnchoredKey, Predicate, SignedPod, Value},
+    middleware::{self, NativePredicate},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
