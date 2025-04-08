@@ -7,7 +7,7 @@ use num::Zero;
 use plonky2::{hash::poseidon::PoseidonHash, plonk::config::Hasher};
 
 use super::{
-    hash_to_point::hash_to_point_poseidon,
+    hash_to_point::hash_to_point,
     keys::PubKeyPoly,
     math::{FalconFelt, FastFft, Polynomial},
     ByteReader, ByteWriter, Deserializable, DeserializationError, Felt, Nonce, Rpo256,
@@ -100,7 +100,7 @@ impl Signature {
             return false;
         }
 
-        let c = hash_to_point_poseidon(message, &self.nonce);
+        let c = hash_to_point(message, &self.nonce);
         verify_helper(&c, &self.s2, self.pk_poly())
     }
 }

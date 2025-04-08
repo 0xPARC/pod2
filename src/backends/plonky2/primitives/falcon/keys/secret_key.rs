@@ -18,7 +18,7 @@ use super::{
     PubKeyPoly, PublicKey,
 };
 use crate::backends::plonky2::primitives::falcon::{
-    hash_to_point::hash_to_point_poseidon, math::ntru_gen, SIG_NONCE_LEN, SK_LEN,
+    hash_to_point::hash_to_point, math::ntru_gen, SIG_NONCE_LEN, SK_LEN,
 };
 
 // CONSTANTS
@@ -134,7 +134,7 @@ impl SecretKey {
         let nonce = Nonce::new(nonce_bytes);
 
         let h = self.compute_pub_key_poly();
-        let c = hash_to_point_poseidon(message, &nonce);
+        let c = hash_to_point(message, &nonce);
         let s2 = self.sign_helper(c, rng);
 
         Signature::new(nonce, h, s2)

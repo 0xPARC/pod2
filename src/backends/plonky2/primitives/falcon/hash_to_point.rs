@@ -17,11 +17,11 @@ use plonky2::{
 
 use super::{math::FalconFelt, Nonce, Polynomial, Rpo256, Word, MODULUS, N};
 use crate::backends::plonky2::basetypes::F;
-const RATE_RANGE: Range<usize> = 4..12;
+pub(crate) const RATE_RANGE: Range<usize> = 4..12; // TODO review
 
-/// Returns a polynomial in Z_p[x]/(phi) representing the hash of the provided message and
-/// nonce using Poseidon.
-pub fn hash_to_point_poseidon(message: Word, nonce: &Nonce) -> Polynomial<FalconFelt> {
+/// Returns a polynomial in Z_p[x]/(phi) representing the hash of the provided
+/// message and nonce using Poseidon.
+pub fn hash_to_point(message: Word, nonce: &Nonce) -> Polynomial<FalconFelt> {
     let mut state: [F; <PoseidonPermutation<F> as PlonkyPermutation<F>>::WIDTH] =
         [F::ZERO; <PoseidonPermutation<F> as PlonkyPermutation<F>>::WIDTH];
 

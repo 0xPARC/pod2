@@ -1,18 +1,18 @@
 //! Fork from https://github.com/0xPolygonMiden/crypto/tree/aa45474377e978050958958d75688e7a8d46b628/miden-crypto/src/dsa/rpo_falcon512
 //!
-pub use crate::backends::plonky2::basetypes::Value as Word;
-pub use crate::backends::plonky2::basetypes::F as Felt;
-use crate::backends::plonky2::basetypes::{Proof, Value, C, D, F, VALUE_SIZE};
 pub use miden_crypto::{
     hash::rpo::Rpo256,
     utils::{ByteReader, ByteWriter, Deserializable, DeserializationError, Serializable},
 };
 use plonky2::field::types::Field;
 
-mod hash_to_point;
-mod keys;
-mod math;
-mod signature;
+use crate::backends::plonky2::basetypes::{Proof, Value, C, D, F, VALUE_SIZE};
+pub use crate::backends::plonky2::basetypes::{Value as Word, F as Felt};
+
+pub(crate) mod hash_to_point;
+pub(crate) mod keys;
+pub(crate) mod math;
+pub(crate) mod signature;
 
 pub use self::{
     keys::{PubKeyPoly, PublicKey, SecretKey},
@@ -24,21 +24,21 @@ pub use self::{
 // ================================================================================================
 
 // The Falcon modulus p.
-const MODULUS: i16 = 12289;
+pub(crate) const MODULUS: i16 = 12289;
 
 // Number of bits needed to encode an element in the Falcon field.
-const FALCON_ENCODING_BITS: u32 = 14;
+pub(crate) const FALCON_ENCODING_BITS: u32 = 14;
 
 // The Falcon parameters for Falcon-512. This is the degree of the polynomial `phi := x^N + 1`
 // defining the ring Z_p[x]/(phi).
-const N: usize = 512;
+pub(crate) const N: usize = 512;
 const LOG_N: u8 = 9;
 
 /// Length of nonce used for key-pair generation.
-const SIG_NONCE_LEN: usize = 40;
+pub const SIG_NONCE_LEN: usize = 40;
 
 /// Number of filed elements used to encode a nonce.
-const NONCE_ELEMENTS: usize = 8;
+pub const NONCE_ELEMENTS: usize = 8;
 
 /// Public key length as a u8 vector.
 pub const PK_LEN: usize = 897;

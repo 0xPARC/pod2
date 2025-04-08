@@ -5,3 +5,4 @@ mod signature_proofbased_circuit;
 
 mod falcon;
 pub mod signature;
+pub mod signature_circuit;
