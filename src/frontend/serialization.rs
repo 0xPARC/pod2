@@ -256,7 +256,6 @@ mod tests {
         let deserialized: SignedPod = serde_json::from_str(&serialized).unwrap();
 
         assert_eq!(pod.kvs, deserialized.kvs);
-        assert_eq!(pod.origin(), deserialized.origin());
         assert_eq!(pod.verify().is_ok(), deserialized.verify().is_ok());
         assert_eq!(pod.id(), deserialized.id())
     }

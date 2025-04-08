@@ -35,18 +35,6 @@ pub enum PodClass {
     Main,
 }
 
-// An Origin, which represents a reference to an ancestor POD.
-#[derive(Clone, Debug, PartialEq, Eq, h::Hash, Default, Serialize, Deserialize, JsonSchema)]
-pub struct Origin {
-    pub pod_id: PodId,
-}
-
-impl Origin {
-    pub fn new(pod_id: PodId) -> Self {
-        Self { pod_id }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[schemars(transform = serialization::transform_value_schema)]
 pub enum Value {
@@ -269,9 +257,6 @@ impl SignedPod {
     pub fn id(&self) -> PodId {
         self.pod.id()
     }
-    pub fn origin(&self) -> Origin {
-        Origin::new(self.id())
-    }
     pub fn verify(&self) -> Result<()> {
         self.pod.verify()
     }
@@ -286,19 +271,19 @@ impl SignedPod {
 
 #[derive(Clone, Debug, PartialEq, Eq, h::Hash, Serialize, Deserialize, JsonSchema)]
 pub struct AnchoredKey {
-    pub origin: Origin,
+    pub pod_id: PodId,
     pub key: String,
 }
 
 impl AnchoredKey {
-    pub fn new(origin: Origin, key: String) -> Self {
-        Self { origin, key }
+    pub fn new(pod_id: PodId, key: String) -> Self {
+        Self { pod_id, key }
     }
 }
 
 impl From<AnchoredKey> for middleware::AnchoredKey {
     fn from(ak: AnchoredKey) -> Self {
-        middleware::AnchoredKey(ak.origin.pod_id, hash_str(&ak.key))
+        middleware::AnchoredKey(ak.pod_id, hash_str(&ak.key))
     }
 }
 
@@ -362,7 +347,7 @@ impl MainPodBuilder {
             .iter()
             .flat_map(|s| &s.args)
             .flat_map(|arg| match arg {
-                StatementArg::Key(AnchoredKey { origin: _, key }) => {
+                StatementArg::Key(AnchoredKey { pod_id: _, key }) => {
                     Some((hash_str(key), key.clone()))
                 }
                 _ => None,
@@ -401,10 +386,7 @@ impl MainPodBuilder {
                     st_args.push(value_of_st.args[0].clone())
                 }
                 OperationArg::Entry(k, v) => {
-                    st_args.push(StatementArg::Key(AnchoredKey::new(
-                        Origin::new(SELF),
-                        k.clone(),
-                    )));
+                    st_args.push(StatementArg::Key(AnchoredKey::new(SELF, k.clone())));
                     st_args.push(StatementArg::Literal(v.clone()))
                 }
             };
@@ -678,10 +660,10 @@ impl MainPodBuilder {
                     .chunks(2)
                     .map(|chunk| {
                         Ok(StatementArg::Key(AnchoredKey::new(
-                            Origin::new(PodId(match chunk[0] {
+                            PodId(match chunk[0] {
                                 Value::Raw(v) => v.into(),
                                 _ => return Err(anyhow!("Invalid POD class value.")),
-                            })),
+                            }),
                             self.key_table
                                 .get(&match &chunk[1] {
                                     Value::String(s) => hash_str(s.as_str()),
@@ -702,7 +684,7 @@ impl MainPodBuilder {
 
         // Add key-hash pairs in statement to table.
         st.args.iter().for_each(|arg| {
-            if let StatementArg::Key(AnchoredKey { origin: _, key }) = arg {
+            if let StatementArg::Key(AnchoredKey { pod_id: _, key }) = arg {
                 self.key_table.insert(hash_str(key), key.clone());
             }
         });
@@ -781,10 +763,7 @@ impl MainPodBuilder {
                 ) if id == pod_id && key == type_key_hash => Some(Statement {
                     predicate: Predicate::Native(NativePredicate::ValueOf),
                     args: vec![
-                        StatementArg::Key(AnchoredKey::new(
-                            Origin::new(pod_id),
-                            KEY_TYPE.to_string(),
-                        )),
+                        StatementArg::Key(AnchoredKey::new(pod_id, KEY_TYPE.to_string())),
                         StatementArg::Literal(value.into()),
                     ],
                 }),
@@ -801,11 +780,8 @@ impl MainPodBuilder {
                     .args
                     .into_iter()
                     .map(|arg| match arg {
-                        StatementArg::Key(AnchoredKey {
-                            origin: Origin { pod_id: id },
-                            key,
-                        }) if id == SELF => {
-                            StatementArg::Key(AnchoredKey::new(Origin::new(pod_id), key))
+                        StatementArg::Key(AnchoredKey { pod_id: id, key }) if id == SELF => {
+                            StatementArg::Key(AnchoredKey::new(pod_id, key))
                         }
                         _ => arg,
                     })
@@ -847,9 +823,6 @@ impl fmt::Display for MainPod {
 impl MainPod {
     pub fn id(&self) -> PodId {
         self.pod.id()
-    }
-    pub fn origin(&self) -> Origin {
-        Origin::new(self.id())
     }
 }
 
@@ -1098,55 +1071,55 @@ pub mod build_utils {
     #[macro_export]
     macro_rules! op {
         (new_entry, ($key:expr, $value:expr)) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::NewEntry),
+            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::NewEntry),
             $crate::op_args!(($key, $value)), $crate::middleware::OperationAux::None) };
         (eq, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::EqualFromEntries),
+            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::EqualFromEntries),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (ne, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::NotEqualFromEntries),
+            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::NotEqualFromEntries),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (gt, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::GtFromEntries),
+            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::GtFromEntries),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (lt, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::LtFromEntries),
+            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::LtFromEntries),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (transitive_eq, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::TransitiveEqualFromStatements),
+            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::TransitiveEqualFromStatements),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (gt_to_ne, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::GtToNotEqual),
+            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::GtToNotEqual),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (lt_to_ne, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::LtToNotEqual),
+            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::LtToNotEqual),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (sum_of, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::SumOf),
+            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::SumOf),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (product_of, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::ProductOf),
+            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::ProductOf),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (max_of, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::MaxOf),
+            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::MaxOf),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (custom, $op:expr, $($arg:expr),+) => { $crate::frontend::Operation(
             $crate::frontend::OperationType::Custom($op),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (dict_contains, $dict:expr, $key:expr, $value:expr, $aux:expr) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::DictContainsFromEntries),
+            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::DictContainsFromEntries),
             $crate::op_args!($dict, $key, $value), $crate::middleware::OperationAux::MerkleProof($aux)) };
         (dict_not_contains, $dict:expr, $key:expr, $aux:expr) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::DictNotContainsFromEntries),
+            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::DictNotContainsFromEntries),
             $crate::op_args!($dict, $key), $crate::middleware::OperationAux::MerkleProof($aux)) };
         (set_contains, $set:expr, $value:expr, $aux:expr) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::SetContainsFromEntries),
+            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::SetContainsFromEntries),
             $crate::op_args!($set, $value), $crate::middleware::OperationAux::MerkleProof($aux)) };
         (set_not_contains, $set:expr, $value:expr, $aux:expr) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::SetNotContainsFromEntries),
+            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::SetNotContainsFromEntries),
             $crate::op_args!($set, $value), $crate::middleware::OperationAux::MerkleProof($aux)) };
         (array_contains, $array:expr, $value:expr, $aux:expr) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::frontend::NativeOperation::ArrayContainsFromEntries),
+            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::ArrayContainsFromEntries),
             $crate::op_args!($array, $value), $crate::middleware::OperationAux::MerkleProof($aux)) };
     }
 }
@@ -1155,10 +1128,7 @@ pub mod build_utils {
 pub mod tests {
     use super::*;
     use crate::{
-        backends::plonky2::{
-            basetypes,
-            mock::{mainpod::MockProver, signedpod::MockSigner},
-        },
+        backends::plonky2::mock::{mainpod::MockProver, signedpod::MockSigner},
         examples::{
             eth_dos_pod_builder, eth_friend_signed_pod_builder, great_boy_pod_full_flow,
             tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_sign_pod_builders,
@@ -1388,7 +1358,6 @@ pub mod tests {
         let params = Params::default();
         let mut builder = SignedPodBuilder::new(&params);
 
-        type BeValue = basetypes::Value;
         let mut my_dict_kvs: HashMap<String, Value> = HashMap::new();
         my_dict_kvs.insert("a".to_string(), Value::from(1));
         my_dict_kvs.insert("b".to_string(), Value::from(2));
@@ -1437,6 +1406,7 @@ pub mod tests {
     }
 
     #[should_panic]
+    #[test]
     fn test_incorrect_pod() {
         // try to insert the same key multiple times
         // right now this is not caught when you build the pod,
@@ -1449,7 +1419,7 @@ pub mod tests {
             Statement::new(
                 Predicate::Native(NativePredicate::ValueOf),
                 vec![
-                    StatementArg::Key(AnchoredKey::new(Origin::new(SELF), "a".into())),
+                    StatementArg::Key(AnchoredKey::new(SELF, "a".into())),
                     StatementArg::Literal(Value::Int(3)),
                 ],
             ),
@@ -1463,7 +1433,7 @@ pub mod tests {
             Statement::new(
                 Predicate::Native(NativePredicate::ValueOf),
                 vec![
-                    StatementArg::Key(AnchoredKey::new(Origin::new(SELF), "a".into())),
+                    StatementArg::Key(AnchoredKey::new(SELF, "a".into())),
                     StatementArg::Literal(Value::Int(28)),
                 ],
             ),
@@ -1476,14 +1446,14 @@ pub mod tests {
 
         let mut prover = MockProver {};
         let pod = builder.prove(&mut prover, &params).unwrap();
-        pod.pod.verify();
+        pod.pod.verify().unwrap();
 
         // try to insert a statement that doesn't follow from the operation
         // right now the mock prover catches this when it calls compile()
         let params = Params::default();
         let mut builder = MainPodBuilder::new(&params);
-        let self_a = AnchoredKey::new(Origin::new(SELF), "a".into());
-        let self_b = AnchoredKey::new(Origin::new(SELF), "b".into());
+        let self_a = AnchoredKey::new(SELF, "a".into());
+        let self_b = AnchoredKey::new(SELF, "b".into());
         let value_of_a = Statement::new(
             Predicate::Native(NativePredicate::ValueOf),
             vec![
@@ -1532,6 +1502,6 @@ pub mod tests {
 
         let mut prover = MockProver {};
         let pod = builder.prove(&mut prover, &params).unwrap();
-        pod.pod.verify();
+        pod.pod.verify().unwrap();
     }
 }

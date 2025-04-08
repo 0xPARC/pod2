@@ -1,15 +1,14 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use NativePredicate as NP;
 use StatementTmplBuilder as STB;
 
 use crate::{
     frontend::{
-        literal, CustomPredicateBatch, CustomPredicateBatchBuilder, CustomPredicateRef,
-        NativePredicate, Predicate, StatementTmplBuilder,
+        literal, CustomPredicateBatch, CustomPredicateBatchBuilder, CustomPredicateRef, Predicate,
+        StatementTmplBuilder,
     },
-    middleware::{self, Params, PodType, KEY_SIGNER, KEY_TYPE},
+    middleware::{self, NativePredicate as NP, Params, PodType, KEY_SIGNER, KEY_TYPE},
 };
 
 /// Instantiates an ETH friend batch

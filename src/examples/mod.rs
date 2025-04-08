@@ -19,7 +19,7 @@ use crate::{
 
 pub fn zu_kyc_sign_pod_builders(
     params: &Params,
-    sanction_set: &Value,
+    _sanction_set: &Value,
 ) -> (SignedPodBuilder, SignedPodBuilder, SignedPodBuilder) {
     let mut gov_id = SignedPodBuilder::new(params);
     gov_id.insert("idNumber", "4242424242");

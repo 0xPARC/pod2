@@ -573,7 +573,7 @@ mod tests {
             .map(|pf| pf.into())
             .collect();
 
-        let operation_verify = OperationVerifyGadget {
+        OperationVerifyGadget {
             params: params.clone(),
         }
         .eval(

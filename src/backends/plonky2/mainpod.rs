@@ -210,7 +210,7 @@ pub mod tests {
             (pay_stub, "socialSecurityNumber")
         ))?;
         let start_date_st = kyc.pub_op(frontend::Operation(
-            frontend::OperationType::Native(frontend::NativeOperation::NewEntry),
+            frontend::OperationType::Native(NativeOperation::NewEntry),
             vec![frontend::OperationArg::Entry(
                 "startDate".to_string(),
                 now_minus_1y.into(),

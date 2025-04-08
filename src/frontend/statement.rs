@@ -19,7 +19,7 @@ impl fmt::Display for StatementArg {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Literal(v) => write!(f, "{}", v),
-            Self::Key(r) => write!(f, "{}.{}", r.origin.pod_id, r.key),
+            Self::Key(r) => write!(f, "{}.{}", r.pod_id, r.key),
         }
     }
 }
@@ -47,7 +47,7 @@ impl From<(&SignedPod, &str)> for Statement {
         Statement {
             predicate: Predicate::Native(NativePredicate::ValueOf),
             args: vec![
-                StatementArg::Key(AnchoredKey::new(pod.origin(), key.to_string())),
+                StatementArg::Key(AnchoredKey::new(pod.id(), key.to_string())),
                 StatementArg::Literal(value),
             ],
         }

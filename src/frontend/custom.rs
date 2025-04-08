@@ -6,7 +6,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    frontend::{AnchoredKey, Origin, Statement, StatementArg, Value},
+    frontend::{AnchoredKey, Statement, StatementArg, Value},
     middleware::{self, hash_str, HashOrWildcard, NativePredicate, Params, PodId, ToFields},
     util::hashmap_insert_no_dupe,
 };
@@ -445,7 +445,7 @@ impl StatementTmplArg {
             (
                 Self::Key(tmpl_o, tmpl_k),
                 StatementArg::Key(AnchoredKey {
-                    origin: Origin { pod_id: PodId(o) },
+                    pod_id: PodId(o),
                     key: k,
                 }),
             ) => {
