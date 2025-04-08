@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     frontend::serialization::*,
     middleware::{
-        self, hash_str, Hash, MainPodInputs, NativeOperation, NativePredicate, OperationAux,
-        Params, PodId, PodProver, PodSigner, EMPTY_VALUE, KEY_SIGNER, KEY_TYPE, SELF,
+        self, hash_str, AnchoredKey, Hash, MainPodInputs, NativeOperation, NativePredicate,
+        OperationAux, Params, PodId, PodProver, PodSigner, EMPTY_VALUE, KEY_SIGNER, KEY_TYPE, SELF,
     },
 };
 
@@ -201,11 +201,11 @@ impl SignedPodBuilder {
         // backend. Include these in the frontend representation.
         let mid_kvs = pod.kvs();
         let pod_type = mid_kvs
-            .get(&crate::middleware::AnchoredKey::new(pod.id(), KEY_TYPE))
+            .get(&AnchoredKey::new(pod.id(), KEY_TYPE))
             .cloned()
             .ok_or(anyhow!("Missing POD type information in POD: {:?}", pod))?;
         let pod_signer = mid_kvs
-            .get(&crate::middleware::AnchoredKey::new(pod.id(), KEY_SIGNER))
+            .get(&AnchoredKey::new(pod.id(), KEY_SIGNER))
             .cloned()
             .ok_or(anyhow!("Missing POD signer in POD: {:?}", pod))?;
         kvs.insert(KEY_TYPE.to_string(), pod_type.into());
@@ -258,26 +258,8 @@ impl SignedPod {
         self.pod
             .kvs()
             .into_iter()
-            .map(|(middleware::AnchoredKey { key, .. }, v)| (key.hash(), v))
+            .map(|(AnchoredKey { key, .. }, v)| (key.hash(), v))
             .collect()
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, h::Hash, Serialize, Deserialize, JsonSchema)]
-pub struct AnchoredKey {
-    pub pod_id: PodId,
-    pub key: String,
-}
-
-impl AnchoredKey {
-    pub fn new(pod_id: PodId, key: String) -> Self {
-        Self { pod_id, key }
-    }
-}
-
-impl From<AnchoredKey> for middleware::AnchoredKey {
-    fn from(ak: AnchoredKey) -> Self {
-        middleware::AnchoredKey::new(ak.pod_id, ak.key)
     }
 }
 
@@ -341,7 +323,9 @@ impl MainPodBuilder {
             .iter()
             .flat_map(|s| &s.args)
             .flat_map(|arg| match arg {
-                StatementArg::Key(AnchoredKey { key, .. }) => Some((hash_str(key), key.clone())),
+                StatementArg::Key(AnchoredKey { key, .. }) => {
+                    Some((key.hash(), key.name().to_string()))
+                }
                 _ => None,
             })
             .for_each(|(hash, key)| {
@@ -656,6 +640,8 @@ impl MainPodBuilder {
                                 Value::Raw(v) => v.into(),
                                 _ => return Err(anyhow!("Invalid POD class value.")),
                             }),
+                            // TODO: Can we remove key_table now that the middleware AnchoredKey
+                            // has the String of the Key?
                             self.key_table
                                 .get(&match &chunk[1] {
                                     Value::String(s) => hash_str(s.as_str()),
@@ -677,7 +663,7 @@ impl MainPodBuilder {
         // Add key-hash pairs in statement to table.
         st.args.iter().for_each(|arg| {
             if let StatementArg::Key(AnchoredKey { key, .. }) = arg {
-                self.key_table.insert(hash_str(key), key.clone());
+                self.key_table.insert(key.hash(), key.name().to_string());
             }
         });
 
@@ -1413,7 +1399,7 @@ pub mod tests {
             Statement::new(
                 Predicate::Native(NativePredicate::ValueOf),
                 vec![
-                    StatementArg::Key(AnchoredKey::new(SELF, "a".into())),
+                    StatementArg::Key(AnchoredKey::new(SELF, "a")),
                     StatementArg::Literal(Value::Int(3)),
                 ],
             ),
@@ -1427,7 +1413,7 @@ pub mod tests {
             Statement::new(
                 Predicate::Native(NativePredicate::ValueOf),
                 vec![
-                    StatementArg::Key(AnchoredKey::new(SELF, "a".into())),
+                    StatementArg::Key(AnchoredKey::new(SELF, "a")),
                     StatementArg::Literal(Value::Int(28)),
                 ],
             ),
@@ -1446,8 +1432,8 @@ pub mod tests {
         // right now the mock prover catches this when it calls compile()
         let params = Params::default();
         let mut builder = MainPodBuilder::new(&params);
-        let self_a = AnchoredKey::new(SELF, "a".into());
-        let self_b = AnchoredKey::new(SELF, "b".into());
+        let self_a = AnchoredKey::new(SELF, "a");
+        let self_b = AnchoredKey::new(SELF, "b");
         let value_of_a = Statement::new(
             Predicate::Native(NativePredicate::ValueOf),
             vec![

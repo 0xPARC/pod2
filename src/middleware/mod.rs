@@ -32,7 +32,7 @@ impl fmt::Display for PodId {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct Key {
     name: String,
     hash: Hash,
@@ -53,6 +53,7 @@ impl Key {
     }
 }
 
+// A Key can easily be created from a string-like type
 impl<T> From<T> for Key
 where
     T: Into<String>,
@@ -81,15 +82,14 @@ impl From<Key> for Value {
     }
 }
 
-/// AnchoredKey is a tuple containing (OriginId: PodId, key: Hash)
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct AnchoredKey {
     pub pod_id: PodId,
     pub key: Key,
 }
 
 impl AnchoredKey {
-    // The `key` can be  `&str, String, Key, ...`
+    // The `key` can be `&str, String, Key, ...`
     pub fn new(pod_id: PodId, key: impl Into<Key>) -> Self {
         Self {
             pod_id,

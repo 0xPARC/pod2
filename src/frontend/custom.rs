@@ -450,7 +450,7 @@ impl StatementTmplArg {
                 }),
             ) => {
                 let o_corr = tmpl_o.match_against(&(middleware::Value::from(*o)).into())?;
-                let k_corr = tmpl_k.match_against(&(*k.as_str()).into())?;
+                let k_corr = tmpl_k.match_against(&(k.name()).into())?;
                 Ok([o_corr, k_corr].into_iter().flatten().collect())
             }
             _ => Err(anyhow!(
