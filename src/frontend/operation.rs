@@ -3,15 +3,15 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    frontend::{CustomPredicateRef, Predicate, SignedPod, Statement, Value},
+    frontend::{CustomPredicateRef, Predicate, SignedPod, Statement, TypedValue},
     middleware::{self, NativeOperation, NativePredicate, OperationAux},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OperationArg {
     Statement(Statement),
-    Literal(Value),
-    Entry(String, Value),
+    Literal(TypedValue),
+    Entry(String, TypedValue),
 }
 
 impl fmt::Display for OperationArg {
@@ -24,33 +24,33 @@ impl fmt::Display for OperationArg {
     }
 }
 
-impl From<Value> for OperationArg {
-    fn from(v: Value) -> Self {
+impl From<TypedValue> for OperationArg {
+    fn from(v: TypedValue) -> Self {
         Self::Literal(v)
     }
 }
 
-impl From<&Value> for OperationArg {
-    fn from(v: &Value) -> Self {
+impl From<&TypedValue> for OperationArg {
+    fn from(v: &TypedValue) -> Self {
         Self::Literal(v.clone())
     }
 }
 
 impl From<&str> for OperationArg {
     fn from(s: &str) -> Self {
-        Self::Literal(Value::from(s))
+        Self::Literal(TypedValue::from(s))
     }
 }
 
 impl From<i64> for OperationArg {
     fn from(v: i64) -> Self {
-        Self::Literal(Value::from(v))
+        Self::Literal(TypedValue::from(v))
     }
 }
 
 impl From<bool> for OperationArg {
     fn from(b: bool) -> Self {
-        Self::Literal(Value::from(b))
+        Self::Literal(TypedValue::from(b))
     }
 }
 
@@ -66,7 +66,7 @@ impl From<Statement> for OperationArg {
     }
 }
 
-impl<V: Into<Value>> From<(&str, V)> for OperationArg {
+impl<V: Into<TypedValue>> From<(&str, V)> for OperationArg {
     fn from((key, value): (&str, V)) -> Self {
         Self::Entry(key.to_string(), value.into())
     }

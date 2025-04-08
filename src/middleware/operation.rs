@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree},
     middleware::{
-        AnchoredKey, CustomPredicateRef, NativePredicate, Params, Predicate, Statement,
-        StatementArg, ToFields, Value, F, SELF,
+        AnchoredKey, CustomPredicateRef, NativePredicate, Params, Predicate, RawValue, Statement,
+        StatementArg, ToFields, F, SELF,
     },
 };
 
@@ -496,9 +496,9 @@ impl Operation {
                 Self::SumOf(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3)),
                 SumOf(ak4, ak5, ak6),
             ) => {
-                let v1: i64 = (*v1).try_into()?;
-                let v2: i64 = (*v2).try_into()?;
-                let v3: i64 = (*v3).try_into()?;
+                let v1: i64 = v1.typed().try_into()?;
+                let v2: i64 = v2.typed().try_into()?;
+                let v3: i64 = v3.typed().try_into()?;
                 Ok((v1 == v2 + v3) && ak4 == ak1 && ak5 == ak2 && ak6 == ak3)
             }
             (Self::Custom(CustomPredicateRef(cpb, i), args), Custom(cpr, s_args))
@@ -523,7 +523,7 @@ impl Operation {
                     let s_args = s_args
                         .iter()
                         .flat_map(|AnchoredKey { pod_id, key }| {
-                            [Value::from(pod_id.0), key.clone().into()]
+                            [RawValue::from(pod_id.0), key.clone().into()]
                         })
                         .collect::<Vec<_>>();
                     if bound_args != s_args {

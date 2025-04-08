@@ -5,14 +5,14 @@ use serde::{Deserialize, Serialize, Serializer};
 
 use crate::{
     backends::plonky2::mock::{mainpod::MockMainPod, signedpod::MockSignedPod},
-    frontend::{containers::Dictionary, MainPod, SignedPod, Statement, Value},
+    frontend::{containers::Dictionary, MainPod, SignedPod, Statement, TypedValue},
     middleware::PodId,
 };
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[schemars(title = "SignedPod")]
 pub struct SignedPodHelper {
-    entries: HashMap<String, Value>,
+    entries: HashMap<String, TypedValue>,
     proof: String,
     pod_class: String,
     pod_type: String,
@@ -169,30 +169,34 @@ mod tests {
     fn test_value_serialization() {
         // Pairs of values and their expected serialized representations
         let values = vec![
-            (Value::String("hello".to_string()), "\"hello\""),
-            (Value::Int(42), "{\"Int\":\"42\"}"),
-            (Value::Bool(true), "true"),
+            (TypedValue::String("hello".to_string()), "\"hello\""),
+            (TypedValue::Int(42), "{\"Int\":\"42\"}"),
+            (TypedValue::Bool(true), "true"),
             (
-                Value::Array(
-                    Array::new(vec![Value::String("foo".to_string()), Value::Bool(false)]).unwrap(),
+                TypedValue::Array(
+                    Array::new(vec![
+                        TypedValue::String("foo".to_string()),
+                        TypedValue::Bool(false),
+                    ])
+                    .unwrap(),
                 ),
                 "[\"foo\",false]",
             ),
             (
-                Value::Dictionary(
+                TypedValue::Dictionary(
                     Dictionary::new(HashMap::from([
-                        ("foo".to_string(), Value::Int(123)),
-                        ("bar".to_string(), Value::String("baz".to_string())),
+                        ("foo".to_string(), TypedValue::Int(123)),
+                        ("bar".to_string(), TypedValue::String("baz".to_string())),
                     ]))
                     .unwrap(),
                 ),
                 "{\"Dictionary\":{\"bar\":\"baz\",\"foo\":{\"Int\":\"123\"}}}",
             ),
             (
-                Value::Set(
+                TypedValue::Set(
                     Set::new(vec![
-                        Value::String("foo".to_string()),
-                        Value::String("bar".to_string()),
+                        TypedValue::String("foo".to_string()),
+                        TypedValue::String("bar".to_string()),
                     ])
                     .unwrap(),
                 ),
@@ -203,9 +207,9 @@ mod tests {
         for (value, expected) in values {
             let serialized = serde_json::to_string(&value).unwrap();
             assert_eq!(serialized, expected);
-            let deserialized: Value = serde_json::from_str(&serialized).unwrap();
+            let deserialized: TypedValue = serde_json::from_str(&serialized).unwrap();
             assert_eq!(value, deserialized);
-            let expected_deserialized: Value = serde_json::from_str(&expected).unwrap();
+            let expected_deserialized: TypedValue = serde_json::from_str(&expected).unwrap();
             assert_eq!(value, expected_deserialized);
         }
     }
@@ -219,27 +223,32 @@ mod tests {
         builder.insert("very_large_int", 1152921504606846976);
         builder.insert(
             "a_dict_containing_one_key",
-            Value::Dictionary(
+            TypedValue::Dictionary(
                 Dictionary::new(HashMap::from([
-                    ("foo".to_string(), Value::Int(123)),
+                    ("foo".to_string(), TypedValue::Int(123)),
                     (
                         "an_array_containing_three_ints".to_string(),
-                        Value::Array(
-                            Array::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]).unwrap(),
+                        TypedValue::Array(
+                            Array::new(vec![
+                                TypedValue::Int(1),
+                                TypedValue::Int(2),
+                                TypedValue::Int(3),
+                            ])
+                            .unwrap(),
                         ),
                     ),
                     (
                         "a_set_containing_two_strings".to_string(),
-                        Value::Set(
+                        TypedValue::Set(
                             Set::new(vec![
-                                Value::Array(
+                                TypedValue::Array(
                                     Array::new(vec![
-                                        Value::String("foo".to_string()),
-                                        Value::String("bar".to_string()),
+                                        TypedValue::String("foo".to_string()),
+                                        TypedValue::String("bar".to_string()),
                                     ])
                                     .unwrap(),
                                 ),
-                                Value::String("baz".to_string()),
+                                TypedValue::String("baz".to_string()),
                             ])
                             .unwrap(),
                         ),
@@ -264,7 +273,7 @@ mod tests {
     fn test_main_pod_serialization() -> Result<()> {
         let params = middleware::Params::default();
         let sanctions_values = vec!["A343434340".into()];
-        let sanction_set = Value::Set(Set::new(sanctions_values)?);
+        let sanction_set = TypedValue::Set(Set::new(sanctions_values)?);
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params, &sanction_set);

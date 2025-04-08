@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     backends::plonky2::basetypes::HASH_SIZE,
     middleware::{
-        hash_fields, AnchoredKey, Hash, NativePredicate, Params, PodId, Statement, StatementArg,
-        ToFields, Value, F,
+        hash_fields, AnchoredKey, Hash, NativePredicate, Params, PodId, RawValue, Statement,
+        StatementArg, ToFields, F,
     },
     util::hashmap_insert_no_dupe,
 };
@@ -26,9 +26,9 @@ impl HashOrWildcard {
     /// Matches a hash or wildcard against a value, returning a pair
     /// representing a wildcard binding (if any) or an error if no
     /// match is possible.
-    pub fn match_against(&self, v: &Value) -> Result<Option<(usize, Value)>> {
+    pub fn match_against(&self, v: &RawValue) -> Result<Option<(usize, RawValue)>> {
         match self {
-            HashOrWildcard::Hash(h) if &Value::from(*h) == v => Ok(None),
+            HashOrWildcard::Hash(h) if &RawValue::from(*h) == v => Ok(None),
             HashOrWildcard::Wildcard(i) => Ok(Some((*i, *v))),
             _ => Err(anyhow!(
                 "Failed to match hash or wildcard {} against value {}.",
@@ -63,7 +63,7 @@ impl ToFields for HashOrWildcard {
 #[derive(Clone, Debug, PartialEq, Eq, h::Hash, Serialize, Deserialize, JsonSchema)]
 pub enum StatementTmplArg {
     None,
-    Literal(Value),
+    Literal(RawValue),
     Key(HashOrWildcard, HashOrWildcard),
 }
 
@@ -72,7 +72,7 @@ impl StatementTmplArg {
     /// argument, returning a wildcard correspondence in the case of
     /// one or more wildcard matches, nothing in the case of a
     /// literal/hash match, and an error otherwise.
-    pub fn match_against(&self, s_arg: &StatementArg) -> Result<Vec<(usize, Value)>> {
+    pub fn match_against(&self, s_arg: &StatementArg) -> Result<Vec<(usize, RawValue)>> {
         match (self, s_arg) {
             (Self::None, StatementArg::None) => Ok(vec![]),
             (Self::Literal(v), StatementArg::Literal(w)) if v == w => Ok(vec![]),
@@ -165,7 +165,7 @@ impl StatementTmpl {
     /// Matches a statement template against a statement, returning
     /// the variable bindings as an association list. Returns an error
     /// if there is type or argument mismatch.
-    pub fn match_against(&self, s: &Statement) -> Result<Vec<(usize, Value)>> {
+    pub fn match_against(&self, s: &Statement) -> Result<Vec<(usize, RawValue)>> {
         type P = Predicate;
         if matches!(self, Self(P::BatchSelf(_), _)) {
             Err(anyhow!(
@@ -337,7 +337,7 @@ impl CustomPredicateRef {
     pub fn arg_len(&self) -> usize {
         self.0.predicates[self.1].args_len
     }
-    pub fn match_against(&self, statements: &[Statement]) -> Result<HashMap<usize, Value>> {
+    pub fn match_against(&self, statements: &[Statement]) -> Result<HashMap<usize, RawValue>> {
         let mut bindings = HashMap::new();
         // Single out custom predicate, replacing batch-self
         // references with custom predicate references.

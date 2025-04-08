@@ -25,7 +25,7 @@ pub fn eth_friend_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
             // there is an attestation pod that's a SignedPod
             STB::new(NP::ValueOf)
                 .arg(("attestation_pod", literal(KEY_TYPE)))
-                .arg(middleware::Value::from(PodType::MockSigned)), // TODO
+                .arg(middleware::RawValue::from(PodType::MockSigned)), // TODO
             // the attestation pod is signed by (src_or, src_key)
             STB::new(NP::Equal)
                 .arg(("attestation_pod", literal(KEY_SIGNER)))

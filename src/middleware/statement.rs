@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use strum_macros::FromRepr;
 
 use crate::middleware::{
-    AnchoredKey, CustomPredicateRef, Params, Predicate, ToFields, Value, F, VALUE_SIZE,
+    AnchoredKey, CustomPredicateRef, Params, Predicate, RawValue, ToFields, Value, F, VALUE_SIZE,
 };
 
 // hash(KEY_SIGNER) = [2145458785152392366, 15113074911296146791, 15323228995597834291, 11804480340100333725]
@@ -263,7 +263,7 @@ impl StatementArg {
     }
     pub fn literal(&self) -> Result<Value> {
         match self {
-            Self::Literal(value) => Ok(*value),
+            Self::Literal(value) => Ok(value.clone()),
             _ => Err(anyhow!("Statement argument {:?} is not a literal.", self)),
         }
     }
@@ -286,11 +286,12 @@ impl ToFields for StatementArg {
         // dealing with `Literal` it would be of length 4.
         let f = match self {
             StatementArg::None => vec![F::ZERO; STATEMENT_ARG_F_LEN],
-            StatementArg::Literal(v) => {
-                v.0.into_iter()
-                    .chain(iter::repeat(F::ZERO).take(STATEMENT_ARG_F_LEN - VALUE_SIZE))
-                    .collect()
-            }
+            StatementArg::Literal(v) => v
+                .raw()
+                .0
+                .into_iter()
+                .chain(iter::repeat(F::ZERO).take(STATEMENT_ARG_F_LEN - VALUE_SIZE))
+                .collect(),
             StatementArg::Key(ak) => {
                 let mut fields = ak.pod_id.to_fields(_params);
                 fields.extend(ak.key.to_fields(_params));

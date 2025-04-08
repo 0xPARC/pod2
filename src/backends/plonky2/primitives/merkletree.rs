@@ -7,7 +7,7 @@ use plonky2::field::types::Field;
 use serde::{Deserialize, Serialize};
 
 pub use super::merkletree_circuit::*;
-use crate::backends::plonky2::basetypes::{hash_fields, Hash, Value, EMPTY_HASH, F};
+use crate::backends::plonky2::basetypes::{hash_fields, Hash, RawValue, EMPTY_HASH, F};
 
 /// Implements the MerkleTree specified at
 /// https://0xparc.github.io/pod2/merkletree.html
@@ -19,7 +19,7 @@ pub struct MerkleTree {
 
 impl MerkleTree {
     /// builds a new `MerkleTree` where the leaves contain the given key-values
-    pub fn new(max_depth: usize, kvs: &HashMap<Value, Value>) -> Result<Self> {
+    pub fn new(max_depth: usize, kvs: &HashMap<RawValue, RawValue>) -> Result<Self> {
         // Construct leaves.
         let mut leaves: Vec<_> = kvs
             .iter()
@@ -50,7 +50,7 @@ impl MerkleTree {
     }
 
     /// returns the value at the given key
-    pub fn get(&self, key: &Value) -> Result<Value> {
+    pub fn get(&self, key: &RawValue) -> Result<RawValue> {
         let path = keypath(self.max_depth, *key)?;
         let key_resolution = self.root.down(0, self.max_depth, path, None)?;
         match key_resolution {
@@ -60,7 +60,7 @@ impl MerkleTree {
     }
 
     /// returns a boolean indicating whether the key exists in the tree
-    pub fn contains(&self, key: &Value) -> Result<bool> {
+    pub fn contains(&self, key: &RawValue) -> Result<bool> {
         let path = keypath(self.max_depth, *key)?;
         match self.root.down(0, self.max_depth, path, None) {
             Ok(Some((k, _))) => {
@@ -77,7 +77,7 @@ impl MerkleTree {
     /// returns a proof of existence, which proves that the given key exists in
     /// the tree. It returns the `value` of the leaf at the given `key`, and the
     /// `MerkleProof`.
-    pub fn prove(&self, key: &Value) -> Result<(Value, MerkleProof)> {
+    pub fn prove(&self, key: &RawValue) -> Result<(RawValue, MerkleProof)> {
         let path = keypath(self.max_depth, *key)?;
 
         let mut siblings: Vec<Hash> = Vec::new();
@@ -102,7 +102,7 @@ impl MerkleTree {
     /// `key` does not exist in the tree. The return value specifies
     /// the key-value pair in the leaf reached as a result of
     /// resolving `key` as well as a `MerkleProof`.
-    pub fn prove_nonexistence(&self, key: &Value) -> Result<MerkleProof> {
+    pub fn prove_nonexistence(&self, key: &RawValue) -> Result<MerkleProof> {
         let path = keypath(self.max_depth, *key)?;
 
         let mut siblings: Vec<Hash> = Vec::new();
@@ -134,8 +134,8 @@ impl MerkleTree {
         max_depth: usize,
         root: Hash,
         proof: &MerkleProof,
-        key: &Value,
-        value: &Value,
+        key: &RawValue,
+        value: &RawValue,
     ) -> Result<()> {
         let h = proof.compute_root_from_leaf(max_depth, key, Some(*value))?;
 
@@ -152,13 +152,13 @@ impl MerkleTree {
         max_depth: usize,
         root: Hash,
         proof: &MerkleProof,
-        key: &Value,
+        key: &RawValue,
     ) -> Result<()> {
         match proof.other_leaf {
             Some((k, _v)) if &k == key => Err(anyhow!("Invalid non-existence proof.")),
             _ => {
                 let k = proof.other_leaf.map(|(k, _)| k).unwrap_or(*key);
-                let v: Option<Value> = proof.other_leaf.map(|(_, v)| v);
+                let v: Option<RawValue> = proof.other_leaf.map(|(_, v)| v);
                 let h = proof.compute_root_from_leaf(max_depth, &k, v)?;
 
                 if h != root {
@@ -180,14 +180,14 @@ impl MerkleTree {
 
 /// Hash function for key-value pairs. Different branch pair hashes to
 /// mitigate fake proofs.
-pub fn kv_hash(key: &Value, value: Option<Value>) -> Hash {
+pub fn kv_hash(key: &RawValue, value: Option<RawValue>) -> Hash {
     value
         .map(|v| hash_fields(&[key.0.to_vec(), v.0.to_vec(), vec![F::ONE]].concat()))
         .unwrap_or(EMPTY_HASH)
 }
 
 impl<'a> IntoIterator for &'a MerkleTree {
-    type Item = (&'a Value, &'a Value);
+    type Item = (&'a RawValue, &'a RawValue);
     type IntoIter = Iter<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -216,7 +216,7 @@ pub struct MerkleProof {
     pub(crate) existence: bool,
     pub(crate) siblings: Vec<Hash>,
     // other_leaf is used for non-existence proofs
-    pub(crate) other_leaf: Option<(Value, Value)>,
+    pub(crate) other_leaf: Option<(RawValue, RawValue)>,
 }
 
 impl fmt::Display for MerkleProof {
@@ -238,8 +238,8 @@ impl MerkleProof {
     fn compute_root_from_leaf(
         &self,
         max_depth: usize,
-        key: &Value,
-        value: Option<Value>,
+        key: &RawValue,
+        value: Option<RawValue>,
     ) -> Result<Hash> {
         if self.siblings.len() >= max_depth {
             return Err(anyhow!("max depth reached"));
@@ -335,7 +335,7 @@ impl Node {
         max_depth: usize,
         path: Vec<bool>,
         mut siblings: Option<&mut Vec<Hash>>,
-    ) -> Result<Option<(Value, Value)>> {
+    ) -> Result<Option<(RawValue, RawValue)>> {
         if lvl >= max_depth {
             return Err(anyhow!("max depth reached"));
         }
@@ -494,11 +494,11 @@ impl Intermediate {
 struct Leaf {
     hash: Option<Hash>,
     path: Vec<bool>,
-    key: Value,
-    value: Value,
+    key: RawValue,
+    value: RawValue,
 }
 impl Leaf {
-    fn new(max_depth: usize, key: Value, value: Value) -> Result<Self> {
+    fn new(max_depth: usize, key: RawValue, value: RawValue) -> Result<Self> {
         Ok(Self {
             hash: None,
             path: keypath(max_depth, key)?,
@@ -523,7 +523,7 @@ impl Leaf {
 // max-depth? ie, what happens when two keys share the same path for more bits
 // than the max_depth?
 /// returns the path of the given key
-pub(crate) fn keypath(max_depth: usize, k: Value) -> Result<Vec<bool>> {
+pub(crate) fn keypath(max_depth: usize, k: RawValue) -> Result<Vec<bool>> {
     let bytes = k.to_bytes();
     if max_depth > 8 * bytes.len() {
         // note that our current keys are of Value type, which are 4 Goldilocks
@@ -545,7 +545,7 @@ pub struct Iter<'a> {
 }
 
 impl<'a> Iterator for Iter<'a> {
-    type Item = (&'a Value, &'a Value);
+    type Item = (&'a RawValue, &'a RawValue);
 
     fn next(&mut self) -> Option<Self::Item> {
         let node = self.state.pop();
@@ -586,10 +586,10 @@ pub mod tests {
             if i == 1 {
                 continue;
             }
-            kvs.insert(Value::from(i), Value::from(1000 + i));
+            kvs.insert(RawValue::from(i), RawValue::from(1000 + i));
         }
-        let key = Value::from(13);
-        let value = Value::from(1013);
+        let key = RawValue::from(13);
+        let value = RawValue::from(1013);
         kvs.insert(key, value);
 
         let tree = MerkleTree::new(32, &kvs)?;
@@ -598,25 +598,25 @@ pub mod tests {
         println!("{}", tree);
 
         // Inclusion checks
-        let (v, proof) = tree.prove(&Value::from(13))?;
-        assert_eq!(v, Value::from(1013));
+        let (v, proof) = tree.prove(&RawValue::from(13))?;
+        assert_eq!(v, RawValue::from(1013));
         println!("{}", proof);
 
         MerkleTree::verify(32, tree.root(), &proof, &key, &value)?;
 
         // Exclusion checks
-        let key = Value::from(12);
+        let key = RawValue::from(12);
         let proof = tree.prove_nonexistence(&key)?;
         assert_eq!(
             proof.other_leaf.unwrap(),
-            (Value::from(4), Value::from(1004))
+            (RawValue::from(4), RawValue::from(1004))
         );
         println!("{}", proof);
 
         MerkleTree::verify_nonexistence(32, tree.root(), &proof, &key)?;
 
-        let key = Value::from(1);
-        let proof = tree.prove_nonexistence(&Value::from(1))?;
+        let key = RawValue::from(1);
+        let proof = tree.prove_nonexistence(&RawValue::from(1))?;
         assert_eq!(proof.other_leaf, None);
         println!("{}", proof);
 

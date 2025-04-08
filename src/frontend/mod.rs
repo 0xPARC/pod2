@@ -37,7 +37,7 @@ pub enum PodClass {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[schemars(transform = serialization::transform_value_schema)]
-pub enum Value {
+pub enum TypedValue {
     // Serde cares about the order of the enum variants, with untagged variants
     // appearing at the end.
     // Variants without "untagged" will be serialized as "tagged" values by
@@ -58,7 +58,7 @@ pub enum Value {
         i64,
     ),
     // Uses the serialization for middleware::Value:
-    Raw(middleware::Value),
+    Raw(middleware::RawValue),
     // UNTAGGED TYPES:
     #[serde(untagged)]
     #[schemars(skip)]
@@ -71,72 +71,72 @@ pub enum Value {
     Bool(bool),
 }
 
-impl h::Hash for Value {
+impl h::Hash for TypedValue {
     fn hash<H: Hasher>(&self, state: &mut H) {
         // Hash the discriminant first
         std::mem::discriminant(self).hash(state);
 
         // Hash the inner values only for types that implement Hash
         match self {
-            Value::String(s) => s.hash(state),
-            Value::Int(i) => i.hash(state),
-            Value::Bool(b) => b.hash(state),
-            Value::Dictionary(d) => d.middleware_dict().commitment().hash(state),
-            Value::Set(s) => s.middleware_set().commitment().hash(state),
-            Value::Array(a) => a.middleware_array().commitment().hash(state),
-            Value::Raw(r) => r.hash(state),
+            TypedValue::String(s) => s.hash(state),
+            TypedValue::Int(i) => i.hash(state),
+            TypedValue::Bool(b) => b.hash(state),
+            TypedValue::Dictionary(d) => d.middleware_dict().commitment().hash(state),
+            TypedValue::Set(s) => s.middleware_set().commitment().hash(state),
+            TypedValue::Array(a) => a.middleware_array().commitment().hash(state),
+            TypedValue::Raw(r) => r.hash(state),
         }
     }
 }
 
-impl From<&str> for Value {
+impl From<&str> for TypedValue {
     fn from(s: &str) -> Self {
-        Value::String(s.to_string())
+        TypedValue::String(s.to_string())
     }
 }
 
-impl From<i64> for Value {
+impl From<i64> for TypedValue {
     fn from(v: i64) -> Self {
-        Value::Int(v)
+        TypedValue::Int(v)
     }
 }
 
-impl From<bool> for Value {
+impl From<bool> for TypedValue {
     fn from(b: bool) -> Self {
-        Value::Bool(b)
+        TypedValue::Bool(b)
     }
 }
 
-impl From<&Value> for middleware::Value {
-    fn from(v: &Value) -> Self {
+impl From<&TypedValue> for middleware::RawValue {
+    fn from(v: &TypedValue) -> Self {
         match v {
-            Value::String(s) => hash_str(s).value(),
-            Value::Int(v) => middleware::Value::from(*v),
-            Value::Bool(b) => middleware::Value::from(*b as i64),
-            Value::Dictionary(d) => d.middleware_dict().commitment().value(),
-            Value::Set(s) => s.middleware_set().commitment().value(),
-            Value::Array(a) => a.middleware_array().commitment().value(),
-            Value::Raw(v) => *v,
+            TypedValue::String(s) => hash_str(s).value(),
+            TypedValue::Int(v) => middleware::RawValue::from(*v),
+            TypedValue::Bool(b) => middleware::RawValue::from(*b as i64),
+            TypedValue::Dictionary(d) => d.middleware_dict().commitment().value(),
+            TypedValue::Set(s) => s.middleware_set().commitment().value(),
+            TypedValue::Array(a) => a.middleware_array().commitment().value(),
+            TypedValue::Raw(v) => *v,
         }
     }
 }
 
-impl From<middleware::Value> for Value {
-    fn from(v: middleware::Value) -> Self {
+impl From<middleware::RawValue> for TypedValue {
+    fn from(v: middleware::RawValue) -> Self {
         Self::Raw(v)
     }
 }
 
-impl From<middleware::Hash> for Value {
+impl From<middleware::Hash> for TypedValue {
     fn from(v: middleware::Hash) -> Self {
         Self::Raw(v.into())
     }
 }
 
-impl TryInto<i64> for Value {
+impl TryInto<i64> for TypedValue {
     type Error = Error;
     fn try_into(self) -> std::result::Result<i64, Self::Error> {
-        if let Value::Int(n) = self {
+        if let TypedValue::Int(n) = self {
             Ok(n)
         } else {
             Err(anyhow!("Value not an int"))
@@ -144,16 +144,16 @@ impl TryInto<i64> for Value {
     }
 }
 
-impl fmt::Display for Value {
+impl fmt::Display for TypedValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Value::String(s) => write!(f, "\"{}\"", s),
-            Value::Int(v) => write!(f, "{}", v),
-            Value::Bool(b) => write!(f, "{}", b),
-            Value::Dictionary(d) => write!(f, "dict:{}", d.middleware_dict().commitment()),
-            Value::Set(s) => write!(f, "set:{}", s.middleware_set().commitment()),
-            Value::Array(a) => write!(f, "arr:{}", a.middleware_array().commitment()),
-            Value::Raw(v) => write!(f, "{}", v),
+            TypedValue::String(s) => write!(f, "\"{}\"", s),
+            TypedValue::Int(v) => write!(f, "{}", v),
+            TypedValue::Bool(b) => write!(f, "{}", b),
+            TypedValue::Dictionary(d) => write!(f, "dict:{}", d.middleware_dict().commitment()),
+            TypedValue::Set(s) => write!(f, "set:{}", s.middleware_set().commitment()),
+            TypedValue::Array(a) => write!(f, "arr:{}", a.middleware_array().commitment()),
+            TypedValue::Raw(v) => write!(f, "{}", v),
         }
     }
 }
@@ -161,7 +161,7 @@ impl fmt::Display for Value {
 #[derive(Clone, Debug)]
 pub struct SignedPodBuilder {
     pub params: Params,
-    pub kvs: HashMap<String, Value>,
+    pub kvs: HashMap<String, TypedValue>,
 }
 
 impl fmt::Display for SignedPodBuilder {
@@ -182,7 +182,7 @@ impl SignedPodBuilder {
         }
     }
 
-    pub fn insert(&mut self, key: impl Into<String>, value: impl Into<Value>) {
+    pub fn insert(&mut self, key: impl Into<String>, value: impl Into<TypedValue>) {
         self.kvs.insert(key.into(), value.into());
     }
 
@@ -224,7 +224,7 @@ pub struct SignedPod {
     /// correspond to the entries of `pod.kvs()` after hashing and
     /// replacing each key with its corresponding anchored key.
     #[serde(serialize_with = "ordered_map")]
-    pub kvs: HashMap<String, Value>,
+    pub kvs: HashMap<String, TypedValue>,
 }
 
 impl fmt::Display for SignedPod {
@@ -240,7 +240,7 @@ impl fmt::Display for SignedPod {
                 "  - {} = {}: {}",
                 hash_str(k),
                 k,
-                crate::middleware::Value::from(v)
+                crate::middleware::RawValue::from(v)
             )?;
         }
         Ok(())
@@ -254,7 +254,7 @@ impl SignedPod {
     pub fn verify(&self) -> Result<()> {
         self.pod.verify()
     }
-    pub fn kvs(&self) -> HashMap<Hash, middleware::Value> {
+    pub fn kvs(&self) -> HashMap<Hash, middleware::RawValue> {
         self.pod
             .kvs()
             .into_iter()
@@ -637,14 +637,14 @@ impl MainPodBuilder {
                     .map(|chunk| {
                         Ok(StatementArg::Key(AnchoredKey::new(
                             PodId(match chunk[0] {
-                                Value::Raw(v) => v.into(),
+                                TypedValue::Raw(v) => v.into(),
                                 _ => return Err(anyhow!("Invalid POD class value.")),
                             }),
                             // TODO: Can we remove key_table now that the middleware AnchoredKey
                             // has the String of the Key?
                             self.key_table
                                 .get(&match &chunk[1] {
-                                    Value::String(s) => hash_str(s.as_str()),
+                                    TypedValue::String(s) => hash_str(s.as_str()),
                                     _ => return Err(anyhow!("Invalid key value.")),
                                 })
                                 .cloned()
@@ -672,17 +672,17 @@ impl MainPodBuilder {
     }
 
     /// Convenience method for introducing public constants.
-    pub fn pub_literal<V: Clone + Into<Value>>(&mut self, v: &V) -> Result<Statement> {
+    pub fn pub_literal<V: Clone + Into<TypedValue>>(&mut self, v: &V) -> Result<Statement> {
         self.literal(true, v)
     }
 
     /// Convenience method for introducing private constants.
-    pub fn priv_literal<V: Clone + Into<Value>>(&mut self, v: &V) -> Result<Statement> {
+    pub fn priv_literal<V: Clone + Into<TypedValue>>(&mut self, v: &V) -> Result<Statement> {
         self.literal(false, v)
     }
 
-    fn literal<V: Clone + Into<Value>>(&mut self, public: bool, v: &V) -> Result<Statement> {
-        let v: Value = v.clone().into();
+    fn literal<V: Clone + Into<TypedValue>>(&mut self, public: bool, v: &V) -> Result<Statement> {
+        let v: TypedValue = v.clone().into();
         let k = format!("c{}", self.const_cnt);
         self.const_cnt += 1;
         self.op(
@@ -823,7 +823,7 @@ struct MainPodCompiler {
     // then `self.literals.get(&val)` returns `Some(idx)`, and
     // then `self.statements[idx]` is the ValueOf statement
     // where it was introduced.
-    literals: HashMap<middleware::Value, usize>,
+    literals: HashMap<middleware::RawValue, usize>,
 }
 
 impl MainPodCompiler {
@@ -861,8 +861,8 @@ impl MainPodCompiler {
     // Introduces a literal value if it hasn't been introduced,
     // or else returns the existing ValueOf statement where it was first introduced.
     // TODO: this might produce duplicate keys, fix
-    fn literal<V: Clone + Into<middleware::Value>>(&mut self, val: V) -> &middleware::Statement {
-        let val: middleware::Value = val.into();
+    fn literal<V: Clone + Into<middleware::RawValue>>(&mut self, val: V) -> &middleware::Statement {
+        let val: middleware::RawValue = val.into();
         match self.literals.get(&val) {
             Some(idx) => &self.statements[*idx],
             None => {
@@ -878,11 +878,11 @@ impl MainPodCompiler {
 
     // Returns the existing ValueOf statement where it was first introduced,
     // or None if it does not exist.
-    fn get_literal<V: Clone + Into<middleware::Value>>(
+    fn get_literal<V: Clone + Into<middleware::RawValue>>(
         &self,
         val: V,
     ) -> Option<&middleware::Statement> {
-        let val: middleware::Value = val.into();
+        let val: middleware::RawValue = val.into();
         match self.literals.get(&val) {
             Some(idx) => Some(&self.statements[*idx]),
             None => None,
@@ -1133,7 +1133,7 @@ pub mod tests {
         let kvs = pod
             .kvs
             .iter()
-            .map(|(k, v)| (hash_str(k), middleware::Value::from(v)))
+            .map(|(k, v)| (hash_str(k), middleware::RawValue::from(v)))
             .collect::<HashMap<_, _>>();
         let embedded_kvs = pod
             .pod
@@ -1157,7 +1157,7 @@ pub mod tests {
     fn test_front_zu_kyc() -> Result<()> {
         let params = Params::default();
         let sanctions_values = vec!["A343434340".into()];
-        let sanction_set = Value::Set(Set::new(sanctions_values)?);
+        let sanction_set = TypedValue::Set(Set::new(sanctions_values)?);
         let (gov_id, pay_stub, sanction_list) = zu_kyc_sign_pod_builders(&params, &sanction_set);
 
         println!("{}", gov_id);
@@ -1338,14 +1338,14 @@ pub mod tests {
         let params = Params::default();
         let mut builder = SignedPodBuilder::new(&params);
 
-        let mut my_dict_kvs: HashMap<String, Value> = HashMap::new();
-        my_dict_kvs.insert("a".to_string(), Value::from(1));
-        my_dict_kvs.insert("b".to_string(), Value::from(2));
-        my_dict_kvs.insert("c".to_string(), Value::from(3));
+        let mut my_dict_kvs: HashMap<String, TypedValue> = HashMap::new();
+        my_dict_kvs.insert("a".to_string(), TypedValue::from(1));
+        my_dict_kvs.insert("b".to_string(), TypedValue::from(2));
+        my_dict_kvs.insert("c".to_string(), TypedValue::from(3));
         //        let my_dict_as_mt = MerkleTree::new(5, &my_dict_kvs).unwrap();
         //        let dict = Dictionary { mt: my_dict_as_mt };
         let dict = Dictionary::new(my_dict_kvs)?;
-        let dict_root = Value::Dictionary(dict.clone());
+        let dict_root = TypedValue::Dictionary(dict.clone());
         builder.insert("dict", dict_root);
 
         let mut signer = MockSigner {
@@ -1357,7 +1357,7 @@ pub mod tests {
         builder.add_signed_pod(&pod);
         let st0 = Statement::from((&pod, "dict"));
         let st1 = builder.op(true, op!(new_entry, ("key", "a"))).unwrap();
-        let st2 = builder.literal(false, &Value::Int(1)).unwrap();
+        let st2 = builder.literal(false, &TypedValue::Int(1)).unwrap();
 
         builder
             .pub_op(Operation(
@@ -1400,7 +1400,7 @@ pub mod tests {
                 Predicate::Native(NativePredicate::ValueOf),
                 vec![
                     StatementArg::Key(AnchoredKey::new(SELF, "a")),
-                    StatementArg::Literal(Value::Int(3)),
+                    StatementArg::Literal(TypedValue::Int(3)),
                 ],
             ),
             Operation(
@@ -1414,7 +1414,7 @@ pub mod tests {
                 Predicate::Native(NativePredicate::ValueOf),
                 vec![
                     StatementArg::Key(AnchoredKey::new(SELF, "a")),
-                    StatementArg::Literal(Value::Int(28)),
+                    StatementArg::Literal(TypedValue::Int(28)),
                 ],
             ),
             Operation(
@@ -1438,14 +1438,14 @@ pub mod tests {
             Predicate::Native(NativePredicate::ValueOf),
             vec![
                 StatementArg::Key(self_a.clone()),
-                StatementArg::Literal(Value::Int(3)),
+                StatementArg::Literal(TypedValue::Int(3)),
             ],
         );
         let value_of_b = Statement::new(
             Predicate::Native(NativePredicate::ValueOf),
             vec![
                 StatementArg::Key(self_b.clone()),
-                StatementArg::Literal(Value::Int(27)),
+                StatementArg::Literal(TypedValue::Int(27)),
             ],
         );
 

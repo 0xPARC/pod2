@@ -200,7 +200,7 @@ impl MockMainPod {
         assert!(inputs.public_statements.len() < params.max_public_statements);
         let mut type_st = middleware::Statement::ValueOf(
             AnchoredKey::new(SELF, KEY_TYPE),
-            middleware::Value::from(PodType::MockMain),
+            middleware::RawValue::from(PodType::MockMain),
         )
         .into();
         Self::pad_statement(params, &mut type_st);
@@ -576,8 +576,8 @@ pub mod tests {
     #[test]
     fn test_mock_main_zu_kyc() -> Result<()> {
         let params = middleware::Params::default();
-        let sanctions_values = ["A343434340"].map(|s| crate::frontend::Value::from(s));
-        let sanction_set = crate::frontend::Value::Set(crate::frontend::containers::Set::new(
+        let sanctions_values = ["A343434340"].map(|s| crate::frontend::TypedValue::from(s));
+        let sanction_set = crate::frontend::TypedValue::Set(crate::frontend::containers::Set::new(
             sanctions_values.to_vec(),
         )?);
 

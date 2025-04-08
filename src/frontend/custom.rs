@@ -6,7 +6,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    frontend::{AnchoredKey, Statement, StatementArg, Value},
+    frontend::{AnchoredKey, Statement, StatementArg, TypedValue},
     middleware::{self, hash_str, HashOrWildcard, NativePredicate, Params, PodId, ToFields},
     util::hashmap_insert_no_dupe,
 };
@@ -42,9 +42,9 @@ impl KeyOrWildcard {
     /// Matches a key or wildcard against a value, returning a pair
     /// representing a wildcard binding (if any) or an error if no
     /// match is possible.
-    pub fn match_against(&self, v: &Value) -> Result<Option<(usize, Value)>> {
+    pub fn match_against(&self, v: &TypedValue) -> Result<Option<(usize, TypedValue)>> {
         match self {
-            KeyOrWildcard::Key(k) if Value::from(k.as_str()) == *v => Ok(None),
+            KeyOrWildcard::Key(k) if TypedValue::from(k.as_str()) == *v => Ok(None),
             KeyOrWildcard::Wildcard(i) => Ok(Some((i.index, v.clone()))),
             _ => Err(anyhow!(
                 "Failed to match key or wildcard {} against value {}.",
@@ -85,7 +85,7 @@ fn wildcard(s: &str) -> KeyOrWildcardStr {
 
 /// Builder Argument for the StatementTmplBuilder
 pub enum BuilderArg {
-    Literal(Value),
+    Literal(TypedValue),
     /// Key: (origin, key), where origin & key can be both Hash or Wildcard
     Key(KeyOrWildcardStr, KeyOrWildcardStr),
 }
@@ -115,7 +115,7 @@ impl From<(&str, &str)> for BuilderArg {
 /// case iii.
 impl<V> From<V> for BuilderArg
 where
-    V: Into<Value>,
+    V: Into<TypedValue>,
 {
     fn from(v: V) -> Self {
         Self::Literal(v.into())
@@ -185,7 +185,7 @@ impl CustomPredicateRef {
     pub fn arg_len(&self) -> usize {
         self.batch.predicates[self.index].args_len
     }
-    pub fn match_against(&self, statements: &[Statement]) -> Result<HashMap<usize, Value>> {
+    pub fn match_against(&self, statements: &[Statement]) -> Result<HashMap<usize, TypedValue>> {
         let mut bindings = HashMap::new();
         // Single out custom predicate, replacing batch-self
         // references with custom predicate references.
@@ -339,7 +339,7 @@ impl fmt::Display for CustomPredicate {
 #[serde(tag = "type", content = "value")]
 pub enum StatementTmplArg {
     None,
-    Literal(Value),
+    Literal(TypedValue),
     //  #[schemars(with = "Vec<KeyOrWildcard>")]
     Key(KeyOrWildcard, KeyOrWildcard),
 }
@@ -401,7 +401,7 @@ impl StatementTmpl {
     /// Matches a statement template against a statement, returning
     /// the variable bindings as an association list. Returns an error
     /// if there is type or argument mismatch.
-    pub fn match_against(&self, s: &Statement) -> Result<Vec<(usize, Value)>> {
+    pub fn match_against(&self, s: &Statement) -> Result<Vec<(usize, TypedValue)>> {
         type P = Predicate;
         if matches!(
             self,
@@ -438,7 +438,7 @@ impl StatementTmplArg {
     /// argument, returning a wildcard correspondence in the case of
     /// one or more wildcard matches, nothing in the case of a
     /// literal/hash match, and an error otherwise.
-    pub fn match_against(&self, s_arg: &StatementArg) -> Result<Vec<(usize, Value)>> {
+    pub fn match_against(&self, s_arg: &StatementArg) -> Result<Vec<(usize, TypedValue)>> {
         match (self, s_arg) {
             //    (Self::None, StatementArg::None) => Ok(vec![]),
             (Self::Literal(v), StatementArg::Literal(w)) if v == w => Ok(vec![]),
@@ -449,7 +449,7 @@ impl StatementTmplArg {
                     key: k,
                 }),
             ) => {
-                let o_corr = tmpl_o.match_against(&(middleware::Value::from(*o)).into())?;
+                let o_corr = tmpl_o.match_against(&(middleware::RawValue::from(*o)).into())?;
                 let k_corr = tmpl_k.match_against(&(k.name()).into())?;
                 Ok([o_corr, k_corr].into_iter().flatten().collect())
             }

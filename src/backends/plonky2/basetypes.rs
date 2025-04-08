@@ -44,13 +44,13 @@ pub type Proof = Plonky2Proof<F, PoseidonGoldilocksConfig, D>;
 pub const HASH_SIZE: usize = 4;
 pub const VALUE_SIZE: usize = 4;
 
-pub const EMPTY_VALUE: Value = Value([F::ZERO, F::ZERO, F::ZERO, F::ZERO]);
+pub const EMPTY_VALUE: RawValue = RawValue([F::ZERO, F::ZERO, F::ZERO, F::ZERO]);
 pub const SELF_ID_HASH: Hash = Hash([F::ONE, F::ZERO, F::ZERO, F::ZERO]);
 pub const EMPTY_HASH: Hash = Hash([F::ZERO, F::ZERO, F::ZERO, F::ZERO]);
 
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[schemars(rename = "MiddlewareValue")]
-pub struct Value(
+#[schemars(rename = "RawValue")]
+pub struct RawValue(
     #[serde(
         serialize_with = "serialize_value_tuple",
         deserialize_with = "deserialize_value_tuple"
@@ -61,13 +61,13 @@ pub struct Value(
     pub [F; VALUE_SIZE],
 );
 
-impl ToFields for Value {
+impl ToFields for RawValue {
     fn to_fields(&self, _params: &Params) -> Vec<F> {
         self.0.to_vec()
     }
 }
 
-impl Value {
+impl RawValue {
     pub fn to_bytes(self) -> Vec<u8> {
         self.0
             .iter()
@@ -76,7 +76,7 @@ impl Value {
     }
 }
 
-impl Ord for Value {
+impl Ord for RawValue {
     fn cmp(&self, other: &Self) -> Ordering {
         for (lhs, rhs) in self.0.iter().zip(other.0.iter()).rev() {
             let (lhs, rhs) = (lhs.to_canonical_u64(), rhs.to_canonical_u64());
@@ -90,27 +90,27 @@ impl Ord for Value {
     }
 }
 
-impl PartialOrd for Value {
+impl PartialOrd for RawValue {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl From<i64> for Value {
+impl From<i64> for RawValue {
     fn from(v: i64) -> Self {
         let lo = F::from_canonical_u64((v as u64) & 0xffffffff);
         let hi = F::from_canonical_u64((v as u64) >> 32);
-        Value([lo, hi, F::ZERO, F::ZERO])
+        RawValue([lo, hi, F::ZERO, F::ZERO])
     }
 }
 
-impl From<Hash> for Value {
+impl From<Hash> for RawValue {
     fn from(h: Hash) -> Self {
-        Value(h.0)
+        RawValue(h.0)
     }
 }
 
-impl TryInto<i64> for Value {
+impl TryInto<i64> for RawValue {
     type Error = Error;
     fn try_into(self) -> std::result::Result<i64, Self::Error> {
         let value = self.0;
@@ -126,7 +126,7 @@ impl TryInto<i64> for Value {
     }
 }
 
-impl fmt::Display for Value {
+impl fmt::Display for RawValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.0[2].is_zero() && self.0[3].is_zero() {
             // Assume this is an integer
@@ -151,7 +151,7 @@ pub struct Hash(
     pub [F; HASH_SIZE],
 );
 
-pub fn hash_value(input: &Value) -> Hash {
+pub fn hash_value(input: &RawValue) -> Hash {
     hash_fields(&input.0)
 }
 
@@ -159,14 +159,14 @@ pub fn hash_fields(input: &[F]) -> Hash {
     Hash(PoseidonHash::hash_no_pad(input).elements)
 }
 
-impl From<Value> for Hash {
-    fn from(v: Value) -> Self {
+impl From<RawValue> for Hash {
+    fn from(v: RawValue) -> Self {
         Hash(v.0)
     }
 }
 impl Hash {
-    pub fn value(self) -> Value {
-        Value(self.0)
+    pub fn value(self) -> RawValue {
+        RawValue(self.0)
     }
 }
 
@@ -178,7 +178,7 @@ impl ToFields for Hash {
 
 impl Ord for Hash {
     fn cmp(&self, other: &Self) -> Ordering {
-        Value(self.0).cmp(&Value(other.0))
+        RawValue(self.0).cmp(&RawValue(other.0))
     }
 }
 
@@ -259,7 +259,7 @@ mod tests {
         ];
 
         for &original in test_cases.iter() {
-            let value = Value::from(original);
+            let value = RawValue::from(original);
             let roundtrip: i64 = value.try_into().unwrap();
             assert_eq!(original, roundtrip, "Failed roundtrip for {}", original);
         }

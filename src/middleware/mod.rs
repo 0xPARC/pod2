@@ -2,12 +2,19 @@
 //! the backend.
 
 mod basetypes;
+use std::hash;
+
+use anyhow;
 pub mod containers;
 mod custom;
 mod operation;
 pub mod serialization;
 mod statement;
-use std::{any::Any, collections::HashMap, fmt};
+use std::{
+    any::Any,
+    collections::{HashMap, HashSet},
+    fmt,
+};
 
 use anyhow::Result;
 pub use basetypes::*;
@@ -19,6 +26,137 @@ use serde::{Deserialize, Serialize};
 pub use statement::*;
 
 pub const SELF: PodId = PodId(SELF_ID_HASH);
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+// TODO #[schemars(transform = serialization::transform_value_schema)]
+pub enum TypedValue {
+    // Serde cares about the order of the enum variants, with untagged variants
+    // appearing at the end.
+    // Variants without "untagged" will be serialized as "tagged" values by
+    // default, meaning that a Set appears in JSON as {"Set":[...]}
+    // and not as [...]
+    // Arrays, Strings and Booleans are untagged, as there is a natural JSON
+    // representation for them that is unambiguous to deserialize and is fully
+    // compatible with the semantics of the POD types.
+    // As JSON integers do not specify precision, and JavaScript is limited to
+    // 53-bit precision for integers, integers are represented as tagged
+    // strings, with a custom serializer and deserializer.
+    // TAGGED TYPES:
+    Set(HashSet<Value>),
+    Dictionary(HashMap<Key, Value>),
+    Int(
+        // TODO #[serde(serialize_with = "serialize_i64", deserialize_with = "deserialize_i64")]
+        #[schemars(with = "String", regex(pattern = r"^\d+$"))] i64,
+    ),
+    // Uses the serialization for middleware::Value:
+    Raw(RawValue),
+    // UNTAGGED TYPES:
+    #[serde(untagged)]
+    #[schemars(skip)]
+    Array(Vec<Value>),
+    #[serde(untagged)]
+    #[schemars(skip)]
+    String(String),
+    #[serde(untagged)]
+    #[schemars(skip)]
+    Bool(bool),
+}
+
+impl From<&str> for TypedValue {
+    fn from(s: &str) -> Self {
+        TypedValue::String(s.to_string())
+    }
+}
+
+impl From<i64> for TypedValue {
+    fn from(v: i64) -> Self {
+        TypedValue::Int(v)
+    }
+}
+
+impl From<bool> for TypedValue {
+    fn from(b: bool) -> Self {
+        TypedValue::Bool(b)
+    }
+}
+
+impl TryFrom<&TypedValue> for i64 {
+    type Error = anyhow::Error;
+    fn try_from(v: &TypedValue) -> std::result::Result<Self, Self::Error> {
+        if let TypedValue::Int(n) = v {
+            Ok(*n)
+        } else {
+            Err(anyhow!("Value not an int"))
+        }
+    }
+}
+
+impl fmt::Display for TypedValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TypedValue::String(s) => write!(f, "\"{}\"", s),
+            TypedValue::Int(v) => write!(f, "{}", v),
+            TypedValue::Bool(b) => write!(f, "{}", b),
+            // TypedValue::Dictionary(d) => write!(f, "dict:{}", d.middleware_dict().commitment()),
+            // TypedValue::Set(s) => write!(f, "set:{}", s.middleware_set().commitment()),
+            // TypedValue::Array(a) => write!(f, "arr:{}", a.middleware_array().commitment()),
+            TypedValue::Raw(v) => write!(f, "{}", v),
+            _ => todo!(), // TODO Dictionary, Set, Array
+        }
+    }
+}
+
+impl From<&TypedValue> for RawValue {
+    fn from(v: &TypedValue) -> Self {
+        match v {
+            TypedValue::String(s) => hash_str(s).value(),
+            TypedValue::Int(v) => RawValue::from(*v),
+            TypedValue::Bool(b) => RawValue::from(*b as i64),
+            // TypedValue::Dictionary(d) => d.middleware_dict().commitment().value(),
+            // TypedValue::Set(s) => s.middleware_set().commitment().value(),
+            // TypedValue::Array(a) => a.middleware_array().commitment().value(),
+            TypedValue::Raw(v) => *v,
+            _ => todo!(), // TODO: Dictionary, Set, Array
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Value {
+    typed: TypedValue,
+    raw: RawValue,
+}
+
+impl hash::Hash for Value {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        self.raw.hash(state)
+    }
+}
+
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.typed)
+    }
+}
+
+impl Value {
+    // The `value` can be `&str, i64, bool, RawValue, ...`
+    pub fn new(value: impl Into<TypedValue>) -> Self {
+        let typed_value: TypedValue = value.into();
+        let raw_value: RawValue = (&typed_value).into();
+        Self {
+            typed: typed_value,
+            raw: raw_value,
+        }
+    }
+
+    pub fn typed(&self) -> &TypedValue {
+        &self.typed
+    }
+    pub fn raw(&self) -> RawValue {
+        self.raw
+    }
+}
 
 impl fmt::Display for PodId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -76,9 +214,9 @@ impl fmt::Display for Key {
     }
 }
 
-impl From<Key> for Value {
-    fn from(key: Key) -> Value {
-        Value(key.hash.0)
+impl From<Key> for RawValue {
+    fn from(key: Key) -> RawValue {
+        RawValue(key.hash.0)
     }
 }
 
@@ -104,9 +242,6 @@ impl fmt::Display for AnchoredKey {
         Ok(())
     }
 }
-
-/// An entry consists of a key-value pair.
-pub type Entry = (String, Value);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
 pub struct PodId(pub Hash);
@@ -137,9 +272,9 @@ impl fmt::Display for PodType {
     }
 }
 
-impl From<PodType> for Value {
+impl From<PodType> for RawValue {
     fn from(v: PodType) -> Self {
-        Value::from(v as i64)
+        RawValue::from(v as i64)
     }
 }
 
@@ -266,7 +401,7 @@ pub trait Pod: fmt::Debug + DynClone {
 dyn_clone::clone_trait_object!(Pod);
 
 pub trait PodSigner {
-    fn sign(&mut self, params: &Params, kvs: &HashMap<Hash, Value>) -> Result<Box<dyn Pod>>;
+    fn sign(&mut self, params: &Params, kvs: &HashMap<Hash, RawValue>) -> Result<Box<dyn Pod>>;
 }
 
 /// This is a filler type that fulfills the Pod trait and always verifies.  It's empty.  This

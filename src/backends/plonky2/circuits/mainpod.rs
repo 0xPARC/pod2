@@ -8,7 +8,7 @@ use plonky2::{
 
 use crate::{
     backends::plonky2::{
-        basetypes::{Value, D, F, VALUE_SIZE},
+        basetypes::{RawValue, D, F, VALUE_SIZE},
         circuits::{
             common::{
                 CircuitBuilderPod, Flattenable, MerkleClaimTarget, OperationTarget,
@@ -426,7 +426,7 @@ impl MainPodVerifyGadget {
             &builder.constants(
                 &Statement::ValueOf(
                     AnchoredKey::new(SELF, KEY_TYPE),
-                    Value::from(PodType::MockMain),
+                    RawValue::from(PodType::MockMain),
                 )
                 .to_fields(params),
             ),
@@ -638,7 +638,7 @@ mod tests {
         let st1: mainpod::Statement =
             Statement::ValueOf(AnchoredKey::new(SELF, "hello"), 55.into()).into();
         let st2: mainpod::Statement = Statement::ValueOf(
-            AnchoredKey::new(PodId(Value::from(75).into()), "hello"),
+            AnchoredKey::new(PodId(RawValue::from(75).into()), "hello"),
             55.into(),
         )
         .into();
@@ -667,13 +667,13 @@ mod tests {
 
         // Eq
         let st2: mainpod::Statement = Statement::ValueOf(
-            AnchoredKey::new(PodId(Value::from(75).into()), "world"),
+            AnchoredKey::new(PodId(RawValue::from(75).into()), "world"),
             55.into(),
         )
         .into();
         let st: mainpod::Statement = Statement::Equal(
             AnchoredKey::new(SELF, "hello"),
-            AnchoredKey::new(PodId(Value::from(75).into()), "world"),
+            AnchoredKey::new(PodId(RawValue::from(75).into()), "world"),
         )
         .into();
         let op = mainpod::Operation(
@@ -686,13 +686,13 @@ mod tests {
 
         // Lt
         let st2: mainpod::Statement = Statement::ValueOf(
-            AnchoredKey::new(PodId(Value::from(88).into()), "hello"),
+            AnchoredKey::new(PodId(RawValue::from(88).into()), "hello"),
             56.into(),
         )
         .into();
         let st: mainpod::Statement = Statement::Lt(
             AnchoredKey::new(SELF, "hello"),
-            AnchoredKey::new(PodId(Value::from(88).into()), "hello"),
+            AnchoredKey::new(PodId(RawValue::from(88).into()), "hello"),
         )
         .into();
         let op = mainpod::Operation(
@@ -714,10 +714,10 @@ mod tests {
         let mt = MerkleTree::new(params.max_depth_mt_gadget, &kvs)?;
 
         let root = mt.root().into();
-        let root_ak = AnchoredKey::new(PodId(Value::from(88).into()), "merkle root");
+        let root_ak = AnchoredKey::new(PodId(RawValue::from(88).into()), "merkle root");
 
         let key = 5.into();
-        let key_ak = AnchoredKey::new(PodId(Value::from(88).into()), "key");
+        let key_ak = AnchoredKey::new(PodId(RawValue::from(88).into()), "key");
 
         let no_key_pf = mt.prove_nonexistence(&key)?;
 

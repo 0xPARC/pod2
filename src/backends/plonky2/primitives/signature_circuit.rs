@@ -23,7 +23,7 @@ use plonky2::{
 };
 
 use crate::backends::plonky2::{
-    basetypes::{Hash, Proof, Value, C, D, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE},
+    basetypes::{Hash, Proof, RawValue, C, D, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE},
     circuits::common::{CircuitBuilderPod, ValueTarget},
     primitives::signature::{
         PublicKey, SecretKey, Signature, DUMMY_PUBLIC_INPUTS, DUMMY_SIGNATURE,
@@ -81,12 +81,12 @@ impl SignatureVerifyGadget {
         let dummy_pi = DUMMY_PUBLIC_INPUTS.clone();
 
         let pk_targ_dummy =
-            builder.constant_value(Value(dummy_pi[..VALUE_SIZE].try_into().unwrap()));
-        let msg_targ_dummy = builder.constant_value(Value(
+            builder.constant_value(RawValue(dummy_pi[..VALUE_SIZE].try_into().unwrap()));
+        let msg_targ_dummy = builder.constant_value(RawValue(
             dummy_pi[VALUE_SIZE..VALUE_SIZE * 2].try_into().unwrap(),
         ));
         let s_targ_dummy =
-            builder.constant_value(Value(dummy_pi[VALUE_SIZE * 2..].try_into().unwrap()));
+            builder.constant_value(RawValue(dummy_pi[VALUE_SIZE * 2..].try_into().unwrap()));
 
         // connect the {pk, msg, s} with the proof_targ.public_inputs conditionally
         let pk_targ_connect = builder.select_value(enabled, pk_targ, pk_targ_dummy);
@@ -129,7 +129,7 @@ impl SignatureVerifyTarget {
         pw: &mut PartialWitness<F>,
         enabled: bool,
         pk: PublicKey,
-        msg: Value,
+        msg: RawValue,
         signature: Signature,
     ) -> Result<()> {
         pw.set_bool_target(self.enabled, enabled)?;
@@ -137,7 +137,7 @@ impl SignatureVerifyTarget {
         pw.set_target_arr(&self.msg.elements, &msg.0)?;
 
         // note that this hash is checked again in-circuit at the `SignatureInternalCircuit`
-        let s = Value(PoseidonHash::hash_no_pad(&[pk.0 .0, msg.0].concat()).elements);
+        let s = RawValue(PoseidonHash::hash_no_pad(&[pk.0 .0, msg.0].concat()).elements);
         let public_inputs: Vec<F> = [pk.0 .0, msg.0, s.0].concat();
 
         if enabled {
@@ -177,7 +177,7 @@ pub mod tests {
         // generate a valid signature
         let sk = SecretKey::new_rand();
         let pk = sk.public_key();
-        let msg = Value::from(42);
+        let msg = RawValue::from(42);
         let sig = sk.sign(msg)?;
         sig.verify(&pk, msg)?;
 
@@ -208,15 +208,15 @@ pub mod tests {
         // generate a valid signature
         let sk = SecretKey::new_rand();
         let pk = sk.public_key();
-        let msg = Value::from(42);
+        let msg = RawValue::from(42);
         let sig = sk.sign(msg)?;
         // verification should pass
         sig.verify(&pk, msg)?;
 
         // replace the message, so that verifications should fail
-        let msg = Value::from(24);
+        let msg = RawValue::from(24);
         // expect signature native verification to fail
-        let v = sig.verify(&pk, Value::from(24));
+        let v = sig.verify(&pk, RawValue::from(24));
         assert!(v.is_err(), "should fail to verify");
 
         // circuit

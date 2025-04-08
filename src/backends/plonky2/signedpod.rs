@@ -11,21 +11,21 @@ use crate::{
     constants::MAX_DEPTH,
     middleware::{
         containers::Dictionary, hash_str, AnchoredKey, Hash, Params, Pod, PodId, PodSigner,
-        PodType, Statement, Value, KEY_SIGNER, KEY_TYPE,
+        PodType, RawValue, Statement, KEY_SIGNER, KEY_TYPE,
     },
 };
 
 pub struct Signer(pub SecretKey);
 
 impl PodSigner for Signer {
-    fn sign(&mut self, _params: &Params, kvs: &HashMap<Hash, Value>) -> Result<Box<dyn Pod>> {
+    fn sign(&mut self, _params: &Params, kvs: &HashMap<Hash, RawValue>) -> Result<Box<dyn Pod>> {
         let mut kvs = kvs.clone();
         let pubkey = self.0.public_key();
         kvs.insert(hash_str(KEY_SIGNER), pubkey.0);
-        kvs.insert(hash_str(KEY_TYPE), Value::from(PodType::Signed));
+        kvs.insert(hash_str(KEY_TYPE), RawValue::from(PodType::Signed));
 
         let dict = Dictionary::new(&kvs)?;
-        let id = Value::from(dict.commitment()); // PodId as Value
+        let id = RawValue::from(dict.commitment()); // PodId as Value
 
         let signature: Signature = self.0.sign(id)?;
         Ok(Box::new(SignedPod {
@@ -47,7 +47,7 @@ impl Pod for SignedPod {
     fn verify(&self) -> Result<()> {
         // 1. Verify type
         let value_at_type = self.dict.get(&hash_str(KEY_TYPE).into())?;
-        if Value::from(PodType::Signed) != value_at_type {
+        if RawValue::from(PodType::Signed) != value_at_type {
             return Err(anyhow!(
                 "type does not match, expected Signed ({}), found {}",
                 PodType::Signed,
@@ -62,7 +62,7 @@ impl Pod for SignedPod {
                 .dict
                 .iter()
                 .map(|(&k, &v)| (k, v))
-                .collect::<HashMap<Value, Value>>(),
+                .collect::<HashMap<RawValue, RawValue>>(),
         )?;
         let id = PodId(mt.root());
         if id != self.id {
@@ -76,7 +76,7 @@ impl Pod for SignedPod {
         // 3. Verify signature
         let pk_value = self.dict.get(&hash_str(KEY_SIGNER).into())?;
         let pk = PublicKey(pk_value);
-        self.signature.verify(&pk, Value::from(id.0))?;
+        self.signature.verify(&pk, RawValue::from(id.0))?;
 
         Ok(())
     }
@@ -89,9 +89,9 @@ impl Pod for SignedPod {
         let id = self.id();
         // By convention we put the KEY_TYPE first and KEY_SIGNER second
         let mut kvs: HashMap<_, _> = self.dict.iter().collect();
-        let key_type = Value::from(hash_str(KEY_TYPE));
+        let key_type = RawValue::from(hash_str(KEY_TYPE));
         let value_type = kvs.remove(&key_type).expect("KEY_TYPE");
-        let key_signer = Value::from(hash_str(KEY_SIGNER));
+        let key_signer = RawValue::from(hash_str(KEY_SIGNER));
         let value_signer = kvs.remove(&key_signer).expect("KEY_SIGNER");
         [(&key_type, value_type), (&key_signer, value_signer)]
             .into_iter()
@@ -152,7 +152,7 @@ pub mod tests {
         println!("kvs: {:?}", pod.kvs());
 
         let mut bad_pod = pod.clone();
-        bad_pod.signature = signer.0.sign(Value::from(42_i64))?;
+        bad_pod.signature = signer.0.sign(RawValue::from(42_i64))?;
         assert!(bad_pod.verify().is_err());
 
         let mut bad_pod = pod.clone();
@@ -160,25 +160,28 @@ pub mod tests {
         assert!(bad_pod.verify().is_err());
 
         let mut bad_pod = pod.clone();
-        let bad_kv = (hash_str(KEY_SIGNER).into(), Value(PodId(EMPTY_HASH).0 .0));
+        let bad_kv = (
+            hash_str(KEY_SIGNER).into(),
+            RawValue(PodId(EMPTY_HASH).0 .0),
+        );
         let bad_kvs_mt = &bad_pod
             .kvs()
             .into_iter()
-            .map(|(AnchoredKey { key, .. }, v)| (Value(key.hash().0), v))
+            .map(|(AnchoredKey { key, .. }, v)| (RawValue(key.hash().0), v))
             .chain(iter::once(bad_kv))
-            .collect::<HashMap<Value, Value>>();
+            .collect::<HashMap<RawValue, RawValue>>();
         let bad_mt = MerkleTree::new(MAX_DEPTH, bad_kvs_mt)?;
         bad_pod.dict.mt = bad_mt;
         assert!(bad_pod.verify().is_err());
 
         let mut bad_pod = pod.clone();
-        let bad_kv = (hash_str(KEY_TYPE).into(), Value::from(0));
+        let bad_kv = (hash_str(KEY_TYPE).into(), RawValue::from(0));
         let bad_kvs_mt = &bad_pod
             .kvs()
             .into_iter()
-            .map(|(AnchoredKey { key, .. }, v)| (Value(key.hash().0), v))
+            .map(|(AnchoredKey { key, .. }, v)| (RawValue(key.hash().0), v))
             .chain(iter::once(bad_kv))
-            .collect::<HashMap<Value, Value>>();
+            .collect::<HashMap<RawValue, RawValue>>();
         let bad_mt = MerkleTree::new(MAX_DEPTH, bad_kvs_mt)?;
         bad_pod.dict.mt = bad_mt;
         assert!(bad_pod.verify().is_err());

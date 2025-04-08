@@ -5,13 +5,13 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    frontend::{AnchoredKey, Predicate, SignedPod, Value},
+    frontend::{AnchoredKey, Predicate, SignedPod, TypedValue},
     middleware::{self, NativePredicate},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum StatementArg {
-    Literal(Value),
+    Literal(TypedValue),
     Key(AnchoredKey),
 }
 

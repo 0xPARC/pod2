@@ -8,8 +8,8 @@ use custom::{eth_dos_batch, eth_friend_batch};
 use crate::{
     backends::plonky2::mock::signedpod::MockSigner,
     frontend::{
-        containers::Dictionary, CustomPredicateRef, MainPodBuilder, SignedPod, SignedPodBuilder,
-        Statement, Value,
+        containers::{Dictionary, Set},
+        CustomPredicateRef, MainPodBuilder, SignedPod, SignedPodBuilder, Statement, TypedValue,
     },
     middleware::{Params, PodType, KEY_SIGNER, KEY_TYPE},
     op,
@@ -19,7 +19,7 @@ use crate::{
 
 pub fn zu_kyc_sign_pod_builders(
     params: &Params,
-    _sanction_set: &Value,
+    _sanction_set: &TypedValue,
 ) -> (SignedPodBuilder, SignedPodBuilder, SignedPodBuilder) {
     let mut gov_id = SignedPodBuilder::new(params);
     gov_id.insert("idNumber", "4242424242");
@@ -31,7 +31,12 @@ pub fn zu_kyc_sign_pod_builders(
     pay_stub.insert("startDate", 1706367566);
 
     let mut sanction_list = SignedPodBuilder::new(params);
-    sanction_list.insert("sanctionList", sanction_set.clone());
+    let sanctions_values = ["A343434340"].map(TypedValue::from);
+
+    sanction_list.insert(
+        "sanctionList",
+        TypedValue::Set(Set::new(sanctions_values.into()).unwrap()),
+    );
 
     (gov_id, pay_stub, sanction_list)
 }
@@ -43,7 +48,7 @@ pub fn zu_kyc_pod_builder(
     sanction_list: &SignedPod,
 ) -> Result<MainPodBuilder> {
     let sanction_set = match sanction_list.kvs.get("sanctionList") {
-        Some(Value::Set(s)) => Ok(s),
+        Some(TypedValue::Set(s)) => Ok(s),
         _ => Err(anyhow!("Missing sanction list!")),
     }?;
     let now_minus_18y: i64 = 1169909388;
@@ -77,7 +82,10 @@ pub fn zu_kyc_pod_builder(
 
 // ETHDoS
 
-pub fn eth_friend_signed_pod_builder(params: &Params, friend_pubkey: Value) -> SignedPodBuilder {
+pub fn eth_friend_signed_pod_builder(
+    params: &Params,
+    friend_pubkey: TypedValue,
+) -> SignedPodBuilder {
     let mut attestation = SignedPodBuilder::new(params);
     attestation.insert("attestation", friend_pubkey);
 
@@ -88,7 +96,7 @@ pub fn eth_dos_pod_builder(
     params: &Params,
     alice_attestation: &SignedPod,
     charlie_attestation: &SignedPod,
-    bob_pubkey: &Value,
+    bob_pubkey: &TypedValue,
 ) -> Result<MainPodBuilder> {
     // Will need ETH friend and ETH DoS custom predicate batches.
     let eth_friend = CustomPredicateRef::new(eth_friend_batch(params)?, 0);
@@ -232,7 +240,7 @@ pub fn great_boy_pod_builder(
     params: &Params,
     good_boy_pods: [&SignedPod; 4],
     friend_pods: [&SignedPod; 2],
-    good_boy_issuers: &Value,
+    good_boy_issuers: &TypedValue,
     receiver: &str,
 ) -> Result<MainPodBuilder> {
     // Attestment chain (issuer -> good boy -> great boy):
@@ -269,7 +277,7 @@ pub fn great_boy_pod_builder(
             ))?;
             // Each good boy POD comes from a valid issuer
             let good_boy_proof = match good_boy_issuers {
-                Value::Dictionary(dict) => Ok(dict),
+                TypedValue::Dictionary(dict) => Ok(dict),
                 _ => Err(anyhow!("Invalid good boy issuers!")),
             }?
             .middleware_dict()
@@ -357,7 +365,7 @@ pub fn great_boy_pod_full_flow() -> Result<MainPodBuilder> {
     alice_friend_pods.push(friend.sign(&mut bob_signer).unwrap());
     alice_friend_pods.push(friend.sign(&mut charlie_signer).unwrap());
 
-    let good_boy_issuers = Value::Dictionary(Dictionary::new(
+    let good_boy_issuers = TypedValue::Dictionary(Dictionary::new(
         good_boy_issuers
             .into_iter()
             .map(|issuer| (issuer.to_string(), 0.into()))
@@ -403,7 +411,7 @@ pub fn tickets_pod_builder(
     let attendee_nin_blacklist_pf = blacklisted_emails
         .middleware_dict()
         .prove_nonexistence(&attendee_email_value.into())?;
-    let blacklisted_email_dict_value = Value::Dictionary(blacklisted_emails.clone());
+    let blacklisted_email_dict_value = TypedValue::Dictionary(blacklisted_emails.clone());
     // Create a main pod referencing this signed pod with some statements
     let mut builder = MainPodBuilder::new(params);
     builder.add_signed_pod(signed_pod);

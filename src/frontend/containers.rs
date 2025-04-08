@@ -5,21 +5,21 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    frontend::{serialization::ordered_map, Value},
+    frontend::{serialization::ordered_map, TypedValue},
     middleware::{
         containers::{
             Array as MiddlewareArray, Dictionary as MiddlewareDictionary, Set as MiddlewareSet,
         },
-        hash_str, Value as MiddlewareValue,
+        hash_str, RawValue as MiddlewareValue,
     },
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(transparent)]
-pub struct Set(Vec<Value>, #[serde(skip)] MiddlewareSet);
+pub struct Set(Vec<TypedValue>, #[serde(skip)] MiddlewareSet);
 
 impl Set {
-    pub fn new(values: Vec<Value>) -> Result<Self> {
+    pub fn new(values: Vec<TypedValue>) -> Result<Self> {
         let set =
             MiddlewareSet::new(&values.iter().map(MiddlewareValue::from).collect::<Vec<_>>())?;
         Ok(Self(values, set))
@@ -29,7 +29,7 @@ impl Set {
         &self.1
     }
 
-    pub fn values(&self) -> &Vec<Value> {
+    pub fn values(&self) -> &Vec<TypedValue> {
         &self.0
     }
 }
@@ -39,7 +39,7 @@ impl<'de> Deserialize<'de> for Set {
     where
         D: serde::Deserializer<'de>,
     {
-        let values: Vec<Value> = Vec::deserialize(deserializer)?;
+        let values: Vec<TypedValue> = Vec::deserialize(deserializer)?;
         Set::new(values).map_err(serde::de::Error::custom)
     }
 }
@@ -47,12 +47,12 @@ impl<'de> Deserialize<'de> for Set {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(transparent)]
 pub struct Dictionary(
-    #[serde(serialize_with = "ordered_map")] HashMap<String, Value>,
+    #[serde(serialize_with = "ordered_map")] HashMap<String, TypedValue>,
     #[serde(skip)] MiddlewareDictionary,
 );
 
 impl Dictionary {
-    pub fn new(values: HashMap<String, Value>) -> Result<Self> {
+    pub fn new(values: HashMap<String, TypedValue>) -> Result<Self> {
         let dict = MiddlewareDictionary::new(
             &values
                 .iter()
@@ -66,7 +66,7 @@ impl Dictionary {
         &self.1
     }
 
-    pub fn values(&self) -> &HashMap<String, Value> {
+    pub fn values(&self) -> &HashMap<String, TypedValue> {
         &self.0
     }
 }
@@ -76,17 +76,17 @@ impl<'de> Deserialize<'de> for Dictionary {
     where
         D: serde::Deserializer<'de>,
     {
-        let values: HashMap<String, Value> = HashMap::deserialize(deserializer)?;
+        let values: HashMap<String, TypedValue> = HashMap::deserialize(deserializer)?;
         Dictionary::new(values).map_err(serde::de::Error::custom)
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(transparent)]
-pub struct Array(Vec<Value>, #[serde(skip)] MiddlewareArray);
+pub struct Array(Vec<TypedValue>, #[serde(skip)] MiddlewareArray);
 
 impl Array {
-    pub fn new(values: Vec<Value>) -> Result<Self> {
+    pub fn new(values: Vec<TypedValue>) -> Result<Self> {
         let array =
             MiddlewareArray::new(&values.iter().map(MiddlewareValue::from).collect::<Vec<_>>())?;
         Ok(Self(values, array))
@@ -96,7 +96,7 @@ impl Array {
         &self.1
     }
 
-    pub fn values(&self) -> &Vec<Value> {
+    pub fn values(&self) -> &Vec<TypedValue> {
         &self.0
     }
 }
@@ -106,7 +106,7 @@ impl<'de> Deserialize<'de> for Array {
     where
         D: serde::Deserializer<'de>,
     {
-        let values: Vec<Value> = Vec::deserialize(deserializer)?;
+        let values: Vec<TypedValue> = Vec::deserialize(deserializer)?;
         Array::new(values).map_err(serde::de::Error::custom)
     }
 }

@@ -170,7 +170,7 @@ pub mod tests {
         },
         examples::zu_kyc_sign_pod_builders,
         frontend, middleware,
-        middleware::{NativeOperation, Value},
+        middleware::{NativeOperation, RawValue},
         op,
     };
 
@@ -182,7 +182,7 @@ pub mod tests {
         sanction_list: &frontend::SignedPod,
     ) -> Result<frontend::MainPodBuilder> {
         let sanction_set = match sanction_list.kvs.get("sanctionList") {
-            Some(frontend::Value::Set(s)) => Ok(s),
+            Some(frontend::TypedValue::Set(s)) => Ok(s),
             _ => Err(anyhow!("Missing sanction list!")),
         }?;
         let now_minus_18y: i64 = 1169909388;
@@ -233,14 +233,15 @@ pub mod tests {
         };
 
         let sanctions_values = vec!["A343434340".into()];
-        let sanction_set = frontend::Value::Set(frontend::containers::Set::new(sanctions_values)?);
+        let sanction_set =
+            frontend::TypedValue::Set(frontend::containers::Set::new(sanctions_values)?);
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params, &sanction_set);
-        let mut signer = Signer(SecretKey(Value::from(1)));
+        let mut signer = Signer(SecretKey(RawValue::from(1)));
         let gov_id_pod = gov_id_builder.sign(&mut signer)?;
-        let mut signer = Signer(SecretKey(Value::from(2)));
+        let mut signer = Signer(SecretKey(RawValue::from(2)));
         let pay_stub_pod = pay_stub_builder.sign(&mut signer)?;
-        let mut signer = Signer(SecretKey(Value::from(3)));
+        let mut signer = Signer(SecretKey(RawValue::from(3)));
         let sanction_list_pod = sanction_list_builder.sign(&mut signer)?;
         let kyc_builder =
             zu_kyc_pod_builder(&params, &gov_id_pod, &pay_stub_pod, &sanction_list_pod)?;
@@ -267,7 +268,7 @@ pub mod tests {
         gov_id_builder.insert("idNumber", "4242424242");
         gov_id_builder.insert("dateOfBirth", 1169909384);
         gov_id_builder.insert("socialSecurityNumber", "G2121210");
-        let mut signer = Signer(SecretKey(Value::from(42)));
+        let mut signer = Signer(SecretKey(RawValue::from(42)));
         let gov_id = gov_id_builder.sign(&mut signer).unwrap();
         let now_minus_18y: i64 = 1169909388;
         let mut kyc_builder = frontend::MainPodBuilder::new(&params);

@@ -8,7 +8,7 @@ use crate::{
     constants::MAX_DEPTH,
     middleware::{
         containers::Dictionary, hash_str, AnchoredKey, Hash, Params, Pod, PodId, PodSigner,
-        PodType, Statement, Value, KEY_SIGNER, KEY_TYPE,
+        PodType, RawValue, Statement, KEY_SIGNER, KEY_TYPE,
     },
 };
 
@@ -17,17 +17,17 @@ pub struct MockSigner {
 }
 
 impl MockSigner {
-    pub fn pubkey(&self) -> Value {
-        Value(hash_str(&self.pk).0)
+    pub fn pubkey(&self) -> RawValue {
+        RawValue(hash_str(&self.pk).0)
     }
 }
 
 impl PodSigner for MockSigner {
-    fn sign(&mut self, _params: &Params, kvs: &HashMap<Hash, Value>) -> Result<Box<dyn Pod>> {
+    fn sign(&mut self, _params: &Params, kvs: &HashMap<Hash, RawValue>) -> Result<Box<dyn Pod>> {
         let mut kvs = kvs.clone();
         let pubkey = self.pubkey();
         kvs.insert(hash_str(KEY_SIGNER), pubkey);
-        kvs.insert(hash_str(KEY_TYPE), Value::from(PodType::MockSigned));
+        kvs.insert(hash_str(KEY_TYPE), RawValue::from(PodType::MockSigned));
 
         let dict = Dictionary::new(&kvs)?;
         let id = PodId(dict.commitment());
@@ -66,7 +66,7 @@ impl Pod for MockSignedPod {
                 .dict
                 .iter()
                 .map(|(&k, &v)| (k, v))
-                .collect::<HashMap<Value, Value>>(),
+                .collect::<HashMap<RawValue, RawValue>>(),
         )?;
         let id = PodId(mt.root());
         if id != self.id {
@@ -79,7 +79,7 @@ impl Pod for MockSignedPod {
 
         // 2. Verify type
         let value_at_type = self.dict.get(&hash_str(KEY_TYPE).into())?;
-        if Value::from(PodType::MockSigned) != value_at_type {
+        if RawValue::from(PodType::MockSigned) != value_at_type {
             return Err(anyhow!(
                 "type does not match, expected MockSigned ({}), found {}",
                 PodType::MockSigned,
@@ -109,9 +109,9 @@ impl Pod for MockSignedPod {
         let id = self.id();
         // By convention we put the KEY_TYPE first and KEY_SIGNER second
         let mut kvs: HashMap<_, _> = self.dict.iter().collect();
-        let key_type = Value::from(hash_str(KEY_TYPE));
+        let key_type = RawValue::from(hash_str(KEY_TYPE));
         let value_type = kvs.remove(&key_type).expect("KEY_TYPE");
-        let key_signer = Value::from(hash_str(KEY_SIGNER));
+        let key_signer = RawValue::from(hash_str(KEY_SIGNER));
         let value_signer = kvs.remove(&key_signer).expect("KEY_SIGNER");
         [(&key_type, value_type), (&key_signer, value_signer)]
             .into_iter()
@@ -175,25 +175,28 @@ pub mod tests {
         assert!(bad_pod.verify().is_err());
 
         let mut bad_pod = pod.clone();
-        let bad_kv = (hash_str(KEY_SIGNER).into(), Value(PodId(EMPTY_HASH).0 .0));
+        let bad_kv = (
+            hash_str(KEY_SIGNER).into(),
+            RawValue(PodId(EMPTY_HASH).0 .0),
+        );
         let bad_kvs_mt = &bad_pod
             .kvs()
             .into_iter()
-            .map(|(AnchoredKey { key, .. }, v)| (Value(key.hash().0), v))
+            .map(|(AnchoredKey { key, .. }, v)| (RawValue(key.hash().0), v))
             .chain(iter::once(bad_kv))
-            .collect::<HashMap<Value, Value>>();
+            .collect::<HashMap<RawValue, RawValue>>();
         let bad_mt = MerkleTree::new(MAX_DEPTH, bad_kvs_mt)?;
         bad_pod.dict.mt = bad_mt;
         assert!(bad_pod.verify().is_err());
 
         let mut bad_pod = pod.clone();
-        let bad_kv = (hash_str(KEY_TYPE).into(), Value::from(0));
+        let bad_kv = (hash_str(KEY_TYPE).into(), RawValue::from(0));
         let bad_kvs_mt = &bad_pod
             .kvs()
             .into_iter()
-            .map(|(AnchoredKey { key, .. }, v)| (Value(key.hash().0), v))
+            .map(|(AnchoredKey { key, .. }, v)| (RawValue(key.hash().0), v))
             .chain(iter::once(bad_kv))
-            .collect::<HashMap<Value, Value>>();
+            .collect::<HashMap<RawValue, RawValue>>();
         let bad_mt = MerkleTree::new(MAX_DEPTH, bad_kvs_mt)?;
         bad_pod.dict.mt = bad_mt;
         assert!(bad_pod.verify().is_err());

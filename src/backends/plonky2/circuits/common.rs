@@ -23,7 +23,7 @@ use crate::{
         primitives::merkletree::MerkleClaimAndProofTarget,
     },
     middleware::{
-        NativeOperation, NativePredicate, Params, Predicate, StatementArg, ToFields, Value,
+        NativeOperation, NativePredicate, Params, Predicate, RawValue, StatementArg, ToFields,
         EMPTY_VALUE, F, HASH_SIZE, OPERATION_ARG_F_LEN, OPERATION_AUX_F_LEN, STATEMENT_ARG_F_LEN,
         VALUE_SIZE,
     },
@@ -294,7 +294,7 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     fn add_virtual_operation(&mut self, params: &Params) -> OperationTarget;
     fn select_value(&mut self, b: BoolTarget, x: ValueTarget, y: ValueTarget) -> ValueTarget;
     fn select_bool(&mut self, b: BoolTarget, x: BoolTarget, y: BoolTarget) -> BoolTarget;
-    fn constant_value(&mut self, v: Value) -> ValueTarget;
+    fn constant_value(&mut self, v: RawValue) -> ValueTarget;
     fn is_equal_slice(&mut self, xs: &[Target], ys: &[Target]) -> BoolTarget;
 
     // Convenience methods for checking values.
@@ -365,7 +365,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
         BoolTarget::new_unsafe(self.select(b, x.target, y.target))
     }
 
-    fn constant_value(&mut self, v: Value) -> ValueTarget {
+    fn constant_value(&mut self, v: RawValue) -> ValueTarget {
         ValueTarget {
             elements: std::array::from_fn(|i| {
                 self.constant(F::from_noncanonical_u64(v.0[i].to_noncanonical_u64()))

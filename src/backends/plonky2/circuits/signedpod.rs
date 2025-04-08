@@ -13,7 +13,7 @@ use plonky2::{
 
 use crate::{
     backends::plonky2::{
-        basetypes::{Value, D, EMPTY_VALUE, F},
+        basetypes::{RawValue, D, EMPTY_VALUE, F},
         circuits::common::{CircuitBuilderPod, StatementArgTarget, StatementTarget, ValueTarget},
         primitives::{
             merkletree::{MerkleProof, MerkleProofExistenceGadget, MerkleProofExistenceTarget},
@@ -48,7 +48,7 @@ impl SignedPodVerifyGadget {
         let type_mt_proof = &mt_proofs[0];
         let key_type = builder.constant_value(hash_str(KEY_TYPE).into());
         builder.connect_values(type_mt_proof.key, key_type);
-        let value_type = builder.constant_value(Value::from(PodType::Signed));
+        let value_type = builder.constant_value(RawValue::from(PodType::Signed));
         builder.connect_values(type_mt_proof.value, value_type);
 
         // 3.a. Verify signature
@@ -122,8 +122,8 @@ impl SignedPodVerifyTarget {
         // - empty leaves (if needed)
 
         // add proof verification of KEY_TYPE & KEY_SIGNER leaves
-        let key_type_key = Value::from(hash_str(KEY_TYPE));
-        let key_signer_key = Value::from(hash_str(KEY_SIGNER));
+        let key_type_key = RawValue::from(hash_str(KEY_TYPE));
+        let key_signer_key = RawValue::from(hash_str(KEY_SIGNER));
         let key_signer_value = [key_type_key, key_signer_key]
             .iter()
             .enumerate()
@@ -132,7 +132,7 @@ impl SignedPodVerifyTarget {
                 self.mt_proofs[i].set_targets(pw, true, pod.dict.commitment(), proof, *k, v)?;
                 Ok(v)
             })
-            .collect::<Result<Vec<Value>>>()?[1];
+            .collect::<Result<Vec<RawValue>>>()?[1];
 
         // add the verification of the rest of leaves
         let mut curr = 2; // since we already added key_type and key_signer
@@ -172,7 +172,7 @@ impl SignedPodVerifyTarget {
         // get the signer pk
         let pk = PublicKey(key_signer_value);
         // the msg signed is the pod.id
-        let msg = Value::from(pod.id.0);
+        let msg = RawValue::from(pod.id.0);
 
         // set signature targets values
         self.signature
