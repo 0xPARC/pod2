@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     frontend::serialization::*,
     middleware::{
-        self, hash_str, hash_value, Hash, MainPodInputs, NativeOperation, NativePredicate,
-        OperationAux, Params, PodId, PodProver, PodSigner, EMPTY_VALUE, KEY_SIGNER, KEY_TYPE, SELF,
+        self, hash_str, Hash, MainPodInputs, NativeOperation, NativePredicate, OperationAux,
+        Params, PodId, PodProver, PodSigner, EMPTY_VALUE, KEY_SIGNER, KEY_TYPE, SELF,
     },
 };
 
@@ -201,17 +201,11 @@ impl SignedPodBuilder {
         // backend. Include these in the frontend representation.
         let mid_kvs = pod.kvs();
         let pod_type = mid_kvs
-            .get(&crate::middleware::AnchoredKey(
-                pod.id(),
-                hash_str(KEY_TYPE),
-            ))
+            .get(&crate::middleware::AnchoredKey::new(pod.id(), KEY_TYPE))
             .cloned()
             .ok_or(anyhow!("Missing POD type information in POD: {:?}", pod))?;
         let pod_signer = mid_kvs
-            .get(&crate::middleware::AnchoredKey(
-                pod.id(),
-                hash_str(KEY_SIGNER),
-            ))
+            .get(&crate::middleware::AnchoredKey::new(pod.id(), KEY_SIGNER))
             .cloned()
             .ok_or(anyhow!("Missing POD signer in POD: {:?}", pod))?;
         kvs.insert(KEY_TYPE.to_string(), pod_type.into());
@@ -264,7 +258,7 @@ impl SignedPod {
         self.pod
             .kvs()
             .into_iter()
-            .map(|(middleware::AnchoredKey(_, k), v)| (k, v))
+            .map(|(middleware::AnchoredKey { key, .. }, v)| (key.hash(), v))
             .collect()
     }
 }
@@ -283,7 +277,7 @@ impl AnchoredKey {
 
 impl From<AnchoredKey> for middleware::AnchoredKey {
     fn from(ak: AnchoredKey) -> Self {
-        middleware::AnchoredKey(ak.pod_id, hash_str(&ak.key))
+        middleware::AnchoredKey::new(ak.pod_id, ak.key)
     }
 }
 
@@ -347,9 +341,7 @@ impl MainPodBuilder {
             .iter()
             .flat_map(|s| &s.args)
             .flat_map(|arg| match arg {
-                StatementArg::Key(AnchoredKey { pod_id: _, key }) => {
-                    Some((hash_str(key), key.clone()))
-                }
+                StatementArg::Key(AnchoredKey { key, .. }) => Some((hash_str(key), key.clone())),
                 _ => None,
             })
             .for_each(|(hash, key)| {
@@ -684,7 +676,7 @@ impl MainPodBuilder {
 
         // Add key-hash pairs in statement to table.
         st.args.iter().for_each(|arg| {
-            if let StatementArg::Key(AnchoredKey { pod_id: _, key }) = arg {
+            if let StatementArg::Key(AnchoredKey { key, .. }) = arg {
                 self.key_table.insert(hash_str(key), key.clone());
             }
         });
@@ -758,9 +750,9 @@ impl MainPodBuilder {
             .into_iter()
             .find_map(|s| match s {
                 crate::middleware::Statement::ValueOf(
-                    crate::middleware::AnchoredKey(id, key),
+                    crate::middleware::AnchoredKey { pod_id: id, key },
                     value,
-                ) if id == pod_id && key == type_key_hash => Some(Statement {
+                ) if id == pod_id && key.hash() == type_key_hash => Some(Statement {
                     predicate: Predicate::Native(NativePredicate::ValueOf),
                     args: vec![
                         StatementArg::Key(AnchoredKey::new(pod_id, KEY_TYPE.to_string())),
@@ -888,7 +880,7 @@ impl MainPodCompiler {
         match self.literals.get(&val) {
             Some(idx) => &self.statements[*idx],
             None => {
-                let ak = middleware::AnchoredKey(SELF, hash_value(&val));
+                let ak = middleware::AnchoredKey::new(SELF, format!("const_{}", val));
                 let st = middleware::Statement::ValueOf(ak, val);
                 let op = middleware::Operation::NewEntry;
                 self.statements.push(st);
@@ -921,14 +913,15 @@ impl MainPodCompiler {
             Predicate::Native(NativePredicate::DictContains) => {
                 let empty_st = self.literal(EMPTY_VALUE).clone();
                 let empty_ak = match empty_st {
-                    middleware::Statement::ValueOf(ak, _) => ak,
+                    middleware::Statement::ValueOf(ref ak, _) => ak,
                     _ => unreachable!(),
                 };
                 let (ak1, ak2) = match (st.args.get(0).cloned(), st.args.get(1).cloned()) {
                     (Some(StatementArg::Key(ak1)), Some(StatementArg::Key(ak2))) => (ak1, ak2),
                     _ => Err(anyhow!("Ill-formed statement: {}", st))?,
                 };
-                let middle_st = middleware::Statement::Contains(ak1.into(), ak2.into(), empty_ak);
+                let middle_st =
+                    middleware::Statement::Contains(ak1.into(), ak2.into(), empty_ak.clone());
                 let middle_op = middleware::Operation::ContainsFromEntries(
                     match &op.1[0] {
                         OperationArg::Statement(s) => self.compile_st(s)?,
@@ -938,7 +931,7 @@ impl MainPodCompiler {
                         OperationArg::Statement(s) => self.compile_st(s)?,
                         _ => Err(anyhow!("Statement compile failed in manual compile"))?,
                     },
-                    empty_st,
+                    empty_st.clone(),
                     match &op.2 {
                         OperationAux::MerkleProof(mp) => mp.clone(),
                         _ => {
@@ -988,7 +981,8 @@ impl MainPodCompiler {
                     (Some(StatementArg::Key(ak1)), Some(StatementArg::Key(ak2))) => (ak1, ak2),
                     _ => Err(anyhow!("Ill-formed statement: {}", st))?,
                 };
-                let middle_st = middleware::Statement::Contains(ak1.into(), ak2.into(), *empty_ak);
+                let middle_st =
+                    middleware::Statement::Contains(ak1.into(), ak2.into(), empty_ak.clone());
                 Ok(middle_st)
             }
         }
@@ -1159,7 +1153,7 @@ pub mod tests {
             .pod
             .kvs()
             .into_iter()
-            .map(|(middleware::AnchoredKey(_, k), v)| (k, v))
+            .map(|(middleware::AnchoredKey { key, .. }, v)| (key.hash(), v))
             .collect::<HashMap<_, _>>();
 
         if kvs == embedded_kvs {

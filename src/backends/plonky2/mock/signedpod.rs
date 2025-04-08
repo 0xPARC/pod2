@@ -116,7 +116,12 @@ impl Pod for MockSignedPod {
         [(&key_type, value_type), (&key_signer, value_signer)]
             .into_iter()
             .chain(kvs.into_iter().sorted_by_key(|kv| kv.0))
-            .map(|(k, v)| Statement::ValueOf(AnchoredKey(id, Hash(k.0)), *v))
+            // TODO: Refactor the SignedPod so that it uses `Key`
+            // ALERT ALERT ALERT ALERT
+            // ALERT ALERT ALERT ALERT
+            // ALERT ALERT ALERT ALERT
+            // ALERT ALERT ALERT ALERT
+            .map(|(_k, v)| Statement::ValueOf(AnchoredKey::new(id, ""), *v))
             .collect()
     }
 
@@ -174,7 +179,7 @@ pub mod tests {
         let bad_kvs_mt = &bad_pod
             .kvs()
             .into_iter()
-            .map(|(AnchoredKey(_, k), v)| (Value(k.0), v))
+            .map(|(AnchoredKey { key, .. }, v)| (Value(key.hash().0), v))
             .chain(iter::once(bad_kv))
             .collect::<HashMap<Value, Value>>();
         let bad_mt = MerkleTree::new(MAX_DEPTH, bad_kvs_mt)?;
@@ -186,7 +191,7 @@ pub mod tests {
         let bad_kvs_mt = &bad_pod
             .kvs()
             .into_iter()
-            .map(|(AnchoredKey(_, k), v)| (Value(k.0), v))
+            .map(|(AnchoredKey { key, .. }, v)| (Value(key.hash().0), v))
             .chain(iter::once(bad_kv))
             .collect::<HashMap<Value, Value>>();
         let bad_mt = MerkleTree::new(MAX_DEPTH, bad_kvs_mt)?;

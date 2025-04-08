@@ -199,7 +199,7 @@ impl MockMainPod {
         // Public statements
         assert!(inputs.public_statements.len() < params.max_public_statements);
         let mut type_st = middleware::Statement::ValueOf(
-            AnchoredKey(SELF, hash_str(KEY_TYPE)),
+            AnchoredKey::new(SELF, KEY_TYPE),
             middleware::Value::from(PodType::MockMain),
         )
         .into();
@@ -449,8 +449,8 @@ impl Pod for MockMainPod {
         let has_type_statement = self.public_statements.iter().any(|s| {
             s.0 == Predicate::Native(NativePredicate::ValueOf)
                 && !s.1.is_empty()
-                && if let StatementArg::Key(AnchoredKey(pod_id, key_hash)) = s.1[0] {
-                    pod_id == SELF && key_hash == hash_str(KEY_TYPE)
+                && if let StatementArg::Key(AnchoredKey { pod_id, ref key }) = s.1[0] {
+                    pod_id == SELF && key.hash() == hash_str(KEY_TYPE)
                 } else {
                     false
                 }
@@ -477,7 +477,7 @@ impl Pod for MockMainPod {
                 .filter(|(_, s)| s.0 == Predicate::Native(NativePredicate::ValueOf))
                 .flat_map(|(i, s)| {
                     if let StatementArg::Key(ak) = &s.1[0] {
-                        vec![(i, ak.1, ak.0)]
+                        vec![(i, ak.pod_id, ak.key.hash())]
                     } else {
                         vec![]
                     }
@@ -536,10 +536,10 @@ impl Pod for MockMainPod {
                         .1
                         .iter()
                         .map(|sa| match &sa {
-                            StatementArg::Key(AnchoredKey(pod_id, h)) if *pod_id == SELF => {
-                                StatementArg::Key(AnchoredKey(self.id(), *h))
+                            StatementArg::Key(AnchoredKey { pod_id, key }) if *pod_id == SELF => {
+                                StatementArg::Key(AnchoredKey::new(self.id(), key.name()))
                             }
-                            _ => *sa,
+                            _ => sa.clone(),
                         })
                         .collect(),
                 )

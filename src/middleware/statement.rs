@@ -111,35 +111,45 @@ impl Statement {
         let st: Result<Self> = match pred {
             Native(NativePredicate::None) => Ok(Self::None),
             Native(NativePredicate::ValueOf) => {
-                if let (StatementArg::Key(a0), StatementArg::Literal(v1)) = (args[0], args[1]) {
+                if let (StatementArg::Key(a0), StatementArg::Literal(v1)) =
+                    (args[0].clone(), args[1].clone())
+                {
                     Ok(Self::ValueOf(a0, v1))
                 } else {
                     Err(anyhow!("Incorrect statement args"))
                 }
             }
             Native(NativePredicate::Equal) => {
-                if let (StatementArg::Key(a0), StatementArg::Key(a1)) = (args[0], args[1]) {
+                if let (StatementArg::Key(a0), StatementArg::Key(a1)) =
+                    (args[0].clone(), args[1].clone())
+                {
                     Ok(Self::Equal(a0, a1))
                 } else {
                     Err(anyhow!("Incorrect statement args"))
                 }
             }
             Native(NativePredicate::NotEqual) => {
-                if let (StatementArg::Key(a0), StatementArg::Key(a1)) = (args[0], args[1]) {
+                if let (StatementArg::Key(a0), StatementArg::Key(a1)) =
+                    (args[0].clone(), args[1].clone())
+                {
                     Ok(Self::NotEqual(a0, a1))
                 } else {
                     Err(anyhow!("Incorrect statement args"))
                 }
             }
             Native(NativePredicate::Gt) => {
-                if let (StatementArg::Key(a0), StatementArg::Key(a1)) = (args[0], args[1]) {
+                if let (StatementArg::Key(a0), StatementArg::Key(a1)) =
+                    (args[0].clone(), args[1].clone())
+                {
                     Ok(Self::Gt(a0, a1))
                 } else {
                     Err(anyhow!("Incorrect statement args"))
                 }
             }
             Native(NativePredicate::Lt) => {
-                if let (StatementArg::Key(a0), StatementArg::Key(a1)) = (args[0], args[1]) {
+                if let (StatementArg::Key(a0), StatementArg::Key(a1)) =
+                    (args[0].clone(), args[1].clone())
+                {
                     Ok(Self::Lt(a0, a1))
                 } else {
                     Err(anyhow!("Incorrect statement args"))
@@ -147,7 +157,7 @@ impl Statement {
             }
             Native(NativePredicate::Contains) => {
                 if let (StatementArg::Key(a0), StatementArg::Key(a1), StatementArg::Key(a2)) =
-                    (args[0], args[1], args[2])
+                    (args[0].clone(), args[1].clone(), args[2].clone())
                 {
                     Ok(Self::Contains(a0, a1, a2))
                 } else {
@@ -155,7 +165,9 @@ impl Statement {
                 }
             }
             Native(NativePredicate::NotContains) => {
-                if let (StatementArg::Key(a0), StatementArg::Key(a1)) = (args[0], args[1]) {
+                if let (StatementArg::Key(a0), StatementArg::Key(a1)) =
+                    (args[0].clone(), args[1].clone())
+                {
                     Ok(Self::NotContains(a0, a1))
                 } else {
                     Err(anyhow!("Incorrect statement args"))
@@ -163,7 +175,7 @@ impl Statement {
             }
             Native(NativePredicate::SumOf) => {
                 if let (StatementArg::Key(a0), StatementArg::Key(a1), StatementArg::Key(a2)) =
-                    (args[0], args[1], args[2])
+                    (args[0].clone(), args[1].clone(), args[2].clone())
                 {
                     Ok(Self::SumOf(a0, a1, a2))
                 } else {
@@ -172,7 +184,7 @@ impl Statement {
             }
             Native(NativePredicate::ProductOf) => {
                 if let (StatementArg::Key(a0), StatementArg::Key(a1), StatementArg::Key(a2)) =
-                    (args[0], args[1], args[2])
+                    (args[0].clone(), args[1].clone(), args[2].clone())
                 {
                     Ok(Self::ProductOf(a0, a1, a2))
                 } else {
@@ -181,7 +193,7 @@ impl Statement {
             }
             Native(NativePredicate::MaxOf) => {
                 if let (StatementArg::Key(a0), StatementArg::Key(a1), StatementArg::Key(a2)) =
-                    (args[0], args[1], args[2])
+                    (args[0].clone(), args[1].clone(), args[2].clone())
                 {
                     Ok(Self::MaxOf(a0, a1, a2))
                 } else {
@@ -194,7 +206,7 @@ impl Statement {
                 let ak_args: Result<Vec<AnchoredKey>> = args
                     .iter()
                     .map(|x| match x {
-                        StatementArg::Key(ak) => Ok(*ak),
+                        StatementArg::Key(ak) => Ok(ak.clone()),
                         _ => Err(anyhow!("Incorrect statement args")),
                     })
                     .collect();
@@ -228,7 +240,7 @@ impl fmt::Display for Statement {
 }
 
 /// Statement argument type. Useful for statement decompositions.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StatementArg {
     None,
     Literal(Value),
@@ -240,7 +252,7 @@ impl fmt::Display for StatementArg {
         match self {
             StatementArg::None => write!(f, "none"),
             StatementArg::Literal(v) => write!(f, "{}", v),
-            StatementArg::Key(r) => write!(f, "{}.{}", r.0, r.1),
+            StatementArg::Key(r) => write!(f, "{}.{}", r.pod_id, r.key),
         }
     }
 }
@@ -257,7 +269,7 @@ impl StatementArg {
     }
     pub fn key(&self) -> Result<AnchoredKey> {
         match self {
-            Self::Key(ak) => Ok(*ak),
+            Self::Key(ak) => Ok(ak.clone()),
             _ => Err(anyhow!("Statement argument {:?} is not a key.", self)),
         }
     }
@@ -280,8 +292,8 @@ impl ToFields for StatementArg {
                     .collect()
             }
             StatementArg::Key(ak) => {
-                let mut fields = ak.0.to_fields(_params);
-                fields.extend(ak.1.to_fields(_params));
+                let mut fields = ak.pod_id.to_fields(_params);
+                fields.extend(ak.key.to_fields(_params));
                 fields
             }
         };

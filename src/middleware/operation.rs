@@ -288,7 +288,10 @@ impl Operation {
             Self::CopyStatement(s1) => Some(s1.args()),
             Self::EqualFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) => {
                 if v1 == v2 {
-                    Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
+                    Some(vec![
+                        StatementArg::Key(ak1.clone()),
+                        StatementArg::Key(ak2.clone()),
+                    ])
                 } else {
                     return Err(anyhow!("Invalid operation"));
                 }
@@ -298,7 +301,10 @@ impl Operation {
             }
             Self::NotEqualFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) => {
                 if v1 != v2 {
-                    Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
+                    Some(vec![
+                        StatementArg::Key(ak1.clone()),
+                        StatementArg::Key(ak2.clone()),
+                    ])
                 } else {
                     return Err(anyhow!("Invalid operation"));
                 }
@@ -308,7 +314,10 @@ impl Operation {
             }
             Self::GtFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) => {
                 if v1 > v2 {
-                    Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
+                    Some(vec![
+                        StatementArg::Key(ak1.clone()),
+                        StatementArg::Key(ak2.clone()),
+                    ])
                 } else {
                     return Err(anyhow!("Invalid operation"));
                 }
@@ -318,7 +327,10 @@ impl Operation {
             }
             Self::LtFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)) => {
                 if v1 < v2 {
-                    Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
+                    Some(vec![
+                        StatementArg::Key(ak1.clone()),
+                        StatementArg::Key(ak2.clone()),
+                    ])
                 } else {
                     return Err(anyhow!("Invalid operation"));
                 }
@@ -328,7 +340,10 @@ impl Operation {
             }
             Self::TransitiveEqualFromStatements(Equal(ak1, ak2), Equal(ak3, ak4)) => {
                 if ak2 == ak3 {
-                    Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak4)])
+                    Some(vec![
+                        StatementArg::Key(ak1.clone()),
+                        StatementArg::Key(ak4.clone()),
+                    ])
                 } else {
                     return Err(anyhow!("Invalid operation"));
                 }
@@ -336,15 +351,17 @@ impl Operation {
             Self::TransitiveEqualFromStatements(_, _) => {
                 return Err(anyhow!("Invalid operation"));
             }
-            Self::GtToNotEqual(Gt(ak1, ak2)) => {
-                Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
-            }
+            Self::GtToNotEqual(Gt(ak1, ak2)) => Some(vec![
+                StatementArg::Key(ak1.clone()),
+                StatementArg::Key(ak2.clone()),
+            ]),
             Self::GtToNotEqual(_) => {
                 return Err(anyhow!("Invalid operation"));
             }
-            Self::LtToNotEqual(Gt(ak1, ak2)) => {
-                Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
-            }
+            Self::LtToNotEqual(Gt(ak1, ak2)) => Some(vec![
+                StatementArg::Key(ak1.clone()),
+                StatementArg::Key(ak2.clone()),
+            ]),
             Self::LtToNotEqual(_) => {
                 return Err(anyhow!("Invalid operation"));
             }
@@ -352,9 +369,9 @@ impl Operation {
                 if MerkleTree::verify(pf.siblings.len(), (*v1).into(), pf, v2, v3).is_ok() =>
             {
                 Some(vec![
-                    StatementArg::Key(*ak1),
-                    StatementArg::Key(*ak2),
-                    StatementArg::Key(*ak3),
+                    StatementArg::Key(ak1.clone()),
+                    StatementArg::Key(ak2.clone()),
+                    StatementArg::Key(ak3.clone()),
                 ])
             }
             Self::ContainsFromEntries(_, _, _, _) => {
@@ -364,7 +381,10 @@ impl Operation {
                 if MerkleTree::verify_nonexistence(pf.siblings.len(), (*v1).into(), pf, v2)
                     .is_ok() =>
             {
-                Some(vec![StatementArg::Key(*ak1), StatementArg::Key(*ak2)])
+                Some(vec![
+                    StatementArg::Key(ak1.clone()),
+                    StatementArg::Key(ak2.clone()),
+                ])
             }
             Self::NotContainsFromEntries(_, _, _) => {
                 return Err(anyhow!("Invalid operation"));
@@ -375,9 +395,9 @@ impl Operation {
                 let v3: i64 = (*v3).try_into()?;
                 if v1 == v2 + v3 {
                     Some(vec![
-                        StatementArg::Key(*ak1),
-                        StatementArg::Key(*ak2),
-                        StatementArg::Key(*ak3),
+                        StatementArg::Key(ak1.clone()),
+                        StatementArg::Key(ak2.clone()),
+                        StatementArg::Key(ak3.clone()),
                     ])
                 } else {
                     return Err(anyhow!("Invalid operation"));
@@ -392,9 +412,9 @@ impl Operation {
                 let v3: i64 = (*v3).try_into()?;
                 if v1 == v2 * v3 {
                     Some(vec![
-                        StatementArg::Key(*ak1),
-                        StatementArg::Key(*ak2),
-                        StatementArg::Key(*ak3),
+                        StatementArg::Key(ak1.clone()),
+                        StatementArg::Key(ak2.clone()),
+                        StatementArg::Key(ak3.clone()),
                     ])
                 } else {
                     return Err(anyhow!("Invalid operation"));
@@ -409,9 +429,9 @@ impl Operation {
                 let v3: i64 = (*v3).try_into()?;
                 if v1 == std::cmp::max(v2, v3) {
                     Some(vec![
-                        StatementArg::Key(*ak1),
-                        StatementArg::Key(*ak2),
-                        StatementArg::Key(*ak3),
+                        StatementArg::Key(ak1.clone()),
+                        StatementArg::Key(ak2.clone()),
+                        StatementArg::Key(ak3.clone()),
                     ])
                 } else {
                     return Err(anyhow!("Invalid operation"));
@@ -442,7 +462,7 @@ impl Operation {
         use Statement::*;
         match (self, output_statement) {
             (Self::None, None) => Ok(true),
-            (Self::NewEntry, ValueOf(AnchoredKey(pod_id, _), _)) => Ok(pod_id == &SELF),
+            (Self::NewEntry, ValueOf(AnchoredKey { pod_id, .. }, _)) => Ok(pod_id == &SELF),
             (Self::CopyStatement(s1), s2) => Ok(s1 == s2),
             (Self::EqualFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)), Equal(ak3, ak4)) => {
                 Ok(v1 == v2 && ak3 == ak1 && ak4 == ak2)
@@ -502,7 +522,9 @@ impl Operation {
                         .collect::<Result<Vec<_>>>()?;
                     let s_args = s_args
                         .iter()
-                        .flat_map(|AnchoredKey(o, k)| [Value::from(o.0), (*k).into()])
+                        .flat_map(|AnchoredKey { pod_id, key }| {
+                            [Value::from(pod_id.0), key.clone().into()]
+                        })
                         .collect::<Vec<_>>();
                     if bound_args != s_args {
                         Err(anyhow!("Arguments to output statement {} do not match those implied by operation {:?}", output_statement,self))

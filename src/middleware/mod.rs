@@ -32,22 +32,75 @@ impl fmt::Display for PodId {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Key {
+    name: String,
+    hash: Hash,
+}
+
+impl Key {
+    pub fn new(name: impl Into<String>) -> Self {
+        let name = name.into();
+        let hash = hash_str(&name);
+        Self { name, hash }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    pub fn hash(&self) -> Hash {
+        self.hash
+    }
+}
+
+impl<T> From<T> for Key
+where
+    T: Into<String>,
+{
+    fn from(t: T) -> Self {
+        Self::new(t)
+    }
+}
+
+impl ToFields for Key {
+    fn to_fields(&self, params: &Params) -> Vec<F> {
+        self.hash.to_fields(params)
+    }
+}
+
+impl fmt::Display for Key {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.name)?;
+        Ok(())
+    }
+}
+
+impl From<Key> for Value {
+    fn from(key: Key) -> Value {
+        Value(key.hash.0)
+    }
+}
+
 /// AnchoredKey is a tuple containing (OriginId: PodId, key: Hash)
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct AnchoredKey(pub PodId, pub Hash);
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AnchoredKey {
+    pub pod_id: PodId,
+    pub key: Key,
+}
 
 impl AnchoredKey {
-    pub fn origin(&self) -> PodId {
-        self.0
-    }
-    pub fn key(&self) -> Hash {
-        self.1
+    // The `key` can be  `&str, String, Key, ...`
+    pub fn new(pod_id: PodId, key: impl Into<Key>) -> Self {
+        Self {
+            pod_id,
+            key: key.into(),
+        }
     }
 }
 
 impl fmt::Display for AnchoredKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}.{}", self.0, self.1)?;
+        write!(f, "{}.{}", self.pod_id, self.key)?;
         Ok(())
     }
 }

@@ -76,9 +76,15 @@ impl StatementTmplArg {
         match (self, s_arg) {
             (Self::None, StatementArg::None) => Ok(vec![]),
             (Self::Literal(v), StatementArg::Literal(w)) if v == w => Ok(vec![]),
-            (Self::Key(tmpl_o, tmpl_k), StatementArg::Key(AnchoredKey(PodId(o), k))) => {
+            (
+                Self::Key(tmpl_o, tmpl_k),
+                StatementArg::Key(AnchoredKey {
+                    pod_id: PodId(o),
+                    key,
+                }),
+            ) => {
                 let o_corr = tmpl_o.match_against(&(*o).into())?;
-                let k_corr = tmpl_k.match_against(&(*k).into())?;
+                let k_corr = tmpl_k.match_against(&key.clone().into())?;
                 Ok([o_corr, k_corr].into_iter().flatten().collect())
             }
             _ => Err(anyhow!(
@@ -493,19 +499,19 @@ mod tests {
         let custom_statement = Statement::Custom(
             CustomPredicateRef(cust_pred_batch.clone(), 0),
             vec![
-                AnchoredKey(SELF, "Some value".into()),
-                AnchoredKey(SELF, "Some other value".into()),
+                AnchoredKey::new(SELF, "Some value"),
+                AnchoredKey::new(SELF, "Some other value"),
             ],
         );
 
         let custom_deduction = Operation::Custom(
             CustomPredicateRef(cust_pred_batch, 0),
             vec![
-                Statement::ValueOf(AnchoredKey(SELF, "Some constant".into()), 2.into()),
+                Statement::ValueOf(AnchoredKey::new(SELF, "Some constant"), 2.into()),
                 Statement::ProductOf(
-                    AnchoredKey(SELF, "Some value".into()),
-                    AnchoredKey(SELF, "Some constant".into()),
-                    AnchoredKey(SELF, "Some other value".into()),
+                    AnchoredKey::new(SELF, "Some value"),
+                    AnchoredKey::new(SELF, "Some constant"),
+                    AnchoredKey::new(SELF, "Some other value"),
                 ),
             ],
         );
@@ -648,9 +654,9 @@ mod tests {
         let ethdos_example = Statement::Custom(
             CustomPredicateRef(eth_dos_distance_batch.clone(), 2),
             vec![
-                AnchoredKey(pod_id1, "Alice".into()),
-                AnchoredKey(pod_id2, "Bob".into()),
-                AnchoredKey(SELF, "Seven".into()),
+                AnchoredKey::new(pod_id1, "Alice"),
+                AnchoredKey::new(pod_id2, "Bob"),
+                AnchoredKey::new(SELF, "Seven"),
             ],
         );
 
@@ -661,9 +667,9 @@ mod tests {
         let ethdos_ind_example = Statement::Custom(
             CustomPredicateRef(eth_dos_distance_batch.clone(), 1),
             vec![
-                AnchoredKey(pod_id1, "Alice".into()),
-                AnchoredKey(pod_id2, "Bob".into()),
-                AnchoredKey(SELF, "Seven".into()),
+                AnchoredKey::new(pod_id1, "Alice"),
+                AnchoredKey::new(pod_id2, "Bob"),
+                AnchoredKey::new(SELF, "Seven"),
             ],
         );
 
@@ -680,22 +686,22 @@ mod tests {
             Statement::Custom(
                 CustomPredicateRef(eth_dos_distance_batch.clone(), 2),
                 vec![
-                    AnchoredKey(pod_id1, "Alice".into()),
-                    AnchoredKey(pod_id3, "Charlie".into()),
-                    AnchoredKey(pod_id4, "Six".into()),
+                    AnchoredKey::new(pod_id1, "Alice"),
+                    AnchoredKey::new(pod_id3, "Charlie"),
+                    AnchoredKey::new(pod_id4, "Six"),
                 ],
             ),
-            Statement::ValueOf(AnchoredKey(SELF, "One".into()), 1.into()),
+            Statement::ValueOf(AnchoredKey::new(SELF, "One"), 1.into()),
             Statement::SumOf(
-                AnchoredKey(SELF, "Seven".into()),
-                AnchoredKey(pod_id4, "Six".into()),
-                AnchoredKey(SELF, "One".into()),
+                AnchoredKey::new(SELF, "Seven"),
+                AnchoredKey::new(pod_id4, "Six"),
+                AnchoredKey::new(SELF, "One"),
             ),
             Statement::Custom(
                 CustomPredicateRef(eth_friend_batch.clone(), 0),
                 vec![
-                    AnchoredKey(pod_id3, "Charlie".into()),
-                    AnchoredKey(pod_id2, "Bob".into()),
+                    AnchoredKey::new(pod_id3, "Charlie"),
+                    AnchoredKey::new(pod_id2, "Bob"),
                 ],
             ),
         ];

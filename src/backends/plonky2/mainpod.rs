@@ -136,10 +136,10 @@ impl Pod for MainPod {
                         .1
                         .iter()
                         .map(|sa| match &sa {
-                            StatementArg::Key(AnchoredKey(pod_id, h)) if *pod_id == SELF => {
-                                StatementArg::Key(AnchoredKey(self.id(), *h))
+                            StatementArg::Key(AnchoredKey { pod_id, key }) if *pod_id == SELF => {
+                                StatementArg::Key(AnchoredKey::new(self.id(), key.clone()))
                             }
-                            _ => *sa,
+                            _ => sa.clone(),
                         })
                         .collect(),
                 )
@@ -170,7 +170,7 @@ pub mod tests {
         },
         examples::zu_kyc_sign_pod_builders,
         frontend, middleware,
-        middleware::Value,
+        middleware::{NativeOperation, Value},
         op,
     };
 
