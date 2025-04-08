@@ -154,7 +154,6 @@ impl MerkleProofGadget {
 
 impl MerkleClaimAndProofTarget {
     /// assigns the given values to the targets
-    // @arnaucube, can we define a MerkleClaimAndProofInput for this?
     #[allow(clippy::too_many_arguments)]
     pub fn set_targets(
         &self,
