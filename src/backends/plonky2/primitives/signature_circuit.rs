@@ -46,9 +46,10 @@ const FALCON_ENCODING_BITS_usize: usize = FALCON_ENCODING_BITS as usize;
 
 /// An element in the Falcon-512 field, ie. modulus 12289.
 #[derive(Debug, Copy, Clone)]
-pub struct FalconTarget(Target);
-impl FalconTarget {
-    /// Checks that r = x%p, and it takes 11 plonky2 gates. // WIP: iterate it to use less gates.
+pub struct FalconFTarget(Target);
+impl FalconFTarget {
+    /// Checks that r = x%p.
+    /// Note: this gadget takes 11 plonky2 gates. // WIP: iterate it to use less gates.
     // That is, want: r = v % p (where p is the Falcon prime)
     // thus, it exists q s.th. v = q * p + r.
     // Range checks:
@@ -145,12 +146,13 @@ pub fn assert_less<const NUM_BITS: usize>(
 /// in Z_p[x]/(phi).
 #[derive(Copy, Clone)]
 pub struct PolynomialTarget {
-    // pub coeffs: [FalconTarget; N],
+    // pub coeffs: [FalconFTarget; N],
     pub coeffs: [Target; N],
 }
 
 pub struct SignatureVerifyGadget {}
 
+/// Note: this gadget takes 4879 gates. // WIP: do a modified (cheaper) version.
 fn hash_to_point_gadget(
     builder: &mut CircuitBuilder<F, D>,
     message: ValueTarget,
@@ -164,7 +166,8 @@ fn hash_to_point_gadget(
     }
     let perm_in = PlonkyPermutation::new(state);
     let perm_out = builder.permute::<PoseidonHash>(perm_in);
-    let mut state = perm_out.as_ref();
+    let mut state: [Target; <PoseidonPermutation<F> as PlonkyPermutation<F>>::WIDTH] = [builder.zero(); <PoseidonPermutation<F> as PlonkyPermutation<F>>::WIDTH];
+    state[..].copy_from_slice(perm_out.as_ref());
 
     for (&m, s) in message.elements.iter().zip(state[RATE_RANGE].iter_mut()) {
         *s = m;
@@ -172,21 +175,23 @@ fn hash_to_point_gadget(
     
     let mut i = 0;
     let mut res = [builder.zero(); N];
-    for _ in 0..64 {
-        let perm_in = PlonkyPermutation::new(state);
-        let perm_out = builder.permute::<PoseidonHash>(perm_in).as_ref();
-    state = perm_out.as_ref();
+    let mut states: [[Target; <PoseidonPermutation<F> as PlonkyPermutation<F>>::WIDTH]; 512+1] = [[builder.zero(); <PoseidonPermutation<F> as PlonkyPermutation<F>>::WIDTH];512+1];
+    states[0][..].copy_from_slice(&state);
+    for j in 0..64 {
+        let perm_in = PlonkyPermutation::new(states[j]);
+        let perm_out = builder.permute::<PoseidonHash>(perm_in);
+        states[j+1][..].copy_from_slice(perm_out.as_ref());
 
-        for a in &state[RATE_RANGE] {
-            todo!();
-            res[i] = FalconTarget::modulus(builder, *a);
+        for a in &states[j+1][RATE_RANGE] {
+            res[i] = FalconFTarget::modulus(builder, *a);
             i += 1;
         }
     }
 
-    // todo!();
     Ok(PolynomialTarget { coeffs: res })
 }
+
+
 
 #[cfg(test)]
 pub mod tests {
@@ -243,8 +248,12 @@ pub mod tests {
         let v_targ = builder.add_virtual_target();
         pw.set_target(v_targ, v)?;
 
-        FalconTarget::modulus(&mut builder, v_targ);
+        let r_targ = FalconFTarget::modulus(&mut builder, v_targ);
         dbg!(builder.num_gates());
+
+        let expected_r_targ = builder.add_virtual_target();
+        pw.set_target(expected_r_targ, r)?;
+            builder.connect(r_targ, expected_r_targ);
 
         // generate & verify proof
         let data = builder.build::<C>();
@@ -270,7 +279,6 @@ pub mod tests {
             .collect();
         let mut c_padded = [F::ZERO; N];
         c_padded[..c.coefficients.len()].copy_from_slice(&coeffs_F);
-        // dbg!(&c_padded);
 
         // circuit
         let config = CircuitConfig::standard_recursion_zk_config();
@@ -285,10 +293,12 @@ pub mod tests {
         let expected_c_targ = builder.add_virtual_target_arr::<N>();
         pw.set_target_arr(&expected_c_targ, &c_padded)?;
 
-        // let c_targ = hash_to_point_gadget(&mut builder, msg_targ, nonce_targ)?;
-        // for i in 0..N {
-        //     builder.connect(c_targ.coeffs[i], expected_c_targ[i]);
-        // }
+        let c_targ = hash_to_point_gadget(&mut builder, msg_targ, nonce_targ)?;
+        for i in 0..N {
+            builder.connect(c_targ.coeffs[i], expected_c_targ[i]);
+        }
+
+        dbg!(builder.num_gates());
 
         Ok(())
     }
