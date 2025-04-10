@@ -8,8 +8,8 @@ use custom::{eth_dos_batch, eth_friend_batch};
 use crate::{
     backends::plonky2::mock::signedpod::MockSigner,
     frontend::{
-        containers::{Dictionary, Set},
-        CustomPredicateRef, MainPodBuilder, SignedPod, SignedPodBuilder, Statement, Value,
+        containers::Dictionary, CustomPredicateRef, MainPodBuilder, SignedPod, SignedPodBuilder,
+        Statement, Value,
     },
     middleware::{Params, PodType, KEY_SIGNER, KEY_TYPE},
     op,
@@ -31,12 +31,7 @@ pub fn zu_kyc_sign_pod_builders(
     pay_stub.insert("startDate", 1706367566);
 
     let mut sanction_list = SignedPodBuilder::new(params);
-    let sanctions_values = ["A343434340"].map(Value::from);
-
-    sanction_list.insert(
-        "sanctionList",
-        Value::Set(Set::new(sanctions_values.into()).unwrap()),
-    );
+    sanction_list.insert("sanctionList", sanction_set.clone());
 
     (gov_id, pay_stub, sanction_list)
 }
