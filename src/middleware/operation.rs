@@ -3,23 +3,23 @@ use std::{fmt, iter};
 use anyhow::{anyhow, Result};
 use log::error;
 use plonky2::field::types::Field;
-use serde::{Deserialize, Serialize};
 
+// use serde::{Deserialize, Serialize};
 use crate::{
     backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree},
     middleware::{
-        AnchoredKey, CustomPredicateRef, NativePredicate, Params, Predicate, RawValue, Statement,
-        StatementArg, ToFields, F, SELF,
+        AnchoredKey, CustomPredicateRef, NativePredicate, Params, Predicate, Statement,
+        StatementArg, ToFields, Value, F, SELF,
     },
 };
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum OperationType {
     Native(NativeOperation),
     Custom(CustomPredicateRef),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum OperationAux {
     None,
     MerkleProof(MerkleProof),
@@ -51,7 +51,7 @@ impl ToFields for OperationType {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NativeOperation {
     None = 0,
     NewEntry = 1,
@@ -140,7 +140,7 @@ impl OperationType {
 }
 
 // TODO: Refine this enum.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Operation {
     None,
     NewEntry,
@@ -366,7 +366,8 @@ impl Operation {
                 return Err(anyhow!("Invalid operation"));
             }
             Self::ContainsFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3), pf)
-                if MerkleTree::verify(pf.siblings.len(), (*v1).into(), pf, v2, v3).is_ok() =>
+                if MerkleTree::verify(pf.siblings.len(), v1.into(), pf, &v2.raw(), &v3.raw())
+                    .is_ok() =>
             {
                 Some(vec![
                     StatementArg::Key(ak1.clone()),
@@ -378,7 +379,7 @@ impl Operation {
                 return Err(anyhow!("Invalid operation"));
             }
             Self::NotContainsFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2), pf)
-                if MerkleTree::verify_nonexistence(pf.siblings.len(), (*v1).into(), pf, v2)
+                if MerkleTree::verify_nonexistence(pf.siblings.len(), v1.into(), pf, &v2.raw())
                     .is_ok() =>
             {
                 Some(vec![
@@ -390,9 +391,9 @@ impl Operation {
                 return Err(anyhow!("Invalid operation"));
             }
             Self::SumOf(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3)) => {
-                let v1: i64 = (*v1).try_into()?;
-                let v2: i64 = (*v2).try_into()?;
-                let v3: i64 = (*v3).try_into()?;
+                let v1: i64 = v1.typed().try_into()?;
+                let v2: i64 = v2.typed().try_into()?;
+                let v3: i64 = v3.typed().try_into()?;
                 if v1 == v2 + v3 {
                     Some(vec![
                         StatementArg::Key(ak1.clone()),
@@ -407,9 +408,9 @@ impl Operation {
                 return Err(anyhow!("Invalid operation"));
             }
             Self::ProductOf(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3)) => {
-                let v1: i64 = (*v1).try_into()?;
-                let v2: i64 = (*v2).try_into()?;
-                let v3: i64 = (*v3).try_into()?;
+                let v1: i64 = v1.typed().try_into()?;
+                let v2: i64 = v2.typed().try_into()?;
+                let v3: i64 = v3.typed().try_into()?;
                 if v1 == v2 * v3 {
                     Some(vec![
                         StatementArg::Key(ak1.clone()),
@@ -424,9 +425,9 @@ impl Operation {
                 return Err(anyhow!("Invalid operation"));
             }
             Self::MaxOf(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3)) => {
-                let v1: i64 = (*v1).try_into()?;
-                let v2: i64 = (*v2).try_into()?;
-                let v3: i64 = (*v3).try_into()?;
+                let v1: i64 = v1.typed().try_into()?;
+                let v2: i64 = v2.typed().try_into()?;
+                let v3: i64 = v3.typed().try_into()?;
                 if v1 == std::cmp::max(v2, v3) {
                     Some(vec![
                         StatementArg::Key(ak1.clone()),
@@ -523,7 +524,7 @@ impl Operation {
                     let s_args = s_args
                         .iter()
                         .flat_map(|AnchoredKey { pod_id, key }| {
-                            [RawValue::from(pod_id.0), key.clone().into()]
+                            [Value::from(pod_id.0), key.hash().into()]
                         })
                         .collect::<Vec<_>>();
                     if bound_args != s_args {

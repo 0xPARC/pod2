@@ -1,7 +1,6 @@
 use std::fmt;
 
-use serde::{Deserialize, Serialize};
-
+// use serde::{Deserialize, Serialize};
 use crate::{
     frontend::{CustomPredicateRef, Predicate, SignedPod, Statement, TypedValue},
     middleware::{self, NativeOperation, NativePredicate, OperationAux},
@@ -72,7 +71,7 @@ impl<V: Into<TypedValue>> From<(&str, V)> for OperationArg {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OperationType {
     Native(NativeOperation),
     Custom(CustomPredicateRef),

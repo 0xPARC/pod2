@@ -1,3 +1,5 @@
+// TODO: Reenable
+/*
 use plonky2::field::types::Field;
 use serde::Deserialize;
 
@@ -67,3 +69,4 @@ where
 {
     deserialize_field_tuple::<D, VALUE_SIZE>(deserializer)
 }
+*/

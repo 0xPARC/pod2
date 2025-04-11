@@ -2,8 +2,8 @@ use std::{fmt, iter};
 
 use anyhow::{anyhow, Result};
 use plonky2::field::types::Field;
-use serde::{Deserialize, Serialize};
 
+// use serde::{Deserialize, Serialize};
 use crate::{
     backends::plonky2::{
         mock::mainpod::Statement,
@@ -14,7 +14,7 @@ use crate::{
     },
 };
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum OperationArg {
     None,
     Index(usize),
@@ -36,7 +36,7 @@ impl OperationArg {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum OperationAux {
     None,
     MerkleProofIndex(usize),
@@ -52,7 +52,7 @@ impl ToFields for OperationAux {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MerkleClaimAndProof {
     pub enabled: bool,
     pub root: Hash,
@@ -154,7 +154,7 @@ impl fmt::Display for MerkleClaimAndProof {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Operation(pub OperationType, pub Vec<OperationArg>, pub OperationAux);
 
 impl Operation {

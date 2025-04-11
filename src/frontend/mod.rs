@@ -6,11 +6,12 @@ use std::{collections::HashMap, convert::From, fmt, hash as h, hash::Hasher};
 use anyhow::{anyhow, Error, Result};
 use containers::{Array, Dictionary, Set};
 use itertools::Itertools;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 
+// use schemars::JsonSchema;
+
+// use serde::{Deserialize, Serialize};
 use crate::{
-    frontend::serialization::*,
+    // frontend::serialization::*,
     middleware::{
         self, hash_str, AnchoredKey, Hash, MainPodInputs, NativeOperation, NativePredicate,
         OperationAux, Params, PodId, PodProver, PodSigner, EMPTY_VALUE, KEY_SIGNER, KEY_TYPE, SELF,
@@ -21,22 +22,22 @@ pub mod containers;
 mod custom;
 mod operation;
 mod predicate;
-mod serialization;
+// mod serialization;
 mod statement;
 pub use custom::{CustomPredicateRef, Predicate, *};
 pub use operation::*;
 pub use statement::*;
 
 /// This type is just for presentation purposes.
-#[derive(Clone, Debug, Default, h::Hash, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum PodClass {
     #[default]
     Signed,
     Main,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[schemars(transform = serialization::transform_value_schema)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+// #[schemars(transform = serialization::transform_value_schema)]
 pub enum TypedValue {
     // Serde cares about the order of the enum variants, with untagged variants
     // appearing at the end.
@@ -53,21 +54,21 @@ pub enum TypedValue {
     Set(Set),
     Dictionary(Dictionary),
     Int(
-        #[serde(serialize_with = "serialize_i64", deserialize_with = "deserialize_i64")]
-        #[schemars(with = "String", regex(pattern = r"^\d+$"))]
+        // #[serde(serialize_with = "serialize_i64", deserialize_with = "deserialize_i64")]
+        // #[schemars(with = "String", regex(pattern = r"^\d+$"))]
         i64,
     ),
     // Uses the serialization for middleware::Value:
     Raw(middleware::RawValue),
     // UNTAGGED TYPES:
-    #[serde(untagged)]
-    #[schemars(skip)]
+    // #[serde(untagged)]
+    // #[schemars(skip)]
     Array(Array),
-    #[serde(untagged)]
-    #[schemars(skip)]
+    // #[serde(untagged)]
+    // #[schemars(skip)]
     String(String),
-    #[serde(untagged)]
-    #[schemars(skip)]
+    // #[serde(untagged)]
+    // #[schemars(skip)]
     Bool(bool),
 }
 
@@ -216,14 +217,14 @@ impl SignedPodBuilder {
 
 /// SignedPod is a wrapper on top of backend::SignedPod, which additionally stores the
 /// string<-->hash relation of the keys.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(try_from = "SignedPodHelper", into = "SignedPodHelper")]
+#[derive(Debug, Clone)]
+// #[serde(try_from = "SignedPodHelper", into = "SignedPodHelper")]
 pub struct SignedPod {
     pub pod: Box<dyn middleware::Pod>,
     /// Key-value pairs as represented in the frontend. These should
     /// correspond to the entries of `pod.kvs()` after hashing and
     /// replacing each key with its corresponding anchored key.
-    #[serde(serialize_with = "ordered_map")]
+    // #[serde(serialize_with = "ordered_map")]
     pub kvs: HashMap<String, TypedValue>,
 }
 
@@ -775,8 +776,8 @@ impl MainPodBuilder {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(try_from = "MainPodHelper", into = "MainPodHelper")]
+#[derive(Debug, Clone)]
+// #[serde(try_from = "MainPodHelper", into = "MainPodHelper")]
 pub struct MainPod {
     pub pod: Box<dyn middleware::Pod>,
     pub public_statements: Vec<Statement>,

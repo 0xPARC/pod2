@@ -1,9 +1,9 @@
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+// use schemars::JsonSchema;
 
+// use serde::{Deserialize, Serialize};
 use crate::middleware::{CustomPredicateRef, NativePredicate};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Predicate {
     Native(NativePredicate),
     BatchSelf(usize),

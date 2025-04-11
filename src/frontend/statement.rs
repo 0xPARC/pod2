@@ -1,15 +1,16 @@
 use std::fmt;
 
 use anyhow::{anyhow, Result};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 
+// use schemars::JsonSchema;
+
+// use serde::{Deserialize, Serialize};
 use crate::{
     frontend::{AnchoredKey, Predicate, SignedPod, TypedValue},
     middleware::{self, NativePredicate},
 };
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StatementArg {
     Literal(TypedValue),
     Key(AnchoredKey),
@@ -24,7 +25,7 @@ impl fmt::Display for StatementArg {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Statement {
     pub predicate: Predicate,
     pub args: Vec<StatementArg>,

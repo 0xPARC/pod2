@@ -3,22 +3,22 @@ use std::{collections::HashMap, fmt, hash as h, iter, iter::zip, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 
+// use serde::{Deserialize, Serialize};
 use crate::{
     frontend::{AnchoredKey, Statement, StatementArg, TypedValue},
     middleware::{self, hash_str, HashOrWildcard, NativePredicate, Params, PodId, ToFields},
     util::hashmap_insert_no_dupe,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq, h::Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 /// Argument to a statement template
 pub enum KeyOrWildcardStr {
     Key(String), // represents a literal key
     Wildcard(String),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, h::Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IndexedWildcard {
     wildcard: String,
     index: usize,
@@ -30,8 +30,8 @@ impl IndexedWildcard {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, h::Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type", content = "value")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+// #[serde(tag = "type", content = "value")]
 /// Represents a key or resolved wildcard
 pub enum KeyOrWildcard {
     Key(String),
@@ -122,8 +122,8 @@ where
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type", content = "value")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+// #[serde(tag = "type", content = "value")]
 pub enum Predicate {
     Native(NativePredicate),
     BatchSelf(usize),
@@ -164,7 +164,7 @@ impl fmt::Display for Predicate {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CustomPredicateRef {
     pub batch: Arc<CustomPredicateBatch>,
     pub index: usize,
@@ -236,7 +236,7 @@ impl CustomPredicateRef {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CustomPredicateBatch {
     pub name: String,
     pub predicates: Vec<CustomPredicate>,
@@ -251,7 +251,7 @@ impl From<CustomPredicateBatch> for middleware::CustomPredicateBatch {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 /// NOTE: fields are not public (outside of crate) to enforce the struct instantiation through
 /// the `::and/or` methods, which performs checks on the values.
 pub struct CustomPredicate {
@@ -335,8 +335,8 @@ impl fmt::Display for CustomPredicate {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, h::Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type", content = "value")]
+#[derive(Clone, Debug, PartialEq, Eq, h::Hash)]
+// #[serde(tag = "type", content = "value")]
 pub enum StatementTmplArg {
     None,
     Literal(TypedValue),
@@ -385,7 +385,7 @@ impl StatementTmplBuilder {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StatementTmpl {
     pub pred: Predicate,
     pub args: Vec<StatementTmplArg>,

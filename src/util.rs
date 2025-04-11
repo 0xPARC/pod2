@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt::Debug, hash::Hash};
 
 use anyhow::{anyhow, Result};
 
-pub(crate) fn hashmap_insert_no_dupe<S: Clone + Debug + Eq + Hash, T: Clone + Debug + Eq>(
+pub(crate) fn hashmap_insert_no_dupe<S: Clone + Debug + Eq + Hash, T: Clone + Debug + PartialEq>(
     hm: &mut HashMap<S, T>,
     kv: (S, T),
 ) -> Result<()> {

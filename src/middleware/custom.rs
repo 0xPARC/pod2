@@ -1,22 +1,23 @@
-use std::{collections::HashMap, fmt, hash as h, iter, iter::zip, sync::Arc};
+use std::{collections::HashMap, fmt, iter, iter::zip, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use plonky2::field::types::Field;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 
+// use schemars::JsonSchema;
+
+// use serde::{Deserialize, Serialize};
 use crate::{
-    backends::plonky2::basetypes::HASH_SIZE,
+    middleware::HASH_SIZE,
     middleware::{
-        hash_fields, AnchoredKey, Hash, NativePredicate, Params, PodId, RawValue, Statement,
-        StatementArg, ToFields, F,
+        hash_fields, AnchoredKey, Hash, NativePredicate, Params, PodId, Statement, StatementArg,
+        ToFields, Value, F,
     },
     util::hashmap_insert_no_dupe,
 };
 
 // BEGIN Custom 1b
 
-#[derive(Clone, Debug, PartialEq, Eq, h::Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HashOrWildcard {
     Hash(Hash),
     Wildcard(usize),
@@ -26,10 +27,10 @@ impl HashOrWildcard {
     /// Matches a hash or wildcard against a value, returning a pair
     /// representing a wildcard binding (if any) or an error if no
     /// match is possible.
-    pub fn match_against(&self, v: &RawValue) -> Result<Option<(usize, RawValue)>> {
+    pub fn match_against(&self, v: &Value) -> Result<Option<(usize, Value)>> {
         match self {
-            HashOrWildcard::Hash(h) if &RawValue::from(*h) == v => Ok(None),
-            HashOrWildcard::Wildcard(i) => Ok(Some((*i, *v))),
+            HashOrWildcard::Hash(h) if &Value::from(*h) == v => Ok(None),
+            HashOrWildcard::Wildcard(i) => Ok(Some((*i, v.clone()))),
             _ => Err(anyhow!(
                 "Failed to match hash or wildcard {} against value {}.",
                 self,
@@ -60,10 +61,10 @@ impl ToFields for HashOrWildcard {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, h::Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum StatementTmplArg {
     None,
-    Literal(RawValue),
+    Literal(Value),
     Key(HashOrWildcard, HashOrWildcard),
 }
 
@@ -72,7 +73,7 @@ impl StatementTmplArg {
     /// argument, returning a wildcard correspondence in the case of
     /// one or more wildcard matches, nothing in the case of a
     /// literal/hash match, and an error otherwise.
-    pub fn match_against(&self, s_arg: &StatementArg) -> Result<Vec<(usize, RawValue)>> {
+    pub fn match_against(&self, s_arg: &StatementArg) -> Result<Vec<(usize, Value)>> {
         match (self, s_arg) {
             (Self::None, StatementArg::None) => Ok(vec![]),
             (Self::Literal(v), StatementArg::Literal(w)) if v == w => Ok(vec![]),
@@ -84,7 +85,7 @@ impl StatementTmplArg {
                 }),
             ) => {
                 let o_corr = tmpl_o.match_against(&(*o).into())?;
-                let k_corr = tmpl_k.match_against(&key.clone().into())?;
+                let k_corr = tmpl_k.match_against(&key.hash().into())?;
                 Ok([o_corr, k_corr].into_iter().flatten().collect())
             }
             _ => Err(anyhow!(
@@ -113,7 +114,7 @@ impl ToFields for StatementTmplArg {
             }
             StatementTmplArg::Literal(v) => {
                 let fields: Vec<F> = iter::once(F::from_canonical_u64(1))
-                    .chain(v.to_fields(params))
+                    .chain(v.raw().to_fields(params))
                     .chain(iter::repeat_with(|| F::from_canonical_u64(0)).take(HASH_SIZE))
                     .collect();
                 fields
@@ -152,7 +153,7 @@ impl fmt::Display for StatementTmplArg {
 // END
 
 /// Statement Template for a Custom Predicate
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct StatementTmpl(pub Predicate, pub Vec<StatementTmplArg>);
 
 impl StatementTmpl {
@@ -165,7 +166,7 @@ impl StatementTmpl {
     /// Matches a statement template against a statement, returning
     /// the variable bindings as an association list. Returns an error
     /// if there is type or argument mismatch.
-    pub fn match_against(&self, s: &Statement) -> Result<Vec<(usize, RawValue)>> {
+    pub fn match_against(&self, s: &Statement) -> Result<Vec<(usize, Value)>> {
         type P = Predicate;
         if matches!(self, Self(P::BatchSelf(_), _)) {
             Err(anyhow!(
@@ -206,7 +207,7 @@ impl ToFields for StatementTmpl {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq)]
 /// NOTE: fields are not public (outside of crate) to enforce the struct instantiation through
 /// the `::and/or` methods, which performs checks on the values.
 pub struct CustomPredicate {
@@ -293,7 +294,7 @@ impl fmt::Display for CustomPredicate {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CustomPredicateBatch {
     pub name: String,
     pub predicates: Vec<CustomPredicate>,
@@ -330,14 +331,14 @@ impl CustomPredicateBatch {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CustomPredicateRef(pub Arc<CustomPredicateBatch>, pub usize);
 
 impl CustomPredicateRef {
     pub fn arg_len(&self) -> usize {
         self.0.predicates[self.1].args_len
     }
-    pub fn match_against(&self, statements: &[Statement]) -> Result<HashMap<usize, RawValue>> {
+    pub fn match_against(&self, statements: &[Statement]) -> Result<HashMap<usize, Value>> {
         let mut bindings = HashMap::new();
         // Single out custom predicate, replacing batch-self
         // references with custom predicate references.
@@ -389,8 +390,8 @@ impl CustomPredicateRef {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type", content = "value")]
+#[derive(Clone, Debug, PartialEq)]
+// #[serde(tag = "type", content = "value")]
 pub enum Predicate {
     Native(NativePredicate),
     BatchSelf(usize),

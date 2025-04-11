@@ -2,14 +2,15 @@ use std::{fmt, iter};
 
 use anyhow::{anyhow, Result};
 use plonky2::field::types::Field;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+// use schemars::JsonSchema;
+// use serde::{Deserialize, Serialize};
 use strum_macros::FromRepr;
 
 use crate::middleware::{
-    AnchoredKey, CustomPredicateRef, Params, Predicate, RawValue, ToFields, Value, F, VALUE_SIZE,
+    AnchoredKey, CustomPredicateRef, Params, Predicate, ToFields, Value, F, VALUE_SIZE,
 };
 
+// TODO: Maybe store KEY_SIGNER and KEY_TYPE as Key with lazy_static
 // hash(KEY_SIGNER) = [2145458785152392366, 15113074911296146791, 15323228995597834291, 11804480340100333725]
 pub const KEY_SIGNER: &str = "_signer";
 // hash(KEY_TYPE) = [17948789436443445142, 12513915140657440811, 15878361618879468769, 938231894693848619]
@@ -18,7 +19,7 @@ pub const STATEMENT_ARG_F_LEN: usize = 8;
 pub const OPERATION_ARG_F_LEN: usize = 1;
 pub const OPERATION_AUX_F_LEN: usize = 1;
 
-#[derive(Clone, Copy, Debug, FromRepr, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, FromRepr, PartialEq, Eq, Hash)]
 pub enum NativePredicate {
     None = 0,
     ValueOf = 1,
@@ -48,7 +49,7 @@ impl ToFields for NativePredicate {
 }
 
 /// Type encapsulating statements with their associated arguments.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Statement {
     None,
     ValueOf(AnchoredKey, Value),
@@ -240,7 +241,7 @@ impl fmt::Display for Statement {
 }
 
 /// Statement argument type. Useful for statement decompositions.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum StatementArg {
     None,
     Literal(Value),

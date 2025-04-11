@@ -3,8 +3,8 @@ use std::{any::Any, fmt};
 use anyhow::{anyhow, Result};
 use base64::prelude::*;
 use plonky2::{hash::poseidon::PoseidonHash, plonk::config::Hasher};
-use serde::{Deserialize, Serialize};
 
+// use serde::{Deserialize, Serialize};
 use crate::{
     backends::plonky2::primitives::merkletree,
     middleware::{
@@ -27,7 +27,7 @@ impl PodProver for MockProver {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct MockMainPod {
     params: Params,
     id: PodId,
@@ -199,8 +199,8 @@ impl MockMainPod {
         // Public statements
         assert!(inputs.public_statements.len() < params.max_public_statements);
         let mut type_st = middleware::Statement::ValueOf(
-            AnchoredKey::new(SELF, KEY_TYPE),
-            middleware::RawValue::from(PodType::MockMain),
+            AnchoredKey::from((SELF, KEY_TYPE)),
+            middleware::Value::from(PodType::MockMain),
         )
         .into();
         Self::pad_statement(params, &mut type_st);
@@ -235,9 +235,9 @@ impl MockMainPod {
                     pf,
                 ) => Some(MerkleClaimAndProof::try_from_middleware(
                     params,
-                    root,
-                    key,
-                    Some(value),
+                    &root.raw(),
+                    &key.raw(),
+                    Some(&value.raw()),
                     pf,
                 )),
                 middleware::Operation::NotContainsFromEntries(
@@ -245,7 +245,11 @@ impl MockMainPod {
                     middleware::Statement::ValueOf(_, key),
                     pf,
                 ) => Some(MerkleClaimAndProof::try_from_middleware(
-                    params, root, key, None, pf,
+                    params,
+                    &root.raw(),
+                    &key.raw(),
+                    None,
+                    pf,
                 )),
                 _ => None,
             })
@@ -417,14 +421,14 @@ impl MockMainPod {
         fill_pad(args, OperationArg::None, params.max_operation_args)
     }
 
-    pub fn deserialize(serialized: String) -> Result<Self> {
-        let proof = String::from_utf8(BASE64_STANDARD.decode(&serialized)?)
-            .map_err(|e| anyhow::anyhow!("Invalid base64 encoding: {}", e))?;
-        let pod: MockMainPod = serde_json::from_str(&proof)
-            .map_err(|e| anyhow::anyhow!("Failed to parse proof: {}", e))?;
+    // pub fn deserialize(serialized: String) -> Result<Self> {
+    //     let proof = String::from_utf8(BASE64_STANDARD.decode(&serialized)?)
+    //         .map_err(|e| anyhow::anyhow!("Invalid base64 encoding: {}", e))?;
+    //     let pod: MockMainPod = serde_json::from_str(&proof)
+    //         .map_err(|e| anyhow::anyhow!("Failed to parse proof: {}", e))?;
 
-        Ok(pod)
-    }
+    //     Ok(pod)
+    // }
 }
 
 pub fn hash_statements(statements: &[Statement], _params: &Params) -> middleware::Hash {
@@ -537,7 +541,7 @@ impl Pod for MockMainPod {
                         .iter()
                         .map(|sa| match &sa {
                             StatementArg::Key(AnchoredKey { pod_id, key }) if *pod_id == SELF => {
-                                StatementArg::Key(AnchoredKey::new(self.id(), key.name()))
+                                StatementArg::Key(AnchoredKey::new(self.id(), key.clone()))
                             }
                             _ => sa.clone(),
                         })
@@ -557,7 +561,8 @@ impl Pod for MockMainPod {
     }
 
     fn serialized_proof(&self) -> String {
-        BASE64_STANDARD.encode(serde_json::to_string(self).unwrap())
+        todo!()
+        // BASE64_STANDARD.encode(serde_json::to_string(self).unwrap())
     }
 }
 

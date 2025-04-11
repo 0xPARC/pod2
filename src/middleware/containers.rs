@@ -1,14 +1,14 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// This file implements the types defined at
 /// https://0xparc.github.io/pod2/values.html#dictionary-array-set .
 use anyhow::Result;
 
 #[cfg(feature = "backend_plonky2")]
-use crate::backends::plonky2::primitives::merkletree::{Iter as TreeIter, MerkleProof, MerkleTree};
+use crate::backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree};
 use crate::{
     constants::MAX_DEPTH,
-    middleware::basetypes::{hash_value, Hash, RawValue, EMPTY_VALUE},
+    middleware::{hash_value, Hash, Key, RawValue, Value, EMPTY_VALUE},
 };
 
 /// Dictionary: the user original keys and values are hashed to be used in the leaf.
@@ -16,48 +16,56 @@ use crate::{
 ///    leaf.value=hash(original_value)
 #[derive(Clone, Debug)]
 pub struct Dictionary {
-    // exposed with pub(crate) so that it can be modified at tests
-    pub(crate) mt: MerkleTree,
+    mt: MerkleTree,
+    kvs: HashMap<Key, Value>,
 }
 
 impl Dictionary {
-    pub fn new(kvs: &HashMap<Hash, RawValue>) -> Result<Self> {
-        let kvs: HashMap<RawValue, RawValue> =
-            kvs.iter().map(|(&k, &v)| (RawValue(k.0), v)).collect();
+    pub fn new(kvs: HashMap<Key, Value>) -> Result<Self> {
+        let kvs_raw: HashMap<RawValue, RawValue> = kvs
+            .iter()
+            .map(|(k, v)| (RawValue(k.hash().0), v.raw()))
+            .collect();
         Ok(Self {
-            mt: MerkleTree::new(MAX_DEPTH, &kvs)?,
+            mt: MerkleTree::new(MAX_DEPTH, &kvs_raw)?,
+            kvs,
         })
     }
     pub fn commitment(&self) -> Hash {
         self.mt.root()
     }
-    pub fn get(&self, key: &RawValue) -> Result<RawValue> {
-        self.mt.get(key)
+    pub fn get(&self, key: &Key) -> Option<&Value> {
+        self.kvs.get(key)
     }
-    pub fn prove(&self, key: &RawValue) -> Result<(RawValue, MerkleProof)> {
-        self.mt.prove(key)
+    pub fn prove(&self, key: &Key) -> Result<(&Value, MerkleProof)> {
+        let (_, mtp) = self.mt.prove(&RawValue(key.hash().0))?;
+        let value = self.kvs.get(key).expect("key exists");
+        Ok((value, mtp))
     }
-    pub fn prove_nonexistence(&self, key: &RawValue) -> Result<MerkleProof> {
-        self.mt.prove_nonexistence(key)
+    pub fn prove_nonexistence(&self, key: &Key) -> Result<MerkleProof> {
+        self.mt.prove_nonexistence(&RawValue(key.hash().0))
     }
-    pub fn verify(root: Hash, proof: &MerkleProof, key: &RawValue, value: &RawValue) -> Result<()> {
-        MerkleTree::verify(MAX_DEPTH, root, proof, key, value)
+    pub fn verify(root: Hash, proof: &MerkleProof, key: &Key, value: &Value) -> Result<()> {
+        let key = RawValue(key.hash().0);
+        MerkleTree::verify(MAX_DEPTH, root, proof, &key, &value.raw())
     }
-    pub fn verify_nonexistence(root: Hash, proof: &MerkleProof, key: &RawValue) -> Result<()> {
-        MerkleTree::verify_nonexistence(MAX_DEPTH, root, proof, key)
+    pub fn verify_nonexistence(root: Hash, proof: &MerkleProof, key: &Key) -> Result<()> {
+        let key = RawValue(key.hash().0);
+        MerkleTree::verify_nonexistence(MAX_DEPTH, root, proof, &key)
     }
-    pub fn iter(&self) -> TreeIter {
-        self.mt.iter()
-    }
-}
-impl<'a> IntoIterator for &'a Dictionary {
-    type Item = (&'a RawValue, &'a RawValue);
-    type IntoIter = TreeIter<'a>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.mt.iter()
+    // TODO: Rename to dict to be consistent maybe?
+    pub fn kvs(&self) -> &HashMap<Key, Value> {
+        &self.kvs
     }
 }
+// impl<'a> IntoIterator for &'a Dictionary {
+//     type Item = (&'a RawValue, &'a RawValue);
+//     type IntoIter = TreeIter<'a>;
+//
+//     fn into_iter(self) -> Self::IntoIter {
+//         self.mt.iter()
+//     }
+// }
 
 impl PartialEq for Dictionary {
     fn eq(&self, other: &Self) -> bool {
@@ -72,42 +80,46 @@ impl Eq for Dictionary {}
 #[derive(Clone, Debug)]
 pub struct Set {
     mt: MerkleTree,
+    set: HashSet<Value>,
 }
 
 impl Set {
-    pub fn new(set: &[RawValue]) -> Result<Self> {
-        let kvs: HashMap<RawValue, RawValue> = set
+    pub fn new(set: HashSet<Value>) -> Result<Self> {
+        let kvs_raw: HashMap<RawValue, RawValue> = set
             .iter()
             .map(|e| {
-                let h = hash_value(e);
+                // FIXME: Here we're hashing the elements but in the proving/verifying methods
+                // we're not.
+                let h = hash_value(&e.raw());
                 (RawValue::from(h), EMPTY_VALUE)
             })
             .collect();
         Ok(Self {
-            mt: MerkleTree::new(MAX_DEPTH, &kvs)?,
+            mt: MerkleTree::new(MAX_DEPTH, &kvs_raw)?,
+            set,
         })
     }
     pub fn commitment(&self) -> Hash {
         self.mt.root()
     }
-    pub fn contains(&self, value: &RawValue) -> Result<bool> {
-        self.mt.contains(value)
+    pub fn contains(&self, value: &Value) -> bool {
+        self.set.contains(value)
     }
-    pub fn prove(&self, value: &RawValue) -> Result<MerkleProof> {
-        let (_, proof) = self.mt.prove(value)?;
+    pub fn prove(&self, value: &Value) -> Result<MerkleProof> {
+        let (_, proof) = self.mt.prove(&value.raw())?;
         Ok(proof)
     }
-    pub fn prove_nonexistence(&self, value: &RawValue) -> Result<MerkleProof> {
-        self.mt.prove_nonexistence(value)
+    pub fn prove_nonexistence(&self, value: &Value) -> Result<MerkleProof> {
+        self.mt.prove_nonexistence(&value.raw())
     }
-    pub fn verify(root: Hash, proof: &MerkleProof, value: &RawValue) -> Result<()> {
-        MerkleTree::verify(MAX_DEPTH, root, proof, value, &EMPTY_VALUE)
+    pub fn verify(root: Hash, proof: &MerkleProof, value: &Value) -> Result<()> {
+        MerkleTree::verify(MAX_DEPTH, root, proof, &value.raw(), &EMPTY_VALUE)
     }
-    pub fn verify_nonexistence(root: Hash, proof: &MerkleProof, value: &RawValue) -> Result<()> {
-        MerkleTree::verify_nonexistence(MAX_DEPTH, root, proof, value)
+    pub fn verify_nonexistence(root: Hash, proof: &MerkleProof, value: &Value) -> Result<()> {
+        MerkleTree::verify_nonexistence(MAX_DEPTH, root, proof, &value.raw())
     }
-    pub fn iter(&self) -> TreeIter {
-        self.mt.iter()
+    pub fn set(&self) -> &HashSet<Value> {
+        &self.set
     }
 }
 
@@ -125,34 +137,44 @@ impl Eq for Set {}
 #[derive(Clone, Debug)]
 pub struct Array {
     mt: MerkleTree,
+    array: Vec<Value>,
 }
 
 impl Array {
-    pub fn new(array: &[RawValue]) -> Result<Self> {
-        let kvs: HashMap<RawValue, RawValue> = array
+    pub fn new(array: Vec<Value>) -> Result<Self> {
+        let kvs_raw: HashMap<RawValue, RawValue> = array
             .iter()
             .enumerate()
-            .map(|(i, &e)| (RawValue::from(i as i64), e))
+            .map(|(i, e)| (RawValue::from(i as i64), e.raw()))
             .collect();
 
         Ok(Self {
-            mt: MerkleTree::new(MAX_DEPTH, &kvs)?,
+            mt: MerkleTree::new(MAX_DEPTH, &kvs_raw)?,
+            array,
         })
     }
     pub fn commitment(&self) -> Hash {
         self.mt.root()
     }
-    pub fn get(&self, i: usize) -> Result<RawValue> {
-        self.mt.get(&RawValue::from(i as i64))
+    pub fn get(&self, i: usize) -> Option<&Value> {
+        self.array.get(i)
     }
-    pub fn prove(&self, i: usize) -> Result<(RawValue, MerkleProof)> {
-        self.mt.prove(&RawValue::from(i as i64))
+    pub fn prove(&self, i: usize) -> Result<(&Value, MerkleProof)> {
+        let (_, mtp) = self.mt.prove(&RawValue::from(i as i64))?;
+        let value = self.array.get(i).expect("valid index");
+        Ok((value, mtp))
     }
-    pub fn verify(root: Hash, proof: &MerkleProof, i: usize, value: &RawValue) -> Result<()> {
-        MerkleTree::verify(MAX_DEPTH, root, proof, &RawValue::from(i as i64), value)
+    pub fn verify(root: Hash, proof: &MerkleProof, i: usize, value: &Value) -> Result<()> {
+        MerkleTree::verify(
+            MAX_DEPTH,
+            root,
+            proof,
+            &RawValue::from(i as i64),
+            &value.raw(),
+        )
     }
-    pub fn iter(&self) -> TreeIter {
-        self.mt.iter()
+    pub fn array(&self) -> &[Value] {
+        &self.array
     }
 }
 
