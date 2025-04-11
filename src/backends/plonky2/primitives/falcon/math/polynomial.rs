@@ -8,11 +8,12 @@ use core::{
 };
 
 use num::{One, Zero};
+use plonky2::field::types::Field;
 
 use super::{field::FalconFelt, Inverse};
+// notice that Felt is the Goldilocks field, not a generic field nor the falcon field
 use crate::backends::plonky2::basetypes::F as Felt;
 use crate::backends::plonky2::primitives::falcon::{MODULUS, N};
-use plonky2::field::types::Field;
 
 #[derive(Debug, Clone, Default)]
 pub struct Polynomial<F> {
@@ -96,6 +97,16 @@ impl<
             + PartialEq,
     > Polynomial<F>
 {
+    pub fn evaluate(&self, x: F) -> F {
+        let mut res = F::zero();
+        let mut x_i = F::one();
+        for c in self.coefficients.iter() {
+            res += c.clone() * x_i.clone();
+            x_i *= x.clone();
+        }
+        res
+    }
+
     /// Reduce the polynomial by X^n + 1.
     pub fn reduce_by_cyclotomic(&self, n: usize) -> Self {
         let mut coefficients = vec![F::zero(); n];
@@ -616,7 +627,7 @@ impl Polynomial<FalconFelt> {
     /// than the Miden prime.
     ///
     /// Note that this multiplication is not over Z_p\[x\]/(phi).
-    pub fn mul_modulo_p(a: &Self, b: &Self) -> [u64; 1024] {
+    pub fn mul_modulo_p(a: &Self, b: &Self) -> [u64; N * 2] {
         let mut c = [0; 2 * N];
         for i in 0..N {
             for j in 0..N {
@@ -629,7 +640,7 @@ impl Polynomial<FalconFelt> {
 
     /// Reduces a polynomial, that is the product of two polynomials over Z_p\[x\], modulo
     /// the irreducible polynomial phi. This results in an element in Z_p\[x\]/(phi).
-    pub fn reduce_negacyclic(a: &[u64; 1024]) -> Self {
+    pub fn reduce_negacyclic(a: &[u64; N * 2]) -> Self {
         let mut c = [FalconFelt::zero(); N];
         let modulus = MODULUS as u16;
         for i in 0..N {
@@ -666,8 +677,9 @@ impl Polynomial<i16> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FalconFelt, Polynomial, N};
     use rand::Rng;
+
+    use super::{FalconFelt, Polynomial, N};
 
     #[test]
     fn test_negacyclic_reduction() {

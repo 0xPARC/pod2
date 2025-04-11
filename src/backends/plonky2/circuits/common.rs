@@ -37,6 +37,10 @@ pub struct ValueTarget {
 }
 
 impl ValueTarget {
+    pub fn set_targets(&self, pw: &mut PartialWitness<F>, v: &Value) -> Result<()> {
+        pw.set_target_arr(&self.elements, &v.0)
+    }
+
     pub fn zero(builder: &mut CircuitBuilder<F, D>) -> Self {
         Self {
             elements: [builder.zero(); VALUE_SIZE],
