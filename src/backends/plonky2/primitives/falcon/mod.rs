@@ -32,6 +32,7 @@ pub(crate) const FALCON_ENCODING_BITS: u32 = 14;
 // The Falcon parameters for Falcon-512. This is the degree of the polynomial `phi := x^N + 1`
 // defining the ring Z_p[x]/(phi).
 pub(crate) const N: usize = 512;
+// pub(crate) const N: usize = 8;
 const LOG_N: u8 = 9;
 
 /// Length of nonce used for key-pair generation.

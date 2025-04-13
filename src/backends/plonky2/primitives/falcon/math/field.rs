@@ -8,7 +8,7 @@ use num::{One, Zero};
 use super::{fft::CyclotomicFourier, Inverse, MODULUS};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct FalconFelt(u32);
+pub struct FalconFelt(pub(crate) u32);
 
 impl FalconFelt {
     pub const fn new(value: i16) -> Self {

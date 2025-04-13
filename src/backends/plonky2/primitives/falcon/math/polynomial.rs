@@ -83,6 +83,18 @@ impl<F: Zero + PartialEq + Clone> Polynomial<F> {
     }
 }
 
+impl<F: One + Zero + Clone + MulAssign + AddAssign> Polynomial<F> {
+    pub fn evaluate(&self, x: F) -> F {
+        let mut res = F::zero();
+        let mut x_i = F::one();
+        for c in self.coefficients.iter() {
+            res += c.clone() * x_i.clone();
+            x_i *= x.clone();
+        }
+        res
+    }
+}
+
 /// The following implementations are specific to cyclotomic polynomial rings,
 /// i.e., F\[ X \] / <X^n + 1>, and are used extensively in Falcon.
 impl<
@@ -97,16 +109,6 @@ impl<
             + PartialEq,
     > Polynomial<F>
 {
-    pub fn evaluate(&self, x: F) -> F {
-        let mut res = F::zero();
-        let mut x_i = F::one();
-        for c in self.coefficients.iter() {
-            res += c.clone() * x_i.clone();
-            x_i *= x.clone();
-        }
-        res
-    }
-
     /// Reduce the polynomial by X^n + 1.
     pub fn reduce_by_cyclotomic(&self, n: usize) -> Self {
         let mut coefficients = vec![F::zero(); n];
@@ -595,6 +597,16 @@ impl From<&Vec<i16>> for Polynomial<FalconFelt> {
     fn from(item: &Vec<i16>) -> Self {
         let res: Vec<FalconFelt> = item.iter().map(|&a| FalconFelt::new(a)).collect();
         Polynomial::new(res)
+    }
+}
+
+impl Polynomial<u64> {
+    /// Returns the coefficients of this polynomial as field elements.
+    pub fn to_elements(&self) -> Vec<Felt> {
+        self.coefficients
+            .iter()
+            .map(|&a| Felt::from_canonical_u64(a))
+            .collect()
     }
 }
 

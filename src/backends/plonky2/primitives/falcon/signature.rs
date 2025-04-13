@@ -50,10 +50,10 @@ use super::{
 /// The total size of the signature (including the extended public key) is 1563 bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Signature {
-    header: SignatureHeader,
-    nonce: Nonce,
-    s2: SignaturePoly,
-    h: PubKeyPoly,
+    pub(crate) header: SignatureHeader,
+    pub(crate) nonce: Nonce,
+    pub(crate) s2: SignaturePoly,
+    pub(crate) h: PubKeyPoly,
 }
 
 impl Signature {
