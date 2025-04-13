@@ -200,10 +200,10 @@ impl<const DEG: usize> PolynomialTarget<DEG> {
             // we can multiply X Falcon field elements together without
             // overflowing the Goldilocks field; therefore, reduce modulus only
             // one every Y iterations:
-            // TODO calculate X & Y
-            // if i % 3[>Y<] == 0 {
-            res = FalconFTarget::modulus(builder, res);
-            // }
+            const Y: usize = 3; // TODO calculate X & Y
+            if i % Y == 0 {
+                res = FalconFTarget::modulus(builder, res);
+            }
         }
         // res = FalconFTarget::modulus(builder, res);
         res
@@ -213,6 +213,115 @@ impl<const DEG: usize> PolynomialTarget<DEG> {
         Self(std::array::from_fn(|i| {
             FalconFTarget::modulus(builder, self.0[i])
         }))
+    }
+}
+
+pub struct SignatureVerifyGadget {
+    enabled: BoolTarget,
+    msg: ValueTarget,
+    tau: Target,
+    pk: PolynomialTarget<N>,
+    s1: PolynomialTarget<N>,
+    s2: PolynomialTarget<N>,
+    s2h: PolynomialTarget<{ N * 2 }>, // claimed to be s2*h
+    nonce_elems: [Target; NONCE_ELEMENTS],
+}
+
+impl SignatureVerifyGadget {
+    pub fn build(builder: &mut CircuitBuilder<F, D>) -> Result<Self> {
+        let enabled = builder.add_virtual_bool_target_safe();
+
+        let tau = builder.add_virtual_target();
+        // TODO assert that tau!={1,0,-1}
+
+        let pk = builder.add_virtual_polynomial::<N>();
+        let s1 = builder.add_virtual_polynomial::<N>();
+        let s2 = builder.add_virtual_polynomial::<N>();
+        // let h = PolynomialTarget(builder.add_virtual_target_arr::<N>()); // =pk
+        let s2h = builder.add_virtual_polynomial::<{ N * 2 }>();
+
+        let msg = builder.add_virtual_value();
+        let nonce_elems = builder.add_virtual_target_arr::<NONCE_ELEMENTS>();
+
+        let c = hash_to_point_gadget(builder, msg, nonce_elems)?;
+
+        // probabilistic proof for s1 == c - s2 * h (mod q)
+        // ==> s1 + s2*h == c
+        let s1_tau = s1.evaluate(builder, tau);
+        let s2_tau = s2.evaluate(builder, tau);
+        let c_tau = c.evaluate(builder, tau);
+        let h_tau = pk.evaluate(builder, tau);
+        let s2h_tau = s2h.evaluate(builder, tau);
+
+        // polynomial probabilistic product
+        let s2tau_htau_raw = builder.mul(s2_tau, h_tau);
+        let s2tau_htau = FalconFTarget::modulus(builder, s2tau_htau_raw);
+        builder.connect(s2tau_htau, s2h_tau); // TODO dependent on 'enabled'
+
+        // check s1(tau) + s2(tau) * h(tau) == c(tau)
+        let lhs_raw = builder.add(s1_tau, s2tau_htau);
+        let lhs = FalconFTarget::modulus(builder, lhs_raw);
+        // builder.connect(lhs, c_tau); // TODO dependent on 'enabled'
+
+        // norm check
+        // TODO
+
+        Ok(Self {
+            enabled,
+            msg,
+            tau,
+            pk,
+            s1,
+            s2,
+            s2h,
+            nonce_elems,
+        })
+    }
+
+    pub fn set_targets(
+        &self,
+        pw: &mut PartialWitness<F>,
+        enabled: bool,
+        tau: FalconFelt,
+        pk: Polynomial<FalconFelt>,
+        msg: Value,
+        sig: Signature,
+    ) -> Result<()> {
+        pw.set_bool_target(self.enabled, enabled)?;
+        self.msg.set_targets(pw, &msg)?;
+        pw.set_target(self.tau, F::from_canonical_u64(tau.value() as u64))?;
+        self.pk.set_targets(pw, &pk)?;
+        self.s2.set_targets(pw, &sig.s2.0)?;
+        pw.set_target_arr(&self.nonce_elems, &sig.nonce.to_elements())?;
+
+        let s2h = polynomial_mul_modulo_p(&sig.s2.0, &pk);
+        self.s2h.set_targets_not_reduced_q(pw, &s2h)?;
+
+        // let s2h_u64: [u64; N * 2] = std::array::from_fn(|i| s2h.coefficients[i].0 as u64);
+        // let s2h_reduced = Polynomial::<FalconFelt>::reduce_negacyclic(&s2h_u64);
+
+        // compute s1 to pass it as hint
+        let c = hash_to_point(msg, &sig.nonce);
+        let s1 = (c.fft() - sig.s2.fft().hadamard_mul(&sig.pk_poly().fft())).ifft();
+        // let s1 = c.clone() - s2h.clone();
+        // let s1 = c.clone() - s2h_reduced.clone();
+        self.s1.set_targets(pw, &s1)?;
+
+        // sanity check
+        #[cfg(test)]
+        {
+            let s2_tau = sig.s2.evaluate(tau);
+            let h_tau = pk.evaluate(tau);
+            let s2h_tau = s2h.evaluate(tau);
+            assert_eq!(s2_tau * h_tau, s2h_tau);
+
+            let s1_tau = s1.evaluate(tau);
+            let c_tau = c.evaluate(tau);
+            // assert_eq!(s1_tau + s2h_tau, c_tau);
+            // assert_eq!(s1_tau, c_tau - s2h_tau);
+        }
+
+        Ok(())
     }
 }
 
@@ -430,9 +539,9 @@ pub mod tests {
         let h_tau_targ = h_targ.evaluate(&mut builder, tau_targ);
         let fh_tau_targ = fh_targ.evaluate(&mut builder, tau_targ);
 
-        let ftau_htau_targ = builder.mul(f_tau_targ, h_tau_targ);
-        let res = FalconFTarget::modulus(&mut builder, ftau_htau_targ);
-        builder.connect(res, fh_tau_targ);
+        let ftau_htau_targ_raw = builder.mul(f_tau_targ, h_tau_targ);
+        let ftau_htau_targ = FalconFTarget::modulus(&mut builder, ftau_htau_targ_raw);
+        builder.connect(ftau_htau_targ, fh_tau_targ);
 
         dbg!(builder.num_gates());
 
@@ -478,6 +587,43 @@ pub mod tests {
         for i in 0..N {
             builder.connect(c_targ.0[i], expected_c_targ[i]);
         }
+
+        dbg!(builder.num_gates()); // 6534 gates
+
+        // generate & verify proof
+        let data = builder.build::<C>();
+        let proof = data.prove(pw)?;
+        data.verify(proof.clone())?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_falcon_gadget() -> Result<()> {
+        let seed = [0_u8; 32];
+        let mut rng = ChaCha20Rng::from_seed(seed);
+
+        // generate random keys
+        let sk = SecretKey::with_rng(&mut rng);
+        let pk = sk.public_key();
+
+        // sign a random message
+        let msg: Value = Value([F::ONE; 4]);
+        let sig = sk.sign_with_rng(msg, &mut rng);
+
+        // make sure the signature verifies correctly
+        assert!(pk.verify(msg, &sig));
+
+        // let tau = F::rand();
+        let tau = FalconFelt::new(rng.random());
+
+        // circuit
+        let config = CircuitConfig::standard_recursion_config();
+        let mut builder = CircuitBuilder::<F, D>::new(config);
+        let mut pw = PartialWitness::<F>::new();
+
+        let signature_targ = SignatureVerifyGadget::build(&mut builder)?;
+        signature_targ.set_targets(&mut pw, true, tau, sig.pk_poly().0.clone(), msg, sig)?;
 
         dbg!(builder.num_gates());
 
