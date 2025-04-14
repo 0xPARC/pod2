@@ -8,6 +8,7 @@ use plonky2::{
         extension::Extendable,
         types::{Field, Field64, PrimeField64},
     },
+    gates::lookup_table::LookupTable,
     hash::{
         hash_types::{HashOut, HashOutTarget, RichField},
         hashing::PlonkyPermutation,
@@ -55,6 +56,14 @@ impl CircuitBuilderFalcon<F, D> for CircuitBuilder<F, D> {
     }
 }
 
+fn gen_falcon_field_table() -> LookupTable {
+    let mut t: Vec<(u16, u16)> = vec![];
+    for i in 0..MODULUS {
+        t.push((i as u16, i as u16));
+    }
+    std::sync::Arc::new(t)
+}
+
 // TODO maybe abstract it from the concrete field, and move it to
 // backends/plonky2/circuit/common.rs (not yet to avoid git-conflicts)
 /// An element in the Falcon-512 field, ie. modulus 12289.
@@ -66,12 +75,9 @@ impl FalconFTarget {
     // That is, want: r = v % p (where p is the Falcon prime)
     // thus, it exists q s.th. v = q * p + r.
     // Range checks:
-    // i) r < p
+    // i) r < p (done through lookup)
     // ii) q < floor(|F|/p) (|F|=Goldilocks prime)
-    // TODO: explore using
-    // https://github.com/0xPolygonZero/plonky2/blob/main/plonky2/src/gates/lookup_table.rs
-    // for the range checks.
-    pub fn modulus(builder: &mut CircuitBuilder<F, D>, v: Target) -> Target {
+    pub fn modulus(builder: &mut CircuitBuilder<F, D>, falcon_lut_i: usize, v: Target) -> Target {
         let q = builder.add_virtual_target();
         let r = builder.add_virtual_target();
 
@@ -83,7 +89,9 @@ impl FalconFTarget {
         builder.connect(v, computed_v);
 
         // i) r < p
-        assert_less::<FALCON_ENCODING_BITS_usize>(builder, r, p);
+        // assert_less::<FALCON_ENCODING_BITS_usize>(builder, r, p); // done with lookup // TODO rm line
+        let lut_out = builder.add_lookup_from_index(r, falcon_lut_i);
+        builder.connect(lut_out, r);
         // ii) q < MAX_Q
         let max_q = builder.constant(F::from_canonical_u64(MAX_Q));
         assert_less::<{ F::BITS }>(builder, q, max_q);
@@ -187,7 +195,12 @@ impl<const DEG: usize> PolynomialTarget<DEG> {
         Ok(())
     }
 
-    pub fn evaluate(&self, builder: &mut CircuitBuilder<F, D>, x: Target) -> Target {
+    pub fn evaluate(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        falcon_lut_i: usize,
+        x: Target,
+    ) -> Target {
         let coeffs = self.0;
 
         // We want to compute
@@ -203,15 +216,15 @@ impl<const DEG: usize> PolynomialTarget<DEG> {
             // modulus only one every Y iterations:
             const Y: usize = 3;
             if i % Y == 0 {
-                res = FalconFTarget::modulus(builder, res);
+                res = FalconFTarget::modulus(builder, falcon_lut_i, res);
             }
         }
         res
     }
 
-    pub fn modulo_reduce(&self, builder: &mut CircuitBuilder<F, D>) -> Self {
+    pub fn modulo_reduce(&self, builder: &mut CircuitBuilder<F, D>, falcon_lut_i: usize) -> Self {
         Self(std::array::from_fn(|i| {
-            FalconFTarget::modulus(builder, self.0[i])
+            FalconFTarget::modulus(builder, falcon_lut_i, self.0[i])
         }))
     }
 }
@@ -243,9 +256,11 @@ impl SignatureVerifyGadget {
         let msg = builder.add_virtual_value();
         let nonce_elems = builder.add_virtual_target_arr::<NONCE_ELEMENTS>();
 
-        let c = hash_to_point_gadget(builder, true, msg, nonce_elems)?;
+        let falcon_lut_i = builder.add_lookup_table_from_pairs(gen_falcon_field_table());
 
-        equality_check(builder, enabled, tau, s1, s2, pk, s2h, c)?;
+        let c = hash_to_point_gadget(builder, falcon_lut_i, true, msg, nonce_elems)?;
+
+        equality_check(builder, falcon_lut_i, enabled, tau, s1, s2, pk, s2h, c)?;
 
         // norm check
         // TODO
@@ -316,6 +331,7 @@ impl SignatureVerifyGadget {
 /// ==> s1 + s2*h == c
 fn equality_check(
     builder: &mut CircuitBuilder<F, D>,
+    falcon_lut_i: usize,
     enabled: BoolTarget,
     tau: Target,
     s1: PolynomialTarget<N>,
@@ -326,16 +342,16 @@ fn equality_check(
     // prime)
     c: PolynomialTarget<N>,
 ) -> Result<()> {
-    let s1_tau = s1.evaluate(builder, tau);
-    let s2_tau = s2.evaluate(builder, tau);
-    let c_tau = c.evaluate(builder, tau);
-    let h_tau = h.evaluate(builder, tau);
-    let s2h_tau = s2h.evaluate(builder, tau);
+    let s1_tau = s1.evaluate(builder, falcon_lut_i, tau);
+    let s2_tau = s2.evaluate(builder, falcon_lut_i, tau);
+    let c_tau = c.evaluate(builder, falcon_lut_i, tau);
+    let h_tau = h.evaluate(builder, falcon_lut_i, tau);
+    let s2h_tau = s2h.evaluate(builder, falcon_lut_i, tau);
     let zero = builder.zero();
 
     // polynomial probabilistic product
     let s2tau_htau_raw = builder.mul(s2_tau, h_tau);
-    let s2tau_htau = FalconFTarget::modulus(builder, s2tau_htau_raw);
+    let s2tau_htau = FalconFTarget::modulus(builder, falcon_lut_i, s2tau_htau_raw);
     // here we could do only 1 select, and instead of using `zero` using the
     // other value (s2tau_htau), but the code could be more confusing while only
     // saving a single gate
@@ -345,7 +361,7 @@ fn equality_check(
 
     // check s1(tau) + s2(tau) * h(tau) == c(tau)
     let s1s2h_raw = builder.add(s1_tau, s2tau_htau);
-    let s1s2h = FalconFTarget::modulus(builder, s1s2h_raw);
+    let s1s2h = FalconFTarget::modulus(builder, falcon_lut_i, s1s2h_raw);
     // builder.connect(lhs, c_tau); // TODO dependent on 'enabled'
     // TODO-NOTE: maybe don't do the full `s1(tau)+s2(tau)h(tau)-c(tau)==0`, and
     // just compute the actual s1(x) polynomial, so that then the norm can be
@@ -357,6 +373,7 @@ fn equality_check(
 /// compatible with falcon/hash_to_point.rs#hash_to_point
 fn hash_to_point_gadget(
     builder: &mut CircuitBuilder<F, D>,
+    falcon_lut_i: usize,
     apply_mod: bool,
     message: ValueTarget,
     nonce_elems: [Target; NONCE_ELEMENTS],
@@ -389,7 +406,7 @@ fn hash_to_point_gadget(
 
         for a in &states[j + 1][RATE_RANGE] {
             res[i] = if apply_mod {
-                FalconFTarget::modulus(builder, *a)
+                FalconFTarget::modulus(builder, falcon_lut_i, *a)
             } else {
                 *a
             };
@@ -460,6 +477,43 @@ pub mod tests {
     };
 
     #[test]
+    fn test_falcon_field_table() -> Result<()> {
+        let r = F::from_canonical_u64((MODULUS - 1) as u64);
+        test_falcon_field_table_opt(r, true)?;
+
+        let r = F::from_canonical_u64((MODULUS) as u64);
+        test_falcon_field_table_opt(r, false)?;
+        let r = F::from_canonical_u64((MODULUS + 1) as u64);
+        test_falcon_field_table_opt(r, false)?;
+
+        Ok(())
+    }
+    fn test_falcon_field_table_opt(r: F, expect_pass: bool) -> Result<()> {
+        let config = CircuitConfig::standard_recursion_config();
+        let mut builder = CircuitBuilder::<F, D>::new(config);
+        let mut pw = PartialWitness::<F>::new();
+
+        let falcon_lut_i = builder.add_lookup_table_from_pairs(gen_falcon_field_table());
+
+        let r_targ = builder.add_virtual_target();
+        let lut_out = builder.add_lookup_from_index(r_targ, falcon_lut_i);
+        builder.connect(lut_out, r_targ);
+
+        pw.set_target(r_targ, r)?;
+
+        // generate & verify proof
+        let data = builder.build::<C>();
+        if expect_pass {
+            let proof = data.prove(pw)?;
+            data.verify(proof.clone())?;
+        } else {
+            assert!(data.prove(pw).is_err()); // expect prove to fail
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn test_modulus() -> Result<()> {
         let p: F = F::from_canonical_u64(MODULUS as u64);
         let v: F = F::from_canonical_u64(p.0 * 42 + 3 as u64); // overflows p
@@ -475,17 +529,19 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
+        let falcon_lut_i = builder.add_lookup_table_from_pairs(gen_falcon_field_table());
+
         let v_targ = builder.add_virtual_target();
         pw.set_target(v_targ, v)?;
 
-        let r_targ = FalconFTarget::modulus(&mut builder, v_targ);
+        let r_targ = FalconFTarget::modulus(&mut builder, falcon_lut_i, v_targ);
         dbg!(builder.num_gates());
 
         let expected_r_targ = builder.add_virtual_target();
         pw.set_target(expected_r_targ, r)?;
         builder.connect(r_targ, expected_r_targ);
 
-        dbg!(builder.num_gates()); // 11 gates
+        dbg!(builder.num_gates());
 
         // generate & verify proof
         let data = builder.build::<C>();
@@ -511,6 +567,8 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
+        let falcon_lut_i = builder.add_lookup_table_from_pairs(gen_falcon_field_table());
+
         // set targets
         let p_targ = builder.add_virtual_polynomial::<N>();
         p_targ.set_targets(&mut pw, &p)?;
@@ -522,10 +580,10 @@ pub mod tests {
             F::from_canonical_u64(eval.value() as u64),
         )?;
 
-        let eval_targ: Target = p_targ.evaluate(&mut builder, x_targ);
+        let eval_targ: Target = p_targ.evaluate(&mut builder, falcon_lut_i, x_targ);
         builder.connect(eval_targ, expected_eval_targ);
 
-        dbg!(builder.num_gates()); // 1634 gates
+        dbg!(builder.num_gates());
 
         // generate & verify proof
         let data = builder.build::<C>();
@@ -564,6 +622,8 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
+        let falcon_lut_i = builder.add_lookup_table_from_pairs(gen_falcon_field_table());
+
         let f_targ = builder.add_virtual_polynomial::<N>();
         f_targ.set_targets(&mut pw, &f)?;
         let h_targ = builder.add_virtual_polynomial::<N>();
@@ -573,15 +633,15 @@ pub mod tests {
         let tau_targ = builder.add_virtual_target();
         pw.set_target(tau_targ, F::from_canonical_u64(tau.value() as u64))?;
 
-        let f_tau_targ = f_targ.evaluate(&mut builder, tau_targ);
-        let h_tau_targ = h_targ.evaluate(&mut builder, tau_targ);
-        let fh_tau_targ = fh_targ.evaluate(&mut builder, tau_targ);
+        let f_tau_targ = f_targ.evaluate(&mut builder, falcon_lut_i, tau_targ);
+        let h_tau_targ = h_targ.evaluate(&mut builder, falcon_lut_i, tau_targ);
+        let fh_tau_targ = fh_targ.evaluate(&mut builder, falcon_lut_i, tau_targ);
 
         let ftau_htau_targ_raw = builder.mul(f_tau_targ, h_tau_targ);
-        let ftau_htau_targ = FalconFTarget::modulus(&mut builder, ftau_htau_targ_raw);
+        let ftau_htau_targ = FalconFTarget::modulus(&mut builder, falcon_lut_i, ftau_htau_targ_raw);
         builder.connect(ftau_htau_targ, fh_tau_targ);
 
-        dbg!(builder.num_gates()); // 6534 gates
+        dbg!(builder.num_gates());
 
         // generate & verify proof
         let data = builder.build::<C>();
@@ -613,6 +673,8 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
+        let falcon_lut_i = builder.add_lookup_table_from_pairs(gen_falcon_field_table());
+
         let msg_targ = builder.add_virtual_value();
         pw.set_target_arr(&msg_targ.elements, &msg.0)?;
         let nonce_targ = builder.add_virtual_target_arr::<NONCE_ELEMENTS>();
@@ -621,7 +683,7 @@ pub mod tests {
         let expected_c_targ = builder.add_virtual_target_arr::<N>();
         pw.set_target_arr(&expected_c_targ, &c_padded)?;
 
-        let c_targ = hash_to_point_gadget(&mut builder, true, msg_targ, nonce_targ)?;
+        let c_targ = hash_to_point_gadget(&mut builder, falcon_lut_i, true, msg_targ, nonce_targ)?;
         for i in 0..N {
             builder.connect(c_targ.0[i], expected_c_targ[i]);
         }
