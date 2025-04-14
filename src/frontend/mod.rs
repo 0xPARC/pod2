@@ -16,7 +16,6 @@ use crate::middleware::{
     TypedValue, Value, EMPTY_VALUE, KEY_SIGNER, KEY_TYPE, SELF,
 };
 
-pub mod containers;
 mod custom;
 mod operation;
 pub use custom::*;
