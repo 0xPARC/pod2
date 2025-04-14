@@ -2,15 +2,18 @@ use std::fmt;
 
 // use serde::{Deserialize, Serialize};
 use crate::{
-    frontend::{CustomPredicateRef, Predicate, SignedPod, Statement, TypedValue},
-    middleware::{self, NativeOperation, NativePredicate, OperationAux},
+    frontend::{Predicate, SignedPod},
+    middleware::{
+        self, AnchoredKey, CustomPredicateRef, NativeOperation, NativePredicate, OperationAux,
+        Statement, Value,
+    },
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum OperationArg {
     Statement(Statement),
-    Literal(TypedValue),
-    Entry(String, TypedValue),
+    Literal(Value),
+    Entry(String, Value),
 }
 
 impl fmt::Display for OperationArg {
@@ -23,39 +26,48 @@ impl fmt::Display for OperationArg {
     }
 }
 
-impl From<TypedValue> for OperationArg {
-    fn from(v: TypedValue) -> Self {
+impl From<Value> for OperationArg {
+    fn from(v: Value) -> Self {
         Self::Literal(v)
     }
 }
 
-impl From<&TypedValue> for OperationArg {
-    fn from(v: &TypedValue) -> Self {
+impl From<&Value> for OperationArg {
+    fn from(v: &Value) -> Self {
         Self::Literal(v.clone())
     }
 }
 
 impl From<&str> for OperationArg {
     fn from(s: &str) -> Self {
-        Self::Literal(TypedValue::from(s))
+        Self::Literal(Value::from(s))
     }
 }
 
 impl From<i64> for OperationArg {
     fn from(v: i64) -> Self {
-        Self::Literal(TypedValue::from(v))
+        Self::Literal(Value::from(v))
     }
 }
 
 impl From<bool> for OperationArg {
     fn from(b: bool) -> Self {
-        Self::Literal(TypedValue::from(b))
+        Self::Literal(Value::from(b))
     }
 }
 
 impl From<(&SignedPod, &str)> for OperationArg {
     fn from((pod, key): (&SignedPod, &str)) -> Self {
-        Self::Statement((pod, key).into())
+        // TODO: TryFrom.
+        let value = pod
+            .kvs()
+            .get(&key.into())
+            .cloned()
+            .unwrap_or_else(|| panic!("Key {} is not present in POD: {}", key, pod));
+        Self::Statement(Statement::ValueOf(
+            AnchoredKey::from((pod.id(), key)),
+            value,
+        ))
     }
 }
 
@@ -65,13 +77,13 @@ impl From<Statement> for OperationArg {
     }
 }
 
-impl<V: Into<TypedValue>> From<(&str, V)> for OperationArg {
+impl<V: Into<Value>> From<(&str, V)> for OperationArg {
     fn from((key, value): (&str, V)) -> Self {
         Self::Entry(key.to_string(), value.into())
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum OperationType {
     Native(NativeOperation),
     Custom(CustomPredicateRef),
@@ -174,7 +186,7 @@ impl OperationType {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Operation(pub OperationType, pub Vec<OperationArg>, pub OperationAux);
 
 impl fmt::Display for Operation {

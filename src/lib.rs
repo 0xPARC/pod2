@@ -2,7 +2,7 @@
 
 pub mod backends;
 pub mod constants;
-// pub mod frontend;
+pub mod frontend;
 pub mod middleware;
 mod util;
 

@@ -9,53 +9,76 @@ use plonky2::field::types::Field;
 use crate::{
     middleware::HASH_SIZE,
     middleware::{
-        hash_fields, AnchoredKey, Hash, NativePredicate, Params, PodId, Statement, StatementArg,
-        ToFields, Value, F,
+        hash_fields, AnchoredKey, Hash, Key, NativePredicate, Params, PodId, Statement,
+        StatementArg, ToFields, Value, F,
     },
     util::hashmap_insert_no_dupe,
 };
 
-// BEGIN Custom 1b
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum HashOrWildcard {
-    Hash(Hash),
-    Wildcard(usize),
+#[derive(Clone, Debug, PartialEq)]
+pub struct Wildcard {
+    pub name: String,
+    pub index: usize,
 }
 
-impl HashOrWildcard {
-    /// Matches a hash or wildcard against a value, returning a pair
-    /// representing a wildcard binding (if any) or an error if no
-    /// match is possible.
-    pub fn match_against(&self, v: &Value) -> Result<Option<(usize, Value)>> {
-        match self {
-            HashOrWildcard::Hash(h) if &Value::from(*h) == v => Ok(None),
-            HashOrWildcard::Wildcard(i) => Ok(Some((*i, v.clone()))),
-            _ => Err(anyhow!(
-                "Failed to match hash or wildcard {} against value {}.",
-                self,
-                v
-            )),
-        }
+impl Wildcard {
+    pub fn new(name: String, index: usize) -> Self {
+        Self { name, index }
     }
 }
 
-impl fmt::Display for HashOrWildcard {
+impl fmt::Display for Wildcard {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "*{}[{}]", self.index, self.name)
+    }
+}
+
+impl ToFields for Wildcard {
+    fn to_fields(&self, _params: &Params) -> Vec<F> {
+        vec![F::from_canonical_u64(self.index as u64)]
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum KeyOrWildcard {
+    Key(Key),
+    Wildcard(Wildcard),
+}
+
+impl KeyOrWildcard {
+    // /// Matches a key or wildcard against a value, returning a pair
+    // /// representing a wildcard binding (if any) or an error if no
+    // /// match is possible.
+    // pub fn match_against(&self, v: &Value) -> Result<Option<(usize, Value)>> {
+    //     match self {
+    //         // TODO: What does this mean? Comparing a key with a value?
+    //         KeyOrWildcard::Key(k) if k.hash().0 == v.raw().0 => Ok(None),
+    //         KeyOrWildcard::Wildcard(Wildcard { index, .. }) => Ok(Some((*index, v.clone()))),
+    //         _ => Err(anyhow!(
+    //             "Failed to match key or wildcard {} against value {}.",
+    //             self,
+    //             v
+    //         )),
+    //     }
+    // }
+}
+
+impl fmt::Display for KeyOrWildcard {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::Hash(h) => write!(f, "{}", h),
-            Self::Wildcard(n) => write!(f, "*{}", n),
+            Self::Key(k) => write!(f, "{}", k),
+            Self::Wildcard(wc) => write!(f, "{}", wc),
         }
     }
 }
 
-impl ToFields for HashOrWildcard {
+impl ToFields for KeyOrWildcard {
     fn to_fields(&self, params: &Params) -> Vec<F> {
         match self {
-            HashOrWildcard::Hash(h) => h.to_fields(params),
-            HashOrWildcard::Wildcard(w) => (0..HASH_SIZE - 1)
-                .chain(iter::once(*w))
-                .map(|x| F::from_canonical_u64(x as u64))
+            KeyOrWildcard::Key(k) => k.hash().to_fields(params),
+            KeyOrWildcard::Wildcard(wc) => iter::once(F::ZERO)
+                .take(HASH_SIZE - 1)
+                .chain(iter::once(F::from_canonical_u64(wc.index as u64)))
                 .collect(),
         }
     }
@@ -65,36 +88,37 @@ impl ToFields for HashOrWildcard {
 pub enum StatementTmplArg {
     None,
     Literal(Value),
-    Key(HashOrWildcard, HashOrWildcard),
+    // AnchoredKey
+    Key(Wildcard, KeyOrWildcard),
 }
 
 impl StatementTmplArg {
-    /// Matches a statement template argument against a statement
-    /// argument, returning a wildcard correspondence in the case of
-    /// one or more wildcard matches, nothing in the case of a
-    /// literal/hash match, and an error otherwise.
-    pub fn match_against(&self, s_arg: &StatementArg) -> Result<Vec<(usize, Value)>> {
-        match (self, s_arg) {
-            (Self::None, StatementArg::None) => Ok(vec![]),
-            (Self::Literal(v), StatementArg::Literal(w)) if v == w => Ok(vec![]),
-            (
-                Self::Key(tmpl_o, tmpl_k),
-                StatementArg::Key(AnchoredKey {
-                    pod_id: PodId(o),
-                    key,
-                }),
-            ) => {
-                let o_corr = tmpl_o.match_against(&(*o).into())?;
-                let k_corr = tmpl_k.match_against(&key.hash().into())?;
-                Ok([o_corr, k_corr].into_iter().flatten().collect())
-            }
-            _ => Err(anyhow!(
-                "Failed to match statement template argument {:?} against statement argument {:?}.",
-                self,
-                s_arg
-            )),
-        }
-    }
+    // /// Matches a statement template argument against a statement
+    // /// argument, returning a wildcard correspondence in the case of
+    // /// one or more wildcard matches, nothing in the case of a
+    // /// literal/hash match, and an error otherwise.
+    // pub fn match_against(&self, s_arg: &StatementArg) -> Result<Vec<(usize, Value)>> {
+    //     match (self, s_arg) {
+    //         (Self::None, StatementArg::None) => Ok(vec![]),
+    //         (Self::Literal(v), StatementArg::Literal(w)) if v == w => Ok(vec![]),
+    //         (
+    //             Self::Key(tmpl_o, tmpl_k),
+    //             StatementArg::Key(AnchoredKey {
+    //                 pod_id: PodId(o),
+    //                 key,
+    //             }),
+    //         ) => {
+    //             let o_corr = tmpl_o.match_against(&(*o).into())?;
+    //             let k_corr = tmpl_k.match_against(&key.hash().into())?;
+    //             Ok([o_corr, k_corr].into_iter().flatten().collect())
+    //         }
+    //         _ => Err(anyhow!(
+    //             "Failed to match statement template argument {:?} against statement argument {:?}.",
+    //             self,
+    //             s_arg
+    //         )),
+    //     }
+    // }
 }
 
 impl ToFields for StatementTmplArg {
@@ -140,47 +164,38 @@ impl fmt::Display for StatementTmplArg {
     }
 }
 
-// END
-
-// BEGIN Custom 2
-
-// pub enum StatementTmplArg {
-//     None,
-//     Literal(Value),
-//     Wildcard(usize),
-// }
-
-// END
-
 /// Statement Template for a Custom Predicate
 #[derive(Clone, Debug, PartialEq)]
-pub struct StatementTmpl(pub Predicate, pub Vec<StatementTmplArg>);
+pub struct StatementTmpl {
+    pub pred: Predicate,
+    pub args: Vec<StatementTmplArg>,
+}
 
 impl StatementTmpl {
     pub fn pred(&self) -> &Predicate {
-        &self.0
+        &self.pred
     }
     pub fn args(&self) -> &[StatementTmplArg] {
-        &self.1
+        &self.args
     }
-    /// Matches a statement template against a statement, returning
-    /// the variable bindings as an association list. Returns an error
-    /// if there is type or argument mismatch.
-    pub fn match_against(&self, s: &Statement) -> Result<Vec<(usize, Value)>> {
-        type P = Predicate;
-        if matches!(self, Self(P::BatchSelf(_), _)) {
-            Err(anyhow!(
-                "Cannot check self-referencing statement templates."
-            ))
-        } else if self.pred() != &s.predicate() {
-            Err(anyhow!("Type mismatch between {:?} and {}.", self, s))
-        } else {
-            zip(self.args(), s.args())
-                .map(|(t_arg, s_arg)| t_arg.match_against(&s_arg))
-                .collect::<Result<Vec<_>>>()
-                .map(|v| v.concat())
-        }
-    }
+    // /// Matches a statement template against a statement, returning
+    // /// the variable bindings as an association list. Returns an error
+    // /// if there is type or argument mismatch.
+    // pub fn match_against(&self, s: &Statement) -> Result<Vec<(usize, Value)>> {
+    //     type P = Predicate;
+    //     if matches!(self, Self(P::BatchSelf(_), _)) {
+    //         Err(anyhow!(
+    //             "Cannot check self-referencing statement templates."
+    //         ))
+    //     } else if self.pred() != &s.predicate() {
+    //         Err(anyhow!("Type mismatch between {:?} and {}.", self, s))
+    //     } else {
+    //         zip(self.args(), s.args())
+    //             .map(|(t_arg, s_arg)| t_arg.match_against(&s_arg))
+    //             .collect::<Result<Vec<_>>>()
+    //             .map(|v| v.concat())
+    //     }
+    // }
 }
 
 impl ToFields for StatementTmpl {
@@ -192,15 +207,15 @@ impl ToFields for StatementTmpl {
         // TODO think if this check should go into the StatementTmpl creation,
         // instead of at the `to_fields` method, where we should assume that the
         // values are already valid
-        if self.1.len() > params.max_statement_args {
+        if self.args.len() > params.max_statement_args {
             panic!("Statement template has too many arguments");
         }
 
         let mut fields: Vec<F> = self
-            .0
+            .pred
             .to_fields(params)
             .into_iter()
-            .chain(self.1.iter().flat_map(|sta| sta.to_fields(params)))
+            .chain(self.args.iter().flat_map(|sta| sta.to_fields(params)))
             .collect();
         fields.resize_with(params.statement_tmpl_size(), || F::from_canonical_u64(0));
         fields
@@ -211,6 +226,7 @@ impl ToFields for StatementTmpl {
 /// NOTE: fields are not public (outside of crate) to enforce the struct instantiation through
 /// the `::and/or` methods, which performs checks on the values.
 pub struct CustomPredicate {
+    pub name: String, // Non-cryptographic metadata
     /// true for "and", false for "or"
     pub(crate) conjunction: bool,
     pub(crate) statements: Vec<StatementTmpl>,
@@ -220,13 +236,24 @@ pub struct CustomPredicate {
 }
 
 impl CustomPredicate {
-    pub fn and(params: &Params, statements: Vec<StatementTmpl>, args_len: usize) -> Result<Self> {
-        Self::new(params, true, statements, args_len)
+    pub fn and(
+        name: String,
+        params: &Params,
+        statements: Vec<StatementTmpl>,
+        args_len: usize,
+    ) -> Result<Self> {
+        Self::new(name, params, true, statements, args_len)
     }
-    pub fn or(params: &Params, statements: Vec<StatementTmpl>, args_len: usize) -> Result<Self> {
-        Self::new(params, false, statements, args_len)
+    pub fn or(
+        name: String,
+        params: &Params,
+        statements: Vec<StatementTmpl>,
+        args_len: usize,
+    ) -> Result<Self> {
+        Self::new(name, params, false, statements, args_len)
     }
     pub fn new(
+        name: String,
         params: &Params,
         conjunction: bool,
         statements: Vec<StatementTmpl>,
@@ -237,6 +264,7 @@ impl CustomPredicate {
         }
 
         Ok(Self {
+            name,
             conjunction,
             statements,
             args_len,
@@ -273,8 +301,8 @@ impl fmt::Display for CustomPredicate {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "{}<", if self.conjunction { "and" } else { "or" })?;
         for st in &self.statements {
-            write!(f, "  {}", st.0)?;
-            for (i, arg) in st.1.iter().enumerate() {
+            write!(f, "  {}", st.pred)?;
+            for (i, arg) in st.args.iter().enumerate() {
                 if i != 0 {
                     write!(f, ", ")?;
                 }
@@ -332,62 +360,68 @@ impl CustomPredicateBatch {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct CustomPredicateRef(pub Arc<CustomPredicateBatch>, pub usize);
+pub struct CustomPredicateRef {
+    pub batch: Arc<CustomPredicateBatch>,
+    pub index: usize,
+}
 
 impl CustomPredicateRef {
+    pub fn new(batch: Arc<CustomPredicateBatch>, index: usize) -> Self {
+        Self { batch, index }
+    }
     pub fn arg_len(&self) -> usize {
-        self.0.predicates[self.1].args_len
+        self.batch.predicates[self.index].args_len
     }
-    pub fn match_against(&self, statements: &[Statement]) -> Result<HashMap<usize, Value>> {
-        let mut bindings = HashMap::new();
-        // Single out custom predicate, replacing batch-self
-        // references with custom predicate references.
-        let custom_predicate = {
-            let cp = &Arc::unwrap_or_clone(self.0.clone()).predicates[self.1];
-            CustomPredicate {
-                conjunction: cp.conjunction,
-                statements: cp
-                    .statements
-                    .iter()
-                    .map(|StatementTmpl(p, args)| {
-                        StatementTmpl(
-                            match p {
-                                Predicate::BatchSelf(i) => {
-                                    Predicate::Custom(CustomPredicateRef(self.0.clone(), *i))
-                                }
-                                _ => p.clone(),
-                            },
-                            args.to_vec(),
-                        )
-                    })
-                    .collect(),
-                args_len: cp.args_len,
-            }
-        };
-        match custom_predicate.conjunction {
-                    true if custom_predicate.statements.len() == statements.len() => {
-                        // Match op args against statement templates
-                    let match_bindings = iter::zip(custom_predicate.statements, statements).map(
-                        |(s_tmpl, s)| s_tmpl.match_against(s)
-                    ).collect::<Result<Vec<_>>>()
-                        .map(|v| v.concat())?;
-                    // Add bindings to binding table, throwing if there is an inconsistency.
-                    match_bindings.into_iter().try_for_each(|kv| hashmap_insert_no_dupe(&mut bindings, kv))?;
-                    Ok(bindings)
-                    },
-                    false if statements.len() == 1 => {
-                        // Match op arg against each statement template
-                        custom_predicate.statements.iter().map(
-                            |s_tmpl| {
-                                let mut bindings = bindings.clone();
-                                s_tmpl.match_against(&statements[0])?.into_iter().try_for_each(|kv| hashmap_insert_no_dupe(&mut bindings, kv))?;
-                                Ok::<_, anyhow::Error>(bindings)
-                            }
-                        ).find(|m| m.is_ok()).unwrap_or(Err(anyhow!("Statement {} does not match disjunctive custom predicate {}.", &statements[0], custom_predicate)))
-                    },
-                    _ =>                     Err(anyhow!("Custom predicate statement template list {:?} does not match op argument list {:?}.", custom_predicate.statements, statements))
-                }
-    }
+    // pub fn match_against(&self, statements: &[Statement]) -> Result<HashMap<usize, Value>> {
+    //     let mut bindings = HashMap::new();
+    //     // Single out custom predicate, replacing batch-self
+    //     // references with custom predicate references.
+    //     let custom_predicate = {
+    //         let cp = &self.batch.predicates[self.index];
+    //         CustomPredicate {
+    //             conjunction: cp.conjunction,
+    //             statements: cp
+    //                 .statements
+    //                 .iter()
+    //                 .map(|StatementTmpl(p, args)| {
+    //                     StatementTmpl(
+    //                         match p {
+    //                             Predicate::BatchSelf(i) => Predicate::Custom(
+    //                                 CustomPredicateRef::new(self.batch.clone(), *i),
+    //                             ),
+    //                             _ => p.clone(),
+    //                         },
+    //                         args.to_vec(),
+    //                     )
+    //                 })
+    //                 .collect(),
+    //             args_len: cp.args_len,
+    //         }
+    //     };
+    //     match custom_predicate.conjunction {
+    //                 true if custom_predicate.statements.len() == statements.len() => {
+    //                     // Match op args against statement templates
+    //                 let match_bindings = iter::zip(custom_predicate.statements, statements).map(
+    //                     |(s_tmpl, s)| s_tmpl.match_against(s)
+    //                 ).collect::<Result<Vec<_>>>()
+    //                     .map(|v| v.concat())?;
+    //                 // Add bindings to binding table, throwing if there is an inconsistency.
+    //                 match_bindings.into_iter().try_for_each(|kv| hashmap_insert_no_dupe(&mut bindings, kv))?;
+    //                 Ok(bindings)
+    //                 },
+    //                 false if statements.len() == 1 => {
+    //                     // Match op arg against each statement template
+    //                     custom_predicate.statements.iter().map(
+    //                         |s_tmpl| {
+    //                             let mut bindings = bindings.clone();
+    //                             s_tmpl.match_against(&statements[0])?.into_iter().try_for_each(|kv| hashmap_insert_no_dupe(&mut bindings, kv))?;
+    //                             Ok::<_, anyhow::Error>(bindings)
+    //                         }
+    //                     ).find(|m| m.is_ok()).unwrap_or(Err(anyhow!("Statement {} does not match disjunctive custom predicate {}.", &statements[0], custom_predicate)))
+    //                 },
+    //                 _ =>                     Err(anyhow!("Custom predicate statement template list {:?} does not match op argument list {:?}.", custom_predicate.statements, statements))
+    //             }
+    // }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -421,10 +455,12 @@ impl ToFields for Predicate {
             Self::BatchSelf(i) => iter::once(F::from_canonical_u64(2))
                 .chain(iter::once(F::from_canonical_usize(*i)))
                 .collect(),
-            Self::Custom(CustomPredicateRef(pb, i)) => iter::once(F::from_canonical_u64(3))
-                .chain(pb.hash(params).0)
-                .chain(iter::once(F::from_canonical_usize(*i)))
-                .collect(),
+            Self::Custom(CustomPredicateRef { batch, index }) => {
+                iter::once(F::from_canonical_u64(3))
+                    .chain(batch.hash(params).0)
+                    .chain(iter::once(F::from_canonical_usize(*index)))
+                    .collect()
+            }
         };
         fields.resize_with(Params::predicate_size(), || F::from_canonical_u64(0));
         fields
@@ -436,7 +472,9 @@ impl fmt::Display for Predicate {
         match self {
             Self::Native(p) => write!(f, "{:?}", p),
             Self::BatchSelf(i) => write!(f, "self.{}", i),
-            Self::Custom(CustomPredicateRef(pb, i)) => write!(f, "{}.{}", pb.name, i),
+            Self::Custom(CustomPredicateRef { batch, index }) => {
+                write!(f, "{}.{}", batch.name, index)
+            }
         }
     }
 }
@@ -450,7 +488,7 @@ mod tests {
 
     use crate::middleware::{
         AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash,
-        HashOrWildcard, NativePredicate, Operation, Params, PodId, PodType, Predicate, Statement,
+        KeyOrWildcard, NativePredicate, Operation, Params, PodId, PodType, Predicate, Statement,
         StatementTmpl, StatementTmplArg, SELF,
     };
 
@@ -459,7 +497,7 @@ mod tests {
     }
 
     type STA = StatementTmplArg;
-    type HOW = HashOrWildcard;
+    type HOW = KeyOrWildcard;
     type P = Predicate;
     type NP = NativePredicate;
 
@@ -532,21 +570,21 @@ mod tests {
                 st(
                     P::Native(NP::ValueOf),
                     vec![
-                        STA::Key(HOW::Wildcard(4), HashOrWildcard::Hash("type".into())),
+                        STA::Key(HOW::Wildcard(4), KeyOrWildcard::Hash("type".into())),
                         STA::Literal(PodType::Signed.into()),
                     ],
                 ),
                 st(
                     P::Native(NP::Equal),
                     vec![
-                        STA::Key(HOW::Wildcard(4), HashOrWildcard::Hash("signer".into())),
+                        STA::Key(HOW::Wildcard(4), KeyOrWildcard::Hash("signer".into())),
                         STA::Key(HOW::Wildcard(0), HOW::Wildcard(1)),
                     ],
                 ),
                 st(
                     P::Native(NP::Equal),
                     vec![
-                        STA::Key(HOW::Wildcard(4), HashOrWildcard::Hash("attestation".into())),
+                        STA::Key(HOW::Wildcard(4), KeyOrWildcard::Hash("attestation".into())),
                         STA::Key(HOW::Wildcard(2), HOW::Wildcard(3)),
                     ],
                 ),

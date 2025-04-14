@@ -4,7 +4,7 @@
 use std::{collections::HashMap, convert::From, fmt, hash as h, hash::Hasher};
 
 use anyhow::{anyhow, Error, Result};
-use containers::{Array, Dictionary, Set};
+// use containers::{Array, Dictionary, Set};
 use itertools::Itertools;
 
 // use schemars::JsonSchema;
@@ -13,20 +13,21 @@ use itertools::Itertools;
 use crate::{
     // frontend::serialization::*,
     middleware::{
-        self, hash_str, AnchoredKey, Hash, MainPodInputs, NativeOperation, NativePredicate,
-        OperationAux, Params, PodId, PodProver, PodSigner, EMPTY_VALUE, KEY_SIGNER, KEY_TYPE, SELF,
+        self, hash_str, AnchoredKey, Hash, Key, MainPodInputs, NativeOperation, NativePredicate,
+        OperationAux, Params, PodId, PodProver, PodSigner, Predicate, Statement, StatementArg,
+        Value, EMPTY_VALUE, KEY_SIGNER, KEY_TYPE, SELF,
     },
 };
 
 pub mod containers;
 mod custom;
 mod operation;
-mod predicate;
+// mod predicate;
 // mod serialization;
-mod statement;
-pub use custom::{CustomPredicateRef, Predicate, *};
+// mod statement;
+pub use custom::*;
 pub use operation::*;
-pub use statement::*;
+// pub use statement::*;
 
 /// This type is just for presentation purposes.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -36,139 +37,140 @@ pub enum PodClass {
     Main,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-// #[schemars(transform = serialization::transform_value_schema)]
-pub enum TypedValue {
-    // Serde cares about the order of the enum variants, with untagged variants
-    // appearing at the end.
-    // Variants without "untagged" will be serialized as "tagged" values by
-    // default, meaning that a Set appears in JSON as {"Set":[...]}
-    // and not as [...]
-    // Arrays, Strings and Booleans are untagged, as there is a natural JSON
-    // representation for them that is unambiguous to deserialize and is fully
-    // compatible with the semantics of the POD types.
-    // As JSON integers do not specify precision, and JavaScript is limited to
-    // 53-bit precision for integers, integers are represented as tagged
-    // strings, with a custom serializer and deserializer.
-    // TAGGED TYPES:
-    Set(Set),
-    Dictionary(Dictionary),
-    Int(
-        // #[serde(serialize_with = "serialize_i64", deserialize_with = "deserialize_i64")]
-        // #[schemars(with = "String", regex(pattern = r"^\d+$"))]
-        i64,
-    ),
-    // Uses the serialization for middleware::Value:
-    Raw(middleware::RawValue),
-    // UNTAGGED TYPES:
-    // #[serde(untagged)]
-    // #[schemars(skip)]
-    Array(Array),
-    // #[serde(untagged)]
-    // #[schemars(skip)]
-    String(String),
-    // #[serde(untagged)]
-    // #[schemars(skip)]
-    Bool(bool),
-}
-
-impl h::Hash for TypedValue {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        // Hash the discriminant first
-        std::mem::discriminant(self).hash(state);
-
-        // Hash the inner values only for types that implement Hash
-        match self {
-            TypedValue::String(s) => s.hash(state),
-            TypedValue::Int(i) => i.hash(state),
-            TypedValue::Bool(b) => b.hash(state),
-            TypedValue::Dictionary(d) => d.middleware_dict().commitment().hash(state),
-            TypedValue::Set(s) => s.middleware_set().commitment().hash(state),
-            TypedValue::Array(a) => a.middleware_array().commitment().hash(state),
-            TypedValue::Raw(r) => r.hash(state),
-        }
-    }
-}
-
-impl From<&str> for TypedValue {
-    fn from(s: &str) -> Self {
-        TypedValue::String(s.to_string())
-    }
-}
-
-impl From<i64> for TypedValue {
-    fn from(v: i64) -> Self {
-        TypedValue::Int(v)
-    }
-}
-
-impl From<bool> for TypedValue {
-    fn from(b: bool) -> Self {
-        TypedValue::Bool(b)
-    }
-}
-
-impl From<&TypedValue> for middleware::RawValue {
-    fn from(v: &TypedValue) -> Self {
-        match v {
-            TypedValue::String(s) => hash_str(s).value(),
-            TypedValue::Int(v) => middleware::RawValue::from(*v),
-            TypedValue::Bool(b) => middleware::RawValue::from(*b as i64),
-            TypedValue::Dictionary(d) => d.middleware_dict().commitment().value(),
-            TypedValue::Set(s) => s.middleware_set().commitment().value(),
-            TypedValue::Array(a) => a.middleware_array().commitment().value(),
-            TypedValue::Raw(v) => *v,
-        }
-    }
-}
-
-impl From<middleware::RawValue> for TypedValue {
-    fn from(v: middleware::RawValue) -> Self {
-        Self::Raw(v)
-    }
-}
-
-impl From<middleware::Hash> for TypedValue {
-    fn from(v: middleware::Hash) -> Self {
-        Self::Raw(v.into())
-    }
-}
-
-impl TryInto<i64> for TypedValue {
-    type Error = Error;
-    fn try_into(self) -> std::result::Result<i64, Self::Error> {
-        if let TypedValue::Int(n) = self {
-            Ok(n)
-        } else {
-            Err(anyhow!("Value not an int"))
-        }
-    }
-}
-
-impl fmt::Display for TypedValue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TypedValue::String(s) => write!(f, "\"{}\"", s),
-            TypedValue::Int(v) => write!(f, "{}", v),
-            TypedValue::Bool(b) => write!(f, "{}", b),
-            TypedValue::Dictionary(d) => write!(f, "dict:{}", d.middleware_dict().commitment()),
-            TypedValue::Set(s) => write!(f, "set:{}", s.middleware_set().commitment()),
-            TypedValue::Array(a) => write!(f, "arr:{}", a.middleware_array().commitment()),
-            TypedValue::Raw(v) => write!(f, "{}", v),
-        }
-    }
-}
+// TODO: Delete
+// #[derive(Clone, Debug, PartialEq, Eq)]
+// // #[schemars(transform = serialization::transform_value_schema)]
+// pub enum TypedValue {
+//     // Serde cares about the order of the enum variants, with untagged variants
+//     // appearing at the end.
+//     // Variants without "untagged" will be serialized as "tagged" values by
+//     // default, meaning that a Set appears in JSON as {"Set":[...]}
+//     // and not as [...]
+//     // Arrays, Strings and Booleans are untagged, as there is a natural JSON
+//     // representation for them that is unambiguous to deserialize and is fully
+//     // compatible with the semantics of the POD types.
+//     // As JSON integers do not specify precision, and JavaScript is limited to
+//     // 53-bit precision for integers, integers are represented as tagged
+//     // strings, with a custom serializer and deserializer.
+//     // TAGGED TYPES:
+//     Set(Set),
+//     Dictionary(Dictionary),
+//     Int(
+//         // #[serde(serialize_with = "serialize_i64", deserialize_with = "deserialize_i64")]
+//         // #[schemars(with = "String", regex(pattern = r"^\d+$"))]
+//         i64,
+//     ),
+//     // Uses the serialization for middleware::Value:
+//     Raw(middleware::RawValue),
+//     // UNTAGGED TYPES:
+//     // #[serde(untagged)]
+//     // #[schemars(skip)]
+//     Array(Array),
+//     // #[serde(untagged)]
+//     // #[schemars(skip)]
+//     String(String),
+//     // #[serde(untagged)]
+//     // #[schemars(skip)]
+//     Bool(bool),
+// }
+//
+// impl h::Hash for TypedValue {
+//     fn hash<H: Hasher>(&self, state: &mut H) {
+//         // Hash the discriminant first
+//         std::mem::discriminant(self).hash(state);
+//
+//         // Hash the inner values only for types that implement Hash
+//         match self {
+//             TypedValue::String(s) => s.hash(state),
+//             TypedValue::Int(i) => i.hash(state),
+//             TypedValue::Bool(b) => b.hash(state),
+//             TypedValue::Dictionary(d) => d.middleware_dict().commitment().hash(state),
+//             TypedValue::Set(s) => s.middleware_set().commitment().hash(state),
+//             TypedValue::Array(a) => a.middleware_array().commitment().hash(state),
+//             TypedValue::Raw(r) => r.hash(state),
+//         }
+//     }
+// }
+//
+// impl From<&str> for TypedValue {
+//     fn from(s: &str) -> Self {
+//         TypedValue::String(s.to_string())
+//     }
+// }
+//
+// impl From<i64> for TypedValue {
+//     fn from(v: i64) -> Self {
+//         TypedValue::Int(v)
+//     }
+// }
+//
+// impl From<bool> for TypedValue {
+//     fn from(b: bool) -> Self {
+//         TypedValue::Bool(b)
+//     }
+// }
+//
+// impl From<&TypedValue> for middleware::RawValue {
+//     fn from(v: &TypedValue) -> Self {
+//         match v {
+//             TypedValue::String(s) => hash_str(s).value(),
+//             TypedValue::Int(v) => middleware::RawValue::from(*v),
+//             TypedValue::Bool(b) => middleware::RawValue::from(*b as i64),
+//             TypedValue::Dictionary(d) => d.middleware_dict().commitment().value(),
+//             TypedValue::Set(s) => s.middleware_set().commitment().value(),
+//             TypedValue::Array(a) => a.middleware_array().commitment().value(),
+//             TypedValue::Raw(v) => *v,
+//         }
+//     }
+// }
+//
+// impl From<middleware::RawValue> for TypedValue {
+//     fn from(v: middleware::RawValue) -> Self {
+//         Self::Raw(v)
+//     }
+// }
+//
+// impl From<middleware::Hash> for TypedValue {
+//     fn from(v: middleware::Hash) -> Self {
+//         Self::Raw(v.into())
+//     }
+// }
+//
+// impl TryInto<i64> for TypedValue {
+//     type Error = Error;
+//     fn try_into(self) -> std::result::Result<i64, Self::Error> {
+//         if let TypedValue::Int(n) = self {
+//             Ok(n)
+//         } else {
+//             Err(anyhow!("Value not an int"))
+//         }
+//     }
+// }
+//
+// impl fmt::Display for TypedValue {
+//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//         match self {
+//             TypedValue::String(s) => write!(f, "\"{}\"", s),
+//             TypedValue::Int(v) => write!(f, "{}", v),
+//             TypedValue::Bool(b) => write!(f, "{}", b),
+//             TypedValue::Dictionary(d) => write!(f, "dict:{}", d.middleware_dict().commitment()),
+//             TypedValue::Set(s) => write!(f, "set:{}", s.middleware_set().commitment()),
+//             TypedValue::Array(a) => write!(f, "arr:{}", a.middleware_array().commitment()),
+//             TypedValue::Raw(v) => write!(f, "{}", v),
+//         }
+//     }
+// }
 
 #[derive(Clone, Debug)]
 pub struct SignedPodBuilder {
     pub params: Params,
-    pub kvs: HashMap<String, TypedValue>,
+    pub kvs: HashMap<Key, Value>,
 }
 
 impl fmt::Display for SignedPodBuilder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "SignedPodBuilder:")?;
-        for (k, v) in self.kvs.iter().sorted_by_key(|kv| kv.0) {
+        for (k, v) in self.kvs.iter().sorted_by_key(|kv| kv.0.hash()) {
             writeln!(f, "  - {}: {}", k, v)?;
         }
         Ok(())
@@ -183,35 +185,30 @@ impl SignedPodBuilder {
         }
     }
 
-    pub fn insert(&mut self, key: impl Into<String>, value: impl Into<TypedValue>) {
+    pub fn insert(&mut self, key: impl Into<Key>, value: impl Into<Value>) {
         self.kvs.insert(key.into(), value.into());
     }
 
     pub fn sign<S: PodSigner>(&self, signer: &mut S) -> Result<SignedPod> {
         // Sign POD with committed KV store.
-        let committed_kvs = self
-            .kvs
-            .iter()
-            .map(|(k, v)| (hash_str(k), v.into()))
-            .collect::<HashMap<_, _>>();
-        let pod = signer.sign(&self.params, &committed_kvs)?;
+        let pod = signer.sign(&self.params, &self.kvs)?;
 
-        let mut kvs = self.kvs.clone();
-
+        // TODO: Delete
+        // let mut kvs = self.kvs.clone();
         // Type and signer information are passed in by the
         // backend. Include these in the frontend representation.
-        let mid_kvs = pod.kvs();
-        let pod_type = mid_kvs
-            .get(&AnchoredKey::new(pod.id(), KEY_TYPE))
-            .cloned()
-            .ok_or(anyhow!("Missing POD type information in POD: {:?}", pod))?;
-        let pod_signer = mid_kvs
-            .get(&AnchoredKey::new(pod.id(), KEY_SIGNER))
-            .cloned()
-            .ok_or(anyhow!("Missing POD signer in POD: {:?}", pod))?;
-        kvs.insert(KEY_TYPE.to_string(), pod_type.into());
-        kvs.insert(KEY_SIGNER.to_string(), pod_signer.into());
-        Ok(SignedPod { pod, kvs })
+        // let mid_kvs = pod.kvs();
+        // let pod_type = mid_kvs
+        //     .get(&AnchoredKey::new(pod.id(), KEY_TYPE))
+        //     .cloned()
+        //     .ok_or(anyhow!("Missing POD type information in POD: {:?}", pod))?;
+        // let pod_signer = mid_kvs
+        //     .get(&AnchoredKey::new(pod.id(), KEY_SIGNER))
+        //     .cloned()
+        //     .ok_or(anyhow!("Missing POD signer in POD: {:?}", pod))?;
+        // kvs.insert(KEY_TYPE.to_string(), pod_type.into());
+        // kvs.insert(KEY_SIGNER.to_string(), pod_signer.into());
+        Ok(SignedPod { pod })
     }
 }
 
@@ -221,11 +218,12 @@ impl SignedPodBuilder {
 // #[serde(try_from = "SignedPodHelper", into = "SignedPodHelper")]
 pub struct SignedPod {
     pub pod: Box<dyn middleware::Pod>,
-    /// Key-value pairs as represented in the frontend. These should
-    /// correspond to the entries of `pod.kvs()` after hashing and
-    /// replacing each key with its corresponding anchored key.
+    // TODO: Delete
+    // /// Key-value pairs as represented in the frontend. These should
+    // /// correspond to the entries of `pod.kvs()` after hashing and
+    // /// replacing each key with its corresponding anchored key.
     // #[serde(serialize_with = "ordered_map")]
-    pub kvs: HashMap<String, TypedValue>,
+    // pub kvs: HashMap<String, TypedValue>,
 }
 
 impl fmt::Display for SignedPod {
@@ -235,14 +233,8 @@ impl fmt::Display for SignedPod {
         // https://0xparc.github.io/pod2/merkletree.html will not need it since it will be
         // deterministic based on the keys values not on the order of the keys when added into the
         // tree.
-        for (k, v) in self.kvs.iter().sorted_by_key(|kv| kv.0) {
-            writeln!(
-                f,
-                "  - {} = {}: {}",
-                hash_str(k),
-                k,
-                crate::middleware::RawValue::from(v)
-            )?;
+        for (k, v) in self.pod.kvs().iter().sorted_by_key(|kv| kv.0.key.hash()) {
+            writeln!(f, "  - {} = {}", k, v)?;
         }
         Ok(())
     }
@@ -255,11 +247,11 @@ impl SignedPod {
     pub fn verify(&self) -> Result<()> {
         self.pod.verify()
     }
-    pub fn kvs(&self) -> HashMap<Hash, middleware::RawValue> {
+    pub fn kvs(&self) -> HashMap<Key, Value> {
         self.pod
             .kvs()
             .into_iter()
-            .map(|(AnchoredKey { key, .. }, v)| (key.hash(), v))
+            .map(|(AnchoredKey { key, .. }, v)| (key, v))
             .collect()
     }
 }
@@ -274,7 +266,7 @@ pub struct MainPodBuilder {
     pub public_statements: Vec<Statement>,
     // Internal state
     const_cnt: usize,
-    key_table: HashMap<Hash, String>,
+    // key_table: HashMap<Hash, String>,
 }
 
 impl fmt::Display for MainPodBuilder {
@@ -308,30 +300,32 @@ impl MainPodBuilder {
             operations: Vec::new(),
             public_statements: Vec::new(),
             const_cnt: 0,
-            key_table: HashMap::new(),
+            // key_table: HashMap::new(),
         }
     }
     pub fn add_signed_pod(&mut self, pod: &SignedPod) {
         self.input_signed_pods.push(pod.clone());
-        // Add key-hash correspondences to key table.
-        pod.kvs.iter().for_each(|(key, _)| {
-            self.key_table.insert(hash_str(key), key.clone());
-        });
+        // TODO: Delete
+        // // Add key-hash correspondences to key table.
+        // pod.kvs.iter().for_each(|(key, _)| {
+        //     self.key_table.insert(hash_str(key), key.clone());
+        // });
     }
     pub fn add_main_pod(&mut self, pod: MainPod) {
-        // Add key-hash and POD ID-class correspondences to tables.
-        pod.public_statements
-            .iter()
-            .flat_map(|s| &s.args)
-            .flat_map(|arg| match arg {
-                StatementArg::Key(AnchoredKey { key, .. }) => {
-                    Some((key.hash(), key.name().to_string()))
-                }
-                _ => None,
-            })
-            .for_each(|(hash, key)| {
-                self.key_table.insert(hash, key);
-            });
+        // TODO: Delete
+        // // Add key-hash and POD ID-class correspondences to tables.
+        // pod.public_statements
+        //     .iter()
+        //     .flat_map(|s| &s.args)
+        //     .flat_map(|arg| match arg {
+        //         StatementArg::Key(AnchoredKey { key, .. }) => {
+        //             Some((key.hash(), key.name().to_string()))
+        //         }
+        //         _ => None,
+        //     })
+        //     .for_each(|(hash, key)| {
+        //         self.key_table.insert(hash, key);
+        //     });
         self.input_main_pods.push(pod);
     }
     pub fn insert(&mut self, st_op: (Statement, Operation)) {
@@ -347,11 +341,12 @@ impl MainPodBuilder {
         args: &mut [OperationArg],
     ) -> Result<Vec<StatementArg>> {
         let mut st_args = Vec::new();
+        // TODO: Rewrite without calling args() and instead using matches?
         for arg in args.iter_mut() {
             match arg {
                 OperationArg::Statement(s) => {
-                    if s.predicate == Predicate::Native(NativePredicate::ValueOf) {
-                        st_args.push(s.args[0].clone())
+                    if s.predicate() == Predicate::Native(NativePredicate::ValueOf) {
+                        st_args.push(s.args()[0].clone())
                     } else {
                         panic!("Invalid statement argument.");
                     }
@@ -360,10 +355,10 @@ impl MainPodBuilder {
                 OperationArg::Literal(v) => {
                     let value_of_st = self.literal(public, v)?;
                     *arg = OperationArg::Statement(value_of_st.clone());
-                    st_args.push(value_of_st.args[0].clone())
+                    st_args.push(value_of_st.args()[0].clone())
                 }
                 OperationArg::Entry(k, v) => {
-                    st_args.push(StatementArg::Key(AnchoredKey::new(SELF, k.clone())));
+                    st_args.push(StatementArg::Key(AnchoredKey::from((SELF, k.as_str()))));
                     st_args.push(StatementArg::Literal(v.clone()))
                 }
             };
@@ -386,7 +381,7 @@ impl MainPodBuilder {
         let pred = op_type.output_predicate().map(Ok).unwrap_or_else(|| {
             // We are dealing with a copy here.
             match (args).first() {
-                Some(OperationArg::Statement(s)) if args.len() == 1 => Ok(s.predicate.clone()),
+                Some(OperationArg::Statement(s)) if args.len() == 1 => Ok(s.predicate().clone()),
                 _ => Err(anyhow!("Invalid arguments to copy operation: {:?}", args)),
             }
         })?;
@@ -396,7 +391,7 @@ impl MainPodBuilder {
                 None => vec![],
                 NewEntry => self.op_args_entries(public, args)?,
                 CopyStatement => match &args[0] {
-                    OperationArg::Statement(s) => s.args.clone(),
+                    OperationArg::Statement(s) => s.args().clone(),
                     _ => {
                         return Err(anyhow!("Invalid arguments to copy operation: {}", op));
                     }
@@ -408,20 +403,14 @@ impl MainPodBuilder {
                 TransitiveEqualFromStatements => {
                     match (args[0].clone(), args[1].clone()) {
                         (
-                            OperationArg::Statement(Statement {
-                                predicate: Predicate::Native(NativePredicate::Equal),
-                                args: st0_args,
-                            }),
-                            OperationArg::Statement(Statement {
-                                predicate: Predicate::Native(NativePredicate::Equal),
-                                args: st1_args,
-                            }),
+                            OperationArg::Statement(Statement::Equal(ak0, ak1)),
+                            OperationArg::Statement(Statement::Equal(ak2, ak3)),
                         ) => {
                             // st_args0 == vec![ak0, ak1]
                             // st_args1 == vec![ak1, ak2]
                             // output statement Equals(ak0, ak2)
-                            if st0_args[1] == st1_args[0] {
-                                vec![st0_args[0].clone(), st1_args[1].clone()]
+                            if ak1 == ak2 {
+                                vec![StatementArg::Key(ak0), StatementArg::Key(ak3)]
                             } else {
                                 return Err(anyhow!(
                                     "Invalid arguments to transitive equality operation"
@@ -436,22 +425,16 @@ impl MainPodBuilder {
                     }
                 }
                 GtToNotEqual => match args[0].clone() {
-                    OperationArg::Statement(Statement {
-                        predicate: Predicate::Native(NativePredicate::Gt),
-                        args: st_args,
-                    }) => {
-                        vec![st_args[0].clone()]
+                    OperationArg::Statement(Statement::Gt(ak0, ak1)) => {
+                        vec![StatementArg::Key(ak0), StatementArg::Key(ak1)]
                     }
                     _ => {
                         return Err(anyhow!("Invalid arguments to gt-to-neq operation"));
                     }
                 },
                 LtToNotEqual => match args[0].clone() {
-                    OperationArg::Statement(Statement {
-                        predicate: Predicate::Native(NativePredicate::Lt),
-                        args: st_args,
-                    }) => {
-                        vec![st_args[0].clone()]
+                    OperationArg::Statement(Statement::Lt(ak0, ak1)) => {
+                        vec![StatementArg::Key(ak0), StatementArg::Key(ak1)]
                     }
                     _ => {
                         return Err(anyhow!("Invalid arguments to lt-to-neq operation"));
@@ -459,47 +442,22 @@ impl MainPodBuilder {
                 },
                 SumOf => match (args[0].clone(), args[1].clone(), args[2].clone()) {
                     (
-                        OperationArg::Statement(Statement {
-                            predicate: Predicate::Native(NativePredicate::ValueOf),
-                            args: st0_args,
-                        }),
-                        OperationArg::Statement(Statement {
-                            predicate: Predicate::Native(NativePredicate::ValueOf),
-                            args: st1_args,
-                        }),
-                        OperationArg::Statement(Statement {
-                            predicate: Predicate::Native(NativePredicate::ValueOf),
-                            args: st2_args,
-                        }),
+                        OperationArg::Statement(Statement::ValueOf(ak0, v0)),
+                        OperationArg::Statement(Statement::ValueOf(ak1, v1)),
+                        OperationArg::Statement(Statement::ValueOf(ak2, v2)),
                     ) => {
-                        let st_args: Vec<StatementArg> = match (
-                            st0_args[1].clone(),
-                            st1_args[1].clone(),
-                            st2_args[1].clone(),
-                        ) {
-                            (
-                                StatementArg::Literal(v0),
-                                StatementArg::Literal(v1),
-                                StatementArg::Literal(v2),
-                            ) => {
-                                let v0: i64 = v0.clone().try_into()?;
-                                let v1: i64 = v1.clone().try_into()?;
-                                let v2: i64 = v2.clone().try_into()?;
-                                if v0 == v1 + v2 {
-                                    vec![
-                                        st0_args[0].clone(),
-                                        st1_args[0].clone(),
-                                        st2_args[0].clone(),
-                                    ]
-                                } else {
-                                    return Err(anyhow!("Invalid arguments to sum-of operation"));
-                                }
-                            }
-                            _ => {
-                                return Err(anyhow!("Invalid arguments to sum-of operation"));
-                            }
-                        };
-                        st_args
+                        let v0: i64 = v0.typed().try_into()?;
+                        let v1: i64 = v1.typed().try_into()?;
+                        let v2: i64 = v2.typed().try_into()?;
+                        if v0 == v1 + v2 {
+                            vec![
+                                StatementArg::Key(ak0),
+                                StatementArg::Key(ak1),
+                                StatementArg::Key(ak2),
+                            ]
+                        } else {
+                            return Err(anyhow!("Invalid arguments to sum-of operation"));
+                        }
                     }
                     _ => {
                         return Err(anyhow!("Invalid arguments to sum-of operation"));
@@ -507,49 +465,22 @@ impl MainPodBuilder {
                 },
                 ProductOf => match (args[0].clone(), args[1].clone(), args[2].clone()) {
                     (
-                        OperationArg::Statement(Statement {
-                            predicate: Predicate::Native(NativePredicate::ValueOf),
-                            args: st0_args,
-                        }),
-                        OperationArg::Statement(Statement {
-                            predicate: Predicate::Native(NativePredicate::ValueOf),
-                            args: st1_args,
-                        }),
-                        OperationArg::Statement(Statement {
-                            predicate: Predicate::Native(NativePredicate::ValueOf),
-                            args: st2_args,
-                        }),
+                        OperationArg::Statement(Statement::ValueOf(ak0, v0)),
+                        OperationArg::Statement(Statement::ValueOf(ak1, v1)),
+                        OperationArg::Statement(Statement::ValueOf(ak2, v2)),
                     ) => {
-                        let st_args: Vec<StatementArg> = match (
-                            st0_args[1].clone(),
-                            st1_args[1].clone(),
-                            st2_args[1].clone(),
-                        ) {
-                            (
-                                StatementArg::Literal(v0),
-                                StatementArg::Literal(v1),
-                                StatementArg::Literal(v2),
-                            ) => {
-                                let v0: i64 = v0.clone().try_into()?;
-                                let v1: i64 = v1.clone().try_into()?;
-                                let v2: i64 = v2.clone().try_into()?;
-                                if v0 == v1 * v2 {
-                                    vec![
-                                        st0_args[0].clone(),
-                                        st1_args[0].clone(),
-                                        st2_args[0].clone(),
-                                    ]
-                                } else {
-                                    return Err(anyhow!(
-                                        "Invalid arguments to product-of operation"
-                                    ));
-                                }
-                            }
-                            _ => {
-                                return Err(anyhow!("Invalid arguments to product-of operation"));
-                            }
-                        };
-                        st_args
+                        let v0: i64 = v0.typed().try_into()?;
+                        let v1: i64 = v1.typed().try_into()?;
+                        let v2: i64 = v2.typed().try_into()?;
+                        if v0 == v1 * v2 {
+                            vec![
+                                StatementArg::Key(ak0),
+                                StatementArg::Key(ak1),
+                                StatementArg::Key(ak2),
+                            ]
+                        } else {
+                            return Err(anyhow!("Invalid arguments to product-of operation"));
+                        }
                     }
                     _ => {
                         return Err(anyhow!("Invalid arguments to product-of operation"));
@@ -557,50 +488,25 @@ impl MainPodBuilder {
                 },
                 MaxOf => match (args[0].clone(), args[1].clone(), args[2].clone()) {
                     (
-                        OperationArg::Statement(Statement {
-                            predicate: Predicate::Native(NativePredicate::ValueOf),
-                            args: st0_args,
-                        }),
-                        OperationArg::Statement(Statement {
-                            predicate: Predicate::Native(NativePredicate::ValueOf),
-                            args: st1_args,
-                        }),
-                        OperationArg::Statement(Statement {
-                            predicate: Predicate::Native(NativePredicate::ValueOf),
-                            args: st2_args,
-                        }),
+                        OperationArg::Statement(Statement::ValueOf(ak0, v0)),
+                        OperationArg::Statement(Statement::ValueOf(ak1, v1)),
+                        OperationArg::Statement(Statement::ValueOf(ak2, v2)),
                     ) => {
-                        let st_args: Vec<StatementArg> = match (
-                            st0_args[1].clone(),
-                            st1_args[1].clone(),
-                            st2_args[1].clone(),
-                        ) {
-                            (
-                                StatementArg::Literal(v0),
-                                StatementArg::Literal(v1),
-                                StatementArg::Literal(v2),
-                            ) => {
-                                let v0: i64 = v0.clone().try_into()?;
-                                let v1: i64 = v1.clone().try_into()?;
-                                let v2: i64 = v2.clone().try_into()?;
-                                if v0 == std::cmp::max(v1, v2) {
-                                    vec![
-                                        st0_args[0].clone(),
-                                        st1_args[0].clone(),
-                                        st2_args[0].clone(),
-                                    ]
-                                } else {
-                                    return Err(anyhow!("Invalid arguments to max-of operation"));
-                                }
-                            }
-                            _ => {
-                                return Err(anyhow!("Invalid arguments to max-of operation"));
-                            }
-                        };
-                        st_args
+                        let v0: i64 = v0.typed().try_into()?;
+                        let v1: i64 = v1.typed().try_into()?;
+                        let v2: i64 = v2.typed().try_into()?;
+                        if v0 == std::cmp::max(v1, v2) {
+                            vec![
+                                StatementArg::Key(ak0),
+                                StatementArg::Key(ak1),
+                                StatementArg::Key(ak2),
+                            ]
+                        } else {
+                            return Err(anyhow!("Invalid arguments to max-of operation"));
+                        }
                     }
                     _ => {
-                        return Err(anyhow!("Invalid arguments to operation"));
+                        return Err(anyhow!("Invalid arguments to max-of operation"));
                     }
                 },
                 ContainsFromEntries => self.op_args_entries(public, args)?,
@@ -613,77 +519,79 @@ impl MainPodBuilder {
                 SetNotContainsFromEntries => self.op_args_entries(public, args)?,
                 ArrayContainsFromEntries => self.op_args_entries(public, args)?,
             },
-            OperationType::Custom(cpr) => {
+            OperationType::Custom(_cpr) => {
+                todo!()
                 // All args should be statements to be pattern matched against statement templates.
-                let args = args.iter().map(
-                    |a| match a {
-                        OperationArg::Statement(s) => Ok(s.clone()),
-                            _ => Err(anyhow!("Invalid argument {} to operation corresponding to custom predicate {:?}.", a, cpr))
-                    }
-                ).collect::<Result<Vec<_>>>()?;
-                // Match these statements against the custom predicate definition
-                let bindings = cpr.match_against(&args)?;
-                let output_arg_values = (0..cpr.arg_len())
-                    .map(|i| {
-                        bindings.get(&i).cloned().ok_or(anyhow!(
-                            "Wildcard {} of custom predicate {:?} is unbound.",
-                            i,
-                            cpr
-                        ))
-                    })
-                    .collect::<Result<Vec<_>>>()?;
+                // let args = args.iter().map(
+                //     |a| match a {
+                //         OperationArg::Statement(s) => Ok(s.clone()),
+                //             _ => Err(anyhow!("Invalid argument {} to operation corresponding to custom predicate {:?}.", a, cpr))
+                //     }
+                // ).collect::<Result<Vec<_>>>()?;
+                // // Match these statements against the custom predicate definition
+                // let bindings = cpr.match_against(&args)?;
+                // let output_arg_values = (0..cpr.arg_len())
+                //     .map(|i| {
+                //         bindings.get(&i).cloned().ok_or(anyhow!(
+                //             "Wildcard {} of custom predicate {:?} is unbound.",
+                //             i,
+                //             cpr
+                //         ))
+                //     })
+                //     .collect::<Result<Vec<_>>>()?;
 
-                output_arg_values
-                    .chunks(2)
-                    .map(|chunk| {
-                        Ok(StatementArg::Key(AnchoredKey::new(
-                            PodId(match chunk[0] {
-                                TypedValue::Raw(v) => v.into(),
-                                _ => return Err(anyhow!("Invalid POD class value.")),
-                            }),
-                            // TODO: Can we remove key_table now that the middleware AnchoredKey
-                            // has the String of the Key?
-                            self.key_table
-                                .get(&match &chunk[1] {
-                                    TypedValue::String(s) => hash_str(s.as_str()),
-                                    _ => return Err(anyhow!("Invalid key value.")),
-                                })
-                                .cloned()
-                                .ok_or(anyhow!("Missing key corresponding to hash."))?,
-                        )))
-                    })
-                    .collect::<Result<Vec<_>>>()?
+                // output_arg_values
+                //     .chunks(2)
+                //     .map(|chunk| {
+                //         Ok(StatementArg::Key(AnchoredKey::new(
+                //             PodId(match chunk[0] {
+                //                 TypedValue::Raw(v) => v.into(),
+                //                 _ => return Err(anyhow!("Invalid POD class value.")),
+                //             }),
+                //             // TODO: Can we remove key_table now that the middleware AnchoredKey
+                //             // has the String of the Key?
+                //             self.key_table
+                //                 .get(&match &chunk[1] {
+                //                     TypedValue::String(s) => hash_str(s.as_str()),
+                //                     _ => return Err(anyhow!("Invalid key value.")),
+                //                 })
+                //                 .cloned()
+                //                 .ok_or(anyhow!("Missing key corresponding to hash."))?,
+                //         )))
+                //     })
+                //     .collect::<Result<Vec<_>>>()?
             }
         };
-        let st = Statement::new(pred, st_args);
+        let st = Statement::from_args(pred.into(), st_args).expect("valid arguments");
         self.operations.push(op);
         if public {
             self.public_statements.push(st.clone());
         }
 
+        // TODO: Delete
         // Add key-hash pairs in statement to table.
-        st.args.iter().for_each(|arg| {
-            if let StatementArg::Key(AnchoredKey { key, .. }) = arg {
-                self.key_table.insert(key.hash(), key.name().to_string());
-            }
-        });
+        // st.args.iter().for_each(|arg| {
+        //     if let StatementArg::Key(AnchoredKey { key, .. }) = arg {
+        //         self.key_table.insert(key.hash(), key.name().to_string());
+        //     }
+        // });
 
         self.statements.push(st);
         Ok(self.statements[self.statements.len() - 1].clone())
     }
 
     /// Convenience method for introducing public constants.
-    pub fn pub_literal<V: Clone + Into<TypedValue>>(&mut self, v: &V) -> Result<Statement> {
+    pub fn pub_literal<V: Clone + Into<Value>>(&mut self, v: &V) -> Result<Statement> {
         self.literal(true, v)
     }
 
     /// Convenience method for introducing private constants.
-    pub fn priv_literal<V: Clone + Into<TypedValue>>(&mut self, v: &V) -> Result<Statement> {
+    pub fn priv_literal<V: Clone + Into<Value>>(&mut self, v: &V) -> Result<Statement> {
         self.literal(false, v)
     }
 
-    fn literal<V: Clone + Into<TypedValue>>(&mut self, public: bool, v: &V) -> Result<Statement> {
-        let v: TypedValue = v.clone().into();
+    fn literal<V: Clone + Into<Value>>(&mut self, public: bool, v: &V) -> Result<Statement> {
+        let v: Value = v.clone().into();
         let k = format!("c{}", self.const_cnt);
         self.const_cnt += 1;
         self.op(
@@ -736,16 +644,14 @@ impl MainPodBuilder {
             .pub_statements()
             .into_iter()
             .find_map(|s| match s {
-                crate::middleware::Statement::ValueOf(
-                    crate::middleware::AnchoredKey { pod_id: id, key },
-                    value,
-                ) if id == pod_id && key.hash() == type_key_hash => Some(Statement {
-                    predicate: Predicate::Native(NativePredicate::ValueOf),
-                    args: vec![
-                        StatementArg::Key(AnchoredKey::new(pod_id, KEY_TYPE.to_string())),
-                        StatementArg::Literal(value.into()),
-                    ],
-                }),
+                Statement::ValueOf(AnchoredKey { pod_id: id, key }, value)
+                    if id == pod_id && key.hash() == type_key_hash =>
+                {
+                    Some(Statement::ValueOf(
+                        AnchoredKey::from((pod_id, KEY_TYPE)),
+                        value,
+                    ))
+                }
                 _ => None,
             })
             .ok_or(anyhow!("Missing POD type information in POD: {:?}", pod))?;
@@ -754,9 +660,9 @@ impl MainPodBuilder {
         let public_statements = [type_statement]
             .into_iter()
             .chain(self.public_statements.clone().into_iter().map(|s| {
-                let s_type = s.predicate;
+                let s_type = s.predicate();
                 let s_args = s
-                    .args
+                    .args()
                     .into_iter()
                     .map(|arg| match arg {
                         StatementArg::Key(AnchoredKey { pod_id: id, key }) if id == SELF => {
@@ -765,7 +671,7 @@ impl MainPodBuilder {
                         _ => arg,
                     })
                     .collect();
-                Statement::new(s_type, s_args)
+                Statement::from_args(s_type, s_args).expect("valid arguments")
             }))
             .collect();
 
@@ -816,7 +722,7 @@ struct MainPodCompilerInputs<'a> {
 struct MainPodCompiler {
     params: Params,
     // Output
-    statements: Vec<middleware::Statement>,
+    statements: Vec<Statement>,
     operations: Vec<middleware::Operation>,
     // Internal state
     // Tracks literal constants assigned to ValueOf statements by self.literal()
@@ -837,14 +743,14 @@ impl MainPodCompiler {
         }
     }
 
-    fn push_st_op(&mut self, st: middleware::Statement, op: middleware::Operation) {
+    fn push_st_op(&mut self, st: Statement, op: middleware::Operation) {
         self.statements.push(st);
         self.operations.push(op);
     }
 
-    fn compile_op_arg(&self, op_arg: &OperationArg) -> Option<middleware::Statement> {
+    fn compile_op_arg(&self, op_arg: &OperationArg) -> Option<Statement> {
         match op_arg {
-            OperationArg::Statement(s) => self.compile_st(s).ok(),
+            OperationArg::Statement(s) => Some(s.clone()),
             OperationArg::Literal(_v) => {
                 // OperationArg::Literal is a syntax sugar for the frontend.  This is translated to
                 // a new ValueOf statement and it's key used instead.
@@ -859,121 +765,124 @@ impl MainPodCompiler {
         }
     }
 
+    // TODO: Handle this in the builder, not the compiler
     // Introduces a literal value if it hasn't been introduced,
     // or else returns the existing ValueOf statement where it was first introduced.
     // TODO: this might produce duplicate keys, fix
-    fn literal<V: Clone + Into<middleware::RawValue>>(&mut self, val: V) -> &middleware::Statement {
-        let val: middleware::RawValue = val.into();
-        match self.literals.get(&val) {
-            Some(idx) => &self.statements[*idx],
-            None => {
-                let ak = middleware::AnchoredKey::new(SELF, format!("const_{}", val));
-                let st = middleware::Statement::ValueOf(ak, val);
-                let op = middleware::Operation::NewEntry;
-                self.statements.push(st);
-                self.operations.push(op);
-                self.statements.last().unwrap()
-            }
-        }
-    }
+    // fn literal<V: Clone + Into<middleware::RawValue>>(&mut self, val: V) -> &Statement {
+    //     let val: middleware::RawValue = val.into();
+    //     match self.literals.get(&val) {
+    //         Some(idx) => &self.statements[*idx],
+    //         None => {
+    //             let ak = middleware::AnchoredKey::new(SELF, format!("const_{}", val));
+    //             let st = Statement::ValueOf(ak, val);
+    //             let op = middleware::Operation::NewEntry;
+    //             self.statements.push(st);
+    //             self.operations.push(op);
+    //             self.statements.last().unwrap()
+    //         }
+    //     }
+    // }
 
     // Returns the existing ValueOf statement where it was first introduced,
     // or None if it does not exist.
-    fn get_literal<V: Clone + Into<middleware::RawValue>>(
-        &self,
-        val: V,
-    ) -> Option<&middleware::Statement> {
-        let val: middleware::RawValue = val.into();
-        match self.literals.get(&val) {
-            Some(idx) => Some(&self.statements[*idx]),
-            None => None,
-        }
-    }
+    // fn get_literal<V: Clone + Into<middleware::RawValue>>(&self, val: V) -> Option<&Statement> {
+    //     let val: middleware::RawValue = val.into();
+    //     match self.literals.get(&val) {
+    //         Some(idx) => Some(&self.statements[*idx]),
+    //         None => None,
+    //     }
+    // }
 
     // This function handles cases where one frontend statement
     // compiles to multiple middleware statements.
     // For example: DictContains(x, y) on the frontend compiles to:
     // ValueOf(empty, EMPTY_VALUE)
     // Contains(x, y, empty)
-    fn manual_compile_st_op(&mut self, st: &Statement, op: &Operation) -> Result<()> {
-        match st.predicate {
-            Predicate::Native(NativePredicate::DictContains) => {
-                let empty_st = self.literal(EMPTY_VALUE).clone();
-                let empty_ak = match empty_st {
-                    middleware::Statement::ValueOf(ref ak, _) => ak,
-                    _ => unreachable!(),
-                };
-                let (ak1, ak2) = match (st.args.get(0).cloned(), st.args.get(1).cloned()) {
-                    (Some(StatementArg::Key(ak1)), Some(StatementArg::Key(ak2))) => (ak1, ak2),
-                    _ => Err(anyhow!("Ill-formed statement: {}", st))?,
-                };
-                let middle_st =
-                    middleware::Statement::Contains(ak1.into(), ak2.into(), empty_ak.clone());
-                let middle_op = middleware::Operation::ContainsFromEntries(
-                    match &op.1[0] {
-                        OperationArg::Statement(s) => self.compile_st(s)?,
-                        _ => Err(anyhow!("Statement compile failed in manual compile"))?,
-                    },
-                    match &op.1[1] {
-                        OperationArg::Statement(s) => self.compile_st(s)?,
-                        _ => Err(anyhow!("Statement compile failed in manual compile"))?,
-                    },
-                    empty_st.clone(),
-                    match &op.2 {
-                        OperationAux::MerkleProof(mp) => mp.clone(),
-                        _ => {
-                            return Err(anyhow!(
-                                "Auxiliary argument to DictContainsFromEntries must be Merkle proof"
-                            ));
-                        }
-                    },
-                );
-                self.statements.push(middle_st);
-                self.operations.push(middle_op);
-                assert_eq!(self.statements.len(), self.operations.len());
-                Ok(())
-            }
-            _ => unreachable!(),
-        }
-    }
+    // TODO
+    // fn manual_compile_st_op(&mut self, st: &Statement, op: &Operation) -> Result<()> {
+    //     use Statement::*;
+    //     match st {
+    //         SetContains() => todo!(),
+    //         DictN() => todo!(),
+    //     }
+    //     match st.predicate {
+    //         Predicate::Native(NativePredicate::DictContains) => {
+    //             let empty_st = self.literal(EMPTY_VALUE).clone();
+    //             let empty_ak = match empty_st {
+    //                 Statement::ValueOf(ref ak, _) => ak,
+    //                 _ => unreachable!(),
+    //             };
+    //             let (ak1, ak2) = match (st.args.get(0).cloned(), st.args.get(1).cloned()) {
+    //                 (Some(StatementArg::Key(ak1)), Some(StatementArg::Key(ak2))) => (ak1, ak2),
+    //                 _ => Err(anyhow!("Ill-formed statement: {}", st))?,
+    //             };
+    //             let middle_st = Statement::Contains(ak1.into(), ak2.into(), empty_ak.clone());
+    //             let middle_op = middleware::Operation::ContainsFromEntries(
+    //                 match &op.1[0] {
+    //                     OperationArg::Statement(s) => s.clone(),
+    //                     _ => Err(anyhow!("Statement compile failed in manual compile"))?,
+    //                 },
+    //                 match &op.1[1] {
+    //                     OperationArg::Statement(s) => s.clone(),
+    //                     _ => Err(anyhow!("Statement compile failed in manual compile"))?,
+    //                 },
+    //                 empty_st.clone(),
+    //                 match &op.2 {
+    //                     OperationAux::MerkleProof(mp) => mp.clone(),
+    //                     _ => {
+    //                         return Err(anyhow!(
+    //                             "Auxiliary argument to DictContainsFromEntries must be Merkle proof"
+    //                         ));
+    //                     }
+    //                 },
+    //             );
+    //             self.statements.push(middle_st);
+    //             self.operations.push(middle_op);
+    //             assert_eq!(self.statements.len(), self.operations.len());
+    //             Ok(())
+    //         }
+    //         _ => unreachable!(),
+    //     }
+    // }
 
     // If the frontend statement `st` compiles to a single middleware statement,
     // returns that middleware statement.
     // If it compiles to multiple middlewarestatements, returns StatementConversionError.
     // This is only a helper method within compile_st_op().
     // If you want to compile a statement in general, run compile_st().
-    fn compile_st_try_simple(
-        &self,
-        st: &Statement,
-    ) -> Result<middleware::Statement, StatementConversionError> {
-        st.clone().try_into()
-    }
+    // fn compile_st_try_simple(
+    //     &self,
+    //     st: &Statement,
+    // ) -> Result<middleware::Statement, StatementConversionError> {
+    //     st.clone().try_into()
+    // }
 
     // Compiles the frontend statement `st` to a middleware statement.
     // This function assumes the middleware statement already exists --
     // it should not be called from compile_st_op.
-    fn compile_st(&self, st: &Statement) -> Result<middleware::Statement> {
-        match self.compile_st_try_simple(st) {
-            Ok(s) => Ok(s),
-            Err(StatementConversionError::Error(e)) => Err(e),
-            Err(StatementConversionError::MCR(_)) => {
-                let empty_st = self
-                    .get_literal(EMPTY_VALUE)
-                    .ok_or(anyhow!("Literal value not found for empty literal."))?;
-                let empty_ak = match empty_st {
-                    middleware::Statement::ValueOf(ak, _) => ak,
-                    _ => unreachable!(),
-                };
-                let (ak1, ak2) = match (st.args.get(0).cloned(), st.args.get(1).cloned()) {
-                    (Some(StatementArg::Key(ak1)), Some(StatementArg::Key(ak2))) => (ak1, ak2),
-                    _ => Err(anyhow!("Ill-formed statement: {}", st))?,
-                };
-                let middle_st =
-                    middleware::Statement::Contains(ak1.into(), ak2.into(), empty_ak.clone());
-                Ok(middle_st)
-            }
-        }
-    }
+    // fn compile_st(&self, st: &Statement) -> Result<middleware::Statement> {
+    //     match self.compile_st_try_simple(st) {
+    //         Ok(s) => Ok(s),
+    //         Err(StatementConversionError::Error(e)) => Err(e),
+    //         Err(StatementConversionError::MCR(_)) => {
+    //             let empty_st = self
+    //                 .get_literal(EMPTY_VALUE)
+    //                 .ok_or(anyhow!("Literal value not found for empty literal."))?;
+    //             let empty_ak = match empty_st {
+    //                 middleware::Statement::ValueOf(ak, _) => ak,
+    //                 _ => unreachable!(),
+    //             };
+    //             let (ak1, ak2) = match (st.args.get(0).cloned(), st.args.get(1).cloned()) {
+    //                 (Some(StatementArg::Key(ak1)), Some(StatementArg::Key(ak2))) => (ak1, ak2),
+    //                 _ => Err(anyhow!("Ill-formed statement: {}", st))?,
+    //             };
+    //             let middle_st =
+    //                 middleware::Statement::Contains(ak1.into(), ak2.into(), empty_ak.clone());
+    //             Ok(middle_st)
+    //         }
+    //     }
+    // }
 
     fn compile_op(&self, op: &Operation) -> Result<middleware::Operation> {
         let mop_code: middleware::OperationType = op.0.clone().try_into()?;
@@ -987,26 +896,26 @@ impl MainPodCompiler {
     }
 
     fn compile_st_op(&mut self, st: &Statement, op: &Operation, params: &Params) -> Result<()> {
-        let middle_st_res = self.compile_st_try_simple(st);
-        match middle_st_res {
-            Ok(middle_st) => {
-                let middle_op = self.compile_op(op)?;
-                let is_correct = middle_op.check(params, &middle_st)?;
-                if !is_correct {
-                    // todo: improve error handling
-                    Err(anyhow!(
-                        "Compile failed due to invalid deduction:\n {} ⇏ {}",
-                        middle_op,
-                        middle_st
-                    ))
-                } else {
-                    self.push_st_op(middle_st, middle_op);
-                    Ok(())
-                }
-            }
-            Err(StatementConversionError::Error(e)) => Err(e),
-            Err(StatementConversionError::MCR(_)) => self.manual_compile_st_op(st, op),
+        // let middle_st_res = self.compile_st_try_simple(st);
+        // match middle_st_res {
+        //     Ok(middle_st) => {
+        let middle_op = self.compile_op(op)?;
+        let is_correct = middle_op.check(params, &st)?;
+        if !is_correct {
+            // todo: improve error handling
+            Err(anyhow!(
+                "Compile failed due to invalid deduction:\n {} ⇏ {}",
+                middle_op,
+                st
+            ))
+        } else {
+            self.push_st_op(st.clone(), middle_op);
+            Ok(())
         }
+        //     }
+        //     Err(StatementConversionError::Error(e)) => Err(e),
+        //     Err(StatementConversionError::MCR(_)) => self.manual_compile_st_op(st, op),
+        // }
     }
 
     pub fn compile(
@@ -1014,9 +923,9 @@ impl MainPodCompiler {
         inputs: MainPodCompilerInputs<'_>,
         params: &Params,
     ) -> Result<(
-        Vec<middleware::Statement>, // input statements
+        Vec<Statement>, // input statements
         Vec<middleware::Operation>,
-        Vec<middleware::Statement>, // public statements
+        Vec<Statement>, // public statements
     )> {
         let MainPodCompilerInputs {
             // signed_pods: _,
@@ -1031,11 +940,11 @@ impl MainPodCompiler {
                 panic!("too many statements");
             }
         }
-        let public_statements = public_statements
-            .iter()
-            .map(|st| self.compile_st(st))
-            .collect::<Result<Vec<_>>>()?;
-        Ok((self.statements, self.operations, public_statements))
+        // let public_statements = public_statements
+        //     .iter()
+        //     .map(|st| self.compile_st(st))
+        //     .collect::<Result<Vec<_>>>()?;
+        Ok((self.statements, self.operations, public_statements.to_vec()))
     }
 }
 
@@ -1158,7 +1067,7 @@ pub mod tests {
     fn test_front_zu_kyc() -> Result<()> {
         let params = Params::default();
         let sanctions_values = vec!["A343434340".into()];
-        let sanction_set = TypedValue::Set(Set::new(sanctions_values)?);
+        let sanction_set = Value::Set(Set::new(sanctions_values)?);
         let (gov_id, pay_stub, sanction_list) = zu_kyc_sign_pod_builders(&params, &sanction_set);
 
         println!("{}", gov_id);
@@ -1339,14 +1248,14 @@ pub mod tests {
         let params = Params::default();
         let mut builder = SignedPodBuilder::new(&params);
 
-        let mut my_dict_kvs: HashMap<String, TypedValue> = HashMap::new();
-        my_dict_kvs.insert("a".to_string(), TypedValue::from(1));
-        my_dict_kvs.insert("b".to_string(), TypedValue::from(2));
-        my_dict_kvs.insert("c".to_string(), TypedValue::from(3));
+        let mut my_dict_kvs: HashMap<String, Value> = HashMap::new();
+        my_dict_kvs.insert("a".to_string(), Value::from(1));
+        my_dict_kvs.insert("b".to_string(), Value::from(2));
+        my_dict_kvs.insert("c".to_string(), Value::from(3));
         //        let my_dict_as_mt = MerkleTree::new(5, &my_dict_kvs).unwrap();
         //        let dict = Dictionary { mt: my_dict_as_mt };
         let dict = Dictionary::new(my_dict_kvs)?;
-        let dict_root = TypedValue::Dictionary(dict.clone());
+        let dict_root = Value::Dictionary(dict.clone());
         builder.insert("dict", dict_root);
 
         let mut signer = MockSigner {
@@ -1358,7 +1267,7 @@ pub mod tests {
         builder.add_signed_pod(&pod);
         let st0 = Statement::from((&pod, "dict"));
         let st1 = builder.op(true, op!(new_entry, ("key", "a"))).unwrap();
-        let st2 = builder.literal(false, &TypedValue::Int(1)).unwrap();
+        let st2 = builder.literal(false, &Value::Int(1)).unwrap();
 
         builder
             .pub_op(Operation(
@@ -1401,7 +1310,7 @@ pub mod tests {
                 Predicate::Native(NativePredicate::ValueOf),
                 vec![
                     StatementArg::Key(AnchoredKey::new(SELF, "a")),
-                    StatementArg::Literal(TypedValue::Int(3)),
+                    StatementArg::Literal(Value::Int(3)),
                 ],
             ),
             Operation(
@@ -1415,7 +1324,7 @@ pub mod tests {
                 Predicate::Native(NativePredicate::ValueOf),
                 vec![
                     StatementArg::Key(AnchoredKey::new(SELF, "a")),
-                    StatementArg::Literal(TypedValue::Int(28)),
+                    StatementArg::Literal(Value::Int(28)),
                 ],
             ),
             Operation(
@@ -1439,14 +1348,14 @@ pub mod tests {
             Predicate::Native(NativePredicate::ValueOf),
             vec![
                 StatementArg::Key(self_a.clone()),
-                StatementArg::Literal(TypedValue::Int(3)),
+                StatementArg::Literal(Value::Int(3)),
             ],
         );
         let value_of_b = Statement::new(
             Predicate::Native(NativePredicate::ValueOf),
             vec![
                 StatementArg::Key(self_b.clone()),
-                StatementArg::Literal(TypedValue::Int(27)),
+                StatementArg::Literal(Value::Int(27)),
             ],
         );
 

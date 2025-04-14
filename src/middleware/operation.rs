@@ -41,10 +41,12 @@ impl ToFields for OperationType {
             Self::Native(p) => iter::once(F::from_canonical_u64(1))
                 .chain(p.to_fields(params))
                 .collect(),
-            Self::Custom(CustomPredicateRef(pb, i)) => iter::once(F::from_canonical_u64(3))
-                .chain(pb.hash(params).0)
-                .chain(iter::once(F::from_canonical_usize(*i)))
-                .collect(),
+            Self::Custom(CustomPredicateRef { batch, index }) => {
+                iter::once(F::from_canonical_u64(3))
+                    .chain(batch.hash(params).0)
+                    .chain(iter::once(F::from_canonical_usize(*index)))
+                    .collect()
+            }
         };
         fields.resize_with(Params::operation_type_size(), || F::from_canonical_u64(0));
         fields
@@ -502,37 +504,38 @@ impl Operation {
                 let v3: i64 = v3.typed().try_into()?;
                 Ok((v1 == v2 + v3) && ak4 == ak1 && ak5 == ak2 && ak6 == ak3)
             }
-            (Self::Custom(CustomPredicateRef(cpb, i), args), Custom(cpr, s_args))
-                if cpb == &cpr.0 && i == &cpr.1 =>
+            (Self::Custom(CustomPredicateRef { batch, index }, args), Custom(cpr, s_args))
+                if batch == &cpr.batch && index == &cpr.index =>
             {
-                // Bind according to custom predicate pattern match against arg list.
-                let bindings = cpr.match_against(args)?;
-                // Check arg length
-                let arg_len = cpr.arg_len();
-                if arg_len != 2 * s_args.len() {
-                    Err(anyhow!("Custom predicate arg list {:?} must have {} arguments after destructuring.", s_args, arg_len))
-                } else {
-                    let bound_args = (0..arg_len)
-                        .map(|i| {
-                            bindings.get(&i).cloned().ok_or(anyhow!(
-                                "Wildcard {} of custom predicate {:?} is unbound.",
-                                i,
-                                cpr
-                            ))
-                        })
-                        .collect::<Result<Vec<_>>>()?;
-                    let s_args = s_args
-                        .iter()
-                        .flat_map(|AnchoredKey { pod_id, key }| {
-                            [Value::from(pod_id.0), key.hash().into()]
-                        })
-                        .collect::<Vec<_>>();
-                    if bound_args != s_args {
-                        Err(anyhow!("Arguments to output statement {} do not match those implied by operation {:?}", output_statement,self))
-                    } else {
-                        Ok(true)
-                    }
-                }
+                todo!()
+                // // Bind according to custom predicate pattern match against arg list.
+                // let bindings = cpr.match_against(args)?;
+                // // Check arg length
+                // let arg_len = cpr.arg_len();
+                // if arg_len != 2 * s_args.len() {
+                //     Err(anyhow!("Custom predicate arg list {:?} must have {} arguments after destructuring.", s_args, arg_len))
+                // } else {
+                //     let bound_args = (0..arg_len)
+                //         .map(|i| {
+                //             bindings.get(&i).cloned().ok_or(anyhow!(
+                //                 "Wildcard {} of custom predicate {:?} is unbound.",
+                //                 i,
+                //                 cpr
+                //             ))
+                //         })
+                //         .collect::<Result<Vec<_>>>()?;
+                //     let s_args = s_args
+                //         .iter()
+                //         .flat_map(|AnchoredKey { pod_id, key }| {
+                //             [Value::from(pod_id.0), key.hash().into()]
+                //         })
+                //         .collect::<Vec<_>>();
+                //     if bound_args != s_args {
+                //         Err(anyhow!("Arguments to output statement {} do not match those implied by operation {:?}", output_statement,self))
+                //     } else {
+                //         Ok(true)
+                //     }
+                // }
             }
             _ => Err(anyhow!(
                 "Invalid deduction: {:?} ⇏ {:#}",

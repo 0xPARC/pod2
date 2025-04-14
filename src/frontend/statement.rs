@@ -1,3 +1,5 @@
+// TODO: Delte this file
+
 use std::fmt;
 
 use anyhow::{anyhow, Result};
@@ -6,13 +8,13 @@ use anyhow::{anyhow, Result};
 
 // use serde::{Deserialize, Serialize};
 use crate::{
-    frontend::{AnchoredKey, Predicate, SignedPod, TypedValue},
-    middleware::{self, NativePredicate},
+    frontend::{AnchoredKey, Predicate, SignedPod},
+    middleware::{self, NativePredicate, Value},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StatementArg {
-    Literal(TypedValue),
+    Literal(Value),
     Key(AnchoredKey),
 }
 
