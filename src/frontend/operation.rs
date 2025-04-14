@@ -163,23 +163,25 @@ impl OperationType {
                 NativeOperation::NotContainsFromEntries => {
                     Some(Predicate::Native(NativePredicate::NotContains))
                 }
+                no => unreachable!("Unexpected syntactic sugar op {:?}", no),
+                // TODO: Delete
                 // TODO: Could we remove these and assume that this function is never called with
                 // syntax sugar operations?
-                NativeOperation::DictContainsFromEntries => {
-                    Some(Predicate::Native(NativePredicate::DictContains))
-                }
-                NativeOperation::DictNotContainsFromEntries => {
-                    Some(Predicate::Native(NativePredicate::DictNotContains))
-                }
-                NativeOperation::SetContainsFromEntries => {
-                    Some(Predicate::Native(NativePredicate::SetContains))
-                }
-                NativeOperation::SetNotContainsFromEntries => {
-                    Some(Predicate::Native(NativePredicate::SetNotContains))
-                }
-                NativeOperation::ArrayContainsFromEntries => {
-                    Some(Predicate::Native(NativePredicate::ArrayContains))
-                }
+                // NativeOperation::DictContainsFromEntries => {
+                //     Some(Predicate::Native(NativePredicate::DictContains))
+                // }
+                // NativeOperation::DictNotContainsFromEntries => {
+                //     Some(Predicate::Native(NativePredicate::DictNotContains))
+                // }
+                // NativeOperation::SetContainsFromEntries => {
+                //     Some(Predicate::Native(NativePredicate::SetContains))
+                // }
+                // NativeOperation::SetNotContainsFromEntries => {
+                //     Some(Predicate::Native(NativePredicate::SetNotContains))
+                // }
+                // NativeOperation::ArrayContainsFromEntries => {
+                //     Some(Predicate::Native(NativePredicate::ArrayContains))
+                // }
             },
             OperationType::Custom(cpr) => Some(Predicate::Custom(cpr.clone())),
         }

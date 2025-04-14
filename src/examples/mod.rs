@@ -1,17 +1,18 @@
 pub mod custom;
 
-use std::collections::HashMap;
+use std::collections::HashSet;
 
 use anyhow::{anyhow, Result};
 use custom::{eth_dos_batch, eth_friend_batch};
 
 use crate::{
     backends::plonky2::mock::signedpod::MockSigner,
-    frontend::{
+    frontend::{MainPodBuilder, SignedPod, SignedPodBuilder},
+    middleware::{
         containers::{Dictionary, Set},
-        CustomPredicateRef, MainPodBuilder, SignedPod, SignedPodBuilder, Statement, TypedValue,
+        CustomPredicateRef, Key, Params, PodType, Statement, TypedValue, Value, KEY_SIGNER,
+        KEY_TYPE,
     },
-    middleware::{Params, PodType, KEY_SIGNER, KEY_TYPE},
     op,
 };
 
@@ -31,12 +32,9 @@ pub fn zu_kyc_sign_pod_builders(
     pay_stub.insert("startDate", 1706367566);
 
     let mut sanction_list = SignedPodBuilder::new(params);
-    let sanctions_values = ["A343434340"].map(TypedValue::from);
+    let sanctions_values: HashSet<Value> = ["A343434340"].iter().map(|s| Value::from(*s)).collect();
 
-    sanction_list.insert(
-        "sanctionList",
-        TypedValue::Set(Set::new(sanctions_values.into()).unwrap()),
-    );
+    sanction_list.insert("sanctionList", Set::new(sanctions_values).unwrap());
 
     (gov_id, pay_stub, sanction_list)
 }
@@ -47,7 +45,7 @@ pub fn zu_kyc_pod_builder(
     pay_stub: &SignedPod,
     sanction_list: &SignedPod,
 ) -> Result<MainPodBuilder> {
-    let sanction_set = match sanction_list.kvs.get("sanctionList") {
+    let sanction_set = match sanction_list.get("sanctionList").map(|v| v.typed()) {
         Some(TypedValue::Set(s)) => Ok(s),
         _ => Err(anyhow!("Missing sanction list!")),
     }?;
@@ -65,9 +63,7 @@ pub fn zu_kyc_pod_builder(
         set_not_contains,
         (sanction_list, "sanctionList"),
         (gov_id, "idNumber"),
-        sanction_set
-            .middleware_set()
-            .prove_nonexistence(id_number_value)?
+        sanction_set.prove_nonexistence(id_number_value)?
     ))?;
     kyc.pub_op(op!(lt, (gov_id, "dateOfBirth"), now_minus_18y))?;
     kyc.pub_op(op!(
@@ -111,14 +107,14 @@ pub fn eth_dos_pod_builder(
     alice_bob_ethdos.add_signed_pod(charlie_attestation);
 
     // Attestation POD entries
-    let alice_pubkey = *alice_attestation
-        .kvs()
-        .get(&KEY_SIGNER.into())
-        .ok_or(anyhow!("Could not find Alice's public key!"))?;
-    let charlie_pubkey = *charlie_attestation
-        .kvs()
-        .get(&KEY_SIGNER.into())
-        .ok_or(anyhow!("Could not find Charlie's public key!"))?;
+    let alice_pubkey = alice_attestation
+        .get(KEY_SIGNER)
+        .expect("Could not find Alice's public key!")
+        .clone();
+    let charlie_pubkey = charlie_attestation
+        .get(KEY_SIGNER)
+        .expect("Could not find Charlie's public key!")
+        .clone();
 
     // Include Alice and Bob's keys as public statements. We don't
     // want to reveal the middleman.
@@ -146,7 +142,7 @@ pub fn eth_dos_pod_builder(
     ))?;
 
     // Alice and Charlie are ETH friends.
-    let attestation_is_signed_pod = Statement::from((alice_attestation, KEY_TYPE));
+    let attestation_is_signed_pod = alice_attestation.get_statement(KEY_TYPE).unwrap();
     let attestation_signed_by_alice =
         alice_bob_ethdos.priv_op(op!(eq, (alice_attestation, KEY_SIGNER), alice_pubkey_copy))?;
     let alice_attests_to_charlie = alice_bob_ethdos.priv_op(op!(
@@ -163,7 +159,7 @@ pub fn eth_dos_pod_builder(
     ))?;
 
     // ...and so are Chuck and Bob.
-    let attestation_is_signed_pod = Statement::from((charlie_attestation, KEY_TYPE));
+    let attestation_is_signed_pod = charlie_attestation.get_statement(KEY_TYPE).unwrap();
     let attestation_signed_by_charlie =
         alice_bob_ethdos.priv_op(op!(eq, (charlie_attestation, KEY_SIGNER), charlie_pubkey))?;
     let charlie_attests_to_bob = alice_bob_ethdos.priv_op(op!(
@@ -240,7 +236,7 @@ pub fn great_boy_pod_builder(
     params: &Params,
     good_boy_pods: [&SignedPod; 4],
     friend_pods: [&SignedPod; 2],
-    good_boy_issuers: &TypedValue,
+    good_boy_issuers: &Value,
     receiver: &str,
 ) -> Result<MainPodBuilder> {
     // Attestment chain (issuer -> good boy -> great boy):
@@ -276,18 +272,15 @@ pub fn great_boy_pod_builder(
                 PodType::MockSigned as i64
             ))?;
             // Each good boy POD comes from a valid issuer
-            let good_boy_proof = match good_boy_issuers {
-                TypedValue::Dictionary(dict) => Ok(dict),
+            let good_boy_proof = match good_boy_issuers.typed() {
+                TypedValue::Set(set) => Ok(set),
                 _ => Err(anyhow!("Invalid good boy issuers!")),
             }?
-            .middleware_dict()
-            .prove(pod_kvs.get(&KEY_SIGNER.into()).unwrap())?
-            .1;
+            .prove(pod_kvs.get(&Key::from(KEY_SIGNER)).unwrap())?;
             great_boy.pub_op(op!(
-                dict_contains,
+                set_contains,
                 good_boy_issuers,
                 (good_boy_pods[good_boy_idx * 2 + issuer_idx], KEY_SIGNER),
-                0,
                 good_boy_proof
             ))?;
             // Each good boy has 2 good boy pods
@@ -365,11 +358,8 @@ pub fn great_boy_pod_full_flow() -> Result<MainPodBuilder> {
     alice_friend_pods.push(friend.sign(&mut bob_signer).unwrap());
     alice_friend_pods.push(friend.sign(&mut charlie_signer).unwrap());
 
-    let good_boy_issuers = TypedValue::Dictionary(Dictionary::new(
-        good_boy_issuers
-            .into_iter()
-            .map(|issuer| (issuer.to_string(), 0.into()))
-            .collect(),
+    let good_boy_issuers = Value::from(Set::new(
+        good_boy_issuers.into_iter().map(Value::from).collect(),
     )?);
 
     great_boy_pod_builder(
@@ -405,13 +395,15 @@ pub fn tickets_pod_builder(
     signed_pod: &SignedPod,
     expected_event_id: i64,
     expect_consumed: bool,
-    blacklisted_emails: &Dictionary,
+    blacklisted_emails: &Set,
 ) -> Result<MainPodBuilder> {
-    let attendee_email_value = signed_pod.kvs.get("attendeeEmail").unwrap();
-    let attendee_nin_blacklist_pf = blacklisted_emails
-        .middleware_dict()
-        .prove_nonexistence(&attendee_email_value.into())?;
-    let blacklisted_email_dict_value = TypedValue::Dictionary(blacklisted_emails.clone());
+    let attendee_email_value = signed_pod
+        .kvs()
+        .get(&Key::from("attendeeEmail"))
+        .unwrap()
+        .clone();
+    let attendee_nin_blacklist_pf = blacklisted_emails.prove_nonexistence(&attendee_email_value)?;
+    let blacklisted_email_set_value = Value::from(TypedValue::Set(blacklisted_emails.clone()));
     // Create a main pod referencing this signed pod with some statements
     let mut builder = MainPodBuilder::new(params);
     builder.add_signed_pod(signed_pod);
@@ -420,7 +412,7 @@ pub fn tickets_pod_builder(
     builder.pub_op(op!(eq, (signed_pod, "isRevoked"), false))?;
     builder.pub_op(op!(
         dict_not_contains,
-        blacklisted_email_dict_value,
+        blacklisted_email_set_value,
         (signed_pod, "attendeeEmail"),
         attendee_nin_blacklist_pf
     ))?;
@@ -431,11 +423,5 @@ pub fn tickets_pod_full_flow() -> Result<MainPodBuilder> {
     let params = Params::default();
     let builder = tickets_sign_pod_builder(&params);
     let signed_pod = builder.sign(&mut MockSigner { pk: "test".into() }).unwrap();
-    tickets_pod_builder(
-        &params,
-        &signed_pod,
-        123,
-        true,
-        &Dictionary::new(HashMap::new())?,
-    )
+    tickets_pod_builder(&params, &signed_pod, 123, true, &Set::new(HashSet::new())?)
 }

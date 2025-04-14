@@ -95,6 +95,24 @@ impl From<Hash> for TypedValue {
     }
 }
 
+impl From<Set> for TypedValue {
+    fn from(s: Set) -> Self {
+        TypedValue::Set(s)
+    }
+}
+
+impl From<Dictionary> for TypedValue {
+    fn from(d: Dictionary) -> Self {
+        TypedValue::Dictionary(d)
+    }
+}
+
+impl From<Array> for TypedValue {
+    fn from(a: Array) -> Self {
+        TypedValue::Array(a)
+    }
+}
+
 impl From<PodType> for TypedValue {
     fn from(t: PodType) -> Self {
         TypedValue::from(t as i64)
@@ -333,12 +351,6 @@ impl fmt::Display for PodType {
         }
     }
 }
-
-// impl From<PodType> for RawValue {
-//     fn from(v: PodType) -> Self {
-//         RawValue::from(v as i64)
-//     }
-// }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Params {

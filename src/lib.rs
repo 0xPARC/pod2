@@ -6,5 +6,5 @@ pub mod frontend;
 pub mod middleware;
 mod util;
 
-// #[cfg(test)]
-// pub mod examples;
+#[cfg(test)]
+pub mod examples;

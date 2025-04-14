@@ -10,24 +10,17 @@ use itertools::Itertools;
 // use schemars::JsonSchema;
 
 // use serde::{Deserialize, Serialize};
-use crate::{
-    // frontend::serialization::*,
-    middleware::{
-        self, hash_str, AnchoredKey, Hash, Key, MainPodInputs, NativeOperation, NativePredicate,
-        OperationAux, Params, PodId, PodProver, PodSigner, Predicate, Statement, StatementArg,
-        Value, EMPTY_VALUE, KEY_SIGNER, KEY_TYPE, SELF,
-    },
+use crate::middleware::{
+    self, hash_str, AnchoredKey, Hash, Key, MainPodInputs, NativeOperation, NativePredicate,
+    OperationAux, Params, PodId, PodProver, PodSigner, Predicate, Statement, StatementArg,
+    TypedValue, Value, EMPTY_VALUE, KEY_SIGNER, KEY_TYPE, SELF,
 };
 
 pub mod containers;
 mod custom;
 mod operation;
-// mod predicate;
-// mod serialization;
-// mod statement;
 pub use custom::*;
 pub use operation::*;
-// pub use statement::*;
 
 /// This type is just for presentation purposes.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -36,130 +29,6 @@ pub enum PodClass {
     Signed,
     Main,
 }
-
-// TODO: Delete
-// #[derive(Clone, Debug, PartialEq, Eq)]
-// // #[schemars(transform = serialization::transform_value_schema)]
-// pub enum TypedValue {
-//     // Serde cares about the order of the enum variants, with untagged variants
-//     // appearing at the end.
-//     // Variants without "untagged" will be serialized as "tagged" values by
-//     // default, meaning that a Set appears in JSON as {"Set":[...]}
-//     // and not as [...]
-//     // Arrays, Strings and Booleans are untagged, as there is a natural JSON
-//     // representation for them that is unambiguous to deserialize and is fully
-//     // compatible with the semantics of the POD types.
-//     // As JSON integers do not specify precision, and JavaScript is limited to
-//     // 53-bit precision for integers, integers are represented as tagged
-//     // strings, with a custom serializer and deserializer.
-//     // TAGGED TYPES:
-//     Set(Set),
-//     Dictionary(Dictionary),
-//     Int(
-//         // #[serde(serialize_with = "serialize_i64", deserialize_with = "deserialize_i64")]
-//         // #[schemars(with = "String", regex(pattern = r"^\d+$"))]
-//         i64,
-//     ),
-//     // Uses the serialization for middleware::Value:
-//     Raw(middleware::RawValue),
-//     // UNTAGGED TYPES:
-//     // #[serde(untagged)]
-//     // #[schemars(skip)]
-//     Array(Array),
-//     // #[serde(untagged)]
-//     // #[schemars(skip)]
-//     String(String),
-//     // #[serde(untagged)]
-//     // #[schemars(skip)]
-//     Bool(bool),
-// }
-//
-// impl h::Hash for TypedValue {
-//     fn hash<H: Hasher>(&self, state: &mut H) {
-//         // Hash the discriminant first
-//         std::mem::discriminant(self).hash(state);
-//
-//         // Hash the inner values only for types that implement Hash
-//         match self {
-//             TypedValue::String(s) => s.hash(state),
-//             TypedValue::Int(i) => i.hash(state),
-//             TypedValue::Bool(b) => b.hash(state),
-//             TypedValue::Dictionary(d) => d.middleware_dict().commitment().hash(state),
-//             TypedValue::Set(s) => s.middleware_set().commitment().hash(state),
-//             TypedValue::Array(a) => a.middleware_array().commitment().hash(state),
-//             TypedValue::Raw(r) => r.hash(state),
-//         }
-//     }
-// }
-//
-// impl From<&str> for TypedValue {
-//     fn from(s: &str) -> Self {
-//         TypedValue::String(s.to_string())
-//     }
-// }
-//
-// impl From<i64> for TypedValue {
-//     fn from(v: i64) -> Self {
-//         TypedValue::Int(v)
-//     }
-// }
-//
-// impl From<bool> for TypedValue {
-//     fn from(b: bool) -> Self {
-//         TypedValue::Bool(b)
-//     }
-// }
-//
-// impl From<&TypedValue> for middleware::RawValue {
-//     fn from(v: &TypedValue) -> Self {
-//         match v {
-//             TypedValue::String(s) => hash_str(s).value(),
-//             TypedValue::Int(v) => middleware::RawValue::from(*v),
-//             TypedValue::Bool(b) => middleware::RawValue::from(*b as i64),
-//             TypedValue::Dictionary(d) => d.middleware_dict().commitment().value(),
-//             TypedValue::Set(s) => s.middleware_set().commitment().value(),
-//             TypedValue::Array(a) => a.middleware_array().commitment().value(),
-//             TypedValue::Raw(v) => *v,
-//         }
-//     }
-// }
-//
-// impl From<middleware::RawValue> for TypedValue {
-//     fn from(v: middleware::RawValue) -> Self {
-//         Self::Raw(v)
-//     }
-// }
-//
-// impl From<middleware::Hash> for TypedValue {
-//     fn from(v: middleware::Hash) -> Self {
-//         Self::Raw(v.into())
-//     }
-// }
-//
-// impl TryInto<i64> for TypedValue {
-//     type Error = Error;
-//     fn try_into(self) -> std::result::Result<i64, Self::Error> {
-//         if let TypedValue::Int(n) = self {
-//             Ok(n)
-//         } else {
-//             Err(anyhow!("Value not an int"))
-//         }
-//     }
-// }
-//
-// impl fmt::Display for TypedValue {
-//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         match self {
-//             TypedValue::String(s) => write!(f, "\"{}\"", s),
-//             TypedValue::Int(v) => write!(f, "{}", v),
-//             TypedValue::Bool(b) => write!(f, "{}", b),
-//             TypedValue::Dictionary(d) => write!(f, "dict:{}", d.middleware_dict().commitment()),
-//             TypedValue::Set(s) => write!(f, "set:{}", s.middleware_set().commitment()),
-//             TypedValue::Array(a) => write!(f, "arr:{}", a.middleware_array().commitment()),
-//             TypedValue::Raw(v) => write!(f, "{}", v),
-//         }
-//     }
-// }
 
 #[derive(Clone, Debug)]
 pub struct SignedPodBuilder {
@@ -193,22 +62,7 @@ impl SignedPodBuilder {
         // Sign POD with committed KV store.
         let pod = signer.sign(&self.params, &self.kvs)?;
 
-        // TODO: Delete
-        // let mut kvs = self.kvs.clone();
-        // Type and signer information are passed in by the
-        // backend. Include these in the frontend representation.
-        // let mid_kvs = pod.kvs();
-        // let pod_type = mid_kvs
-        //     .get(&AnchoredKey::new(pod.id(), KEY_TYPE))
-        //     .cloned()
-        //     .ok_or(anyhow!("Missing POD type information in POD: {:?}", pod))?;
-        // let pod_signer = mid_kvs
-        //     .get(&AnchoredKey::new(pod.id(), KEY_SIGNER))
-        //     .cloned()
-        //     .ok_or(anyhow!("Missing POD signer in POD: {:?}", pod))?;
-        // kvs.insert(KEY_TYPE.to_string(), pod_type.into());
-        // kvs.insert(KEY_SIGNER.to_string(), pod_signer.into());
-        Ok(SignedPod { pod })
+        Ok(SignedPod::new(pod))
     }
 }
 
@@ -218,12 +72,8 @@ impl SignedPodBuilder {
 // #[serde(try_from = "SignedPodHelper", into = "SignedPodHelper")]
 pub struct SignedPod {
     pub pod: Box<dyn middleware::Pod>,
-    // TODO: Delete
-    // /// Key-value pairs as represented in the frontend. These should
-    // /// correspond to the entries of `pod.kvs()` after hashing and
-    // /// replacing each key with its corresponding anchored key.
-    // #[serde(serialize_with = "ordered_map")]
-    // pub kvs: HashMap<String, TypedValue>,
+    // We store a copy of the key values for quick access
+    kvs: HashMap<Key, Value>,
 }
 
 impl fmt::Display for SignedPod {
@@ -241,18 +91,32 @@ impl fmt::Display for SignedPod {
 }
 
 impl SignedPod {
+    pub fn new(pod: Box<dyn middleware::Pod>) -> Self {
+        let kvs = pod
+            .kvs()
+            .into_iter()
+            .map(|(AnchoredKey { key, .. }, v)| (key, v))
+            .collect();
+        Self { pod, kvs }
+    }
     pub fn id(&self) -> PodId {
         self.pod.id()
     }
     pub fn verify(&self) -> Result<()> {
         self.pod.verify()
     }
-    pub fn kvs(&self) -> HashMap<Key, Value> {
-        self.pod
-            .kvs()
-            .into_iter()
-            .map(|(AnchoredKey { key, .. }, v)| (key, v))
-            .collect()
+    pub fn kvs(&self) -> &HashMap<Key, Value> {
+        &self.kvs
+    }
+    pub fn get(&self, key: impl Into<Key>) -> Option<&Value> {
+        self.kvs.get(&key.into())
+    }
+    // Returns the ValueOf statement that defines key if it exists.
+    pub fn get_statement(&self, key: impl Into<Key>) -> Option<Statement> {
+        let key: Key = key.into();
+        self.kvs()
+            .get(&key)
+            .map(|value| Statement::ValueOf(AnchoredKey::from((self.id(), key)), value.clone()))
     }
 }
 
@@ -266,7 +130,6 @@ pub struct MainPodBuilder {
     pub public_statements: Vec<Statement>,
     // Internal state
     const_cnt: usize,
-    // key_table: HashMap<Hash, String>,
 }
 
 impl fmt::Display for MainPodBuilder {
@@ -305,27 +168,8 @@ impl MainPodBuilder {
     }
     pub fn add_signed_pod(&mut self, pod: &SignedPod) {
         self.input_signed_pods.push(pod.clone());
-        // TODO: Delete
-        // // Add key-hash correspondences to key table.
-        // pod.kvs.iter().for_each(|(key, _)| {
-        //     self.key_table.insert(hash_str(key), key.clone());
-        // });
     }
     pub fn add_main_pod(&mut self, pod: MainPod) {
-        // TODO: Delete
-        // // Add key-hash and POD ID-class correspondences to tables.
-        // pod.public_statements
-        //     .iter()
-        //     .flat_map(|s| &s.args)
-        //     .flat_map(|arg| match arg {
-        //         StatementArg::Key(AnchoredKey { key, .. }) => {
-        //             Some((key.hash(), key.name().to_string()))
-        //         }
-        //         _ => None,
-        //     })
-        //     .for_each(|(hash, key)| {
-        //         self.key_table.insert(hash, key);
-        //     });
         self.input_main_pods.push(pod);
     }
     pub fn insert(&mut self, st_op: (Statement, Operation)) {
@@ -374,8 +218,40 @@ impl MainPodBuilder {
         self.op(false, op)
     }
 
-    fn op(&mut self, public: bool, mut op: Operation) -> Result<Statement, anyhow::Error> {
+    // Lower syntactic sugar operation into backend compatible operation.
+    // - {Dict,Array,Set}Contains/NotContains becomes Contains/NotContains.
+    fn lower_op(op: Operation) -> Operation {
         use NativeOperation::*;
+        use OperationType::*;
+        match op.0 {
+            Native(DictContainsFromEntries) => {
+                let [dict, key, value] = op.1.try_into().unwrap(); // TODO: Error handling
+                Operation(Native(ContainsFromEntries), vec![dict, key, value], op.2)
+            }
+            Native(DictNotContainsFromEntries) => {
+                let [dict, key] = op.1.try_into().unwrap(); // TODO: Error handling
+                Operation(Native(NotContainsFromEntries), vec![dict, key], op.2)
+            }
+            Native(SetContainsFromEntries) => {
+                let [set, value] = op.1.try_into().unwrap(); // TODO: Error handling
+                let empty = OperationArg::Literal(Value::from(TypedValue::Raw(EMPTY_VALUE)));
+                Operation(Native(ContainsFromEntries), vec![set, value, empty], op.2)
+            }
+            Native(SetNotContainsFromEntries) => {
+                let [set, value] = op.1.try_into().unwrap(); // TODO: Error handling
+                Operation(Native(NotContainsFromEntries), vec![set, value], op.2)
+            }
+            Native(ArrayContainsFromEntries) => {
+                let [array, index, value] = op.1.try_into().unwrap(); // TODO: Error handling
+                Operation(Native(ContainsFromEntries), vec![array, index, value], op.2)
+            }
+            _ => op,
+        }
+    }
+
+    fn op(&mut self, public: bool, op: Operation) -> Result<Statement, anyhow::Error> {
+        use NativeOperation::*;
+        let mut op = Self::lower_op(op);
         let Operation(op_type, ref mut args, _) = &mut op;
         // TODO: argument type checking
         let pred = op_type.output_predicate().map(Ok).unwrap_or_else(|| {
@@ -568,14 +444,6 @@ impl MainPodBuilder {
             self.public_statements.push(st.clone());
         }
 
-        // TODO: Delete
-        // Add key-hash pairs in statement to table.
-        // st.args.iter().for_each(|arg| {
-        //     if let StatementArg::Key(AnchoredKey { key, .. }) = arg {
-        //         self.key_table.insert(key.hash(), key.name().to_string());
-        //     }
-        // });
-
         self.statements.push(st);
         Ok(self.statements[self.statements.len() - 1].clone())
     }
@@ -590,6 +458,7 @@ impl MainPodBuilder {
         self.literal(false, v)
     }
 
+    // TODO: Keep a list of created literals and reuse them instead of creating ValueOf duplicates.
     fn literal<V: Clone + Into<Value>>(&mut self, public: bool, v: &V) -> Result<Statement> {
         let v: Value = v.clone().into();
         let k = format!("c{}", self.const_cnt);
@@ -940,10 +809,6 @@ impl MainPodCompiler {
                 panic!("too many statements");
             }
         }
-        // let public_statements = public_statements
-        //     .iter()
-        //     .map(|st| self.compile_st(st))
-        //     .collect::<Result<Vec<_>>>()?;
         Ok((self.statements, self.operations, public_statements.to_vec()))
     }
 }
@@ -1008,9 +873,9 @@ pub mod build_utils {
         (set_not_contains, $set:expr, $value:expr, $aux:expr) => { $crate::frontend::Operation(
             $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::SetNotContainsFromEntries),
             $crate::op_args!($set, $value), $crate::middleware::OperationAux::MerkleProof($aux)) };
-        (array_contains, $array:expr, $value:expr, $aux:expr) => { $crate::frontend::Operation(
+        (array_contains, $array:expr, $index:expr, $value:expr, $aux:expr) => { $crate::frontend::Operation(
             $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::ArrayContainsFromEntries),
-            $crate::op_args!($array, $value), $crate::middleware::OperationAux::MerkleProof($aux)) };
+            $crate::op_args!($array, $index, $value), $crate::middleware::OperationAux::MerkleProof($aux)) };
     }
 }
 
