@@ -113,6 +113,12 @@ impl From<Array> for TypedValue {
     }
 }
 
+impl From<RawValue> for TypedValue {
+    fn from(v: RawValue) -> Self {
+        TypedValue::Raw(v)
+    }
+}
+
 impl From<PodType> for TypedValue {
     fn from(t: PodType) -> Self {
         TypedValue::from(t as i64)

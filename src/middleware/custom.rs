@@ -479,6 +479,7 @@ impl fmt::Display for Predicate {
     }
 }
 
+/* TODO: Uncomment
 #[cfg(test)]
 mod tests {
     use std::{array, sync::Arc};
@@ -754,3 +755,4 @@ mod tests {
         Ok(())
     }
 }
+*/

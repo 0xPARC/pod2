@@ -24,10 +24,13 @@ use plonky2::{
     plonk::circuit_builder::CircuitBuilder,
 };
 
-use crate::backends::plonky2::{
-    basetypes::{Hash, RawValue, D, EMPTY_HASH, EMPTY_VALUE, F, HASH_SIZE},
-    circuits::common::{CircuitBuilderPod, ValueTarget},
-    primitives::merkletree::MerkleProof,
+use crate::{
+    backends::plonky2::{
+        basetypes::D,
+        circuits::common::{CircuitBuilderPod, ValueTarget},
+        primitives::merkletree::MerkleProof,
+    },
+    middleware::{Hash, RawValue, EMPTY_HASH, EMPTY_VALUE, F, HASH_SIZE},
 };
 
 /// `MerkleProofGadget` allows to verify both proofs of existence and proofs

@@ -20,7 +20,7 @@ use crate::{
 
 pub fn zu_kyc_sign_pod_builders(
     params: &Params,
-    _sanction_set: &TypedValue,
+    sanction_set: Value,
 ) -> (SignedPodBuilder, SignedPodBuilder, SignedPodBuilder) {
     let mut gov_id = SignedPodBuilder::new(params);
     gov_id.insert("idNumber", "4242424242");
@@ -32,9 +32,8 @@ pub fn zu_kyc_sign_pod_builders(
     pay_stub.insert("startDate", 1706367566);
 
     let mut sanction_list = SignedPodBuilder::new(params);
-    let sanctions_values: HashSet<Value> = ["A343434340"].iter().map(|s| Value::from(*s)).collect();
 
-    sanction_list.insert("sanctionList", Set::new(sanctions_values).unwrap());
+    sanction_list.insert("sanctionList", sanction_set);
 
     (gov_id, pay_stub, sanction_list)
 }
@@ -53,7 +52,7 @@ pub fn zu_kyc_pod_builder(
     let now_minus_1y: i64 = 1706367566;
 
     let gov_id_kvs = gov_id.kvs();
-    let id_number_value = gov_id_kvs.get(&"idNumber".into()).unwrap();
+    let id_number_value = gov_id_kvs.get(&Key::from("idNumber")).unwrap();
 
     let mut kyc = MainPodBuilder::new(params);
     kyc.add_signed_pod(gov_id);

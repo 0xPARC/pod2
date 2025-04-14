@@ -147,9 +147,8 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        constants::MAX_DEPTH,
         frontend,
-        middleware::{self, EMPTY_HASH, F},
+        middleware::{self, EMPTY_VALUE, F},
     };
 
     #[test]
@@ -177,30 +176,25 @@ pub mod tests {
         assert!(bad_pod.verify().is_err());
 
         let mut bad_pod = pod.clone();
-        let bad_kv = (
-            hash_str(KEY_SIGNER).into(),
-            RawValue(PodId(EMPTY_HASH).0 .0),
-        );
-        let bad_kvs_mt = &bad_pod
-            .kvs()
+        let bad_kv = (Key::from(KEY_SIGNER), Value::from(EMPTY_VALUE));
+        let bad_kvs = bad_pod
+            .kvs
+            .clone()
             .into_iter()
-            .map(|(AnchoredKey { key, .. }, v)| (key.raw(), v))
             .chain(iter::once(bad_kv))
-            .collect::<HashMap<RawValue, RawValue>>();
-        let bad_mt = MerkleTree::new(MAX_DEPTH, bad_kvs_mt)?;
-        bad_pod.dict.mt = bad_mt;
+            .collect::<HashMap<Key, Value>>();
+        bad_pod.kvs = bad_kvs;
         assert!(bad_pod.verify().is_err());
 
         let mut bad_pod = pod.clone();
-        let bad_kv = (hash_str(KEY_TYPE).into(), RawValue::from(0));
-        let bad_kvs_mt = &bad_pod
-            .kvs()
+        let bad_kv = (Key::from(KEY_TYPE), Value::from(0));
+        let bad_kvs = bad_pod
+            .kvs
+            .clone()
             .into_iter()
-            .map(|(AnchoredKey { key, .. }, v)| (key.raw(), v))
             .chain(iter::once(bad_kv))
-            .collect::<HashMap<RawValue, RawValue>>();
-        let bad_mt = MerkleTree::new(MAX_DEPTH, bad_kvs_mt)?;
-        bad_pod.dict.mt = bad_mt;
+            .collect::<HashMap<Key, Value>>();
+        bad_pod.kvs = bad_kvs;
         assert!(bad_pod.verify().is_err());
 
         Ok(())

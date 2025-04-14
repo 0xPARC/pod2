@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 /// This file implements the types defined at
 /// https://0xparc.github.io/pod2/values.html#dictionary-array-set .
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 
 #[cfg(feature = "backend_plonky2")]
 use crate::backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree};
@@ -34,8 +34,10 @@ impl Dictionary {
     pub fn commitment(&self) -> Hash {
         self.mt.root()
     }
-    pub fn get(&self, key: &Key) -> Option<&Value> {
-        self.kvs.get(key)
+    pub fn get(&self, key: &Key) -> Result<&Value> {
+        self.kvs
+            .get(key)
+            .ok_or_else(|| anyhow!("key \"{}\" not found", key.name()))
     }
     pub fn prove(&self, key: &Key) -> Result<(&Value, MerkleProof)> {
         let (_, mtp) = self.mt.prove(&RawValue(key.hash().0))?;
@@ -156,8 +158,10 @@ impl Array {
     pub fn commitment(&self) -> Hash {
         self.mt.root()
     }
-    pub fn get(&self, i: usize) -> Option<&Value> {
-        self.array.get(i)
+    pub fn get(&self, i: usize) -> Result<&Value> {
+        self.array
+            .get(i)
+            .ok_or_else(|| anyhow!("index {} out of bounds 0..{}", i, self.array.len()))
     }
     pub fn prove(&self, i: usize) -> Result<(&Value, MerkleProof)> {
         let (_, mtp) = self.mt.prove(&RawValue::from(i as i64))?;

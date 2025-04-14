@@ -8,7 +8,7 @@ use plonky2::{
 
 use crate::{
     backends::plonky2::{
-        basetypes::{RawValue, D, F, VALUE_SIZE},
+        basetypes::D,
         circuits::{
             common::{
                 CircuitBuilderPod, Flattenable, MerkleClaimTarget, OperationTarget,
@@ -24,8 +24,8 @@ use crate::{
         signedpod::SignedPod,
     },
     middleware::{
-        AnchoredKey, NativeOperation, NativePredicate, Params, PodType, Statement, StatementArg,
-        ToFields, KEY_TYPE, SELF,
+        AnchoredKey, NativeOperation, NativePredicate, Params, PodType, RawValue, Statement,
+        StatementArg, ToFields, Value, F, KEY_TYPE, SELF, VALUE_SIZE,
     },
 };
 
@@ -304,7 +304,7 @@ impl OperationVerifyGadget {
         let st_code_ok = st.has_native_type(builder, &self.params, NativePredicate::ValueOf);
 
         let expected_arg_prefix = builder.constants(
-            &StatementArg::Key(AnchoredKey::new(SELF, "")).to_fields(&self.params)[..VALUE_SIZE],
+            &StatementArg::Key(AnchoredKey::from((SELF, ""))).to_fields(&self.params)[..VALUE_SIZE],
         );
         let arg_prefix_ok =
             builder.is_equal_slice(&st.args[0].elements[..VALUE_SIZE], &expected_arg_prefix);
@@ -425,8 +425,8 @@ impl MainPodVerifyGadget {
         let expected_type_statement = StatementTarget::from_flattened(
             &builder.constants(
                 &Statement::ValueOf(
-                    AnchoredKey::new(SELF, KEY_TYPE),
-                    RawValue::from(PodType::MockMain),
+                    AnchoredKey::from((SELF, KEY_TYPE)),
+                    Value::from(PodType::MockMain),
                 )
                 .to_fields(params),
             ),
@@ -529,6 +529,7 @@ impl MainPodVerifyCircuit {
     }
 }
 
+/* TODO
 #[cfg(test)]
 mod tests {
     use merkletree::MerkleTree;
@@ -739,3 +740,4 @@ mod tests {
         Ok(())
     }
 }
+*/

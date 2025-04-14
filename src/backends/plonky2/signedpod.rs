@@ -10,21 +10,21 @@ use crate::{
     },
     constants::MAX_DEPTH,
     middleware::{
-        containers::Dictionary, hash_str, AnchoredKey, Hash, Params, Pod, PodId, PodSigner,
-        PodType, RawValue, Statement, KEY_SIGNER, KEY_TYPE,
+        containers::Dictionary, hash_str, AnchoredKey, Hash, Key, Params, Pod, PodId, PodSigner,
+        PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE,
     },
 };
 
 pub struct Signer(pub SecretKey);
 
 impl PodSigner for Signer {
-    fn sign(&mut self, _params: &Params, kvs: &HashMap<Hash, RawValue>) -> Result<Box<dyn Pod>> {
+    fn sign(&mut self, _params: &Params, kvs: &HashMap<Key, Value>) -> Result<Box<dyn Pod>> {
         let mut kvs = kvs.clone();
         let pubkey = self.0.public_key();
-        kvs.insert(hash_str(KEY_SIGNER), pubkey.0);
-        kvs.insert(hash_str(KEY_TYPE), RawValue::from(PodType::Signed));
+        kvs.insert(Key::from(KEY_SIGNER), Value::from(pubkey.0));
+        kvs.insert(Key::from(KEY_TYPE), Value::from(PodType::Signed));
 
-        let dict = Dictionary::new(&kvs)?;
+        let dict = Dictionary::new(kvs)?;
         let id = RawValue::from(dict.commitment()); // PodId as Value
 
         let signature: Signature = self.0.sign(id)?;
@@ -46,8 +46,8 @@ pub struct SignedPod {
 impl Pod for SignedPod {
     fn verify(&self) -> Result<()> {
         // 1. Verify type
-        let value_at_type = self.dict.get(&hash_str(KEY_TYPE).into())?;
-        if RawValue::from(PodType::Signed) != value_at_type {
+        let value_at_type = self.dict.get(&Key::from(KEY_TYPE))?;
+        if Value::from(PodType::Signed) != *value_at_type {
             return Err(anyhow!(
                 "type does not match, expected Signed ({}), found {}",
                 PodType::Signed,
@@ -60,8 +60,9 @@ impl Pod for SignedPod {
             MAX_DEPTH,
             &self
                 .dict
+                .kvs()
                 .iter()
-                .map(|(&k, &v)| (k, v))
+                .map(|(k, v)| (k.raw(), v.raw()))
                 .collect::<HashMap<RawValue, RawValue>>(),
         )?;
         let id = PodId(mt.root());
@@ -74,8 +75,8 @@ impl Pod for SignedPod {
         }
 
         // 3. Verify signature
-        let pk_value = self.dict.get(&hash_str(KEY_SIGNER).into())?;
-        let pk = PublicKey(pk_value);
+        let pk_value = self.dict.get(&Key::from(KEY_SIGNER))?;
+        let pk = PublicKey(pk_value.raw());
         self.signature.verify(&pk, RawValue::from(id.0))?;
 
         Ok(())
@@ -88,20 +89,20 @@ impl Pod for SignedPod {
     fn pub_statements(&self) -> Vec<Statement> {
         let id = self.id();
         // By convention we put the KEY_TYPE first and KEY_SIGNER second
-        let mut kvs: HashMap<_, _> = self.dict.iter().collect();
-        let key_type = RawValue::from(hash_str(KEY_TYPE));
+        let mut kvs: HashMap<Key, Value> = self.dict.kvs().clone();
+        let key_type = Key::from(KEY_TYPE);
         let value_type = kvs.remove(&key_type).expect("KEY_TYPE");
-        let key_signer = RawValue::from(hash_str(KEY_SIGNER));
+        let key_signer = Key::from(KEY_SIGNER);
         let value_signer = kvs.remove(&key_signer).expect("KEY_SIGNER");
-        [(&key_type, value_type), (&key_signer, value_signer)]
+        [(key_type, value_type), (key_signer, value_signer)]
             .into_iter()
-            .chain(kvs.into_iter().sorted_by_key(|kv| kv.0))
+            .chain(kvs.into_iter().sorted_by_key(|kv| kv.0.hash()))
             // TODO: Refactor the SignedPod so that it uses `Key`
             // ALERT ALERT ALERT ALERT
             // ALERT ALERT ALERT ALERT
             // ALERT ALERT ALERT ALERT
             // ALERT ALERT ALERT ALERT
-            .map(|(_k, v)| Statement::ValueOf(AnchoredKey::new(id, ""), *v))
+            .map(|(_k, v)| Statement::ValueOf(AnchoredKey::from((id, "")), v))
             .collect()
     }
 

@@ -21,7 +21,10 @@ use plonky2::{
 };
 
 pub use super::signature_circuit::*;
-use crate::backends::plonky2::basetypes::{Proof, RawValue, C, D, F, VALUE_SIZE};
+use crate::{
+    backends::plonky2::basetypes::{Proof, C, D},
+    middleware::{RawValue, F, VALUE_SIZE},
+};
 
 lazy_static! {
     /// Signature prover parameters

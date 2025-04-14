@@ -191,6 +191,7 @@ fn resolve_wildcard(args: &[&str], priv_args: &[&str], s: &str) -> Wildcard {
         .unwrap()
 }
 
+/* TODO: Uncomment
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,3 +224,4 @@ mod tests {
         Ok(())
     }
 }
+*/

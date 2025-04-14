@@ -22,12 +22,15 @@ use plonky2::{
     },
 };
 
-use crate::backends::plonky2::{
-    basetypes::{Hash, Proof, RawValue, C, D, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE},
-    circuits::common::{CircuitBuilderPod, ValueTarget},
-    primitives::signature::{
-        PublicKey, SecretKey, Signature, DUMMY_PUBLIC_INPUTS, DUMMY_SIGNATURE,
+use crate::{
+    backends::plonky2::{
+        basetypes::{Proof, C, D},
+        circuits::common::{CircuitBuilderPod, ValueTarget},
+        primitives::signature::{
+            PublicKey, SecretKey, Signature, DUMMY_PUBLIC_INPUTS, DUMMY_SIGNATURE,
+        },
     },
+    middleware::{Hash, RawValue, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE},
 };
 
 lazy_static! {
@@ -170,7 +173,7 @@ impl SignatureVerifyTarget {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::backends::plonky2::{basetypes::Hash, primitives::signature::SecretKey};
+    use crate::{backends::plonky2::primitives::signature::SecretKey, middleware::Hash};
 
     #[test]
     fn test_signature_gadget() -> Result<()> {
