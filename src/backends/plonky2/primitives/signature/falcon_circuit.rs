@@ -33,8 +33,8 @@ use plonky2::{
 use crate::backends::plonky2::{
     basetypes::{Hash, Proof, Value, C, D, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE},
     circuits::common::{CircuitBuilderPod, ValueTarget},
-    primitives::falcon::{
-        hash_to_point::{hash_to_point, RATE_RANGE},
+    primitives::signature::falcon_lib::{
+        hash_to_point::{hash_to_point, hash_to_point_no_mod, RATE_RANGE},
         math::{FalconFelt, FastFft, Polynomial},
         Signature, FALCON_ENCODING_BITS, MODULUS, N, NONCE_ELEMENTS,
     },
@@ -155,7 +155,7 @@ pub fn assert_less<const NUM_BITS: usize>(
     builder.range_check(expr, NUM_BITS);
 }
 
-/// in Z_p[x]/(phi).
+/// PolynomialTarget represents an element in Z_p[x]/(phi) inside a circuit.
 /// This data type is only for polynomimals at the Falcon-512 field 12289
 /// represented over the Goldilocks field.
 /// Notice that the coefficients are not represented as Falcon
@@ -197,15 +197,15 @@ impl<const DEG: usize> PolynomialTarget<DEG> {
         let mut res: Target = coeffs[DEG - 1];
         for i in (0..DEG - 1).rev() {
             res = builder.mul_add(res, x, coeffs[i]);
-            // we can multiply X Falcon field elements together without
-            // overflowing the Goldilocks field; therefore, reduce modulus only
-            // one every Y iterations:
-            const Y: usize = 3; // TODO calculate X & Y
+            // Since Goldilocks:64 bits and Falcon field:14 bits, we can
+            // multiply 4 Falcon field elements together without overflowing the
+            // Goldilocks field. We're also doing additions, therefore, reduce
+            // modulus only one every Y iterations:
+            const Y: usize = 3;
             if i % Y == 0 {
                 res = FalconFTarget::modulus(builder, res);
             }
         }
-        // res = FalconFTarget::modulus(builder, res);
         res
     }
 
@@ -243,25 +243,9 @@ impl SignatureVerifyGadget {
         let msg = builder.add_virtual_value();
         let nonce_elems = builder.add_virtual_target_arr::<NONCE_ELEMENTS>();
 
-        let c = hash_to_point_gadget(builder, msg, nonce_elems)?;
+        let c = hash_to_point_gadget(builder, true, msg, nonce_elems)?;
 
-        // probabilistic proof for s1 == c - s2 * h (mod q)
-        // ==> s1 + s2*h == c
-        let s1_tau = s1.evaluate(builder, tau);
-        let s2_tau = s2.evaluate(builder, tau);
-        let c_tau = c.evaluate(builder, tau);
-        let h_tau = pk.evaluate(builder, tau);
-        let s2h_tau = s2h.evaluate(builder, tau);
-
-        // polynomial probabilistic product
-        let s2tau_htau_raw = builder.mul(s2_tau, h_tau);
-        let s2tau_htau = FalconFTarget::modulus(builder, s2tau_htau_raw);
-        builder.connect(s2tau_htau, s2h_tau); // TODO dependent on 'enabled'
-
-        // check s1(tau) + s2(tau) * h(tau) == c(tau)
-        let lhs_raw = builder.add(s1_tau, s2tau_htau);
-        let lhs = FalconFTarget::modulus(builder, lhs_raw);
-        // builder.connect(lhs, c_tau); // TODO dependent on 'enabled'
+        equality_check(builder, enabled, tau, s1, s2, pk, s2h, c)?;
 
         // norm check
         // TODO
@@ -302,6 +286,7 @@ impl SignatureVerifyGadget {
 
         // compute s1 to pass it as hint
         let c = hash_to_point(msg, &sig.nonce);
+        // let c = hash_to_point_no_mod(msg, &sig.nonce);
         let s1 = (c.fft() - sig.s2.fft().hadamard_mul(&sig.pk_poly().fft())).ifft();
         // let s1 = c.clone() - s2h.clone();
         // let s1 = c.clone() - s2h_reduced.clone();
@@ -310,11 +295,13 @@ impl SignatureVerifyGadget {
         // sanity check
         #[cfg(test)]
         {
+            // check product
             let s2_tau = sig.s2.evaluate(tau);
             let h_tau = pk.evaluate(tau);
             let s2h_tau = s2h.evaluate(tau);
             assert_eq!(s2_tau * h_tau, s2h_tau);
 
+            // check sum
             let s1_tau = s1.evaluate(tau);
             let c_tau = c.evaluate(tau);
             // assert_eq!(s1_tau + s2h_tau, c_tau);
@@ -325,9 +312,52 @@ impl SignatureVerifyGadget {
     }
 }
 
-/// Note: this gadget takes 4879 gates. // WIP: do a modified (cheaper) version.
+/// Computes the probabilistic proof for s1 == c - s2 * h (mod q)
+/// ==> s1 + s2*h == c
+fn equality_check(
+    builder: &mut CircuitBuilder<F, D>,
+    enabled: BoolTarget,
+    tau: Target,
+    s1: PolynomialTarget<N>,
+    s2: PolynomialTarget<N>,
+    h: PolynomialTarget<N>,
+    s2h: PolynomialTarget<{ 2 * N }>,
+    // note `c` could be with mod q not applied to its coefficients (q=Falcon
+    // prime)
+    c: PolynomialTarget<N>,
+) -> Result<()> {
+    let s1_tau = s1.evaluate(builder, tau);
+    let s2_tau = s2.evaluate(builder, tau);
+    let c_tau = c.evaluate(builder, tau);
+    let h_tau = h.evaluate(builder, tau);
+    let s2h_tau = s2h.evaluate(builder, tau);
+    let zero = builder.zero();
+
+    // polynomial probabilistic product
+    let s2tau_htau_raw = builder.mul(s2_tau, h_tau);
+    let s2tau_htau = FalconFTarget::modulus(builder, s2tau_htau_raw);
+    // here we could do only 1 select, and instead of using `zero` using the
+    // other value (s2tau_htau), but the code could be more confusing while only
+    // saving a single gate
+    let rhs = builder.select(enabled, s2h_tau, zero);
+    let lhs = builder.select(enabled, s2tau_htau, zero);
+    builder.connect(lhs, rhs);
+
+    // check s1(tau) + s2(tau) * h(tau) == c(tau)
+    let s1s2h_raw = builder.add(s1_tau, s2tau_htau);
+    let s1s2h = FalconFTarget::modulus(builder, s1s2h_raw);
+    // builder.connect(lhs, c_tau); // TODO dependent on 'enabled'
+    // TODO-NOTE: maybe don't do the full `s1(tau)+s2(tau)h(tau)-c(tau)==0`, and
+    // just compute the actual s1(x) polynomial, so that then the norm can be
+    // computed from it.
+
+    Ok(())
+}
+
+/// compatible with falcon/hash_to_point.rs#hash_to_point
 fn hash_to_point_gadget(
     builder: &mut CircuitBuilder<F, D>,
+    apply_mod: bool,
     message: ValueTarget,
     nonce_elems: [Target; NONCE_ELEMENTS],
 ) -> Result<PolynomialTarget<N>> {
@@ -358,7 +388,11 @@ fn hash_to_point_gadget(
         states[j + 1][..].copy_from_slice(perm_out.as_ref());
 
         for a in &states[j + 1][RATE_RANGE] {
-            res[i] = FalconFTarget::modulus(builder, *a);
+            res[i] = if apply_mod {
+                FalconFTarget::modulus(builder, *a)
+            } else {
+                *a
+            };
             i += 1;
         }
     }
@@ -420,7 +454,9 @@ pub mod tests {
     use crate::backends::plonky2::{
         basetypes::{Hash, F},
         circuits::common::CircuitBuilderPod,
-        primitives::falcon::{hash_to_point::hash_to_point, Nonce, SecretKey, SIG_NONCE_LEN},
+        primitives::signature::falcon_lib::{
+            hash_to_point::hash_to_point, Nonce, SecretKey, SIG_NONCE_LEN,
+        },
     };
 
     #[test]
@@ -448,6 +484,8 @@ pub mod tests {
         let expected_r_targ = builder.add_virtual_target();
         pw.set_target(expected_r_targ, r)?;
         builder.connect(r_targ, expected_r_targ);
+
+        dbg!(builder.num_gates()); // 11 gates
 
         // generate & verify proof
         let data = builder.build::<C>();
@@ -487,7 +525,7 @@ pub mod tests {
         let eval_targ: Target = p_targ.evaluate(&mut builder, x_targ);
         builder.connect(eval_targ, expected_eval_targ);
 
-        dbg!(builder.num_gates());
+        dbg!(builder.num_gates()); // 1634 gates
 
         // generate & verify proof
         let data = builder.build::<C>();
@@ -543,7 +581,7 @@ pub mod tests {
         let ftau_htau_targ = FalconFTarget::modulus(&mut builder, ftau_htau_targ_raw);
         builder.connect(ftau_htau_targ, fh_tau_targ);
 
-        dbg!(builder.num_gates());
+        dbg!(builder.num_gates()); // 6534 gates
 
         // generate & verify proof
         let data = builder.build::<C>();
@@ -583,12 +621,14 @@ pub mod tests {
         let expected_c_targ = builder.add_virtual_target_arr::<N>();
         pw.set_target_arr(&expected_c_targ, &c_padded)?;
 
-        let c_targ = hash_to_point_gadget(&mut builder, msg_targ, nonce_targ)?;
+        let c_targ = hash_to_point_gadget(&mut builder, true, msg_targ, nonce_targ)?;
         for i in 0..N {
             builder.connect(c_targ.0[i], expected_c_targ[i]);
         }
 
-        dbg!(builder.num_gates()); // 6534 gates
+        // apply_mod:true= 4879 gates,
+        // apply_mod:false= 64 gates.
+        dbg!(builder.num_gates());
 
         // generate & verify proof
         let data = builder.build::<C>();
@@ -625,6 +665,8 @@ pub mod tests {
         let signature_targ = SignatureVerifyGadget::build(&mut builder)?;
         signature_targ.set_targets(&mut pw, true, tau, sig.pk_poly().0.clone(), msg, sig)?;
 
+        // c no_mod = 9874 gates
+        // c with mod = 14687 gates
         dbg!(builder.num_gates());
 
         // generate & verify proof

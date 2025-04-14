@@ -17,7 +17,7 @@ use crate::{
         circuits::common::{CircuitBuilderPod, StatementArgTarget, StatementTarget, ValueTarget},
         primitives::{
             merkletree::{MerkleProof, MerkleProofExistenceGadget, MerkleProofExistenceTarget},
-            signature_proofbased::{PublicKey, SignatureVerifyGadget, SignatureVerifyTarget},
+            signature::proofbased::{PublicKey, SignatureVerifyGadget, SignatureVerifyTarget},
         },
         signedpod::SignedPod,
     },
@@ -193,7 +193,7 @@ pub mod tests {
     use crate::{
         backends::plonky2::{
             basetypes::C,
-            primitives::signature_proofbased::SecretKey,
+            primitives::signature::proofbased::SecretKey,
             signedpod::{SignedPod, Signer},
         },
         middleware::F,

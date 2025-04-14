@@ -18,19 +18,18 @@ pub(crate) use secret_key::{WIDTH_BIG_POLY_COEFFICIENT, WIDTH_SMALL_POLY_COEFFIC
 
 #[cfg(test)]
 mod tests {
+    use plonky2::field::types::Field;
     use rand::SeedableRng;
     use rand_chacha::ChaCha20Rng;
+
     // use winter_math::FieldElement;
     // use winter_utils::{Deserializable, Serializable};
     use super::{
         ByteReader, ByteWriter, Deserializable, DeserializationError, Felt, Serializable,
         Signature, Word,
     };
-
     // use crate::backends::plonky2::basetypes::{Value as Word, F};
-    use crate::backends::plonky2::primitives::falcon::SecretKey;
-
-    use plonky2::field::types::Field;
+    use crate::backends::plonky2::primitives::signature::falcon_lib::SecretKey;
 
     #[test]
     fn test_falcon_verification() {

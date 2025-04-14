@@ -17,7 +17,7 @@ use super::{
     },
     PubKeyPoly, PublicKey,
 };
-use crate::backends::plonky2::primitives::falcon::{
+use crate::backends::plonky2::primitives::signature::falcon_lib::{
     hash_to_point::hash_to_point, math::ntru_gen, SIG_NONCE_LEN, SK_LEN,
 };
 

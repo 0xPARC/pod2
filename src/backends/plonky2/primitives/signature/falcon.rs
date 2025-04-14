@@ -3,7 +3,7 @@
 //! https://github.com/0xPolygonMiden/crypto/tree/aa45474377e978050958958d75688e7a8d46b628/miden-crypto/src/dsa/rpo_falcon512/signature.rs#L49
 //!
 
-pub use super::falcon::{PublicKey, SecretKey, Signature};
+pub use super::falcon_lib::{PublicKey, SecretKey, Signature};
 
 #[cfg(test)]
 mod tests {
@@ -25,13 +25,11 @@ mod tests {
             proof::ProofWithPublicInputs,
         },
     };
-
     use rand::SeedableRng;
     use rand_chacha::ChaCha20Rng;
 
-    use crate::backends::plonky2::basetypes::{Proof, Value, C, D, F, VALUE_SIZE};
-
     use super::{PublicKey, SecretKey, Signature};
+    use crate::backends::plonky2::basetypes::{Proof, Value, C, D, F, VALUE_SIZE};
 
     #[test]
     fn test_falcon() {

@@ -50,3 +50,33 @@ pub fn hash_to_point(message: Word, nonce: &Nonce) -> Polynomial<FalconFelt> {
 
     Polynomial::new(res.to_vec())
 }
+
+pub fn hash_to_point_no_mod(message: Word, nonce: &Nonce) -> Polynomial<FalconFelt> {
+    let mut state: [F; <PoseidonPermutation<F> as PlonkyPermutation<F>>::WIDTH] =
+        [F::ZERO; <PoseidonPermutation<F> as PlonkyPermutation<F>>::WIDTH];
+
+    // absorb the nonce into the state
+    let nonce_elements = nonce.to_elements();
+    for (&n, s) in nonce_elements.iter().zip(state.iter_mut()) {
+        *s = n;
+    }
+    state = F::poseidon(state);
+
+    // absorb message into the state
+    for (&m, s) in message.0.iter().zip(state[RATE_RANGE].iter_mut()) {
+        *s = m;
+    }
+
+    // squeeze the coefficients of the polynomial
+    let mut i = 0;
+    let mut res = [FalconFelt::zero(); N];
+    for _ in 0..64 {
+        state = F::poseidon(state);
+        for a in &state[RATE_RANGE] {
+            res[i] = FalconFelt::new(a.0 as i16);
+            i += 1;
+        }
+    }
+
+    Polynomial::new(res.to_vec())
+}

@@ -4,14 +4,14 @@
 use core::ops::Deref;
 
 use num::Zero;
+use plonky2::{hash::poseidon::PoseidonHash, plonk::config::Hasher};
 
 use super::{
     super::{Rpo256, LOG_N, N, PK_LEN},
     ByteReader, ByteWriter, Deserializable, DeserializationError, FalconFelt, Felt, Polynomial,
     Serializable, Signature, Word,
 };
-use crate::backends::plonky2::primitives::falcon::FALCON_ENCODING_BITS;
-use plonky2::{hash::poseidon::PoseidonHash, plonk::config::Hasher};
+use crate::backends::plonky2::primitives::signature::falcon_lib::FALCON_ENCODING_BITS;
 
 // PUBLIC KEY
 // ================================================================================================

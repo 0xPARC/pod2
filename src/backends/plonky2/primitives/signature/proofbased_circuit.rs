@@ -25,7 +25,7 @@ use plonky2::{
 use crate::backends::plonky2::{
     basetypes::{Hash, Proof, Value, C, D, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE},
     circuits::common::{CircuitBuilderPod, ValueTarget},
-    primitives::signature_proofbased::{
+    primitives::signature::proofbased::{
         PublicKey, SecretKey, Signature, DUMMY_PUBLIC_INPUTS, DUMMY_SIGNATURE,
     },
 };
@@ -64,7 +64,7 @@ impl SignatureVerifyGadget {
     pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<SignatureVerifyTarget> {
         let enabled = builder.add_virtual_bool_target_safe();
 
-        let common_data = super::signature_proofbased::VP.0.common.clone();
+        let common_data = super::proofbased::VP.0.common.clone();
 
         // targets related to the 'public inputs' for the verification of the
         // `SignatureInternalCircuit` proof.
@@ -160,7 +160,7 @@ impl SignatureVerifyTarget {
 
         pw.set_verifier_data_target(
             &self.verifier_data_targ,
-            &super::signature_proofbased::VP.0.verifier_only,
+            &super::proofbased::VP.0.verifier_only,
         )?;
 
         Ok(())
@@ -170,7 +170,7 @@ impl SignatureVerifyTarget {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::backends::plonky2::{basetypes::Hash, primitives::signature_proofbased::SecretKey};
+    use crate::backends::plonky2::{basetypes::Hash, primitives::signature::proofbased::SecretKey};
 
     #[test]
     fn test_signature_gadget() -> Result<()> {
