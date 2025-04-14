@@ -5,7 +5,7 @@ use crate::{
     frontend::{Predicate, SignedPod},
     middleware::{
         self, AnchoredKey, CustomPredicateRef, NativeOperation, NativePredicate, OperationAux,
-        Statement, Value,
+        OperationType, Statement, Value,
     },
 };
 
@@ -80,111 +80,6 @@ impl From<Statement> for OperationArg {
 impl<V: Into<Value>> From<(&str, V)> for OperationArg {
     fn from((key, value): (&str, V)) -> Self {
         Self::Entry(key.to_string(), value.into())
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum OperationType {
-    Native(NativeOperation),
-    Custom(CustomPredicateRef),
-}
-
-impl TryFrom<OperationType> for middleware::OperationType {
-    type Error = anyhow::Error;
-    fn try_from(fe_ot: OperationType) -> Result<Self, Self::Error> {
-        type FeOT = OperationType;
-        type FeNO = NativeOperation;
-        type MwOT = middleware::OperationType;
-        type MwNO = middleware::NativeOperation;
-        let mw_ot = match fe_ot {
-            FeOT::Native(FeNO::None) => MwOT::Native(MwNO::None),
-            FeOT::Native(FeNO::NewEntry) => MwOT::Native(MwNO::NewEntry),
-            FeOT::Native(FeNO::CopyStatement) => MwOT::Native(MwNO::CopyStatement),
-            FeOT::Native(FeNO::EqualFromEntries) => MwOT::Native(MwNO::EqualFromEntries),
-            FeOT::Native(FeNO::NotEqualFromEntries) => MwOT::Native(MwNO::NotEqualFromEntries),
-            FeOT::Native(FeNO::GtFromEntries) => MwOT::Native(MwNO::GtFromEntries),
-            FeOT::Native(FeNO::LtFromEntries) => MwOT::Native(MwNO::LtFromEntries),
-            FeOT::Native(FeNO::TransitiveEqualFromStatements) => {
-                MwOT::Native(MwNO::TransitiveEqualFromStatements)
-            }
-            FeOT::Native(FeNO::GtToNotEqual) => MwOT::Native(MwNO::GtToNotEqual),
-            FeOT::Native(FeNO::LtToNotEqual) => MwOT::Native(MwNO::LtToNotEqual),
-            FeOT::Native(FeNO::SumOf) => MwOT::Native(MwNO::SumOf),
-            FeOT::Native(FeNO::ProductOf) => MwOT::Native(MwNO::ProductOf),
-            FeOT::Native(FeNO::MaxOf) => MwOT::Native(MwNO::MaxOf),
-            FeOT::Native(FeNO::ContainsFromEntries) => MwOT::Native(MwNO::ContainsFromEntries),
-            FeOT::Native(FeNO::NotContainsFromEntries) => {
-                MwOT::Native(MwNO::NotContainsFromEntries)
-            }
-            FeOT::Native(FeNO::DictContainsFromEntries) => MwOT::Native(MwNO::ContainsFromEntries),
-            FeOT::Native(FeNO::DictNotContainsFromEntries) => {
-                MwOT::Native(MwNO::NotContainsFromEntries)
-            }
-            FeOT::Native(FeNO::SetContainsFromEntries) => MwOT::Native(MwNO::ContainsFromEntries),
-            FeOT::Native(FeNO::SetNotContainsFromEntries) => {
-                MwOT::Native(MwNO::NotContainsFromEntries)
-            }
-            FeOT::Native(FeNO::ArrayContainsFromEntries) => MwOT::Native(MwNO::ContainsFromEntries),
-            FeOT::Custom(mw_cpr) => MwOT::Custom(mw_cpr.into()),
-        };
-        Ok(mw_ot)
-    }
-}
-
-impl OperationType {
-    /// Gives the type of predicate that the operation will output, if known.
-    /// CopyStatement may output any predicate (it will match the statement copied),
-    /// so output_predicate returns None on CopyStatement.
-    pub fn output_predicate(&self) -> Option<Predicate> {
-        match self {
-            OperationType::Native(native_op) => match native_op {
-                NativeOperation::None => Some(Predicate::Native(NativePredicate::None)),
-                NativeOperation::NewEntry => Some(Predicate::Native(NativePredicate::ValueOf)),
-                NativeOperation::CopyStatement => None,
-                NativeOperation::EqualFromEntries => {
-                    Some(Predicate::Native(NativePredicate::Equal))
-                }
-                NativeOperation::NotEqualFromEntries => {
-                    Some(Predicate::Native(NativePredicate::NotEqual))
-                }
-                NativeOperation::GtFromEntries => Some(Predicate::Native(NativePredicate::Gt)),
-                NativeOperation::LtFromEntries => Some(Predicate::Native(NativePredicate::Lt)),
-                NativeOperation::TransitiveEqualFromStatements => {
-                    Some(Predicate::Native(NativePredicate::Equal))
-                }
-                NativeOperation::GtToNotEqual => Some(Predicate::Native(NativePredicate::NotEqual)),
-                NativeOperation::LtToNotEqual => Some(Predicate::Native(NativePredicate::NotEqual)),
-                NativeOperation::SumOf => Some(Predicate::Native(NativePredicate::SumOf)),
-                NativeOperation::ProductOf => Some(Predicate::Native(NativePredicate::ProductOf)),
-                NativeOperation::MaxOf => Some(Predicate::Native(NativePredicate::MaxOf)),
-                NativeOperation::ContainsFromEntries => {
-                    Some(Predicate::Native(NativePredicate::Contains))
-                }
-                NativeOperation::NotContainsFromEntries => {
-                    Some(Predicate::Native(NativePredicate::NotContains))
-                }
-                no => unreachable!("Unexpected syntactic sugar op {:?}", no),
-                // TODO: Delete
-                // TODO: Could we remove these and assume that this function is never called with
-                // syntax sugar operations?
-                // NativeOperation::DictContainsFromEntries => {
-                //     Some(Predicate::Native(NativePredicate::DictContains))
-                // }
-                // NativeOperation::DictNotContainsFromEntries => {
-                //     Some(Predicate::Native(NativePredicate::DictNotContains))
-                // }
-                // NativeOperation::SetContainsFromEntries => {
-                //     Some(Predicate::Native(NativePredicate::SetContains))
-                // }
-                // NativeOperation::SetNotContainsFromEntries => {
-                //     Some(Predicate::Native(NativePredicate::SetNotContains))
-                // }
-                // NativeOperation::ArrayContainsFromEntries => {
-                //     Some(Predicate::Native(NativePredicate::ArrayContains))
-                // }
-            },
-            OperationType::Custom(cpr) => Some(Predicate::Custom(cpr.clone())),
-        }
     }
 }
 

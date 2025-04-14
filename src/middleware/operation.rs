@@ -118,23 +118,7 @@ impl OperationType {
                 NativeOperation::SumOf => Some(Predicate::Native(NativePredicate::SumOf)),
                 NativeOperation::ProductOf => Some(Predicate::Native(NativePredicate::ProductOf)),
                 NativeOperation::MaxOf => Some(Predicate::Native(NativePredicate::MaxOf)),
-                // TODO: Could we remove these and assume that this function is never called with
-                // syntax sugar operations?
-                NativeOperation::DictContainsFromEntries => {
-                    Some(Predicate::Native(NativePredicate::Contains))
-                }
-                NativeOperation::DictNotContainsFromEntries => {
-                    Some(Predicate::Native(NativePredicate::NotContains))
-                }
-                NativeOperation::SetContainsFromEntries => {
-                    Some(Predicate::Native(NativePredicate::Contains))
-                }
-                NativeOperation::SetNotContainsFromEntries => {
-                    Some(Predicate::Native(NativePredicate::NotContains))
-                }
-                NativeOperation::ArrayContainsFromEntries => {
-                    Some(Predicate::Native(NativePredicate::Contains))
-                }
+                no => unreachable!("Unexpected syntactic sugar op {:?}", no),
             },
             OperationType::Custom(cpr) => Some(Predicate::Custom(cpr.clone())),
         }

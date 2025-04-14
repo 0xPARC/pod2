@@ -12,8 +12,8 @@ use itertools::Itertools;
 // use serde::{Deserialize, Serialize};
 use crate::middleware::{
     self, hash_str, AnchoredKey, Hash, Key, MainPodInputs, NativeOperation, NativePredicate,
-    OperationAux, Params, PodId, PodProver, PodSigner, Predicate, Statement, StatementArg,
-    TypedValue, Value, EMPTY_VALUE, KEY_SIGNER, KEY_TYPE, SELF,
+    OperationAux, OperationType, Params, PodId, PodProver, PodSigner, Predicate, Statement,
+    StatementArg, TypedValue, Value, EMPTY_VALUE, KEY_SIGNER, KEY_TYPE, SELF,
 };
 
 mod custom;
@@ -717,55 +717,55 @@ pub mod build_utils {
     #[macro_export]
     macro_rules! op {
         (new_entry, ($key:expr, $value:expr)) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::NewEntry),
+            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::NewEntry),
             $crate::op_args!(($key, $value)), $crate::middleware::OperationAux::None) };
         (eq, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::EqualFromEntries),
+            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::EqualFromEntries),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (ne, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::NotEqualFromEntries),
+            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::NotEqualFromEntries),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (gt, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::GtFromEntries),
+            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::GtFromEntries),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (lt, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::LtFromEntries),
+            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::LtFromEntries),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (transitive_eq, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::TransitiveEqualFromStatements),
+            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::TransitiveEqualFromStatements),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (gt_to_ne, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::GtToNotEqual),
+            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::GtToNotEqual),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (lt_to_ne, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::LtToNotEqual),
+            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::LtToNotEqual),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (sum_of, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::SumOf),
+            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::SumOf),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (product_of, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::ProductOf),
+            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::ProductOf),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (max_of, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::MaxOf),
+            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::MaxOf),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (custom, $op:expr, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Custom($op),
+            $crate::middleware::OperationType::Custom($op),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (dict_contains, $dict:expr, $key:expr, $value:expr, $aux:expr) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::DictContainsFromEntries),
+            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::DictContainsFromEntries),
             $crate::op_args!($dict, $key, $value), $crate::middleware::OperationAux::MerkleProof($aux)) };
         (dict_not_contains, $dict:expr, $key:expr, $aux:expr) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::DictNotContainsFromEntries),
+            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::DictNotContainsFromEntries),
             $crate::op_args!($dict, $key), $crate::middleware::OperationAux::MerkleProof($aux)) };
         (set_contains, $set:expr, $value:expr, $aux:expr) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::SetContainsFromEntries),
+            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::SetContainsFromEntries),
             $crate::op_args!($set, $value), $crate::middleware::OperationAux::MerkleProof($aux)) };
         (set_not_contains, $set:expr, $value:expr, $aux:expr) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::SetNotContainsFromEntries),
+            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::SetNotContainsFromEntries),
             $crate::op_args!($set, $value), $crate::middleware::OperationAux::MerkleProof($aux)) };
         (array_contains, $array:expr, $index:expr, $value:expr, $aux:expr) => { $crate::frontend::Operation(
-            $crate::frontend::OperationType::Native($crate::middleware::NativeOperation::ArrayContainsFromEntries),
+            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::ArrayContainsFromEntries),
             $crate::op_args!($array, $index, $value), $crate::middleware::OperationAux::MerkleProof($aux)) };
     }
 }
