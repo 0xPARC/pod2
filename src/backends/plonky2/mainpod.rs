@@ -176,56 +176,6 @@ pub mod tests {
         op,
     };
 
-    // TODO: Delete
-    // TODO: Use the method from examples once everything works
-    // pub fn zu_kyc_pod_builder(
-    //     params: &Params,
-    //     gov_id: &frontend::SignedPod,
-    //     pay_stub: &frontend::SignedPod,
-    //     sanction_list: &frontend::SignedPod,
-    // ) -> Result<frontend::MainPodBuilder> {
-    //     let sanction_set = match sanction_list.kvs.get("sanctionList") {
-    //         Some(frontend::TypedValue::Set(s)) => Ok(s),
-    //         _ => Err(anyhow!("Missing sanction list!")),
-    //     }?;
-    //     let now_minus_18y: i64 = 1169909388;
-    //     let now_minus_1y: i64 = 1706367566;
-
-    //     let gov_id_kvs = gov_id.kvs();
-    //     let id_number_value = gov_id_kvs.get(&"idNumber".into()).unwrap();
-
-    //     let mut kyc = frontend::MainPodBuilder::new(params);
-    //     kyc.add_signed_pod(gov_id);
-    //     kyc.add_signed_pod(pay_stub);
-    //     kyc.add_signed_pod(sanction_list);
-    //     kyc.pub_op(op!(
-    //         set_not_contains,
-    //         (sanction_list, "sanctionList"),
-    //         (gov_id, "idNumber"),
-    //         sanction_set
-    //             .middleware_set()
-    //             .prove_nonexistence(id_number_value)?
-    //     ))?;
-    //     kyc.pub_op(op!(lt, (gov_id, "dateOfBirth"), now_minus_18y))?;
-    //     kyc.pub_op(op!(
-    //         eq,
-    //         (gov_id, "socialSecurityNumber"),
-    //         (pay_stub, "socialSecurityNumber")
-    //     ))?;
-    //     let start_date_st = kyc.pub_op(frontend::Operation(
-    //         frontend::OperationType::Native(NativeOperation::NewEntry),
-    //         vec![frontend::OperationArg::Entry(
-    //             "startDate".to_string(),
-    //             now_minus_1y.into(),
-    //         )],
-    //         middleware::OperationAux::None,
-    //     ))?;
-    //     kyc.pub_op(op!(eq, (pay_stub, "startDate"), start_date_st))?;
-    //     kyc.pub_op(op!(eq, (pay_stub, "startDate"), now_minus_1y))?;
-
-    //     Ok(kyc)
-    // }
-
     #[test]
     fn test_main_zu_kyc() -> Result<()> {
         let params = middleware::Params {
@@ -235,12 +185,8 @@ pub mod tests {
             ..Default::default()
         };
 
-        let sanctions_values: HashSet<Value> =
-            ["A343434340"].iter().map(|s| Value::from(*s)).collect();
-        let sanction_set = Value::from(Set::new(sanctions_values).unwrap());
-
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
-            zu_kyc_sign_pod_builders(&params, sanction_set);
+            zu_kyc_sign_pod_builders(&params);
         let mut signer = Signer(SecretKey(RawValue::from(1)));
         let gov_id_pod = gov_id_builder.sign(&mut signer)?;
         let mut signer = Signer(SecretKey(RawValue::from(2)));

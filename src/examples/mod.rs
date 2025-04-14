@@ -20,8 +20,10 @@ use crate::{
 
 pub fn zu_kyc_sign_pod_builders(
     params: &Params,
-    sanction_set: Value,
 ) -> (SignedPodBuilder, SignedPodBuilder, SignedPodBuilder) {
+    let sanctions_values: HashSet<Value> = ["A343434340"].iter().map(|s| Value::from(*s)).collect();
+    let sanction_set = Value::from(Set::new(sanctions_values).unwrap());
+
     let mut gov_id = SignedPodBuilder::new(params);
     gov_id.insert("idNumber", "4242424242");
     gov_id.insert("dateOfBirth", 1169909384);

@@ -568,8 +568,6 @@ impl Pod for MockMainPod {
 
 #[cfg(test)]
 pub mod tests {
-    use std::collections::HashSet;
-
     use super::*;
     use crate::{
         backends::plonky2::mock::signedpod::MockSigner,
@@ -577,19 +575,14 @@ pub mod tests {
             great_boy_pod_full_flow, tickets_pod_full_flow, zu_kyc_pod_builder,
             zu_kyc_sign_pod_builders,
         },
-        middleware::{self, containers::Set, Value},
+        middleware::{self},
     };
 
     #[test]
     fn test_mock_main_zu_kyc() -> Result<()> {
         let params = middleware::Params::default();
-
-        let sanctions_values: HashSet<Value> =
-            ["A343434340"].iter().map(|s| Value::from(*s)).collect();
-        let sanction_set = Value::from(Set::new(sanctions_values).unwrap());
-
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
-            zu_kyc_sign_pod_builders(&params, sanction_set);
+            zu_kyc_sign_pod_builders(&params);
         let mut signer = MockSigner {
             pk: "ZooGov".into(),
         };

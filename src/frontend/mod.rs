@@ -770,7 +770,6 @@ pub mod build_utils {
     }
 }
 
-/* TODO: Uncomment
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -779,6 +778,10 @@ pub mod tests {
         examples::{
             eth_dos_pod_builder, eth_friend_signed_pod_builder, great_boy_pod_full_flow,
             tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_sign_pod_builders,
+        },
+        middleware::{
+            containers::{Dictionary, Set},
+            Value,
         },
     };
 
@@ -799,14 +802,15 @@ pub mod tests {
     fn check_kvs(pod: &SignedPod) -> Result<()> {
         let kvs = pod
             .kvs
-            .iter()
-            .map(|(k, v)| (hash_str(k), middleware::RawValue::from(v)))
+            .clone()
+            .into_iter()
+            .map(|(k, v)| (k, v))
             .collect::<HashMap<_, _>>();
         let embedded_kvs = pod
             .pod
             .kvs()
             .into_iter()
-            .map(|(middleware::AnchoredKey { key, .. }, v)| (key.hash(), v))
+            .map(|(middleware::AnchoredKey { key, .. }, v)| (key, v))
             .collect::<HashMap<_, _>>();
 
         if kvs == embedded_kvs {
@@ -823,9 +827,7 @@ pub mod tests {
     #[test]
     fn test_front_zu_kyc() -> Result<()> {
         let params = Params::default();
-        let sanctions_values = vec!["A343434340".into()];
-        let sanction_set = Value::Set(Set::new(sanctions_values)?);
-        let (gov_id, pay_stub, sanction_list) = zu_kyc_sign_pod_builders(&params, &sanction_set);
+        let (gov_id, pay_stub, sanction_list) = zu_kyc_sign_pod_builders(&params);
 
         println!("{}", gov_id);
         println!("{}", pay_stub);
@@ -1005,14 +1007,14 @@ pub mod tests {
         let params = Params::default();
         let mut builder = SignedPodBuilder::new(&params);
 
-        let mut my_dict_kvs: HashMap<String, Value> = HashMap::new();
-        my_dict_kvs.insert("a".to_string(), Value::from(1));
-        my_dict_kvs.insert("b".to_string(), Value::from(2));
-        my_dict_kvs.insert("c".to_string(), Value::from(3));
+        let mut my_dict_kvs: HashMap<Key, Value> = HashMap::new();
+        my_dict_kvs.insert(Key::from("a"), Value::from(1));
+        my_dict_kvs.insert(Key::from("b"), Value::from(2));
+        my_dict_kvs.insert(Key::from("c"), Value::from(3));
         //        let my_dict_as_mt = MerkleTree::new(5, &my_dict_kvs).unwrap();
         //        let dict = Dictionary { mt: my_dict_as_mt };
         let dict = Dictionary::new(my_dict_kvs)?;
-        let dict_root = Value::Dictionary(dict.clone());
+        let dict_root = Value::from(dict.clone());
         builder.insert("dict", dict_root);
 
         let mut signer = MockSigner {
@@ -1022,9 +1024,9 @@ pub mod tests {
 
         let mut builder = MainPodBuilder::new(&params);
         builder.add_signed_pod(&pod);
-        let st0 = Statement::from((&pod, "dict"));
+        let st0 = pod.get_statement("dict").unwrap();
         let st1 = builder.op(true, op!(new_entry, ("key", "a"))).unwrap();
-        let st2 = builder.literal(false, &Value::Int(1)).unwrap();
+        let st2 = builder.literal(false, Value::from(1)).unwrap();
 
         builder
             .pub_op(Operation(
@@ -1036,12 +1038,7 @@ pub mod tests {
                     OperationArg::Statement(st1),
                     OperationArg::Statement(st2),
                 ],
-                OperationAux::MerkleProof(
-                    dict.middleware_dict()
-                        .prove(&Hash::from("a").into())
-                        .unwrap()
-                        .1,
-                ),
+                OperationAux::MerkleProof(dict.prove(&Key::from("a")).unwrap().1),
             ))
             .unwrap();
         let mut main_prover = MockProver {};
@@ -1062,34 +1059,16 @@ pub mod tests {
 
         let params = Params::default();
         let mut builder = MainPodBuilder::new(&params);
-        builder.insert((
-            Statement::new(
-                Predicate::Native(NativePredicate::ValueOf),
-                vec![
-                    StatementArg::Key(AnchoredKey::new(SELF, "a")),
-                    StatementArg::Literal(Value::Int(3)),
-                ],
-            ),
-            Operation(
-                OperationType::Native(NativeOperation::NewEntry),
-                vec![],
-                OperationAux::None,
-            ),
-        ));
-        builder.insert((
-            Statement::new(
-                Predicate::Native(NativePredicate::ValueOf),
-                vec![
-                    StatementArg::Key(AnchoredKey::new(SELF, "a")),
-                    StatementArg::Literal(Value::Int(28)),
-                ],
-            ),
-            Operation(
-                OperationType::Native(NativeOperation::NewEntry),
-                vec![],
-                OperationAux::None,
-            ),
-        ));
+        let st = Statement::ValueOf(AnchoredKey::from((SELF, "a")), Value::from(3));
+        let op_new_entry = Operation(
+            OperationType::Native(NativeOperation::NewEntry),
+            vec![],
+            OperationAux::None,
+        );
+        builder.insert(false, (st, op_new_entry.clone()));
+
+        let st = Statement::ValueOf(AnchoredKey::from((SELF, "a")), Value::from(28));
+        builder.insert(false, (st, op_new_entry.clone()));
 
         let mut prover = MockProver {};
         let pod = builder.prove(&mut prover, &params).unwrap();
@@ -1099,57 +1078,26 @@ pub mod tests {
         // right now the mock prover catches this when it calls compile()
         let params = Params::default();
         let mut builder = MainPodBuilder::new(&params);
-        let self_a = AnchoredKey::new(SELF, "a");
-        let self_b = AnchoredKey::new(SELF, "b");
-        let value_of_a = Statement::new(
-            Predicate::Native(NativePredicate::ValueOf),
-            vec![
-                StatementArg::Key(self_a.clone()),
-                StatementArg::Literal(Value::Int(3)),
-            ],
-        );
-        let value_of_b = Statement::new(
-            Predicate::Native(NativePredicate::ValueOf),
-            vec![
-                StatementArg::Key(self_b.clone()),
-                StatementArg::Literal(Value::Int(27)),
-            ],
-        );
+        let self_a = AnchoredKey::from((SELF, "a"));
+        let self_b = AnchoredKey::from((SELF, "b"));
+        let value_of_a = Statement::ValueOf(self_a.clone(), Value::from(3));
+        let value_of_b = Statement::ValueOf(self_b.clone(), Value::from(27));
 
-        builder.insert((
-            value_of_a.clone(),
-            Operation(
-                OperationType::Native(NativeOperation::NewEntry),
-                vec![],
-                OperationAux::None,
-            ),
-        ));
-        builder.insert((
-            value_of_b.clone(),
-            Operation(
-                OperationType::Native(NativeOperation::NewEntry),
-                vec![],
-                OperationAux::None,
-            ),
-        ));
-        builder.insert((
-            Statement::new(
-                Predicate::Native(NativePredicate::Equal),
-                vec![StatementArg::Key(self_a), StatementArg::Key(self_b)],
-            ),
-            Operation(
-                OperationType::Native(NativeOperation::EqualFromEntries),
-                vec![
-                    OperationArg::Statement(value_of_a),
-                    OperationArg::Statement(value_of_b),
-                ],
-                OperationAux::None,
-            ),
-        ));
+        builder.insert(false, (value_of_a.clone(), op_new_entry.clone()));
+        builder.insert(false, (value_of_b.clone(), op_new_entry));
+        let st = Statement::Equal(self_a, self_b);
+        let op = Operation(
+            OperationType::Native(NativeOperation::EqualFromEntries),
+            vec![
+                OperationArg::Statement(value_of_a),
+                OperationArg::Statement(value_of_b),
+            ],
+            OperationAux::None,
+        );
+        builder.insert(false, (st, op));
 
         let mut prover = MockProver {};
         let pod = builder.prove(&mut prover, &params).unwrap();
         pod.pod.verify().unwrap();
     }
 }
-*/
