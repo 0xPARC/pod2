@@ -128,8 +128,13 @@ pub struct MainPodBuilder {
     pub statements: Vec<Statement>,
     pub operations: Vec<Operation>,
     pub public_statements: Vec<Statement>,
+    //
     // Internal state
+    //
+    // Counter for constants created from literals
     const_cnt: usize,
+    // Map from (public, Value) to Key of already created literals via ValueOf statements.
+    literals: HashMap<(bool, Value), Key>,
 }
 
 impl fmt::Display for MainPodBuilder {
@@ -163,7 +168,7 @@ impl MainPodBuilder {
             operations: Vec::new(),
             public_statements: Vec::new(),
             const_cnt: 0,
-            // key_table: HashMap::new(),
+            literals: HashMap::new(),
         }
     }
     pub fn add_signed_pod(&mut self, pod: &SignedPod) {
@@ -172,10 +177,20 @@ impl MainPodBuilder {
     pub fn add_main_pod(&mut self, pod: MainPod) {
         self.input_main_pods.push(pod);
     }
-    pub fn insert(&mut self, st_op: (Statement, Operation)) {
+    pub fn insert(&mut self, public: bool, st_op: (Statement, Operation)) {
+        // TODO: Do error handling instead of panic
         let (st, op) = st_op;
+        if public {
+            self.public_statements.push(st.clone());
+        }
+        if self.public_statements.len() > self.params.max_public_statements {
+            panic!("too many public statements");
+        }
         self.statements.push(st);
         self.operations.push(op);
+        if self.statements.len() > self.params.max_statements {
+            panic!("too many statements");
+        }
     }
 
     /// Convert [OperationArg]s to [StatementArg]s for the operations that work with entries
@@ -197,7 +212,7 @@ impl MainPodBuilder {
                 }
                 // todo: better error handling
                 OperationArg::Literal(v) => {
-                    let value_of_st = self.literal(public, v)?;
+                    let value_of_st = self.literal(public, v.clone())?;
                     *arg = OperationArg::Statement(value_of_st.clone());
                     st_args.push(value_of_st.args()[0].clone())
                 }
@@ -439,38 +454,42 @@ impl MainPodBuilder {
             }
         };
         let st = Statement::from_args(pred.into(), st_args).expect("valid arguments");
-        self.operations.push(op);
-        if public {
-            self.public_statements.push(st.clone());
-        }
+        self.insert(public, (st, op));
 
-        self.statements.push(st);
         Ok(self.statements[self.statements.len() - 1].clone())
     }
 
     /// Convenience method for introducing public constants.
-    pub fn pub_literal<V: Clone + Into<Value>>(&mut self, v: &V) -> Result<Statement> {
-        self.literal(true, v)
+    pub fn pub_literal(&mut self, v: impl Into<Value>) -> Result<Statement> {
+        self.literal(true, v.into())
     }
 
     /// Convenience method for introducing private constants.
-    pub fn priv_literal<V: Clone + Into<Value>>(&mut self, v: &V) -> Result<Statement> {
-        self.literal(false, v)
+    pub fn priv_literal(&mut self, v: impl Into<Value>) -> Result<Statement> {
+        self.literal(false, v.into())
     }
 
-    // TODO: Keep a list of created literals and reuse them instead of creating ValueOf duplicates.
-    fn literal<V: Clone + Into<Value>>(&mut self, public: bool, v: &V) -> Result<Statement> {
-        let v: Value = v.clone().into();
-        let k = format!("c{}", self.const_cnt);
-        self.const_cnt += 1;
-        self.op(
-            public,
-            Operation(
-                OperationType::Native(NativeOperation::NewEntry),
-                vec![OperationArg::Entry(k.clone(), v)],
-                OperationAux::None,
-            ),
-        )
+    fn literal(&mut self, public: bool, value: Value) -> Result<Statement> {
+        let public_value = (public, value);
+        if let Some(key) = self.literals.get(&public_value) {
+            Ok(Statement::ValueOf(
+                AnchoredKey::new(SELF, key.clone()),
+                public_value.1,
+            ))
+        } else {
+            let key = format!("c{}", self.const_cnt);
+            self.literals
+                .insert(public_value.clone(), Key::new(key.clone()));
+            self.const_cnt += 1;
+            self.op(
+                public,
+                Operation(
+                    OperationType::Native(NativeOperation::NewEntry),
+                    vec![OperationArg::Entry(key.clone(), public_value.1)],
+                    OperationAux::None,
+                ),
+            )
+        }
     }
 
     pub fn reveal(&mut self, st: &Statement) {
@@ -593,13 +612,6 @@ struct MainPodCompiler {
     // Output
     statements: Vec<Statement>,
     operations: Vec<middleware::Operation>,
-    // Internal state
-    // Tracks literal constants assigned to ValueOf statements by self.literal()
-    // If `val` has been added as a literal,
-    // then `self.literals.get(&val)` returns `Some(idx)`, and
-    // then `self.statements[idx]` is the ValueOf statement
-    // where it was introduced.
-    literals: HashMap<middleware::RawValue, usize>,
 }
 
 impl MainPodCompiler {
@@ -608,13 +620,15 @@ impl MainPodCompiler {
             params: params.clone(),
             statements: Vec::new(),
             operations: Vec::new(),
-            literals: HashMap::new(),
         }
     }
 
     fn push_st_op(&mut self, st: Statement, op: middleware::Operation) {
         self.statements.push(st);
         self.operations.push(op);
+        if self.statements.len() > self.params.max_statements {
+            panic!("too many statements");
+        }
     }
 
     fn compile_op_arg(&self, op_arg: &OperationArg) -> Option<Statement> {
@@ -633,125 +647,6 @@ impl MainPodCompiler {
             }
         }
     }
-
-    // TODO: Handle this in the builder, not the compiler
-    // Introduces a literal value if it hasn't been introduced,
-    // or else returns the existing ValueOf statement where it was first introduced.
-    // TODO: this might produce duplicate keys, fix
-    // fn literal<V: Clone + Into<middleware::RawValue>>(&mut self, val: V) -> &Statement {
-    //     let val: middleware::RawValue = val.into();
-    //     match self.literals.get(&val) {
-    //         Some(idx) => &self.statements[*idx],
-    //         None => {
-    //             let ak = middleware::AnchoredKey::new(SELF, format!("const_{}", val));
-    //             let st = Statement::ValueOf(ak, val);
-    //             let op = middleware::Operation::NewEntry;
-    //             self.statements.push(st);
-    //             self.operations.push(op);
-    //             self.statements.last().unwrap()
-    //         }
-    //     }
-    // }
-
-    // Returns the existing ValueOf statement where it was first introduced,
-    // or None if it does not exist.
-    // fn get_literal<V: Clone + Into<middleware::RawValue>>(&self, val: V) -> Option<&Statement> {
-    //     let val: middleware::RawValue = val.into();
-    //     match self.literals.get(&val) {
-    //         Some(idx) => Some(&self.statements[*idx]),
-    //         None => None,
-    //     }
-    // }
-
-    // This function handles cases where one frontend statement
-    // compiles to multiple middleware statements.
-    // For example: DictContains(x, y) on the frontend compiles to:
-    // ValueOf(empty, EMPTY_VALUE)
-    // Contains(x, y, empty)
-    // TODO
-    // fn manual_compile_st_op(&mut self, st: &Statement, op: &Operation) -> Result<()> {
-    //     use Statement::*;
-    //     match st {
-    //         SetContains() => todo!(),
-    //         DictN() => todo!(),
-    //     }
-    //     match st.predicate {
-    //         Predicate::Native(NativePredicate::DictContains) => {
-    //             let empty_st = self.literal(EMPTY_VALUE).clone();
-    //             let empty_ak = match empty_st {
-    //                 Statement::ValueOf(ref ak, _) => ak,
-    //                 _ => unreachable!(),
-    //             };
-    //             let (ak1, ak2) = match (st.args.get(0).cloned(), st.args.get(1).cloned()) {
-    //                 (Some(StatementArg::Key(ak1)), Some(StatementArg::Key(ak2))) => (ak1, ak2),
-    //                 _ => Err(anyhow!("Ill-formed statement: {}", st))?,
-    //             };
-    //             let middle_st = Statement::Contains(ak1.into(), ak2.into(), empty_ak.clone());
-    //             let middle_op = middleware::Operation::ContainsFromEntries(
-    //                 match &op.1[0] {
-    //                     OperationArg::Statement(s) => s.clone(),
-    //                     _ => Err(anyhow!("Statement compile failed in manual compile"))?,
-    //                 },
-    //                 match &op.1[1] {
-    //                     OperationArg::Statement(s) => s.clone(),
-    //                     _ => Err(anyhow!("Statement compile failed in manual compile"))?,
-    //                 },
-    //                 empty_st.clone(),
-    //                 match &op.2 {
-    //                     OperationAux::MerkleProof(mp) => mp.clone(),
-    //                     _ => {
-    //                         return Err(anyhow!(
-    //                             "Auxiliary argument to DictContainsFromEntries must be Merkle proof"
-    //                         ));
-    //                     }
-    //                 },
-    //             );
-    //             self.statements.push(middle_st);
-    //             self.operations.push(middle_op);
-    //             assert_eq!(self.statements.len(), self.operations.len());
-    //             Ok(())
-    //         }
-    //         _ => unreachable!(),
-    //     }
-    // }
-
-    // If the frontend statement `st` compiles to a single middleware statement,
-    // returns that middleware statement.
-    // If it compiles to multiple middlewarestatements, returns StatementConversionError.
-    // This is only a helper method within compile_st_op().
-    // If you want to compile a statement in general, run compile_st().
-    // fn compile_st_try_simple(
-    //     &self,
-    //     st: &Statement,
-    // ) -> Result<middleware::Statement, StatementConversionError> {
-    //     st.clone().try_into()
-    // }
-
-    // Compiles the frontend statement `st` to a middleware statement.
-    // This function assumes the middleware statement already exists --
-    // it should not be called from compile_st_op.
-    // fn compile_st(&self, st: &Statement) -> Result<middleware::Statement> {
-    //     match self.compile_st_try_simple(st) {
-    //         Ok(s) => Ok(s),
-    //         Err(StatementConversionError::Error(e)) => Err(e),
-    //         Err(StatementConversionError::MCR(_)) => {
-    //             let empty_st = self
-    //                 .get_literal(EMPTY_VALUE)
-    //                 .ok_or(anyhow!("Literal value not found for empty literal."))?;
-    //             let empty_ak = match empty_st {
-    //                 middleware::Statement::ValueOf(ak, _) => ak,
-    //                 _ => unreachable!(),
-    //             };
-    //             let (ak1, ak2) = match (st.args.get(0).cloned(), st.args.get(1).cloned()) {
-    //                 (Some(StatementArg::Key(ak1)), Some(StatementArg::Key(ak2))) => (ak1, ak2),
-    //                 _ => Err(anyhow!("Ill-formed statement: {}", st))?,
-    //             };
-    //             let middle_st =
-    //                 middleware::Statement::Contains(ak1.into(), ak2.into(), empty_ak.clone());
-    //             Ok(middle_st)
-    //         }
-    //     }
-    // }
 
     fn compile_op(&self, op: &Operation) -> Result<middleware::Operation> {
         let mop_code: middleware::OperationType = op.0.clone().try_into()?;
@@ -805,9 +700,6 @@ impl MainPodCompiler {
         } = inputs;
         for (st, op) in statements.iter().zip_eq(operations.iter()) {
             self.compile_st_op(st, op, params)?;
-            if self.statements.len() > self.params.max_statements {
-                panic!("too many statements");
-            }
         }
         Ok((self.statements, self.operations, public_statements.to_vec()))
     }

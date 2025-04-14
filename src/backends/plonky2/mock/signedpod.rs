@@ -118,12 +118,7 @@ impl Pod for MockSignedPod {
         [(key_type, value_type), (key_signer, value_signer)]
             .into_iter()
             .chain(kvs.into_iter().sorted_by_key(|kv| kv.0.hash()))
-            // TODO: Refactor the SignedPod so that it uses `Key`
-            // ALERT ALERT ALERT ALERT
-            // ALERT ALERT ALERT ALERT
-            // ALERT ALERT ALERT ALERT
-            // ALERT ALERT ALERT ALERT
-            .map(|(_k, v)| Statement::ValueOf(AnchoredKey::from((id, "")), v))
+            .map(|(k, v)| Statement::ValueOf(AnchoredKey::from((id, k)), v))
             .collect()
     }
 

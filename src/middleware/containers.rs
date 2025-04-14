@@ -90,8 +90,6 @@ impl Set {
         let kvs_raw: HashMap<RawValue, RawValue> = set
             .iter()
             .map(|e| {
-                // FIXME: Here we're hashing the elements but in the proving/verifying methods
-                // we're not.
                 let h = hash_value(&e.raw());
                 (RawValue::from(h), EMPTY_VALUE)
             })
@@ -108,17 +106,21 @@ impl Set {
         self.set.contains(value)
     }
     pub fn prove(&self, value: &Value) -> Result<MerkleProof> {
-        let (_, proof) = self.mt.prove(&value.raw())?;
+        let h = hash_value(&value.raw());
+        let (_, proof) = self.mt.prove(&RawValue::from(h))?;
         Ok(proof)
     }
     pub fn prove_nonexistence(&self, value: &Value) -> Result<MerkleProof> {
-        self.mt.prove_nonexistence(&value.raw())
+        let h = hash_value(&value.raw());
+        self.mt.prove_nonexistence(&RawValue::from(h))
     }
     pub fn verify(root: Hash, proof: &MerkleProof, value: &Value) -> Result<()> {
-        MerkleTree::verify(MAX_DEPTH, root, proof, &value.raw(), &EMPTY_VALUE)
+        let h = hash_value(&value.raw());
+        MerkleTree::verify(MAX_DEPTH, root, proof, &RawValue::from(h), &EMPTY_VALUE)
     }
     pub fn verify_nonexistence(root: Hash, proof: &MerkleProof, value: &Value) -> Result<()> {
-        MerkleTree::verify_nonexistence(MAX_DEPTH, root, proof, &value.raw())
+        let h = hash_value(&value.raw());
+        MerkleTree::verify_nonexistence(MAX_DEPTH, root, proof, &RawValue::from(h))
     }
     pub fn set(&self) -> &HashSet<Value> {
         &self.set

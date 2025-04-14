@@ -211,7 +211,7 @@ impl fmt::Display for Operation {
         }
         match self.2 {
             OperationAux::None => (),
-            OperationAux::MerkleProofIndex(i) => write!(f, "merkle_proof_{:02}", i)?,
+            OperationAux::MerkleProofIndex(i) => write!(f, " merkle_proof_{:02}", i)?,
         }
         Ok(())
     }

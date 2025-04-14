@@ -408,9 +408,9 @@ pub mod tests {
     use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
 
     use super::*;
-    use crate::backends::plonky2::{
-        basetypes::{hash_value, C},
-        primitives::merkletree::*,
+    use crate::{
+        backends::plonky2::{basetypes::C, primitives::merkletree::*},
+        middleware::{hash_value, RawValue},
     };
 
     #[test]

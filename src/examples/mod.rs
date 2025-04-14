@@ -122,7 +122,7 @@ pub fn eth_dos_pod_builder(
     let charlie_pubkey = alice_bob_ethdos.priv_op(op!(new_entry, ("Charlie", charlie_pubkey)))?;
 
     // The ETHDoS distance from Alice to Alice is 0.
-    let zero = alice_bob_ethdos.priv_literal(&0)?;
+    let zero = alice_bob_ethdos.priv_literal(0)?;
     let alice_equals_alice = alice_bob_ethdos.priv_op(op!(
         eq,
         (alice_attestation, KEY_SIGNER),
@@ -175,7 +175,7 @@ pub fn eth_dos_pod_builder(
     ))?;
 
     // The ETHDoS distance from Alice to Charlie is 1.
-    let one = alice_bob_ethdos.priv_literal(&1)?;
+    let one = alice_bob_ethdos.priv_literal(1)?;
     // 1 = 0 + 1
     let ethdos_sum =
         alice_bob_ethdos.priv_op(op!(sum_of, one.clone(), zero.clone(), one.clone()))?;
@@ -196,7 +196,7 @@ pub fn eth_dos_pod_builder(
     // The ETHDoS distance from Alice to Bob is 2.
     // The constant "TWO" and the final statement are both to be
     // public.
-    let two = alice_bob_ethdos.pub_literal(&2)?;
+    let two = alice_bob_ethdos.pub_literal(2)?;
     // 2 = 1 + 1
     let ethdos_sum =
         alice_bob_ethdos.priv_op(op!(sum_of, two.clone(), one.clone(), one.clone()))?;

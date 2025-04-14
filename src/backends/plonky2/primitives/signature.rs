@@ -204,7 +204,7 @@ impl SignatureInternalCircuit {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::backends::plonky2::basetypes::Hash;
+    use crate::middleware::hash_str;
 
     #[test]
     fn test_signature() -> Result<()> {
@@ -220,7 +220,7 @@ pub mod tests {
         assert!(v.is_err(), "should fail to verify");
 
         // perform a 2nd signature over another msg and verify it
-        let msg_2 = RawValue::from(Hash::from("message"));
+        let msg_2 = RawValue::from(hash_str("message"));
         let sig2 = sk.sign(msg_2)?;
         sig2.verify(&pk, msg_2)?;
 

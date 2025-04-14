@@ -97,12 +97,7 @@ impl Pod for SignedPod {
         [(key_type, value_type), (key_signer, value_signer)]
             .into_iter()
             .chain(kvs.into_iter().sorted_by_key(|kv| kv.0.hash()))
-            // TODO: Refactor the SignedPod so that it uses `Key`
-            // ALERT ALERT ALERT ALERT
-            // ALERT ALERT ALERT ALERT
-            // ALERT ALERT ALERT ALERT
-            // ALERT ALERT ALERT ALERT
-            .map(|(_k, v)| Statement::ValueOf(AnchoredKey::from((id, "")), v))
+            .map(|(k, v)| Statement::ValueOf(AnchoredKey::from((id, k)), v))
             .collect()
     }
 
@@ -131,7 +126,7 @@ pub mod tests {
     use crate::{
         constants::MAX_DEPTH,
         frontend,
-        middleware::{self, EMPTY_HASH, F},
+        middleware::{self, EMPTY_VALUE, F},
     };
 
     #[test]
@@ -161,30 +156,27 @@ pub mod tests {
         assert!(bad_pod.verify().is_err());
 
         let mut bad_pod = pod.clone();
-        let bad_kv = (
-            hash_str(KEY_SIGNER).into(),
-            RawValue(PodId(EMPTY_HASH).0 .0),
-        );
-        let bad_kvs_mt = &bad_pod
+        let bad_kv = (Key::from(KEY_SIGNER), Value::from(EMPTY_VALUE));
+        let bad_kvs = bad_pod
+            .dict
             .kvs()
+            .clone()
             .into_iter()
-            .map(|(AnchoredKey { key, .. }, v)| (RawValue(key.hash().0), v))
             .chain(iter::once(bad_kv))
-            .collect::<HashMap<RawValue, RawValue>>();
-        let bad_mt = MerkleTree::new(MAX_DEPTH, bad_kvs_mt)?;
-        bad_pod.dict.mt = bad_mt;
+            .collect::<HashMap<Key, Value>>();
+        bad_pod.dict = Dictionary::new(bad_kvs).unwrap();
         assert!(bad_pod.verify().is_err());
 
         let mut bad_pod = pod.clone();
-        let bad_kv = (hash_str(KEY_TYPE).into(), RawValue::from(0));
-        let bad_kvs_mt = &bad_pod
+        let bad_kv = (Key::from(KEY_TYPE), Value::from(0));
+        let bad_kvs = bad_pod
+            .dict
             .kvs()
+            .clone()
             .into_iter()
-            .map(|(AnchoredKey { key, .. }, v)| (RawValue(key.hash().0), v))
             .chain(iter::once(bad_kv))
-            .collect::<HashMap<RawValue, RawValue>>();
-        let bad_mt = MerkleTree::new(MAX_DEPTH, bad_kvs_mt)?;
-        bad_pod.dict.mt = bad_mt;
+            .collect::<HashMap<Key, Value>>();
+        bad_pod.dict = Dictionary::new(bad_kvs).unwrap();
         assert!(bad_pod.verify().is_err());
 
         Ok(())
