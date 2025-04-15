@@ -37,13 +37,13 @@ use crate::backends::plonky2::{
     primitives::signature::falcon_lib::{
         hash_to_point::{hash_to_point, hash_to_point_no_mod, RATE_RANGE},
         math::{FalconFelt, FastFft, Polynomial},
-        Signature, FALCON_ENCODING_BITS, MODULUS, N, NONCE_ELEMENTS,
+        Signature, FALCON_ENCODING_BITS, MODULUS as FALCON_PRIME, N, NONCE_ELEMENTS, SIG_L2_BOUND,
     },
 };
 
 // MAX_Q < floor( |F| / p )
-const P: u64 = MODULUS as u64;
-const MAX_Q: u64 = F::ORDER / MODULUS as u64; // = 1501077717423271 // TODO review that is floor(F::O/M)
+const P: u64 = FALCON_PRIME as u64;
+const MAX_Q: u64 = F::ORDER / FALCON_PRIME as u64; // = 1501077717423271 // TODO review that is floor(F::O/M)
 const MAX_Q_NBITS: usize = 51;
 const FALCON_ENCODING_BITS_usize: usize = FALCON_ENCODING_BITS as usize;
 
@@ -59,7 +59,7 @@ impl CircuitBuilderFalcon<F, D> for CircuitBuilder<F, D> {
 
 fn gen_falcon_field_table() -> LookupTable {
     let mut t: Vec<(u16, u16)> = vec![];
-    for i in 0..MODULUS {
+    for i in 0..FALCON_PRIME {
         t.push((i as u16, i as u16));
     }
     std::sync::Arc::new(t)
@@ -78,14 +78,18 @@ impl FalconFTarget {
     // Range checks:
     // i) r < p (done through lookup)
     // ii) q < floor(|F|/p) (|F|=Goldilocks prime)
-    pub fn modulus(builder: &mut CircuitBuilder<F, D>, falcon_lut_i: usize, v: Target) -> Target {
+    pub fn modulo_reduction(
+        builder: &mut CircuitBuilder<F, D>,
+        falcon_lut_i: usize,
+        v: Target,
+    ) -> Target {
         let q = builder.add_virtual_target();
         let r = builder.add_virtual_target();
 
         // assign the q & r values
         builder.add_simple_generator(FalconHintGenerator { v, q, r });
 
-        let p = builder.constant(F::from_canonical_u64(MODULUS as u64));
+        let p = builder.constant(F::from_canonical_u64(FALCON_PRIME as u64));
         let computed_v = builder.mul_add(q, p, r);
         builder.connect(v, computed_v);
 
@@ -99,6 +103,16 @@ impl FalconFTarget {
         less_than_maxq(builder, falcon_lut_i, q);
 
         r
+    }
+    // balance the given value, only dealing with positive values
+    fn balance(builder: &mut CircuitBuilder<F, D>, v: Target) -> Target {
+        let p: Target = builder.constant(F::from_canonical_u64(P));
+        let p_2: Target = builder.constant(F::from_canonical_u64(P / 2));
+
+        // if v > p/2, then return p-v
+        let s: BoolTarget = is_less::<FALCON_ENCODING_BITS_usize>(builder, p_2, v);
+        let p_v = builder.sub(p, v);
+        builder.select(s, p_v, v)
     }
 }
 
@@ -163,6 +177,28 @@ pub fn assert_less<const NUM_BITS: usize>(
     let x_plus_1 = builder.add_const(x, F::ONE);
     let expr = builder.sub(y, x_plus_1);
     builder.range_check(expr, NUM_BITS);
+}
+
+pub fn is_less<const NUM_BITS: usize>(
+    builder: &mut CircuitBuilder<F, D>,
+    x: Target,
+    y: Target,
+) -> BoolTarget {
+    // check that input targets fit within `NUM_BITS` bits.
+    builder.range_check(x, NUM_BITS);
+    builder.range_check(y, NUM_BITS);
+
+    // follow same approach as in
+    // https://github.com/iden3/circomlib/tree/0a045aec50d51396fcd86a568981a5a0afb99e95/circuits/comparators.circom#L89
+
+    // x + 2^n
+    let x_pow_n = builder.add_const(x, F::from_canonical_u64((1 << NUM_BITS) as u64));
+    let res = builder.sub(x_pow_n, y);
+
+    let bits = builder.split_le(res, NUM_BITS + 1);
+    // BoolTarget::new_unsafe(builder.neg(bits[NUM_BITS].target))
+    let one = builder.constant(F::ONE);
+    BoolTarget::new_unsafe(builder.sub(one, bits[NUM_BITS].target))
 }
 
 #[derive(Debug, Default)]
@@ -313,18 +349,32 @@ impl<const DEG: usize> PolynomialTarget<DEG> {
             // multiply 4 Falcon field elements together without overflowing the
             // Goldilocks field. We're also doing additions, therefore, reduce
             // modulus only one every Y iterations:
-            const Y: usize = 3;
+            const Y: usize = 4;
             if i % Y == 0 {
-                res = FalconFTarget::modulus(builder, falcon_lut_i, res);
+                res = FalconFTarget::modulo_reduction(builder, falcon_lut_i, res);
             }
         }
         res
     }
 
-    pub fn modulo_reduce(&self, builder: &mut CircuitBuilder<F, D>, falcon_lut_i: usize) -> Self {
+    pub fn modulo_reduction(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        falcon_lut_i: usize,
+    ) -> Self {
         Self(std::array::from_fn(|i| {
-            FalconFTarget::modulus(builder, falcon_lut_i, self.0[i])
+            FalconFTarget::modulo_reduction(builder, falcon_lut_i, self.0[i])
         }))
+    }
+
+    pub fn norm_squared(&self, builder: &mut CircuitBuilder<F, D>) -> Target {
+        let mut res: Target = builder.constant(F::ZERO);
+        for i in 0..DEG {
+            let c_balanced = FalconFTarget::balance(builder, self.0[i]);
+            let c_squared = builder.square(c_balanced);
+            res = builder.add(res, c_squared);
+        }
+        res
     }
 }
 
@@ -359,6 +409,7 @@ impl SignatureVerifyGadget {
 
         let c = hash_to_point_gadget(builder, falcon_lut_i, true, msg, nonce_elems)?;
 
+        // check that s1== c - s2 * h (mod q)
         equality_check(builder, falcon_lut_i, enabled, tau, s1, s2, pk, s2h, c)?;
 
         // norm check
@@ -450,7 +501,7 @@ fn equality_check(
 
     // polynomial probabilistic product
     let s2tau_htau_raw = builder.mul(s2_tau, h_tau);
-    let s2tau_htau = FalconFTarget::modulus(builder, falcon_lut_i, s2tau_htau_raw);
+    let s2tau_htau = FalconFTarget::modulo_reduction(builder, falcon_lut_i, s2tau_htau_raw);
     // here we could do only 1 select, and instead of using `zero` using the
     // other value (s2tau_htau), but the code could be more confusing while only
     // saving a single gate
@@ -460,7 +511,7 @@ fn equality_check(
 
     // check s1(tau) + s2(tau) * h(tau) == c(tau)
     let s1s2h_raw = builder.add(s1_tau, s2tau_htau);
-    let s1s2h = FalconFTarget::modulus(builder, falcon_lut_i, s1s2h_raw);
+    let s1s2h = FalconFTarget::modulo_reduction(builder, falcon_lut_i, s1s2h_raw);
     // builder.connect(lhs, c_tau); // TODO dependent on 'enabled'
     // TODO-NOTE: maybe don't do the full `s1(tau)+s2(tau)h(tau)-c(tau)==0`, and
     // just compute the actual s1(x) polynomial, so that then the norm can be
@@ -505,7 +556,7 @@ fn hash_to_point_gadget(
 
         for a in &states[j + 1][RATE_RANGE] {
             res[i] = if apply_mod {
-                FalconFTarget::modulus(builder, falcon_lut_i, *a)
+                FalconFTarget::modulo_reduction(builder, falcon_lut_i, *a)
             } else {
                 *a
             };
@@ -577,12 +628,12 @@ pub mod tests {
 
     #[test]
     fn test_falcon_field_table() -> Result<()> {
-        let r = F::from_canonical_u64((MODULUS - 1) as u64);
+        let r = F::from_canonical_u64((FALCON_PRIME - 1) as u64);
         test_falcon_field_table_opt(r, true)?;
 
-        let r = F::from_canonical_u64((MODULUS) as u64);
+        let r = F::from_canonical_u64((FALCON_PRIME) as u64);
         test_falcon_field_table_opt(r, false)?;
-        let r = F::from_canonical_u64((MODULUS + 1) as u64);
+        let r = F::from_canonical_u64((FALCON_PRIME + 1) as u64);
         test_falcon_field_table_opt(r, false)?;
 
         Ok(())
@@ -614,7 +665,7 @@ pub mod tests {
 
     #[test]
     fn test_modulus() -> Result<()> {
-        let p: F = F::from_canonical_u64(MODULUS as u64);
+        let p: F = F::from_canonical_u64(FALCON_PRIME as u64);
         let v: F = F::from_canonical_u64(p.0 * 42 + 3 as u64); // overflows p
         let r = F::from_canonical_u64(v.0 % p.0 as u64);
         let h = (v - r).div(p);
@@ -633,7 +684,7 @@ pub mod tests {
         let v_targ = builder.add_virtual_target();
         pw.set_target(v_targ, v)?;
 
-        let r_targ = FalconFTarget::modulus(&mut builder, falcon_lut_i, v_targ);
+        let r_targ = FalconFTarget::modulo_reduction(&mut builder, falcon_lut_i, v_targ);
         dbg!(builder.num_gates());
 
         let expected_r_targ = builder.add_virtual_target();
@@ -737,7 +788,8 @@ pub mod tests {
         let fh_tau_targ = fh_targ.evaluate(&mut builder, falcon_lut_i, tau_targ);
 
         let ftau_htau_targ_raw = builder.mul(f_tau_targ, h_tau_targ);
-        let ftau_htau_targ = FalconFTarget::modulus(&mut builder, falcon_lut_i, ftau_htau_targ_raw);
+        let ftau_htau_targ =
+            FalconFTarget::modulo_reduction(&mut builder, falcon_lut_i, ftau_htau_targ_raw);
         builder.connect(ftau_htau_targ, fh_tau_targ);
 
         dbg!(builder.num_gates());
@@ -789,6 +841,78 @@ pub mod tests {
 
         // apply_mod:true= 4879 gates,
         // apply_mod:false= 64 gates.
+        dbg!(builder.num_gates());
+
+        // generate & verify proof
+        let data = builder.build::<C>();
+        let proof = data.prove(pw)?;
+        data.verify(proof.clone())?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_falcon_balance() -> Result<()> {
+        let mut rng = StdRng::from_os_rng();
+        // TODO do the test with an array of values, including:
+        // let values = [0,1,6143, 6144, 6145, 6146];
+        let v: FalconFelt = FalconFelt::new(6144);
+        let balanced_i16: i16 = v.balanced_value();
+        let balanced: u64 = balanced_i16.abs() as u64;
+        println!("{:?} {:?} {:?}", v, balanced_i16, balanced);
+
+        let s: u64 = ((P / 2) < balanced) as u64;
+        let p_v = P - balanced;
+        let res = balanced + s * (p_v - balanced);
+        dbg!(res);
+
+        let config = CircuitConfig::standard_recursion_config();
+        let mut builder = CircuitBuilder::<F, D>::new(config);
+        let mut pw = PartialWitness::<F>::new();
+
+        // set targets
+        let v_targ = builder.add_virtual_target();
+        pw.set_target(v_targ, F::from_canonical_u64(v.0 as u64))?;
+        let expected_balanced_targ = builder.add_virtual_target();
+        pw.set_target(expected_balanced_targ, F::from_canonical_u64(balanced))?;
+
+        let computed_balanced_targ: Target = FalconFTarget::balance(&mut builder, v_targ);
+        builder.connect(computed_balanced_targ, expected_balanced_targ);
+
+        dbg!(builder.num_gates());
+
+        // generate & verify proof
+        let data = builder.build::<C>();
+        let proof = data.prove(pw)?;
+        data.verify(proof.clone())?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_norm_squared() -> Result<()> {
+        let mut rng = StdRng::from_os_rng();
+
+        let coeffs: Vec<FalconFelt> =
+            std::iter::repeat_with(|| FalconFelt::new(rng.random::<i16>().abs()))
+                .take(N)
+                .collect();
+        let p: Polynomial<FalconFelt> = Polynomial::new(coeffs);
+        let norm = p.norm_squared();
+
+        let config = CircuitConfig::standard_recursion_config();
+        let mut builder = CircuitBuilder::<F, D>::new(config);
+        let mut pw = PartialWitness::<F>::new();
+
+        // set targets
+        let p_targ = builder.add_virtual_polynomial::<N>();
+        p_targ.set_targets(&mut pw, &p)?;
+        let expected_norm_targ = builder.add_virtual_target();
+        pw.set_target(expected_norm_targ, F::from_canonical_u64(norm))?;
+
+        let computed_norm_targ: Target = p_targ.norm_squared(&mut builder);
+        builder.connect(computed_norm_targ, expected_norm_targ);
+
         dbg!(builder.num_gates());
 
         // generate & verify proof
