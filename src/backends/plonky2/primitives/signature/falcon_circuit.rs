@@ -43,7 +43,8 @@ use crate::backends::plonky2::{
 
 // MAX_Q < floor( |F| / p )
 const P: u64 = MODULUS as u64;
-const MAX_Q: u64 = F::ORDER / MODULUS as u64; // TODO review that is floor(F::O/M)
+const MAX_Q: u64 = F::ORDER / MODULUS as u64; // = 1501077717423271 // TODO review that is floor(F::O/M)
+const MAX_Q_NBITS: usize = 51;
 const FALCON_ENCODING_BITS_usize: usize = FALCON_ENCODING_BITS as usize;
 
 pub trait CircuitBuilderFalcon<F: RichField + Extendable<D>, const D: usize> {
@@ -93,8 +94,9 @@ impl FalconFTarget {
         let lut_out = builder.add_lookup_from_index(r, falcon_lut_i);
         builder.connect(lut_out, r);
         // ii) q < MAX_Q
-        let max_q = builder.constant(F::from_canonical_u64(MAX_Q));
-        assert_less::<{ F::BITS }>(builder, q, max_q);
+        // let max_q = builder.constant(F::from_canonical_u64(MAX_Q)); // TODO rm line
+        // assert_less::<{ F::BITS }>(builder, q, max_q); // TODO rm line
+        less_than_maxq(builder, falcon_lut_i, q);
 
         r
     }
@@ -161,6 +163,103 @@ pub fn assert_less<const NUM_BITS: usize>(
     let x_plus_1 = builder.add_const(x, F::ONE);
     let expr = builder.sub(y, x_plus_1);
     builder.range_check(expr, NUM_BITS);
+}
+
+#[derive(Debug, Default)]
+struct LimbsDecompGenerator {
+    v: Target,
+    limbs: [Target; 4],
+}
+impl SimpleGenerator<F, D> for LimbsDecompGenerator {
+    fn id(&self) -> String {
+        "LimbsDecompGenerator".to_string()
+    }
+    fn dependencies(&self) -> Vec<Target> {
+        vec![self.v]
+    }
+    fn run_once(
+        &self,
+        witness: &PartitionWitness<F>,
+        out_buffer: &mut GeneratedValues<F>,
+    ) -> Result<()> {
+        let v = witness.get_target(self.v);
+        let mut v64 = v.to_canonical_u64();
+
+        let mut limbs: Vec<u64> = vec![];
+        while v64 > 0 {
+            let rem = v64 % P;
+            limbs.push(rem);
+            v64 = v64 / P;
+        }
+
+        // sanity check
+        #[cfg(test)]
+        {
+            for l in limbs.iter() {
+                assert!(*l < P);
+            }
+            assert!(limbs.len() <= 4);
+            // TODO deal with when limbs.len()>4
+        }
+        // extend to 4
+        limbs.resize(4, 0u64);
+
+        out_buffer.set_target(self.v, v)?;
+        out_buffer.set_target(self.limbs[0], F::from_canonical_u64(limbs[0]))?;
+        out_buffer.set_target(self.limbs[1], F::from_canonical_u64(limbs[1]))?;
+        out_buffer.set_target(self.limbs[2], F::from_canonical_u64(limbs[2]))?;
+        out_buffer.set_target(self.limbs[3], F::from_canonical_u64(limbs[3]))?;
+
+        Ok(())
+    }
+    fn serialize(&self, dst: &mut Vec<u8>, _common_data: &CommonCircuitData<F, D>) -> IoResult<()> {
+        dst.write_target(self.v)?;
+        dst.write_target(self.limbs[0])?;
+        dst.write_target(self.limbs[1])?;
+        dst.write_target(self.limbs[2])?;
+        dst.write_target(self.limbs[3])?;
+        Ok(())
+    }
+    fn deserialize(src: &mut Buffer, _common_data: &CommonCircuitData<F, D>) -> IoResult<Self>
+    where
+        Self: Sized,
+    {
+        let v = src.read_target()?;
+        let limbs = src.read_target_array::<4>()?;
+        Ok(Self { v, limbs })
+    }
+}
+
+fn num_from_limbs(builder: &mut CircuitBuilder<F, D>, limbs: [Target; 4]) -> Target {
+    let falcon_prime = builder.constant(F::from_canonical_u64(P));
+    // similar strategy as in the `PolynomialTarget.evaluate` method
+    let mut res: Target = limbs[3];
+    res = builder.mul_add(res, falcon_prime, limbs[2]);
+    res = builder.mul_add(res, falcon_prime, limbs[1]);
+    res = builder.mul_add(res, falcon_prime, limbs[0]);
+    res
+}
+
+/// Asserts that the given value `v` is smaller than `MAX_Q`.
+fn less_than_maxq(builder: &mut CircuitBuilder<F, D>, falcon_lut_i: usize, v: Target) {
+    let max_q = builder.constant(F::from_canonical_u64(MAX_Q));
+
+    // 1. assert_less::<max_q.nbits()>(v, max_q)
+    assert_less::<MAX_Q_NBITS>(builder, v, max_q);
+
+    // 2. limbs = decompose_into_limbs(v)
+    let limbs = builder.add_virtual_target_arr::<4>();
+    builder.add_simple_generator(LimbsDecompGenerator { v, limbs });
+
+    // 3. assert that v = from_limbs(limbs)
+    let v_from_limbs = num_from_limbs(builder, limbs);
+    builder.connect(v_from_limbs, v);
+
+    // // 4. lookup check to assert that limbs < falcon field prime (p)
+    for i in 0..4 {
+        let lut_out = builder.add_lookup_from_index(limbs[i], falcon_lut_i);
+        builder.connect(lut_out, limbs[i]);
+    }
 }
 
 /// PolynomialTarget represents an element in Z_p[x]/(phi) inside a circuit.
