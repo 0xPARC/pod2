@@ -587,7 +587,8 @@ fn check_custom_pred(
         let st_args = st.args();
         for (st_tmpl_arg, st_arg) in st_tmpl.args.iter().zip(&st_args) {
             if !check_st_tmpl(st_tmpl_arg, st_arg, &mut wildcard_map) {
-                println!("DBG {:?} doesn't match {:?}", st_arg, st_tmpl_arg);
+                println!("DBG {} doesn't match {}", st_arg, st_tmpl_arg);
+                println!("DBG {} doesn't match {}", st, st_tmpl);
                 return Ok(false);
             }
         }

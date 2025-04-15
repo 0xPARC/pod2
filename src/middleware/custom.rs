@@ -392,7 +392,6 @@ impl fmt::Display for Predicate {
     }
 }
 
-/* TODO: Uncomment
 #[cfg(test)]
 mod tests {
     use std::{array, sync::Arc};
@@ -400,18 +399,29 @@ mod tests {
     use anyhow::Result;
     use plonky2::field::goldilocks_field::GoldilocksField;
 
+    use super::*;
     use crate::middleware::{
         AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash,
         KeyOrWildcard, NativePredicate, Operation, Params, PodId, PodType, Predicate, Statement,
-        StatementTmpl, StatementTmplArg, SELF,
+        StatementTmpl, StatementTmplArg, WildcardValue, SELF,
     };
 
     fn st(p: Predicate, args: Vec<StatementTmplArg>) -> StatementTmpl {
-        StatementTmpl(p, args)
+        StatementTmpl { pred: p, args }
+    }
+
+    fn kow_wc(i: usize) -> KOW {
+        KOW::Wildcard(wc(i))
+    }
+    fn wc(i: usize) -> Wildcard {
+        Wildcard {
+            name: format!("{}", i),
+            index: i,
+        }
     }
 
     type STA = StatementTmplArg;
-    type HOW = KeyOrWildcard;
+    type KOW = KeyOrWildcard;
     type P = Predicate;
     type NP = NativePredicate;
 
@@ -427,44 +437,42 @@ mod tests {
         let cust_pred_batch = Arc::new(CustomPredicateBatch {
             name: "is_double".to_string(),
             predicates: vec![CustomPredicate::and(
+                "_".into(),
                 &params,
                 vec![
                     st(
                         P::Native(NP::ValueOf),
-                        vec![
-                            STA::Key(HOW::Wildcard(4), HOW::Wildcard(5)),
-                            STA::Literal(2.into()),
-                        ],
+                        vec![STA::Key(wc(4), kow_wc(5)), STA::Literal(2.into())],
                     ),
                     st(
                         P::Native(NP::ProductOf),
                         vec![
-                            STA::Key(HOW::Wildcard(0), HOW::Wildcard(1)),
-                            STA::Key(HOW::Wildcard(4), HOW::Wildcard(5)),
-                            STA::Key(HOW::Wildcard(2), HOW::Wildcard(3)),
+                            STA::Key(wc(0), kow_wc(1)),
+                            STA::Key(wc(4), kow_wc(5)),
+                            STA::Key(wc(2), kow_wc(3)),
                         ],
                     ),
                 ],
-                4,
+                2,
             )?],
         });
 
         let custom_statement = Statement::Custom(
-            CustomPredicateRef(cust_pred_batch.clone(), 0),
+            CustomPredicateRef::new(cust_pred_batch.clone(), 0),
             vec![
-                AnchoredKey::new(SELF, "Some value"),
-                AnchoredKey::new(SELF, "Some other value"),
+                WildcardValue::PodId(SELF),
+                WildcardValue::Key(Key::from("Some value")),
             ],
         );
 
         let custom_deduction = Operation::Custom(
-            CustomPredicateRef(cust_pred_batch, 0),
+            CustomPredicateRef::new(cust_pred_batch, 0),
             vec![
-                Statement::ValueOf(AnchoredKey::new(SELF, "Some constant"), 2.into()),
+                Statement::ValueOf(AnchoredKey::from((SELF, "Some constant")), 2.into()),
                 Statement::ProductOf(
-                    AnchoredKey::new(SELF, "Some value"),
-                    AnchoredKey::new(SELF, "Some constant"),
-                    AnchoredKey::new(SELF, "Some other value"),
+                    AnchoredKey::from((SELF, "Some value")),
+                    AnchoredKey::from((SELF, "Some constant")),
+                    AnchoredKey::from((SELF, "Some other value")),
                 ),
             ],
         );
@@ -476,30 +484,34 @@ mod tests {
 
     #[test]
     fn ethdos_test() -> Result<()> {
-        let params = Params::default();
+        let params = Params {
+            max_custom_predicate_wildcards: 12,
+            ..Default::default()
+        };
 
         let eth_friend_cp = CustomPredicate::and(
+            "eth_friend_cp".into(),
             &params,
             vec![
                 st(
                     P::Native(NP::ValueOf),
                     vec![
-                        STA::Key(HOW::Wildcard(4), KeyOrWildcard::Hash("type".into())),
+                        STA::Key(wc(4), KeyOrWildcard::Key("type".into())),
                         STA::Literal(PodType::Signed.into()),
                     ],
                 ),
                 st(
                     P::Native(NP::Equal),
                     vec![
-                        STA::Key(HOW::Wildcard(4), KeyOrWildcard::Hash("signer".into())),
-                        STA::Key(HOW::Wildcard(0), HOW::Wildcard(1)),
+                        STA::Key(wc(4), KeyOrWildcard::Key("signer".into())),
+                        STA::Key(wc(0), kow_wc(1)),
                     ],
                 ),
                 st(
                     P::Native(NP::Equal),
                     vec![
-                        STA::Key(HOW::Wildcard(4), KeyOrWildcard::Hash("attestation".into())),
-                        STA::Key(HOW::Wildcard(2), HOW::Wildcard(3)),
+                        STA::Key(wc(4), KeyOrWildcard::Key("attestation".into())),
+                        STA::Key(wc(2), kow_wc(3)),
                     ],
                 ),
             ],
@@ -511,81 +523,89 @@ mod tests {
             predicates: vec![eth_friend_cp],
         });
 
+        // 0
         let eth_dos_base = CustomPredicate::and(
+            "eth_dos_base".into(),
             &params,
             vec![
                 st(
                     P::Native(NP::Equal),
-                    vec![
-                        STA::Key(HOW::Wildcard(0), HOW::Wildcard(1)),
-                        STA::Key(HOW::Wildcard(2), HOW::Wildcard(3)),
-                    ],
+                    vec![STA::Key(wc(0), kow_wc(1)), STA::Key(wc(2), kow_wc(3))],
                 ),
                 st(
                     P::Native(NP::ValueOf),
-                    vec![
-                        STA::Key(HOW::Wildcard(4), HOW::Wildcard(5)),
-                        STA::Literal(0.into()),
-                    ],
+                    vec![STA::Key(wc(4), kow_wc(5)), STA::Literal(0.into())],
                 ),
             ],
             6,
         )?;
 
+        // 1
         let eth_dos_ind = CustomPredicate::and(
+            "eth_dos_ind".into(),
             &params,
             vec![
                 st(
                     P::BatchSelf(2),
                     vec![
-                        STA::Key(HOW::Wildcard(0), HOW::Wildcard(1)),
-                        STA::Key(HOW::Wildcard(10), HOW::Wildcard(11)),
-                        STA::Key(HOW::Wildcard(8), HOW::Wildcard(9)),
+                        STA::WildcardLiteral(wc(0)),
+                        STA::WildcardLiteral(wc(1)),
+                        STA::WildcardLiteral(wc(10)),
+                        STA::WildcardLiteral(wc(11)),
+                        STA::WildcardLiteral(wc(8)),
+                        STA::WildcardLiteral(wc(9)),
                     ],
                 ),
                 st(
                     P::Native(NP::ValueOf),
-                    vec![
-                        STA::Key(HOW::Wildcard(6), HOW::Wildcard(7)),
-                        STA::Literal(1.into()),
-                    ],
+                    vec![STA::Key(wc(6), kow_wc(7)), STA::Literal(1.into())],
                 ),
                 st(
                     P::Native(NP::SumOf),
                     vec![
-                        STA::Key(HOW::Wildcard(4), HOW::Wildcard(5)),
-                        STA::Key(HOW::Wildcard(8), HOW::Wildcard(9)),
-                        STA::Key(HOW::Wildcard(6), HOW::Wildcard(7)),
+                        STA::Key(wc(4), kow_wc(5)),
+                        STA::Key(wc(8), kow_wc(9)),
+                        STA::Key(wc(6), kow_wc(7)),
                     ],
                 ),
                 st(
-                    P::Custom(CustomPredicateRef(eth_friend_batch.clone(), 0)),
+                    P::Custom(CustomPredicateRef::new(eth_friend_batch.clone(), 0)),
                     vec![
-                        STA::Key(HOW::Wildcard(10), HOW::Wildcard(11)),
-                        STA::Key(HOW::Wildcard(2), HOW::Wildcard(3)),
+                        STA::WildcardLiteral(wc(10)),
+                        STA::WildcardLiteral(wc(11)),
+                        STA::WildcardLiteral(wc(2)),
+                        STA::WildcardLiteral(wc(3)),
                     ],
                 ),
             ],
             6,
         )?;
 
+        // 2
         let eth_dos_distance_either = CustomPredicate::or(
+            "eth_dos_distance_either".into(),
             &params,
             vec![
                 st(
                     P::BatchSelf(0),
                     vec![
-                        STA::Key(HOW::Wildcard(0), HOW::Wildcard(1)),
-                        STA::Key(HOW::Wildcard(2), HOW::Wildcard(3)),
-                        STA::Key(HOW::Wildcard(4), HOW::Wildcard(5)),
+                        STA::WildcardLiteral(wc(0)),
+                        STA::WildcardLiteral(wc(1)),
+                        STA::WildcardLiteral(wc(2)),
+                        STA::WildcardLiteral(wc(3)),
+                        STA::WildcardLiteral(wc(4)),
+                        STA::WildcardLiteral(wc(5)),
                     ],
                 ),
                 st(
                     P::BatchSelf(1),
                     vec![
-                        STA::Key(HOW::Wildcard(0), HOW::Wildcard(1)),
-                        STA::Key(HOW::Wildcard(2), HOW::Wildcard(3)),
-                        STA::Key(HOW::Wildcard(4), HOW::Wildcard(5)),
+                        STA::WildcardLiteral(wc(0)),
+                        STA::WildcardLiteral(wc(1)),
+                        STA::WildcardLiteral(wc(2)),
+                        STA::WildcardLiteral(wc(3)),
+                        STA::WildcardLiteral(wc(4)),
+                        STA::WildcardLiteral(wc(5)),
                     ],
                 ),
             ],
@@ -605,11 +625,14 @@ mod tests {
 
         // Example statement
         let ethdos_example = Statement::Custom(
-            CustomPredicateRef(eth_dos_distance_batch.clone(), 2),
+            CustomPredicateRef::new(eth_dos_distance_batch.clone(), 2),
             vec![
-                AnchoredKey::new(pod_id1, "Alice"),
-                AnchoredKey::new(pod_id2, "Bob"),
-                AnchoredKey::new(SELF, "Seven"),
+                WildcardValue::PodId(pod_id1),
+                WildcardValue::Key(Key::from("Alice")),
+                WildcardValue::PodId(pod_id2),
+                WildcardValue::Key(Key::from("Bob")),
+                WildcardValue::PodId(SELF),
+                WildcardValue::Key(Key::from("Seven")),
             ],
         );
 
@@ -618,17 +641,20 @@ mod tests {
 
         // This could arise as the inductive step.
         let ethdos_ind_example = Statement::Custom(
-            CustomPredicateRef(eth_dos_distance_batch.clone(), 1),
+            CustomPredicateRef::new(eth_dos_distance_batch.clone(), 1),
             vec![
-                AnchoredKey::new(pod_id1, "Alice"),
-                AnchoredKey::new(pod_id2, "Bob"),
-                AnchoredKey::new(SELF, "Seven"),
+                WildcardValue::PodId(pod_id1),
+                WildcardValue::Key(Key::from("Alice")),
+                WildcardValue::PodId(pod_id2),
+                WildcardValue::Key(Key::from("Bob")),
+                WildcardValue::PodId(SELF),
+                WildcardValue::Key(Key::from("Seven")),
             ],
         );
 
         assert!(Operation::Custom(
-            CustomPredicateRef(eth_dos_distance_batch.clone(), 2),
-            vec![ethdos_ind_example.clone()]
+            CustomPredicateRef::new(eth_dos_distance_batch.clone(), 2),
+            vec![Statement::None, ethdos_ind_example.clone()]
         )
         .check(&params, &ethdos_example)?);
 
@@ -637,30 +663,35 @@ mod tests {
         // less than 7, and Charlie is ETH-friends with Bob.
         let ethdos_facts = vec![
             Statement::Custom(
-                CustomPredicateRef(eth_dos_distance_batch.clone(), 2),
+                CustomPredicateRef::new(eth_dos_distance_batch.clone(), 2),
                 vec![
-                    AnchoredKey::new(pod_id1, "Alice"),
-                    AnchoredKey::new(pod_id3, "Charlie"),
-                    AnchoredKey::new(pod_id4, "Six"),
+                    WildcardValue::PodId(pod_id1),
+                    WildcardValue::Key(Key::from("Alice")),
+                    WildcardValue::PodId(pod_id3),
+                    WildcardValue::Key(Key::from("Charlie")),
+                    WildcardValue::PodId(pod_id4),
+                    WildcardValue::Key(Key::from("Six")),
                 ],
             ),
-            Statement::ValueOf(AnchoredKey::new(SELF, "One"), 1.into()),
+            Statement::ValueOf(AnchoredKey::from((SELF, "One")), 1.into()),
             Statement::SumOf(
-                AnchoredKey::new(SELF, "Seven"),
-                AnchoredKey::new(pod_id4, "Six"),
-                AnchoredKey::new(SELF, "One"),
+                AnchoredKey::from((SELF, "Seven")),
+                AnchoredKey::from((pod_id4, "Six")),
+                AnchoredKey::from((SELF, "One")),
             ),
             Statement::Custom(
-                CustomPredicateRef(eth_friend_batch.clone(), 0),
+                CustomPredicateRef::new(eth_friend_batch.clone(), 0),
                 vec![
-                    AnchoredKey::new(pod_id3, "Charlie"),
-                    AnchoredKey::new(pod_id2, "Bob"),
+                    WildcardValue::PodId(pod_id3),
+                    WildcardValue::Key(Key::from("Charlie")),
+                    WildcardValue::PodId(pod_id2),
+                    WildcardValue::Key(Key::from("Bob")),
                 ],
             ),
         ];
 
         assert!(Operation::Custom(
-            CustomPredicateRef(eth_dos_distance_batch.clone(), 1),
+            CustomPredicateRef::new(eth_dos_distance_batch.clone(), 1),
             ethdos_facts
         )
         .check(&params, &ethdos_ind_example)?);
@@ -668,4 +699,3 @@ mod tests {
         Ok(())
     }
 }
-*/
