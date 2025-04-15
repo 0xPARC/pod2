@@ -547,10 +547,7 @@ pub fn check_st_tmpl(
         (StatementTmplArg::WildcardLiteral(wc), StatementArg::WildcardLiteral(v)) => {
             check_or_set(v.clone(), wc, wildcard_map)
         }
-        _ => {
-            println!("DBG {} doesn't match {}", st_arg, st_tmpl_arg);
-            false
-        }
+        _ => false,
     }
 }
 
@@ -587,9 +584,9 @@ fn check_custom_pred(
         let st_args = st.args();
         for (st_tmpl_arg, st_arg) in st_tmpl.args.iter().zip(&st_args) {
             if !check_st_tmpl(st_tmpl_arg, st_arg, &mut wildcard_map) {
-                // TODO: Better errors
-                println!("DBG {} doesn't match {}", st_arg, st_tmpl_arg);
-                println!("DBG {} doesn't match {}", st, st_tmpl);
+                // TODO: Better errors.  Example:
+                // println!("{} doesn't match {}", st_arg, st_tmpl_arg);
+                // println!("{} doesn't match {}", st, st_tmpl);
                 return Ok(false);
             }
         }
@@ -604,7 +601,6 @@ fn check_custom_pred(
         if st_tmpl_pred == st.predicate() {
             num_matches += 1;
         }
-        println!("DBG\n- {}\n- {}", st_tmpl.pred, st.predicate());
     }
 
     // Check that the resolved wildcard match the statement arguments.
@@ -615,10 +611,8 @@ fn check_custom_pred(
     }
 
     if pred.conjunction {
-        println!("DBG and {} {}", num_matches, pred.statements.len());
         Ok(num_matches == pred.statements.len())
     } else {
-        println!("DBG or {} {}", num_matches, pred.statements.len());
         Ok(num_matches > 0)
     }
 }

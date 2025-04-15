@@ -431,14 +431,7 @@ impl MainPodBuilder {
                     let st_args = st.args();
                     for (st_tmpl_arg, st_arg) in st_tmpl.args.iter().zip(&st_args) {
                         if !check_st_tmpl(st_tmpl_arg, st_arg, &mut wildcard_map) {
-                            for (i, wc_v) in wildcard_map.iter().enumerate() {
-                                if let Some(wc_v) = wc_v {
-                                    println!("DBG {} = {}", i, wc_v);
-                                } else {
-                                    println!("DBG {} = None", i);
-                                }
-                            }
-                            println!("DBG {} doesn't match {}", st_arg, st_tmpl_arg);
+                            // TODO: Add wildcard_map in the error for better context
                             return Err(anyhow!("{} doesn't match {}", st, st_tmpl));
                         }
                     }
