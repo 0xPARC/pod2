@@ -519,6 +519,7 @@ pub fn check_st_tmpl(
     ) -> bool {
         if let Some(prev) = &wildcard_map[wc.index] {
             if *prev != v {
+                // TODO: Return nice error
                 return false;
             }
         } else {

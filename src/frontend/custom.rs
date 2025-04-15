@@ -11,7 +11,6 @@ use crate::{
         self, hash_str, CustomPredicate, CustomPredicateBatch, Key, KeyOrWildcard, NativePredicate,
         Params, PodId, Predicate, StatementTmpl, StatementTmplArg, ToFields, Value, Wildcard,
     },
-    util::hashmap_insert_no_dupe,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]

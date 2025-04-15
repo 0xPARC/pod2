@@ -12,7 +12,6 @@ use crate::{
         hash_fields, AnchoredKey, Hash, Key, NativePredicate, Params, PodId, Statement,
         StatementArg, ToFields, Value, F,
     },
-    util::hashmap_insert_no_dupe,
 };
 
 #[derive(Clone, Debug, PartialEq)]
