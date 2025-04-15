@@ -163,8 +163,6 @@ impl Pod for MainPod {
 
 #[cfg(test)]
 pub mod tests {
-    use std::collections::HashSet;
-
     use super::*;
     use crate::{
         backends::plonky2::{
@@ -172,7 +170,7 @@ pub mod tests {
         },
         examples::{zu_kyc_pod_builder, zu_kyc_sign_pod_builders},
         frontend, middleware,
-        middleware::{containers::Set, RawValue, Value},
+        middleware::RawValue,
         op,
     };
 

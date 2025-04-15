@@ -1,20 +1,18 @@
 //! The frontend includes the user-level abstractions and user-friendly types to define and work
 //! with Pods.
 
-use std::{collections::HashMap, convert::From, fmt, hash as h, hash::Hasher};
+use std::{collections::HashMap, convert::From, fmt};
 
-use anyhow::{anyhow, Error, Result};
-// use containers::{Array, Dictionary, Set};
+use anyhow::{anyhow, Result};
 use itertools::Itertools;
 
 // use schemars::JsonSchema;
 
 // use serde::{Deserialize, Serialize};
 use crate::middleware::{
-    self, check_st_tmpl, hash_str, AnchoredKey, Hash, Key, MainPodInputs, NativeOperation,
+    self, check_st_tmpl, hash_str, AnchoredKey, Key, MainPodInputs, NativeOperation,
     NativePredicate, OperationAux, OperationType, Params, PodId, PodProver, PodSigner, Predicate,
-    Statement, StatementArg, TypedValue, Value, WildcardValue, EMPTY_VALUE, KEY_SIGNER, KEY_TYPE,
-    SELF,
+    Statement, StatementArg, Value, WildcardValue, EMPTY_VALUE, KEY_TYPE, SELF,
 };
 
 mod custom;
@@ -453,7 +451,7 @@ impl MainPodBuilder {
                     .collect()
             }
         };
-        let st = Statement::from_args(pred.into(), st_args).expect("valid arguments");
+        let st = Statement::from_args(pred, st_args).expect("valid arguments");
         self.insert(public, (st, op));
 
         Ok(self.statements[self.statements.len() - 1].clone())
@@ -650,19 +648,17 @@ impl MainPodCompiler {
     }
 
     fn compile_op(&self, op: &Operation) -> Result<middleware::Operation> {
-        let mop_code: middleware::OperationType = op.0.clone().try_into()?;
-
         // TODO: Take Merkle proof into account.
         let mop_args =
             op.1.iter()
                 .flat_map(|arg| self.compile_op_arg(arg))
                 .collect_vec();
-        middleware::Operation::op(mop_code, &mop_args, &op.2)
+        middleware::Operation::op(op.0.clone(), &mop_args, &op.2)
     }
 
     fn compile_st_op(&mut self, st: &Statement, op: &Operation, params: &Params) -> Result<()> {
         let middle_op = self.compile_op(op)?;
-        let is_correct = middle_op.check(params, &st)?;
+        let is_correct = middle_op.check(params, st)?;
         if !is_correct {
             // todo: improve error handling
             Err(anyhow!(
@@ -774,10 +770,7 @@ pub mod tests {
             eth_dos_pod_builder, eth_friend_signed_pod_builder, great_boy_pod_full_flow,
             tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_sign_pod_builders,
         },
-        middleware::{
-            containers::{Dictionary, Set},
-            Value,
-        },
+        middleware::{containers::Dictionary, Value},
     };
 
     // Check that frontend public statements agree with those

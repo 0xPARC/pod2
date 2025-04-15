@@ -1,3 +1,4 @@
+// TODO: Update this doc
 //! This file exposes the backend dependent basetypes as middleware types,
 //! taking them from the feature-enabled backend.
 //!
@@ -136,22 +137,6 @@ impl From<Hash> for RawValue {
     }
 }
 
-// impl TryInto<i64> for RawValue {
-//     type Error = Error;
-//     fn try_into(self) -> std::result::Result<i64, Self::Error> {
-//         let value = self.0;
-//         if value[2..] != [F::ZERO, F::ZERO]
-//             || value[..2]
-//                 .iter()
-//                 .all(|x| x.to_canonical_u64() > u32::MAX as u64)
-//         {
-//             Err(anyhow!("Value not an element of the i64 embedding."))
-//         } else {
-//             Ok((value[0].to_canonical_u64() | (value[1].to_canonical_u64() << 32)) as i64)
-//         }
-//     }
-// }
-
 impl fmt::Display for RawValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.0[2].is_zero() && self.0[3].is_zero() {
@@ -236,12 +221,6 @@ impl FromHex for Hash {
     }
 }
 
-// impl From<&str> for Hash {
-//     fn from(s: &str) -> Self {
-//         hash_str(s)
-//     }
-// }
-
 pub fn hash_str(s: &str) -> Hash {
     let mut input = s.as_bytes().to_vec();
     input.push(1); // padding
@@ -260,29 +239,3 @@ pub fn hash_str(s: &str) -> Hash {
         .collect();
     hash_fields(&input)
 }
-
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//
-//     #[test]
-//     fn test_i64_value_roundtrip() {
-//         let test_cases = [
-//             0i64,
-//             1,
-//             -1,
-//             i64::MAX,
-//             i64::MIN,
-//             42,
-//             -42,
-//             1 << 32,
-//             -(1 << 32),
-//         ];
-//
-//         for &original in test_cases.iter() {
-//             let value = RawValue::from(original);
-//             let roundtrip: i64 = value.try_into().unwrap();
-//             assert_eq!(original, roundtrip, "Failed roundtrip for {}", original);
-//         }
-//     }
-// }

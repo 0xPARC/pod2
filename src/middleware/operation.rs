@@ -8,9 +8,9 @@ use plonky2::field::types::Field;
 use crate::{
     backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree},
     middleware::{
-        custom::KeyOrWildcard, AnchoredKey, CustomPredicate, CustomPredicateBatch,
-        CustomPredicateRef, NativePredicate, Params, Predicate, RawValue, Statement, StatementArg,
-        StatementTmplArg, ToFields, Value, Wildcard, WildcardValue, F, SELF,
+        custom::KeyOrWildcard, AnchoredKey, CustomPredicateBatch, CustomPredicateRef,
+        NativePredicate, Params, Predicate, Statement, StatementArg, StatementTmplArg, ToFields,
+        Wildcard, WildcardValue, F, SELF,
     },
 };
 
@@ -587,6 +587,7 @@ fn check_custom_pred(
         let st_args = st.args();
         for (st_tmpl_arg, st_arg) in st_tmpl.args.iter().zip(&st_args) {
             if !check_st_tmpl(st_tmpl_arg, st_arg, &mut wildcard_map) {
+                // TODO: Better errors
                 println!("DBG {} doesn't match {}", st_arg, st_tmpl_arg);
                 println!("DBG {} doesn't match {}", st, st_tmpl);
                 return Ok(false);

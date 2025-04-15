@@ -10,8 +10,8 @@ use crate::{
     },
     constants::MAX_DEPTH,
     middleware::{
-        containers::Dictionary, hash_str, AnchoredKey, Hash, Key, Params, Pod, PodId, PodSigner,
-        PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE,
+        containers::Dictionary, AnchoredKey, Hash, Key, Params, Pod, PodId, PodSigner, PodType,
+        RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE,
     },
 };
 
@@ -124,7 +124,6 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        constants::MAX_DEPTH,
         frontend,
         middleware::{self, EMPTY_VALUE, F},
     };

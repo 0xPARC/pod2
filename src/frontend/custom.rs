@@ -25,12 +25,6 @@ pub fn key(s: &str) -> KeyOrWildcardStr {
     KeyOrWildcardStr::Key(s.to_string())
 }
 
-/// helper to build a KeyOrWildcardStr::Wildcard from the given str. For the
-/// moment this method does not need to be public.
-// fn wildcard(s: &str) -> KeyOrWildcardStr {
-//     KeyOrWildcardStr::Wildcard(s.to_string())
-// }
-
 /// Builder Argument for the StatementTmplBuilder
 pub enum BuilderArg {
     Literal(Value),
@@ -161,11 +155,11 @@ impl CustomPredicateBatchBuilder {
                     .map(|a| match a {
                         BuilderArg::Literal(v) => StatementTmplArg::Literal(v.clone()),
                         BuilderArg::Key(pod_id, key) => StatementTmplArg::Key(
-                            resolve_wildcard(args, priv_args, &pod_id),
-                            resolve_key_or_wildcard(args, priv_args, &key),
+                            resolve_wildcard(args, priv_args, pod_id),
+                            resolve_key_or_wildcard(args, priv_args, key),
                         ),
                         BuilderArg::WildcardLiteral(v) => {
-                            StatementTmplArg::WildcardLiteral(resolve_wildcard(args, priv_args, &v))
+                            StatementTmplArg::WildcardLiteral(resolve_wildcard(args, priv_args, v))
                         }
                     })
                     .collect();
@@ -210,14 +204,13 @@ fn resolve_wildcard(args: &[&str], priv_args: &[&str], s: &str) -> Wildcard {
         .unwrap()
 }
 
-/* TODO: Uncomment
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
         examples::custom::{eth_dos_batch, eth_friend_batch},
         middleware,
-        //   middleware::{CustomPredicateRef, Params, PodType},
+        middleware::{CustomPredicateRef, Params, PodType},
     };
 
     #[test]
@@ -225,7 +218,11 @@ mod tests {
         use NativePredicate as NP;
         use StatementTmplBuilder as STB;
 
-        let params = Params::default();
+        let params = Params {
+            max_statement_args: 6,
+            max_custom_predicate_wildcards: 12,
+            ..Default::default()
+        };
         params.print_serialized_sizes();
 
         // ETH friend custom predicate batch
@@ -243,4 +240,3 @@ mod tests {
         Ok(())
     }
 }
-*/

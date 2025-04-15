@@ -1,7 +1,7 @@
 use std::{any::Any, fmt};
 
 use anyhow::{anyhow, Result};
-use base64::prelude::*;
+// use base64::prelude::*;
 use plonky2::{hash::poseidon::PoseidonHash, plonk::config::Hasher};
 
 // use serde::{Deserialize, Serialize};

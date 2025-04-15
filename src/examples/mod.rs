@@ -9,9 +9,8 @@ use crate::{
     backends::plonky2::mock::signedpod::MockSigner,
     frontend::{MainPodBuilder, SignedPod, SignedPodBuilder},
     middleware::{
-        containers::{Dictionary, Set},
-        CustomPredicateRef, Key, Params, PodType, Statement, TypedValue, Value, KEY_SIGNER,
-        KEY_TYPE,
+        containers::Set, CustomPredicateRef, Key, Params, PodType, Statement, TypedValue, Value,
+        KEY_SIGNER, KEY_TYPE,
     },
     op,
 };

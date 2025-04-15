@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt, iter, iter::zip, sync::Arc};
+use std::{fmt, iter, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use plonky2::field::types::Field;
@@ -8,10 +8,7 @@ use plonky2::field::types::Field;
 // use serde::{Deserialize, Serialize};
 use crate::{
     middleware::HASH_SIZE,
-    middleware::{
-        hash_fields, AnchoredKey, Hash, Key, NativePredicate, Params, PodId, Statement,
-        StatementArg, ToFields, Value, F,
-    },
+    middleware::{hash_fields, Hash, Key, NativePredicate, Params, ToFields, Value, F},
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -153,7 +150,7 @@ impl fmt::Display for StatementTmpl {
             }
             write!(f, "{}", arg)?;
         }
-        writeln!(f, "")
+        writeln!(f)
     }
 }
 

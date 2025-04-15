@@ -4,7 +4,7 @@ use anyhow::{anyhow, Result};
 
 // use serde::{Deserialize, Serialize};
 use crate::middleware::{
-    self, AnchoredKey, NativePredicate, Params, Predicate, StatementArg, ToFields, WildcardValue,
+    self, NativePredicate, Params, Predicate, StatementArg, ToFields, WildcardValue,
 };
 
 #[derive(Clone, Debug, PartialEq)]

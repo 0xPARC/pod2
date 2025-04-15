@@ -2,11 +2,8 @@ use std::fmt;
 
 // use serde::{Deserialize, Serialize};
 use crate::{
-    frontend::{Predicate, SignedPod},
-    middleware::{
-        self, AnchoredKey, CustomPredicateRef, NativeOperation, NativePredicate, OperationAux,
-        OperationType, Statement, Value,
-    },
+    frontend::SignedPod,
+    middleware::{AnchoredKey, OperationAux, OperationType, Statement, Value},
 };
 
 #[derive(Clone, Debug, PartialEq)]

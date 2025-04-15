@@ -24,8 +24,8 @@ use crate::{
         signedpod::SignedPod,
     },
     middleware::{
-        AnchoredKey, NativeOperation, NativePredicate, Params, PodType, RawValue, Statement,
-        StatementArg, ToFields, Value, F, KEY_TYPE, SELF, VALUE_SIZE,
+        AnchoredKey, NativeOperation, NativePredicate, Params, PodType, Statement, StatementArg,
+        ToFields, Value, F, KEY_TYPE, SELF, VALUE_SIZE,
     },
 };
 
@@ -529,7 +529,6 @@ impl MainPodVerifyCircuit {
     }
 }
 
-/* TODO
 #[cfg(test)]
 mod tests {
     use merkletree::MerkleTree;
@@ -544,7 +543,7 @@ mod tests {
                 mainpod::{OperationArg, OperationAux},
             },
         },
-        middleware::{OperationType, PodId},
+        middleware::{OperationType, PodId, RawValue},
     };
 
     fn operation_verify(
@@ -637,10 +636,10 @@ mod tests {
 
         // NewEntry
         let st1: mainpod::Statement =
-            Statement::ValueOf(AnchoredKey::new(SELF, "hello"), 55.into()).into();
+            Statement::ValueOf(AnchoredKey::from((SELF, "hello")), Value::from(55)).into();
         let st2: mainpod::Statement = Statement::ValueOf(
-            AnchoredKey::new(PodId(RawValue::from(75).into()), "hello"),
-            55.into(),
+            AnchoredKey::from((PodId(RawValue::from(75).into()), "hello")),
+            Value::from(55),
         )
         .into();
         let prev_statements = vec![st2];
@@ -668,13 +667,13 @@ mod tests {
 
         // Eq
         let st2: mainpod::Statement = Statement::ValueOf(
-            AnchoredKey::new(PodId(RawValue::from(75).into()), "world"),
-            55.into(),
+            AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
+            Value::from(55),
         )
         .into();
         let st: mainpod::Statement = Statement::Equal(
-            AnchoredKey::new(SELF, "hello"),
-            AnchoredKey::new(PodId(RawValue::from(75).into()), "world"),
+            AnchoredKey::from((SELF, "hello")),
+            AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
         )
         .into();
         let op = mainpod::Operation(
@@ -687,13 +686,13 @@ mod tests {
 
         // Lt
         let st2: mainpod::Statement = Statement::ValueOf(
-            AnchoredKey::new(PodId(RawValue::from(88).into()), "hello"),
-            56.into(),
+            AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
+            Value::from(56),
         )
         .into();
         let st: mainpod::Statement = Statement::Lt(
-            AnchoredKey::new(SELF, "hello"),
-            AnchoredKey::new(PodId(RawValue::from(88).into()), "hello"),
+            AnchoredKey::from((SELF, "hello")),
+            AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
         )
         .into();
         let op = mainpod::Operation(
@@ -714,16 +713,16 @@ mod tests {
         .collect();
         let mt = MerkleTree::new(params.max_depth_mt_gadget, &kvs)?;
 
-        let root = mt.root().into();
-        let root_ak = AnchoredKey::new(PodId(RawValue::from(88).into()), "merkle root");
+        let root = Value::from(mt.root());
+        let root_ak = AnchoredKey::from((PodId(RawValue::from(88).into()), "merkle root"));
 
         let key = 5.into();
-        let key_ak = AnchoredKey::new(PodId(RawValue::from(88).into()), "key");
+        let key_ak = AnchoredKey::from((PodId(RawValue::from(88).into()), "key"));
 
         let no_key_pf = mt.prove_nonexistence(&key)?;
 
-        let root_st: mainpod::Statement = Statement::ValueOf(root_ak.clone(), root).into();
-        let key_st: mainpod::Statement = Statement::ValueOf(key_ak.clone(), key).into();
+        let root_st: mainpod::Statement = Statement::ValueOf(root_ak.clone(), root.clone()).into();
+        let key_st: mainpod::Statement = Statement::ValueOf(key_ak.clone(), key.into()).into();
         let st: mainpod::Statement = Statement::NotContains(root_ak, key_ak).into();
         let op = mainpod::Operation(
             OperationType::Native(NativeOperation::NotContainsFromEntries),
@@ -732,7 +731,11 @@ mod tests {
         );
 
         let merkle_proofs = vec![mainpod::MerkleClaimAndProof::try_from_middleware(
-            &params, &root, &key, None, &no_key_pf,
+            &params,
+            &root.raw(),
+            &key,
+            None,
+            &no_key_pf,
         )?];
         let prev_statements = vec![root_st, key_st];
         operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
@@ -740,4 +743,3 @@ mod tests {
         Ok(())
     }
 }
-*/
