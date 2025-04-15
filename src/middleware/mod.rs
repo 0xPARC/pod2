@@ -370,6 +370,7 @@ pub struct Params {
     // max number of statements that can be ANDed or ORed together
     // in a custom predicate
     pub max_custom_predicate_arity: usize,
+    pub max_custom_predicate_wildcards: usize,
     pub max_custom_batch_size: usize,
     // maximum number of merkle proofs
     pub max_merkle_proofs: usize,
@@ -388,6 +389,7 @@ impl Default for Params {
             max_statement_args: 5,
             max_operation_args: 5,
             max_custom_predicate_arity: 5,
+            max_custom_predicate_wildcards: 10,
             max_custom_batch_size: 5,
             max_merkle_proofs: 5,
             max_depth_mt_gadget: 32,

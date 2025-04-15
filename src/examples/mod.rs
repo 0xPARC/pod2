@@ -139,7 +139,8 @@ pub fn eth_dos_pod_builder(
     let ethdos_alice_alice_is_zero = alice_bob_ethdos.priv_op(op!(
         custom,
         eth_dos.clone(),
-        ethdos_alice_alice_is_zero_base
+        ethdos_alice_alice_is_zero_base,
+        Statement::None
     ))?;
 
     // Alice and Charlie are ETH friends.
@@ -192,6 +193,7 @@ pub fn eth_dos_pod_builder(
     let ethdos_alice_charlie_is_one = alice_bob_ethdos.priv_op(op!(
         custom,
         eth_dos.clone(),
+        Statement::None,
         ethdos_alice_charlie_is_one_ind
     ))?;
 
@@ -210,8 +212,12 @@ pub fn eth_dos_pod_builder(
         ethdos_sum,
         ethfriends_charlie_bob
     ))?;
-    let _ethdos_alice_bob_is_two =
-        alice_bob_ethdos.pub_op(op!(custom, eth_dos.clone(), ethdos_alice_bob_is_two_ind))?;
+    let _ethdos_alice_bob_is_two = alice_bob_ethdos.pub_op(op!(
+        custom,
+        eth_dos.clone(),
+        Statement::None,
+        ethdos_alice_bob_is_two_ind
+    ))?;
 
     Ok(alice_bob_ethdos)
 }

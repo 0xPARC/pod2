@@ -7,7 +7,8 @@ use plonky2::field::types::Field;
 use strum_macros::FromRepr;
 
 use crate::middleware::{
-    AnchoredKey, CustomPredicateRef, Params, Predicate, ToFields, Value, F, VALUE_SIZE,
+    AnchoredKey, CustomPredicateRef, Key, Params, PodId, Predicate, RawValue, ToFields, Value, F,
+    VALUE_SIZE,
 };
 
 // TODO: Maybe store KEY_SIGNER and KEY_TYPE as Key with lazy_static
@@ -48,6 +49,39 @@ impl ToFields for NativePredicate {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum WildcardValue {
+    PodId(PodId),
+    Key(Key),
+}
+
+impl WildcardValue {
+    pub fn raw(&self) -> RawValue {
+        match self {
+            WildcardValue::PodId(pod_id) => RawValue::from(pod_id.0),
+            WildcardValue::Key(key) => key.raw(),
+        }
+    }
+}
+
+impl fmt::Display for WildcardValue {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            WildcardValue::PodId(pod_id) => write!(f, "{}", pod_id),
+            WildcardValue::Key(key) => write!(f, "{}", key),
+        }
+    }
+}
+
+impl ToFields for WildcardValue {
+    fn to_fields(&self, params: &Params) -> Vec<F> {
+        match self {
+            WildcardValue::PodId(pod_id) => pod_id.to_fields(params),
+            WildcardValue::Key(key) => key.to_fields(params),
+        }
+    }
+}
+
 /// Type encapsulating statements with their associated arguments.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Statement {
@@ -66,7 +100,7 @@ pub enum Statement {
     SumOf(AnchoredKey, AnchoredKey, AnchoredKey),
     ProductOf(AnchoredKey, AnchoredKey, AnchoredKey),
     MaxOf(AnchoredKey, AnchoredKey, AnchoredKey),
-    Custom(CustomPredicateRef, Vec<AnchoredKey>),
+    Custom(CustomPredicateRef, Vec<WildcardValue>),
 }
 
 impl Statement {
@@ -104,7 +138,7 @@ impl Statement {
             Self::SumOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
             Self::ProductOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
             Self::MaxOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
-            Self::Custom(_, args) => Vec::from_iter(args.into_iter().map(Key)),
+            Self::Custom(_, args) => Vec::from_iter(args.into_iter().map(WildcardLiteral)),
         }
     }
     pub fn from_args(pred: Predicate, args: Vec<StatementArg>) -> Result<Self> {
@@ -204,14 +238,14 @@ impl Statement {
             Native(np) => Err(anyhow!("Predicate {:?} is syntax sugar", np)),
             BatchSelf(_) => unreachable!(),
             Custom(cpr) => {
-                let ak_args: Result<Vec<AnchoredKey>> = args
+                let v_args: Result<Vec<WildcardValue>> = args
                     .iter()
                     .map(|x| match x {
-                        StatementArg::Key(ak) => Ok(ak.clone()),
+                        StatementArg::WildcardLiteral(v) => Ok(v.clone()),
                         _ => Err(anyhow!("Incorrect statement args")),
                     })
                     .collect();
-                Ok(Self::Custom(cpr, ak_args?))
+                Ok(Self::Custom(cpr, v_args?))
             }
         };
         st
@@ -229,14 +263,14 @@ impl ToFields for Statement {
 
 impl fmt::Display for Statement {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?} ", self.predicate())?;
+        write!(f, "{}(", self.predicate())?;
         for (i, arg) in self.args().iter().enumerate() {
             if i != 0 {
-                write!(f, " ")?;
+                write!(f, ", ")?;
             }
             write!(f, "{}", arg)?;
         }
-        Ok(())
+        write!(f, ")")
     }
 }
 
@@ -246,6 +280,7 @@ pub enum StatementArg {
     None,
     Literal(Value),
     Key(AnchoredKey),
+    WildcardLiteral(WildcardValue),
 }
 
 impl fmt::Display for StatementArg {
@@ -254,6 +289,7 @@ impl fmt::Display for StatementArg {
             StatementArg::None => write!(f, "none"),
             StatementArg::Literal(v) => write!(f, "{}", v),
             StatementArg::Key(r) => write!(f, "{}.{}", r.pod_id, r.key),
+            StatementArg::WildcardLiteral(v) => write!(f, "{}", v),
         }
     }
 }
@@ -298,6 +334,12 @@ impl ToFields for StatementArg {
                 fields.extend(ak.key.to_fields(_params));
                 fields
             }
+            StatementArg::WildcardLiteral(v) => v
+                .raw()
+                .0
+                .into_iter()
+                .chain(iter::repeat(F::ZERO).take(STATEMENT_ARG_F_LEN - VALUE_SIZE))
+                .collect(),
         };
         assert_eq!(f.len(), STATEMENT_ARG_F_LEN); // sanity check
         f

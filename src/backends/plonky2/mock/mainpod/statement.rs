@@ -4,7 +4,7 @@ use anyhow::{anyhow, Result};
 
 // use serde::{Deserialize, Serialize};
 use crate::middleware::{
-    self, AnchoredKey, NativePredicate, Params, Predicate, StatementArg, ToFields,
+    self, AnchoredKey, NativePredicate, Params, Predicate, StatementArg, ToFields, WildcardValue,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -81,15 +81,15 @@ impl TryFrom<Statement> for middleware::Statement {
                 _ => Err(anyhow!("Ill-formed statement expression {:?}", s))?,
             },
             Predicate::Custom(cpr) => {
-                let aks: Vec<AnchoredKey> = proper_args
+                let vs: Vec<WildcardValue> = proper_args
                     .into_iter()
                     .filter_map(|arg| match arg {
                         SA::None => None,
-                        SA::Key(ak) => Some(ak),
-                        SA::Literal(_) => unreachable!(),
+                        SA::WildcardLiteral(v) => Some(v),
+                        _ => unreachable!(),
                     })
                     .collect();
-                S::Custom(cpr, aks)
+                S::Custom(cpr, vs)
             }
             Predicate::BatchSelf(_) => {
                 unreachable!()

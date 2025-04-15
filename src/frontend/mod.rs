@@ -11,9 +11,10 @@ use itertools::Itertools;
 
 // use serde::{Deserialize, Serialize};
 use crate::middleware::{
-    self, hash_str, AnchoredKey, Hash, Key, MainPodInputs, NativeOperation, NativePredicate,
-    OperationAux, OperationType, Params, PodId, PodProver, PodSigner, Predicate, Statement,
-    StatementArg, TypedValue, Value, EMPTY_VALUE, KEY_SIGNER, KEY_TYPE, SELF,
+    self, check_st_tmpl, hash_str, AnchoredKey, Hash, Key, MainPodInputs, NativeOperation,
+    NativePredicate, OperationAux, OperationType, Params, PodId, PodProver, PodSigner, Predicate,
+    Statement, StatementArg, TypedValue, Value, WildcardValue, EMPTY_VALUE, KEY_SIGNER, KEY_TYPE,
+    SELF,
 };
 
 mod custom;
@@ -119,6 +120,8 @@ impl SignedPod {
     }
 }
 
+/// The MainPodBuilder allows interactive creation of a MainPod by applying operations and creating
+/// the corresponding statements.
 #[derive(Debug)]
 pub struct MainPodBuilder {
     pub params: Params,
@@ -127,12 +130,10 @@ pub struct MainPodBuilder {
     pub statements: Vec<Statement>,
     pub operations: Vec<Operation>,
     pub public_statements: Vec<Statement>,
-    //
     // Internal state
-    //
-    // Counter for constants created from literals
+    /// Counter for constants created from literals
     const_cnt: usize,
-    // Map from (public, Value) to Key of already created literals via ValueOf statements.
+    /// Map from (public, Value) to Key of already created literals via ValueOf statements.
     literals: HashMap<(bool, Value), Key>,
 }
 
@@ -232,8 +233,8 @@ impl MainPodBuilder {
         self.op(false, op)
     }
 
-    // Lower syntactic sugar operation into backend compatible operation.
-    // - {Dict,Array,Set}Contains/NotContains becomes Contains/NotContains.
+    /// Lower syntactic sugar operation into backend compatible operation.
+    /// - {Dict,Array,Set}Contains/NotContains becomes Contains/NotContains.
     fn lower_op(op: Operation) -> Operation {
         use NativeOperation::*;
         use OperationType::*;
@@ -409,47 +410,47 @@ impl MainPodBuilder {
                 SetNotContainsFromEntries => self.op_args_entries(public, args)?,
                 ArrayContainsFromEntries => self.op_args_entries(public, args)?,
             },
-            OperationType::Custom(_cpr) => {
-                todo!()
+            OperationType::Custom(cpr) => {
+                let pred = &cpr.batch.predicates[cpr.index];
+                if pred.statements.len() != args.len() {
+                    return Err(anyhow!(
+                        "Custom predicate operation needs {} statements but has {}.",
+                        pred.statements.len(),
+                        args.len()
+                    ));
+                }
                 // All args should be statements to be pattern matched against statement templates.
-                // let args = args.iter().map(
-                //     |a| match a {
-                //         OperationArg::Statement(s) => Ok(s.clone()),
-                //             _ => Err(anyhow!("Invalid argument {} to operation corresponding to custom predicate {:?}.", a, cpr))
-                //     }
-                // ).collect::<Result<Vec<_>>>()?;
-                // // Match these statements against the custom predicate definition
-                // let bindings = cpr.match_against(&args)?;
-                // let output_arg_values = (0..cpr.arg_len())
-                //     .map(|i| {
-                //         bindings.get(&i).cloned().ok_or(anyhow!(
-                //             "Wildcard {} of custom predicate {:?} is unbound.",
-                //             i,
-                //             cpr
-                //         ))
-                //     })
-                //     .collect::<Result<Vec<_>>>()?;
+                let args = args.iter().map(
+                    |a| match a {
+                        OperationArg::Statement(s) => Ok(s.clone()),
+                        _ => Err(anyhow!("Invalid argument {} to operation corresponding to custom predicate {:?}.", a, cpr))
+                    }
+                ).collect::<Result<Vec<_>>>()?;
 
-                // output_arg_values
-                //     .chunks(2)
-                //     .map(|chunk| {
-                //         Ok(StatementArg::Key(AnchoredKey::new(
-                //             PodId(match chunk[0] {
-                //                 TypedValue::Raw(v) => v.into(),
-                //                 _ => return Err(anyhow!("Invalid POD class value.")),
-                //             }),
-                //             // TODO: Can we remove key_table now that the middleware AnchoredKey
-                //             // has the String of the Key?
-                //             self.key_table
-                //                 .get(&match &chunk[1] {
-                //                     TypedValue::String(s) => hash_str(s.as_str()),
-                //                     _ => return Err(anyhow!("Invalid key value.")),
-                //                 })
-                //                 .cloned()
-                //                 .ok_or(anyhow!("Missing key corresponding to hash."))?,
-                //         )))
-                //     })
-                //     .collect::<Result<Vec<_>>>()?
+                let mut wildcard_map =
+                    vec![Option::None; self.params.max_custom_predicate_wildcards];
+                for (st_tmpl, st) in pred.statements.iter().zip(args.iter()) {
+                    let st_args = st.args();
+                    for (st_tmpl_arg, st_arg) in st_tmpl.args.iter().zip(&st_args) {
+                        if !check_st_tmpl(st_tmpl_arg, st_arg, &mut wildcard_map) {
+                            for (i, wc_v) in wildcard_map.iter().enumerate() {
+                                if let Some(wc_v) = wc_v {
+                                    println!("DBG {} = {}", i, wc_v);
+                                } else {
+                                    println!("DBG {} = None", i);
+                                }
+                            }
+                            println!("DBG {} doesn't match {}", st_arg, st_tmpl_arg);
+                            return Err(anyhow!("{} doesn't match {}", st, st_tmpl));
+                        }
+                    }
+                }
+                let v_default = WildcardValue::PodId(SELF);
+                wildcard_map
+                    .into_iter()
+                    .take(pred.args_len)
+                    .map(|v| StatementArg::WildcardLiteral(v.unwrap_or_else(|| v_default.clone())))
+                    .collect()
             }
         };
         let st = Statement::from_args(pred.into(), st_args).expect("valid arguments");
@@ -606,6 +607,7 @@ struct MainPodCompilerInputs<'a> {
     pub public_statements: &'a [Statement],
 }
 
+/// The compiler converts frontend::Operation into middleware::Operation
 struct MainPodCompiler {
     params: Params,
     // Output
@@ -659,9 +661,6 @@ impl MainPodCompiler {
     }
 
     fn compile_st_op(&mut self, st: &Statement, op: &Operation, params: &Params) -> Result<()> {
-        // let middle_st_res = self.compile_st_try_simple(st);
-        // match middle_st_res {
-        //     Ok(middle_st) => {
         let middle_op = self.compile_op(op)?;
         let is_correct = middle_op.check(params, &st)?;
         if !is_correct {
@@ -675,10 +674,6 @@ impl MainPodCompiler {
             self.push_st_op(st.clone(), middle_op);
             Ok(())
         }
-        //     }
-        //     Err(StatementConversionError::Error(e)) => Err(e),
-        //     Err(StatementConversionError::MCR(_)) => self.manual_compile_st_op(st, op),
-        // }
     }
 
     pub fn compile(
@@ -873,10 +868,11 @@ pub mod tests {
             max_statements: 31,
             max_signed_pod_values: 8,
             max_public_statements: 10,
-            max_statement_args: 5,
+            max_statement_args: 6,
             max_operation_args: 5,
             max_custom_predicate_arity: 5,
             max_custom_batch_size: 5,
+            max_custom_predicate_wildcards: 12,
             ..Default::default()
         };
 

@@ -4,7 +4,7 @@ use anyhow::Result;
 use StatementTmplBuilder as STB;
 
 use crate::{
-    frontend::{literal, CustomPredicateBatchBuilder, StatementTmplBuilder},
+    frontend::{key, literal, CustomPredicateBatchBuilder, StatementTmplBuilder},
     middleware::{
         self, CustomPredicateBatch, CustomPredicateRef, NativePredicate as NP, Params, PodType,
         Predicate, KEY_SIGNER, KEY_TYPE,
@@ -25,15 +25,15 @@ pub fn eth_friend_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
         &[
             // there is an attestation pod that's a SignedPod
             STB::new(NP::ValueOf)
-                .arg(("attestation_pod", literal(KEY_TYPE)))
-                .arg(PodType::MockSigned), // TODO
+                .arg(("attestation_pod", key(KEY_TYPE)))
+                .arg(literal(PodType::MockSigned)), // TODO
             // the attestation pod is signed by (src_or, src_key)
             STB::new(NP::Equal)
-                .arg(("attestation_pod", literal(KEY_SIGNER)))
+                .arg(("attestation_pod", key(KEY_SIGNER)))
                 .arg(("src_ori", "src_key")),
             // that same attestation pod has an "attestation"
             STB::new(NP::Equal)
-                .arg(("attestation_pod", literal("attestation")))
+                .arg(("attestation_pod", key("attestation")))
                 .arg(("dst_ori", "dst_key")),
         ],
     )?;
@@ -72,7 +72,7 @@ pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
                 .arg(("dst_ori", "dst_key")),
             STB::new(NP::ValueOf)
                 .arg(("distance_ori", "distance_key"))
-                .arg(0),
+                .arg(literal(0)),
         ],
     )?;
     println!(
@@ -106,19 +106,26 @@ pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
         &[
             // statement templates:
             STB::new(eth_dos_distance)
-                .arg(("src_ori", "src_key"))
-                .arg(("intermed_ori", "intermed_key"))
-                .arg(("shorter_distance_ori", "shorter_distance_key")),
+                .arg("src_ori")
+                .arg("src_key")
+                .arg("intermed_ori")
+                .arg("intermed_key")
+                .arg("shorter_distance_ori")
+                .arg("shorter_distance_key"),
             // distance == shorter_distance + 1
-            STB::new(NP::ValueOf).arg(("one_ori", "one_key")).arg(1),
+            STB::new(NP::ValueOf)
+                .arg(("one_ori", "one_key"))
+                .arg(literal(1)),
             STB::new(NP::SumOf)
                 .arg(("distance_ori", "distance_key"))
                 .arg(("shorter_distance_ori", "shorter_distance_key"))
                 .arg(("one_ori", "one_key")),
             // intermed is a friend of dst
             STB::new(eth_friend)
-                .arg(("intermed_ori", "intermed_key"))
-                .arg(("dst_ori", "dst_key")),
+                .arg("intermed_ori")
+                .arg("intermed_key")
+                .arg("dst_ori")
+                .arg("dst_key"),
         ],
     )?;
 
@@ -141,13 +148,19 @@ pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
         &[],
         &[
             STB::new(eth_dos_distance_base)
-                .arg(("src_ori", "src_key"))
-                .arg(("dst_ori", "dst_key"))
-                .arg(("distance_ori", "distance_key")),
+                .arg("src_ori")
+                .arg("src_key")
+                .arg("dst_ori")
+                .arg("dst_key")
+                .arg("distance_ori")
+                .arg("distance_key"),
             STB::new(eth_dos_distance_ind)
-                .arg(("src_ori", "src_key"))
-                .arg(("dst_ori", "dst_key"))
-                .arg(("distance_ori", "distance_key")),
+                .arg("src_ori")
+                .arg("src_key")
+                .arg("dst_ori")
+                .arg("dst_key")
+                .arg("distance_ori")
+                .arg("distance_key"),
         ],
     )?;
 

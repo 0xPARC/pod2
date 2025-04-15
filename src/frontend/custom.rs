@@ -22,27 +22,28 @@ pub enum KeyOrWildcardStr {
 }
 
 /// helper to build a literal KeyOrWildcardStr::Key from the given str
-pub fn literal(s: &str) -> KeyOrWildcardStr {
+pub fn key(s: &str) -> KeyOrWildcardStr {
     KeyOrWildcardStr::Key(s.to_string())
 }
 
 /// helper to build a KeyOrWildcardStr::Wildcard from the given str. For the
 /// moment this method does not need to be public.
-fn wildcard(s: &str) -> KeyOrWildcardStr {
-    KeyOrWildcardStr::Wildcard(s.to_string())
-}
+// fn wildcard(s: &str) -> KeyOrWildcardStr {
+//     KeyOrWildcardStr::Wildcard(s.to_string())
+// }
 
 /// Builder Argument for the StatementTmplBuilder
 pub enum BuilderArg {
     Literal(Value),
     /// Key: (origin, key), where origin is a Wildcard and key can be both Key or Wildcard
     Key(String, KeyOrWildcardStr),
+    WildcardLiteral(String),
 }
 
 /// When defining a `BuilderArg`, it can be done from 3 different inputs:
 ///   i. (&str, literal): this is to set a POD and a field, ie. (POD, literal("field"))
 ///  ii. (&str, &str): this is to define a origin-key wildcard pair, ie. (src_origin, src_dest)
-/// iii. Value: this is to define a literal value, ie. 0
+/// iii. &str: this is to define a WildcardValue wildcard, ie. "src_or"
 ///
 /// case i.
 impl From<(&str, KeyOrWildcardStr)> for BuilderArg {
@@ -58,17 +59,18 @@ impl From<(&str, KeyOrWildcardStr)> for BuilderArg {
 /// case ii.
 impl From<(&str, &str)> for BuilderArg {
     fn from((origin, field): (&str, &str)) -> Self {
-        Self::Key(origin.into(), wildcard(field))
+        Self::Key(origin.into(), KeyOrWildcardStr::Wildcard(field.to_string()))
     }
 }
 /// case iii.
-impl<V> From<V> for BuilderArg
-where
-    V: Into<Value>,
-{
-    fn from(v: V) -> Self {
-        Self::Literal(v.into())
+impl From<&str> for BuilderArg {
+    fn from(wc: &str) -> Self {
+        Self::WildcardLiteral(wc.to_string())
     }
+}
+
+pub fn literal(v: impl Into<Value>) -> BuilderArg {
+    BuilderArg::Literal(v.into())
 }
 
 pub struct StatementTmplBuilder {
@@ -136,6 +138,21 @@ impl CustomPredicateBatchBuilder {
         priv_args: &[&str],
         sts: &[StatementTmplBuilder],
     ) -> Result<Predicate> {
+        if args.len() > params.max_statement_args {
+            return Err(anyhow!(
+                "args.len {} is over the limit {}",
+                args.len(),
+                params.max_statement_args
+            ));
+        }
+        if (args.len() + priv_args.len()) > params.max_custom_predicate_wildcards {
+            return Err(anyhow!(
+                "wildcards.len {} is over the limit {}",
+                args.len() + priv_args.len(),
+                params.max_custom_predicate_wildcards
+            ));
+        }
+
         let statements = sts
             .iter()
             .map(|sb| {
@@ -148,6 +165,9 @@ impl CustomPredicateBatchBuilder {
                             resolve_wildcard(args, priv_args, &pod_id),
                             resolve_key_or_wildcard(args, priv_args, &key),
                         ),
+                        BuilderArg::WildcardLiteral(v) => {
+                            StatementTmplArg::WildcardLiteral(resolve_wildcard(args, priv_args, &v))
+                        }
                     })
                     .collect();
                 StatementTmpl {
