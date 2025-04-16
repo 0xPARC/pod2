@@ -161,7 +161,6 @@ impl MerkleClaimAndProofTarget {
     pub fn set_targets(
         &self,
         pw: &mut PartialWitness<F>,
-        // `enabled` determines if the merkleproof verification is enabled
         enabled: bool,
         existence: bool,
         root: Hash,

@@ -266,11 +266,11 @@ impl MerkleProof {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MerkleClaimAndProof {
+    /// `enabled` determines if the merkleproof verification is enabled
     pub enabled: bool,
     pub root: Hash,
     pub key: RawValue,
     pub value: RawValue,
-    pub case_ii_selector: bool,
     /// The siblings in this proof are padded to max_depth
     pub proof: MerkleProof,
 }
@@ -282,7 +282,6 @@ impl MerkleClaimAndProof {
             root: EMPTY_HASH,
             key: RawValue::from(1),
             value: EMPTY_VALUE,
-            case_ii_selector: false,
             proof: MerkleProof {
                 existence: false,
                 siblings: iter::repeat(EMPTY_HASH).take(max_depth).collect(),
@@ -309,7 +308,6 @@ impl MerkleClaimAndProof {
                 root: (*root).into(),
                 key: *key,
                 value: value.cloned().unwrap_or(EMPTY_VALUE),
-                case_ii_selector: proof.other_leaf.is_some(),
                 proof: MerkleProof {
                     existence: proof.existence,
                     siblings: proof
