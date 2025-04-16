@@ -50,7 +50,7 @@ pub const SK_LEN: usize = 1281;
 const SIG_POLY_BYTE_LEN: usize = 625;
 
 /// Bound on the squared-norm of the signature.
-const SIG_L2_BOUND: u64 = 34034726;
+pub const SIG_L2_BOUND: u64 = 34034726;
 
 /// Standard deviation of the Gaussian over the lattice.
 const SIGMA: f64 = 165.7366171829776;

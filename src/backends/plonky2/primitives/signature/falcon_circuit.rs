@@ -443,7 +443,7 @@ impl SignatureVerifyGadget {
         self.s2.set_targets(pw, &sig.s2.0)?;
         pw.set_target_arr(&self.nonce_elems, &sig.nonce.to_elements())?;
 
-        let s2h = polynomial_mul_modulo_p(&sig.s2.0, &pk);
+        let s2h = (&sig.s2.0) * (&pk);
         self.s2h.set_targets_not_reduced_q(pw, &s2h)?;
 
         // let s2h_u64: [u64; N * 2] = std::array::from_fn(|i| s2h.coefficients[i].0 as u64);
@@ -453,6 +453,7 @@ impl SignatureVerifyGadget {
         let c = hash_to_point(msg, &sig.nonce);
         // let c = hash_to_point_no_mod(msg, &sig.nonce);
         let s1 = (c.fft() - sig.s2.fft().hadamard_mul(&sig.pk_poly().fft())).ifft();
+
         // let s1 = c.clone() - s2h.clone();
         // let s1 = c.clone() - s2h_reduced.clone();
         self.s1.set_targets(pw, &s1)?;
@@ -466,10 +467,19 @@ impl SignatureVerifyGadget {
             let s2h_tau = s2h.evaluate(tau);
             assert_eq!(s2_tau * h_tau, s2h_tau);
 
-            // check sum
+            // check sum, decomposing s2h into higher order and
+            // lower order terms. See comments in `equality_check`
+            // procedure for details.
+            let s2h_lot = Polynomial::new(s2h.coefficients[..N].to_vec());
+            let s2h_hot = Polynomial::new(s2h.coefficients[N..].to_vec());
+
+            let s2h_lot_tau = s2h_lot.evaluate(tau);
+            let s2h_hot_tau = s2h_hot.evaluate(tau);
+
             let s1_tau = s1.evaluate(tau);
             let c_tau = c.evaluate(tau);
-            // assert_eq!(s1_tau + s2h_tau, c_tau);
+
+            assert_eq!(s1_tau + s2h_lot_tau - s2h_hot_tau, c_tau);
             // assert_eq!(s1_tau, c_tau - s2h_tau);
         }
 
@@ -497,6 +507,7 @@ fn equality_check(
     let c_tau = c.evaluate(builder, falcon_lut_i, tau);
     let h_tau = h.evaluate(builder, falcon_lut_i, tau);
     let s2h_tau = s2h.evaluate(builder, falcon_lut_i, tau);
+
     let zero = builder.zero();
 
     // polynomial probabilistic product
@@ -509,13 +520,34 @@ fn equality_check(
     let lhs = builder.select(enabled, s2tau_htau, zero);
     builder.connect(lhs, rhs);
 
-    // check s1(tau) + s2(tau) * h(tau) == c(tau)
-    let s1s2h_raw = builder.add(s1_tau, s2tau_htau);
-    let s1s2h = FalconFTarget::modulo_reduction(builder, falcon_lut_i, s1s2h_raw);
-    // builder.connect(lhs, c_tau); // TODO dependent on 'enabled'
-    // TODO-NOTE: maybe don't do the full `s1(tau)+s2(tau)h(tau)-c(tau)==0`, and
-    // just compute the actual s1(x) polynomial, so that then the norm can be
-    // computed from it.
+    // We need to check that
+    // (#)   s1(x) + s2(x) * h(x) = c(x) modulo (x^N + 1).
+    // Since s2(x) * h(x) is of degree 2*N, it may be written in the form
+    // s2(x) * h(x) = s2h_lot(x) + x^N * s2h_hot(x),
+    // where the polynomials s2h_lot(x) and s2h_hot(x) (the 'lower-order'
+    // and 'higher-order' terms) are of degree < N and therefore already
+    // reduced modulo x^N + 1, whence
+    // s2(x) * h(x) = s2h_lot(x) - s2h_hot(x) modulo (x^N + 1).
+    // Thus, (#) is equivalent to
+    // (##)  s1(x) + s2h_lot(x) - s2h_hot(x) = c(x) modulo (x^N + 1),
+    // and since both sides are already reduced modulo x^N + 1, this
+    // is an equality of polynomials. Rearranging and applying the
+    // probability trick again, we now check that
+    // s1(tau) + s2h_lot(tau) == c(tau) + s2h_hot(tau).
+    let s2h_lot: PolynomialTarget<N> = PolynomialTarget(std::array::from_fn(|i| s2h.0[i]));
+    let s2h_hot: PolynomialTarget<N> = PolynomialTarget(std::array::from_fn(|i| s2h.0[i + N]));
+
+    let s2h_lot_tau = s2h_lot.evaluate(builder, falcon_lut_i, tau);
+    let s2h_hot_tau = s2h_hot.evaluate(builder, falcon_lut_i, tau);
+
+    let lhs_raw = builder.add(s1_tau, s2h_lot_tau);
+    let lhs = FalconFTarget::modulo_reduction(builder, falcon_lut_i, lhs_raw);
+    let rhs_raw = builder.add(c_tau, s2h_hot_tau);
+    let rhs = FalconFTarget::modulo_reduction(builder, falcon_lut_i, rhs_raw);
+    builder.connect(lhs, rhs); // TODO dependent on 'enabled'
+                               // TODO-NOTE: maybe don't do the full `s1(tau)+s2(tau)h(tau)-c(tau)==0`, and
+                               // just compute the actual s1(x) polynomial, so that then the norm can be
+                               // computed from it.
 
     Ok(())
 }
@@ -757,7 +789,7 @@ pub mod tests {
             .collect();
         let h: Polynomial<FalconFelt> = Polynomial::new(coeffs);
 
-        let fh = polynomial_mul_modulo_p(&f, &h);
+        let fh = (&f) * (&h);
 
         let tau = FalconFelt::new(rng.random());
 
