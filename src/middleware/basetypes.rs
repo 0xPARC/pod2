@@ -45,7 +45,6 @@ use std::{
     fmt,
 };
 
-use anyhow::Result;
 use hex::{FromHex, FromHexError};
 use plonky2::{
     field::{

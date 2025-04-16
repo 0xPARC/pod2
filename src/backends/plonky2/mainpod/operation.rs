@@ -1,12 +1,12 @@
 use std::fmt;
 
-use anyhow::{anyhow, Result};
 use plonky2::field::types::Field;
 
 // use serde::{Deserialize, Serialize};
 use crate::{
     backends::plonky2::{mainpod::Statement, primitives::merkletree::MerkleClaimAndProof},
     middleware::{self, OperationType, Params, ToFields, F},
+    Error, Result,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -78,7 +78,7 @@ impl Operation {
             OperationAux::MerkleProofIndex(i) => merkle_proofs
                 .get(i)
                 .cloned()
-                .ok_or(anyhow!("Missing Merkle proof index {}", i))
+                .ok_or(Error::Custom(format!("Missing Merkle proof index {}", i)))
                 .and_then(|mp| {
                     mp.try_into()
                         .map(crate::middleware::OperationAux::MerkleProof)

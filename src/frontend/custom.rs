@@ -1,7 +1,6 @@
 #![allow(unused)]
 use std::{collections::HashMap, fmt, hash as h, iter, iter::zip, sync::Arc};
 
-use anyhow::{anyhow, Result};
 use schemars::JsonSchema;
 
 // use serde::{Deserialize, Serialize};
@@ -11,6 +10,7 @@ use crate::{
         self, hash_str, CustomPredicate, CustomPredicateBatch, Key, KeyOrWildcard, NativePredicate,
         Params, PodId, Predicate, StatementTmpl, StatementTmplArg, ToFields, Value, Wildcard,
     },
+    Error, Result,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -132,17 +132,17 @@ impl CustomPredicateBatchBuilder {
         sts: &[StatementTmplBuilder],
     ) -> Result<Predicate> {
         if args.len() > params.max_statement_args {
-            return Err(anyhow!(
-                "args.len {} is over the limit {}",
+            return Err(Error::MaxLength(
+                "args.len".to_string(),
                 args.len(),
-                params.max_statement_args
+                params.max_statement_args,
             ));
         }
         if (args.len() + priv_args.len()) > params.max_custom_predicate_wildcards {
-            return Err(anyhow!(
-                "wildcards.len {} is over the limit {}",
+            return Err(Error::MaxLength(
+                "wildcards.len".to_string(),
                 args.len() + priv_args.len(),
-                params.max_custom_predicate_wildcards
+                params.max_custom_predicate_wildcards,
             ));
         }
 

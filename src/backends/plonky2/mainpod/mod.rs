@@ -2,7 +2,6 @@ pub mod operation;
 pub mod statement;
 use std::any::Any;
 
-use anyhow::{anyhow, Result};
 use itertools::Itertools;
 pub use operation::*;
 use plonky2::{
@@ -23,9 +22,11 @@ use crate::{
         signedpod::SignedPod,
     },
     middleware::{
-        self, AnchoredKey, Hash, MainPodInputs, NativeOperation, NonePod, OperationType, Params,
-        Pod, PodId, PodProver, PodType, StatementArg, ToFields, F, KEY_TYPE, SELF,
+        self, error::MiddlewareError, AnchoredKey, Hash, MainPodInputs, NativeOperation, NonePod,
+        OperationType, Params, Pod, PodId, PodProver, PodType, StatementArg, ToFields, F, KEY_TYPE,
+        SELF,
     },
+    Error, Result,
 };
 
 /// Hash a list of public statements to derive the PodId
@@ -72,11 +73,11 @@ pub(crate) fn extract_merkle_proofs(
         })
         .collect::<Result<Vec<_>>>()?;
     if merkle_proofs.len() > params.max_merkle_proofs {
-        Err(anyhow!(
+        Err(Error::Custom(format!(
             "The number of required Merkle proofs ({}) exceeds the maximum number ({}).",
             merkle_proofs.len(),
             params.max_merkle_proofs
-        ))
+        )))
     } else {
         fill_pad(
             &mut merkle_proofs,
@@ -98,10 +99,10 @@ fn find_op_arg(statements: &[Statement], op_arg: &middleware::Statement) -> Resu
                 (&middleware::Statement::try_from(s.clone()).ok()? == op_arg).then_some(i)
             })
             .map(OperationArg::Index)
-            .ok_or(anyhow!(
+            .ok_or(Error::Custom(format!(
                 "Statement corresponding to op arg {} not found",
                 op_arg
-            )),
+            ))),
     }
 }
 
@@ -122,10 +123,10 @@ fn find_op_aux(
                     .and_then(|mid_pf: merkletree::MerkleProof| (&mid_pf == pf_arg).then_some(i))
             })
             .map(OperationAux::MerkleProofIndex)
-            .ok_or(anyhow!(
+            .ok_or(Error::Custom(format!(
                 "Merkle proof corresponding to op arg {} not found",
                 op_aux
-            )),
+            ))),
     }
 }
 
@@ -384,11 +385,7 @@ impl Pod for MainPod {
         // 2. get the id out of the public statements
         let id: PodId = PodId(hash_statements(&self.public_statements, &self.params));
         if id != self.id {
-            return Err(anyhow!(
-                "id does not match, expected {}, computed {}",
-                self.id,
-                id
-            ));
+            return Err(Error::Middleware(MiddlewareError::IdNotEqual(self.id, id)));
         }
 
         // 1, 3, 4, 5 verification via the zkSNARK proof
@@ -402,7 +399,7 @@ impl Pod for MainPod {
 
         let data = builder.build::<C>();
         data.verify(self.proof.clone())
-            .map_err(|e| anyhow!("MainPod proof verification failure: {:?}", e))
+            .map_err(|e| Error::Custom(format!("MainPod proof verification failure: {:?}", e)))
     }
 
     fn id(&self) -> PodId {

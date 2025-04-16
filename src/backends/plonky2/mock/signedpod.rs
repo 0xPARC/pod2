@@ -1,15 +1,15 @@
 use std::{any::Any, collections::HashMap};
 
-use anyhow::{anyhow, Result};
 use itertools::Itertools;
 
 use crate::{
     backends::plonky2::primitives::merkletree::MerkleTree,
     constants::MAX_DEPTH,
     middleware::{
-        containers::Dictionary, hash_str, AnchoredKey, Hash, Key, Params, Pod, PodId, PodSigner,
-        PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE,
+        containers::Dictionary, error::MiddlewareError, hash_str, AnchoredKey, Hash, Key, Params,
+        Pod, PodId, PodSigner, PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE,
     },
+    Error, Result,
 };
 
 pub struct MockSigner {
@@ -66,38 +66,32 @@ impl Pod for MockSignedPod {
         )?;
         let id = PodId(mt.root());
         if id != self.id {
-            return Err(anyhow!(
-                "id does not match, expected {}, computed {}",
-                self.id,
-                id
-            ));
+            return Err(Error::Middleware(MiddlewareError::IdNotEqual(self.id, id)));
         }
 
         // 2. Verify type
         let value_at_type = self
             .kvs
             .get(&Key::from(KEY_TYPE))
-            .ok_or(anyhow!("key not found"))?;
+            .ok_or(Error::KeyNotFound)?;
         if &Value::from(PodType::MockSigned) != value_at_type {
-            return Err(anyhow!(
-                "type does not match, expected MockSigned ({}), found {}",
+            return Err(Error::Middleware(MiddlewareError::TypeNotEqual(
                 PodType::MockSigned,
-                value_at_type
-            ));
+                value_at_type.clone(),
+            )));
         }
 
         // 3. Verify signature
         let pk_hash = self
             .kvs
             .get(&Key::from(KEY_SIGNER))
-            .ok_or(anyhow!("key not found"))?;
+            .ok_or(Error::KeyNotFound)?;
         let signature = format!("{}_signed_by_{}", id, pk_hash);
         if signature != self.signature {
-            return Err(anyhow!(
+            return Err(Error::Custom(format!(
                 "signature does not match, expected {}, computed {}",
-                self.id,
-                id
-            ));
+                self.id, id
+            )));
         }
 
         Ok(())

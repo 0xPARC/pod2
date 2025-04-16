@@ -1,6 +1,5 @@
 use std::iter;
 
-use anyhow::Result;
 use itertools::Itertools;
 use plonky2::{
     hash::hash_types::{HashOut, HashOutTarget},
@@ -27,6 +26,7 @@ use crate::{
         hash_str, Key, NativePredicate, Params, PodType, Predicate, RawValue, ToFields, Value, F,
         KEY_SIGNER, KEY_TYPE, SELF,
     },
+    Result,
 };
 
 pub struct SignedPodVerifyGadget {

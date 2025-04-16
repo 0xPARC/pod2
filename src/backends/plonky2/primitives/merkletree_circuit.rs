@@ -10,7 +10,6 @@
 //!
 use std::iter;
 
-use anyhow::Result;
 use plonky2::{
     field::types::Field,
     hash::{
@@ -31,6 +30,7 @@ use crate::{
         primitives::merkletree::MerkleClaimAndProof,
     },
     middleware::{EMPTY_HASH, EMPTY_VALUE, F, HASH_SIZE},
+    Result,
 };
 
 /// `MerkleProofGadget` allows to verify both proofs of existence and proofs

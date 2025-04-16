@@ -8,16 +8,15 @@ use std::{
     hash,
 };
 
-use anyhow::anyhow;
 use containers::{Array, Dictionary, Set};
 pub mod containers;
 mod custom;
+pub mod error;
 mod operation;
 pub mod serialization;
 mod statement;
 use std::{any::Any, collections::HashMap, fmt};
 
-use anyhow::Result;
 pub use basetypes::*;
 pub use custom::*;
 use dyn_clone::DynClone;
@@ -26,7 +25,7 @@ pub use operation::*;
 // use serde::{Deserialize, Serialize};
 pub use statement::*;
 
-use crate::backends::plonky2::primitives::merkletree::MerkleProof;
+use crate::{backends::plonky2::primitives::merkletree::MerkleProof, Error, Result};
 
 pub const SELF: PodId = PodId(SELF_ID_HASH);
 
@@ -128,22 +127,25 @@ impl From<PodType> for TypedValue {
 }
 
 impl TryFrom<&TypedValue> for i64 {
-    type Error = anyhow::Error;
+    type Error = Error;
     fn try_from(v: &TypedValue) -> std::result::Result<Self, Self::Error> {
         if let TypedValue::Int(n) = v {
             Ok(*n)
         } else {
-            Err(anyhow!("Value not an int"))
+            Err(Error::Custom("Value not an int".to_string()))
         }
     }
 }
 
 impl TryFrom<TypedValue> for Key {
-    type Error = anyhow::Error;
+    type Error = Error;
     fn try_from(tv: TypedValue) -> Result<Self> {
         match tv {
             TypedValue::String(s) => Ok(Key::new(s)),
-            _ => Err(anyhow!("Value {} cannot be converted to a key.", tv)),
+            _ => Err(Error::Custom(format!(
+                "Value {} cannot be converted to a key.",
+                tv
+            ))),
         }
     }
 }
@@ -238,20 +240,31 @@ impl Value {
         match &self.typed() {
             TypedValue::Array(a) => match key.typed() {
                 TypedValue::Int(i) if i >= &0 => a.prove((*i) as usize),
-                _ => Err(anyhow!("Invalid key {} for container {}.", key, self))?,
+                _ => Err(Error::Custom(format!(
+                    "Invalid key {} for container {}.",
+                    key, self
+                )))?,
             },
             TypedValue::Dictionary(d) => d.prove(&key.typed().clone().try_into()?),
             TypedValue::Set(s) => Ok((key, s.prove(key)?)),
-            _ => Err(anyhow!("Invalid container value {}", self.typed())),
+            _ => Err(Error::Custom(format!(
+                "Invalid container value {}",
+                self.typed()
+            ))),
         }
     }
     /// Determines Merkle non-existence proof for `key` in `self` (if applicable).
     pub(crate) fn prove_nonexistence<'a>(&'a self, key: &'a Value) -> Result<MerkleProof> {
         match &self.typed() {
-            TypedValue::Array(_) => Err(anyhow!("Arrays do not support `NotContains` operation.")),
+            TypedValue::Array(_) => Err(Error::Custom(
+                "Arrays do not support `NotContains` operation.".to_string(),
+            )),
             TypedValue::Dictionary(d) => d.prove_nonexistence(&key.typed().clone().try_into()?),
             TypedValue::Set(s) => s.prove_nonexistence(key),
-            _ => Err(anyhow!("Invalid container value {}", self.typed())),
+            _ => Err(Error::Custom(format!(
+                "Invalid container value {}",
+                self.typed()
+            ))),
         }
     }
 }

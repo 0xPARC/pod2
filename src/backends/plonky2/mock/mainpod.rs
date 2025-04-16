@@ -4,7 +4,7 @@
 
 use std::{any::Any, fmt};
 
-use anyhow::{anyhow, Result};
+// use base64::prelude::*;
 
 // use base64::prelude::*;
 // use serde::{Deserialize, Serialize};
@@ -21,6 +21,7 @@ use crate::{
         self, hash_str, AnchoredKey, MainPodInputs, NativePredicate, Params, Pod, PodId, PodProver,
         Predicate, StatementArg, KEY_TYPE, SELF,
     },
+    Error, Result,
 };
 
 pub struct MockProver {}
@@ -168,9 +169,9 @@ impl MockMainPod {
 
     // pub fn deserialize(serialized: String) -> Result<Self> {
     //     let proof = String::from_utf8(BASE64_STANDARD.decode(&serialized)?)
-    //         .map_err(|e| anyhow::anyhow!("Invalid base64 encoding: {}", e))?;
+    //         .map_err(|e| Error::Custom(format!("Invalid base64 encoding: {}", e)))?;
     //     let pod: MockMainPod = serde_json::from_str(&proof)
-    //         .map_err(|e| anyhow::anyhow!("Failed to parse proof: {}", e))?;
+    //         .map_err(|e| Error::Custom(format!("Failed to parse proof: {}", e)))?;
 
     //     Ok(pod)
     // }
@@ -245,18 +246,16 @@ impl Pod for MockMainPod {
             .collect::<Result<Vec<_>>>()
             .unwrap();
         if !ids_match {
-            return Err(anyhow!("Verification failed: POD ID is incorrect."));
+            return Err(Error::PodIdInvalid);
         }
         if !has_type_statement {
-            return Err(anyhow!(
-                "Verification failed: POD does not have type statement."
-            ));
+            return Err(Error::NotTypeStatement);
         }
         if !value_ofs_unique {
-            return Err(anyhow!("Verification failed: Repeated ValueOf"));
+            return Err(Error::RepeatedValueOf);
         }
         if !statement_check.iter().all(|b| *b) {
-            return Err(anyhow!("Verification failed: Statement did not check."));
+            return Err(Error::StatementNotCheck);
         }
         Ok(())
     }

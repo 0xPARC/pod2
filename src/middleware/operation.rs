@@ -1,6 +1,5 @@
 use std::{fmt, iter, sync::Arc};
 
-use anyhow::{anyhow, Result};
 use log::error;
 use plonky2::field::types::Field;
 
@@ -8,10 +7,11 @@ use plonky2::field::types::Field;
 use crate::{
     backends::plonky2::primitives::merkletree::MerkleProof,
     middleware::{
-        custom::KeyOrWildcard, AnchoredKey, CustomPredicateBatch, CustomPredicateRef,
-        NativePredicate, Params, Predicate, Statement, StatementArg, StatementTmplArg, ToFields,
-        Wildcard, WildcardValue, F, SELF,
+        custom::KeyOrWildcard, error::MiddlewareError, AnchoredKey, CustomPredicateBatch,
+        CustomPredicateRef, NativePredicate, Params, Predicate, Statement, StatementArg,
+        StatementTmplArg, ToFields, Wildcard, WildcardValue, F, SELF,
     },
+    Error, Result,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -253,11 +253,10 @@ impl Operation {
                     Self::ProductOf(s1, s2, s3)
                 }
                 (NO::MaxOf, (Some(s1), Some(s2), Some(s3)), OA::None, 3) => Self::MaxOf(s1, s2, s3),
-                _ => Err(anyhow!(
+                _ => Err(Error::Custom(format!(
                     "Ill-formed operation {:?} with arguments {:?}.",
-                    op_code,
-                    args
-                ))?,
+                    op_code, args
+                )))?,
             },
             OperationType::Custom(cpr) => Self::Custom(cpr, args.to_vec()),
         })
@@ -320,11 +319,10 @@ impl Operation {
             {
                 check_custom_pred(params, batch, *index, args, s_args)
             }
-            _ => Err(anyhow!(
-                "Invalid deduction: {:?} ⇏ {:#}",
-                self,
-                output_statement
-            )),
+            _ => Err(Error::Middleware(MiddlewareError::InvalidDeduction(
+                self.clone(),
+                output_statement.clone(),
+            ))),
         }
     }
 }
@@ -386,17 +384,19 @@ fn check_custom_pred(
 ) -> Result<bool> {
     let pred = &batch.predicates[index];
     if pred.statements.len() != args.len() {
-        return Err(anyhow!(
-            "Custom predicate operation needs {} statements but has {}.",
+        return Err(Error::DiffAmount(
+            "custom predicate operation".to_string(),
+            "statements".to_string(),
             pred.statements.len(),
-            args.len()
+            args.len(),
         ));
     }
     if pred.args_len != s_args.len() {
-        return Err(anyhow!(
-            "Custom predicate statement needs {} args but has {}.",
+        return Err(Error::DiffAmount(
+            "custom predicate statement".to_string(),
+            "args".to_string(),
             pred.args_len,
-            s_args.len()
+            s_args.len(),
         ));
     }
 

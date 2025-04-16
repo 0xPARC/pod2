@@ -1,5 +1,4 @@
 #![allow(unused)]
-use anyhow::Result;
 use lazy_static::lazy_static;
 use plonky2::{
     field::types::Field,
@@ -31,6 +30,7 @@ use crate::{
         },
     },
     middleware::{Hash, RawValue, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE},
+    Result,
 };
 
 lazy_static! {
