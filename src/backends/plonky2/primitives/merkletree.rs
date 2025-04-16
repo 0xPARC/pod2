@@ -280,10 +280,10 @@ impl MerkleClaimAndProof {
         Self {
             enabled: false,
             root: EMPTY_HASH,
-            key: RawValue::from(1),
+            key: EMPTY_VALUE,
             value: EMPTY_VALUE,
             proof: MerkleProof {
-                existence: false,
+                existence: true,
                 siblings: iter::repeat(EMPTY_HASH).take(max_depth).collect(),
                 other_leaf: None,
             },
