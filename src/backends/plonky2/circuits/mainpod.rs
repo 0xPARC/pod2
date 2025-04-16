@@ -16,10 +16,9 @@ use crate::{
             },
             signedpod::{SignedPodVerifyGadget, SignedPodVerifyTarget},
         },
-        mock::{mainpod, mainpod::MerkleClaimAndProof},
-        primitives::{
-            merkletree,
-            merkletree::{MerkleClaimAndProofTarget, MerkleProofGadget},
+        mainpod,
+        primitives::merkletree::{
+            MerkleClaimAndProof, MerkleClaimAndProofTarget, MerkleProofGadget,
         },
         signedpod::SignedPod,
     },
@@ -495,17 +494,13 @@ impl MainPodVerifyTarget {
         }
         assert_eq!(input.merkle_proofs.len(), self.params.max_merkle_proofs);
         for (i, mp) in input.merkle_proofs.iter().enumerate() {
-            assert_eq!(mp.siblings.len(), self.params.max_depth_mt_gadget);
+            assert_eq!(mp.proof.siblings.len(), self.params.max_depth_mt_gadget);
             self.merkle_proofs[i].set_targets(
                 pw,
                 mp.enabled,
-                mp.existence,
+                mp.proof.existence,
                 mp.root,
-                mp.clone().try_into().unwrap_or(merkletree::MerkleProof {
-                    existence: mp.existence,
-                    siblings: mp.siblings.clone(),
-                    other_leaf: None,
-                }),
+                mp.proof.clone(),
                 mp.key,
                 mp.value,
             )?;

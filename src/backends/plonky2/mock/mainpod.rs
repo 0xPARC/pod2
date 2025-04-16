@@ -1,23 +1,27 @@
+//
+// MainPod
+//
+
 use std::{any::Any, fmt};
 
 use anyhow::{anyhow, Result};
-// use base64::prelude::*;
-use plonky2::{hash::poseidon::PoseidonHash, plonk::config::Hasher};
 
+// use base64::prelude::*;
 // use serde::{Deserialize, Serialize};
+use crate::backends::plonky2::mainpod::process_private_statements_operations;
 use crate::{
-    backends::plonky2::primitives::merkletree,
+    backends::plonky2::{
+        mainpod::{
+            extract_merkle_proofs, hash_statements, layout_statements, normalize_statement,
+            process_public_statements_operations, Operation, Statement,
+        },
+        primitives::merkletree::MerkleClaimAndProof,
+    },
     middleware::{
-        self, hash_str, AnchoredKey, Hash, MainPodInputs, NativeOperation, NativePredicate,
-        NonePod, OperationType, Params, Pod, PodId, PodProver, PodType, Predicate, StatementArg,
-        ToFields, KEY_TYPE, SELF,
+        self, hash_str, AnchoredKey, MainPodInputs, NativePredicate, Params, Pod, PodId, PodProver,
+        Predicate, StatementArg, KEY_TYPE, SELF,
     },
 };
-
-mod operation;
-mod statement;
-pub use operation::*;
-pub use statement::*;
 
 pub struct MockProver {}
 
@@ -111,15 +115,6 @@ fn fmt_statement_index(
     Ok(())
 }
 
-pub fn fill_pad<T: Clone>(v: &mut Vec<T>, pad_value: T, len: usize) {
-    if v.len() > len {
-        panic!("length exceeded");
-    }
-    while v.len() < len {
-        v.push(pad_value.clone());
-    }
-}
-
 /// Inputs are sorted as:
 /// - SignedPods
 /// - MainPods
@@ -136,267 +131,21 @@ impl MockMainPod {
     fn offset_public_statements(&self) -> usize {
         self.offset_input_statements() + self.params.max_priv_statements()
     }
-    fn pad_statement(params: &Params, s: &mut Statement) {
-        fill_pad(&mut s.1, StatementArg::None, params.max_statement_args)
-    }
-
-    /// Returns the statements from the given MainPodInputs, padding to the
-    /// respective max lengths defined at the given Params.
-    pub(crate) fn layout_statements(params: &Params, inputs: &MainPodInputs) -> Vec<Statement> {
-        let mut statements = Vec::new();
-
-        // Input signed pods region
-        let none_sig_pod_box: Box<dyn Pod> = Box::new(NonePod {});
-        let none_sig_pod = none_sig_pod_box.as_ref();
-        assert!(inputs.signed_pods.len() <= params.max_input_signed_pods);
-        for i in 0..params.max_input_signed_pods {
-            let pod = inputs.signed_pods.get(i).unwrap_or(&none_sig_pod);
-            let sts = pod.pub_statements();
-            assert!(sts.len() <= params.max_signed_pod_values);
-            for j in 0..params.max_signed_pod_values {
-                let mut st = sts
-                    .get(j)
-                    .unwrap_or(&middleware::Statement::None)
-                    .clone()
-                    .into();
-                Self::pad_statement(params, &mut st);
-                statements.push(st);
-            }
-        }
-
-        // Input main pods region
-        let none_main_pod_box: Box<dyn Pod> = Box::new(NonePod {});
-        let none_main_pod = none_main_pod_box.as_ref();
-        assert!(inputs.main_pods.len() <= params.max_input_main_pods);
-        for i in 0..params.max_input_main_pods {
-            let pod = inputs.main_pods.get(i).copied().unwrap_or(none_main_pod);
-            let sts = pod.pub_statements();
-            assert!(sts.len() <= params.max_public_statements);
-            for j in 0..params.max_public_statements {
-                let mut st = sts
-                    .get(j)
-                    .unwrap_or(&middleware::Statement::None)
-                    .clone()
-                    .into();
-                Self::pad_statement(params, &mut st);
-                statements.push(st);
-            }
-        }
-
-        // Input statements
-        assert!(inputs.statements.len() <= params.max_priv_statements());
-        for i in 0..params.max_priv_statements() {
-            let mut st = inputs
-                .statements
-                .get(i)
-                .unwrap_or(&middleware::Statement::None)
-                .clone()
-                .into();
-            Self::pad_statement(params, &mut st);
-            statements.push(st);
-        }
-
-        // Public statements
-        assert!(inputs.public_statements.len() < params.max_public_statements);
-        let mut type_st = middleware::Statement::ValueOf(
-            AnchoredKey::from((SELF, KEY_TYPE)),
-            middleware::Value::from(PodType::MockMain),
-        )
-        .into();
-        Self::pad_statement(params, &mut type_st);
-        statements.push(type_st);
-
-        for i in 0..(params.max_public_statements - 1) {
-            let mut st = inputs
-                .public_statements
-                .get(i)
-                .unwrap_or(&middleware::Statement::None)
-                .clone()
-                .into();
-            Self::pad_statement(params, &mut st);
-            statements.push(st);
-        }
-
-        statements
-    }
-
-    /// Extracts and pads Merkle proofs from Contains/NotContains ops.
-    pub(crate) fn extract_merkle_proofs(
-        params: &Params,
-        operations: &[middleware::Operation],
-    ) -> Result<Vec<MerkleClaimAndProof>> {
-        let mut merkle_proofs = operations
-            .iter()
-            .flat_map(|op| match op {
-                middleware::Operation::ContainsFromEntries(
-                    middleware::Statement::ValueOf(_, root),
-                    middleware::Statement::ValueOf(_, key),
-                    middleware::Statement::ValueOf(_, value),
-                    pf,
-                ) => Some(MerkleClaimAndProof::try_from_middleware(
-                    params,
-                    &root.raw(),
-                    &key.raw(),
-                    Some(&value.raw()),
-                    pf,
-                )),
-                middleware::Operation::NotContainsFromEntries(
-                    middleware::Statement::ValueOf(_, root),
-                    middleware::Statement::ValueOf(_, key),
-                    pf,
-                ) => Some(MerkleClaimAndProof::try_from_middleware(
-                    params,
-                    &root.raw(),
-                    &key.raw(),
-                    None,
-                    pf,
-                )),
-                _ => None,
-            })
-            .collect::<Result<Vec<_>>>()?;
-        if merkle_proofs.len() > params.max_merkle_proofs {
-            Err(anyhow!(
-                "The number of required Merkle proofs ({}) exceeds the maximum number ({}).",
-                merkle_proofs.len(),
-                params.max_merkle_proofs
-            ))
-        } else {
-            fill_pad(
-                &mut merkle_proofs,
-                MerkleClaimAndProof::empty(params.max_depth_mt_gadget),
-                params.max_merkle_proofs,
-            );
-            Ok(merkle_proofs)
-        }
-    }
-
-    fn find_op_arg(
-        statements: &[Statement],
-        op_arg: &middleware::Statement,
-    ) -> Result<OperationArg> {
-        match op_arg {
-            middleware::Statement::None => Ok(OperationArg::None),
-            _ => statements
-                .iter()
-                .enumerate()
-                .find_map(|(i, s)| {
-                    (&middleware::Statement::try_from(s.clone()).ok()? == op_arg).then_some(i)
-                })
-                .map(OperationArg::Index)
-                .ok_or(anyhow!(
-                    "Statement corresponding to op arg {} not found",
-                    op_arg
-                )),
-        }
-    }
-
-    fn find_op_aux(
-        merkle_proofs: &[MerkleClaimAndProof],
-        op_aux: &middleware::OperationAux,
-    ) -> Result<OperationAux> {
-        match op_aux {
-            middleware::OperationAux::None => Ok(OperationAux::None),
-            middleware::OperationAux::MerkleProof(pf_arg) => merkle_proofs
-                .iter()
-                .enumerate()
-                .find_map(|(i, pf)| {
-                    pf.clone()
-                        .try_into()
-                        .ok()
-                        .and_then(|mid_pf: merkletree::MerkleProof| {
-                            (&mid_pf == pf_arg).then_some(i)
-                        })
-                })
-                .map(OperationAux::MerkleProofIndex)
-                .ok_or(anyhow!(
-                    "Merkle proof corresponding to op arg {} not found",
-                    op_aux
-                )),
-        }
-    }
-
-    pub(crate) fn process_private_statements_operations(
-        params: &Params,
-        statements: &[Statement],
-        merkle_proofs: &[MerkleClaimAndProof],
-        input_operations: &[middleware::Operation],
-    ) -> Result<Vec<Operation>> {
-        let mut operations = Vec::new();
-        for i in 0..params.max_priv_statements() {
-            let op = input_operations
-                .get(i)
-                .unwrap_or(&middleware::Operation::None)
-                .clone();
-            let mid_args = op.args();
-            let mut args = mid_args
-                .iter()
-                .map(|mid_arg| Self::find_op_arg(statements, mid_arg))
-                .collect::<Result<Vec<_>>>()?;
-
-            let mid_aux = op.aux();
-            let aux = Self::find_op_aux(merkle_proofs, &mid_aux)?;
-
-            Self::pad_operation_args(params, &mut args);
-            operations.push(Operation(op.op_type(), args, aux));
-        }
-        Ok(operations)
-    }
-
-    // NOTE: In this implementation public statements are always copies from
-    // previous statements, so we fill in the operations accordingly.
-    /// This method assumes that the given `statements` array has been padded to
-    /// `params.max_statements`.
-    pub(crate) fn process_public_statements_operations(
-        params: &Params,
-        statements: &[Statement],
-        mut operations: Vec<Operation>,
-    ) -> Result<Vec<Operation>> {
-        let offset_public_statements = statements.len() - params.max_public_statements;
-        operations.push(Operation(
-            OperationType::Native(NativeOperation::NewEntry),
-            vec![],
-            OperationAux::None,
-        ));
-        for i in 0..(params.max_public_statements - 1) {
-            let st = &statements[offset_public_statements + i + 1];
-            let mut op = if st.is_none() {
-                Operation(
-                    OperationType::Native(NativeOperation::None),
-                    vec![],
-                    OperationAux::None,
-                )
-            } else {
-                let mid_arg = st.clone();
-                Operation(
-                    OperationType::Native(NativeOperation::CopyStatement),
-                    vec![Self::find_op_arg(statements, &mid_arg.try_into()?)?],
-                    OperationAux::None,
-                )
-            };
-            fill_pad(&mut op.1, OperationArg::None, params.max_operation_args);
-            operations.push(op);
-        }
-        Ok(operations)
-    }
 
     pub fn new(params: &Params, inputs: MainPodInputs) -> Result<Self> {
-        // TODO: Figure out a way to handle public statements.  For example, in the public slots
-        // use copy operations taking the private statements that need to be public.  We may change
-        // the MainPodInputs type to accommodate for that.
         // TODO: Insert a new public statement of ValueOf with `key=KEY_TYPE,
         // value=PodType::MockMainPod`
-        let statements = Self::layout_statements(params, &inputs);
+        let statements = layout_statements(params, &inputs);
         // Extract Merkle proofs and pad.
-        let merkle_proofs = Self::extract_merkle_proofs(params, inputs.operations)?;
+        let merkle_proofs = extract_merkle_proofs(params, inputs.operations)?;
 
-        let operations = Self::process_private_statements_operations(
+        let operations = process_private_statements_operations(
             params,
             &statements,
             &merkle_proofs,
             inputs.operations,
         )?;
-        let operations =
-            Self::process_public_statements_operations(params, &statements, operations)?;
+        let operations = process_public_statements_operations(params, &statements, operations)?;
 
         let public_statements =
             statements[statements.len() - params.max_public_statements..].to_vec();
@@ -417,10 +166,6 @@ impl MockMainPod {
         })
     }
 
-    fn pad_operation_args(params: &Params, args: &mut Vec<OperationArg>) {
-        fill_pad(args, OperationArg::None, params.max_operation_args)
-    }
-
     // pub fn deserialize(serialized: String) -> Result<Self> {
     //     let proof = String::from_utf8(BASE64_STANDARD.decode(&serialized)?)
     //         .map_err(|e| anyhow::anyhow!("Invalid base64 encoding: {}", e))?;
@@ -429,14 +174,6 @@ impl MockMainPod {
 
     //     Ok(pod)
     // }
-}
-
-pub fn hash_statements(statements: &[Statement], _params: &Params) -> middleware::Hash {
-    let field_elems = statements
-        .iter()
-        .flat_map(|statement| statement.clone().to_fields(_params))
-        .collect::<Vec<_>>();
-    Hash(PoseidonHash::hash_no_pad(&field_elems).elements)
 }
 
 impl Pod for MockMainPod {
@@ -533,23 +270,7 @@ impl Pod for MockMainPod {
             .iter()
             .skip(self.offset_public_statements())
             .cloned()
-            .map(|statement| {
-                Statement(
-                    statement.0.clone(),
-                    statement
-                        .1
-                        .iter()
-                        .map(|sa| match &sa {
-                            StatementArg::Key(AnchoredKey { pod_id, key }) if *pod_id == SELF => {
-                                StatementArg::Key(AnchoredKey::new(self.id(), key.clone()))
-                            }
-                            _ => sa.clone(),
-                        })
-                        .collect(),
-                )
-                .try_into()
-                .unwrap()
-            })
+            .map(|statement| normalize_statement(&statement, self.id()))
             .collect()
     }
 
