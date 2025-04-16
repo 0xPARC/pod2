@@ -495,15 +495,7 @@ impl MainPodVerifyTarget {
         assert_eq!(input.merkle_proofs.len(), self.params.max_merkle_proofs);
         for (i, mp) in input.merkle_proofs.iter().enumerate() {
             assert_eq!(mp.proof.siblings.len(), self.params.max_depth_mt_gadget);
-            self.merkle_proofs[i].set_targets(
-                pw,
-                mp.enabled,
-                mp.proof.existence,
-                mp.root,
-                mp.proof.clone(),
-                mp.key,
-                mp.value,
-            )?;
+            self.merkle_proofs[i].set_targets(pw, mp)?;
         }
         Ok(())
     }
@@ -526,26 +518,23 @@ impl MainPodVerifyCircuit {
 
 #[cfg(test)]
 mod tests {
-    use merkletree::MerkleTree;
     use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
 
     use super::*;
     use crate::{
         backends::plonky2::{
             basetypes::C,
-            mock::{
-                mainpod,
-                mainpod::{OperationArg, OperationAux},
-            },
+            mainpod::{OperationArg, OperationAux},
+            primitives::merkletree::{MerkleClaimAndProof, MerkleTree},
         },
-        middleware::{OperationType, PodId, RawValue},
+        middleware::{Hash, OperationType, PodId, RawValue},
     };
 
     fn operation_verify(
         st: mainpod::Statement,
         op: mainpod::Operation,
         prev_statements: Vec<mainpod::Statement>,
-        merkle_proofs: Vec<mainpod::MerkleClaimAndProof>,
+        merkle_proofs: Vec<MerkleClaimAndProof>,
     ) -> Result<()> {
         let params = Params::default();
         let mp_gadget = MerkleProofGadget {
@@ -590,15 +579,7 @@ mod tests {
         for (merkle_proof_target, merkle_proof) in
             merkle_proofs_target.iter().zip(merkle_proofs.iter())
         {
-            merkle_proof_target.set_targets(
-                &mut pw,
-                merkle_proof.enabled,
-                merkle_proof.existence,
-                merkle_proof.root,
-                merkle_proof.clone().try_into()?,
-                merkle_proof.key,
-                merkle_proof.value,
-            )?
+            merkle_proof_target.set_targets(&mut pw, &merkle_proof)?
         }
 
         // generate & verify proof
@@ -725,10 +706,10 @@ mod tests {
             OperationAux::MerkleProofIndex(0),
         );
 
-        let merkle_proofs = vec![mainpod::MerkleClaimAndProof::try_from_middleware(
-            &params,
-            &root.raw(),
-            &key,
+        let merkle_proofs = vec![MerkleClaimAndProof::new(
+            params.max_depth_mt_gadget,
+            Hash::from(root.raw()),
+            key,
             None,
             &no_key_pf,
         )?];

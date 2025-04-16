@@ -52,9 +52,9 @@ pub(crate) fn extract_merkle_proofs(
                 pf,
             ) => Some(MerkleClaimAndProof::new(
                 params.max_depth_mt_gadget,
-                &root.raw(),
-                &key.raw(),
-                Some(&value.raw()),
+                Hash::from(root.raw()),
+                key.raw(),
+                Some(value.raw()),
                 pf,
             )),
             middleware::Operation::NotContainsFromEntries(
@@ -63,8 +63,8 @@ pub(crate) fn extract_merkle_proofs(
                 pf,
             ) => Some(MerkleClaimAndProof::new(
                 params.max_depth_mt_gadget,
-                &root.raw(),
-                &key.raw(),
+                Hash::from(root.raw()),
+                key.raw(),
                 None,
                 pf,
             )),
@@ -435,7 +435,9 @@ pub mod tests {
     use super::*;
     use crate::{
         backends::plonky2::{
-            mock::mainpod::MockProver, primitives::signature::SecretKey, signedpod::Signer,
+            mock::mainpod::{MockMainPod, MockProver},
+            primitives::signature::SecretKey,
+            signedpod::Signer,
         },
         examples::{zu_kyc_pod_builder, zu_kyc_sign_pod_builders},
         frontend, middleware,

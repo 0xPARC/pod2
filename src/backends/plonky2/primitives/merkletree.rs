@@ -291,9 +291,9 @@ impl MerkleClaimAndProof {
     }
     pub fn new(
         max_depth: usize,
-        root: &RawValue,
-        key: &RawValue,
-        value: Option<&RawValue>,
+        root: Hash,
+        key: RawValue,
+        value: Option<RawValue>,
         proof: &MerkleProof,
     ) -> Result<Self> {
         if proof.siblings.len() > max_depth {
@@ -305,9 +305,9 @@ impl MerkleClaimAndProof {
         } else {
             Ok(Self {
                 enabled: true,
-                root: (*root).into(),
-                key: *key,
-                value: value.cloned().unwrap_or(EMPTY_VALUE),
+                root,
+                key,
+                value: value.unwrap_or(EMPTY_VALUE),
                 proof: MerkleProof {
                     existence: proof.existence,
                     siblings: proof
