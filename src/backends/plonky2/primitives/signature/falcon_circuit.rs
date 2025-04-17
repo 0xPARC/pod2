@@ -373,6 +373,7 @@ impl<const DEG: usize> PolynomialTarget<DEG> {
             let c_balanced = FalconFTarget::balance(builder, self.0[i]);
             let c_squared = builder.square(c_balanced);
             res = builder.add(res, c_squared);
+            // res = builder.mul_add(c_balanced, c_balanced, res);
         }
         res
     }
@@ -413,7 +414,11 @@ impl SignatureVerifyGadget {
         equality_check(builder, falcon_lut_i, enabled, tau, s1, s2, pk, s2h, c)?;
 
         // norm check
-        // TODO
+        let norm1 = s1.norm_squared(builder);
+        let norm2 = s2.norm_squared(builder);
+        let sum_norms = builder.add(norm1, norm2);
+        let norm_bound = builder.constant(F::from_canonical_u64(SIG_L2_BOUND));
+        assert_less::<64>(builder, sum_norms, norm_bound); // TODO try lookup
 
         Ok(Self {
             enabled,
@@ -518,7 +523,7 @@ fn equality_check(
     // saving a single gate
     let rhs = builder.select(enabled, s2h_tau, zero);
     let lhs = builder.select(enabled, s2tau_htau, zero);
-    builder.connect(lhs, rhs);
+    // builder.connect(lhs, rhs);
 
     // We need to check that
     // (#)   s1(x) + s2(x) * h(x) = c(x) modulo (x^N + 1).
@@ -544,10 +549,10 @@ fn equality_check(
     let lhs = FalconFTarget::modulo_reduction(builder, falcon_lut_i, lhs_raw);
     let rhs_raw = builder.add(c_tau, s2h_hot_tau);
     let rhs = FalconFTarget::modulo_reduction(builder, falcon_lut_i, rhs_raw);
-    builder.connect(lhs, rhs); // TODO dependent on 'enabled'
-                               // TODO-NOTE: maybe don't do the full `s1(tau)+s2(tau)h(tau)-c(tau)==0`, and
-                               // just compute the actual s1(x) polynomial, so that then the norm can be
-                               // computed from it.
+    // builder.connect(lhs, rhs); // TODO dependent on 'enabled'
+    let rhs_selected = builder.select(enabled, rhs, zero);
+    let lhs_selected = builder.select(enabled, lhs, zero);
+    builder.connect(lhs_selected, rhs_selected);
 
     Ok(())
 }
@@ -885,31 +890,48 @@ pub mod tests {
 
     #[test]
     fn test_falcon_balance() -> Result<()> {
-        let mut rng = StdRng::from_os_rng();
-        // TODO do the test with an array of values, including:
-        // let values = [0,1,6143, 6144, 6145, 6146];
-        let v: FalconFelt = FalconFelt::new(6144);
-        let balanced_i16: i16 = v.balanced_value();
-        let balanced: u64 = balanced_i16.abs() as u64;
-        println!("{:?} {:?} {:?}", v, balanced_i16, balanced);
+        let values: Vec<FalconFelt> = vec![0_i16, 1, 6143, 6144, 6145, 6146]
+            .iter()
+            .map(|v| FalconFelt::new(*v))
+            .collect();
 
-        let s: u64 = ((P / 2) < balanced) as u64;
-        let p_v = P - balanced;
-        let res = balanced + s * (p_v - balanced);
-        dbg!(res);
+        let balanced_values: Vec<u64> = values
+            .iter()
+            .map(|v| {
+                let balanced_i16: i16 = v.balanced_value();
+                balanced_i16.abs() as u64
+            })
+            .collect();
+
+        // let mut rng = StdRng::from_os_rng();
+        // // TODO do the test with an array of values, including:
+        // let v: FalconFelt = FalconFelt::new(6144);
+        // let balanced_i16: i16 = v.balanced_value();
+        // let balanced: u64 = balanced_i16.abs() as u64;
+        // println!("{:?} {:?} {:?}", v, balanced_i16, balanced);
+
+        // let s: u64 = ((P / 2) < balanced) as u64;
+        // let p_v = P - balanced;
+        // let res = balanced + s * (p_v - balanced);
+        // dbg!(res);
 
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        // set targets
-        let v_targ = builder.add_virtual_target();
-        pw.set_target(v_targ, F::from_canonical_u64(v.0 as u64))?;
-        let expected_balanced_targ = builder.add_virtual_target();
-        pw.set_target(expected_balanced_targ, F::from_canonical_u64(balanced))?;
+        // set targets, for each of the values
+        for (i, v) in values.iter().enumerate() {
+            let v_targ = builder.add_virtual_target();
+            pw.set_target(v_targ, F::from_canonical_u64(v.0 as u64))?;
+            let expected_balanced_targ = builder.add_virtual_target();
+            pw.set_target(
+                expected_balanced_targ,
+                F::from_canonical_u64(balanced_values[i]),
+            )?;
 
-        let computed_balanced_targ: Target = FalconFTarget::balance(&mut builder, v_targ);
-        builder.connect(computed_balanced_targ, expected_balanced_targ);
+            let computed_balanced_targ: Target = FalconFTarget::balance(&mut builder, v_targ);
+            builder.connect(computed_balanced_targ, expected_balanced_targ);
+        }
 
         dbg!(builder.num_gates());
 
@@ -959,17 +981,28 @@ pub mod tests {
     fn test_falcon_gadget() -> Result<()> {
         let seed = [0_u8; 32];
         let mut rng = ChaCha20Rng::from_seed(seed);
+        // let mut rng = StdRng::from_os_rng();
+
+        use std::time::Instant;
 
         // generate random keys
+        let start = Instant::now();
         let sk = SecretKey::with_rng(&mut rng);
+        println!("sk gen {:?}", start.elapsed());
+        let start = Instant::now();
         let pk = sk.public_key();
+        println!("pk gen {:?}", start.elapsed());
 
         // sign a random message
         let msg: Value = Value([F::ONE; 4]);
+        let start = Instant::now();
         let sig = sk.sign_with_rng(msg, &mut rng);
+        println!("sign {:?}", start.elapsed());
 
         // make sure the signature verifies correctly
+        let start = Instant::now();
         assert!(pk.verify(msg, &sig));
+        println!("verify {:?}", start.elapsed());
 
         // let tau = F::rand();
         let tau = FalconFelt::new(rng.random());
@@ -980,7 +1013,14 @@ pub mod tests {
         let mut pw = PartialWitness::<F>::new();
 
         let signature_targ = SignatureVerifyGadget::build(&mut builder)?;
-        signature_targ.set_targets(&mut pw, true, tau, sig.pk_poly().0.clone(), msg, sig)?;
+        signature_targ.set_targets(
+            &mut pw,
+            true,
+            tau,
+            sig.pk_poly().0.clone(),
+            msg,
+            sig.clone(),
+        )?;
 
         // c no_mod = 9874 gates
         // c with mod = 14687 gates
@@ -988,8 +1028,17 @@ pub mod tests {
 
         // generate & verify proof
         let data = builder.build::<C>();
+        let start = Instant::now();
         let proof = data.prove(pw)?;
+        println!("proof gen {:?}", start.elapsed());
+        let start = Instant::now();
         data.verify(proof.clone())?;
+        println!("proof verif {:?}", start.elapsed());
+
+        use miden_crypto::utils::Serializable;
+        // let b = pk.to_bytes();
+
+        dbg!(sig.to_bytes().len());
 
         Ok(())
     }

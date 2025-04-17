@@ -37,8 +37,8 @@ lazy_static! {
 }
 
 pub struct ProverParams {
-    prover: ProverCircuitData<F, C, D>,
-    circuit: SignatureInternalCircuit,
+    pub(crate) prover: ProverCircuitData<F, C, D>,
+    pub(crate) circuit: SignatureInternalCircuit,
 }
 
 #[derive(Clone, Debug)]

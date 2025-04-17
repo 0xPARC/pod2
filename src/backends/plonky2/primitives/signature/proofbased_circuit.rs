@@ -174,12 +174,22 @@ pub mod tests {
 
     #[test]
     fn test_signature_gadget() -> Result<()> {
+        use std::time::Instant;
+
         // generate a valid signature
+        let start = Instant::now();
         let sk = SecretKey::new_rand();
+        println!("sk gen {:?}", start.elapsed());
+        let start = Instant::now();
         let pk = sk.public_key();
+        println!("pk gen {:?}", start.elapsed());
         let msg = Value::from(42);
+        let start = Instant::now();
         let sig = sk.sign(msg)?;
+        println!("sign {:?}", start.elapsed());
+        let start = Instant::now();
         sig.verify(&pk, msg)?;
+        println!("verify {:?}", start.elapsed());
 
         // circuit
         let config = CircuitConfig::standard_recursion_zk_config();
@@ -187,12 +197,39 @@ pub mod tests {
         let mut pw = PartialWitness::<F>::new();
 
         let targets = SignatureVerifyGadget {}.eval(&mut builder)?;
-        targets.set_targets(&mut pw, true, pk, msg, sig)?;
+        targets.set_targets(&mut pw, true, pk.clone(), msg, sig.clone())?;
+
+        dbg!(builder.num_gates());
 
         // generate & verify proof
         let data = builder.build::<C>();
+        let start = Instant::now();
         let proof = data.prove(pw)?;
+        println!("proof gen {:?}", start.elapsed());
+        let start = Instant::now();
         data.verify(proof.clone())?;
+        println!("proof verif {:?}", start.elapsed());
+
+        let s = Value(PoseidonHash::hash_no_pad(&[pk.0 .0, msg.0].concat()).elements);
+        let public_inputs: Vec<F> = [pk.0 .0, msg.0, s.0].concat();
+        let sig_pi = ProofWithPublicInputs {
+            proof: sig.0.clone(),
+            public_inputs,
+        };
+
+        let compressed_proof = data.compress(sig_pi)?;
+        dbg!(compressed_proof.to_bytes().len());
+
+        let gate_serializer = plonky2::util::serialization::DefaultGateSerializer;
+        let generator_serializer =
+            plonky2::util::serialization::DefaultGeneratorSerializer::<C, D>::default();
+        let (pp, vp) = Signature::params()?;
+        dbg!(pp
+            .prover
+            .to_bytes(&gate_serializer, &generator_serializer)
+            .unwrap()
+            .len());
+        dbg!(vp.0.to_bytes(&gate_serializer).unwrap().len());
 
         // verify the proof with the lazy_static loaded verifier_data (S_VD)
         S_VD.verify(ProofWithPublicInputs {
@@ -204,7 +241,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_signature_gadget_disabled() -> Result<()> {
+    fn test_aasignature_gadget_disabled() -> Result<()> {
         // generate a valid signature
         let sk = SecretKey::new_rand();
         let pk = sk.public_key();
