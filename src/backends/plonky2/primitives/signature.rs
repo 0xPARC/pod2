@@ -1,6 +1,5 @@
 //! Proof-based signatures using Plonky2 proofs, following
 //! https://eprint.iacr.org/2024/1553 .
-use anyhow::Result;
 use lazy_static::lazy_static;
 use plonky2::{
     field::types::Sample,
@@ -24,6 +23,7 @@ pub use super::signature_circuit::*;
 use crate::{
     backends::plonky2::basetypes::{Proof, C, D},
     middleware::{RawValue, F, VALUE_SIZE},
+    Error, Result,
 };
 
 lazy_static! {
@@ -121,6 +121,7 @@ impl Signature {
             proof: self.0.clone(),
             public_inputs,
         })
+        .map_err(|_| Error::Plonky2ProofFail)
     }
 }
 

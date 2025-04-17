@@ -1,4 +1,3 @@
-use anyhow::Result;
 use itertools::zip_eq;
 use plonky2::{
     hash::{hash_types::HashOutTarget, poseidon::PoseidonHash},
@@ -26,6 +25,7 @@ use crate::{
         AnchoredKey, NativeOperation, NativePredicate, Params, PodType, Statement, StatementArg,
         ToFields, Value, F, KEY_TYPE, SELF, VALUE_SIZE,
     },
+    Result,
 };
 
 //

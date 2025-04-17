@@ -17,6 +17,7 @@ dyn-clone = "1.0.18"
 log = "0.4"
 env_logger = "0.11"
 lazy_static = "1.5.0"
+thiserror = { version = "2.0.12" }
 # enabled by features:
 plonky2 = { git = "https://github.com/0xPolygonZero/plonky2", optional = true }
 serde = "1.0.219"

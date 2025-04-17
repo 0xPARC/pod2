@@ -1,14 +1,14 @@
-use std::collections::{HashMap, HashSet};
+//! This file implements the types defined at
+//! https://0xparc.github.io/pod2/values.html#dictionary-array-set .
 
-/// This file implements the types defined at
-/// https://0xparc.github.io/pod2/values.html#dictionary-array-set .
-use anyhow::{anyhow, Result};
+use std::collections::{HashMap, HashSet};
 
 #[cfg(feature = "backend_plonky2")]
 use crate::backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree};
 use crate::{
     constants::MAX_DEPTH,
     middleware::{hash_value, Hash, Key, RawValue, Value, EMPTY_VALUE},
+    Error, Result,
 };
 
 /// Dictionary: the user original keys and values are hashed to be used in the leaf.
@@ -37,7 +37,7 @@ impl Dictionary {
     pub fn get(&self, key: &Key) -> Result<&Value> {
         self.kvs
             .get(key)
-            .ok_or_else(|| anyhow!("key \"{}\" not found", key.name()))
+            .ok_or_else(|| Error::Custom(format!("key \"{}\" not found", key.name())))
     }
     pub fn prove(&self, key: &Key) -> Result<(&Value, MerkleProof)> {
         let (_, mtp) = self.mt.prove(&RawValue(key.hash().0))?;
@@ -161,9 +161,9 @@ impl Array {
         self.mt.root()
     }
     pub fn get(&self, i: usize) -> Result<&Value> {
-        self.array
-            .get(i)
-            .ok_or_else(|| anyhow!("index {} out of bounds 0..{}", i, self.array.len()))
+        self.array.get(i).ok_or_else(|| {
+            Error::Custom(format!("index {} out of bounds 0..{}", i, self.array.len()))
+        })
     }
     pub fn prove(&self, i: usize) -> Result<(&Value, MerkleProof)> {
         let (_, mtp) = self.mt.prove(&RawValue::from(i as i64))?;

@@ -2,7 +2,6 @@
 
 use std::{array, iter};
 
-use anyhow::Result;
 use plonky2::{
     field::{
         extension::Extendable,
@@ -27,6 +26,7 @@ use crate::{
         EMPTY_VALUE, F, HASH_SIZE, OPERATION_ARG_F_LEN, OPERATION_AUX_F_LEN, STATEMENT_ARG_F_LEN,
         VALUE_SIZE,
     },
+    Result,
 };
 
 pub const CODE_SIZE: usize = HASH_SIZE + 2;
@@ -75,7 +75,7 @@ impl StatementArgTarget {
         params: &Params,
         arg: &StatementArg,
     ) -> Result<()> {
-        pw.set_target_arr(&self.elements, &arg.to_fields(params))
+        Ok(pw.set_target_arr(&self.elements, &arg.to_fields(params))?)
     }
 
     fn new(first: ValueTarget, second: ValueTarget) -> Self {

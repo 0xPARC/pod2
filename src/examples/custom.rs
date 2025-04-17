@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use anyhow::Result;
 use StatementTmplBuilder as STB;
 
 use crate::{
@@ -9,6 +8,7 @@ use crate::{
         CustomPredicateBatch, CustomPredicateRef, NativePredicate as NP, Params, PodType,
         Predicate, KEY_SIGNER, KEY_TYPE,
     },
+    Result,
 };
 
 /// Instantiates an ETH friend batch

@@ -1,6 +1,5 @@
 use std::{any::Any, collections::HashMap};
 
-use anyhow::{anyhow, Result};
 use itertools::Itertools;
 
 use crate::{
@@ -10,9 +9,10 @@ use crate::{
     },
     constants::MAX_DEPTH,
     middleware::{
-        containers::Dictionary, AnchoredKey, Hash, Key, Params, Pod, PodId, PodSigner, PodType,
-        RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE,
+        containers::Dictionary, error::MiddlewareError, AnchoredKey, Hash, Key, Params, Pod, PodId,
+        PodSigner, PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE,
     },
+    Error, Result,
 };
 
 pub struct Signer(pub SecretKey);
@@ -48,11 +48,10 @@ impl Pod for SignedPod {
         // 1. Verify type
         let value_at_type = self.dict.get(&Key::from(KEY_TYPE))?;
         if Value::from(PodType::Signed) != *value_at_type {
-            return Err(anyhow!(
-                "type does not match, expected Signed ({}), found {}",
+            return Err(Error::Middleware(MiddlewareError::TypeNotEqual(
                 PodType::Signed,
-                value_at_type
-            ));
+                value_at_type.clone(),
+            )));
         }
 
         // 2. Verify id
@@ -67,11 +66,7 @@ impl Pod for SignedPod {
         )?;
         let id = PodId(mt.root());
         if id != self.id {
-            return Err(anyhow!(
-                "id does not match, expected {}, computed {}",
-                self.id,
-                id
-            ));
+            return Err(Error::Middleware(MiddlewareError::IdNotEqual(self.id, id)));
         }
 
         // 3. Verify signature

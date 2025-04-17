@@ -8,6 +8,7 @@ use crate::{
     backends::plonky2::mock::{mainpod::MockMainPod, signedpod::MockSignedPod},
     frontend::{containers::Dictionary, MainPod, SignedPod, Statement, TypedValue},
     middleware::PodId,
+    Error,
 };
 
 #[derive(Serialize, Deserialize, JsonSchema)]
@@ -20,14 +21,14 @@ pub struct SignedPodHelper {
 }
 
 impl TryFrom<SignedPodHelper> for SignedPod {
-    type Error = anyhow::Error;
+    type Error = Error;
 
     fn try_from(helper: SignedPodHelper) -> Result<SignedPod, Self::Error> {
         if helper.pod_class != "Signed" {
-            return Err(anyhow::anyhow!("pod_class is not Signed"));
+            return Err(Error::Custom("pod_class is not Signed"));
         }
         if helper.pod_type != "Mock" {
-            return Err(anyhow::anyhow!("pod_type is not Mock"));
+            return Err(Error::Custom("pod_type is not Mock"));
         }
 
         let dict = Dictionary::new(helper.entries.clone())?
@@ -63,18 +64,18 @@ pub struct MainPodHelper {
 }
 
 impl TryFrom<MainPodHelper> for MainPod {
-    type Error = anyhow::Error; // or you can create a custom error type
+    type Error = Error; // or you can create a custom error type
 
     fn try_from(helper: MainPodHelper) -> Result<Self, Self::Error> {
         if helper.pod_class != "Main" {
-            return Err(anyhow::anyhow!("pod_class is not Main"));
+            return Err(Error::Custom("pod_class is not Main"));
         }
         if helper.pod_type != "Mock" {
-            return Err(anyhow::anyhow!("pod_type is not Mock"));
+            return Err(Error::Custom("pod_type is not Mock"));
         }
 
         let pod = MockMainPod::deserialize(helper.proof)
-            .map_err(|e| anyhow::anyhow!("Failed to deserialize proof: {}", e))?;
+            .map_err(|e| Error::Custom(format!("Failed to deserialize proof: {}", e)))?;
 
         Ok(MainPod {
             pod: Box::new(pod),
@@ -152,7 +153,6 @@ pub fn transform_value_schema(schema: &mut Schema) {
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Result;
     use schemars::generate::SchemaSettings;
 
     use super::*;
@@ -164,6 +164,7 @@ mod tests {
             SignedPodBuilder,
         },
         middleware::{self, Params},
+        Result,
     };
 
     #[test]

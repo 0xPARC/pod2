@@ -1,6 +1,5 @@
 use std::{fmt, iter, sync::Arc};
 
-use anyhow::{anyhow, Result};
 use plonky2::field::types::Field;
 
 // use schemars::JsonSchema;
@@ -9,6 +8,7 @@ use plonky2::field::types::Field;
 use crate::{
     middleware::HASH_SIZE,
     middleware::{hash_fields, Hash, Key, NativePredicate, Params, ToFields, Value, F},
+    Error, Result,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -216,7 +216,11 @@ impl CustomPredicate {
         args_len: usize,
     ) -> Result<Self> {
         if statements.len() > params.max_custom_predicate_arity {
-            return Err(anyhow!("Custom predicate depends on too many statements"));
+            return Err(Error::MaxLength(
+                "statements.len".to_string(),
+                statements.len(),
+                params.max_custom_predicate_arity,
+            ));
         }
 
         Ok(Self {
@@ -393,14 +397,16 @@ impl fmt::Display for Predicate {
 mod tests {
     use std::{array, sync::Arc};
 
-    use anyhow::Result;
     use plonky2::field::goldilocks_field::GoldilocksField;
 
     use super::*;
-    use crate::middleware::{
-        AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash,
-        KeyOrWildcard, NativePredicate, Operation, Params, PodId, PodType, Predicate, Statement,
-        StatementTmpl, StatementTmplArg, WildcardValue, SELF,
+    use crate::{
+        middleware::{
+            AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash,
+            KeyOrWildcard, NativePredicate, Operation, Params, PodId, PodType, Predicate,
+            Statement, StatementTmpl, StatementTmplArg, WildcardValue, SELF,
+        },
+        Result,
     };
 
     fn st(p: Predicate, args: Vec<StatementTmplArg>) -> StatementTmpl {
