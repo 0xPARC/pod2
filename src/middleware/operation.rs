@@ -6,7 +6,7 @@ use plonky2::field::types::Field;
 
 // use serde::{Deserialize, Serialize};
 use crate::{
-    backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree},
+    backends::plonky2::primitives::merkletree::MerkleProof,
     middleware::{
         custom::KeyOrWildcard, AnchoredKey, CustomPredicateBatch, CustomPredicateRef,
         NativePredicate, Params, Predicate, Statement, StatementArg, StatementTmplArg, ToFields,
