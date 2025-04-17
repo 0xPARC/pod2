@@ -165,6 +165,19 @@ impl MerkleClaimAndProofTarget {
         pw.set_target_arr(&self.value.elements, &mp.value.0)?;
         pw.set_bool_target(self.existence, mp.proof.existence)?;
 
+        // pad siblings with zeros to length max_depth
+        assert!(mp.proof.siblings.len() <= self.max_depth);
+        for (i, sibling) in mp
+            .proof
+            .siblings
+            .iter()
+            .chain(iter::repeat(&EMPTY_HASH))
+            .take(self.max_depth)
+            .enumerate()
+        {
+            pw.set_hash_target(self.siblings[i], HashOut::from_vec(sibling.0.to_vec()))?;
+        }
+
         assert_eq!(mp.proof.siblings.len(), self.max_depth);
         for (i, sibling) in mp.proof.siblings.iter().enumerate() {
             pw.set_hash_target(self.siblings[i], HashOut::from_vec(sibling.0.to_vec()))?;
@@ -259,9 +272,15 @@ impl MerkleProofExistenceTarget {
         pw.set_target_arr(&self.value.elements, &mp.value.0)?;
 
         // pad siblings with zeros to length max_depth
-        assert_eq!(mp.proof.siblings.len(), self.max_depth);
-
-        for (i, sibling) in mp.proof.siblings.iter().enumerate() {
+        assert!(mp.proof.siblings.len() <= self.max_depth);
+        for (i, sibling) in mp
+            .proof
+            .siblings
+            .iter()
+            .chain(iter::repeat(&EMPTY_HASH))
+            .take(self.max_depth)
+            .enumerate()
+        {
             pw.set_hash_target(self.siblings[i], HashOut::from_vec(sibling.0.to_vec()))?;
         }
 
@@ -515,7 +534,7 @@ pub mod tests {
         let targets = MerkleProofGadget { max_depth }.eval(&mut builder)?;
         targets.set_targets(
             &mut pw,
-            &MerkleClaimAndProof::new(max_depth, tree.root(), key, Some(value), &proof)?,
+            &MerkleClaimAndProof::new(tree.root(), key, Some(value), proof),
         )?;
 
         // generate & verify proof
@@ -560,7 +579,7 @@ pub mod tests {
         let targets = MerkleProofExistenceGadget { max_depth }.eval(&mut builder)?;
         targets.set_targets(
             &mut pw,
-            &MerkleClaimAndProof::new(max_depth, tree.root(), key, Some(value), &proof)?,
+            &MerkleClaimAndProof::new(tree.root(), key, Some(value), proof),
         )?;
 
         // generate & verify proof
@@ -634,7 +653,7 @@ pub mod tests {
         let targets = MerkleProofGadget { max_depth }.eval(&mut builder)?;
         targets.set_targets(
             &mut pw,
-            &MerkleClaimAndProof::new(max_depth, tree.root(), key, Some(value), &proof)?,
+            &MerkleClaimAndProof::new(tree.root(), key, Some(value), proof),
         )?;
 
         // generate & verify proof
@@ -677,7 +696,7 @@ pub mod tests {
 
         let targets = MerkleProofGadget { max_depth }.eval(&mut builder)?;
         // verification enabled & proof of existence
-        let mut mp = MerkleClaimAndProof::new(max_depth, tree2.root(), key, Some(value), &proof)?;
+        let mut mp = MerkleClaimAndProof::new(tree2.root(), key, Some(value), proof);
         targets.set_targets(&mut pw, &mp)?;
 
         // generate proof, expecting it to fail (since we're using the wrong

@@ -134,13 +134,7 @@ impl SignedPodVerifyTarget {
                 let (v, proof) = pod.dict.prove(k)?;
                 self.mt_proofs[i].set_targets(
                     pw,
-                    &MerkleClaimAndProof::new(
-                        self.params.max_depth_mt_gadget,
-                        pod.dict.commitment(),
-                        k.raw(),
-                        Some(v.raw()),
-                        &proof,
-                    )?,
+                    &MerkleClaimAndProof::new(pod.dict.commitment(), k.raw(), Some(v.raw()), proof),
                 )?;
                 Ok(v)
             })
@@ -160,13 +154,7 @@ impl SignedPodVerifyTarget {
 
             self.mt_proofs[curr].set_targets(
                 pw,
-                &MerkleClaimAndProof::new(
-                    self.params.max_depth_mt_gadget,
-                    pod.dict.commitment(),
-                    k.raw(),
-                    Some(v.raw()),
-                    &proof,
-                )?,
+                &MerkleClaimAndProof::new(pod.dict.commitment(), k.raw(), Some(v.raw()), proof),
             )?;
             curr += 1;
         }
@@ -174,7 +162,7 @@ impl SignedPodVerifyTarget {
         assert!(curr <= self.params.max_signed_pod_values);
 
         // add the proofs of empty leaves (if needed), till the max_signed_pod_values
-        let mut mp = MerkleClaimAndProof::empty(self.params.max_depth_mt_gadget);
+        let mut mp = MerkleClaimAndProof::empty();
         mp.root = pod.dict.commitment();
         for i in curr..self.params.max_signed_pod_values {
             self.mt_proofs[i].set_targets(pw, &mp)?;

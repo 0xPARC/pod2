@@ -42,7 +42,7 @@ pub(crate) fn extract_merkle_proofs(
     params: &Params,
     operations: &[middleware::Operation],
 ) -> Result<Vec<MerkleClaimAndProof>> {
-    let mut merkle_proofs = operations
+    let mut merkle_proofs: Vec<_> = operations
         .iter()
         .flat_map(|op| match op {
             middleware::Operation::ContainsFromEntries(
@@ -51,26 +51,24 @@ pub(crate) fn extract_merkle_proofs(
                 middleware::Statement::ValueOf(_, value),
                 pf,
             ) => Some(MerkleClaimAndProof::new(
-                params.max_depth_mt_gadget,
                 Hash::from(root.raw()),
                 key.raw(),
                 Some(value.raw()),
-                pf,
+                pf.clone(),
             )),
             middleware::Operation::NotContainsFromEntries(
                 middleware::Statement::ValueOf(_, root),
                 middleware::Statement::ValueOf(_, key),
                 pf,
             ) => Some(MerkleClaimAndProof::new(
-                params.max_depth_mt_gadget,
                 Hash::from(root.raw()),
                 key.raw(),
                 None,
-                pf,
+                pf.clone(),
             )),
             _ => None,
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect();
     if merkle_proofs.len() > params.max_merkle_proofs {
         Err(anyhow!(
             "The number of required Merkle proofs ({}) exceeds the maximum number ({}).",
@@ -80,7 +78,7 @@ pub(crate) fn extract_merkle_proofs(
     } else {
         fill_pad(
             &mut merkle_proofs,
-            MerkleClaimAndProof::empty(params.max_depth_mt_gadget),
+            MerkleClaimAndProof::empty(),
             params.max_merkle_proofs,
         );
         Ok(merkle_proofs)
@@ -293,7 +291,6 @@ pub(crate) fn process_public_statements_operations(
 pub struct Prover {}
 
 impl PodProver for Prover {
-    // TODO: Be consistent on where we apply the padding, here, or in the set_targets?
     fn prove(&mut self, params: &Params, inputs: MainPodInputs) -> Result<Box<dyn Pod>> {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);

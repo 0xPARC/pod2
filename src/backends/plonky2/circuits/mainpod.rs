@@ -707,12 +707,11 @@ mod tests {
         );
 
         let merkle_proofs = vec![MerkleClaimAndProof::new(
-            params.max_depth_mt_gadget,
             Hash::from(root.raw()),
             key,
             None,
-            &no_key_pf,
-        )?];
+            no_key_pf,
+        )];
         let prev_statements = vec![root_st, key_st];
         operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
 
