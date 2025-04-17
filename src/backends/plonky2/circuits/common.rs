@@ -19,7 +19,7 @@ use plonky2::{
 use crate::{
     backends::plonky2::{
         basetypes::D,
-        mock::mainpod::{Operation, OperationArg, Statement},
+        mainpod::{Operation, OperationArg, Statement},
         primitives::merkletree::MerkleClaimAndProofTarget,
     },
     middleware::{

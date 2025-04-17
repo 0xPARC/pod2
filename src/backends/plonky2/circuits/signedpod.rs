@@ -16,14 +16,16 @@ use crate::{
         basetypes::D,
         circuits::common::{CircuitBuilderPod, StatementArgTarget, StatementTarget, ValueTarget},
         primitives::{
-            merkletree::{MerkleProof, MerkleProofExistenceGadget, MerkleProofExistenceTarget},
+            merkletree::{
+                MerkleClaimAndProof, MerkleProofExistenceGadget, MerkleProofExistenceTarget,
+            },
             signature::{PublicKey, SignatureVerifyGadget, SignatureVerifyTarget},
         },
         signedpod::SignedPod,
     },
     middleware::{
-        hash_str, Key, NativePredicate, Params, PodType, Predicate, RawValue, ToFields, Value,
-        EMPTY_VALUE, F, KEY_SIGNER, KEY_TYPE, SELF,
+        hash_str, Key, NativePredicate, Params, PodType, Predicate, RawValue, ToFields, Value, F,
+        KEY_SIGNER, KEY_TYPE, SELF,
     },
 };
 
@@ -132,11 +134,13 @@ impl SignedPodVerifyTarget {
                 let (v, proof) = pod.dict.prove(k)?;
                 self.mt_proofs[i].set_targets(
                     pw,
-                    true,
-                    pod.dict.commitment(),
-                    proof,
-                    k.raw(),
-                    v.raw(),
+                    &MerkleClaimAndProof::new(
+                        self.params.max_depth_mt_gadget,
+                        pod.dict.commitment(),
+                        k.raw(),
+                        Some(v.raw()),
+                        &proof,
+                    )?,
                 )?;
                 Ok(v)
             })
@@ -156,11 +160,13 @@ impl SignedPodVerifyTarget {
 
             self.mt_proofs[curr].set_targets(
                 pw,
-                true,
-                pod.dict.commitment(),
-                proof,
-                k.raw(),
-                v.raw(),
+                &MerkleClaimAndProof::new(
+                    self.params.max_depth_mt_gadget,
+                    pod.dict.commitment(),
+                    k.raw(),
+                    Some(v.raw()),
+                    &proof,
+                )?,
             )?;
             curr += 1;
         }
@@ -168,20 +174,10 @@ impl SignedPodVerifyTarget {
         assert!(curr <= self.params.max_signed_pod_values);
 
         // add the proofs of empty leaves (if needed), till the max_signed_pod_values
+        let mut mp = MerkleClaimAndProof::empty(self.params.max_depth_mt_gadget);
+        mp.root = pod.dict.commitment();
         for i in curr..self.params.max_signed_pod_values {
-            self.mt_proofs[i].set_targets(
-                pw,
-                false, // disable verification
-                pod.dict.commitment(),
-                // use an empty proof:
-                MerkleProof {
-                    existence: true,
-                    siblings: vec![],
-                    other_leaf: None,
-                },
-                EMPTY_VALUE,
-                EMPTY_VALUE,
-            )?;
+            self.mt_proofs[i].set_targets(pw, &mp)?;
         }
 
         // get the signer pk

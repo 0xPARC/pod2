@@ -1,13 +1,17 @@
 //! Module that implements the MerkleTree specified at
 //! https://0xparc.github.io/pod2/merkletree.html .
-use std::{collections::HashMap, fmt, iter::IntoIterator};
+use std::{
+    collections::HashMap,
+    fmt,
+    iter::{self, IntoIterator},
+};
 
 use anyhow::{anyhow, Result};
 use plonky2::field::types::Field;
 
 // use serde::{Deserialize, Serialize};
 pub use super::merkletree_circuit::*;
-use crate::middleware::{hash_fields, Hash, RawValue, EMPTY_HASH, F};
+use crate::middleware::{hash_fields, Hash, RawValue, EMPTY_HASH, EMPTY_VALUE, F};
 
 /// Implements the MerkleTree specified at
 /// https://0xparc.github.io/pod2/merkletree.html
@@ -257,6 +261,99 @@ impl MerkleProof {
             h = hash_fields(&input);
         }
         Ok(h)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MerkleClaimAndProof {
+    /// `enabled` determines if the merkleproof verification is enabled
+    pub enabled: bool,
+    pub root: Hash,
+    pub key: RawValue,
+    pub value: RawValue,
+    /// The siblings in this proof are padded to max_depth
+    pub proof: MerkleProof,
+}
+
+impl MerkleClaimAndProof {
+    pub fn empty(max_depth: usize) -> Self {
+        Self {
+            enabled: false,
+            root: EMPTY_HASH,
+            key: EMPTY_VALUE,
+            value: EMPTY_VALUE,
+            proof: MerkleProof {
+                existence: true,
+                siblings: iter::repeat(EMPTY_HASH).take(max_depth).collect(),
+                other_leaf: None,
+            },
+        }
+    }
+    pub fn new(
+        max_depth: usize,
+        root: Hash,
+        key: RawValue,
+        value: Option<RawValue>,
+        proof: &MerkleProof,
+    ) -> Result<Self> {
+        if proof.siblings.len() > max_depth {
+            Err(anyhow!(
+                "Number of siblings ({}) exceeds maximum depth ({})",
+                proof.siblings.len(),
+                max_depth
+            ))
+        } else {
+            Ok(Self {
+                enabled: true,
+                root,
+                key,
+                value: value.unwrap_or(EMPTY_VALUE),
+                proof: MerkleProof {
+                    existence: proof.existence,
+                    siblings: proof
+                        .siblings
+                        .iter()
+                        .cloned()
+                        .chain(iter::repeat(EMPTY_HASH))
+                        .take(max_depth)
+                        .collect(),
+                    other_leaf: proof.other_leaf,
+                },
+            })
+        }
+    }
+}
+
+impl TryFrom<MerkleClaimAndProof> for MerkleProof {
+    type Error = anyhow::Error;
+    fn try_from(mp: MerkleClaimAndProof) -> Result<Self> {
+        if !mp.enabled {
+            return Err(anyhow!("Not a valid Merkle proof."));
+        }
+        Ok(MerkleProof {
+            existence: mp.proof.existence,
+            // Trim padding (if any).
+            siblings: mp
+                .proof
+                .siblings
+                .into_iter()
+                .rev()
+                .skip_while(|s| s == &EMPTY_HASH)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect(),
+            other_leaf: mp.proof.other_leaf,
+        })
+    }
+}
+
+impl fmt::Display for MerkleClaimAndProof {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match MerkleProof::try_from(self.clone()) {
+            Err(_) => write!(f, "∅"),
+            Ok(mp) => mp.fmt(f),
+        }
     }
 }
 
