@@ -134,6 +134,7 @@ impl SignedPodVerifyTarget {
                 let (v, proof) = pod.dict.prove(k)?;
                 self.mt_proofs[i].set_targets(
                     pw,
+                    true,
                     &MerkleClaimAndProof::new(pod.dict.commitment(), k.raw(), Some(v.raw()), proof),
                 )?;
                 Ok(v)
@@ -154,6 +155,7 @@ impl SignedPodVerifyTarget {
 
             self.mt_proofs[curr].set_targets(
                 pw,
+                true,
                 &MerkleClaimAndProof::new(pod.dict.commitment(), k.raw(), Some(v.raw()), proof),
             )?;
             curr += 1;
@@ -165,7 +167,7 @@ impl SignedPodVerifyTarget {
         let mut mp = MerkleClaimAndProof::empty();
         mp.root = pod.dict.commitment();
         for i in curr..self.params.max_signed_pod_values {
-            self.mt_proofs[i].set_targets(pw, &mp)?;
+            self.mt_proofs[i].set_targets(pw, false, &mp)?;
         }
 
         // get the signer pk

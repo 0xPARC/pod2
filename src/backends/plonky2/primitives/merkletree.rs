@@ -262,8 +262,6 @@ impl MerkleProof {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MerkleClaimAndProof {
-    /// `enabled` determines if the merkleproof verification is enabled
-    pub enabled: bool,
     pub root: Hash,
     pub key: RawValue,
     pub value: RawValue,
@@ -273,7 +271,6 @@ pub struct MerkleClaimAndProof {
 impl MerkleClaimAndProof {
     pub fn empty() -> Self {
         Self {
-            enabled: false,
             root: EMPTY_HASH,
             key: EMPTY_VALUE,
             value: EMPTY_VALUE,
@@ -286,7 +283,6 @@ impl MerkleClaimAndProof {
     }
     pub fn new(root: Hash, key: RawValue, value: Option<RawValue>, proof: MerkleProof) -> Self {
         Self {
-            enabled: true,
             root,
             key,
             value: value.unwrap_or(EMPTY_VALUE),
@@ -295,36 +291,9 @@ impl MerkleClaimAndProof {
     }
 }
 
-impl TryFrom<MerkleClaimAndProof> for MerkleProof {
-    type Error = anyhow::Error;
-    fn try_from(mp: MerkleClaimAndProof) -> Result<Self> {
-        if !mp.enabled {
-            return Err(anyhow!("Not a valid Merkle proof."));
-        }
-        Ok(MerkleProof {
-            existence: mp.proof.existence,
-            // Trim padding (if any).
-            siblings: mp
-                .proof
-                .siblings
-                .into_iter()
-                .rev()
-                .skip_while(|s| s == &EMPTY_HASH)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect(),
-            other_leaf: mp.proof.other_leaf,
-        })
-    }
-}
-
 impl fmt::Display for MerkleClaimAndProof {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match MerkleProof::try_from(self.clone()) {
-            Err(_) => write!(f, "∅"),
-            Ok(mp) => mp.fmt(f),
-        }
+        self.proof.fmt(f)
     }
 }
 

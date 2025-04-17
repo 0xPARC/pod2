@@ -158,8 +158,13 @@ impl MerkleProofGadget {
 impl MerkleClaimAndProofTarget {
     /// assigns the given values to the targets
     #[allow(clippy::too_many_arguments)]
-    pub fn set_targets(&self, pw: &mut PartialWitness<F>, mp: &MerkleClaimAndProof) -> Result<()> {
-        pw.set_bool_target(self.enabled, mp.enabled)?;
+    pub fn set_targets(
+        &self,
+        pw: &mut PartialWitness<F>,
+        enabled: bool,
+        mp: &MerkleClaimAndProof,
+    ) -> Result<()> {
+        pw.set_bool_target(self.enabled, enabled)?;
         pw.set_hash_target(self.root, HashOut::from_vec(mp.root.0.to_vec()))?;
         pw.set_target_arr(&self.key.elements, &mp.key.0)?;
         pw.set_target_arr(&self.value.elements, &mp.value.0)?;
@@ -175,11 +180,6 @@ impl MerkleClaimAndProofTarget {
             .take(self.max_depth)
             .enumerate()
         {
-            pw.set_hash_target(self.siblings[i], HashOut::from_vec(sibling.0.to_vec()))?;
-        }
-
-        assert_eq!(mp.proof.siblings.len(), self.max_depth);
-        for (i, sibling) in mp.proof.siblings.iter().enumerate() {
             pw.set_hash_target(self.siblings[i], HashOut::from_vec(sibling.0.to_vec()))?;
         }
 
@@ -263,10 +263,15 @@ impl MerkleProofExistenceGadget {
 
 impl MerkleProofExistenceTarget {
     /// assigns the given values to the targets
-    pub fn set_targets(&self, pw: &mut PartialWitness<F>, mp: &MerkleClaimAndProof) -> Result<()> {
+    pub fn set_targets(
+        &self,
+        pw: &mut PartialWitness<F>,
+        enabled: bool,
+        mp: &MerkleClaimAndProof,
+    ) -> Result<()> {
         assert!(mp.proof.existence); // sanity check
 
-        pw.set_bool_target(self.enabled, mp.enabled)?;
+        pw.set_bool_target(self.enabled, enabled)?;
         pw.set_hash_target(self.root, HashOut::from_vec(mp.root.0.to_vec()))?;
         pw.set_target_arr(&self.key.elements, &mp.key.0)?;
         pw.set_target_arr(&self.value.elements, &mp.value.0)?;
@@ -534,6 +539,7 @@ pub mod tests {
         let targets = MerkleProofGadget { max_depth }.eval(&mut builder)?;
         targets.set_targets(
             &mut pw,
+            true,
             &MerkleClaimAndProof::new(tree.root(), key, Some(value), proof),
         )?;
 
@@ -579,6 +585,7 @@ pub mod tests {
         let targets = MerkleProofExistenceGadget { max_depth }.eval(&mut builder)?;
         targets.set_targets(
             &mut pw,
+            true,
             &MerkleClaimAndProof::new(tree.root(), key, Some(value), proof),
         )?;
 
@@ -653,6 +660,7 @@ pub mod tests {
         let targets = MerkleProofGadget { max_depth }.eval(&mut builder)?;
         targets.set_targets(
             &mut pw,
+            true,
             &MerkleClaimAndProof::new(tree.root(), key, Some(value), proof),
         )?;
 
@@ -696,8 +704,8 @@ pub mod tests {
 
         let targets = MerkleProofGadget { max_depth }.eval(&mut builder)?;
         // verification enabled & proof of existence
-        let mut mp = MerkleClaimAndProof::new(tree2.root(), key, Some(value), proof);
-        targets.set_targets(&mut pw, &mp)?;
+        let mp = MerkleClaimAndProof::new(tree2.root(), key, Some(value), proof);
+        targets.set_targets(&mut pw, true, &mp)?;
 
         // generate proof, expecting it to fail (since we're using the wrong
         // root)
@@ -712,8 +720,7 @@ pub mod tests {
 
         let targets = MerkleProofGadget { max_depth }.eval(&mut builder)?;
         // verification disabled & proof of existence
-        mp.enabled = false;
-        targets.set_targets(&mut pw, &mp)?;
+        targets.set_targets(&mut pw, false, &mp)?;
 
         // generate proof, should pass despite using wrong witness, since the
         // `enabled=false`

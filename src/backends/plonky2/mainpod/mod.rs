@@ -19,7 +19,7 @@ use crate::{
     backends::plonky2::{
         basetypes::{C, D},
         circuits::mainpod::{MainPodVerifyCircuit, MainPodVerifyInput},
-        primitives::{merkletree, merkletree::MerkleClaimAndProof},
+        primitives::merkletree::MerkleClaimAndProof,
         signedpod::SignedPod,
     },
     middleware::{
@@ -42,7 +42,7 @@ pub(crate) fn extract_merkle_proofs(
     params: &Params,
     operations: &[middleware::Operation],
 ) -> Result<Vec<MerkleClaimAndProof>> {
-    let mut merkle_proofs: Vec<_> = operations
+    let merkle_proofs: Vec<_> = operations
         .iter()
         .flat_map(|op| match op {
             middleware::Operation::ContainsFromEntries(
@@ -70,19 +70,13 @@ pub(crate) fn extract_merkle_proofs(
         })
         .collect();
     if merkle_proofs.len() > params.max_merkle_proofs {
-        Err(anyhow!(
+        return Err(anyhow!(
             "The number of required Merkle proofs ({}) exceeds the maximum number ({}).",
             merkle_proofs.len(),
             params.max_merkle_proofs
-        ))
-    } else {
-        fill_pad(
-            &mut merkle_proofs,
-            MerkleClaimAndProof::empty(),
-            params.max_merkle_proofs,
-        );
-        Ok(merkle_proofs)
+        ));
     }
+    Ok(merkle_proofs)
 }
 
 /// Find the operation argument statement in the list of previous statements and return the index.
@@ -113,12 +107,7 @@ fn find_op_aux(
         middleware::OperationAux::MerkleProof(pf_arg) => merkle_proofs
             .iter()
             .enumerate()
-            .find_map(|(i, pf)| {
-                pf.clone()
-                    .try_into()
-                    .ok()
-                    .and_then(|mid_pf: merkletree::MerkleProof| (&mid_pf == pf_arg).then_some(i))
-            })
+            .find_map(|(i, pf)| (pf.proof == *pf_arg).then_some(i))
             .map(OperationAux::MerkleProofIndex)
             .ok_or(anyhow!(
                 "Merkle proof corresponding to op arg {} not found",
