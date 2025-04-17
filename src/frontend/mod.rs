@@ -282,18 +282,11 @@ impl MainPodBuilder {
                         .and_then(|arg| arg.value())
                         .ok_or(anyhow!("Invalid key argument for op {}.", op))?;
                 let proof = if op_type == &Native(ContainsFromEntries) {
-                    container.prove_existence(key)?.map(|(_, proof)| proof)
+                    container.prove_existence(key)?.1
                 } else {
                     container.prove_nonexistence(key)?
                 };
-                match proof {
-                    None => Err(anyhow!(
-                        "Invalid container value {} in op {}.",
-                        container,
-                        op
-                    )),
-                    Some(proof) => Ok(Operation(op_type.clone(), op.1, OpAux::MerkleProof(proof))),
-                }
+                Ok(Operation(op_type.clone(), op.1, OpAux::MerkleProof(proof)))
             }
             _ => Ok(op),
         }

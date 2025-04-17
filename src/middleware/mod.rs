@@ -138,12 +138,12 @@ impl TryFrom<&TypedValue> for i64 {
     }
 }
 
-impl TryInto<Key> for TypedValue {
+impl TryFrom<TypedValue> for Key {
     type Error = anyhow::Error;
-    fn try_into(self) -> Result<Key> {
-        match self {
-            Self::String(s) => Ok(Key::new(s)),
-            _ => Err(anyhow!("Value {} cannot be converted to a key.", self)),
+    fn try_from(tv: TypedValue) -> Result<Self> {
+        match tv {
+            TypedValue::String(s) => Ok(Key::new(s)),
+            _ => Err(anyhow!("Value {} cannot be converted to a key.", tv)),
         }
     }
 }
@@ -234,27 +234,25 @@ impl Value {
     pub(crate) fn prove_existence<'a>(
         &'a self,
         key: &'a Value,
-    ) -> Result<Option<(&'a Value, MerkleProof)>> {
-        Ok(match &self.typed() {
+    ) -> Result<(&'a Value, MerkleProof)> {
+        match &self.typed() {
             TypedValue::Array(a) => match key.typed() {
-                TypedValue::Int(i) if i >= &0 => Some(a.prove((*i) as usize)?),
+                TypedValue::Int(i) if i >= &0 => a.prove((*i) as usize),
                 _ => Err(anyhow!("Invalid key {} for container {}.", key, self))?,
             },
-            TypedValue::Dictionary(d) => Some(d.prove(&key.typed().clone().try_into()?)?),
-            TypedValue::Set(s) => Some((key, s.prove(key)?)),
-            _ => None,
-        })
+            TypedValue::Dictionary(d) => d.prove(&key.typed().clone().try_into()?),
+            TypedValue::Set(s) => Ok((key, s.prove(key)?)),
+            _ => Err(anyhow!("Invalid container value {}", self.typed())),
+        }
     }
     /// Determines Merkle non-existence proof for `key` in `self` (if applicable).
-    pub(crate) fn prove_nonexistence<'a>(&'a self, key: &'a Value) -> Result<Option<MerkleProof>> {
-        Ok(match &self.typed() {
-            TypedValue::Array(_) => Err(anyhow!("Arrays do not support `NotContains` operation."))?,
-            TypedValue::Dictionary(d) => {
-                Some(d.prove_nonexistence(&key.typed().clone().try_into()?)?)
-            }
-            TypedValue::Set(s) => Some(s.prove_nonexistence(key)?),
-            _ => None,
-        })
+    pub(crate) fn prove_nonexistence<'a>(&'a self, key: &'a Value) -> Result<MerkleProof> {
+        match &self.typed() {
+            TypedValue::Array(_) => Err(anyhow!("Arrays do not support `NotContains` operation.")),
+            TypedValue::Dictionary(d) => d.prove_nonexistence(&key.typed().clone().try_into()?),
+            TypedValue::Set(s) => s.prove_nonexistence(key),
+            _ => Err(anyhow!("Invalid container value {}", self.typed())),
+        }
     }
 }
 
