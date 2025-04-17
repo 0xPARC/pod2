@@ -578,7 +578,7 @@ pub mod tests {
         let key = RawValue::from(hash_value(&RawValue::from(5)));
         let (value, proof) = tree.prove(&key)?;
         assert_eq!(value, RawValue::from(5));
-        assert_eq!(proof.existence, true);
+        assert!(proof.existence);
 
         MerkleTree::verify(max_depth, tree.root(), &proof, &key, &value)?;
 

@@ -13,6 +13,18 @@ pub enum OperationArg {
     Entry(String, Value),
 }
 
+impl OperationArg {
+    /// Extracts the value underlying literal and `ValueOf` statement
+    /// operation args.
+    pub(crate) fn value(&self) -> Option<&Value> {
+        match self {
+            Self::Literal(v) => Some(v),
+            Self::Statement(Statement::ValueOf(_, v)) => Some(v),
+            _ => None,
+        }
+    }
+}
+
 impl fmt::Display for OperationArg {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

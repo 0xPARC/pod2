@@ -2,14 +2,14 @@ pub mod custom;
 
 use std::collections::HashSet;
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use custom::{eth_dos_batch, eth_friend_batch};
 
 use crate::{
     backends::plonky2::mock::signedpod::MockSigner,
     frontend::{MainPodBuilder, SignedPod, SignedPodBuilder},
     middleware::{
-        containers::Set, CustomPredicateRef, Key, Params, PodType, Statement, TypedValue, Value,
+        containers::Set, CustomPredicateRef, Params, PodType, Statement, TypedValue, Value,
         KEY_SIGNER, KEY_TYPE,
     },
     op,
@@ -45,15 +45,8 @@ pub fn zu_kyc_pod_builder(
     pay_stub: &SignedPod,
     sanction_list: &SignedPod,
 ) -> Result<MainPodBuilder> {
-    let sanction_set = match sanction_list.get("sanctionList").map(|v| v.typed()) {
-        Some(TypedValue::Set(s)) => Ok(s),
-        _ => Err(anyhow!("Missing sanction list!")),
-    }?;
     let now_minus_18y: i64 = 1169909388;
     let now_minus_1y: i64 = 1706367566;
-
-    let gov_id_kvs = gov_id.kvs();
-    let id_number_value = gov_id_kvs.get(&Key::from("idNumber")).unwrap();
 
     let mut kyc = MainPodBuilder::new(params);
     kyc.add_signed_pod(gov_id);
@@ -62,8 +55,7 @@ pub fn zu_kyc_pod_builder(
     kyc.pub_op(op!(
         set_not_contains,
         (sanction_list, "sanctionList"),
-        (gov_id, "idNumber"),
-        sanction_set.prove_nonexistence(id_number_value)?
+        (gov_id, "idNumber")
     ))?;
     kyc.pub_op(op!(lt, (gov_id, "dateOfBirth"), now_minus_18y))?;
     kyc.pub_op(op!(
@@ -269,8 +261,6 @@ pub fn great_boy_pod_builder(
             PodType::MockSigned as i64
         ))?;
         for issuer_idx in 0..2 {
-            let pod_kvs = good_boy_pods[good_boy_idx * 2 + issuer_idx].kvs();
-
             // Type check
             great_boy.pub_op(op!(
                 eq,
@@ -278,16 +268,10 @@ pub fn great_boy_pod_builder(
                 PodType::MockSigned as i64
             ))?;
             // Each good boy POD comes from a valid issuer
-            let good_boy_proof = match good_boy_issuers.typed() {
-                TypedValue::Set(set) => Ok(set),
-                _ => Err(anyhow!("Invalid good boy issuers!")),
-            }?
-            .prove(pod_kvs.get(&Key::from(KEY_SIGNER)).unwrap())?;
             great_boy.pub_op(op!(
                 set_contains,
                 good_boy_issuers,
-                (good_boy_pods[good_boy_idx * 2 + issuer_idx], KEY_SIGNER),
-                good_boy_proof
+                (good_boy_pods[good_boy_idx * 2 + issuer_idx], KEY_SIGNER)
             ))?;
             // Each good boy has 2 good boy pods
             great_boy.pub_op(op!(
@@ -403,12 +387,6 @@ pub fn tickets_pod_builder(
     expect_consumed: bool,
     blacklisted_emails: &Set,
 ) -> Result<MainPodBuilder> {
-    let attendee_email_value = signed_pod
-        .kvs()
-        .get(&Key::from("attendeeEmail"))
-        .unwrap()
-        .clone();
-    let attendee_nin_blacklist_pf = blacklisted_emails.prove_nonexistence(&attendee_email_value)?;
     let blacklisted_email_set_value = Value::from(TypedValue::Set(blacklisted_emails.clone()));
     // Create a main pod referencing this signed pod with some statements
     let mut builder = MainPodBuilder::new(params);
@@ -419,8 +397,7 @@ pub fn tickets_pod_builder(
     builder.pub_op(op!(
         dict_not_contains,
         blacklisted_email_set_value,
-        (signed_pod, "attendeeEmail"),
-        attendee_nin_blacklist_pf
+        (signed_pod, "attendeeEmail")
     ))?;
     Ok(builder)
 }

@@ -262,9 +262,46 @@ impl MainPodBuilder {
         }
     }
 
+    /// Fills in auxiliary data if necessary/possible.
+    fn fill_in_aux(op: Operation) -> Result<Operation> {
+        use NativeOperation::{ContainsFromEntries, NotContainsFromEntries};
+        use OperationAux as OpAux;
+        use OperationType::Native;
+
+        let op_type = &op.0;
+
+        match (op_type, &op.2) {
+            (Native(ContainsFromEntries), OpAux::None)
+            | (Native(NotContainsFromEntries), OpAux::None) => {
+                let container =
+                    op.1.get(0)
+                        .and_then(|arg| arg.value())
+                        .ok_or(anyhow!("Invalid container argument for op {}.", op))?;
+                let key =
+                    op.1.get(1)
+                        .and_then(|arg| arg.value())
+                        .ok_or(anyhow!("Invalid key argument for op {}.", op))?;
+                let proof = if op_type == &Native(ContainsFromEntries) {
+                    container.prove_existence(key)?.map(|(_, proof)| proof)
+                } else {
+                    container.prove_nonexistence(key)?
+                };
+                match proof {
+                    None => Err(anyhow!(
+                        "Invalid container value {} in op {}.",
+                        container,
+                        op
+                    )),
+                    Some(proof) => Ok(Operation(op_type.clone(), op.1, OpAux::MerkleProof(proof))),
+                }
+            }
+            _ => Ok(op),
+        }
+    }
+
     fn op(&mut self, public: bool, op: Operation) -> Result<Statement, anyhow::Error> {
         use NativeOperation::*;
-        let mut op = Self::lower_op(op);
+        let mut op = Self::fill_in_aux(Self::lower_op(op))?;
         let Operation(op_type, ref mut args, _) = &mut op;
         // TODO: argument type checking
         let pred = op_type.output_predicate().map(Ok).unwrap_or_else(|| {
@@ -736,21 +773,21 @@ pub mod build_utils {
         (custom, $op:expr, $($arg:expr),+) => { $crate::frontend::Operation(
             $crate::middleware::OperationType::Custom($op),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
-        (dict_contains, $dict:expr, $key:expr, $value:expr, $aux:expr) => { $crate::frontend::Operation(
+        (dict_contains, $dict:expr, $key:expr, $value:expr) => { $crate::frontend::Operation(
             $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::DictContainsFromEntries),
-            $crate::op_args!($dict, $key, $value), $crate::middleware::OperationAux::MerkleProof($aux)) };
-        (dict_not_contains, $dict:expr, $key:expr, $aux:expr) => { $crate::frontend::Operation(
+            $crate::op_args!($dict, $key, $value), $crate::middleware::OperationAux::None) };
+        (dict_not_contains, $dict:expr, $key:expr) => { $crate::frontend::Operation(
             $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::DictNotContainsFromEntries),
-            $crate::op_args!($dict, $key), $crate::middleware::OperationAux::MerkleProof($aux)) };
-        (set_contains, $set:expr, $value:expr, $aux:expr) => { $crate::frontend::Operation(
+            $crate::op_args!($dict, $key), $crate::middleware::OperationAux::None) };
+        (set_contains, $set:expr, $value:expr) => { $crate::frontend::Operation(
             $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::SetContainsFromEntries),
-            $crate::op_args!($set, $value), $crate::middleware::OperationAux::MerkleProof($aux)) };
-        (set_not_contains, $set:expr, $value:expr, $aux:expr) => { $crate::frontend::Operation(
+            $crate::op_args!($set, $value), $crate::middleware::OperationAux::None) };
+        (set_not_contains, $set:expr, $value:expr) => { $crate::frontend::Operation(
             $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::SetNotContainsFromEntries),
-            $crate::op_args!($set, $value), $crate::middleware::OperationAux::MerkleProof($aux)) };
-        (array_contains, $array:expr, $index:expr, $value:expr, $aux:expr) => { $crate::frontend::Operation(
+            $crate::op_args!($set, $value), $crate::middleware::OperationAux::None) };
+        (array_contains, $array:expr, $index:expr, $value:expr) => { $crate::frontend::Operation(
             $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::ArrayContainsFromEntries),
-            $crate::op_args!($array, $index, $value), $crate::middleware::OperationAux::MerkleProof($aux)) };
+            $crate::op_args!($array, $index, $value), $crate::middleware::OperationAux::None) };
     }
 }
 
@@ -781,12 +818,7 @@ pub mod tests {
     // Check that frontend key-values agree with those embedded in a
     // SignedPod.
     fn check_kvs(pod: &SignedPod) -> Result<()> {
-        let kvs = pod
-            .kvs
-            .clone()
-            .into_iter()
-            .map(|(k, v)| (k, v))
-            .collect::<HashMap<_, _>>();
+        let kvs = pod.kvs.clone().into_iter().collect::<HashMap<_, _>>();
         let embedded_kvs = pod
             .pod
             .kvs()

@@ -26,6 +26,8 @@ pub use operation::*;
 // use serde::{Deserialize, Serialize};
 pub use statement::*;
 
+use crate::backends::plonky2::primitives::merkletree::MerkleProof;
+
 pub const SELF: PodId = PodId(SELF_ID_HASH);
 
 // TODO: Move all value-related types to to `value.rs`
@@ -136,6 +138,16 @@ impl TryFrom<&TypedValue> for i64 {
     }
 }
 
+impl TryInto<Key> for TypedValue {
+    type Error = anyhow::Error;
+    fn try_into(self) -> Result<Key> {
+        match self {
+            Self::String(s) => Ok(Key::new(s)),
+            _ => Err(anyhow!("Value {} cannot be converted to a key.", self)),
+        }
+    }
+}
+
 impl fmt::Display for TypedValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -217,6 +229,32 @@ impl Value {
     }
     pub fn raw(&self) -> RawValue {
         self.raw
+    }
+    /// Determines Merkle existence proof for `key` in `self` (if applicable).
+    pub(crate) fn prove_existence<'a>(
+        &'a self,
+        key: &'a Value,
+    ) -> Result<Option<(&'a Value, MerkleProof)>> {
+        Ok(match &self.typed() {
+            TypedValue::Array(a) => match key.typed() {
+                TypedValue::Int(i) if i >= &0 => Some(a.prove((*i) as usize)?),
+                _ => Err(anyhow!("Invalid key {} for container {}.", key, self))?,
+            },
+            TypedValue::Dictionary(d) => Some(d.prove(&key.typed().clone().try_into()?)?),
+            TypedValue::Set(s) => Some((key, s.prove(key)?)),
+            _ => None,
+        })
+    }
+    /// Determines Merkle non-existence proof for `key` in `self` (if applicable).
+    pub(crate) fn prove_nonexistence<'a>(&'a self, key: &'a Value) -> Result<Option<MerkleProof>> {
+        Ok(match &self.typed() {
+            TypedValue::Array(_) => Err(anyhow!("Arrays do not support `NotContains` operation."))?,
+            TypedValue::Dictionary(d) => {
+                Some(d.prove_nonexistence(&key.typed().clone().try_into()?)?)
+            }
+            TypedValue::Set(s) => Some(s.prove_nonexistence(key)?),
+            _ => None,
+        })
     }
 }
 

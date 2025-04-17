@@ -233,7 +233,7 @@ mod tests {
 
         let eth_dos_batch = eth_dos_batch(&params)?;
         let eth_dos_batch_mw: middleware::CustomPredicateBatch =
-            Arc::unwrap_or_clone(eth_dos_batch).into();
+            Arc::unwrap_or_clone(eth_dos_batch);
         let fields = eth_dos_batch_mw.to_fields(&params);
         println!("Batch b, serialized: {:?}", fields);
 
