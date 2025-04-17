@@ -10,42 +10,35 @@ use plonky2::{
     },
     gates::lookup_table::LookupTable,
     hash::{
-        hash_types::{HashOut, HashOutTarget, RichField},
+        hash_types::RichField,
         hashing::PlonkyPermutation,
-        poseidon::{Poseidon, PoseidonHash, PoseidonPermutation},
+        poseidon::{PoseidonHash, PoseidonPermutation},
     },
     iop::{
         generator::{GeneratedValues, SimpleGenerator},
         target::{BoolTarget, Target},
         witness::{PartialWitness, PartitionWitness, Witness, WitnessWrite},
     },
-    plonk::{
-        circuit_builder::CircuitBuilder,
-        circuit_data::{
-            CircuitConfig, CircuitData, CommonCircuitData, ProverCircuitData, VerifierCircuitData,
-            VerifierCircuitTarget,
-        },
-        config::{AlgebraicHasher, Hasher},
-        proof::{ProofWithPublicInputs, ProofWithPublicInputsTarget},
-    },
+    plonk::{circuit_builder::CircuitBuilder, circuit_data::CommonCircuitData},
     util::serialization::{Buffer, IoResult, Read, Write},
 };
 
 use crate::backends::plonky2::{
-    basetypes::{Hash, Proof, Value, C, D, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE},
+    basetypes::{Value, D, F},
     circuits::common::{CircuitBuilderPod, ValueTarget},
     primitives::signature::falcon_lib::{
-        hash_to_point::{hash_to_point, hash_to_point_no_mod, RATE_RANGE},
+        hash_to_point::{hash_to_point, RATE_RANGE},
         math::{FalconFelt, FastFft, Polynomial},
-        Signature, FALCON_ENCODING_BITS, MODULUS as FALCON_PRIME, N, NONCE_ELEMENTS, SIG_L2_BOUND,
+        Signature, FALCON_ENCODING_BITS as FALCON_ENCODING_BITS_u32, MODULUS as FALCON_PRIME, N,
+        NONCE_ELEMENTS, SIG_L2_BOUND,
     },
 };
 
-// MAX_Q < floor( |F| / p )
 const P: u64 = FALCON_PRIME as u64;
-const MAX_Q: u64 = F::ORDER / FALCON_PRIME as u64; // = 1501077717423271 // TODO review that is floor(F::O/M)
+// MAX_Q = floor( |F| / p )
+const MAX_Q: u64 = F::ORDER / FALCON_PRIME as u64; // = 1501077717423271
 const MAX_Q_NBITS: usize = 51;
-const FALCON_ENCODING_BITS_usize: usize = FALCON_ENCODING_BITS as usize;
+const FALCON_ENCODING_BITS: usize = FALCON_ENCODING_BITS_u32 as usize;
 
 pub trait CircuitBuilderFalcon<F: RichField + Extendable<D>, const D: usize> {
     fn add_virtual_polynomial<const DEG: usize>(&mut self) -> PolynomialTarget<DEG>;
@@ -65,11 +58,9 @@ fn gen_falcon_field_table() -> LookupTable {
     std::sync::Arc::new(t)
 }
 
-// TODO maybe abstract it from the concrete field, and move it to
-// backends/plonky2/circuit/common.rs (not yet to avoid git-conflicts)
 /// An element in the Falcon-512 field, ie. modulus 12289.
 #[derive(Debug, Copy, Clone)]
-pub struct FalconFTarget(Target);
+pub struct FalconFTarget {}
 impl FalconFTarget {
     /// Checks that r = x%p.
     /// Note: this gadget takes 11 plonky2 gates. // WIP: iterate it to use less gates.
@@ -94,12 +85,9 @@ impl FalconFTarget {
         builder.connect(v, computed_v);
 
         // i) r < p
-        // assert_less::<FALCON_ENCODING_BITS_usize>(builder, r, p); // done with lookup // TODO rm line
         let lut_out = builder.add_lookup_from_index(r, falcon_lut_i);
         builder.connect(lut_out, r);
         // ii) q < MAX_Q
-        // let max_q = builder.constant(F::from_canonical_u64(MAX_Q)); // TODO rm line
-        // assert_less::<{ F::BITS }>(builder, q, max_q); // TODO rm line
         less_than_maxq(builder, falcon_lut_i, q);
 
         r
@@ -110,13 +98,12 @@ impl FalconFTarget {
         let p_2: Target = builder.constant(F::from_canonical_u64(P / 2));
 
         // if v > p/2, then return p-v
-        let s: BoolTarget = is_less::<FALCON_ENCODING_BITS_usize>(builder, p_2, v);
+        let s: BoolTarget = is_less::<FALCON_ENCODING_BITS>(builder, p_2, v);
         let p_v = builder.sub(p, v);
         builder.select(s, p_v, v)
     }
 }
 
-// TODO move it to backends/plonky2/circuit/common.rs (not yet to avoid git-conflicts)
 /// Witness hint generator for reducing the Falcon modulus. v = q * p + r
 #[derive(Debug, Default)]
 struct FalconHintGenerator {
@@ -163,7 +150,6 @@ impl SimpleGenerator<F, D> for FalconHintGenerator {
     }
 }
 
-// TODO move it to backends/plonky2/circuit/common.rs (not yet to avoid git-conflicts)
 /// assert x<y
 pub fn assert_less<const NUM_BITS: usize>(
     builder: &mut CircuitBuilder<F, D>,
@@ -349,7 +335,7 @@ impl<const DEG: usize> PolynomialTarget<DEG> {
             // multiply 4 Falcon field elements together without overflowing the
             // Goldilocks field. We're also doing additions, therefore, reduce
             // modulus only one every Y iterations:
-            const Y: usize = 4;
+            const Y: usize = 3;
             if i % Y == 0 {
                 res = FalconFTarget::modulo_reduction(builder, falcon_lut_i, res);
             }
@@ -373,6 +359,7 @@ impl<const DEG: usize> PolynomialTarget<DEG> {
             let c_balanced = FalconFTarget::balance(builder, self.0[i]);
             let c_squared = builder.square(c_balanced);
             res = builder.add(res, c_squared);
+            // res = builder.mul_add(c_balanced, c_balanced, res);
         }
         res
     }
@@ -413,7 +400,12 @@ impl SignatureVerifyGadget {
         equality_check(builder, falcon_lut_i, enabled, tau, s1, s2, pk, s2h, c)?;
 
         // norm check
-        // TODO
+        let norm1 = s1.norm_squared(builder);
+        let norm2 = s2.norm_squared(builder);
+        let sum_norms = builder.add(norm1, norm2);
+        let norm_bound = builder.constant(F::from_canonical_u64(SIG_L2_BOUND));
+        // not using lookup since it's a small amount of gates in the context of the logic
+        assert_less::<64>(builder, sum_norms, norm_bound);
 
         Ok(Self {
             enabled,
@@ -498,8 +490,7 @@ fn equality_check(
     s2: PolynomialTarget<N>,
     h: PolynomialTarget<N>,
     s2h: PolynomialTarget<{ 2 * N }>,
-    // note `c` could be with mod q not applied to its coefficients (q=Falcon
-    // prime)
+    // note: `c` could be with mod q not applied to its coefficients (q=Falcon prime)
     c: PolynomialTarget<N>,
 ) -> Result<()> {
     let s1_tau = s1.evaluate(builder, falcon_lut_i, tau);
@@ -544,10 +535,9 @@ fn equality_check(
     let lhs = FalconFTarget::modulo_reduction(builder, falcon_lut_i, lhs_raw);
     let rhs_raw = builder.add(c_tau, s2h_hot_tau);
     let rhs = FalconFTarget::modulo_reduction(builder, falcon_lut_i, rhs_raw);
-    builder.connect(lhs, rhs); // TODO dependent on 'enabled'
-                               // TODO-NOTE: maybe don't do the full `s1(tau)+s2(tau)h(tau)-c(tau)==0`, and
-                               // just compute the actual s1(x) polynomial, so that then the norm can be
-                               // computed from it.
+    let rhs_selected = builder.select(enabled, rhs, zero);
+    let lhs_selected = builder.select(enabled, lhs, zero);
+    builder.connect(lhs_selected, rhs_selected);
 
     Ok(())
 }
@@ -603,7 +593,7 @@ fn hash_to_point_gadget(
 // Z_p[x]/(X^N+1).
 // For the in-circuit equivalent logic, notice that the input polynomials are of
 // degree N, and the ouptut polynomial is of degree 2N. Since N=512, Falcon
-// field prime is 12289, and Goldilocks field prime is 2^64-2^32-1, the
+// field prime is 12289, and Goldilocks field prime is 2^64-2^32+1, the
 // resulting polynomial coeffs will not overflow the Goldilocks field.
 pub fn polynomial_mul_modulo_p(
     a: &Polynomial<FalconFelt>,
@@ -627,31 +617,19 @@ pub mod tests {
     use std::ops::Div;
 
     use plonky2::{
-        field::types::{Field, Sample},
-        hash::{
-            hash_types::{HashOut, HashOutTarget},
-            poseidon::PoseidonHash,
-        },
+        field::types::Field,
         iop::{
-            target::{BoolTarget, Target},
+            target::Target,
             witness::{PartialWitness, WitnessWrite},
         },
-        plonk::{
-            circuit_builder::CircuitBuilder,
-            circuit_data::{
-                CircuitConfig, CircuitData, ProverCircuitData, VerifierCircuitData,
-                VerifierCircuitTarget,
-            },
-            config::Hasher,
-            proof::{ProofWithPublicInputs, ProofWithPublicInputsTarget},
-        },
+        plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig},
     };
-    use rand::{rng, rngs::StdRng, Rng, RngCore, SeedableRng};
+    use rand::{rngs::StdRng, Rng, RngCore, SeedableRng};
     use rand_chacha::ChaCha20Rng;
 
     use super::*;
     use crate::backends::plonky2::{
-        basetypes::{Hash, F},
+        basetypes::{C, F},
         circuits::common::CircuitBuilderPod,
         primitives::signature::falcon_lib::{
             hash_to_point::hash_to_point, Nonce, SecretKey, SIG_NONCE_LEN,
@@ -703,10 +681,6 @@ pub mod tests {
         let h = (v - r).div(p);
         assert_eq!(v, h * p + r);
 
-        dbg!(&v);
-        dbg!(&r);
-        dbg!(&h);
-
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
@@ -717,7 +691,6 @@ pub mod tests {
         pw.set_target(v_targ, v)?;
 
         let r_targ = FalconFTarget::modulo_reduction(&mut builder, falcon_lut_i, v_targ);
-        dbg!(builder.num_gates());
 
         let expected_r_targ = builder.add_virtual_target();
         pw.set_target(expected_r_targ, r)?;
@@ -871,8 +844,6 @@ pub mod tests {
             builder.connect(c_targ.0[i], expected_c_targ[i]);
         }
 
-        // apply_mod:true= 4879 gates,
-        // apply_mod:false= 64 gates.
         dbg!(builder.num_gates());
 
         // generate & verify proof
@@ -885,33 +856,37 @@ pub mod tests {
 
     #[test]
     fn test_falcon_balance() -> Result<()> {
-        let mut rng = StdRng::from_os_rng();
-        // TODO do the test with an array of values, including:
-        // let values = [0,1,6143, 6144, 6145, 6146];
-        let v: FalconFelt = FalconFelt::new(6144);
-        let balanced_i16: i16 = v.balanced_value();
-        let balanced: u64 = balanced_i16.abs() as u64;
-        println!("{:?} {:?} {:?}", v, balanced_i16, balanced);
+        // set the values to use in the test
+        let values: Vec<FalconFelt> = vec![0_i16, 1, 6143, 6144, 6145, 6146]
+            .iter()
+            .map(|v| FalconFelt::new(*v))
+            .collect();
 
-        let s: u64 = ((P / 2) < balanced) as u64;
-        let p_v = P - balanced;
-        let res = balanced + s * (p_v - balanced);
-        dbg!(res);
+        let balanced_values: Vec<u64> = values
+            .iter()
+            .map(|v| {
+                let balanced_i16: i16 = v.balanced_value();
+                balanced_i16.abs() as u64
+            })
+            .collect();
 
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        // set targets
-        let v_targ = builder.add_virtual_target();
-        pw.set_target(v_targ, F::from_canonical_u64(v.0 as u64))?;
-        let expected_balanced_targ = builder.add_virtual_target();
-        pw.set_target(expected_balanced_targ, F::from_canonical_u64(balanced))?;
+        // set targets, for each of the values
+        for (i, v) in values.iter().enumerate() {
+            let v_targ = builder.add_virtual_target();
+            pw.set_target(v_targ, F::from_canonical_u64(v.0 as u64))?;
+            let expected_balanced_targ = builder.add_virtual_target();
+            pw.set_target(
+                expected_balanced_targ,
+                F::from_canonical_u64(balanced_values[i]),
+            )?;
 
-        let computed_balanced_targ: Target = FalconFTarget::balance(&mut builder, v_targ);
-        builder.connect(computed_balanced_targ, expected_balanced_targ);
-
-        dbg!(builder.num_gates());
+            let computed_balanced_targ: Target = FalconFTarget::balance(&mut builder, v_targ);
+            builder.connect(computed_balanced_targ, expected_balanced_targ);
+        }
 
         // generate & verify proof
         let data = builder.build::<C>();
@@ -957,8 +932,9 @@ pub mod tests {
 
     #[test]
     fn test_falcon_gadget() -> Result<()> {
-        let seed = [0_u8; 32];
-        let mut rng = ChaCha20Rng::from_seed(seed);
+        // let seed = [0_u8; 32];
+        // let mut rng = ChaCha20Rng::from_seed(seed);
+        let mut rng = StdRng::from_os_rng();
 
         // generate random keys
         let sk = SecretKey::with_rng(&mut rng);
@@ -971,7 +947,6 @@ pub mod tests {
         // make sure the signature verifies correctly
         assert!(pk.verify(msg, &sig));
 
-        // let tau = F::rand();
         let tau = FalconFelt::new(rng.random());
 
         // circuit
@@ -982,8 +957,6 @@ pub mod tests {
         let signature_targ = SignatureVerifyGadget::build(&mut builder)?;
         signature_targ.set_targets(&mut pw, true, tau, sig.pk_poly().0.clone(), msg, sig)?;
 
-        // c no_mod = 9874 gates
-        // c with mod = 14687 gates
         dbg!(builder.num_gates());
 
         // generate & verify proof
