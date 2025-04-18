@@ -1,18 +1,19 @@
 use std::collections::HashMap;
 
-use schemars::{JsonSchema, Schema};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::mock::{mainpod::MockMainPod, signedpod::MockSignedPod},
     frontend::{MainPod, SignedPod, Statement},
-    middleware::{containers::Dictionary, Key, PodId, Value},
+    middleware::{containers::Dictionary, Key, PodId, TypedValue, Value},
 };
 
-#[derive(Serialize, Deserialize /*JsonSchema*/)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-//#[schemars(title = "SignedPod")]
+#[schemars(title = "SignedPod")]
 pub struct SignedPodHelper {
+    #[schemars(with = "HashMap<String, TypedValue>")]
     entries: HashMap<Key, Value>,
     proof: String,
     pod_class: String,
@@ -52,8 +53,8 @@ impl From<SignedPod> for SignedPodHelper {
     }
 }
 
-#[derive(Serialize, Deserialize /*JsonSchema*/)]
-//#[schemars(title = "MainPod")]
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "MainPod")]
 #[serde(rename_all = "camelCase")]
 pub struct MainPodHelper {
     public_statements: Vec<Statement>,
@@ -94,33 +95,6 @@ impl From<MainPod> for MainPodHelper {
     }
 }
 
-pub fn transform_value_schema(schema: &mut Schema) {
-    let obj = schema.as_object_mut().unwrap();
-
-    // Get the oneOf array which contains our variant schemas
-    if let Some(one_of_container) = obj.get_mut("oneOf") {
-        if let Some(variants) = one_of_container.as_array_mut() {
-            // Add String variant (untagged)
-            variants.push(serde_json::json!({
-                "type": "string"
-            }));
-
-            // Add Boolean variant (untagged)
-            variants.push(serde_json::json!({
-                "type": "boolean"
-            }));
-
-            // Add Array variant (untagged)
-            variants.push(serde_json::json!({
-                "type": "array",
-                "items": {
-                    "$ref": "#/definitions/Value"
-                }
-            }));
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -128,8 +102,9 @@ mod tests {
     use anyhow::Result;
     // Pretty assertions give nicer diffs between expected and actual values
     use pretty_assertions::assert_eq;
-    use schemars::generate::SchemaSettings;
+    use schemars::schema_for;
 
+    //  use schemars::generate::SchemaSettings;
     use super::*;
     use crate::{
         backends::plonky2::mock::{mainpod::MockProver, signedpod::MockSigner},
@@ -267,17 +242,16 @@ mod tests {
 
         Ok(())
     }
-    /*
+
     #[test]
     fn test_schema() {
-        let generator = SchemaSettings::draft07().into_generator();
-        let mainpod_schema = generator.clone().into_root_schema_for::<MainPodHelper>();
-        let signedpod_schema = generator.into_root_schema_for::<SignedPodHelper>();
+        let mainpod_schema = schema_for!(MainPodHelper);
+        let signedpod_schema = schema_for!(SignedPodHelper);
 
         println!("{}", serde_json::to_string_pretty(&mainpod_schema).unwrap());
         println!(
             "{}",
             serde_json::to_string_pretty(&signedpod_schema).unwrap()
         );
-    }*/
+    }
 }

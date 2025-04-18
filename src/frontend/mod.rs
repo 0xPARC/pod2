@@ -7,7 +7,6 @@ use anyhow::{anyhow, Result};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
-// use schemars::JsonSchema;
 use crate::middleware::{
     self, check_st_tmpl, hash_str, AnchoredKey, Key, MainPodInputs, NativeOperation,
     NativePredicate, OperationAux, OperationType, Params, PodId, PodProver, PodSigner, Predicate,
