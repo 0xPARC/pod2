@@ -2,14 +2,14 @@ use std::fmt;
 
 use anyhow::{anyhow, Result};
 use plonky2::field::types::Field;
+use serde::{Deserialize, Serialize};
 
-// use serde::{Deserialize, Serialize};
 use crate::{
     backends::plonky2::{mainpod::Statement, primitives::merkletree::MerkleClaimAndProof},
     middleware::{self, OperationType, Params, ToFields, F},
 };
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum OperationArg {
     None,
     Index(usize),
@@ -31,7 +31,7 @@ impl OperationArg {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum OperationAux {
     None,
     MerkleProofIndex(usize),
@@ -47,7 +47,7 @@ impl ToFields for OperationAux {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Operation(pub OperationType, pub Vec<OperationArg>, pub OperationAux);
 
 impl Operation {

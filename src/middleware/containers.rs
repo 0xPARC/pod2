@@ -3,7 +3,9 @@ use std::collections::{HashMap, HashSet};
 /// This file implements the types defined at
 /// https://0xparc.github.io/pod2/values.html#dictionary-array-set .
 use anyhow::{anyhow, Result};
+use serde::{Deserialize, Deserializer, Serialize};
 
+use super::serialization::{ordered_map, ordered_set};
 #[cfg(feature = "backend_plonky2")]
 use crate::backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree};
 use crate::{
@@ -14,9 +16,12 @@ use crate::{
 /// Dictionary: the user original keys and values are hashed to be used in the leaf.
 ///    leaf.key=hash(original_key)
 ///    leaf.value=hash(original_value)
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
+#[serde(transparent)]
 pub struct Dictionary {
+    #[serde(skip)]
     mt: MerkleTree,
+    #[serde(serialize_with = "ordered_map")]
     kvs: HashMap<Key, Value>,
 }
 
@@ -76,12 +81,27 @@ impl PartialEq for Dictionary {
 }
 impl Eq for Dictionary {}
 
+impl<'de> Deserialize<'de> for Dictionary {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let kvs: HashMap<Key, Value> = HashMap::deserialize(deserializer)?;
+        Dictionary::new(kvs).map_err(serde::de::Error::custom)
+    }
+}
+
 /// Set: the value field of the leaf is unused, and the key contains the hash of the element.
 ///    leaf.key=hash(original_value)
 ///    leaf.value=0
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
+// Because the Merkle tree is skipped, "transparent" serialization will
+// serialize the Set as just the inner `set` value.
+#[serde(transparent)]
 pub struct Set {
+    #[serde(skip)]
     mt: MerkleTree,
+    #[serde(serialize_with = "ordered_set")]
     set: HashSet<Value>,
 }
 
@@ -133,6 +153,19 @@ impl PartialEq for Set {
     }
 }
 impl Eq for Set {}
+
+impl<'de> Deserialize<'de> for Set {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // Deserialize the set directly
+        let set: HashSet<Value> = HashSet::deserialize(deserializer)?;
+
+        // Create a new Set using the set field
+        Set::new(set).map_err(serde::de::Error::custom)
+    }
+}
 
 /// Array: the elements are placed at the value field of each leaf, and the key field is just the
 /// array index (integer).
@@ -190,3 +223,22 @@ impl PartialEq for Array {
     }
 }
 impl Eq for Array {}
+
+impl Serialize for Array {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.array.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Array {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let array: Vec<Value> = Vec::deserialize(deserializer)?;
+        Array::new(array).map_err(serde::de::Error::custom)
+    }
+}

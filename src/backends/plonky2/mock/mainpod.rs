@@ -5,15 +5,15 @@
 use std::{any::Any, fmt};
 
 use anyhow::{anyhow, Result};
+use base64::{prelude::BASE64_STANDARD, Engine};
+use serde::{Deserialize, Serialize};
 
-// use base64::prelude::*;
-// use serde::{Deserialize, Serialize};
-use crate::backends::plonky2::mainpod::process_private_statements_operations;
 use crate::{
     backends::plonky2::{
         mainpod::{
             extract_merkle_proofs, hash_statements, layout_statements, normalize_statement,
-            process_public_statements_operations, Operation, Statement,
+            process_private_statements_operations, process_public_statements_operations, Operation,
+            Statement,
         },
         primitives::merkletree::MerkleClaimAndProof,
     },
@@ -31,7 +31,7 @@ impl PodProver for MockProver {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MockMainPod {
     params: Params,
     id: PodId,
@@ -166,14 +166,14 @@ impl MockMainPod {
         })
     }
 
-    // pub fn deserialize(serialized: String) -> Result<Self> {
-    //     let proof = String::from_utf8(BASE64_STANDARD.decode(&serialized)?)
-    //         .map_err(|e| anyhow::anyhow!("Invalid base64 encoding: {}", e))?;
-    //     let pod: MockMainPod = serde_json::from_str(&proof)
-    //         .map_err(|e| anyhow::anyhow!("Failed to parse proof: {}", e))?;
+    pub fn deserialize(serialized: String) -> Result<Self> {
+        let proof = String::from_utf8(BASE64_STANDARD.decode(&serialized)?)
+            .map_err(|e| anyhow::anyhow!("Invalid base64 encoding: {}", e))?;
+        let pod: MockMainPod = serde_json::from_str(&proof)
+            .map_err(|e| anyhow::anyhow!("Failed to parse proof: {}", e))?;
 
-    //     Ok(pod)
-    // }
+        Ok(pod)
+    }
 }
 
 impl Pod for MockMainPod {
@@ -282,8 +282,7 @@ impl Pod for MockMainPod {
     }
 
     fn serialized_proof(&self) -> String {
-        todo!()
-        // BASE64_STANDARD.encode(serde_json::to_string(self).unwrap())
+        BASE64_STANDARD.encode(serde_json::to_string(self).unwrap())
     }
 }
 

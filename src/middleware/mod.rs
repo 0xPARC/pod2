@@ -10,6 +10,7 @@ use std::{
 
 use anyhow::anyhow;
 use containers::{Array, Dictionary, Set};
+use serde::{Deserialize, Serialize};
 pub mod containers;
 mod custom;
 mod operation;
@@ -22,8 +23,8 @@ pub use basetypes::*;
 pub use custom::*;
 use dyn_clone::DynClone;
 pub use operation::*;
+use serialization::*;
 // use schemars::JsonSchema;
-// use serde::{Deserialize, Serialize};
 pub use statement::*;
 
 use crate::backends::plonky2::primitives::merkletree::MerkleProof;
@@ -31,7 +32,7 @@ use crate::backends::plonky2::primitives::merkletree::MerkleProof;
 pub const SELF: PodId = PodId(SELF_ID_HASH);
 
 // TODO: Move all value-related types to to `value.rs`
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 // TODO #[schemars(transform = serialization::transform_value_schema)]
 pub enum TypedValue {
     // Serde cares about the order of the enum variants, with untagged variants
@@ -49,20 +50,20 @@ pub enum TypedValue {
     Set(Set),
     Dictionary(Dictionary),
     Int(
-        // TODO #[serde(serialize_with = "serialize_i64", deserialize_with = "deserialize_i64")]
+        #[serde(serialize_with = "serialize_i64", deserialize_with = "deserialize_i64")]
         // #[schemars(with = "String", regex(pattern = r"^\d+$"))]
         i64,
     ),
     // Uses the serialization for middleware::Value:
     Raw(RawValue),
     // UNTAGGED TYPES:
-    // #[serde(untagged)]
+    #[serde(untagged)]
     // #[schemars(skip)]
     Array(Array),
-    // #[serde(untagged)]
+    #[serde(untagged)]
     // #[schemars(skip)]
     String(String),
-    // #[serde(untagged)]
+    #[serde(untagged)]
     // #[schemars(skip)]
     Bool(bool),
 }
@@ -181,6 +182,25 @@ pub struct Value {
     // The `TypedValue` is under `Arc` so that cloning a `Value` is cheap.
     typed: Arc<TypedValue>,
     raw: RawValue,
+}
+
+impl Serialize for Value {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.typed.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Value {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let typed = TypedValue::deserialize(deserializer)?;
+        Ok(Value::new(typed))
+    }
 }
 
 impl PartialEq for Value {
@@ -336,7 +356,26 @@ impl From<Key> for RawValue {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+impl Serialize for Key {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.name.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Key {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let name = String::deserialize(deserializer)?;
+        Ok(Key::new(name))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AnchoredKey {
     pub pod_id: PodId,
     pub key: Key,
@@ -364,7 +403,7 @@ where
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct PodId(pub Hash);
 
 impl ToFields for PodId {
@@ -394,7 +433,7 @@ impl fmt::Display for PodType {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Params {
     pub max_input_signed_pods: usize,
     pub max_input_main_pods: usize,
