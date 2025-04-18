@@ -107,7 +107,10 @@ mod tests {
     use super::*;
     use crate::{
         backends::plonky2::mock::{mainpod::MockProver, signedpod::MockSigner},
-        examples::{zu_kyc_pod_builder, zu_kyc_sign_pod_builders},
+        examples::{
+            eth_dos_pod_builder, eth_friend_signed_pod_builder, zu_kyc_pod_builder,
+            zu_kyc_sign_pod_builders,
+        },
         frontend::SignedPodBuilder,
         middleware::{
             self,
@@ -252,6 +255,46 @@ mod tests {
         Ok(())
     }
 
+    fn build_ethdos_pod() -> Result<MainPod> {
+        let params = Params {
+            max_input_signed_pods: 3,
+            max_input_main_pods: 3,
+            max_statements: 31,
+            max_signed_pod_values: 8,
+            max_public_statements: 10,
+            max_statement_args: 6,
+            max_operation_args: 5,
+            max_custom_predicate_arity: 5,
+            max_custom_batch_size: 5,
+            max_custom_predicate_wildcards: 12,
+            ..Default::default()
+        };
+
+        let mut alice = MockSigner { pk: "Alice".into() };
+        let bob = MockSigner { pk: "Bob".into() };
+        let mut charlie = MockSigner {
+            pk: "Charlie".into(),
+        };
+
+        // Alice attests that she is ETH friends with Charlie and Charlie
+        // attests that he is ETH friends with Bob.
+        let alice_attestation =
+            eth_friend_signed_pod_builder(&params, charlie.pubkey().into()).sign(&mut alice)?;
+        let charlie_attestation =
+            eth_friend_signed_pod_builder(&params, bob.pubkey().into()).sign(&mut charlie)?;
+
+        let mut prover = MockProver {};
+        let alice_bob_ethdos = eth_dos_pod_builder(
+            &params,
+            &alice_attestation,
+            &charlie_attestation,
+            &bob.pubkey().into(),
+        )?
+        .prove(&mut prover, &params)?;
+
+        Ok(alice_bob_ethdos)
+    }
+
     #[test]
     // This tests that we can generate JSON Schemas for the MainPod and
     // SignedPod types, and that we can validate real Signed and Main Pods
@@ -262,7 +305,7 @@ mod tests {
 
         let kyc_pod = build_zukyc_pod().unwrap();
         let signed_pod = build_signed_pod().unwrap();
-
+        let ethdos_pod = build_ethdos_pod().unwrap();
         let mainpod_schema_value = serde_json::to_value(&mainpod_schema).unwrap();
         let signedpod_schema_value = serde_json::to_value(&signedpod_schema).unwrap();
 
@@ -274,6 +317,8 @@ mod tests {
         let signedpod_valid = jsonschema::validate(&signedpod_schema_value, &signed_pod_value);
         assert!(signedpod_valid.is_ok(), "{:#?}", signedpod_valid);
 
-        // TODO test a MainPod with a custom predicate
+        let ethdos_pod_value = serde_json::to_value(&ethdos_pod).unwrap();
+        let ethdos_pod_valid = jsonschema::validate(&mainpod_schema_value, &ethdos_pod_value);
+        assert!(ethdos_pod_valid.is_ok(), "{:#?}", ethdos_pod_valid);
     }
 }
