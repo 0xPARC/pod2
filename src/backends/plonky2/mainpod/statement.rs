@@ -1,13 +1,13 @@
 use std::fmt;
 
 use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
 
-// use serde::{Deserialize, Serialize};
 use crate::middleware::{
     self, NativePredicate, Params, Predicate, StatementArg, ToFields, WildcardValue,
 };
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Statement(pub Predicate, pub Vec<StatementArg>);
 
 impl Statement {

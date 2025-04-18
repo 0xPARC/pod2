@@ -1,19 +1,18 @@
-/*
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use schemars::{JsonSchema, Schema};
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::mock::{mainpod::MockMainPod, signedpod::MockSignedPod},
-    frontend::{containers::Dictionary, MainPod, SignedPod, Statement, TypedValue},
-    middleware::PodId,
+    frontend::{MainPod, SignedPod, Statement},
+    middleware::{containers::Dictionary, Key, PodId, Value},
 };
 
-#[derive(Serialize, Deserialize, JsonSchema)]
-#[schemars(title = "SignedPod")]
+#[derive(Serialize, Deserialize /*JsonSchema*/)]
+//#[schemars(title = "SignedPod")]
 pub struct SignedPodHelper {
-    entries: HashMap<String, TypedValue>,
+    entries: HashMap<Key, Value>,
     proof: String,
     pod_class: String,
     pod_type: String,
@@ -30,10 +29,9 @@ impl TryFrom<SignedPodHelper> for SignedPod {
             return Err(anyhow::anyhow!("pod_type is not Mock"));
         }
 
-        let dict = Dictionary::new(helper.entries.clone())?
-            .middleware_dict()
-            .clone();
-        let pod = MockSignedPod::deserialize(PodId(dict.commitment()), helper.proof, dict);
+        let dict = Dictionary::new(helper.entries.clone())?.clone();
+        let pod =
+            MockSignedPod::deserialize(PodId(dict.commitment()), helper.proof, dict.kvs().clone());
 
         Ok(SignedPod {
             pod: Box::new(pod),
@@ -53,8 +51,8 @@ impl From<SignedPod> for SignedPodHelper {
     }
 }
 
-#[derive(Serialize, Deserialize, JsonSchema)]
-#[schemars(title = "MainPod")]
+#[derive(Serialize, Deserialize /*JsonSchema*/)]
+//#[schemars(title = "MainPod")]
 pub struct MainPodHelper {
     public_statements: Vec<Statement>,
     proof: String,
@@ -94,35 +92,6 @@ impl From<MainPod> for MainPodHelper {
     }
 }
 
-pub fn serialize_i64<S>(value: &i64, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    serializer.serialize_str(&value.to_string())
-}
-
-pub fn deserialize_i64<'de, D>(deserializer: D) -> Result<i64, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    String::deserialize(deserializer)?
-        .parse()
-        .map_err(serde::de::Error::custom)
-}
-
-// HashMap is not ordered, but we want our dictionaries to be ordered
-// by key for serialization, so we turn HashMaps into BTreeMaps.
-pub fn ordered_map<S, K: Ord + Serialize, V: Serialize>(
-    value: &HashMap<K, V>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let ordered: BTreeMap<_, _> = value.iter().collect();
-    ordered.serialize(serializer)
-}
-
 pub fn transform_value_schema(schema: &mut Schema) {
     let obj = schema.as_object_mut().unwrap();
 
@@ -152,18 +121,23 @@ pub fn transform_value_schema(schema: &mut Schema) {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use anyhow::Result;
+    // Pretty assertions give nicer diffs between expected and actual values
+    use pretty_assertions::assert_eq;
     use schemars::generate::SchemaSettings;
 
     use super::*;
     use crate::{
         backends::plonky2::mock::{mainpod::MockProver, signedpod::MockSigner},
         examples::{zu_kyc_pod_builder, zu_kyc_sign_pod_builders},
-        frontend::{
-            containers::{Array, Dictionary, Set},
-            SignedPodBuilder,
+        frontend::SignedPodBuilder,
+        middleware::{
+            self,
+            containers::{Array, Set},
+            Params, TypedValue,
         },
-        middleware::{self, Params},
     };
 
     #[test]
@@ -174,33 +148,21 @@ mod tests {
             (TypedValue::Int(42), "{\"Int\":\"42\"}"),
             (TypedValue::Bool(true), "true"),
             (
-                TypedValue::Array(
-                    Array::new(vec![
-                        TypedValue::String("foo".to_string()),
-                        TypedValue::Bool(false),
-                    ])
-                    .unwrap(),
-                ),
+                TypedValue::Array(Array::new(vec!["foo".into(), false.into()]).unwrap()),
                 "[\"foo\",false]",
             ),
             (
                 TypedValue::Dictionary(
                     Dictionary::new(HashMap::from([
-                        ("foo".to_string(), TypedValue::Int(123)),
-                        ("bar".to_string(), TypedValue::String("baz".to_string())),
+                        ("foo".into(), 123.into()),
+                        (("bar".into()), "baz".into()),
                     ]))
                     .unwrap(),
                 ),
                 "{\"Dictionary\":{\"bar\":\"baz\",\"foo\":{\"Int\":\"123\"}}}",
             ),
             (
-                TypedValue::Set(
-                    Set::new(vec![
-                        TypedValue::String("foo".to_string()),
-                        TypedValue::String("bar".to_string()),
-                    ])
-                    .unwrap(),
-                ),
+                TypedValue::Set(Set::new(HashSet::from(["foo".into(), "bar".into()])).unwrap()),
                 "{\"Set\":[\"foo\",\"bar\"]}",
             ),
         ];
@@ -209,12 +171,15 @@ mod tests {
             let serialized = serde_json::to_string(&value).unwrap();
             assert_eq!(serialized, expected);
             let deserialized: TypedValue = serde_json::from_str(&serialized).unwrap();
-            assert_eq!(value, deserialized);
+            assert_eq!(
+                value, deserialized,
+                "value {:#?} should equal deserialized {:#?}",
+                value, deserialized
+            );
             let expected_deserialized: TypedValue = serde_json::from_str(&expected).unwrap();
             assert_eq!(value, expected_deserialized);
         }
     }
-
     #[test]
     fn test_signed_pod_serialization() {
         let mut signer = MockSigner { pk: "test".into() };
@@ -224,39 +189,25 @@ mod tests {
         builder.insert("very_large_int", 1152921504606846976);
         builder.insert(
             "a_dict_containing_one_key",
-            TypedValue::Dictionary(
-                Dictionary::new(HashMap::from([
-                    ("foo".to_string(), TypedValue::Int(123)),
-                    (
-                        "an_array_containing_three_ints".to_string(),
-                        TypedValue::Array(
-                            Array::new(vec![
-                                TypedValue::Int(1),
-                                TypedValue::Int(2),
-                                TypedValue::Int(3),
-                            ])
-                            .unwrap(),
-                        ),
-                    ),
-                    (
-                        "a_set_containing_two_strings".to_string(),
-                        TypedValue::Set(
-                            Set::new(vec![
-                                TypedValue::Array(
-                                    Array::new(vec![
-                                        TypedValue::String("foo".to_string()),
-                                        TypedValue::String("bar".to_string()),
-                                    ])
-                                    .unwrap(),
-                                ),
-                                TypedValue::String("baz".to_string()),
-                            ])
-                            .unwrap(),
-                        ),
-                    ),
-                ]))
-                .unwrap(),
-            ),
+            Dictionary::new(HashMap::from([
+                ("foo".into(), 123.into()),
+                (
+                    "an_array_containing_three_ints".into(),
+                    Array::new(vec![1.into(), 2.into(), 3.into()])
+                        .unwrap()
+                        .into(),
+                ),
+                (
+                    "a_set_containing_two_strings".into(),
+                    Set::new(HashSet::from([
+                        Array::new(vec!["foo".into(), "bar".into()]).unwrap().into(),
+                        "baz".into(),
+                    ]))
+                    .unwrap()
+                    .into(),
+                ),
+            ]))
+            .unwrap(),
         );
 
         let pod = builder.sign(&mut signer).unwrap();
@@ -273,11 +224,9 @@ mod tests {
     #[test]
     fn test_main_pod_serialization() -> Result<()> {
         let params = middleware::Params::default();
-        let sanctions_values = vec!["A343434340".into()];
-        let sanction_set = TypedValue::Set(Set::new(sanctions_values)?);
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
-            zu_kyc_sign_pod_builders(&params, &sanction_set);
+            zu_kyc_sign_pod_builders(&params);
         let mut signer = MockSigner {
             pk: "ZooGov".into(),
         };
@@ -306,7 +255,7 @@ mod tests {
 
         Ok(())
     }
-
+    /*
     #[test]
     fn test_schema() {
         let generator = SchemaSettings::draft07().into_generator();
@@ -318,6 +267,5 @@ mod tests {
             "{}",
             serde_json::to_string_pretty(&signedpod_schema).unwrap()
         );
-    }
+    }*/
 }
-*/

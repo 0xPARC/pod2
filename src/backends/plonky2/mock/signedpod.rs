@@ -43,15 +43,11 @@ pub struct MockSignedPod {
     kvs: HashMap<Key, Value>,
 }
 
-// impl MockSignedPod {
-//     pub fn deserialize(id: PodId, signature: String, dict: Dictionary) -> Self {
-//         Self {
-//             id,
-//             signature,
-//             dict,
-//         }
-//     }
-// }
+impl MockSignedPod {
+    pub fn deserialize(id: PodId, signature: String, kvs: HashMap<Key, Value>) -> Self {
+        Self { id, signature, kvs }
+    }
+}
 
 impl Pod for MockSignedPod {
     fn verify(&self) -> Result<()> {

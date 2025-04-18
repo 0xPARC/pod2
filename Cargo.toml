@@ -28,6 +28,9 @@ schemars = "1.0.0-alpha.17"
 # [patch."https://github.com/0xPolygonZero/plonky2"]
 # plonky2 = { path = "../plonky2/plonky2" }
 
+[dev-dependencies]
+pretty_assertions = "1.4.1"
+
 [features]
 default = ["backend_plonky2"]
 backend_plonky2 = ["plonky2"]
