@@ -169,9 +169,9 @@ impl MockMainPod {
 
     // pub fn deserialize(serialized: String) -> Result<Self> {
     //     let proof = String::from_utf8(BASE64_STANDARD.decode(&serialized)?)
-    //         .map_err(|e| Error::Custom(format!("Invalid base64 encoding: {}", e)))?;
+    //         .map_err(|e| Error::custom(format!("Invalid base64 encoding: {}", e)))?;
     //     let pod: MockMainPod = serde_json::from_str(&proof)
-    //         .map_err(|e| Error::Custom(format!("Failed to parse proof: {}", e)))?;
+    //         .map_err(|e| Error::custom(format!("Failed to parse proof: {}", e)))?;
 
     //     Ok(pod)
     // }

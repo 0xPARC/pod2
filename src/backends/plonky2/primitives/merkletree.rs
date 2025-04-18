@@ -301,7 +301,7 @@ impl MerkleClaimAndProof {
         proof: &MerkleProof,
     ) -> Result<Self> {
         if proof.siblings.len() > max_depth {
-            Err(Error::Custom(format!(
+            Err(Error::custom(format!(
                 "Number of siblings ({}) exceeds maximum depth ({})",
                 proof.siblings.len(),
                 max_depth
@@ -332,7 +332,7 @@ impl TryFrom<MerkleClaimAndProof> for MerkleProof {
     type Error = Error;
     fn try_from(mp: MerkleClaimAndProof) -> Result<Self> {
         if !mp.enabled {
-            return Err(Error::Custom("Not a valid Merkle proof.".to_string()));
+            return Err(Error::custom("Not a valid Merkle proof.".to_string()));
         }
         Ok(MerkleProof {
             existence: mp.proof.existence,

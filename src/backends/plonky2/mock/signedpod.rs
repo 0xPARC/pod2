@@ -88,7 +88,7 @@ impl Pod for MockSignedPod {
             .ok_or(Error::KeyNotFound)?;
         let signature = format!("{}_signed_by_{}", id, pk_hash);
         if signature != self.signature {
-            return Err(Error::Custom(format!(
+            return Err(Error::custom(format!(
                 "signature does not match, expected {}, computed {}",
                 self.id, id
             )));

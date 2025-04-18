@@ -78,7 +78,7 @@ impl Operation {
             OperationAux::MerkleProofIndex(i) => merkle_proofs
                 .get(i)
                 .cloned()
-                .ok_or(Error::Custom(format!("Missing Merkle proof index {}", i)))
+                .ok_or(Error::custom(format!("Missing Merkle proof index {}", i)))
                 .and_then(|mp| {
                     mp.try_into()
                         .map(crate::middleware::OperationAux::MerkleProof)

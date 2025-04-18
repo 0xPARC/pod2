@@ -73,7 +73,7 @@ pub(crate) fn extract_merkle_proofs(
         })
         .collect::<Result<Vec<_>>>()?;
     if merkle_proofs.len() > params.max_merkle_proofs {
-        Err(Error::Custom(format!(
+        Err(Error::custom(format!(
             "The number of required Merkle proofs ({}) exceeds the maximum number ({}).",
             merkle_proofs.len(),
             params.max_merkle_proofs
@@ -99,7 +99,7 @@ fn find_op_arg(statements: &[Statement], op_arg: &middleware::Statement) -> Resu
                 (&middleware::Statement::try_from(s.clone()).ok()? == op_arg).then_some(i)
             })
             .map(OperationArg::Index)
-            .ok_or(Error::Custom(format!(
+            .ok_or(Error::custom(format!(
                 "Statement corresponding to op arg {} not found",
                 op_arg
             ))),
@@ -123,7 +123,7 @@ fn find_op_aux(
                     .and_then(|mid_pf: merkletree::MerkleProof| (&mid_pf == pf_arg).then_some(i))
             })
             .map(OperationAux::MerkleProofIndex)
-            .ok_or(Error::Custom(format!(
+            .ok_or(Error::custom(format!(
                 "Merkle proof corresponding to op arg {} not found",
                 op_aux
             ))),
@@ -399,7 +399,7 @@ impl Pod for MainPod {
 
         let data = builder.build::<C>();
         data.verify(self.proof.clone())
-            .map_err(|e| Error::Custom(format!("MainPod proof verification failure: {:?}", e)))
+            .map_err(|e| Error::custom(format!("MainPod proof verification failure: {:?}", e)))
     }
 
     fn id(&self) -> PodId {

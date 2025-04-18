@@ -37,7 +37,7 @@ impl Dictionary {
     pub fn get(&self, key: &Key) -> Result<&Value> {
         self.kvs
             .get(key)
-            .ok_or_else(|| Error::Custom(format!("key \"{}\" not found", key.name())))
+            .ok_or_else(|| Error::custom(format!("key \"{}\" not found", key.name())))
     }
     pub fn prove(&self, key: &Key) -> Result<(&Value, MerkleProof)> {
         let (_, mtp) = self.mt.prove(&RawValue(key.hash().0))?;
@@ -162,7 +162,7 @@ impl Array {
     }
     pub fn get(&self, i: usize) -> Result<&Value> {
         self.array.get(i).ok_or_else(|| {
-            Error::Custom(format!("index {} out of bounds 0..{}", i, self.array.len()))
+            Error::custom(format!("index {} out of bounds 0..{}", i, self.array.len()))
         })
     }
     pub fn prove(&self, i: usize) -> Result<(&Value, MerkleProof)> {

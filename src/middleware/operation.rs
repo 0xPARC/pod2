@@ -253,7 +253,7 @@ impl Operation {
                     Self::ProductOf(s1, s2, s3)
                 }
                 (NO::MaxOf, (Some(s1), Some(s2), Some(s3)), OA::None, 3) => Self::MaxOf(s1, s2, s3),
-                _ => Err(Error::Custom(format!(
+                _ => Err(Error::custom(format!(
                     "Ill-formed operation {:?} with arguments {:?}.",
                     op_code, args
                 )))?,
@@ -319,7 +319,7 @@ impl Operation {
             {
                 check_custom_pred(params, batch, *index, args, s_args)
             }
-            _ => Err(Error::Middleware(MiddlewareError::InvalidDeduction(
+            _ => Err(Error::middleware(MiddlewareError::InvalidDeduction(
                 self.clone(),
                 output_statement.clone(),
             ))),
@@ -384,7 +384,7 @@ fn check_custom_pred(
 ) -> Result<bool> {
     let pred = &batch.predicates[index];
     if pred.statements.len() != args.len() {
-        return Err(Error::DiffAmount(
+        return Err(Error::diff_amount(
             "custom predicate operation".to_string(),
             "statements".to_string(),
             pred.statements.len(),
@@ -392,7 +392,7 @@ fn check_custom_pred(
         ));
     }
     if pred.args_len != s_args.len() {
-        return Err(Error::DiffAmount(
+        return Err(Error::diff_amount(
             "custom predicate statement".to_string(),
             "args".to_string(),
             pred.args_len,

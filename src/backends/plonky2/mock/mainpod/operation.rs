@@ -87,7 +87,7 @@ impl MerkleClaimAndProof {
         mid_mp: &merkletree::MerkleProof,
     ) -> Result<Self> {
         if mid_mp.siblings.len() > params.max_depth_mt_gadget {
-            Err(Error::Custom(format!(
+            Err(Error::custom(format!(
                 "Number of siblings ({}) exceeds maximum depth ({})",
                 mid_mp.siblings.len(),
                 params.max_depth_mt_gadget
@@ -119,7 +119,7 @@ impl TryFrom<MerkleClaimAndProof> for merkletree::MerkleProof {
     type Error = Error;
     fn try_from(mp: MerkleClaimAndProof) -> Result<Self> {
         if !mp.enabled {
-            return Err(Error::Custom("not a valid Merkle proof".to_string()));
+            return Err(Error::custom("not a valid Merkle proof".to_string()));
         }
         let existence = mp.existence;
         let other_leaf = if mp.case_ii_selector {
@@ -185,7 +185,7 @@ impl Operation {
             OperationAux::MerkleProofIndex(i) => merkle_proofs
                 .get(i)
                 .cloned()
-                .ok_or(Error::Custom(format!("Missing Merkle proof index {}", i)))
+                .ok_or(Error::custom(format!("Missing Merkle proof index {}", i)))
                 .and_then(|mp| {
                     mp.try_into()
                         .map(crate::middleware::OperationAux::MerkleProof)

@@ -278,14 +278,14 @@ impl MainPodBuilder {
                 let container =
                     op.1.get(0)
                         .and_then(|arg| arg.value())
-                        .ok_or(Error::Custom(format!(
+                        .ok_or(Error::custom(format!(
                             "Invalid container argument for op {}.",
                             op
                         )))?;
                 let key =
                     op.1.get(1)
                         .and_then(|arg| arg.value())
-                        .ok_or(Error::Custom(format!(
+                        .ok_or(Error::custom(format!(
                             "Invalid key argument for op {}.",
                             op
                         )))?;
@@ -447,7 +447,7 @@ impl MainPodBuilder {
             OperationType::Custom(cpr) => {
                 let pred = &cpr.batch.predicates[cpr.index];
                 if pred.statements.len() != args.len() {
-                    return Err(Error::Custom(format!(
+                    return Err(Error::custom(format!(
                         "Custom predicate operation needs {} statements but has {}.",
                         pred.statements.len(),
                         args.len()
@@ -457,7 +457,7 @@ impl MainPodBuilder {
                 let args = args.iter().map(
                     |a| match a {
                         OperationArg::Statement(s) => Ok(s.clone()),
-                        _ => Err(Error::Custom(format!("Invalid argument {} to operation corresponding to custom predicate {:?}.", a, cpr)))
+                        _ => Err(Error::custom(format!("Invalid argument {} to operation corresponding to custom predicate {:?}.", a, cpr)))
                     }
                 ).collect::<Result<Vec<_>>>()?;
 
@@ -569,7 +569,7 @@ impl MainPodBuilder {
                 }
                 _ => None,
             })
-            .ok_or(Error::Custom(format!(
+            .ok_or(Error::custom(format!(
                 // TODO use a specific Error
                 "Missing POD type information in POD: {:?}",
                 pod
@@ -694,7 +694,7 @@ impl MainPodCompiler {
         let is_correct = middle_op.check(params, st)?;
         if !is_correct {
             // todo: improve error handling
-            Err(Error::Custom(format!(
+            Err(Error::custom(format!(
                 "Compile failed due to invalid deduction:\n {} ⇏ {}",
                 middle_op, st
             )))

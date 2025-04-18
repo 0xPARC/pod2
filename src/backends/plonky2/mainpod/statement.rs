@@ -77,7 +77,7 @@ impl TryFrom<Statement> for middleware::Statement {
                 (NP::MaxOf, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), Some(SA::Key(ak3))), 3) => {
                     S::MaxOf(ak1, ak2, ak3)
                 }
-                _ => Err(Error::Custom(format!(
+                _ => Err(Error::custom(format!(
                     "Ill-formed statement expression {:?}",
                     s
                 )))?,
