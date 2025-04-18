@@ -6,14 +6,13 @@ use serde::{Deserialize, Serialize};
 use crate::{
     backends::plonky2::mock::{mainpod::MockMainPod, signedpod::MockSignedPod},
     frontend::{MainPod, SignedPod, Statement},
-    middleware::{containers::Dictionary, Key, PodId, TypedValue, Value},
+    middleware::{containers::Dictionary, Key, PodId, Value},
 };
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[schemars(title = "SignedPod")]
 pub struct SignedPodHelper {
-    #[schemars(with = "HashMap<String, TypedValue>")]
     entries: HashMap<Key, Value>,
     proof: String,
     pod_class: String,
@@ -167,8 +166,8 @@ mod tests {
             assert_eq!(value, expected_deserialized);
         }
     }
-    #[test]
-    fn test_signed_pod_serialization() {
+
+    fn build_signed_pod() -> Result<SignedPod> {
         let mut signer = MockSigner { pk: "test".into() };
         let mut builder = SignedPodBuilder::new(&Params::default());
         builder.insert("name", "test");
@@ -198,6 +197,12 @@ mod tests {
         );
 
         let pod = builder.sign(&mut signer).unwrap();
+        Ok(pod)
+    }
+
+    #[test]
+    fn test_signed_pod_serialization() {
+        let pod = build_signed_pod().unwrap();
 
         let serialized = serde_json::to_string_pretty(&pod).unwrap();
         println!("serialized: {}", serialized);
@@ -208,8 +213,7 @@ mod tests {
         assert_eq!(pod.id(), deserialized.id())
     }
 
-    #[test]
-    fn test_main_pod_serialization() -> Result<()> {
+    fn build_zukyc_pod() -> Result<MainPod> {
         let params = middleware::Params::default();
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
@@ -231,7 +235,12 @@ mod tests {
 
         let mut prover = MockProver {};
         let kyc_pod = kyc_builder.prove(&mut prover, &params).unwrap();
+        Ok(kyc_pod)
+    }
 
+    #[test]
+    fn test_main_pod_serialization() -> Result<()> {
+        let kyc_pod = build_zukyc_pod()?;
         let serialized = serde_json::to_string_pretty(&kyc_pod).unwrap();
         println!("serialized: {}", serialized);
         let deserialized: MainPod = serde_json::from_str(&serialized).unwrap();
@@ -248,10 +257,20 @@ mod tests {
         let mainpod_schema = schema_for!(MainPodHelper);
         let signedpod_schema = schema_for!(SignedPodHelper);
 
-        println!("{}", serde_json::to_string_pretty(&mainpod_schema).unwrap());
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&signedpod_schema).unwrap()
-        );
+        let kyc_pod = build_zukyc_pod().unwrap();
+        let signed_pod = build_signed_pod().unwrap();
+
+        let mainpod_schema_value = serde_json::to_value(&mainpod_schema).unwrap();
+        let signedpod_schema_value = serde_json::to_value(&signedpod_schema).unwrap();
+
+        let kyc_pod_value = serde_json::to_value(&kyc_pod).unwrap();
+        let mainpod_valid = jsonschema::validate(&mainpod_schema_value, &kyc_pod_value);
+        assert!(mainpod_valid.is_ok(), "{:#?}", mainpod_valid);
+
+        let signed_pod_value = serde_json::to_value(&signed_pod).unwrap();
+        let signedpod_valid = jsonschema::validate(&signedpod_schema_value, &signed_pod_value);
+        assert!(signedpod_valid.is_ok(), "{:#?}", signedpod_valid);
+
+        // TODO test a MainPod with a custom predicate
     }
 }

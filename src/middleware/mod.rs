@@ -405,8 +405,7 @@ impl From<&Value> for Hash {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, JsonSchema)]
-#[schemars(with = "String")]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Key {
     name: String,
     hash: Hash,
@@ -474,6 +473,16 @@ impl<'de> Deserialize<'de> for Key {
     {
         let name = String::deserialize(deserializer)?;
         Ok(Key::new(name))
+    }
+}
+
+impl JsonSchema for Key {
+    fn schema_name() -> String {
+        "Key".to_string()
+    }
+
+    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        <String>::json_schema(gen)
     }
 }
 
