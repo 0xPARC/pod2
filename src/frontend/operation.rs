@@ -1,6 +1,5 @@
 use std::fmt;
 
-// use serde::{Deserialize, Serialize};
 use crate::{
     frontend::SignedPod,
     middleware::{AnchoredKey, OperationAux, OperationType, Statement, Value},

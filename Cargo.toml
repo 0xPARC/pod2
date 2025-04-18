@@ -22,11 +22,16 @@ plonky2 = { git = "https://github.com/0xPolygonZero/plonky2", optional = true }
 serde = "1.0.219"
 serde_json = "1.0.140"
 base64 = "0.22.1"
-schemars = "1.0.0-alpha.17"
+schemars = "0.8.22"
 
 # Uncomment for debugging with https://github.com/ed255/plonky2/ at branch `feat/debug`.  The repo directory needs to be checked out next to the pod2 repo directory.
 # [patch."https://github.com/0xPolygonZero/plonky2"]
 # plonky2 = { path = "../plonky2/plonky2" }
+
+[dev-dependencies]
+pretty_assertions = "1.4.1"
+# Used only for testing JSON Schema generation and validation.
+jsonschema = "0.30.0"
 
 [features]
 default = ["backend_plonky2"]

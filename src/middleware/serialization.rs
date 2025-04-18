@@ -1,8 +1,9 @@
-// TODO: Reenable
-/*
-use plonky2::field::types::Field;
-use serde::Deserialize;
+use std::collections::{HashMap, HashSet};
 
+use plonky2::field::types::Field;
+use serde::{ser::SerializeSeq, Deserialize, Serialize, Serializer};
+
+use super::{Key, Value};
 use crate::middleware::{F, HASH_SIZE, VALUE_SIZE};
 
 fn serialize_field_tuple<S, const N: usize>(
@@ -69,4 +70,60 @@ where
 {
     deserialize_field_tuple::<D, VALUE_SIZE>(deserializer)
 }
-*/
+
+pub fn serialize_i64<S>(value: &i64, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(&value.to_string())
+}
+
+pub fn deserialize_i64<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    String::deserialize(deserializer)?
+        .parse()
+        .map_err(serde::de::Error::custom)
+}
+
+// In order to serialize a Dictionary consistently, we want to order the
+// key-value pairs by the key's name field. This has no effect on the hashes
+// of the keys and therefore on the Merkle tree, but it makes the serialized
+// output deterministic.
+pub fn ordered_map<S, V: Serialize>(
+    value: &HashMap<Key, V>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    // Convert to Vec and sort by the key's name field
+    let mut pairs: Vec<_> = value.iter().collect();
+    pairs.sort_by(|(k1, _), (k2, _)| k1.name.cmp(&k2.name));
+
+    // Serialize as a map
+    use serde::ser::SerializeMap;
+    let mut map = serializer.serialize_map(Some(pairs.len()))?;
+    for (k, v) in pairs {
+        map.serialize_entry(k, v)?;
+    }
+    map.end()
+}
+
+// Sets are serialized as sequences of elements, which are not ordered by
+// default.  We want to serialize them in a deterministic way, and we can
+// achieve this by sorting the elements. This takes advantage of the fact that
+// Value implements Ord.
+pub fn ordered_set<S>(value: &HashSet<Value>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let mut set = serializer.serialize_seq(Some(value.len()))?;
+    let mut sorted_values: Vec<&Value> = value.iter().collect();
+    sorted_values.sort();
+    for v in sorted_values {
+        set.serialize_element(v)?;
+    }
+    set.end()
+}

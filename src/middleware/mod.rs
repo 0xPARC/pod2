@@ -10,6 +10,8 @@ use std::{
 
 use anyhow::anyhow;
 use containers::{Array, Dictionary, Set};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 pub mod containers;
 mod custom;
 mod operation;
@@ -22,8 +24,7 @@ pub use basetypes::*;
 pub use custom::*;
 use dyn_clone::DynClone;
 pub use operation::*;
-// use schemars::JsonSchema;
-// use serde::{Deserialize, Serialize};
+use serialization::*;
 pub use statement::*;
 
 use crate::backends::plonky2::primitives::merkletree::MerkleProof;
@@ -31,7 +32,7 @@ use crate::backends::plonky2::primitives::merkletree::MerkleProof;
 pub const SELF: PodId = PodId(SELF_ID_HASH);
 
 // TODO: Move all value-related types to to `value.rs`
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 // TODO #[schemars(transform = serialization::transform_value_schema)]
 pub enum TypedValue {
     // Serde cares about the order of the enum variants, with untagged variants
@@ -49,21 +50,18 @@ pub enum TypedValue {
     Set(Set),
     Dictionary(Dictionary),
     Int(
-        // TODO #[serde(serialize_with = "serialize_i64", deserialize_with = "deserialize_i64")]
+        #[serde(serialize_with = "serialize_i64", deserialize_with = "deserialize_i64")]
         // #[schemars(with = "String", regex(pattern = r"^\d+$"))]
         i64,
     ),
     // Uses the serialization for middleware::Value:
     Raw(RawValue),
     // UNTAGGED TYPES:
-    // #[serde(untagged)]
-    // #[schemars(skip)]
+    #[serde(untagged)]
     Array(Array),
-    // #[serde(untagged)]
-    // #[schemars(skip)]
+    #[serde(untagged)]
     String(String),
-    // #[serde(untagged)]
-    // #[schemars(skip)]
+    #[serde(untagged)]
     Bool(bool),
 }
 
@@ -176,11 +174,142 @@ impl From<&TypedValue> for RawValue {
     }
 }
 
+// Schemars/JsonSchema can't handle Serde's "untagged" variants.
+// Instead, we have to implement schema generation directly. It's not as
+// complicated as it looks, though.
+// We have to generate schemas for each of the variants, and then combine them
+// into a single schema using the `anyOf` keyword.
+// If we add a new variant, we will have to update this function.
+impl JsonSchema for TypedValue {
+    fn schema_name() -> String {
+        "TypedValue".to_string()
+    }
+
+    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        use schemars::schema::{InstanceType, Schema, SchemaObject, SingleOrVec};
+
+        let set_schema = schemars::schema::SchemaObject {
+            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
+            object: Some(Box::new(schemars::schema::ObjectValidation {
+                properties: [("Set".to_string(), gen.subschema_for::<Set>())]
+                    .into_iter()
+                    .collect(),
+                required: ["Set".to_string()].into_iter().collect(),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+
+        let dictionary_schema = schemars::schema::SchemaObject {
+            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
+            object: Some(Box::new(schemars::schema::ObjectValidation {
+                properties: [("Dictionary".to_string(), gen.subschema_for::<Dictionary>())]
+                    .into_iter()
+                    .collect(),
+                required: ["Dictionary".to_string()].into_iter().collect(),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+
+        // Int is serialized/deserialized as a tagged string
+        let int_schema = schemars::schema::SchemaObject {
+            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
+            object: Some(Box::new(schemars::schema::ObjectValidation {
+                properties: [(
+                    "Int".to_string(),
+                    Schema::Object(SchemaObject {
+                        instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::String))),
+                        metadata: Some(Box::new(schemars::schema::Metadata {
+                            description: Some("An i64 represented as a string.".to_string()),
+                            ..Default::default()
+                        })),
+                        ..Default::default()
+                    }),
+                )]
+                .into_iter()
+                .collect(),
+                required: ["Int".to_string()].into_iter().collect(),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+
+        let raw_schema = schemars::schema::SchemaObject {
+            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
+            object: Some(Box::new(schemars::schema::ObjectValidation {
+                properties: [("Raw".to_string(), gen.subschema_for::<RawValue>())]
+                    .into_iter()
+                    .collect(),
+                required: ["Raw".to_string()].into_iter().collect(),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+
+        // This is the part that Schemars can't generate automatically:
+        let untagged_array_schema = gen.subschema_for::<Array>();
+        let untagged_string_schema = gen.subschema_for::<String>();
+        let untagged_bool_schema = gen.subschema_for::<bool>();
+
+        Schema::Object(SchemaObject {
+            subschemas: Some(Box::new(schemars::schema::SubschemaValidation {
+                any_of: Some(vec![
+                    Schema::Object(set_schema),
+                    Schema::Object(dictionary_schema),
+                    Schema::Object(int_schema),
+                    Schema::Object(raw_schema),
+                    untagged_array_schema,
+                    untagged_string_schema,
+                    untagged_bool_schema,
+                ]),
+                ..Default::default()
+            })),
+            metadata: Some(Box::new(schemars::schema::Metadata {
+                description: Some("Represents various POD value types. Array, String, and Bool variants are represented untagged in JSON.".to_string()),
+                ..Default::default()
+            })),
+            ..Default::default()
+        })
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Value {
     // The `TypedValue` is under `Arc` so that cloning a `Value` is cheap.
     typed: Arc<TypedValue>,
     raw: RawValue,
+}
+
+// Values are serialized as their TypedValue.
+impl Serialize for Value {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.typed.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Value {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let typed = TypedValue::deserialize(deserializer)?;
+        Ok(Value::new(typed))
+    }
+}
+
+impl JsonSchema for Value {
+    fn schema_name() -> String {
+        "Value".to_string()
+    }
+
+    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        // Just use the schema of TypedValue since that's what we're actually serializing
+        <TypedValue>::json_schema(gen)
+    }
 }
 
 impl PartialEq for Value {
@@ -336,7 +465,44 @@ impl From<Key> for RawValue {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+// When serializing a Key, we serialize only the name field, and not the hash.
+// We can't directly tell Serde to render the whole struct as a string, so we
+// implement our own serialization. It's important that if we change the
+// structure of the Key struct, we update this implementation.
+impl Serialize for Key {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.name.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Key {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let name = String::deserialize(deserializer)?;
+        Ok(Key::new(name))
+    }
+}
+
+// As per the above, we implement custom serialization for the Key type, and
+// Schemars can't automatically generate a schema for it. Instead, we tell it
+// to use the standard String schema.
+impl JsonSchema for Key {
+    fn schema_name() -> String {
+        "Key".to_string()
+    }
+
+    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        <String>::json_schema(gen)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct AnchoredKey {
     pub pod_id: PodId,
     pub key: Key,
@@ -364,7 +530,7 @@ where
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
 pub struct PodId(pub Hash);
 
 impl ToFields for PodId {
@@ -394,7 +560,8 @@ impl fmt::Display for PodType {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Params {
     pub max_input_signed_pods: usize,
     pub max_input_main_pods: usize,

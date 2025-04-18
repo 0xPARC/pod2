@@ -55,15 +55,11 @@ use plonky2::{
     hash::poseidon::PoseidonHash,
     plonk::config::Hasher,
 };
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
-use crate::middleware::{
-    // serialization::{
-    //     deserialize_hash_tuple, deserialize_value_tuple, serialize_hash_tuple,
-    //     serialize_value_tuple,
-    // },
-    Params,
-    ToFields,
-};
+use super::serialization::*;
+use crate::middleware::{Params, ToFields};
 
 /// F is the native field we use everywhere.  Currently it's Goldilocks from plonky2
 pub type F = GoldilocksField;
@@ -75,16 +71,15 @@ pub const EMPTY_VALUE: RawValue = RawValue([F::ZERO, F::ZERO, F::ZERO, F::ZERO])
 pub const SELF_ID_HASH: Hash = Hash([F::ONE, F::ZERO, F::ZERO, F::ZERO]);
 pub const EMPTY_HASH: Hash = Hash([F::ZERO, F::ZERO, F::ZERO, F::ZERO]);
 
-#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]
-// #[schemars(rename = "RawValue")]
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RawValue(
-    // #[serde(
-    //     serialize_with = "serialize_value_tuple",
-    //     deserialize_with = "deserialize_value_tuple"
-    // )]
+    #[serde(
+        serialize_with = "serialize_value_tuple",
+        deserialize_with = "deserialize_value_tuple"
+    )]
     // We know that Serde will serialize and deserialize this as a string, so we can
     // use the JsonSchema to validate the format.
-    // #[schemars(with = "String", regex(pattern = r"^[0-9a-fA-F]{64}$"))]
+    #[schemars(with = "String", regex(pattern = r"^[0-9a-fA-F]{64}$"))]
     pub [F; VALUE_SIZE],
 );
 
@@ -152,13 +147,13 @@ impl fmt::Display for RawValue {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Hash(
-    // #[serde(
-    //     serialize_with = "serialize_hash_tuple",
-    //     deserialize_with = "deserialize_hash_tuple"
-    // )]
-    // #[schemars(with = "String", regex(pattern = r"^[0-9a-fA-F]{64}$"))]
+    #[serde(
+        serialize_with = "serialize_hash_tuple",
+        deserialize_with = "deserialize_hash_tuple"
+    )]
+    #[schemars(with = "String", regex(pattern = r"^[0-9a-fA-F]{64}$"))]
     pub [F; HASH_SIZE],
 );
 

@@ -2,8 +2,8 @@ use std::{fmt, iter};
 
 use anyhow::{anyhow, Result};
 use plonky2::field::types::Field;
-// use schemars::JsonSchema;
-// use serde::{Deserialize, Serialize};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use strum_macros::FromRepr;
 
 use crate::middleware::{
@@ -20,7 +20,7 @@ pub const STATEMENT_ARG_F_LEN: usize = 8;
 pub const OPERATION_ARG_F_LEN: usize = 1;
 pub const OPERATION_AUX_F_LEN: usize = 1;
 
-#[derive(Clone, Copy, Debug, FromRepr, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, FromRepr, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum NativePredicate {
     None = 0,
     ValueOf = 1,
@@ -49,7 +49,7 @@ impl ToFields for NativePredicate {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub enum WildcardValue {
     PodId(PodId),
     Key(Key),
@@ -83,7 +83,8 @@ impl ToFields for WildcardValue {
 }
 
 /// Type encapsulating statements with their associated arguments.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "predicate", content = "args")]
 pub enum Statement {
     None,
     ValueOf(AnchoredKey, Value),
@@ -275,7 +276,7 @@ impl fmt::Display for Statement {
 }
 
 /// Statement argument type. Useful for statement decompositions.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum StatementArg {
     None,
     Literal(Value),

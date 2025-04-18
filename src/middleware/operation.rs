@@ -3,8 +3,8 @@ use std::{fmt, iter, sync::Arc};
 use anyhow::{anyhow, Result};
 use log::error;
 use plonky2::field::types::Field;
+use serde::{Deserialize, Serialize};
 
-// use serde::{Deserialize, Serialize};
 use crate::{
     backends::plonky2::primitives::merkletree::MerkleProof,
     middleware::{
@@ -14,7 +14,7 @@ use crate::{
     },
 };
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum OperationType {
     Native(NativeOperation),
     Custom(CustomPredicateRef),
@@ -54,7 +54,7 @@ impl ToFields for OperationType {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NativeOperation {
     None = 0,
     NewEntry = 1,
