@@ -376,6 +376,7 @@ impl<'de> Deserialize<'de> for Key {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AnchoredKey {
     pub pod_id: PodId,
     pub key: Key,

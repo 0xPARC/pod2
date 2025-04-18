@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use plonky2::field::types::Field;
 use serde::{ser::SerializeSeq, Deserialize, Serialize, Serializer};
 
-use super::Key;
+use super::{Key, Value};
 use crate::middleware::{F, HASH_SIZE, VALUE_SIZE};
 
 fn serialize_field_tuple<S, const N: usize>(
@@ -111,12 +111,18 @@ where
     map.end()
 }
 
-pub fn ordered_set<S, V: Serialize>(value: &HashSet<V>, serializer: S) -> Result<S::Ok, S::Error>
+// Sets are serialized as sequences of elements, which are not ordered by
+// default.  We want to serialize them in a deterministic way, and we can
+// achieve this by sorting the elements. This takes advantage of the fact that
+// Value implements Ord.
+pub fn ordered_set<S>(value: &HashSet<Value>, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
     let mut set = serializer.serialize_seq(Some(value.len()))?;
-    for v in value {
+    let mut sorted_values: Vec<&Value> = value.iter().collect();
+    sorted_values.sort_by(|a, b| a.cmp(b));
+    for v in sorted_values {
         set.serialize_element(v)?;
     }
     set.end()

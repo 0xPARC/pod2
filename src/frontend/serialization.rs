@@ -10,6 +10,7 @@ use crate::{
 };
 
 #[derive(Serialize, Deserialize /*JsonSchema*/)]
+#[serde(rename_all = "camelCase")]
 //#[schemars(title = "SignedPod")]
 pub struct SignedPodHelper {
     entries: HashMap<Key, Value>,
@@ -53,6 +54,7 @@ impl From<SignedPod> for SignedPodHelper {
 
 #[derive(Serialize, Deserialize /*JsonSchema*/)]
 //#[schemars(title = "MainPod")]
+#[serde(rename_all = "camelCase")]
 pub struct MainPodHelper {
     public_statements: Vec<Statement>,
     proof: String,
@@ -154,16 +156,26 @@ mod tests {
             (
                 TypedValue::Dictionary(
                     Dictionary::new(HashMap::from([
+                        // The set of valid keys is equal to the set of valid JSON keys
                         ("foo".into(), 123.into()),
-                        (("bar".into()), "baz".into()),
+                        // Empty strings are valid JSON keys
+                        (("".into()), "baz".into()),
+                        // Keys can contain whitespace
+                        (("    hi".into()), false.into()),
+                        // Keys can contain special characters
+                        (("!@£$%^&&*()".into()), "".into()),
+                        // Keys can contain _very_ special characters
+                        (("\0".into()), "".into()),
+                        // Keys can contain emojis
+                        (("🥳".into()), "party time!".into()),
                     ]))
                     .unwrap(),
                 ),
-                "{\"Dictionary\":{\"bar\":\"baz\",\"foo\":{\"Int\":\"123\"}}}",
+                "{\"Dictionary\":{\"\":\"baz\",\"\\u0000\":\"\",\"    hi\":false,\"!@£$%^&&*()\":\"\",\"foo\":{\"Int\":\"123\"},\"🥳\":\"party time!\"}}",
             ),
             (
                 TypedValue::Set(Set::new(HashSet::from(["foo".into(), "bar".into()])).unwrap()),
-                "{\"Set\":[\"foo\",\"bar\"]}",
+                "{\"Set\":[\"bar\",\"foo\"]}",
             ),
         ];
 
@@ -212,7 +224,7 @@ mod tests {
 
         let pod = builder.sign(&mut signer).unwrap();
 
-        let serialized = serde_json::to_string(&pod).unwrap();
+        let serialized = serde_json::to_string_pretty(&pod).unwrap();
         println!("serialized: {}", serialized);
         let deserialized: SignedPod = serde_json::from_str(&serialized).unwrap();
 
@@ -245,7 +257,7 @@ mod tests {
         let mut prover = MockProver {};
         let kyc_pod = kyc_builder.prove(&mut prover, &params).unwrap();
 
-        let serialized = serde_json::to_string(&kyc_pod).unwrap();
+        let serialized = serde_json::to_string_pretty(&kyc_pod).unwrap();
         println!("serialized: {}", serialized);
         let deserialized: MainPod = serde_json::from_str(&serialized).unwrap();
 
