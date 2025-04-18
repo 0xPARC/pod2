@@ -10,6 +10,7 @@ use std::{
 
 use anyhow::anyhow;
 use containers::{Array, Dictionary, Set};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 pub mod containers;
 mod custom;
@@ -24,7 +25,6 @@ pub use custom::*;
 use dyn_clone::DynClone;
 pub use operation::*;
 use serialization::*;
-// use schemars::JsonSchema;
 pub use statement::*;
 
 use crate::backends::plonky2::primitives::merkletree::MerkleProof;
@@ -58,13 +58,10 @@ pub enum TypedValue {
     Raw(RawValue),
     // UNTAGGED TYPES:
     #[serde(untagged)]
-    // #[schemars(skip)]
     Array(Array),
     #[serde(untagged)]
-    // #[schemars(skip)]
     String(String),
     #[serde(untagged)]
-    // #[schemars(skip)]
     Bool(bool),
 }
 
@@ -177,11 +174,115 @@ impl From<&TypedValue> for RawValue {
     }
 }
 
+impl JsonSchema for TypedValue {
+    fn schema_name() -> String {
+        "TypedValue".to_string()
+    }
+
+    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        use schemars::schema::{InstanceType, Schema, SchemaObject, SingleOrVec};
+
+        let set_schema = schemars::schema::SchemaObject {
+            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
+            object: Some(Box::new(schemars::schema::ObjectValidation {
+                properties: [("Set".to_string(), gen.subschema_for::<Set>())]
+                    .into_iter()
+                    .collect(),
+                required: ["Set".to_string()].into_iter().collect(),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+
+        let dictionary_schema = schemars::schema::SchemaObject {
+            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
+            object: Some(Box::new(schemars::schema::ObjectValidation {
+                properties: [("Dictionary".to_string(), gen.subschema_for::<Dictionary>())]
+                    .into_iter()
+                    .collect(),
+                required: ["Dictionary".to_string()].into_iter().collect(),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+
+        // Int is serialized/deserialized as a string
+        let int_schema = schemars::schema::SchemaObject {
+            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
+            object: Some(Box::new(schemars::schema::ObjectValidation {
+                properties: [(
+                    "Int".to_string(),
+                    Schema::Object(SchemaObject {
+                        instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::String))),
+                        metadata: Some(Box::new(schemars::schema::Metadata {
+                            description: Some("An i64 represented as a string.".to_string()),
+                            ..Default::default()
+                        })),
+                        ..Default::default()
+                    }),
+                )]
+                .into_iter()
+                .collect(),
+                required: ["Int".to_string()].into_iter().collect(),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+
+        let raw_schema = schemars::schema::SchemaObject {
+            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
+            object: Some(Box::new(schemars::schema::ObjectValidation {
+                properties: [("Raw".to_string(), gen.subschema_for::<RawValue>())]
+                    .into_iter()
+                    .collect(),
+                required: ["Raw".to_string()].into_iter().collect(),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+
+        let untagged_array_schema = gen.subschema_for::<Array>();
+        let untagged_string_schema = gen.subschema_for::<String>();
+        let untagged_bool_schema = gen.subschema_for::<bool>();
+
+        Schema::Object(SchemaObject {
+            subschemas: Some(Box::new(schemars::schema::SubschemaValidation {
+                any_of: Some(vec![
+                    Schema::Object(set_schema),
+                    Schema::Object(dictionary_schema),
+                    Schema::Object(int_schema),
+                    Schema::Object(raw_schema),
+                    untagged_array_schema,
+                    untagged_string_schema,
+                    untagged_bool_schema,
+                ]),
+                ..Default::default()
+            })),
+            metadata: Some(Box::new(schemars::schema::Metadata {
+                description: Some("Represents various POD value types. Array, String, and Bool variants are represented untagged in JSON.".to_string()),
+                ..Default::default()
+            })),
+            ..Default::default()
+        })
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Value {
     // The `TypedValue` is under `Arc` so that cloning a `Value` is cheap.
     typed: Arc<TypedValue>,
     raw: RawValue,
+}
+
+impl JsonSchema for Value {
+    fn schema_name() -> String {
+        "Value".to_string()
+    }
+
+    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        // Just use the schema of TypedValue since that's what we're actually serializing
+        <TypedValue>::json_schema(gen)
+    }
 }
 
 impl Serialize for Value {
@@ -304,7 +405,8 @@ impl From<&Value> for Hash {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, JsonSchema)]
+#[schemars(with = "String")]
 pub struct Key {
     name: String,
     hash: Hash,
@@ -375,7 +477,7 @@ impl<'de> Deserialize<'de> for Key {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AnchoredKey {
     pub pod_id: PodId,
@@ -404,7 +506,7 @@ where
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
 pub struct PodId(pub Hash);
 
 impl ToFields for PodId {

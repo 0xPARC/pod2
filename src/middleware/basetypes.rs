@@ -55,6 +55,7 @@ use plonky2::{
     hash::poseidon::PoseidonHash,
     plonk::config::Hasher,
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::serialization::*;
@@ -70,8 +71,7 @@ pub const EMPTY_VALUE: RawValue = RawValue([F::ZERO, F::ZERO, F::ZERO, F::ZERO])
 pub const SELF_ID_HASH: Hash = Hash([F::ONE, F::ZERO, F::ZERO, F::ZERO]);
 pub const EMPTY_HASH: Hash = Hash([F::ZERO, F::ZERO, F::ZERO, F::ZERO]);
 
-#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
-// #[schemars(rename = "RawValue")]
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RawValue(
     #[serde(
         serialize_with = "serialize_value_tuple",
@@ -79,8 +79,8 @@ pub struct RawValue(
     )]
     // We know that Serde will serialize and deserialize this as a string, so we can
     // use the JsonSchema to validate the format.
-    // #[schemars(with = "String", regex(pattern = r"^[0-9a-fA-F]{64}$"))]
-    pub  [F; VALUE_SIZE],
+    #[schemars(with = "String", regex(pattern = r"^[0-9a-fA-F]{64}$"))]
+    pub [F; VALUE_SIZE],
 );
 
 impl ToFields for RawValue {
@@ -147,14 +147,14 @@ impl fmt::Display for RawValue {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Hash(
     #[serde(
         serialize_with = "serialize_hash_tuple",
         deserialize_with = "deserialize_hash_tuple"
     )]
-    // #[schemars(with = "String", regex(pattern = r"^[0-9a-fA-F]{64}$"))]
-    pub  [F; HASH_SIZE],
+    #[schemars(with = "String", regex(pattern = r"^[0-9a-fA-F]{64}$"))]
+    pub [F; HASH_SIZE],
 );
 
 pub fn hash_value(input: &RawValue) -> Hash {

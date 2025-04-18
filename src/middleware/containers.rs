@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 /// This file implements the types defined at
 /// https://0xparc.github.io/pod2/values.html#dictionary-array-set .
 use anyhow::{anyhow, Result};
+use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use super::serialization::{ordered_map, ordered_set};
@@ -91,12 +92,21 @@ impl<'de> Deserialize<'de> for Dictionary {
     }
 }
 
+impl JsonSchema for Dictionary {
+    fn schema_name() -> String {
+        "Dictionary".to_string()
+    }
+
+    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        // Just use the schema of HashMap<Key, Value> since that's what we're actually serializing
+        <HashMap<Key, Value>>::json_schema(gen)
+    }
+}
+
 /// Set: the value field of the leaf is unused, and the key contains the hash of the element.
 ///    leaf.key=hash(original_value)
 ///    leaf.value=0
 #[derive(Clone, Debug, Serialize)]
-// Because the Merkle tree is skipped, "transparent" serialization will
-// serialize the Set as just the inner `set` value.
 #[serde(transparent)]
 pub struct Set {
     #[serde(skip)]
@@ -167,6 +177,17 @@ impl<'de> Deserialize<'de> for Set {
     }
 }
 
+impl JsonSchema for Set {
+    fn schema_name() -> String {
+        "Set".to_string()
+    }
+
+    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        // Just use the schema of HashSet<Value> since that's what we're actually serializing
+        <HashSet<Value>>::json_schema(gen)
+    }
+}
+
 /// Array: the elements are placed at the value field of each leaf, and the key field is just the
 /// array index (integer).
 ///    leaf.key=i
@@ -233,5 +254,16 @@ impl<'de> Deserialize<'de> for Array {
     {
         let array: Vec<Value> = Vec::deserialize(deserializer)?;
         Array::new(array).map_err(serde::de::Error::custom)
+    }
+}
+
+impl JsonSchema for Array {
+    fn schema_name() -> String {
+        "Array".to_string()
+    }
+
+    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        // Just use the schema of Vec<Value> since that's what we're actually serializing
+        <Vec<Value>>::json_schema(gen)
     }
 }
