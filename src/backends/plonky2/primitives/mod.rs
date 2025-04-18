@@ -1,4 +1,3 @@
-pub mod error;
 pub mod merkletree;
 mod merkletree_circuit;
 pub mod signature;

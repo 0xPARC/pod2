@@ -5,12 +5,11 @@ use schemars::JsonSchema;
 
 // use serde::{Deserialize, Serialize};
 use crate::{
-    frontend::{AnchoredKey, Statement, StatementArg},
+    frontend::{AnchoredKey, FrontendError, FrontendResult, Statement, StatementArg},
     middleware::{
         self, hash_str, CustomPredicate, CustomPredicateBatch, Key, KeyOrWildcard, NativePredicate,
         Params, PodId, Predicate, StatementTmpl, StatementTmplArg, ToFields, Value, Wildcard,
     },
-    Error, Result,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -105,7 +104,7 @@ impl CustomPredicateBatchBuilder {
         args: &[&str],
         priv_args: &[&str],
         sts: &[StatementTmplBuilder],
-    ) -> Result<Predicate> {
+    ) -> FrontendResult<Predicate> {
         self.predicate(name, params, true, args, priv_args, sts)
     }
 
@@ -116,7 +115,7 @@ impl CustomPredicateBatchBuilder {
         args: &[&str],
         priv_args: &[&str],
         sts: &[StatementTmplBuilder],
-    ) -> Result<Predicate> {
+    ) -> FrontendResult<Predicate> {
         self.predicate(name, params, false, args, priv_args, sts)
     }
 
@@ -130,16 +129,16 @@ impl CustomPredicateBatchBuilder {
         args: &[&str],
         priv_args: &[&str],
         sts: &[StatementTmplBuilder],
-    ) -> Result<Predicate> {
+    ) -> FrontendResult<Predicate> {
         if args.len() > params.max_statement_args {
-            return Err(Error::MaxLength(
+            return Err(FrontendError::max_length(
                 "args.len".to_string(),
                 args.len(),
                 params.max_statement_args,
             ));
         }
         if (args.len() + priv_args.len()) > params.max_custom_predicate_wildcards {
-            return Err(Error::MaxLength(
+            return Err(FrontendError::max_length(
                 "wildcards.len".to_string(),
                 args.len() + priv_args.len(),
                 params.max_custom_predicate_wildcards,
@@ -214,7 +213,7 @@ mod tests {
     };
 
     #[test]
-    fn test_custom_pred() -> Result<()> {
+    fn test_custom_pred() -> FrontendResult<()> {
         use NativePredicate as NP;
         use StatementTmplBuilder as STB;
 

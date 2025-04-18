@@ -25,12 +25,12 @@ use crate::{
     backends::plonky2::{
         basetypes::{Proof, C, D},
         circuits::common::{CircuitBuilderPod, ValueTarget},
+        error::BackendResult,
         primitives::signature::{
             PublicKey, SecretKey, Signature, DUMMY_PUBLIC_INPUTS, DUMMY_SIGNATURE,
         },
     },
     middleware::{Hash, RawValue, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE},
-    Result,
 };
 
 lazy_static! {
@@ -51,7 +51,7 @@ pub struct SignatureVerifyTarget {
 }
 
 impl SignatureVerifyGadget {
-    pub fn verifier_data() -> Result<VerifierCircuitData<F, C, D>> {
+    pub fn verifier_data() -> BackendResult<VerifierCircuitData<F, C, D>> {
         // notice that we use the 'zk' config
         let config = CircuitConfig::standard_recursion_zk_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
@@ -64,7 +64,7 @@ impl SignatureVerifyGadget {
 
 impl SignatureVerifyGadget {
     /// creates the targets and defines the logic of the circuit
-    pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<SignatureVerifyTarget> {
+    pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> BackendResult<SignatureVerifyTarget> {
         let enabled = builder.add_virtual_bool_target_safe();
 
         let common_data = super::signature::VP.0.common.clone();
@@ -134,7 +134,7 @@ impl SignatureVerifyTarget {
         pk: PublicKey,
         msg: RawValue,
         signature: Signature,
-    ) -> Result<()> {
+    ) -> BackendResult<()> {
         pw.set_bool_target(self.enabled, enabled)?;
         pw.set_target_arr(&self.pk.elements, &pk.0 .0)?;
         pw.set_target_arr(&self.msg.elements, &msg.0)?;
@@ -176,7 +176,7 @@ pub mod tests {
     use crate::{backends::plonky2::primitives::signature::SecretKey, middleware::Hash};
 
     #[test]
-    fn test_signature_gadget() -> Result<()> {
+    fn test_signature_gadget() -> BackendResult<()> {
         // generate a valid signature
         let sk = SecretKey::new_rand();
         let pk = sk.public_key();
@@ -207,7 +207,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_signature_gadget_disabled() -> Result<()> {
+    fn test_signature_gadget_disabled() -> BackendResult<()> {
         // generate a valid signature
         let sk = SecretKey::new_rand();
         let pk = sk.public_key();

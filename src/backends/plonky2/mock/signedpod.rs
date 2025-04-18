@@ -3,13 +3,15 @@ use std::{any::Any, collections::HashMap};
 use itertools::Itertools;
 
 use crate::{
-    backends::plonky2::primitives::merkletree::MerkleTree,
+    backends::plonky2::{
+        error::{BackendError, BackendResult},
+        primitives::merkletree::MerkleTree,
+    },
     constants::MAX_DEPTH,
     middleware::{
-        containers::Dictionary, error::MiddlewareError, hash_str, AnchoredKey, Hash, Key, Params,
-        Pod, PodId, PodSigner, PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE,
+        containers::Dictionary, hash_str, AnchoredKey, DynError, Hash, Key, Params, Pod, PodId,
+        PodSigner, PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE,
     },
-    Error, Result,
 };
 
 pub struct MockSigner {
@@ -22,8 +24,12 @@ impl MockSigner {
     }
 }
 
-impl PodSigner for MockSigner {
-    fn sign(&mut self, _params: &Params, kvs: &HashMap<Key, Value>) -> Result<Box<dyn Pod>> {
+impl MockSigner {
+    fn _sign(
+        &mut self,
+        _params: &Params,
+        kvs: &HashMap<Key, Value>,
+    ) -> BackendResult<MockSignedPod> {
         let mut kvs = kvs.clone();
         let pubkey = self.pubkey();
         kvs.insert(Key::from(KEY_SIGNER), Value::from(pubkey));
@@ -32,7 +38,17 @@ impl PodSigner for MockSigner {
         let dict = Dictionary::new(kvs.clone())?;
         let id = PodId(dict.commitment());
         let signature = format!("{}_signed_by_{}", id, pubkey);
-        Ok(Box::new(MockSignedPod { id, signature, kvs }))
+        Ok(MockSignedPod { id, signature, kvs })
+    }
+}
+
+impl PodSigner for MockSigner {
+    fn sign(
+        &mut self,
+        params: &Params,
+        kvs: &HashMap<Key, Value>,
+    ) -> Result<Box<dyn Pod>, Box<DynError>> {
+        Ok(self._sign(params, kvs).map(Box::new)?)
     }
 }
 
@@ -53,8 +69,8 @@ pub struct MockSignedPod {
 //     }
 // }
 
-impl Pod for MockSignedPod {
-    fn verify(&self) -> Result<()> {
+impl MockSignedPod {
+    fn _verify(&self) -> BackendResult<()> {
         // 1. Verify id
         let mt = MerkleTree::new(
             MAX_DEPTH,
@@ -66,35 +82,41 @@ impl Pod for MockSignedPod {
         )?;
         let id = PodId(mt.root());
         if id != self.id {
-            return Err(Error::Middleware(MiddlewareError::IdNotEqual(self.id, id)));
+            return Err(BackendError::id_not_equal(self.id, id));
         }
 
         // 2. Verify type
         let value_at_type = self
             .kvs
             .get(&Key::from(KEY_TYPE))
-            .ok_or(Error::KeyNotFound)?;
+            .ok_or(BackendError::key_not_found())?;
         if &Value::from(PodType::MockSigned) != value_at_type {
-            return Err(Error::Middleware(MiddlewareError::TypeNotEqual(
+            return Err(BackendError::type_not_equal(
                 PodType::MockSigned,
                 value_at_type.clone(),
-            )));
+            ));
         }
 
         // 3. Verify signature
         let pk_hash = self
             .kvs
             .get(&Key::from(KEY_SIGNER))
-            .ok_or(Error::KeyNotFound)?;
+            .ok_or(BackendError::key_not_found())?;
         let signature = format!("{}_signed_by_{}", id, pk_hash);
         if signature != self.signature {
-            return Err(Error::Custom(format!(
+            return Err(BackendError::custom(format!(
                 "signature does not match, expected {}, computed {}",
                 self.id, id
             )));
         }
 
         Ok(())
+    }
+}
+
+impl Pod for MockSignedPod {
+    fn verify(&self) -> Result<(), Box<DynError>> {
+        Ok(self._verify()?)
     }
 
     fn id(&self) -> PodId {
@@ -141,7 +163,7 @@ pub mod tests {
     };
 
     #[test]
-    fn test_mock_signed_0() -> Result<()> {
+    fn test_mock_signed_0() -> BackendResult<()> {
         let params = middleware::Params::default();
         let mut pod = frontend::SignedPodBuilder::new(&params);
         pod.insert("idNumber", "4242424242");
@@ -152,7 +174,7 @@ pub mod tests {
         let pod = pod.sign(&mut signer).unwrap();
         let pod = pod.pod.into_any().downcast::<MockSignedPod>().unwrap();
 
-        pod.verify()?;
+        pod._verify()?;
         println!("id: {}", pod.id());
         println!("kvs: {:?}", pod.kvs());
 

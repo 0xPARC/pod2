@@ -6,8 +6,8 @@ use plonky2::field::types::Field;
 use strum_macros::FromRepr;
 
 use crate::middleware::{
-    error::MiddlewareError, AnchoredKey, CustomPredicateRef, Error, Key, Params, PodId, Predicate,
-    RawValue, Result, ToFields, Value, F, VALUE_SIZE,
+    AnchoredKey, CustomPredicateRef, Key, MiddlewareError, MiddlewareResult, Params, PodId,
+    Predicate, RawValue, ToFields, Value, F, VALUE_SIZE,
 };
 
 // TODO: Maybe store KEY_SIGNER and KEY_TYPE as Key with lazy_static
@@ -140,9 +140,9 @@ impl Statement {
             Self::Custom(_, args) => Vec::from_iter(args.into_iter().map(WildcardLiteral)),
         }
     }
-    pub fn from_args(pred: Predicate, args: Vec<StatementArg>) -> Result<Self> {
+    pub fn from_args(pred: Predicate, args: Vec<StatementArg>) -> MiddlewareResult<Self> {
         use Predicate::*;
-        let st: Result<Self> = match pred {
+        let st: MiddlewareResult<Self> = match pred {
             Native(NativePredicate::None) => Ok(Self::None),
             Native(NativePredicate::ValueOf) => {
                 if let (StatementArg::Key(a0), StatementArg::Literal(v1)) =
@@ -150,7 +150,7 @@ impl Statement {
                 {
                     Ok(Self::ValueOf(a0, v1))
                 } else {
-                    Err(Error::Middleware(MiddlewareError::IncorrectStatementArgs))
+                    Err(MiddlewareError::incorrect_statements_args())
                 }
             }
             Native(NativePredicate::Equal) => {
@@ -159,7 +159,7 @@ impl Statement {
                 {
                     Ok(Self::Equal(a0, a1))
                 } else {
-                    Err(Error::Middleware(MiddlewareError::IncorrectStatementArgs))
+                    Err(MiddlewareError::incorrect_statements_args())
                 }
             }
             Native(NativePredicate::NotEqual) => {
@@ -168,7 +168,7 @@ impl Statement {
                 {
                     Ok(Self::NotEqual(a0, a1))
                 } else {
-                    Err(Error::Middleware(MiddlewareError::IncorrectStatementArgs))
+                    Err(MiddlewareError::incorrect_statements_args())
                 }
             }
             Native(NativePredicate::Gt) => {
@@ -177,7 +177,7 @@ impl Statement {
                 {
                     Ok(Self::Gt(a0, a1))
                 } else {
-                    Err(Error::Middleware(MiddlewareError::IncorrectStatementArgs))
+                    Err(MiddlewareError::incorrect_statements_args())
                 }
             }
             Native(NativePredicate::Lt) => {
@@ -186,7 +186,7 @@ impl Statement {
                 {
                     Ok(Self::Lt(a0, a1))
                 } else {
-                    Err(Error::Middleware(MiddlewareError::IncorrectStatementArgs))
+                    Err(MiddlewareError::incorrect_statements_args())
                 }
             }
             Native(NativePredicate::Contains) => {
@@ -195,7 +195,7 @@ impl Statement {
                 {
                     Ok(Self::Contains(a0, a1, a2))
                 } else {
-                    Err(Error::Middleware(MiddlewareError::IncorrectStatementArgs))
+                    Err(MiddlewareError::incorrect_statements_args())
                 }
             }
             Native(NativePredicate::NotContains) => {
@@ -204,7 +204,7 @@ impl Statement {
                 {
                     Ok(Self::NotContains(a0, a1))
                 } else {
-                    Err(Error::Middleware(MiddlewareError::IncorrectStatementArgs))
+                    Err(MiddlewareError::incorrect_statements_args())
                 }
             }
             Native(NativePredicate::SumOf) => {
@@ -213,7 +213,7 @@ impl Statement {
                 {
                     Ok(Self::SumOf(a0, a1, a2))
                 } else {
-                    Err(Error::Middleware(MiddlewareError::IncorrectStatementArgs))
+                    Err(MiddlewareError::incorrect_statements_args())
                 }
             }
             Native(NativePredicate::ProductOf) => {
@@ -222,7 +222,7 @@ impl Statement {
                 {
                     Ok(Self::ProductOf(a0, a1, a2))
                 } else {
-                    Err(Error::Middleware(MiddlewareError::IncorrectStatementArgs))
+                    Err(MiddlewareError::incorrect_statements_args())
                 }
             }
             Native(NativePredicate::MaxOf) => {
@@ -231,17 +231,20 @@ impl Statement {
                 {
                     Ok(Self::MaxOf(a0, a1, a2))
                 } else {
-                    Err(Error::Middleware(MiddlewareError::IncorrectStatementArgs))
+                    Err(MiddlewareError::incorrect_statements_args())
                 }
             }
-            Native(np) => Err(Error::Custom(format!("Predicate {:?} is syntax sugar", np))),
+            Native(np) => Err(MiddlewareError::custom(format!(
+                "Predicate {:?} is syntax sugar",
+                np
+            ))),
             BatchSelf(_) => unreachable!(),
             Custom(cpr) => {
-                let v_args: Result<Vec<WildcardValue>> = args
+                let v_args: MiddlewareResult<Vec<WildcardValue>> = args
                     .iter()
                     .map(|x| match x {
                         StatementArg::WildcardLiteral(v) => Ok(v.clone()),
-                        _ => Err(Error::Middleware(MiddlewareError::IncorrectStatementArgs)),
+                        _ => Err(MiddlewareError::incorrect_statements_args()),
                     })
                     .collect();
                 Ok(Self::Custom(cpr, v_args?))
@@ -297,22 +300,22 @@ impl StatementArg {
     pub fn is_none(&self) -> bool {
         matches!(self, Self::None)
     }
-    pub fn literal(&self) -> Result<Value> {
+    pub fn literal(&self) -> MiddlewareResult<Value> {
         match self {
             Self::Literal(value) => Ok(value.clone()),
-            _ => Err(Error::Middleware(MiddlewareError::InvalidStatementArg(
+            _ => Err(MiddlewareError::invalid_statement_arg(
                 self.clone(),
                 "literal".to_string(),
-            ))),
+            )),
         }
     }
-    pub fn key(&self) -> Result<AnchoredKey> {
+    pub fn key(&self) -> MiddlewareResult<AnchoredKey> {
         match self {
             Self::Key(ak) => Ok(ak.clone()),
-            _ => Err(Error::Middleware(MiddlewareError::InvalidStatementArg(
+            _ => Err(MiddlewareError::invalid_statement_arg(
                 self.clone(),
                 "key".to_string(),
-            ))),
+            )),
         }
     }
 }

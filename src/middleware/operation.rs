@@ -7,11 +7,10 @@ use plonky2::field::types::Field;
 use crate::{
     backends::plonky2::primitives::merkletree::MerkleProof,
     middleware::{
-        custom::KeyOrWildcard, error::MiddlewareError, AnchoredKey, CustomPredicateBatch,
-        CustomPredicateRef, NativePredicate, Params, Predicate, Statement, StatementArg,
-        StatementTmplArg, ToFields, Wildcard, WildcardValue, F, SELF,
+        custom::KeyOrWildcard, AnchoredKey, CustomPredicateBatch, CustomPredicateRef,
+        MiddlewareError, MiddlewareResult, NativePredicate, Params, Predicate, Statement,
+        StatementArg, StatementTmplArg, ToFields, Wildcard, WildcardValue, F, SELF,
     },
-    Error, Result,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -211,7 +210,11 @@ impl Operation {
     }
 
     /// Forms operation from op-code and arguments.
-    pub fn op(op_code: OperationType, args: &[Statement], aux: &OperationAux) -> Result<Self> {
+    pub fn op(
+        op_code: OperationType,
+        args: &[Statement],
+        aux: &OperationAux,
+    ) -> MiddlewareResult<Self> {
         type OA = OperationAux;
         type NO = NativeOperation;
         let arg_tup = (
@@ -253,7 +256,7 @@ impl Operation {
                     Self::ProductOf(s1, s2, s3)
                 }
                 (NO::MaxOf, (Some(s1), Some(s2), Some(s3)), OA::None, 3) => Self::MaxOf(s1, s2, s3),
-                _ => Err(Error::Custom(format!(
+                _ => Err(MiddlewareError::custom(format!(
                     "Ill-formed operation {:?} with arguments {:?}.",
                     op_code, args
                 )))?,
@@ -262,7 +265,11 @@ impl Operation {
         })
     }
     /// Checks the given operation against a statement, and prints information if the check does not pass
-    pub fn check_and_log(&self, params: &Params, output_statement: &Statement) -> Result<bool> {
+    pub fn check_and_log(
+        &self,
+        params: &Params,
+        output_statement: &Statement,
+    ) -> MiddlewareResult<bool> {
         let valid: bool = self.check(params, output_statement)?;
         if !valid {
             error!("Check failed on the following statement");
@@ -271,7 +278,7 @@ impl Operation {
         Ok(valid)
     }
     /// Checks the given operation against a statement.
-    pub fn check(&self, params: &Params, output_statement: &Statement) -> Result<bool> {
+    pub fn check(&self, params: &Params, output_statement: &Statement) -> MiddlewareResult<bool> {
         use Statement::*;
         match (self, output_statement) {
             (Self::None, None) => Ok(true),
@@ -319,10 +326,10 @@ impl Operation {
             {
                 check_custom_pred(params, batch, *index, args, s_args)
             }
-            _ => Err(Error::Middleware(MiddlewareError::InvalidDeduction(
+            _ => Err(MiddlewareError::invalid_deduction(
                 self.clone(),
                 output_statement.clone(),
-            ))),
+            )),
         }
     }
 }
@@ -381,10 +388,10 @@ fn check_custom_pred(
     index: usize,
     args: &[Statement],
     s_args: &[WildcardValue],
-) -> Result<bool> {
+) -> MiddlewareResult<bool> {
     let pred = &batch.predicates[index];
     if pred.statements.len() != args.len() {
-        return Err(Error::DiffAmount(
+        return Err(MiddlewareError::diff_amount(
             "custom predicate operation".to_string(),
             "statements".to_string(),
             pred.statements.len(),
@@ -392,7 +399,7 @@ fn check_custom_pred(
         ));
     }
     if pred.args_len != s_args.len() {
-        return Err(Error::DiffAmount(
+        return Err(MiddlewareError::diff_amount(
             "custom predicate statement".to_string(),
             "args".to_string(),
             pred.args_len,

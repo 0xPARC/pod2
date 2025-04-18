@@ -11,6 +11,7 @@ use std::{any::Any, fmt};
 use crate::backends::plonky2::mainpod::process_private_statements_operations;
 use crate::{
     backends::plonky2::{
+        error::{BackendError, BackendResult},
         mainpod::{
             extract_merkle_proofs, hash_statements, layout_statements, normalize_statement,
             process_public_statements_operations, Operation, Statement,
@@ -18,16 +19,19 @@ use crate::{
         primitives::merkletree::MerkleClaimAndProof,
     },
     middleware::{
-        self, hash_str, AnchoredKey, MainPodInputs, NativePredicate, Params, Pod, PodId, PodProver,
-        Predicate, StatementArg, KEY_TYPE, SELF,
+        self, hash_str, AnchoredKey, DynError, MainPodInputs, MiddlewareError, NativePredicate,
+        Params, Pod, PodId, PodProver, Predicate, StatementArg, KEY_TYPE, SELF,
     },
-    Error, Result,
 };
 
 pub struct MockProver {}
 
 impl PodProver for MockProver {
-    fn prove(&mut self, params: &Params, inputs: MainPodInputs) -> Result<Box<dyn Pod>> {
+    fn prove(
+        &mut self,
+        params: &Params,
+        inputs: MainPodInputs,
+    ) -> Result<Box<dyn Pod>, Box<DynError>> {
         Ok(Box::new(MockMainPod::new(params, inputs)?))
     }
 }
@@ -133,7 +137,7 @@ impl MockMainPod {
         self.offset_input_statements() + self.params.max_priv_statements()
     }
 
-    pub fn new(params: &Params, inputs: MainPodInputs) -> Result<Self> {
+    pub fn new(params: &Params, inputs: MainPodInputs) -> BackendResult<Self> {
         // TODO: Insert a new public statement of ValueOf with `key=KEY_TYPE,
         // value=PodType::MockMainPod`
         let statements = layout_statements(params, &inputs);
@@ -169,16 +173,14 @@ impl MockMainPod {
 
     // pub fn deserialize(serialized: String) -> Result<Self> {
     //     let proof = String::from_utf8(BASE64_STANDARD.decode(&serialized)?)
-    //         .map_err(|e| Error::Custom(format!("Invalid base64 encoding: {}", e)))?;
+    //         .map_err(|e| Error::custom(format!("Invalid base64 encoding: {}", e)))?;
     //     let pod: MockMainPod = serde_json::from_str(&proof)
-    //         .map_err(|e| Error::Custom(format!("Failed to parse proof: {}", e)))?;
+    //         .map_err(|e| Error::custom(format!("Failed to parse proof: {}", e)))?;
 
     //     Ok(pod)
     // }
-}
 
-impl Pod for MockMainPod {
-    fn verify(&self) -> Result<()> {
+    fn _verify(&self) -> BackendResult<()> {
         // 1. TODO: Verify input pods
 
         let input_statement_offset = self.offset_input_statements();
@@ -243,21 +245,27 @@ impl Pod for MockMainPod {
                     .unwrap()
                     .check_and_log(&self.params, &s.clone().try_into().unwrap())
             })
-            .collect::<Result<Vec<_>>>()
+            .collect::<Result<Vec<_>, MiddlewareError>>()
             .unwrap();
         if !ids_match {
-            return Err(Error::PodIdInvalid);
+            return Err(BackendError::pod_id_invalid());
         }
         if !has_type_statement {
-            return Err(Error::NotTypeStatement);
+            return Err(BackendError::not_type_statement());
         }
         if !value_ofs_unique {
-            return Err(Error::RepeatedValueOf);
+            return Err(BackendError::repeated_value_of());
         }
         if !statement_check.iter().all(|b| *b) {
-            return Err(Error::StatementNotCheck);
+            return Err(BackendError::statement_not_check());
         }
         Ok(())
+    }
+}
+
+impl Pod for MockMainPod {
+    fn verify(&self) -> Result<(), Box<DynError>> {
+        Ok(self._verify()?)
     }
     fn id(&self) -> PodId {
         self.id
@@ -295,11 +303,12 @@ pub mod tests {
             great_boy_pod_full_flow, tickets_pod_full_flow, zu_kyc_pod_builder,
             zu_kyc_sign_pod_builders,
         },
+        frontend::FrontendResult,
         middleware::{self},
     };
 
     #[test]
-    fn test_mock_main_zu_kyc() -> Result<()> {
+    fn test_mock_main_zu_kyc() -> FrontendResult<()> {
         let params = middleware::Params::default();
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params);
@@ -331,7 +340,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_mock_main_great_boy() -> Result<()> {
+    fn test_mock_main_great_boy() -> FrontendResult<()> {
         let params = middleware::Params::default();
         let great_boy_builder = great_boy_pod_full_flow()?;
 
@@ -351,7 +360,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_mock_main_tickets() -> Result<()> {
+    fn test_mock_main_tickets() -> FrontendResult<()> {
         let params = middleware::Params::default();
         let tickets_builder = tickets_pod_full_flow()?;
         let mut prover = MockProver {};

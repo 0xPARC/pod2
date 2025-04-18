@@ -15,6 +15,7 @@ use crate::{
             },
             signedpod::{SignedPodVerifyGadget, SignedPodVerifyTarget},
         },
+        error::BackendResult,
         mainpod,
         primitives::merkletree::{
             MerkleClaimAndProof, MerkleClaimAndProofTarget, MerkleProofGadget,
@@ -25,7 +26,6 @@ use crate::{
         AnchoredKey, NativeOperation, NativePredicate, Params, PodType, Statement, StatementArg,
         ToFields, Value, F, KEY_TYPE, SELF, VALUE_SIZE,
     },
-    Result,
 };
 
 //
@@ -44,7 +44,7 @@ impl OperationVerifyGadget {
         op: &OperationTarget,
         prev_statements: &[StatementTarget],
         merkle_claims: &[MerkleClaimTarget],
-    ) -> Result<()> {
+    ) -> BackendResult<()> {
         let _true = builder._true();
         let _false = builder._false();
 
@@ -332,7 +332,7 @@ impl OperationVerifyGadget {
         st: &StatementTarget,
         op: &OperationTarget,
         resolved_op_args: &[StatementTarget],
-    ) -> Result<BoolTarget> {
+    ) -> BackendResult<BoolTarget> {
         let op_code_ok = op.has_native_type(builder, NativeOperation::CopyStatement);
 
         let expected_statement = &resolved_op_args[0];
@@ -347,7 +347,7 @@ struct MainPodVerifyGadget {
 }
 
 impl MainPodVerifyGadget {
-    fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MainPodVerifyTarget> {
+    fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> BackendResult<MainPodVerifyTarget> {
         let params = &self.params;
         // 1. Verify all input signed pods
         let mut signed_pods = Vec::new();
@@ -398,7 +398,7 @@ impl MainPodVerifyGadget {
         };
         let merkle_proofs: Vec<_> = (0..params.max_merkle_proofs)
             .map(|_| mp_gadget.eval(builder))
-            .collect::<Result<_>>()?;
+            .collect::<BackendResult<_>>()?;
         let merkle_claims: Vec<_> = merkle_proofs
             .clone()
             .into_iter()
@@ -476,7 +476,7 @@ impl MainPodVerifyTarget {
         &self,
         pw: &mut PartialWitness<F>,
         input: &MainPodVerifyInput,
-    ) -> Result<()> {
+    ) -> BackendResult<()> {
         assert!(input.signed_pods.len() <= self.params.max_input_signed_pods);
         for (i, signed_pod) in input.signed_pods.iter().enumerate() {
             self.signed_pods[i].set_targets(pw, signed_pod)?;
@@ -506,7 +506,7 @@ pub struct MainPodVerifyCircuit {
 }
 
 impl MainPodVerifyCircuit {
-    pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MainPodVerifyTarget> {
+    pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> BackendResult<MainPodVerifyTarget> {
         let main_pod = MainPodVerifyGadget {
             params: self.params.clone(),
         }
@@ -535,7 +535,7 @@ mod tests {
         op: mainpod::Operation,
         prev_statements: Vec<mainpod::Statement>,
         merkle_proofs: Vec<MerkleClaimAndProof>,
-    ) -> Result<()> {
+    ) -> BackendResult<()> {
         let params = Params::default();
         let mp_gadget = MerkleProofGadget {
             max_depth: params.max_depth_mt_gadget,
@@ -552,7 +552,7 @@ mod tests {
         let merkle_proofs_target: Vec<_> = merkle_proofs
             .iter()
             .map(|_| mp_gadget.eval(&mut builder))
-            .collect::<Result<_>>()?;
+            .collect::<BackendResult<_>>()?;
         let merkle_claims_target: Vec<_> = merkle_proofs_target
             .clone()
             .into_iter()
@@ -591,7 +591,7 @@ mod tests {
     }
 
     #[test]
-    fn test_operation_verify() -> Result<()> {
+    fn test_operation_verify() -> BackendResult<()> {
         let params = Params::default();
 
         // None

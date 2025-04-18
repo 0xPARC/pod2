@@ -7,8 +7,9 @@ use std::collections::{HashMap, HashSet};
 use crate::backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree};
 use crate::{
     constants::MAX_DEPTH,
-    middleware::{hash_value, Hash, Key, RawValue, Value, EMPTY_VALUE},
-    Error, Result,
+    middleware::{
+        hash_value, Hash, Key, MiddlewareError, MiddlewareResult, RawValue, Value, EMPTY_VALUE,
+    },
 };
 
 /// Dictionary: the user original keys and values are hashed to be used in the leaf.
@@ -21,7 +22,7 @@ pub struct Dictionary {
 }
 
 impl Dictionary {
-    pub fn new(kvs: HashMap<Key, Value>) -> Result<Self> {
+    pub fn new(kvs: HashMap<Key, Value>) -> MiddlewareResult<Self> {
         let kvs_raw: HashMap<RawValue, RawValue> = kvs
             .iter()
             .map(|(k, v)| (RawValue(k.hash().0), v.raw()))
@@ -34,26 +35,39 @@ impl Dictionary {
     pub fn commitment(&self) -> Hash {
         self.mt.root()
     }
-    pub fn get(&self, key: &Key) -> Result<&Value> {
+    pub fn get(&self, key: &Key) -> MiddlewareResult<&Value> {
         self.kvs
             .get(key)
-            .ok_or_else(|| Error::Custom(format!("key \"{}\" not found", key.name())))
+            .ok_or_else(|| MiddlewareError::custom(format!("key \"{}\" not found", key.name())))
     }
-    pub fn prove(&self, key: &Key) -> Result<(&Value, MerkleProof)> {
+    pub fn prove(&self, key: &Key) -> MiddlewareResult<(&Value, MerkleProof)> {
         let (_, mtp) = self.mt.prove(&RawValue(key.hash().0))?;
         let value = self.kvs.get(key).expect("key exists");
         Ok((value, mtp))
     }
-    pub fn prove_nonexistence(&self, key: &Key) -> Result<MerkleProof> {
-        self.mt.prove_nonexistence(&RawValue(key.hash().0))
+    pub fn prove_nonexistence(&self, key: &Key) -> MiddlewareResult<MerkleProof> {
+        Ok(self.mt.prove_nonexistence(&RawValue(key.hash().0))?)
     }
-    pub fn verify(root: Hash, proof: &MerkleProof, key: &Key, value: &Value) -> Result<()> {
+    pub fn verify(
+        root: Hash,
+        proof: &MerkleProof,
+        key: &Key,
+        value: &Value,
+    ) -> MiddlewareResult<()> {
         let key = RawValue(key.hash().0);
-        MerkleTree::verify(MAX_DEPTH, root, proof, &key, &value.raw())
+        Ok(MerkleTree::verify(
+            MAX_DEPTH,
+            root,
+            proof,
+            &key,
+            &value.raw(),
+        )?)
     }
-    pub fn verify_nonexistence(root: Hash, proof: &MerkleProof, key: &Key) -> Result<()> {
+    pub fn verify_nonexistence(root: Hash, proof: &MerkleProof, key: &Key) -> MiddlewareResult<()> {
         let key = RawValue(key.hash().0);
-        MerkleTree::verify_nonexistence(MAX_DEPTH, root, proof, &key)
+        Ok(MerkleTree::verify_nonexistence(
+            MAX_DEPTH, root, proof, &key,
+        )?)
     }
     // TODO: Rename to dict to be consistent maybe?
     pub fn kvs(&self) -> &HashMap<Key, Value> {
@@ -86,7 +100,7 @@ pub struct Set {
 }
 
 impl Set {
-    pub fn new(set: HashSet<Value>) -> Result<Self> {
+    pub fn new(set: HashSet<Value>) -> MiddlewareResult<Self> {
         let kvs_raw: HashMap<RawValue, RawValue> = set
             .iter()
             .map(|e| {
@@ -105,22 +119,37 @@ impl Set {
     pub fn contains(&self, value: &Value) -> bool {
         self.set.contains(value)
     }
-    pub fn prove(&self, value: &Value) -> Result<MerkleProof> {
+    pub fn prove(&self, value: &Value) -> MiddlewareResult<MerkleProof> {
         let h = hash_value(&value.raw());
         let (_, proof) = self.mt.prove(&RawValue::from(h))?;
         Ok(proof)
     }
-    pub fn prove_nonexistence(&self, value: &Value) -> Result<MerkleProof> {
+    pub fn prove_nonexistence(&self, value: &Value) -> MiddlewareResult<MerkleProof> {
         let h = hash_value(&value.raw());
-        self.mt.prove_nonexistence(&RawValue::from(h))
+        Ok(self.mt.prove_nonexistence(&RawValue::from(h))?)
     }
-    pub fn verify(root: Hash, proof: &MerkleProof, value: &Value) -> Result<()> {
+    pub fn verify(root: Hash, proof: &MerkleProof, value: &Value) -> MiddlewareResult<()> {
         let h = hash_value(&value.raw());
-        MerkleTree::verify(MAX_DEPTH, root, proof, &RawValue::from(h), &EMPTY_VALUE)
+        Ok(MerkleTree::verify(
+            MAX_DEPTH,
+            root,
+            proof,
+            &RawValue::from(h),
+            &EMPTY_VALUE,
+        )?)
     }
-    pub fn verify_nonexistence(root: Hash, proof: &MerkleProof, value: &Value) -> Result<()> {
+    pub fn verify_nonexistence(
+        root: Hash,
+        proof: &MerkleProof,
+        value: &Value,
+    ) -> MiddlewareResult<()> {
         let h = hash_value(&value.raw());
-        MerkleTree::verify_nonexistence(MAX_DEPTH, root, proof, &RawValue::from(h))
+        Ok(MerkleTree::verify_nonexistence(
+            MAX_DEPTH,
+            root,
+            proof,
+            &RawValue::from(h),
+        )?)
     }
     pub fn set(&self) -> &HashSet<Value> {
         &self.set
@@ -145,7 +174,7 @@ pub struct Array {
 }
 
 impl Array {
-    pub fn new(array: Vec<Value>) -> Result<Self> {
+    pub fn new(array: Vec<Value>) -> MiddlewareResult<Self> {
         let kvs_raw: HashMap<RawValue, RawValue> = array
             .iter()
             .enumerate()
@@ -160,24 +189,29 @@ impl Array {
     pub fn commitment(&self) -> Hash {
         self.mt.root()
     }
-    pub fn get(&self, i: usize) -> Result<&Value> {
+    pub fn get(&self, i: usize) -> MiddlewareResult<&Value> {
         self.array.get(i).ok_or_else(|| {
-            Error::Custom(format!("index {} out of bounds 0..{}", i, self.array.len()))
+            MiddlewareError::custom(format!("index {} out of bounds 0..{}", i, self.array.len()))
         })
     }
-    pub fn prove(&self, i: usize) -> Result<(&Value, MerkleProof)> {
+    pub fn prove(&self, i: usize) -> MiddlewareResult<(&Value, MerkleProof)> {
         let (_, mtp) = self.mt.prove(&RawValue::from(i as i64))?;
         let value = self.array.get(i).expect("valid index");
         Ok((value, mtp))
     }
-    pub fn verify(root: Hash, proof: &MerkleProof, i: usize, value: &Value) -> Result<()> {
-        MerkleTree::verify(
+    pub fn verify(
+        root: Hash,
+        proof: &MerkleProof,
+        i: usize,
+        value: &Value,
+    ) -> MiddlewareResult<()> {
+        Ok(MerkleTree::verify(
             MAX_DEPTH,
             root,
             proof,
             &RawValue::from(i as i64),
             &value.raw(),
-        )
+        )?)
     }
     pub fn array(&self) -> &[Value] {
         &self.array

@@ -25,10 +25,10 @@ impl TryFrom<SignedPodHelper> for SignedPod {
 
     fn try_from(helper: SignedPodHelper) -> Result<SignedPod, Self::Error> {
         if helper.pod_class != "Signed" {
-            return Err(Error::Custom("pod_class is not Signed"));
+            return Err(Error::custom("pod_class is not Signed"));
         }
         if helper.pod_type != "Mock" {
-            return Err(Error::Custom("pod_type is not Mock"));
+            return Err(Error::custom("pod_type is not Mock"));
         }
 
         let dict = Dictionary::new(helper.entries.clone())?
@@ -68,14 +68,14 @@ impl TryFrom<MainPodHelper> for MainPod {
 
     fn try_from(helper: MainPodHelper) -> Result<Self, Self::Error> {
         if helper.pod_class != "Main" {
-            return Err(Error::Custom("pod_class is not Main"));
+            return Err(Error::custom("pod_class is not Main"));
         }
         if helper.pod_type != "Mock" {
-            return Err(Error::Custom("pod_type is not Mock"));
+            return Err(Error::custom("pod_type is not Mock"));
         }
 
         let pod = MockMainPod::deserialize(helper.proof)
-            .map_err(|e| Error::Custom(format!("Failed to deserialize proof: {}", e)))?;
+            .map_err(|e| Error::custom(format!("Failed to deserialize proof: {}", e)))?;
 
         Ok(MainPod {
             pod: Box::new(pod),

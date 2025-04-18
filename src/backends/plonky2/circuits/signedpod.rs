@@ -14,6 +14,7 @@ use crate::{
     backends::plonky2::{
         basetypes::D,
         circuits::common::{CircuitBuilderPod, StatementArgTarget, StatementTarget, ValueTarget},
+        error::BackendResult,
         primitives::{
             merkletree::{
                 MerkleClaimAndProof, MerkleProofExistenceGadget, MerkleProofExistenceTarget,
@@ -26,7 +27,6 @@ use crate::{
         hash_str, Key, NativePredicate, Params, PodType, Predicate, RawValue, ToFields, Value, F,
         KEY_SIGNER, KEY_TYPE, SELF,
     },
-    Result,
 };
 
 pub struct SignedPodVerifyGadget {
@@ -34,7 +34,7 @@ pub struct SignedPodVerifyGadget {
 }
 
 impl SignedPodVerifyGadget {
-    pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<SignedPodVerifyTarget> {
+    pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> BackendResult<SignedPodVerifyTarget> {
         // 1. Verify id
         let id = builder.add_virtual_hash();
         let mut mt_proofs = Vec::new();
@@ -117,7 +117,7 @@ impl SignedPodVerifyTarget {
         statements
     }
 
-    pub fn set_targets(&self, pw: &mut PartialWitness<F>, pod: &SignedPod) -> Result<()> {
+    pub fn set_targets(&self, pw: &mut PartialWitness<F>, pod: &SignedPod) -> BackendResult<()> {
         // set the self.mt_proofs witness with the following order:
         // - KEY_TYPE leaf proof
         // - KEY_SIGNER leaf proof
@@ -144,7 +144,7 @@ impl SignedPodVerifyTarget {
                 )?;
                 Ok(v)
             })
-            .collect::<Result<Vec<&Value>>>()?[1];
+            .collect::<BackendResult<Vec<&Value>>>()?[1];
 
         // add the verification of the rest of leaves
         let mut curr = 2; // since we already added key_type and key_signer
@@ -211,7 +211,7 @@ pub mod tests {
     };
 
     #[test]
-    fn test_signed_pod_verify() -> Result<()> {
+    fn test_signed_pod_verify() -> BackendResult<()> {
         let params = Params {
             max_signed_pod_values: 6,
             ..Default::default()

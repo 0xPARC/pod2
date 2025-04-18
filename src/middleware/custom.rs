@@ -7,8 +7,10 @@ use plonky2::field::types::Field;
 // use serde::{Deserialize, Serialize};
 use crate::{
     middleware::HASH_SIZE,
-    middleware::{hash_fields, Hash, Key, NativePredicate, Params, ToFields, Value, F},
-    Error, Result,
+    middleware::{
+        hash_fields, Hash, Key, MiddlewareError, MiddlewareResult, NativePredicate, Params,
+        ToFields, Value, F,
+    },
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -197,7 +199,7 @@ impl CustomPredicate {
         params: &Params,
         statements: Vec<StatementTmpl>,
         args_len: usize,
-    ) -> Result<Self> {
+    ) -> MiddlewareResult<Self> {
         Self::new(name, params, true, statements, args_len)
     }
     pub fn or(
@@ -205,7 +207,7 @@ impl CustomPredicate {
         params: &Params,
         statements: Vec<StatementTmpl>,
         args_len: usize,
-    ) -> Result<Self> {
+    ) -> MiddlewareResult<Self> {
         Self::new(name, params, false, statements, args_len)
     }
     pub fn new(
@@ -214,9 +216,9 @@ impl CustomPredicate {
         conjunction: bool,
         statements: Vec<StatementTmpl>,
         args_len: usize,
-    ) -> Result<Self> {
+    ) -> MiddlewareResult<Self> {
         if statements.len() > params.max_custom_predicate_arity {
-            return Err(Error::MaxLength(
+            return Err(MiddlewareError::max_length(
                 "statements.len".to_string(),
                 statements.len(),
                 params.max_custom_predicate_arity,
@@ -400,13 +402,10 @@ mod tests {
     use plonky2::field::goldilocks_field::GoldilocksField;
 
     use super::*;
-    use crate::{
-        middleware::{
-            AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash,
-            KeyOrWildcard, NativePredicate, Operation, Params, PodId, PodType, Predicate,
-            Statement, StatementTmpl, StatementTmplArg, WildcardValue, SELF,
-        },
-        Result,
+    use crate::middleware::{
+        AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash,
+        KeyOrWildcard, NativePredicate, Operation, Params, PodId, PodType, Predicate, Statement,
+        StatementTmpl, StatementTmplArg, WildcardValue, SELF,
     };
 
     fn st(p: Predicate, args: Vec<StatementTmplArg>) -> StatementTmpl {
@@ -429,7 +428,7 @@ mod tests {
     type NP = NativePredicate;
 
     #[test]
-    fn is_double_test() -> Result<()> {
+    fn is_double_test() -> MiddlewareResult<()> {
         let params = Params::default();
 
         /*
@@ -486,7 +485,7 @@ mod tests {
     }
 
     #[test]
-    fn ethdos_test() -> Result<()> {
+    fn ethdos_test() -> MiddlewareResult<()> {
         let params = Params {
             max_custom_predicate_wildcards: 12,
             ..Default::default()
