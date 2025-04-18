@@ -165,7 +165,7 @@ mod tests {
                 "value {:#?} should equal deserialized {:#?}",
                 value, deserialized
             );
-            let expected_deserialized: TypedValue = serde_json::from_str(&expected).unwrap();
+            let expected_deserialized: TypedValue = serde_json::from_str(expected).unwrap();
             assert_eq!(value, expected_deserialized);
         }
     }
