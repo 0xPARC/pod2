@@ -435,6 +435,7 @@ impl fmt::Display for PodType {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Params {
     pub max_input_signed_pods: usize,
     pub max_input_main_pods: usize,
