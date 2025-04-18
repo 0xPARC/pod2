@@ -84,6 +84,7 @@ impl ToFields for WildcardValue {
 
 /// Type encapsulating statements with their associated arguments.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "predicate", content = "args")]
 pub enum Statement {
     None,
     ValueOf(AnchoredKey, Value),
