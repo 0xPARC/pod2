@@ -174,6 +174,12 @@ impl From<&TypedValue> for RawValue {
     }
 }
 
+// Schemars/JsonSchema can't handle Serde's "untagged" variants.
+// Instead, we have to implement schema generation directly. It's not as
+// complicated as it looks, though.
+// We have to generate schemas for each of the variants, and then combine them
+// into a single schema using the `anyOf` keyword.
+// If we add a new variant, we will have to update this function.
 impl JsonSchema for TypedValue {
     fn schema_name() -> String {
         "TypedValue".to_string()
@@ -206,7 +212,7 @@ impl JsonSchema for TypedValue {
             ..Default::default()
         };
 
-        // Int is serialized/deserialized as a string
+        // Int is serialized/deserialized as a tagged string
         let int_schema = schemars::schema::SchemaObject {
             instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
             object: Some(Box::new(schemars::schema::ObjectValidation {
@@ -241,6 +247,7 @@ impl JsonSchema for TypedValue {
             ..Default::default()
         };
 
+        // This is the part that Schemars can't generate automatically:
         let untagged_array_schema = gen.subschema_for::<Array>();
         let untagged_string_schema = gen.subschema_for::<String>();
         let untagged_bool_schema = gen.subschema_for::<bool>();
@@ -274,17 +281,7 @@ pub struct Value {
     raw: RawValue,
 }
 
-impl JsonSchema for Value {
-    fn schema_name() -> String {
-        "Value".to_string()
-    }
-
-    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
-        // Just use the schema of TypedValue since that's what we're actually serializing
-        <TypedValue>::json_schema(gen)
-    }
-}
-
+// Values are serialized as their TypedValue.
 impl Serialize for Value {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -301,6 +298,17 @@ impl<'de> Deserialize<'de> for Value {
     {
         let typed = TypedValue::deserialize(deserializer)?;
         Ok(Value::new(typed))
+    }
+}
+
+impl JsonSchema for Value {
+    fn schema_name() -> String {
+        "Value".to_string()
+    }
+
+    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        // Just use the schema of TypedValue since that's what we're actually serializing
+        <TypedValue>::json_schema(gen)
     }
 }
 
@@ -457,6 +465,10 @@ impl From<Key> for RawValue {
     }
 }
 
+// When serializing a Key, we serialize only the name field, and not the hash.
+// We can't directly tell Serde to render the whole struct as a string, so we
+// implement our own serialization. It's important that if we change the
+// structure of the Key struct, we update this implementation.
 impl Serialize for Key {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -476,6 +488,9 @@ impl<'de> Deserialize<'de> for Key {
     }
 }
 
+// As per the above, we implement custom serialization for the Key type, and
+// Schemars can't automatically generate a schema for it. Instead, we tell it
+// to use the standard String schema.
 impl JsonSchema for Key {
     fn schema_name() -> String {
         "Key".to_string()

@@ -253,6 +253,9 @@ mod tests {
     }
 
     #[test]
+    // This tests that we can generate JSON Schemas for the MainPod and
+    // SignedPod types, and that we can validate real Signed and Main Pods
+    // against the schemas.
     fn test_schema() {
         let mainpod_schema = schema_for!(MainPodHelper);
         let signedpod_schema = schema_for!(SignedPodHelper);
