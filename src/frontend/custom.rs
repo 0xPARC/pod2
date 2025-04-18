@@ -4,7 +4,6 @@ use std::{collections::HashMap, fmt, hash as h, iter, iter::zip, sync::Arc};
 use anyhow::{anyhow, Result};
 use schemars::JsonSchema;
 
-// use serde::{Deserialize, Serialize};
 use crate::{
     frontend::{AnchoredKey, Statement, StatementArg},
     middleware::{

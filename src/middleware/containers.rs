@@ -171,8 +171,10 @@ impl<'de> Deserialize<'de> for Set {
 /// array index (integer).
 ///    leaf.key=i
 ///    leaf.value=original_value
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
+#[serde(transparent)]
 pub struct Array {
+    #[serde(skip)]
     mt: MerkleTree,
     array: Vec<Value>,
 }
@@ -223,15 +225,6 @@ impl PartialEq for Array {
     }
 }
 impl Eq for Array {}
-
-impl Serialize for Array {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        self.array.serialize(serializer)
-    }
-}
 
 impl<'de> Deserialize<'de> for Array {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
