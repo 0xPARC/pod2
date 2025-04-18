@@ -121,7 +121,7 @@ where
 {
     let mut set = serializer.serialize_seq(Some(value.len()))?;
     let mut sorted_values: Vec<&Value> = value.iter().collect();
-    sorted_values.sort_by(|a, b| a.cmp(b));
+    sorted_values.sort();
     for v in sorted_values {
         set.serialize_element(v)?;
     }
