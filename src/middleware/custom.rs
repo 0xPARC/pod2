@@ -34,6 +34,7 @@ impl ToFields for Wildcard {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", content = "value")]
 pub enum KeyOrWildcard {
     Key(Key),
     Wildcard(Wildcard),
@@ -61,6 +62,7 @@ impl ToFields for KeyOrWildcard {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", content = "value")]
 pub enum StatementTmplArg {
     None,
     Literal(Value),
