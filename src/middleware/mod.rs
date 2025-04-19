@@ -30,7 +30,7 @@ use crate::backends::plonky2::primitives::merkletree::MerkleProof;
 
 pub const SELF: PodId = PodId(SELF_ID_HASH);
 
-// TODO: Move all value-related types to to `value.rs`
+// TODO: Move all value-related types to `value.rs`
 #[derive(Clone, Debug)]
 // TODO #[schemars(transform = serialization::transform_value_schema)]
 pub enum TypedValue {
