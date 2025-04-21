@@ -18,7 +18,10 @@ use crate::{
     backends::plonky2::{
         basetypes::{C, D},
         circuits::mainpod::{MainPodVerifyCircuit, MainPodVerifyInput},
-        primitives::{merkletree, merkletree::MerkleClaimAndProof},
+        primitives::{
+            merkletree,
+            merkletree::{MerkleClaimAndProof, TreeError},
+        },
         signedpod::SignedPod,
     },
     middleware::{
@@ -71,7 +74,7 @@ pub(crate) fn extract_merkle_proofs(
             )),
             _ => None,
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<Result<Vec<_>, TreeError>>()?;
     if merkle_proofs.len() > params.max_merkle_proofs {
         Err(Error::custom(format!(
             "The number of required Merkle proofs ({}) exceeds the maximum number ({}).",

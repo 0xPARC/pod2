@@ -16,7 +16,7 @@ pub enum InnerError {
 
     // sub-categories of errors
     #[error(transparent)]
-    Tree(#[from] crate::backends::plonky2::primitives::error::TreeError),
+    Tree(#[from] crate::backends::plonky2::primitives::merkletree::error::TreeError),
     #[error(transparent)]
     Middleware(#[from] crate::middleware::error::MiddlewareError),
 
@@ -67,6 +67,8 @@ pub enum Error {
     Anyhow(#[from] anyhow::Error),
     #[error(transparent)]
     Infallible(#[from] std::convert::Infallible),
+    #[error(transparent)]
+    Tree(#[from] crate::backends::plonky2::primitives::merkletree::error::TreeError),
 }
 
 impl Debug for Error {
@@ -154,7 +156,7 @@ impl Error {
             backtrace: Box::new(Backtrace::capture()),
         }
     }
-    pub fn tree(e: crate::backends::plonky2::primitives::error::TreeError) -> Self {
+    pub fn tree(e: crate::backends::plonky2::primitives::merkletree::error::TreeError) -> Self {
         Self::Inner {
             inner: Box::new(InnerError::Tree(e)),
             backtrace: Box::new(Backtrace::capture()),

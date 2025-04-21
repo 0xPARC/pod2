@@ -80,8 +80,9 @@ impl Operation {
                 .cloned()
                 .ok_or(Error::custom(format!("Missing Merkle proof index {}", i)))
                 .and_then(|mp| {
-                    mp.try_into()
-                        .map(crate::middleware::OperationAux::MerkleProof)
+                    Ok(mp
+                        .try_into()
+                        .map(crate::middleware::OperationAux::MerkleProof)?)
                 }),
         }?;
         middleware::Operation::op(self.0.clone(), &deref_args, &deref_aux)

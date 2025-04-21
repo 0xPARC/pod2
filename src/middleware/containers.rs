@@ -45,15 +45,23 @@ impl Dictionary {
         Ok((value, mtp))
     }
     pub fn prove_nonexistence(&self, key: &Key) -> Result<MerkleProof> {
-        self.mt.prove_nonexistence(&RawValue(key.hash().0))
+        Ok(self.mt.prove_nonexistence(&RawValue(key.hash().0))?)
     }
     pub fn verify(root: Hash, proof: &MerkleProof, key: &Key, value: &Value) -> Result<()> {
         let key = RawValue(key.hash().0);
-        MerkleTree::verify(MAX_DEPTH, root, proof, &key, &value.raw())
+        Ok(MerkleTree::verify(
+            MAX_DEPTH,
+            root,
+            proof,
+            &key,
+            &value.raw(),
+        )?)
     }
     pub fn verify_nonexistence(root: Hash, proof: &MerkleProof, key: &Key) -> Result<()> {
         let key = RawValue(key.hash().0);
-        MerkleTree::verify_nonexistence(MAX_DEPTH, root, proof, &key)
+        Ok(MerkleTree::verify_nonexistence(
+            MAX_DEPTH, root, proof, &key,
+        )?)
     }
     // TODO: Rename to dict to be consistent maybe?
     pub fn kvs(&self) -> &HashMap<Key, Value> {
@@ -112,15 +120,26 @@ impl Set {
     }
     pub fn prove_nonexistence(&self, value: &Value) -> Result<MerkleProof> {
         let h = hash_value(&value.raw());
-        self.mt.prove_nonexistence(&RawValue::from(h))
+        Ok(self.mt.prove_nonexistence(&RawValue::from(h))?)
     }
     pub fn verify(root: Hash, proof: &MerkleProof, value: &Value) -> Result<()> {
         let h = hash_value(&value.raw());
-        MerkleTree::verify(MAX_DEPTH, root, proof, &RawValue::from(h), &EMPTY_VALUE)
+        Ok(MerkleTree::verify(
+            MAX_DEPTH,
+            root,
+            proof,
+            &RawValue::from(h),
+            &EMPTY_VALUE,
+        )?)
     }
     pub fn verify_nonexistence(root: Hash, proof: &MerkleProof, value: &Value) -> Result<()> {
         let h = hash_value(&value.raw());
-        MerkleTree::verify_nonexistence(MAX_DEPTH, root, proof, &RawValue::from(h))
+        Ok(MerkleTree::verify_nonexistence(
+            MAX_DEPTH,
+            root,
+            proof,
+            &RawValue::from(h),
+        )?)
     }
     pub fn set(&self) -> &HashSet<Value> {
         &self.set
@@ -171,13 +190,13 @@ impl Array {
         Ok((value, mtp))
     }
     pub fn verify(root: Hash, proof: &MerkleProof, i: usize, value: &Value) -> Result<()> {
-        MerkleTree::verify(
+        Ok(MerkleTree::verify(
             MAX_DEPTH,
             root,
             proof,
             &RawValue::from(i as i64),
             &value.raw(),
-        )
+        )?)
     }
     pub fn array(&self) -> &[Value] {
         &self.array

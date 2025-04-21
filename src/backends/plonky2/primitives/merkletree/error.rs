@@ -2,6 +2,8 @@
 
 use std::{backtrace::Backtrace, fmt::Debug};
 
+pub type Result<T, E = TreeError> = core::result::Result<T, E>;
+
 #[derive(Debug, thiserror::Error)]
 pub enum TreeInnerError {
     #[error("key not found")]
@@ -18,6 +20,8 @@ pub enum TreeInnerError {
     InvalidProof(String),
     #[error("key too short (key length: {0}) for the max_depth: {1}")]
     TooShortKey(usize, usize),
+    #[error("{0}")]
+    Custom(String),
 }
 
 #[derive(thiserror::Error)]
@@ -73,6 +77,12 @@ impl TreeError {
     pub fn too_short_key(depth: usize, max_depth: usize) -> Self {
         Self {
             inner: Box::new(TreeInnerError::TooShortKey(depth, max_depth)),
+            backtrace: Box::new(Backtrace::capture()),
+        }
+    }
+    pub fn custom(s: String) -> Self {
+        Self {
+            inner: Box::new(TreeInnerError::Custom(s)),
             backtrace: Box::new(Backtrace::capture()),
         }
     }

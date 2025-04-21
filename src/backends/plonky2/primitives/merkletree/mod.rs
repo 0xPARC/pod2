@@ -9,11 +9,11 @@ use std::{
 use plonky2::field::types::Field;
 
 // use serde::{Deserialize, Serialize};
-pub use super::{error::TreeError, merkletree_circuit::*};
-use crate::{
-    middleware::{hash_fields, Hash, RawValue, EMPTY_HASH, EMPTY_VALUE, F},
-    Error, Result,
-};
+pub use super::merkletree_circuit::*;
+use crate::middleware::{hash_fields, Hash, RawValue, EMPTY_HASH, EMPTY_VALUE, F};
+
+pub mod error;
+pub use error::{Result, TreeError};
 
 /// Implements the MerkleTree specified at
 /// https://0xparc.github.io/pod2/merkletree.html
@@ -61,7 +61,7 @@ impl MerkleTree {
         let key_resolution = self.root.down(0, self.max_depth, path, None)?;
         match key_resolution {
             Some((k, v)) if &k == key => Ok(v),
-            _ => Err(Error::tree(TreeError::KeyNotFound)),
+            _ => Err(TreeError::key_not_found()),
         }
     }
 
@@ -100,7 +100,7 @@ impl MerkleTree {
                     other_leaf: None,
                 },
             )),
-            _ => Err(Error::tree(TreeError::KeyNotFound)),
+            _ => Err(TreeError::key_not_found()),
         }
     }
 
@@ -130,7 +130,7 @@ impl MerkleTree {
                 siblings,
                 other_leaf: Some((k, v)),
             }),
-            _ => Err(Error::tree(TreeError::KeyNotFound)),
+            _ => Err(TreeError::key_not_found()),
         }
         // both cases prove that the given key don't exist in the tree. ∎
     }
@@ -146,7 +146,7 @@ impl MerkleTree {
         let h = proof.compute_root_from_leaf(max_depth, key, Some(*value))?;
 
         if h != root {
-            Err(Error::tree(TreeError::ProofFail("inclusion".to_string())))
+            Err(TreeError::proof_fail("inclusion".to_string()))
         } else {
             Ok(())
         }
@@ -161,16 +161,16 @@ impl MerkleTree {
         key: &RawValue,
     ) -> Result<()> {
         match proof.other_leaf {
-            Some((k, _v)) if &k == key => Err(Error::tree(TreeError::InvalidProof(
-                "non-existence".to_string(),
-            ))),
+            Some((k, _v)) if &k == key => {
+                Err(TreeError::invalid_proof("non-existence".to_string()))
+            }
             _ => {
                 let k = proof.other_leaf.map(|(k, _)| k).unwrap_or(*key);
                 let v: Option<RawValue> = proof.other_leaf.map(|(_, v)| v);
                 let h = proof.compute_root_from_leaf(max_depth, &k, v)?;
 
                 if h != root {
-                    Err(Error::tree(TreeError::ProofFail("exclusion".to_string())))
+                    Err(TreeError::proof_fail("exclusion".to_string()))
                 } else {
                     Ok(())
                 }
@@ -250,7 +250,7 @@ impl MerkleProof {
         value: Option<RawValue>,
     ) -> Result<Hash> {
         if self.siblings.len() >= max_depth {
-            return Err(Error::tree(TreeError::MaxDepth));
+            return Err(TreeError::max_depth());
         }
 
         let path = keypath(max_depth, *key)?;
@@ -301,7 +301,7 @@ impl MerkleClaimAndProof {
         proof: &MerkleProof,
     ) -> Result<Self> {
         if proof.siblings.len() > max_depth {
-            Err(Error::custom(format!(
+            Err(TreeError::custom(format!(
                 "Number of siblings ({}) exceeds maximum depth ({})",
                 proof.siblings.len(),
                 max_depth
@@ -329,10 +329,10 @@ impl MerkleClaimAndProof {
 }
 
 impl TryFrom<MerkleClaimAndProof> for MerkleProof {
-    type Error = Error;
+    type Error = TreeError;
     fn try_from(mp: MerkleClaimAndProof) -> Result<Self> {
         if !mp.enabled {
-            return Err(Error::custom("Not a valid Merkle proof.".to_string()));
+            return Err(TreeError::custom("Not a valid Merkle proof.".to_string()));
         }
         Ok(MerkleProof {
             existence: mp.proof.existence,
@@ -438,7 +438,7 @@ impl Node {
         mut siblings: Option<&mut Vec<Hash>>,
     ) -> Result<Option<(RawValue, RawValue)>> {
         if lvl >= max_depth {
-            return Err(Error::tree(TreeError::MaxDepth));
+            return Err(TreeError::max_depth());
         }
 
         match self {
@@ -468,7 +468,7 @@ impl Node {
     // adds the leaf at the tree from the current node (self), without computing any hash
     pub(crate) fn add_leaf(&mut self, lvl: usize, max_depth: usize, leaf: Leaf) -> Result<()> {
         if lvl >= max_depth {
-            return Err(Error::tree(TreeError::MaxDepth));
+            return Err(TreeError::max_depth());
         }
 
         match self {
@@ -500,7 +500,7 @@ impl Node {
                     // Note: current approach returns an error when trying to
                     // add to a leaf where the key already exists. We could also
                     // ignore it if needed.
-                    return Err(Error::tree(TreeError::KeyExists));
+                    return Err(TreeError::key_exists());
                 }
                 let old_leaf = l.clone();
                 // set self as an intermediate node
@@ -508,7 +508,7 @@ impl Node {
                 return self.down_till_divergence(lvl, max_depth, old_leaf, leaf);
             }
             Self::None => {
-                return Err(Error::tree(TreeError::EmptyNode));
+                return Err(TreeError::empty_node());
             }
         }
         Ok(())
@@ -526,7 +526,7 @@ impl Node {
         new_leaf: Leaf,
     ) -> Result<()> {
         if lvl >= max_depth {
-            return Err(Error::tree(TreeError::MaxDepth));
+            return Err(TreeError::max_depth());
         }
 
         if let Node::Intermediate(ref mut n) = self {
@@ -630,10 +630,7 @@ pub(crate) fn keypath(max_depth: usize, k: RawValue) -> Result<Vec<bool>> {
         // note that our current keys are of Value type, which are 4 Goldilocks
         // field elements, ie ~256 bits, therefore the max_depth can not be
         // bigger than 256.
-        return Err(Error::tree(TreeError::TooShortKey(
-            8 * bytes.len(),
-            max_depth,
-        )));
+        return Err(TreeError::too_short_key(8 * bytes.len(), max_depth));
     }
     Ok((0..max_depth)
         .map(|n| bytes[n / 8] & (1 << (n % 8)) != 0)
