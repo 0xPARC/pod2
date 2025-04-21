@@ -25,9 +25,9 @@ use crate::{
         signedpod::SignedPod,
     },
     middleware::{
-        self, AnchoredKey, Hash, MainPodInputs, MiddlewareError, NativeOperation, NonePod,
-        OperationType, Params, Pod, PodId, PodProver, PodType, StatementArg, ToFields, F, KEY_TYPE,
-        SELF,
+        self, AnchoredKey, DynError, Hash, MainPodInputs, MiddlewareError, NativeOperation,
+        NonePod, OperationType, Params, Pod, PodId, PodProver, PodType, StatementArg, ToFields, F,
+        KEY_TYPE, SELF,
     },
     Error, Result,
 };
@@ -361,7 +361,7 @@ impl PodProver for Prover {
         &mut self,
         params: &Params,
         inputs: MainPodInputs,
-    ) -> Result<Box<dyn Pod>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Box<dyn Pod>, Box<DynError>> {
         Ok(self._prove(params, inputs).map(Box::new)?)
     }
 }
@@ -417,7 +417,7 @@ impl MainPod {
 }
 
 impl Pod for MainPod {
-    fn verify(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    fn verify(&self) -> Result<(), Box<DynError>> {
         Ok(self._verify()?)
     }
 

@@ -1,6 +1,6 @@
 use std::{backtrace::Backtrace, fmt::Debug};
 
-use crate::middleware::{Statement, StatementTmpl};
+use crate::middleware::{DynError, Statement, StatementTmpl};
 
 pub type Result<T, E = Error> = core::result::Result<T, E>;
 
@@ -70,7 +70,7 @@ pub enum Error {
     #[error(transparent)]
     Tree(#[from] crate::backends::plonky2::primitives::merkletree::error::TreeError),
     #[error(transparent)]
-    Backend(#[from] Box<dyn std::error::Error + Send + Sync>),
+    Backend(#[from] Box<DynError>),
     #[error(transparent)]
     Middleware(#[from] crate::middleware::MiddlewareError),
 }

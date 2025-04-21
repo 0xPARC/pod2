@@ -6,8 +6,8 @@ use crate::{
     backends::plonky2::primitives::merkletree::MerkleTree,
     constants::MAX_DEPTH,
     middleware::{
-        containers::Dictionary, hash_str, AnchoredKey, Hash, Key, MiddlewareError, Params, Pod,
-        PodId, PodSigner, PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE,
+        containers::Dictionary, hash_str, AnchoredKey, DynError, Hash, Key, MiddlewareError,
+        Params, Pod, PodId, PodSigner, PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE,
     },
     Error, Result,
 };
@@ -41,7 +41,7 @@ impl PodSigner for MockSigner {
         &mut self,
         params: &Params,
         kvs: &HashMap<Key, Value>,
-    ) -> Result<Box<dyn Pod>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Box<dyn Pod>, Box<DynError>> {
         Ok(self._sign(params, kvs).map(Box::new)?)
     }
 }
@@ -109,7 +109,7 @@ impl MockSignedPod {
 }
 
 impl Pod for MockSignedPod {
-    fn verify(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    fn verify(&self) -> Result<(), Box<DynError>> {
         Ok(self._verify()?)
     }
 

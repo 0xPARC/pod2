@@ -18,8 +18,8 @@ use crate::{
         primitives::merkletree::MerkleClaimAndProof,
     },
     middleware::{
-        self, hash_str, AnchoredKey, MainPodInputs, MiddlewareError, NativePredicate, Params, Pod,
-        PodId, PodProver, Predicate, StatementArg, KEY_TYPE, SELF,
+        self, hash_str, AnchoredKey, DynError, MainPodInputs, MiddlewareError, NativePredicate,
+        Params, Pod, PodId, PodProver, Predicate, StatementArg, KEY_TYPE, SELF,
     },
     Error, Result,
 };
@@ -31,7 +31,7 @@ impl PodProver for MockProver {
         &mut self,
         params: &Params,
         inputs: MainPodInputs,
-    ) -> Result<Box<dyn Pod>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Box<dyn Pod>, Box<DynError>> {
         Ok(Box::new(MockMainPod::new(params, inputs)?))
     }
 }
@@ -264,7 +264,7 @@ impl MockMainPod {
 }
 
 impl Pod for MockMainPod {
-    fn verify(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    fn verify(&self) -> Result<(), Box<DynError>> {
         Ok(self._verify()?)
     }
     fn id(&self) -> PodId {

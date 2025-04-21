@@ -9,8 +9,8 @@ use crate::{
     },
     constants::MAX_DEPTH,
     middleware::{
-        containers::Dictionary, AnchoredKey, Hash, Key, MiddlewareError, Params, Pod, PodId,
-        PodSigner, PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE,
+        containers::Dictionary, AnchoredKey, DynError, Hash, Key, MiddlewareError, Params, Pod,
+        PodId, PodSigner, PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE,
     },
     Error, Result,
 };
@@ -41,7 +41,7 @@ impl PodSigner for Signer {
         &mut self,
         params: &Params,
         kvs: &HashMap<Key, Value>,
-    ) -> Result<Box<dyn Pod>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Box<dyn Pod>, Box<DynError>> {
         Ok(self._sign(params, kvs).map(Box::new)?)
     }
 }
@@ -89,7 +89,7 @@ impl SignedPod {
 }
 
 impl Pod for SignedPod {
-    fn verify(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    fn verify(&self) -> Result<(), Box<DynError>> {
         Ok(self._verify().map_err(Box::new)?)
     }
 

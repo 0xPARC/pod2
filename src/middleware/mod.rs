@@ -504,11 +504,10 @@ impl Params {
     }
 }
 
-// TODO: Use this alias instead of the long thing
-// pub type DynError = dyn std::error::Error + Send + Sync;
+pub type DynError = dyn std::error::Error + Send + Sync;
 
 pub trait Pod: fmt::Debug + DynClone {
-    fn verify(&self) -> MiddlewareResult<(), Box<dyn std::error::Error + Send + Sync>>;
+    fn verify(&self) -> Result<(), Box<DynError>>;
     fn id(&self) -> PodId;
     fn pub_statements(&self) -> Vec<Statement>;
     /// Extract key-values from ValueOf public statements
@@ -543,7 +542,7 @@ pub trait PodSigner {
         &mut self,
         params: &Params,
         kvs: &HashMap<Key, Value>,
-    ) -> MiddlewareResult<Box<dyn Pod>, Box<dyn std::error::Error + Send + Sync>>;
+    ) -> Result<Box<dyn Pod>, Box<DynError>>;
 }
 
 /// This is a filler type that fulfills the Pod trait and always verifies.  It's empty.  This
@@ -552,7 +551,7 @@ pub trait PodSigner {
 pub struct NonePod {}
 
 impl Pod for NonePod {
-    fn verify(&self) -> MiddlewareResult<(), Box<dyn std::error::Error + Send + Sync>> {
+    fn verify(&self) -> Result<(), Box<DynError>> {
         Ok(())
     }
     fn id(&self) -> PodId {
@@ -588,7 +587,7 @@ pub trait PodProver {
         &mut self,
         params: &Params,
         inputs: MainPodInputs,
-    ) -> MiddlewareResult<Box<dyn Pod>, Box<dyn std::error::Error + Send + Sync>>;
+    ) -> Result<Box<dyn Pod>, Box<DynError>>;
 }
 
 pub trait ToFields {
