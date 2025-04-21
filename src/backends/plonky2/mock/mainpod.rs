@@ -31,7 +31,7 @@ impl PodProver for MockProver {
         &mut self,
         params: &Params,
         inputs: MainPodInputs,
-    ) -> BackendResult<Box<dyn Pod>, Box<DynError>> {
+    ) -> Result<Box<dyn Pod>, Box<DynError>> {
         Ok(Box::new(MockMainPod::new(params, inputs)?))
     }
 }
@@ -245,7 +245,7 @@ impl MockMainPod {
                     .unwrap()
                     .check_and_log(&self.params, &s.clone().try_into().unwrap())
             })
-            .collect::<BackendResult<Vec<_>, MiddlewareError>>()
+            .collect::<Result<Vec<_>, MiddlewareError>>()
             .unwrap();
         if !ids_match {
             return Err(BackendError::pod_id_invalid());
@@ -264,7 +264,7 @@ impl MockMainPod {
 }
 
 impl Pod for MockMainPod {
-    fn verify(&self) -> BackendResult<(), Box<DynError>> {
+    fn verify(&self) -> Result<(), Box<DynError>> {
         Ok(self._verify()?)
     }
     fn id(&self) -> PodId {

@@ -102,7 +102,7 @@ impl SignedPod {
         self.pod.id()
     }
     pub fn verify(&self) -> FrontendResult<()> {
-        Ok(self.pod.verify().map_err(FrontendError::Backend)?)
+        self.pod.verify().map_err(FrontendError::Backend)
     }
     pub fn kvs(&self) -> &HashMap<Key, Value> {
         &self.kvs

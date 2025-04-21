@@ -3,8 +3,6 @@
 
 pub mod backends;
 pub mod constants;
-mod error;
-pub use error::{SuperError, SuperResult};
 pub mod frontend;
 pub mod middleware;
 

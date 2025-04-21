@@ -402,13 +402,10 @@ mod tests {
     use plonky2::field::goldilocks_field::GoldilocksField;
 
     use super::*;
-    use crate::{
-        middleware::{
-            AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash,
-            KeyOrWildcard, NativePredicate, Operation, Params, PodId, PodType, Predicate,
-            Statement, StatementTmpl, StatementTmplArg, WildcardValue, SELF,
-        },
-        SuperResult,
+    use crate::middleware::{
+        AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash,
+        KeyOrWildcard, NativePredicate, Operation, Params, PodId, PodType, Predicate, Statement,
+        StatementTmpl, StatementTmplArg, WildcardValue, SELF,
     };
 
     fn st(p: Predicate, args: Vec<StatementTmplArg>) -> StatementTmpl {
@@ -431,7 +428,7 @@ mod tests {
     type NP = NativePredicate;
 
     #[test]
-    fn is_double_test() -> SuperResult<()> {
+    fn is_double_test() -> MiddlewareResult<()> {
         let params = Params::default();
 
         /*
@@ -488,7 +485,7 @@ mod tests {
     }
 
     #[test]
-    fn ethdos_test() -> SuperResult<()> {
+    fn ethdos_test() -> MiddlewareResult<()> {
         let params = Params {
             max_custom_predicate_wildcards: 12,
             ..Default::default()

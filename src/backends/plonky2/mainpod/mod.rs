@@ -73,7 +73,7 @@ pub(crate) fn extract_merkle_proofs(
             )),
             _ => None,
         })
-        .collect::<BackendResult<Vec<_>, TreeError>>()?;
+        .collect::<Result<Vec<_>, TreeError>>()?;
     if merkle_proofs.len() > params.max_merkle_proofs {
         Err(BackendError::custom(format!(
             "The number of required Merkle proofs ({}) exceeds the maximum number ({}).",
@@ -363,7 +363,7 @@ impl PodProver for Prover {
         &mut self,
         params: &Params,
         inputs: MainPodInputs,
-    ) -> BackendResult<Box<dyn Pod>, Box<DynError>> {
+    ) -> Result<Box<dyn Pod>, Box<DynError>> {
         Ok(self._prove(params, inputs).map(Box::new)?)
     }
 }
@@ -420,7 +420,7 @@ impl MainPod {
 }
 
 impl Pod for MainPod {
-    fn verify(&self) -> BackendResult<(), Box<DynError>> {
+    fn verify(&self) -> Result<(), Box<DynError>> {
         Ok(self._verify()?)
     }
 

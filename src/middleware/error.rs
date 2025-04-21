@@ -2,18 +2,12 @@
 
 use std::{backtrace::Backtrace, fmt::Debug};
 
-use crate::middleware::{Operation, PodId, PodType, Statement, StatementArg, Value};
+use crate::middleware::{Operation, Statement, StatementArg};
 
 pub type MiddlewareResult<T, E = MiddlewareError> = core::result::Result<T, E>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum MiddlewareInnerError {
-    #[error("type does not match, expected {0}, found {1}")]
-    TypeNotEqual(PodType, Value),
-    #[error("id does not match, expected {0}, found {1}")]
-    IdNotEqual(PodId, PodId),
-    #[error("invalid operation")]
-    InvalidOp,
     #[error("incorrect statement args")]
     IncorrectStatementArgs,
     #[error("invalid deduction: {0:?} ⇏ {1:#}")]
@@ -24,7 +18,7 @@ pub enum MiddlewareInnerError {
     MaxLength(String, usize, usize),
     #[error("{0} amount of {1} should be {1} but it's {2}")]
     DiffAmount(String, String, usize, usize),
-
+    // Other
     #[error("{0}")]
     Custom(String),
 }
@@ -36,7 +30,6 @@ pub enum MiddlewareError {
         inner: Box<MiddlewareInnerError>,
         backtrace: Box<Backtrace>,
     },
-    // Wrappers on top of other errors
     #[error(transparent)]
     Tree(#[from] crate::backends::plonky2::primitives::merkletree::error::TreeError),
 }
@@ -57,15 +50,6 @@ macro_rules! new {
 }
 use MiddlewareInnerError::*;
 impl MiddlewareError {
-    pub(crate) fn type_not_equal(expected: PodType, found: Value) -> Self {
-        new!(TypeNotEqual(expected, found))
-    }
-    pub(crate) fn id_not_equal(expected: PodId, found: PodId) -> Self {
-        new!(IdNotEqual(expected, found))
-    }
-    pub(crate) fn invalid_op() -> Self {
-        new!(InvalidOp)
-    }
     pub(crate) fn incorrect_statements_args() -> Self {
         new!(IncorrectStatementArgs)
     }

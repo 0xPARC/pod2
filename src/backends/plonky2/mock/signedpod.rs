@@ -47,7 +47,7 @@ impl PodSigner for MockSigner {
         &mut self,
         params: &Params,
         kvs: &HashMap<Key, Value>,
-    ) -> BackendResult<Box<dyn Pod>, Box<DynError>> {
+    ) -> Result<Box<dyn Pod>, Box<DynError>> {
         Ok(self._sign(params, kvs).map(Box::new)?)
     }
 }
@@ -115,7 +115,7 @@ impl MockSignedPod {
 }
 
 impl Pod for MockSignedPod {
-    fn verify(&self) -> BackendResult<(), Box<DynError>> {
+    fn verify(&self) -> Result<(), Box<DynError>> {
         Ok(self._verify()?)
     }
 
@@ -174,7 +174,7 @@ pub mod tests {
         let pod = pod.sign(&mut signer).unwrap();
         let pod = pod.pod.into_any().downcast::<MockSignedPod>().unwrap();
 
-        pod.verify()?;
+        pod._verify()?;
         println!("id: {}", pod.id());
         println!("kvs: {:?}", pod.kvs());
 

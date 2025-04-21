@@ -123,7 +123,7 @@ impl Signature {
             proof: self.0.clone(),
             public_inputs,
         })
-        .map_err(|_| BackendError::plonky2_proof_fail())
+        .map_err(BackendError::plonky2_proof_fail)
     }
 }
 
