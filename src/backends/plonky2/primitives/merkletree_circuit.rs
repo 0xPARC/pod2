@@ -702,6 +702,8 @@ pub mod tests {
         assert_eq!(
             MerkleTree::verify(max_depth, tree2.root(), &proof, &key, &value)
                 .unwrap_err()
+                .inner()
+                .unwrap()
                 .to_string(),
             "proof of inclusion does not verify"
         );

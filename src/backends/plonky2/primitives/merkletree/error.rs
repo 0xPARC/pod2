@@ -49,6 +49,12 @@ macro_rules! new {
 }
 use TreeInnerError::*;
 impl TreeError {
+    pub fn inner(&self) -> Option<&TreeInnerError> {
+        match self {
+            Self::Inner { inner, .. } => Some(inner),
+            _ => None,
+        }
+    }
     pub(crate) fn key_not_found() -> Self {
         new!(KeyNotFound)
     }
