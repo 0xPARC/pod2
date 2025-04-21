@@ -293,8 +293,7 @@ impl PodProver for Prover {
             .signed_pods
             .iter()
             .map(|p| {
-                let p = p
-                    .as_any()
+                let p = (*p as &dyn Any)
                     .downcast_ref::<SignedPod>()
                     .expect("type SignedPod");
                 p.clone()
@@ -404,13 +403,6 @@ impl Pod for MainPod {
             .collect()
     }
 
-    fn into_any(self: Box<Self>) -> Box<dyn Any> {
-        self
-    }
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn serialized_proof(&self) -> String {
         todo!()
     }
@@ -453,7 +445,7 @@ pub mod tests {
 
         let mut prover = Prover {};
         let kyc_pod = kyc_builder.prove(&mut prover, &params)?;
-        let pod = kyc_pod.pod.into_any().downcast::<MainPod>().unwrap();
+        let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
 
         pod.verify()
     }
@@ -488,14 +480,16 @@ pub mod tests {
         // Mock
         let mut prover = MockProver {};
         let kyc_pod = kyc_builder.prove(&mut prover, &params).unwrap();
-        let pod = kyc_pod.pod.into_any().downcast::<MockMainPod>().unwrap();
+        let pod = (kyc_pod.pod as Box<dyn Any>)
+            .downcast::<MockMainPod>()
+            .unwrap();
         pod.verify().unwrap();
         println!("{:#}", pod);
 
         // Real
         let mut prover = Prover {};
         let kyc_pod = kyc_builder.prove(&mut prover, &params).unwrap();
-        let pod = kyc_pod.pod.into_any().downcast::<MainPod>().unwrap();
+        let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
         pod.verify().unwrap()
     }
 }

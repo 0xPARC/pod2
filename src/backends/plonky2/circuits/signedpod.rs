@@ -188,6 +188,8 @@ impl SignedPodVerifyTarget {
 
 #[cfg(test)]
 pub mod tests {
+    use std::any::Any;
+
     use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
 
     use super::*;
@@ -218,7 +220,7 @@ pub mod tests {
         let sk = SecretKey::new_rand();
         let mut signer = Signer(sk);
         let pod = pod.sign(&mut signer).unwrap();
-        let signed_pod = pod.pod.into_any().downcast::<SignedPod>().unwrap();
+        let signed_pod = (pod.pod as Box<dyn Any>).downcast::<SignedPod>().unwrap();
 
         // use the pod in the circuit
         let config = CircuitConfig::standard_recursion_config();

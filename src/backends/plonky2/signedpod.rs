@@ -1,4 +1,4 @@
-use std::{any::Any, collections::HashMap};
+use std::collections::HashMap;
 
 use anyhow::{anyhow, Result};
 use itertools::Itertools;
@@ -101,13 +101,6 @@ impl Pod for SignedPod {
             .collect()
     }
 
-    fn into_any(self: Box<Self>) -> Box<dyn Any> {
-        self
-    }
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn serialized_proof(&self) -> String {
         let mut buffer = Vec::new();
         use plonky2::util::serialization::Write;
@@ -118,7 +111,7 @@ impl Pod for SignedPod {
 
 #[cfg(test)]
 pub mod tests {
-    use std::iter;
+    use std::{any::Any, iter};
 
     use plonky2::field::types::Field;
 
@@ -140,7 +133,7 @@ pub mod tests {
         let sk = SecretKey::new_rand();
         let mut signer = Signer(sk);
         let pod = pod.sign(&mut signer).unwrap();
-        let pod = pod.pod.into_any().downcast::<SignedPod>().unwrap();
+        let pod = (pod.pod as Box<dyn Any>).downcast::<SignedPod>().unwrap();
 
         pod.verify()?;
         println!("id: {}", pod.id());
