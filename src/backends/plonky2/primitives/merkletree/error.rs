@@ -20,9 +20,6 @@ pub enum TreeInnerError {
     InvalidProof(String),
     #[error("key too short (key length: {0}) for the max_depth: {1}")]
     TooShortKey(usize, usize),
-
-    #[error("{0}")]
-    Custom(String),
 }
 
 #[derive(thiserror::Error)]
@@ -72,8 +69,5 @@ impl TreeError {
     }
     pub(crate) fn too_short_key(depth: usize, max_depth: usize) -> Self {
         new!(TooShortKey(depth, max_depth))
-    }
-    pub(crate) fn custom(s: String) -> Self {
-        new!(Custom(s))
     }
 }

@@ -77,20 +77,18 @@ impl Operation {
             })
             .collect::<BackendResult<Vec<_>>>()?;
         let deref_aux = match self.2 {
-            OperationAux::None => Ok(crate::middleware::OperationAux::None),
-            OperationAux::MerkleProofIndex(i) => merkle_proofs
-                .get(i)
-                .cloned()
-                .ok_or(BackendError::custom(format!(
-                    "Missing Merkle proof index {}",
-                    i
-                )))
-                .and_then(|mp| {
-                    Ok(mp
-                        .try_into()
-                        .map(crate::middleware::OperationAux::MerkleProof)?)
-                }),
-        }?;
+            OperationAux::None => crate::middleware::OperationAux::None,
+            OperationAux::MerkleProofIndex(i) => crate::middleware::OperationAux::MerkleProof(
+                merkle_proofs
+                    .get(i)
+                    .ok_or(BackendError::custom(format!(
+                        "Missing Merkle proof index {}",
+                        i
+                    )))?
+                    .proof
+                    .clone(),
+            ),
+        };
         Ok(middleware::Operation::op(
             self.0.clone(),
             &deref_args,

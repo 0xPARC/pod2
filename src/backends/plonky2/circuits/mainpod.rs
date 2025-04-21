@@ -492,10 +492,14 @@ impl MainPodVerifyTarget {
             self.statements[i].set_targets(pw, &self.params, st)?;
             self.operations[i].set_targets(pw, &self.params, op)?;
         }
-        assert_eq!(input.merkle_proofs.len(), self.params.max_merkle_proofs);
+        assert!(input.merkle_proofs.len() <= self.params.max_merkle_proofs);
         for (i, mp) in input.merkle_proofs.iter().enumerate() {
-            assert_eq!(mp.proof.siblings.len(), self.params.max_depth_mt_gadget);
-            self.merkle_proofs[i].set_targets(pw, mp)?;
+            self.merkle_proofs[i].set_targets(pw, true, mp)?;
+        }
+        // Padding
+        let pad_mp = MerkleClaimAndProof::empty();
+        for i in input.merkle_proofs.len()..self.params.max_merkle_proofs {
+            self.merkle_proofs[i].set_targets(pw, false, &pad_mp)?;
         }
         Ok(())
     }
@@ -579,7 +583,7 @@ mod tests {
         for (merkle_proof_target, merkle_proof) in
             merkle_proofs_target.iter().zip(merkle_proofs.iter())
         {
-            merkle_proof_target.set_targets(&mut pw, &merkle_proof)?
+            merkle_proof_target.set_targets(&mut pw, true, &merkle_proof)?
         }
 
         // generate & verify proof
@@ -707,12 +711,11 @@ mod tests {
         );
 
         let merkle_proofs = vec![MerkleClaimAndProof::new(
-            params.max_depth_mt_gadget,
             Hash::from(root.raw()),
             key,
             None,
-            &no_key_pf,
-        )?];
+            no_key_pf,
+        )];
         let prev_statements = vec![root_st, key_st];
         operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
 

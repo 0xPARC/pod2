@@ -176,7 +176,7 @@ pub mod tests {
     use crate::{backends::plonky2::primitives::signature::SecretKey, middleware::Hash};
 
     #[test]
-    fn test_signature_gadget() -> BackendResult<()> {
+    fn test_signature_gadget_enabled() -> BackendResult<()> {
         // generate a valid signature
         let sk = SecretKey::new_rand();
         let pk = sk.public_key();

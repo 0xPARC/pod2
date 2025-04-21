@@ -19,10 +19,7 @@ use crate::{
         basetypes::{C, D},
         circuits::mainpod::{MainPodVerifyCircuit, MainPodVerifyInput},
         error::{BackendError, BackendResult},
-        primitives::{
-            merkletree,
-            merkletree::{MerkleClaimAndProof, TreeError},
-        },
+        primitives::merkletree::MerkleClaimAndProof,
         signedpod::SignedPod,
     },
     middleware::{
@@ -45,7 +42,7 @@ pub(crate) fn extract_merkle_proofs(
     params: &Params,
     operations: &[middleware::Operation],
 ) -> BackendResult<Vec<MerkleClaimAndProof>> {
-    let mut merkle_proofs = operations
+    let merkle_proofs: Vec<_> = operations
         .iter()
         .flat_map(|op| match op {
             middleware::Operation::ContainsFromEntries(
@@ -54,40 +51,32 @@ pub(crate) fn extract_merkle_proofs(
                 middleware::Statement::ValueOf(_, value),
                 pf,
             ) => Some(MerkleClaimAndProof::new(
-                params.max_depth_mt_gadget,
                 Hash::from(root.raw()),
                 key.raw(),
                 Some(value.raw()),
-                pf,
+                pf.clone(),
             )),
             middleware::Operation::NotContainsFromEntries(
                 middleware::Statement::ValueOf(_, root),
                 middleware::Statement::ValueOf(_, key),
                 pf,
             ) => Some(MerkleClaimAndProof::new(
-                params.max_depth_mt_gadget,
                 Hash::from(root.raw()),
                 key.raw(),
                 None,
-                pf,
+                pf.clone(),
             )),
             _ => None,
         })
-        .collect::<Result<Vec<_>, TreeError>>()?;
+        .collect();
     if merkle_proofs.len() > params.max_merkle_proofs {
-        Err(BackendError::custom(format!(
+        return Err(BackendError::custom(format!(
             "The number of required Merkle proofs ({}) exceeds the maximum number ({}).",
             merkle_proofs.len(),
             params.max_merkle_proofs
-        )))
-    } else {
-        fill_pad(
-            &mut merkle_proofs,
-            MerkleClaimAndProof::empty(params.max_depth_mt_gadget),
-            params.max_merkle_proofs,
-        );
-        Ok(merkle_proofs)
+        )));
     }
+    Ok(merkle_proofs)
 }
 
 /// Find the operation argument statement in the list of previous statements and return the index.
@@ -121,12 +110,7 @@ fn find_op_aux(
         middleware::OperationAux::MerkleProof(pf_arg) => merkle_proofs
             .iter()
             .enumerate()
-            .find_map(|(i, pf)| {
-                pf.clone()
-                    .try_into()
-                    .ok()
-                    .and_then(|mid_pf: merkletree::MerkleProof| (&mid_pf == pf_arg).then_some(i))
-            })
+            .find_map(|(i, pf)| (pf.proof == *pf_arg).then_some(i))
             .map(OperationAux::MerkleProofIndex)
             .ok_or(BackendError::custom(format!(
                 "Merkle proof corresponding to op arg {} not found",
@@ -358,7 +342,6 @@ impl Prover {
 }
 
 impl PodProver for Prover {
-    // TODO: Be consistent on where we apply the padding, here, or in the set_targets?
     fn prove(
         &mut self,
         params: &Params,
