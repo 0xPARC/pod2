@@ -48,7 +48,7 @@ impl Pod for SignedPod {
         // 1. Verify type
         let value_at_type = self.dict.get(&Key::from(KEY_TYPE))?;
         if Value::from(PodType::Signed) != *value_at_type {
-            return Err(Error::Middleware(MiddlewareError::TypeNotEqual(
+            return Err(Error::middleware(MiddlewareError::TypeNotEqual(
                 PodType::Signed,
                 value_at_type.clone(),
             )));
@@ -66,7 +66,7 @@ impl Pod for SignedPod {
         )?;
         let id = PodId(mt.root());
         if id != self.id {
-            return Err(Error::Middleware(MiddlewareError::IdNotEqual(self.id, id)));
+            return Err(Error::middleware(MiddlewareError::IdNotEqual(self.id, id)));
         }
 
         // 3. Verify signature

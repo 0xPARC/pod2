@@ -246,16 +246,16 @@ impl Pod for MockMainPod {
             .collect::<Result<Vec<_>>>()
             .unwrap();
         if !ids_match {
-            return Err(Error::PodIdInvalid);
+            return Err(Error::pod_id_invalid());
         }
         if !has_type_statement {
-            return Err(Error::NotTypeStatement);
+            return Err(Error::not_type_statement());
         }
         if !value_ofs_unique {
-            return Err(Error::RepeatedValueOf);
+            return Err(Error::repeated_value_of());
         }
         if !statement_check.iter().all(|b| *b) {
-            return Err(Error::StatementNotCheck);
+            return Err(Error::statement_not_check());
         }
         Ok(())
     }

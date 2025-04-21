@@ -121,7 +121,7 @@ impl Signature {
             proof: self.0.clone(),
             public_inputs,
         })
-        .map_err(|_| Error::Plonky2ProofFail)
+        .map_err(|_| Error::plonky2_proof_fail())
     }
 }
 

@@ -309,7 +309,7 @@ impl MainPodBuilder {
             // We are dealing with a copy here.
             match (args).first() {
                 Some(OperationArg::Statement(s)) if args.len() == 1 => Ok(s.predicate().clone()),
-                _ => Err(Error::OpInvalidArgs("copy".to_string())),
+                _ => Err(Error::op_invalid_args("copy".to_string())),
             }
         })?;
 
@@ -320,7 +320,7 @@ impl MainPodBuilder {
                 CopyStatement => match &args[0] {
                     OperationArg::Statement(s) => s.args().clone(),
                     _ => {
-                        return Err(Error::OpInvalidArgs("copy".to_string()));
+                        return Err(Error::op_invalid_args("copy".to_string()));
                     }
                 },
                 EqualFromEntries => self.op_args_entries(public, args)?,
@@ -339,13 +339,13 @@ impl MainPodBuilder {
                             if ak1 == ak2 {
                                 vec![StatementArg::Key(ak0), StatementArg::Key(ak3)]
                             } else {
-                                return Err(Error::OpInvalidArgs(
+                                return Err(Error::op_invalid_args(
                                     "transitivity equality".to_string(),
                                 ));
                             }
                         }
                         _ => {
-                            return Err(Error::OpInvalidArgs("transitivity equality".to_string()));
+                            return Err(Error::op_invalid_args("transitivity equality".to_string()));
                         }
                     }
                 }
@@ -354,7 +354,7 @@ impl MainPodBuilder {
                         vec![StatementArg::Key(ak0), StatementArg::Key(ak1)]
                     }
                     _ => {
-                        return Err(Error::OpInvalidArgs("gt-to-neq".to_string()));
+                        return Err(Error::op_invalid_args("gt-to-neq".to_string()));
                     }
                 },
                 LtToNotEqual => match args[0].clone() {
@@ -362,7 +362,7 @@ impl MainPodBuilder {
                         vec![StatementArg::Key(ak0), StatementArg::Key(ak1)]
                     }
                     _ => {
-                        return Err(Error::OpInvalidArgs("lt-to-neq".to_string()));
+                        return Err(Error::op_invalid_args("lt-to-neq".to_string()));
                     }
                 },
                 SumOf => match (args[0].clone(), args[1].clone(), args[2].clone()) {
@@ -381,11 +381,11 @@ impl MainPodBuilder {
                                 StatementArg::Key(ak2),
                             ]
                         } else {
-                            return Err(Error::OpInvalidArgs("sum-of".to_string()));
+                            return Err(Error::op_invalid_args("sum-of".to_string()));
                         }
                     }
                     _ => {
-                        return Err(Error::OpInvalidArgs("sum-of".to_string()));
+                        return Err(Error::op_invalid_args("sum-of".to_string()));
                     }
                 },
                 ProductOf => match (args[0].clone(), args[1].clone(), args[2].clone()) {
@@ -404,11 +404,11 @@ impl MainPodBuilder {
                                 StatementArg::Key(ak2),
                             ]
                         } else {
-                            return Err(Error::OpInvalidArgs("product-of".to_string()));
+                            return Err(Error::op_invalid_args("product-of".to_string()));
                         }
                     }
                     _ => {
-                        return Err(Error::OpInvalidArgs("product-of".to_string()));
+                        return Err(Error::op_invalid_args("product-of".to_string()));
                     }
                 },
                 MaxOf => match (args[0].clone(), args[1].clone(), args[2].clone()) {
@@ -427,11 +427,11 @@ impl MainPodBuilder {
                                 StatementArg::Key(ak2),
                             ]
                         } else {
-                            return Err(Error::OpInvalidArgs("max-of".to_string()));
+                            return Err(Error::op_invalid_args("max-of".to_string()));
                         }
                     }
                     _ => {
-                        return Err(Error::OpInvalidArgs("max-of".to_string()));
+                        return Err(Error::op_invalid_args("max-of".to_string()));
                     }
                 },
                 ContainsFromEntries => self.op_args_entries(public, args)?,
@@ -468,7 +468,7 @@ impl MainPodBuilder {
                     for (st_tmpl_arg, st_arg) in st_tmpl.args.iter().zip(&st_args) {
                         if !check_st_tmpl(st_tmpl_arg, st_arg, &mut wildcard_map) {
                             // TODO: Add wildcard_map in the error for better context
-                            return Err(Error::StatementsDontMatch(st.clone(), st_tmpl.clone()));
+                            return Err(Error::statements_dont_match(st.clone(), st_tmpl.clone()));
                         }
                     }
                 }
@@ -831,7 +831,7 @@ pub mod tests {
         if kvs == embedded_kvs {
             Ok(())
         } else {
-            Err(Error::Custom(format!(
+            Err(Error::custom(format!(
                 "KVs {:?} do not agree with those embedded in the POD: {:?}",
                 kvs, embedded_kvs
             )))

@@ -25,9 +25,7 @@ pub use operation::*;
 // use serde::{Deserialize, Serialize};
 pub use statement::*;
 
-use crate::{
-    backends::plonky2::primitives::merkletree::MerkleProof, error::ErrorBacktrace, Error, Result,
-};
+use crate::{backends::plonky2::primitives::merkletree::MerkleProof, Error, Result};
 
 pub const SELF: PodId = PodId(SELF_ID_HASH);
 
@@ -129,7 +127,7 @@ impl From<PodType> for TypedValue {
 }
 
 impl TryFrom<&TypedValue> for i64 {
-    type Error = ErrorBacktrace;
+    type Error = Error;
     fn try_from(v: &TypedValue) -> std::result::Result<Self, Self::Error> {
         if let TypedValue::Int(n) = v {
             Ok(*n)

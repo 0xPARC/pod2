@@ -216,7 +216,7 @@ impl CustomPredicate {
         args_len: usize,
     ) -> Result<Self> {
         if statements.len() > params.max_custom_predicate_arity {
-            return Err(Error::MaxLength(
+            return Err(Error::max_length(
                 "statements.len".to_string(),
                 statements.len(),
                 params.max_custom_predicate_arity,

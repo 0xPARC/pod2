@@ -132,14 +132,14 @@ impl CustomPredicateBatchBuilder {
         sts: &[StatementTmplBuilder],
     ) -> Result<Predicate> {
         if args.len() > params.max_statement_args {
-            return Err(Error::MaxLength(
+            return Err(Error::max_length(
                 "args.len".to_string(),
                 args.len(),
                 params.max_statement_args,
             ));
         }
         if (args.len() + priv_args.len()) > params.max_custom_predicate_wildcards {
-            return Err(Error::MaxLength(
+            return Err(Error::max_length(
                 "wildcards.len".to_string(),
                 args.len() + priv_args.len(),
                 params.max_custom_predicate_wildcards,

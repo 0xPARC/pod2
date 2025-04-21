@@ -61,7 +61,7 @@ impl MerkleTree {
         let key_resolution = self.root.down(0, self.max_depth, path, None)?;
         match key_resolution {
             Some((k, v)) if &k == key => Ok(v),
-            _ => Err(Error::Tree(TreeError::KeyNotFound)),
+            _ => Err(Error::tree(TreeError::KeyNotFound)),
         }
     }
 
@@ -100,7 +100,7 @@ impl MerkleTree {
                     other_leaf: None,
                 },
             )),
-            _ => Err(Error::Tree(TreeError::KeyNotFound)),
+            _ => Err(Error::tree(TreeError::KeyNotFound)),
         }
     }
 
@@ -130,7 +130,7 @@ impl MerkleTree {
                 siblings,
                 other_leaf: Some((k, v)),
             }),
-            _ => Err(Error::Tree(TreeError::KeyNotFound)),
+            _ => Err(Error::tree(TreeError::KeyNotFound)),
         }
         // both cases prove that the given key don't exist in the tree. ∎
     }
@@ -146,7 +146,7 @@ impl MerkleTree {
         let h = proof.compute_root_from_leaf(max_depth, key, Some(*value))?;
 
         if h != root {
-            Err(Error::Tree(TreeError::ProofFail("inclusion".to_string())))
+            Err(Error::tree(TreeError::ProofFail("inclusion".to_string())))
         } else {
             Ok(())
         }
@@ -161,7 +161,7 @@ impl MerkleTree {
         key: &RawValue,
     ) -> Result<()> {
         match proof.other_leaf {
-            Some((k, _v)) if &k == key => Err(Error::Tree(TreeError::InvalidProof(
+            Some((k, _v)) if &k == key => Err(Error::tree(TreeError::InvalidProof(
                 "non-existence".to_string(),
             ))),
             _ => {
@@ -170,7 +170,7 @@ impl MerkleTree {
                 let h = proof.compute_root_from_leaf(max_depth, &k, v)?;
 
                 if h != root {
-                    Err(Error::Tree(TreeError::ProofFail("exclusion".to_string())))
+                    Err(Error::tree(TreeError::ProofFail("exclusion".to_string())))
                 } else {
                     Ok(())
                 }
@@ -250,7 +250,7 @@ impl MerkleProof {
         value: Option<RawValue>,
     ) -> Result<Hash> {
         if self.siblings.len() >= max_depth {
-            return Err(Error::Tree(TreeError::MaxDepth));
+            return Err(Error::tree(TreeError::MaxDepth));
         }
 
         let path = keypath(max_depth, *key)?;
@@ -438,7 +438,7 @@ impl Node {
         mut siblings: Option<&mut Vec<Hash>>,
     ) -> Result<Option<(RawValue, RawValue)>> {
         if lvl >= max_depth {
-            return Err(Error::Tree(TreeError::MaxDepth));
+            return Err(Error::tree(TreeError::MaxDepth));
         }
 
         match self {
@@ -468,7 +468,7 @@ impl Node {
     // adds the leaf at the tree from the current node (self), without computing any hash
     pub(crate) fn add_leaf(&mut self, lvl: usize, max_depth: usize, leaf: Leaf) -> Result<()> {
         if lvl >= max_depth {
-            return Err(Error::Tree(TreeError::MaxDepth));
+            return Err(Error::tree(TreeError::MaxDepth));
         }
 
         match self {
@@ -500,7 +500,7 @@ impl Node {
                     // Note: current approach returns an error when trying to
                     // add to a leaf where the key already exists. We could also
                     // ignore it if needed.
-                    return Err(Error::Tree(TreeError::KeyExists));
+                    return Err(Error::tree(TreeError::KeyExists));
                 }
                 let old_leaf = l.clone();
                 // set self as an intermediate node
@@ -508,7 +508,7 @@ impl Node {
                 return self.down_till_divergence(lvl, max_depth, old_leaf, leaf);
             }
             Self::None => {
-                return Err(Error::Tree(TreeError::EmptyNode));
+                return Err(Error::tree(TreeError::EmptyNode));
             }
         }
         Ok(())
@@ -526,7 +526,7 @@ impl Node {
         new_leaf: Leaf,
     ) -> Result<()> {
         if lvl >= max_depth {
-            return Err(Error::Tree(TreeError::MaxDepth));
+            return Err(Error::tree(TreeError::MaxDepth));
         }
 
         if let Node::Intermediate(ref mut n) = self {
@@ -630,7 +630,7 @@ pub(crate) fn keypath(max_depth: usize, k: RawValue) -> Result<Vec<bool>> {
         // note that our current keys are of Value type, which are 4 Goldilocks
         // field elements, ie ~256 bits, therefore the max_depth can not be
         // bigger than 256.
-        return Err(Error::Tree(TreeError::TooShortKey(
+        return Err(Error::tree(TreeError::TooShortKey(
             8 * bytes.len(),
             max_depth,
         )));

@@ -66,16 +66,16 @@ impl Pod for MockSignedPod {
         )?;
         let id = PodId(mt.root());
         if id != self.id {
-            return Err(Error::Middleware(MiddlewareError::IdNotEqual(self.id, id)));
+            return Err(Error::middleware(MiddlewareError::IdNotEqual(self.id, id)));
         }
 
         // 2. Verify type
         let value_at_type = self
             .kvs
             .get(&Key::from(KEY_TYPE))
-            .ok_or(Error::KeyNotFound)?;
+            .ok_or(Error::key_not_found())?;
         if &Value::from(PodType::MockSigned) != value_at_type {
-            return Err(Error::Middleware(MiddlewareError::TypeNotEqual(
+            return Err(Error::middleware(MiddlewareError::TypeNotEqual(
                 PodType::MockSigned,
                 value_at_type.clone(),
             )));
@@ -85,7 +85,7 @@ impl Pod for MockSignedPod {
         let pk_hash = self
             .kvs
             .get(&Key::from(KEY_SIGNER))
-            .ok_or(Error::KeyNotFound)?;
+            .ok_or(Error::key_not_found())?;
         let signature = format!("{}_signed_by_{}", id, pk_hash);
         if signature != self.signature {
             return Err(Error::custom(format!(
