@@ -25,10 +25,10 @@ replace () {
 # replace not_equal NotEqual
 # replace middleware Middleware
 
-replace key_not_found KeyNotFound
-replace key_exists KeyExists
-replace max_depth MaxDepth
-replace empty_node EmptyNode
-replace proof_fail ProofFail
-replace invalid_proof InvalidProof
-replace too_short_key TooShortKey
+replace "key_not_found()" KeyNotFound
+replace "key_exists()" KeyExists
+replace "max_depth()" MaxDepth
+replace "empty_node()" EmptyNode
+replace "proof_fail(" "ProofFail{"
+replace "invalid_proof(" "InvalidProof{"
+replace "too_short_key(" "TooShortKey{"
