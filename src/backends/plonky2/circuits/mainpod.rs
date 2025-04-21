@@ -496,11 +496,11 @@ impl MainPodVerifyTarget {
         for (i, mp) in input.merkle_proofs.iter().enumerate() {
             self.merkle_proofs[i].set_targets(pw, true, mp)?;
         }
+        // Padding
         let pad_mp = MerkleClaimAndProof::empty();
         for i in input.merkle_proofs.len()..self.params.max_merkle_proofs {
             self.merkle_proofs[i].set_targets(pw, false, &pad_mp)?;
         }
-        // Padding
         Ok(())
     }
 }
