@@ -7,8 +7,10 @@ use plonky2::field::types::Field;
 // use serde::{Deserialize, Serialize};
 use crate::{
     middleware::HASH_SIZE,
-    middleware::{hash_fields, Hash, Key, NativePredicate, Params, ToFields, Value, F},
-    Error, Result,
+    middleware::{
+        hash_fields, Hash, Key, MiddlewareError, NativePredicate, Params, Result, ToFields, Value,
+        F,
+    },
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -216,7 +218,7 @@ impl CustomPredicate {
         args_len: usize,
     ) -> Result<Self> {
         if statements.len() > params.max_custom_predicate_arity {
-            return Err(Error::max_length(
+            return Err(MiddlewareError::max_length(
                 "statements.len".to_string(),
                 statements.len(),
                 params.max_custom_predicate_arity,

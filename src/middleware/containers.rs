@@ -7,8 +7,7 @@ use std::collections::{HashMap, HashSet};
 use crate::backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree};
 use crate::{
     constants::MAX_DEPTH,
-    middleware::{hash_value, Hash, Key, RawValue, Value, EMPTY_VALUE},
-    Error, Result,
+    middleware::{hash_value, Hash, Key, MiddlewareError, RawValue, Result, Value, EMPTY_VALUE},
 };
 
 /// Dictionary: the user original keys and values are hashed to be used in the leaf.
@@ -37,7 +36,7 @@ impl Dictionary {
     pub fn get(&self, key: &Key) -> Result<&Value> {
         self.kvs
             .get(key)
-            .ok_or_else(|| Error::custom(format!("key \"{}\" not found", key.name())))
+            .ok_or_else(|| MiddlewareError::custom(format!("key \"{}\" not found", key.name())))
     }
     pub fn prove(&self, key: &Key) -> Result<(&Value, MerkleProof)> {
         let (_, mtp) = self.mt.prove(&RawValue(key.hash().0))?;
@@ -181,7 +180,7 @@ impl Array {
     }
     pub fn get(&self, i: usize) -> Result<&Value> {
         self.array.get(i).ok_or_else(|| {
-            Error::custom(format!("index {} out of bounds 0..{}", i, self.array.len()))
+            MiddlewareError::custom(format!("index {} out of bounds 0..{}", i, self.array.len()))
         })
     }
     pub fn prove(&self, i: usize) -> Result<(&Value, MerkleProof)> {

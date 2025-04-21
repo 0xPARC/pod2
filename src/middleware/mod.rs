@@ -11,7 +11,7 @@ use std::{
 use containers::{Array, Dictionary, Set};
 pub mod containers;
 mod custom;
-pub mod error;
+mod error;
 mod operation;
 pub mod serialization;
 mod statement;
@@ -20,12 +20,13 @@ use std::{any::Any, collections::HashMap, fmt};
 pub use basetypes::*;
 pub use custom::*;
 use dyn_clone::DynClone;
+pub use error::*;
 pub use operation::*;
 // use schemars::JsonSchema;
 // use serde::{Deserialize, Serialize};
 pub use statement::*;
 
-use crate::{backends::plonky2::primitives::merkletree::MerkleProof, Error, Result};
+use crate::backends::plonky2::primitives::merkletree::MerkleProof;
 
 pub const SELF: PodId = PodId(SELF_ID_HASH);
 
@@ -127,22 +128,22 @@ impl From<PodType> for TypedValue {
 }
 
 impl TryFrom<&TypedValue> for i64 {
-    type Error = Error;
+    type Error = MiddlewareError;
     fn try_from(v: &TypedValue) -> std::result::Result<Self, Self::Error> {
         if let TypedValue::Int(n) = v {
             Ok(*n)
         } else {
-            Err(Error::custom("Value not an int".to_string()))
+            Err(MiddlewareError::custom("Value not an int".to_string()))
         }
     }
 }
 
 impl TryFrom<TypedValue> for Key {
-    type Error = Error;
+    type Error = MiddlewareError;
     fn try_from(tv: TypedValue) -> Result<Self> {
         match tv {
             TypedValue::String(s) => Ok(Key::new(s)),
-            _ => Err(Error::custom(format!(
+            _ => Err(MiddlewareError::custom(format!(
                 "Value {} cannot be converted to a key.",
                 tv
             ))),
@@ -240,14 +241,14 @@ impl Value {
         match &self.typed() {
             TypedValue::Array(a) => match key.typed() {
                 TypedValue::Int(i) if i >= &0 => a.prove((*i) as usize),
-                _ => Err(Error::custom(format!(
+                _ => Err(MiddlewareError::custom(format!(
                     "Invalid key {} for container {}.",
                     key, self
                 )))?,
             },
             TypedValue::Dictionary(d) => d.prove(&key.typed().clone().try_into()?),
             TypedValue::Set(s) => Ok((key, s.prove(key)?)),
-            _ => Err(Error::custom(format!(
+            _ => Err(MiddlewareError::custom(format!(
                 "Invalid container value {}",
                 self.typed()
             ))),
@@ -256,12 +257,12 @@ impl Value {
     /// Determines Merkle non-existence proof for `key` in `self` (if applicable).
     pub(crate) fn prove_nonexistence<'a>(&'a self, key: &'a Value) -> Result<MerkleProof> {
         match &self.typed() {
-            TypedValue::Array(_) => Err(Error::custom(
+            TypedValue::Array(_) => Err(MiddlewareError::custom(
                 "Arrays do not support `NotContains` operation.".to_string(),
             )),
             TypedValue::Dictionary(d) => d.prove_nonexistence(&key.typed().clone().try_into()?),
             TypedValue::Set(s) => s.prove_nonexistence(key),
-            _ => Err(Error::custom(format!(
+            _ => Err(MiddlewareError::custom(format!(
                 "Invalid container value {}",
                 self.typed()
             ))),
@@ -500,8 +501,11 @@ impl Params {
     }
 }
 
+// TODO: Use this alias instead of the long thing
+// pub type DynError = dyn std::error::Error + Send + Sync;
+
 pub trait Pod: fmt::Debug + DynClone {
-    fn verify(&self) -> Result<()>;
+    fn verify(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
     fn id(&self) -> PodId;
     fn pub_statements(&self) -> Vec<Statement>;
     /// Extract key-values from ValueOf public statements
@@ -532,7 +536,11 @@ pub trait Pod: fmt::Debug + DynClone {
 dyn_clone::clone_trait_object!(Pod);
 
 pub trait PodSigner {
-    fn sign(&mut self, params: &Params, kvs: &HashMap<Key, Value>) -> Result<Box<dyn Pod>>;
+    fn sign(
+        &mut self,
+        params: &Params,
+        kvs: &HashMap<Key, Value>,
+    ) -> Result<Box<dyn Pod>, Box<dyn std::error::Error + Send + Sync>>;
 }
 
 /// This is a filler type that fulfills the Pod trait and always verifies.  It's empty.  This
@@ -541,7 +549,7 @@ pub trait PodSigner {
 pub struct NonePod {}
 
 impl Pod for NonePod {
-    fn verify(&self) -> Result<()> {
+    fn verify(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Ok(())
     }
     fn id(&self) -> PodId {
@@ -573,7 +581,11 @@ pub struct MainPodInputs<'a> {
 }
 
 pub trait PodProver {
-    fn prove(&mut self, params: &Params, inputs: MainPodInputs) -> Result<Box<dyn Pod>>;
+    fn prove(
+        &mut self,
+        params: &Params,
+        inputs: MainPodInputs,
+    ) -> Result<Box<dyn Pod>, Box<dyn std::error::Error + Send + Sync>>;
 }
 
 pub trait ToFields {
