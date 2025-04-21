@@ -76,7 +76,9 @@ impl MockSignedPod {
         )?;
         let id = PodId(mt.root());
         if id != self.id {
-            return Err(Error::middleware(MiddlewareError::IdNotEqual(self.id, id)));
+            return Err(Error::middleware(MiddlewareError::id_not_equal(
+                self.id, id,
+            )));
         }
 
         // 2. Verify type
@@ -85,7 +87,7 @@ impl MockSignedPod {
             .get(&Key::from(KEY_TYPE))
             .ok_or(Error::key_not_found())?;
         if &Value::from(PodType::MockSigned) != value_at_type {
-            return Err(Error::middleware(MiddlewareError::TypeNotEqual(
+            return Err(Error::middleware(MiddlewareError::type_not_equal(
                 PodType::MockSigned,
                 value_at_type.clone(),
             )));

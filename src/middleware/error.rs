@@ -74,7 +74,7 @@ impl MiddlewareError {
     }
     pub fn invalid_deduction(op: Operation, st: Statement) -> Self {
         Self::Inner {
-            inner: Box::new(MiddlewareInnerError::IncorrectStatementArgs(op, st)),
+            inner: Box::new(MiddlewareInnerError::InvalidDeduction(op, st)),
             backtrace: Box::new(Backtrace::capture()),
         }
     }

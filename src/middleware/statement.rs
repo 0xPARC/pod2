@@ -150,7 +150,7 @@ impl Statement {
                 {
                     Ok(Self::ValueOf(a0, v1))
                 } else {
-                    Err(MiddlewareError::IncorrectStatementArgs)
+                    Err(MiddlewareError::incorrect_statements_args())
                 }
             }
             Native(NativePredicate::Equal) => {
@@ -159,7 +159,7 @@ impl Statement {
                 {
                     Ok(Self::Equal(a0, a1))
                 } else {
-                    Err(MiddlewareError::IncorrectStatementArgs)
+                    Err(MiddlewareError::incorrect_statements_args())
                 }
             }
             Native(NativePredicate::NotEqual) => {
@@ -168,7 +168,7 @@ impl Statement {
                 {
                     Ok(Self::NotEqual(a0, a1))
                 } else {
-                    Err(MiddlewareError::IncorrectStatementArgs)
+                    Err(MiddlewareError::incorrect_statements_args())
                 }
             }
             Native(NativePredicate::Gt) => {
@@ -177,7 +177,7 @@ impl Statement {
                 {
                     Ok(Self::Gt(a0, a1))
                 } else {
-                    Err(MiddlewareError::IncorrectStatementArgs)
+                    Err(MiddlewareError::incorrect_statements_args())
                 }
             }
             Native(NativePredicate::Lt) => {
@@ -186,7 +186,7 @@ impl Statement {
                 {
                     Ok(Self::Lt(a0, a1))
                 } else {
-                    Err(MiddlewareError::IncorrectStatementArgs)
+                    Err(MiddlewareError::incorrect_statements_args())
                 }
             }
             Native(NativePredicate::Contains) => {
@@ -195,7 +195,7 @@ impl Statement {
                 {
                     Ok(Self::Contains(a0, a1, a2))
                 } else {
-                    Err(MiddlewareError::IncorrectStatementArgs)
+                    Err(MiddlewareError::incorrect_statements_args())
                 }
             }
             Native(NativePredicate::NotContains) => {
@@ -204,7 +204,7 @@ impl Statement {
                 {
                     Ok(Self::NotContains(a0, a1))
                 } else {
-                    Err(MiddlewareError::IncorrectStatementArgs)
+                    Err(MiddlewareError::incorrect_statements_args())
                 }
             }
             Native(NativePredicate::SumOf) => {
@@ -213,7 +213,7 @@ impl Statement {
                 {
                     Ok(Self::SumOf(a0, a1, a2))
                 } else {
-                    Err(MiddlewareError::IncorrectStatementArgs)
+                    Err(MiddlewareError::incorrect_statements_args())
                 }
             }
             Native(NativePredicate::ProductOf) => {
@@ -222,7 +222,7 @@ impl Statement {
                 {
                     Ok(Self::ProductOf(a0, a1, a2))
                 } else {
-                    Err(MiddlewareError::IncorrectStatementArgs)
+                    Err(MiddlewareError::incorrect_statements_args())
                 }
             }
             Native(NativePredicate::MaxOf) => {
@@ -231,7 +231,7 @@ impl Statement {
                 {
                     Ok(Self::MaxOf(a0, a1, a2))
                 } else {
-                    Err(MiddlewareError::IncorrectStatementArgs)
+                    Err(MiddlewareError::incorrect_statements_args())
                 }
             }
             Native(np) => Err(MiddlewareError::custom(format!(
@@ -244,7 +244,7 @@ impl Statement {
                     .iter()
                     .map(|x| match x {
                         StatementArg::WildcardLiteral(v) => Ok(v.clone()),
-                        _ => Err(MiddlewareError::IncorrectStatementArgs),
+                        _ => Err(MiddlewareError::incorrect_statements_args()),
                     })
                     .collect();
                 Ok(Self::Custom(cpr, v_args?))
@@ -303,7 +303,7 @@ impl StatementArg {
     pub fn literal(&self) -> MiddlewareResult<Value> {
         match self {
             Self::Literal(value) => Ok(value.clone()),
-            _ => Err(MiddlewareError::InvalidStatementArg(
+            _ => Err(MiddlewareError::invalid_statement_arg(
                 self.clone(),
                 "literal".to_string(),
             )),
@@ -312,7 +312,7 @@ impl StatementArg {
     pub fn key(&self) -> MiddlewareResult<AnchoredKey> {
         match self {
             Self::Key(ak) => Ok(ak.clone()),
-            _ => Err(MiddlewareError::InvalidStatementArg(
+            _ => Err(MiddlewareError::invalid_statement_arg(
                 self.clone(),
                 "key".to_string(),
             )),

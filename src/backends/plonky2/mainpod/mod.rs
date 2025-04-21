@@ -398,7 +398,9 @@ impl MainPod {
         // 2. get the id out of the public statements
         let id: PodId = PodId(hash_statements(&self.public_statements, &self.params));
         if id != self.id {
-            return Err(Error::middleware(MiddlewareError::IdNotEqual(self.id, id)));
+            return Err(Error::middleware(MiddlewareError::id_not_equal(
+                self.id, id,
+            )));
         }
 
         // 1, 3, 4, 5 verification via the zkSNARK proof

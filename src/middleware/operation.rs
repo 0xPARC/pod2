@@ -326,7 +326,7 @@ impl Operation {
             {
                 check_custom_pred(params, batch, *index, args, s_args)
             }
-            _ => Err(MiddlewareError::InvalidDeduction(
+            _ => Err(MiddlewareError::invalid_deduction(
                 self.clone(),
                 output_statement.clone(),
             )),
