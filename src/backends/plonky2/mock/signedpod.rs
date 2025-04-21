@@ -6,8 +6,8 @@ use crate::{
     backends::plonky2::primitives::merkletree::MerkleTree,
     constants::MAX_DEPTH,
     middleware::{
-        containers::Dictionary, error::MiddlewareError, hash_str, AnchoredKey, Hash, Key, Params,
-        Pod, PodId, PodSigner, PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE,
+        containers::Dictionary, hash_str, AnchoredKey, Hash, Key, MiddlewareError, Params, Pod,
+        PodId, PodSigner, PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE,
     },
     Error, Result,
 };
@@ -22,8 +22,8 @@ impl MockSigner {
     }
 }
 
-impl PodSigner for MockSigner {
-    fn sign(&mut self, _params: &Params, kvs: &HashMap<Key, Value>) -> Result<Box<dyn Pod>> {
+impl MockSigner {
+    fn _sign(&mut self, _params: &Params, kvs: &HashMap<Key, Value>) -> Result<MockSignedPod> {
         let mut kvs = kvs.clone();
         let pubkey = self.pubkey();
         kvs.insert(Key::from(KEY_SIGNER), Value::from(pubkey));
@@ -32,7 +32,17 @@ impl PodSigner for MockSigner {
         let dict = Dictionary::new(kvs.clone())?;
         let id = PodId(dict.commitment());
         let signature = format!("{}_signed_by_{}", id, pubkey);
-        Ok(Box::new(MockSignedPod { id, signature, kvs }))
+        Ok(MockSignedPod { id, signature, kvs })
+    }
+}
+
+impl PodSigner for MockSigner {
+    fn sign(
+        &mut self,
+        params: &Params,
+        kvs: &HashMap<Key, Value>,
+    ) -> Result<Box<dyn Pod>, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(self._sign(params, kvs).map(Box::new)?)
     }
 }
 
@@ -53,8 +63,8 @@ pub struct MockSignedPod {
 //     }
 // }
 
-impl Pod for MockSignedPod {
-    fn verify(&self) -> Result<()> {
+impl MockSignedPod {
+    fn _verify(&self) -> Result<()> {
         // 1. Verify id
         let mt = MerkleTree::new(
             MAX_DEPTH,
@@ -95,6 +105,12 @@ impl Pod for MockSignedPod {
         }
 
         Ok(())
+    }
+}
+
+impl Pod for MockSignedPod {
+    fn verify(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(self._verify()?)
     }
 
     fn id(&self) -> PodId {

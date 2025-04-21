@@ -2,7 +2,7 @@
 
 use crate::middleware::{Operation, PodId, PodType, Statement, StatementArg, Value};
 
-pub type Result<T, E = MiddlewareError> = core::result::Result<T, E>;
+pub type MiddlewareResult<T, E = MiddlewareError> = core::result::Result<T, E>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum MiddlewareError {

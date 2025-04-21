@@ -85,7 +85,11 @@ impl Operation {
                         .map(crate::middleware::OperationAux::MerkleProof)?)
                 }),
         }?;
-        middleware::Operation::op(self.0.clone(), &deref_args, &deref_aux)
+        Ok(middleware::Operation::op(
+            self.0.clone(),
+            &deref_args,
+            &deref_aux,
+        )?)
     }
 }
 

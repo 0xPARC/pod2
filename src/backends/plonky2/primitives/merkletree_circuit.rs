@@ -384,7 +384,10 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        backends::plonky2::{basetypes::C, primitives::merkletree::*},
+        backends::plonky2::{
+            basetypes::C,
+            primitives::merkletree::{keypath, kv_hash, MerkleTree},
+        },
         middleware::{hash_value, RawValue},
     };
 

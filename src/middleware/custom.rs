@@ -8,8 +8,8 @@ use plonky2::field::types::Field;
 use crate::{
     middleware::HASH_SIZE,
     middleware::{
-        hash_fields, Hash, Key, MiddlewareError, NativePredicate, Params, Result, ToFields, Value,
-        F,
+        hash_fields, Hash, Key, MiddlewareError, MiddlewareResult, NativePredicate, Params,
+        ToFields, Value, F,
     },
 };
 
@@ -199,7 +199,7 @@ impl CustomPredicate {
         params: &Params,
         statements: Vec<StatementTmpl>,
         args_len: usize,
-    ) -> Result<Self> {
+    ) -> MiddlewareResult<Self> {
         Self::new(name, params, true, statements, args_len)
     }
     pub fn or(
@@ -207,7 +207,7 @@ impl CustomPredicate {
         params: &Params,
         statements: Vec<StatementTmpl>,
         args_len: usize,
-    ) -> Result<Self> {
+    ) -> MiddlewareResult<Self> {
         Self::new(name, params, false, statements, args_len)
     }
     pub fn new(
@@ -216,7 +216,7 @@ impl CustomPredicate {
         conjunction: bool,
         statements: Vec<StatementTmpl>,
         args_len: usize,
-    ) -> Result<Self> {
+    ) -> MiddlewareResult<Self> {
         if statements.len() > params.max_custom_predicate_arity {
             return Err(MiddlewareError::max_length(
                 "statements.len".to_string(),

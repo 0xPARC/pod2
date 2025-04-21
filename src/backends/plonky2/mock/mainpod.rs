@@ -18,8 +18,8 @@ use crate::{
         primitives::merkletree::MerkleClaimAndProof,
     },
     middleware::{
-        self, hash_str, AnchoredKey, MainPodInputs, NativePredicate, Params, Pod, PodId, PodProver,
-        Predicate, StatementArg, KEY_TYPE, SELF,
+        self, hash_str, AnchoredKey, MainPodInputs, MiddlewareError, NativePredicate, Params, Pod,
+        PodId, PodProver, Predicate, StatementArg, KEY_TYPE, SELF,
     },
     Error, Result,
 };
@@ -27,7 +27,11 @@ use crate::{
 pub struct MockProver {}
 
 impl PodProver for MockProver {
-    fn prove(&mut self, params: &Params, inputs: MainPodInputs) -> Result<Box<dyn Pod>> {
+    fn prove(
+        &mut self,
+        params: &Params,
+        inputs: MainPodInputs,
+    ) -> Result<Box<dyn Pod>, Box<dyn std::error::Error + Send + Sync>> {
         Ok(Box::new(MockMainPod::new(params, inputs)?))
     }
 }
@@ -175,10 +179,8 @@ impl MockMainPod {
 
     //     Ok(pod)
     // }
-}
 
-impl Pod for MockMainPod {
-    fn verify(&self) -> Result<()> {
+    fn _verify(&self) -> Result<()> {
         // 1. TODO: Verify input pods
 
         let input_statement_offset = self.offset_input_statements();
@@ -243,7 +245,7 @@ impl Pod for MockMainPod {
                     .unwrap()
                     .check_and_log(&self.params, &s.clone().try_into().unwrap())
             })
-            .collect::<Result<Vec<_>>>()
+            .collect::<Result<Vec<_>, MiddlewareError>>()
             .unwrap();
         if !ids_match {
             return Err(Error::pod_id_invalid());
@@ -258,6 +260,12 @@ impl Pod for MockMainPod {
             return Err(Error::statement_not_check());
         }
         Ok(())
+    }
+}
+
+impl Pod for MockMainPod {
+    fn verify(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(self._verify()?)
     }
     fn id(&self) -> PodId {
         self.id

@@ -8,8 +8,8 @@ use crate::{
     backends::plonky2::primitives::merkletree::MerkleProof,
     middleware::{
         custom::KeyOrWildcard, AnchoredKey, CustomPredicateBatch, CustomPredicateRef,
-        MiddlewareError, NativePredicate, Params, Predicate, Result, Statement, StatementArg,
-        StatementTmplArg, ToFields, Wildcard, WildcardValue, F, SELF,
+        MiddlewareError, MiddlewareResult, NativePredicate, Params, Predicate, Statement,
+        StatementArg, StatementTmplArg, ToFields, Wildcard, WildcardValue, F, SELF,
     },
 };
 
@@ -210,7 +210,11 @@ impl Operation {
     }
 
     /// Forms operation from op-code and arguments.
-    pub fn op(op_code: OperationType, args: &[Statement], aux: &OperationAux) -> Result<Self> {
+    pub fn op(
+        op_code: OperationType,
+        args: &[Statement],
+        aux: &OperationAux,
+    ) -> MiddlewareResult<Self> {
         type OA = OperationAux;
         type NO = NativeOperation;
         let arg_tup = (
@@ -261,7 +265,11 @@ impl Operation {
         })
     }
     /// Checks the given operation against a statement, and prints information if the check does not pass
-    pub fn check_and_log(&self, params: &Params, output_statement: &Statement) -> Result<bool> {
+    pub fn check_and_log(
+        &self,
+        params: &Params,
+        output_statement: &Statement,
+    ) -> MiddlewareResult<bool> {
         let valid: bool = self.check(params, output_statement)?;
         if !valid {
             error!("Check failed on the following statement");
@@ -270,7 +278,7 @@ impl Operation {
         Ok(valid)
     }
     /// Checks the given operation against a statement.
-    pub fn check(&self, params: &Params, output_statement: &Statement) -> Result<bool> {
+    pub fn check(&self, params: &Params, output_statement: &Statement) -> MiddlewareResult<bool> {
         use Statement::*;
         match (self, output_statement) {
             (Self::None, None) => Ok(true),
@@ -380,7 +388,7 @@ fn check_custom_pred(
     index: usize,
     args: &[Statement],
     s_args: &[WildcardValue],
-) -> Result<bool> {
+) -> MiddlewareResult<bool> {
     let pred = &batch.predicates[index];
     if pred.statements.len() != args.len() {
         return Err(MiddlewareError::diff_amount(

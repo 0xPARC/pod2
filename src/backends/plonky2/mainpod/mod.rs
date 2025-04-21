@@ -25,7 +25,7 @@ use crate::{
         signedpod::SignedPod,
     },
     middleware::{
-        self, error::MiddlewareError, AnchoredKey, Hash, MainPodInputs, NativeOperation, NonePod,
+        self, AnchoredKey, Hash, MainPodInputs, MiddlewareError, NativeOperation, NonePod,
         OperationType, Params, Pod, PodId, PodProver, PodType, StatementArg, ToFields, F, KEY_TYPE,
         SELF,
     },
@@ -296,9 +296,8 @@ pub(crate) fn process_public_statements_operations(
 
 pub struct Prover {}
 
-impl PodProver for Prover {
-    // TODO: Be consistent on where we apply the padding, here, or in the set_targets?
-    fn prove(&mut self, params: &Params, inputs: MainPodInputs) -> Result<Box<dyn Pod>> {
+impl Prover {
+    fn _prove(&mut self, params: &Params, inputs: MainPodInputs) -> Result<MainPod> {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let main_pod = MainPodVerifyCircuit {
@@ -347,12 +346,23 @@ impl PodProver for Prover {
         let data = builder.build::<C>();
         let proof = data.prove(pw)?;
 
-        Ok(Box::new(MainPod {
+        Ok(MainPod {
             params: params.clone(),
             id,
             public_statements,
             proof,
-        }))
+        })
+    }
+}
+
+impl PodProver for Prover {
+    // TODO: Be consistent on where we apply the padding, here, or in the set_targets?
+    fn prove(
+        &mut self,
+        params: &Params,
+        inputs: MainPodInputs,
+    ) -> Result<Box<dyn Pod>, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(self._prove(params, inputs).map(Box::new)?)
     }
 }
 
@@ -383,8 +393,8 @@ pub(crate) fn normalize_statement(statement: &Statement, self_id: PodId) -> midd
     .unwrap()
 }
 
-impl Pod for MainPod {
-    fn verify(&self) -> Result<()> {
+impl MainPod {
+    fn _verify(&self) -> Result<()> {
         // 2. get the id out of the public statements
         let id: PodId = PodId(hash_statements(&self.public_statements, &self.params));
         if id != self.id {
@@ -403,6 +413,12 @@ impl Pod for MainPod {
         let data = builder.build::<C>();
         data.verify(self.proof.clone())
             .map_err(|e| Error::custom(format!("MainPod proof verification failure: {:?}", e)))
+    }
+}
+
+impl Pod for MainPod {
+    fn verify(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(self._verify()?)
     }
 
     fn id(&self) -> PodId {
@@ -469,7 +485,7 @@ pub mod tests {
         let kyc_pod = kyc_builder.prove(&mut prover, &params)?;
         let pod = kyc_pod.pod.into_any().downcast::<MainPod>().unwrap();
 
-        pod.verify()
+        Ok(pod.verify()?)
     }
 
     #[test]

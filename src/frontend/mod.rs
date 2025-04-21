@@ -103,7 +103,7 @@ impl SignedPod {
         self.pod.id()
     }
     pub fn verify(&self) -> Result<()> {
-        self.pod.verify()
+        Ok(self.pod.verify().map_err(Error::Backend)?)
     }
     pub fn kvs(&self) -> &HashMap<Key, Value> {
         &self.kvs
@@ -345,7 +345,9 @@ impl MainPodBuilder {
                             }
                         }
                         _ => {
-                            return Err(Error::op_invalid_args("transitivity equality".to_string()));
+                            return Err(Error::op_invalid_args(
+                                "transitivity equality".to_string(),
+                            ));
                         }
                     }
                 }
@@ -686,7 +688,7 @@ impl MainPodCompiler {
             op.1.iter()
                 .flat_map(|arg| self.compile_op_arg(arg))
                 .collect_vec();
-        middleware::Operation::op(op.0.clone(), &mop_args, &op.2)
+        Ok(middleware::Operation::op(op.0.clone(), &mop_args, &op.2)?)
     }
 
     fn compile_st_op(&mut self, st: &Statement, op: &Operation, params: &Params) -> Result<()> {

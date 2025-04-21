@@ -140,7 +140,7 @@ impl TryFrom<&TypedValue> for i64 {
 
 impl TryFrom<TypedValue> for Key {
     type Error = MiddlewareError;
-    fn try_from(tv: TypedValue) -> Result<Self> {
+    fn try_from(tv: TypedValue) -> MiddlewareResult<Self> {
         match tv {
             TypedValue::String(s) => Ok(Key::new(s)),
             _ => Err(MiddlewareError::custom(format!(
@@ -237,7 +237,7 @@ impl Value {
     pub(crate) fn prove_existence<'a>(
         &'a self,
         key: &'a Value,
-    ) -> Result<(&'a Value, MerkleProof)> {
+    ) -> MiddlewareResult<(&'a Value, MerkleProof)> {
         match &self.typed() {
             TypedValue::Array(a) => match key.typed() {
                 TypedValue::Int(i) if i >= &0 => a.prove((*i) as usize),
@@ -255,7 +255,10 @@ impl Value {
         }
     }
     /// Determines Merkle non-existence proof for `key` in `self` (if applicable).
-    pub(crate) fn prove_nonexistence<'a>(&'a self, key: &'a Value) -> Result<MerkleProof> {
+    pub(crate) fn prove_nonexistence<'a>(
+        &'a self,
+        key: &'a Value,
+    ) -> MiddlewareResult<MerkleProof> {
         match &self.typed() {
             TypedValue::Array(_) => Err(MiddlewareError::custom(
                 "Arrays do not support `NotContains` operation.".to_string(),
@@ -505,7 +508,7 @@ impl Params {
 // pub type DynError = dyn std::error::Error + Send + Sync;
 
 pub trait Pod: fmt::Debug + DynClone {
-    fn verify(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    fn verify(&self) -> MiddlewareResult<(), Box<dyn std::error::Error + Send + Sync>>;
     fn id(&self) -> PodId;
     fn pub_statements(&self) -> Vec<Statement>;
     /// Extract key-values from ValueOf public statements
@@ -540,7 +543,7 @@ pub trait PodSigner {
         &mut self,
         params: &Params,
         kvs: &HashMap<Key, Value>,
-    ) -> Result<Box<dyn Pod>, Box<dyn std::error::Error + Send + Sync>>;
+    ) -> MiddlewareResult<Box<dyn Pod>, Box<dyn std::error::Error + Send + Sync>>;
 }
 
 /// This is a filler type that fulfills the Pod trait and always verifies.  It's empty.  This
@@ -549,7 +552,7 @@ pub trait PodSigner {
 pub struct NonePod {}
 
 impl Pod for NonePod {
-    fn verify(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    fn verify(&self) -> MiddlewareResult<(), Box<dyn std::error::Error + Send + Sync>> {
         Ok(())
     }
     fn id(&self) -> PodId {
@@ -585,7 +588,7 @@ pub trait PodProver {
         &mut self,
         params: &Params,
         inputs: MainPodInputs,
-    ) -> Result<Box<dyn Pod>, Box<dyn std::error::Error + Send + Sync>>;
+    ) -> MiddlewareResult<Box<dyn Pod>, Box<dyn std::error::Error + Send + Sync>>;
 }
 
 pub trait ToFields {

@@ -18,7 +18,7 @@ pub enum InnerError {
     #[error(transparent)]
     Tree(#[from] crate::backends::plonky2::primitives::merkletree::error::TreeError),
     #[error(transparent)]
-    Middleware(#[from] crate::middleware::error::MiddlewareError),
+    Middleware(#[from] crate::middleware::MiddlewareError),
 
     // Comparators errors
     #[error("not equal")]
@@ -69,6 +69,10 @@ pub enum Error {
     Infallible(#[from] std::convert::Infallible),
     #[error(transparent)]
     Tree(#[from] crate::backends::plonky2::primitives::merkletree::error::TreeError),
+    #[error(transparent)]
+    Backend(#[from] Box<dyn std::error::Error + Send + Sync>),
+    #[error(transparent)]
+    Middleware(#[from] crate::middleware::MiddlewareError),
 }
 
 impl Debug for Error {
@@ -150,7 +154,7 @@ impl Error {
             backtrace: Box::new(Backtrace::capture()),
         }
     }
-    pub fn middleware(e: crate::middleware::error::MiddlewareError) -> Self {
+    pub fn middleware(e: crate::middleware::MiddlewareError) -> Self {
         Self::Inner {
             inner: Box::new(InnerError::Middleware(e)),
             backtrace: Box::new(Backtrace::capture()),

@@ -6,8 +6,8 @@ use plonky2::field::types::Field;
 use strum_macros::FromRepr;
 
 use crate::middleware::{
-    AnchoredKey, CustomPredicateRef, Key, MiddlewareError, Params, PodId, Predicate, RawValue,
-    Result, ToFields, Value, F, VALUE_SIZE,
+    AnchoredKey, CustomPredicateRef, Key, MiddlewareError, MiddlewareResult, Params, PodId,
+    Predicate, RawValue, ToFields, Value, F, VALUE_SIZE,
 };
 
 // TODO: Maybe store KEY_SIGNER and KEY_TYPE as Key with lazy_static
@@ -140,9 +140,9 @@ impl Statement {
             Self::Custom(_, args) => Vec::from_iter(args.into_iter().map(WildcardLiteral)),
         }
     }
-    pub fn from_args(pred: Predicate, args: Vec<StatementArg>) -> Result<Self> {
+    pub fn from_args(pred: Predicate, args: Vec<StatementArg>) -> MiddlewareResult<Self> {
         use Predicate::*;
-        let st: Result<Self> = match pred {
+        let st: MiddlewareResult<Self> = match pred {
             Native(NativePredicate::None) => Ok(Self::None),
             Native(NativePredicate::ValueOf) => {
                 if let (StatementArg::Key(a0), StatementArg::Literal(v1)) =
@@ -240,7 +240,7 @@ impl Statement {
             ))),
             BatchSelf(_) => unreachable!(),
             Custom(cpr) => {
-                let v_args: Result<Vec<WildcardValue>> = args
+                let v_args: MiddlewareResult<Vec<WildcardValue>> = args
                     .iter()
                     .map(|x| match x {
                         StatementArg::WildcardLiteral(v) => Ok(v.clone()),
@@ -300,7 +300,7 @@ impl StatementArg {
     pub fn is_none(&self) -> bool {
         matches!(self, Self::None)
     }
-    pub fn literal(&self) -> Result<Value> {
+    pub fn literal(&self) -> MiddlewareResult<Value> {
         match self {
             Self::Literal(value) => Ok(value.clone()),
             _ => Err(MiddlewareError::InvalidStatementArg(
@@ -309,7 +309,7 @@ impl StatementArg {
             )),
         }
     }
-    pub fn key(&self) -> Result<AnchoredKey> {
+    pub fn key(&self) -> MiddlewareResult<AnchoredKey> {
         match self {
             Self::Key(ak) => Ok(ak.clone()),
             _ => Err(MiddlewareError::InvalidStatementArg(
