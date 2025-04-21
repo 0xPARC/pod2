@@ -6,12 +6,12 @@ use custom::{eth_dos_batch, eth_friend_batch};
 
 use crate::{
     backends::plonky2::mock::signedpod::MockSigner,
-    frontend::{MainPodBuilder, SignedPod, SignedPodBuilder},
+    frontend::{FrontendResult, MainPodBuilder, SignedPod, SignedPodBuilder},
     middleware::{
         containers::Set, CustomPredicateRef, Params, PodType, Statement, TypedValue, Value,
         KEY_SIGNER, KEY_TYPE,
     },
-    op, Result,
+    op,
 };
 
 // ZuKYC
@@ -43,7 +43,7 @@ pub fn zu_kyc_pod_builder(
     gov_id: &SignedPod,
     pay_stub: &SignedPod,
     sanction_list: &SignedPod,
-) -> Result<MainPodBuilder> {
+) -> FrontendResult<MainPodBuilder> {
     let now_minus_18y: i64 = 1169909388;
     let now_minus_1y: i64 = 1706367566;
 
@@ -84,7 +84,7 @@ pub fn eth_dos_pod_builder(
     alice_attestation: &SignedPod,
     charlie_attestation: &SignedPod,
     bob_pubkey: &TypedValue,
-) -> Result<MainPodBuilder> {
+) -> FrontendResult<MainPodBuilder> {
     // Will need ETH friend and ETH DoS custom predicate batches.
     let eth_friend = CustomPredicateRef::new(eth_friend_batch(params)?, 0);
     let eth_dos_batch = eth_dos_batch(params)?;
@@ -235,7 +235,7 @@ pub fn great_boy_pod_builder(
     friend_pods: [&SignedPod; 2],
     good_boy_issuers: &Value,
     receiver: &str,
-) -> Result<MainPodBuilder> {
+) -> FrontendResult<MainPodBuilder> {
     // Attestment chain (issuer -> good boy -> great boy):
     // issuer 0 -> good_boy_pods[0] => good boy 0
     // issuer 1 -> good_boy_pods[1] => good boy 0
@@ -298,7 +298,7 @@ pub fn great_boy_pod_builder(
     Ok(great_boy)
 }
 
-pub fn great_boy_pod_full_flow() -> Result<MainPodBuilder> {
+pub fn great_boy_pod_full_flow() -> FrontendResult<MainPodBuilder> {
     let params = Params {
         max_input_signed_pods: 6,
         max_statements: 100,
@@ -385,7 +385,7 @@ pub fn tickets_pod_builder(
     expected_event_id: i64,
     expect_consumed: bool,
     blacklisted_emails: &Set,
-) -> Result<MainPodBuilder> {
+) -> FrontendResult<MainPodBuilder> {
     let blacklisted_email_set_value = Value::from(TypedValue::Set(blacklisted_emails.clone()));
     // Create a main pod referencing this signed pod with some statements
     let mut builder = MainPodBuilder::new(params);
@@ -401,7 +401,7 @@ pub fn tickets_pod_builder(
     Ok(builder)
 }
 
-pub fn tickets_pod_full_flow() -> Result<MainPodBuilder> {
+pub fn tickets_pod_full_flow() -> FrontendResult<MainPodBuilder> {
     let params = Params::default();
     let builder = tickets_sign_pod_builder(&params);
     let signed_pod = builder.sign(&mut MockSigner { pk: "test".into() }).unwrap();

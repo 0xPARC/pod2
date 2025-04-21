@@ -408,7 +408,7 @@ mod tests {
             KeyOrWildcard, NativePredicate, Operation, Params, PodId, PodType, Predicate,
             Statement, StatementTmpl, StatementTmplArg, WildcardValue, SELF,
         },
-        Result,
+        SuperResult,
     };
 
     fn st(p: Predicate, args: Vec<StatementTmplArg>) -> StatementTmpl {
@@ -431,7 +431,7 @@ mod tests {
     type NP = NativePredicate;
 
     #[test]
-    fn is_double_test() -> Result<()> {
+    fn is_double_test() -> SuperResult<()> {
         let params = Params::default();
 
         /*
@@ -488,7 +488,7 @@ mod tests {
     }
 
     #[test]
-    fn ethdos_test() -> Result<()> {
+    fn ethdos_test() -> SuperResult<()> {
         let params = Params {
             max_custom_predicate_wildcards: 12,
             ..Default::default()

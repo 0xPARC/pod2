@@ -3,13 +3,15 @@ use std::{any::Any, collections::HashMap};
 use itertools::Itertools;
 
 use crate::{
-    backends::plonky2::primitives::merkletree::MerkleTree,
+    backends::plonky2::{
+        error::{BackendError, BackendResult},
+        primitives::merkletree::MerkleTree,
+    },
     constants::MAX_DEPTH,
     middleware::{
-        containers::Dictionary, hash_str, AnchoredKey, DynError, Hash, Key, MiddlewareError,
-        Params, Pod, PodId, PodSigner, PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE,
+        containers::Dictionary, hash_str, AnchoredKey, DynError, Hash, Key, Params, Pod, PodId,
+        PodSigner, PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE,
     },
-    Result, SuperError,
 };
 
 pub struct MockSigner {
@@ -23,7 +25,11 @@ impl MockSigner {
 }
 
 impl MockSigner {
-    fn _sign(&mut self, _params: &Params, kvs: &HashMap<Key, Value>) -> Result<MockSignedPod> {
+    fn _sign(
+        &mut self,
+        _params: &Params,
+        kvs: &HashMap<Key, Value>,
+    ) -> BackendResult<MockSignedPod> {
         let mut kvs = kvs.clone();
         let pubkey = self.pubkey();
         kvs.insert(Key::from(KEY_SIGNER), Value::from(pubkey));
@@ -41,7 +47,7 @@ impl PodSigner for MockSigner {
         &mut self,
         params: &Params,
         kvs: &HashMap<Key, Value>,
-    ) -> Result<Box<dyn Pod>, Box<DynError>> {
+    ) -> BackendResult<Box<dyn Pod>, Box<DynError>> {
         Ok(self._sign(params, kvs).map(Box::new)?)
     }
 }
@@ -64,7 +70,7 @@ pub struct MockSignedPod {
 // }
 
 impl MockSignedPod {
-    fn _verify(&self) -> Result<()> {
+    fn _verify(&self) -> BackendResult<()> {
         // 1. Verify id
         let mt = MerkleTree::new(
             MAX_DEPTH,
@@ -76,31 +82,29 @@ impl MockSignedPod {
         )?;
         let id = PodId(mt.root());
         if id != self.id {
-            return Err(SuperError::middleware(MiddlewareError::id_not_equal(
-                self.id, id,
-            )));
+            return Err(BackendError::id_not_equal(self.id, id));
         }
 
         // 2. Verify type
         let value_at_type = self
             .kvs
             .get(&Key::from(KEY_TYPE))
-            .ok_or(SuperError::key_not_found())?;
+            .ok_or(BackendError::key_not_found())?;
         if &Value::from(PodType::MockSigned) != value_at_type {
-            return Err(SuperError::middleware(MiddlewareError::type_not_equal(
+            return Err(BackendError::type_not_equal(
                 PodType::MockSigned,
                 value_at_type.clone(),
-            )));
+            ));
         }
 
         // 3. Verify signature
         let pk_hash = self
             .kvs
             .get(&Key::from(KEY_SIGNER))
-            .ok_or(SuperError::key_not_found())?;
+            .ok_or(BackendError::key_not_found())?;
         let signature = format!("{}_signed_by_{}", id, pk_hash);
         if signature != self.signature {
-            return Err(SuperError::custom(format!(
+            return Err(BackendError::custom(format!(
                 "signature does not match, expected {}, computed {}",
                 self.id, id
             )));
@@ -111,7 +115,7 @@ impl MockSignedPod {
 }
 
 impl Pod for MockSignedPod {
-    fn verify(&self) -> Result<(), Box<DynError>> {
+    fn verify(&self) -> BackendResult<(), Box<DynError>> {
         Ok(self._verify()?)
     }
 
@@ -159,7 +163,7 @@ pub mod tests {
     };
 
     #[test]
-    fn test_mock_signed_0() -> Result<()> {
+    fn test_mock_signed_0() -> BackendResult<()> {
         let params = middleware::Params::default();
         let mut pod = frontend::SignedPodBuilder::new(&params);
         pod.insert("idNumber", "4242424242");

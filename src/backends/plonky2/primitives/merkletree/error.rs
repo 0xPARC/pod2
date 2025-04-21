@@ -52,28 +52,28 @@ macro_rules! new {
 }
 use TreeInnerError::*;
 impl TreeError {
-    pub fn key_not_found() -> Self {
+    pub(crate) fn key_not_found() -> Self {
         new!(KeyNotFound)
     }
-    pub fn key_exists() -> Self {
+    pub(crate) fn key_exists() -> Self {
         new!(KeyExists)
     }
-    pub fn max_depth() -> Self {
+    pub(crate) fn max_depth() -> Self {
         new!(MaxDepth)
     }
-    pub fn empty_node() -> Self {
+    pub(crate) fn empty_node() -> Self {
         new!(EmptyNode)
     }
-    pub fn proof_fail(obj: String) -> Self {
+    pub(crate) fn proof_fail(obj: String) -> Self {
         new!(ProofFail(obj))
     }
-    pub fn invalid_proof(obj: String) -> Self {
+    pub(crate) fn invalid_proof(obj: String) -> Self {
         new!(InvalidProof(obj))
     }
-    pub fn too_short_key(depth: usize, max_depth: usize) -> Self {
+    pub(crate) fn too_short_key(depth: usize, max_depth: usize) -> Self {
         new!(TooShortKey(depth, max_depth))
     }
-    pub fn custom(s: String) -> Self {
+    pub(crate) fn custom(s: String) -> Self {
         new!(Custom(s))
     }
 }

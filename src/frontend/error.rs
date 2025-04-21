@@ -2,7 +2,7 @@ use std::{backtrace::Backtrace, fmt::Debug};
 
 use crate::middleware::{DynError, Statement, StatementTmpl};
 
-pub type SuperResult<T, E = SuperError> = core::result::Result<T, E>;
+pub type FrontendResult<T, E = FrontendError> = core::result::Result<T, E>;
 
 #[derive(thiserror::Error, Debug)]
 pub enum InnerError {
@@ -46,7 +46,7 @@ pub enum InnerError {
 }
 
 #[derive(thiserror::Error)]
-pub enum SuperError {
+pub enum FrontendError {
     #[error("Inner: {inner}\n{backtrace}")]
     Inner {
         inner: Box<InnerError>,
@@ -67,7 +67,7 @@ pub enum SuperError {
     Middleware(#[from] crate::middleware::MiddlewareError),
 }
 
-impl Debug for SuperError {
+impl Debug for FrontendError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(self, f)
     }
@@ -75,14 +75,14 @@ impl Debug for SuperError {
 
 macro_rules! new {
     ($inner:expr) => {
-        SuperError::Inner {
+        FrontendError::Inner {
             inner: Box::new($inner),
             backtrace: Box::new(Backtrace::capture()),
         }
     };
 }
 use InnerError::*;
-impl SuperError {
+impl FrontendError {
     pub(crate) fn custom(s: String) -> Self {
         new!(Custom(s))
     }
@@ -126,33 +126,5 @@ impl SuperError {
         e: crate::backends::plonky2::primitives::merkletree::error::TreeError,
     ) -> Self {
         new!(Tree(e))
-    }
-}
-
-#[cfg(test)]
-pub mod tests {
-    use super::*;
-
-    fn bar() -> SuperResult<()> {
-        Err(SuperError::not_equal())
-    }
-
-    fn foo() -> SuperResult<()> {
-        bar()
-    }
-
-    #[test]
-    fn test_error_1() -> SuperResult<()> {
-        foo()
-    }
-
-    #[test]
-    fn test_error_2() -> core::result::Result<(), InnerError> {
-        Err(InnerError::NotEqual)
-    }
-
-    #[test]
-    fn test_error_3() -> core::result::Result<(), anyhow::Error> {
-        Err(anyhow::anyhow!("foo bar"))
     }
 }

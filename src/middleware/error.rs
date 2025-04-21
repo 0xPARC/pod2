@@ -57,31 +57,31 @@ macro_rules! new {
 }
 use MiddlewareInnerError::*;
 impl MiddlewareError {
-    pub fn type_not_equal(expected: PodType, found: Value) -> Self {
+    pub(crate) fn type_not_equal(expected: PodType, found: Value) -> Self {
         new!(TypeNotEqual(expected, found))
     }
-    pub fn id_not_equal(expected: PodId, found: PodId) -> Self {
+    pub(crate) fn id_not_equal(expected: PodId, found: PodId) -> Self {
         new!(IdNotEqual(expected, found))
     }
-    pub fn invalid_op() -> Self {
+    pub(crate) fn invalid_op() -> Self {
         new!(InvalidOp)
     }
-    pub fn incorrect_statements_args() -> Self {
+    pub(crate) fn incorrect_statements_args() -> Self {
         new!(IncorrectStatementArgs)
     }
-    pub fn invalid_deduction(op: Operation, st: Statement) -> Self {
+    pub(crate) fn invalid_deduction(op: Operation, st: Statement) -> Self {
         new!(InvalidDeduction(op, st))
     }
-    pub fn invalid_statement_arg(st_arg: StatementArg, v: String) -> Self {
+    pub(crate) fn invalid_statement_arg(st_arg: StatementArg, v: String) -> Self {
         new!(InvalidStatementArg(st_arg, v))
     }
-    pub fn max_length(obj: String, found: usize, expect: usize) -> Self {
+    pub(crate) fn max_length(obj: String, found: usize, expect: usize) -> Self {
         new!(MaxLength(obj, found, expect))
     }
-    pub fn diff_amount(obj: String, unit: String, expect: usize, found: usize) -> Self {
+    pub(crate) fn diff_amount(obj: String, unit: String, expect: usize, found: usize) -> Self {
         new!(DiffAmount(obj, unit, expect, found))
     }
-    pub fn custom(s: String) -> Self {
+    pub(crate) fn custom(s: String) -> Self {
         new!(Custom(s))
     }
 }

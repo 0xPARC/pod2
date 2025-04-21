@@ -1,8 +1,8 @@
 use std::{backtrace::Backtrace, fmt::Debug};
 
-use crate::middleware::{DynError, Statement, StatementTmpl};
+use crate::middleware::{DynError, PodId, PodType, Statement, StatementTmpl, Value};
 
-pub type SuperResult<T, E = SuperError> = core::result::Result<T, E>;
+pub type BackendResult<T, E = BackendError> = core::result::Result<T, E>;
 
 #[derive(thiserror::Error, Debug)]
 pub enum InnerError {
@@ -15,6 +15,10 @@ pub enum InnerError {
     // Comparators errors
     #[error("not equal")]
     NotEqual,
+    #[error("id does not match, expected {0}, found {1}")]
+    IdNotEqual(PodId, PodId),
+    #[error("type does not match, expected {0}, found {1}")]
+    TypeNotEqual(PodType, Value),
     #[error("{0} {1} is over the limit {2}")]
     MaxLength(String, usize, usize),
     #[error("{0} amount of {1} should be {1} but it's {2}")]
@@ -46,7 +50,7 @@ pub enum InnerError {
 }
 
 #[derive(thiserror::Error)]
-pub enum SuperError {
+pub enum BackendError {
     #[error("Inner: {inner}\n{backtrace}")]
     Inner {
         inner: Box<InnerError>,
@@ -67,7 +71,7 @@ pub enum SuperError {
     Middleware(#[from] crate::middleware::MiddlewareError),
 }
 
-impl Debug for SuperError {
+impl Debug for BackendError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(self, f)
     }
@@ -75,14 +79,14 @@ impl Debug for SuperError {
 
 macro_rules! new {
     ($inner:expr) => {
-        SuperError::Inner {
+        BackendError::Inner {
             inner: Box::new($inner),
             backtrace: Box::new(Backtrace::capture()),
         }
     };
 }
 use InnerError::*;
-impl SuperError {
+impl BackendError {
     pub(crate) fn custom(s: String) -> Self {
         new!(Custom(s))
     }
@@ -119,6 +123,12 @@ impl SuperError {
     pub(crate) fn not_equal() -> Self {
         new!(NotEqual)
     }
+    pub(crate) fn id_not_equal(expected: PodId, found: PodId) -> Self {
+        new!(IdNotEqual(expected, found))
+    }
+    pub(crate) fn type_not_equal(expected: PodType, found: Value) -> Self {
+        new!(TypeNotEqual(expected, found))
+    }
     pub(crate) fn middleware(e: crate::middleware::MiddlewareError) -> Self {
         new!(Middleware(e))
     }
@@ -126,33 +136,5 @@ impl SuperError {
         e: crate::backends::plonky2::primitives::merkletree::error::TreeError,
     ) -> Self {
         new!(Tree(e))
-    }
-}
-
-#[cfg(test)]
-pub mod tests {
-    use super::*;
-
-    fn bar() -> SuperResult<()> {
-        Err(SuperError::not_equal())
-    }
-
-    fn foo() -> SuperResult<()> {
-        bar()
-    }
-
-    #[test]
-    fn test_error_1() -> SuperResult<()> {
-        foo()
-    }
-
-    #[test]
-    fn test_error_2() -> core::result::Result<(), InnerError> {
-        Err(InnerError::NotEqual)
-    }
-
-    #[test]
-    fn test_error_3() -> core::result::Result<(), anyhow::Error> {
-        Err(anyhow::anyhow!("foo bar"))
     }
 }

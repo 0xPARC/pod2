@@ -18,6 +18,7 @@ use crate::{
     backends::plonky2::{
         basetypes::{C, D},
         circuits::mainpod::{MainPodVerifyCircuit, MainPodVerifyInput},
+        error::{BackendError, BackendResult},
         primitives::{
             merkletree,
             merkletree::{MerkleClaimAndProof, TreeError},
@@ -25,11 +26,9 @@ use crate::{
         signedpod::SignedPod,
     },
     middleware::{
-        self, AnchoredKey, DynError, Hash, MainPodInputs, MiddlewareError, NativeOperation,
-        NonePod, OperationType, Params, Pod, PodId, PodProver, PodType, StatementArg, ToFields, F,
-        KEY_TYPE, SELF,
+        self, AnchoredKey, DynError, Hash, MainPodInputs, NativeOperation, NonePod, OperationType,
+        Params, Pod, PodId, PodProver, PodType, StatementArg, ToFields, F, KEY_TYPE, SELF,
     },
-    Result, SuperError,
 };
 
 /// Hash a list of public statements to derive the PodId
@@ -45,7 +44,7 @@ pub(crate) fn hash_statements(statements: &[Statement], _params: &Params) -> mid
 pub(crate) fn extract_merkle_proofs(
     params: &Params,
     operations: &[middleware::Operation],
-) -> Result<Vec<MerkleClaimAndProof>> {
+) -> BackendResult<Vec<MerkleClaimAndProof>> {
     let mut merkle_proofs = operations
         .iter()
         .flat_map(|op| match op {
@@ -74,9 +73,9 @@ pub(crate) fn extract_merkle_proofs(
             )),
             _ => None,
         })
-        .collect::<Result<Vec<_>, TreeError>>()?;
+        .collect::<BackendResult<Vec<_>, TreeError>>()?;
     if merkle_proofs.len() > params.max_merkle_proofs {
-        Err(SuperError::custom(format!(
+        Err(BackendError::custom(format!(
             "The number of required Merkle proofs ({}) exceeds the maximum number ({}).",
             merkle_proofs.len(),
             params.max_merkle_proofs
@@ -92,7 +91,10 @@ pub(crate) fn extract_merkle_proofs(
 }
 
 /// Find the operation argument statement in the list of previous statements and return the index.
-fn find_op_arg(statements: &[Statement], op_arg: &middleware::Statement) -> Result<OperationArg> {
+fn find_op_arg(
+    statements: &[Statement],
+    op_arg: &middleware::Statement,
+) -> BackendResult<OperationArg> {
     match op_arg {
         middleware::Statement::None => Ok(OperationArg::None),
         _ => statements
@@ -102,7 +104,7 @@ fn find_op_arg(statements: &[Statement], op_arg: &middleware::Statement) -> Resu
                 (&middleware::Statement::try_from(s.clone()).ok()? == op_arg).then_some(i)
             })
             .map(OperationArg::Index)
-            .ok_or(SuperError::custom(format!(
+            .ok_or(BackendError::custom(format!(
                 "Statement corresponding to op arg {} not found",
                 op_arg
             ))),
@@ -113,7 +115,7 @@ fn find_op_arg(statements: &[Statement], op_arg: &middleware::Statement) -> Resu
 fn find_op_aux(
     merkle_proofs: &[MerkleClaimAndProof],
     op_aux: &middleware::OperationAux,
-) -> Result<OperationAux> {
+) -> BackendResult<OperationAux> {
     match op_aux {
         middleware::OperationAux::None => Ok(OperationAux::None),
         middleware::OperationAux::MerkleProof(pf_arg) => merkle_proofs
@@ -126,7 +128,7 @@ fn find_op_aux(
                     .and_then(|mid_pf: merkletree::MerkleProof| (&mid_pf == pf_arg).then_some(i))
             })
             .map(OperationAux::MerkleProofIndex)
-            .ok_or(SuperError::custom(format!(
+            .ok_or(BackendError::custom(format!(
                 "Merkle proof corresponding to op arg {} not found",
                 op_aux
             ))),
@@ -235,7 +237,7 @@ pub(crate) fn process_private_statements_operations(
     statements: &[Statement],
     merkle_proofs: &[MerkleClaimAndProof],
     input_operations: &[middleware::Operation],
-) -> Result<Vec<Operation>> {
+) -> BackendResult<Vec<Operation>> {
     let mut operations = Vec::new();
     for i in 0..params.max_priv_statements() {
         let op = input_operations
@@ -246,7 +248,7 @@ pub(crate) fn process_private_statements_operations(
         let mut args = mid_args
             .iter()
             .map(|mid_arg| find_op_arg(statements, mid_arg))
-            .collect::<Result<Vec<_>>>()?;
+            .collect::<BackendResult<Vec<_>>>()?;
 
         let mid_aux = op.aux();
         let aux = find_op_aux(merkle_proofs, &mid_aux)?;
@@ -265,7 +267,7 @@ pub(crate) fn process_public_statements_operations(
     params: &Params,
     statements: &[Statement],
     mut operations: Vec<Operation>,
-) -> Result<Vec<Operation>> {
+) -> BackendResult<Vec<Operation>> {
     let offset_public_statements = statements.len() - params.max_public_statements;
     operations.push(Operation(
         OperationType::Native(NativeOperation::NewEntry),
@@ -297,7 +299,7 @@ pub(crate) fn process_public_statements_operations(
 pub struct Prover {}
 
 impl Prover {
-    fn _prove(&mut self, params: &Params, inputs: MainPodInputs) -> Result<MainPod> {
+    fn _prove(&mut self, params: &Params, inputs: MainPodInputs) -> BackendResult<MainPod> {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let main_pod = MainPodVerifyCircuit {
@@ -361,7 +363,7 @@ impl PodProver for Prover {
         &mut self,
         params: &Params,
         inputs: MainPodInputs,
-    ) -> Result<Box<dyn Pod>, Box<DynError>> {
+    ) -> BackendResult<Box<dyn Pod>, Box<DynError>> {
         Ok(self._prove(params, inputs).map(Box::new)?)
     }
 }
@@ -394,13 +396,11 @@ pub(crate) fn normalize_statement(statement: &Statement, self_id: PodId) -> midd
 }
 
 impl MainPod {
-    fn _verify(&self) -> Result<()> {
+    fn _verify(&self) -> BackendResult<()> {
         // 2. get the id out of the public statements
         let id: PodId = PodId(hash_statements(&self.public_statements, &self.params));
         if id != self.id {
-            return Err(SuperError::middleware(MiddlewareError::id_not_equal(
-                self.id, id,
-            )));
+            return Err(BackendError::id_not_equal(self.id, id));
         }
 
         // 1, 3, 4, 5 verification via the zkSNARK proof
@@ -413,13 +413,14 @@ impl MainPod {
         .eval(&mut builder)?;
 
         let data = builder.build::<C>();
-        data.verify(self.proof.clone())
-            .map_err(|e| SuperError::custom(format!("MainPod proof verification failure: {:?}", e)))
+        data.verify(self.proof.clone()).map_err(|e| {
+            BackendError::custom(format!("MainPod proof verification failure: {:?}", e))
+        })
     }
 }
 
 impl Pod for MainPod {
-    fn verify(&self) -> Result<(), Box<DynError>> {
+    fn verify(&self) -> BackendResult<(), Box<DynError>> {
         Ok(self._verify()?)
     }
 
@@ -458,13 +459,14 @@ pub mod tests {
             signedpod::Signer,
         },
         examples::{zu_kyc_pod_builder, zu_kyc_sign_pod_builders},
-        frontend, middleware,
+        frontend::{self, FrontendResult},
+        middleware,
         middleware::RawValue,
         op,
     };
 
     #[test]
-    fn test_main_zu_kyc() -> Result<()> {
+    fn test_main_zu_kyc() -> FrontendResult<()> {
         let params = middleware::Params {
             // Currently the circuit uses random access that only supports vectors of length 64.
             // With max_input_main_pods=3 we need random access to a vector of length 73.

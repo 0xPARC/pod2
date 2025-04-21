@@ -1,9 +1,9 @@
 use std::fmt;
 
 // use serde::{Deserialize, Serialize};
-use crate::{
-    middleware::{self, NativePredicate, Params, Predicate, StatementArg, ToFields, WildcardValue},
-    Result, SuperError,
+use crate::backends::plonky2::error::{BackendError, BackendResult};
+use crate::middleware::{
+    self, NativePredicate, Params, Predicate, StatementArg, ToFields, WildcardValue,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -35,8 +35,8 @@ impl ToFields for Statement {
 }
 
 impl TryFrom<Statement> for middleware::Statement {
-    type Error = SuperError;
-    fn try_from(s: Statement) -> Result<Self> {
+    type Error = BackendError;
+    fn try_from(s: Statement) -> BackendResult<Self> {
         type S = middleware::Statement;
         type NP = NativePredicate;
         type SA = StatementArg;
@@ -77,7 +77,7 @@ impl TryFrom<Statement> for middleware::Statement {
                 (NP::MaxOf, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), Some(SA::Key(ak3))), 3) => {
                     S::MaxOf(ak1, ak2, ak3)
                 }
-                _ => Err(SuperError::custom(format!(
+                _ => Err(BackendError::custom(format!(
                     "Ill-formed statement expression {:?}",
                     s
                 )))?,

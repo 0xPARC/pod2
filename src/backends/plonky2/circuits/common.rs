@@ -18,6 +18,7 @@ use plonky2::{
 use crate::{
     backends::plonky2::{
         basetypes::D,
+        error::BackendResult,
         mainpod::{Operation, OperationArg, Statement},
         primitives::merkletree::MerkleClaimAndProofTarget,
     },
@@ -26,7 +27,6 @@ use crate::{
         EMPTY_VALUE, F, HASH_SIZE, OPERATION_ARG_F_LEN, OPERATION_AUX_F_LEN, STATEMENT_ARG_F_LEN,
         VALUE_SIZE,
     },
-    Result,
 };
 
 pub const CODE_SIZE: usize = HASH_SIZE + 2;
@@ -74,7 +74,7 @@ impl StatementArgTarget {
         pw: &mut PartialWitness<F>,
         params: &Params,
         arg: &StatementArg,
-    ) -> Result<()> {
+    ) -> BackendResult<()> {
         Ok(pw.set_target_arr(&self.elements, &arg.to_fields(params))?)
     }
 
@@ -134,7 +134,7 @@ impl StatementTarget {
         pw: &mut PartialWitness<F>,
         params: &Params,
         st: &Statement,
-    ) -> Result<()> {
+    ) -> BackendResult<()> {
         pw.set_target_arr(&self.predicate, &st.predicate().to_fields(params))?;
         for (i, arg) in st
             .args()
@@ -173,7 +173,7 @@ impl OperationTarget {
         pw: &mut PartialWitness<F>,
         params: &Params,
         op: &Operation,
-    ) -> Result<()> {
+    ) -> BackendResult<()> {
         pw.set_target_arr(&self.op_type, &op.op_type().to_fields(params))?;
         for (i, arg) in op
             .args()

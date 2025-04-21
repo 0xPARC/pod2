@@ -4,9 +4,12 @@ use plonky2::field::types::Field;
 
 // use serde::{Deserialize, Serialize};
 use crate::{
-    backends::plonky2::{mainpod::Statement, primitives::merkletree::MerkleClaimAndProof},
+    backends::plonky2::{
+        error::{BackendError, BackendResult},
+        mainpod::Statement,
+        primitives::merkletree::MerkleClaimAndProof,
+    },
     middleware::{self, OperationType, Params, ToFields, F},
-    Result, SuperError,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -64,7 +67,7 @@ impl Operation {
         &self,
         statements: &[Statement],
         merkle_proofs: &[MerkleClaimAndProof],
-    ) -> Result<crate::middleware::Operation> {
+    ) -> BackendResult<crate::middleware::Operation> {
         let deref_args = self
             .1
             .iter()
@@ -72,13 +75,13 @@ impl Operation {
                 OperationArg::None => None,
                 OperationArg::Index(i) => Some(statements[*i].clone().try_into()),
             })
-            .collect::<Result<Vec<_>>>()?;
+            .collect::<BackendResult<Vec<_>>>()?;
         let deref_aux = match self.2 {
             OperationAux::None => Ok(crate::middleware::OperationAux::None),
             OperationAux::MerkleProofIndex(i) => merkle_proofs
                 .get(i)
                 .cloned()
-                .ok_or(SuperError::custom(format!(
+                .ok_or(BackendError::custom(format!(
                     "Missing Merkle proof index {}",
                     i
                 )))

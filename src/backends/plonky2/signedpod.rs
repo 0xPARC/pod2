@@ -3,22 +3,24 @@ use std::{any::Any, collections::HashMap};
 use itertools::Itertools;
 
 use crate::{
-    backends::plonky2::primitives::{
-        merkletree::MerkleTree,
-        signature::{PublicKey, SecretKey, Signature},
+    backends::plonky2::{
+        error::{BackendError, BackendResult},
+        primitives::{
+            merkletree::MerkleTree,
+            signature::{PublicKey, SecretKey, Signature},
+        },
     },
     constants::MAX_DEPTH,
     middleware::{
-        containers::Dictionary, AnchoredKey, DynError, Hash, Key, MiddlewareError, Params, Pod,
-        PodId, PodSigner, PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE,
+        containers::Dictionary, AnchoredKey, DynError, Hash, Key, Params, Pod, PodId, PodSigner,
+        PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE,
     },
-    Result, SuperError,
 };
 
 pub struct Signer(pub SecretKey);
 
 impl Signer {
-    fn _sign(&mut self, _params: &Params, kvs: &HashMap<Key, Value>) -> Result<SignedPod> {
+    fn _sign(&mut self, _params: &Params, kvs: &HashMap<Key, Value>) -> BackendResult<SignedPod> {
         let mut kvs = kvs.clone();
         let pubkey = self.0.public_key();
         kvs.insert(Key::from(KEY_SIGNER), Value::from(pubkey.0));
@@ -41,7 +43,7 @@ impl PodSigner for Signer {
         &mut self,
         params: &Params,
         kvs: &HashMap<Key, Value>,
-    ) -> Result<Box<dyn Pod>, Box<DynError>> {
+    ) -> BackendResult<Box<dyn Pod>, Box<DynError>> {
         Ok(self._sign(params, kvs).map(Box::new)?)
     }
 }
@@ -54,14 +56,14 @@ pub struct SignedPod {
 }
 
 impl SignedPod {
-    fn _verify(&self) -> Result<()> {
+    fn _verify(&self) -> BackendResult<()> {
         // 1. Verify type
         let value_at_type = self.dict.get(&Key::from(KEY_TYPE))?;
         if Value::from(PodType::Signed) != *value_at_type {
-            return Err(SuperError::middleware(MiddlewareError::type_not_equal(
+            return Err(BackendError::type_not_equal(
                 PodType::Signed,
                 value_at_type.clone(),
-            )));
+            ));
         }
 
         // 2. Verify id
@@ -76,9 +78,7 @@ impl SignedPod {
         )?;
         let id = PodId(mt.root());
         if id != self.id {
-            return Err(SuperError::middleware(MiddlewareError::id_not_equal(
-                self.id, id,
-            )));
+            return Err(BackendError::id_not_equal(self.id, id));
         }
 
         // 3. Verify signature
@@ -91,7 +91,7 @@ impl SignedPod {
 }
 
 impl Pod for SignedPod {
-    fn verify(&self) -> Result<(), Box<DynError>> {
+    fn verify(&self) -> BackendResult<(), Box<DynError>> {
         Ok(self._verify().map_err(Box::new)?)
     }
 
@@ -142,7 +142,7 @@ pub mod tests {
     };
 
     #[test]
-    fn test_signed_0() -> Result<()> {
+    fn test_signed_0() -> BackendResult<()> {
         let params = middleware::Params::default();
         let mut pod = frontend::SignedPodBuilder::new(&params);
         pod.insert("idNumber", "4242424242");
