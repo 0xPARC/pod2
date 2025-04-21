@@ -14,7 +14,7 @@ use crate::{
         NativePredicate, OperationAux, OperationType, Params, PodId, PodProver, PodSigner,
         Predicate, Statement, StatementArg, Value, WildcardValue, EMPTY_VALUE, KEY_TYPE, SELF,
     },
-    Error, Result,
+    Result, SuperError,
 };
 
 mod custom;
@@ -103,7 +103,7 @@ impl SignedPod {
         self.pod.id()
     }
     pub fn verify(&self) -> Result<()> {
-        Ok(self.pod.verify().map_err(Error::Backend)?)
+        Ok(self.pod.verify().map_err(SuperError::Backend)?)
     }
     pub fn kvs(&self) -> &HashMap<Key, Value> {
         &self.kvs
@@ -278,14 +278,14 @@ impl MainPodBuilder {
                 let container =
                     op.1.get(0)
                         .and_then(|arg| arg.value())
-                        .ok_or(Error::custom(format!(
+                        .ok_or(SuperError::custom(format!(
                             "Invalid container argument for op {}.",
                             op
                         )))?;
                 let key =
                     op.1.get(1)
                         .and_then(|arg| arg.value())
-                        .ok_or(Error::custom(format!(
+                        .ok_or(SuperError::custom(format!(
                             "Invalid key argument for op {}.",
                             op
                         )))?;
@@ -309,7 +309,7 @@ impl MainPodBuilder {
             // We are dealing with a copy here.
             match (args).first() {
                 Some(OperationArg::Statement(s)) if args.len() == 1 => Ok(s.predicate().clone()),
-                _ => Err(Error::op_invalid_args("copy".to_string())),
+                _ => Err(SuperError::op_invalid_args("copy".to_string())),
             }
         })?;
 
@@ -320,7 +320,7 @@ impl MainPodBuilder {
                 CopyStatement => match &args[0] {
                     OperationArg::Statement(s) => s.args().clone(),
                     _ => {
-                        return Err(Error::op_invalid_args("copy".to_string()));
+                        return Err(SuperError::op_invalid_args("copy".to_string()));
                     }
                 },
                 EqualFromEntries => self.op_args_entries(public, args)?,
@@ -339,13 +339,13 @@ impl MainPodBuilder {
                             if ak1 == ak2 {
                                 vec![StatementArg::Key(ak0), StatementArg::Key(ak3)]
                             } else {
-                                return Err(Error::op_invalid_args(
+                                return Err(SuperError::op_invalid_args(
                                     "transitivity equality".to_string(),
                                 ));
                             }
                         }
                         _ => {
-                            return Err(Error::op_invalid_args(
+                            return Err(SuperError::op_invalid_args(
                                 "transitivity equality".to_string(),
                             ));
                         }
@@ -356,7 +356,7 @@ impl MainPodBuilder {
                         vec![StatementArg::Key(ak0), StatementArg::Key(ak1)]
                     }
                     _ => {
-                        return Err(Error::op_invalid_args("gt-to-neq".to_string()));
+                        return Err(SuperError::op_invalid_args("gt-to-neq".to_string()));
                     }
                 },
                 LtToNotEqual => match args[0].clone() {
@@ -364,7 +364,7 @@ impl MainPodBuilder {
                         vec![StatementArg::Key(ak0), StatementArg::Key(ak1)]
                     }
                     _ => {
-                        return Err(Error::op_invalid_args("lt-to-neq".to_string()));
+                        return Err(SuperError::op_invalid_args("lt-to-neq".to_string()));
                     }
                 },
                 SumOf => match (args[0].clone(), args[1].clone(), args[2].clone()) {
@@ -383,11 +383,11 @@ impl MainPodBuilder {
                                 StatementArg::Key(ak2),
                             ]
                         } else {
-                            return Err(Error::op_invalid_args("sum-of".to_string()));
+                            return Err(SuperError::op_invalid_args("sum-of".to_string()));
                         }
                     }
                     _ => {
-                        return Err(Error::op_invalid_args("sum-of".to_string()));
+                        return Err(SuperError::op_invalid_args("sum-of".to_string()));
                     }
                 },
                 ProductOf => match (args[0].clone(), args[1].clone(), args[2].clone()) {
@@ -406,11 +406,11 @@ impl MainPodBuilder {
                                 StatementArg::Key(ak2),
                             ]
                         } else {
-                            return Err(Error::op_invalid_args("product-of".to_string()));
+                            return Err(SuperError::op_invalid_args("product-of".to_string()));
                         }
                     }
                     _ => {
-                        return Err(Error::op_invalid_args("product-of".to_string()));
+                        return Err(SuperError::op_invalid_args("product-of".to_string()));
                     }
                 },
                 MaxOf => match (args[0].clone(), args[1].clone(), args[2].clone()) {
@@ -429,11 +429,11 @@ impl MainPodBuilder {
                                 StatementArg::Key(ak2),
                             ]
                         } else {
-                            return Err(Error::op_invalid_args("max-of".to_string()));
+                            return Err(SuperError::op_invalid_args("max-of".to_string()));
                         }
                     }
                     _ => {
-                        return Err(Error::op_invalid_args("max-of".to_string()));
+                        return Err(SuperError::op_invalid_args("max-of".to_string()));
                     }
                 },
                 ContainsFromEntries => self.op_args_entries(public, args)?,
@@ -449,7 +449,7 @@ impl MainPodBuilder {
             OperationType::Custom(cpr) => {
                 let pred = &cpr.batch.predicates[cpr.index];
                 if pred.statements.len() != args.len() {
-                    return Err(Error::custom(format!(
+                    return Err(SuperError::custom(format!(
                         "Custom predicate operation needs {} statements but has {}.",
                         pred.statements.len(),
                         args.len()
@@ -459,7 +459,7 @@ impl MainPodBuilder {
                 let args = args.iter().map(
                     |a| match a {
                         OperationArg::Statement(s) => Ok(s.clone()),
-                        _ => Err(Error::custom(format!("Invalid argument {} to operation corresponding to custom predicate {:?}.", a, cpr)))
+                        _ => Err(SuperError::custom(format!("Invalid argument {} to operation corresponding to custom predicate {:?}.", a, cpr)))
                     }
                 ).collect::<Result<Vec<_>>>()?;
 
@@ -470,7 +470,10 @@ impl MainPodBuilder {
                     for (st_tmpl_arg, st_arg) in st_tmpl.args.iter().zip(&st_args) {
                         if !check_st_tmpl(st_tmpl_arg, st_arg, &mut wildcard_map) {
                             // TODO: Add wildcard_map in the error for better context
-                            return Err(Error::statements_dont_match(st.clone(), st_tmpl.clone()));
+                            return Err(SuperError::statements_dont_match(
+                                st.clone(),
+                                st_tmpl.clone(),
+                            ));
                         }
                     }
                 }
@@ -571,7 +574,7 @@ impl MainPodBuilder {
                 }
                 _ => None,
             })
-            .ok_or(Error::custom(format!(
+            .ok_or(SuperError::custom(format!(
                 // TODO use a specific Error
                 "Missing POD type information in POD: {:?}",
                 pod
@@ -696,7 +699,7 @@ impl MainPodCompiler {
         let is_correct = middle_op.check(params, st)?;
         if !is_correct {
             // todo: improve error handling
-            Err(Error::custom(format!(
+            Err(SuperError::custom(format!(
                 "Compile failed due to invalid deduction:\n {} ⇏ {}",
                 middle_op, st
             )))
@@ -833,7 +836,7 @@ pub mod tests {
         if kvs == embedded_kvs {
             Ok(())
         } else {
-            Err(Error::custom(format!(
+            Err(SuperError::custom(format!(
                 "KVs {:?} do not agree with those embedded in the POD: {:?}",
                 kvs, embedded_kvs
             )))

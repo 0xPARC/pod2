@@ -4,7 +4,7 @@
 pub mod backends;
 pub mod constants;
 mod error;
-pub use error::{Error, Result};
+pub use error::{Result, SuperError};
 pub mod frontend;
 pub mod middleware;
 

@@ -2,7 +2,7 @@ use std::{backtrace::Backtrace, fmt::Debug};
 
 use crate::middleware::{DynError, Statement, StatementTmpl};
 
-pub type Result<T, E = Error> = core::result::Result<T, E>;
+pub type Result<T, E = SuperError> = core::result::Result<T, E>;
 
 #[derive(thiserror::Error, Debug)]
 pub enum InnerError {
@@ -54,7 +54,7 @@ pub enum InnerError {
 }
 
 #[derive(thiserror::Error)]
-pub enum Error {
+pub enum SuperError {
     #[error("Inner: {inner}\n{backtrace}")]
     Inner {
         inner: Box<InnerError>,
@@ -75,96 +75,63 @@ pub enum Error {
     Middleware(#[from] crate::middleware::MiddlewareError),
 }
 
-impl Debug for Error {
+impl Debug for SuperError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(self, f)
     }
 }
 
-impl Error {
-    pub fn custom(s: String) -> Self {
-        Self::Inner {
-            inner: Box::new(InnerError::Custom(s)),
+macro_rules! new {
+    ($inner:expr) => {
+        SuperError::Inner {
+            inner: Box::new($inner),
             backtrace: Box::new(Backtrace::capture()),
         }
+    };
+}
+use InnerError::*;
+impl SuperError {
+    pub fn custom(s: String) -> Self {
+        new!(Custom(s))
     }
     pub fn plonky2_proof_fail() -> Self {
-        Self::Inner {
-            inner: Box::new(InnerError::Plonky2ProofFail),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(Plonky2ProofFail)
     }
     pub fn key_not_found() -> Self {
-        Self::Inner {
-            inner: Box::new(InnerError::KeyNotFound),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(KeyNotFound)
     }
     pub fn statement_not_check() -> Self {
-        Self::Inner {
-            inner: Box::new(InnerError::StatementNotCheck),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(StatementNotCheck)
     }
     pub fn repeated_value_of() -> Self {
-        Self::Inner {
-            inner: Box::new(InnerError::RepeatedValueOf),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(RepeatedValueOf)
     }
     pub fn not_type_statement() -> Self {
-        Self::Inner {
-            inner: Box::new(InnerError::NotTypeStatement),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(NotTypeStatement)
     }
     pub fn pod_id_invalid() -> Self {
-        Self::Inner {
-            inner: Box::new(InnerError::PodIdInvalid),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(PodIdInvalid)
     }
     pub fn op_invalid_args(s: String) -> Self {
-        Self::Inner {
-            inner: Box::new(InnerError::OpInvalidArgs(s)),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(OpInvalidArgs(s))
     }
     pub fn statements_dont_match(s0: Statement, s1: StatementTmpl) -> Self {
-        Self::Inner {
-            inner: Box::new(InnerError::StatementsDontMatch(s0, s1)),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(StatementsDontMatch(s0, s1))
     }
     pub fn diff_amount(obj: String, unit: String, expect: usize, found: usize) -> Self {
-        Self::Inner {
-            inner: Box::new(InnerError::DiffAmount(obj, unit, expect, found)),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(DiffAmount(obj, unit, expect, found))
     }
     pub fn max_length(obj: String, found: usize, expect: usize) -> Self {
-        Self::Inner {
-            inner: Box::new(InnerError::MaxLength(obj, found, expect)),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(MaxLength(obj, found, expect))
     }
     pub fn not_equal() -> Self {
-        Self::Inner {
-            inner: Box::new(InnerError::NotEqual),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(NotEqual)
     }
     pub fn middleware(e: crate::middleware::MiddlewareError) -> Self {
-        Self::Inner {
-            inner: Box::new(InnerError::Middleware(e)),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(Middleware(e))
     }
     pub fn tree(e: crate::backends::plonky2::primitives::merkletree::error::TreeError) -> Self {
-        Self::Inner {
-            inner: Box::new(InnerError::Tree(e)),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(Tree(e))
     }
 }
 
@@ -173,7 +140,7 @@ pub mod tests {
     use super::*;
 
     fn bar() -> Result<()> {
-        Err(Error::not_equal())
+        Err(SuperError::not_equal())
     }
 
     fn foo() -> Result<()> {

@@ -21,7 +21,7 @@ use crate::{
         self, hash_str, AnchoredKey, DynError, MainPodInputs, MiddlewareError, NativePredicate,
         Params, Pod, PodId, PodProver, Predicate, StatementArg, KEY_TYPE, SELF,
     },
-    Error, Result,
+    Result, SuperError,
 };
 
 pub struct MockProver {}
@@ -248,16 +248,16 @@ impl MockMainPod {
             .collect::<Result<Vec<_>, MiddlewareError>>()
             .unwrap();
         if !ids_match {
-            return Err(Error::pod_id_invalid());
+            return Err(SuperError::pod_id_invalid());
         }
         if !has_type_statement {
-            return Err(Error::not_type_statement());
+            return Err(SuperError::not_type_statement());
         }
         if !value_ofs_unique {
-            return Err(Error::repeated_value_of());
+            return Err(SuperError::repeated_value_of());
         }
         if !statement_check.iter().all(|b| *b) {
-            return Err(Error::statement_not_check());
+            return Err(SuperError::statement_not_check());
         }
         Ok(())
     }

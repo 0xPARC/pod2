@@ -23,7 +23,7 @@ pub use super::signature_circuit::*;
 use crate::{
     backends::plonky2::basetypes::{Proof, C, D},
     middleware::{RawValue, F, VALUE_SIZE},
-    Error, Result,
+    Result, SuperError,
 };
 
 lazy_static! {
@@ -121,7 +121,7 @@ impl Signature {
             proof: self.0.clone(),
             public_inputs,
         })
-        .map_err(|_| Error::plonky2_proof_fail())
+        .map_err(|_| SuperError::plonky2_proof_fail())
     }
 }
 

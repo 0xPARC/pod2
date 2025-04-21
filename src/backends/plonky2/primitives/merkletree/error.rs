@@ -42,53 +42,38 @@ impl Debug for TreeError {
     }
 }
 
+macro_rules! new {
+    ($inner:expr) => {
+        TreeError::Inner {
+            inner: Box::new($inner),
+            backtrace: Box::new(Backtrace::capture()),
+        }
+    };
+}
+use TreeInnerError::*;
 impl TreeError {
     pub fn key_not_found() -> Self {
-        Self::Inner {
-            inner: Box::new(TreeInnerError::KeyNotFound),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(KeyNotFound)
     }
     pub fn key_exists() -> Self {
-        Self::Inner {
-            inner: Box::new(TreeInnerError::KeyExists),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(KeyExists)
     }
     pub fn max_depth() -> Self {
-        Self::Inner {
-            inner: Box::new(TreeInnerError::MaxDepth),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(MaxDepth)
     }
     pub fn empty_node() -> Self {
-        Self::Inner {
-            inner: Box::new(TreeInnerError::EmptyNode),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(EmptyNode)
     }
     pub fn proof_fail(obj: String) -> Self {
-        Self::Inner {
-            inner: Box::new(TreeInnerError::ProofFail(obj)),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(ProofFail(obj))
     }
     pub fn invalid_proof(obj: String) -> Self {
-        Self::Inner {
-            inner: Box::new(TreeInnerError::InvalidProof(obj)),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(InvalidProof(obj))
     }
     pub fn too_short_key(depth: usize, max_depth: usize) -> Self {
-        Self::Inner {
-            inner: Box::new(TreeInnerError::TooShortKey(depth, max_depth)),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(TooShortKey(depth, max_depth))
     }
     pub fn custom(s: String) -> Self {
-        Self::Inner {
-            inner: Box::new(TreeInnerError::Custom(s)),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(Custom(s))
     }
 }

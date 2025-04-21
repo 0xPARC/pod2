@@ -9,7 +9,7 @@ use crate::{
         containers::Dictionary, hash_str, AnchoredKey, DynError, Hash, Key, MiddlewareError,
         Params, Pod, PodId, PodSigner, PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE,
     },
-    Error, Result,
+    Result, SuperError,
 };
 
 pub struct MockSigner {
@@ -76,7 +76,7 @@ impl MockSignedPod {
         )?;
         let id = PodId(mt.root());
         if id != self.id {
-            return Err(Error::middleware(MiddlewareError::id_not_equal(
+            return Err(SuperError::middleware(MiddlewareError::id_not_equal(
                 self.id, id,
             )));
         }
@@ -85,9 +85,9 @@ impl MockSignedPod {
         let value_at_type = self
             .kvs
             .get(&Key::from(KEY_TYPE))
-            .ok_or(Error::key_not_found())?;
+            .ok_or(SuperError::key_not_found())?;
         if &Value::from(PodType::MockSigned) != value_at_type {
-            return Err(Error::middleware(MiddlewareError::type_not_equal(
+            return Err(SuperError::middleware(MiddlewareError::type_not_equal(
                 PodType::MockSigned,
                 value_at_type.clone(),
             )));
@@ -97,10 +97,10 @@ impl MockSignedPod {
         let pk_hash = self
             .kvs
             .get(&Key::from(KEY_SIGNER))
-            .ok_or(Error::key_not_found())?;
+            .ok_or(SuperError::key_not_found())?;
         let signature = format!("{}_signed_by_{}", id, pk_hash);
         if signature != self.signature {
-            return Err(Error::custom(format!(
+            return Err(SuperError::custom(format!(
                 "signature does not match, expected {}, computed {}",
                 self.id, id
             )));

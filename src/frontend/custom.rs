@@ -10,7 +10,7 @@ use crate::{
         self, hash_str, CustomPredicate, CustomPredicateBatch, Key, KeyOrWildcard, NativePredicate,
         Params, PodId, Predicate, StatementTmpl, StatementTmplArg, ToFields, Value, Wildcard,
     },
-    Error, Result,
+    Result, SuperError,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -132,14 +132,14 @@ impl CustomPredicateBatchBuilder {
         sts: &[StatementTmplBuilder],
     ) -> Result<Predicate> {
         if args.len() > params.max_statement_args {
-            return Err(Error::max_length(
+            return Err(SuperError::max_length(
                 "args.len".to_string(),
                 args.len(),
                 params.max_statement_args,
             ));
         }
         if (args.len() + priv_args.len()) > params.max_custom_predicate_wildcards {
-            return Err(Error::max_length(
+            return Err(SuperError::max_length(
                 "wildcards.len".to_string(),
                 args.len() + priv_args.len(),
                 params.max_custom_predicate_wildcards,

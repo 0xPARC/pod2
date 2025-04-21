@@ -47,59 +47,41 @@ impl Debug for MiddlewareError {
     }
 }
 
+macro_rules! new {
+    ($inner:expr) => {
+        MiddlewareError::Inner {
+            inner: Box::new($inner),
+            backtrace: Box::new(Backtrace::capture()),
+        }
+    };
+}
+use MiddlewareInnerError::*;
 impl MiddlewareError {
     pub fn type_not_equal(expected: PodType, found: Value) -> Self {
-        Self::Inner {
-            inner: Box::new(MiddlewareInnerError::TypeNotEqual(expected, found)),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(TypeNotEqual(expected, found))
     }
     pub fn id_not_equal(expected: PodId, found: PodId) -> Self {
-        Self::Inner {
-            inner: Box::new(MiddlewareInnerError::IdNotEqual(expected, found)),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(IdNotEqual(expected, found))
     }
     pub fn invalid_op() -> Self {
-        Self::Inner {
-            inner: Box::new(MiddlewareInnerError::InvalidOp),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(InvalidOp)
     }
     pub fn incorrect_statements_args() -> Self {
-        Self::Inner {
-            inner: Box::new(MiddlewareInnerError::IncorrectStatementArgs),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(IncorrectStatementArgs)
     }
     pub fn invalid_deduction(op: Operation, st: Statement) -> Self {
-        Self::Inner {
-            inner: Box::new(MiddlewareInnerError::InvalidDeduction(op, st)),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(InvalidDeduction(op, st))
     }
     pub fn invalid_statement_arg(st_arg: StatementArg, v: String) -> Self {
-        Self::Inner {
-            inner: Box::new(MiddlewareInnerError::InvalidStatementArg(st_arg, v)),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(InvalidStatementArg(st_arg, v))
     }
     pub fn max_length(obj: String, found: usize, expect: usize) -> Self {
-        Self::Inner {
-            inner: Box::new(MiddlewareInnerError::MaxLength(obj, found, expect)),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(MaxLength(obj, found, expect))
     }
     pub fn diff_amount(obj: String, unit: String, expect: usize, found: usize) -> Self {
-        Self::Inner {
-            inner: Box::new(MiddlewareInnerError::DiffAmount(obj, unit, expect, found)),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(DiffAmount(obj, unit, expect, found))
     }
     pub fn custom(s: String) -> Self {
-        Self::Inner {
-            inner: Box::new(MiddlewareInnerError::Custom(s)),
-            backtrace: Box::new(Backtrace::capture()),
-        }
+        new!(Custom(s))
     }
 }
