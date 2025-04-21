@@ -6,7 +6,7 @@ replace () {
     new=$1
     old=$2
 
-    find -name "*.rs" -exec sed -i "s/Error::$old/Error::$new/g" {} \;
+    find -name "*.rs" -exec sed -i "s/MiddlewareError::$old/MiddlewareError::$new/g" {} \;
 }
 
 # replace custom Custom
@@ -25,10 +25,20 @@ replace () {
 # replace not_equal NotEqual
 # replace middleware Middleware
 
-replace "key_not_found()" KeyNotFound
-replace "key_exists()" KeyExists
-replace "max_depth()" MaxDepth
-replace "empty_node()" EmptyNode
-replace "proof_fail(" "ProofFail\("
-replace "invalid_proof(" "InvalidProof\("
-replace "too_short_key(" "TooShortKey\("
+# replace "key_not_found()" KeyNotFound
+# replace "key_exists()" KeyExists
+# replace "max_depth()" MaxDepth
+# replace "empty_node()" EmptyNode
+# replace "proof_fail(" "ProofFail\("
+# replace "invalid_proof(" "InvalidProof\("
+# replace "too_short_key(" "TooShortKey\("
+
+replace "type_not_equal" TypeNotEqual
+replace "id_not_equal" IdNotEqual
+replace "invalid_op()" InvalidOp
+replace "incorrect_statements_args()" IncorrectStatementArgs
+replace "invalid_deduction()" IncorrectStatementArgs
+replace "invalid_statement_arg" InvalidStatementArg
+replace "max_length" MaxLength
+replace "diff_amount" DiffAmount
+replace "custom" Custom
