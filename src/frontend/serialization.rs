@@ -66,10 +66,10 @@ impl TryFrom<MainPodHelper> for MainPod {
 
     fn try_from(helper: MainPodHelper) -> Result<Self, Self::Error> {
         if helper.pod_class != "Main" {
-            return Err(Error::custom(format!("pod_class is not Main")));
+            return Err(Error::custom("pod_class is not Main"));
         }
         if helper.pod_type != "Mock" {
-            return Err(Error::custom(format!("pod_type is not Mock")));
+            return Err(Error::custom("pod_type is not Mock"));
         }
 
         let pod = MockMainPod::deserialize(helper.proof)
