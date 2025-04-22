@@ -166,7 +166,10 @@ impl MockMainPod {
         })
     }
 
-    pub fn deserialize(serialized: String) -> Result<Self> {
+    // MockMainPods include some internal private state which is necessary
+    // for verification. In non-mock Pods, this state will not be necessary,
+    // as the public statements can be verified using a ZK proof.
+    pub(crate) fn deserialize(serialized: String) -> Result<Self> {
         let proof = String::from_utf8(BASE64_STANDARD.decode(&serialized)?)
             .map_err(|e| anyhow::anyhow!("Invalid base64 encoding: {}", e))?;
         let pod: MockMainPod = serde_json::from_str(&proof)

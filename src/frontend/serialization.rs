@@ -31,8 +31,7 @@ impl TryFrom<SignedPodHelper> for SignedPod {
         }
 
         let dict = Dictionary::new(helper.entries.clone())?.clone();
-        let pod =
-            MockSignedPod::deserialize(PodId(dict.commitment()), helper.proof, dict.kvs().clone());
+        let pod = MockSignedPod::new(PodId(dict.commitment()), helper.proof, dict.kvs().clone());
 
         Ok(SignedPod {
             pod: Box::new(pod),

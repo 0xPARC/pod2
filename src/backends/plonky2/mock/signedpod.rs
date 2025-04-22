@@ -44,7 +44,7 @@ pub struct MockSignedPod {
 }
 
 impl MockSignedPod {
-    pub fn deserialize(id: PodId, signature: String, kvs: HashMap<Key, Value>) -> Self {
+    pub(crate) fn new(id: PodId, signature: String, kvs: HashMap<Key, Value>) -> Self {
         Self { id, signature, kvs }
     }
 }
