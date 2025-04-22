@@ -670,7 +670,7 @@ impl Params {
 
 pub type DynError = dyn std::error::Error + Send + Sync;
 
-pub trait Pod: fmt::Debug + DynClone {
+pub trait Pod: fmt::Debug + DynClone + Any {
     fn verify(&self) -> Result<(), Box<DynError>>;
     fn id(&self) -> PodId;
     fn pub_statements(&self) -> Vec<Statement>;
@@ -684,9 +684,6 @@ pub trait Pod: fmt::Debug + DynClone {
             })
             .collect()
     }
-    // Used for downcasting
-    fn into_any(self: Box<Self>) -> Box<dyn Any>;
-    fn as_any(&self) -> &dyn Any;
     // Front-end Pods keep references to middleware Pods. Most of the
     // middleware data can be derived directly from front-end data, but the
     // "proof" data is only created at the point of proving/signing, and
@@ -723,12 +720,6 @@ impl Pod for NonePod {
     }
     fn pub_statements(&self) -> Vec<Statement> {
         Vec::new()
-    }
-    fn into_any(self: Box<Self>) -> Box<dyn Any> {
-        self
-    }
-    fn as_any(&self) -> &dyn Any {
-        self
     }
     fn serialized_proof(&self) -> String {
         "".to_string()
