@@ -4,10 +4,8 @@
 use std::{collections::HashMap, convert::From, fmt};
 
 use itertools::Itertools;
+use serde::{Deserialize, Serialize};
 
-// use schemars::JsonSchema;
-
-// use serde::{Deserialize, Serialize};
 use crate::middleware::{
     self, check_st_tmpl, hash_str, AnchoredKey, Key, MainPodInputs, NativeOperation,
     NativePredicate, OperationAux, OperationType, Params, PodId, PodProver, PodSigner, Predicate,
@@ -17,9 +15,11 @@ use crate::middleware::{
 mod custom;
 mod error;
 mod operation;
+mod serialization;
 pub use custom::*;
 pub use error::*;
 pub use operation::*;
+use serialization::*;
 
 /// This type is just for presentation purposes.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -67,8 +67,8 @@ impl SignedPodBuilder {
 
 /// SignedPod is a wrapper on top of backend::SignedPod, which additionally stores the
 /// string<-->hash relation of the keys.
-#[derive(Debug, Clone)]
-// #[serde(try_from = "SignedPodHelper", into = "SignedPodHelper")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "SignedPodHelper", into = "SignedPodHelper")]
 pub struct SignedPod {
     pub pod: Box<dyn middleware::Pod>,
     // We store a copy of the key values for quick access
@@ -602,8 +602,8 @@ impl MainPodBuilder {
     }
 }
 
-#[derive(Debug, Clone)]
-// #[serde(try_from = "MainPodHelper", into = "MainPodHelper")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "MainPodHelper", into = "MainPodHelper")]
 pub struct MainPod {
     pub pod: Box<dyn middleware::Pod>,
     pub public_statements: Vec<Statement>,

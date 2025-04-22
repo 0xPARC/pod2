@@ -4,17 +4,16 @@
 
 use std::{any::Any, fmt};
 
-// use base64::prelude::*;
+use base64::{prelude::BASE64_STANDARD, Engine};
+use serde::{Deserialize, Serialize};
 
-// use base64::prelude::*;
-// use serde::{Deserialize, Serialize};
-use crate::backends::plonky2::mainpod::process_private_statements_operations;
 use crate::{
     backends::plonky2::{
         error::{Error, Result},
         mainpod::{
             extract_merkle_proofs, hash_statements, layout_statements, normalize_statement,
-            process_public_statements_operations, Operation, Statement,
+            process_private_statements_operations, process_public_statements_operations, Operation,
+            Statement,
         },
         primitives::merkletree::MerkleClaimAndProof,
     },
@@ -36,7 +35,7 @@ impl PodProver for MockProver {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MockMainPod {
     params: Params,
     id: PodId,
@@ -171,14 +170,17 @@ impl MockMainPod {
         })
     }
 
-    // pub fn deserialize(serialized: String) -> Result<Self> {
-    //     let proof = String::from_utf8(BASE64_STANDARD.decode(&serialized)?)
-    //         .map_err(|e| Error::custom(format!("Invalid base64 encoding: {}", e)))?;
-    //     let pod: MockMainPod = serde_json::from_str(&proof)
-    //         .map_err(|e| Error::custom(format!("Failed to parse proof: {}", e)))?;
+    // MockMainPods include some internal private state which is necessary
+    // for verification. In non-mock Pods, this state will not be necessary,
+    // as the public statements can be verified using a ZK proof.
+    pub(crate) fn deserialize(serialized: String) -> Result<Self> {
+        let proof = String::from_utf8(BASE64_STANDARD.decode(&serialized)?)
+            .map_err(|e| anyhow::anyhow!("Invalid base64 encoding: {}", e))?;
+        let pod: MockMainPod = serde_json::from_str(&proof)
+            .map_err(|e| anyhow::anyhow!("Failed to parse proof: {}", e))?;
 
-    //     Ok(pod)
-    // }
+        Ok(pod)
+    }
 
     fn _verify(&self) -> Result<()> {
         // 1. TODO: Verify input pods
@@ -289,8 +291,7 @@ impl Pod for MockMainPod {
     }
 
     fn serialized_proof(&self) -> String {
-        todo!()
-        // BASE64_STANDARD.encode(serde_json::to_string(self).unwrap())
+        BASE64_STANDARD.encode(serde_json::to_string(self).unwrap())
     }
 }
 

@@ -1,12 +1,13 @@
 use std::fmt;
 
-// use serde::{Deserialize, Serialize};
-use crate::backends::plonky2::error::{Error, Result};
-use crate::middleware::{
-    self, NativePredicate, Params, Predicate, StatementArg, ToFields, WildcardValue,
+use serde::{Deserialize, Serialize};
+
+use crate::{
+    backends::plonky2::error::{Error, Result},
+    middleware::{self, NativePredicate, Params, Predicate, StatementArg, ToFields, WildcardValue},
 };
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Statement(pub Predicate, pub Vec<StatementArg>);
 
 impl Statement {

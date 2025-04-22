@@ -39,6 +39,8 @@ pub enum Error {
     Anyhow(#[from] anyhow::Error),
     #[error("Plonky2 proof failed to verify: {0}")]
     Plonky2ProofFail(anyhow::Error),
+    #[error("base64::DecodeError: {0}")]
+    Base64Decode(#[from] base64::DecodeError),
     #[error(transparent)]
     Tree(#[from] crate::backends::plonky2::primitives::merkletree::error::TreeError),
     #[error(transparent)]

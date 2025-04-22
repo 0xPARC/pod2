@@ -48,8 +48,8 @@ macro_rules! new {
 }
 use InnerError::*;
 impl Error {
-    pub(crate) fn custom(s: String) -> Self {
-        new!(Custom(s))
+    pub(crate) fn custom(s: impl Into<String>) -> Self {
+        new!(Custom(s.into()))
     }
     pub(crate) fn op_invalid_args(s: String) -> Self {
         new!(OpInvalidArgs(s))

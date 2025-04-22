@@ -3,7 +3,6 @@ use std::{collections::HashMap, fmt, hash as h, iter, iter::zip, sync::Arc};
 
 use schemars::JsonSchema;
 
-// use serde::{Deserialize, Serialize};
 use crate::{
     frontend::{AnchoredKey, Error, Result, Statement, StatementArg},
     middleware::{
