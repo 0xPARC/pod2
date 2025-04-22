@@ -27,7 +27,7 @@ use crate::{
         circuits::common::{CircuitBuilderPod, ValueTarget},
         error::Result,
         primitives::signature::{
-            PublicKey, SecretKey, Signature, DUMMY_PUBLIC_INPUTS, DUMMY_SIGNATURE,
+            PublicKey, SecretKey, Signature, DUMMY_PUBLIC_INPUTS, DUMMY_SIGNATURE, VP,
         },
     },
     middleware::{Hash, RawValue, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE},
@@ -67,7 +67,7 @@ impl SignatureVerifyGadget {
     pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<SignatureVerifyTarget> {
         let enabled = builder.add_virtual_bool_target_safe();
 
-        let common_data = super::signature::VP.0.common.clone();
+        let common_data = VP.0.common.clone();
 
         // targets related to the 'public inputs' for the verification of the
         // `SignatureInternalCircuit` proof.
@@ -161,10 +161,7 @@ impl SignatureVerifyTarget {
             )?;
         }
 
-        pw.set_verifier_data_target(
-            &self.verifier_data_targ,
-            &super::signature::VP.0.verifier_only,
-        )?;
+        pw.set_verifier_data_target(&self.verifier_data_targ, &VP.0.verifier_only)?;
 
         Ok(())
     }

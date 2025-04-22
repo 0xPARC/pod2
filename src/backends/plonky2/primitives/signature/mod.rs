@@ -19,7 +19,9 @@ use plonky2::{
     },
 };
 
-pub use super::signature_circuit::*;
+pub mod circuit;
+pub use circuit::*;
+
 use crate::{
     backends::plonky2::{
         basetypes::{Proof, C, D},
