@@ -4,7 +4,7 @@ use itertools::Itertools;
 
 use crate::{
     backends::plonky2::{
-        error::{BackendError, BackendResult},
+        error::{Error, Result},
         primitives::{
             merkletree::MerkleTree,
             signature::{PublicKey, SecretKey, Signature},
@@ -20,7 +20,7 @@ use crate::{
 pub struct Signer(pub SecretKey);
 
 impl Signer {
-    fn _sign(&mut self, _params: &Params, kvs: &HashMap<Key, Value>) -> BackendResult<SignedPod> {
+    fn _sign(&mut self, _params: &Params, kvs: &HashMap<Key, Value>) -> Result<SignedPod> {
         let mut kvs = kvs.clone();
         let pubkey = self.0.public_key();
         kvs.insert(Key::from(KEY_SIGNER), Value::from(pubkey.0));
@@ -56,11 +56,11 @@ pub struct SignedPod {
 }
 
 impl SignedPod {
-    fn _verify(&self) -> BackendResult<()> {
+    fn _verify(&self) -> Result<()> {
         // 1. Verify type
         let value_at_type = self.dict.get(&Key::from(KEY_TYPE))?;
         if Value::from(PodType::Signed) != *value_at_type {
-            return Err(BackendError::type_not_equal(
+            return Err(Error::type_not_equal(
                 PodType::Signed,
                 value_at_type.clone(),
             ));
@@ -78,7 +78,7 @@ impl SignedPod {
         )?;
         let id = PodId(mt.root());
         if id != self.id {
-            return Err(BackendError::id_not_equal(self.id, id));
+            return Err(Error::id_not_equal(self.id, id));
         }
 
         // 3. Verify signature
@@ -142,7 +142,7 @@ pub mod tests {
     };
 
     #[test]
-    fn test_signed_0() -> BackendResult<()> {
+    fn test_signed_0() -> Result<()> {
         let params = middleware::Params::default();
         let mut pod = frontend::SignedPodBuilder::new(&params);
         pod.insert("idNumber", "4242424242");

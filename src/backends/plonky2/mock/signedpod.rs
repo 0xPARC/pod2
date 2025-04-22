@@ -4,7 +4,7 @@ use itertools::Itertools;
 
 use crate::{
     backends::plonky2::{
-        error::{BackendError, BackendResult},
+        error::{Error, Result},
         primitives::merkletree::MerkleTree,
     },
     constants::MAX_DEPTH,
@@ -25,11 +25,7 @@ impl MockSigner {
 }
 
 impl MockSigner {
-    fn _sign(
-        &mut self,
-        _params: &Params,
-        kvs: &HashMap<Key, Value>,
-    ) -> BackendResult<MockSignedPod> {
+    fn _sign(&mut self, _params: &Params, kvs: &HashMap<Key, Value>) -> Result<MockSignedPod> {
         let mut kvs = kvs.clone();
         let pubkey = self.pubkey();
         kvs.insert(Key::from(KEY_SIGNER), Value::from(pubkey));
@@ -70,7 +66,7 @@ pub struct MockSignedPod {
 // }
 
 impl MockSignedPod {
-    fn _verify(&self) -> BackendResult<()> {
+    fn _verify(&self) -> Result<()> {
         // 1. Verify id
         let mt = MerkleTree::new(
             MAX_DEPTH,
@@ -82,16 +78,16 @@ impl MockSignedPod {
         )?;
         let id = PodId(mt.root());
         if id != self.id {
-            return Err(BackendError::id_not_equal(self.id, id));
+            return Err(Error::id_not_equal(self.id, id));
         }
 
         // 2. Verify type
         let value_at_type = self
             .kvs
             .get(&Key::from(KEY_TYPE))
-            .ok_or(BackendError::key_not_found())?;
+            .ok_or(Error::key_not_found())?;
         if &Value::from(PodType::MockSigned) != value_at_type {
-            return Err(BackendError::type_not_equal(
+            return Err(Error::type_not_equal(
                 PodType::MockSigned,
                 value_at_type.clone(),
             ));
@@ -101,10 +97,10 @@ impl MockSignedPod {
         let pk_hash = self
             .kvs
             .get(&Key::from(KEY_SIGNER))
-            .ok_or(BackendError::key_not_found())?;
+            .ok_or(Error::key_not_found())?;
         let signature = format!("{}_signed_by_{}", id, pk_hash);
         if signature != self.signature {
-            return Err(BackendError::custom(format!(
+            return Err(Error::custom(format!(
                 "signature does not match, expected {}, computed {}",
                 self.id, id
             )));
@@ -163,7 +159,7 @@ pub mod tests {
     };
 
     #[test]
-    fn test_mock_signed_0() -> BackendResult<()> {
+    fn test_mock_signed_0() -> Result<()> {
         let params = middleware::Params::default();
         let mut pod = frontend::SignedPodBuilder::new(&params);
         pod.insert("idNumber", "4242424242");

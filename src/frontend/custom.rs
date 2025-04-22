@@ -5,7 +5,7 @@ use schemars::JsonSchema;
 
 // use serde::{Deserialize, Serialize};
 use crate::{
-    frontend::{AnchoredKey, FrontendError, FrontendResult, Statement, StatementArg},
+    frontend::{AnchoredKey, Error, Result, Statement, StatementArg},
     middleware::{
         self, hash_str, CustomPredicate, CustomPredicateBatch, Key, KeyOrWildcard, NativePredicate,
         Params, PodId, Predicate, StatementTmpl, StatementTmplArg, ToFields, Value, Wildcard,
@@ -104,7 +104,7 @@ impl CustomPredicateBatchBuilder {
         args: &[&str],
         priv_args: &[&str],
         sts: &[StatementTmplBuilder],
-    ) -> FrontendResult<Predicate> {
+    ) -> Result<Predicate> {
         self.predicate(name, params, true, args, priv_args, sts)
     }
 
@@ -115,7 +115,7 @@ impl CustomPredicateBatchBuilder {
         args: &[&str],
         priv_args: &[&str],
         sts: &[StatementTmplBuilder],
-    ) -> FrontendResult<Predicate> {
+    ) -> Result<Predicate> {
         self.predicate(name, params, false, args, priv_args, sts)
     }
 
@@ -129,16 +129,16 @@ impl CustomPredicateBatchBuilder {
         args: &[&str],
         priv_args: &[&str],
         sts: &[StatementTmplBuilder],
-    ) -> FrontendResult<Predicate> {
+    ) -> Result<Predicate> {
         if args.len() > params.max_statement_args {
-            return Err(FrontendError::max_length(
+            return Err(Error::max_length(
                 "args.len".to_string(),
                 args.len(),
                 params.max_statement_args,
             ));
         }
         if (args.len() + priv_args.len()) > params.max_custom_predicate_wildcards {
-            return Err(FrontendError::max_length(
+            return Err(Error::max_length(
                 "wildcards.len".to_string(),
                 args.len() + priv_args.len(),
                 params.max_custom_predicate_wildcards,
@@ -213,7 +213,7 @@ mod tests {
     };
 
     #[test]
-    fn test_custom_pred() -> FrontendResult<()> {
+    fn test_custom_pred() -> Result<()> {
         use NativePredicate as NP;
         use StatementTmplBuilder as STB;
 

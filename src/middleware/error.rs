@@ -4,7 +4,7 @@ use std::{backtrace::Backtrace, fmt::Debug};
 
 use crate::middleware::{Operation, Statement, StatementArg};
 
-pub type MiddlewareResult<T, E = MiddlewareError> = core::result::Result<T, E>;
+pub type Result<T, E = Error> = core::result::Result<T, E>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum MiddlewareInnerError {
@@ -24,7 +24,7 @@ pub enum MiddlewareInnerError {
 }
 
 #[derive(thiserror::Error)]
-pub enum MiddlewareError {
+pub enum Error {
     #[error("Inner: {inner}\n{backtrace}")]
     Inner {
         inner: Box<MiddlewareInnerError>,
@@ -34,7 +34,7 @@ pub enum MiddlewareError {
     Tree(#[from] crate::backends::plonky2::primitives::merkletree::error::TreeError),
 }
 
-impl Debug for MiddlewareError {
+impl Debug for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(self, f)
     }
@@ -42,14 +42,14 @@ impl Debug for MiddlewareError {
 
 macro_rules! new {
     ($inner:expr) => {
-        MiddlewareError::Inner {
+        Error::Inner {
             inner: Box::new($inner),
             backtrace: Box::new(Backtrace::capture()),
         }
     };
 }
 use MiddlewareInnerError::*;
-impl MiddlewareError {
+impl Error {
     pub(crate) fn incorrect_statements_args() -> Self {
         new!(IncorrectStatementArgs)
     }

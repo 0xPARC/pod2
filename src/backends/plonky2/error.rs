@@ -2,7 +2,7 @@ use std::{backtrace::Backtrace, fmt::Debug};
 
 use crate::middleware::{PodId, PodType, Value};
 
-pub type BackendResult<T, E = BackendError> = core::result::Result<T, E>;
+pub type Result<T, E = Error> = core::result::Result<T, E>;
 
 #[derive(thiserror::Error, Debug)]
 pub enum InnerError {
@@ -29,7 +29,7 @@ pub enum InnerError {
 }
 
 #[derive(thiserror::Error)]
-pub enum BackendError {
+pub enum Error {
     #[error("Inner: {inner}\n{backtrace}")]
     Inner {
         inner: Box<InnerError>,
@@ -42,10 +42,10 @@ pub enum BackendError {
     #[error(transparent)]
     Tree(#[from] crate::backends::plonky2::primitives::merkletree::error::TreeError),
     #[error(transparent)]
-    Middleware(#[from] crate::middleware::MiddlewareError),
+    Middleware(#[from] crate::middleware::Error),
 }
 
-impl Debug for BackendError {
+impl Debug for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(self, f)
     }
@@ -53,14 +53,14 @@ impl Debug for BackendError {
 
 macro_rules! new {
     ($inner:expr) => {
-        BackendError::Inner {
+        Error::Inner {
             inner: Box::new($inner),
             backtrace: Box::new(Backtrace::capture()),
         }
     };
 }
 use InnerError::*;
-impl BackendError {
+impl Error {
     pub(crate) fn custom(s: String) -> Self {
         new!(Custom(s))
     }

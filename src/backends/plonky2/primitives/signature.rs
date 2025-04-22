@@ -23,7 +23,7 @@ pub use super::signature_circuit::*;
 use crate::{
     backends::plonky2::{
         basetypes::{Proof, C, D},
-        error::{BackendError, BackendResult},
+        error::{Error, Result},
     },
     middleware::{RawValue, F, VALUE_SIZE},
 };
@@ -69,7 +69,7 @@ impl SecretKey {
         PublicKey(RawValue(PoseidonHash::hash_no_pad(&self.0 .0).elements))
     }
 
-    pub fn sign(&self, msg: RawValue) -> BackendResult<Signature> {
+    pub fn sign(&self, msg: RawValue) -> Result<Signature> {
         let pk = self.public_key();
         let s = RawValue(PoseidonHash::hash_no_pad(&[pk.0 .0, msg.0].concat()).elements);
 
@@ -85,25 +85,25 @@ impl SecretKey {
 /// Implements the parameters generation and the verification of proof-based
 /// signatures.
 impl Signature {
-    pub fn prover_params() -> BackendResult<ProverParams> {
+    pub fn prover_params() -> Result<ProverParams> {
         let (builder, circuit) = Self::builder()?;
         let prover = builder.build_prover::<C>();
         Ok(ProverParams { prover, circuit })
     }
-    pub fn verifier_params() -> BackendResult<VerifierParams> {
+    pub fn verifier_params() -> Result<VerifierParams> {
         let (builder, _) = Self::builder()?;
         let circuit_data = builder.build::<C>();
         let vp = circuit_data.verifier_data();
 
         Ok(VerifierParams(vp))
     }
-    pub fn params() -> BackendResult<(ProverParams, VerifierParams)> {
+    pub fn params() -> Result<(ProverParams, VerifierParams)> {
         let pp = Self::prover_params()?;
         let vp = Self::verifier_params()?;
         Ok((pp, vp))
     }
 
-    fn builder() -> BackendResult<(CircuitBuilder<F, D>, SignatureInternalCircuit)> {
+    fn builder() -> Result<(CircuitBuilder<F, D>, SignatureInternalCircuit)> {
         // notice that we use the 'zk' config
         let config = CircuitConfig::standard_recursion_zk_config();
 
@@ -113,7 +113,7 @@ impl Signature {
         Ok((builder, circuit))
     }
 
-    pub fn verify(&self, pk: &PublicKey, msg: RawValue) -> BackendResult<()> {
+    pub fn verify(&self, pk: &PublicKey, msg: RawValue) -> Result<()> {
         // prepare public inputs as [pk, msg, s]
         let s = RawValue(PoseidonHash::hash_no_pad(&[pk.0 .0, msg.0].concat()).elements);
         let public_inputs: Vec<F> = [pk.0 .0, msg.0, s.0].concat();
@@ -123,11 +123,11 @@ impl Signature {
             proof: self.0.clone(),
             public_inputs,
         })
-        .map_err(BackendError::plonky2_proof_fail)
+        .map_err(Error::plonky2_proof_fail)
     }
 }
 
-fn dummy_public_inputs() -> BackendResult<Vec<F>> {
+fn dummy_public_inputs() -> Result<Vec<F>> {
     let sk = SecretKey(RawValue::from(0));
     let pk = sk.public_key();
     let msg = RawValue::from(0);
@@ -135,7 +135,7 @@ fn dummy_public_inputs() -> BackendResult<Vec<F>> {
     Ok([pk.0 .0, msg.0, s.0].concat())
 }
 
-fn dummy_signature() -> BackendResult<Signature> {
+fn dummy_signature() -> Result<Signature> {
     let sk = SecretKey(RawValue::from(0));
     let msg = RawValue::from(0);
     sk.sign(msg)
@@ -157,7 +157,7 @@ struct SignatureInternalCircuit {
 
 impl SignatureInternalCircuit {
     /// creates the targets and defines the logic of the circuit
-    fn add_targets(builder: &mut CircuitBuilder<F, D>) -> BackendResult<Self> {
+    fn add_targets(builder: &mut CircuitBuilder<F, D>) -> Result<Self> {
         // create the targets
         let sk_targ = builder.add_virtual_targets(VALUE_SIZE);
         let pk_targ = builder.add_virtual_hash();
@@ -194,7 +194,7 @@ impl SignatureInternalCircuit {
         pk: PublicKey,
         msg: RawValue,
         s: RawValue,
-    ) -> BackendResult<()> {
+    ) -> Result<()> {
         pw.set_target_arr(&self.sk_targ, sk.0 .0.as_ref())?;
         pw.set_hash_target(self.pk_targ, HashOut::<F>::from_vec(pk.0 .0.to_vec()))?;
         pw.set_target_arr(&self.msg_targ, msg.0.as_ref())?;
@@ -210,7 +210,7 @@ pub mod tests {
     use crate::middleware::hash_str;
 
     #[test]
-    fn test_signature() -> BackendResult<()> {
+    fn test_signature() -> Result<()> {
         let sk = SecretKey::new_rand();
         let pk = sk.public_key();
 
@@ -231,7 +231,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_dummy_signature() -> BackendResult<()> {
+    fn test_dummy_signature() -> Result<()> {
         let sk = SecretKey(RawValue::from(0));
         let pk = sk.public_key();
         let msg = RawValue::from(0);

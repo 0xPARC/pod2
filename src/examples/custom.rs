@@ -3,7 +3,7 @@ use std::sync::Arc;
 use StatementTmplBuilder as STB;
 
 use crate::{
-    frontend::{key, literal, CustomPredicateBatchBuilder, FrontendResult, StatementTmplBuilder},
+    frontend::{key, literal, CustomPredicateBatchBuilder, Result, StatementTmplBuilder},
     middleware::{
         CustomPredicateBatch, CustomPredicateRef, NativePredicate as NP, Params, PodType,
         Predicate, KEY_SIGNER, KEY_TYPE,
@@ -11,7 +11,7 @@ use crate::{
 };
 
 /// Instantiates an ETH friend batch
-pub fn eth_friend_batch(params: &Params) -> FrontendResult<Arc<CustomPredicateBatch>> {
+pub fn eth_friend_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
     let mut builder = CustomPredicateBatchBuilder::new("eth_friend".into());
     let _eth_friend = builder.predicate_and(
         "eth_friend",
@@ -42,7 +42,7 @@ pub fn eth_friend_batch(params: &Params) -> FrontendResult<Arc<CustomPredicateBa
 }
 
 /// Instantiates an ETHDoS batch
-pub fn eth_dos_batch(params: &Params) -> FrontendResult<Arc<CustomPredicateBatch>> {
+pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
     let eth_friend = Predicate::Custom(CustomPredicateRef::new(eth_friend_batch(params)?, 0));
     let mut builder = CustomPredicateBatchBuilder::new("eth_dos_distance_base".into());
 

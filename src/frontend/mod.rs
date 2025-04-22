@@ -57,7 +57,7 @@ impl SignedPodBuilder {
         self.kvs.insert(key.into(), value.into());
     }
 
-    pub fn sign<S: PodSigner>(&self, signer: &mut S) -> FrontendResult<SignedPod> {
+    pub fn sign<S: PodSigner>(&self, signer: &mut S) -> Result<SignedPod> {
         // Sign POD with committed KV store.
         let pod = signer.sign(&self.params, &self.kvs)?;
 
@@ -101,8 +101,8 @@ impl SignedPod {
     pub fn id(&self) -> PodId {
         self.pod.id()
     }
-    pub fn verify(&self) -> FrontendResult<()> {
-        self.pod.verify().map_err(FrontendError::Backend)
+    pub fn verify(&self) -> Result<()> {
+        self.pod.verify().map_err(Error::Backend)
     }
     pub fn kvs(&self) -> &HashMap<Key, Value> {
         &self.kvs
@@ -197,7 +197,7 @@ impl MainPodBuilder {
         &mut self,
         public: bool,
         args: &mut [OperationArg],
-    ) -> FrontendResult<Vec<StatementArg>> {
+    ) -> Result<Vec<StatementArg>> {
         let mut st_args = Vec::new();
         // TODO: Rewrite without calling args() and instead using matches?
         for arg in args.iter_mut() {
@@ -224,11 +224,11 @@ impl MainPodBuilder {
         Ok(st_args)
     }
 
-    pub fn pub_op(&mut self, op: Operation) -> FrontendResult<Statement> {
+    pub fn pub_op(&mut self, op: Operation) -> Result<Statement> {
         self.op(true, op)
     }
 
-    pub fn priv_op(&mut self, op: Operation) -> FrontendResult<Statement> {
+    pub fn priv_op(&mut self, op: Operation) -> Result<Statement> {
         self.op(false, op)
     }
 
@@ -264,7 +264,7 @@ impl MainPodBuilder {
     }
 
     /// Fills in auxiliary data if necessary/possible.
-    fn fill_in_aux(op: Operation) -> FrontendResult<Operation> {
+    fn fill_in_aux(op: Operation) -> Result<Operation> {
         use NativeOperation::{ContainsFromEntries, NotContainsFromEntries};
         use OperationAux as OpAux;
         use OperationType::Native;
@@ -277,14 +277,14 @@ impl MainPodBuilder {
                 let container =
                     op.1.get(0)
                         .and_then(|arg| arg.value())
-                        .ok_or(FrontendError::custom(format!(
+                        .ok_or(Error::custom(format!(
                             "Invalid container argument for op {}.",
                             op
                         )))?;
                 let key =
                     op.1.get(1)
                         .and_then(|arg| arg.value())
-                        .ok_or(FrontendError::custom(format!(
+                        .ok_or(Error::custom(format!(
                             "Invalid key argument for op {}.",
                             op
                         )))?;
@@ -299,7 +299,7 @@ impl MainPodBuilder {
         }
     }
 
-    fn op(&mut self, public: bool, op: Operation) -> FrontendResult<Statement> {
+    fn op(&mut self, public: bool, op: Operation) -> Result<Statement> {
         use NativeOperation::*;
         let mut op = Self::fill_in_aux(Self::lower_op(op))?;
         let Operation(op_type, ref mut args, _) = &mut op;
@@ -308,7 +308,7 @@ impl MainPodBuilder {
             // We are dealing with a copy here.
             match (args).first() {
                 Some(OperationArg::Statement(s)) if args.len() == 1 => Ok(s.predicate().clone()),
-                _ => Err(FrontendError::op_invalid_args("copy".to_string())),
+                _ => Err(Error::op_invalid_args("copy".to_string())),
             }
         })?;
 
@@ -319,7 +319,7 @@ impl MainPodBuilder {
                 CopyStatement => match &args[0] {
                     OperationArg::Statement(s) => s.args().clone(),
                     _ => {
-                        return Err(FrontendError::op_invalid_args("copy".to_string()));
+                        return Err(Error::op_invalid_args("copy".to_string()));
                     }
                 },
                 EqualFromEntries => self.op_args_entries(public, args)?,
@@ -338,13 +338,13 @@ impl MainPodBuilder {
                             if ak1 == ak2 {
                                 vec![StatementArg::Key(ak0), StatementArg::Key(ak3)]
                             } else {
-                                return Err(FrontendError::op_invalid_args(
+                                return Err(Error::op_invalid_args(
                                     "transitivity equality".to_string(),
                                 ));
                             }
                         }
                         _ => {
-                            return Err(FrontendError::op_invalid_args(
+                            return Err(Error::op_invalid_args(
                                 "transitivity equality".to_string(),
                             ));
                         }
@@ -355,7 +355,7 @@ impl MainPodBuilder {
                         vec![StatementArg::Key(ak0), StatementArg::Key(ak1)]
                     }
                     _ => {
-                        return Err(FrontendError::op_invalid_args("gt-to-neq".to_string()));
+                        return Err(Error::op_invalid_args("gt-to-neq".to_string()));
                     }
                 },
                 LtToNotEqual => match args[0].clone() {
@@ -363,7 +363,7 @@ impl MainPodBuilder {
                         vec![StatementArg::Key(ak0), StatementArg::Key(ak1)]
                     }
                     _ => {
-                        return Err(FrontendError::op_invalid_args("lt-to-neq".to_string()));
+                        return Err(Error::op_invalid_args("lt-to-neq".to_string()));
                     }
                 },
                 SumOf => match (args[0].clone(), args[1].clone(), args[2].clone()) {
@@ -382,11 +382,11 @@ impl MainPodBuilder {
                                 StatementArg::Key(ak2),
                             ]
                         } else {
-                            return Err(FrontendError::op_invalid_args("sum-of".to_string()));
+                            return Err(Error::op_invalid_args("sum-of".to_string()));
                         }
                     }
                     _ => {
-                        return Err(FrontendError::op_invalid_args("sum-of".to_string()));
+                        return Err(Error::op_invalid_args("sum-of".to_string()));
                     }
                 },
                 ProductOf => match (args[0].clone(), args[1].clone(), args[2].clone()) {
@@ -405,11 +405,11 @@ impl MainPodBuilder {
                                 StatementArg::Key(ak2),
                             ]
                         } else {
-                            return Err(FrontendError::op_invalid_args("product-of".to_string()));
+                            return Err(Error::op_invalid_args("product-of".to_string()));
                         }
                     }
                     _ => {
-                        return Err(FrontendError::op_invalid_args("product-of".to_string()));
+                        return Err(Error::op_invalid_args("product-of".to_string()));
                     }
                 },
                 MaxOf => match (args[0].clone(), args[1].clone(), args[2].clone()) {
@@ -428,11 +428,11 @@ impl MainPodBuilder {
                                 StatementArg::Key(ak2),
                             ]
                         } else {
-                            return Err(FrontendError::op_invalid_args("max-of".to_string()));
+                            return Err(Error::op_invalid_args("max-of".to_string()));
                         }
                     }
                     _ => {
-                        return Err(FrontendError::op_invalid_args("max-of".to_string()));
+                        return Err(Error::op_invalid_args("max-of".to_string()));
                     }
                 },
                 ContainsFromEntries => self.op_args_entries(public, args)?,
@@ -448,7 +448,7 @@ impl MainPodBuilder {
             OperationType::Custom(cpr) => {
                 let pred = &cpr.batch.predicates[cpr.index];
                 if pred.statements.len() != args.len() {
-                    return Err(FrontendError::custom(format!(
+                    return Err(Error::custom(format!(
                         "Custom predicate operation needs {} statements but has {}.",
                         pred.statements.len(),
                         args.len()
@@ -458,9 +458,9 @@ impl MainPodBuilder {
                 let args = args.iter().map(
                     |a| match a {
                         OperationArg::Statement(s) => Ok(s.clone()),
-                        _ => Err(FrontendError::custom(format!("Invalid argument {} to operation corresponding to custom predicate {:?}.", a, cpr)))
+                        _ => Err(Error::custom(format!("Invalid argument {} to operation corresponding to custom predicate {:?}.", a, cpr)))
                     }
-                ).collect::<FrontendResult<Vec<_>>>()?;
+                ).collect::<Result<Vec<_>>>()?;
 
                 let mut wildcard_map =
                     vec![Option::None; self.params.max_custom_predicate_wildcards];
@@ -469,10 +469,7 @@ impl MainPodBuilder {
                     for (st_tmpl_arg, st_arg) in st_tmpl.args.iter().zip(&st_args) {
                         if !check_st_tmpl(st_tmpl_arg, st_arg, &mut wildcard_map) {
                             // TODO: Add wildcard_map in the error for better context
-                            return Err(FrontendError::statements_dont_match(
-                                st.clone(),
-                                st_tmpl.clone(),
-                            ));
+                            return Err(Error::statements_dont_match(st.clone(), st_tmpl.clone()));
                         }
                     }
                 }
@@ -491,16 +488,16 @@ impl MainPodBuilder {
     }
 
     /// Convenience method for introducing public constants.
-    pub fn pub_literal(&mut self, v: impl Into<Value>) -> FrontendResult<Statement> {
+    pub fn pub_literal(&mut self, v: impl Into<Value>) -> Result<Statement> {
         self.literal(true, v.into())
     }
 
     /// Convenience method for introducing private constants.
-    pub fn priv_literal(&mut self, v: impl Into<Value>) -> FrontendResult<Statement> {
+    pub fn priv_literal(&mut self, v: impl Into<Value>) -> Result<Statement> {
         self.literal(false, v.into())
     }
 
-    fn literal(&mut self, public: bool, value: Value) -> FrontendResult<Statement> {
+    fn literal(&mut self, public: bool, value: Value) -> Result<Statement> {
         let public_value = (public, value);
         if let Some(key) = self.literals.get(&public_value) {
             Ok(Statement::ValueOf(
@@ -527,7 +524,7 @@ impl MainPodBuilder {
         self.public_statements.push(st.clone());
     }
 
-    pub fn prove<P: PodProver>(&self, prover: &mut P, params: &Params) -> FrontendResult<MainPod> {
+    pub fn prove<P: PodProver>(&self, prover: &mut P, params: &Params) -> Result<MainPod> {
         let compiler = MainPodCompiler::new(&self.params);
         let inputs = MainPodCompilerInputs {
             // signed_pods: &self.input_signed_pods,
@@ -573,7 +570,7 @@ impl MainPodBuilder {
                 }
                 _ => None,
             })
-            .ok_or(FrontendError::custom(format!(
+            .ok_or(Error::custom(format!(
                 // TODO use a specific Error
                 "Missing POD type information in POD: {:?}",
                 pod
@@ -684,7 +681,7 @@ impl MainPodCompiler {
         }
     }
 
-    fn compile_op(&self, op: &Operation) -> FrontendResult<middleware::Operation> {
+    fn compile_op(&self, op: &Operation) -> Result<middleware::Operation> {
         // TODO: Take Merkle proof into account.
         let mop_args =
             op.1.iter()
@@ -693,17 +690,12 @@ impl MainPodCompiler {
         Ok(middleware::Operation::op(op.0.clone(), &mop_args, &op.2)?)
     }
 
-    fn compile_st_op(
-        &mut self,
-        st: &Statement,
-        op: &Operation,
-        params: &Params,
-    ) -> FrontendResult<()> {
+    fn compile_st_op(&mut self, st: &Statement, op: &Operation, params: &Params) -> Result<()> {
         let middle_op = self.compile_op(op)?;
         let is_correct = middle_op.check(params, st)?;
         if !is_correct {
             // todo: improve error handling
-            Err(FrontendError::custom(format!(
+            Err(Error::custom(format!(
                 "Compile failed due to invalid deduction:\n {} ⇏ {}",
                 middle_op, st
             )))
@@ -717,7 +709,7 @@ impl MainPodCompiler {
         mut self,
         inputs: MainPodCompilerInputs<'_>,
         params: &Params,
-    ) -> FrontendResult<(
+    ) -> Result<(
         Vec<Statement>, // input statements
         Vec<middleware::Operation>,
         Vec<Statement>, // public statements
@@ -816,7 +808,7 @@ pub mod tests {
 
     // Check that frontend public statements agree with those
     // embedded in a MainPod.
-    fn check_public_statements(pod: &MainPod) -> FrontendResult<()> {
+    fn check_public_statements(pod: &MainPod) -> Result<()> {
         Ok(
             std::iter::zip(pod.public_statements.clone(), pod.pod.pub_statements()).try_for_each(
                 |(fes, s)| {
@@ -828,7 +820,7 @@ pub mod tests {
 
     // Check that frontend key-values agree with those embedded in a
     // SignedPod.
-    fn check_kvs(pod: &SignedPod) -> FrontendResult<()> {
+    fn check_kvs(pod: &SignedPod) -> Result<()> {
         let kvs = pod.kvs.clone().into_iter().collect::<HashMap<_, _>>();
         let embedded_kvs = pod
             .pod
@@ -840,7 +832,7 @@ pub mod tests {
         if kvs == embedded_kvs {
             Ok(())
         } else {
-            Err(FrontendError::custom(format!(
+            Err(Error::custom(format!(
                 "KVs {:?} do not agree with those embedded in the POD: {:?}",
                 kvs, embedded_kvs
             )))
@@ -848,7 +840,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_front_zu_kyc() -> FrontendResult<()> {
+    fn test_front_zu_kyc() -> Result<()> {
         let params = Params::default();
         let (gov_id, pay_stub, sanction_list) = zu_kyc_sign_pod_builders(&params);
 
@@ -889,7 +881,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_ethdos() -> FrontendResult<()> {
+    fn test_ethdos() -> Result<()> {
         let params = Params {
             max_input_signed_pods: 3,
             max_input_main_pods: 3,
@@ -932,7 +924,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_front_great_boy() -> FrontendResult<()> {
+    fn test_front_great_boy() -> Result<()> {
         let great_boy = great_boy_pod_full_flow()?;
         println!("{}", great_boy);
 
@@ -942,7 +934,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_front_tickets() -> FrontendResult<()> {
+    fn test_front_tickets() -> Result<()> {
         let builder = tickets_pod_full_flow()?;
         println!("{}", builder);
 
@@ -1027,7 +1019,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_dictionaries() -> FrontendResult<()> {
+    fn test_dictionaries() -> Result<()> {
         let params = Params::default();
         let mut builder = SignedPodBuilder::new(&params);
 

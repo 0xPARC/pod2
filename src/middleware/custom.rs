@@ -8,8 +8,7 @@ use plonky2::field::types::Field;
 use crate::{
     middleware::HASH_SIZE,
     middleware::{
-        hash_fields, Hash, Key, MiddlewareError, MiddlewareResult, NativePredicate, Params,
-        ToFields, Value, F,
+        hash_fields, Error, Hash, Key, NativePredicate, Params, Result, ToFields, Value, F,
     },
 };
 
@@ -199,7 +198,7 @@ impl CustomPredicate {
         params: &Params,
         statements: Vec<StatementTmpl>,
         args_len: usize,
-    ) -> MiddlewareResult<Self> {
+    ) -> Result<Self> {
         Self::new(name, params, true, statements, args_len)
     }
     pub fn or(
@@ -207,7 +206,7 @@ impl CustomPredicate {
         params: &Params,
         statements: Vec<StatementTmpl>,
         args_len: usize,
-    ) -> MiddlewareResult<Self> {
+    ) -> Result<Self> {
         Self::new(name, params, false, statements, args_len)
     }
     pub fn new(
@@ -216,9 +215,9 @@ impl CustomPredicate {
         conjunction: bool,
         statements: Vec<StatementTmpl>,
         args_len: usize,
-    ) -> MiddlewareResult<Self> {
+    ) -> Result<Self> {
         if statements.len() > params.max_custom_predicate_arity {
-            return Err(MiddlewareError::max_length(
+            return Err(Error::max_length(
                 "statements.len".to_string(),
                 statements.len(),
                 params.max_custom_predicate_arity,
@@ -428,7 +427,7 @@ mod tests {
     type NP = NativePredicate;
 
     #[test]
-    fn is_double_test() -> MiddlewareResult<()> {
+    fn is_double_test() -> Result<()> {
         let params = Params::default();
 
         /*
@@ -485,7 +484,7 @@ mod tests {
     }
 
     #[test]
-    fn ethdos_test() -> MiddlewareResult<()> {
+    fn ethdos_test() -> Result<()> {
         let params = Params {
             max_custom_predicate_wildcards: 12,
             ..Default::default()

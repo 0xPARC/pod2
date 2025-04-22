@@ -27,7 +27,7 @@ use crate::{
     backends::plonky2::{
         basetypes::D,
         circuits::common::{CircuitBuilderPod, ValueTarget},
-        error::BackendResult,
+        error::Result,
         primitives::merkletree::MerkleClaimAndProof,
     },
     middleware::{EMPTY_HASH, EMPTY_VALUE, F, HASH_SIZE},
@@ -58,10 +58,7 @@ pub struct MerkleClaimAndProofTarget {
 
 impl MerkleProofGadget {
     /// creates the targets and defines the logic of the circuit
-    pub fn eval(
-        &self,
-        builder: &mut CircuitBuilder<F, D>,
-    ) -> BackendResult<MerkleClaimAndProofTarget> {
+    pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MerkleClaimAndProofTarget> {
         let enabled = builder.add_virtual_bool_target_safe();
         let root = builder.add_virtual_hash();
         let key = builder.add_virtual_value();
@@ -166,7 +163,7 @@ impl MerkleClaimAndProofTarget {
         pw: &mut PartialWitness<F>,
         enabled: bool,
         mp: &MerkleClaimAndProof,
-    ) -> BackendResult<()> {
+    ) -> Result<()> {
         pw.set_bool_target(self.enabled, enabled)?;
         pw.set_hash_target(self.root, HashOut::from_vec(mp.root.0.to_vec()))?;
         pw.set_target_arr(&self.key.elements, &mp.key.0)?;
@@ -223,10 +220,7 @@ pub struct MerkleProofExistenceTarget {
 
 impl MerkleProofExistenceGadget {
     /// creates the targets and defines the logic of the circuit
-    pub fn eval(
-        &self,
-        builder: &mut CircuitBuilder<F, D>,
-    ) -> BackendResult<MerkleProofExistenceTarget> {
+    pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MerkleProofExistenceTarget> {
         let enabled = builder.add_virtual_bool_target_safe();
         let root = builder.add_virtual_hash();
         let key = builder.add_virtual_value();
@@ -274,7 +268,7 @@ impl MerkleProofExistenceTarget {
         pw: &mut PartialWitness<F>,
         enabled: bool,
         mp: &MerkleClaimAndProof,
-    ) -> BackendResult<()> {
+    ) -> Result<()> {
         assert!(mp.proof.existence); // sanity check
 
         pw.set_bool_target(self.enabled, enabled)?;
@@ -305,7 +299,7 @@ fn compute_root_from_leaf(
     path: &[BoolTarget],
     leaf_hash: &HashOutTarget,
     siblings: &[HashOutTarget],
-) -> BackendResult<HashOutTarget> {
+) -> Result<HashOutTarget> {
     assert_eq!(siblings.len(), max_depth);
     // Convenience constants
     let zero = builder.zero();
@@ -422,14 +416,14 @@ pub mod tests {
     };
 
     #[test]
-    fn test_keypath() -> BackendResult<()> {
+    fn test_keypath() -> Result<()> {
         for max_depth in [10, 16, 32, 40, 64, 128, 130, 250, 256] {
             test_keypath_opt(max_depth)?;
         }
         Ok(())
     }
 
-    fn test_keypath_opt(max_depth: usize) -> BackendResult<()> {
+    fn test_keypath_opt(max_depth: usize) -> Result<()> {
         for i in 0..5 {
             let config = CircuitConfig::standard_recursion_config();
             let mut builder = CircuitBuilder::<F, D>::new(config);
@@ -464,7 +458,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_kv_hash() -> BackendResult<()> {
+    fn test_kv_hash() -> Result<()> {
         for i in 0..10 {
             let key = RawValue::from(hash_value(&RawValue::from(i)));
             let value = RawValue::from(1000 + i);
@@ -496,7 +490,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_merkleproof_verify_existence() -> BackendResult<()> {
+    fn test_merkleproof_verify_existence() -> Result<()> {
         for max_depth in [10, 16, 32, 40, 64, 128, 130, 250, 256] {
             test_merkleproof_verify_opt(max_depth, true)?;
         }
@@ -504,7 +498,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_merkleproof_verify_nonexistence() -> BackendResult<()> {
+    fn test_merkleproof_verify_nonexistence() -> Result<()> {
         for max_depth in [10, 16, 32, 40, 64, 128, 130, 250, 256] {
             test_merkleproof_verify_opt(max_depth, false)?;
         }
@@ -512,7 +506,7 @@ pub mod tests {
     }
 
     // test logic to be reused both by the existence & nonexistence tests
-    fn test_merkleproof_verify_opt(max_depth: usize, existence: bool) -> BackendResult<()> {
+    fn test_merkleproof_verify_opt(max_depth: usize, existence: bool) -> Result<()> {
         let mut kvs: HashMap<RawValue, RawValue> = HashMap::new();
         for i in 0..10 {
             kvs.insert(
@@ -561,14 +555,14 @@ pub mod tests {
     }
 
     #[test]
-    fn test_merkleproof_only_existence_verify() -> BackendResult<()> {
+    fn test_merkleproof_only_existence_verify() -> Result<()> {
         for max_depth in [10, 16, 32, 40, 64, 128, 130, 250, 256] {
             test_merkleproof_only_existence_verify_opt(max_depth)?;
         }
         Ok(())
     }
 
-    fn test_merkleproof_only_existence_verify_opt(max_depth: usize) -> BackendResult<()> {
+    fn test_merkleproof_only_existence_verify_opt(max_depth: usize) -> Result<()> {
         let mut kvs: HashMap<RawValue, RawValue> = HashMap::new();
         for i in 0..10 {
             kvs.insert(
@@ -607,7 +601,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_merkletree_edgecases() -> BackendResult<()> {
+    fn test_merkletree_edgecases() -> Result<()> {
         // fill the tree as in https://0xparc.github.io/pod2/merkletree.html#example-3
         //
         //     root
@@ -642,7 +636,7 @@ pub mod tests {
         max_depth: usize,
         tree: &MerkleTree,
         key: RawValue,
-    ) -> BackendResult<()> {
+    ) -> Result<()> {
         let contains = tree.contains(&key)?;
         // generate merkleproof
         let (value, proof) = if contains {
@@ -682,7 +676,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_wrong_witness() -> BackendResult<()> {
+    fn test_wrong_witness() -> Result<()> {
         let mut kvs: HashMap<RawValue, RawValue> = HashMap::new();
         for i in 0..10 {
             kvs.insert(RawValue::from(i), RawValue::from(i));
