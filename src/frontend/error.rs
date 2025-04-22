@@ -6,10 +6,6 @@ pub type FrontendResult<T, E = FrontendError> = core::result::Result<T, E>;
 
 #[derive(thiserror::Error, Debug)]
 pub enum InnerError {
-    #[error(transparent)]
-    Tree(#[from] crate::backends::plonky2::primitives::merkletree::error::TreeError),
-    #[error(transparent)]
-    Middleware(#[from] crate::middleware::MiddlewareError),
     #[error("{0} {1} is over the limit {2}")]
     MaxLength(String, usize, usize),
     #[error("{0} doesn't match {1}")]

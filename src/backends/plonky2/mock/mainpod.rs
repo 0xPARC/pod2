@@ -19,8 +19,8 @@ use crate::{
         primitives::merkletree::MerkleClaimAndProof,
     },
     middleware::{
-        self, hash_str, AnchoredKey, DynError, MainPodInputs, MiddlewareError, NativePredicate,
-        Params, Pod, PodId, PodProver, Predicate, StatementArg, KEY_TYPE, SELF,
+        self, hash_str, AnchoredKey, DynError, MainPodInputs, NativePredicate, Params, Pod, PodId,
+        PodProver, Predicate, StatementArg, KEY_TYPE, SELF,
     },
 };
 
@@ -245,7 +245,7 @@ impl MockMainPod {
                     .unwrap()
                     .check_and_log(&self.params, &s.clone().try_into().unwrap())
             })
-            .collect::<Result<Vec<_>, MiddlewareError>>()
+            .collect::<Result<Vec<_>, middleware::MiddlewareError>>()
             .unwrap();
         if !ids_match {
             return Err(BackendError::pod_id_invalid());
