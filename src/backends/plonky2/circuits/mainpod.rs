@@ -378,7 +378,7 @@ impl MainPodVerifyTarget {
             for _statement in 0..params.max_public_statements {
                 statements.push(StatementTarget::new_native(
                     builder,
-                    &params,
+                    params,
                     NativePredicate::None,
                     &[],
                 ))
