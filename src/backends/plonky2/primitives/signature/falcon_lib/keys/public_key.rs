@@ -32,7 +32,7 @@ impl PublicKey {
 
     /// Verifies the provided signature against provided message and this public key.
     pub fn verify(&self, message: Word, signature: &Signature) -> bool {
-        signature.verify(message, self.0)
+        signature.verify(message, self.0.clone())
     }
 }
 

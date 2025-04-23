@@ -29,7 +29,10 @@ mod tests {
     use rand_chacha::ChaCha20Rng;
 
     use super::{PublicKey, SecretKey, Signature};
-    use crate::backends::plonky2::basetypes::{Proof, Value, C, D, F, VALUE_SIZE};
+    use crate::{
+        backends::plonky2::basetypes::{Proof, C, D},
+        middleware::{RawValue, F, VALUE_SIZE},
+    };
 
     #[test]
     fn test_falcon() {
@@ -41,14 +44,14 @@ mod tests {
         let pk = sk.public_key();
 
         // sign a random message
-        let message: Value = Value([F::ONE; 4]);
+        let message: RawValue = RawValue([F::ONE; 4]);
         let signature = sk.sign_with_rng(message, &mut rng);
 
         // make sure the signature verifies correctly
         assert!(pk.verify(message, &signature));
 
         // a signature should not verify against a wrong message
-        let message2: Value = Value([F::ONE.double(); 4]);
+        let message2: RawValue = RawValue([F::ONE.double(); 4]);
         assert!(!pk.verify(message2, &signature));
 
         // a signature should not verify against a wrong public key

@@ -10,7 +10,6 @@
 //!
 use std::iter;
 
-use anyhow::Result;
 use plonky2::{
     field::types::Field,
     hash::{
@@ -24,10 +23,14 @@ use plonky2::{
     plonk::circuit_builder::CircuitBuilder,
 };
 
-use crate::backends::plonky2::{
-    basetypes::{Hash, Value, D, EMPTY_HASH, EMPTY_VALUE, F, HASH_SIZE},
-    circuits::common::{CircuitBuilderPod, ValueTarget},
-    primitives::merkletree::MerkleProof,
+use crate::{
+    backends::plonky2::{
+        basetypes::D,
+        circuits::common::{CircuitBuilderPod, ValueTarget},
+        error::Result,
+        primitives::merkletree::MerkleClaimAndProof,
+    },
+    middleware::{EMPTY_HASH, EMPTY_VALUE, F, HASH_SIZE},
 };
 
 /// `MerkleProofGadget` allows to verify both proofs of existence and proofs
@@ -158,31 +161,30 @@ impl MerkleClaimAndProofTarget {
     pub fn set_targets(
         &self,
         pw: &mut PartialWitness<F>,
-        // `enabled` determines if the merkleproof verification is enabled
         enabled: bool,
-        existence: bool,
-        root: Hash,
-        proof: MerkleProof,
-        key: Value,
-        value: Value,
+        mp: &MerkleClaimAndProof,
     ) -> Result<()> {
         pw.set_bool_target(self.enabled, enabled)?;
-        pw.set_hash_target(self.root, HashOut::from_vec(root.0.to_vec()))?;
-        pw.set_target_arr(&self.key.elements, &key.0)?;
-        pw.set_target_arr(&self.value.elements, &value.0)?;
-        pw.set_bool_target(self.existence, existence)?;
+        pw.set_hash_target(self.root, HashOut::from_vec(mp.root.0.to_vec()))?;
+        pw.set_target_arr(&self.key.elements, &mp.key.0)?;
+        pw.set_target_arr(&self.value.elements, &mp.value.0)?;
+        pw.set_bool_target(self.existence, mp.proof.existence)?;
 
         // pad siblings with zeros to length max_depth
-        let mut siblings = proof.siblings.clone();
-        siblings.resize(self.max_depth, EMPTY_HASH);
-        assert_eq!(self.siblings.len(), siblings.len());
-
-        for (i, sibling) in siblings.iter().enumerate() {
+        assert!(mp.proof.siblings.len() <= self.max_depth);
+        for (i, sibling) in mp
+            .proof
+            .siblings
+            .iter()
+            .chain(iter::repeat(&EMPTY_HASH))
+            .take(self.max_depth)
+            .enumerate()
+        {
             pw.set_hash_target(self.siblings[i], HashOut::from_vec(sibling.0.to_vec()))?;
         }
 
-        match proof.other_leaf {
-            Some((k, v)) if !existence => {
+        match mp.proof.other_leaf {
+            Some((k, v)) if !mp.proof.existence => {
                 // non-existence case ii) expected leaf does exist but it has a different key
                 pw.set_bool_target(self.case_ii_selector, true)?;
                 pw.set_target_arr(&self.other_key.elements, &k.0)?;
@@ -264,26 +266,26 @@ impl MerkleProofExistenceTarget {
     pub fn set_targets(
         &self,
         pw: &mut PartialWitness<F>,
-        // `enabled` determines if the merkleproof verification is enabled
         enabled: bool,
-        root: Hash,
-        proof: MerkleProof,
-        key: Value,
-        value: Value,
+        mp: &MerkleClaimAndProof,
     ) -> Result<()> {
-        assert!(proof.existence); // sanity check
+        assert!(mp.proof.existence); // sanity check
 
         pw.set_bool_target(self.enabled, enabled)?;
-        pw.set_hash_target(self.root, HashOut::from_vec(root.0.to_vec()))?;
-        pw.set_target_arr(&self.key.elements, &key.0)?;
-        pw.set_target_arr(&self.value.elements, &value.0)?;
+        pw.set_hash_target(self.root, HashOut::from_vec(mp.root.0.to_vec()))?;
+        pw.set_target_arr(&self.key.elements, &mp.key.0)?;
+        pw.set_target_arr(&self.value.elements, &mp.value.0)?;
 
         // pad siblings with zeros to length max_depth
-        let mut siblings = proof.siblings.clone();
-        siblings.resize(self.max_depth, EMPTY_HASH);
-        assert_eq!(self.siblings.len(), siblings.len());
-
-        for (i, sibling) in siblings.iter().enumerate() {
+        assert!(mp.proof.siblings.len() <= self.max_depth);
+        for (i, sibling) in mp
+            .proof
+            .siblings
+            .iter()
+            .chain(iter::repeat(&EMPTY_HASH))
+            .take(self.max_depth)
+            .enumerate()
+        {
             pw.set_hash_target(self.siblings[i], HashOut::from_vec(sibling.0.to_vec()))?;
         }
 
@@ -405,9 +407,12 @@ pub mod tests {
     use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
 
     use super::*;
-    use crate::backends::plonky2::{
-        basetypes::{hash_value, C},
-        primitives::merkletree::*,
+    use crate::{
+        backends::plonky2::{
+            basetypes::C,
+            primitives::merkletree::{keypath, kv_hash, MerkleTree},
+        },
+        middleware::{hash_value, RawValue},
     };
 
     #[test]
@@ -424,7 +429,7 @@ pub mod tests {
             let mut builder = CircuitBuilder::<F, D>::new(config);
             let mut pw = PartialWitness::<F>::new();
 
-            let key = Value::from(hash_value(&Value::from(i)));
+            let key = RawValue::from(hash_value(&RawValue::from(i)));
             let expected_path = keypath(max_depth, key)?;
 
             // small circuit logic to check
@@ -455,8 +460,8 @@ pub mod tests {
     #[test]
     fn test_kv_hash() -> Result<()> {
         for i in 0..10 {
-            let key = Value::from(hash_value(&Value::from(i)));
-            let value = Value::from(1000 + i);
+            let key = RawValue::from(hash_value(&RawValue::from(i)));
+            let value = RawValue::from(1000 + i);
             let h = kv_hash(&key, Some(value));
 
             // circuit
@@ -502,20 +507,23 @@ pub mod tests {
 
     // test logic to be reused both by the existence & nonexistence tests
     fn test_merkleproof_verify_opt(max_depth: usize, existence: bool) -> Result<()> {
-        let mut kvs: HashMap<Value, Value> = HashMap::new();
+        let mut kvs: HashMap<RawValue, RawValue> = HashMap::new();
         for i in 0..10 {
-            kvs.insert(Value::from(hash_value(&Value::from(i))), Value::from(i));
+            kvs.insert(
+                RawValue::from(hash_value(&RawValue::from(i))),
+                RawValue::from(i),
+            );
         }
 
         let tree = MerkleTree::new(max_depth, &kvs)?;
 
         let (key, value, proof) = if existence {
-            let key = Value::from(hash_value(&Value::from(5)));
+            let key = RawValue::from(hash_value(&RawValue::from(5)));
             let (value, proof) = tree.prove(&key)?;
-            assert_eq!(value, Value::from(5));
+            assert_eq!(value, RawValue::from(5));
             (key, value, proof)
         } else {
-            let key = Value::from(hash_value(&Value::from(200)));
+            let key = RawValue::from(hash_value(&RawValue::from(200)));
             (key, EMPTY_VALUE, tree.prove_nonexistence(&key)?)
         };
         assert_eq!(proof.existence, existence);
@@ -534,12 +542,8 @@ pub mod tests {
         let targets = MerkleProofGadget { max_depth }.eval(&mut builder)?;
         targets.set_targets(
             &mut pw,
-            true, // verification enabled
-            existence,
-            tree.root(),
-            proof,
-            key,
-            value,
+            true,
+            &MerkleClaimAndProof::new(tree.root(), key, Some(value), proof),
         )?;
 
         // generate & verify proof
@@ -559,17 +563,20 @@ pub mod tests {
     }
 
     fn test_merkleproof_only_existence_verify_opt(max_depth: usize) -> Result<()> {
-        let mut kvs: HashMap<Value, Value> = HashMap::new();
+        let mut kvs: HashMap<RawValue, RawValue> = HashMap::new();
         for i in 0..10 {
-            kvs.insert(Value::from(hash_value(&Value::from(i))), Value::from(i));
+            kvs.insert(
+                RawValue::from(hash_value(&RawValue::from(i))),
+                RawValue::from(i),
+            );
         }
 
         let tree = MerkleTree::new(max_depth, &kvs)?;
 
-        let key = Value::from(hash_value(&Value::from(5)));
+        let key = RawValue::from(hash_value(&RawValue::from(5)));
         let (value, proof) = tree.prove(&key)?;
-        assert_eq!(value, Value::from(5));
-        assert_eq!(proof.existence, true);
+        assert_eq!(value, RawValue::from(5));
+        assert!(proof.existence);
 
         MerkleTree::verify(max_depth, tree.root(), &proof, &key, &value)?;
 
@@ -579,7 +586,11 @@ pub mod tests {
         let mut pw = PartialWitness::<F>::new();
 
         let targets = MerkleProofExistenceGadget { max_depth }.eval(&mut builder)?;
-        targets.set_targets(&mut pw, true, tree.root(), proof, key, value)?;
+        targets.set_targets(
+            &mut pw,
+            true,
+            &MerkleClaimAndProof::new(tree.root(), key, Some(value), proof),
+        )?;
 
         // generate & verify proof
         let data = builder.build::<C>();
@@ -604,24 +615,28 @@ pub mod tests {
         //       5  13
 
         let mut kvs = HashMap::new();
-        kvs.insert(Value::from(0), Value::from(1000));
-        kvs.insert(Value::from(2), Value::from(1002));
-        kvs.insert(Value::from(5), Value::from(1005));
-        kvs.insert(Value::from(13), Value::from(1013));
+        kvs.insert(RawValue::from(0), RawValue::from(1000));
+        kvs.insert(RawValue::from(2), RawValue::from(1002));
+        kvs.insert(RawValue::from(5), RawValue::from(1005));
+        kvs.insert(RawValue::from(13), RawValue::from(1013));
 
         let max_depth = 5;
         let tree = MerkleTree::new(max_depth, &kvs)?;
         // existence
-        test_merkletree_edgecase_opt(max_depth, &tree, Value::from(5))?;
+        test_merkletree_edgecase_opt(max_depth, &tree, RawValue::from(5))?;
         // non-existence case i) expected leaf does not exist
-        test_merkletree_edgecase_opt(max_depth, &tree, Value::from(1))?;
+        test_merkletree_edgecase_opt(max_depth, &tree, RawValue::from(1))?;
         // non-existence case ii) expected leaf does exist but it has a different 'key'
-        test_merkletree_edgecase_opt(max_depth, &tree, Value::from(21))?;
+        test_merkletree_edgecase_opt(max_depth, &tree, RawValue::from(21))?;
 
         Ok(())
     }
 
-    fn test_merkletree_edgecase_opt(max_depth: usize, tree: &MerkleTree, key: Value) -> Result<()> {
+    fn test_merkletree_edgecase_opt(
+        max_depth: usize,
+        tree: &MerkleTree,
+        key: RawValue,
+    ) -> Result<()> {
         let contains = tree.contains(&key)?;
         // generate merkleproof
         let (value, proof) = if contains {
@@ -648,12 +663,8 @@ pub mod tests {
         let targets = MerkleProofGadget { max_depth }.eval(&mut builder)?;
         targets.set_targets(
             &mut pw,
-            true, // verification enabled
-            proof.existence,
-            tree.root(),
-            proof,
-            key,
-            value,
+            true,
+            &MerkleClaimAndProof::new(tree.root(), key, Some(value), proof),
         )?;
 
         // generate & verify proof
@@ -666,25 +677,27 @@ pub mod tests {
 
     #[test]
     fn test_wrong_witness() -> Result<()> {
-        let mut kvs: HashMap<Value, Value> = HashMap::new();
+        let mut kvs: HashMap<RawValue, RawValue> = HashMap::new();
         for i in 0..10 {
-            kvs.insert(Value::from(i), Value::from(i));
+            kvs.insert(RawValue::from(i), RawValue::from(i));
         }
         let max_depth = 16;
         let tree = MerkleTree::new(max_depth, &kvs)?;
 
-        let key = Value::from(3);
+        let key = RawValue::from(3);
         let (value, proof) = tree.prove(&key)?;
 
         // build another tree with an extra key-value, so that it has a
         // different root
-        kvs.insert(Value::from(100), Value::from(100));
+        kvs.insert(RawValue::from(100), RawValue::from(100));
         let tree2 = MerkleTree::new(max_depth, &kvs)?;
 
         MerkleTree::verify(max_depth, tree.root(), &proof, &key, &value)?;
         assert_eq!(
             MerkleTree::verify(max_depth, tree2.root(), &proof, &key, &value)
                 .unwrap_err()
+                .inner()
+                .unwrap()
                 .to_string(),
             "proof of inclusion does not verify"
         );
@@ -695,15 +708,9 @@ pub mod tests {
         let mut pw = PartialWitness::<F>::new();
 
         let targets = MerkleProofGadget { max_depth }.eval(&mut builder)?;
-        targets.set_targets(
-            &mut pw,
-            true, // verification enabled
-            true, // proof of existence
-            tree2.root(),
-            proof.clone(),
-            key,
-            value,
-        )?;
+        // verification enabled & proof of existence
+        let mp = MerkleClaimAndProof::new(tree2.root(), key, Some(value), proof);
+        targets.set_targets(&mut pw, true, &mp)?;
 
         // generate proof, expecting it to fail (since we're using the wrong
         // root)
@@ -717,15 +724,8 @@ pub mod tests {
         let mut pw = PartialWitness::<F>::new();
 
         let targets = MerkleProofGadget { max_depth }.eval(&mut builder)?;
-        targets.set_targets(
-            &mut pw,
-            false, // verification disabled
-            true,  // proof of existence
-            tree2.root(),
-            proof,
-            key,
-            value,
-        )?;
+        // verification disabled & proof of existence
+        targets.set_targets(&mut pw, false, &mp)?;
 
         // generate proof, should pass despite using wrong witness, since the
         // `enabled=false`

@@ -16,7 +16,7 @@ use plonky2::{
 };
 
 use super::{math::FalconFelt, Nonce, Polynomial, Rpo256, Word, MODULUS, N};
-use crate::backends::plonky2::basetypes::F;
+use crate::middleware::F;
 pub(crate) const RATE_RANGE: Range<usize> = 4..12; // TODO review
 
 /// Returns a polynomial in Z_p[x]/(phi) representing the hash of the provided

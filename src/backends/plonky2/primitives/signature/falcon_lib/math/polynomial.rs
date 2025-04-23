@@ -11,9 +11,9 @@ use num::{One, Zero};
 use plonky2::field::types::Field;
 
 use super::{field::FalconFelt, Inverse};
-// notice that Felt is the Goldilocks field, not a generic field nor the falcon field
-use crate::backends::plonky2::basetypes::F as Felt;
 use crate::backends::plonky2::primitives::signature::falcon_lib::{MODULUS, N};
+// notice that Felt is the Goldilocks field, not a generic field nor the falcon field
+use crate::middleware::F as Felt;
 
 #[derive(Debug, Clone, Default)]
 pub struct Polynomial<F> {

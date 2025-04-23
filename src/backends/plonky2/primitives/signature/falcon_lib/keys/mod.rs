@@ -25,11 +25,9 @@ mod tests {
     // use winter_math::FieldElement;
     // use winter_utils::{Deserializable, Serializable};
     use super::{
-        ByteReader, ByteWriter, Deserializable, DeserializationError, Felt, Serializable,
-        Signature, Word,
+        ByteReader, ByteWriter, Deserializable, DeserializationError, Serializable, Signature, Word,
     };
-    // use crate::backends::plonky2::basetypes::{Value as Word, F};
-    use crate::backends::plonky2::primitives::signature::falcon_lib::SecretKey;
+    use crate::{backends::plonky2::primitives::signature::falcon_lib::SecretKey, middleware::F};
 
     #[test]
     fn test_falcon_verification() {
@@ -50,14 +48,14 @@ mod tests {
         );
 
         // sign a random message
-        let message: Word = Word([Felt::ONE; 4]);
+        let message: Word = Word([F::ONE; 4]);
         let signature = sk.sign_with_rng(message, &mut rng);
 
         // make sure the signature verifies correctly
         assert!(pk.verify(message, &signature));
 
         // a signature should not verify against a wrong message
-        let message2: Word = Word([Felt::ONE.double(); 4]);
+        let message2: Word = Word([F::ONE.double(); 4]);
         assert!(!pk.verify(message2, &signature));
 
         // a signature should not verify against a wrong public key

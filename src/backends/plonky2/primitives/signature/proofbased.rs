@@ -1,6 +1,5 @@
 //! Proof-based signatures using Plonky2 proofs, following
 //! https://eprint.iacr.org/2024/1553 .
-use anyhow::Result;
 use lazy_static::lazy_static;
 use plonky2::{
     field::types::Sample,
@@ -20,8 +19,13 @@ use plonky2::{
     },
 };
 
-pub use super::proofbased_circuit::*;
-use crate::backends::plonky2::basetypes::{Proof, Value, C, D, F, VALUE_SIZE};
+use crate::{
+    backends::plonky2::{
+        basetypes::{Proof, C, D},
+        error::{Error, Result},
+    },
+    middleware::{RawValue, F, VALUE_SIZE},
+};
 
 lazy_static! {
     /// Signature prover parameters
@@ -45,10 +49,10 @@ pub struct ProverParams {
 pub struct VerifierParams(pub(crate) VerifierCircuitData<F, C, D>);
 
 #[derive(Clone, Debug)]
-pub struct SecretKey(pub(crate) Value);
+pub struct SecretKey(pub(crate) RawValue);
 
 #[derive(Clone, Debug)]
-pub struct PublicKey(pub(crate) Value);
+pub struct PublicKey(pub(crate) RawValue);
 
 #[derive(Clone, Debug)]
 pub struct Signature(pub(crate) Proof);
@@ -57,16 +61,16 @@ pub struct Signature(pub(crate) Proof);
 impl SecretKey {
     pub fn new_rand() -> Self {
         // note: the `F::rand()` internally uses `rand::rngs::OsRng`
-        Self(Value(std::array::from_fn(|_| F::rand())))
+        Self(RawValue(std::array::from_fn(|_| F::rand())))
     }
 
     pub fn public_key(&self) -> PublicKey {
-        PublicKey(Value(PoseidonHash::hash_no_pad(&self.0 .0).elements))
+        PublicKey(RawValue(PoseidonHash::hash_no_pad(&self.0 .0).elements))
     }
 
-    pub fn sign(&self, msg: Value) -> Result<Signature> {
+    pub fn sign(&self, msg: RawValue) -> Result<Signature> {
         let pk = self.public_key();
-        let s = Value(PoseidonHash::hash_no_pad(&[pk.0 .0, msg.0].concat()).elements);
+        let s = RawValue(PoseidonHash::hash_no_pad(&[pk.0 .0, msg.0].concat()).elements);
 
         let mut pw = PartialWitness::<F>::new();
         PP.circuit.set_targets(&mut pw, self.clone(), pk, msg, s)?;
@@ -108,9 +112,9 @@ impl Signature {
         Ok((builder, circuit))
     }
 
-    pub fn verify(&self, pk: &PublicKey, msg: Value) -> Result<()> {
+    pub fn verify(&self, pk: &PublicKey, msg: RawValue) -> Result<()> {
         // prepare public inputs as [pk, msg, s]
-        let s = Value(PoseidonHash::hash_no_pad(&[pk.0 .0, msg.0].concat()).elements);
+        let s = RawValue(PoseidonHash::hash_no_pad(&[pk.0 .0, msg.0].concat()).elements);
         let public_inputs: Vec<F> = [pk.0 .0, msg.0, s.0].concat();
 
         // verify plonky2 proof
@@ -118,20 +122,21 @@ impl Signature {
             proof: self.0.clone(),
             public_inputs,
         })
+        .map_err(Error::plonky2_proof_fail)
     }
 }
 
 fn dummy_public_inputs() -> Result<Vec<F>> {
-    let sk = SecretKey(Value::from(0));
+    let sk = SecretKey(RawValue::from(0));
     let pk = sk.public_key();
-    let msg = Value::from(0);
-    let s = Value(PoseidonHash::hash_no_pad(&[pk.0 .0, msg.0].concat()).elements);
+    let msg = RawValue::from(0);
+    let s = RawValue(PoseidonHash::hash_no_pad(&[pk.0 .0, msg.0].concat()).elements);
     Ok([pk.0 .0, msg.0, s.0].concat())
 }
 
 fn dummy_signature() -> Result<Signature> {
-    let sk = SecretKey(Value::from(0));
-    let msg = Value::from(0);
+    let sk = SecretKey(RawValue::from(0));
+    let msg = RawValue::from(0);
     sk.sign(msg)
 }
 
@@ -186,8 +191,8 @@ impl SignatureInternalCircuit {
         pw: &mut PartialWitness<F>,
         sk: SecretKey,
         pk: PublicKey,
-        msg: Value,
-        s: Value,
+        msg: RawValue,
+        s: RawValue,
     ) -> Result<()> {
         pw.set_target_arr(&self.sk_targ, sk.0 .0.as_ref())?;
         pw.set_hash_target(self.pk_targ, HashOut::<F>::from_vec(pk.0 .0.to_vec()))?;
@@ -201,23 +206,23 @@ impl SignatureInternalCircuit {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::backends::plonky2::basetypes::Hash;
+    use crate::middleware::hash_str;
 
     #[test]
     fn test_signature() -> Result<()> {
         let sk = SecretKey::new_rand();
         let pk = sk.public_key();
 
-        let msg = Value::from(42);
+        let msg = RawValue::from(42);
         let sig = sk.sign(msg)?;
         sig.verify(&pk, msg)?;
 
         // expect the signature verification to fail when using a different msg
-        let v = sig.verify(&pk, Value::from(24));
+        let v = sig.verify(&pk, RawValue::from(24));
         assert!(v.is_err(), "should fail to verify");
 
         // perform a 2nd signature over another msg and verify it
-        let msg_2 = Value::from(Hash::from("message"));
+        let msg_2 = RawValue::from(hash_str("message"));
         let sig2 = sk.sign(msg_2)?;
         sig2.verify(&pk, msg_2)?;
 
@@ -226,9 +231,9 @@ pub mod tests {
 
     #[test]
     fn test_dummy_signature() -> Result<()> {
-        let sk = SecretKey(Value::from(0));
+        let sk = SecretKey(RawValue::from(0));
         let pk = sk.public_key();
-        let msg = Value::from(0);
+        let msg = RawValue::from(0);
         DUMMY_SIGNATURE.clone().verify(&pk, msg)?;
 
         Ok(())

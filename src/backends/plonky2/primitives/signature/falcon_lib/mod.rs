@@ -6,8 +6,7 @@ pub use miden_crypto::{
 };
 use plonky2::field::types::Field;
 
-use crate::backends::plonky2::basetypes::{Proof, Value, C, D, F, VALUE_SIZE};
-pub use crate::backends::plonky2::basetypes::{Value as Word, F as Felt};
+pub use crate::middleware::{RawValue as Word, F, F as Felt, VALUE_SIZE};
 
 pub(crate) mod hash_to_point;
 pub(crate) mod keys;

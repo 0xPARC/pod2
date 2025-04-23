@@ -1,14 +1,16 @@
-use std::{any::Any, collections::HashMap};
+use std::collections::HashMap;
 
-use anyhow::{anyhow, Result};
 use itertools::Itertools;
 
 use crate::{
-    backends::plonky2::primitives::merkletree::MerkleTree,
+    backends::plonky2::{
+        error::{Error, Result},
+        primitives::merkletree::MerkleTree,
+    },
     constants::MAX_DEPTH,
     middleware::{
-        containers::Dictionary, hash_str, AnchoredKey, Hash, Params, Pod, PodId, PodSigner,
-        PodType, Statement, Value, KEY_SIGNER, KEY_TYPE,
+        containers::Dictionary, hash_str, AnchoredKey, DynError, Hash, Key, Params, Pod, PodId,
+        PodSigner, PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE,
     },
 };
 
@@ -17,26 +19,32 @@ pub struct MockSigner {
 }
 
 impl MockSigner {
-    pub fn pubkey(&self) -> Value {
-        Value(hash_str(&self.pk).0)
+    pub fn pubkey(&self) -> Hash {
+        hash_str(&self.pk)
+    }
+}
+
+impl MockSigner {
+    fn _sign(&mut self, _params: &Params, kvs: &HashMap<Key, Value>) -> Result<MockSignedPod> {
+        let mut kvs = kvs.clone();
+        let pubkey = self.pubkey();
+        kvs.insert(Key::from(KEY_SIGNER), Value::from(pubkey));
+        kvs.insert(Key::from(KEY_TYPE), Value::from(PodType::MockSigned));
+
+        let dict = Dictionary::new(kvs.clone())?;
+        let id = PodId(dict.commitment());
+        let signature = format!("{}_signed_by_{}", id, pubkey);
+        Ok(MockSignedPod { id, signature, kvs })
     }
 }
 
 impl PodSigner for MockSigner {
-    fn sign(&mut self, _params: &Params, kvs: &HashMap<Hash, Value>) -> Result<Box<dyn Pod>> {
-        let mut kvs = kvs.clone();
-        let pubkey = self.pubkey();
-        kvs.insert(hash_str(KEY_SIGNER), pubkey);
-        kvs.insert(hash_str(KEY_TYPE), Value::from(PodType::MockSigned));
-
-        let dict = Dictionary::new(&kvs)?;
-        let id = PodId(dict.commitment());
-        let signature = format!("{}_signed_by_{}", id, pubkey);
-        Ok(Box::new(MockSignedPod {
-            dict,
-            id,
-            signature,
-        }))
+    fn sign(
+        &mut self,
+        params: &Params,
+        kvs: &HashMap<Key, Value>,
+    ) -> Result<Box<dyn Pod>, Box<DynError>> {
+        Ok(self._sign(params, kvs).map(Box::new)?)
     }
 }
 
@@ -44,61 +52,63 @@ impl PodSigner for MockSigner {
 pub struct MockSignedPod {
     id: PodId,
     signature: String,
-    dict: Dictionary,
+    kvs: HashMap<Key, Value>,
 }
 
 impl MockSignedPod {
-    pub fn deserialize(id: PodId, signature: String, dict: Dictionary) -> Self {
-        Self {
-            id,
-            signature,
-            dict,
-        }
+    pub(crate) fn new(id: PodId, signature: String, kvs: HashMap<Key, Value>) -> Self {
+        Self { id, signature, kvs }
     }
 }
 
-impl Pod for MockSignedPod {
-    fn verify(&self) -> Result<()> {
+impl MockSignedPod {
+    fn _verify(&self) -> Result<()> {
         // 1. Verify id
         let mt = MerkleTree::new(
             MAX_DEPTH,
             &self
-                .dict
+                .kvs
                 .iter()
-                .map(|(&k, &v)| (k, v))
-                .collect::<HashMap<Value, Value>>(),
+                .map(|(k, v)| (k.raw(), v.raw()))
+                .collect::<HashMap<RawValue, RawValue>>(),
         )?;
         let id = PodId(mt.root());
         if id != self.id {
-            return Err(anyhow!(
-                "id does not match, expected {}, computed {}",
-                self.id,
-                id
-            ));
+            return Err(Error::id_not_equal(self.id, id));
         }
 
         // 2. Verify type
-        let value_at_type = self.dict.get(&hash_str(KEY_TYPE).into())?;
-        if Value::from(PodType::MockSigned) != value_at_type {
-            return Err(anyhow!(
-                "type does not match, expected MockSigned ({}), found {}",
+        let value_at_type = self
+            .kvs
+            .get(&Key::from(KEY_TYPE))
+            .ok_or(Error::key_not_found())?;
+        if &Value::from(PodType::MockSigned) != value_at_type {
+            return Err(Error::type_not_equal(
                 PodType::MockSigned,
-                value_at_type
+                value_at_type.clone(),
             ));
         }
 
         // 3. Verify signature
-        let pk_hash = self.dict.get(&hash_str(KEY_SIGNER).into())?;
+        let pk_hash = self
+            .kvs
+            .get(&Key::from(KEY_SIGNER))
+            .ok_or(Error::key_not_found())?;
         let signature = format!("{}_signed_by_{}", id, pk_hash);
         if signature != self.signature {
-            return Err(anyhow!(
+            return Err(Error::custom(format!(
                 "signature does not match, expected {}, computed {}",
-                self.id,
-                id
-            ));
+                self.id, id
+            )));
         }
 
         Ok(())
+    }
+}
+
+impl Pod for MockSignedPod {
+    fn verify(&self) -> Result<(), Box<DynError>> {
+        Ok(self._verify()?)
     }
 
     fn id(&self) -> PodId {
@@ -108,23 +118,16 @@ impl Pod for MockSignedPod {
     fn pub_statements(&self) -> Vec<Statement> {
         let id = self.id();
         // By convention we put the KEY_TYPE first and KEY_SIGNER second
-        let mut kvs: HashMap<_, _> = self.dict.iter().collect();
-        let key_type = Value::from(hash_str(KEY_TYPE));
+        let mut kvs = self.kvs.clone();
+        let key_type = Key::from(KEY_TYPE);
         let value_type = kvs.remove(&key_type).expect("KEY_TYPE");
-        let key_signer = Value::from(hash_str(KEY_SIGNER));
+        let key_signer = Key::from(KEY_SIGNER);
         let value_signer = kvs.remove(&key_signer).expect("KEY_SIGNER");
-        [(&key_type, value_type), (&key_signer, value_signer)]
+        [(key_type, value_type), (key_signer, value_signer)]
             .into_iter()
-            .chain(kvs.into_iter().sorted_by_key(|kv| kv.0))
-            .map(|(k, v)| Statement::ValueOf(AnchoredKey(id, Hash(k.0)), *v))
+            .chain(kvs.into_iter().sorted_by_key(|kv| kv.0.hash()))
+            .map(|(k, v)| Statement::ValueOf(AnchoredKey::from((id, k)), v))
             .collect()
-    }
-
-    fn into_any(self: Box<Self>) -> Box<dyn Any> {
-        self
-    }
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 
     fn serialized_proof(&self) -> String {
@@ -134,15 +137,14 @@ impl Pod for MockSignedPod {
 
 #[cfg(test)]
 pub mod tests {
-    use std::iter;
+    use std::{any::Any, iter};
 
     use plonky2::field::types::Field;
 
     use super::*;
     use crate::{
-        constants::MAX_DEPTH,
         frontend,
-        middleware::{self, EMPTY_HASH, F},
+        middleware::{self, EMPTY_VALUE, F},
     };
 
     #[test]
@@ -155,9 +157,11 @@ pub mod tests {
 
         let mut signer = MockSigner { pk: "Molly".into() };
         let pod = pod.sign(&mut signer).unwrap();
-        let pod = pod.pod.into_any().downcast::<MockSignedPod>().unwrap();
+        let pod = (pod.pod as Box<dyn Any>)
+            .downcast::<MockSignedPod>()
+            .unwrap();
 
-        pod.verify()?;
+        pod._verify()?;
         println!("id: {}", pod.id());
         println!("kvs: {:?}", pod.kvs());
 
@@ -170,27 +174,25 @@ pub mod tests {
         assert!(bad_pod.verify().is_err());
 
         let mut bad_pod = pod.clone();
-        let bad_kv = (hash_str(KEY_SIGNER).into(), Value(PodId(EMPTY_HASH).0 .0));
-        let bad_kvs_mt = &bad_pod
-            .kvs()
+        let bad_kv = (Key::from(KEY_SIGNER), Value::from(EMPTY_VALUE));
+        let bad_kvs = bad_pod
+            .kvs
+            .clone()
             .into_iter()
-            .map(|(AnchoredKey(_, k), v)| (Value(k.0), v))
             .chain(iter::once(bad_kv))
-            .collect::<HashMap<Value, Value>>();
-        let bad_mt = MerkleTree::new(MAX_DEPTH, bad_kvs_mt)?;
-        bad_pod.dict.mt = bad_mt;
+            .collect::<HashMap<Key, Value>>();
+        bad_pod.kvs = bad_kvs;
         assert!(bad_pod.verify().is_err());
 
         let mut bad_pod = pod.clone();
-        let bad_kv = (hash_str(KEY_TYPE).into(), Value::from(0));
-        let bad_kvs_mt = &bad_pod
-            .kvs()
+        let bad_kv = (Key::from(KEY_TYPE), Value::from(0));
+        let bad_kvs = bad_pod
+            .kvs
+            .clone()
             .into_iter()
-            .map(|(AnchoredKey(_, k), v)| (Value(k.0), v))
             .chain(iter::once(bad_kv))
-            .collect::<HashMap<Value, Value>>();
-        let bad_mt = MerkleTree::new(MAX_DEPTH, bad_kvs_mt)?;
-        bad_pod.dict.mt = bad_mt;
+            .collect::<HashMap<Key, Value>>();
+        bad_pod.kvs = bad_kvs;
         assert!(bad_pod.verify().is_err());
 
         Ok(())

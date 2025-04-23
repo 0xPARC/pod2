@@ -24,15 +24,18 @@ use plonky2::{
     util::serialization::{Buffer, IoResult, Read, Write},
 };
 
-use crate::backends::plonky2::{
-    basetypes::{Value, D, F},
-    circuits::common::{CircuitBuilderPod, ValueTarget},
-    primitives::signature::falcon_lib::{
-        hash_to_point::{hash_to_point, RATE_RANGE},
-        math::{FalconFelt, FastFft, Polynomial},
-        Signature, FALCON_ENCODING_BITS as FALCON_ENCODING_BITS_u32, MODULUS as FALCON_PRIME, N,
-        NONCE_ELEMENTS, SIG_L2_BOUND,
+use crate::{
+    backends::plonky2::{
+        basetypes::D,
+        circuits::common::{CircuitBuilderPod, ValueTarget},
+        primitives::signature::falcon_lib::{
+            hash_to_point::{hash_to_point, RATE_RANGE},
+            math::{FalconFelt, FastFft, Polynomial},
+            Signature, FALCON_ENCODING_BITS as FALCON_ENCODING_BITS_u32, MODULUS as FALCON_PRIME,
+            N, NONCE_ELEMENTS, SIG_L2_BOUND,
+        },
     },
+    middleware::{RawValue, F},
 };
 
 const P: u64 = FALCON_PRIME as u64;
@@ -105,7 +108,7 @@ impl SignatureVerifyTarget {
         enabled: bool,
         tau: FalconFelt,
         pk: Polynomial<FalconFelt>,
-        msg: Value,
+        msg: RawValue,
         sig: Signature,
     ) -> Result<()> {
         pw.set_bool_target(self.enabled, enabled)?;
@@ -636,12 +639,15 @@ pub mod tests {
     use rand_chacha::ChaCha20Rng;
 
     use super::*;
-    use crate::backends::plonky2::{
-        basetypes::{C, F},
-        circuits::common::CircuitBuilderPod,
-        primitives::signature::falcon_lib::{
-            hash_to_point::hash_to_point, Nonce, SecretKey, SIG_NONCE_LEN,
+    use crate::{
+        backends::plonky2::{
+            basetypes::C,
+            circuits::common::CircuitBuilderPod,
+            primitives::signature::falcon_lib::{
+                hash_to_point::hash_to_point, Nonce, SecretKey, SIG_NONCE_LEN,
+            },
         },
+        middleware::F,
     };
 
     #[test]
@@ -875,7 +881,7 @@ pub mod tests {
         let mut nonce_bytes = [0u8; SIG_NONCE_LEN];
         rng.fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::new(nonce_bytes);
-        let msg: Value = Value([F::ONE; 4]);
+        let msg: RawValue = RawValue([F::ONE; 4]);
         let c = hash_to_point(msg, &nonce);
         assert!(c.coefficients.len() <= N);
         let coeffs_f: Vec<F> = c
@@ -1003,7 +1009,7 @@ pub mod tests {
         let pk = sk.public_key();
 
         // sign a random message
-        let msg: Value = Value([F::ONE; 4]);
+        let msg: RawValue = RawValue([F::ONE; 4]);
         let sig = sk.sign_with_rng(msg, &mut rng);
 
         // make sure the signature verifies correctly

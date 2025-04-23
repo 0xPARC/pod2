@@ -1,6 +1,5 @@
 use std::iter;
 
-use anyhow::Result;
 use itertools::Itertools;
 use plonky2::{
     hash::hash_types::{HashOut, HashOutTarget},
@@ -13,16 +12,20 @@ use plonky2::{
 
 use crate::{
     backends::plonky2::{
-        basetypes::{Value, D, EMPTY_VALUE, F},
+        basetypes::D,
         circuits::common::{CircuitBuilderPod, StatementArgTarget, StatementTarget, ValueTarget},
+        error::Result,
         primitives::{
-            merkletree::{MerkleProof, MerkleProofExistenceGadget, MerkleProofExistenceTarget},
-            signature::proofbased::{PublicKey, SignatureVerifyGadget, SignatureVerifyTarget},
+            merkletree::{
+                MerkleClaimAndProof, MerkleProofExistenceGadget, MerkleProofExistenceTarget,
+            },
+            signature::{PublicKey, SignatureVerifyGadget, SignatureVerifyTarget},
         },
         signedpod::SignedPod,
     },
     middleware::{
-        hash_str, NativePredicate, Params, PodType, Predicate, ToFields, KEY_SIGNER, KEY_TYPE, SELF,
+        hash_str, Key, NativePredicate, Params, PodType, Predicate, RawValue, ToFields, Value, F,
+        KEY_SIGNER, KEY_TYPE, SELF,
     },
 };
 
@@ -48,7 +51,7 @@ impl SignedPodVerifyGadget {
         let type_mt_proof = &mt_proofs[0];
         let key_type = builder.constant_value(hash_str(KEY_TYPE).into());
         builder.connect_values(type_mt_proof.key, key_type);
-        let value_type = builder.constant_value(Value::from(PodType::Signed));
+        let value_type = builder.constant_value(Value::from(PodType::Signed).raw());
         builder.connect_values(type_mt_proof.value, value_type);
 
         // 3.a. Verify signature
@@ -56,7 +59,7 @@ impl SignedPodVerifyGadget {
 
         // 3.b. Verify signer (ie. signature.pk == merkletree.signer_leaf)
         let signer_mt_proof = &mt_proofs[1];
-        let key_signer = builder.constant_value(hash_str(KEY_SIGNER).into());
+        let key_signer = builder.constant_value(Key::from(KEY_SIGNER).raw());
         builder.connect_values(signer_mt_proof.key, key_signer);
         builder.connect_values(signer_mt_proof.value, signature.pk);
 
@@ -122,21 +125,25 @@ impl SignedPodVerifyTarget {
         // - empty leaves (if needed)
 
         // add proof verification of KEY_TYPE & KEY_SIGNER leaves
-        let key_type_key = Value::from(hash_str(KEY_TYPE));
-        let key_signer_key = Value::from(hash_str(KEY_SIGNER));
-        let key_signer_value = [key_type_key, key_signer_key]
+        let key_type_key = Key::from(KEY_TYPE);
+        let key_signer_key = Key::from(KEY_SIGNER);
+        let key_signer_value = [&key_type_key, &key_signer_key]
             .iter()
             .enumerate()
             .map(|(i, k)| {
                 let (v, proof) = pod.dict.prove(k)?;
-                self.mt_proofs[i].set_targets(pw, true, pod.dict.commitment(), proof, *k, v)?;
+                self.mt_proofs[i].set_targets(
+                    pw,
+                    true,
+                    &MerkleClaimAndProof::new(pod.dict.commitment(), k.raw(), Some(v.raw()), proof),
+                )?;
                 Ok(v)
             })
-            .collect::<Result<Vec<Value>>>()?[1];
+            .collect::<Result<Vec<&Value>>>()?[1];
 
         // add the verification of the rest of leaves
         let mut curr = 2; // since we already added key_type and key_signer
-        for (k, v) in pod.dict.iter().sorted_by_key(|kv| kv.0) {
+        for (k, v) in pod.dict.kvs().iter().sorted_by_key(|kv| kv.0.hash()) {
             if *k == key_type_key || *k == key_signer_key {
                 // skip the key_type & key_signer leaves, since they have
                 // already been checked
@@ -144,35 +151,29 @@ impl SignedPodVerifyTarget {
             }
 
             let (obtained_v, proof) = pod.dict.prove(k)?;
-            assert_eq!(obtained_v, *v); // sanity check
+            assert_eq!(obtained_v, v); // sanity check
 
-            self.mt_proofs[curr].set_targets(pw, true, pod.dict.commitment(), proof, *k, *v)?;
+            self.mt_proofs[curr].set_targets(
+                pw,
+                true,
+                &MerkleClaimAndProof::new(pod.dict.commitment(), k.raw(), Some(v.raw()), proof),
+            )?;
             curr += 1;
         }
         // sanity check
         assert!(curr <= self.params.max_signed_pod_values);
 
         // add the proofs of empty leaves (if needed), till the max_signed_pod_values
+        let mut mp = MerkleClaimAndProof::empty();
+        mp.root = pod.dict.commitment();
         for i in curr..self.params.max_signed_pod_values {
-            self.mt_proofs[i].set_targets(
-                pw,
-                false, // disable verification
-                pod.dict.commitment(),
-                // use an empty proof:
-                MerkleProof {
-                    existence: true,
-                    siblings: vec![],
-                    other_leaf: None,
-                },
-                EMPTY_VALUE,
-                EMPTY_VALUE,
-            )?;
+            self.mt_proofs[i].set_targets(pw, false, &mp)?;
         }
 
         // get the signer pk
-        let pk = PublicKey(key_signer_value);
+        let pk = PublicKey(key_signer_value.raw());
         // the msg signed is the pod.id
-        let msg = Value::from(pod.id.0);
+        let msg = RawValue::from(pod.id.0);
 
         // set signature targets values
         self.signature
@@ -187,13 +188,15 @@ impl SignedPodVerifyTarget {
 
 #[cfg(test)]
 pub mod tests {
+    use std::any::Any;
+
     use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
 
     use super::*;
     use crate::{
         backends::plonky2::{
             basetypes::C,
-            primitives::signature::proofbased::SecretKey,
+            primitives::signature::SecretKey,
             signedpod::{SignedPod, Signer},
         },
         middleware::F,
@@ -217,7 +220,7 @@ pub mod tests {
         let sk = SecretKey::new_rand();
         let mut signer = Signer(sk);
         let pod = pod.sign(&mut signer).unwrap();
-        let signed_pod = pod.pod.into_any().downcast::<SignedPod>().unwrap();
+        let signed_pod = (pod.pod as Box<dyn Any>).downcast::<SignedPod>().unwrap();
 
         // use the pod in the circuit
         let config = CircuitConfig::standard_recursion_config();
