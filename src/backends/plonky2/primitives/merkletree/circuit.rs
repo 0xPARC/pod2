@@ -33,14 +33,9 @@ use crate::{
     middleware::{EMPTY_HASH, EMPTY_VALUE, F, HASH_SIZE},
 };
 
-/// `MerkleProofGadget` allows to verify both proofs of existence and proofs
-/// non-existence with the same circuit.
-/// If only proofs of existence are needed, use `MerkleProofExistenceGadget`,
-/// which requires less amount of constraints.
-pub struct MerkleProofGadget {
-    pub max_depth: usize,
-}
-
+/// Allows to verify both proofs of existence and proofs non-existence with the same circuit. If
+/// only proofs of existence are needed, use `MerkleClaimAndProofExistenceTarget`, which requires
+/// less amount of constraints.
 #[derive(Clone)]
 pub struct MerkleClaimAndProofTarget {
     pub(crate) max_depth: usize,
@@ -56,9 +51,12 @@ pub struct MerkleClaimAndProofTarget {
     pub(crate) other_value: ValueTarget,
 }
 
-impl MerkleProofGadget {
+impl MerkleClaimAndProofTarget {
     /// creates the targets and defines the logic of the circuit
-    pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MerkleClaimAndProofTarget> {
+    pub fn build(
+        builder: &mut CircuitBuilder<F, D>,
+        max_depth: usize,
+    ) -> Result<MerkleClaimAndProofTarget> {
         let enabled = builder.add_virtual_bool_target_safe();
         let root = builder.add_virtual_hash();
         let key = builder.add_virtual_value();
@@ -66,7 +64,7 @@ impl MerkleProofGadget {
         // from proof struct:
         let existence = builder.add_virtual_bool_target_safe();
         // siblings are padded till max_depth length
-        let siblings = builder.add_virtual_hashes(self.max_depth);
+        let siblings = builder.add_virtual_hashes(max_depth);
 
         let case_ii_selector = builder.add_virtual_bool_target_safe();
         let other_key = builder.add_virtual_value();
@@ -120,13 +118,13 @@ impl MerkleProofGadget {
         );
 
         // get key's path
-        let path = keypath_target(self.max_depth, builder, &key);
+        let path = keypath_target(max_depth, builder, &key);
 
         // compute the root for the given siblings and the computed leaf_hash
         // (this is for the three cases (existence, non-existence case i, and
         // non-existence case ii).
         let obtained_root =
-            compute_root_from_leaf(self.max_depth, builder, &path, &leaf_hash, &siblings)?;
+            compute_root_from_leaf(max_depth, builder, &path, &leaf_hash, &siblings)?;
 
         // check that obtained_root==root (from inputs), when enabled==true
         let zero = builder.zero();
@@ -141,7 +139,7 @@ impl MerkleProofGadget {
         }
 
         Ok(MerkleClaimAndProofTarget {
-            max_depth: self.max_depth,
+            max_depth,
             enabled,
             existence,
             root,
@@ -153,11 +151,8 @@ impl MerkleProofGadget {
             other_value,
         })
     }
-}
 
-impl MerkleClaimAndProofTarget {
     /// assigns the given values to the targets
-    #[allow(clippy::too_many_arguments)]
     pub fn set_targets(
         &self,
         pw: &mut PartialWitness<F>,
@@ -202,13 +197,9 @@ impl MerkleClaimAndProofTarget {
     }
 }
 
-/// `MerkleProofExistenceCircuit` allows to verify proofs of existence only. If
-/// proofs of non-existence are needed, use `MerkleProofCircuit`.
-pub struct MerkleProofExistenceGadget {
-    pub max_depth: usize,
-}
-
-pub struct MerkleProofExistenceTarget {
+/// Allows to verify proofs of existence only. If proofs of non-existence are needed, use
+/// `MerkleClaimAndProofTarget`.
+pub struct MerkleClaimAndProofExistenceTarget {
     max_depth: usize,
     // `enabled` determines if the merkleproof verification is enabled
     pub(crate) enabled: BoolTarget,
@@ -218,25 +209,28 @@ pub struct MerkleProofExistenceTarget {
     pub(crate) siblings: Vec<HashOutTarget>,
 }
 
-impl MerkleProofExistenceGadget {
+impl MerkleClaimAndProofExistenceTarget {
     /// creates the targets and defines the logic of the circuit
-    pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MerkleProofExistenceTarget> {
+    pub fn build(
+        builder: &mut CircuitBuilder<F, D>,
+        max_depth: usize,
+    ) -> Result<MerkleClaimAndProofExistenceTarget> {
         let enabled = builder.add_virtual_bool_target_safe();
         let root = builder.add_virtual_hash();
         let key = builder.add_virtual_value();
         let value = builder.add_virtual_value();
         // siblings are padded till max_depth length
-        let siblings = builder.add_virtual_hashes(self.max_depth);
+        let siblings = builder.add_virtual_hashes(max_depth);
 
         // get leaf's hash for the selected k & v
         let leaf_hash = kv_hash_target(builder, &key, &value);
 
         // get key's path
-        let path = keypath_target(self.max_depth, builder, &key);
+        let path = keypath_target(max_depth, builder, &key);
 
         // compute the root for the given siblings and the computed leaf_hash.
         let obtained_root =
-            compute_root_from_leaf(self.max_depth, builder, &path, &leaf_hash, &siblings)?;
+            compute_root_from_leaf(max_depth, builder, &path, &leaf_hash, &siblings)?;
 
         // check that obtained_root==root (from inputs), when enabled==true
         let zero = builder.zero();
@@ -250,8 +244,8 @@ impl MerkleProofExistenceGadget {
             builder.connect(computed_root[j], expected_root[j]);
         }
 
-        Ok(MerkleProofExistenceTarget {
-            max_depth: self.max_depth,
+        Ok(MerkleClaimAndProofExistenceTarget {
+            max_depth,
             enabled,
             root,
             siblings,
@@ -259,9 +253,7 @@ impl MerkleProofExistenceGadget {
             value,
         })
     }
-}
 
-impl MerkleProofExistenceTarget {
     /// assigns the given values to the targets
     pub fn set_targets(
         &self,
@@ -539,7 +531,7 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = MerkleProofGadget { max_depth }.eval(&mut builder)?;
+        let targets = MerkleClaimAndProofTarget::build(&mut builder, max_depth)?;
         targets.set_targets(
             &mut pw,
             true,
@@ -585,8 +577,8 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = MerkleProofExistenceGadget { max_depth }.eval(&mut builder)?;
-        targets.set_targets(
+        let target = MerkleClaimAndProofExistenceTarget::build(&mut builder, max_depth)?;
+        target.set_targets(
             &mut pw,
             true,
             &MerkleClaimAndProof::new(tree.root(), key, Some(value), proof),
@@ -660,7 +652,7 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = MerkleProofGadget { max_depth }.eval(&mut builder)?;
+        let targets = MerkleClaimAndProofTarget::build(&mut builder, max_depth)?;
         targets.set_targets(
             &mut pw,
             true,
@@ -707,7 +699,7 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = MerkleProofGadget { max_depth }.eval(&mut builder)?;
+        let targets = MerkleClaimAndProofTarget::build(&mut builder, max_depth)?;
         // verification enabled & proof of existence
         let mp = MerkleClaimAndProof::new(tree2.root(), key, Some(value), proof);
         targets.set_targets(&mut pw, true, &mp)?;
@@ -723,7 +715,7 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = MerkleProofGadget { max_depth }.eval(&mut builder)?;
+        let targets = MerkleClaimAndProofTarget::build(&mut builder, max_depth)?;
         // verification disabled & proof of existence
         targets.set_targets(&mut pw, false, &mp)?;
 

@@ -17,7 +17,7 @@ pub use statement::*;
 use crate::{
     backends::plonky2::{
         basetypes::{C, D},
-        circuits::mainpod::{MainPodVerifyCircuit, MainPodVerifyInput},
+        circuits::mainpod::{MainPodVerifyInput, MainPodVerifyTarget},
         error::{Error, Result},
         primitives::merkletree::MerkleClaimAndProof,
         signedpod::SignedPod,
@@ -283,10 +283,7 @@ impl Prover {
     fn _prove(&mut self, params: &Params, inputs: MainPodInputs) -> Result<MainPod> {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
-        let main_pod = MainPodVerifyCircuit {
-            params: params.clone(),
-        }
-        .eval(&mut builder)?;
+        let main_pod = MainPodVerifyTarget::build_circuit(&mut builder, params)?;
 
         let mut pw = PartialWitness::<F>::new();
         let signed_pods_input: Vec<SignedPod> = inputs
@@ -386,10 +383,7 @@ impl MainPod {
         // TODO: cache these artefacts
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
-        let _main_pod = MainPodVerifyCircuit {
-            params: self.params.clone(),
-        }
-        .eval(&mut builder)?;
+        let _main_pod = MainPodVerifyTarget::build_circuit(&mut builder, &self.params)?;
 
         let data = builder.build::<C>();
         data.verify(self.proof.clone())

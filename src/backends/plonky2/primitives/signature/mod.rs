@@ -45,7 +45,7 @@ lazy_static! {
 
 pub struct ProverParams {
     prover: ProverCircuitData<F, C, D>,
-    circuit: SignatureInternalCircuit,
+    target: SignatureInternalTarget,
 }
 
 #[derive(Clone, Debug)]
@@ -76,7 +76,7 @@ impl SecretKey {
         let s = RawValue(PoseidonHash::hash_no_pad(&[pk.0 .0, msg.0].concat()).elements);
 
         let mut pw = PartialWitness::<F>::new();
-        PP.circuit.set_targets(&mut pw, self.clone(), pk, msg, s)?;
+        PP.target.set_targets(&mut pw, self.clone(), pk, msg, s)?;
 
         let proof = PP.prover.prove(pw)?;
 
@@ -88,9 +88,9 @@ impl SecretKey {
 /// signatures.
 impl Signature {
     pub fn prover_params() -> Result<ProverParams> {
-        let (builder, circuit) = Self::builder()?;
+        let (builder, target) = Self::builder()?;
         let prover = builder.build_prover::<C>();
-        Ok(ProverParams { prover, circuit })
+        Ok(ProverParams { prover, target })
     }
     pub fn verifier_params() -> Result<VerifierParams> {
         let (builder, _) = Self::builder()?;
@@ -105,14 +105,14 @@ impl Signature {
         Ok((pp, vp))
     }
 
-    fn builder() -> Result<(CircuitBuilder<F, D>, SignatureInternalCircuit)> {
+    fn builder() -> Result<(CircuitBuilder<F, D>, SignatureInternalTarget)> {
         // notice that we use the 'zk' config
         let config = CircuitConfig::standard_recursion_zk_config();
 
         let mut builder = CircuitBuilder::<F, D>::new(config);
-        let circuit = SignatureInternalCircuit::add_targets(&mut builder)?;
+        let target = SignatureInternalTarget::build_circuit(&mut builder)?;
 
-        Ok((builder, circuit))
+        Ok((builder, target))
     }
 
     pub fn verify(&self, pk: &PublicKey, msg: RawValue) -> Result<()> {
@@ -143,23 +143,23 @@ fn dummy_signature() -> Result<Signature> {
     sk.sign(msg)
 }
 
-/// The SignatureInternalCircuit implements the circuit used for the proof of
+/// The SignatureInternalTarget implements the circuit used for the proof of
 /// the argument described at https://eprint.iacr.org/2024/1553.
 ///
 /// The circuit proves that for the given public inputs (pk, msg, s), the Prover
 /// knows the secret (sk) such that:
 /// i) pk == H(sk)
 /// ii) s == H(pk, msg)
-struct SignatureInternalCircuit {
+struct SignatureInternalTarget {
     sk_targ: Vec<Target>,
     pk_targ: HashOutTarget,
     msg_targ: Vec<Target>,
     s_targ: HashOutTarget,
 }
 
-impl SignatureInternalCircuit {
+impl SignatureInternalTarget {
     /// creates the targets and defines the logic of the circuit
-    fn add_targets(builder: &mut CircuitBuilder<F, D>) -> Result<Self> {
+    fn build_circuit(builder: &mut CircuitBuilder<F, D>) -> Result<Self> {
         // create the targets
         let sk_targ = builder.add_virtual_targets(VALUE_SIZE);
         let pk_targ = builder.add_virtual_hash();

@@ -13,13 +13,11 @@ use crate::{
                 CircuitBuilderPod, Flattenable, MerkleClaimTarget, OperationTarget,
                 StatementTarget, ValueTarget,
             },
-            signedpod::{SignedPodVerifyGadget, SignedPodVerifyTarget},
+            signedpod::SignedPodVerifyTarget,
         },
         error::Result,
         mainpod,
-        primitives::merkletree::{
-            MerkleClaimAndProof, MerkleClaimAndProofTarget, MerkleProofGadget,
-        },
+        primitives::merkletree::{MerkleClaimAndProof, MerkleClaimAndProofTarget},
         signedpod::SignedPod,
     },
     middleware::{
@@ -32,14 +30,12 @@ use crate::{
 // MainPod verification
 //
 
-struct OperationVerifyGadget {
-    params: Params,
-}
+struct OperationVerifyTarget {}
 
-impl OperationVerifyGadget {
-    fn eval(
-        &self,
+impl OperationVerifyTarget {
+    fn build(
         builder: &mut CircuitBuilder<F, D>,
+        params: &Params,
         st: &StatementTarget,
         op: &OperationTarget,
         prev_statements: &[StatementTarget],
@@ -71,29 +67,30 @@ impl OperationVerifyGadget {
         // `OperationVerifyTarget` so that we can set during witness generation.
 
         // For now only support native operations
-        // Op checks to carry out. Each 'eval_X' should be thought of
-        // as 'eval' restricted to the op of type X, where the
+        // Op checks to carry out. Each 'build_X' should be thought of
+        // as 'build' restricted to the op of type X, where the
         // returned target is `false` if the input targets lie outside
         // of the domain.
         let op_checks = [
             vec![
-                self.eval_none(builder, st, op),
-                self.eval_new_entry(builder, st, op, prev_statements),
+                Self::build_none(builder, params, st, op),
+                Self::build_new_entry(builder, params, st, op, prev_statements),
             ],
             // Skip these if there are no resolved op args
             if resolved_op_args.is_empty() {
                 vec![]
             } else {
                 vec![
-                    self.eval_copy(builder, st, op, &resolved_op_args)?,
-                    self.eval_eq_from_entries(builder, st, op, &resolved_op_args),
-                    self.eval_lt_from_entries(builder, st, op, &resolved_op_args),
+                    Self::build_copy(builder, st, op, &resolved_op_args)?,
+                    Self::build_eq_from_entries(builder, params, st, op, &resolved_op_args),
+                    Self::build_lt_from_entries(builder, params, st, op, &resolved_op_args),
                 ]
             },
             // Skip these if there are no resolved Merkle claims
             if let Some(resolved_merkle_claim) = resolved_merkle_claim {
-                vec![self.eval_not_contains_from_entries(
+                vec![Self::build_not_contains_from_entries(
                     builder,
+                    params,
                     st,
                     op,
                     resolved_merkle_claim,
@@ -112,9 +109,9 @@ impl OperationVerifyGadget {
         Ok(())
     }
 
-    fn eval_not_contains_from_entries(
-        &self,
+    fn build_not_contains_from_entries(
         builder: &mut CircuitBuilder<F, D>,
+        params: &Params,
         st: &StatementTarget,
         op: &OperationTarget,
         resolved_merkle_claim: MerkleClaimTarget,
@@ -126,7 +123,7 @@ impl OperationVerifyGadget {
         let op_arg_type_checks = resolved_op_args
             .iter()
             .take(2)
-            .map(|op_arg| op_arg.has_native_type(builder, &self.params, NativePredicate::ValueOf))
+            .map(|op_arg| op_arg.has_native_type(builder, params, NativePredicate::ValueOf))
             .collect::<Vec<_>>();
         let op_arg_types_ok = builder.all(op_arg_type_checks);
 
@@ -165,7 +162,7 @@ impl OperationVerifyGadget {
         let arg2_key = resolved_op_args[1].args[0].clone();
         let expected_statement = StatementTarget::new_native(
             builder,
-            &self.params,
+            params,
             NativePredicate::NotContains,
             &[arg1_key, arg2_key],
         );
@@ -180,9 +177,9 @@ impl OperationVerifyGadget {
         ])
     }
 
-    fn eval_eq_from_entries(
-        &self,
+    fn build_eq_from_entries(
         builder: &mut CircuitBuilder<F, D>,
+        params: &Params,
         st: &StatementTarget,
         op: &OperationTarget,
         resolved_op_args: &[StatementTarget],
@@ -193,7 +190,7 @@ impl OperationVerifyGadget {
         let op_arg_type_checks = resolved_op_args
             .iter()
             .take(2)
-            .map(|op_arg| op_arg.has_native_type(builder, &self.params, NativePredicate::ValueOf))
+            .map(|op_arg| op_arg.has_native_type(builder, params, NativePredicate::ValueOf))
             .collect::<Vec<_>>();
         let op_arg_types_ok = builder.all(op_arg_type_checks);
 
@@ -215,7 +212,7 @@ impl OperationVerifyGadget {
         let arg2_key = resolved_op_args[1].args[0].clone();
         let expected_statement = StatementTarget::new_native(
             builder,
-            &self.params,
+            params,
             NativePredicate::Equal,
             &[arg1_key, arg2_key],
         );
@@ -230,9 +227,9 @@ impl OperationVerifyGadget {
         ])
     }
 
-    fn eval_lt_from_entries(
-        &self,
+    fn build_lt_from_entries(
         builder: &mut CircuitBuilder<F, D>,
+        params: &Params,
         st: &StatementTarget,
         op: &OperationTarget,
         resolved_op_args: &[StatementTarget],
@@ -243,7 +240,7 @@ impl OperationVerifyGadget {
         let op_arg_type_checks = resolved_op_args
             .iter()
             .take(2)
-            .map(|op_arg| op_arg.has_native_type(builder, &self.params, NativePredicate::ValueOf))
+            .map(|op_arg| op_arg.has_native_type(builder, params, NativePredicate::ValueOf))
             .collect::<Vec<_>>();
         let op_arg_types_ok = builder.all(op_arg_type_checks);
 
@@ -267,7 +264,7 @@ impl OperationVerifyGadget {
         let arg2_key = resolved_op_args[1].args[0].clone();
         let expected_statement = StatementTarget::new_native(
             builder,
-            &self.params,
+            params,
             NativePredicate::Lt,
             &[arg1_key, arg2_key],
         );
@@ -276,34 +273,34 @@ impl OperationVerifyGadget {
         builder.all([op_code_ok, op_arg_types_ok, op_arg_range_ok, st_ok])
     }
 
-    fn eval_none(
-        &self,
+    fn build_none(
         builder: &mut CircuitBuilder<F, D>,
+        params: &Params,
         st: &StatementTarget,
         op: &OperationTarget,
     ) -> BoolTarget {
         let op_code_ok = op.has_native_type(builder, NativeOperation::None);
 
         let expected_statement =
-            StatementTarget::new_native(builder, &self.params, NativePredicate::None, &[]);
+            StatementTarget::new_native(builder, params, NativePredicate::None, &[]);
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
         builder.all([op_code_ok, st_ok])
     }
 
-    fn eval_new_entry(
-        &self,
+    fn build_new_entry(
         builder: &mut CircuitBuilder<F, D>,
+        params: &Params,
         st: &StatementTarget,
         op: &OperationTarget,
         prev_statements: &[StatementTarget],
     ) -> BoolTarget {
         let op_code_ok = op.has_native_type(builder, NativeOperation::NewEntry);
 
-        let st_code_ok = st.has_native_type(builder, &self.params, NativePredicate::ValueOf);
+        let st_code_ok = st.has_native_type(builder, params, NativePredicate::ValueOf);
 
         let expected_arg_prefix = builder.constants(
-            &StatementArg::Key(AnchoredKey::from((SELF, ""))).to_fields(&self.params)[..VALUE_SIZE],
+            &StatementArg::Key(AnchoredKey::from((SELF, ""))).to_fields(params)[..VALUE_SIZE],
         );
         let arg_prefix_ok =
             builder.is_equal_slice(&st.args[0].elements[..VALUE_SIZE], &expected_arg_prefix);
@@ -326,8 +323,7 @@ impl OperationVerifyGadget {
         builder.all([op_code_ok, st_code_ok, arg_prefix_ok, no_dupes_ok])
     }
 
-    fn eval_copy(
-        &self,
+    fn build_copy(
         builder: &mut CircuitBuilder<F, D>,
         st: &StatementTarget,
         op: &OperationTarget,
@@ -342,20 +338,29 @@ impl OperationVerifyGadget {
     }
 }
 
-struct MainPodVerifyGadget {
-    params: Params,
+pub struct MainPodVerifyInput {
+    pub signed_pods: Vec<SignedPod>,
+    pub statements: Vec<mainpod::Statement>,
+    pub operations: Vec<mainpod::Operation>,
+    pub merkle_proofs: Vec<MerkleClaimAndProof>,
 }
 
-impl MainPodVerifyGadget {
-    fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MainPodVerifyTarget> {
-        let params = &self.params;
+pub struct MainPodVerifyTarget {
+    params: Params,
+    id: HashOutTarget,
+    signed_pods: Vec<SignedPodVerifyTarget>,
+    // The KEY_TYPE statement must be the first public one
+    statements: Vec<StatementTarget>,
+    operations: Vec<OperationTarget>,
+    merkle_proofs: Vec<MerkleClaimAndProofTarget>,
+}
+
+impl MainPodVerifyTarget {
+    fn build(builder: &mut CircuitBuilder<F, D>, params: &Params) -> Result<MainPodVerifyTarget> {
         // 1. Verify all input signed pods
         let mut signed_pods = Vec::new();
         for _ in 0..params.max_input_signed_pods {
-            let signed_pod = SignedPodVerifyGadget {
-                params: params.clone(),
-            }
-            .eval(builder)?;
+            let signed_pod = SignedPodVerifyTarget::build(builder, params)?;
             signed_pods.push(signed_pod);
         }
 
@@ -366,14 +371,14 @@ impl MainPodVerifyGadget {
         }
         debug_assert_eq!(
             statements.len(),
-            self.params.max_input_signed_pods * self.params.max_signed_pod_values
+            params.max_input_signed_pods * params.max_signed_pod_values
         );
         // TODO: Fill with input main pods
-        for _main_pod in 0..self.params.max_input_main_pods {
-            for _statement in 0..self.params.max_public_statements {
+        for _main_pod in 0..params.max_input_main_pods {
+            for _statement in 0..params.max_public_statements {
                 statements.push(StatementTarget::new_native(
                     builder,
-                    &self.params,
+                    &params,
                     NativePredicate::None,
                     &[],
                 ))
@@ -393,11 +398,8 @@ impl MainPodVerifyGadget {
             &input_statements[input_statements.len() - params.max_public_statements..];
 
         // Add Merkle claim/proof targets
-        let mp_gadget = MerkleProofGadget {
-            max_depth: params.max_depth_mt_gadget,
-        };
         let merkle_proofs: Vec<_> = (0..params.max_merkle_proofs)
-            .map(|_| mp_gadget.eval(builder))
+            .map(|_| MerkleClaimAndProofTarget::build(builder, params.max_depth_mt_gadget))
             .collect::<Result<_>>()?;
         let merkle_claims: Vec<_> = merkle_proofs
             .clone()
@@ -437,10 +439,7 @@ impl MainPodVerifyGadget {
         // 5. Verify input statements
         for (i, (st, op)) in input_statements.iter().zip(operations.iter()).enumerate() {
             let prev_statements = &statements[..input_statements_offset + i];
-            OperationVerifyGadget {
-                params: params.clone(),
-            }
-            .eval(builder, st, op, prev_statements, &merkle_claims)?;
+            OperationVerifyTarget::build(builder, params, st, op, prev_statements, &merkle_claims)?;
         }
 
         Ok(MainPodVerifyTarget {
@@ -452,26 +451,16 @@ impl MainPodVerifyGadget {
             merkle_proofs,
         })
     }
-}
 
-pub struct MainPodVerifyTarget {
-    params: Params,
-    id: HashOutTarget,
-    signed_pods: Vec<SignedPodVerifyTarget>,
-    // The KEY_TYPE statement must be the first public one
-    statements: Vec<StatementTarget>,
-    operations: Vec<OperationTarget>,
-    merkle_proofs: Vec<MerkleClaimAndProofTarget>,
-}
+    pub fn build_circuit(
+        builder: &mut CircuitBuilder<F, D>,
+        params: &Params,
+    ) -> Result<MainPodVerifyTarget> {
+        let main_pod = MainPodVerifyTarget::build(builder, params)?;
+        builder.register_public_inputs(&main_pod.id.elements);
+        Ok(main_pod)
+    }
 
-pub struct MainPodVerifyInput {
-    pub signed_pods: Vec<SignedPod>,
-    pub statements: Vec<mainpod::Statement>,
-    pub operations: Vec<mainpod::Operation>,
-    pub merkle_proofs: Vec<MerkleClaimAndProof>,
-}
-
-impl MainPodVerifyTarget {
     pub fn set_targets(
         &self,
         pw: &mut PartialWitness<F>,
@@ -505,21 +494,6 @@ impl MainPodVerifyTarget {
     }
 }
 
-pub struct MainPodVerifyCircuit {
-    pub params: Params,
-}
-
-impl MainPodVerifyCircuit {
-    pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MainPodVerifyTarget> {
-        let main_pod = MainPodVerifyGadget {
-            params: self.params.clone(),
-        }
-        .eval(builder)?;
-        builder.register_public_inputs(&main_pod.id.elements);
-        Ok(main_pod)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
@@ -541,9 +515,6 @@ mod tests {
         merkle_proofs: Vec<MerkleClaimAndProof>,
     ) -> Result<()> {
         let params = Params::default();
-        let mp_gadget = MerkleProofGadget {
-            max_depth: params.max_depth_mt_gadget,
-        };
 
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
@@ -555,7 +526,7 @@ mod tests {
             .collect();
         let merkle_proofs_target: Vec<_> = merkle_proofs
             .iter()
-            .map(|_| mp_gadget.eval(&mut builder))
+            .map(|_| MerkleClaimAndProofTarget::build(&mut builder, params.max_depth_mt_gadget))
             .collect::<Result<_>>()?;
         let merkle_claims_target: Vec<_> = merkle_proofs_target
             .clone()
@@ -563,11 +534,9 @@ mod tests {
             .map(|pf| pf.into())
             .collect();
 
-        OperationVerifyGadget {
-            params: params.clone(),
-        }
-        .eval(
+        OperationVerifyTarget::build(
             &mut builder,
+            &params,
             &st_target,
             &op_target,
             &prev_statements_target,

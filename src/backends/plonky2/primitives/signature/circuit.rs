@@ -35,10 +35,9 @@ use crate::{
 
 lazy_static! {
     /// SignatureVerifyGadget VerifierCircuitData
-    pub static ref S_VD: VerifierCircuitData<F,C,D> = SignatureVerifyGadget::verifier_data().unwrap();
+    pub static ref S_VD: VerifierCircuitData<F,C,D> = SignatureVerifyTarget::verifier_data().unwrap();
 }
 
-pub struct SignatureVerifyGadget {}
 pub struct SignatureVerifyTarget {
     // verifier_data of the SignatureInternalCircuit
     verifier_data_targ: VerifierCircuitTarget,
@@ -50,21 +49,19 @@ pub struct SignatureVerifyTarget {
     proof: ProofWithPublicInputsTarget<D>,
 }
 
-impl SignatureVerifyGadget {
+impl SignatureVerifyTarget {
     pub fn verifier_data() -> Result<VerifierCircuitData<F, C, D>> {
         // notice that we use the 'zk' config
         let config = CircuitConfig::standard_recursion_zk_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
-        let circuit = SignatureVerifyGadget {}.eval(&mut builder)?;
+        let circuit = SignatureVerifyTarget::build(&mut builder)?;
 
         let circuit_data = builder.build::<C>();
         Ok(circuit_data.verifier_data())
     }
-}
 
-impl SignatureVerifyGadget {
     /// creates the targets and defines the logic of the circuit
-    pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<SignatureVerifyTarget> {
+    pub fn build(builder: &mut CircuitBuilder<F, D>) -> Result<SignatureVerifyTarget> {
         let enabled = builder.add_virtual_bool_target_safe();
 
         let common_data = VP.0.common.clone();
@@ -123,9 +120,7 @@ impl SignatureVerifyGadget {
             proof: proof_targ,
         })
     }
-}
 
-impl SignatureVerifyTarget {
     /// assigns the given values to the targets
     pub fn set_targets(
         &self,
@@ -186,7 +181,7 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = SignatureVerifyGadget {}.eval(&mut builder)?;
+        let targets = SignatureVerifyTarget::build(&mut builder)?;
         targets.set_targets(&mut pw, true, pk, msg, sig)?;
 
         // generate & verify proof
@@ -223,7 +218,7 @@ pub mod tests {
         let config = CircuitConfig::standard_recursion_zk_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
-        let targets = SignatureVerifyGadget {}.eval(&mut builder)?;
+        let targets = SignatureVerifyTarget::build(&mut builder)?;
         targets.set_targets(&mut pw, true, pk.clone(), msg, sig.clone())?; // enabled=true
 
         // generate proof, and expect it to fail
@@ -237,7 +232,7 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = SignatureVerifyGadget {}.eval(&mut builder)?;
+        let targets = SignatureVerifyTarget::build(&mut builder)?;
         targets.set_targets(&mut pw, false, pk, msg, sig)?; // enabled=false
 
         // generate & verify proof
