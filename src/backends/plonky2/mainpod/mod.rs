@@ -352,7 +352,7 @@ pub struct MainPod {
     params: Params,
     id: PodId,
     public_statements: Vec<Statement>,
-    proof: ProofWithPublicInputs<F, C, 2>,
+    proof: ProofWithPublicInputs<F, C, D>,
 }
 
 /// Convert a Statement into middleware::Statement and replace references to SELF by `self_id`.
