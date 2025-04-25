@@ -5,7 +5,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::middleware::{
-    hash_fields, Error, Hash, Key, NativePredicate, Params, Result, ToFields, Value, F, HASH_SIZE,
+    hash_fields, Error, Hash, Key, Params, Predicate, Result, ToFields, Value, F, HASH_SIZE,
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -331,65 +331,6 @@ impl CustomPredicateRef {
     }
     pub fn arg_len(&self) -> usize {
         self.batch.predicates[self.index].args_len
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type", content = "value")]
-pub enum Predicate {
-    Native(NativePredicate),
-    BatchSelf(usize),
-    Custom(CustomPredicateRef),
-}
-
-impl From<NativePredicate> for Predicate {
-    fn from(v: NativePredicate) -> Self {
-        Self::Native(v)
-    }
-}
-
-impl ToFields for Predicate {
-    fn to_fields(&self, params: &Params) -> Vec<F> {
-        // serialize:
-        // NativePredicate(id) as (0, id, 0, 0, 0, 0) -- id: usize
-        // BatchSelf(i) as (1, i, 0, 0, 0, 0) -- i: usize
-        // CustomPredicateRef(pb, i) as
-        // (2, [hash of pb], i) -- pb hashes to 4 field elements
-        //                      -- i: usize
-
-        // in every case: pad to (hash_size + 2) field elements
-        let mut fields: Vec<F> = match self {
-            Self::Native(p) => iter::once(F::from_canonical_u64(1))
-                .chain(p.to_fields(params))
-                .collect(),
-            Self::BatchSelf(i) => iter::once(F::from_canonical_u64(2))
-                .chain(iter::once(F::from_canonical_usize(*i)))
-                .collect(),
-            Self::Custom(CustomPredicateRef { batch, index }) => {
-                iter::once(F::from_canonical_u64(3))
-                    .chain(batch.hash(params).0)
-                    .chain(iter::once(F::from_canonical_usize(*index)))
-                    .collect()
-            }
-        };
-        fields.resize_with(Params::predicate_size(), || F::from_canonical_u64(0));
-        fields
-    }
-}
-
-impl fmt::Display for Predicate {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Self::Native(p) => write!(f, "{:?}", p),
-            Self::BatchSelf(i) => write!(f, "self.{}", i),
-            Self::Custom(CustomPredicateRef { batch, index }) => {
-                write!(
-                    f,
-                    "{}.{}[{}]",
-                    batch.name, index, batch.predicates[*index].name
-                )
-            }
-        }
     }
 }
 

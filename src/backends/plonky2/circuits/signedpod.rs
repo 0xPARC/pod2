@@ -3,17 +3,17 @@ use std::iter;
 use itertools::Itertools;
 use plonky2::{
     hash::hash_types::{HashOut, HashOutTarget},
-    iop::{
-        target::Target,
-        witness::{PartialWitness, WitnessWrite},
-    },
+    iop::witness::{PartialWitness, WitnessWrite},
     plonk::circuit_builder::CircuitBuilder,
 };
 
 use crate::{
     backends::plonky2::{
         basetypes::D,
-        circuits::common::{CircuitBuilderPod, StatementArgTarget, StatementTarget, ValueTarget},
+        circuits::common::{
+            CircuitBuilderPod, NativePredicateTarget, PredicateTarget, StatementArgTarget,
+            StatementTarget, ValueTarget,
+        },
         error::Result,
         primitives::{
             merkletree::{
@@ -24,8 +24,8 @@ use crate::{
         signedpod::SignedPod,
     },
     middleware::{
-        hash_str, Key, NativePredicate, Params, PodType, Predicate, RawValue, ToFields, Value, F,
-        KEY_SIGNER, KEY_TYPE, SELF,
+        hash_str, Key, NativePredicate, Params, PodType, RawValue, Value, F, KEY_SIGNER, KEY_TYPE,
+        SELF,
     },
 };
 
@@ -91,10 +91,9 @@ impl SignedPodVerifyTarget {
         self_id: bool,
     ) -> Vec<StatementTarget> {
         let mut statements = Vec::new();
-        let predicate: [Target; Params::predicate_size()] = builder
-            .constants(&Predicate::Native(NativePredicate::ValueOf).to_fields(&self.params))
-            .try_into()
-            .expect("size predicate_size");
+        let native_predicate =
+            NativePredicateTarget::constant(builder, &self.params, NativePredicate::ValueOf);
+        let predicate = PredicateTarget::new_native(builder, &native_predicate);
         let pod_id = if self_id {
             builder.constant_value(SELF.0.into())
         } else {
@@ -111,7 +110,10 @@ impl SignedPodVerifyTarget {
             .chain(iter::repeat_with(|| StatementArgTarget::none(builder)))
             .take(self.params.max_statement_args)
             .collect();
-            let statement = StatementTarget { predicate, args };
+            let statement = StatementTarget {
+                predicate: predicate.clone(),
+                args,
+            };
             statements.push(statement);
         }
         statements

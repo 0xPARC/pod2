@@ -106,20 +106,38 @@ impl StatementArgTarget {
 
 #[derive(Clone)]
 pub struct StatementTarget {
-    pub predicate: [Target; Params::predicate_size()],
+    pub predicate: PredicateTarget,
     pub args: Vec<StatementArgTarget>,
+}
+
+trait Build<T> {
+    fn build(self, builder: &mut CircuitBuilder<F, D>, params: &Params) -> T;
+}
+
+impl Build<NativePredicateTarget> for &NativePredicate {
+    fn build(self, builder: &mut CircuitBuilder<F, D>, params: &Params) -> NativePredicateTarget {
+        NativePredicateTarget::constant(builder, params, *self)
+    }
+}
+
+impl<T> Build<T> for T {
+    fn build(self, builder: &mut CircuitBuilder<F, D>, params: &Params) -> T {
+        self
+    }
 }
 
 impl StatementTarget {
     pub fn new_native(
         builder: &mut CircuitBuilder<F, D>,
         params: &Params,
-        predicate: NativePredicate,
+        native_predicate: impl Build<NativePredicateTarget>,
         args: &[StatementArgTarget],
     ) -> Self {
-        let predicate_vec = builder.constants(&Predicate::Native(predicate).to_fields(params));
+        // if native_predicate is const then NativePredicate -> NativePredicateTarget
+        // else just use as is
+        let native_predicate = native_predicate.build(builder, params);
         Self {
-            predicate: array::from_fn(|i| predicate_vec[i]),
+            predicate: PredicateTarget::new_native(builder, &native_predicate),
             args: args
                 .iter()
                 .cloned()
@@ -135,7 +153,7 @@ impl StatementTarget {
         params: &Params,
         st: &Statement,
     ) -> Result<()> {
-        pw.set_target_arr(&self.predicate, &st.predicate().to_fields(params))?;
+        self.predicate.set_targets(pw, params, st.predicate())?;
         for (i, arg) in st
             .args()
             .iter()
@@ -154,8 +172,9 @@ impl StatementTarget {
         params: &Params,
         t: NativePredicate,
     ) -> BoolTarget {
-        let st_code = builder.constants(&Predicate::Native(t).to_fields(params));
-        builder.is_equal_slice(&self.predicate, &st_code)
+        let expected_t = NativePredicateTarget::constant(builder, params, t);
+        let expected_predicate = PredicateTarget::new_native(builder, &expected_t);
+        builder.is_equal_flattenable(&self.predicate, &expected_predicate)
     }
 }
 
@@ -199,6 +218,80 @@ impl OperationTarget {
         let op_code_matches = builder.is_equal(self.op_type[1], op_code);
         builder.and(op_is_native, op_code_matches)
     }
+}
+
+#[derive(Clone)]
+pub struct NativePredicateTarget(Target);
+
+impl NativePredicateTarget {
+    pub fn constant(
+        builder: &mut CircuitBuilder<F, D>,
+        params: &Params,
+        native_predicate: NativePredicate,
+    ) -> Self {
+        let id = native_predicate.to_fields(params);
+        assert_eq!(1, id.len());
+        Self(builder.constant(id[0]))
+    }
+
+    pub fn set_targets(
+        &self,
+        pw: &mut PartialWitness<F>,
+        params: &Params,
+        native_predicate: NativePredicate,
+    ) -> Result<()> {
+        let id = native_predicate.to_fields(params);
+        assert_eq!(1, id.len());
+        Ok(pw.set_target(self.0, id[0])?)
+    }
+}
+
+#[derive(Clone)]
+pub struct PredicateTarget {
+    elems: [Target; Params::predicate_size()],
+}
+
+impl PredicateTarget {
+    pub fn new_native(
+        builder: &mut CircuitBuilder<F, D>,
+        // native_predicate: &NativePredicate,
+        native_predicate: &NativePredicateTarget,
+    ) -> Self {
+        let prefix = builder.constant(F::from_canonical_usize(1));
+        let id = native_predicate.0;
+        let zero = builder.zero();
+        Self {
+            elems: [prefix, id, zero, zero, zero, zero],
+        }
+    }
+
+    pub fn set_targets(
+        &self,
+        pw: &mut PartialWitness<F>,
+        params: &Params,
+        predicate: Predicate,
+    ) -> Result<()> {
+        Ok(pw.set_target_arr(&self.elems, &predicate.to_fields(params))?)
+    }
+}
+
+#[derive(Clone)]
+pub struct StatementTmplArgTarget {
+    // TODO
+}
+
+#[derive(Clone)]
+pub struct StatementTmplTarget {
+    pub pred: PredicateTarget,
+    pub args: Vec<StatementTmplArgTarget>,
+}
+
+#[derive(Clone)]
+pub struct CustomPredicateTarget {
+    pub conjunction: BoolTarget,
+    // len = params.max_custom_predicate_arity
+    pub statements: Vec<StatementTmplTarget>,
+    pub args_len: Target,
 }
 
 /// Trait for target structs that may be converted to and from vectors
@@ -258,12 +351,24 @@ impl Flattenable for MerkleClaimTarget {
     }
 }
 
+impl Flattenable for PredicateTarget {
+    fn flatten(&self) -> Vec<Target> {
+        self.elems.to_vec()
+    }
+
+    fn from_flattened(v: &[Target]) -> Self {
+        Self {
+            elems: v.try_into().expect("len is predicate_size"),
+        }
+    }
+}
+
 impl Flattenable for StatementTarget {
     fn flatten(&self) -> Vec<Target> {
         self.predicate
-            .iter()
-            .chain(self.args.iter().flat_map(|a| &a.elements))
-            .cloned()
+            .flatten()
+            .into_iter()
+            .chain(self.args.iter().flat_map(|a| &a.elements).cloned())
             .collect()
     }
 
@@ -273,7 +378,7 @@ impl Flattenable for StatementTarget {
             v.len(),
             Params::predicate_size() + num_args * STATEMENT_ARG_F_LEN
         );
-        let predicate: [Target; Params::predicate_size()] = array::from_fn(|i| v[i]);
+        let predicate = PredicateTarget::from_flattened(&v[..Params::predicate_size()]);
         let args = (0..num_args)
             .map(|i| StatementArgTarget {
                 elements: array::from_fn(|j| {
@@ -291,6 +396,7 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     fn connect_slice(&mut self, xs: &[Target], ys: &[Target]);
     fn add_virtual_value(&mut self) -> ValueTarget;
     fn add_virtual_statement(&mut self, params: &Params) -> StatementTarget;
+    fn add_virtual_predicate(&mut self) -> PredicateTarget;
     fn add_virtual_operation(&mut self, params: &Params) -> OperationTarget;
     fn select_value(&mut self, b: BoolTarget, x: ValueTarget, y: ValueTarget) -> ValueTarget;
     fn select_bool(&mut self, b: BoolTarget, x: BoolTarget, y: BoolTarget) -> BoolTarget;
@@ -335,13 +441,20 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
     }
 
     fn add_virtual_statement(&mut self, params: &Params) -> StatementTarget {
+        let predicate = self.add_virtual_predicate();
         StatementTarget {
-            predicate: self.add_virtual_target_arr(),
+            predicate,
             args: (0..params.max_statement_args)
                 .map(|_| StatementArgTarget {
                     elements: self.add_virtual_target_arr(),
                 })
                 .collect(),
+        }
+    }
+
+    fn add_virtual_predicate(&mut self) -> PredicateTarget {
+        PredicateTarget {
+            elems: self.add_virtual_target_arr(),
         }
     }
 
