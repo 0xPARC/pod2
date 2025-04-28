@@ -5,6 +5,7 @@ pub mod backends;
 pub mod constants;
 pub mod frontend;
 pub mod middleware;
+pub mod prover;
 
 #[cfg(test)]
 pub mod examples;
