@@ -259,6 +259,15 @@ impl MainPodBuilder {
                 let [array, index, value] = op.1.try_into().unwrap(); // TODO: Error handling
                 Operation(Native(ContainsFromEntries), vec![array, index, value], op.2)
             }
+            Native(GtEqFromEntries) => {
+                let [entry1, entry2] = op.1.try_into().unwrap(); // TODO: Error handling
+                Operation(Native(LtEqFromEntries), vec![entry2, entry1], op.2)
+            }
+            Native(GtFromEntries) => {
+                let [entry1, entry2] = op.1.try_into().unwrap(); // TODO: Error handling
+                Operation(Native(LtFromEntries), vec![entry2, entry1], op.2)
+            }
+            Native(GtToNotEqual) => Operation(Native(LtToNotEqual), op.1, op.2),
             _ => op,
         }
     }
@@ -315,17 +324,14 @@ impl MainPodBuilder {
         let st_args: Vec<StatementArg> = match op_type {
             OperationType::Native(o) => match o {
                 None => vec![],
-                NewEntry => self.op_args_entries(public, args)?,
+                NewEntry | EqualFromEntries | NotEqualFromEntries | LtFromEntries
+                | LtEqFromEntries => self.op_args_entries(public, args)?,
                 CopyStatement => match &args[0] {
                     OperationArg::Statement(s) => s.args().clone(),
                     _ => {
                         return Err(Error::op_invalid_args("copy".to_string()));
                     }
                 },
-                EqualFromEntries => self.op_args_entries(public, args)?,
-                NotEqualFromEntries => self.op_args_entries(public, args)?,
-                GtFromEntries => self.op_args_entries(public, args)?,
-                LtFromEntries => self.op_args_entries(public, args)?,
                 TransitiveEqualFromStatements => {
                     match (args[0].clone(), args[1].clone()) {
                         (
@@ -350,14 +356,6 @@ impl MainPodBuilder {
                         }
                     }
                 }
-                GtToNotEqual => match args[0].clone() {
-                    OperationArg::Statement(Statement::Gt(ak0, ak1)) => {
-                        vec![StatementArg::Key(ak0), StatementArg::Key(ak1)]
-                    }
-                    _ => {
-                        return Err(Error::op_invalid_args("gt-to-neq".to_string()));
-                    }
-                },
                 LtToNotEqual => match args[0].clone() {
                     OperationArg::Statement(Statement::Lt(ak0, ak1)) => {
                         vec![StatementArg::Key(ak0), StatementArg::Key(ak1)]
@@ -437,13 +435,10 @@ impl MainPodBuilder {
                 },
                 ContainsFromEntries => self.op_args_entries(public, args)?,
                 NotContainsFromEntries => self.op_args_entries(public, args)?,
-                // NOTE: Could we remove these and assume that this function is never called with
-                // syntax sugar operations?
-                DictContainsFromEntries => self.op_args_entries(public, args)?,
-                DictNotContainsFromEntries => self.op_args_entries(public, args)?,
-                SetContainsFromEntries => self.op_args_entries(public, args)?,
-                SetNotContainsFromEntries => self.op_args_entries(public, args)?,
-                ArrayContainsFromEntries => self.op_args_entries(public, args)?,
+                _ => Err(Error::custom(format!(
+                    "Unexpected syntactic sugar: {:?}",
+                    op_type
+                )))?,
             },
             OperationType::Custom(cpr) => {
                 let pred = &cpr.batch.predicates[cpr.index];

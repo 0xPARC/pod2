@@ -59,7 +59,7 @@ impl TryFrom<Statement> for middleware::Statement {
                 (NP::NotEqual, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None), 2) => {
                     S::NotEqual(ak1, ak2)
                 }
-                (NP::Gt, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None), 2) => S::Gt(ak1, ak2),
+                (NP::LtEq, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None), 2) => S::LtEq(ak1, ak2),
                 (NP::Lt, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None), 2) => S::Lt(ak1, ak2),
                 (NP::Contains, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), Some(SA::Key(ak3))), 3) => {
                     S::Contains(ak1, ak2, ak3)

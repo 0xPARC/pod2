@@ -88,6 +88,7 @@ impl OperationVerifyGadget {
                     self.eval_copy(builder, st, op, &resolved_op_args)?,
                     self.eval_eq_from_entries(builder, st, op, &resolved_op_args),
                     self.eval_lt_from_entries(builder, st, op, &resolved_op_args),
+                    self.eval_leq_from_entries(builder, st, op, &resolved_op_args),
                 ]
             },
             // Skip these if there are no resolved Merkle claims
@@ -123,9 +124,8 @@ impl OperationVerifyGadget {
         let op_code_ok = op.has_native_type(builder, NativeOperation::NotContainsFromEntries);
 
         // Expect 2 op args of type `ValueOf`.
-        let op_arg_type_checks = resolved_op_args
+        let op_arg_type_checks = resolved_op_args[..2]
             .iter()
-            .take(2)
             .map(|op_arg| op_arg.has_native_type(builder, &self.params, NativePredicate::ValueOf))
             .collect::<Vec<_>>();
         let op_arg_types_ok = builder.all(op_arg_type_checks);
@@ -190,9 +190,8 @@ impl OperationVerifyGadget {
         let op_code_ok = op.has_native_type(builder, NativeOperation::EqualFromEntries);
 
         // Expect 2 op args of type `ValueOf`.
-        let op_arg_type_checks = resolved_op_args
+        let op_arg_type_checks = resolved_op_args[..2]
             .iter()
-            .take(2)
             .map(|op_arg| op_arg.has_native_type(builder, &self.params, NativePredicate::ValueOf))
             .collect::<Vec<_>>();
         let op_arg_types_ok = builder.all(op_arg_type_checks);
@@ -240,9 +239,8 @@ impl OperationVerifyGadget {
         let op_code_ok = op.has_native_type(builder, NativeOperation::LtFromEntries);
 
         // Expect 2 op args of type `ValueOf`.
-        let op_arg_type_checks = resolved_op_args
+        let op_arg_type_checks = resolved_op_args[..2]
             .iter()
-            .take(2)
             .map(|op_arg| op_arg.has_native_type(builder, &self.params, NativePredicate::ValueOf))
             .collect::<Vec<_>>();
         let op_arg_types_ok = builder.all(op_arg_type_checks);
@@ -269,6 +267,62 @@ impl OperationVerifyGadget {
             builder,
             &self.params,
             NativePredicate::Lt,
+            &[arg1_key, arg2_key],
+        );
+        let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+
+        builder.all([op_code_ok, op_arg_types_ok, op_arg_range_ok, st_ok])
+    }
+
+    fn eval_leq_from_entries(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        st: &StatementTarget,
+        op: &OperationTarget,
+        resolved_op_args: &[StatementTarget],
+    ) -> BoolTarget {
+        let op_code_ok = op.has_native_type(builder, NativeOperation::LtEqFromEntries);
+
+        // Expect 2 op args of type `ValueOf`.
+        let op_arg_type_checks = resolved_op_args[..2]
+            .iter()
+            .map(|op_arg| op_arg.has_native_type(builder, &self.params, NativePredicate::ValueOf))
+            .collect::<Vec<_>>();
+        let op_arg_types_ok = builder.all(op_arg_type_checks);
+
+        // The values embedded in the op args must satisfy `<=`, the
+        // last `STATEMENT_ARG_F_LEN - VALUE_SIZE` slots of each being
+        // 0.
+        let arg1_value = &resolved_op_args[0].args[1];
+        let arg2_value = &resolved_op_args[1].args[1];
+        let op_arg_range_checks = [arg1_value, arg2_value]
+            .into_iter()
+            .map(|x| builder.statement_arg_is_value(x))
+            .collect::<Vec<_>>();
+        let op_arg_range_ok = builder.all(op_arg_range_checks);
+
+        // Check for equality.
+        let args_equal = builder.is_equal_slice(
+            &arg1_value.elements[..VALUE_SIZE],
+            &arg2_value.elements[..VALUE_SIZE],
+        );
+        let lt_check_flag = [op_code_ok, builder.not(args_equal)]
+            .into_iter()
+            .reduce(|x, y| builder.and(x, y))
+            .expect("Empty array.");
+
+        builder.assert_less_if(
+            lt_check_flag,
+            ValueTarget::from_slice(&arg1_value.elements[..VALUE_SIZE]),
+            ValueTarget::from_slice(&arg2_value.elements[..VALUE_SIZE]),
+        );
+
+        let arg1_key = resolved_op_args[0].args[0].clone();
+        let arg2_key = resolved_op_args[1].args[0].clone();
+        let expected_statement = StatementTarget::new_native(
+            builder,
+            &self.params,
+            NativePredicate::LtEq,
             &[arg1_key, arg2_key],
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
@@ -583,7 +637,7 @@ mod tests {
         for (merkle_proof_target, merkle_proof) in
             merkle_proofs_target.iter().zip(merkle_proofs.iter())
         {
-            merkle_proof_target.set_targets(&mut pw, true, &merkle_proof)?
+            merkle_proof_target.set_targets(&mut pw, true, merkle_proof)?
         }
 
         // generate & verify proof
@@ -592,6 +646,62 @@ mod tests {
         data.verify(proof)?;
 
         Ok(())
+    }
+
+    #[test]
+    fn test_lt_lteq_verify_failures() {
+        let st1: mainpod::Statement =
+            Statement::ValueOf(AnchoredKey::from((SELF, "hello")), Value::from(55)).into();
+        let st2: mainpod::Statement = Statement::ValueOf(
+            AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
+            Value::from(56),
+        )
+        .into();
+        let prev_statements = [st1, st2];
+
+        // 56 < 55, 55 < 55, 56 <= 55 should fail to verify
+        [
+            (
+                mainpod::Operation(
+                    OperationType::Native(NativeOperation::LtFromEntries),
+                    vec![OperationArg::Index(1), OperationArg::Index(0)],
+                    OperationAux::None,
+                ),
+                Statement::Lt(
+                    AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
+                    AnchoredKey::from((SELF, "hello")),
+                )
+                .into(),
+            ),
+            (
+                mainpod::Operation(
+                    OperationType::Native(NativeOperation::LtFromEntries),
+                    vec![OperationArg::Index(0), OperationArg::Index(0)],
+                    OperationAux::None,
+                ),
+                Statement::Lt(
+                    AnchoredKey::from((SELF, "hello")),
+                    AnchoredKey::from((SELF, "hello")),
+                )
+                .into(),
+            ),
+            (
+                mainpod::Operation(
+                    OperationType::Native(NativeOperation::LtEqFromEntries),
+                    vec![OperationArg::Index(1), OperationArg::Index(0)],
+                    OperationAux::None,
+                ),
+                Statement::LtEq(
+                    AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
+                    AnchoredKey::from((SELF, "hello")),
+                )
+                .into(),
+            ),
+        ]
+        .into_iter()
+        .for_each(|(op, st)| {
+            assert!(operation_verify(st, op, prev_statements.to_vec(), vec![]).is_err())
+        });
     }
 
     #[test]
@@ -677,6 +787,25 @@ mod tests {
         .into();
         let op = mainpod::Operation(
             OperationType::Native(NativeOperation::LtFromEntries),
+            vec![OperationArg::Index(0), OperationArg::Index(1)],
+            OperationAux::None,
+        );
+        let prev_statements = vec![st1.clone(), st2];
+        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+
+        // LtEq
+        let st2: mainpod::Statement = Statement::ValueOf(
+            AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
+            Value::from(56),
+        )
+        .into();
+        let st: mainpod::Statement = Statement::LtEq(
+            AnchoredKey::from((SELF, "hello")),
+            AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
+        )
+        .into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::LtEqFromEntries),
             vec![OperationArg::Index(0), OperationArg::Index(1)],
             OperationAux::None,
         );

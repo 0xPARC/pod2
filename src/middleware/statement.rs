@@ -25,7 +25,7 @@ pub enum NativePredicate {
     ValueOf = 1,
     Equal = 2,
     NotEqual = 3,
-    Gt = 4,
+    LtEq = 4,
     Lt = 5,
     Contains = 6,
     NotContains = 7,
@@ -40,6 +40,8 @@ pub enum NativePredicate {
     SetContains = 1002,
     SetNotContains = 1003,
     ArrayContains = 1004, // there is no ArrayNotContains
+    GtEq = 1005,
+    Gt = 1006,
 }
 
 impl ToFields for NativePredicate {
@@ -89,7 +91,7 @@ pub enum Statement {
     ValueOf(AnchoredKey, Value),
     Equal(AnchoredKey, AnchoredKey),
     NotEqual(AnchoredKey, AnchoredKey),
-    Gt(AnchoredKey, AnchoredKey),
+    LtEq(AnchoredKey, AnchoredKey),
     Lt(AnchoredKey, AnchoredKey),
     Contains(
         /* root  */ AnchoredKey,
@@ -114,7 +116,7 @@ impl Statement {
             Self::ValueOf(_, _) => Native(NativePredicate::ValueOf),
             Self::Equal(_, _) => Native(NativePredicate::Equal),
             Self::NotEqual(_, _) => Native(NativePredicate::NotEqual),
-            Self::Gt(_, _) => Native(NativePredicate::Gt),
+            Self::LtEq(_, _) => Native(NativePredicate::LtEq),
             Self::Lt(_, _) => Native(NativePredicate::Lt),
             Self::Contains(_, _, _) => Native(NativePredicate::Contains),
             Self::NotContains(_, _) => Native(NativePredicate::NotContains),
@@ -131,7 +133,7 @@ impl Statement {
             Self::ValueOf(ak, v) => vec![Key(ak), Literal(v)],
             Self::Equal(ak1, ak2) => vec![Key(ak1), Key(ak2)],
             Self::NotEqual(ak1, ak2) => vec![Key(ak1), Key(ak2)],
-            Self::Gt(ak1, ak2) => vec![Key(ak1), Key(ak2)],
+            Self::LtEq(ak1, ak2) => vec![Key(ak1), Key(ak2)],
             Self::Lt(ak1, ak2) => vec![Key(ak1), Key(ak2)],
             Self::Contains(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
             Self::NotContains(ak1, ak2) => vec![Key(ak1), Key(ak2)],
@@ -172,11 +174,11 @@ impl Statement {
                     Err(Error::incorrect_statements_args())
                 }
             }
-            Native(NativePredicate::Gt) => {
+            Native(NativePredicate::LtEq) => {
                 if let (StatementArg::Key(a0), StatementArg::Key(a1)) =
                     (args[0].clone(), args[1].clone())
                 {
-                    Ok(Self::Gt(a0, a1))
+                    Ok(Self::LtEq(a0, a1))
                 } else {
                     Err(Error::incorrect_statements_args())
                 }
