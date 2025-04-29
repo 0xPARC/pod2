@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 /// This file contains the RecursiveCircuit, the circuit used for recursion.
 ///
 /// The RecursiveCircuit verifies N proofs of itself (N=arity), together with
@@ -7,7 +9,7 @@
 /// The arity defines the maximum amount of proofs of itself that the
 /// RecursiveCircuit verifies. When arity>1, using the RecursiveCircuit has the
 /// shape of a tree of the same arity.
-///                                              
+///
 //
 //                      π_root
 //                        ▲
@@ -78,6 +80,35 @@ pub struct RecursiveParams {
     arity: usize,
 }
 
+pub struct RecursiveCircuitSetup<I: InnerCircuit> {
+    data: CircuitData<F, C, D>,
+    verifier_data: VerifierCircuitData<F, C, D>,
+    params: RecursiveParams,
+    inner_params: I::Params,
+    phantom: PhantomData<I>,
+}
+
+impl<I: InnerCircuit> RecursiveCircuitSetup<I> {
+    fn new(params: RecursiveParams, inner_params: I::Params) -> Result<Self> {
+        let data = common_data_for_recursion::<I>(&params, &inner_params)?;
+
+        // build the actual RecursiveCircuit circuit data
+        let config = CircuitConfig::standard_recursion_config();
+        let mut builder = CircuitBuilder::new(config);
+
+        RecursiveCircuit::<I>::_build(&mut builder, &params, &inner_params, data.verifier_data())?;
+        let data = builder.build::<C>();
+        let verifier_data = data.verifier_data();
+        Ok(Self {
+            data,
+            verifier_data,
+            params,
+            inner_params,
+            phantom: PhantomData,
+        })
+    }
+}
+
 /// RecursiveCircuit defines the circuit that verifies `arity` proofs of itself.
 pub struct RecursiveCircuit<I: InnerCircuit> {
     params: RecursiveParams,
@@ -90,7 +121,11 @@ pub struct RecursiveCircuit<I: InnerCircuit> {
 }
 
 impl<I: InnerCircuit> RecursiveCircuit<I> {
-    pub fn build(
+    /// This implementation takes `verifier_data` as input.  The public `build` method uses the
+    /// verifier data of the circuit itself, but we need this internal method to bootstrap the
+    /// circuit definition.  See `common_data_for_recursion` and `Self::common_data_for_recursion`
+    /// to see how the bootstrapping happens.
+    fn _build(
         builder: &mut CircuitBuilder<F, D>,
         params: &RecursiveParams,
         inner_params: &I::Params,
@@ -136,6 +171,18 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
             verifier_data_targ,
             verifier_data,
         })
+    }
+
+    pub fn build(
+        builder: &mut CircuitBuilder<F, D>,
+        setup: &RecursiveCircuitSetup<I>,
+    ) -> Result<Self> {
+        Self::_build(
+            builder,
+            &setup.params,
+            &setup.inner_params,
+            setup.verifier_data.clone(),
+        )
     }
 
     pub fn set_targets(
@@ -198,7 +245,7 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::new(config);
 
-        let _ = Self::build(&mut builder, params, inner_params, data.verifier_data())?;
+        let _ = Self::_build(&mut builder, params, inner_params, data.verifier_data())?;
         data = builder.build::<C>();
 
         Ok(data)
@@ -208,21 +255,19 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
     pub fn build_prover(
         params: &RecursiveParams,
         inner_params: &I::Params,
-        verifier_data: VerifierCircuitData<F, C, D>,
     ) -> Result<ProverCircuitData<F, C, D>> {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::new(config);
 
-        let _ = Self::build(&mut builder, params, inner_params, verifier_data.clone())?;
+        let _ = Self::build(&mut builder, params, inner_params)?;
 
         Ok(builder.build_prover::<C>())
     }
 
-    pub fn dummy_proof(circuit_data: CircuitData<F, C, D>) -> Proof {
-        let verifier_data = circuit_data.verifier_data();
+    fn dummy_proof(setup: &RecursiveCircuitSetup<I>) -> Proof {
         let dummy_proof_pis = cyclic_base_proof(
-            &circuit_data.common,
-            &verifier_data.verifier_only,
+            &setup.data.common,
+            &setup.verifier_data.verifier_only,
             HashMap::new(),
         );
         dummy_proof_pis.proof
@@ -511,10 +556,8 @@ mod tests {
 
         // build the circuit_data & verifier_data for the recursive circuit
         let start = Instant::now();
-        let circuit_data = RC::<Circuit1>::circuit_data(&params, &inner_params)?;
-        let verifier_data = circuit_data.verifier_data();
-        let prover = RC::<Circuit1>::build_prover(&params, &inner_params, verifier_data.clone())?;
-        let dummy_proof = RC::<Circuit1>::dummy_proof(circuit_data);
+        let prover = RC::<Circuit1>::build_prover(&params, &inner_params)?;
+        let dummy_proof = RC::<Circuit1>::dummy_proof(&params, &inner_params);
         println!(
             "circuit_data,prover,dummy_proof generated {:?}",
             start.elapsed()
@@ -524,21 +567,19 @@ mod tests {
         // InnerCircuit the Circuit1
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::new(config.clone());
-        let mut circuit = RC::<Circuit1>::build(&mut builder, &params, &(), verifier_data.clone())?;
+        let mut circuit = RC::<Circuit1>::build(&mut builder, &params, &())?;
         println!("Circuit1 num_gates {}", builder.num_gates());
 
         // build 2nd circuit: circuit2, a RecursiveCircuit which uses as
         // InnerCircuit the Circuit2
         let mut builder2 = CircuitBuilder::new(config.clone());
-        let mut circuit2 =
-            RC::<Circuit2>::build(&mut builder2, &params, &(), verifier_data.clone())?;
+        let mut circuit2 = RC::<Circuit2>::build(&mut builder2, &params, &())?;
         println!("Circuit2 num_gates {}", builder2.num_gates());
 
         // build 3rd circuit: circuit3, a RecursiveCircuit which uses as
         // InnerCircuit the Circuit3
         let mut builder3 = CircuitBuilder::new(config);
-        let mut circuit3 =
-            RC::<Circuit3>::build(&mut builder3, &params, &(), verifier_data.clone())?;
+        let mut circuit3 = RC::<Circuit3>::build(&mut builder3, &params, &())?;
         println!("Circuit3 num_gates {}", builder3.num_gates());
 
         // we start with 0 proofs at the first iteration, which means that
