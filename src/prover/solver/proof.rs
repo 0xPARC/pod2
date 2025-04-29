@@ -26,16 +26,6 @@ pub(super) fn try_prove_statement(
     // 2. Check if it's a base fact (CopyStatement)
     let target_middleware_statement = target;
 
-    // --> ENHANCED DEBUGGING <--
-    println!(
-        "DEBUG CopyStatement: Target = {:?}",
-        target_middleware_statement
-    );
-    println!(
-        "DEBUG CopyStatement: Index contains = {:?}",
-        indexes.exact_statement_lookup
-    );
-
     let base_fact = indexes
         .exact_statement_lookup
         .iter()
@@ -43,11 +33,6 @@ pub(super) fn try_prove_statement(
 
     if let Some((origin_pod_id, base_middleware_statement)) = base_fact {
         let base_statement_for_step = base_middleware_statement.clone();
-
-        println!(
-            "DEBUG: CopyStatement found base fact: {:?} for target {:?}",
-            base_middleware_statement, target
-        );
 
         let operation = OperationType::Native(NativeOperation::CopyStatement);
         let proof_step = ProofStep {
@@ -64,10 +49,6 @@ pub(super) fn try_prove_statement(
             .proof_chains
             .insert(target.clone(), proof_chain.clone());
 
-        println!(
-            "Proved (CopyStatement): {:?} from Pod {} (found base fact: {:?})",
-            target, origin_pod_id, base_middleware_statement
-        );
         return Ok(proof_chain);
     }
 
@@ -114,7 +95,6 @@ pub(super) fn try_prove_statement(
                         state
                             .proof_chains
                             .insert(target.clone(), proof_chain.clone());
-                        println!("Proved (EqualFromEntries): {:?}", target);
                         return Ok(proof_chain);
                     }
                 }
@@ -122,123 +102,106 @@ pub(super) fn try_prove_statement(
 
                 // --- START: Transitive Equality Logic ---
                 // Attempt 2: If EqualFromEntries didn't work, try TransitiveEqualFromStatements
-                println!("Attempting TransitiveEqualFromStatements for: {:?}", target);
 
-                // Get the DSU representatives (find)
-                // First get the internal usize indices for the keys from ProverIndexes
-                let Some(idx1) = indexes.get_key_index(ak1) else {
-                    println!("  - Key {:?} not found in DSU index", ak1);
-                    // Fall through to final Unsatisfiable
-                    return Err(ProverError::Internal(format!(
-                        "Key {:?} not found in DSU index for transitive check",
-                        ak1
-                    ))); // Or handle more gracefully?
-                };
-                let Some(idx2) = indexes.get_key_index(ak2) else {
-                    println!("  - Key {:?} not found in DSU index", ak2);
-                    // Fall through to final Unsatisfiable
-                    return Err(ProverError::Internal(format!(
-                        "Key {:?} not found in DSU index for transitive check",
-                        ak2
-                    ))); // Or handle more gracefully?
-                };
+                // Get IDs, handling cases where keys might not be indexed
+                let maybe_id1 = indexes.get_key_index(ak1);
+                let maybe_id2 = indexes.get_key_index(ak2);
 
-                let rep1 = indexes.dsu.find(idx1);
-                let rep2 = indexes.dsu.find(idx2);
+                if let (Some(id1), Some(id2)) = (maybe_id1, maybe_id2) {
+                    let rep1 = indexes.dsu.find(id1);
+                    let rep2 = indexes.dsu.find(id2);
 
-                // Optimization: If not in the same DSU set already, transitivity isn't provable this way.
-                if rep1 != rep2 {
-                    println!("  - DSU check failed: {:?} != {:?}", rep1, rep2);
-                    // Fall through to the final Unsatisfiable error (outside this block)
-                } else {
-                    // Iterate through known keys as potential intermediaries (ak_mid)
-                    // --- SIMPLIFIED APPROACH FOR NOW: --- Iterate through *all* keys known to the indexer
-                    // TODO: Implement and use `indexes.get_keys_in_dsu_set(&rep1)` for efficiency.
-                    let all_known_keys = indexes.get_all_known_keys(); // Assumes this helper exists
+                    // Optimization: If not in the same DSU set already, transitivity isn't provable this way.
+                    if rep1 != rep2 {
+                        // Return error immediately if DSU check fails (cannot be proven transitively)
+                        // Note: This path is hit BEFORE the generic fallback error at the end.
+                        return Err(ProverError::Unsatisfiable(format!(
+                            "Cannot prove Equal({:?}, {:?}) transitively: not in same DSU set (roots: {}, {})",
+                            ak1, ak2, rep1, rep2
+                        )));
+                    } else {
+                        // Iterate through known keys as potential intermediaries (ak_mid)
+                        let all_known_keys = indexes.get_all_known_keys();
 
-                    // --> ADD THIS PRINT <--
-                    println!(
-                        "  --> DEBUG: Keys to check as intermediate: {:?}",
-                        indexes.get_all_known_keys().collect::<Vec<_>>() // Collect into a Vec
-                    );
+                        for ak_mid in all_known_keys {
+                            // Avoid trivial cases: A = A = C or A = C = C
+                            if ak_mid == ak1 || ak_mid == ak2 {
+                                continue;
+                            }
 
-                    for ak_mid in all_known_keys {
-                        // Avoid trivial cases: A = A = C or A = C = C
-                        if ak_mid == ak1 || ak_mid == ak2 {
-                            continue;
-                        }
+                            // Ensure the intermediate key is also indexed before proceeding
+                            if indexes.get_key_index(ak_mid).is_none() {
+                                continue;
+                            }
 
-                        println!("  - Trying intermediate key: {:?}", ak_mid);
+                            // Recursive calls: Try proving Eq(ak1, ak_mid) and Eq(ak_mid, ak2)
+                            let target1_mid = Statement::Equal(ak1.clone(), ak_mid.clone());
+                            let target_mid_2 = Statement::Equal(ak_mid.clone(), ak2.clone());
 
-                        // Recursive calls: Try proving Eq(ak1, ak_mid) and Eq(ak_mid, ak2)
-                        let target1_mid = Statement::Equal(ak1.clone(), ak_mid.clone());
-                        let target_mid_2 = Statement::Equal(ak_mid.clone(), ak2.clone());
+                            // Use temporary state clones or a more sophisticated recursive strategy
+                            // if state modification during recursion is problematic. For now, assume
+                            // try_prove_statement correctly handles caching or avoids bad state.
+                            match try_prove_statement(
+                                state,
+                                &target1_mid,
+                                indexes,
+                                custom_definitions,
+                            ) {
+                                Ok(chain1) => {
+                                    // Now try the second part
+                                    match try_prove_statement(
+                                        state,
+                                        &target_mid_2,
+                                        indexes,
+                                        custom_definitions,
+                                    ) {
+                                        Ok(chain2) => {
+                                            // SUCCESS! Combine chains and add the transitive step.
+                                            let mut combined_steps = chain1.0;
+                                            combined_steps.extend(chain2.0);
 
-                        // --> DEBUG: Show the sub-targets being attempted <--
-                        println!("  --> DEBUG: Attempting sub-target 1: {:?}", target1_mid);
+                                            let transitive_step = ProofStep {
+                                                operation: OperationType::Native(
+                                                    NativeOperation::TransitiveEqualFromStatements,
+                                                ),
+                                                inputs: vec![
+                                                    target1_mid.clone(),
+                                                    target_mid_2.clone(),
+                                                ],
+                                                output: target.clone(),
+                                            };
+                                            combined_steps.push(transitive_step);
 
-                        // --> DEBUG: Show proof_chains state before recursive call 1 <--
-                        println!(
-                            "  --> DEBUG: state.proof_chains before call 1 = {:?}",
-                            state.proof_chains
-                        );
+                                            let final_chain = ProofChain(combined_steps);
 
-                        match try_prove_statement(state, &target1_mid, indexes, custom_definitions)
-                        {
-                            Ok(chain1) => {
-                                println!("    - Proved step 1: {:?}", target1_mid);
-                                // Now try the second part
-                                match try_prove_statement(
-                                    state,
-                                    &target_mid_2,
-                                    indexes,
-                                    custom_definitions,
-                                ) {
-                                    Ok(chain2) => {
-                                        println!("    - Proved step 2: {:?}", target_mid_2);
-                                        // SUCCESS! Combine chains and add the transitive step.
+                                            state
+                                                .proof_chains
+                                                .insert(target.clone(), final_chain.clone());
 
-                                        let mut combined_steps = chain1.0;
-                                        combined_steps.extend(chain2.0);
-
-                                        let transitive_step = ProofStep {
-                                            operation: OperationType::Native(
-                                                NativeOperation::TransitiveEqualFromStatements,
-                                            ),
-                                            inputs: vec![target1_mid.clone(), target_mid_2.clone()],
-                                            output: target.clone(),
-                                        };
-                                        combined_steps.push(transitive_step);
-
-                                        let final_chain = ProofChain(combined_steps);
-
-                                        state
-                                            .proof_chains
-                                            .insert(target.clone(), final_chain.clone());
-
-                                        // --> ADD PRINT BEFORE RETURN <--
-                                        println!("  --> DEBUG: About to return Ok from Transitive");
-                                        println!("Proved (TransitiveEqual): {:?}", target);
-                                        return Ok(final_chain);
-                                    }
-                                    Err(_) => {
-                                        println!("    - Failed step 2: {:?}", target_mid_2);
+                                            return Ok(final_chain);
+                                        }
+                                        Err(_) => {} // Second part failed, continue search for ak_mid
                                     }
                                 }
-                            }
-                            Err(_) => {
-                                // First part failed, continue search for ak_mid
+                                Err(_) => {
+                                    // First part failed, continue search for ak_mid
+                                }
                             }
                         }
+                        // If loop finishes without returning, no transitive path was found via *this* method.
+                        // Fall through to the generic Unsatisfiable error at the end of the function.
                     }
-                    // If loop finishes without returning, no transitive path was found.
-                    println!("  - No suitable intermediate key found for transitivity.");
+                } else {
+                    // If either key wasn't indexed, transitive proof via DSU/iteration is not possible.
+                    // Fall through to the generic Unsatisfiable error at the end.
+                    println!("Skipping transitive check for Equal({:?}, {:?}) as one or both keys not indexed.", ak1, ak2);
                 }
                 // --- END: Transitive Equality Logic ---
             }
         }
         Predicate::Native(NativePredicate::NotEqual) => {
             if let Statement::NotEqual(ak1, ak2) = target {
+                // Attempt 1: Prove via NotEqualFromEntries
                 if let (Some(v1), Some(v2)) = (indexes.get_value(ak1), indexes.get_value(ak2)) {
                     if v1 != v2 {
                         // Proof via NotEqualFromEntries
@@ -281,10 +244,95 @@ pub(super) fn try_prove_statement(
                         state
                             .proof_chains
                             .insert(target.clone(), proof_chain.clone());
-                        println!("Proved (NotEqualFromEntries): {:?}", target);
                         return Ok(proof_chain);
                     }
+                    // If v1 == v2, NotEqualFromEntries fails, continue to other methods.
                 }
+                // End of NotEqualFromEntries attempt
+
+                // --- START: GtToNotEqual / LtToNotEqual Logic ---
+                // Attempt 2: Prove via GtToNotEqual
+                let target_gt1 = Statement::Gt(ak1.clone(), ak2.clone());
+                let target_gt2 = Statement::Gt(ak2.clone(), ak1.clone()); // Check both directions
+
+                // Try proving Gt(ak1, ak2)
+                if let Ok(gt_chain1) =
+                    try_prove_statement(state, &target_gt1, indexes, custom_definitions)
+                {
+                    let mut combined_steps = gt_chain1.0;
+                    let neq_step = ProofStep {
+                        operation: OperationType::Native(NativeOperation::GtToNotEqual),
+                        inputs: vec![target_gt1.clone()], // The proven Gt statement
+                        output: target.clone(),
+                    };
+                    combined_steps.push(neq_step);
+                    let final_chain = ProofChain(combined_steps);
+                    state
+                        .proof_chains
+                        .insert(target.clone(), final_chain.clone());
+                    return Ok(final_chain);
+                }
+
+                // Try proving Gt(ak2, ak1)
+                if let Ok(gt_chain2) =
+                    try_prove_statement(state, &target_gt2, indexes, custom_definitions)
+                {
+                    let mut combined_steps = gt_chain2.0;
+                    let neq_step = ProofStep {
+                        operation: OperationType::Native(NativeOperation::GtToNotEqual),
+                        inputs: vec![target_gt2.clone()], // The proven Gt statement
+                        output: target.clone(),           // Target is still NotEqual(ak1, ak2)
+                    };
+                    combined_steps.push(neq_step);
+                    let final_chain = ProofChain(combined_steps);
+                    state
+                        .proof_chains
+                        .insert(target.clone(), final_chain.clone());
+                    return Ok(final_chain);
+                }
+
+                // Attempt 3: Prove via LtToNotEqual
+                let target_lt1 = Statement::Lt(ak1.clone(), ak2.clone());
+                let target_lt2 = Statement::Lt(ak2.clone(), ak1.clone()); // Check both directions
+
+                // Try proving Lt(ak1, ak2)
+                if let Ok(lt_chain1) =
+                    try_prove_statement(state, &target_lt1, indexes, custom_definitions)
+                {
+                    let mut combined_steps = lt_chain1.0;
+                    let neq_step = ProofStep {
+                        operation: OperationType::Native(NativeOperation::LtToNotEqual),
+                        inputs: vec![target_lt1.clone()], // The proven Lt statement
+                        output: target.clone(),
+                    };
+                    combined_steps.push(neq_step);
+                    let final_chain = ProofChain(combined_steps);
+                    state
+                        .proof_chains
+                        .insert(target.clone(), final_chain.clone());
+                    return Ok(final_chain);
+                }
+
+                // Try proving Lt(ak2, ak1)
+                if let Ok(lt_chain2) =
+                    try_prove_statement(state, &target_lt2, indexes, custom_definitions)
+                {
+                    let mut combined_steps = lt_chain2.0;
+                    let neq_step = ProofStep {
+                        operation: OperationType::Native(NativeOperation::LtToNotEqual),
+                        inputs: vec![target_lt2.clone()], // The proven Lt statement
+                        output: target.clone(),           // Target is still NotEqual(ak1, ak2)
+                    };
+                    combined_steps.push(neq_step);
+                    let final_chain = ProofChain(combined_steps);
+                    state
+                        .proof_chains
+                        .insert(target.clone(), final_chain.clone());
+                    return Ok(final_chain);
+                }
+                // --- END: GtToNotEqual / LtToNotEqual Logic ---
+
+                // If all NotEqual attempts fail, fall through to the generic Unsatisfiable error.
             }
         }
         Predicate::Native(NativePredicate::Gt) => {
@@ -337,7 +385,6 @@ pub(super) fn try_prove_statement(
                         state
                             .proof_chains
                             .insert(target.clone(), proof_chain.clone());
-                        println!("Proved (GtFromEntries): {:?}", target);
                         return Ok(proof_chain);
                     }
                 }
@@ -393,7 +440,6 @@ pub(super) fn try_prove_statement(
                         state
                             .proof_chains
                             .insert(target.clone(), proof_chain.clone());
-                        println!("Proved (LtFromEntries): {:?}", target);
                         return Ok(proof_chain);
                     }
                 }
@@ -460,7 +506,6 @@ pub(super) fn try_prove_statement(
                         state
                             .proof_chains
                             .insert(target.clone(), proof_chain.clone());
-                        println!("Proved (SumOf): {:?}", target);
                         return Ok(proof_chain);
                     }
                 }
@@ -531,7 +576,6 @@ pub(super) fn try_prove_statement(
                         state
                             .proof_chains
                             .insert(target.clone(), proof_chain.clone());
-                        println!("Proved (ProductOf): {:?}", target);
                         return Ok(proof_chain);
                     }
                 }
@@ -598,7 +642,6 @@ pub(super) fn try_prove_statement(
                         state
                             .proof_chains
                             .insert(target.clone(), proof_chain.clone());
-                        println!("Proved (MaxOf): {:?}", target);
                         return Ok(proof_chain);
                     }
                 }
@@ -680,7 +723,6 @@ pub(super) fn try_prove_statement(
                                 state
                                     .proof_chains
                                     .insert(target.clone(), proof_chain.clone());
-                                println!("Proved (ContainsFromEntries): {:?}", target);
                                 return Ok(proof_chain);
                             }
                             Ok(_) => { /* Value exists but doesn't match target */ }
@@ -757,7 +799,6 @@ pub(super) fn try_prove_statement(
                                 state
                                     .proof_chains
                                     .insert(target.clone(), proof_chain.clone());
-                                println!("Proved (NotContainsFromEntries): {:?}", target);
                                 return Ok(proof_chain);
                             }
                             Err(_) => { /* Key might exist or other error */ }

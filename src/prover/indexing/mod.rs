@@ -278,10 +278,9 @@ impl ProverIndexes {
         self.value_map.get(ak)
     }
 
-    /// Retrieves all unique AnchoredKeys known to have a value.
-    /// TODO: Consider if other indexes should contribute (e.g., keys seen only in Eq statements).
+    /// Retrieves all unique AnchoredKeys known to the indexer.
     pub fn get_all_known_keys(&self) -> impl Iterator<Item = &AnchoredKey> {
-        self.value_map.keys()
+        self.id_to_key.iter() // Iterate over all keys assigned an ID
     }
 
     /// Retrieves the internal index used by the DSU for a given AnchoredKey.
