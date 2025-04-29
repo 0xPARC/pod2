@@ -48,7 +48,7 @@ impl ToFields for NativePredicate {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum WildcardValue {
     PodId(PodId),
     Key(Key),
@@ -82,7 +82,7 @@ impl ToFields for WildcardValue {
 }
 
 /// Type encapsulating statements with their associated arguments.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "predicate", content = "args")]
 pub enum Statement {
     None,
@@ -275,12 +275,13 @@ impl fmt::Display for Statement {
 }
 
 /// Statement argument type. Useful for statement decompositions.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub enum StatementArg {
-    None,
-    Literal(Value),
     Key(AnchoredKey),
+    Literal(Value),
     WildcardLiteral(WildcardValue),
+    None, // Used for padding
 }
 
 impl fmt::Display for StatementArg {
