@@ -8,7 +8,7 @@ use crate::middleware::{
     hash_fields, Error, Hash, Key, Params, Predicate, Result, ToFields, Value, F, HASH_SIZE,
 };
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct Wildcard {
     pub name: String,
     pub index: usize,
@@ -32,7 +32,7 @@ impl ToFields for Wildcard {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", content = "value")]
 pub enum KeyOrWildcard {
     Key(Key),
@@ -60,7 +60,7 @@ impl ToFields for KeyOrWildcard {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", content = "value")]
 pub enum StatementTmplArg {
     None,
@@ -139,7 +139,7 @@ impl fmt::Display for StatementTmplArg {
 }
 
 /// Statement Template for a Custom Predicate
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct StatementTmpl {
     pub pred: Predicate,
     pub args: Vec<StatementTmplArg>,
@@ -191,7 +191,7 @@ impl ToFields for StatementTmpl {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 /// NOTE: fields are not public (outside of crate) to enforce the struct instantiation through
 /// the `::and/or` methods, which performs checks on the values.
@@ -296,7 +296,7 @@ impl fmt::Display for CustomPredicate {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct CustomPredicateBatch {
     pub name: String,
     pub predicates: Vec<CustomPredicate>,
@@ -336,7 +336,7 @@ impl CustomPredicateBatch {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct CustomPredicateRef {
     pub batch: Arc<CustomPredicateBatch>,
     pub index: usize,

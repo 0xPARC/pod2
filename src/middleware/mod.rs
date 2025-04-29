@@ -2,7 +2,7 @@
 //! the backend.
 
 use std::sync::Arc;
-mod basetypes;
+pub mod basetypes;
 use std::{
     cmp::{Ordering, PartialEq, PartialOrd},
     hash,
@@ -12,9 +12,9 @@ use containers::{Array, Dictionary, Set};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 pub mod containers;
-mod custom;
-mod error;
-mod operation;
+pub mod custom;
+pub mod error;
+pub mod operation;
 pub mod serialization;
 mod statement;
 use std::{any::Any, collections::HashMap, fmt};
