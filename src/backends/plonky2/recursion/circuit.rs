@@ -111,13 +111,12 @@ impl<I: InnerCircuit> RecursiveCircuitSetup<I> {
 
 /// RecursiveCircuit defines the circuit that verifies `arity` proofs of itself.
 pub struct RecursiveCircuit<I: InnerCircuit> {
-    params: RecursiveParams,
+    setup: RecursiveCircuitSetup<I>,
     selectors_targ: Vec<BoolTarget>,
     innercircuit_targ: I,
     proofs_targ: Vec<ProofWithPublicInputsTarget<D>>,
     // cyclic-recursion params:
     verifier_data_targ: VerifierCircuitTarget,
-    verifier_data: VerifierCircuitData<F, C, D>,
 }
 
 impl<I: InnerCircuit> RecursiveCircuit<I> {
@@ -164,12 +163,10 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
             I::build(builder, inner_params, pub_inp, selectors_targ.clone())?;
 
         Ok(Self {
-            params: params.clone(),
             selectors_targ,
             innercircuit_targ,
             proofs_targ,
             verifier_data_targ,
-            verifier_data,
         })
     }
 
@@ -188,7 +185,6 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
     pub fn set_targets(
         &mut self,
         pw: &mut PartialWitness<F>,
-        dummy_proof: Proof,
         innercircuit_input: I::Input,
         recursive_proofs: Vec<Proof>,
     ) -> Result<()> {
