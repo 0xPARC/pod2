@@ -306,10 +306,8 @@ impl OperationVerifyGadget {
             &arg1_value.elements[..VALUE_SIZE],
             &arg2_value.elements[..VALUE_SIZE],
         );
-        let lt_check_flag = [op_code_ok, builder.not(args_equal)]
-            .into_iter()
-            .reduce(|x, y| builder.and(x, y))
-            .expect("Empty array.");
+        let not_args_equal = builder.not(args_equal);
+        let lt_check_flag = builder.and(op_code_ok, not_args_equal);
 
         builder.assert_less_if(
             lt_check_flag,
