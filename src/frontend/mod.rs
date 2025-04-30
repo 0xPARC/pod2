@@ -234,6 +234,8 @@ impl MainPodBuilder {
 
     /// Lower syntactic sugar operation into backend compatible operation.
     /// - {Dict,Array,Set}Contains/NotContains becomes Contains/NotContains.
+    /// - GtEqFromEntries/GtFromEntries/GtToNotEqual becomes
+    ///   LtEqFromEntries/LtFromEntries/LtToNotEqual.
     fn lower_op(op: Operation) -> Operation {
         use NativeOperation::*;
         use OperationType::*;
