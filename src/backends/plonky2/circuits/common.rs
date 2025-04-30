@@ -30,6 +30,7 @@ use crate::{
 };
 
 pub const CODE_SIZE: usize = HASH_SIZE + 2;
+const NUM_BITS: usize = 32;
 
 #[derive(Copy, Clone)]
 pub struct ValueTarget {
@@ -300,9 +301,13 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     // Convenience methods for checking values.
     /// Checks whether `xs` is right-padded with 0s so as to represent a `Value`.
     fn statement_arg_is_value(&mut self, arg: &StatementArgTarget) -> BoolTarget;
-    /// Checks whether `x < y` if `b` is true. This involves checking
-    /// that `x` and `y` each consist of two `u32` limbs.
-    fn assert_less_if(&mut self, b: BoolTarget, x: ValueTarget, y: ValueTarget);
+    /// Checks whether `x` is an i64, which involves checking that it
+    /// consists of two `u32` limbs.
+    fn assert_i64(&mut self, x: ValueTarget);
+
+    /// Checks whether `x < y` if `b` is true. This assumes that `x`
+    /// and `y` each consist of two `u32` limbs.
+    fn assert_i64_less_if(&mut self, b: BoolTarget, x: ValueTarget, y: ValueTarget);
 
     // Convenience methods for accessing and connecting elements of
     // (vectors of) flattenables.
@@ -389,36 +394,33 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
         self.is_equal_slice(&arg.elements[VALUE_SIZE..], &zeros)
     }
 
-    fn assert_less_if(&mut self, b: BoolTarget, x: ValueTarget, y: ValueTarget) {
-        const NUM_BITS: usize = 32;
+    fn assert_i64(&mut self, x: ValueTarget) {
+        // `x` should only have two limbs.
+        x.elements
+            .into_iter()
+            .skip(2)
+            .for_each(|l| self.assert_zero(l));
 
-        // Lt assertion with 32-bit range check.
-        let assert_limb_lt = |builder: &mut Self, x, y| {
-            // Check that targets fit within `NUM_BITS` bits.
-            builder.range_check(x, NUM_BITS);
-            builder.range_check(y, NUM_BITS);
-            // Check that `y-1-x` fits within `NUM_BITS` bits.
-            let one = builder.one();
-            let y_minus_one = builder.sub(y, one);
-            let expr = builder.sub(y_minus_one, x);
-            builder.range_check(expr, NUM_BITS);
-        };
+        // 32-bit range check.
+        self.range_check(x.elements[0], NUM_BITS);
+        self.range_check(x.elements[1], NUM_BITS);
+    }
 
+    fn assert_i64_less_if(&mut self, b: BoolTarget, x: ValueTarget, y: ValueTarget) {
         // If b is false, replace `x` and `y` with dummy values.
         let zero = ValueTarget::zero(self);
         let one = ValueTarget::one(self);
         let x = self.select_value(b, x, zero);
         let y = self.select_value(b, y, one);
 
-        // `x` and `y` should only have two limbs each.
-        x.elements
-            .into_iter()
-            .skip(2)
-            .for_each(|l| self.assert_zero(l));
-        y.elements
-            .into_iter()
-            .skip(2)
-            .for_each(|l| self.assert_zero(l));
+        // Lt assertion.
+        let assert_limb_lt = |builder: &mut Self, x, y| {
+            // Check that `y-1-x` fits within `NUM_BITS` bits.
+            let one = builder.one();
+            let y_minus_one = builder.sub(y, one);
+            let expr = builder.sub(y_minus_one, x);
+            builder.range_check(expr, NUM_BITS);
+        };
 
         let big_limbs_eq = self.is_equal(x.elements[1], y.elements[1]);
         let lhs = self.select(big_limbs_eq, x.elements[0], x.elements[1]);

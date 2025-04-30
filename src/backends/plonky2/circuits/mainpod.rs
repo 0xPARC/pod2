@@ -258,6 +258,9 @@ impl OperationVerifyGadget {
         op: &OperationTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
+        let zero = ValueTarget::zero(builder);
+        let one = ValueTarget::one(builder);
+
         let lt_op_st_code_ok = {
             let op_code_ok = op.has_native_type(builder, NativeOperation::LtFromEntries);
             let st_code_ok = st.has_native_type(builder, &self.params, NativePredicate::Lt);
@@ -281,22 +284,33 @@ impl OperationVerifyGadget {
             .collect::<Vec<_>>();
         let op_arg_range_ok = builder.all(op_arg_range_checks);
 
-        // Check for equality.
-        let args_equal = builder.is_equal_slice(
-            &arg1_value.elements[..VALUE_SIZE],
-            &arg2_value.elements[..VALUE_SIZE],
+        // If we are not dealing with the right op & statement types,
+        // replace args with dummy values in the following checks.
+        let value1 = builder.select_value(
+            op_st_code_ok,
+            ValueTarget::from_slice(&arg1_value.elements[..VALUE_SIZE]),
+            zero,
         );
+        let value2 = builder.select_value(
+            op_st_code_ok,
+            ValueTarget::from_slice(&arg2_value.elements[..VALUE_SIZE]),
+            one,
+        );
+
+        // Range check
+        builder.assert_i64(value1);
+        builder.assert_i64(value2);
+
+        // Check for equality.
+        let args_equal = builder.is_equal_slice(&value1.elements, &value2.elements);
+
+        // Check < if applicable.
         let not_args_equal = builder.not(args_equal);
         let lt_check_flag = {
             let lteq_eq_case = builder.and(lteq_op_st_code_ok, not_args_equal);
             builder.or(lt_op_st_code_ok, lteq_eq_case)
         };
-
-        builder.assert_less_if(
-            lt_check_flag,
-            ValueTarget::from_slice(&arg1_value.elements[..VALUE_SIZE]),
-            ValueTarget::from_slice(&arg2_value.elements[..VALUE_SIZE]),
-        );
+        builder.assert_i64_less_if(lt_check_flag, value1, value2);
 
         let arg1_key = resolved_op_args[0].args[0].clone();
         let arg2_key = resolved_op_args[1].args[0].clone();
@@ -565,7 +579,10 @@ impl MainPodVerifyCircuit {
 
 #[cfg(test)]
 mod tests {
-    use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
+    use plonky2::{
+        field::{goldilocks_field::GoldilocksField, types::Field},
+        plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig},
+    };
 
     use super::*;
     use crate::{
@@ -646,10 +663,20 @@ mod tests {
             Value::from(56),
         )
         .into();
-        let prev_statements = [st1, st2];
+        let st3: mainpod::Statement = Statement::ValueOf(
+            AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
+            Value::from(RawValue([
+                GoldilocksField::NEG_ONE,
+                GoldilocksField::ZERO,
+                GoldilocksField::ZERO,
+                GoldilocksField::ZERO,
+            ])),
+        )
+        .into();
+        let prev_statements = [st1, st2, st3];
 
-        // 56 < 55, 55 < 55, 56 <= 55 should fail to verify
         [
+            // 56 < 55, 55 < 55, 56 <= 55 should fail to verify
             (
                 mainpod::Operation(
                     OperationType::Native(NativeOperation::LtFromEntries),
@@ -683,6 +710,33 @@ mod tests {
                 Statement::LtEq(
                     AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
                     AnchoredKey::from((SELF, "hello")),
+                )
+                .into(),
+            ),
+            // 56 < p-1 and p-1 <= p-1 should fail to verify, where p
+            // is the Goldilocks prime and 'p-1' occupies a single
+            // limb.
+            (
+                mainpod::Operation(
+                    OperationType::Native(NativeOperation::LtFromEntries),
+                    vec![OperationArg::Index(1), OperationArg::Index(2)],
+                    OperationAux::None,
+                ),
+                Statement::Lt(
+                    AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
+                    AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
+                )
+                .into(),
+            ),
+            (
+                mainpod::Operation(
+                    OperationType::Native(NativeOperation::LtEqFromEntries),
+                    vec![OperationArg::Index(2), OperationArg::Index(2)],
+                    OperationAux::None,
+                ),
+                Statement::LtEq(
+                    AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
+                    AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
                 )
                 .into(),
             ),
