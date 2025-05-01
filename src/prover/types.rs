@@ -3,29 +3,31 @@ use std::{
     hash::Hash,
 };
 
-// Use publicly exported types from middleware
+// Use publicly exported types from the middleware module.
 use crate::middleware::{self, OperationType, PodId, Statement, Value, Wildcard, F};
 
 /// Type alias for mapping custom predicate references to their definitions.
-// pub type CustomDefinitions = HashMap<CustomPredicateRef, CustomPredicate>;
-
-/// Type alias for mapping canonical custom predicate identifiers (Vec<F>)
-/// to their definitions. Based on prover.md Stage 1.
+/// The key is the canonical representation (Vec<F>) derived from the predicate.
+/// Based on prover.md Stage 1.
 pub type CustomDefinitions = HashMap<Vec<F>, crate::middleware::CustomPredicate>;
 
+/// Represents the initial facts provided to the prover, typically derived from input PODs.
+/// Each fact is a `Statement` associated with the `PodId` of its origin.
 pub type InitialFacts = Vec<(PodId, middleware::Statement)>;
 
-/// The overall result of the translation stage.
+/// The overall result of the translation stage, containing processed custom definitions
+/// and the collated initial facts.
 pub struct TranslationOutput {
     pub custom_definitions: CustomDefinitions,
     pub initial_facts: InitialFacts,
 }
 
-// Represents a concrete value found during solving
+/// Represents a concrete value binding discovered during the solving process.
+/// This could be a PodId, a Key name, or a literal Value.
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub enum ConcreteValue {
     Pod(PodId),
-    Key(String), // Store Key name as String for simplicity
+    Key(String), // Key name as String
     Val(Value),
 }
 
@@ -39,32 +41,31 @@ impl std::fmt::Display for ConcreteValue {
     }
 }
 
-// Represents a single step in a proof deduction
-#[derive(Debug, Clone, PartialEq, Eq, Hash)] // Eq requires wrapped types to implement Eq
+/// Represents a single deduction step within a proof chain.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ProofStep {
-    /// The operation used in this step.
-    pub operation: OperationType, // Use middleware::OperationType directly
-    /// The statements used as input to the operation.
-    pub inputs: Vec<Statement>, // Use middleware::Statement directly
-    /// The statement derived by this step.
-    pub output: Statement, // Use middleware::Statement directly
+    /// The operation (native or custom) performed in this step.
+    pub operation: OperationType,
+    /// The input statements required by the operation.
+    pub inputs: Vec<Statement>,
+    /// The output statement derived by this step.
+    pub output: Statement,
 }
 
-/// Represents a sequence of proof steps deriving a target statement.
-/// Using a tuple struct for now based on previous linter errors.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)] // Assuming ProofChain needs these
+/// Represents a sequence of `ProofStep`s demonstrating how a target statement was derived.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ProofChain(pub Vec<ProofStep>);
 
-/// Represents a successful proof outcome.
-#[derive(Debug)]
+/// Represents a successful proof outcome from the solver.
 pub struct ProofSolution {
-    /// The final consistent assignment of wildcards to concrete values.
+    /// The final, consistent assignment of wildcards to concrete values.
     pub bindings: HashMap<Wildcard, ConcreteValue>,
-    /// The specific base statements (with their origin PodId) required for the proof.
-    pub scope: HashSet<(PodId, Statement)>, // Use middleware::Statement
+    /// The minimal set of base statements (from input PODs, with their origin `PodId`)
+    /// required to justify the derived target statements.
+    pub scope: HashSet<(PodId, Statement)>,
     /// The derived target statements mapped to their full proof chains.
-    /// Keyed by the derived middleware::Statement.
-    pub proof_chains: HashMap<Statement, ProofChain>, // Use middleware::Statement
+    /// Keyed by the derived `Statement`.
+    pub proof_chains: HashMap<Statement, ProofChain>,
 }
 
 // Remove incorrect re-exports - these types are defined in this module

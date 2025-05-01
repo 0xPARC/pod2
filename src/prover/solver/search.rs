@@ -1,22 +1,13 @@
-use std::{
-    collections::{HashMap, HashSet},
-    io::Write, // Temporary for println debugging during dev
-};
+use std::collections::HashSet;
 
 use super::{
     proof::try_prove_statement,
     pruning::{self, prune_initial_domains},
-    try_generate_concrete_candidate_and_bindings,
-    types::{Domain, ExpectedType},
-    SolverState,
+    try_generate_concrete_candidate_and_bindings, SolverState,
 };
 use crate::{
     middleware::{NativePredicate, Predicate, StatementTmpl, Wildcard},
-    prover::{
-        error::ProverError,
-        indexing::ProverIndexes,
-        types::{ConcreteValue, CustomDefinitions, ProofSolution},
-    },
+    prover::{error::ProverError, indexing::ProverIndexes, types::CustomDefinitions},
 };
 
 /// Performs Depth-First Search (DFS) backtracking to find a consistent assignment
@@ -275,6 +266,7 @@ impl SolverState {
             // Proof chains and scope are built up, clone is okay for backtracking start point
             proof_chains: self.proof_chains.clone(),
             scope: self.scope.clone(),
+            params: self.params.clone(),
         }
     }
 }

@@ -99,9 +99,7 @@ mod pruning_tests {
         let w_pod = wc("A", 0);
         let p1 = pod(1);
         let p2 = pod(2);
-        let p3 = pod(3);
         let k_foo = key("foo");
-        let k_bar = key("bar");
 
         // Setup indexes: p1 has "foo", p2 has "foo" and "bar", p3 has nothing
         let facts = vec![
@@ -146,9 +144,6 @@ mod pruning_tests {
         let w_key = wc("X", 0);
         let p1 = pod(1);
         let p2 = pod(2);
-        let k_foo = key("foo");
-        let k_bar = key("bar");
-        let k_baz = key("baz");
 
         // Setup indexes: p1 has "foo" and "bar", p2 has "baz"
         let facts = vec![
@@ -194,7 +189,6 @@ mod pruning_tests {
         let w_pod = wc("A", 0);
         let w_key = wc("X", 0);
         let p1 = pod(1);
-        let p2 = pod(2);
         let k_foo = key("foo");
 
         // Setup indexes: p1 has "foo", p2 does not
@@ -545,16 +539,11 @@ mod pruning_tests {
         let container1 = dict_val(vec![("a", 10), ("b", 20)]);
         let cv_container1 = ConcreteValue::Val(container1.clone());
 
-        let key_a = cv_key("a"); // Represents the key "a"
-        let key_b = cv_key("b");
-        let key_c = cv_key("c"); // Non-existent key
-
         // Create ConcreteValues for keys correctly as Val(String)
         let cv_key_a_val = ConcreteValue::Val(Value::from("a"));
         let cv_key_c_val = ConcreteValue::Val(Value::from("c"));
 
         let val_10 = cv_val(10);
-        let val_20 = cv_val(20);
         let val_30 = cv_val(30); // Non-existent value
 
         let mut state = solver_state_with_domains(vec![

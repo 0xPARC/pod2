@@ -1,13 +1,13 @@
 use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc, // Import Arc
+    collections::{HashMap, HashSet, VecDeque},
+    sync::Arc,
 };
 
 use crate::{
     frontend::{
         self, MainPodBuilder, Operation as FrontendOperation, SignedPod as FrontendSignedPod,
     },
-    middleware::{self, OperationAux, OperationType, Pod, PodId, Statement},
+    middleware::{self, OperationAux, OperationType, PodId, Statement},
     prover::{
         error::ProverError,
         types::{ProofSolution, ProofStep},
@@ -38,6 +38,9 @@ pub fn build_main_pod_from_solution(
 
     // 1. Add references to input PODs based on the scope
     let mut referenced_pod_ids = HashSet::new();
+    // Also collect base facts for dependency tracking
+    let base_facts: HashSet<&Statement> = solution.scope.iter().map(|(_, stmt)| stmt).collect();
+
     for (pod_id, _) in &solution.scope {
         if referenced_pod_ids.insert(*pod_id) {
             // Check if it's a known SignedPod
@@ -60,41 +63,114 @@ pub fn build_main_pod_from_solution(
     }
     // TODO: Check if SELF needs explicit reference
 
-    // 2. Translate ProofChain steps and add operations to builder
-    let mut generated_statements = HashSet::new();
+    // --- Topological Sort of Proof Steps --- START ---
 
-    // TODO: Determine correct order of processing steps (e.g., topological sort)
-    // For now, iterate through chains, hoping dependencies are met.
+    // 2a. Collect all unique derived steps, keyed by output statement
+    let mut step_map: HashMap<Statement, ProofStep> = HashMap::new();
     for chain in solution.proof_chains.values() {
         for step in &chain.0 {
-            if generated_statements.contains(&step.output) {
-                continue; // Already generated this statement
+            // Only include steps that derive statements (ignore base fact Copy steps here,
+            // as they don't have dependencies relevant to the sort among derived statements).
+            // We only care about steps whose output is a key in proof_chains (derived targets)
+            // or whose output is used as input to another step.
+            if !base_facts.contains(&step.output) {
+                // Avoid overwriting if multiple chains derive the same intermediate step (shouldn't happen?)
+                step_map
+                    .entry(step.output.clone())
+                    .or_insert_with(|| step.clone());
             }
-
-            let (op_type, op_args) = translate_step_to_frontend_op_args(step)?;
-
-            let frontend_op = FrontendOperation(op_type, op_args, OperationAux::None);
-
-            // Determine if the output statement is a final target
-            let is_public = solution.proof_chains.contains_key(&step.output);
-
-            println!(
-                "  Adding Op (public={}): {:?} -> {:?}",
-                is_public, frontend_op, step.output
-            );
-            // Use pub_op or priv_op based on whether the output is a target statement
-            let _generated_statement = if is_public {
-                builder.pub_op(frontend_op)?
-            } else {
-                builder.priv_op(frontend_op)?
-            };
-            // We might want to verify that _generated_statement == step.output
-
-            generated_statements.insert(step.output.clone());
         }
     }
 
-    // 3. Mark public statements (REMOVED - handled by builder.op)
+    // 2b. Build dependency graph (successors) and calculate in-degrees
+    let mut successors: HashMap<Statement, HashSet<Statement>> = HashMap::new();
+    let mut in_degree: HashMap<Statement, usize> = HashMap::new();
+
+    for (output_stmt, step) in &step_map {
+        // Ensure every derived statement has an in-degree entry (initially 0)
+        in_degree.entry(output_stmt.clone()).or_insert(0);
+
+        for input_stmt in &step.inputs {
+            // Only consider dependencies on *other derived* statements
+            if step_map.contains_key(input_stmt) {
+                // Add edge input_stmt -> output_stmt
+                successors
+                    .entry(input_stmt.clone())
+                    .or_default()
+                    .insert(output_stmt.clone());
+                // Increment in-degree of the output statement
+                *in_degree.entry(output_stmt.clone()).or_insert(0) += 1;
+            }
+            // Base facts (not in step_map) don't contribute to the initial in-degree count
+        }
+    }
+
+    // 2c. Initialize queue with nodes having in-degree 0
+    let mut queue: VecDeque<Statement> = VecDeque::new();
+    for (stmt, degree) in &in_degree {
+        if *degree == 0 {
+            queue.push_back(stmt.clone());
+        }
+    }
+
+    // 2d. Process queue (Kahn's algorithm)
+    let mut sorted_steps: Vec<ProofStep> = Vec::new();
+    while let Some(stmt) = queue.pop_front() {
+        if let Some(step_to_add) = step_map.get(&stmt) {
+            sorted_steps.push(step_to_add.clone());
+
+            if let Some(next_stmts) = successors.get(&stmt) {
+                for successor_stmt in next_stmts {
+                    if let Some(degree) = in_degree.get_mut(successor_stmt) {
+                        *degree -= 1;
+                        if *degree == 0 {
+                            queue.push_back(successor_stmt.clone());
+                        }
+                    }
+                }
+            }
+        } else {
+            // This statement was likely a base fact implicitly added, skip.
+        }
+    }
+
+    // 2e. Check for cycles
+    if sorted_steps.len() != step_map.len() {
+        return Err(ProverError::Internal(
+            "Cycle detected in proof dependencies during topological sort".to_string(),
+        ));
+    }
+
+    // --- Topological Sort of Proof Steps --- END ---
+
+    // 3. Add topologically sorted operations to the builder
+    // We use generated_statements to handle potential duplicates in `sorted_steps` if the same step
+    // was somehow included multiple times despite the HashMap - defensive check.
+    let mut generated_statements = HashSet::new();
+    for step in sorted_steps {
+        // Ensure we only add the operation for each unique output statement once.
+        if !generated_statements.insert(step.output.clone()) {
+            continue;
+        }
+
+        let (op_type, op_args) = translate_step_to_frontend_op_args(&step)?;
+        let frontend_op = FrontendOperation(op_type, op_args, OperationAux::None);
+
+        // Determine if the output statement is a final target required by the request
+        let is_public = solution.proof_chains.contains_key(&step.output);
+
+        println!(
+            "  Adding Sorted Op (public={}): {:?} -> {:?}",
+            is_public, frontend_op, step.output
+        );
+
+        // Add operation to builder
+        let _generated_statement = if is_public {
+            builder.pub_op(frontend_op)?
+        } else {
+            builder.priv_op(frontend_op)?
+        };
+    }
 
     // 4. Invoke the backend prover
     println!("Invoking backend prover...");
@@ -134,9 +210,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        backends::plonky2::mock::{mainpod::MockProver, signedpod::MockSigner},
+        backends::plonky2::mock::signedpod::MockSigner,
         frontend::{self, SignedPodBuilder},
-        middleware::{self, AnchoredKey, Key, NativeOperation, NativePredicate, Value},
+        middleware::{self, AnchoredKey, Key, NativeOperation, Statement, Value},
         prover::types::{ProofChain, ProofSolution, ProofStep},
     };
 

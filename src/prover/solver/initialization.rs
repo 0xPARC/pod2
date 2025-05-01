@@ -333,6 +333,7 @@ pub(super) fn initialize_solver_state(
     constraints.extend(constraints_set);
 
     Ok(SolverState {
+        params: indexes.params.clone(),
         domains,
         constraints,
         proof_chains: HashMap::new(),
