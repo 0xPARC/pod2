@@ -1,5 +1,8 @@
 #![cfg(test)]
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 // Declare test modules
 pub mod proof;
@@ -12,8 +15,9 @@ use crate::{
     middleware::{
         self,
         containers::{Array, Dictionary, Set},
-        AnchoredKey, Key, KeyOrWildcard, NativeOperation, NativePredicate, OperationType, PodId,
-        Predicate, Statement, StatementTmpl, StatementTmplArg, Value, Wildcard,
+        AnchoredKey, CustomPredicateBatch, Key, KeyOrWildcard, NativeOperation, NativePredicate,
+        OperationType, Params, PodId, Predicate, Statement, StatementTmpl, StatementTmplArg,
+        ToFields, Value, Wildcard,
     },
     prover::{
         error::ProverError,
@@ -73,11 +77,26 @@ pub(crate) fn dummy_prover_indexes() -> ProverIndexes {
     ProverIndexes::new(middleware::Params::default())
 }
 
-// Helper to create ProverIndexes with specific base facts for testing try_prove_statement
-pub(crate) fn setup_indexes_with_facts(facts: Vec<(PodId, Statement)>) -> ProverIndexes {
+pub(crate) fn setup_indexes_with_facts(facts: Vec<(PodId, Statement)>) -> (ProverIndexes, Params) {
     let params = middleware::Params::default();
-    // Use the main build method which populates all necessary indexes, including value_map
-    ProverIndexes::build(params, &facts)
+    let indexes = ProverIndexes::build(params.clone(), &facts);
+    (indexes, params)
+}
+
+pub(crate) fn setup_custom_definitions_for_test(
+    definitions: Vec<(
+        Predicate,
+        crate::middleware::CustomPredicate,
+        Arc<CustomPredicateBatch>,
+    )>,
+    params: &Params,
+) -> CustomDefinitions {
+    let mut custom_defs = CustomDefinitions::new();
+    for (predicate_ref_variant, definition, batch_arc) in definitions {
+        let key = predicate_ref_variant.to_fields(params);
+        custom_defs.insert(key, (definition, batch_arc));
+    }
+    custom_defs
 }
 
 // --- START: Container Helpers ---

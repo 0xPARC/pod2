@@ -40,10 +40,8 @@ pub fn translate(
             // Calculate the canonical ID
             let canonical_id = predicate.to_fields(params);
 
-            // Store the definition keyed by its ID
-            // Note: Cloning middleware::CustomPredicate might be acceptable if they are not too large,
-            // otherwise, consider storing Arcs or references if lifetime permits.
-            custom_definitions.insert(canonical_id, predicate_def.clone());
+            // Store the definition and the Arc to the batch, keyed by its ID
+            custom_definitions.insert(canonical_id, (predicate_def.clone(), batch.clone()));
         }
     }
 

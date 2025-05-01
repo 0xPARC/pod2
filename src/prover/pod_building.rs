@@ -175,6 +175,8 @@ pub fn build_main_pod_from_solution(
     // 4. Invoke the backend prover
     println!("Invoking backend prover...");
     // TODO: Use the actual prover instance passed in or created
+    // In the meantime, MockProver should work identically to the real prover,
+    // so it will return a valid MainPod.
     let mut prover = crate::backends::plonky2::mock::mainpod::MockProver {}; // Example
     builder
         .prove(&mut prover, params)
@@ -278,28 +280,30 @@ mod tests {
             &params,
         );
 
-        println!("Result: {:?}", result);
+        println!("{:?}", result.as_ref().unwrap());
 
-        println!(
-            "Verify: {:?}",
-            result.as_ref().unwrap().pod.verify().unwrap()
+        // 5. Assert expected successful outcome
+        assert!(result.is_ok(), "Pod building failed: {:?}", result.err());
+        let main_pod = result.unwrap();
+
+        // 6. Verify the pod itself
+        let verification_result = main_pod.pod.verify();
+        assert!(
+            verification_result.is_ok(),
+            "Generated MainPod failed verification: {:?}",
+            verification_result.err()
         );
 
-        // 5. Assert expected error (due to unimplemented prove)
-        assert!(result.is_err());
-        match result.err().unwrap() {
-            ProverError::FrontendError(frontend_err) => {
-                // Check if the error message contains "not yet implemented" or similar
-                // from the builder.prove() call or a mock prover error.
-                let err_string = frontend_err.to_string();
-                assert!(
-                    err_string.contains("not yet implemented") || // From unimplemented!()
-                    err_string.contains("MockProver error"), // Or a potential mock error
-                    "Expected unimplemented or mock error, got: {}",
-                    err_string
-                );
-            }
-            e => panic!("Expected ProverError::FrontendError, got {:?}", e),
-        }
+        // 7. Verify public statements
+        assert!(
+            main_pod.public_statements.contains(&target_stmt_gt),
+            "Expected Gt statement missing from public statements"
+        );
+        // We also expect the _type statement
+        assert_eq!(
+            main_pod.public_statements.len(),
+            2,
+            "Expected 2 public statements (Gt and _type)"
+        );
     }
 }

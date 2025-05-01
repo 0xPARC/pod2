@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet};
 use crate::{
     middleware,
     middleware::{
-        AnchoredKey, NativeOperation, NativePredicate, OperationType, Params, PodId,
-        Predicate, Statement, StatementArg, Wildcard,
+        AnchoredKey, NativeOperation, NativePredicate, OperationType, Params, PodId, Predicate,
+        Statement, StatementArg, Wildcard,
     },
     prover::{
         error::ProverError,
@@ -59,15 +59,6 @@ impl SolverState {
             proof_chains: HashMap::new(),
             scope: HashSet::new(),
         }
-    }
-
-    /// Placeholder: Finds the Arc<Batch> containing a given definition.
-    /// TODO: Implement this properly, likely needs changes to CustomDefinitions storage.
-    fn find_batch_for_definition(
-        &self,
-        _definition: &crate::middleware::CustomPredicate,
-    ) -> Option<std::sync::Arc<crate::middleware::CustomPredicateBatch>> {
-        None // Placeholder implementation
     }
 }
 

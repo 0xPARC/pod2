@@ -821,9 +821,9 @@ pub(super) fn try_prove_statement(
                     ));
                 }
 
-                // 1. Lookup definition
-                let pred_key = Predicate::Custom(custom_ref.clone()).to_fields(&indexes.params);
-                if let Some(pred_def) = custom_definitions.get(&pred_key) {
+                // 1. Lookup definition and batch Arc
+                let pred_key = Predicate::Custom(custom_ref.clone()).to_fields(&state.params);
+                if let Some((pred_def, batch_arc)) = custom_definitions.get(&pred_key) {
                     // 2. Check conjunction (handle AND first)
                     if pred_def.conjunction {
                         // --- AND Logic ---
@@ -844,9 +844,9 @@ pub(super) fn try_prove_statement(
                                 internal_tmpl,
                                 concrete_args,
                                 &public_bindings,
-                                state, // Pass full state for private WC resolution
-                                // NEW: Pass context
-                                Some((pred_def, custom_ref.batch.clone())),
+                                state,
+                                // Pass the retrieved context
+                                Some((pred_def, batch_arc.clone())),
                             ) {
                                 Ok(stmt) => stmt,
                                 Err(e @ ProverError::Unsatisfiable(_)) => {
@@ -911,8 +911,8 @@ pub(super) fn try_prove_statement(
                                 concrete_args,
                                 &public_bindings,
                                 state,
-                                // NEW: Pass context
-                                Some((pred_def, custom_ref.batch.clone())),
+                                // Pass the retrieved context
+                                Some((pred_def, batch_arc.clone())),
                             );
 
                             if let Ok(concrete_sub_stmt) = concrete_sub_stmt_res {
@@ -995,7 +995,6 @@ fn get_wildcards_from_tmpl_arg(arg: &StatementTmplArg) -> Vec<Wildcard> {
 
 // Helper function to build a concrete statement from a template and bindings
 // This needs access to the full solver state for private wildcards.
-// TODO: Refactor this or the one in `mod.rs` to be reusable.
 fn build_concrete_statement_from_bindings(
     tmpl: &crate::middleware::StatementTmpl,
     _public_args: &[WildcardValue], // Values provided to the target Custom statement (Might not be needed directly here)
@@ -1003,9 +1002,9 @@ fn build_concrete_statement_from_bindings(
     public_bindings: &HashMap<usize, WildcardValue>,
     // Full solver state for private wildcard resolution
     state: &SolverState,
-    // NEW: Pass the context of the predicate containing this template
+    // Context: The predicate definition and batch Arc containing this template
     outer_context: Option<(
-        &crate::middleware::CustomPredicate, // Added lifetime 'a
+        &crate::middleware::CustomPredicate,
         std::sync::Arc<crate::middleware::CustomPredicateBatch>,
     )>,
 ) -> Result<Statement, ProverError> {
@@ -1190,7 +1189,7 @@ fn build_concrete_statement_from_bindings(
             Ok(Statement::Custom(custom_ref.clone(), nested_call_args))
         }
         Predicate::BatchSelf(idx) => {
-            // --- Build args for Nested BatchSelf Predicate Call ---
+            // --- Build args for Nested BatchSelf Predicate Call --- (Modified logic)
             let current_outer_args_len = outer_context.as_ref().map(|(def, _)| def.args_len);
             let mut nested_call_args: Vec<WildcardValue> = Vec::with_capacity(tmpl.args.len());
 
@@ -1229,18 +1228,16 @@ fn build_concrete_statement_from_bindings(
             }
 
             // Determine the correct CustomPredicateRef for the concrete BatchSelf statement
-            // We need the Arc<Batch> context here.
-            let (_outer_pred_def, batch_arc) = outer_context // Borrow here
-                .as_ref() // Use as_ref() before ok_or_else
-                .ok_or_else(|| {
-                    ProverError::Internal(
-                        "Missing outer context needed to resolve BatchSelf predicate in template"
-                            .to_string(),
-                    )
-                })?;
+            // Get the batch Arc directly from the outer_context.
+            let (_outer_pred_def, batch_arc) = outer_context.ok_or_else(|| {
+                ProverError::Internal(
+                    "Missing outer context needed to resolve BatchSelf predicate in template"
+                        .to_string(),
+                )
+            })?;
 
             let concrete_custom_ref = crate::middleware::CustomPredicateRef {
-                batch: batch_arc.clone(), // Use the passed Arc
+                batch: batch_arc.clone(), // Use the Arc from the context
                 index: *idx,
             };
 

@@ -18,7 +18,7 @@ mod search_tests {
             (p1, Statement::ValueOf(ak(1, "foo"), val(10))),
             (p2, Statement::ValueOf(ak(2, "foo"), val(10))),
         ];
-        let indexes = setup_indexes_with_facts(facts);
+        let (indexes, _params) = setup_indexes_with_facts(facts);
         let custom_definitions = CustomDefinitions::default();
 
         // Request: Equal(?A["foo"], ?B["foo"])
@@ -95,7 +95,7 @@ mod search_tests {
             (pod_a, Statement::ValueOf(ak(1, "foo"), val_10.clone())),
             (pod_c, Statement::ValueOf(ak(3, "quux"), val_20.clone())),
         ];
-        let indexes = setup_indexes_with_facts(facts);
+        let (indexes, _params) = setup_indexes_with_facts(facts);
         let custom_definitions = CustomDefinitions::default();
 
         // Request Template: Gt(?Z["quux"], ?A["foo"])
@@ -186,7 +186,7 @@ mod search_tests {
             (pod_a, Statement::ValueOf(ak(1, "foo"), val_10)),
             (pod_b, Statement::ValueOf(ak(2, "bar"), val_20)),
         ];
-        let indexes = setup_indexes_with_facts(facts);
+        let (indexes, _params) = setup_indexes_with_facts(facts);
         let custom_definitions = CustomDefinitions::default();
 
         // Request Template: Gt(?X["foo"], ?Y["bar"])
@@ -247,7 +247,7 @@ mod search_tests {
             (p1, Statement::ValueOf(ak(1, "val"), val(20))),
             (p2, Statement::ValueOf(ak(2, "val"), val(10))),
         ];
-        let indexes = setup_indexes_with_facts(facts.clone());
+        let (indexes, _params) = setup_indexes_with_facts(facts.clone());
         let custom_definitions = CustomDefinitions::default();
 
         // Request Template: Gt(?A["val"], ?B["val"])
@@ -330,7 +330,7 @@ mod search_tests {
             (p1, Statement::ValueOf(ak(1, "_pod_id_val"), val(1))),
             (p2, Statement::ValueOf(ak(2, "_pod_id_val"), val(2))),
         ];
-        let indexes = setup_indexes_with_facts(facts);
+        let (indexes, _params) = setup_indexes_with_facts(facts);
         let custom_definitions = CustomDefinitions::default();
 
         let request_templates = vec![

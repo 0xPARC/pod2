@@ -107,7 +107,7 @@ mod pruning_tests {
             (p2, Statement::ValueOf(ak(2, "foo"), val(20))),
             (p2, Statement::ValueOf(ak(2, "bar"), val(30))),
         ];
-        let indexes = setup_indexes_with_facts(facts);
+        let (indexes, _params) = setup_indexes_with_facts(facts);
 
         let mut state = solver_state_with_domains(vec![(
             w_pod.clone(),
@@ -151,7 +151,7 @@ mod pruning_tests {
             (p1, Statement::ValueOf(ak(1, "bar"), val(20))),
             (p2, Statement::ValueOf(ak(2, "baz"), val(30))),
         ];
-        let indexes = setup_indexes_with_facts(facts);
+        let (indexes, _params) = setup_indexes_with_facts(facts);
 
         let mut state = solver_state_with_domains(vec![(
             w_key.clone(),
@@ -193,7 +193,7 @@ mod pruning_tests {
 
         // Setup indexes: p1 has "foo", p2 does not
         let facts = vec![(p1, Statement::ValueOf(ak(1, "foo"), val(10)))];
-        let indexes = setup_indexes_with_facts(facts);
+        let (indexes, _params) = setup_indexes_with_facts(facts);
 
         // Initial state: w_pod can be p1 or p2, w_key can be "foo" or "bar"
         let mut state = solver_state_with_domains(vec![
