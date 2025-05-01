@@ -250,7 +250,8 @@ impl OperationVerifyGadget {
         builder.all([op_code_ok, op_arg_range_ok, op_args_eq, st_ok])
     }
 
-    /// Carries out the checks necessary for Lt and LtEq.
+    /// Carries out the checks necessary for LtFromEntries and
+    /// LtEqFromEntries.
     fn eval_lt_lteq_from_entries(
         &self,
         builder: &mut CircuitBuilder<F, D>,
@@ -305,8 +306,8 @@ impl OperationVerifyGadget {
         let args_equal = builder.is_equal_slice(&value1.elements, &value2.elements);
 
         // Check < if applicable.
-        let not_args_equal = builder.not(args_equal);
         let lt_check_flag = {
+            let not_args_equal = builder.not(args_equal);
             let lteq_eq_case = builder.and(lteq_op_st_code_ok, not_args_equal);
             builder.or(lt_op_st_code_ok, lteq_eq_case)
         };
