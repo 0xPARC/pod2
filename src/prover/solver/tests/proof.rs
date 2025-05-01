@@ -1,20 +1,20 @@
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc; // Import Arc
-
-use super::*; // Import helpers from mod.rs
-use crate::middleware::Hash; // Import Hash here
-// Add necessary imports for custom predicate tests
-use crate::middleware::{
-    statement::WildcardValue, CustomPredicate, CustomPredicateBatch, CustomPredicateRef,
-    KeyOrWildcard, NativeOperation, NativePredicate, OperationType, Predicate, Statement,
-    StatementTmpl, StatementTmplArg, Value, Wildcard,
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
 };
-// Use correct path for ExpectedType
-use crate::prover::solver::ExpectedType;
-use crate::prover::{
-    solver::proof::try_prove_statement,
-    types::{CustomDefinitions, ProofChain},
-}; // Ensure HashSet is imported if not already // Import ToFields trait
+
+use super::*;
+use crate::{
+    middleware::{
+        statement::WildcardValue, CustomPredicate, CustomPredicateBatch, CustomPredicateRef,
+        KeyOrWildcard, NativeOperation, NativePredicate, OperationType, Predicate, Statement,
+        StatementTmpl, StatementTmplArg, Value, Wildcard,
+    },
+    prover::{
+        solver::{proof::try_prove_statement, ExpectedType},
+        types::{CustomDefinitions, ProofChain},
+    },
+};
 
 #[cfg(test)]
 mod proof_tests {
@@ -902,7 +902,6 @@ mod proof_tests {
         let pod_a = pod(1);
         let pod_b = pod(2);
         let pod_c = pod(3);
-        let pod_d = pod(4);
 
         let key_dict = key("my_dict");
         let key_lookup = key("lookup_key"); // This is the AK for the Key("world")
@@ -910,7 +909,6 @@ mod proof_tests {
 
         let dict_val_str = Value::from("hello");
         let dict_key = key("world"); // Use Key type for dictionary key
-        let missing_key = key("missing"); // Use Key type
 
         let mut map = HashMap::new();
         map.insert(dict_key.clone(), dict_val_str.clone()); // Use Key as HashMap key
@@ -1015,7 +1013,6 @@ mod proof_tests {
         let pod_a = pod(1);
         let pod_b = pod(2);
         let pod_c = pod(3);
-        let pod_d = pod(4);
 
         let key_dict = key("my_dict");
         let key_lookup = key("lookup_key"); // AK for Key("the_key")
@@ -1218,14 +1215,8 @@ mod proof_tests {
         // Inputs: Eq(A["foo"], B["bar"]), Eq(B["bar"], C["quux"])
         // Target: Eq(A["foo"], C["quux"])
 
-        // Use test helpers for construction
         let pod_a = pod(1);
         let pod_b = pod(2);
-        let pod_c = pod(3);
-        let key_foo = key("foo");
-        let key_bar = key("bar");
-        let key_quux = key("quux");
-        // Removed val_10 as ValueOf are not needed/used
 
         let ak_a_foo = ak(1, "foo");
         let ak_b_bar = ak(2, "bar");
@@ -1241,8 +1232,6 @@ mod proof_tests {
         let custom_definitions: CustomDefinitions = HashMap::new();
 
         // Request template for the target statement - Use wildcards
-        let wc_pod_a = wc("?pod_a", 0);
-        let wc_pod_c = wc("?pod_c", 1);
         let target_statement = Statement::Equal(ak_a_foo.clone(), ak_c_quux.clone());
         let mut state = solver_state_with_domains(vec![]); // We need state for try_prove
 
@@ -1817,7 +1806,7 @@ mod proof_tests {
     #[test]
     fn test_try_prove_custom_and_fail_sub_proof() {
         let pod_target = pod(1);
-        let pod_const1 = pod(10); // Pod for Gt constant
+        let _pod_const1 = pod(10); // Pod for Gt constant
         let pod_const2 = pod(11); // Pod for Eq constant
 
         let val_key = key("val");
@@ -1840,7 +1829,6 @@ mod proof_tests {
         let indexes = setup_indexes_with_facts(facts);
 
         // --- Custom Predicate Definition (Same as success test) ---
-        let custom_batch_id = Hash::default();
         let custom_pred_index = 0;
         let wc_a = wc("A", 0);
 
@@ -1968,7 +1956,6 @@ mod proof_tests {
         let indexes = setup_indexes_with_facts(facts);
 
         // --- Custom Predicate Definition (OR) ---
-        let custom_batch_id = Hash::default();
         let custom_pred_index = 0;
         let wc_a = wc("A", 0); // Public Arg 0: PodId
 
@@ -2110,7 +2097,6 @@ mod proof_tests {
         let indexes = setup_indexes_with_facts(facts);
 
         // --- Custom Predicate Definitions ---
-        let batch_id = Hash::default(); // Use same dummy batch for simplicity
 
         // Inner Predicate Definition (index 0)
         let wc_x = wc("X", 0); // Public 0

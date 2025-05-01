@@ -15,14 +15,15 @@ use crate::middleware::{
 pub enum IndexableValue {
     AnchoredKey(AnchoredKey),
     Value(Value),
-    /// Stores pre-computed fields for WildcardValue to ensure hashability.
+    /// Stores pre-computed fields for `WildcardValue` to ensure hashability,
+    /// as the underlying `Value` might not be directly hashable in all cases.
     WildcardValueFields(Vec<F>),
     None,
 }
 
 impl IndexableValue {
     /// Creates an IndexableValue from a StatementArg, requiring Params
-    /// to compute fields for WildcardValue variants.
+    /// to compute fields for `WildcardValue` variants.
     fn from_arg(arg: &StatementArg, params: &Params) -> Self {
         match arg {
             StatementArg::Key(ak) => IndexableValue::AnchoredKey(ak.clone()),
@@ -47,8 +48,8 @@ fn normalize_pair_id(a: CanonicalId, b: CanonicalId) -> (CanonicalId, CanonicalI
     }
 }
 
-/// Helper to normalize pairs of AnchoredKey for tracking processed value pairs,
-/// using Debug representation for deterministic ordering as F doesn't impl Ord.
+/// Helper to normalize pairs of AnchoredKey for tracking processed value pairs.
+/// Uses the `Debug` representation for deterministic ordering because `F` doesn't implement `Ord`.
 fn normalize_pair_key(a: AnchoredKey, b: AnchoredKey) -> (AnchoredKey, AnchoredKey) {
     if format!("{:?}", a) <= format!("{:?}", b) {
         (a, b)
@@ -75,11 +76,11 @@ pub struct ProverIndexes {
     pub next_id: usize,
 
     /// Stores pairs of canonical IDs known *not* to be equal,
-    /// derived from NotEqual, Gt, Lt statements or differing ValueOfs.
+    /// derived from `NotEqual`, `Gt`, `Lt` statements or differing `ValueOf` assignments.
     pub neq_set: HashSet<(CanonicalId, CanonicalId)>,
 
-    /// Stores (PodId, Statement) for fast checking of exact statement existence.
-    pub exact_statement_lookup: HashSet<(PodId, Statement)>, // Changed Vec<F> to Statement
+    /// Stores `(PodId, Statement)` for fast checking of exact statement existence.
+    pub exact_statement_lookup: HashSet<(PodId, Statement)>,
 
     /// Maps a Key to all AnchoredKeys seen using that Key.
     pub key_to_anchored_keys: HashMap<Key, HashSet<AnchoredKey>>,
@@ -87,11 +88,11 @@ pub struct ProverIndexes {
     /// Maps a PodId to all AnchoredKeys seen associated with that PodId.
     pub pod_id_to_anchored_keys: HashMap<PodId, HashSet<AnchoredKey>>,
 
-    /// Maps Predicate (as Vec<F>) -> argument index -> argument value (as IndexableValue)
-    /// to a set of (PodId, Statement) that have that argument value at that position.
+    /// Maps Predicate (as `Vec<F>`) -> argument index -> argument value (as `IndexableValue`)
+    /// to a set of `(PodId, Statement)` that have that argument value at that position.
     pub statement_lookup_by_arg: HashMap<
-        Vec<F>,                                                               // Predicate -> Vec<F>
-        HashMap<usize, HashMap<IndexableValue, HashSet<(PodId, Statement)>>>, // Changed Vec<F> to Statement
+        Vec<F>, // Predicate -> Vec<F>
+        HashMap<usize, HashMap<IndexableValue, HashSet<(PodId, Statement)>>>,
     >,
 }
 
@@ -129,10 +130,12 @@ impl ProverIndexes {
 
     /// Builds all indexes from a collection of initial facts.
     /// Operates in multiple passes:
-    /// 1. Assign IDs to all AnchoredKeys.
-    /// 2. Initialize DSU with the final key count.
-    /// 3. Populate all maps/sets based on initial facts and assigned IDs.
-    /// 4. Derive implicit equalities/inequalities from ValueOf statements.
+    /// 1. Assign internal IDs (`usize`) to all unique `AnchoredKey`s encountered.
+    /// 2. Initialize the DSU structure with the total count of unique keys.
+    /// 3. Populate all index maps (`value_map`, `key_to_anchored_keys`, etc.) and the `exact_statement_lookup` set.
+    ///    Also processes explicit equalities (`Equal`) via DSU unions and explicit inequalities (`NotEqual`, `Gt`, `Lt`) by populating `neq_set`.
+    /// 4. Derive implicit equalities and inequalities based on `ValueOf` statements. Keys with the same value are unioned in the DSU
+    ///    (unless explicitly marked `NotEqual`), and keys with different values have their canonical IDs added to `neq_set`.
     pub fn build(params: Params, initial_facts: &[(PodId, Statement)]) -> Self {
         let mut indexes = Self::new(params);
 
@@ -153,7 +156,6 @@ impl ProverIndexes {
 
         // Pass 2: Populate indexes using assigned IDs.
         for (pod_id, statement) in initial_facts {
-            // Store the Statement object directly
             indexes
                 .exact_statement_lookup
                 .insert((*pod_id, statement.clone()));
@@ -187,7 +189,6 @@ impl ProverIndexes {
                 let indexable_value = IndexableValue::from_arg(arg, &indexes.params);
                 if !matches!(indexable_value, IndexableValue::None) {
                     let arg_map = pred_map.entry(i).or_default();
-                    // Store the Statement object directly
                     arg_map
                         .entry(indexable_value)
                         .or_default()
@@ -195,7 +196,7 @@ impl ProverIndexes {
                 }
             }
 
-            // Handle explicit unions (Equal) and inequalities (NotEqual, Gt, Lt).
+            // Process explicit equalities and inequalities.
             match statement {
                 Statement::Equal(ak1, ak2) => {
                     let id1 = indexes.key_to_id[ak1];
@@ -234,6 +235,7 @@ impl ProverIndexes {
         }
 
         // Pass 3: Derive implicit Eq/NEq from ValueOf statements.
+        // We iterate through all pairs of ValueOf facts to establish relationships.
         let value_map_clone = indexes.value_map.clone();
         let mut processed_pairs = HashSet::new();
 
@@ -250,17 +252,20 @@ impl ProverIndexes {
                 let id1 = indexes.key_to_id[ak1];
                 let id2 = indexes.key_to_id[ak2];
                 if v1 == v2 {
-                    // Check if they are already known to be not equal before unionizing based on ValueOf
+                    // If values are equal, union them in the DSU, but only if
+                    // they aren't already known to be explicitly unequal.
                     let root1 = indexes.dsu.find(id1);
                     let root2 = indexes.dsu.find(id2);
                     if !indexes.neq_set.contains(&normalize_pair_id(root1, root2)) {
                         indexes.dsu.union(id1, id2);
                     }
                 } else {
+                    // If values differ, mark them as unequal in the neq_set,
+                    // but only if the DSU doesn't already consider them equal
+                    // (e.g., due to an explicit `Equal` statement processed earlier).
                     let root1 = indexes.dsu.find(id1);
                     let root2 = indexes.dsu.find(id2);
                     if root1 != root2 {
-                        // Avoid adding NEq if DSU already unified them
                         indexes.neq_set.insert(normalize_pair_id(root1, root2));
                     }
                 }
@@ -290,7 +295,7 @@ impl ProverIndexes {
 
     /// Checks if two AnchoredKeys are known to be in the same equivalence class (via DSU).
     /// Returns true if they are equivalent, false otherwise.
-    /// Falls back to direct equality check if one or both keys were not indexed.
+    /// Falls back to direct equality check (`ak1 == ak2`) if one or both keys were not assigned an ID during indexing.
     pub fn are_potentially_equal(&self, ak1: &AnchoredKey, ak2: &AnchoredKey) -> bool {
         match (self.key_to_id.get(ak1), self.key_to_id.get(ak2)) {
             (Some(&id1), Some(&id2)) => self.dsu.equiv(id1, id2),
@@ -300,29 +305,30 @@ impl ProverIndexes {
 
     /// Checks if two AnchoredKeys are explicitly known *not* to be equal.
     /// This checks the `neq_set` using canonical IDs from the DSU.
-    /// Returns false if they are in the same DSU set or if no explicit NEq was derived.
+    /// Returns false if they are in the same DSU set (meaning they are considered equal)
+    /// or if no explicit NEq relationship was derived between their sets.
     pub fn are_not_equal(&self, ak1: &AnchoredKey, ak2: &AnchoredKey) -> bool {
         match (self.key_to_id.get(ak1), self.key_to_id.get(ak2)) {
             (Some(&id1), Some(&id2)) => {
                 let root1 = self.dsu.find(id1);
                 let root2 = self.dsu.find(id2);
-                // If DSU says they are equivalent, they cannot be unequal.
                 if root1 == root2 {
+                    // If DSU says they are equivalent, they cannot be unequal.
                     false
                 } else {
-                    // Otherwise, check if an explicit NotEqual relationship exists.
+                    // Otherwise, check if an explicit NotEqual relationship exists in neq_set.
                     self.neq_set.contains(&normalize_pair_id(root1, root2))
                 }
             }
-            _ => false, // Cannot determine inequality if keys weren't indexed.
+            // Cannot determine inequality if one or both keys weren't indexed.
+            _ => false,
         }
     }
 
     /// Checks if a specific statement exists in the initial facts.
     pub fn get_exact_statement(&self, pod_id: &PodId, statement: &Statement) -> bool {
-        // Compare Statement directly
         self.exact_statement_lookup
-            .contains(&(*pod_id, statement.clone())) // Clone statement for lookup key
+            .contains(&(*pod_id, statement.clone()))
     }
 
     /// Gets all AnchoredKeys associated with a specific Key.
@@ -336,16 +342,16 @@ impl ProverIndexes {
     }
 
     /// Looks up potential source statements based on a specific argument value.
-    /// Takes the predicate, argument index, and the *actual* argument (StatementArg),
-    /// converts the argument to IndexableValue internally for lookup.
-    /// Returns a set of (PodId, Statement) matching the criteria.
+    /// Takes the predicate, argument index, and the *actual* argument (`StatementArg`),
+    /// converts the argument to `IndexableValue` internally for lookup.
+    /// Returns a set of `(PodId, Statement)` matching the criteria, allowing the caller
+    /// to use the convenient `StatementArg` type directly.
     pub fn lookup_statements_by_arg(
         &self,
         predicate: &Predicate,
         arg_index: usize,
-        arg_value: &StatementArg, // Use StatementArg for caller convenience
+        arg_value: &StatementArg,
     ) -> Option<&HashSet<(PodId, Statement)>> {
-        // Changed Vec<F> to Statement
         let pred_fields = predicate.to_fields(&self.params);
         let lookup_key = IndexableValue::from_arg(arg_value, &self.params);
         self.statement_lookup_by_arg
@@ -369,7 +375,8 @@ impl ProverIndexes {
     }
 
     /// Check if two keys are known to be equal based on the DSU.
-    /// Returns true if they are in the same set, false otherwise (or if unknown).
+    /// Returns true if they are in the same set, false otherwise.
+    /// Falls back to direct equality check (`ak1 == ak2`) if one or both keys were not indexed.
     pub fn are_equal(&self, ak1: &AnchoredKey, ak2: &AnchoredKey) -> bool {
         match (self.key_to_id.get(ak1), self.key_to_id.get(ak2)) {
             (Some(&id1), Some(&id2)) => self.dsu.equiv(id1, id2),
@@ -379,7 +386,6 @@ impl ProverIndexes {
 
     /// Check if a specific concrete statement exists in the initial facts.
     pub fn contains_exact_statement(&self, pod_id: &PodId, statement: &Statement) -> bool {
-        // Compare Statement directly
         self.exact_statement_lookup
             .contains(&(*pod_id, statement.clone()))
     }
@@ -459,7 +465,8 @@ mod tests {
         assert!(keys_for_pod_a.contains(&ak(pod_a, "key3"))); // From Equal
         assert!(keys_for_pod_a.contains(&ak(pod_a, "key4"))); // From NotEqual
         assert!(keys_for_pod_a.contains(&ak(pod_a, "gt_key"))); // From Gt
-                                                                // Note: Does not contain ak(pod_b, "lt_key") even though it's in a statement with pod_a key
+                                                                // Verify that a key anchored to another pod (pod_b) is not included,
+                                                                // even if it appeared in a statement involving pod_a's keys (like the Gt statement).
         assert!(!keys_for_pod_a.contains(&ak(pod_b, "lt_key")));
         assert_eq!(keys_for_pod_a.len(), 5);
         assert!(indexes
@@ -547,10 +554,10 @@ mod tests {
         let key_a = ak(pod_a, "key");
         let key_b = ak(pod_b, "key");
 
-        // Explicit NEq is present
+        // Explicit NEq is present and should take precedence over ValueOf-derived equality.
         assert!(indexes.are_not_equal(&key_a, &key_b));
-        // Even though values are equal, DSU merge might happen *after* NEq check in build pass 3.
-        // Let's verify the final DSU state. NEq check happens *before* ValueOf-based union.
+        // The DSU `union` operation based on ValueOf happens *after* the NEq set check
+        // within the same pass, so the NEq should prevent the union.
         assert!(
             !indexes.are_equal(&key_a, &key_b),
             "Explicit NEq should prevent DSU union from ValueOf"
@@ -592,7 +599,7 @@ mod tests {
         assert!(indexes.get_exact_statement(&pod_a, &stmt1));
         assert!(indexes.contains_exact_statement(&pod_a, &stmt1));
 
-        assert!(indexes.get_exact_statement(&pod_b, &stmt2)); // Check correct origin pod
+        assert!(indexes.get_exact_statement(&pod_b, &stmt2)); // Correct origin pod
         assert!(indexes.contains_exact_statement(&pod_b, &stmt2));
         assert!(!indexes.get_exact_statement(&pod_a, &stmt2)); // Should not exist for pod_a
 
@@ -684,7 +691,7 @@ mod tests {
             .lookup_statements_by_arg(&pred_eq, 0, &lookup_val_a1)
             .unwrap();
         assert_eq!(results.len(), 1);
-        assert!(results.contains(&(pod_a, stmt_eq_a1_b2.clone()))); // Check Statement
+        assert!(results.contains(&(pod_a, stmt_eq_a1_b2.clone())));
 
         // Lookup Equal where arg 1 is ak_b1
         let lookup_val_b1 = StatementArg::Key(ak_b1.clone());
@@ -692,14 +699,14 @@ mod tests {
             .lookup_statements_by_arg(&pred_eq, 1, &lookup_val_b1)
             .unwrap();
         assert_eq!(results.len(), 1);
-        assert!(results.contains(&(pod_b, stmt_eq_c1_b1.clone()))); // Check Statement
+        assert!(results.contains(&(pod_b, stmt_eq_c1_b1.clone())));
 
         // Lookup Lt where arg 0 is ak_a1
         let results = indexes
             .lookup_statements_by_arg(&pred_lt, 0, &lookup_val_a1)
             .unwrap();
         assert_eq!(results.len(), 1);
-        assert!(results.contains(&(pod_c, stmt_lt_a1_b1.clone()))); // Check Statement
+        assert!(results.contains(&(pod_c, stmt_lt_a1_b1.clone())));
 
         // Lookup ValueOf where arg 1 (the value) is int_val(10)
         let lookup_val_10 = StatementArg::Literal(int_val(10));
@@ -707,8 +714,8 @@ mod tests {
             .lookup_statements_by_arg(&pred_val, 1, &lookup_val_10)
             .unwrap();
         assert_eq!(results.len(), 2);
-        assert!(results.contains(&(pod_a, stmt_vo_a1.clone()))); // Check Statement
-        assert!(results.contains(&(pod_c, stmt_vo_c1.clone()))); // Check Statement
+        assert!(results.contains(&(pod_a, stmt_vo_a1.clone())));
+        assert!(results.contains(&(pod_c, stmt_vo_c1.clone())));
 
         // Lookup non-existent value
         let lookup_val_99 = StatementArg::Literal(int_val(99));
@@ -719,11 +726,11 @@ mod tests {
         // Lookup wrong index
         assert!(indexes
             .lookup_statements_by_arg(&pred_eq, 2, &lookup_val_a1)
-            .is_none()); // Equal only has 2 args (0, 1)
+            .is_none()); // Equal only has 2 args (index 0, 1)
 
         // Lookup wrong predicate
         assert!(indexes
             .lookup_statements_by_arg(&pred_lt, 0, &lookup_val_b1)
-            .is_none()); // Lt(A1, B1) exists, not Lt(B1, ...)
+            .is_none()); // Lt(A1, B1) exists, Lt(B1, ...) does not in the facts.
     }
 }

@@ -1,12 +1,9 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     middleware,
     middleware::{
-        AnchoredKey, KeyOrWildcard, NativeOperation, NativePredicate, OperationType, PodId,
+        AnchoredKey, KeyOrWildcard, NativeOperation, NativePredicate, OperationType, Params, PodId,
         Predicate, Statement, StatementArg, StatementTmpl, StatementTmplArg, Wildcard,
     },
     prover::{
@@ -32,15 +29,13 @@ use pruning::{get_wildcards_from_tmpl_arg, prune_domains_after_proof, prune_init
 use search::perform_search;
 use types::{Constraint, Domain, ExpectedType};
 
-use crate::middleware::{
-    statement::WildcardValue,
-    CustomPredicate, // Make sure this is imported if needed by extract_implied_pairs later
-};
 use crate::prover::types::ConcreteValue;
 
 // Represents the overall state of the constraint solver
 #[derive(Clone)]
 pub struct SolverState {
+    /// Middleware parameters used for configuration (e.g., field sizes).
+    pub params: Params,
     // Store Domain and its inferred ExpectedType together
     pub domains: HashMap<Wildcard, (Domain, ExpectedType)>,
     // Store structural constraints derived from templates
@@ -56,9 +51,10 @@ pub struct SolverState {
 }
 
 impl SolverState {
-    /// Creates a new, empty SolverState.
-    pub fn new() -> Self {
+    /// Creates a new, empty SolverState with the given parameters.
+    pub fn new(params: Params) -> Self {
         Self {
+            params, // Store provided params
             domains: HashMap::new(),
             constraints: Vec::new(),
             proof_chains: HashMap::new(),
@@ -74,23 +70,17 @@ impl SolverState {
     ) -> Option<std::sync::Arc<crate::middleware::CustomPredicateBatch>> {
         None // Placeholder implementation
     }
-
-    // Placeholder: Helper to get Params, assuming they might be stored or accessible
-    // TODO: Implement this properly if needed by to_fields calls within proof.rs
-    fn get_params(&self) -> crate::middleware::Params {
-        crate::middleware::Params::default() // Placeholder
-    }
 }
 
 pub fn solve(
-    request_templates: &[StatementTmpl],
-    indexes: &ProverIndexes,
-    custom_definitions: &CustomDefinitions,
-) -> Result<ProofSolution, ProverError> {
-    // 1. Initialization (Identify wildcards, initial domains, static constraints)
+    request_templates: &[middleware::StatementTmpl],
+    indexes: &super::indexing::ProverIndexes,
+    custom_definitions: &super::types::CustomDefinitions,
+) -> Result<super::types::ProofSolution, super::error::ProverError> {
+    // Initialize the solver state. It will use the params stored within the indexes.
     let mut state = initialize_solver_state(request_templates, indexes, custom_definitions)?;
 
-    // NEW: Extract implied equality/inequality pairs from templates
+    // Extract implied equality/inequality pairs from templates
     let (equality_pairs, inequality_pairs) = extract_implied_pairs(request_templates);
 
     // Keep the original templates accessible for candidate generation
@@ -278,6 +268,7 @@ pub fn solve(
         // Re-generate the target statement based on final bindings
         // Use the final bindings derived from the potentially pruned state domains
         let temp_state_for_generation = SolverState {
+            params: state.params.clone(), // Use params from the final state
             domains: final_bindings
                 .iter()
                 .map(|(wc, cv)| {
@@ -332,7 +323,7 @@ pub fn solve(
 
 // --- Helper function to extract implied pairs --- START ---
 fn extract_implied_pairs(
-    request_templates: &[StatementTmpl],
+    request_templates: &[middleware::StatementTmpl],
 ) -> (Vec<(Wildcard, Wildcard)>, Vec<(Wildcard, Wildcard)>) {
     let mut equality_pairs = Vec::new();
     let mut inequality_pairs = Vec::new();
@@ -394,7 +385,7 @@ fn extract_implied_pairs(
 /// succeeding only if all involved wildcards have singleton domains.
 // Make this pub(super) so it can be used by search.rs
 pub(super) fn try_generate_concrete_candidate_and_bindings(
-    tmpl: &StatementTmpl,
+    tmpl: &middleware::StatementTmpl,
     state: &SolverState,
 ) -> Result<Option<(Statement, HashMap<Wildcard, ConcreteValue>)>, ProverError> {
     // Output includes bindings
@@ -430,27 +421,28 @@ pub(super) fn try_generate_concrete_candidate_and_bindings(
 /// Helper to check domain size and collect singleton bindings for a template argument.
 /// Returns Ok(true) if all involved wildcards are singletons, Ok(false) otherwise.
 pub(super) fn collect_singleton_bindings(
-    arg_tmpl: &StatementTmplArg,
+    arg_tmpl: &middleware::StatementTmplArg,
     state: &SolverState,
     bindings: &mut HashMap<Wildcard, ConcreteValue>,
 ) -> Result<bool, ProverError> {
     match arg_tmpl {
-        StatementTmplArg::Key(wc_pod, key_or_wc) => {
+        middleware::StatementTmplArg::Key(wc_pod, key_or_wc) => {
             if !check_and_bind_singleton(wc_pod, state, bindings)? {
                 return Ok(false);
             }
-            if let KeyOrWildcard::Wildcard(wc_key) = key_or_wc {
+            if let middleware::KeyOrWildcard::Wildcard(wc_key) = key_or_wc {
                 if !check_and_bind_singleton(wc_key, state, bindings)? {
                     return Ok(false);
                 }
             }
         }
-        StatementTmplArg::WildcardLiteral(wc_val) => {
+        middleware::StatementTmplArg::WildcardLiteral(wc_val) => {
             if !check_and_bind_singleton(wc_val, state, bindings)? {
                 return Ok(false);
             }
         }
-        StatementTmplArg::Literal(_) | StatementTmplArg::None => { /* No wildcards */ }
+        middleware::StatementTmplArg::Literal(_) | middleware::StatementTmplArg::None => { /* No wildcards */
+        }
     }
     Ok(true)
 }
@@ -484,12 +476,12 @@ pub(super) fn check_and_bind_singleton(
 /// Helper to construct a concrete StatementArg from a template argument using bindings.
 /// Note: Returns Ok(None) for StatementTmplArg::None
 pub(super) fn construct_concrete_arg(
-    arg_tmpl: &StatementTmplArg,
+    arg_tmpl: &middleware::StatementTmplArg,
     bindings: &HashMap<Wildcard, ConcreteValue>,
 ) -> Result<Option<StatementArg>, ProverError> {
     // Return Option<StatementArg>
     match arg_tmpl {
-        StatementTmplArg::Key(wc_pod, key_or_wc) => {
+        middleware::StatementTmplArg::Key(wc_pod, key_or_wc) => {
             let pod_id = match bindings.get(wc_pod) {
                 Some(ConcreteValue::Pod(id)) => *id,
                 _ => {
@@ -500,8 +492,8 @@ pub(super) fn construct_concrete_arg(
                 }
             };
             let key = match key_or_wc {
-                KeyOrWildcard::Key(k) => k.clone(),
-                KeyOrWildcard::Wildcard(wc_key) => match bindings.get(wc_key) {
+                middleware::KeyOrWildcard::Key(k) => k.clone(),
+                middleware::KeyOrWildcard::Wildcard(wc_key) => match bindings.get(wc_key) {
                     Some(ConcreteValue::Key(k_name)) => middleware::Key::new(k_name.clone()),
                     _ => {
                         return Err(ProverError::Internal(format!(
@@ -514,7 +506,7 @@ pub(super) fn construct_concrete_arg(
             // Construct AnchoredKey directly
             Ok(Some(StatementArg::Key(AnchoredKey::new(pod_id, key)))) // Use StatementArg::Key
         }
-        StatementTmplArg::WildcardLiteral(wc_val) => {
+        middleware::StatementTmplArg::WildcardLiteral(wc_val) => {
             match bindings.get(wc_val) {
                 Some(ConcreteValue::Val(v)) => Ok(Some(StatementArg::Literal(v.clone()))), // Use StatementArg::Literal
                 _ => Err(ProverError::Internal(format!(
@@ -523,8 +515,8 @@ pub(super) fn construct_concrete_arg(
                 ))),
             }
         }
-        StatementTmplArg::Literal(v) => Ok(Some(StatementArg::Literal(v.clone()))), // Use StatementArg::Literal
-        StatementTmplArg::None => Ok(None),
+        middleware::StatementTmplArg::Literal(v) => Ok(Some(StatementArg::Literal(v.clone()))), // Use StatementArg::Literal
+        middleware::StatementTmplArg::None => Ok(None),
     }
 }
 

@@ -8,12 +8,11 @@ pub enum ProverError {
     Io(#[from] std::io::Error),
 
     #[error("Serialization error: {0}")]
-    Serialization(String), // Simplified example
+    Serialization(String),
 
     #[error("Frontend error during POD building: {0}")]
-    FrontendError(#[from] frontend::Error), // Add variant for frontend errors
+    FrontendError(#[from] frontend::Error),
 
-    // Add necessary variants
     #[error("Feature not implemented: {0}")]
     NotImplemented(String),
 
@@ -31,5 +30,4 @@ pub enum ProverError {
 
     #[error("An unexpected error occurred: {0}")]
     Other(String),
-    // Add other specific error types as needed
 }

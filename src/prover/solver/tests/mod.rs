@@ -7,10 +7,7 @@ pub mod pruning;
 pub mod search;
 
 // --- Common Test Helper Functions ---
-use super::{
-    types::{Constraint, ExpectedType},
-    SolverState,
-};
+use super::{types::ExpectedType, SolverState};
 use crate::{
     middleware::{
         self,
@@ -21,7 +18,7 @@ use crate::{
     prover::{
         error::ProverError,
         indexing::ProverIndexes,
-        types::{ConcreteValue, CustomDefinitions, ProofChain},
+        types::{ConcreteValue, CustomDefinitions},
     },
 };
 
@@ -68,6 +65,7 @@ pub(crate) fn solver_state_with_domains(
         constraints: vec![],
         proof_chains: HashMap::new(),
         scope: HashSet::new(),
+        params: middleware::Params::default(),
     }
 }
 
