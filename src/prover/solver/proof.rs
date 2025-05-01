@@ -996,7 +996,7 @@ fn get_wildcards_from_tmpl_arg(arg: &StatementTmplArg) -> Vec<Wildcard> {
 // Helper function to build a concrete statement from a template and bindings
 // This needs access to the full solver state for private wildcards.
 // TODO: Refactor this or the one in `mod.rs` to be reusable.
-fn build_concrete_statement_from_bindings<'a>(
+fn build_concrete_statement_from_bindings(
     tmpl: &crate::middleware::StatementTmpl,
     _public_args: &[WildcardValue], // Values provided to the target Custom statement (Might not be needed directly here)
     // Map from public WC index to its concrete value from target statement
@@ -1005,7 +1005,7 @@ fn build_concrete_statement_from_bindings<'a>(
     state: &SolverState,
     // NEW: Pass the context of the predicate containing this template
     outer_context: Option<(
-        &'a crate::middleware::CustomPredicate, // Added lifetime 'a
+        &crate::middleware::CustomPredicate, // Added lifetime 'a
         std::sync::Arc<crate::middleware::CustomPredicateBatch>,
     )>,
 ) -> Result<Statement, ProverError> {
