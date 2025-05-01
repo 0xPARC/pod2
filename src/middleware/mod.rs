@@ -16,7 +16,7 @@ pub mod custom;
 pub mod error;
 pub mod operation;
 pub mod serialization;
-mod statement;
+pub mod statement;
 use std::{any::Any, collections::HashMap, fmt};
 
 pub use basetypes::*;

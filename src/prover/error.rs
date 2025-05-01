@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use crate::frontend; // Import frontend error
+
 #[derive(Error, Debug)]
 pub enum ProverError {
     #[error("I/O error: {0}")]
@@ -7,6 +9,9 @@ pub enum ProverError {
 
     #[error("Serialization error: {0}")]
     Serialization(String), // Simplified example
+
+    #[error("Frontend error during POD building: {0}")]
+    FrontendError(#[from] frontend::Error), // Add variant for frontend errors
 
     // Add necessary variants
     #[error("Feature not implemented: {0}")]
