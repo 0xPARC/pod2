@@ -310,6 +310,7 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     // Convenience methods for checking values.
     /// Checks whether `xs` is right-padded with 0s so as to represent a `Value`.
     fn statement_arg_is_value(&mut self, arg: &StatementArgTarget) -> BoolTarget;
+
     /// Checks whether `x` is an i64, which involves checking that it
     /// consists of two `u32` limbs.
     fn assert_i64(&mut self, x: ValueTarget);
