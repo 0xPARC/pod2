@@ -993,7 +993,6 @@ pub mod tests {
     }
 
     #[test]
-    #[should_panic]
     fn test_false_st() {
         let params = Params::default();
         let mut builder = SignedPodBuilder::new(&params);
@@ -1012,10 +1011,28 @@ pub mod tests {
         builder.pub_op(op!(gt, (&pod, "num"), 5)).unwrap();
 
         let mut prover = MockProver {};
-        let false_pod = builder.prove(&mut prover, &params).unwrap();
+        let result = builder.prove(&mut prover, &params);
 
         println!("{}", builder);
-        println!("{}", false_pod);
+        // Assert that proving fails and returns an error
+        assert!(
+            result.is_err(),
+            "Expected proving to fail for unsatisfiable statement"
+        );
+        match result.err().unwrap() {
+            Error::Backend(backend_err) => {
+                // MockProver returns Error::Backend upon failure.
+                // A real prover might propagate a specific ProverError (e.g., Unsatisfiable)
+                // potentially wrapped differently.
+                println!(
+                    "Got expected backend error from MockProver: {}",
+                    backend_err
+                );
+                // Optionally check the error message if the backend provides details
+                // assert!(backend_err.to_string().contains("Unsatisfiable"));
+            }
+            e => panic!("Expected Error::Backend from MockProver, got {:?}", e),
+        }
     }
 
     #[test]

@@ -161,14 +161,14 @@ fn parse_template_and_generate_constraints(
         }
         Predicate::Custom(custom_ref) => {
             let predicate_key = Predicate::Custom(custom_ref.clone()).to_fields(&indexes.params);
-            if let Some(custom_pred) = custom_definitions.get(&predicate_key) {
-                if custom_pred.conjunction {
+            if let Some((custom_pred_def, _batch_arc)) = custom_definitions.get(&predicate_key) {
+                if custom_pred_def.conjunction {
                     // --- AND Predicate Handling ---
 
                     // 1. Identify Inner Wildcards (Public vs. Private)
                     let inner_wildcards =
-                        get_wildcards_from_definition_stmts(&custom_pred.statements);
-                    let public_args_count = custom_pred.args_len;
+                        get_wildcards_from_definition_stmts(&custom_pred_def.statements);
+                    let public_args_count = custom_pred_def.args_len;
 
                     // 2. TODO: Create the *next level* alias map (`next_alias_map`)
                     // This is complex: map inner public wildcards (index < args_len)
@@ -190,7 +190,7 @@ fn parse_template_and_generate_constraints(
                     }
 
                     // 4. Recursively Parse Internal Templates
-                    for internal_tmpl in &custom_pred.statements {
+                    for internal_tmpl in &custom_pred_def.statements {
                         parse_template_and_generate_constraints(
                             internal_tmpl,
                             // tmpl.args(), // Pass caller args down? Or rely on alias map?
@@ -206,7 +206,7 @@ fn parse_template_and_generate_constraints(
                     // Do nothing during initialization, constraints are handled during proof search.
                     println!(
                         "Skipping OR predicate constraint generation during init: {}",
-                        custom_pred.name
+                        custom_pred_def.name
                     );
                 }
             } else {

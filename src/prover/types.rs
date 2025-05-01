@@ -1,15 +1,20 @@
 use std::{
     collections::{HashMap, HashSet},
     hash::Hash,
+    sync::Arc,
 };
 
 // Use publicly exported types from the middleware module.
-use crate::middleware::{self, OperationType, PodId, Statement, Value, Wildcard, F};
+use crate::middleware::{
+    self, CustomPredicate, CustomPredicateBatch, OperationType, PodId, Statement, Value, Wildcard,
+    F,
+};
 
 /// Type alias for mapping custom predicate references to their definitions.
 /// The key is the canonical representation (Vec<F>) derived from the predicate.
+/// The value is a tuple containing the predicate definition and an Arc to its batch.
 /// Based on prover.md Stage 1.
-pub type CustomDefinitions = HashMap<Vec<F>, crate::middleware::CustomPredicate>;
+pub type CustomDefinitions = HashMap<Vec<F>, (CustomPredicate, Arc<CustomPredicateBatch>)>;
 
 /// Represents the initial facts provided to the prover, typically derived from input PODs.
 /// Each fact is a `Statement` associated with the `PodId` of its origin.
