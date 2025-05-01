@@ -1,6 +1,6 @@
 use crate::{
     backends::plonky2::mock::signedpod::MockSigner,
-    frontend::{Error, Result, SignedPod, SignedPodBuilder},
+    frontend::{Result, SignedPod, SignedPodBuilder},
     middleware::{Params, Pod, PodId, Statement, Value},
     prover::indexing::ProverIndexes,
 };
@@ -29,9 +29,8 @@ pub fn create_test_signed_pod(
     let mut signer = MockSigner {
         pk: signer_pk.into(),
     };
-    builder.sign(&mut signer).map_err(Error::from)
-    // Convert backend error to frontend::Error if necessary,
-    // assuming builder.sign returns a compatible Result type or we use .map_err
+    builder.sign(&mut signer) // Convert backend error to frontend::Error if necessary,
+                              // assuming builder.sign returns a compatible Result type or we use .map_err
 }
 
 /// Creates a populated `ProverIndexes` instance from a list of test Pods.
@@ -44,7 +43,7 @@ pub fn create_test_signed_pod(
 /// # Returns
 ///
 /// A `ProverIndexes` instance populated with the public statements from the input pods.
-pub fn setup_prover_indexes<'a>(params: Params, pods: &[&'a dyn Pod]) -> ProverIndexes {
+pub fn setup_prover_indexes(params: Params, pods: &[&dyn Pod]) -> ProverIndexes {
     let all_facts: Vec<(PodId, Statement)> = pods
         .iter()
         .flat_map(|pod| {

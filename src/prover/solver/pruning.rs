@@ -510,7 +510,6 @@ pub(super) fn prune_domains_after_proof(
                         // Find the concrete value this wildcard bound to
                         if let Some(concrete_value) = bindings.get(&wc_val) {
                             if let ConcreteValue::Val(bound_val) = concrete_value {
-                                // Prune the domain of wc_val to only this bound_val
                                 if let Some((domain, _)) = state.domains.get_mut(&wc_val) {
                                     let initial_len = domain.len();
                                     let target_cv = ConcreteValue::Val(bound_val.clone());
@@ -1326,15 +1325,12 @@ fn prune_container_domain_by_value_existence(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashSet;
 
     use super::*;
     use crate::{
         middleware::{self, Key, PodId},
-        prover::{
-            solver::tests::{ak, cv_key, cv_pod, pod, solver_state_with_domains, val}, // Use helpers from main tests
-            types::CustomDefinitions, // Use ConcreteValue from main types
-        },
+        prover::solver::tests::{ak, cv_key, cv_pod, pod, solver_state_with_domains, val, wc},
     };
 
     // Helper to create ProverIndexes with specific base facts
@@ -1345,13 +1341,11 @@ mod tests {
 
     #[test]
     fn test_prune_wildcard_origin_interaction() {
-        let w_pod = super::super::tests::wc("A", 0); // Use wc helper from solver::tests
-        let w_key = super::super::tests::wc("K", 0);
+        let w_pod = wc("A", 0);
+        let w_key = wc("K", 0);
         let p1 = pod(1);
         let p2 = pod(2);
         let k_foo = Key::new("foo".to_string());
-        let k_bar = Key::new("bar".to_string());
-        let k_baz = Key::new("baz".to_string());
 
         // Facts: p1 has keys "foo", "bar". p2 has key "baz".
         let facts = vec![

@@ -55,11 +55,8 @@ fn get_wildcards_from_definition_stmts(statements: &[StatementTmpl]) -> HashSet<
             }
         }
         // Consider wildcards within nested custom predicate calls if needed
-        match &stmt_tmpl.pred {
-            Predicate::Custom(custom_ref) => {
-                // We currently parse recursively, so nested wildcards are handled there.
-            }
-            _ => {}
+        if let Predicate::Custom(custom_ref) = &stmt_tmpl.pred {
+            // We currently parse recursively, so nested wildcards are handled there.
         }
     }
     wildcards

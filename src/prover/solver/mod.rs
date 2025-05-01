@@ -3,13 +3,12 @@ use std::collections::{HashMap, HashSet};
 use crate::{
     middleware,
     middleware::{
-        AnchoredKey, KeyOrWildcard, NativeOperation, NativePredicate, OperationType, Params, PodId,
-        Predicate, Statement, StatementArg, StatementTmpl, StatementTmplArg, Wildcard,
+        AnchoredKey, NativeOperation, NativePredicate, OperationType, Params, PodId,
+        Predicate, Statement, StatementArg, Wildcard,
     },
     prover::{
         error::ProverError,
-        indexing::ProverIndexes,
-        types::{CustomDefinitions, ProofChain, ProofSolution},
+        types::{ProofChain, ProofSolution},
     },
 };
 
@@ -340,7 +339,7 @@ fn extract_implied_pairs(
             let wcs2 = get_wildcards_from_tmpl_arg(&tmpl.args[1]);
 
             // Helper closure to add pairs for a specific type (Pod, Key, Val)
-            let mut add_pairs =
+            let add_pairs =
                 |wc_list1: &[Wildcard],
                  wc_list2: &[Wildcard],
                  target_list: &mut Vec<(Wildcard, Wildcard)>| {
