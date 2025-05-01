@@ -64,6 +64,15 @@ impl ValueTarget {
     }
 }
 
+/// StatementArgTarget to ValueTarget coercion. Make sure to check
+/// that the arg is a value using the `statement_arg_is_value` method
+/// first!
+impl From<&StatementArgTarget> for ValueTarget {
+    fn from(st_arg: &StatementArgTarget) -> Self {
+        ValueTarget::from_slice(&st_arg.elements[..VALUE_SIZE])
+    }
+}
+
 #[derive(Clone)]
 pub struct StatementArgTarget {
     pub elements: [Target; STATEMENT_ARG_F_LEN],

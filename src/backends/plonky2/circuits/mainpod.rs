@@ -76,17 +76,17 @@ impl OperationVerifyGadget {
          * - a Lt statement.
          * We form the type check targets here and use them where necessary.
          */
-        let [args_are_two_valueofs, _args_are_three_valueofs] = {
-            let valueof_checks = resolved_op_args[..3]
-                .iter()
-                .map(|op_arg| {
-                    op_arg.has_native_type(builder, &self.params, NativePredicate::ValueOf)
-                })
-                .collect::<Vec<_>>();
-            let two_valueofs = builder.and(valueof_checks[0], valueof_checks[1]);
-            let three_valueofs = builder.and(two_valueofs, valueof_checks[2]);
-            [two_valueofs, three_valueofs]
-        };
+        let arg_is_valueof = resolved_op_args[..3]
+            .iter()
+            .map(|op_arg| {
+                let st_type_ok =
+                    op_arg.has_native_type(builder, &self.params, NativePredicate::ValueOf);
+                let value_arg_ok = builder.statement_arg_is_value(&op_arg.args[1]);
+                builder.and(st_type_ok, value_arg_ok)
+            })
+            .collect::<Vec<_>>();
+        let args_are_two_valueofs = builder.and(arg_is_valueof[0], arg_is_valueof[1]);
+        let _args_are_three_valueofs = builder.and(args_are_two_valueofs, arg_is_valueof[2]);
         let _args_are_two_equals = {
             let equal_checks = resolved_op_args[..2]
                 .iter()
@@ -170,16 +170,8 @@ impl OperationVerifyGadget {
     ) -> BoolTarget {
         let op_code_ok = op.has_native_type(builder, NativeOperation::NotContainsFromEntries);
 
-        // The values embedded in the op args must be values, i.e. the
-        // last `STATEMENT_ARG_F_LEN - VALUE_SIZE` slots of each being
-        // 0.
-        let merkle_root_arg = &resolved_op_args[0].args[1];
-        let key_arg = &resolved_op_args[1].args[1];
-        let op_arg_range_checks = [
-            builder.statement_arg_is_value(merkle_root_arg),
-            builder.statement_arg_is_value(key_arg),
-        ];
-        let op_arg_range_ok = builder.all(op_arg_range_checks);
+        let merkle_root_value = ValueTarget::from(&resolved_op_args[0].args[1]);
+        let key_value = ValueTarget::from(&resolved_op_args[1].args[1]);
 
         // Check Merkle proof (verified elsewhere) against op args.
         let merkle_proof_checks = [
@@ -189,13 +181,10 @@ impl OperationVerifyGadget {
             builder.not(resolved_merkle_claim.existence),
             /* ...for the root-key pair in the resolved op args. */
             builder.is_equal_slice(
-                &merkle_root_arg.elements[..VALUE_SIZE],
+                &merkle_root_value.elements,
                 &resolved_merkle_claim.root.elements,
             ),
-            builder.is_equal_slice(
-                &key_arg.elements[..VALUE_SIZE],
-                &resolved_merkle_claim.key.elements,
-            ),
+            builder.is_equal_slice(&key_value.elements, &resolved_merkle_claim.key.elements),
         ];
 
         let merkle_proof_ok = builder.all(merkle_proof_checks);
@@ -211,7 +200,7 @@ impl OperationVerifyGadget {
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-        builder.all([op_code_ok, op_arg_range_ok, merkle_proof_ok, st_ok])
+        builder.all([op_code_ok, merkle_proof_ok, st_ok])
     }
 
     fn eval_eq_from_entries(
@@ -223,19 +212,9 @@ impl OperationVerifyGadget {
     ) -> BoolTarget {
         let op_code_ok = op.has_native_type(builder, NativeOperation::EqualFromEntries);
 
-        // The values embedded in the op args must match, the last
-        // `STATEMENT_ARG_F_LEN - VALUE_SIZE` slots of each being 0.
-        let arg1_value = &resolved_op_args[0].args[1];
-        let arg2_value = &resolved_op_args[1].args[1];
-        let op_arg_range_checks = [
-            builder.statement_arg_is_value(arg1_value),
-            builder.statement_arg_is_value(arg2_value),
-        ];
-        let op_arg_range_ok = builder.all(op_arg_range_checks);
-        let op_args_eq = builder.is_equal_slice(
-            &arg1_value.elements[..VALUE_SIZE],
-            &arg2_value.elements[..VALUE_SIZE],
-        );
+        let arg1_value = ValueTarget::from(&resolved_op_args[0].args[1]);
+        let arg2_value = ValueTarget::from(&resolved_op_args[1].args[1]);
+        let op_args_eq = builder.is_equal_slice(&arg1_value.elements, &arg2_value.elements);
 
         let arg1_key = resolved_op_args[0].args[0].clone();
         let arg2_key = resolved_op_args[1].args[0].clone();
@@ -247,7 +226,7 @@ impl OperationVerifyGadget {
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-        builder.all([op_code_ok, op_arg_range_ok, op_args_eq, st_ok])
+        builder.all([op_code_ok, op_args_eq, st_ok])
     }
 
     /// Carries out the checks necessary for LtFromEntries and
@@ -274,29 +253,13 @@ impl OperationVerifyGadget {
         };
         let op_st_code_ok = builder.or(lt_op_st_code_ok, lteq_op_st_code_ok);
 
-        // The values embedded in the op args must satisfy `<=`, the
-        // last `STATEMENT_ARG_F_LEN - VALUE_SIZE` slots of each being
-        // 0.
-        let arg1_value = &resolved_op_args[0].args[1];
-        let arg2_value = &resolved_op_args[1].args[1];
-        let op_arg_range_checks = [arg1_value, arg2_value]
-            .into_iter()
-            .map(|x| builder.statement_arg_is_value(x))
-            .collect::<Vec<_>>();
-        let op_arg_range_ok = builder.all(op_arg_range_checks);
+        let arg1_value = ValueTarget::from(&resolved_op_args[0].args[1]);
+        let arg2_value = ValueTarget::from(&resolved_op_args[1].args[1]);
 
         // If we are not dealing with the right op & statement types,
         // replace args with dummy values in the following checks.
-        let value1 = builder.select_value(
-            op_st_code_ok,
-            ValueTarget::from_slice(&arg1_value.elements[..VALUE_SIZE]),
-            zero,
-        );
-        let value2 = builder.select_value(
-            op_st_code_ok,
-            ValueTarget::from_slice(&arg2_value.elements[..VALUE_SIZE]),
-            one,
-        );
+        let value1 = builder.select_value(op_st_code_ok, arg1_value, zero);
+        let value2 = builder.select_value(op_st_code_ok, arg2_value, one);
 
         // Range check
         builder.assert_i64(value1);
@@ -331,7 +294,7 @@ impl OperationVerifyGadget {
                 .collect::<Vec<_>>(),
         );
 
-        builder.all([op_st_code_ok, op_arg_range_ok, st_args_ok])
+        builder.all([op_st_code_ok, st_args_ok])
     }
 
     fn eval_none(
