@@ -29,6 +29,8 @@ pub(super) fn perform_search(
     request_templates: &[StatementTmpl], // <-- Add original templates
     indexes: &ProverIndexes,
     custom_definitions: &CustomDefinitions, // <-- Use this now
+    equality_pairs: &[(Wildcard, Wildcard)],
+    inequality_pairs: &[(Wildcard, Wildcard)],
 ) -> Result<SolverState, ProverError> {
     println!("Entering DFS Search...");
 
@@ -139,7 +141,12 @@ pub(super) fn perform_search(
         *target_domain = HashSet::from([value.clone()]); // Assign the value
 
         // 4. Propagate constraints in the hypothetical state
-        match prune_initial_domains(&mut hypothetical_state, indexes) {
+        match prune_initial_domains(
+            &mut hypothetical_state,
+            indexes,
+            equality_pairs,
+            inequality_pairs,
+        ) {
             Ok(_) => {
                 // Propagation succeeded, no immediate contradiction
                 println!("      Propagation succeeded.");
@@ -157,6 +164,8 @@ pub(super) fn perform_search(
                     request_templates,
                     indexes,
                     custom_definitions,
+                    equality_pairs,
+                    inequality_pairs,
                 ) {
                     // Pass custom_definitions
                     Ok(solved_state) => {

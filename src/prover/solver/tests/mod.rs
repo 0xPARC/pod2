@@ -1,0 +1,112 @@
+#![cfg(test)]
+use std::collections::{HashMap, HashSet};
+
+// Declare test modules
+pub mod proof;
+pub mod pruning;
+pub mod search;
+
+// --- Common Test Helper Functions ---
+use super::{
+    types::{Constraint, ExpectedType},
+    SolverState,
+};
+use crate::{
+    middleware::{
+        self,
+        containers::{Array, Dictionary, Set},
+        AnchoredKey, Key, KeyOrWildcard, NativeOperation, NativePredicate, OperationType, PodId,
+        Predicate, Statement, StatementTmpl, StatementTmplArg, Value, Wildcard,
+    },
+    prover::{
+        error::ProverError,
+        indexing::ProverIndexes,
+        types::{ConcreteValue, CustomDefinitions, ProofChain},
+    },
+};
+
+pub(crate) fn wc(name: &str, index: usize) -> Wildcard {
+    Wildcard::new(name.to_string(), index)
+}
+
+pub(crate) fn pod(id: u64) -> PodId {
+    PodId(middleware::hash_str(&id.to_string()))
+}
+
+pub(crate) fn key(name: &str) -> Key {
+    Key::new(name.to_string())
+}
+
+pub(crate) fn val(v: i64) -> Value {
+    Value::from(v)
+}
+
+pub(crate) fn ak(pod_id: u64, key_name: &str) -> AnchoredKey {
+    AnchoredKey::new(pod(pod_id), key(key_name))
+}
+
+pub(crate) fn cv_pod(id: u64) -> ConcreteValue {
+    ConcreteValue::Pod(pod(id))
+}
+
+pub(crate) fn cv_key(name: &str) -> ConcreteValue {
+    ConcreteValue::Key(name.to_string())
+}
+
+pub(crate) fn cv_val(v: i64) -> ConcreteValue {
+    ConcreteValue::Val(Value::from(v))
+}
+
+pub(crate) fn solver_state_with_domains(
+    domains: Vec<(Wildcard, HashSet<ConcreteValue>, ExpectedType)>,
+) -> SolverState {
+    SolverState {
+        domains: domains
+            .into_iter()
+            .map(|(wc, dom, et)| (wc, (dom, et)))
+            .collect(),
+        constraints: vec![],
+        proof_chains: HashMap::new(),
+        scope: HashSet::new(),
+    }
+}
+
+pub(crate) fn dummy_prover_indexes() -> ProverIndexes {
+    ProverIndexes::new(middleware::Params::default())
+}
+
+// Helper to create ProverIndexes with specific base facts for testing try_prove_statement
+pub(crate) fn setup_indexes_with_facts(facts: Vec<(PodId, Statement)>) -> ProverIndexes {
+    let params = middleware::Params::default();
+    // Use the main build method which populates all necessary indexes, including value_map
+    ProverIndexes::build(params, &facts)
+}
+
+// --- START: Container Helpers ---
+pub(crate) fn dict_val(kvs: Vec<(&str, i64)>) -> Value {
+    let map: HashMap<Key, Value> = kvs.into_iter().map(|(k, v)| (key(k), val(v))).collect();
+    Value::from(Dictionary::new(map).unwrap())
+}
+
+pub(crate) fn cv_dict(kvs: Vec<(&str, i64)>) -> ConcreteValue {
+    ConcreteValue::Val(dict_val(kvs))
+}
+
+pub(crate) fn set_val(vals: Vec<i64>) -> Value {
+    let set: HashSet<Value> = vals.into_iter().map(val).collect();
+    Value::from(Set::new(set).unwrap())
+}
+
+pub(crate) fn cv_set(vals: Vec<i64>) -> ConcreteValue {
+    ConcreteValue::Val(set_val(vals))
+}
+
+pub(crate) fn array_val(vals: Vec<i64>) -> Value {
+    let array: Vec<Value> = vals.into_iter().map(val).collect();
+    Value::from(Array::new(array).unwrap())
+}
+
+pub(crate) fn cv_array(vals: Vec<i64>) -> ConcreteValue {
+    ConcreteValue::Val(array_val(vals))
+}
+// --- END: Container Helpers ---

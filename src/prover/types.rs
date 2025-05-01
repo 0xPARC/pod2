@@ -6,7 +6,13 @@ use std::{
 // Use publicly exported types from middleware
 use crate::middleware::{self, OperationType, PodId, Statement, Value, Wildcard, F};
 
-pub type CustomDefinitions = HashMap<Vec<F>, middleware::CustomPredicate>;
+/// Type alias for mapping custom predicate references to their definitions.
+// pub type CustomDefinitions = HashMap<CustomPredicateRef, CustomPredicate>;
+
+/// Type alias for mapping canonical custom predicate identifiers (Vec<F>)
+/// to their definitions. Based on prover.md Stage 1.
+pub type CustomDefinitions = HashMap<Vec<F>, crate::middleware::CustomPredicate>;
+
 pub type InitialFacts = Vec<(PodId, middleware::Statement)>;
 
 /// The overall result of the translation stage.
@@ -60,3 +66,9 @@ pub struct ProofSolution {
     /// Keyed by the derived middleware::Statement.
     pub proof_chains: HashMap<Statement, ProofChain>, // Use middleware::Statement
 }
+
+// Remove incorrect re-exports - these types are defined in this module
+// pub use crate::middleware::ProofSolution; // Re-export if needed
+// pub use crate::middleware::ProofStep; // Re-export if needed
+// pub use crate::middleware::ProofChain; // Re-export if needed
+// pub use crate::middleware::ConcreteValue; // Re-export if needed

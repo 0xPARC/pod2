@@ -26,6 +26,11 @@ pub enum Constraint {
         key_wildcard: super::Wildcard, // Use super::Wildcard
         literal_pod_id: PodId,
     },
+    // e.g., ?A[?Y] constraint relating ?Y to ?A
+    WildcardOrigin {
+        key_wildcard: super::Wildcard,
+        pod_wildcard: super::Wildcard,
+    },
     // e.g., ValueOf(..., ?V) where ?V must match a literal value arg
     LiteralValue {
         wildcard: super::Wildcard, // Use super::Wildcard

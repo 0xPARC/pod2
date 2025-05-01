@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use crate::{
     middleware,
@@ -20,16 +23,19 @@ mod pruning;
 mod search;
 pub mod types; // Make types public within the solver module
 
-#[cfg(test)]
-mod tests; // Keep tests private to the solver module
+pub mod tests; // Declare the public tests module directory
 
 // Use items brought into scope by the submodules
 use initialization::initialize_solver_state;
 use proof::try_prove_statement; // Import try_prove_statement
-use pruning::{prune_domains_after_proof, prune_initial_domains};
+use pruning::{get_wildcards_from_tmpl_arg, prune_domains_after_proof, prune_initial_domains}; // Import helper
 use search::perform_search;
 use types::{Constraint, Domain, ExpectedType};
 
+use crate::middleware::{
+    statement::WildcardValue,
+    CustomPredicate, // Make sure this is imported if needed by extract_implied_pairs later
+};
 use crate::prover::types::ConcreteValue;
 
 // Represents the overall state of the constraint solver
@@ -49,19 +55,50 @@ pub struct SolverState {
     // pub custom_definitions: 'a CustomDefinitions,
 }
 
+impl SolverState {
+    /// Creates a new, empty SolverState.
+    pub fn new() -> Self {
+        Self {
+            domains: HashMap::new(),
+            constraints: Vec::new(),
+            proof_chains: HashMap::new(),
+            scope: HashSet::new(),
+        }
+    }
+
+    /// Placeholder: Finds the Arc<Batch> containing a given definition.
+    /// TODO: Implement this properly, likely needs changes to CustomDefinitions storage.
+    fn find_batch_for_definition(
+        &self,
+        _definition: &crate::middleware::CustomPredicate,
+    ) -> Option<std::sync::Arc<crate::middleware::CustomPredicateBatch>> {
+        None // Placeholder implementation
+    }
+
+    // Placeholder: Helper to get Params, assuming they might be stored or accessible
+    // TODO: Implement this properly if needed by to_fields calls within proof.rs
+    fn get_params(&self) -> crate::middleware::Params {
+        crate::middleware::Params::default() // Placeholder
+    }
+}
+
 pub fn solve(
     request_templates: &[StatementTmpl],
     indexes: &ProverIndexes,
     custom_definitions: &CustomDefinitions,
 ) -> Result<ProofSolution, ProverError> {
     // 1. Initialization (Identify wildcards, initial domains, static constraints)
-    let mut state = initialize_solver_state(request_templates, indexes)?;
+    let mut state = initialize_solver_state(request_templates, indexes, custom_definitions)?;
+
+    // NEW: Extract implied equality/inequality pairs from templates
+    let (equality_pairs, inequality_pairs) = extract_implied_pairs(request_templates);
 
     // Keep the original templates accessible for candidate generation
     let original_templates = request_templates.to_vec();
 
     // 2. Initial Domain Pruning (Static Unary Constraints)
-    prune_initial_domains(&mut state, indexes)?;
+    // Pass the extracted pairs
+    prune_initial_domains(&mut state, indexes, &equality_pairs, &inequality_pairs)?;
 
     // 3. Iterative Constraint Propagation & Proof Generation (Loop)
     let mut changed_in_iteration = true;
@@ -74,7 +111,8 @@ pub fn solve(
         println!("Solver iteration {}", iteration);
 
         // 3a. Re-apply basic pruning based on current domains
-        let pruning_changed = prune_initial_domains(&mut state, indexes)?;
+        let pruning_changed =
+            prune_initial_domains(&mut state, indexes, &equality_pairs, &inequality_pairs)?;
         if pruning_changed {
             println!("  - Pruning changed domains");
             changed_in_iteration = true;
@@ -197,7 +235,15 @@ pub fn solve(
     if state.domains.values().any(|(domain, _)| domain.len() > 1) {
         println!("Domains still contain multiple values, entering Search phase.");
         // Call the search function, taking ownership of the current state
-        match perform_search(state, &original_templates, indexes, custom_definitions) {
+        // Pass the extracted pairs down to search
+        match perform_search(
+            state,
+            &original_templates,
+            indexes,
+            custom_definitions,
+            &equality_pairs,   // Pass pairs
+            &inequality_pairs, // Pass pairs
+        ) {
             Ok(solved_state) => {
                 println!("Search phase succeeded.");
                 state = solved_state; // Update state with the solved one from search
@@ -284,8 +330,69 @@ pub fn solve(
     })
 }
 
+// --- Helper function to extract implied pairs --- START ---
+fn extract_implied_pairs(
+    request_templates: &[StatementTmpl],
+) -> (Vec<(Wildcard, Wildcard)>, Vec<(Wildcard, Wildcard)>) {
+    let mut equality_pairs = Vec::new();
+    let mut inequality_pairs = Vec::new();
+
+    for tmpl in request_templates {
+        let is_eq = tmpl.pred == Predicate::Native(NativePredicate::Equal);
+        let is_neq = tmpl.pred == Predicate::Native(NativePredicate::NotEqual)
+            || tmpl.pred == Predicate::Native(NativePredicate::Gt)
+            || tmpl.pred == Predicate::Native(NativePredicate::Lt);
+
+        if (is_eq || is_neq) && tmpl.args.len() == 2 {
+            // Use the imported helper function
+            let wcs1 = get_wildcards_from_tmpl_arg(&tmpl.args[0]);
+            let wcs2 = get_wildcards_from_tmpl_arg(&tmpl.args[1]);
+
+            // Helper closure to add pairs for a specific type (Pod, Key, Val)
+            let mut add_pairs =
+                |wc_list1: &[Wildcard],
+                 wc_list2: &[Wildcard],
+                 target_list: &mut Vec<(Wildcard, Wildcard)>| {
+                    if let (Some(wc1), Some(wc2)) = (wc_list1.get(0), wc_list2.get(0)) {
+                        // Avoid adding pair if wildcards are identical
+                        if wc1 != wc2 {
+                            // Ensure canonical ordering to help deduplication if needed later
+                            if wc1.index <= wc2.index {
+                                target_list.push((wc1.clone(), wc2.clone()));
+                            } else {
+                                target_list.push((wc2.clone(), wc1.clone()));
+                            }
+                        }
+                    }
+                };
+
+            let target_list = if is_eq {
+                &mut equality_pairs
+            } else {
+                &mut inequality_pairs
+            };
+
+            add_pairs(&wcs1.pod_wcs, &wcs2.pod_wcs, target_list);
+            add_pairs(&wcs1.key_wcs, &wcs2.key_wcs, target_list);
+            add_pairs(&wcs1.val_wcs, &wcs2.val_wcs, target_list);
+        }
+        // TODO: Handle custom predicates? Recursively extract pairs from their definitions?
+        // For now, only handle native Eq/NEq/Gt/Lt.
+    }
+
+    // Remove duplicates
+    equality_pairs.sort_unstable_by_key(|(a, b)| (a.index, b.index));
+    equality_pairs.dedup();
+    inequality_pairs.sort_unstable_by_key(|(a, b)| (a.index, b.index));
+    inequality_pairs.dedup();
+
+    (equality_pairs, inequality_pairs)
+}
+// --- Helper function to extract implied pairs --- END ---
+
 /// Tries to generate a concrete statement and its bindings from a template,
 /// succeeding only if all involved wildcards have singleton domains.
+// Make this pub(super) so it can be used by search.rs
 pub(super) fn try_generate_concrete_candidate_and_bindings(
     tmpl: &StatementTmpl,
     state: &SolverState,

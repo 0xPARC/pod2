@@ -1,12 +1,16 @@
+use std::collections::HashMap;
+
 use super::SolverState;
 use crate::{
     middleware::{
-        NativeOperation, NativePredicate, OperationType, Predicate, Statement, TypedValue,
+        statement::{StatementArg, WildcardValue},
+        NativeOperation, NativePredicate, OperationType, Predicate, Statement, StatementTmplArg,
+        ToFields, TypedValue, Wildcard,
     },
     prover::{
         error::ProverError,
         indexing::ProverIndexes,
-        types::{CustomDefinitions, ProofChain, ProofStep},
+        types::{ConcreteValue, CustomDefinitions, ProofChain, ProofStep},
     },
 };
 
@@ -807,8 +811,164 @@ pub(super) fn try_prove_statement(
                 }
             }
         }
+        // --- START: Custom Predicate Logic ---
+        Predicate::Custom(custom_ref) => {
+            if let Statement::Custom(target_custom_ref, concrete_args) = target {
+                // Ensure the target ref matches the predicate branch we are in
+                if custom_ref != *target_custom_ref {
+                    return Err(ProverError::Internal(
+                        "Predicate mismatch in custom proof logic".to_string(),
+                    ));
+                }
+
+                // 1. Lookup definition
+                let pred_key = Predicate::Custom(custom_ref.clone()).to_fields(&indexes.params);
+                if let Some(pred_def) = custom_definitions.get(&pred_key) {
+                    // 2. Check conjunction (handle AND first)
+                    if pred_def.conjunction {
+                        // --- AND Logic ---
+                        let mut combined_steps = Vec::new();
+                        let mut sub_statement_inputs = Vec::new();
+                        let mut succeeded = true;
+
+                        // Build public bindings map (index -> value)
+                        // TODO: Need a robust way to get the *order* of public wildcards from the definition.
+                        // Assuming for now that `concrete_args` aligns positionally with public wildcards (index 0 to args_len-1).
+                        let public_bindings: HashMap<usize, WildcardValue> =
+                            concrete_args.iter().cloned().enumerate().collect();
+
+                        // 3. Iterate through internal templates
+                        for internal_tmpl in &pred_def.statements {
+                            // 4. Determine concrete sub-statement (Si)
+                            let concrete_sub_stmt = match build_concrete_statement_from_bindings(
+                                internal_tmpl,
+                                concrete_args,
+                                &public_bindings,
+                                state, // Pass full state for private WC resolution
+                                // NEW: Pass context
+                                Some((pred_def, custom_ref.batch.clone())),
+                            ) {
+                                Ok(stmt) => stmt,
+                                Err(e @ ProverError::Unsatisfiable(_)) => {
+                                    // If a private wildcard wasn't singleton, this specific path fails
+                                    println!("Failed to build concrete sub-statement due to non-singleton private wildcard: {:?}", e);
+                                    succeeded = false;
+                                    break; // Cannot prove this AND branch
+                                }
+                                Err(e) => return Err(e), // Propagate other errors
+                            };
+
+                            sub_statement_inputs.push(concrete_sub_stmt.clone()); // Collect for final step
+
+                            // 5. Recursively call try_prove_statement(Si)
+                            match try_prove_statement(
+                                state,
+                                &concrete_sub_stmt,
+                                indexes,
+                                custom_definitions,
+                            ) {
+                                Ok(sub_chain) => {
+                                    combined_steps.extend(sub_chain.0);
+                                }
+                                Err(e) => {
+                                    // If any sub-proof fails in an AND, the whole thing fails.
+                                    // Propagate the specific error from the sub-proof directly.
+                                    println!(
+                                        "Failed recursive proof for sub-statement {:?}: {:?}. Failing AND predicate.",
+                                        concrete_sub_stmt, e
+                                    );
+                                    // Return the error immediately
+                                    return Err(e);
+                                }
+                            }
+                        }
+
+                        // 6. Combine chains and add final step (if all sub-proofs succeeded)
+                        if succeeded {
+                            let final_custom_step = ProofStep {
+                                operation: OperationType::Custom(custom_ref.clone()),
+                                inputs: sub_statement_inputs, // The concrete sub-statements
+                                output: target.clone(),
+                            };
+                            combined_steps.push(final_custom_step);
+
+                            let final_chain = ProofChain(combined_steps);
+                            state
+                                .proof_chains
+                                .insert(target.clone(), final_chain.clone());
+                            return Ok(final_chain);
+                        }
+                        // If !succeeded, fall through to generic unsatisfiable error
+                    } else {
+                        // --- OR Logic ---
+                        let public_bindings: HashMap<usize, WildcardValue> =
+                            concrete_args.iter().cloned().enumerate().collect();
+
+                        for internal_tmpl in &pred_def.statements {
+                            // Try to build concrete sub-statement for this branch
+                            let concrete_sub_stmt_res = build_concrete_statement_from_bindings(
+                                internal_tmpl,
+                                concrete_args,
+                                &public_bindings,
+                                state,
+                                // NEW: Pass context
+                                Some((pred_def, custom_ref.batch.clone())),
+                            );
+
+                            if let Ok(concrete_sub_stmt) = concrete_sub_stmt_res {
+                                // Attempt to prove this branch's sub-statement
+                                match try_prove_statement(
+                                    state,
+                                    &concrete_sub_stmt,
+                                    indexes,
+                                    custom_definitions,
+                                ) {
+                                    Ok(sub_chain) => {
+                                        // SUCCESS! First successful branch wins.
+                                        let mut combined_steps = sub_chain.0;
+                                        let final_custom_step = ProofStep {
+                                            operation: OperationType::Custom(custom_ref.clone()),
+                                            inputs: vec![concrete_sub_stmt.clone()], // Input is the successfully proven sub-statement
+                                            output: target.clone(),
+                                        };
+                                        combined_steps.push(final_custom_step);
+
+                                        let final_chain = ProofChain(combined_steps);
+                                        state
+                                            .proof_chains
+                                            .insert(target.clone(), final_chain.clone());
+                                        return Ok(final_chain);
+                                    }
+                                    Err(e) => {
+                                        // This branch failed, try the next one. Log the error.
+                                        println!(
+                                            "OR branch failed to prove sub-statement {:?}: {:?}",
+                                            concrete_sub_stmt, e
+                                        );
+                                    }
+                                }
+                            } else {
+                                // Failed to build concrete statement for this branch (e.g., private WC not singleton). Try next branch.
+                                println!("OR branch failed to build concrete sub-statement from template {:?}: {:?}", internal_tmpl, concrete_sub_stmt_res.err());
+                            }
+                        }
+                        // If loop finishes, no OR branch succeeded. Fall through to generic unsatisfiable error.
+                        println!(
+                            "All OR branches failed for custom predicate: {:?}",
+                            custom_ref
+                        );
+                    }
+                } else {
+                    return Err(ProverError::Internal(format!(
+                        "Custom predicate definition not found for ref: {:?}",
+                        custom_ref
+                    )));
+                }
+            }
+        }
+        // --- END: Custom Predicate Logic ---
         _ => {
-            // Continue to other proof methods if applicable
+            // Continue to other proof methods if applicable (already handled above)
         }
     }
 
@@ -817,4 +977,289 @@ pub(super) fn try_prove_statement(
         "Could not find or derive proof for: {:?}",
         target
     )))
+}
+
+// Helper function (similar to initialization.rs) to get wildcards from template args
+fn get_wildcards_from_tmpl_arg(arg: &StatementTmplArg) -> Vec<Wildcard> {
+    match arg {
+        StatementTmplArg::Key(wc_pod, crate::middleware::KeyOrWildcard::Wildcard(wc_key)) => {
+            vec![wc_pod.clone(), wc_key.clone()]
+        }
+        StatementTmplArg::Key(wc_pod, crate::middleware::KeyOrWildcard::Key(_)) => {
+            vec![wc_pod.clone()]
+        }
+        StatementTmplArg::WildcardLiteral(wc_val) => vec![wc_val.clone()],
+        _ => vec![],
+    }
+}
+
+// Helper function to build a concrete statement from a template and bindings
+// This needs access to the full solver state for private wildcards.
+// TODO: Refactor this or the one in `mod.rs` to be reusable.
+fn build_concrete_statement_from_bindings<'a>(
+    tmpl: &crate::middleware::StatementTmpl,
+    _public_args: &[WildcardValue], // Values provided to the target Custom statement (Might not be needed directly here)
+    // Map from public WC index to its concrete value from target statement
+    public_bindings: &HashMap<usize, WildcardValue>,
+    // Full solver state for private wildcard resolution
+    state: &SolverState,
+    // NEW: Pass the context of the predicate containing this template
+    outer_context: Option<(
+        &'a crate::middleware::CustomPredicate, // Added lifetime 'a
+        std::sync::Arc<crate::middleware::CustomPredicateBatch>,
+    )>,
+) -> Result<Statement, ProverError> {
+    // Determine args_len from outer context if available
+    let outer_args_len = outer_context.as_ref().map(|(def, _)| def.args_len);
+
+    match &tmpl.pred {
+        Predicate::Native(_) => {
+            // --- Build args for Native Predicates ---
+            let mut concrete_args = Vec::with_capacity(tmpl.args.len());
+            for arg_tmpl in &tmpl.args {
+                match arg_tmpl {
+                    StatementTmplArg::Key(wc_pod, key_or_wc) => {
+                        // Resolve Pod Wildcard
+                        let pod_id = match outer_args_len {
+                            Some(args_len) if wc_pod.index < args_len => {
+                                // Public WC
+                                match public_bindings.get(&wc_pod.index) {
+                                    Some(WildcardValue::PodId(id)) => *id,
+                                    _ => {
+                                        return Err(ProverError::Internal(format!(
+                                            "Missing/wrong public binding for Pod WC {}",
+                                            wc_pod
+                                        )))
+                                    }
+                                }
+                            }
+                            Some(_) | None => {
+                                // Private WC or no outer context (should be private)
+                                match state.domains.get(wc_pod) {
+                                    Some((domain, _)) if domain.len() == 1 => {
+                                        match domain.iter().next().unwrap() {
+                                            ConcreteValue::Pod(id) => *id,
+                                            _ => return Err(ProverError::Internal(format!(
+                                                    "Private Pod WC {} domain wrong type", wc_pod
+                                            )))
+                                        }
+                                    }
+                                    _ => return Err(ProverError::Unsatisfiable(format!(
+                                            "Private Pod WC {} domain not singleton or outer context missing", wc_pod
+                                    )))
+                                }
+                            }
+                        };
+                        // Resolve Key or Key Wildcard
+                        let key = match key_or_wc {
+                            crate::middleware::KeyOrWildcard::Key(k) => k.clone(),
+                            crate::middleware::KeyOrWildcard::Wildcard(wc_key) => {
+                                match outer_args_len {
+                                    Some(args_len) if wc_key.index < args_len => {
+                                        // Public WC
+                                        match public_bindings.get(&wc_key.index) {
+                                            Some(WildcardValue::Key(k)) => k.clone(),
+                                            _ => {
+                                                return Err(ProverError::Internal(format!(
+                                                    "Missing/wrong public binding for Key WC {}",
+                                                    wc_key
+                                                )))
+                                            }
+                                        }
+                                    }
+                                    Some(_) | None => {
+                                        // Private WC or no outer context
+                                        match state.domains.get(wc_key) {
+                                            Some((domain, _)) if domain.len() == 1 => {
+                                                match domain.iter().next().unwrap() {
+                                                     ConcreteValue::Key(k_name) => {
+                                                         crate::middleware::Key::new(k_name.clone())
+                                                     }
+                                                     _ => return Err(ProverError::Internal(format!(
+                                                             "Private Key WC {} domain wrong type", wc_key
+                                                     )))
+                                                }
+                                            }
+                                            _ => return Err(ProverError::Unsatisfiable(format!(
+                                                     "Private Key WC {} domain not singleton or outer context missing", wc_key
+                                            )))
+                                        }
+                                    }
+                                }
+                            }
+                        };
+                        concrete_args.push(StatementArg::Key(crate::middleware::AnchoredKey::new(
+                            pod_id, key,
+                        )));
+                    }
+                    StatementTmplArg::WildcardLiteral(wc_val) => {
+                        // This arm is for resolving PRIVATE value wildcards for native predicates
+                        match outer_args_len {
+                            Some(args_len) if wc_val.index < args_len => {
+                                return Err(ProverError::Internal(format!(
+                                    "Invalid Use: StatementTmplArg::WildcardLiteral ({}) used for public index in native predicate template.",
+                                    wc_val
+                                )));
+                            }
+                            Some(_) | None => {
+                                // Private WC or no outer context
+                                // Resolve private Value wildcard
+                                let value = match state.domains.get(wc_val) {
+                                    Some((domain, _)) if domain.len() == 1 => {
+                                        match domain.iter().next().unwrap() {
+                                            ConcreteValue::Val(v) => v.clone(),
+                                            _ => return Err(ProverError::Internal(format!(
+                                                    "Private Value WC {} domain wrong type", wc_val
+                                            )))
+                                        }
+                                    }
+                                     _ => return Err(ProverError::Unsatisfiable(format!(
+                                             "Private Value WC {} domain not singleton or outer context missing", wc_val
+                                     )))
+                                };
+                                concrete_args.push(StatementArg::Literal(value));
+                            }
+                        }
+                    }
+                    StatementTmplArg::Literal(v) => {
+                        concrete_args.push(StatementArg::Literal(v.clone()));
+                    }
+                    StatementTmplArg::None => {}
+                }
+            }
+            crate::prover::solver::build_concrete_statement(tmpl.pred.clone(), concrete_args)
+        }
+        Predicate::Custom(custom_ref) => {
+            // --- Build args for Nested Custom Predicate Call ---
+            let current_outer_args_len = outer_context.as_ref().map(|(def, _)| def.args_len);
+            let mut nested_call_args: Vec<WildcardValue> = Vec::with_capacity(tmpl.args.len());
+
+            for arg_tmpl in &tmpl.args {
+                // Resolve the wildcard used in the argument template based on the *current* context
+                let resolved_wc_value = match arg_tmpl {
+                    StatementTmplArg::WildcardLiteral(wc) => {
+                         // Resolve the wildcard (could be public or private in the *outer* scope)
+                         match current_outer_args_len {
+                              Some(args_len) if wc.index < args_len => { // Public in outer scope
+                                  public_bindings.get(&wc.index).cloned().ok_or_else(|| ProverError::Internal(format!(
+                                      "Missing public binding for WC {} needed for nested call arg", wc
+                                  )))?
+                              }
+                              Some(_) | None => { // Private in outer scope or no outer context
+                                  match state.domains.get(wc) {
+                                      Some((domain, _)) if domain.len() == 1 => match domain.iter().next().unwrap() {
+                                          ConcreteValue::Pod(id) => WildcardValue::PodId(*id),
+                                          ConcreteValue::Key(k_name) => WildcardValue::Key(crate::middleware::Key::new(k_name.clone())),
+                                          ConcreteValue::Val(_) => return Err(ProverError::Internal(format!(
+                                              "Cannot pass Value type via WildcardLiteral to nested custom predicate for WC {}", wc
+                                          )))
+                                      },
+                                      _ => return Err(ProverError::Unsatisfiable(format!(
+                                          "Private WC {} for nested call arg not singleton or outer context missing", wc
+                                      )))
+                                  }
+                              }
+                         }
+                    }
+                    _ => return Err(ProverError::Internal(format!(
+                        "Unsupported argument type {:?} used when calling nested custom predicate in template", arg_tmpl
+                    )))
+                };
+                nested_call_args.push(resolved_wc_value);
+            }
+
+            // Check if args length matches the *nested* predicate being called
+            let nested_pred_def = custom_ref
+                .batch
+                .predicates
+                .get(custom_ref.index)
+                .ok_or_else(|| {
+                    ProverError::Internal(format!(
+                        "Custom ref index {} out of bounds for batch '{}'",
+                        custom_ref.index, custom_ref.batch.name
+                    ))
+                })?;
+            if nested_call_args.len() != nested_pred_def.args_len {
+                return Err(ProverError::Internal(format!(
+                    "Argument length mismatch calling Custom predicate '{}'. Template provided {} args, but predicate requires {}.",
+                     nested_pred_def.name, nested_call_args.len(), nested_pred_def.args_len
+                 )));
+            }
+
+            // For Predicate::Custom, the concrete_custom_ref is just the one we matched on.
+            Ok(Statement::Custom(custom_ref.clone(), nested_call_args))
+        }
+        Predicate::BatchSelf(idx) => {
+            // --- Build args for Nested BatchSelf Predicate Call ---
+            let current_outer_args_len = outer_context.as_ref().map(|(def, _)| def.args_len);
+            let mut nested_call_args: Vec<WildcardValue> = Vec::with_capacity(tmpl.args.len());
+
+            for arg_tmpl in &tmpl.args {
+                // Resolve the wildcard used in the argument template based on the *current* context
+                // (Same logic as in the Predicate::Custom arm)
+                let resolved_wc_value = match arg_tmpl {
+                    StatementTmplArg::WildcardLiteral(wc) => {
+                         match current_outer_args_len {
+                             Some(args_len) if wc.index < args_len => { // Public in outer scope
+                                 public_bindings.get(&wc.index).cloned().ok_or_else(|| ProverError::Internal(format!(
+                                     "Missing public binding for WC {} needed for nested call arg", wc
+                                 )))?
+                             }
+                             Some(_) | None => { // Private in outer scope or no outer context
+                                 match state.domains.get(wc) {
+                                     Some((domain, _)) if domain.len() == 1 => match domain.iter().next().unwrap() {
+                                         ConcreteValue::Pod(id) => WildcardValue::PodId(*id),
+                                         ConcreteValue::Key(k_name) => WildcardValue::Key(crate::middleware::Key::new(k_name.clone())),
+                                         ConcreteValue::Val(_) => return Err(ProverError::Internal(format!(
+                                             "Cannot pass Value type via WildcardLiteral to nested custom predicate for WC {}", wc
+                                         )))
+                                     },
+                                     _ => return Err(ProverError::Unsatisfiable(format!(
+                                         "Private WC {} for nested call arg not singleton or outer context missing", wc
+                                     )))
+                                 }
+                             }
+                         }
+                    }
+                    _ => return Err(ProverError::Internal(format!(
+                        "Unsupported argument type {:?} used when calling nested custom predicate in template", arg_tmpl
+                    )))
+                };
+                nested_call_args.push(resolved_wc_value);
+            }
+
+            // Determine the correct CustomPredicateRef for the concrete BatchSelf statement
+            // We need the Arc<Batch> context here.
+            let (_outer_pred_def, batch_arc) = outer_context // Borrow here
+                .as_ref() // Use as_ref() before ok_or_else
+                .ok_or_else(|| {
+                    ProverError::Internal(
+                        "Missing outer context needed to resolve BatchSelf predicate in template"
+                            .to_string(),
+                    )
+                })?;
+
+            let concrete_custom_ref = crate::middleware::CustomPredicateRef {
+                batch: batch_arc.clone(), // Use the passed Arc
+                index: *idx,
+            };
+
+            // Check if args length matches the resolved predicate
+            let resolved_pred_def = batch_arc.predicates.get(*idx).ok_or_else(|| {
+                ProverError::Internal(format!(
+                    "BatchSelf index {} out of bounds for batch '{}'",
+                    idx, batch_arc.name
+                ))
+            })?;
+            if nested_call_args.len() != resolved_pred_def.args_len {
+                return Err(ProverError::Internal(format!(
+                    "Argument length mismatch when resolving BatchSelf({}). Template provided {} args, but predicate '{}' requires {}.",
+                     idx, nested_call_args.len(), resolved_pred_def.name, resolved_pred_def.args_len
+                 )));
+            }
+
+            // Note: The concrete *Statement* is still Statement::Custom, even if the template used BatchSelf
+            Ok(Statement::Custom(concrete_custom_ref, nested_call_args))
+        }
+    }
 }

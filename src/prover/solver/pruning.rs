@@ -228,11 +228,88 @@ pub fn prune_by_literal_value(
     Ok(changed)
 }
 
+/// Applies wildcard origin constraints (?A[?K]), removing Keys from ?K's domain
+/// if ?A's domain becomes a singleton PodId and the Key doesn't exist in that Pod.
+/// Returns Ok(true) if any domain changed, Ok(false) otherwise.
+pub fn prune_by_wildcard_origin(
+    state: &mut SolverState,
+    indexes: &ProverIndexes,
+    constraints: &[Constraint],
+) -> Result<bool, ProverError> {
+    let mut changed = false;
+
+    for constraint in constraints {
+        if let Constraint::WildcardOrigin {
+            key_wildcard,
+            pod_wildcard,
+        } = constraint
+        {
+            // Check if the pod_wildcard domain is now a singleton
+            let mut literal_pod_id_opt: Option<PodId> = None;
+            if let Some((pod_domain, pod_expected_type)) = state.domains.get(pod_wildcard) {
+                if *pod_expected_type == ExpectedType::Pod && pod_domain.len() == 1 {
+                    if let Some(ConcreteValue::Pod(id)) = pod_domain.iter().next() {
+                        literal_pod_id_opt = Some(*id);
+                    }
+                }
+            } // Immutable borrow of state.domains ends here
+
+            // If pod domain was a singleton PodId, apply the constraint
+            if let Some(literal_pod_id) = literal_pod_id_opt {
+                // Now get the mutable borrow for the key domain
+                if let Some((key_domain, key_expected_type)) = state.domains.get_mut(key_wildcard) {
+                    // Should be a Key domain
+                    if *key_expected_type != ExpectedType::Key {
+                        continue;
+                    }
+
+                    let initial_size = key_domain.len();
+
+                    let allowed_keys: HashSet<String> = indexes
+                        .get_anchored_keys_for_pod_id(&literal_pod_id) // Use the extracted PodId
+                        .map(|anchored_keys| {
+                            anchored_keys
+                                .iter()
+                                .map(|ak| ak.key.name().to_string())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+
+                    key_domain.retain(|value| match value {
+                        ConcreteValue::Key(key_string) => allowed_keys.contains(key_string),
+                        _ => false,
+                    });
+
+                    if key_domain.is_empty() {
+                        return Err(ProverError::Unsatisfiable(format!(
+                            "WildcardOrigin constraint (pod='{}', key='{}') made key domain empty",
+                            pod_wildcard.name, key_wildcard.name
+                        )));
+                    }
+
+                    if key_domain.len() < initial_size {
+                        changed = true;
+                        // Note: Unlike literal constraints, we might consider removing this
+                        // WildcardOrigin constraint now that it's been effectively applied once.
+                        // However, leaving it allows re-checking if domains change further.
+                    }
+                }
+                // else: Key wildcard not found in domains (internal error)
+            }
+            // else: Pod domain not yet a singleton PodId, cannot apply the constraint yet.
+        }
+    }
+
+    Ok(changed)
+}
+
 /// Runs the initial set of pruning functions iteratively until a fixed point is reached.
 /// Returns Ok(true) if any domain changed during the process, Ok(false) otherwise.
 pub(super) fn prune_initial_domains(
     state: &mut SolverState,
     indexes: &ProverIndexes,
+    equality_pairs: &[(Wildcard, Wildcard)],
+    inequality_pairs: &[(Wildcard, Wildcard)],
 ) -> Result<bool, ProverError> {
     let mut overall_changed = false;
     let mut changed_this_pass = true;
@@ -250,25 +327,63 @@ pub(super) fn prune_initial_domains(
             processed_type_pruning = true; // Only mark after first change
         }
 
-        // Apply other literal constraints
-        // Clone constraints to avoid borrowing state mutably and immutably simultaneously
-        // We might need to re-run these if type pruning (or other pruning) changed domains.
+        // Apply other literal/structural constraints
         let current_constraints = state.constraints.clone();
 
-        if prune_by_literal_key(state, indexes, &current_constraints)? {
-            changed_this_pass = true;
-            overall_changed = true;
-        }
+        // --- Iterate through explicit constraints and apply pruning --- START ---
+        for constraint in &current_constraints {
+            // Reset changed flag for *this specific constraint type* check
+            let mut constraint_changed = false;
+            match constraint {
+                Constraint::LiteralKey { .. } => {
+                    constraint_changed =
+                        prune_by_literal_key(state, indexes, &[constraint.clone()])?;
+                }
+                Constraint::LiteralOrigin { .. } => {
+                    constraint_changed =
+                        prune_by_literal_origin(state, indexes, &[constraint.clone()])?;
+                }
+                Constraint::WildcardOrigin { .. } => {
+                    constraint_changed =
+                        prune_by_wildcard_origin(state, indexes, &[constraint.clone()])?;
+                }
+                Constraint::LiteralValue { .. } => {
+                    constraint_changed =
+                        prune_by_literal_value(state, indexes, &[constraint.clone()])?;
+                }
+                // Note: No Equal/NotEqual variants here
+                // Ignore other constraint types (like Type, handled elsewhere)
+                _ => {}
+            };
 
-        if prune_by_literal_origin(state, indexes, &current_constraints)? {
-            changed_this_pass = true;
-            overall_changed = true;
+            if constraint_changed {
+                changed_this_pass = true;
+                overall_changed = true;
+            }
         }
+        // --- Iterate through explicit constraints and apply pruning --- END ---
 
-        if prune_by_literal_value(state, indexes, &current_constraints)? {
-            changed_this_pass = true;
-            overall_changed = true;
+        // --- Apply IMPLICIT Equality constraints --- START ---
+        for (wc1, wc2) in equality_pairs {
+            if propagate_or_intersect(&mut state.domains, wc1, wc2)? {
+                changed_this_pass = true;
+                overall_changed = true;
+            }
         }
+        // --- Apply IMPLICIT Equality constraints --- END ---
+
+        // --- Apply IMPLICIT Inequality constraints --- START ---
+        for (wc1, wc2) in inequality_pairs {
+            if remove_singleton(&mut state.domains, wc1, wc2)? {
+                changed_this_pass = true;
+                overall_changed = true;
+            }
+            if remove_singleton(&mut state.domains, wc2, wc1)? {
+                changed_this_pass = true;
+                overall_changed = true;
+            }
+        }
+        // --- Apply IMPLICIT Inequality constraints --- END ---
 
         // Reset type pruning check if other constraints made changes, potentially enabling more type pruning
         if changed_this_pass {
@@ -590,8 +705,82 @@ pub(super) fn prune_domains_after_proof(
                             )?;
                         }
                     }
-                    // Prune Key wildcard domain (based on Value) - More complex, requires iterating container domain
-                    // This is less likely to be a strong pruning step. Skip for now.
+                    // Prune Key wildcard domain (based on Value)
+                    if let Some(wc_k) = wcs_k.val_wcs.get(0) {
+                        // Get the key wildcard
+                        if let Some(wc_c) = wcs_c.val_wcs.get(0) {
+                            // Get the container wildcard
+                            let mut allowed_keys: HashSet<ConcreteValue> = HashSet::new();
+
+                            // Need immutable borrow of domains first to read container domain
+                            if let Some((container_domain, _)) = state.domains.get(wc_c) {
+                                for cv_container in container_domain {
+                                    if let ConcreteValue::Val(container_val) = cv_container {
+                                        // Check based on container type
+                                        match container_val.typed() {
+                                            TypedValue::Dictionary(dict) => {
+                                                for (key, val) in dict.kvs() {
+                                                    if val == &value {
+                                                        // Compare with the bound value
+                                                        // Key is middleware::Key, convert to ConcreteValue::Val(Value::String)
+                                                        allowed_keys.insert(ConcreteValue::Val(
+                                                            Value::from(key.name()),
+                                                        ));
+                                                    }
+                                                }
+                                            }
+                                            TypedValue::Array(arr) => {
+                                                // If Contains(Array, Index, Value) is supported this way
+                                                for (idx, val) in arr.array().iter().enumerate() {
+                                                    if val == &value {
+                                                        // Key is the index, represented as ConcreteValue::Val(Value::Int)
+                                                        allowed_keys.insert(ConcreteValue::Val(
+                                                            Value::from(idx as i64),
+                                                        ));
+                                                    }
+                                                }
+                                            }
+                                            // Set doesn't map keys to values in the Contains(C, K, V) sense.
+                                            TypedValue::Set(_) => {}
+                                            _ => {} // Other types don't map keys to values like this
+                                        }
+                                    }
+                                }
+                            } // Immutable borrow ends
+
+                            // Now get mutable borrow for the key domain and prune
+                            if let Some((key_domain, _)) = state.domains.get_mut(wc_k) {
+                                let initial_len = key_domain.len();
+                                if allowed_keys.is_empty() {
+                                    // If no keys map to the bound value in any possible container,
+                                    // the key domain must become empty.
+                                    if initial_len > 0 {
+                                        key_domain.clear();
+                                        changed = true;
+                                        // Return error immediately as it's unsatisfiable
+                                        return Err(ProverError::Unsatisfiable(format!(
+                                            "Dynamic pruning (Contains/Value->Key) found no valid keys for value {:?}, emptied domain for {}",
+                                            value, wc_k.name
+                                        )));
+                                    }
+                                } else {
+                                    // Otherwise, retain only the allowed keys
+                                    key_domain.retain(|cv_key| allowed_keys.contains(cv_key));
+                                    if key_domain.is_empty() && initial_len > 0 {
+                                        // This case shouldn't technically be hit if allowed_keys is non-empty,
+                                        // but handle for robustness.
+                                        return Err(ProverError::Unsatisfiable(format!(
+                                            "Dynamic pruning (Contains/Value->Key) emptied domain for {} after filtering",
+                                            wc_k.name
+                                        )));
+                                    }
+                                    if key_domain.len() < initial_len {
+                                        changed = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1015,7 +1204,7 @@ fn prune_gt_lt_values(
 
 // --- NEW Helper Functions for Contains/NotContains Pruning ---
 
-/// Prunes a domain of potential keys (Value::String representing key names) based on
+/// Prunes a domain of potential keys (Values representing key names) based on
 /// whether they exist (or not) in a specific container.
 fn prune_domain_by_container_existence(
     domain: &mut Domain,
@@ -1024,14 +1213,16 @@ fn prune_domain_by_container_existence(
 ) -> Result<bool, ProverError> {
     let initial_len = domain.len();
     domain.retain(|cv| match cv {
-        ConcreteValue::Key(key_string) => {
-            let key_value = Value::from(key_string.clone()); // Create Value from key string
-            match container.prove_existence(&key_value) {
-                Ok(_) => keep_existing,   // Key exists, keep if keep_existing is true
+        // Match on ConcreteValue::Val, as the key is represented as a Value
+        ConcreteValue::Val(key_value) => {
+            // Use the key_value directly for the existence check
+            match container.prove_existence(key_value) {
+                // Pass &Value directly
+                Ok(_) => keep_existing, // Key exists, keep if keep_existing is true
                 Err(_) => !keep_existing, // Key doesn't exist, keep if keep_existing is false
             }
         }
-        _ => true, // Retain non-Key types (shouldn't be here for key domain)
+        _ => true, // Retain other types (e.g., Key, Pod) - though domain should only have Val
     });
     if domain.is_empty() {
         return Err(ProverError::Unsatisfiable(
@@ -1131,4 +1322,85 @@ fn prune_container_domain_by_value_existence(
         ));
     }
     Ok(domain.len() < initial_len)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{HashMap, HashSet};
+
+    use super::*;
+    use crate::{
+        middleware::{self, Key, PodId},
+        prover::{
+            solver::tests::{ak, cv_key, cv_pod, pod, solver_state_with_domains, val}, // Use helpers from main tests
+            types::CustomDefinitions, // Use ConcreteValue from main types
+        },
+    };
+
+    // Helper to create ProverIndexes with specific base facts
+    fn setup_indexes_with_facts(facts: Vec<(PodId, Statement)>) -> ProverIndexes {
+        let params = middleware::Params::default();
+        ProverIndexes::build(params, &facts)
+    }
+
+    #[test]
+    fn test_prune_wildcard_origin_interaction() {
+        let w_pod = super::super::tests::wc("A", 0); // Use wc helper from solver::tests
+        let w_key = super::super::tests::wc("K", 0);
+        let p1 = pod(1);
+        let p2 = pod(2);
+        let k_foo = Key::new("foo".to_string());
+        let k_bar = Key::new("bar".to_string());
+        let k_baz = Key::new("baz".to_string());
+
+        // Facts: p1 has keys "foo", "bar". p2 has key "baz".
+        let facts = vec![
+            (p1, Statement::ValueOf(ak(1, "foo"), val(10))),
+            (p1, Statement::ValueOf(ak(1, "bar"), val(20))),
+            (p2, Statement::ValueOf(ak(2, "baz"), val(30))),
+        ];
+        let indexes = setup_indexes_with_facts(facts);
+
+        // Initial state: ?A={p1, p2}, ?K={"foo", "bar", "baz"}
+        let mut state = solver_state_with_domains(vec![
+            (
+                w_pod.clone(),
+                HashSet::from([cv_pod(1), cv_pod(2)]),
+                ExpectedType::Pod,
+            ),
+            (
+                w_key.clone(),
+                HashSet::from([cv_key("foo"), cv_key("bar"), cv_key("baz")]),
+                ExpectedType::Key,
+            ),
+        ]);
+
+        // Constraints:
+        // 1. ?A[?K] (WildcardOrigin)
+        // 2. ?A["foo"] (LiteralKey, will prune ?A to p1)
+        state.constraints = vec![
+            Constraint::WildcardOrigin {
+                key_wildcard: w_key.clone(),
+                pod_wildcard: w_pod.clone(),
+            },
+            Constraint::LiteralKey {
+                pod_wildcard: w_pod.clone(),
+                literal_key: k_foo.name().to_string(),
+            },
+        ];
+
+        // Run the full initial pruning loop
+        let changed = prune_initial_domains(&mut state, &indexes, &[], &[]).unwrap();
+
+        assert!(changed, "Domains should have changed");
+
+        // Check final domains:
+        // ?A should be pruned to p1 by LiteralKey
+        assert_eq!(state.domains[&w_pod].0, HashSet::from([cv_pod(1)]));
+        // ?K should be pruned to {"foo", "bar"} by WildcardOrigin (triggered after ?A became singleton p1)
+        assert_eq!(
+            state.domains[&w_key].0,
+            HashSet::from([cv_key("foo"), cv_key("bar")])
+        );
+    }
 }
