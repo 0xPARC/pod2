@@ -31,13 +31,18 @@ mod proof_tests {
             Statement::ValueOf(AnchoredKey::new(pod_a, key_foo.clone()), val_10.clone());
         let base_fact_prover: Statement = base_fact_stmt.clone();
         // Destructure the result and pass &indexes
-        let (indexes, _) = setup_indexes_with_facts(vec![(pod_a, base_fact_stmt.clone())]);
+        let (indexes, _) = setup_indexes_with_facts(&vec![(pod_a, base_fact_stmt.clone())]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result =
-            try_prove_statement(&mut state, &base_fact_prover, &indexes, &custom_definitions);
+        let result = try_prove_statement(
+            &mut state,
+            &base_fact_prover,
+            &indexes,
+            &custom_definitions,
+            &[],
+        );
         assert!(result.is_ok(), "Proof should succeed via CopyStatement");
         let proof_chain = result.unwrap();
 
@@ -74,8 +79,13 @@ mod proof_tests {
         );
 
         // Pass &indexes
-        let result_again =
-            try_prove_statement(&mut state, &base_fact_prover, &indexes, &custom_definitions);
+        let result_again = try_prove_statement(
+            &mut state,
+            &base_fact_prover,
+            &indexes,
+            &custom_definitions,
+            &[],
+        );
         assert!(result_again.is_ok(), "Second proof should succeed");
         assert_eq!(
             result_again.unwrap(),
@@ -95,12 +105,18 @@ mod proof_tests {
         let target_prover: Statement = target_stmt.clone();
 
         // Destructure the result and pass &indexes
-        let (indexes, _) = setup_indexes_with_facts(vec![]);
+        let (indexes, _) = setup_indexes_with_facts(&[]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_prover, &indexes, &custom_definitions);
+        let result = try_prove_statement(
+            &mut state,
+            &target_prover,
+            &indexes,
+            &custom_definitions,
+            &[],
+        );
 
         assert!(result.is_err(), "Proof should fail");
         match result.err().unwrap() {
@@ -133,7 +149,7 @@ mod proof_tests {
         let target_prover: Statement = target_stmt.clone();
 
         // Destructure the result and pass &indexes
-        let (indexes, _) = setup_indexes_with_facts(vec![]);
+        let (indexes, _) = setup_indexes_with_facts(&[]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
@@ -144,9 +160,15 @@ mod proof_tests {
             .insert(target_prover.clone(), dummy_chain.clone());
 
         // Destructure the result and pass &indexes
-        let (indexes, _) = setup_indexes_with_facts(vec![]);
+        let (indexes, _) = setup_indexes_with_facts(&vec![]);
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_prover, &indexes, &custom_definitions);
+        let result = try_prove_statement(
+            &mut state,
+            &target_prover,
+            &indexes,
+            &custom_definitions,
+            &[],
+        );
 
         assert!(
             result.is_ok(),
@@ -179,12 +201,13 @@ mod proof_tests {
 
         // Destructure the result and pass &indexes
         let (indexes, _) =
-            setup_indexes_with_facts(vec![(pod_a, fact1.clone()), (pod_b, fact2.clone())]);
+            setup_indexes_with_facts(&vec![(pod_a, fact1.clone()), (pod_b, fact2.clone())]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(result.is_ok(), "Proof should succeed via EqualFromEntries");
         let proof_chain = result.unwrap();
 
@@ -223,11 +246,12 @@ mod proof_tests {
 
         // Destructure the result and pass &indexes
         let (indexes, _) =
-            setup_indexes_with_facts(vec![(pod_a, fact1.clone()), (pod_b, fact2.clone())]);
+            setup_indexes_with_facts(&vec![(pod_a, fact1.clone()), (pod_b, fact2.clone())]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(result.is_err());
         // Should now fail specifically because DSU sets are different due to ValueOf derivation
         match result.err().unwrap() {
@@ -263,12 +287,13 @@ mod proof_tests {
         let target_stmt = Statement::Equal(ak1.clone(), ak2.clone());
 
         // Destructure the result and pass &indexes
-        let (indexes, _) = setup_indexes_with_facts(vec![(pod_a, fact1.clone())]);
+        let (indexes, _) = setup_indexes_with_facts(&vec![(pod_a, fact1.clone())]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         // Should now fall through to the generic Unsatisfiable error because the transitive check
         // will see that ak2 is not indexed and skip that path.
         assert!(result.is_err());
@@ -302,12 +327,13 @@ mod proof_tests {
 
         // Destructure the result and pass &indexes
         let (indexes, _) =
-            setup_indexes_with_facts(vec![(pod_a, fact1.clone()), (pod_b, fact2.clone())]);
+            setup_indexes_with_facts(&vec![(pod_a, fact1.clone()), (pod_b, fact2.clone())]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(
             result.is_ok(),
             "Proof should succeed via NotEqualFromEntries"
@@ -348,11 +374,12 @@ mod proof_tests {
 
         // Destructure the result and pass &indexes
         let (indexes, _) =
-            setup_indexes_with_facts(vec![(pod_a, fact1.clone()), (pod_b, fact2.clone())]);
+            setup_indexes_with_facts(&vec![(pod_a, fact1.clone()), (pod_b, fact2.clone())]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(result.is_err());
         match result.err().unwrap() {
             ProverError::Unsatisfiable(msg) => {
@@ -380,12 +407,13 @@ mod proof_tests {
 
         // Destructure the result and pass &indexes
         let (indexes, _) =
-            setup_indexes_with_facts(vec![(pod_a, fact_gt.clone()), (pod_b, fact_lt.clone())]);
+            setup_indexes_with_facts(&vec![(pod_a, fact_gt.clone()), (pod_b, fact_lt.clone())]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(result.is_ok(), "Proof should succeed via GtFromEntries");
         let proof_chain = result.unwrap();
 
@@ -424,12 +452,13 @@ mod proof_tests {
 
         // Destructure the result and pass &indexes
         let (indexes, _) =
-            setup_indexes_with_facts(vec![(pod_a, fact_a.clone()), (pod_b, fact_b.clone())]);
+            setup_indexes_with_facts(&vec![(pod_a, fact_a.clone()), (pod_b, fact_b.clone())]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(result.is_err());
         match result.err().unwrap() {
             ProverError::Unsatisfiable(msg) => {
@@ -457,12 +486,13 @@ mod proof_tests {
 
         // Destructure the result and pass &indexes
         let (indexes, _) =
-            setup_indexes_with_facts(vec![(pod_a, fact_a.clone()), (pod_b, fact_b.clone())]);
+            setup_indexes_with_facts(&vec![(pod_a, fact_a.clone()), (pod_b, fact_b.clone())]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(
             result.is_err(),
             "Should fail because types are incompatible for Gt"
@@ -493,12 +523,13 @@ mod proof_tests {
 
         // Destructure the result and pass &indexes
         let (indexes, _) =
-            setup_indexes_with_facts(vec![(pod_a, fact_lt.clone()), (pod_b, fact_gt.clone())]);
+            setup_indexes_with_facts(&vec![(pod_a, fact_lt.clone()), (pod_b, fact_gt.clone())]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(result.is_ok(), "Proof should succeed via LtFromEntries");
         let proof_chain = result.unwrap();
 
@@ -537,12 +568,13 @@ mod proof_tests {
 
         // Destructure the result and pass &indexes
         let (indexes, _) =
-            setup_indexes_with_facts(vec![(pod_a, fact_a.clone()), (pod_b, fact_b.clone())]);
+            setup_indexes_with_facts(&vec![(pod_a, fact_a.clone()), (pod_b, fact_b.clone())]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(result.is_err());
         match result.err().unwrap() {
             ProverError::Unsatisfiable(msg) => {
@@ -576,7 +608,7 @@ mod proof_tests {
         let target_stmt = Statement::SumOf(ak_sum.clone(), ak_add1.clone(), ak_add2.clone());
 
         // Destructure the result and pass &indexes
-        let (indexes, _) = setup_indexes_with_facts(vec![
+        let (indexes, _) = setup_indexes_with_facts(&vec![
             (pod_a, fact_sum.clone()),
             (pod_b, fact_add1.clone()),
             (pod_c, fact_add2.clone()),
@@ -585,7 +617,8 @@ mod proof_tests {
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(result.is_ok(), "Proof should succeed via SumOf");
         let proof_chain = result.unwrap();
 
@@ -630,7 +663,7 @@ mod proof_tests {
         let target_stmt = Statement::SumOf(ak_sum.clone(), ak_add1.clone(), ak_add2.clone());
 
         // Destructure the result and pass &indexes
-        let (indexes, _) = setup_indexes_with_facts(vec![
+        let (indexes, _) = setup_indexes_with_facts(&vec![
             (pod_a, fact_sum.clone()),
             (pod_b, fact_add1.clone()),
             (pod_c, fact_add2.clone()),
@@ -639,7 +672,8 @@ mod proof_tests {
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(result.is_err());
         match result.err().unwrap() {
             ProverError::Unsatisfiable(msg) => {
@@ -671,7 +705,7 @@ mod proof_tests {
         let target_stmt = Statement::SumOf(ak_sum.clone(), ak_add1.clone(), ak_add2.clone());
 
         // Destructure the result and pass &indexes
-        let (indexes, _) = setup_indexes_with_facts(vec![
+        let (indexes, _) = setup_indexes_with_facts(&vec![
             (pod_a, fact_sum.clone()),
             (pod_b, fact_add1.clone()),
             (pod_c, fact_add2.clone()),
@@ -680,7 +714,8 @@ mod proof_tests {
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(result.is_err(), "Should fail due to wrong type");
         match result.err().unwrap() {
             ProverError::Unsatisfiable(msg) => {
@@ -713,12 +748,13 @@ mod proof_tests {
 
         // Destructure the result and pass &indexes
         let (indexes, _) =
-            setup_indexes_with_facts(vec![(pod_a, fact_sum.clone()), (pod_b, fact_add1.clone())]);
+            setup_indexes_with_facts(&vec![(pod_a, fact_sum.clone()), (pod_b, fact_add1.clone())]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(result.is_err(), "Should fail due to missing value");
         match result.err().unwrap() {
             ProverError::Unsatisfiable(msg) => {
@@ -752,7 +788,7 @@ mod proof_tests {
         let target_stmt = Statement::ProductOf(ak_prod.clone(), ak_fac1.clone(), ak_fac2.clone());
 
         // Destructure the result and pass &indexes
-        let (indexes, _) = setup_indexes_with_facts(vec![
+        let (indexes, _) = setup_indexes_with_facts(&vec![
             (pod_a, fact_prod.clone()),
             (pod_b, fact_fac1.clone()),
             (pod_c, fact_fac2.clone()),
@@ -761,7 +797,8 @@ mod proof_tests {
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(result.is_ok(), "Proof should succeed via ProductOf");
         let proof_chain = result.unwrap();
 
@@ -806,7 +843,7 @@ mod proof_tests {
         let target_stmt = Statement::ProductOf(ak_prod.clone(), ak_fac1.clone(), ak_fac2.clone());
 
         // Destructure the result and pass &indexes
-        let (indexes, _) = setup_indexes_with_facts(vec![
+        let (indexes, _) = setup_indexes_with_facts(&vec![
             (pod_a, fact_prod.clone()),
             (pod_b, fact_fac1.clone()),
             (pod_c, fact_fac2.clone()),
@@ -815,7 +852,8 @@ mod proof_tests {
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(result.is_err());
         match result.err().unwrap() {
             ProverError::Unsatisfiable(msg) => {
@@ -849,7 +887,7 @@ mod proof_tests {
         let target_stmt = Statement::MaxOf(ak_max.clone(), ak_op1.clone(), ak_op2.clone());
 
         // Destructure the result and pass &indexes
-        let (indexes, _) = setup_indexes_with_facts(vec![
+        let (indexes, _) = setup_indexes_with_facts(&vec![
             (pod_a, fact_max.clone()),
             (pod_b, fact_op1.clone()),
             (pod_c, fact_op2.clone()),
@@ -858,7 +896,8 @@ mod proof_tests {
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(result.is_ok(), "Proof should succeed via MaxOf (case 1)");
         let proof_chain = result.unwrap();
 
@@ -887,15 +926,20 @@ mod proof_tests {
         let target_stmt2 = Statement::MaxOf(ak_max.clone(), ak_op1.clone(), ak_op2.clone());
 
         // Destructure the result and pass &indexes
-        let (indexes2, _) = setup_indexes_with_facts(vec![
+        let (indexes2, _) = setup_indexes_with_facts(&vec![
             (pod_a, fact_max2.clone()),
             (pod_b, fact_op1_2.clone()),
             (pod_c, fact_op2_2.clone()),
         ]);
         let mut state2 = solver_state_with_domains(vec![]);
         // Pass &indexes2
-        let result2 =
-            try_prove_statement(&mut state2, &target_stmt2, &indexes2, &custom_definitions);
+        let result2 = try_prove_statement(
+            &mut state2,
+            &target_stmt2,
+            &indexes2,
+            &custom_definitions,
+            &[],
+        );
         assert!(result2.is_ok(), "Proof should succeed via MaxOf (case 2)");
     }
 
@@ -921,7 +965,7 @@ mod proof_tests {
         let target_stmt = Statement::MaxOf(ak_max.clone(), ak_op1.clone(), ak_op2.clone());
 
         // Destructure the result and pass &indexes
-        let (indexes, _) = setup_indexes_with_facts(vec![
+        let (indexes, _) = setup_indexes_with_facts(&vec![
             (pod_a, fact_max.clone()),
             (pod_b, fact_op1.clone()),
             (pod_c, fact_op2.clone()),
@@ -930,7 +974,8 @@ mod proof_tests {
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(result.is_err());
         match result.err().unwrap() {
             ProverError::Unsatisfiable(msg) => {
@@ -970,7 +1015,7 @@ mod proof_tests {
         let target_stmt = Statement::Contains(ak_dict.clone(), ak_key.clone(), ak_val.clone());
 
         // Destructure the result and pass &indexes
-        let (indexes, _) = setup_indexes_with_facts(vec![
+        let (indexes, _) = setup_indexes_with_facts(&vec![
             (pod_a, fact_dict.clone()),
             (pod_b, fact_key.clone()),
             (pod_c, fact_val.clone()),
@@ -979,7 +1024,8 @@ mod proof_tests {
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(
             result.is_ok(),
             "Proof should succeed via ContainsFromEntries"
@@ -1038,7 +1084,7 @@ mod proof_tests {
             Statement::Contains(ak_dict.clone(), ak_key_missing.clone(), ak_val.clone());
 
         // Destructure the result and pass &indexes
-        let (indexes, _) = setup_indexes_with_facts(vec![
+        let (indexes, _) = setup_indexes_with_facts(&vec![
             (pod_a, fact_dict.clone()),
             (pod_b, fact_key_missing.clone()),
             (pod_c, fact_val.clone()),
@@ -1047,7 +1093,8 @@ mod proof_tests {
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(result.is_err());
         match result.err().unwrap() {
             ProverError::Unsatisfiable(msg) => {
@@ -1089,7 +1136,7 @@ mod proof_tests {
             Statement::Contains(ak_dict.clone(), ak_key.clone(), ak_val_wrong.clone());
 
         // Destructure the result and pass &indexes
-        let (indexes, _) = setup_indexes_with_facts(vec![
+        let (indexes, _) = setup_indexes_with_facts(&vec![
             (pod_a, fact_dict.clone()),
             (pod_b, fact_key.clone()),
             (pod_c, fact_val_wrong.clone()),
@@ -1098,7 +1145,8 @@ mod proof_tests {
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(result.is_err());
         match result.err().unwrap() {
             ProverError::Unsatisfiable(msg) => {
@@ -1136,7 +1184,7 @@ mod proof_tests {
         let target_stmt = Statement::Contains(ak_dict.clone(), ak_key.clone(), ak_val.clone());
 
         // Destructure the result and pass &indexes
-        let (indexes, _) = setup_indexes_with_facts(vec![
+        let (indexes, _) = setup_indexes_with_facts(&vec![
             (pod_a, fact_dict.clone()),
             (pod_b, fact_key.clone()),
             // Missing fact_val
@@ -1145,7 +1193,8 @@ mod proof_tests {
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(
             result.is_err(),
             "Should fail due to missing ValueOf for value AK"
@@ -1186,7 +1235,7 @@ mod proof_tests {
         let target_stmt = Statement::NotContains(ak_dict.clone(), ak_key_missing.clone());
 
         // Destructure the result and pass &indexes
-        let (indexes, _) = setup_indexes_with_facts(vec![
+        let (indexes, _) = setup_indexes_with_facts(&vec![
             (pod_a, fact_dict.clone()),
             (pod_b, fact_key_missing.clone()),
         ]);
@@ -1194,7 +1243,8 @@ mod proof_tests {
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(
             result.is_ok(),
             "Proof should succeed via NotContainsFromEntries"
@@ -1246,7 +1296,7 @@ mod proof_tests {
         let target_stmt = Statement::NotContains(ak_dict.clone(), ak_key_exists.clone());
 
         // Destructure the result and pass &indexes
-        let (indexes, _) = setup_indexes_with_facts(vec![
+        let (indexes, _) = setup_indexes_with_facts(&vec![
             (pod_a, fact_dict.clone()),
             (pod_b, fact_key_exists.clone()),
         ]);
@@ -1254,7 +1304,8 @@ mod proof_tests {
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(
             result.is_err(),
             "Should fail because key exists in dictionary"
@@ -1287,7 +1338,7 @@ mod proof_tests {
 
         // Destructure the result and pass &indexes
         let initial_facts_clone = initial_facts.clone(); // Clone `initial_facts` here if needed later
-        let (indexes, _) = setup_indexes_with_facts(initial_facts);
+        let (indexes, _) = setup_indexes_with_facts(&initial_facts);
         let custom_definitions: CustomDefinitions = HashMap::new();
 
         // Request template for the target statement - Use wildcards
@@ -1296,8 +1347,13 @@ mod proof_tests {
 
         // --- Call try_prove_statement directly --- (Solver logic is tested in search.rs)
         // Pass &indexes
-        let result =
-            try_prove_statement(&mut state, &target_statement, &indexes, &custom_definitions);
+        let result = try_prove_statement(
+            &mut state,
+            &target_statement,
+            &indexes,
+            &custom_definitions,
+            &[],
+        );
 
         // --- Assertions ---
         assert!(
@@ -1393,13 +1449,18 @@ mod proof_tests {
         let target_neq_stmt = Statement::NotEqual(ak1.clone(), ak2.clone());
 
         // Destructure the result and pass &indexes
-        let (indexes, _) = setup_indexes_with_facts(vec![(pod_a, input_gt_stmt.clone())]);
+        let (indexes, _) = setup_indexes_with_facts(&vec![(pod_a, input_gt_stmt.clone())]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result =
-            try_prove_statement(&mut state, &target_neq_stmt, &indexes, &custom_definitions);
+        let result = try_prove_statement(
+            &mut state,
+            &target_neq_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+        );
         assert!(result.is_ok(), "Proof should succeed via GtToNotEqual");
         let proof_chain = result.unwrap();
 
@@ -1446,13 +1507,18 @@ mod proof_tests {
         let target_neq_stmt = Statement::NotEqual(ak1.clone(), ak2.clone());
 
         // Destructure the result and pass &indexes
-        let (indexes, _) = setup_indexes_with_facts(vec![(pod_a, input_lt_stmt.clone())]);
+        let (indexes, _) = setup_indexes_with_facts(&vec![(pod_a, input_lt_stmt.clone())]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result =
-            try_prove_statement(&mut state, &target_neq_stmt, &indexes, &custom_definitions);
+        let result = try_prove_statement(
+            &mut state,
+            &target_neq_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+        );
         assert!(result.is_ok(), "Proof should succeed via LtToNotEqual");
         let proof_chain = result.unwrap();
 
@@ -1498,13 +1564,18 @@ mod proof_tests {
 
         // No facts provided, so Gt/Lt cannot be proven
         // Destructure the result and pass &indexes
-        let (indexes, _) = setup_indexes_with_facts(vec![]);
+        let (indexes, _) = setup_indexes_with_facts(&vec![]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result =
-            try_prove_statement(&mut state, &target_neq_stmt, &indexes, &custom_definitions);
+        let result = try_prove_statement(
+            &mut state,
+            &target_neq_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+        );
         assert!(result.is_err());
         match result.err().unwrap() {
             ProverError::Unsatisfiable(msg) => {
@@ -1541,13 +1612,18 @@ mod proof_tests {
             (pod_b, fact_b.clone()),
             (pod_a, input_gt_stmt.clone()), // Add the Gt base fact
         ];
-        let (indexes, _) = setup_indexes_with_facts(facts_vec);
+        let (indexes, _) = setup_indexes_with_facts(&facts_vec);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result =
-            try_prove_statement(&mut state, &target_neq_stmt, &indexes, &custom_definitions);
+        let result = try_prove_statement(
+            &mut state,
+            &target_neq_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+        );
         assert!(result.is_ok(), "Proof should succeed");
         let proof_chain = result.unwrap();
 
@@ -1623,8 +1699,6 @@ mod proof_tests {
             (pod_const1, fact_const_val.clone()),
             (pod_const2, fact_const_key.clone()),
         ];
-        // Destructure the result and pass &indexes
-        let (indexes, params) = setup_indexes_with_facts(facts.clone()); // Clone facts here
 
         // --- Custom Predicate Definition ---
         let custom_pred_index = 0;
@@ -1675,12 +1749,12 @@ mod proof_tests {
 
         // Use the new helper to create the definitions map
         // Destructure the result and pass &indexes
-        let (indexes, params) = setup_indexes_with_facts(facts.clone()); // Clone facts here
-                                                                         // let custom_definitions = setup_custom_definitions_for_test(
-                                                                         //     vec![(custom_pred_variant.clone(), custom_pred_def, custom_batch.clone())],
-                                                                         //     &params,
-                                                                         // );
-                                                                         // Construct map manually due to issues with helper
+        let (indexes, params) = setup_indexes_with_facts(&facts); // Clone facts here
+                                                                  // let custom_definitions = setup_custom_definitions_for_test(
+                                                                  //     vec![(custom_pred_variant.clone(), custom_pred_def, custom_batch.clone())],
+                                                                  //     &params,
+                                                                  // );
+                                                                  // Construct map manually due to issues with helper
         let mut custom_definitions = CustomDefinitions::new();
         let key = custom_pred_variant.to_fields(&params);
         custom_definitions.insert(key, (custom_pred_def, custom_batch.clone()));
@@ -1713,7 +1787,8 @@ mod proof_tests {
         ]);
 
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
 
         assert!(result.is_ok(), "Proof failed: {:?}", result.err());
         let proof_chain = result.unwrap();
@@ -1772,7 +1847,7 @@ mod proof_tests {
             ),
         ];
         // Destructure the result and pass &indexes
-        let (indexes, params) = setup_indexes_with_facts(facts.clone()); // Clone facts here
+        let (indexes, params) = setup_indexes_with_facts(&facts); // Clone facts here
 
         // --- Custom Predicate Definition (Same as AND test, but conjunction=false) ---
         let custom_pred_index = 0;
@@ -1861,7 +1936,8 @@ mod proof_tests {
         ]);
 
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
 
         assert!(result.is_ok(), "Proof failed for OR: {:?}", result.err());
         let proof_chain = result.unwrap();
@@ -1917,7 +1993,7 @@ mod proof_tests {
             // Missing fact from pod_const1
             (pod_const2, fact_const_key.clone()),
         ];
-        let (indexes, params) = setup_indexes_with_facts(facts.clone()); // Clone facts here
+        let (indexes, params) = setup_indexes_with_facts(&facts); // Clone facts here
 
         // --- Custom Predicate Definition (Same as success test) ---
         let custom_pred_index = 0;
@@ -2000,7 +2076,8 @@ mod proof_tests {
         ]);
 
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
 
         assert!(
             result.is_err(),
@@ -2050,7 +2127,7 @@ mod proof_tests {
             (pod_target, fact_target_key.clone()),
             (pod_const2, fact_const_key.clone()),
         ];
-        let (indexes, params) = setup_indexes_with_facts(facts.clone()); // Clone facts here
+        let (indexes, params) = setup_indexes_with_facts(&facts); // Clone facts here
 
         // --- Custom Predicate Definition (OR) ---
         let custom_pred_index = 0;
@@ -2136,7 +2213,8 @@ mod proof_tests {
         ]);
 
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
 
         assert!(
             result.is_err(),
@@ -2197,7 +2275,7 @@ mod proof_tests {
             (pod_m, fact_m_val.clone()),
             (pod_n, fact_n_val.clone()),
         ];
-        let (indexes, params) = setup_indexes_with_facts(facts.clone()); // Clone facts here
+        let (indexes, params) = setup_indexes_with_facts(&facts); // Clone facts here
 
         // --- Custom Predicate Definitions ---
 
@@ -2304,7 +2382,8 @@ mod proof_tests {
 
         // --- Execution ---
         // Pass &indexes
-        let result = try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions);
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
 
         // --- Assertions ---
         assert!(result.is_ok(), "Nested proof failed: {:?}", result.err());

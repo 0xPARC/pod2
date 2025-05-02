@@ -8,6 +8,7 @@ use crate::{
     },
     prover::{
         error::ProverError,
+        indexing::ProverIndexes,
         types::{ProofChain, ProofSolution},
     },
 };
@@ -64,21 +65,29 @@ impl SolverState {
 
 pub fn solve(
     request_templates: &[middleware::StatementTmpl],
-    indexes: &super::indexing::ProverIndexes,
+    initial_facts: &[(PodId, Statement)],
+    params: &Params,
     custom_definitions: &super::types::CustomDefinitions,
 ) -> Result<super::types::ProofSolution, super::error::ProverError> {
-    // Initialize the solver state. It will use the params stored within the indexes.
-    let mut state = initialize_solver_state(request_templates, indexes, custom_definitions)?;
+    // --- Stage 1: Initialize Solver State & Get Potential Constant Info/SELF facts ---
+    let (mut state, potential_constant_info, self_facts) =
+        initialize_solver_state(request_templates, initial_facts, params, custom_definitions)?;
 
-    // Extract implied equality/inequality pairs from templates
+    // --- Stage 2: Combine facts & Build Indexes ---
+    let mut combined_facts = initial_facts.to_vec();
+    combined_facts.extend(self_facts);
+    let solver_indexes = ProverIndexes::build(params.clone(), &combined_facts);
+
+    // --- Stage 3: Initial Pruning (using the correct indexes) ---
     let (equality_pairs, inequality_pairs) = extract_implied_pairs(request_templates);
+    let original_templates = request_templates.to_vec(); // Keep original templates
 
-    // Keep the original templates accessible for candidate generation
-    let original_templates = request_templates.to_vec();
-
-    // 2. Initial Domain Pruning (Static Unary Constraints)
-    // Pass the extracted pairs
-    prune_initial_domains(&mut state, indexes, &equality_pairs, &inequality_pairs)?;
+    prune_initial_domains(
+        &mut state,
+        &solver_indexes, // Pass the newly built index
+        &equality_pairs,
+        &inequality_pairs,
+    )?;
 
     // 3. Iterative Constraint Propagation & Proof Generation (Loop)
     let mut changed_in_iteration = true;
@@ -91,8 +100,12 @@ pub fn solve(
         println!("Solver iteration {}", iteration);
 
         // 3a. Re-apply basic pruning based on current domains
-        let pruning_changed =
-            prune_initial_domains(&mut state, indexes, &equality_pairs, &inequality_pairs)?;
+        let pruning_changed = prune_initial_domains(
+            &mut state,
+            &solver_indexes,
+            &equality_pairs,
+            &inequality_pairs,
+        )?;
         if pruning_changed {
             println!("  - Pruning changed domains");
             changed_in_iteration = true;
@@ -116,8 +129,9 @@ pub fn solve(
                     match try_prove_statement(
                         &mut state,
                         &target_statement,
-                        indexes,
+                        &solver_indexes,
                         custom_definitions,
+                        &potential_constant_info, // Pass constant info
                     ) {
                         Ok(_proof_chain) => {
                             println!("  - Successfully proved: {:?}", target_statement);
@@ -131,7 +145,7 @@ pub fn solve(
                                 tmpl,              // Pass the template!
                                 &target_statement, // Pass the concrete statement
                                 &bindings,         // Pass the specific bindings
-                                indexes,
+                                &solver_indexes,   // Use solver_indexes
                             )?; // Propagate errors
 
                             if pruned_dynamically {
@@ -219,10 +233,11 @@ pub fn solve(
         match perform_search(
             state,
             &original_templates,
-            indexes,
+            &solver_indexes, // Pass correct index
             custom_definitions,
-            &equality_pairs,   // Pass pairs
-            &inequality_pairs, // Pass pairs
+            &equality_pairs,
+            &inequality_pairs,
+            &potential_constant_info, // Pass constant info
         ) {
             Ok(solved_state) => {
                 println!("Search phase succeeded.");
@@ -281,11 +296,11 @@ pub fn solve(
                 chain.collect_scope(
                     &mut final_scope,
                     &state.proof_chains,
-                    &indexes.exact_statement_lookup,
+                    &solver_indexes.exact_statement_lookup,
                 );
             } else {
                 // This might happen if the final statement was a base fact itself
-                if let Some((pod_id, base_stmt)) = indexes
+                if let Some((pod_id, base_stmt)) = solver_indexes
                     .exact_statement_lookup
                     .iter()
                     .find(|(_, stmt)| stmt == &target_stmt)

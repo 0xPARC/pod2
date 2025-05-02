@@ -18,7 +18,7 @@ mod search_tests {
             (p1, Statement::ValueOf(ak(1, "foo"), val(10))),
             (p2, Statement::ValueOf(ak(2, "foo"), val(10))),
         ];
-        let (indexes, _params) = setup_indexes_with_facts(facts);
+        let _params = middleware::Params::default();
         let custom_definitions = CustomDefinitions::default();
 
         // Request: Equal(?A["foo"], ?B["foo"])
@@ -32,7 +32,7 @@ mod search_tests {
             ],
         }];
 
-        let result = crate::prover::solver::solve(&request, &indexes, &custom_definitions);
+        let result = crate::prover::solver::solve(&request, &facts, &_params, &custom_definitions);
 
         // Current expectation is that search finds a solution (A=p1, B=p1 or A=p2, B=p2)
         // Let's verify it finds *a* solution, not error out.
@@ -95,7 +95,7 @@ mod search_tests {
             (pod_a, Statement::ValueOf(ak(1, "foo"), val_10.clone())),
             (pod_c, Statement::ValueOf(ak(3, "quux"), val_20.clone())),
         ];
-        let (indexes, _params) = setup_indexes_with_facts(facts);
+        let _params = middleware::Params::default();
         let custom_definitions = CustomDefinitions::default();
 
         // Request Template: Gt(?Z["quux"], ?A["foo"])
@@ -109,7 +109,7 @@ mod search_tests {
 
         // Run the solver
         let result =
-            crate::prover::solver::solve(&request_templates, &indexes, &custom_definitions);
+            crate::prover::solver::solve(&request_templates, &facts, &_params, &custom_definitions);
 
         // --- Assertions ---
         // Assert: Expect the solver to succeed now
@@ -186,7 +186,7 @@ mod search_tests {
             (pod_a, Statement::ValueOf(ak(1, "foo"), val_10)),
             (pod_b, Statement::ValueOf(ak(2, "bar"), val_20)),
         ];
-        let (indexes, _params) = setup_indexes_with_facts(facts);
+        let _params = middleware::Params::default();
         let custom_definitions = CustomDefinitions::default();
 
         // Request Template: Gt(?X["foo"], ?Y["bar"])
@@ -200,7 +200,7 @@ mod search_tests {
 
         // Run the solver
         let result =
-            crate::prover::solver::solve(&request_templates, &indexes, &custom_definitions);
+            crate::prover::solver::solve(&request_templates, &facts, &_params, &custom_definitions);
 
         // Assert: Expect the solver to return Unsatisfiable because Gt(10, 20) fails.
         assert!(
@@ -247,7 +247,8 @@ mod search_tests {
             (p1, Statement::ValueOf(ak(1, "val"), val(20))),
             (p2, Statement::ValueOf(ak(2, "val"), val(10))),
         ];
-        let (indexes, _params) = setup_indexes_with_facts(facts.clone());
+        let facts_clone = facts.clone(); // Keep clone for potential later use
+        let _params = middleware::Params::default();
         let custom_definitions = CustomDefinitions::default();
 
         // Request Template: Gt(?A["val"], ?B["val"])
@@ -261,7 +262,7 @@ mod search_tests {
 
         // Run the solver
         let result =
-            crate::prover::solver::solve(&request_templates, &indexes, &custom_definitions);
+            crate::prover::solver::solve(&request_templates, &facts, &_params, &custom_definitions);
         assert!(
             result.is_ok(),
             "Solver failed for Gt search. Err: {:?}",
@@ -330,7 +331,7 @@ mod search_tests {
             (p1, Statement::ValueOf(ak(1, "_pod_id_val"), val(1))),
             (p2, Statement::ValueOf(ak(2, "_pod_id_val"), val(2))),
         ];
-        let (indexes, _params) = setup_indexes_with_facts(facts);
+        let _params = middleware::Params::default();
         let custom_definitions = CustomDefinitions::default();
 
         let request_templates = vec![
@@ -355,7 +356,7 @@ mod search_tests {
 
         // Run the solver
         let result =
-            crate::prover::solver::solve(&request_templates, &indexes, &custom_definitions);
+            crate::prover::solver::solve(&request_templates, &facts, &_params, &custom_definitions);
 
         // Expect Unsatisfiable because the constraints conflict
         assert!(

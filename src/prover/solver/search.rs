@@ -6,7 +6,7 @@ use super::{
     try_generate_concrete_candidate_and_bindings, SolverState,
 };
 use crate::{
-    middleware::{NativePredicate, Predicate, StatementTmpl, Wildcard},
+    middleware::{Key, NativePredicate, Predicate, StatementTmpl, Value, Wildcard},
     prover::{error::ProverError, indexing::ProverIndexes, types::CustomDefinitions},
 };
 
@@ -22,6 +22,7 @@ pub(super) fn perform_search(
     custom_definitions: &CustomDefinitions, // <-- Use this now
     equality_pairs: &[(Wildcard, Wildcard)],
     inequality_pairs: &[(Wildcard, Wildcard)],
+    potential_constant_info: &[(Wildcard, Key, Value)], // Change Wildcard -> Value
 ) -> Result<SolverState, ProverError> {
     println!("Entering DFS Search...");
 
@@ -47,6 +48,7 @@ pub(super) fn perform_search(
                         &target_statement,
                         indexes,
                         custom_definitions,
+                        potential_constant_info, // Pass down
                     ) {
                         Ok(_) => {
                             // This specific statement is provable with this assignment
@@ -157,6 +159,7 @@ pub(super) fn perform_search(
                     custom_definitions,
                     equality_pairs,
                     inequality_pairs,
+                    potential_constant_info, // Pass down (type should now match)
                 ) {
                     // Pass custom_definitions
                     Ok(solved_state) => {

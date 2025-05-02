@@ -7,7 +7,8 @@ use crate::{
     frontend::{
         self, MainPodBuilder, Operation as FrontendOperation, SignedPod as FrontendSignedPod,
     },
-    middleware::{self, OperationAux, OperationType, PodId, Statement},
+    middleware::{self, NativeOperation, OperationAux, OperationType, PodId, Statement, SELF},
+    op,
     prover::{
         error::ProverError,
         solver::types::ExpectedType,
@@ -35,26 +36,45 @@ pub fn build_main_pod_from_solution(
     params: &middleware::Params,
     request_templates: &[middleware::StatementTmpl],
 ) -> Result<frontend::MainPod, ProverError> {
-    println!("Building MainPod from solution...");
+    // println!("Building MainPod from solution...");
 
     let mut builder = MainPodBuilder::new(params);
 
     // 1. Add references to input PODs based on the scope
     let mut referenced_pod_ids = HashSet::new();
-    // Also collect base facts for dependency tracking
-    let base_facts: HashSet<&Statement> = solution.scope.iter().map(|(_, stmt)| stmt).collect();
+    // Also collect base facts and SELF facts for dependency tracking and op generation
+    let mut self_value_facts = HashMap::new(); // Store SELF ValueOf facts: Key -> Value
+    let base_facts: HashSet<&Statement> = solution
+        .scope
+        .iter()
+        .map(|(pod_id, stmt)| {
+            if *pod_id == SELF {
+                if let Statement::ValueOf(ak, value) = stmt {
+                    if ak.pod_id == SELF {
+                        self_value_facts.insert(ak.key.clone(), value.clone());
+                    }
+                }
+            }
+            stmt // Collect all statements regardless of origin for now
+        })
+        .collect();
 
     for (pod_id, _) in &solution.scope {
+        // Skip adding reference for SELF
+        if *pod_id == SELF {
+            continue;
+        }
+
         if referenced_pod_ids.insert(*pod_id) {
             // Check if it's a known SignedPod
             if let Some(signed_pod_arc) = original_signed_pods.get(pod_id) {
                 // Pass the actual SignedPod reference
                 builder.add_signed_pod(signed_pod_arc);
-                println!("  Added reference for SignedPod: {:?}", pod_id);
+                // println!("  Added reference for SignedPod: {:?}", pod_id);
             } else if let Some(main_pod_arc) = original_main_pods.get(pod_id) {
                 // Pass the actual MainPod reference
                 builder.add_main_pod(main_pod_arc.as_ref().clone()); // Clone the MainPod if needed by builder
-                println!("  Added reference for MainPod: {:?}", pod_id);
+                                                                     // println!("  Added reference for MainPod: {:?}", pod_id);
             } else {
                 // This indicates an inconsistency: a PodId from the scope wasn't in either input map
                 return Err(ProverError::Internal(format!(
@@ -93,16 +113,16 @@ pub fn build_main_pod_from_solution(
             &final_state_for_generation,
         ) {
             Ok(Some((target_stmt, _))) => {
-                println!("  Identified Target Statement: {:?}", target_stmt);
+                // println!("  Identified Target Statement: {:?}", target_stmt);
                 target_statements.insert(target_stmt);
             }
             Ok(None) => {
-                println!("Warning: Could not generate concrete target statement from template {:?} during build (should not happen if solve succeeded)", tmpl);
+                // println!("Warning: Could not generate concrete target statement from template {:?} during build (should not happen if solve succeeded)", tmpl);
                 // This might indicate an issue if the solver succeeded but we can't generate the target now.
                 // Depending on desired strictness, could return an error here.
             }
             Err(e) => {
-                println!("Error generating concrete target statement from template {:?} during build: {:?}", tmpl, e);
+                // println!("Error generating concrete target statement from template {:?} during build: {:?}", tmpl, e);
                 return Err(e); // Propagate the error
             }
         }
@@ -189,11 +209,52 @@ pub fn build_main_pod_from_solution(
 
     // --- Topological Sort of Proof Steps --- END ---
 
-    // 3. Add topologically sorted operations to the builder
-    // We use generated_statements to handle potential duplicates in `sorted_steps` if the same step
-    // was somehow included multiple times despite the HashMap - defensive check.
-    let mut generated_statements = HashSet::new();
+    let mut generated_statements = HashSet::new(); // Keep track of handled statements
+
+    // --- Process SELF Constant NewEntry Steps FIRST --- START ---
+    for step in solution.proof_chains.values().flat_map(|chain| &chain.0) {
+        if step.operation == OperationType::Native(NativeOperation::NewEntry) {
+            if let Statement::ValueOf(ak_self, literal_value) = &step.output {
+                if ak_self.pod_id == SELF {
+                    // Ensure we only add the NewEntry once for this constant
+                    if !generated_statements.insert(step.output.clone()) {
+                        continue;
+                    }
+
+                    let new_entry_op = op!(new_entry, (ak_self.key.name(), literal_value.clone()));
+                    let is_public = target_statements.contains(&step.output);
+                    println!(
+                        "  Adding PRE-SORT NewEntry Op (public={}): {:?} -> {:?}",
+                        is_public, new_entry_op, step.output
+                    );
+
+                    let _added_statement = if is_public {
+                        builder.pub_op(new_entry_op)?
+                    } else {
+                        builder.priv_op(new_entry_op)?
+                    };
+                }
+            }
+        }
+    }
+    // --- Process SELF Constant NewEntry Steps FIRST --- END ---
+
+    // 3. Add topologically sorted derived operations to the builder
+    // let mut generated_statements = HashSet::new(); // Moved up
     for step in sorted_steps {
+        // Now only contains derived steps from step_map
+
+        // Skip if output already handled (e.g., by the NewEntry pre-processing)
+        if generated_statements.contains(&step.output) {
+            println!("  Skipping already handled statement: {:?}", step.output);
+            continue;
+        }
+
+        // --- Remove specific NewEntry/CopyStatement handling from here, covered above/by AddPodRef ---
+        // if step.operation == OperationType::Native(NativeOperation::CopyStatement)
+        //     || step.operation == OperationType::Native(NativeOperation::NewEntry)
+        // { ... }
+
         // Ensure we only add the operation for each unique output statement once.
         if !generated_statements.insert(step.output.clone()) {
             continue;
@@ -205,10 +266,10 @@ pub fn build_main_pod_from_solution(
         // Determine if the output statement is a final target required by the request
         let is_public = target_statements.contains(&step.output);
 
-        println!(
-            "  Adding Sorted Op (public={}): {:?} -> {:?}",
-            is_public, frontend_op, step.output
-        );
+        // println!(
+        //     "  Adding Sorted Op (public={}): {:?} -> {:?}",
+        //     is_public, frontend_op, step.output
+        // );
 
         // Add operation to builder
         let _generated_statement = if is_public {
@@ -219,10 +280,9 @@ pub fn build_main_pod_from_solution(
     }
 
     // 4. Invoke the backend prover
-    println!("Invoking backend prover...");
+    // println!("Invoking backend prover...");
     // TODO: Use the actual prover instance passed in or created
     // In the meantime, MockProver should work identically to the real prover,
-    // so it will return a valid MainPod.
     let mut prover = crate::backends::plonky2::mock::mainpod::MockProver {}; // Example
     builder
         .prove(&mut prover, params)

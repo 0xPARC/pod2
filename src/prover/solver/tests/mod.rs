@@ -77,9 +77,9 @@ pub(crate) fn dummy_prover_indexes() -> ProverIndexes {
     ProverIndexes::new(middleware::Params::default())
 }
 
-pub(crate) fn setup_indexes_with_facts(facts: Vec<(PodId, Statement)>) -> (ProverIndexes, Params) {
+pub(crate) fn setup_indexes_with_facts(facts: &[(PodId, Statement)]) -> (ProverIndexes, Params) {
     let params = middleware::Params::default();
-    let indexes = ProverIndexes::build(params.clone(), &facts);
+    let indexes = ProverIndexes::build(params.clone(), facts);
     (indexes, params)
 }
 
@@ -105,17 +105,9 @@ pub(crate) fn dict_val(kvs: Vec<(&str, i64)>) -> Value {
     Value::from(Dictionary::new(map).unwrap())
 }
 
-pub(crate) fn cv_dict(kvs: Vec<(&str, i64)>) -> ConcreteValue {
-    ConcreteValue::Val(dict_val(kvs))
-}
-
 pub(crate) fn set_val(vals: Vec<i64>) -> Value {
     let set: HashSet<Value> = vals.into_iter().map(val).collect();
     Value::from(Set::new(set).unwrap())
-}
-
-pub(crate) fn cv_set(vals: Vec<i64>) -> ConcreteValue {
-    ConcreteValue::Val(set_val(vals))
 }
 
 pub(crate) fn array_val(vals: Vec<i64>) -> Value {
@@ -123,7 +115,4 @@ pub(crate) fn array_val(vals: Vec<i64>) -> Value {
     Value::from(Array::new(array).unwrap())
 }
 
-pub(crate) fn cv_array(vals: Vec<i64>) -> ConcreteValue {
-    ConcreteValue::Val(array_val(vals))
-}
 // --- END: Container Helpers ---
