@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use super::{
     types::{Constraint, Domain, ExpectedType},
@@ -74,18 +77,180 @@ fn get_wildcards_from_tmpl_arg(arg: &StatementTmplArg) -> Vec<Wildcard> {
     }
 }
 
+/// Infers the expected type of a public argument (by index) for a custom predicate
+/// by recursively analyzing its usage within the predicate's internal statement templates,
+/// including nested custom predicate calls.
+fn infer_argument_type(
+    pred_def: &crate::middleware::CustomPredicate,
+    arg_index: usize,
+    custom_definitions: &CustomDefinitions,
+    params: &crate::middleware::Params,
+    current_batch: Option<&Arc<crate::middleware::CustomPredicateBatch>>,
+    visited: &mut HashSet<(String, usize)>,
+) -> ExpectedType {
+    // Prevent infinite recursion in case of cyclic predicate definitions (shouldn't happen ideally)
+    let visited_key = (pred_def.name.clone(), arg_index);
+    if !visited.insert(visited_key.clone()) {
+        println!(
+            "Warning: Cycle detected or redundant check during type inference for {} arg {}",
+            pred_def.name, arg_index
+        );
+        return ExpectedType::Unknown; // Avoid infinite loop, return Unknown
+    }
+
+    let mut final_type = ExpectedType::Unknown;
+
+    for stmt_tmpl in &pred_def.statements {
+        let mut type_from_native = ExpectedType::Unknown;
+        let mut type_from_recursive = ExpectedType::Unknown;
+
+        // Check native usage first
+        for arg in &stmt_tmpl.args {
+            if let Predicate::Native(_) = &stmt_tmpl.pred {
+                match arg {
+                    StatementTmplArg::Key(wc_pod, key_or_wc) => {
+                        if wc_pod.index == arg_index {
+                            type_from_native = ExpectedType::Pod;
+                            break; // Found direct usage
+                        }
+                        if let KeyOrWildcard::Wildcard(wc_key) = key_or_wc {
+                            if wc_key.index == arg_index {
+                                type_from_native = ExpectedType::Key;
+                                break; // Found direct usage
+                            }
+                        }
+                    }
+                    StatementTmplArg::WildcardLiteral(wc_val) => {
+                        if wc_val.index == arg_index {
+                            // Don't immediately assume Val, but note it.
+                            if type_from_native == ExpectedType::Unknown {
+                                type_from_native = ExpectedType::Val;
+                            } else if type_from_native != ExpectedType::Val {
+                                // Conflict within the same native statement template usage
+                                visited.remove(&visited_key);
+                                return ExpectedType::Unknown;
+                            }
+                            // If it matches, no need to break, could be used elsewhere.
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // If native usage gave a definite type, check for conflicts and update final_type
+        if type_from_native != ExpectedType::Unknown {
+            if final_type == ExpectedType::Unknown {
+                final_type = type_from_native;
+            } else if final_type != type_from_native {
+                // Conflict found across different templates
+                visited.remove(&visited_key);
+                return ExpectedType::Unknown;
+            }
+            continue; // Move to the next statement template
+        }
+
+        // If no native usage found in this template, check for recursive usage
+        match &stmt_tmpl.pred {
+            Predicate::Custom(custom_ref) => {
+                // Find which arg position corresponds to our arg_index
+                for (nested_arg_pos, arg_tmpl) in stmt_tmpl.args.iter().enumerate() {
+                    if let StatementTmplArg::WildcardLiteral(wc) = arg_tmpl {
+                        if wc.index == arg_index {
+                            // Found the mapping, now recurse
+                            let predicate_key =
+                                Predicate::Custom(custom_ref.clone()).to_fields(params);
+                            if let Some((nested_pred_def, _)) =
+                                custom_definitions.get(&predicate_key)
+                            {
+                                // Pass the nested predicate's batch
+                                type_from_recursive = infer_argument_type(
+                                    nested_pred_def,
+                                    nested_arg_pos,
+                                    custom_definitions,
+                                    params,
+                                    Some(&custom_ref.batch), // Pass Arc ref
+                                    visited,
+                                );
+                                break; // Found the relevant argument, stop inner loop
+                            } else {
+                                // Definition not found - error? Or just Unknown?
+                                println!(
+                                    "Warning: Custom def not found for {:?} during type inference",
+                                    custom_ref
+                                );
+                                type_from_recursive = ExpectedType::Unknown;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            Predicate::BatchSelf(index) => {
+                if let Some(batch_arc) = current_batch {
+                    if let Some(nested_pred_def) = batch_arc.predicates.get(*index) {
+                        // Find which arg position corresponds to our arg_index
+                        for (nested_arg_pos, arg_tmpl) in stmt_tmpl.args.iter().enumerate() {
+                            if let StatementTmplArg::WildcardLiteral(wc) = arg_tmpl {
+                                if wc.index == arg_index {
+                                    // Found the mapping, now recurse
+                                    type_from_recursive = infer_argument_type(
+                                        nested_pred_def,
+                                        nested_arg_pos,
+                                        custom_definitions,
+                                        params,
+                                        Some(batch_arc), // Pass the same batch Arc ref
+                                        visited,
+                                    );
+                                    break; // Found the relevant argument, stop inner loop
+                                }
+                            }
+                        }
+                    } else {
+                        // Index out of bounds - error? Or just Unknown?
+                        println!(
+                            "Warning: BatchSelf index {} out of bounds for batch '{}' during type inference",
+                            index, batch_arc.name
+                        );
+                        type_from_recursive = ExpectedType::Unknown;
+                    }
+                } else {
+                    // BatchSelf without context - error? Or just Unknown?
+                    println!("Warning: BatchSelf used without current_batch context during type inference");
+                    type_from_recursive = ExpectedType::Unknown;
+                }
+            }
+            _ => {} // Native predicate already handled or not relevant here
+        }
+
+        // Update final_type based on recursive result, checking for conflicts
+        if type_from_recursive != ExpectedType::Unknown {
+            if final_type == ExpectedType::Unknown {
+                final_type = type_from_recursive;
+            } else if final_type != type_from_recursive {
+                // Conflict found between native/recursive usage or across different recursive paths
+                visited.remove(&visited_key);
+                return ExpectedType::Unknown;
+            }
+            // If a definite type was found via recursion, no need to check further templates *for this arg_index*?
+            // Let's allow checking all templates to ensure consistency.
+        }
+    }
+
+    // Remove the key before returning
+    visited.remove(&visited_key);
+    final_type
+}
+
 /// Helper function to recursively parse templates and generate constraints.
 fn parse_template_and_generate_constraints(
     tmpl: &StatementTmpl,
-    // Wildcards defined in the *calling* context (could be top-level or from an outer predicate)
-    // caller_args_tmpl: &[StatementTmplArg], // May not be needed if alias map is correct
+    current_batch: Option<Arc<crate::middleware::CustomPredicateBatch>>,
     wildcard_types: &mut HashMap<Wildcard, ExpectedType>,
     constraints: &mut Vec<Constraint>,
     custom_definitions: &CustomDefinitions,
     indexes: &ProverIndexes,
-    // Map from INNER wildcards (of the predicate being processed) to OUTER wildcards (from caller)
-    // TODO: Implement alias map logic carefully
-    alias_map: &HashMap<Wildcard, Wildcard>,
+    alias_map: &HashMap<usize, Wildcard>,
 ) -> Result<(), ProverError> {
     // --- Pass 1: Basic Type Inference & Constraints from Arguments ---
     // Apply constraints based on the structure of the *current* template (`tmpl`)
@@ -93,8 +258,13 @@ fn parse_template_and_generate_constraints(
     for arg in &tmpl.args {
         match arg {
             StatementTmplArg::Key(inner_wc_pod, key_or_wc) => {
-                let outer_wc_pod = alias_map.get(inner_wc_pod).unwrap_or(inner_wc_pod); // Use outer alias if exists
+                // Resolve inner pod wc using alias map
+                let outer_wc_pod = match alias_map.get(&inner_wc_pod.index) {
+                    Some(outer_wc) => outer_wc,
+                    None => inner_wc_pod, // Should only happen for private wildcards
+                };
                 update_wildcard_type(wildcard_types, outer_wc_pod, ExpectedType::Pod)?;
+                // Constraint always applies to the outer/aliased wildcard
                 constraints.push(Constraint::Type {
                     wildcard: outer_wc_pod.clone(),
                     expected_type: ExpectedType::Pod,
@@ -102,49 +272,43 @@ fn parse_template_and_generate_constraints(
 
                 match key_or_wc {
                     KeyOrWildcard::Wildcard(inner_wc_key) => {
-                        let outer_wc_key = alias_map.get(inner_wc_key).unwrap_or(inner_wc_key);
+                        // Resolve inner key wc using alias map
+                        let outer_wc_key = match alias_map.get(&inner_wc_key.index) {
+                            Some(outer_wc) => outer_wc,
+                            None => inner_wc_key,
+                        };
                         update_wildcard_type(wildcard_types, outer_wc_key, ExpectedType::Key)?;
                         constraints.push(Constraint::Type {
                             wildcard: outer_wc_key.clone(),
                             expected_type: ExpectedType::Key,
                         });
-                        // Add WildcardOrigin constraint instead of trying to access domain here
+                        // WildcardOrigin constraint relates the outer/aliased key and pod wildcards
                         constraints.push(Constraint::WildcardOrigin {
                             key_wildcard: outer_wc_key.clone(),
-                            pod_wildcard: outer_wc_pod.clone(), // Use the potentially aliased outer pod wildcard
+                            pod_wildcard: outer_wc_pod.clone(),
                         });
                     }
                     KeyOrWildcard::Key(literal_key) => {
+                        // LiteralKey constraint applies to the outer/aliased pod wildcard
                         constraints.push(Constraint::LiteralKey {
-                            pod_wildcard: outer_wc_pod.clone(), // Constraint on the outer Pod wildcard
+                            pod_wildcard: outer_wc_pod.clone(),
                             literal_key: literal_key.name().to_string(),
                         });
                     }
                 }
             }
             StatementTmplArg::WildcardLiteral(inner_wc_val) => {
-                let outer_wc_val = alias_map.get(inner_wc_val).unwrap_or(inner_wc_val);
-                update_wildcard_type(wildcard_types, outer_wc_val, ExpectedType::Val)?;
-                constraints.push(Constraint::Type {
-                    wildcard: outer_wc_val.clone(),
-                    expected_type: ExpectedType::Val,
-                });
+                // Resolve inner val wc using alias map
+                let outer_wc_val = match alias_map.get(&inner_wc_val.index) {
+                    Some(outer_wc) => outer_wc,
+                    None => inner_wc_val,
+                };
+                // The type for outer_wc_val will be correctly inferred when it's used
+                // as an argument to a Custom/BatchSelf predicate call later in Pass 2.
             }
-            StatementTmplArg::Literal(lit_val) => {
-                // If this literal is used as an argument to a custom predicate,
-                // we need to propagate this constraint down.
-                // Find the wildcard this literal corresponds to in the alias map.
-                // This requires iterating through the alias map to find the key whose value is this literal's position?
-                // This is getting complex. Let's assume for now that literal constraints
-                // are primarily handled during pruning based on the `Constraint::LiteralValue`.
-
-                // If this template uses a literal value, potentially create a constraint for any wildcard used in the corresponding position
-                // e.g. ValueOf(?A[?X], Literal(10)). If ?A[?X] corresponds to ?V, add constraint LiteralValue{?V, 10}
-                // This requires knowing the mapping from tmpl.args to wildcards.
-
-                // Alternative: Look for wildcards in this position via alias map.
-                // Find `inner_wc` such that `alias_map.get(inner_wc) == Some(outer_wc_representing_this_position)`.
-                // Then add `Constraint::LiteralValue { wildcard: outer_wc, literal_value: lit_val.clone() }`.
+            StatementTmplArg::Literal(_lit_val) => {
+                // TODO: Handle propagation of literal constraints down through aliases?
+                // For now, assume Constraint::LiteralValue generated elsewhere handles this.
             }
             StatementTmplArg::None => {}
         }
@@ -170,13 +334,64 @@ fn parse_template_and_generate_constraints(
                         get_wildcards_from_definition_stmts(&custom_pred_def.statements);
                     let public_args_count = custom_pred_def.args_len;
 
-                    // 2. TODO: Create the *next level* alias map (`next_alias_map`)
-                    // This is complex: map inner public wildcards (index < args_len)
-                    // to the corresponding outer wildcards provided in `tmpl.args`.
-                    // Requires careful handling of how Key(wc_pod, wc_key) etc. map positionally.
-                    // For now, we pass an empty map recursively.
-                    let next_alias_map: HashMap<Wildcard, Wildcard> = HashMap::new();
-                    println!("Warning: Alias map creation for custom predicates not yet fully implemented in initialization.");
+                    // 2. Create the next level alias map (`next_alias_map`)
+                    let mut next_alias_map: HashMap<usize, Wildcard> =
+                        HashMap::with_capacity(public_args_count);
+                    for i in 0..public_args_count {
+                        match tmpl.args.get(i) {
+                            Some(StatementTmplArg::WildcardLiteral(outer_wc_from_tmpl)) => {
+                                // Infer the type the target predicate expects for this argument index
+                                let mut visited = HashSet::new(); // Create visited set for this inference path
+                                let expected_arg_type = infer_argument_type(
+                                    custom_pred_def,
+                                    i,
+                                    custom_definitions,
+                                    &indexes.params,
+                                    Some(&custom_ref.batch), // Pass batch from the Custom ref
+                                    &mut visited,
+                                );
+
+                                // Resolve the wildcard passed by the caller using the *current* alias map
+                                let actual_outer_wc = match alias_map.get(&outer_wc_from_tmpl.index)
+                                {
+                                    Some(outer_wc) => outer_wc,
+                                    None => outer_wc_from_tmpl, // Use the template WC if no alias found (should mean it's top-level)
+                                };
+
+                                // Update the type for the *actual* outer wildcard
+                                update_wildcard_type(
+                                    wildcard_types,
+                                    actual_outer_wc,
+                                    expected_arg_type,
+                                )?;
+
+                                // Add type constraint for the *actual* outer wildcard
+                                constraints.push(Constraint::Type {
+                                    wildcard: actual_outer_wc.clone(),
+                                    expected_type: expected_arg_type,
+                                });
+
+                                // Map: Inner Predicate Arg Index -> Actual Outer Wildcard
+                                next_alias_map.insert(i, actual_outer_wc.clone());
+                            }
+                            Some(arg) => {
+                                // Invalid Argument Type: Expected StatementTmplArg::WildcardLiteral when
+                                // processing arguments for a custom predicate call, but found a different
+                                // variant. This likely indicates an invalid template structure.
+                                return Err(ProverError::Internal(format!(
+                                    "Expected WildcardLiteral arg at index {} when calling Custom predicate '{}', found {:?}",
+                                    i, custom_pred_def.name, arg
+                                )));
+                            }
+                            None => {
+                                return Err(ProverError::Internal(format!(
+                                    "Argument count mismatch: Custom predicate '{}' expects {} args, but caller template provided fewer.",
+                                    custom_pred_def.name, public_args_count
+                                )));
+                            }
+                        }
+                    }
+                    // println!("Warning: Alias map creation for custom predicates not yet fully implemented in initialization.");
 
                     // 3. Identify and Register Private Wildcards
                     for inner_wc in &inner_wildcards {
@@ -193,12 +408,12 @@ fn parse_template_and_generate_constraints(
                     for internal_tmpl in &custom_pred_def.statements {
                         parse_template_and_generate_constraints(
                             internal_tmpl,
-                            // tmpl.args(), // Pass caller args down? Or rely on alias map?
+                            Some(custom_ref.batch.clone()),
                             wildcard_types,
                             constraints,
                             custom_definitions,
                             indexes,
-                            &next_alias_map, // Pass the (currently empty) next alias map
+                            &next_alias_map,
                         )?;
                     }
                 } else {
@@ -217,10 +432,117 @@ fn parse_template_and_generate_constraints(
             }
         }
         Predicate::BatchSelf(index) => {
-            // TODO: Resolve BatchSelf index based on context.
-            return Err(ProverError::NotImplemented(
-                "BatchSelf predicate parsing during initialization".to_string(),
-            ));
+            if let Some(current_batch_arc) = current_batch.as_ref() {
+                // Resolve the target predicate definition using the current batch context
+                let target_pred_def =
+                    current_batch_arc.predicates.get(*index).ok_or_else(|| {
+                        ProverError::Internal(format!(
+                            "BatchSelf index {} out of bounds for batch '{}' during initialization",
+                            index, current_batch_arc.name
+                        ))
+                    })?;
+
+                // Now we have the target_pred_def. Proceed with AND/OR logic and recursion.
+                if target_pred_def.conjunction {
+                    // --- AND Predicate Handling (Similar to Custom) ---
+                    let inner_wildcards =
+                        get_wildcards_from_definition_stmts(&target_pred_def.statements);
+                    let public_args_count = target_pred_def.args_len;
+
+                    // Create the next alias map (Step 3)
+                    let mut next_alias_map: HashMap<usize, Wildcard> =
+                        HashMap::with_capacity(public_args_count);
+                    for i in 0..public_args_count {
+                        match tmpl.args.get(i) {
+                            Some(StatementTmplArg::WildcardLiteral(outer_wc_from_tmpl)) => {
+                                // Infer the type the target predicate expects for this argument index
+                                let mut visited = HashSet::new(); // Create visited set for this inference path
+                                let expected_arg_type = infer_argument_type(
+                                    target_pred_def,
+                                    i,
+                                    custom_definitions,
+                                    &indexes.params,
+                                    Some(current_batch_arc), // Pass the current batch
+                                    &mut visited,
+                                );
+
+                                // Resolve the wildcard passed by the caller using the *current* alias map
+                                let actual_outer_wc = match alias_map.get(&outer_wc_from_tmpl.index)
+                                {
+                                    Some(outer_wc) => outer_wc,
+                                    None => outer_wc_from_tmpl, // Use the template WC if no alias found
+                                };
+
+                                // Update the type for the *actual* outer wildcard
+                                update_wildcard_type(
+                                    wildcard_types,
+                                    actual_outer_wc,
+                                    expected_arg_type,
+                                )?;
+
+                                // Add type constraint for the *actual* outer wildcard
+                                constraints.push(Constraint::Type {
+                                    wildcard: actual_outer_wc.clone(),
+                                    expected_type: expected_arg_type,
+                                });
+
+                                // Map: Inner Predicate Arg Index -> Actual Outer Wildcard
+                                next_alias_map.insert(i, actual_outer_wc.clone());
+                            }
+                            Some(arg) => {
+                                // Invalid Argument Type: Expected StatementTmplArg::WildcardLiteral when
+                                // processing arguments for a BatchSelf predicate call, but found a different
+                                // variant. This likely indicates an invalid template structure.
+                                return Err(ProverError::Internal(format!(
+                                    "Expected WildcardLiteral arg at index {} when calling BatchSelf predicate '{}', found {:?}",
+                                    i, target_pred_def.name, arg
+                                )));
+                            }
+                            None => {
+                                return Err(ProverError::Internal(format!(
+                                    "Argument count mismatch: BatchSelf predicate '{}' expects {} args, but caller template provided fewer.",
+                                    target_pred_def.name, public_args_count
+                                )));
+                            }
+                        }
+                    }
+                    // println!("Warning: Alias map creation for BatchSelf not yet implemented.");
+
+                    // Identify and Register Private Wildcards (Step 6 - verification needed)
+                    for inner_wc in &inner_wildcards {
+                        if inner_wc.index >= public_args_count {
+                            wildcard_types
+                                .entry(inner_wc.clone())
+                                .or_insert(ExpectedType::Unknown);
+                        }
+                    }
+
+                    // Recursively Parse Internal Templates (Step 4)
+                    for internal_tmpl in &target_pred_def.statements {
+                        parse_template_and_generate_constraints(
+                            internal_tmpl,
+                            Some(current_batch_arc.clone()),
+                            wildcard_types,
+                            constraints,
+                            custom_definitions,
+                            indexes,
+                            &next_alias_map,
+                        )?;
+                    }
+                } else {
+                    // --- OR Predicate Handling ---
+                    println!(
+                        "Skipping OR predicate (BatchSelf) constraint generation during init: {}",
+                        target_pred_def.name
+                    );
+                }
+            } else {
+                // BatchSelf encountered without a current_batch context
+                return Err(ProverError::Internal(
+                    "BatchSelf predicate encountered outside of a batch context during initialization"
+                        .to_string(),
+                ));
+            }
         }
     }
 
@@ -236,12 +558,12 @@ pub(super) fn initialize_solver_state(
     let mut constraints = Vec::new();
 
     // Top-level calls don't have an alias map initially
-    let initial_alias_map = HashMap::new();
+    let initial_alias_map: HashMap<usize, Wildcard> = HashMap::new();
 
     for tmpl in request_templates {
         parse_template_and_generate_constraints(
             tmpl,
-            // tmpl.args(), // Pass top-level template args?
+            None, // Top-level calls have no current_batch
             &mut wildcard_types,
             &mut constraints,
             custom_definitions,

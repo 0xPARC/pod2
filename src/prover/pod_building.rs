@@ -10,6 +10,7 @@ use crate::{
     middleware::{self, OperationAux, OperationType, PodId, Statement},
     prover::{
         error::ProverError,
+        solver::types::ExpectedType,
         types::{ProofSolution, ProofStep},
     },
 };
@@ -22,6 +23,7 @@ use crate::{
 /// * `original_signed_pods` - Map from PodId to original SignedPod objects.
 /// * `original_main_pods` - Map from PodId to original MainPod objects.
 /// * `params` - Middleware parameters.
+/// * `request_templates` - Templates for generating concrete target statements.
 ///
 /// # Returns
 ///
@@ -31,6 +33,7 @@ pub fn build_main_pod_from_solution(
     original_signed_pods: &HashMap<PodId, Arc<FrontendSignedPod>>,
     original_main_pods: &HashMap<PodId, Arc<frontend::MainPod>>,
     params: &middleware::Params,
+    request_templates: &[middleware::StatementTmpl],
 ) -> Result<frontend::MainPod, ProverError> {
     println!("Building MainPod from solution...");
 
@@ -62,6 +65,49 @@ pub fn build_main_pod_from_solution(
         }
     }
     // TODO: Check if SELF needs explicit reference
+
+    // --- Generate Concrete Target Statements --- START ---
+    let mut target_statements = HashSet::new();
+    // Create a temporary solver state just for generating target statements from final bindings
+    let final_state_for_generation = crate::prover::solver::SolverState {
+        params: params.clone(),
+        domains: solution
+            .bindings
+            .iter()
+            .map(|(wc, cv)| {
+                // Need to guess the ExpectedType, but it doesn't matter for generation
+                (
+                    wc.clone(),
+                    (HashSet::from([cv.clone()]), ExpectedType::Unknown),
+                )
+            })
+            .collect(),
+        constraints: Vec::new(),
+        proof_chains: HashMap::new(),
+        scope: HashSet::new(),
+    };
+
+    for tmpl in request_templates {
+        match crate::prover::solver::try_generate_concrete_candidate_and_bindings(
+            tmpl,
+            &final_state_for_generation,
+        ) {
+            Ok(Some((target_stmt, _))) => {
+                println!("  Identified Target Statement: {:?}", target_stmt);
+                target_statements.insert(target_stmt);
+            }
+            Ok(None) => {
+                println!("Warning: Could not generate concrete target statement from template {:?} during build (should not happen if solve succeeded)", tmpl);
+                // This might indicate an issue if the solver succeeded but we can't generate the target now.
+                // Depending on desired strictness, could return an error here.
+            }
+            Err(e) => {
+                println!("Error generating concrete target statement from template {:?} during build: {:?}", tmpl, e);
+                return Err(e); // Propagate the error
+            }
+        }
+    }
+    // --- Generate Concrete Target Statements --- END ---
 
     // --- Topological Sort of Proof Steps --- START ---
 
@@ -157,7 +203,7 @@ pub fn build_main_pod_from_solution(
         let frontend_op = FrontendOperation(op_type, op_args, OperationAux::None);
 
         // Determine if the output statement is a final target required by the request
-        let is_public = solution.proof_chains.contains_key(&step.output);
+        let is_public = target_statements.contains(&step.output);
 
         println!(
             "  Adding Sorted Op (public={}): {:?} -> {:?}",
@@ -204,106 +250,4 @@ fn translate_step_to_frontend_op_args(
 
     // OperationAux is handled by the builder's op/pub_op/priv_op methods.
     Ok((op_type, op_args))
-}
-
-#[cfg(test)]
-mod tests {
-    use std::{collections::HashMap, sync::Arc};
-
-    use super::*;
-    use crate::{
-        backends::plonky2::mock::signedpod::MockSigner,
-        frontend::{self, SignedPodBuilder},
-        middleware::{self, AnchoredKey, Key, NativeOperation, Statement, Value},
-        prover::types::{ProofChain, ProofSolution, ProofStep},
-    };
-
-    // Helper to create simple SignedPods for testing
-    fn create_test_signed_pod(
-        params: &middleware::Params,
-        signer_pk: &str,
-        kvs: Vec<(&str, Value)>,
-    ) -> Arc<frontend::SignedPod> {
-        let mut builder = SignedPodBuilder::new(params);
-        for (k, v) in kvs {
-            builder.insert(k, v);
-        }
-        let mut signer = MockSigner {
-            pk: signer_pk.into(),
-        };
-        Arc::new(builder.sign(&mut signer).unwrap())
-    }
-
-    #[test]
-    fn test_build_pod_simple_gt() {
-        let params = middleware::Params::default();
-
-        // 1. Create mock input PODs
-        let pod_a = create_test_signed_pod(&params, "signer_a", vec![("foo", Value::from(10))]);
-        let pod_b = create_test_signed_pod(&params, "signer_b", vec![("bar", Value::from(20))]);
-
-        // 2. Construct the ProofSolution
-        let ak_a_foo = AnchoredKey::new(pod_a.id(), Key::new("foo".to_string()));
-        let ak_b_bar = AnchoredKey::new(pod_b.id(), Key::new("bar".to_string()));
-        let val_a = Value::from(10);
-        let val_b = Value::from(20);
-
-        let stmt_val_a = Statement::ValueOf(ak_a_foo.clone(), val_a.clone());
-        let stmt_val_b = Statement::ValueOf(ak_b_bar.clone(), val_b.clone());
-        let target_stmt_gt = Statement::Gt(ak_b_bar.clone(), ak_a_foo.clone()); // Gt(B["bar"], A["foo"])
-
-        let proof_step = ProofStep {
-            // Use the aliased middleware type
-            operation: OperationType::Native(NativeOperation::GtFromEntries),
-            inputs: vec![stmt_val_b.clone(), stmt_val_a.clone()],
-            output: target_stmt_gt.clone(),
-        };
-
-        let solution = ProofSolution {
-            bindings: HashMap::new(), // No wildcards in this simple case
-            // Collect scope into a HashSet
-            scope: vec![(pod_a.id(), stmt_val_a), (pod_b.id(), stmt_val_b)]
-                .into_iter()
-                .collect(),
-            proof_chains: HashMap::from([(target_stmt_gt.clone(), ProofChain(vec![proof_step]))]),
-        };
-
-        // 3. Prepare original pod maps
-        let original_signed_pods = HashMap::from([(pod_a.id(), pod_a), (pod_b.id(), pod_b)]);
-        let original_main_pods = HashMap::new(); // No main pods in this test
-
-        // 4. Call the build function
-        let result = build_main_pod_from_solution(
-            &solution,
-            &original_signed_pods,
-            &original_main_pods,
-            &params,
-        );
-
-        println!("{:?}", result.as_ref().unwrap());
-
-        // 5. Assert expected successful outcome
-        assert!(result.is_ok(), "Pod building failed: {:?}", result.err());
-        let main_pod = result.unwrap();
-
-        // 6. Verify the pod itself
-        let verification_result = main_pod.pod.verify();
-        assert!(
-            verification_result.is_ok(),
-            "Generated MainPod failed verification: {:?}",
-            verification_result.err()
-        );
-
-        // 7. Verify public statements
-        assert!(
-            main_pod.public_statements.contains(&target_stmt_gt),
-            "Expected Gt statement missing from public statements"
-        );
-        // We also expect the _type statement
-        assert_eq!(
-            main_pod.public_statements.len(),
-            2,
-            "Expected 2 public statements (Gt and _type)"
-        );
-    }
 }

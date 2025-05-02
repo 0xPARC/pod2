@@ -4,7 +4,7 @@ use crate::{
     middleware,
     middleware::{
         AnchoredKey, NativeOperation, NativePredicate, OperationType, Params, PodId, Predicate,
-        Statement, StatementArg, Wildcard,
+        Statement, StatementArg, Wildcard, WildcardValue,
     },
     prover::{
         error::ProverError,
@@ -379,7 +379,6 @@ pub(super) fn try_generate_concrete_candidate_and_bindings(
     state: &SolverState,
 ) -> Result<Option<(Statement, HashMap<Wildcard, ConcreteValue>)>, ProverError> {
     // Output includes bindings
-    let mut concrete_args = Vec::with_capacity(tmpl.args.len());
     let mut bindings = HashMap::new(); // Track concrete values for this template
 
     // First pass: Check if all wildcards are singletons and collect bindings
@@ -392,17 +391,72 @@ pub(super) fn try_generate_concrete_candidate_and_bindings(
     }
 
     // If we reach here, all necessary wildcards were singletons.
-    // Second pass: Construct concrete arguments using the collected bindings
-    for arg_tmpl in &tmpl.args {
-        match construct_concrete_arg(arg_tmpl, &bindings) {
-            Ok(Some(arg)) => concrete_args.push(arg),
-            Ok(None) => { /* Skip None args */ }
-            Err(e) => return Err(e), // Propagate construction errors
-        }
-    }
 
-    // Construct the concrete statement
-    let concrete_statement = build_concrete_statement(tmpl.pred.clone(), concrete_args)?;
+    // Second pass: Construct the concrete statement based on the predicate type
+    let concrete_statement = match &tmpl.pred {
+        Predicate::Native(_) => {
+            // Build Vec<StatementArg> for native predicate
+            let mut concrete_args = Vec::with_capacity(tmpl.args.len());
+            for arg_tmpl in &tmpl.args {
+                match construct_concrete_arg(arg_tmpl, &bindings) {
+                    Ok(Some(arg)) => concrete_args.push(arg),
+                    Ok(None) => { /* Skip None args */ }
+                    Err(e) => return Err(e), // Propagate construction errors
+                }
+            }
+            // Build the native statement
+            build_concrete_statement(tmpl.pred.clone(), concrete_args)?
+        }
+        Predicate::Custom(custom_ref) => {
+            // Build Vec<WildcardValue> for custom predicate
+            let mut custom_args = Vec::with_capacity(tmpl.args.len());
+            for arg_tmpl in &tmpl.args {
+                match arg_tmpl {
+                    middleware::StatementTmplArg::WildcardLiteral(wc) => {
+                        let bound_value = bindings.get(wc).ok_or_else(|| {
+                            ProverError::Internal(format!(
+                                "Binding for wildcard '{}' not found during Custom statement construction",
+                                wc.name
+                            ))
+                        })?;
+                        // Convert ConcreteValue to WildcardValue
+                        let wc_value = match bound_value {
+                            ConcreteValue::Pod(id) => WildcardValue::PodId(*id),
+                            ConcreteValue::Key(k) => {
+                                WildcardValue::Key(middleware::Key::new(k.clone()))
+                            }
+                            // ConcreteValue::Val should not be directly passed as a WildcardValue arg
+                            ConcreteValue::Val(v) => {
+                                return Err(ProverError::Internal(format!(
+                                    "Attempted to pass ConcreteValue::Val ({:?}) as WildcardValue for WC '{}' in Custom statement construction",
+                                    v, wc.name
+                                )));
+                            }
+                        };
+                        custom_args.push(wc_value);
+                    }
+                    _ => {
+                        // Custom predicate templates should only use WildcardLiteral for args
+                        return Err(ProverError::Internal(format!(
+                            "Invalid argument type {:?} found in template for Custom predicate call",
+                            arg_tmpl
+                        )));
+                    }
+                }
+            }
+            // TODO: Verify arg count against custom_ref definition?
+            Statement::Custom(custom_ref.clone(), custom_args)
+        }
+        Predicate::BatchSelf(_) => {
+            // BatchSelf *templates* should resolve to Predicate::Custom in the actual Statement
+            // This branch should ideally not be hit if the solver logic is correct,
+            // but handle it defensively.
+            return Err(ProverError::Internal(
+                "Cannot directly construct concrete BatchSelf statement during generation"
+                    .to_string(),
+            ));
+        }
+    };
 
     // Return the concrete statement and the bindings used to create it
     Ok(Some((concrete_statement, bindings)))
