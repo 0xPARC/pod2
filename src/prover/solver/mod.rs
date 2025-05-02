@@ -45,9 +45,6 @@ pub struct SolverState {
     // Store the set of base facts (from input PODs) used in the proofs
     // The PodId indicates the origin of the base fact.
     pub scope: HashSet<(PodId, Statement)>,
-    // References to inputs: (Potentially add back if needed)
-    // pub indexes: 'a ProverIndexes,
-    // pub custom_definitions: 'a CustomDefinitions,
 }
 
 impl SolverState {
@@ -220,14 +217,8 @@ pub fn solve(
         ));
     }
 
-    println!(
-        "Solver finished propagation after {} iterations.",
-        iteration
-    );
-
-    // 4. Search (If Necessary)
+    // 4. Search
     if state.domains.values().any(|(domain, _)| domain.len() > 1) {
-        println!("Domains still contain multiple values, entering Search phase.");
         // Call the search function, taking ownership of the current state
         // Pass the extracted pairs down to search
         match perform_search(
@@ -240,28 +231,24 @@ pub fn solve(
             &potential_constant_info, // Pass constant info
         ) {
             Ok(solved_state) => {
-                println!("Search phase succeeded.");
                 state = solved_state; // Update state with the solved one from search
             }
             Err(e) => {
-                println!("Search phase failed: {:?}", e);
                 return Err(e); // Propagate the search error (e.g., Unsatisfiable)
             }
         }
-    } else {
-        println!("No search needed, all domains are singletons after propagation.");
     }
 
     // 5. Solution Extraction
-    println!("All domains have size 1, preparing for Solution Extraction.");
 
-    let final_bindings: HashMap<Wildcard, ConcreteValue> = state.domains.iter()
+    let final_bindings: HashMap<Wildcard, ConcreteValue> = state
+        .domains
+        .iter()
         .filter_map(|(wc, (domain, _))| {
             if domain.len() == 1 {
                 Some((wc.clone(), domain.iter().next().unwrap().clone()))
             } else {
                 // Should not happen if search phase is complete or wasn't needed
-                 println!("Warning: Wildcard {:?} ended with domain size != 1 ({:?}) after propagation/search.", wc.name, domain);
                 None
             }
         })
@@ -306,16 +293,8 @@ pub fn solve(
                     .find(|(_, stmt)| stmt == &target_stmt)
                 {
                     final_scope.insert((*pod_id, base_stmt.clone()));
-                } else {
-                    // If it wasn't proven and isn't a base fact, something went wrong or search is needed
-                    // This could also happen if the concrete statement generated using final bindings
-                    // is different from the one generated during the iterations (due to pruning)
-                    println!("Warning: Could not find proof chain or base fact for final target statement: {:?}. This might indicate inconsistent state or needed search.", target_stmt);
                 }
             }
-        } else {
-            // Could not generate concrete statement from template even at the end
-            println!("Warning: Could not generate concrete statement from final template interpretation: {:?}", tmpl);
         }
     }
 
