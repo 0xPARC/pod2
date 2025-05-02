@@ -62,6 +62,7 @@ pub struct ProofStep {
 pub struct ProofChain(pub Vec<ProofStep>);
 
 /// Represents a successful proof outcome from the solver.
+#[derive(Debug)]
 pub struct ProofSolution {
     /// The final, consistent assignment of wildcards to concrete values.
     pub bindings: HashMap<Wildcard, ConcreteValue>,
