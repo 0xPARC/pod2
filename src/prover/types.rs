@@ -73,9 +73,3 @@ pub struct ProofSolution {
     /// Keyed by the derived `Statement`.
     pub proof_chains: HashMap<Statement, ProofChain>,
 }
-
-// Remove incorrect re-exports - these types are defined in this module
-// pub use crate::middleware::ProofSolution; // Re-export if needed
-// pub use crate::middleware::ProofStep; // Re-export if needed
-// pub use crate::middleware::ProofChain; // Re-export if needed
-// pub use crate::middleware::ConcreteValue; // Re-export if needed

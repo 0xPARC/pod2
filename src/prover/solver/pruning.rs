@@ -77,25 +77,11 @@ pub fn prune_by_literal_key(
                     .map(|anchored_keys| anchored_keys.iter().map(|ak| ak.pod_id).collect())
                     .unwrap_or_default(); // If key not found in index, no PodIds are allowed
 
-                // --- Re-enable DEBUG PRINT --- START ---
-                println!(
-                    "PRUNE_LITERAL_KEY: Checking constraint '{}[{}]'. Domain before prune: {:?}. Allowed Pod IDs from index: {:?}",
-                     pod_wildcard.name, literal_key, domain, allowed_pod_ids
-                 );
-                // --- Re-enable DEBUG PRINT --- END ---
-
                 // Retain only PodIds present in the allowed set
                 domain.retain(|value| match value {
                     ConcreteValue::Pod(pod_id) => allowed_pod_ids.contains(pod_id),
                     _ => false, // Remove non-Pod values (should be gone after prune_by_type)
                 });
-
-                // --- Re-enable DEBUG PRINT --- START ---
-                println!(
-                    "PRUNE_LITERAL_KEY: Domain for {} after prune: {:?}",
-                    pod_wildcard.name, domain
-                );
-                // --- Re-enable DEBUG PRINT --- END ---
 
                 if domain.is_empty() {
                     return Err(ProverError::Unsatisfiable(format!(

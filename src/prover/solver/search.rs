@@ -24,16 +24,12 @@ pub(super) fn perform_search(
     inequality_pairs: &[(Wildcard, Wildcard)],
     potential_constant_info: &[(Wildcard, Key, Value)], // Change Wildcard -> Value
 ) -> Result<SolverState, ProverError> {
-    println!("Entering DFS Search...");
-
     // Check if already solved (base case for recursion)
     if initial_state
         .domains
         .values()
         .all(|(domain, _)| domain.len() == 1)
     {
-        println!("  Base case: All domains singletons. Verifying proof...");
-
         // --- Verify Provability --- START ---
         // Need a mutable copy to pass to try_prove_statement
         let mut verification_state = initial_state.clone_state_for_search();
@@ -90,17 +86,6 @@ pub(super) fn perform_search(
         println!("  Base case: Verification successful.");
         return Ok(verification_state); // <-- Return the state with the added proofs!
                                        // --- Verify Provability --- END ---
-
-        // OLD Check (Removed): Kept for reference during development
-        // if check_final_state_consistency(&initial_state, request_templates) {
-        //      println!("  Base case: Already solved and consistent.");
-        //      return Ok(initial_state);
-        // } else {
-        //     println!("  Base case: Solved but inconsistent with NEq templates. Failing.");
-        //      return Err(ProverError::Unsatisfiable(
-        //          "Search base case failed NotEqual constraint check".to_string(),
-        //      ));
-        // }
     }
 
     // 1. Select an unassigned variable (first one found with domain > 1)

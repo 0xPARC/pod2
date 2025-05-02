@@ -4,6 +4,7 @@ use std::{
 };
 
 use crate::{
+    backends::plonky2::mock::mainpod::MockProver,
     frontend::{
         self, MainPodBuilder, Operation as FrontendOperation, SignedPod as FrontendSignedPod,
     },
@@ -11,7 +12,7 @@ use crate::{
     op,
     prover::{
         error::ProverError,
-        solver::types::ExpectedType,
+        solver::{self, types::ExpectedType, SolverState},
         types::{ProofSolution, ProofStep},
     },
 };
@@ -70,7 +71,6 @@ pub fn build_main_pod_from_solution(
             if let Some(signed_pod_arc) = original_signed_pods.get(pod_id) {
                 // Pass the actual SignedPod reference
                 builder.add_signed_pod(signed_pod_arc);
-                // println!("  Added reference for SignedPod: {:?}", pod_id);
             } else if let Some(main_pod_arc) = original_main_pods.get(pod_id) {
                 // Pass the actual MainPod reference
                 builder.add_main_pod(main_pod_arc.as_ref().clone()); // Clone the MainPod if needed by builder
@@ -89,7 +89,7 @@ pub fn build_main_pod_from_solution(
     // --- Generate Concrete Target Statements --- START ---
     let mut target_statements = HashSet::new();
     // Create a temporary solver state just for generating target statements from final bindings
-    let final_state_for_generation = crate::prover::solver::SolverState {
+    let final_state_for_generation = SolverState {
         params: params.clone(),
         domains: solution
             .bindings
@@ -108,7 +108,7 @@ pub fn build_main_pod_from_solution(
     };
 
     for tmpl in request_templates {
-        match crate::prover::solver::try_generate_concrete_candidate_and_bindings(
+        match solver::try_generate_concrete_candidate_and_bindings(
             tmpl,
             &final_state_for_generation,
         ) {
@@ -119,7 +119,6 @@ pub fn build_main_pod_from_solution(
             Ok(None) => {
                 // println!("Warning: Could not generate concrete target statement from template {:?} during build (should not happen if solve succeeded)", tmpl);
                 // This might indicate an issue if the solver succeeded but we can't generate the target now.
-                // Depending on desired strictness, could return an error here.
             }
             Err(e) => {
                 // println!("Error generating concrete target statement from template {:?} during build: {:?}", tmpl, e);
@@ -195,8 +194,6 @@ pub fn build_main_pod_from_solution(
                     }
                 }
             }
-        } else {
-            // This statement was likely a base fact implicitly added, skip.
         }
     }
 
@@ -250,11 +247,6 @@ pub fn build_main_pod_from_solution(
             continue;
         }
 
-        // --- Remove specific NewEntry/CopyStatement handling from here, covered above/by AddPodRef ---
-        // if step.operation == OperationType::Native(NativeOperation::CopyStatement)
-        //     || step.operation == OperationType::Native(NativeOperation::NewEntry)
-        // { ... }
-
         // Ensure we only add the operation for each unique output statement once.
         if !generated_statements.insert(step.output.clone()) {
             continue;
@@ -266,11 +258,6 @@ pub fn build_main_pod_from_solution(
         // Determine if the output statement is a final target required by the request
         let is_public = target_statements.contains(&step.output);
 
-        // println!(
-        //     "  Adding Sorted Op (public={}): {:?} -> {:?}",
-        //     is_public, frontend_op, step.output
-        // );
-
         // Add operation to builder
         let _generated_statement = if is_public {
             builder.pub_op(frontend_op)?
@@ -280,10 +267,7 @@ pub fn build_main_pod_from_solution(
     }
 
     // 4. Invoke the backend prover
-    // println!("Invoking backend prover...");
-    // TODO: Use the actual prover instance passed in or created
-    // In the meantime, MockProver should work identically to the real prover,
-    let mut prover = crate::backends::plonky2::mock::mainpod::MockProver {}; // Example
+    let mut prover = MockProver {}; // Example
     builder
         .prove(&mut prover, params)
         .map_err(ProverError::FrontendError) // Use From trait via variant name
@@ -293,12 +277,12 @@ pub fn build_main_pod_from_solution(
 /// needed for a frontend::Operation (op_type, Vec<OperationArg>).
 fn translate_step_to_frontend_op_args(
     step: &ProofStep,
-) -> Result<(middleware::OperationType, Vec<frontend::OperationArg>), ProverError> {
+) -> Result<(OperationType, Vec<frontend::OperationArg>), ProverError> {
     // Map the prover OperationType to the middleware OperationType
     let op_type = match &step.operation {
         // Use middleware::OperationType which should be public
-        OperationType::Native(native_op) => middleware::OperationType::Native(*native_op),
-        OperationType::Custom(custom_ref) => middleware::OperationType::Custom(custom_ref.clone()),
+        OperationType::Native(native_op) => OperationType::Native(*native_op),
+        OperationType::Custom(custom_ref) => OperationType::Custom(custom_ref.clone()),
     };
 
     // Map Vec<middleware::Statement> inputs to Vec<frontend::OperationArg>
