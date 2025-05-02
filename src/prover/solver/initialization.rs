@@ -8,7 +8,10 @@ use super::{
     SolverState,
 };
 use crate::{
-    middleware::{KeyOrWildcard, Predicate, StatementTmpl, StatementTmplArg, ToFields, Wildcard},
+    middleware::{
+        AnchoredKey, Key, KeyOrWildcard, NativePredicate, PodId, Predicate, Statement,
+        StatementTmpl, StatementTmplArg, ToFields, Value, Wildcard, SELF,
+    },
     prover::{
         error::ProverError,
         indexing::ProverIndexes,
@@ -91,10 +94,6 @@ fn infer_argument_type(
     // Prevent infinite recursion in case of cyclic predicate definitions (shouldn't happen ideally)
     let visited_key = (pred_def.name.clone(), arg_index);
     if !visited.insert(visited_key.clone()) {
-        println!(
-            "Warning: Cycle detected or redundant check during type inference for {} arg {}",
-            pred_def.name, arg_index
-        );
         return ExpectedType::Unknown; // Avoid infinite loop, return Unknown
     }
 
@@ -174,11 +173,6 @@ fn infer_argument_type(
                                 );
                                 break; // Found the relevant argument, stop inner loop
                             } else {
-                                // Definition not found - error? Or just Unknown?
-                                println!(
-                                    "Warning: Custom def not found for {:?} during type inference",
-                                    custom_ref
-                                );
                                 type_from_recursive = ExpectedType::Unknown;
                                 break;
                             }
@@ -207,16 +201,9 @@ fn infer_argument_type(
                             }
                         }
                     } else {
-                        // Index out of bounds - error? Or just Unknown?
-                        println!(
-                            "Warning: BatchSelf index {} out of bounds for batch '{}' during type inference",
-                            index, batch_arc.name
-                        );
                         type_from_recursive = ExpectedType::Unknown;
                     }
                 } else {
-                    // BatchSelf without context - error? Or just Unknown?
-                    println!("Warning: BatchSelf used without current_batch context during type inference");
                     type_from_recursive = ExpectedType::Unknown;
                 }
             }
@@ -242,19 +229,23 @@ fn infer_argument_type(
     final_type
 }
 
+// Define the type alias for the info tuple
+type PotentialConstantInfo = (Wildcard, Key, Value);
+
 /// Helper function to recursively parse templates and generate constraints.
+/// Also collects literal values encountered.
 fn parse_template_and_generate_constraints(
     tmpl: &StatementTmpl,
     current_batch: Option<Arc<crate::middleware::CustomPredicateBatch>>,
     wildcard_types: &mut HashMap<Wildcard, ExpectedType>,
     constraints: &mut Vec<Constraint>,
     custom_definitions: &CustomDefinitions,
-    indexes: &ProverIndexes,
+    params: &crate::middleware::Params,
     alias_map: &HashMap<usize, Wildcard>,
+    constant_template_info: &mut Vec<PotentialConstantInfo>, // Updated type
 ) -> Result<(), ProverError> {
+    // println!("INIT PARSE: Processing template: {:?}", tmpl); // DEBUG
     // --- Pass 1: Basic Type Inference & Constraints from Arguments ---
-    // Apply constraints based on the structure of the *current* template (`tmpl`)
-    // using the *caller's* wildcards (accessed via alias_map if needed).
     for arg in &tmpl.args {
         match arg {
             StatementTmplArg::Key(inner_wc_pod, key_or_wc) => {
@@ -297,26 +288,107 @@ fn parse_template_and_generate_constraints(
                     }
                 }
             }
-            StatementTmplArg::WildcardLiteral(inner_wc_val) => {
-                // Resolve inner val wc using alias map
-                let outer_wc_val = match alias_map.get(&inner_wc_val.index) {
-                    Some(outer_wc) => outer_wc,
-                    None => inner_wc_val,
-                };
-                // The type for outer_wc_val will be correctly inferred when it's used
-                // as an argument to a Custom/BatchSelf predicate call later in Pass 2.
-            }
-            StatementTmplArg::Literal(_lit_val) => {
-                // TODO: Handle propagation of literal constraints down through aliases?
-                // For now, assume Constraint::LiteralValue generated elsewhere handles this.
-            }
+            StatementTmplArg::WildcardLiteral(_) => {}
+            StatementTmplArg::Literal(_) => {}
             StatementTmplArg::None => {}
         }
     }
 
     // --- Pass 2: Predicate-Specific Constraints & Recursion ---
     match &tmpl.pred {
-        Predicate::Native(native_pred) => {
+        Predicate::Native(NativePredicate::ValueOf) => {
+            // println!("INIT PARSE: Entered ValueOf handler. Arg count = {}", tmpl.args.len()); // DEBUG Arg0
+            // println!("INIT PARSE: ValueOf Arg1 = {:?}", &tmpl.args[1]); // DEBUG Arg1
+            // println!("INIT PARSE: ValueOf has 2 args, checking pattern..."); // DEBUG
+            if tmpl.args.len() == 2 {
+                // println!("INIT PARSE: Matched ValueOf constant pattern! Holder={:?}, Key={:?}, Value={:?}", wc_pod_holder, const_key, literal_value);
+                if let (
+                    StatementTmplArg::Key(wc_pod_holder, KeyOrWildcard::Key(const_key)),
+                    StatementTmplArg::Literal(literal_value),
+                ) = (&tmpl.args[0], &tmpl.args[1])
+                {
+                    // Matched the pattern!
+                    // println!("INIT PARSE: Matched ValueOf constant pattern! Holder={:?}, Key={:?}, Value={:?}", wc_pod_holder, const_key, literal_value);
+                    constant_template_info.push((
+                        wc_pod_holder.clone(),
+                        const_key.clone(),
+                        literal_value.clone(), // Store the actual value
+                    ));
+                    // Apply type constraints
+                    update_wildcard_type(wildcard_types, wc_pod_holder, ExpectedType::Pod)?;
+                    // We know the value is literal, so no type constraint needed for it here.
+                    constraints.push(Constraint::Type {
+                        wildcard: wc_pod_holder.clone(),
+                        expected_type: ExpectedType::Pod,
+                    });
+                    // Add constraint relating holder and key
+                    constraints.push(Constraint::LiteralKey {
+                        pod_wildcard: wc_pod_holder.clone(),
+                        literal_key: const_key.name().to_string(),
+                    });
+                } else {
+                    // This is the branch for when the pattern doesn't match
+                    // println!("INIT PARSE: ValueOf pattern did NOT match args: ({:?}, {:?})", &tmpl.args[0], &tmpl.args[1]); // DEBUG
+                    // Apply standard type inference/constraints if not the constant pattern
+                    // (This part might need refinement depending on other ValueOf uses)
+                    for arg in &tmpl.args {
+                        match arg {
+                            StatementTmplArg::Key(wc_pod, key_or_wc) => {
+                                let outer_wc_pod = alias_map.get(&wc_pod.index).unwrap_or(wc_pod);
+                                update_wildcard_type(
+                                    wildcard_types,
+                                    outer_wc_pod,
+                                    ExpectedType::Pod,
+                                )?;
+                                constraints.push(Constraint::Type {
+                                    wildcard: outer_wc_pod.clone(),
+                                    expected_type: ExpectedType::Pod,
+                                });
+                                match key_or_wc {
+                                    KeyOrWildcard::Wildcard(wc_key) => {
+                                        let outer_wc_key =
+                                            alias_map.get(&wc_key.index).unwrap_or(wc_key);
+                                        update_wildcard_type(
+                                            wildcard_types,
+                                            outer_wc_key,
+                                            ExpectedType::Key,
+                                        )?;
+                                        constraints.push(Constraint::Type {
+                                            wildcard: outer_wc_key.clone(),
+                                            expected_type: ExpectedType::Key,
+                                        });
+                                        constraints.push(Constraint::WildcardOrigin {
+                                            key_wildcard: outer_wc_key.clone(),
+                                            pod_wildcard: outer_wc_pod.clone(),
+                                        });
+                                    }
+                                    KeyOrWildcard::Key(lit_key) => {
+                                        constraints.push(Constraint::LiteralKey {
+                                            pod_wildcard: outer_wc_pod.clone(),
+                                            literal_key: lit_key.name().to_string(),
+                                        });
+                                    }
+                                }
+                            }
+                            StatementTmplArg::WildcardLiteral(wc_val) => {
+                                let outer_wc_val = alias_map.get(&wc_val.index).unwrap_or(wc_val);
+                                update_wildcard_type(
+                                    wildcard_types,
+                                    outer_wc_val,
+                                    ExpectedType::Val,
+                                )?;
+                                constraints.push(Constraint::Type {
+                                    wildcard: outer_wc_val.clone(),
+                                    expected_type: ExpectedType::Val,
+                                });
+                            }
+                            StatementTmplArg::Literal(_) | StatementTmplArg::None => {}
+                        }
+                    }
+                }
+            }
+        }
+        Predicate::Native(_native_pred) => {
             // TODO: Generate predicate-specific constraints based on native predicate rules
             // E.g., Gt/Lt -> args must resolve to Int (Type constraints handled above)
             // SumOf/ProductOf -> args must resolve to Int (Type constraints handled above)
@@ -324,7 +396,7 @@ fn parse_template_and_generate_constraints(
             // Need to ensure the *concrete types* within Val match (e.g., Int for SumOf) later during pruning/proof.
         }
         Predicate::Custom(custom_ref) => {
-            let predicate_key = Predicate::Custom(custom_ref.clone()).to_fields(&indexes.params);
+            let predicate_key = Predicate::Custom(custom_ref.clone()).to_fields(params);
             if let Some((custom_pred_def, _batch_arc)) = custom_definitions.get(&predicate_key) {
                 if custom_pred_def.conjunction {
                     // --- AND Predicate Handling ---
@@ -346,7 +418,7 @@ fn parse_template_and_generate_constraints(
                                     custom_pred_def,
                                     i,
                                     custom_definitions,
-                                    &indexes.params,
+                                    params,
                                     Some(&custom_ref.batch), // Pass batch from the Custom ref
                                     &mut visited,
                                 );
@@ -400,7 +472,6 @@ fn parse_template_and_generate_constraints(
                             wildcard_types
                                 .entry(inner_wc.clone())
                                 .or_insert(ExpectedType::Unknown);
-                            println!("Identified private wildcard: {:?}", inner_wc);
                         }
                     }
 
@@ -412,17 +483,14 @@ fn parse_template_and_generate_constraints(
                             wildcard_types,
                             constraints,
                             custom_definitions,
-                            indexes,
+                            params,
                             &next_alias_map,
+                            constant_template_info,
                         )?;
                     }
                 } else {
                     // --- OR Predicate Handling ---
                     // Do nothing during initialization, constraints are handled during proof search.
-                    println!(
-                        "Skipping OR predicate constraint generation during init: {}",
-                        custom_pred_def.name
-                    );
                 }
             } else {
                 return Err(ProverError::Other(format!(
@@ -461,7 +529,7 @@ fn parse_template_and_generate_constraints(
                                     target_pred_def,
                                     i,
                                     custom_definitions,
-                                    &indexes.params,
+                                    params,
                                     Some(current_batch_arc), // Pass the current batch
                                     &mut visited,
                                 );
@@ -525,16 +593,13 @@ fn parse_template_and_generate_constraints(
                             wildcard_types,
                             constraints,
                             custom_definitions,
-                            indexes,
+                            params,
                             &next_alias_map,
+                            constant_template_info,
                         )?;
                     }
                 } else {
                     // --- OR Predicate Handling ---
-                    println!(
-                        "Skipping OR predicate (BatchSelf) constraint generation during init: {}",
-                        target_pred_def.name
-                    );
                 }
             } else {
                 // BatchSelf encountered without a current_batch context
@@ -549,17 +614,27 @@ fn parse_template_and_generate_constraints(
     Ok(())
 }
 
+/// Initializes the `SolverState` based on request templates, indexes, and custom definitions.
 pub(super) fn initialize_solver_state(
     request_templates: &[StatementTmpl],
-    indexes: &ProverIndexes,
+    initial_facts: &[(PodId, Statement)], // <-- Receive initial facts
+    params: &crate::middleware::Params,
     custom_definitions: &CustomDefinitions,
-) -> Result<SolverState, ProverError> {
+) -> Result<
+    (
+        SolverState,
+        Vec<PotentialConstantInfo>, // Return potential constant info
+        Vec<(PodId, Statement)>,    // Return generated SELF facts
+    ),
+    ProverError,
+> {
     let mut wildcard_types: HashMap<Wildcard, ExpectedType> = HashMap::new();
     let mut constraints = Vec::new();
+    let mut constant_template_info: Vec<PotentialConstantInfo> = Vec::new(); // Correct type
 
-    // Top-level calls don't have an alias map initially
     let initial_alias_map: HashMap<usize, Wildcard> = HashMap::new();
 
+    // Parse ALL templates to collect wildcards, constraints, etc.
     for tmpl in request_templates {
         parse_template_and_generate_constraints(
             tmpl,
@@ -567,95 +642,98 @@ pub(super) fn initialize_solver_state(
             &mut wildcard_types,
             &mut constraints,
             custom_definitions,
-            indexes,
+            params,
             &initial_alias_map,
+            &mut constant_template_info,
         )?;
     }
 
-    // Establish initial broad domains for ALL identified wildcards (including private ones)
-    let mut domains = HashMap::new();
+    // --- Generate SELF facts from identified constants --- START ---
+    let mut self_facts: Vec<(PodId, Statement)> = Vec::new();
+    for (_holder_wc, key, literal_value) in &constant_template_info {
+        // We now have the literal value directly
+        let self_ak = AnchoredKey::new(SELF, key.clone());
+        let value_of_stmt = Statement::ValueOf(self_ak, literal_value.clone());
+        self_facts.push((SELF, value_of_stmt));
+    }
+    // --- Generate SELF facts from identified constants --- END ---
+
+    // --- Combine original facts with newly generated SELF facts ---
+    // println!("DEBUG: Length of self_facts before extend: {}", self_facts.len()); // Add length check
+    let mut combined_initial_facts = initial_facts.to_vec();
+    combined_initial_facts.extend(self_facts.clone()); // Clone self_facts here
+
+    // --- Build Indexes using the combined facts ---
+    let solver_indexes = ProverIndexes::build(params.clone(), &combined_initial_facts); // <<-- MOVE THIS UP
+
+    // --- Initialize Domains (Simplified - Now has Index Access) ---
+    let mut wildcard_domains: HashMap<Wildcard, (Domain, ExpectedType)> = HashMap::new();
+
     for (wildcard, expected_type) in &wildcard_types {
+        // Initialize with broad, potentially empty domains based only on type
+        // Pruning will refine these later using the actual index built in solve()
         let initial_domain: Domain = match expected_type {
-            ExpectedType::Pod => indexes
-                .pod_id_to_anchored_keys()
-                .keys()
-                .map(|pod_id| ConcreteValue::Pod(*pod_id))
-                .collect(),
-            ExpectedType::Key => indexes
+            ExpectedType::Pod => {
+                // println!("INIT DOMAIN: Initializing Pod domain for {:?}", wildcard.name);
+                let pod_map = solver_indexes.pod_id_to_anchored_keys();
+                // println!("INIT DOMAIN: Index pod_map keys: {:?}", pod_map.keys());
+                let mut pods: HashSet<_> = pod_map
+                    .keys()
+                    .map(|pod_id| ConcreteValue::Pod(*pod_id))
+                    .collect();
+                // Ensure SELF is included if relevant indexes exist for it
+                let self_present_in_index = pod_map.contains_key(&SELF);
+                // println!("INIT DOMAIN: Is SELF present in index pod_map? {}", self_present_in_index);
+                if self_present_in_index {
+                    pods.insert(ConcreteValue::Pod(SELF));
+                }
+                // println!("INIT DOMAIN: Final initial domain for {:?}: {:?}", wildcard.name, pods);
+                pods
+            }
+            ExpectedType::Key => solver_indexes
                 .key_to_anchored_keys()
                 .keys()
                 .map(|k| k.to_string())
                 .map(ConcreteValue::Key)
                 .collect(),
-            ExpectedType::Val => indexes
+            ExpectedType::Val => solver_indexes
                 .value_map()
                 .values()
                 .map(|value| ConcreteValue::Val(value.clone()))
                 .collect(),
             ExpectedType::Unknown => {
-                // Type should be inferred during the recursive parsing. If still Unknown, something went wrong or it's truly unconstrained.
-                // For now, assign a broad domain and let pruning handle it.
-                println!(
-                    "Warning: Wildcard {} still has Unknown type after parsing. Assigning broad domain.",
-                    wildcard.name
-                );
-                let all_pods: HashSet<_> = indexes
-                    .pod_id_to_anchored_keys()
-                    .keys()
-                    .map(|id| ConcreteValue::Pod(*id))
-                    .collect();
-                let all_keys: HashSet<_> = indexes
-                    .key_to_anchored_keys()
-                    .keys()
-                    .map(|k| ConcreteValue::Key(k.to_string()))
-                    .collect();
-                let all_vals: HashSet<_> = indexes
-                    .value_map()
-                    .values()
-                    .map(|v| ConcreteValue::Val(v.clone()))
-                    .collect();
-                all_pods
-                    .union(&all_keys)
-                    .cloned()
-                    .collect::<HashSet<_>>()
-                    .union(&all_vals)
-                    .cloned()
-                    .collect()
+                let mut all = HashSet::new();
+                // Collect all known concrete values
+                for pod_id in solver_indexes.pod_id_to_anchored_keys().keys() {
+                    all.insert(ConcreteValue::Pod(*pod_id));
+                }
+                if solver_indexes.pod_id_to_anchored_keys().contains_key(&SELF) {
+                    all.insert(ConcreteValue::Pod(SELF));
+                }
+                for key in solver_indexes.key_to_anchored_keys().keys() {
+                    all.insert(ConcreteValue::Key(key.to_string()));
+                }
+                for value in solver_indexes.value_map().values() {
+                    all.insert(ConcreteValue::Val(value.clone()));
+                }
+                all
             }
-        };
-        // Check if domain is empty only if the corresponding index is non-empty
-        let domain_is_meaningfully_empty = match expected_type {
-            ExpectedType::Pod => {
-                !indexes.pod_id_to_anchored_keys().is_empty() && initial_domain.is_empty()
-            }
-            ExpectedType::Key => {
-                !indexes.key_to_anchored_keys().is_empty() && initial_domain.is_empty()
-            }
-            ExpectedType::Val => !indexes.value_map().is_empty() && initial_domain.is_empty(),
-            ExpectedType::Unknown => initial_domain.is_empty(), // Empty if everything is empty
         };
 
-        if domain_is_meaningfully_empty {
-            // This indicates an issue, perhaps the wildcard type is constrained in a way
-            // that no known values match. However, this might be okay if the wildcard
-            // is expected to bind to a value generated *during* the solve.
-            println!(
-                "Warning: Initial domain for {} ({:?}) is empty based on known indexes.",
-                wildcard.name, expected_type
-            );
-        }
-        domains.insert(wildcard.clone(), (initial_domain, *expected_type));
+        wildcard_domains.insert(wildcard.clone(), (initial_domain, *expected_type));
     }
 
     // Remove duplicates constraints if any
     let constraints_set: HashSet<_> = constraints.drain(..).collect();
     constraints.extend(constraints_set);
 
-    Ok(SolverState {
-        params: indexes.params.clone(),
-        domains,
+    let solver_state = SolverState {
+        params: params.clone(),
+        domains: wildcard_domains,
         constraints,
         proof_chains: HashMap::new(),
         scope: HashSet::new(),
-    })
+    };
+
+    Ok((solver_state, constant_template_info, self_facts)) // <-- Return state, constant_info, self_facts
 }

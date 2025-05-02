@@ -137,6 +137,7 @@ impl ProverIndexes {
     /// 4. Derive implicit equalities and inequalities based on `ValueOf` statements. Keys with the same value are unioned in the DSU
     ///    (unless explicitly marked `NotEqual`), and keys with different values have their canonical IDs added to `neq_set`.
     pub fn build(params: Params, initial_facts: &[(PodId, Statement)]) -> Self {
+        // println!("INDEXING: Building indexes from facts: {:?}", initial_facts);
         let mut indexes = Self::new(params);
 
         // Pass 1: Assign IDs to all unique AnchoredKeys encountered.
@@ -146,6 +147,7 @@ impl ProverIndexes {
                     let _ = indexes.get_or_assign_id(&ak);
                 }
             }
+            // Assign ID for the AK defined BY a ValueOf statement itself
             if let Statement::ValueOf(ak, _) = statement {
                 let _ = indexes.get_or_assign_id(ak);
             }
@@ -155,7 +157,16 @@ impl ProverIndexes {
         indexes.dsu = UnionFind::new(indexes.next_id);
 
         // Pass 2: Populate indexes using assigned IDs.
+        println!(
+            "INDEXING: Length of initial_facts slice in build Pass 2: {}",
+            initial_facts.len()
+        ); // Add length check
+        println!("INDEXING: Starting Pass 2 population loop..."); // Re-enable
         for (pod_id, statement) in initial_facts {
+            // println!("INDEXING: Processing fact: ({:?}, {:?})", pod_id, statement); // Re-enable
+
+            // --- Temporarily comment out all processing logic within the loop --- START ---
+            // Restore the commented-out logic
             indexes
                 .exact_statement_lookup
                 .insert((*pod_id, statement.clone()));
@@ -163,21 +174,54 @@ impl ProverIndexes {
             // Populate key/pod lookups
             for arg in statement.args() {
                 if let StatementArg::Key(ak) = arg {
-                    indexes
+                    let key_for_map = ak.key.clone();
+                    let ak_set = indexes
                         .key_to_anchored_keys
-                        .entry(ak.key.clone())
-                        .or_default()
-                        .insert(ak.clone());
-                    indexes
+                        .entry(key_for_map.clone())
+                        .or_default();
+                    let inserted = ak_set.insert(ak.clone());
+                    if ak.pod_id == crate::middleware::SELF {
+                        println!("INDEXING [key_to_anchored_keys - Args Loop]: Processed Key={:?}, AnchoredKey={:?}, InsertedNew={}",
+                                 key_for_map, ak, inserted);
+                    }
+
+                    let ak_set_pod = indexes
                         .pod_id_to_anchored_keys
                         .entry(ak.pod_id)
-                        .or_default()
-                        .insert(ak.clone());
+                        .or_default();
+                    let inserted_pod = ak_set_pod.insert(ak.clone());
+                    if ak.pod_id == crate::middleware::SELF {
+                        println!("INDEXING [pod_id_to_anchored_keys - Args Loop]: Processed PodId=SELF, AnchoredKey={:?}, InsertedNew={}",
+                                 ak, inserted_pod);
+                    }
                 }
             }
             // Populate value_map
             if let Statement::ValueOf(ak, v) = statement {
                 indexes.value_map.insert(ak.clone(), v.clone());
+                // Re-enable debug for ValueOf SELF
+                if ak.pod_id == crate::middleware::SELF {
+                    println!(
+                        "INDEXING [ValueOf - Pass 2]: Found ValueOf for SELF. AK = {:?}",
+                        ak
+                    );
+                    let key_for_map = ak.key.clone();
+                    // Explicitly update maps here, even if redundant with loop below, for debugging
+                    let inserted_key = indexes
+                        .key_to_anchored_keys
+                        .entry(key_for_map)
+                        .or_default()
+                        .insert(ak.clone());
+                    let inserted_pod = indexes
+                        .pod_id_to_anchored_keys
+                        .entry(ak.pod_id)
+                        .or_default()
+                        .insert(ak.clone());
+                    println!(
+                        "INDEXING [ValueOf - Pass 2]: Updated key_map?={}, pod_map?={}",
+                        inserted_key, inserted_pod
+                    );
+                }
             }
             // Populate statement_lookup_by_arg
             let pred_fields = statement.predicate().to_fields(&indexes.params);
@@ -230,10 +274,37 @@ impl ProverIndexes {
                         indexes.neq_set.insert(normalize_pair_id(root1, root2));
                     }
                 }
+                Statement::ValueOf(ak, _v) => {
+                    // ValueOf already handled for value_map
+                    // Ensure its AK is in the other maps (potentially redundant, but safe)
+                    if ak.pod_id == crate::middleware::SELF {
+                        println!(
+                            "INDEXING [key_to_anchored_keys - ValueOf Match]: AK={:?}",
+                            ak
+                        );
+                        indexes
+                            .key_to_anchored_keys
+                            .entry(ak.key.clone())
+                            .or_default()
+                            .insert(ak.clone());
+                        println!(
+                            "INDEXING [pod_id_to_anchored_keys - ValueOf Match]: AK={:?}",
+                            ak
+                        );
+                        indexes
+                            .pod_id_to_anchored_keys
+                            .entry(ak.pod_id)
+                            .or_default()
+                            .insert(ak.clone());
+                    }
+                }
                 _ => {}
             }
+            // --- Temporarily comment out all processing logic within the loop --- END ---
         }
 
+        // --- Temporarily comment out Pass 3 --- START ---
+        // Restore Pass 3 logic
         // Pass 3: Derive implicit Eq/NEq from ValueOf statements.
         // We iterate through all pairs of ValueOf facts to establish relationships.
         let value_map_clone = indexes.value_map.clone();
@@ -272,6 +343,8 @@ impl ProverIndexes {
                 processed_pairs.insert(key_pair);
             }
         }
+        // */
+        // --- Temporarily comment out Pass 3 --- END ---
 
         indexes
     }

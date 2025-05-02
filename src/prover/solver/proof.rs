@@ -4,8 +4,8 @@ use super::SolverState;
 use crate::{
     middleware::{
         statement::{StatementArg, WildcardValue},
-        NativeOperation, NativePredicate, OperationType, Predicate, Statement, StatementTmplArg,
-        ToFields, TypedValue, Wildcard,
+        AnchoredKey, Key, NativeOperation, NativePredicate, OperationType, Predicate, Statement,
+        StatementTmplArg, ToFields, TypedValue, Value, Wildcard, SELF,
     },
     prover::{
         error::ProverError,
@@ -21,11 +21,58 @@ pub(super) fn try_prove_statement(
     target: &Statement,
     indexes: &ProverIndexes,
     custom_definitions: &CustomDefinitions,
+    potential_constant_info: &[(Wildcard, Key, Value)],
 ) -> Result<ProofChain, ProverError> {
     // 1. Check if proof already exists
     if let Some(existing_chain) = state.proof_chains.get(target) {
         return Ok(existing_chain.clone());
     }
+
+    // --- NEW: Check for potential SELF constant generation (for ValueOf) ---
+    if let Statement::ValueOf(target_ak, target_value) = target {
+        // Check if this (key, value) pair corresponds to a potential constant
+        if let Some((holder_wc, const_key, _value)) = potential_constant_info
+            .iter()
+            // Find the entry matching the target key and value
+            .find(|(_, k, v)| k == &target_ak.key && v == target_value)
+        {
+            // Check if the holder domain allows SELF
+            if state
+                .domains
+                .get(holder_wc)
+                .is_some_and(|(dom, _)| dom.contains(&ConcreteValue::Pod(SELF)))
+            {
+                // Prefer generating this constant via NewEntry for SELF
+
+                // IMPORTANT: Create the output statement with SELF pod_id
+                let self_output_ak = AnchoredKey::new(SELF, const_key.clone());
+                let self_output_stmt = Statement::ValueOf(self_output_ak, target_value.clone());
+
+                let proof_step = ProofStep {
+                    operation: OperationType::Native(NativeOperation::NewEntry),
+                    inputs: vec![], // NewEntry has no statement inputs
+                    output: self_output_stmt.clone(), // Output is ValueOf(SELF, ...)
+                };
+                let proof_chain = ProofChain(vec![proof_step]);
+
+                // Add to proof chains (use the SELF version as the key)
+                state
+                    .proof_chains
+                    .insert(self_output_stmt.clone(), proof_chain.clone());
+
+                // Note: We don't add to scope here, as NewEntry doesn't consume base facts.
+                // The pod_building stage will handle adding the actual NewEntry op.
+
+                // Crucially, return success *even if the original target had a different pod_id*.
+                // The solver might have requested ValueOf(ExternalPod[const_key], val) but we satisfy it
+                // via ValueOf(SELF[const_key], val). The binding/pruning logic should handle this.
+                // TODO: Revisit if this interaction causes issues with binding/pruning.
+                // println!("Proving ValueOf via SELF NewEntry: {:?}", self_output_stmt);
+                return Ok(proof_chain);
+            }
+        }
+    }
+    // --- END NEW ---
 
     // 2. Check if it's a base fact (CopyStatement)
     let target_middleware_statement = target;
@@ -150,6 +197,7 @@ pub(super) fn try_prove_statement(
                                 &target1_mid,
                                 indexes,
                                 custom_definitions,
+                                &[], // Pass empty potential_constant_info
                             ) {
                                 Ok(chain1) => {
                                     // Now try the second part
@@ -158,6 +206,7 @@ pub(super) fn try_prove_statement(
                                         &target_mid_2,
                                         indexes,
                                         custom_definitions,
+                                        &[], // Pass empty potential_constant_info
                                     ) {
                                         Ok(chain2) => {
                                             // SUCCESS! Combine chains and add the transitive step.
@@ -260,9 +309,13 @@ pub(super) fn try_prove_statement(
                 let target_gt2 = Statement::Gt(ak2.clone(), ak1.clone()); // Check both directions
 
                 // Try proving Gt(ak1, ak2)
-                if let Ok(gt_chain1) =
-                    try_prove_statement(state, &target_gt1, indexes, custom_definitions)
-                {
+                if let Ok(gt_chain1) = try_prove_statement(
+                    state,
+                    &target_gt1,
+                    indexes,
+                    custom_definitions,
+                    &[], // Pass empty
+                ) {
                     let mut combined_steps = gt_chain1.0;
                     let neq_step = ProofStep {
                         operation: OperationType::Native(NativeOperation::GtToNotEqual),
@@ -278,9 +331,13 @@ pub(super) fn try_prove_statement(
                 }
 
                 // Try proving Gt(ak2, ak1)
-                if let Ok(gt_chain2) =
-                    try_prove_statement(state, &target_gt2, indexes, custom_definitions)
-                {
+                if let Ok(gt_chain2) = try_prove_statement(
+                    state,
+                    &target_gt2,
+                    indexes,
+                    custom_definitions,
+                    &[], // Pass empty
+                ) {
                     let mut combined_steps = gt_chain2.0;
                     let neq_step = ProofStep {
                         operation: OperationType::Native(NativeOperation::GtToNotEqual),
@@ -300,9 +357,13 @@ pub(super) fn try_prove_statement(
                 let target_lt2 = Statement::Lt(ak2.clone(), ak1.clone()); // Check both directions
 
                 // Try proving Lt(ak1, ak2)
-                if let Ok(lt_chain1) =
-                    try_prove_statement(state, &target_lt1, indexes, custom_definitions)
-                {
+                if let Ok(lt_chain1) = try_prove_statement(
+                    state,
+                    &target_lt1,
+                    indexes,
+                    custom_definitions,
+                    &[], // Pass empty
+                ) {
                     let mut combined_steps = lt_chain1.0;
                     let neq_step = ProofStep {
                         operation: OperationType::Native(NativeOperation::LtToNotEqual),
@@ -318,9 +379,13 @@ pub(super) fn try_prove_statement(
                 }
 
                 // Try proving Lt(ak2, ak1)
-                if let Ok(lt_chain2) =
-                    try_prove_statement(state, &target_lt2, indexes, custom_definitions)
-                {
+                if let Ok(lt_chain2) = try_prove_statement(
+                    state,
+                    &target_lt2,
+                    indexes,
+                    custom_definitions,
+                    &[], // Pass empty
+                ) {
                     let mut combined_steps = lt_chain2.0;
                     let neq_step = ProofStep {
                         operation: OperationType::Native(NativeOperation::LtToNotEqual),
@@ -866,6 +931,7 @@ pub(super) fn try_prove_statement(
                                 &concrete_sub_stmt,
                                 indexes,
                                 custom_definitions,
+                                &[], // Pass empty potential_constant_info
                             ) {
                                 Ok(sub_chain) => {
                                     combined_steps.extend(sub_chain.0);
@@ -922,6 +988,7 @@ pub(super) fn try_prove_statement(
                                     &concrete_sub_stmt,
                                     indexes,
                                     custom_definitions,
+                                    &[], // Pass empty potential_constant_info
                                 ) {
                                     Ok(sub_chain) => {
                                         // SUCCESS! First successful branch wins.
@@ -977,20 +1044,6 @@ pub(super) fn try_prove_statement(
         "Could not find or derive proof for: {:?}",
         target
     )))
-}
-
-// Helper function (similar to initialization.rs) to get wildcards from template args
-fn get_wildcards_from_tmpl_arg(arg: &StatementTmplArg) -> Vec<Wildcard> {
-    match arg {
-        StatementTmplArg::Key(wc_pod, crate::middleware::KeyOrWildcard::Wildcard(wc_key)) => {
-            vec![wc_pod.clone(), wc_key.clone()]
-        }
-        StatementTmplArg::Key(wc_pod, crate::middleware::KeyOrWildcard::Key(_)) => {
-            vec![wc_pod.clone()]
-        }
-        StatementTmplArg::WildcardLiteral(wc_val) => vec![wc_val.clone()],
-        _ => vec![],
-    }
 }
 
 // Helper function to build a concrete statement from a template and bindings
