@@ -16,7 +16,6 @@ mod tests {
         sync::Arc,
     };
 
-    use super::*;
     use crate::{
         backends::plonky2::mock::signedpod::MockSigner,
         examples::zu_kyc_sign_pod_builders,

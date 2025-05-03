@@ -305,10 +305,12 @@ pub fn solve(
     })
 }
 
+type WildcardPair = (Wildcard, Wildcard);
+
 // --- Helper function to extract implied pairs --- START ---
 fn extract_implied_pairs(
     request_templates: &[middleware::StatementTmpl],
-) -> (Vec<(Wildcard, Wildcard)>, Vec<(Wildcard, Wildcard)>) {
+) -> (Vec<WildcardPair>, Vec<WildcardPair>) {
     let mut equality_pairs = Vec::new();
     let mut inequality_pairs = Vec::new();
 
