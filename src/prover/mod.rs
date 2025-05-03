@@ -80,10 +80,8 @@ mod tests {
         let solution = solve_result.unwrap();
 
         // 5. Prepare inputs for the pod building stage.
-        let original_signed_pods = HashMap::from([
-            (pod_a.id(), Arc::new(pod_a.clone())),
-            (pod_b.id(), Arc::new(pod_b.clone())),
-        ]);
+        let original_signed_pods =
+            HashMap::from([(pod_a.id(), pod_a.clone()), (pod_b.id(), pod_b.clone())]);
         let original_main_pods = HashMap::new();
 
         // 6. Call the pod building process to construct the final MainPod based on the solution.
@@ -329,9 +327,9 @@ mod tests {
 
         // --- Build Pod ---
         let original_signed_pods = HashMap::from([
-            (pod_1.id(), Arc::new(pod_1.clone())),
-            (pod_2.id(), Arc::new(pod_2.clone())),
-            (pod_3.id(), Arc::new(pod_3.clone())),
+            (pod_1.id(), pod_1.clone()),
+            (pod_2.id(), pod_2.clone()),
+            (pod_3.id(), pod_3.clone()),
         ]);
         let original_main_pods = HashMap::new();
 
@@ -726,9 +724,9 @@ mod tests {
 
         // 7. Prepare inputs for pod building.
         let original_signed_pods = HashMap::from([
-            (gov_id_pod.id(), Arc::new(gov_id_pod.clone())),
-            (pay_stub_pod.id(), Arc::new(pay_stub_pod.clone())),
-            (sanction_list_pod.id(), Arc::new(sanction_list_pod.clone())),
+            (gov_id_pod.id(), gov_id_pod.clone()),
+            (pay_stub_pod.id(), pay_stub_pod.clone()),
+            (sanction_list_pod.id(), sanction_list_pod.clone()),
         ]);
         let original_main_pods = HashMap::new(); // No input main pods
 
