@@ -247,7 +247,6 @@ mod search_tests {
             (p1, Statement::ValueOf(ak(1, "val"), val(20))),
             (p2, Statement::ValueOf(ak(2, "val"), val(10))),
         ];
-        let facts_clone = facts.clone(); // Keep clone for potential later use
         let _params = middleware::Params::default();
         let custom_definitions = CustomDefinitions::default();
 

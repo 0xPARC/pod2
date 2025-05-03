@@ -755,7 +755,6 @@ pub(super) fn prune_domains_after_proof(
                                     // the key domain must become empty.
                                     if initial_len > 0 {
                                         key_domain.clear();
-                                        changed = true;
                                         // Return error immediately as it's unsatisfiable
                                         return Err(ProverError::Unsatisfiable(format!(
                                             "Dynamic pruning (Contains/Value->Key) found no valid keys for value {:?}, emptied domain for {}",

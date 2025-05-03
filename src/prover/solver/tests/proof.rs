@@ -148,8 +148,6 @@ mod proof_tests {
             Statement::ValueOf(AnchoredKey::new(pod_a, key_foo.clone()), val_10.clone());
         let target_prover: Statement = target_stmt.clone();
 
-        // Destructure the result and pass &indexes
-        let (indexes, _) = setup_indexes_with_facts(&[]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
@@ -160,7 +158,7 @@ mod proof_tests {
             .insert(target_prover.clone(), dummy_chain.clone());
 
         // Destructure the result and pass &indexes
-        let (indexes, _) = setup_indexes_with_facts(&vec![]);
+        let (indexes, _) = setup_indexes_with_facts(&[]);
         // Pass &indexes
         let result = try_prove_statement(
             &mut state,
@@ -1564,7 +1562,7 @@ mod proof_tests {
 
         // No facts provided, so Gt/Lt cannot be proven
         // Destructure the result and pass &indexes
-        let (indexes, _) = setup_indexes_with_facts(&vec![]);
+        let (indexes, _) = setup_indexes_with_facts(&[]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
@@ -1655,25 +1653,6 @@ mod proof_tests {
     fn build_custom_ref(batch: Arc<CustomPredicateBatch>, index: usize) -> CustomPredicateRef {
         // Field should be Arc<CustomPredicateBatch>
         CustomPredicateRef { batch, index }
-    }
-
-    // Helper to setup CustomDefinitions map
-    fn setup_custom_definitions(
-        definitions: Vec<(
-            Predicate,
-            CustomPredicate,
-            Arc<CustomPredicateBatch>, // Add Arc here
-        )>,
-        params: &middleware::Params,
-    ) -> CustomDefinitions {
-        let mut custom_defs = CustomDefinitions::new();
-        for (predicate_ref, definition, batch_arc) in definitions {
-            // Unpack Arc here
-            // Call to_fields should work now with trait in scope
-            let key = predicate_ref.to_fields(params);
-            custom_defs.insert(key, (definition, batch_arc)); // Insert tuple
-        }
-        custom_defs
     }
 
     #[test]

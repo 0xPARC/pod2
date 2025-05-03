@@ -60,24 +60,8 @@ fn get_wildcards_from_definition_stmts(statements: &[StatementTmpl]) -> HashSet<
                 _ => {}
             }
         }
-        // Consider wildcards within nested custom predicate calls if needed
-        if let Predicate::Custom(custom_ref) = &stmt_tmpl.pred {
-            // We currently parse recursively, so nested wildcards are handled there.
-        }
     }
     wildcards
-}
-
-/// Helper function to get all wildcards used in a specific StatementTmplArg.
-fn get_wildcards_from_tmpl_arg(arg: &StatementTmplArg) -> Vec<Wildcard> {
-    match arg {
-        StatementTmplArg::Key(wc_pod, KeyOrWildcard::Wildcard(wc_key)) => {
-            vec![wc_pod.clone(), wc_key.clone()]
-        }
-        StatementTmplArg::Key(wc_pod, KeyOrWildcard::Key(_)) => vec![wc_pod.clone()],
-        StatementTmplArg::WildcardLiteral(wc_val) => vec![wc_val.clone()],
-        _ => vec![],
-    }
 }
 
 /// Infers the expected type of a public argument (by index) for a custom predicate
@@ -463,7 +447,6 @@ fn parse_template_and_generate_constraints(
                             }
                         }
                     }
-                    // println!("Warning: Alias map creation for custom predicates not yet fully implemented in initialization.");
 
                     // 3. Identify and Register Private Wildcards
                     for inner_wc in &inner_wildcards {
@@ -490,7 +473,155 @@ fn parse_template_and_generate_constraints(
                     }
                 } else {
                     // --- OR Predicate Handling ---
-                    // Do nothing during initialization, constraints are handled during proof search.
+                    // Collect constraints and types from each branch.
+                    let mut branch_constraints_sets: Vec<HashSet<Constraint>> = Vec::new();
+                    let mut branch_types_maps: Vec<HashMap<Wildcard, ExpectedType>> = Vec::new();
+                    let public_args_count = custom_pred_def.args_len; // Needed for alias map
+
+                    // 1. Build the alias map for this level (same as AND)
+                    let mut next_alias_map: HashMap<usize, Wildcard> =
+                        HashMap::with_capacity(public_args_count);
+                    // Similar logic as AND to build next_alias_map...
+                    for i in 0..public_args_count {
+                        match tmpl.args.get(i) {
+                            Some(StatementTmplArg::WildcardLiteral(outer_wc_from_tmpl)) => {
+                                // Resolve the outer wildcard using the current alias map
+                                let actual_outer_wc = match alias_map.get(&outer_wc_from_tmpl.index)
+                                {
+                                    Some(outer_wc) => outer_wc,
+                                    None => outer_wc_from_tmpl,
+                                };
+                                // Map: Inner Predicate Arg Index -> Actual Outer Wildcard
+                                next_alias_map.insert(i, actual_outer_wc.clone());
+                                // NOTE: We don't infer/add type constraints here for OR,
+                                // as the type might depend on the branch taken.
+                                // We'll infer types within each branch's analysis below.
+                            }
+                            Some(arg) => {
+                                // Error handling similar to AND
+                                return Err(ProverError::Internal(format!(
+                                    "OR: Expected WildcardLiteral arg at index {} when calling Custom predicate '{}', found {:?}",
+                                    i, custom_pred_def.name, arg
+                                )));
+                            }
+                            None => {
+                                // Error handling similar to AND
+                                return Err(ProverError::Internal(format!(
+                                    "OR: Argument count mismatch: Custom predicate '{}' expects {} args, but caller template provided fewer.",
+                                    custom_pred_def.name, public_args_count
+                                )));
+                            }
+                        }
+                    }
+
+                    // 2. Analyze each branch recursively
+                    for internal_tmpl in &custom_pred_def.statements {
+                        let mut current_branch_constraints_vec: Vec<Constraint> = Vec::new();
+                        let mut current_branch_types_map: HashMap<Wildcard, ExpectedType> =
+                            HashMap::new();
+                        // IMPORTANT: Also pass down potential constant info accumulation buffer,
+                        // although constants found inside an OR branch might not be guaranteed.
+                        // For simplicity, we'll collect constants but won't use them for SELF facts from OR branches for now.
+                        let mut current_branch_constant_info: Vec<PotentialConstantInfo> =
+                            Vec::new();
+
+                        // Recursively parse, collecting constraints and types into temporary buffers
+                        // Pass the correct batch context (custom_ref.batch)
+                        match parse_template_and_generate_constraints(
+                            internal_tmpl,
+                            Some(custom_ref.batch.clone()), // Pass batch context
+                            &mut current_branch_types_map,  // Temporary types map
+                            &mut current_branch_constraints_vec, // Temporary constraints vec
+                            custom_definitions,
+                            params,
+                            &next_alias_map,                   // Pass the alias map
+                            &mut current_branch_constant_info, // Temporary constants vec
+                        ) {
+                            Ok(_) => {
+                                // Successfully parsed branch, store results
+                                let constraints_set: HashSet<Constraint> =
+                                    current_branch_constraints_vec.into_iter().collect();
+                                branch_constraints_sets.push(constraints_set);
+                                branch_types_maps.push(current_branch_types_map);
+                            }
+                            Err(e) => {
+                                // If a branch is inherently unsatisfiable, we might ignore it for common constraint analysis?
+                                // Or propagate the error if *all* branches fail?
+                                // For now, let's just log and skip this branch's results.
+                                // Consider if a single failing branch should invalidate the OR constraint analysis.
+                                eprintln!(
+                                    // Use eprintln for warnings/errors
+                                    "Warning: Failed to parse OR branch template {:?}: {:?}",
+                                    internal_tmpl, e
+                                );
+                                // If one branch fails, we cannot determine common constraints reliably.
+                                // Reset collected results and break? Or just continue and potentially find no commonalities?
+                                // Let's clear and break, assuming a broken branch prevents finding guaranteed common constraints.
+                                branch_constraints_sets.clear();
+                                branch_types_maps.clear();
+                                break;
+                            }
+                        }
+                    }
+
+                    // 3. Find and add common constraints
+                    if let Some(first_set) = branch_constraints_sets.first() {
+                        let mut common_constraints = first_set.clone();
+                        for other_set in branch_constraints_sets.iter().skip(1) {
+                            common_constraints.retain(|constraint| other_set.contains(constraint));
+                        }
+                        // Add common constraints to the main constraints vector
+                        constraints.extend(common_constraints);
+                    }
+
+                    // 4. Find and add common wildcard types
+                    if !branch_types_maps.is_empty() {
+                        // Collect all wildcards mentioned across all branch type maps
+                        let mut all_wcs_in_or: HashSet<Wildcard> = HashSet::new();
+                        for map in &branch_types_maps {
+                            all_wcs_in_or.extend(map.keys().cloned());
+                        }
+
+                        for wc in all_wcs_in_or {
+                            let mut common_type = ExpectedType::Unknown;
+                            let mut first_type_found = false;
+                            let mut conflict = false;
+
+                            for map in &branch_types_maps {
+                                match map.get(&wc) {
+                                    Some(&branch_type) if branch_type != ExpectedType::Unknown => {
+                                        if !first_type_found {
+                                            common_type = branch_type;
+                                            first_type_found = true;
+                                        } else if common_type != branch_type {
+                                            conflict = true;
+                                            break; // Conflict found
+                                        }
+                                    }
+                                    _ => {
+                                        // Wildcard not mentioned or Unknown in this branch, doesn't affect commonality yet
+                                    }
+                                }
+                            }
+
+                            // If a common type was found across all branches (where mentioned) and no conflict occurred
+                            if first_type_found && !conflict {
+                                // Update the main wildcard_types map
+                                update_wildcard_type(wildcard_types, &wc, common_type)?;
+                                // Also add the Type constraint explicitly if not already added by intersection
+                                let type_constraint = Constraint::Type {
+                                    wildcard: wc.clone(),
+                                    expected_type: common_type,
+                                };
+                                // Avoid adding duplicate constraints
+                                if !constraints.contains(&type_constraint) {
+                                    constraints.push(type_constraint);
+                                }
+                            }
+                            // If conflict or only Unknown found, leave the type in the main map as is (likely Unknown)
+                        }
+                    }
+                    // End of OR logic
                 }
             } else {
                 return Err(ProverError::Other(format!(
@@ -574,7 +705,6 @@ fn parse_template_and_generate_constraints(
                             }
                         }
                     }
-                    // println!("Warning: Alias map creation for BatchSelf not yet implemented.");
 
                     // Identify and Register Private Wildcards (Step 6 - verification needed)
                     for inner_wc in &inner_wildcards {
@@ -600,6 +730,133 @@ fn parse_template_and_generate_constraints(
                     }
                 } else {
                     // --- OR Predicate Handling ---
+                    // Collect constraints and types from each branch.
+                    let mut branch_constraints_sets: Vec<HashSet<Constraint>> = Vec::new();
+                    let mut branch_types_maps: Vec<HashMap<Wildcard, ExpectedType>> = Vec::new();
+                    let public_args_count = target_pred_def.args_len; // Needed for alias map
+
+                    // 1. Build the alias map for this level (same as AND)
+                    let mut next_alias_map: HashMap<usize, Wildcard> =
+                        HashMap::with_capacity(public_args_count);
+                    // Similar logic as AND to build next_alias_map...
+                    for i in 0..public_args_count {
+                        match tmpl.args.get(i) {
+                            Some(StatementTmplArg::WildcardLiteral(outer_wc_from_tmpl)) => {
+                                // Resolve the outer wildcard using the current alias map
+                                let actual_outer_wc = match alias_map.get(&outer_wc_from_tmpl.index)
+                                {
+                                    Some(outer_wc) => outer_wc,
+                                    None => outer_wc_from_tmpl,
+                                };
+                                // Map: Inner Predicate Arg Index -> Actual Outer Wildcard
+                                next_alias_map.insert(i, actual_outer_wc.clone());
+                                // NOTE: Type constraints handled within branch analysis below.
+                            }
+                            Some(arg) => {
+                                // Error handling similar to AND
+                                return Err(ProverError::Internal(format!(
+                                     "OR/BatchSelf: Expected WildcardLiteral arg at index {} when calling BatchSelf predicate '{}', found {:?}",
+                                     i, target_pred_def.name, arg
+                                 )));
+                            }
+                            None => {
+                                // Error handling similar to AND
+                                return Err(ProverError::Internal(format!(
+                                     "OR/BatchSelf: Argument count mismatch: BatchSelf predicate '{}' expects {} args, but caller template provided fewer.",
+                                     target_pred_def.name, public_args_count
+                                 )));
+                            }
+                        }
+                    }
+
+                    // 2. Analyze each branch recursively
+                    for internal_tmpl in &target_pred_def.statements {
+                        let mut current_branch_constraints_vec: Vec<Constraint> = Vec::new();
+                        let mut current_branch_types_map: HashMap<Wildcard, ExpectedType> =
+                            HashMap::new();
+                        let mut current_branch_constant_info: Vec<PotentialConstantInfo> =
+                            Vec::new();
+
+                        // Recursively parse, collecting constraints and types into temporary buffers
+                        // Pass the current batch Arc ref
+                        match parse_template_and_generate_constraints(
+                            internal_tmpl,
+                            Some(current_batch_arc.clone()), // Pass current batch context
+                            &mut current_branch_types_map,
+                            &mut current_branch_constraints_vec,
+                            custom_definitions,
+                            params,
+                            &next_alias_map,
+                            &mut current_branch_constant_info, // Temporary constants vec
+                        ) {
+                            Ok(_) => {
+                                let constraints_set: HashSet<Constraint> =
+                                    current_branch_constraints_vec.into_iter().collect();
+                                branch_constraints_sets.push(constraints_set);
+                                branch_types_maps.push(current_branch_types_map);
+                            }
+                            Err(e) => {
+                                eprintln!( // Use eprintln for warnings/errors
+                                     "Warning: Failed to parse OR/BatchSelf branch template {:?}: {:?}",
+                                     internal_tmpl, e
+                                 );
+                                // Clear and break if one branch fails.
+                                branch_constraints_sets.clear();
+                                branch_types_maps.clear();
+                                break;
+                            }
+                        }
+                    }
+
+                    // 3. Find and add common constraints (same logic as Custom OR)
+                    if let Some(first_set) = branch_constraints_sets.first() {
+                        let mut common_constraints = first_set.clone();
+                        for other_set in branch_constraints_sets.iter().skip(1) {
+                            common_constraints.retain(|constraint| other_set.contains(constraint));
+                        }
+                        constraints.extend(common_constraints);
+                    }
+
+                    // 4. Find and add common wildcard types (same logic as Custom OR)
+                    if !branch_types_maps.is_empty() {
+                        let mut all_wcs_in_or: HashSet<Wildcard> = HashSet::new();
+                        for map in &branch_types_maps {
+                            all_wcs_in_or.extend(map.keys().cloned());
+                        }
+
+                        for wc in all_wcs_in_or {
+                            let mut common_type = ExpectedType::Unknown;
+                            let mut first_type_found = false;
+                            let mut conflict = false;
+
+                            for map in &branch_types_maps {
+                                match map.get(&wc) {
+                                    Some(&branch_type) if branch_type != ExpectedType::Unknown => {
+                                        if !first_type_found {
+                                            common_type = branch_type;
+                                            first_type_found = true;
+                                        } else if common_type != branch_type {
+                                            conflict = true;
+                                            break;
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+
+                            if first_type_found && !conflict {
+                                update_wildcard_type(wildcard_types, &wc, common_type)?;
+                                let type_constraint = Constraint::Type {
+                                    wildcard: wc.clone(),
+                                    expected_type: common_type,
+                                };
+                                if !constraints.contains(&type_constraint) {
+                                    constraints.push(type_constraint);
+                                }
+                            }
+                        }
+                    }
+                    // End of OR logic
                 }
             } else {
                 // BatchSelf encountered without a current_batch context
