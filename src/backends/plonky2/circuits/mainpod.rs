@@ -1,5 +1,3 @@
-use core::ops::Not;
-
 use itertools::zip_eq;
 use plonky2::{
     hash::{hash_types::HashOutTarget, poseidon::PoseidonHash},
@@ -39,6 +37,27 @@ struct OperationVerifyGadget {
 }
 
 impl OperationVerifyGadget {
+    fn first_n_args_are_valueofs(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        n: usize,
+        resolved_op_args: &[StatementTarget],
+    ) -> BoolTarget {
+        let arg_is_valueof = resolved_op_args[..n]
+            .iter()
+            .map(|arg| {
+                let st_type_ok =
+                    arg.has_native_type(builder, &self.params, NativePredicate::ValueOf);
+                let value_arg_ok = builder.statement_arg_is_value(&arg.args[1]);
+                builder.and(st_type_ok, value_arg_ok)
+            })
+            .collect::<Vec<_>>();
+        arg_is_valueof
+            .into_iter()
+            .reduce(|a, b| builder.and(a, b))
+            .expect("No args specified.")
+    }
+
     fn eval(
         &self,
         builder: &mut CircuitBuilder<F, D>,
@@ -68,35 +87,6 @@ impl OperationVerifyGadget {
         let resolved_merkle_claim =
             (!merkle_claims.is_empty()).then(|| builder.vec_ref(merkle_claims, op.aux[0]));
 
-        /*
-         * Type checks
-         * Op args are either:
-         * - up to three ValueOf statements,
-         * - two Equal statements, or
-         * - a Lt statement.
-         * We form the type check targets here and use them where necessary.
-         */
-        let arg_is_valueof = resolved_op_args[..3]
-            .iter()
-            .map(|op_arg| {
-                let st_type_ok =
-                    op_arg.has_native_type(builder, &self.params, NativePredicate::ValueOf);
-                let value_arg_ok = builder.statement_arg_is_value(&op_arg.args[1]);
-                builder.and(st_type_ok, value_arg_ok)
-            })
-            .collect::<Vec<_>>();
-        let args_are_two_valueofs = builder.and(arg_is_valueof[0], arg_is_valueof[1]);
-        let _args_are_three_valueofs = builder.and(args_are_two_valueofs, arg_is_valueof[2]);
-        let _args_are_two_equals = {
-            let equal_checks = resolved_op_args[..2]
-                .iter()
-                .map(|op_arg| op_arg.has_native_type(builder, &self.params, NativePredicate::Equal))
-                .collect::<Vec<_>>();
-            builder.and(equal_checks[0], equal_checks[1])
-        };
-        let _arg_is_lt =
-            resolved_op_args[0].has_native_type(builder, &self.params, NativePredicate::Lt);
-
         // The verification may require aux data which needs to be stored in the
         // `OperationVerifyTarget` so that we can set during witness generation.
 
@@ -104,29 +94,24 @@ impl OperationVerifyGadget {
         // Op checks to carry out. Each 'eval_X' should
         // be thought of as 'eval' restricted to the op of type X,
         // where the returned target is `false` if the input targets
-        // lie outside of the domain. We group ops together by op arg
-        // type, where the arg type check is carried out separately
-        // from the `eval` method.
-        let op_checks_arb_args: Vec<_> = [
-            Some(self.eval_none(builder, st, op)),
-            Some(self.eval_new_entry(builder, st, op, prev_statements)),
-            resolved_op_args
-                .is_empty()
-                .not()
-                .then(|| self.eval_copy(builder, st, op, &resolved_op_args))
-                .transpose()?,
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-        let op_checks_two_valueof_args: Vec<_> = [
-            resolved_op_args.is_empty().not().then(|| {
+        // lie outside of the domain.
+        let op_checks = [
+            vec![
+                self.eval_none(builder, st, op),
+                self.eval_new_entry(builder, st, op, prev_statements),
+            ],
+            // Skip these if there are no resolved op args
+            if resolved_op_args.is_empty() {
+                vec![]
+            } else {
                 vec![
+                    self.eval_copy(builder, st, op, &resolved_op_args)?,
                     self.eval_eq_from_entries(builder, st, op, &resolved_op_args),
                     self.eval_lt_lteq_from_entries(builder, st, op, &resolved_op_args),
                 ]
-            }),
-            resolved_merkle_claim.map(|resolved_merkle_claim| {
+            },
+            // Skip these if there are no resolved Merkle claims
+            if let Some(resolved_merkle_claim) = resolved_merkle_claim {
                 vec![self.eval_not_contains_from_entries(
                     builder,
                     st,
@@ -134,24 +119,11 @@ impl OperationVerifyGadget {
                     resolved_merkle_claim,
                     &resolved_op_args,
                 )]
-            }),
+            } else {
+                vec![]
+            },
         ]
-        .into_iter()
-        .flatten()
-        .flatten()
-        .collect();
-        let op_checks = [
-            // No arg type checks necessary.
-            (_true, op_checks_arb_args),
-            // Args should be two ValueOf statements.
-            (args_are_two_valueofs, op_checks_two_valueof_args),
-        ]
-        .into_iter()
-        .map(|(arg_type_check, eval_checks)| {
-            let eval_check = builder.any(eval_checks);
-            builder.and(arg_type_check, eval_check)
-        })
-        .collect::<Vec<_>>();
+        .concat();
 
         let ok = builder.any(op_checks);
 
@@ -169,6 +141,8 @@ impl OperationVerifyGadget {
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
         let op_code_ok = op.has_native_type(builder, NativeOperation::NotContainsFromEntries);
+
+        let arg_types_ok = self.first_n_args_are_valueofs(builder, 2, resolved_op_args);
 
         let merkle_root_value = ValueTarget::from(&resolved_op_args[0].args[1]);
         let key_value = ValueTarget::from(&resolved_op_args[1].args[1]);
@@ -200,7 +174,7 @@ impl OperationVerifyGadget {
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-        builder.all([op_code_ok, merkle_proof_ok, st_ok])
+        builder.all([op_code_ok, arg_types_ok, merkle_proof_ok, st_ok])
     }
 
     fn eval_eq_from_entries(
@@ -211,6 +185,8 @@ impl OperationVerifyGadget {
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
         let op_code_ok = op.has_native_type(builder, NativeOperation::EqualFromEntries);
+
+        let arg_types_ok = self.first_n_args_are_valueofs(builder, 2, resolved_op_args);
 
         let arg1_value = ValueTarget::from(&resolved_op_args[0].args[1]);
         let arg2_value = ValueTarget::from(&resolved_op_args[1].args[1]);
@@ -226,7 +202,7 @@ impl OperationVerifyGadget {
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-        builder.all([op_code_ok, op_args_eq, st_ok])
+        builder.all([op_code_ok, arg_types_ok, op_args_eq, st_ok])
     }
 
     /// Carries out the checks necessary for LtFromEntries and
@@ -252,6 +228,8 @@ impl OperationVerifyGadget {
             builder.and(op_code_ok, st_code_ok)
         };
         let op_st_code_ok = builder.or(lt_op_st_code_ok, lteq_op_st_code_ok);
+
+        let arg_types_ok = self.first_n_args_are_valueofs(builder, 2, resolved_op_args);
 
         let arg1_value = ValueTarget::from(&resolved_op_args[0].args[1]);
         let arg2_value = ValueTarget::from(&resolved_op_args[1].args[1]);
@@ -294,7 +272,7 @@ impl OperationVerifyGadget {
                 .collect::<Vec<_>>(),
         );
 
-        builder.all([op_st_code_ok, st_args_ok])
+        builder.all([op_st_code_ok, arg_types_ok, st_args_ok])
     }
 
     fn eval_none(
