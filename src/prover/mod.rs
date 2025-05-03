@@ -2,10 +2,10 @@ pub mod error;
 pub mod indexing;
 pub mod pod_building;
 pub mod solver;
-// Keep test_utils public for external integration/library tests if needed
 pub mod test_utils;
 pub mod translation;
 pub mod types;
+pub mod visualization;
 
 pub use error::ProverError;
 
@@ -26,9 +26,10 @@ mod tests {
         },
         prover::{
             pod_building,
-            solver::{self, types::ExpectedType},
+            solver::{self, types::ExpectedType, SolverState},
             test_utils::*,
             types::{ConcreteValue, CustomDefinitions},
+            visualization::generate_graphviz_dot,
         },
     };
 
@@ -584,8 +585,8 @@ mod tests {
         let wc_pay = wc("pay", 1);
         let wc_sanctions = wc("sanctions", 2);
         let wc_const = wc("const", 3);
-        let wc_holder_18y = Wildcard::new("SELF_HOLDER_18Y".to_string(), 4);
-        let wc_holder_1y = Wildcard::new("SELF_HOLDER_1Y".to_string(), 5);
+        let wc_holder_18y = wc("SELF_HOLDER_18Y", 4);
+        let wc_holder_1y = wc("SELF_HOLDER_1Y", 5);
 
         let id_num_key = key("idNumber");
         let dob_key = key("dateOfBirth");
@@ -638,12 +639,11 @@ mod tests {
                     StatementTmplArg::Key(wc_pay.clone(), KeyOrWildcard::Key(ssn_key.clone())), // ?pay["socialSecurityNumber"]
                 ],
             },
-            // Add ValueOf templates for the constants, using Literal values
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::ValueOf),
                 args: vec![
                     StatementTmplArg::Key(
-                        wc_holder_18y.clone(), // Use the distinct holder wildcard
+                        wc_holder_18y.clone(),
                         KeyOrWildcard::Key(const_18y_key.clone()),
                     ),
                     StatementTmplArg::Literal(now_minus_18y_val.clone()),
@@ -794,7 +794,7 @@ mod tests {
             ),
         );
 
-        let final_state_for_generation = crate::prover::solver::SolverState {
+        let final_state_for_generation = SolverState {
             params: params.clone(),
             domains: final_domains,
             constraints: Vec::new(),
@@ -855,6 +855,8 @@ mod tests {
 
         println!("ZuKYC end-to-end test successful!");
         println!("Generated MainPod: {}", main_pod);
+
+        println!("Solution:\n{}", generate_graphviz_dot(&solution));
 
         Ok(())
     }
