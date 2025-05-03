@@ -144,8 +144,8 @@ impl OperationVerifyGadget {
 
         let arg_types_ok = self.first_n_args_are_valueofs(builder, 2, resolved_op_args);
 
-        let merkle_root_value = ValueTarget::from(&resolved_op_args[0].args[1]);
-        let key_value = ValueTarget::from(&resolved_op_args[1].args[1]);
+        let merkle_root_value = resolved_op_args[0].args[1].as_value();
+        let key_value = resolved_op_args[1].args[1].as_value();
 
         // Check Merkle proof (verified elsewhere) against op args.
         let merkle_proof_checks = [
@@ -188,8 +188,8 @@ impl OperationVerifyGadget {
 
         let arg_types_ok = self.first_n_args_are_valueofs(builder, 2, resolved_op_args);
 
-        let arg1_value = ValueTarget::from(&resolved_op_args[0].args[1]);
-        let arg2_value = ValueTarget::from(&resolved_op_args[1].args[1]);
+        let arg1_value = &resolved_op_args[0].args[1].as_value();
+        let arg2_value = resolved_op_args[1].args[1].as_value();
         let op_args_eq = builder.is_equal_slice(&arg1_value.elements, &arg2_value.elements);
 
         let arg1_key = resolved_op_args[0].args[0].clone();
@@ -231,8 +231,8 @@ impl OperationVerifyGadget {
 
         let arg_types_ok = self.first_n_args_are_valueofs(builder, 2, resolved_op_args);
 
-        let arg1_value = ValueTarget::from(&resolved_op_args[0].args[1]);
-        let arg2_value = ValueTarget::from(&resolved_op_args[1].args[1]);
+        let arg1_value = resolved_op_args[0].args[1].as_value();
+        let arg2_value = resolved_op_args[1].args[1].as_value();
 
         // If we are not dealing with the right op & statement types,
         // replace args with dummy values in the following checks.
