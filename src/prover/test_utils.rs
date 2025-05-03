@@ -1,7 +1,7 @@
 use crate::{
     backends::plonky2::mock::signedpod::MockSigner,
     frontend::{Result, SignedPod, SignedPodBuilder},
-    middleware::{Params, Pod, PodId, Statement, Value},
+    middleware::{AnchoredKey, Key, Params, Pod, PodId, Statement, Value, Wildcard},
     prover::indexing::ProverIndexes,
 };
 
@@ -57,28 +57,22 @@ pub fn setup_prover_indexes(params: Params, pods: &[&dyn Pod]) -> ProverIndexes 
     ProverIndexes::build(params, &all_facts)
 }
 
-// --- Common Test Helper Functions (moved from solver/tests) ---
-
-pub fn wc(name: &str, index: usize) -> crate::middleware::Wildcard {
-    crate::middleware::Wildcard::new(name.to_string(), index)
+pub fn wc(name: &str, index: usize) -> Wildcard {
+    Wildcard::new(name.to_string(), index)
 }
 
-pub fn pod(id: u64) -> crate::middleware::PodId {
-    crate::middleware::PodId(crate::middleware::hash_str(&id.to_string()))
+pub fn pod(id: u64) -> PodId {
+    PodId(crate::middleware::hash_str(&id.to_string()))
 }
 
-pub fn key(name: &str) -> crate::middleware::Key {
-    crate::middleware::Key::new(name.to_string())
+pub fn key(name: &str) -> Key {
+    Key::new(name.to_string())
 }
 
 pub fn val(v: i64) -> Value {
     Value::from(v)
 }
 
-pub fn ak(pod_id: u64, key_name: &str) -> crate::middleware::AnchoredKey {
-    crate::middleware::AnchoredKey::new(pod(pod_id), key(key_name))
+pub fn ak(pod_id: u64, key_name: &str) -> AnchoredKey {
+    AnchoredKey::new(pod(pod_id), key(key_name))
 }
-
-// --- End Common Test Helper Functions ---
-
-// Other test utilities will go here...
