@@ -1,13 +1,8 @@
-use std::{
-    collections::{HashMap, HashSet, VecDeque},
-    sync::Arc,
-};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::{
     backends::plonky2::mock::mainpod::MockProver,
-    frontend::{
-        self, MainPodBuilder, Operation as FrontendOperation, SignedPod as FrontendSignedPod,
-    },
+    frontend::{self, MainPod, MainPodBuilder, Operation as FrontendOperation, SignedPod},
     middleware::{self, NativeOperation, OperationAux, OperationType, PodId, Statement, SELF},
     op,
     prover::{
@@ -32,11 +27,11 @@ use crate::{
 /// A Result containing the built frontend::MainPod or a ProverError.
 pub fn build_main_pod_from_solution(
     solution: &ProofSolution,
-    original_signed_pods: &HashMap<PodId, Arc<FrontendSignedPod>>,
-    original_main_pods: &HashMap<PodId, Arc<frontend::MainPod>>,
+    original_signed_pods: &HashMap<PodId, SignedPod>,
+    original_main_pods: &HashMap<PodId, MainPod>,
     params: &middleware::Params,
     request_templates: &[middleware::StatementTmpl],
-) -> Result<frontend::MainPod, ProverError> {
+) -> Result<MainPod, ProverError> {
     // println!("Building MainPod from solution...");
 
     let mut builder = MainPodBuilder::new(params);
@@ -68,13 +63,12 @@ pub fn build_main_pod_from_solution(
 
         if referenced_pod_ids.insert(*pod_id) {
             // Check if it's a known SignedPod
-            if let Some(signed_pod_arc) = original_signed_pods.get(pod_id) {
-                // Pass the actual SignedPod reference
-                builder.add_signed_pod(signed_pod_arc);
-            } else if let Some(main_pod_arc) = original_main_pods.get(pod_id) {
-                // Pass the actual MainPod reference
-                builder.add_main_pod(main_pod_arc.as_ref().clone()); // Clone the MainPod if needed by builder
-                                                                     // println!("  Added reference for MainPod: {:?}", pod_id);
+            if let Some(signed_pod) = original_signed_pods.get(pod_id) {
+                // Pass the SignedPod reference
+                builder.add_signed_pod(signed_pod);
+            } else if let Some(main_pod) = original_main_pods.get(pod_id) {
+                // Pass a clone of the MainPod
+                builder.add_main_pod(main_pod.clone());
             } else {
                 // This indicates an inconsistency: a PodId from the scope wasn't in either input map
                 return Err(ProverError::Internal(format!(
