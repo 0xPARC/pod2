@@ -23,7 +23,7 @@ pub mod types; // Make types public within the solver module
 pub mod tests; // Declare the public tests module directory
 
 // Use items brought into scope by the submodules
-use initialization::initialize_solver_state;
+use initialization::{initialize_solver_state, SolverContext};
 use proof::try_prove_statement; // Import try_prove_statement
 use pruning::{get_wildcards_from_tmpl_arg, prune_domains_after_proof, prune_initial_domains}; // Import helper
 use search::perform_search;
@@ -67,8 +67,14 @@ pub fn solve(
     custom_definitions: &super::types::CustomDefinitions,
 ) -> Result<super::types::ProofSolution, super::error::ProverError> {
     // --- Stage 1: Initialize Solver State & Get Potential Constant Info/SELF facts ---
-    let (mut state, potential_constant_info, self_facts) =
-        initialize_solver_state(request_templates, initial_facts, params, custom_definitions)?;
+    let (mut state, potential_constant_info, self_facts) = initialize_solver_state(
+        request_templates,
+        &SolverContext {
+            initial_facts,
+            params,
+            custom_definitions,
+        },
+    )?;
 
     // --- Stage 2: Combine facts & Build Indexes ---
     let mut combined_facts = initial_facts.to_vec();
@@ -367,13 +373,15 @@ fn extract_implied_pairs(
 }
 // --- Helper function to extract implied pairs --- END ---
 
+type CandidateAndBindings = (Statement, HashMap<Wildcard, ConcreteValue>);
+
 /// Tries to generate a concrete statement and its bindings from a template,
 /// succeeding only if all involved wildcards have singleton domains.
 // pub(super) so it can be used by search.rs
 pub(super) fn try_generate_concrete_candidate_and_bindings(
     tmpl: &middleware::StatementTmpl,
     state: &SolverState,
-) -> Result<Option<(Statement, HashMap<Wildcard, ConcreteValue>)>, ProverError> {
+) -> Result<Option<CandidateAndBindings>, ProverError> {
     // Output includes bindings
     let mut bindings = HashMap::new(); // Track concrete values for this template
 

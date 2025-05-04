@@ -58,6 +58,11 @@ fn normalize_pair_key(a: AnchoredKey, b: AnchoredKey) -> (AnchoredKey, AnchoredK
     }
 }
 
+/// Maps Predicate (as `Vec<F>`) -> argument index -> argument value (as `IndexableValue`)
+/// to a set of `(PodId, Statement)` that have that argument value at that position.
+type PredicateArgumentMap =
+    HashMap<Vec<F>, HashMap<usize, HashMap<IndexableValue, HashSet<(PodId, Statement)>>>>;
+
 /// Contains various indexes over prover facts (Statements) to accelerate lookups
 /// during the constraint solving phase.
 pub struct ProverIndexes {
@@ -90,10 +95,7 @@ pub struct ProverIndexes {
 
     /// Maps Predicate (as `Vec<F>`) -> argument index -> argument value (as `IndexableValue`)
     /// to a set of `(PodId, Statement)` that have that argument value at that position.
-    pub statement_lookup_by_arg: HashMap<
-        Vec<F>, // Predicate -> Vec<F>
-        HashMap<usize, HashMap<IndexableValue, HashSet<(PodId, Statement)>>>,
-    >,
+    pub statement_lookup_by_arg: PredicateArgumentMap,
 }
 
 impl ProverIndexes {
