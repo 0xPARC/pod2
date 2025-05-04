@@ -224,11 +224,13 @@ fn parse_template_and_generate_constraints(
     current_batch: Option<Arc<CustomPredicateBatch>>,
     wildcard_types: &mut HashMap<Wildcard, ExpectedType>,
     constraints: &mut Vec<Constraint>,
-    custom_definitions: &CustomDefinitions,
-    params: &Params,
+    context: &SolverContext,
     alias_map: &HashMap<usize, Wildcard>,
     constant_template_info: &mut Vec<PotentialConstantInfo>,
 ) -> Result<(), ProverError> {
+    let custom_definitions = context.custom_definitions;
+    let params = context.params;
+
     // --- Pass 1: Basic Type Inference & Constraints from Arguments ---
     for arg in &tmpl.args {
         match arg {
@@ -380,7 +382,7 @@ fn parse_template_and_generate_constraints(
             // Need to ensure the *concrete types* within Val match (e.g., Int for SumOf) later during pruning/proof.
         }
         Predicate::Custom(custom_ref) => {
-            let predicate_key = Predicate::Custom(custom_ref.clone()).to_fields(params);
+            let predicate_key = Predicate::Custom(custom_ref.clone()).to_fields(context.params);
             if let Some((custom_pred_def, _batch_arc)) = custom_definitions.get(&predicate_key) {
                 if custom_pred_def.conjunction {
                     // --- AND Predicate Handling ---
@@ -465,8 +467,7 @@ fn parse_template_and_generate_constraints(
                             Some(custom_ref.batch.clone()),
                             wildcard_types,
                             constraints,
-                            custom_definitions,
-                            params,
+                            context,
                             &next_alias_map,
                             constant_template_info,
                         )?;
@@ -532,8 +533,7 @@ fn parse_template_and_generate_constraints(
                             Some(custom_ref.batch.clone()), // Pass batch context
                             &mut current_branch_types_map,  // Temporary types map
                             &mut current_branch_constraints_vec, // Temporary constraints vec
-                            custom_definitions,
-                            params,
+                            context,
                             &next_alias_map,                   // Pass the alias map
                             &mut current_branch_constant_info, // Temporary constants vec
                         ) {
@@ -722,8 +722,7 @@ fn parse_template_and_generate_constraints(
                             Some(current_batch_arc.clone()),
                             wildcard_types,
                             constraints,
-                            custom_definitions,
-                            params,
+                            context,
                             &next_alias_map,
                             constant_template_info,
                         )?;
@@ -784,8 +783,7 @@ fn parse_template_and_generate_constraints(
                             Some(current_batch_arc.clone()), // Pass current batch context
                             &mut current_branch_types_map,
                             &mut current_branch_constraints_vec,
-                            custom_definitions,
-                            params,
+                            context,
                             &next_alias_map,
                             &mut current_branch_constant_info, // Temporary constants vec
                         ) {
@@ -877,12 +875,16 @@ type InitializationResult = (
     Vec<(PodId, Statement)>,
 );
 
+pub(super) struct SolverContext<'a> {
+    pub initial_facts: &'a [(PodId, Statement)],
+    pub params: &'a Params,
+    pub custom_definitions: &'a CustomDefinitions,
+}
+
 /// Initializes the `SolverState` based on request templates, indexes, and custom definitions.
 pub(super) fn initialize_solver_state(
     request_templates: &[StatementTmpl],
-    initial_facts: &[(PodId, Statement)], // <-- Receive initial facts
-    params: &Params,
-    custom_definitions: &CustomDefinitions,
+    context: &SolverContext,
 ) -> Result<InitializationResult, ProverError> {
     let mut wildcard_types: HashMap<Wildcard, ExpectedType> = HashMap::new();
     let mut constraints = Vec::new();
@@ -897,8 +899,7 @@ pub(super) fn initialize_solver_state(
             None, // Top-level calls have no current_batch
             &mut wildcard_types,
             &mut constraints,
-            custom_definitions,
-            params,
+            context,
             &initial_alias_map,
             &mut constant_template_info,
         )?;
@@ -916,11 +917,11 @@ pub(super) fn initialize_solver_state(
 
     // --- Combine original facts with newly generated SELF facts ---
     // println!("DEBUG: Length of self_facts before extend: {}", self_facts.len()); // Add length check
-    let mut combined_initial_facts = initial_facts.to_vec();
+    let mut combined_initial_facts = context.initial_facts.to_vec();
     combined_initial_facts.extend(self_facts.clone()); // Clone self_facts here
 
     // --- Build Indexes using the combined facts ---
-    let solver_indexes = ProverIndexes::build(params.clone(), &combined_initial_facts); // <<-- MOVE THIS UP
+    let solver_indexes = ProverIndexes::build(context.params.clone(), &combined_initial_facts); // <<-- MOVE THIS UP
 
     // --- Initialize Domains (Simplified - Now has Index Access) ---
     let mut wildcard_domains: HashMap<Wildcard, (Domain, ExpectedType)> = HashMap::new();
@@ -984,7 +985,7 @@ pub(super) fn initialize_solver_state(
     constraints.extend(constraints_set);
 
     let solver_state = SolverState {
-        params: params.clone(),
+        params: context.params.clone(),
         domains: wildcard_domains,
         constraints,
         proof_chains: HashMap::new(),
