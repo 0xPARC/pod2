@@ -6,7 +6,7 @@ use std::hash::Hash; // Note: Removed Hasher import as it wasn't used directly
 use petgraph::unionfind::UnionFind;
 
 use crate::middleware::{
-    AnchoredKey, Key, Params, PodId, Predicate, Statement, StatementArg, ToFields, Value, F,
+    AnchoredKey, Key, Params, PodId, Predicate, Statement, StatementArg, ToFields, Value, F, SELF,
 };
 
 /// Represents different types of concrete values that can appear as arguments
@@ -185,7 +185,7 @@ impl ProverIndexes {
             if let Statement::ValueOf(ak, v) = statement {
                 indexes.value_map.insert(ak.clone(), v.clone());
                 // Re-enable debug for ValueOf SELF
-                if ak.pod_id == crate::middleware::SELF {
+                if ak.pod_id == SELF {
                     let key_for_map = ak.key.clone();
                     // Explicitly update maps here, even if redundant with loop below, for debugging
                     indexes
@@ -254,7 +254,7 @@ impl ProverIndexes {
                 Statement::ValueOf(ak, _v) => {
                     // ValueOf already handled for value_map
                     // Ensure its AK is in the other maps (potentially redundant, but safe)
-                    if ak.pod_id == crate::middleware::SELF {
+                    if ak.pod_id == SELF {
                         indexes
                             .key_to_anchored_keys
                             .entry(ak.key.clone())

@@ -4,12 +4,14 @@ use super::SolverState;
 use crate::{
     middleware::{
         statement::{StatementArg, WildcardValue},
-        AnchoredKey, Key, NativeOperation, NativePredicate, OperationType, Predicate, Statement,
+        AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key, KeyOrWildcard,
+        NativeOperation, NativePredicate, OperationType, Predicate, Statement, StatementTmpl,
         StatementTmplArg, ToFields, TypedValue, Value, Wildcard, SELF,
     },
     prover::{
         error::ProverError,
         indexing::ProverIndexes,
+        solver::build_concrete_statement,
         types::{ConcreteValue, CustomDefinitions, ProofChain, ProofStep},
     },
 };
@@ -1049,17 +1051,14 @@ pub(super) fn try_prove_statement(
 // Helper function to build a concrete statement from a template and bindings
 // This needs access to the full solver state for private wildcards.
 fn build_concrete_statement_from_bindings(
-    tmpl: &crate::middleware::StatementTmpl,
+    tmpl: &StatementTmpl,
     _public_args: &[WildcardValue], // Values provided to the target Custom statement (Might not be needed directly here)
     // Map from public WC index to its concrete value from target statement
     public_bindings: &HashMap<usize, WildcardValue>,
     // Full solver state for private wildcard resolution
     state: &SolverState,
     // Context: The predicate definition and batch Arc containing this template
-    outer_context: Option<(
-        &crate::middleware::CustomPredicate,
-        std::sync::Arc<crate::middleware::CustomPredicateBatch>,
-    )>,
+    outer_context: Option<(&CustomPredicate, std::sync::Arc<CustomPredicateBatch>)>,
 ) -> Result<Statement, ProverError> {
     // Determine args_len from outer context if available
     let outer_args_len = outer_context.as_ref().map(|(def, _)| def.args_len);
@@ -1104,8 +1103,8 @@ fn build_concrete_statement_from_bindings(
                         };
                         // Resolve Key or Key Wildcard
                         let key = match key_or_wc {
-                            crate::middleware::KeyOrWildcard::Key(k) => k.clone(),
-                            crate::middleware::KeyOrWildcard::Wildcard(wc_key) => {
+                            KeyOrWildcard::Key(k) => k.clone(),
+                            KeyOrWildcard::Wildcard(wc_key) => {
                                 match outer_args_len {
                                     Some(args_len) if wc_key.index < args_len => {
                                         // Public WC
@@ -1125,7 +1124,7 @@ fn build_concrete_statement_from_bindings(
                                             Some((domain, _)) if domain.len() == 1 => {
                                                 match domain.iter().next().unwrap() {
                                                      ConcreteValue::Key(k_name) => {
-                                                         crate::middleware::Key::new(k_name.clone())
+                                                         Key::new(k_name.clone())
                                                      }
                                                      _ => return Err(ProverError::Internal(format!(
                                                              "Private Key WC {} domain wrong type", wc_key
@@ -1140,9 +1139,7 @@ fn build_concrete_statement_from_bindings(
                                 }
                             }
                         };
-                        concrete_args.push(StatementArg::Key(crate::middleware::AnchoredKey::new(
-                            pod_id, key,
-                        )));
+                        concrete_args.push(StatementArg::Key(AnchoredKey::new(pod_id, key)));
                     }
                     StatementTmplArg::WildcardLiteral(wc_val) => {
                         // This arm is for resolving PRIVATE value wildcards for native predicates
@@ -1179,7 +1176,7 @@ fn build_concrete_statement_from_bindings(
                     StatementTmplArg::None => {}
                 }
             }
-            crate::prover::solver::build_concrete_statement(tmpl.pred.clone(), concrete_args)
+            build_concrete_statement(tmpl.pred.clone(), concrete_args)
         }
         Predicate::Custom(custom_ref) => {
             // --- Build args for Nested Custom Predicate Call ---
@@ -1201,7 +1198,7 @@ fn build_concrete_statement_from_bindings(
                                   match state.domains.get(wc) {
                                       Some((domain, _)) if domain.len() == 1 => match domain.iter().next().unwrap() {
                                           ConcreteValue::Pod(id) => WildcardValue::PodId(*id),
-                                          ConcreteValue::Key(k_name) => WildcardValue::Key(crate::middleware::Key::new(k_name.clone())),
+                                          ConcreteValue::Key(k_name) => WildcardValue::Key(Key::new(k_name.clone())),
                                           ConcreteValue::Val(_) => return Err(ProverError::Internal(format!(
                                               "Cannot pass Value type via WildcardLiteral to nested custom predicate for WC {}", wc
                                           )))
@@ -1261,7 +1258,7 @@ fn build_concrete_statement_from_bindings(
                                  match state.domains.get(wc) {
                                      Some((domain, _)) if domain.len() == 1 => match domain.iter().next().unwrap() {
                                          ConcreteValue::Pod(id) => WildcardValue::PodId(*id),
-                                         ConcreteValue::Key(k_name) => WildcardValue::Key(crate::middleware::Key::new(k_name.clone())),
+                                         ConcreteValue::Key(k_name) => WildcardValue::Key(Key::new(k_name.clone())),
                                          ConcreteValue::Val(_) => return Err(ProverError::Internal(format!(
                                              "Cannot pass Value type via WildcardLiteral to nested custom predicate for WC {}", wc
                                          )))
@@ -1289,7 +1286,7 @@ fn build_concrete_statement_from_bindings(
                 )
             })?;
 
-            let concrete_custom_ref = crate::middleware::CustomPredicateRef {
+            let concrete_custom_ref = CustomPredicateRef {
                 batch: batch_arc.clone(), // Use the Arc from the context
                 index: *idx,
             };

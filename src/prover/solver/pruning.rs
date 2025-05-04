@@ -6,7 +6,7 @@ use super::{
 };
 use crate::{
     middleware::{
-        KeyOrWildcard, NativePredicate, PodId, Predicate, Statement, StatementTmpl,
+        Key, KeyOrWildcard, NativePredicate, PodId, Predicate, Statement, StatementTmpl,
         StatementTmplArg, TypedValue, Value, Wildcard,
     },
     prover::{error::ProverError, indexing::ProverIndexes, types::ConcreteValue},
@@ -71,7 +71,7 @@ pub fn prune_by_literal_key(
                 let initial_size = domain.len();
 
                 // Find the set of PodIds known to have this literal_key
-                let middleware_key = crate::middleware::Key::new(literal_key.clone());
+                let middleware_key = Key::new(literal_key.clone());
                 let allowed_pod_ids: HashSet<PodId> = indexes
                     .get_anchored_keys_for_key(&middleware_key)
                     .map(|anchored_keys| anchored_keys.iter().map(|ak| ak.pod_id).collect())
@@ -508,21 +508,19 @@ pub(super) fn prune_domains_after_proof(
                     let value_wildcards = get_wildcards_from_tmpl_arg(value_arg_tmpl);
                     for wc_val in value_wildcards.val_wcs {
                         // Find the concrete value this wildcard bound to
-                        if let Some(concrete_value) = bindings.get(&wc_val) {
-                            if let ConcreteValue::Val(bound_val) = concrete_value {
-                                if let Some((domain, _)) = state.domains.get_mut(&wc_val) {
-                                    let initial_len = domain.len();
-                                    let target_cv = ConcreteValue::Val(bound_val.clone());
-                                    domain.retain(|cv| cv == &target_cv);
-                                    if domain.is_empty() {
-                                        return Err(ProverError::Unsatisfiable(format!(
-                                            "Dynamic pruning (ValueOf) emptied domain for {}",
-                                            wc_val.name
-                                        )));
-                                    }
-                                    if domain.len() < initial_len {
-                                        changed = true;
-                                    }
+                        if let Some(ConcreteValue::Val(bound_val)) = bindings.get(&wc_val) {
+                            if let Some((domain, _)) = state.domains.get_mut(&wc_val) {
+                                let initial_len = domain.len();
+                                let target_cv = ConcreteValue::Val(bound_val.clone());
+                                domain.retain(|cv| cv == &target_cv);
+                                if domain.is_empty() {
+                                    return Err(ProverError::Unsatisfiable(format!(
+                                        "Dynamic pruning (ValueOf) emptied domain for {}",
+                                        wc_val.name
+                                    )));
+                                }
+                                if domain.len() < initial_len {
+                                    changed = true;
                                 }
                             }
                         }
@@ -649,7 +647,7 @@ pub(super) fn prune_domains_after_proof(
                     }
                     // Prune Value wildcard domain (based on Key)
                     for wc_v in &wcs_v.val_wcs {
-                        if let Some((domain_v, _)) = state.domains.get_mut(wc_v) {
+                        if state.domains.contains_key(wc_v) {
                             // Collect expected values associated with this key across possible containers
                             let mut possible_values = HashSet::new();
                             let wc_c_target = wcs_c.val_wcs.get(0); // Assume single container wildcard

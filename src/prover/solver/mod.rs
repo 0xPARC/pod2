@@ -369,7 +369,7 @@ fn extract_implied_pairs(
 
 /// Tries to generate a concrete statement and its bindings from a template,
 /// succeeding only if all involved wildcards have singleton domains.
-// Make this pub(super) so it can be used by search.rs
+// pub(super) so it can be used by search.rs
 pub(super) fn try_generate_concrete_candidate_and_bindings(
     tmpl: &middleware::StatementTmpl,
     state: &SolverState,

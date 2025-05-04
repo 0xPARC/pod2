@@ -1,7 +1,7 @@
 use crate::{
     backends::plonky2::mock::signedpod::MockSigner,
     frontend::{Result, SignedPod, SignedPodBuilder},
-    middleware::{AnchoredKey, Key, Params, Pod, PodId, Statement, Value, Wildcard},
+    middleware::{hash_str, AnchoredKey, Key, Params, Pod, PodId, Statement, Value, Wildcard},
     prover::indexing::ProverIndexes,
 };
 
@@ -62,7 +62,7 @@ pub fn wc(name: &str, index: usize) -> Wildcard {
 }
 
 pub fn pod(id: u64) -> PodId {
-    PodId(crate::middleware::hash_str(&id.to_string()))
+    PodId(hash_str(&id.to_string()))
 }
 
 pub fn key(name: &str) -> Key {

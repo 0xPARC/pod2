@@ -2,7 +2,8 @@ use super::*; // Import helpers from mod.rs
 
 #[cfg(test)]
 mod search_tests {
-    use super::*; // Make helpers available inside the module
+    use super::*;
+    use crate::prover::solver::solve; // Make helpers available inside the module
 
     #[test]
     fn test_solve_requires_search() {
@@ -32,7 +33,7 @@ mod search_tests {
             ],
         }];
 
-        let result = crate::prover::solver::solve(&request, &facts, &_params, &custom_definitions);
+        let result = solve(&request, &facts, &_params, &custom_definitions);
 
         // Current expectation is that search finds a solution (A=p1, B=p1 or A=p2, B=p2)
         // Let's verify it finds *a* solution, not error out.
@@ -108,8 +109,7 @@ mod search_tests {
         }];
 
         // Run the solver
-        let result =
-            crate::prover::solver::solve(&request_templates, &facts, &_params, &custom_definitions);
+        let result = solve(&request_templates, &facts, &_params, &custom_definitions);
 
         // --- Assertions ---
         // Assert: Expect the solver to succeed now
@@ -199,8 +199,7 @@ mod search_tests {
         }];
 
         // Run the solver
-        let result =
-            crate::prover::solver::solve(&request_templates, &facts, &_params, &custom_definitions);
+        let result = solve(&request_templates, &facts, &_params, &custom_definitions);
 
         // Assert: Expect the solver to return Unsatisfiable because Gt(10, 20) fails.
         assert!(
@@ -260,8 +259,7 @@ mod search_tests {
         }];
 
         // Run the solver
-        let result =
-            crate::prover::solver::solve(&request_templates, &facts, &_params, &custom_definitions);
+        let result = solve(&request_templates, &facts, &_params, &custom_definitions);
         assert!(
             result.is_ok(),
             "Solver failed for Gt search. Err: {:?}",
@@ -354,8 +352,7 @@ mod search_tests {
         ];
 
         // Run the solver
-        let result =
-            crate::prover::solver::solve(&request_templates, &facts, &_params, &custom_definitions);
+        let result = solve(&request_templates, &facts, &_params, &custom_definitions);
 
         // Expect Unsatisfiable because the constraints conflict
         assert!(

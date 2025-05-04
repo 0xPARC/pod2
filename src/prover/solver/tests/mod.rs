@@ -15,9 +15,9 @@ use crate::{
     middleware::{
         self,
         containers::{Array, Dictionary, Set},
-        AnchoredKey, CustomPredicateBatch, Key, KeyOrWildcard, NativeOperation, NativePredicate,
-        OperationType, Params, PodId, Predicate, Statement, StatementTmpl, StatementTmplArg,
-        ToFields, Value, Wildcard,
+        AnchoredKey, CustomPredicate, CustomPredicateBatch, Key, KeyOrWildcard, NativeOperation,
+        NativePredicate, OperationType, Params, PodId, Predicate, Statement, StatementTmpl,
+        StatementTmplArg, ToFields, Value, Wildcard,
     },
     prover::{
         error::ProverError,
@@ -84,11 +84,7 @@ pub(crate) fn setup_indexes_with_facts(facts: &[(PodId, Statement)]) -> (ProverI
 }
 
 pub(crate) fn setup_custom_definitions_for_test(
-    definitions: Vec<(
-        Predicate,
-        crate::middleware::CustomPredicate,
-        Arc<CustomPredicateBatch>,
-    )>,
+    definitions: Vec<(Predicate, CustomPredicate, Arc<CustomPredicateBatch>)>,
     params: &Params,
 ) -> CustomDefinitions {
     let mut custom_defs = CustomDefinitions::new();
