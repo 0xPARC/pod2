@@ -871,20 +871,19 @@ fn parse_template_and_generate_constraints(
     Ok(())
 }
 
+type InitializationResult = (
+    SolverState,
+    Vec<PotentialConstantInfo>,
+    Vec<(PodId, Statement)>,
+);
+
 /// Initializes the `SolverState` based on request templates, indexes, and custom definitions.
 pub(super) fn initialize_solver_state(
     request_templates: &[StatementTmpl],
     initial_facts: &[(PodId, Statement)], // <-- Receive initial facts
     params: &Params,
     custom_definitions: &CustomDefinitions,
-) -> Result<
-    (
-        SolverState,
-        Vec<PotentialConstantInfo>, // Return potential constant info
-        Vec<(PodId, Statement)>,    // Return generated SELF facts
-    ),
-    ProverError,
-> {
+) -> Result<InitializationResult, ProverError> {
     let mut wildcard_types: HashMap<Wildcard, ExpectedType> = HashMap::new();
     let mut constraints = Vec::new();
     let mut constant_template_info: Vec<PotentialConstantInfo> = Vec::new(); // Correct type
