@@ -1,4 +1,5 @@
-// src/lang/grammar.pest
+// Grammar for the "Podlog" language. Used for describing POD2 Custom
+// Predicates and Proof Requests.
 
 // Silent rules (`_`) are automatically handled by Pest between other rules.
 // WHITESPACE matches one or more spaces, tabs, or newlines.
@@ -11,6 +12,18 @@ COMMENT = _{ "//" ~ (!NEWLINE ~ ANY)* }
 // Define rules for identifiers (predicate names, variable names without '?')
 // Must start with alpha or _, followed by alpha, numeric, or _
 identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+
+// Keywords for native statements (used to prevent collision with custom predicate names)
+native_statement_keyword = @{
+    "ValueOf" | "Equal" | "NotEqual" | "Gt" | "Lt" | "Contains" |
+    "NotContains" | "SumOf" | "ProductOf" | "MaxOf"
+}
+
+// An identifier specifically for predicate names, cannot be a native keyword.
+predicate_identifier = @{
+    // Negative lookahead: ensure the matched text is not exactly a native keyword.
+    !native_statement_keyword ~ identifier
+}
 
 // Define variable names (start with '?')
 variable = @{ "?" ~ identifier }
@@ -27,7 +40,7 @@ request_def = { "REQUEST" ~ "(" ~ statement_list? ~ ")" } // Allow empty REQUEST
 conjunction_type = { "AND" | "OR" }
 
 custom_predicate_def = {
-    identifier ~ "(" ~ def_arg_list? ~ ")" ~ // Predicate name and public args
+    predicate_identifier ~ "(" ~ def_arg_list? ~ ")" ~ // Use predicate_identifier for the name
     "=" ~
     conjunction_type ~ "(" ~ // Use the named rule here
     (private_args_def)? ~ // Optional private args
@@ -112,7 +125,7 @@ product_of_stmt = { "ProductOf" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," 
 max_of_stmt = { "MaxOf" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," ~ anchored_key ~ ")" }
 
 // Rule for a custom predicate call
-custom_predicate_call = { identifier ~ "(" ~ call_arg_list? ~ ")" }
+custom_predicate_call = { predicate_identifier ~ "(" ~ call_arg_list? ~ ")" }
 
 // --- Rules for testing full input matching ---
 test_identifier = { SOI ~ identifier ~ EOI }
@@ -120,4 +133,5 @@ test_variable = { SOI ~ variable ~ EOI }
 test_literal_int = { SOI ~ literal_int ~ EOI }
 test_literal_raw = { SOI ~ literal_raw ~ EOI } // Update test rule for raw
 // Add others here if needed for specific assert_fails tests later
-test_literal_value = { SOI ~ literal_value ~ EOI } 
+test_literal_value = { SOI ~ literal_value ~ EOI }
+test_custom_predicate_call = { SOI ~ custom_predicate_call ~ EOI }

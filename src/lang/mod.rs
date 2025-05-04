@@ -330,12 +330,12 @@ mod tests {
         let input = r#"
             REQUEST(
                 // Order matters for comparison, match the hardcoded order
-                NotContains(?sanctions["sanctionList"], ?gov["idNumber"]) // 1
-                Lt(?gov["dateOfBirth"], ?SELF_HOLDER_18Y["const_18y"])       // 2
-                Equal(?pay["startDate"], ?SELF_HOLDER_1Y["const_1y"])          // 3
-                Equal(?gov["socialSecurityNumber"], ?pay["socialSecurityNumber"]) // 4
-                ValueOf(?SELF_HOLDER_18Y["const_18y"], 1169909388)                // 5
-                ValueOf(?SELF_HOLDER_1Y["const_1y"], 1706367566)                   // 6
+                NotContains(?sanctions["sanctionList"], ?gov["idNumber"]) 
+                Lt(?gov["dateOfBirth"], ?SELF_HOLDER_18Y["const_18y"])      
+                Equal(?pay["startDate"], ?SELF_HOLDER_1Y["const_1y"])         
+                Equal(?gov["socialSecurityNumber"], ?pay["socialSecurityNumber"]) 
+                ValueOf(?SELF_HOLDER_18Y["const_18y"], 1169909388)               
+                ValueOf(?SELF_HOLDER_1Y["const_1y"], 1706367566)                  
             )
         "#;
 
