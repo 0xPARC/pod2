@@ -1,0 +1,8 @@
+{
+  "short_name": "ZuKYC Issuer",
+  "name": "Pod2 ZuKYC Issuer",
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#000000",
+  "background_color": "#ffffff"
+}
