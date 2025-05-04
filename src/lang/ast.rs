@@ -230,6 +230,24 @@ fn build_custom_predicate(
     for inner_pair in pair.into_inner() {
         match inner_pair.as_rule() {
             Rule::identifier => {
+                // This should no longer happen for the predicate name itself
+                // If it occurs elsewhere unexpectedly, it might indicate a grammar issue
+                // or an issue in how this function is called.
+                // For now, let's treat it as an internal error if encountered here.
+                return Err(AstBuildError::Internal(format!(
+                    "Unexpected 'identifier' rule ({}) encountered directly within custom_predicate_def. Expected 'predicate_identifier'.",
+                    inner_pair.as_str()
+                )));
+            }
+            Rule::predicate_identifier => {
+                // Correctly handle the predicate name identifier
+                if name_opt.is_some() {
+                    // Avoid overwriting if somehow matched twice
+                    return Err(AstBuildError::Internal(
+                        "Found multiple predicate names".to_string(),
+                    ));
+                }
+                // Build the identifier directly from the predicate_identifier pair's string content
                 name_opt = Some(build_identifier(inner_pair)?);
             }
             Rule::def_arg_list => {

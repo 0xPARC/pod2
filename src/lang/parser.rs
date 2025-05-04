@@ -240,4 +240,50 @@ mod tests {
             "pred_mixed(?A, 123, ?P[\"k\"], \"lit\", #[])",
         ); // Mixed args
     }
+
+    #[test]
+    fn test_parser_rejects_keyword_as_predicate_name() {
+        // Should fail defining a predicate named like a native statement
+        assert_fails(
+            Rule::custom_predicate_def,
+            "Equal(A) = AND()",
+            // "Parser should reject native keyword 'Equal' as custom predicate name"
+        );
+        assert_fails(
+            Rule::custom_predicate_def,
+            "valueOf(X, Y) = OR( Lt(?X, ?Y) )", // Check different case variation if needed later
+                                                // "Parser should reject 'valueOf' (even if case differs) if grammar was case-insensitive"
+        );
+        assert_fails(
+            Rule::custom_predicate_def,
+            "Gt() = AND()",
+            // "Parser should reject native keyword 'Gt' as custom predicate name"
+        );
+
+        // Should fail calling a predicate named like a native statement using the test rule
+        assert_fails(
+            Rule::test_custom_predicate_call,
+            "Lt()",
+            // "Parser should reject native keyword 'Lt' in a custom call context"
+        );
+        assert_fails(
+            Rule::test_custom_predicate_call,
+            "Contains(?A, ?B)",
+            // "Parser should reject native keyword 'Contains' in a custom call context"
+        );
+
+        // Should also fail within a REQUEST block
+        assert_fails(
+            Rule::document, // Test within the context of a document
+            "REQUEST( Equal(?X) )", // Assuming Equal(?X) doesn't match native Equal due to args
+                            // It should fail because Equal is not a valid predicate_identifier here.
+                            // "Parser should reject native keyword 'Equal' as custom call inside REQUEST"
+        );
+
+        // Valid cases (should parse)
+        assert_parses(Rule::custom_predicate_def, "MyEqual(A) = AND()");
+        assert_parses(Rule::test_custom_predicate_call, "my_Lt()");
+        assert_parses(Rule::document, "REQUEST( some_pred() )");
+        assert_parses(Rule::document, "pred(X) = AND() REQUEST( pred(?A) ) ");
+    }
 }
