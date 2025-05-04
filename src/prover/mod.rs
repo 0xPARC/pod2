@@ -1,6 +1,7 @@
 pub mod error;
 pub mod indexing;
 pub mod pod_building;
+pub mod runtime;
 pub mod solver;
 pub mod test_utils;
 pub mod translation;
@@ -19,6 +20,7 @@ mod tests {
     use crate::{
         backends::plonky2::mock::signedpod::MockSigner,
         examples::zu_kyc_sign_pod_builders,
+        lang::parse,
         middleware::{
             self, AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key,
             KeyOrWildcard, NativePredicate, PodId, Predicate, Statement, StatementTmpl,
@@ -843,6 +845,214 @@ mod tests {
             if let Statement::ValueOf(ak, _) = stmt {
                 if ak.pod_id == main_pod_id // Check against the actual pod ID
                     && (ak.key == const_18y_key || ak.key == const_1y_key)
+                {
+                    continue;
+                }
+            }
+            assert!(
+                main_pod.public_statements.contains(stmt),
+                "Expected public statement missing: {:?}",
+                stmt
+            );
+        }
+
+        println!("ZuKYC end-to-end test successful!");
+        println!("Generated MainPod: {}", main_pod);
+
+        println!("Solution:\n{}", generate_graphviz_dot(&solution));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_prover_zukyc_from_podlog() -> Result<(), Box<dyn std::error::Error>> {
+        let params = middleware::Params::default();
+
+        // 1. Create mock input SignedPods
+        let mut gov_signer = MockSigner { pk: "gov".into() };
+        let mut pay_signer = MockSigner { pk: "pay".into() };
+        let mut sanction_signer = MockSigner {
+            pk: "sanction".into(),
+        };
+
+        let (gov_builder, pay_builder, sanction_builder) = zu_kyc_sign_pod_builders(&params);
+
+        let gov_id_pod = gov_builder.sign(&mut gov_signer)?;
+        let pay_stub_pod = pay_builder.sign(&mut pay_signer)?;
+        let sanction_list_pod = sanction_builder.sign(&mut sanction_signer)?;
+
+        let input = r#"
+        REQUEST(
+            NotContains(?sanctions["sanctionList"], ?gov["idNumber"])
+            Lt(?gov["dateOfBirth"], ?SELF_HOLDER_18Y["const_18y"])
+            Equal(?pay["startDate"], ?SELF_HOLDER_1Y["const_1y"])
+            Equal(?gov["socialSecurityNumber"], ?pay["socialSecurityNumber"])
+            ValueOf(?SELF_HOLDER_18Y["const_18y"], 1169909388)
+            ValueOf(?SELF_HOLDER_1Y["const_1y"], 1706367566)
+        )
+    "#;
+
+        let processed = parse(input).unwrap();
+        let request_templates = processed.request_templates;
+
+        // 2. Prepare inputs for the constraint solver.
+        // Only include facts from the real signed pods.
+        let initial_facts: Vec<(PodId, Statement)> = gov_id_pod
+            .pod
+            .pub_statements()
+            .into_iter()
+            .map(|stmt| (gov_id_pod.id(), stmt))
+            .chain(
+                pay_stub_pod
+                    .pod
+                    .pub_statements()
+                    .into_iter()
+                    .map(|stmt| (pay_stub_pod.id(), stmt)),
+            )
+            .chain(
+                sanction_list_pod
+                    .pod
+                    .pub_statements()
+                    .into_iter()
+                    .map(|stmt| (sanction_list_pod.id(), stmt)),
+            )
+            .collect();
+
+        let custom_definitions = CustomDefinitions::default();
+
+        // 3. Call the solver.
+        // Pass initial_facts and params directly
+        let solve_result = solver::solve(
+            &request_templates,
+            &initial_facts, // Use the list including SELF facts
+            &params,
+            &custom_definitions,
+        );
+        assert!(
+            solve_result.is_ok(),
+            "Solver failed for ZuKYC: {:?}",
+            solve_result.err()
+        );
+        let solution = solve_result.unwrap();
+
+        // 4. Prepare inputs for pod building.
+        let original_signed_pods = HashMap::from([
+            (gov_id_pod.id(), gov_id_pod.clone()),
+            (pay_stub_pod.id(), pay_stub_pod.clone()),
+            (sanction_list_pod.id(), sanction_list_pod.clone()),
+        ]);
+        let original_main_pods = HashMap::new(); // No input main pods
+
+        // 5. Call pod building.
+        let build_result = pod_building::build_main_pod_from_solution(
+            &solution,
+            &original_signed_pods,
+            &original_main_pods,
+            &params,
+            &request_templates,
+        );
+        assert!(
+            build_result.is_ok(),
+            "Pod building failed for ZuKYC: {:?}",
+            build_result.err()
+        );
+        let main_pod = build_result.unwrap();
+
+        // 6. Verify the generated MainPod.
+        let verification_result = main_pod.pod.verify();
+        assert!(
+            verification_result.is_ok(),
+            "MainPod verification failed for ZuKYC: {:?}",
+            verification_result.err()
+        );
+
+        // 7. Check that the generated MainPod contains the expected public statements.
+        // Re-generate the target statements using the solution bindings.
+        // Need to manually create the SELF statements for generation check
+        let mut final_domains = solution
+            .bindings
+            .iter()
+            .map(|(wc, cv)| {
+                (
+                    // Determine ExpectedType based on ConcreteValue variant
+                    wc.clone(),
+                    (
+                        HashSet::from([cv.clone()]),
+                        match cv {
+                            ConcreteValue::Pod(_) => ExpectedType::Pod,
+                            ConcreteValue::Key(_) => ExpectedType::Key,
+                            ConcreteValue::Val(_) => ExpectedType::Val,
+                        },
+                    ),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        // Add SELF pod wildcard mapping for generation
+        // These map the dummy SELF holder wildcards to the actual SELF PodId
+        final_domains.insert(
+            Wildcard::new("SELF_HOLDER_18Y".to_string(), 100),
+            (
+                HashSet::from([ConcreteValue::Pod(middleware::SELF)]),
+                ExpectedType::Pod,
+            ),
+        );
+        final_domains.insert(
+            Wildcard::new("SELF_HOLDER_1Y".to_string(), 101),
+            (
+                HashSet::from([ConcreteValue::Pod(middleware::SELF)]),
+                ExpectedType::Pod,
+            ),
+        );
+
+        let final_state_for_generation = SolverState {
+            params: params.clone(),
+            domains: final_domains,
+            constraints: Vec::new(),
+            proof_chains: HashMap::new(),
+            scope: HashSet::new(),
+        };
+
+        let mut expected_public_statements = HashSet::new();
+        for tmpl in &request_templates {
+            // Use original templates for verification check
+            // Use check_templates here <-- No, use original templates
+            match try_generate_concrete_candidate_and_bindings(
+            tmpl,
+            &final_state_for_generation,
+        ) {
+            Ok(Some((target_stmt, _))) => {
+                expected_public_statements.insert(target_stmt);
+            }
+            Ok(None) => panic!("Failed to generate concrete statement (None) from template {:?} during verification check", tmpl),
+            Err(e) => panic!("Failed to generate concrete statement (Err {:?}) from template {:?} during verification check", e, tmpl),
+        }
+        }
+
+        // Adjust expected statements for SELF
+        let main_pod_id = main_pod.id();
+        let adjusted_expected_public_statements: HashSet<_> = expected_public_statements
+            .iter()
+            .map(|stmt| adjust_statement_for_self(stmt, main_pod_id))
+            .collect();
+
+        // Add the implicit _type statement
+        assert_eq!(
+            main_pod.public_statements.len(),
+            adjusted_expected_public_statements.len() + 1, // to account for the _type statement
+            "Mismatch in number of public statements.\nExpected (adjusted): {:#?}\n   Found: {:#?}",
+            adjusted_expected_public_statements, // Use adjusted set
+            main_pod.public_statements
+        );
+
+        for stmt in &adjusted_expected_public_statements {
+            // Use the adjusted set
+            // Exclude the ValueOf statements for constants from the final public check
+            // (This exclusion might be removable now, depending on how strictly we want to check)
+            if let Statement::ValueOf(ak, _) = stmt {
+                if ak.pod_id == main_pod_id
+                // Check against the actual pod ID
+                //       && (ak.key == const_18y_key || ak.key == const_1y_key)
                 {
                     continue;
                 }

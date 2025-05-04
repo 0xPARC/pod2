@@ -1,0 +1,123 @@
+// src/lang/grammar.pest
+
+// Silent rules (`_`) are automatically handled by Pest between other rules.
+// WHITESPACE matches one or more spaces, tabs, or newlines.
+WHITESPACE = _{ (" " | "\t" | NEWLINE)+ }
+
+// COMMENT matches '//' followed by any characters until the end of the line.
+// Also silent.
+COMMENT = _{ "//" ~ (!NEWLINE ~ ANY)* }
+
+// Define rules for identifiers (predicate names, variable names without '?')
+// Must start with alpha or _, followed by alpha, numeric, or _
+identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+
+// Define variable names (start with '?')
+variable = @{ "?" ~ identifier }
+
+// Argument list (for predicate definition) - comma-separated identifiers
+def_arg_list = { identifier ~ ("," ~ identifier)* }
+
+// Top-level items: Request or Custom Predicate Definition
+document = { SOI ~ (custom_predicate_def | request_def)* ~ EOI }
+
+request_def = { "REQUEST" ~ "(" ~ statement_list? ~ ")" } // Allow empty REQUEST?
+
+// Define conjunction type explicitly
+conjunction_type = { "AND" | "OR" }
+
+custom_predicate_def = {
+    identifier ~ "(" ~ def_arg_list? ~ ")" ~ // Predicate name and public args
+    "=" ~
+    conjunction_type ~ "(" ~ // Use the named rule here
+    (private_args_def)? ~ // Optional private args
+    statement_list? ~     // Statement templates
+    ")"
+}
+
+private_args_def = { "private" ~ "(" ~ def_arg_list? ~ ")" }
+
+// statement_list implicitly allows whitespace/comments between statements due to silent rules
+statement_list = { statement+ }
+
+// Combined statement rule
+statement = {
+    value_of_stmt |
+    equal_stmt |
+    not_equal_stmt |
+    gt_stmt |
+    lt_stmt |
+    contains_stmt |
+    not_contains_stmt |
+    sum_of_stmt |
+    product_of_stmt |
+    max_of_stmt |
+    custom_predicate_call // Should come last
+}
+
+// Arguments for predicate calls
+// Can be a variable, a literal value, or an anchored key
+// Reordered to prioritize anchored_key
+call_arg = { anchored_key | variable | literal_value }
+call_arg_list = { call_arg ~ ("," ~ call_arg)* }
+
+// Anchored Key: ?Var[\"key_literal\" | ?KeyVar]
+// Make atomic
+anchored_key = { variable ~ "[" ~ (variable | literal_string) ~ "]" }
+
+// Literal Values (ordered to avoid ambiguity, e.g., string before int)
+literal_value = {
+    literal_dict |
+    literal_set |
+    literal_array |
+    literal_bool |
+    literal_raw |
+    literal_string |
+    literal_int
+}
+
+// Primitive literal types
+literal_int = @{ "-"? ~ ASCII_DIGIT+ }
+literal_bool = @{ "true" | "false" }
+// literal_raw: 0x followed by one or more PAIRS of hex digits
+literal_raw = @{ "0x" ~ (ASCII_HEX_DIGIT ~ ASCII_HEX_DIGIT)+ }
+
+// -- New String Literal Parsing Strategy (based on Pest JSON example) --
+literal_string = ${ "\"" ~ inner ~ "\"" } // Compound atomic string rule
+inner = @{ char* } // Atomic rule for the raw inner content
+char = { // Rule for a single logical character (unescaped or escaped)
+    !("\"" | "\\") ~ ANY // Any char except quote or backslash
+    | "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t") // Simple escape sequences
+    | "\\" ~ ("u" ~ ASCII_HEX_DIGIT{4}) // Unicode escape sequence
+}
+// -- End New String Literal Parsing Strategy --
+
+// Container Literals (recursive definition using literal_value)
+literal_array = { "[" ~ (literal_value ~ ("," ~ literal_value)*)? ~ "]" }
+literal_set = { "#[" ~ (literal_value ~ ("," ~ literal_value)*)? ~ "]" }
+literal_dict = { "{" ~ (dict_pair ~ ("," ~ dict_pair)*)? ~ "}" }
+dict_pair = { literal_string ~ ":" ~ literal_value }
+
+
+// Rules for specific native predicate calls
+value_of_stmt = { "ValueOf" ~ "(" ~ anchored_key ~ "," ~ literal_value ~ ")" }
+equal_stmt = { "Equal" ~ "(" ~ anchored_key ~ "," ~ call_arg ~ ")" }
+not_equal_stmt = { "NotEqual" ~ "(" ~ anchored_key ~ "," ~ call_arg ~ ")" }
+gt_stmt = { "Gt" ~ "(" ~ anchored_key ~ "," ~ call_arg ~ ")" }
+lt_stmt = { "Lt" ~ "(" ~ anchored_key ~ "," ~ call_arg ~ ")" }
+contains_stmt = { "Contains" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," ~ anchored_key ~ ")" }
+not_contains_stmt = { "NotContains" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ ")" }
+sum_of_stmt = { "SumOf" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," ~ anchored_key ~ ")" }
+product_of_stmt = { "ProductOf" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," ~ anchored_key ~ ")" }
+max_of_stmt = { "MaxOf" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," ~ anchored_key ~ ")" }
+
+// Rule for a custom predicate call
+custom_predicate_call = { identifier ~ "(" ~ call_arg_list? ~ ")" }
+
+// --- Rules for testing full input matching ---
+test_identifier = { SOI ~ identifier ~ EOI }
+test_variable = { SOI ~ variable ~ EOI }
+test_literal_int = { SOI ~ literal_int ~ EOI }
+test_literal_raw = { SOI ~ literal_raw ~ EOI } // Update test rule for raw
+// Add others here if needed for specific assert_fails tests later
+test_literal_value = { SOI ~ literal_value ~ EOI } 
