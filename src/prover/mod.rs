@@ -26,7 +26,10 @@ mod tests {
         },
         prover::{
             pod_building,
-            solver::{self, types::ExpectedType, SolverState},
+            solver::{
+                self, try_generate_concrete_candidate_and_bindings, types::ExpectedType,
+                SolverState,
+            },
             test_utils::*,
             types::{ConcreteValue, CustomDefinitions},
             visualization::generate_graphviz_dot,
@@ -804,7 +807,7 @@ mod tests {
         for tmpl in &request_templates {
             // Use original templates for verification check
             // Use check_templates here <-- No, use original templates
-            match crate::prover::solver::try_generate_concrete_candidate_and_bindings(
+            match try_generate_concrete_candidate_and_bindings(
             tmpl,
             &final_state_for_generation,
         ) {

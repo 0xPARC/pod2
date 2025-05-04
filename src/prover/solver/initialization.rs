@@ -9,8 +9,9 @@ use super::{
 };
 use crate::{
     middleware::{
-        AnchoredKey, Key, KeyOrWildcard, NativePredicate, PodId, Predicate, Statement,
-        StatementTmpl, StatementTmplArg, ToFields, Value, Wildcard, SELF,
+        AnchoredKey, CustomPredicate, CustomPredicateBatch, Key, KeyOrWildcard, NativePredicate,
+        Params, PodId, Predicate, Statement, StatementTmpl, StatementTmplArg, ToFields, Value,
+        Wildcard, SELF,
     },
     prover::{
         error::ProverError,
@@ -68,11 +69,11 @@ fn get_wildcards_from_definition_stmts(statements: &[StatementTmpl]) -> HashSet<
 /// by recursively analyzing its usage within the predicate's internal statement templates,
 /// including nested custom predicate calls.
 fn infer_argument_type(
-    pred_def: &crate::middleware::CustomPredicate,
+    pred_def: &CustomPredicate,
     arg_index: usize,
     custom_definitions: &CustomDefinitions,
-    params: &crate::middleware::Params,
-    current_batch: Option<&Arc<crate::middleware::CustomPredicateBatch>>,
+    params: &Params,
+    current_batch: Option<&Arc<CustomPredicateBatch>>,
     visited: &mut HashSet<(String, usize)>,
 ) -> ExpectedType {
     // Prevent infinite recursion in case of cyclic predicate definitions (shouldn't happen ideally)
@@ -220,15 +221,14 @@ type PotentialConstantInfo = (Wildcard, Key, Value);
 /// Also collects literal values encountered.
 fn parse_template_and_generate_constraints(
     tmpl: &StatementTmpl,
-    current_batch: Option<Arc<crate::middleware::CustomPredicateBatch>>,
+    current_batch: Option<Arc<CustomPredicateBatch>>,
     wildcard_types: &mut HashMap<Wildcard, ExpectedType>,
     constraints: &mut Vec<Constraint>,
     custom_definitions: &CustomDefinitions,
-    params: &crate::middleware::Params,
+    params: &Params,
     alias_map: &HashMap<usize, Wildcard>,
-    constant_template_info: &mut Vec<PotentialConstantInfo>, // Updated type
+    constant_template_info: &mut Vec<PotentialConstantInfo>,
 ) -> Result<(), ProverError> {
-    // println!("INIT PARSE: Processing template: {:?}", tmpl); // DEBUG
     // --- Pass 1: Basic Type Inference & Constraints from Arguments ---
     for arg in &tmpl.args {
         match arg {
@@ -875,7 +875,7 @@ fn parse_template_and_generate_constraints(
 pub(super) fn initialize_solver_state(
     request_templates: &[StatementTmpl],
     initial_facts: &[(PodId, Statement)], // <-- Receive initial facts
-    params: &crate::middleware::Params,
+    params: &Params,
     custom_definitions: &CustomDefinitions,
 ) -> Result<
     (

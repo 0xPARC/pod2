@@ -76,6 +76,7 @@ mod tests {
     use super::*;
     use crate::{
         backends::plonky2::mock::{mainpod::MockProver, signedpod::MockSigner},
+        frontend::{MainPodBuilder, SignedPodBuilder},
         middleware::{Key, PodType, Statement, Value, KEY_SIGNER, KEY_TYPE},
     };
 
@@ -88,12 +89,12 @@ mod tests {
         };
 
         // Create dummy inputs
-        let mut signed_pod_builder = crate::frontend::SignedPodBuilder::new(&params);
+        let mut signed_pod_builder = SignedPodBuilder::new(&params);
         signed_pod_builder.insert("data", Value::from(123));
         let signed_pod = signed_pod_builder.sign(&mut signer).unwrap();
         let signed_pod_id = signed_pod.id();
 
-        let mut main_pod_builder = crate::frontend::MainPodBuilder::new(&params);
+        let mut main_pod_builder = MainPodBuilder::new(&params);
         // Add a public statement to the main pod for testing
         let lit_stmt = main_pod_builder.pub_literal(Value::from(456)).unwrap();
         let main_pod = main_pod_builder.prove(&mut MockProver {}, &params).unwrap();
