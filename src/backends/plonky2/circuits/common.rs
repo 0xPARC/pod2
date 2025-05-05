@@ -222,6 +222,7 @@ pub trait Flattenable {
 /// For the purpose of op verification, we need only look up the
 /// Merkle claim rather than the Merkle proof since it is verified
 /// elsewhere.
+#[derive(Copy, Clone)]
 pub struct MerkleClaimTarget {
     pub(crate) enabled: BoolTarget,
     pub(crate) root: HashOutTarget,
