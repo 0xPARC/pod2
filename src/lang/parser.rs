@@ -212,21 +212,9 @@ mod tests {
 
             REQUEST(
                 is_valid_user(?SomeUser)
-                Equal(?SomeUser["country"], "US")
+                Equal(?SomeUser["country"], ?Other["country"])
             )"#,
         );
-    }
-
-    #[test]
-    fn test_call_args() {
-        assert_parses(Rule::call_arg, "?MyVar");
-        assert_parses(Rule::call_arg, "123");
-        assert_parses(Rule::call_arg, "\"string_lit\"");
-        assert_parses(Rule::call_arg, "true");
-        assert_parses(Rule::call_arg, "?PodVar[\"key\"]");
-        assert_parses(Rule::call_arg, "[1, 2]");
-        assert_parses(Rule::call_arg, "#[\"a\"]");
-        assert_parses(Rule::call_arg, "{\"k\": 0xab}"); // Use even digits
     }
 
     #[test]
@@ -234,11 +222,15 @@ mod tests {
         assert_parses(Rule::custom_predicate_call, "my_pred()"); // No args
         assert_parses(Rule::custom_predicate_call, "pred_one(?A)"); // One var arg
         assert_parses(Rule::custom_predicate_call, "pred_lit(123)"); // One lit arg
-        assert_parses(Rule::custom_predicate_call, "pred_ak(?P[\"k\"])"); // One AK arg
+        assert_fails(Rule::test_custom_predicate_call, "pred_ak(?P[\"k\"])"); // Should fail now
         assert_parses(
             Rule::custom_predicate_call,
-            "pred_mixed(?A, 123, ?P[\"k\"], \"lit\", #[])",
-        ); // Mixed args
+            "pred_mixed(?A, 123, \"lit\", #[])", // Removed AK arg
+        ); // Mixed args (Var, Lit, Lit, Lit)
+        assert_fails(
+            Rule::test_custom_predicate_call,
+            "pred_fail(?A, ?P[\"k\"])", // Should fail with AK
+        );
     }
 
     #[test]

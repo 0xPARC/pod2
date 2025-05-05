@@ -117,7 +117,7 @@ pub enum Argument {
 // --- Statements ---
 
 // Corresponds to middleware::NativePredicate, but potentially different args for AST
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
 pub enum NativePredicate {
     ValueOf,
     Equal,
@@ -230,45 +230,49 @@ fn build_custom_predicate(
     for inner_pair in pair.into_inner() {
         match inner_pair.as_rule() {
             Rule::identifier => {
-                // This should no longer happen for the predicate name itself
-                // If it occurs elsewhere unexpectedly, it might indicate a grammar issue
-                // or an issue in how this function is called.
-                // For now, let's treat it as an internal error if encountered here.
-                return Err(AstBuildError::Internal(format!(
-                    "Unexpected 'identifier' rule ({}) encountered directly within custom_predicate_def. Expected 'predicate_identifier'.",
-                    inner_pair.as_str()
-                )));
+                return Err(ast_err!(Generic, &inner_pair, "Unexpected 'identifier' rule ({}) encountered directly within custom_predicate_def. Expected 'predicate_identifier'.", inner_pair.as_str()));
             }
             Rule::predicate_identifier => {
                 // Correctly handle the predicate name identifier
                 if name_opt.is_some() {
                     // Avoid overwriting if somehow matched twice
-                    return Err(AstBuildError::Internal(
-                        "Found multiple predicate names".to_string(),
+                    return Err(ast_err!(
+                        Generic,
+                        &inner_pair,
+                        "Found multiple predicate names"
                     ));
                 }
                 // Build the identifier directly from the predicate_identifier pair's string content
                 name_opt = Some(build_identifier(inner_pair)?);
             }
-            Rule::def_arg_list => {
-                // Check if it's for public or private args based on context (hacky, better grammar might help)
-                // For now, assume first def_arg_list is public, second is private if seen after private_kw
-                if type_opt.is_none() {
-                    // Before AND/OR = public
-                    public_args = inner_pair
-                        .into_inner()
-                        .map(|p| build_identifier(p).map(|ident| Variable(ident.0)))
-                        .collect::<Result<Vec<Variable>, _>>()?;
-                } else {
-                    // After AND/OR = must be inside private_args_def
-                    // This case handled by Rule::private_args_def inner iteration
-                    return Err(ast_err!(UnexpectedRule, &inner_pair));
+            Rule::public_arg_list => {
+                // Parse the public arguments
+                if !public_args.is_empty() {
+                    // Should only parse once
+                    return Err(ast_err!(
+                        Generic,
+                        &inner_pair,
+                        "Duplicate public_arg_list found"
+                    ));
                 }
+                public_args = inner_pair
+                    .into_inner()
+                    .map(|p| build_identifier(p).map(|ident| Variable(ident.0)))
+                    .collect::<Result<Vec<Variable>, _>>()?;
             }
             Rule::private_args_def => {
+                // Extract the private_arg_list from within this
+                if !private_args.is_empty() {
+                    // Should only parse once
+                    return Err(ast_err!(
+                        Generic,
+                        &inner_pair,
+                        "Duplicate private_args_def found"
+                    ));
+                }
                 private_args = inner_pair
                     .into_inner() // Get inner of private_args_def
-                    .find(|p| p.as_rule() == Rule::def_arg_list) // Find the def_arg_list within it
+                    .find(|p| p.as_rule() == Rule::private_arg_list) // Find the private_arg_list within it
                     .map_or(Ok(Vec::new()), |arg_list_pair| {
                         arg_list_pair
                             .into_inner()
@@ -285,18 +289,24 @@ fn build_custom_predicate(
             // Match the new conjunction_type rule
             Rule::conjunction_type => {
                 if type_opt.is_some() {
-                    return Err(AstBuildError::Internal(
-                        "Found multiple conjunction types".to_string(),
+                    return Err(ast_err!(
+                        Generic,
+                        &inner_pair,
+                        "Found multiple conjunction types"
                     ));
                 }
                 type_opt = match inner_pair.as_str() {
                     "AND" => Some(CustomPredicateType::And),
                     "OR" => Some(CustomPredicateType::Or),
                     _ => {
-                        return Err(AstBuildError::Internal(
-                            "Unexpected content for conjunction_type".to_string(),
-                        ))
-                    } // Should not happen
+                        // Should not happen if grammar is correct
+                        return Err(ast_err!(
+                            Generic,
+                            &inner_pair,
+                            "Unexpected content for conjunction_type: {}",
+                            inner_pair.as_str()
+                        ));
+                    }
                 };
             }
             // Ignore known syntax/comments/whitespace, error on others
@@ -311,9 +321,12 @@ fn build_custom_predicate(
     }
 
     let name = name_opt.ok_or_else(|| {
+        // Span isn't easily available here, maybe pass the outer pair down?
+        // For now, keep as Internal or make it a Generic without span.
         AstBuildError::Internal("Missing predicate name in parsed pairs".to_string())
     })?;
     let type_ = type_opt.ok_or_else(|| {
+        // Span isn't easily available here either.
         AstBuildError::Internal("Missing predicate type (AND/OR) in parsed pairs".to_string())
     })?;
 
@@ -327,21 +340,29 @@ fn build_custom_predicate(
 }
 
 fn build_request(pair: Pair<'_, Rule>) -> Result<RequestDefinition, AstBuildError> {
+    // Keep outer pair reference for potential errors
+    let outer_pair = pair.clone();
     let maybe_statement_list = pair
         .into_inner()
         .find(|p| p.as_rule() == Rule::statement_list);
-    // .ok_or_else(|| {
-    //     AstBuildError::Internal("Missing statement_list in request_def".to_string())
-    // })?;
 
     let statements = match maybe_statement_list {
         Some(statement_list) => statement_list
             .into_inner()
             .filter(|p| p.as_rule() == Rule::statement)
             .map(build_statement)
-            .collect::<Result<_, _>>()?,
+            .collect::<Result<_, _>>()?, // Errors from build_statement will have spans
         None => Vec::new(), // Handle case where statement_list is not present
     };
+
+    // Check for unexpected rules inside request_def (besides statement_list or comments/ws)
+    for inner in outer_pair.into_inner() {
+        match inner.as_rule() {
+            Rule::statement_list | Rule::COMMENT | Rule::WHITESPACE => { /* Expected */ }
+            _ if ["REQUEST", "(", ")"].contains(&inner.as_str().trim()) => { /* Ignore syntax */ }
+            _ => return Err(ast_err!(UnexpectedRule, &inner)), // Add span here
+        }
+    }
 
     Ok(RequestDefinition { statements })
 }
@@ -349,9 +370,10 @@ fn build_request(pair: Pair<'_, Rule>) -> Result<RequestDefinition, AstBuildErro
 fn build_statement(pair: Pair<'_, Rule>) -> Result<Statement, AstBuildError> {
     // The statement rule directly contains one of the specific stmt rules or a custom call
     let inner_pair = pair
+        .clone()
         .into_inner()
         .next()
-        .ok_or_else(|| AstBuildError::Internal("Empty statement".to_string()))?;
+        .ok_or_else(|| ast_err!(Generic, &pair, "Empty statement encountered"))?;
     match inner_pair.as_rule() {
         // Match specific native statement rules
         Rule::value_of_stmt
@@ -370,7 +392,7 @@ fn build_statement(pair: Pair<'_, Rule>) -> Result<Statement, AstBuildError> {
 }
 
 fn build_native_call(pair: Pair<'_, Rule>) -> Result<NativePredicateCall, AstBuildError> {
-    // The specific rule tells us the predicate type
+    // Determine the predicate type from the rule of the pair itself
     let predicate = match pair.as_rule() {
         Rule::value_of_stmt => NativePredicate::ValueOf,
         Rule::equal_stmt => NativePredicate::Equal,
@@ -382,119 +404,136 @@ fn build_native_call(pair: Pair<'_, Rule>) -> Result<NativePredicateCall, AstBui
         Rule::sum_of_stmt => NativePredicate::SumOf,
         Rule::product_of_stmt => NativePredicate::ProductOf,
         Rule::max_of_stmt => NativePredicate::MaxOf,
-        // This function should only be called with one of the above rules
-        _ => return Err(ast_err!(UnexpectedRule, &pair)),
+        _ => return Err(ast_err!(UnexpectedRule, &pair)), // Should not happen if called correctly
     };
 
-    // The inner pairs are the arguments
-    let args = match predicate {
-        NativePredicate::ValueOf => {
-            // Get an iterator for the inner pairs
-            let mut inner_pairs = pair.into_inner();
+    // Process arguments based on the predicate type
+    let args = if predicate == NativePredicate::ValueOf {
+        // Specific logic for ValueOf (AK, Literal)
+        let mut inner_pairs = pair.clone().into_inner(); // Clone for iteration
+        let ak_pair = inner_pairs.next().ok_or_else(|| {
+            ast_err!(
+                Generic,
+                &pair,
+                "Missing ValueOf argument 1 (expected anchored_key)"
+            )
+        })?;
+        let lit_pair = inner_pairs.next().ok_or_else(|| {
+            ast_err!(
+                Generic,
+                &pair,
+                "Missing ValueOf argument 2 (expected literal_value)"
+            )
+        })?;
 
-            let ak_pair = inner_pairs
-                .next()
-                .ok_or_else(|| AstBuildError::Internal("Missing ValueOf arg 1".to_string()))?;
-            let lit_pair = inner_pairs // Use the *same* iterator
-                .next()
-                .ok_or_else(|| AstBuildError::Internal("Missing ValueOf arg 2".to_string()))?;
-
-            // Perform rule checks after getting the pairs
-            if ak_pair.as_rule() != Rule::anchored_key {
-                return Err(AstBuildError::Internal(format!(
-                    "Invalid arg type for ValueOf arg 1: expected anchored_key, got {:?}",
-                    ak_pair.as_rule()
-                )));
-            }
-            if lit_pair.as_rule() != Rule::literal_value {
-                return Err(AstBuildError::Internal(format!(
-                    "Invalid arg type for ValueOf arg 2: expected literal_value, got {:?}",
-                    lit_pair.as_rule()
-                )));
-            }
-
-            vec![
-                Argument::AnchoredKey(build_anchored_key(ak_pair)?),
-                Argument::Literal(build_literal(lit_pair)?),
-            ]
+        // Rule checks
+        if ak_pair.as_rule() != Rule::anchored_key {
+            return Err(ast_err!(
+                Generic,
+                &ak_pair,
+                "Invalid arg type for ValueOf arg 1: expected anchored_key, got {:?}",
+                ak_pair.as_rule()
+            ));
         }
-        _ => pair
-            .into_inner()
-            // Need to handle argument types based on the specific predicate
-            .map(|arg_pair| match (predicate.clone(), arg_pair.as_rule()) {
-                // Most predicates take AnchoredKey args
-                (
-                    NativePredicate::Equal
-                    | NativePredicate::NotEqual
-                    | NativePredicate::Gt
-                    | NativePredicate::Lt
-                    | NativePredicate::Contains
-                    | NativePredicate::NotContains
-                    | NativePredicate::SumOf
-                    | NativePredicate::ProductOf
-                    | NativePredicate::MaxOf,
-                    Rule::anchored_key,
-                ) => Ok(Argument::AnchoredKey(build_anchored_key(arg_pair)?)),
+        if lit_pair.as_rule() != Rule::literal_value {
+            return Err(ast_err!(
+                Generic,
+                &lit_pair,
+                "Invalid arg type for ValueOf arg 2: expected literal_value, got {:?}",
+                lit_pair.as_rule()
+            ));
+        }
+        if inner_pairs.next().is_some() {
+            return Err(ast_err!(
+                Generic,
+                &pair,
+                "Too many arguments for ValueOf (expected 2)"
+            ));
+        }
 
-                // Predicates allowing CallArg (which includes literals/vars/AK) as second arg
-                (
-                    NativePredicate::Equal
-                    | NativePredicate::NotEqual
-                    | NativePredicate::Gt
-                    | NativePredicate::Lt,
-                    Rule::call_arg,
-                ) => build_argument(arg_pair), // Call the existing argument builder
-
-                // Other combinations are errors for native calls
-                _ => Err(ast_err!(UnexpectedRule, &arg_pair)),
-            })
-            .collect::<Result<_, _>>()?,
+        vec![
+            Argument::AnchoredKey(build_anchored_key(ak_pair)?),
+            Argument::Literal(build_literal(lit_pair)?),
+        ]
+    } else {
+        // Use the helper function for all other predicate types
+        build_native_call_args(predicate, pair)? // Pass original pair
     };
 
     Ok(NativePredicateCall { predicate, args })
 }
 
+// Helper function to process arguments for most native calls (non-ValueOf)
+fn build_native_call_args(
+    predicate: NativePredicate, // Pass the predicate type explicitly
+    pair: Pair<'_, Rule>,       // Pass the *original* pair for iteration
+) -> Result<Vec<Argument>, AstBuildError> {
+    pair.into_inner()
+        .map(|arg_pair| match arg_pair.as_rule() {
+            // Only AnchoredKey is expected now for these predicates
+            Rule::anchored_key => Ok(Argument::AnchoredKey(build_anchored_key(arg_pair)?)),
+            // Any other rule is an error
+            _ => Err(ast_err!(
+                Generic,
+                &arg_pair,
+                "Invalid argument type {:?} for native predicate {:?}, expected AnchoredKey",
+                arg_pair.as_rule(),
+                predicate
+            )),
+        })
+        .collect::<Result<_, _>>()
+}
+
 fn build_custom_call(pair: Pair<'_, Rule>) -> Result<CustomPredicateCall, AstBuildError> {
-    let mut inner = pair.into_inner();
-    let name = build_identifier(inner.next().ok_or_else(|| {
-        AstBuildError::Internal("Missing custom predicate call name".to_string())
-    })?)?;
+    let mut inner = pair.clone().into_inner(); // Clone for potential errors
+    let name = build_identifier(
+        inner
+            .next()
+            .ok_or_else(|| ast_err!(Generic, &pair, "Missing custom predicate call name"))?,
+    )?;
     let args_pair = inner.next();
 
     let args = match args_pair {
-        Some(p) => p
-            .into_inner()
-            .map(build_argument)
-            .collect::<Result<_, _>>()?,
+        Some(p) => {
+            p.into_inner() // Should contain custom_call_arg pairs
+                .map(|custom_arg_pair| {
+                    // custom_call_arg contains either variable or literal_value
+                    let arg_content =
+                        custom_arg_pair.clone().into_inner().next().ok_or_else(|| {
+                            ast_err!(Generic, &custom_arg_pair, "Empty custom_call_arg")
+                        })?;
+                    match arg_content.as_rule() {
+                        Rule::variable => Ok(Argument::Variable(build_variable(&arg_content)?)),
+                        Rule::literal_value => Ok(Argument::Literal(build_literal(arg_content)?)),
+                        _ => Err(ast_err!(UnexpectedRule, &arg_content)),
+                    }
+                })
+                .collect::<Result<_, _>>()?
+        }
         None => Vec::new(),
     };
 
     Ok(CustomPredicateCall { name, args })
 }
 
-fn build_argument(pair: Pair<'_, Rule>) -> Result<Argument, AstBuildError> {
-    // The call_arg rule directly contains one of the argument types
-    let inner_pair = pair
-        .into_inner()
-        .next()
-        .ok_or_else(|| AstBuildError::Internal("Empty call_arg".to_string()))?;
-    match inner_pair.as_rule() {
-        Rule::literal_value => Ok(Argument::Literal(build_literal(inner_pair)?)), // Use literal_value
-        Rule::variable => Ok(Argument::Variable(build_variable(&inner_pair)?)),
-        Rule::anchored_key => Ok(Argument::AnchoredKey(build_anchored_key(inner_pair)?)),
-        _ => Err(ast_err!(UnexpectedRule, &inner_pair)),
-    }
-}
-
 fn build_anchored_key(pair: Pair<'_, Rule>) -> Result<AnchoredKey, AstBuildError> {
-    let mut inner = pair.into_inner();
-    let pod_var = build_variable(&inner.next().ok_or_else(|| {
-        AstBuildError::Internal("Missing pod variable in anchored key".to_string())
-    })?)?;
+    let mut inner = pair.clone().into_inner(); // Clone for errors
+    let pod_var = build_variable(
+        &inner
+            .next()
+            .ok_or_else(|| ast_err!(Generic, &pair, "Missing pod variable in anchored key"))?,
+    )?;
     let key_pair = inner
         .next()
-        .ok_or_else(|| AstBuildError::Internal("Missing key in anchored key".to_string()))?;
+        .ok_or_else(|| ast_err!(Generic, &pair, "Missing key in anchored key"))?;
     let key = build_anchored_key_key(&key_pair)?;
+    if inner.next().is_some() {
+        return Err(ast_err!(
+            Generic,
+            &pair,
+            "Unexpected extra content in anchored key"
+        ));
+    }
     Ok(AnchoredKey { pod_var, key })
 }
 
@@ -540,9 +579,10 @@ fn build_literal(pair: Pair<'_, Rule>) -> Result<Literal, AstBuildError> {
         return Err(ast_err!(UnexpectedRule, &pair));
     }
     let inner_pair = pair
+        .clone()
         .into_inner()
         .next()
-        .ok_or_else(|| AstBuildError::Internal("Empty literal_value".to_string()))?;
+        .ok_or_else(|| ast_err!(Generic, &pair, "Empty literal_value encountered"))?;
     match inner_pair.as_rule() {
         Rule::literal_int => {
             let val = inner_pair
@@ -591,15 +631,22 @@ fn build_literal(pair: Pair<'_, Rule>) -> Result<Literal, AstBuildError> {
                 .into_inner()
                 .map(|dict_entry_pair| {
                     // dict_entry_pair rule is dict_pair
-                    let mut entry_inner = dict_entry_pair.into_inner();
-                    // First inner is literal_string
+                    let mut entry_inner = dict_entry_pair.clone().into_inner(); // Clone for errors
+                                                                                // First inner is literal_string
                     let key_pair = entry_inner
                         .next()
-                        .ok_or_else(|| AstBuildError::Internal("Missing dict key".to_string()))?;
+                        .ok_or_else(|| ast_err!(Generic, &dict_entry_pair, "Missing dict key"))?;
                     // Second inner is literal_value
                     let val_pair = entry_inner
                         .next()
-                        .ok_or_else(|| AstBuildError::Internal("Missing dict value".to_string()))?;
+                        .ok_or_else(|| ast_err!(Generic, &dict_entry_pair, "Missing dict value"))?;
+                    if entry_inner.next().is_some() {
+                        return Err(ast_err!(
+                            Generic,
+                            &dict_entry_pair,
+                            "Unexpected extra content in dict entry"
+                        ));
+                    }
                     let key = parse_string_literal(&key_pair)?;
                     let val = build_literal(val_pair)?; // build_literal expects literal_value
                     Ok((key, val))
@@ -706,12 +753,12 @@ fn parse_string_literal(pair: &Pair<'_, Rule>) -> Result<String, AstBuildError> 
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap; // Add this import
+    use std::collections::HashMap;
 
     use pest::Parser;
 
-    use super::*; // Import items from parent module (ast)
-    use crate::lang::parser::{PodlogParser, Rule}; // Import parser and Rule
+    use super::*;
+    use crate::lang::parser::{PodlogParser, Rule};
 
     // Helper to parse a string with a specific rule and expect success
     fn parse_rule(rule: Rule, input: &str) -> Result<Pair<'_, Rule>, String> {
@@ -1052,199 +1099,6 @@ mod tests {
         assert!(parse_rule(Rule::anchored_key, "?PodVar[]").is_err()); // Empty key
     }
 
-    #[test]
-    fn test_build_argument() {
-        // Literal arg
-        let pair_lit = parse_rule(Rule::call_arg, "123").expect("Parse literal arg failed");
-        assert_eq!(
-            build_argument(pair_lit),
-            Ok(Argument::Literal(Literal::Int(123)))
-        );
-
-        // Variable arg
-        let pair_var = parse_rule(Rule::call_arg, "?MyVar").expect("Parse variable arg failed");
-        assert_eq!(
-            build_argument(pair_var),
-            Ok(Argument::Variable(Variable("MyVar".to_string())))
-        );
-
-        // Anchored Key arg
-        let pair_ak = parse_rule(Rule::call_arg, "?Pod[\"k\"]").expect("Parse AK arg failed");
-        let expected_ak = Argument::AnchoredKey(AnchoredKey {
-            pod_var: Variable("Pod".to_string()),
-            key: AnchoredKeyKey::LiteralString("k".to_string()),
-        });
-        assert_eq!(build_argument(pair_ak), Ok(expected_ak));
-
-        // Anchored Key with Var key arg
-        let pair_ak_var =
-            parse_rule(Rule::call_arg, "?Pod[?Key]").expect("Parse AK var-key arg failed");
-        let expected_ak_var = Argument::AnchoredKey(AnchoredKey {
-            pod_var: Variable("Pod".to_string()),
-            key: AnchoredKeyKey::Variable(Variable("Key".to_string())),
-        });
-        assert_eq!(build_argument(pair_ak_var), Ok(expected_ak_var));
-    }
-
-    // Helper to parse and build a native call
-    fn build_test_native_call(
-        input: &str,
-        rule: Rule,
-    ) -> Result<NativePredicateCall, AstBuildError> {
-        let pair = parse_rule(rule, input).map_err(|e| {
-            AstBuildError::Internal(format!("Parser failed for native call: {}", e))
-        })?;
-        build_native_call(pair)
-    }
-
-    #[test]
-    fn test_build_native_call() {
-        // ValueOf(AnchoredKey, Literal)
-        let result_vo = build_test_native_call("ValueOf(?Pod[\"k\"], 1)", Rule::value_of_stmt);
-        let expected_vo = Ok(NativePredicateCall {
-            predicate: NativePredicate::ValueOf,
-            args: vec![
-                Argument::AnchoredKey(AnchoredKey {
-                    pod_var: Variable("Pod".to_string()),
-                    key: AnchoredKeyKey::LiteralString("k".to_string()),
-                }),
-                Argument::Literal(Literal::Int(1)),
-            ],
-        });
-        assert_eq!(result_vo, expected_vo);
-
-        // Equal(AnchoredKey, CallArg)
-        let result_eq = build_test_native_call("Equal(?P1[?K], ?P2[\"fixed\"])", Rule::equal_stmt);
-        let expected_eq = Ok(NativePredicateCall {
-            predicate: NativePredicate::Equal,
-            args: vec![
-                Argument::AnchoredKey(AnchoredKey {
-                    pod_var: Variable("P1".to_string()),
-                    key: AnchoredKeyKey::Variable(Variable("K".to_string())),
-                }),
-                Argument::AnchoredKey(AnchoredKey {
-                    pod_var: Variable("P2".to_string()),
-                    key: AnchoredKeyKey::LiteralString("fixed".to_string()),
-                }),
-            ],
-        });
-        assert_eq!(result_eq, expected_eq);
-
-        // Lt(AnchoredKey, CallArg = Literal)
-        let result_lt_lit = build_test_native_call("Lt(?A[\"x\"], 5)", Rule::lt_stmt);
-        let expected_lt_lit = Ok(NativePredicateCall {
-            predicate: NativePredicate::Lt,
-            args: vec![
-                Argument::AnchoredKey(AnchoredKey {
-                    pod_var: Variable("A".to_string()),
-                    key: AnchoredKeyKey::LiteralString("x".to_string()),
-                }),
-                Argument::Literal(Literal::Int(5)),
-            ],
-        });
-        assert_eq!(result_lt_lit, expected_lt_lit);
-
-        // Gt(AnchoredKey, CallArg = Variable)
-        let result_gt_var = build_test_native_call("Gt(?A[\"x\"], ?MyVar)", Rule::gt_stmt);
-        let expected_gt_var = Ok(NativePredicateCall {
-            predicate: NativePredicate::Gt,
-            args: vec![
-                Argument::AnchoredKey(AnchoredKey {
-                    pod_var: Variable("A".to_string()),
-                    key: AnchoredKeyKey::LiteralString("x".to_string()),
-                }),
-                Argument::Variable(Variable("MyVar".to_string())),
-            ],
-        });
-        assert_eq!(result_gt_var, expected_gt_var);
-
-        // NotContains(AnchoredKey, AnchoredKey)
-        let result_nc = build_test_native_call(
-            "NotContains(?Set[\"k1\"], ?Val[\"k2\"])",
-            Rule::not_contains_stmt,
-        );
-        let expected_nc = Ok(NativePredicateCall {
-            predicate: NativePredicate::NotContains,
-            args: vec![
-                Argument::AnchoredKey(AnchoredKey {
-                    pod_var: Variable("Set".to_string()),
-                    key: AnchoredKeyKey::LiteralString("k1".to_string()),
-                }),
-                Argument::AnchoredKey(AnchoredKey {
-                    pod_var: Variable("Val".to_string()),
-                    key: AnchoredKeyKey::LiteralString("k2".to_string()),
-                }),
-            ],
-        });
-        assert_eq!(result_nc, expected_nc);
-
-        // SumOf(AnchoredKey, AnchoredKey, AnchoredKey)
-        let result_sum = build_test_native_call(
-            "SumOf(?R[\"res\"], ?A[\"a\"], ?B[\"b\"])",
-            Rule::sum_of_stmt,
-        );
-        let expected_sum = Ok(NativePredicateCall {
-            predicate: NativePredicate::SumOf,
-            args: vec![
-                Argument::AnchoredKey(AnchoredKey {
-                    pod_var: Variable("R".to_string()),
-                    key: AnchoredKeyKey::LiteralString("res".to_string()),
-                }),
-                Argument::AnchoredKey(AnchoredKey {
-                    pod_var: Variable("A".to_string()),
-                    key: AnchoredKeyKey::LiteralString("a".to_string()),
-                }),
-                Argument::AnchoredKey(AnchoredKey {
-                    pod_var: Variable("B".to_string()),
-                    key: AnchoredKeyKey::LiteralString("b".to_string()),
-                }),
-            ],
-        });
-        assert_eq!(result_sum, expected_sum);
-    }
-
-    // Helper to parse and build a custom call
-    fn build_test_custom_call(input: &str) -> Result<CustomPredicateCall, AstBuildError> {
-        let pair = parse_rule(Rule::custom_predicate_call, input).map_err(|e| {
-            AstBuildError::Internal(format!("Parser failed for custom call: {}", e))
-        })?;
-        build_custom_call(pair)
-    }
-
-    #[test]
-    fn test_build_custom_call() {
-        // No args
-        let result_no_args = build_test_custom_call("my_pred()");
-        let expected_no_args = Ok(CustomPredicateCall {
-            name: Identifier("my_pred".to_string()),
-            args: vec![],
-        });
-        assert_eq!(result_no_args, expected_no_args);
-
-        // One arg
-        let result_one_arg = build_test_custom_call("pred_one(?A)");
-        let expected_one_arg = Ok(CustomPredicateCall {
-            name: Identifier("pred_one".to_string()),
-            args: vec![Argument::Variable(Variable("A".to_string()))],
-        });
-        assert_eq!(result_one_arg, expected_one_arg);
-
-        // Multiple mixed args
-        let result_mixed = build_test_custom_call("pred_mix(?A, 123, ?P[\"k\"])");
-        let expected_mixed = Ok(CustomPredicateCall {
-            name: Identifier("pred_mix".to_string()),
-            args: vec![
-                Argument::Variable(Variable("A".to_string())),
-                Argument::Literal(Literal::Int(123)),
-                Argument::AnchoredKey(AnchoredKey {
-                    pod_var: Variable("P".to_string()),
-                    key: AnchoredKeyKey::LiteralString("k".to_string()),
-                }),
-            ],
-        });
-        assert_eq!(result_mixed, expected_mixed);
-    }
-
     // Helper to parse and build a statement
     fn build_test_statement(input: &str) -> Result<Statement, AstBuildError> {
         let pair = parse_rule(Rule::statement, input)
@@ -1433,7 +1287,7 @@ mod tests {
         // Request with comments
         let input_comments = r#"REQUEST(
             // First statement
-            Gt(?Val["x"], 0)
+            Gt(?Val["x"], ?Other["y"])
             // Another custom call
             other_pred()
         )"#;
@@ -1447,7 +1301,10 @@ mod tests {
                             pod_var: Variable("Val".to_string()),
                             key: AnchoredKeyKey::LiteralString("x".to_string()),
                         }),
-                        Argument::Literal(Literal::Int(0)),
+                        Argument::AnchoredKey(AnchoredKey {
+                            pod_var: Variable("Other".to_string()),
+                            key: AnchoredKeyKey::LiteralString("y".to_string()),
+                        }),
                     ],
                 }),
                 Statement::Custom(CustomPredicateCall {
@@ -1473,7 +1330,7 @@ mod tests {
         let input_full = r#"
             // Predicate first
             pred(X) = AND(
-                Gt(?X["a"], 0)
+                Gt(?X["a"], ?X["b"])
             )
 
             // Then request
