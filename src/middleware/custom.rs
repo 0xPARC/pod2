@@ -76,9 +76,9 @@ impl ToFields for StatementTmplArg {
     fn to_fields(&self, params: &Params) -> Vec<F> {
         // None => (0, ...)
         // Literal(value) => (1, [value], 0, 0, 0, 0)
-        // Key(wildcard1, key_or_wildcard2)
-        //    => (2, [wildcard1], [key_or_wildcard2])
-        // WildcardLiteral(wildcard) => (3, [wildcard], 0, 0, 0, 0)
+        // Key(wildcard1_index, key_or_wildcard2)
+        //    => (2, [wildcard1_index], 0, 0, 0, [key_or_wildcard2])
+        // WildcardLiteral(wildcard_index) => (3, [wildcard_index], 0, 0, 0, 0, 0, 0, 0)
         // In all three cases, we pad to 2 * hash_size + 1 = 9 field elements
         match self {
             StatementTmplArg::None => {

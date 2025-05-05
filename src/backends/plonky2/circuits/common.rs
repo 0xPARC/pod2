@@ -7,7 +7,10 @@ use plonky2::{
         extension::Extendable,
         types::{Field, PrimeField64},
     },
-    hash::hash_types::{HashOutTarget, RichField, NUM_HASH_OUT_ELTS},
+    hash::{
+        hash_types::{HashOutTarget, RichField, NUM_HASH_OUT_ELTS},
+        poseidon::PoseidonHash,
+    },
     iop::{
         target::{BoolTarget, Target},
         witness::{PartialWitness, WitnessWrite},
@@ -23,9 +26,9 @@ use crate::{
         primitives::merkletree::MerkleClaimAndProofTarget,
     },
     middleware::{
-        NativeOperation, NativePredicate, Params, Predicate, RawValue, StatementArg, ToFields,
-        EMPTY_VALUE, F, HASH_SIZE, OPERATION_ARG_F_LEN, OPERATION_AUX_F_LEN, STATEMENT_ARG_F_LEN,
-        VALUE_SIZE,
+        KeyOrWildcard, NativeOperation, NativePredicate, Params, Predicate, RawValue, StatementArg,
+        ToFields, EMPTY_VALUE, F, HASH_SIZE, OPERATION_ARG_F_LEN, OPERATION_AUX_F_LEN,
+        STATEMENT_ARG_F_LEN, VALUE_SIZE,
     },
 };
 
@@ -295,8 +298,51 @@ impl PredicateTarget {
 }
 
 #[derive(Clone)]
+pub struct KeyOrWildcardTarget {
+    pub elements: [Target; VALUE_SIZE],
+}
+
+impl KeyOrWildcardTarget {
+    fn from_slice(v: &[Target]) -> Self {
+        Self {
+            elements: v.try_into().expect("len is VALUE_SIZE"),
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct StatementTmplArgTarget {
     pub elements: [Target; Params::statement_tmpl_arg_size()],
+}
+
+impl StatementTmplArgTarget {
+    pub fn as_none(&self, builder: &mut CircuitBuilder<F, D>) -> BoolTarget {
+        let none_prefix = builder.constant(F::from_canonical_usize(0));
+        let case_ok = builder.is_equal(self.elements[0], none_prefix);
+        case_ok
+    }
+    pub fn as_literal(&self, builder: &mut CircuitBuilder<F, D>) -> (BoolTarget, ValueTarget) {
+        let none_prefix = builder.constant(F::from_canonical_usize(1));
+        let case_ok = builder.is_equal(self.elements[0], none_prefix);
+        let value = ValueTarget::from_slice(&self.elements[1..5]);
+        (case_ok, value)
+    }
+    pub fn as_key(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+    ) -> (BoolTarget, Target, KeyOrWildcardTarget) {
+        let none_prefix = builder.constant(F::from_canonical_usize(2));
+        let case_ok = builder.is_equal(self.elements[0], none_prefix);
+        let id_wildcard_index = self.elements[1];
+        let value_key_or_wildcard = KeyOrWildcardTarget::from_slice(&self.elements[5..9]);
+        (case_ok, id_wildcard_index, value_key_or_wildcard)
+    }
+    pub fn as_wildcard_literal(&self, builder: &mut CircuitBuilder<F, D>) -> (BoolTarget, Target) {
+        let none_prefix = builder.constant(F::from_canonical_usize(3));
+        let case_ok = builder.is_equal(self.elements[0], none_prefix);
+        let wildcard_index = self.elements[1];
+        (case_ok, wildcard_index)
+    }
 }
 
 #[derive(Clone)]
@@ -311,6 +357,18 @@ pub struct CustomPredicateTarget {
     // len = params.max_custom_predicate_arity
     pub statements: Vec<StatementTmplTarget>,
     pub args_len: Target,
+}
+
+#[derive(Clone)]
+pub struct CustomPredicateBatchTarget {
+    pub predicates: Vec<CustomPredicateTarget>,
+}
+
+impl CustomPredicateBatchTarget {
+    pub fn id(&self, builder: &mut CircuitBuilder<F, D>) -> HashOutTarget {
+        let flattened = self.predicates.iter().flat_map(|cp| cp.flatten()).collect();
+        builder.hash_n_to_hash_no_pad::<PoseidonHash>(flattened)
+    }
 }
 
 /// Trait for target structs that may be converted to and from vectors
@@ -463,11 +521,13 @@ impl Flattenable for StatementTmplTarget {
 
 impl Flattenable for StatementTmplArgTarget {
     fn flatten(&self) -> Vec<Target> {
-        todo!()
+        self.elements.to_vec()
     }
 
-    fn from_flattened(params: &Params, v: &[Target]) -> Self {
-        todo!()
+    fn from_flattened(_params: &Params, v: &[Target]) -> Self {
+        Self {
+            elements: v.try_into().expect("len is statement_tmpl_arg_size"),
+        }
     }
 }
 
@@ -692,5 +752,59 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
         xs.into_iter()
             .reduce(|a, b| self.or(a, b))
             .unwrap_or(self._false())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use itertools::Itertools;
+    use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
+
+    use super::*;
+    use crate::{backends::plonky2::basetypes::C, examples::custom::eth_friend_batch, frontend};
+
+    #[test]
+    fn custom_predicate_batch() -> frontend::Result<()> {
+        let params = Params::default();
+        let config = CircuitConfig::standard_recursion_config();
+        let mut builder = CircuitBuilder::<F, D>::new(config);
+
+        let custom_predicate_batch = eth_friend_batch(&params)?;
+        let predicate_targets = custom_predicate_batch
+            .predicates
+            .iter()
+            .map(|cp| {
+                let flattened = cp.to_fields(&params);
+                let flatteend_target = flattened.iter().map(|v| builder.constant(*v)).collect_vec();
+                CustomPredicateTarget::from_flattened(&params, &flatteend_target)
+            })
+            .collect();
+
+        let custom_predicate_batch_target = CustomPredicateBatchTarget {
+            predicates: predicate_targets,
+        };
+
+        let id_target = custom_predicate_batch_target.id(&mut builder);
+        let id = custom_predicate_batch.id(&params);
+
+        let id_expected_target = HashOutTarget {
+            elements: id
+                .to_fields(&params)
+                .iter()
+                .map(|v| builder.constant(*v))
+                .collect_vec()
+                .try_into()
+                .unwrap(),
+        };
+        builder.connect_array(id_target.elements, id_expected_target.elements);
+
+        let pw = PartialWitness::<F>::new();
+
+        // generate & verify proof
+        let data = builder.build::<C>();
+        let proof = data.prove(pw).unwrap();
+        data.verify(proof.clone()).unwrap();
+
+        Ok(())
     }
 }
