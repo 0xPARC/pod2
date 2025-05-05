@@ -80,11 +80,10 @@ impl ToFields for StatementTmplArg {
         //    => (2, [wildcard1], [key_or_wildcard2])
         // WildcardLiteral(wildcard) => (3, [wildcard], 0, 0, 0, 0)
         // In all three cases, we pad to 2 * hash_size + 1 = 9 field elements
-        let statement_tmpl_arg_size = 2 * HASH_SIZE + 1;
         match self {
             StatementTmplArg::None => {
                 let fields: Vec<F> = iter::repeat_with(|| F::from_canonical_u64(0))
-                    .take(statement_tmpl_arg_size)
+                    .take(Params::statement_tmpl_arg_size())
                     .collect();
                 fields
             }
@@ -312,7 +311,10 @@ impl ToFields for CustomPredicateBatch {
 }
 
 impl CustomPredicateBatch {
-    pub fn hash(&self, params: &Params) -> Hash {
+    /// Cryptographic identifier for the batch.
+    pub fn id(&self, params: &Params) -> Hash {
+        // NOTE: This implementation just hashes the concatenation of all the custom predicates,
+        // but ideally we want to use the root of a merkle tree built from the custom predicates.
         let input = self.to_fields(params);
 
         hash_fields(&input)

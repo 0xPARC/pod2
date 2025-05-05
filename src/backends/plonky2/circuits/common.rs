@@ -248,20 +248,39 @@ impl NativePredicateTarget {
 
 #[derive(Clone)]
 pub struct PredicateTarget {
-    elems: [Target; Params::predicate_size()],
+    elements: [Target; Params::predicate_size()],
 }
 
 impl PredicateTarget {
     pub fn new_native(
         builder: &mut CircuitBuilder<F, D>,
-        // native_predicate: &NativePredicate,
         native_predicate: &NativePredicateTarget,
     ) -> Self {
         let prefix = builder.constant(F::from_canonical_usize(1));
         let id = native_predicate.0;
         let zero = builder.zero();
         Self {
-            elems: [prefix, id, zero, zero, zero, zero],
+            elements: [prefix, id, zero, zero, zero, zero],
+        }
+    }
+
+    pub fn new_batch_self(builder: &mut CircuitBuilder<F, D>, index: Target) -> Self {
+        let prefix = builder.constant(F::from_canonical_usize(2));
+        let zero = builder.zero();
+        Self {
+            elements: [prefix, index, zero, zero, zero, zero],
+        }
+    }
+
+    pub fn new_custom(
+        builder: &mut CircuitBuilder<F, D>,
+        batch_id: HashOutTarget,
+        index: Target,
+    ) -> Self {
+        let prefix = builder.constant(F::from_canonical_usize(3));
+        let id = batch_id.elements;
+        Self {
+            elements: [prefix, id[0], id[1], id[2], id[3], index],
         }
     }
 
@@ -271,13 +290,13 @@ impl PredicateTarget {
         params: &Params,
         predicate: Predicate,
     ) -> Result<()> {
-        Ok(pw.set_target_arr(&self.elems, &predicate.to_fields(params))?)
+        Ok(pw.set_target_arr(&self.elements, &predicate.to_fields(params))?)
     }
 }
 
 #[derive(Clone)]
 pub struct StatementTmplArgTarget {
-    // TODO
+    pub elements: [Target; Params::statement_tmpl_arg_size()],
 }
 
 #[derive(Clone)]
@@ -298,7 +317,7 @@ pub struct CustomPredicateTarget {
 /// of targets.
 pub trait Flattenable {
     fn flatten(&self) -> Vec<Target>;
-    fn from_flattened(vs: &[Target]) -> Self;
+    fn from_flattened(params: &Params, vs: &[Target]) -> Self;
 }
 
 /// For the purpose of op verification, we need only look up the
@@ -336,7 +355,7 @@ impl Flattenable for MerkleClaimTarget {
         .concat()
     }
 
-    fn from_flattened(vs: &[Target]) -> Self {
+    fn from_flattened(_params: &Params, vs: &[Target]) -> Self {
         Self {
             enabled: BoolTarget::new_unsafe(vs[0]),
             root: HashOutTarget::from_vec(vs[1..1 + NUM_HASH_OUT_ELTS].to_vec()),
@@ -353,12 +372,12 @@ impl Flattenable for MerkleClaimTarget {
 
 impl Flattenable for PredicateTarget {
     fn flatten(&self) -> Vec<Target> {
-        self.elems.to_vec()
+        self.elements.to_vec()
     }
 
-    fn from_flattened(v: &[Target]) -> Self {
+    fn from_flattened(_params: &Params, v: &[Target]) -> Self {
         Self {
-            elems: v.try_into().expect("len is predicate_size"),
+            elements: v.try_into().expect("len is predicate_size"),
         }
     }
 }
@@ -372,13 +391,13 @@ impl Flattenable for StatementTarget {
             .collect()
     }
 
-    fn from_flattened(v: &[Target]) -> Self {
+    fn from_flattened(params: &Params, v: &[Target]) -> Self {
         let num_args = (v.len() - Params::predicate_size()) / STATEMENT_ARG_F_LEN;
         assert_eq!(
             v.len(),
             Params::predicate_size() + num_args * STATEMENT_ARG_F_LEN
         );
-        let predicate = PredicateTarget::from_flattened(&v[..Params::predicate_size()]);
+        let predicate = PredicateTarget::from_flattened(params, &v[..Params::predicate_size()]);
         let args = (0..num_args)
             .map(|i| StatementArgTarget {
                 elements: array::from_fn(|j| {
@@ -388,6 +407,67 @@ impl Flattenable for StatementTarget {
             .collect();
 
         Self { predicate, args }
+    }
+}
+
+impl Flattenable for CustomPredicateTarget {
+    fn flatten(&self) -> Vec<Target> {
+        iter::once(self.conjunction.target)
+            .chain(iter::once(self.args_len))
+            .chain(self.statements.iter().flat_map(|s| s.flatten()))
+            .collect()
+    }
+
+    fn from_flattened(params: &Params, v: &[Target]) -> Self {
+        // We assume that `from_flattened` is always called with the output of `flattened`, so
+        // this `BoolTarget` should actually safe.
+        let conjunction = BoolTarget::new_unsafe(v[0]);
+        let args_len = v[1];
+        let st_tmpl_size = params.statement_tmpl_size();
+        let statements = (0..params.max_custom_predicate_arity)
+            .map(|i| {
+                let st_v = &v[2 + st_tmpl_size * i..2 + st_tmpl_size * (i + 1)];
+                StatementTmplTarget::from_flattened(params, st_v)
+            })
+            .collect();
+        Self {
+            conjunction,
+            statements,
+            args_len,
+        }
+    }
+}
+
+impl Flattenable for StatementTmplTarget {
+    fn flatten(&self) -> Vec<Target> {
+        self.pred
+            .flatten()
+            .into_iter()
+            .chain(self.args.iter().flat_map(|sta| sta.flatten()))
+            .collect()
+    }
+
+    fn from_flattened(params: &Params, v: &[Target]) -> Self {
+        let pred_end = Params::predicate_size();
+        let pred = PredicateTarget::from_flattened(params, &v[..pred_end]);
+        let sta_size = Params::statement_tmpl_arg_size();
+        let args = (0..params.max_custom_predicate_arity)
+            .map(|i| {
+                let sta_v = &v[pred_end + sta_size * i..pred_end + sta_size * (i + 1)];
+                StatementTmplArgTarget::from_flattened(params, sta_v)
+            })
+            .collect();
+        Self { pred, args }
+    }
+}
+
+impl Flattenable for StatementTmplArgTarget {
+    fn flatten(&self) -> Vec<Target> {
+        todo!()
+    }
+
+    fn from_flattened(params: &Params, v: &[Target]) -> Self {
+        todo!()
     }
 }
 
@@ -412,8 +492,14 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
 
     // Convenience methods for accessing and connecting elements of
     // (vectors of) flattenables.
-    fn vec_ref<T: Flattenable>(&mut self, ts: &[T], i: Target) -> T;
-    fn select_flattenable<T: Flattenable>(&mut self, b: BoolTarget, x: &T, y: &T) -> T;
+    fn vec_ref<T: Flattenable>(&mut self, params: &Params, ts: &[T], i: Target) -> T;
+    fn select_flattenable<T: Flattenable>(
+        &mut self,
+        params: &Params,
+        b: BoolTarget,
+        x: &T,
+        y: &T,
+    ) -> T;
     fn connect_flattenable<T: Flattenable>(&mut self, xs: &T, ys: &T);
     fn is_equal_flattenable<T: Flattenable>(&mut self, xs: &T, ys: &T) -> BoolTarget;
 
@@ -454,7 +540,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
 
     fn add_virtual_predicate(&mut self) -> PredicateTarget {
         PredicateTarget {
-            elems: self.add_virtual_target_arr(),
+            elements: self.add_virtual_target_arr(),
         }
     }
 
@@ -539,7 +625,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
         assert_limb_lt(self, lhs, rhs);
     }
 
-    fn vec_ref<T: Flattenable>(&mut self, ts: &[T], i: Target) -> T {
+    fn vec_ref<T: Flattenable>(&mut self, params: &Params, ts: &[T], i: Target) -> T {
         // TODO: Revisit this when we need more than 64 statements.
         let vector_ref = |builder: &mut CircuitBuilder<F, D>, v: &[Target], i| {
             assert!(v.len() <= 64);
@@ -567,14 +653,21 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
         };
 
         let flattened_ts = ts.iter().map(|t| t.flatten()).collect::<Vec<_>>();
-        T::from_flattened(&matrix_row_ref(self, &flattened_ts, i))
+        T::from_flattened(params, &matrix_row_ref(self, &flattened_ts, i))
     }
 
-    fn select_flattenable<T: Flattenable>(&mut self, b: BoolTarget, x: &T, y: &T) -> T {
+    fn select_flattenable<T: Flattenable>(
+        &mut self,
+        params: &Params,
+        b: BoolTarget,
+        x: &T,
+        y: &T,
+    ) -> T {
         let flattened_x = x.flatten();
         let flattened_y = y.flatten();
 
         T::from_flattened(
+            params,
             &iter::zip(flattened_x, flattened_y)
                 .map(|(x, y)| self.select(b, x, y))
                 .collect::<Vec<_>>(),

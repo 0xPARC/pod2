@@ -57,15 +57,15 @@ impl OperationVerifyGadget {
             op.args
                 .iter()
                 .flatten()
-                .map(|&i| builder.vec_ref(prev_statements, i))
+                .map(|&i| builder.vec_ref(&self.params, prev_statements, i))
                 .collect::<Vec<_>>()
         };
 
         // Certain operations (Contains/NotContains) will refer to one
         // of the provided Merkle proofs (if any). These proofs have already
         // been verified, so we need only look up the claim.
-        let resolved_merkle_claim =
-            (!merkle_claims.is_empty()).then(|| builder.vec_ref(merkle_claims, op.aux[0]));
+        let resolved_merkle_claim = (!merkle_claims.is_empty())
+            .then(|| builder.vec_ref(&self.params, merkle_claims, op.aux[0]));
 
         // The verification may require aux data which needs to be stored in the
         // `OperationVerifyTarget` so that we can set during witness generation.
@@ -422,6 +422,7 @@ impl MainPodVerifyGadget {
         // TODO: Store this hash in a global static with lazy init so that we don't have to
         // compute it every time.
         let expected_type_statement = StatementTarget::from_flattened(
+            &self.params,
             &builder.constants(
                 &Statement::ValueOf(
                     AnchoredKey::from((SELF, KEY_TYPE)),
