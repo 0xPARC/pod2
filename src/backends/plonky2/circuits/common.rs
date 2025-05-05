@@ -440,23 +440,14 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
             builder.range_check(expr, NUM_BITS);
         };
 
-        // First check if `x` and `y` have the same sign.
+        // Check if `x` and `y` have the same sign. If not, swap.
         let x_is_negative = self.i64_is_negative(x);
         let y_is_negative = self.i64_is_negative(y);
         let same_sign_ind = self.is_equal(x_is_negative.target, y_is_negative.target);
-
-        // If not, bypass the lt check below.
-        let x = self.select_value(same_sign_ind, x, zero);
-        let y = self.select_value(same_sign_ind, y, one);
-
-        // If the signs are not the same, then we must have x negative
-        // and y nonnegative.
-        let y_is_nonnegative = self.not(y_is_negative);
-        let diff_signs_ok = self.and(x_is_negative, y_is_nonnegative);
-
-        // Altogether, either both signs are the same, or x < 0 <= y.
-        let signs_ok = self.or(same_sign_ind, diff_signs_ok);
-        self.assert_one(signs_ok.target);
+        let (x, y) = (
+            self.select_value(same_sign_ind, x, y),
+            self.select_value(same_sign_ind, y, x),
+        );
 
         let big_limbs_eq = self.is_equal(x.elements[1], y.elements[1]);
         let lhs = self.select(big_limbs_eq, x.elements[0], x.elements[1]);
