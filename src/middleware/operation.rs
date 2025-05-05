@@ -69,6 +69,7 @@ pub enum NativeOperation {
     SumOf = 11,
     ProductOf = 12,
     MaxOf = 13,
+    HashOf = 14,
 
     // Syntactic sugar operations.  These operations are not supported by the backend.  The
     // frontend compiler is responsible of translating these operations into the operations above.
@@ -119,6 +120,7 @@ impl OperationType {
                 NativeOperation::SumOf => Some(Predicate::Native(NativePredicate::SumOf)),
                 NativeOperation::ProductOf => Some(Predicate::Native(NativePredicate::ProductOf)),
                 NativeOperation::MaxOf => Some(Predicate::Native(NativePredicate::MaxOf)),
+                NativeOperation::HashOf => Some(Predicate::Native(NativePredicate::HashOf)),
                 no => unreachable!("Unexpected syntactic sugar op {:?}", no),
             },
             OperationType::Custom(cpr) => Some(Predicate::Custom(cpr.clone())),
@@ -152,6 +154,7 @@ pub enum Operation {
     SumOf(Statement, Statement, Statement),
     ProductOf(Statement, Statement, Statement),
     MaxOf(Statement, Statement, Statement),
+    HashOf(Statement, Statement, Statement),
     Custom(CustomPredicateRef, Vec<Statement>),
 }
 
@@ -174,6 +177,7 @@ impl Operation {
             Self::SumOf(_, _, _) => OT::Native(SumOf),
             Self::ProductOf(_, _, _) => OT::Native(ProductOf),
             Self::MaxOf(_, _, _) => OT::Native(MaxOf),
+            Self::HashOf(_, _, _) => OT::Native(HashOf),
             Self::Custom(cpr, _) => OT::Custom(cpr.clone()),
         }
     }
@@ -194,6 +198,7 @@ impl Operation {
             Self::SumOf(s1, s2, s3) => vec![s1, s2, s3],
             Self::ProductOf(s1, s2, s3) => vec![s1, s2, s3],
             Self::MaxOf(s1, s2, s3) => vec![s1, s2, s3],
+            Self::HashOf(s1, s2, s3) => vec![s1, s2, s3],
             Self::Custom(_, args) => args,
         }
     }
@@ -250,6 +255,9 @@ impl Operation {
                     Self::ProductOf(s1, s2, s3)
                 }
                 (NO::MaxOf, (Some(s1), Some(s2), Some(s3)), OA::None, 3) => Self::MaxOf(s1, s2, s3),
+                (NO::HashOf, (Some(s1), Some(s2), Some(s3)), OA::None, 3) => {
+                    Self::HashOf(s1, s2, s3)
+                }
                 _ => Err(Error::custom(format!(
                     "Ill-formed operation {:?} with arguments {:?}.",
                     op_code, args

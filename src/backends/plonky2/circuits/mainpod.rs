@@ -108,6 +108,7 @@ impl OperationVerifyGadget {
                     self.eval_copy(builder, st, op, &resolved_op_args)?,
                     self.eval_eq_from_entries(builder, st, op, &resolved_op_args),
                     self.eval_lt_lteq_from_entries(builder, st, op, &resolved_op_args),
+                    self.eval_hash_of(builder, st, op, &resolved_op_args),
                 ]
             },
             // Skip these if there are no resolved Merkle claims
@@ -273,6 +274,40 @@ impl OperationVerifyGadget {
         );
 
         builder.all([op_st_code_ok, arg_types_ok, st_args_ok])
+    }
+
+    fn eval_hash_of(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        st: &StatementTarget,
+        op: &OperationTarget,
+        resolved_op_args: &[StatementTarget],
+    ) -> BoolTarget {
+        let op_code_ok = op.has_native_type(builder, NativeOperation::HashOf);
+
+        let arg_types_ok = self.first_n_args_are_valueofs(builder, 3, resolved_op_args);
+
+        let arg1_value = resolved_op_args[0].args[1].as_value();
+        let arg2_value = resolved_op_args[1].args[1].as_value();
+        let arg3_value = resolved_op_args[2].args[1].as_value();
+
+        let expected_hash_value = builder.hash_values(arg2_value, arg3_value);
+
+        let hash_value_ok =
+            builder.is_equal_slice(&arg1_value.elements, &expected_hash_value.elements);
+
+        let arg1_key = resolved_op_args[0].args[0].clone();
+        let arg2_key = resolved_op_args[1].args[0].clone();
+        let arg3_key = resolved_op_args[2].args[0].clone();
+        let expected_statement = StatementTarget::new_native(
+            builder,
+            &self.params,
+            NativePredicate::HashOf,
+            &[arg1_key, arg2_key, arg3_key],
+        );
+        let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+
+        builder.all([op_code_ok, arg_types_ok, hash_value_ok, st_ok])
     }
 
     fn eval_none(
@@ -533,7 +568,7 @@ mod tests {
             mainpod::{OperationArg, OperationAux},
             primitives::merkletree::{MerkleClaimAndProof, MerkleTree},
         },
-        middleware::{Hash, OperationType, PodId, RawValue},
+        middleware::{hash_values, Hash, OperationType, PodId, RawValue},
     };
 
     fn operation_verify(
@@ -937,6 +972,53 @@ mod tests {
             vec![OperationArg::Index(1), OperationArg::Index(1)],
             OperationAux::None,
         );
+        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+
+        // HashOf
+        let input_values = [
+            Value::from(RawValue([
+                GoldilocksField(1),
+                GoldilocksField(2),
+                GoldilocksField(3),
+                GoldilocksField(4),
+            ])),
+            Value::from(512),
+        ];
+        let v1 = hash_values(&input_values);
+        let [v2, v3] = input_values;
+
+        let st1: mainpod::Statement = Statement::ValueOf(
+            AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
+            v1.into(),
+        )
+        .into();
+        let st2: mainpod::Statement = Statement::ValueOf(
+            AnchoredKey::from((PodId(RawValue::from(128).into()), "mundo")),
+            v2,
+        )
+        .into();
+        let st3: mainpod::Statement = Statement::ValueOf(
+            AnchoredKey::from((PodId(RawValue::from(256).into()), "!")),
+            v3,
+        )
+        .into();
+
+        let st: mainpod::Statement = Statement::HashOf(
+            AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
+            AnchoredKey::from((PodId(RawValue::from(128).into()), "mundo")),
+            AnchoredKey::from((PodId(RawValue::from(256).into()), "!")),
+        )
+        .into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::HashOf),
+            vec![
+                OperationArg::Index(0),
+                OperationArg::Index(1),
+                OperationArg::Index(2),
+            ],
+            OperationAux::None,
+        );
+        let prev_statements = vec![st1, st2, st3];
         operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
 
         // NotContainsFromEntries

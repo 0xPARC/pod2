@@ -7,9 +7,10 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
 use crate::middleware::{
-    self, check_st_tmpl, hash_str, AnchoredKey, Key, MainPodInputs, NativeOperation,
-    NativePredicate, OperationAux, OperationType, Params, PodId, PodProver, PodSigner, Predicate,
-    Statement, StatementArg, Value, WildcardValue, EMPTY_VALUE, KEY_TYPE, SELF,
+    self, check_st_tmpl, hash_str, hash_values, AnchoredKey, Hash, Key, MainPodInputs,
+    NativeOperation, NativePredicate, OperationAux, OperationType, Params, PodId, PodProver,
+    PodSigner, Predicate, Statement, StatementArg, Value, WildcardValue, EMPTY_VALUE, KEY_TYPE,
+    SELF,
 };
 
 mod custom;
@@ -433,6 +434,26 @@ impl MainPodBuilder {
                     }
                     _ => {
                         return Err(Error::op_invalid_args("max-of".to_string()));
+                    }
+                },
+                HashOf => match (args[0].clone(), args[1].clone(), args[2].clone()) {
+                    (
+                        OperationArg::Statement(Statement::ValueOf(ak0, v0)),
+                        OperationArg::Statement(Statement::ValueOf(ak1, v1)),
+                        OperationArg::Statement(Statement::ValueOf(ak2, v2)),
+                    ) => {
+                        if Hash::from(v0.raw()) == hash_values(&[v1, v2]) {
+                            vec![
+                                StatementArg::Key(ak0),
+                                StatementArg::Key(ak1),
+                                StatementArg::Key(ak2),
+                            ]
+                        } else {
+                            return Err(Error::op_invalid_args("hash-of".to_string()));
+                        }
+                    }
+                    _ => {
+                        return Err(Error::op_invalid_args("hash-of".to_string()));
                     }
                 },
                 ContainsFromEntries => self.op_args_entries(public, args)?,

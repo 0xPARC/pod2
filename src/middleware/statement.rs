@@ -32,6 +32,7 @@ pub enum NativePredicate {
     SumOf = 8,
     ProductOf = 9,
     MaxOf = 10,
+    HashOf = 11,
 
     // Syntactic sugar predicates.  These predicates are not supported by the backend.  The
     // frontend compiler is responsible of translating these predicates into the predicates above.
@@ -102,6 +103,7 @@ pub enum Statement {
     SumOf(AnchoredKey, AnchoredKey, AnchoredKey),
     ProductOf(AnchoredKey, AnchoredKey, AnchoredKey),
     MaxOf(AnchoredKey, AnchoredKey, AnchoredKey),
+    HashOf(AnchoredKey, AnchoredKey, AnchoredKey),
     Custom(CustomPredicateRef, Vec<WildcardValue>),
 }
 
@@ -123,6 +125,7 @@ impl Statement {
             Self::SumOf(_, _, _) => Native(NativePredicate::SumOf),
             Self::ProductOf(_, _, _) => Native(NativePredicate::ProductOf),
             Self::MaxOf(_, _, _) => Native(NativePredicate::MaxOf),
+            Self::HashOf(_, _, _) => Native(NativePredicate::HashOf),
             Self::Custom(cpr, _) => Custom(cpr.clone()),
         }
     }
@@ -140,6 +143,7 @@ impl Statement {
             Self::SumOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
             Self::ProductOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
             Self::MaxOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
+            Self::HashOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
             Self::Custom(_, args) => Vec::from_iter(args.into_iter().map(WildcardLiteral)),
         }
     }

@@ -58,7 +58,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::serialization::*;
-use crate::middleware::{Params, ToFields};
+use crate::middleware::{Params, ToFields, Value};
 
 /// F is the native field we use everywhere.  Currently it's Goldilocks from plonky2
 pub type F = GoldilocksField;
@@ -162,6 +162,10 @@ pub fn hash_value(input: &RawValue) -> Hash {
 
 pub fn hash_fields(input: &[F]) -> Hash {
     Hash(PoseidonHash::hash_no_pad(input).elements)
+}
+
+pub fn hash_values(input: &[Value]) -> Hash {
+    hash_fields(&input.iter().flat_map(|v| v.raw().0).collect::<Vec<_>>())
 }
 
 impl From<RawValue> for Hash {

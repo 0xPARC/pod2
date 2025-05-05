@@ -7,7 +7,10 @@ use plonky2::{
         extension::Extendable,
         types::{Field, PrimeField64},
     },
-    hash::hash_types::{HashOutTarget, RichField, NUM_HASH_OUT_ELTS},
+    hash::{
+        hash_types::{HashOutTarget, RichField, NUM_HASH_OUT_ELTS},
+        poseidon::PoseidonHash,
+    },
     iop::{
         target::{BoolTarget, Target},
         witness::{PartialWitness, WitnessWrite},
@@ -320,6 +323,9 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     /// and `y` each consist of two `u32` limbs.
     fn assert_i64_less_if(&mut self, b: BoolTarget, x: ValueTarget, y: ValueTarget);
 
+    /// Creates value target that is a hash of two given values.
+    fn hash_values(&mut self, x: ValueTarget, y: ValueTarget) -> ValueTarget;
+
     // Convenience methods for accessing and connecting elements of
     // (vectors of) flattenables.
     fn vec_ref<T: Flattenable>(&mut self, ts: &[T], i: Target) -> T;
@@ -453,6 +459,14 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
         let lhs = self.select(big_limbs_eq, x.elements[0], x.elements[1]);
         let rhs = self.select(big_limbs_eq, y.elements[0], y.elements[1]);
         assert_limb_lt(self, lhs, rhs);
+    }
+
+    fn hash_values(&mut self, x: ValueTarget, y: ValueTarget) -> ValueTarget {
+        ValueTarget::from_slice(
+            &self
+                .hash_n_to_hash_no_pad::<PoseidonHash>([x.elements, y.elements].concat())
+                .elements,
+        )
     }
 
     fn vec_ref<T: Flattenable>(&mut self, ts: &[T], i: Target) -> T {
