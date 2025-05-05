@@ -1,5 +1,3 @@
-// src/lang/processor.rs
-
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,
@@ -41,14 +39,14 @@ pub enum ProcessorError {
     #[error("Multiple REQUEST definitions found. Only one is allowed.")]
     MultipleRequestDefinitions,
     #[error("Internal processing error: {0}")]
-    Internal(String), // For unexpected issues
+    Internal(String), // For unexpected logic errors during processing
     #[error("Middleware error: {0}")]
     Middleware(#[from] middleware::Error),
 }
 
 /// Holds the processed output: a single batch of custom predicates
 /// and the list of statement templates for the main request.
-#[derive(Debug, Clone, PartialEq)] // Removed Default
+#[derive(Debug, Clone, PartialEq)]
 pub struct ProcessedOutput {
     pub custom_batch: Arc<CustomPredicateBatch>,
     pub request_templates: Vec<StatementTmpl>,
@@ -73,6 +71,10 @@ struct ScopeContext<'a> {
 
 /// Processes the parsed Podlog AST into middleware structures.
 ///
+/// This involves two passes:
+/// 1. Collect signatures (name, arity, index) of all custom predicates.
+/// 2. Process the bodies of predicates and the request, resolving references using the signatures.
+///
 /// Takes the AST `Document` and `Params` (needed for middleware validation).
 /// Returns the processed output or an error.
 pub fn process_document(
@@ -81,7 +83,7 @@ pub fn process_document(
 ) -> Result<ProcessedOutput, ProcessorError> {
     let mut custom_definitions = Vec::new();
     let mut request_definition: Option<ast::RequestDefinition> = None;
-    let mut defined_names = HashSet::new(); // Track defined predicate names
+    let mut defined_names = HashSet::new();
 
     // 1. Separate definitions and check for duplicates/multiple requests
     for definition in document.definitions {
@@ -141,7 +143,7 @@ pub fn process_document(
 
     // Process Request (if exists) using the same context
     let request_templates = if let Some(req_def) = request_definition {
-        process_request(req_def, &processing_ctx)? // Pass the context
+        process_request(req_def, &processing_ctx)?
     } else {
         Vec::new() // No request defined
     };
@@ -442,12 +444,12 @@ fn parse_hex_to_raw_value(hex_str: &str) -> Result<middleware::RawValue, Process
 }
 
 // Resolves a variable name within the current scope.
-// For custom predicates, `create_if_missing` should be false.
-// For requests, `create_if_missing` should be true.
+// If `create_if_missing` is true (for requests), assigns a new wildcard index if not found.
+// If `create_if_missing` is false (for predicates), returns an error if not found.
 fn resolve_variable(
     var: ast::Variable,
     scope: &mut ScopeContext,
-    create_if_missing: bool, // Flag to control behavior for requests
+    create_if_missing: bool,
 ) -> Result<Wildcard, ProcessorError> {
     let var_name = &var.0;
     if let Some(wildcard) = scope.variables.get(var_name) {
@@ -455,11 +457,10 @@ fn resolve_variable(
     } else if create_if_missing {
         let index = scope.next_wildcard_index;
         // Check wildcard limit before adding
-        // Use max_custom_predicate_wildcards limit even for request wildcards for consistency? Check Params def.
-        // Assuming the same limit applies for now.
+        // Use max_custom_predicate_wildcards limit even for request wildcards for consistency
         if index >= scope.processing_ctx.params.max_custom_predicate_wildcards {
             return Err(ProcessorError::Middleware(middleware::Error::max_length(
-                "wildcards in request".to_string(), // Clarify context
+                "wildcards in request".to_string(), // Clarify context if this is request-specific
                 index + 1,                          // We are about to add one more
                 scope.processing_ctx.params.max_custom_predicate_wildcards,
             )));
@@ -474,8 +475,8 @@ fn resolve_variable(
         scope.next_wildcard_index += 1;
         Ok(new_wildcard)
     } else {
-        // If variable is not found in predicate scope (create_if_missing=false)
-        Err(ProcessorError::UndefinedIdentifier(var_name.clone())) // Use UndefinedIdentifier
+        // Variable not found and create_if_missing is false (inside predicate definition)
+        Err(ProcessorError::UndefinedIdentifier(var_name.clone()))
     }
 }
 
@@ -521,7 +522,7 @@ fn check_native_arity(pred: NativePredicate, args_len: usize) -> Result<(), Proc
     if args_len < expected_min || args_len > expected_max {
         Err(ProcessorError::ArgumentCountMismatch {
             predicate: format!("{:?}", pred),
-            // For simplicity, just show expected min if range is used (though currently all are fixed)
+            // For simplicity, just show expected min if range is used (currently all are fixed)
             expected: expected_min,
             found: args_len,
         })

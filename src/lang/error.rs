@@ -1,5 +1,3 @@
-// src/lang/error.rs
-
 use thiserror::Error;
 
 use crate::{
@@ -23,7 +21,6 @@ pub enum LangError {
 
     #[error("Middleware error during processing: {0}")]
     Middleware(#[from] Box<middleware::Error>),
-    // Add more specific processing errors as needed
 }
 
 // We need to manually implement From for the boxed types because

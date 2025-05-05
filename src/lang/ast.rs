@@ -33,7 +33,7 @@ pub enum AstBuildError {
         span: Option<(usize, usize)>,
     },
     #[error("Internal error during AST build: {0}")]
-    Internal(String), // For unexpected logic errors
+    Internal(String), // For unexpected logic errors during AST construction
 }
 
 // Helper to get span from a Pair
@@ -116,7 +116,7 @@ pub enum Argument {
 
 // --- Statements ---
 
-// Corresponds to middleware::NativePredicate, but potentially different args for AST
+// Corresponds to middleware::NativePredicate
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
 pub enum NativePredicate {
     ValueOf,
@@ -233,22 +233,19 @@ fn build_custom_predicate(
                 return Err(ast_err!(Generic, &inner_pair, "Unexpected 'identifier' rule ({}) encountered directly within custom_predicate_def. Expected 'predicate_identifier'.", inner_pair.as_str()));
             }
             Rule::predicate_identifier => {
-                // Correctly handle the predicate name identifier
+                // Avoid overwriting if somehow matched twice
                 if name_opt.is_some() {
-                    // Avoid overwriting if somehow matched twice
                     return Err(ast_err!(
                         Generic,
                         &inner_pair,
                         "Found multiple predicate names"
                     ));
                 }
-                // Build the identifier directly from the predicate_identifier pair's string content
                 name_opt = Some(build_identifier(inner_pair)?);
             }
             Rule::public_arg_list => {
-                // Parse the public arguments
+                // Should only parse once
                 if !public_args.is_empty() {
-                    // Should only parse once
                     return Err(ast_err!(
                         Generic,
                         &inner_pair,
@@ -261,9 +258,8 @@ fn build_custom_predicate(
                     .collect::<Result<Vec<Variable>, _>>()?;
             }
             Rule::private_args_def => {
-                // Extract the private_arg_list from within this
+                // Should only parse once
                 if !private_args.is_empty() {
-                    // Should only parse once
                     return Err(ast_err!(
                         Generic,
                         &inner_pair,
@@ -286,7 +282,7 @@ fn build_custom_predicate(
                     .map(build_statement)
                     .collect::<Result<_, _>>()?;
             }
-            // Match the new conjunction_type rule
+            // Match the conjunction_type rule
             Rule::conjunction_type => {
                 if type_opt.is_some() {
                     return Err(ast_err!(
@@ -321,8 +317,7 @@ fn build_custom_predicate(
     }
 
     let name = name_opt.ok_or_else(|| {
-        // Span isn't easily available here, maybe pass the outer pair down?
-        // For now, keep as Internal or make it a Generic without span.
+        // Span isn't easily available here if the name was completely missing.
         AstBuildError::Internal("Missing predicate name in parsed pairs".to_string())
     })?;
     let type_ = type_opt.ok_or_else(|| {
@@ -340,7 +335,7 @@ fn build_custom_predicate(
 }
 
 fn build_request(pair: Pair<'_, Rule>) -> Result<RequestDefinition, AstBuildError> {
-    // Keep outer pair reference for potential errors
+    // Keep outer pair reference for potential errors on unexpected rules.
     let outer_pair = pair.clone();
     let maybe_statement_list = pair
         .into_inner()
@@ -352,15 +347,15 @@ fn build_request(pair: Pair<'_, Rule>) -> Result<RequestDefinition, AstBuildErro
             .filter(|p| p.as_rule() == Rule::statement)
             .map(build_statement)
             .collect::<Result<_, _>>()?, // Errors from build_statement will have spans
-        None => Vec::new(), // Handle case where statement_list is not present
+        None => Vec::new(),
     };
 
-    // Check for unexpected rules inside request_def (besides statement_list or comments/ws)
+    // Check for unexpected rules inside request_def (besides statement_list or comments/ws).
     for inner in outer_pair.into_inner() {
         match inner.as_rule() {
-            Rule::statement_list | Rule::COMMENT | Rule::WHITESPACE => { /* Expected */ }
-            _ if ["REQUEST", "(", ")"].contains(&inner.as_str().trim()) => { /* Ignore syntax */ }
-            _ => return Err(ast_err!(UnexpectedRule, &inner)), // Add span here
+            Rule::statement_list | Rule::COMMENT | Rule::WHITESPACE => {}
+            _ if ["REQUEST", "(", ")"].contains(&inner.as_str().trim()) => {}
+            _ => return Err(ast_err!(UnexpectedRule, &inner)),
         }
     }
 
@@ -392,7 +387,6 @@ fn build_statement(pair: Pair<'_, Rule>) -> Result<Statement, AstBuildError> {
 }
 
 fn build_native_call(pair: Pair<'_, Rule>) -> Result<NativePredicateCall, AstBuildError> {
-    // Determine the predicate type from the rule of the pair itself
     let predicate = match pair.as_rule() {
         Rule::value_of_stmt => NativePredicate::ValueOf,
         Rule::equal_stmt => NativePredicate::Equal,
@@ -407,10 +401,10 @@ fn build_native_call(pair: Pair<'_, Rule>) -> Result<NativePredicateCall, AstBui
         _ => return Err(ast_err!(UnexpectedRule, &pair)), // Should not happen if called correctly
     };
 
-    // Process arguments based on the predicate type
+    // Process arguments differently for ValueOf vs other native predicates.
     let args = if predicate == NativePredicate::ValueOf {
-        // Specific logic for ValueOf (AK, Literal)
-        let mut inner_pairs = pair.clone().into_inner(); // Clone for iteration
+        // ValueOf requires (AnchoredKey, Literal)
+        let mut inner_pairs = pair.clone().into_inner();
         let ak_pair = inner_pairs.next().ok_or_else(|| {
             ast_err!(
                 Generic,
@@ -456,8 +450,8 @@ fn build_native_call(pair: Pair<'_, Rule>) -> Result<NativePredicateCall, AstBui
             Argument::Literal(build_literal(lit_pair)?),
         ]
     } else {
-        // Use the helper function for all other predicate types
-        build_native_call_args(predicate, pair)? // Pass original pair
+        // All other native predicates expect only AnchoredKey arguments.
+        build_native_call_args(predicate, pair)?
     };
 
     Ok(NativePredicateCall { predicate, args })
@@ -547,7 +541,7 @@ fn build_anchored_key_key(pair: &Pair<'_, Rule>) -> Result<AnchoredKeyKey, AstBu
 
 fn build_variable(pair: &Pair<'_, Rule>) -> Result<Variable, AstBuildError> {
     // The variable rule is atomic (@), so we get the full string `?Name`
-    // and strip the prefix.
+    // and strip the `?` prefix.
     let var_str = pair.as_str();
     let name = var_str.strip_prefix("?").ok_or_else(|| {
         ast_err!(
@@ -557,6 +551,7 @@ fn build_variable(pair: &Pair<'_, Rule>) -> Result<Variable, AstBuildError> {
             var_str
         )
     })?;
+
     // Basic validation: ensure it's not just "?"
     if name.is_empty() {
         return Err(ast_err!(
@@ -565,7 +560,8 @@ fn build_variable(pair: &Pair<'_, Rule>) -> Result<Variable, AstBuildError> {
             "Variable name cannot be empty after '?'"
         ));
     }
-    // You might add identifier validation here if needed (e.g., match identifier rule regex)
+
+    // Optional: Add further validation for identifier characters if the grammar allows too much.
     Ok(Variable(name.to_string()))
 }
 
@@ -610,7 +606,6 @@ fn build_literal(pair: Pair<'_, Rule>) -> Result<Literal, AstBuildError> {
         }
         Rule::literal_string => Ok(Literal::String(parse_string_literal(&inner_pair)?)),
         Rule::literal_array => {
-            // The inner of literal_array can be empty or contain literal_values
             let elements = inner_pair
                 .into_inner()
                 .map(build_literal)
@@ -618,7 +613,6 @@ fn build_literal(pair: Pair<'_, Rule>) -> Result<Literal, AstBuildError> {
             Ok(Literal::Array(elements))
         }
         Rule::literal_set => {
-            // The inner of literal_set can be empty or contain literal_values
             let elements = inner_pair
                 .into_inner()
                 .map(build_literal)
@@ -626,17 +620,13 @@ fn build_literal(pair: Pair<'_, Rule>) -> Result<Literal, AstBuildError> {
             Ok(Literal::Set(elements))
         }
         Rule::literal_dict => {
-            // The inner of literal_dict can be empty or contain dict_pairs
             let pairs = inner_pair
                 .into_inner()
                 .map(|dict_entry_pair| {
-                    // dict_entry_pair rule is dict_pair
-                    let mut entry_inner = dict_entry_pair.clone().into_inner(); // Clone for errors
-                                                                                // First inner is literal_string
+                    let mut entry_inner = dict_entry_pair.clone().into_inner();
                     let key_pair = entry_inner
                         .next()
                         .ok_or_else(|| ast_err!(Generic, &dict_entry_pair, "Missing dict key"))?;
-                    // Second inner is literal_value
                     let val_pair = entry_inner
                         .next()
                         .ok_or_else(|| ast_err!(Generic, &dict_entry_pair, "Missing dict value"))?;
@@ -648,7 +638,7 @@ fn build_literal(pair: Pair<'_, Rule>) -> Result<Literal, AstBuildError> {
                         ));
                     }
                     let key = parse_string_literal(&key_pair)?;
-                    let val = build_literal(val_pair)?; // build_literal expects literal_value
+                    let val = build_literal(val_pair)?;
                     Ok((key, val))
                 })
                 .collect::<Result<HashMap<_, _>, _>>()?;
@@ -687,11 +677,10 @@ fn parse_string_literal(pair: &Pair<'_, Rule>) -> Result<String, AstBuildError> 
 
     while let Some(c) = chars.next() {
         if c == '\\' {
-            // Escape sequence
             match chars.next() {
                 Some('"') => result.push('"'),
                 Some('\\') => result.push('\\'),
-                Some('/') => result.push('/'), // Note: JSON technically allows unescaped /
+                Some('/') => result.push('/'), // Note: JSON technically allows unescaped /.
                 Some('b') => result.push('\x08'),
                 Some('f') => result.push('\x0C'),
                 Some('n') => result.push('\n'),
@@ -725,7 +714,6 @@ fn parse_string_literal(pair: &Pair<'_, Rule>) -> Result<String, AstBuildError> 
                     })?);
                 }
                 Some(other) => {
-                    // Invalid escape character
                     return Err(ast_err!(
                         Generic,
                         &inner_pair,
@@ -734,7 +722,6 @@ fn parse_string_literal(pair: &Pair<'_, Rule>) -> Result<String, AstBuildError> 
                     ));
                 }
                 None => {
-                    // Dangling backslash at end of string
                     return Err(ast_err!(
                         Generic,
                         &inner_pair,
@@ -743,7 +730,6 @@ fn parse_string_literal(pair: &Pair<'_, Rule>) -> Result<String, AstBuildError> 
                 }
             }
         } else {
-            // Regular character
             result.push(c);
         }
     }
@@ -760,9 +746,11 @@ mod tests {
     use super::*;
     use crate::lang::parser::{PodlogParser, Rule};
 
-    // Helper to parse a string with a specific rule and expect success
+    // Helper to parse a string with a specific rule and expect success.
+    // Uses anchored test rules (e.g., `test_identifier`) from the grammar
+    // to ensure the entire input matches the target rule.
     fn parse_rule(rule: Rule, input: &str) -> Result<Pair<'_, Rule>, String> {
-        // Map the base rule to its corresponding anchored test rule
+        // Map the base rule to its corresponding anchored test rule.
         let test_rule = match rule {
             Rule::identifier => Rule::test_identifier,
             Rule::variable => Rule::test_variable,
@@ -772,8 +760,6 @@ mod tests {
             // For rules without a specific test rule, maybe just use the original?
             // Or panic if a test requires an anchored version that doesn't exist.
             _ => rule, // Fallback to original rule, might need adjustment
-                       // Consider panicking or returning Err for unhandled test rules
-                       // panic!("No corresponding test rule defined for {:?}", rule);
         };
 
         match PodlogParser::parse(test_rule, input) {
@@ -802,30 +788,31 @@ mod tests {
         }
     }
 
-    // Helper function to parse a string and build a literal
+    // Helper function to parse a string and build a literal.
+    // It specifically parses using the `test_literal_value` rule, which
+    // anchors the `literal_value` rule to ensure the whole input is consumed.
+    // It then calls `build_literal` on the inner `literal_value` pair.
     fn build_test_literal(input: &str) -> Result<Literal, AstBuildError> {
         // Need to wrap the literal rule in literal_value for build_literal
         match PodlogParser::parse(Rule::test_literal_value, input) {
-            // Use the anchored test rule
             Ok(mut pairs) => {
                 let test_pair = pairs.next().ok_or_else(|| {
                     AstBuildError::Internal(
                         "Parser returned OK but no pair for test_literal_value".to_string(),
                     )
                 })?;
-                // The test_literal_value rule contains literal_value as its inner rule
+                // The test_literal_value rule contains literal_value as its inner rule.
                 let literal_value_pair = test_pair.into_inner().next().ok_or_else(|| {
                     AstBuildError::Internal(
                         "No inner literal_value found in test_literal_value".to_string(),
                     )
                 })?;
 
-                // Check if the inner pair is the actual literal or literal_value itself
-                // The pair returned by parsing literal_value should *always* be literal_value
+                // The pair returned by parsing literal_value should *always* be literal_value.
                 if literal_value_pair.as_rule() == Rule::literal_value {
                     build_literal(literal_value_pair)
                 } else {
-                    // This case indicates a parser/grammar inconsistency
+                    // This case indicates a parser/grammar inconsistency.
                     Err(ast_err!(UnexpectedRule, &literal_value_pair))
                 }
             }
@@ -854,7 +841,7 @@ mod tests {
             Ok(Literal::Int(0)),
             "Test Int Zero"
         );
-        // Parser should fail for floats, resulting in Internal error from build_test_literal
+        // Parser should fail for floats, resulting in Internal error from build_test_literal.
         assert!(
             matches!(build_test_literal("1.23"), Err(AstBuildError::Internal(_))),
             "Test Int Fail Float"
@@ -895,11 +882,11 @@ mod tests {
             "Test Raw Longer"
         );
         // AST builder should fail for odd length / empty / invalid hex
+        // Note: Grammar now enforces even length >= 2, so parser fails first.
         assert!(
             matches!(
                 build_test_literal("0xabc"),
                 Err(AstBuildError::Internal(_)) // Expect Internal error due to parse failure
-                                                // Err(AstBuildError::InvalidHexLength { .. }) // Original incorrect expectation
             ),
             "Test Raw Fail Odd"
         );
@@ -910,7 +897,7 @@ mod tests {
             ),
             "Test Raw Fail Empty"
         );
-        // Parser should fail for invalid hex chars
+        // Parser should fail for invalid hex chars.
         assert!(
             matches!(build_test_literal("0xgg"), Err(AstBuildError::Internal(_))),
             "Test Raw Fail Invalid Hex"
@@ -937,7 +924,7 @@ mod tests {
             Ok(Literal::String("\n newline".to_string())),
             "Test String Escaped Newline"
         );
-        // Parser should fail for unterminated
+        // Parser should fail for unterminated strings.
         assert!(
             matches!(
                 build_test_literal("\"unterminated"),
@@ -945,7 +932,7 @@ mod tests {
             ),
             "Test String Fail Unterminated"
         );
-        // AST builder should fail for invalid escape
+        // Parser should fail for invalid escape sequences.
         assert!(
             matches!(
                 build_test_literal(r#""invalid \escape""#),
@@ -985,7 +972,7 @@ mod tests {
             "Test Set Empty"
         );
         assert_eq!(
-            build_test_literal("#[1, 2, 1]"), // Duplicates allowed in AST, processor checks later
+            build_test_literal("#[1, 2, 1]"), // Duplicates allowed in AST, processor checks later.
             Ok(Literal::Set(vec![
                 Literal::Int(1),
                 Literal::Int(2),
@@ -1017,7 +1004,7 @@ mod tests {
             Ok(Literal::Dict(expected_nested_dict)),
             "Test Dict Nested"
         );
-        // Parser should fail for non-string key
+        // Parser should fail for non-string key.
         assert!(
             matches!(
                 build_test_literal("{ name: \"Alice\" }"),
@@ -1047,7 +1034,7 @@ mod tests {
             build_identifier(pair),
             Ok(Identifier("ValidName123".to_string()))
         );
-        // Parser should fail for invalid identifiers
+        // Parser should fail for invalid identifiers.
         assert!(parse_rule(Rule::identifier, "1_invalid").is_err());
         assert!(parse_rule(Rule::identifier, "invalid-char").is_err());
     }
@@ -1063,19 +1050,18 @@ mod tests {
         let pair = parse_rule(Rule::variable, "?X1").expect("Parser failed for variable");
         assert_eq!(build_variable(&pair), Ok(Variable("X1".to_string())));
 
-        // Parser should fail for just "?"
+        // Parser should fail for just "?".
         assert!(
             parse_rule(Rule::variable, "?").is_err(),
             "Parser should fail for '?'"
         );
 
-        // Parser should fail for invalid variable chars
+        // Parser should fail for invalid variable chars.
         assert!(parse_rule(Rule::variable, "?invalid-char").is_err());
     }
 
     #[test]
     fn test_build_anchored_key() {
-        // Literal key
         let pair_lit =
             parse_rule(Rule::anchored_key, "?PodVar[\"key\"]").expect("Parse AK literal failed");
         let expected_lit = Ok(AnchoredKey {
@@ -1084,7 +1070,6 @@ mod tests {
         });
         assert_eq!(build_anchored_key(pair_lit), expected_lit);
 
-        // Variable key
         let pair_var =
             parse_rule(Rule::anchored_key, "?PodVar[?KeyVar]").expect("Parse AK variable failed");
         let expected_var = Ok(AnchoredKey {
@@ -1093,7 +1078,7 @@ mod tests {
         });
         assert_eq!(build_anchored_key(pair_var), expected_var);
 
-        // Error cases (parser should catch these)
+        // Error cases (parser should catch these).
         assert!(parse_rule(Rule::anchored_key, "PodVar[\"key\"]").is_err()); // Missing `?` on pod var
         assert!(parse_rule(Rule::anchored_key, "?PodVar[invalid]").is_err()); // Invalid key type (not var or string lit)
         assert!(parse_rule(Rule::anchored_key, "?PodVar[]").is_err()); // Empty key
@@ -1108,7 +1093,6 @@ mod tests {
 
     #[test]
     fn test_build_statement() {
-        // Native statement
         let result_native = build_test_statement("Equal(?A[\"k\"], ?B[\"k\"])");
         let expected_native = Ok(Statement::Native(NativePredicateCall {
             predicate: NativePredicate::Equal,
@@ -1125,7 +1109,6 @@ mod tests {
         }));
         assert_eq!(result_native, expected_native);
 
-        // Custom statement
         let result_custom = build_test_statement("my_pred(?X)");
         let expected_custom = Ok(Statement::Custom(CustomPredicateCall {
             name: Identifier("my_pred".to_string()),
@@ -1146,7 +1129,6 @@ mod tests {
 
     #[test]
     fn test_build_custom_predicate() {
-        // Simple AND predicate
         let input_and = r#"simple_and(A, B) = AND(
             Equal(?A["val"], ?B["val"])
         )"#;
@@ -1172,7 +1154,6 @@ mod tests {
         });
         assert_eq!(result_and, expected_and);
 
-        // Predicate with private args
         let input_priv = r#"with_priv(Pub) = OR(
             private(Priv1, Priv2)
             Lt(?Pub["x"], ?Priv1["y"])
@@ -1215,7 +1196,6 @@ mod tests {
         });
         assert_eq!(result_priv, expected_priv);
 
-        // Predicate with no args, no statements
         let input_empty = "empty_pred() = AND()";
         let result_empty = build_test_custom_predicate(input_empty);
         let expected_empty = Ok(CustomPredicateDefinition {
@@ -1227,7 +1207,6 @@ mod tests {
         });
         assert_eq!(result_empty, expected_empty);
 
-        // Predicate with args, no statements
         let input_no_stmts = "no_stmts(A, B) = OR()";
         let result_no_stmts = build_test_custom_predicate(input_no_stmts);
         let expected_no_stmts = Ok(CustomPredicateDefinition {
@@ -1278,17 +1257,15 @@ mod tests {
         });
         assert_eq!(result, expected);
 
-        // Empty request
         let input_empty = "REQUEST()";
         let result_empty = build_test_request(input_empty);
         let expected_empty = Ok(RequestDefinition { statements: vec![] });
         assert_eq!(result_empty, expected_empty);
 
-        // Request with comments
         let input_comments = r#"REQUEST(
-            // First statement
+            // Comment line
             Gt(?Val["x"], ?Other["y"])
-            // Another custom call
+            // Another comment
             other_pred()
         )"#;
         let result_comments = build_test_request(input_comments);
@@ -1326,14 +1303,13 @@ mod tests {
 
     #[test]
     fn test_build_ast() {
-        // Document with one predicate and one request
         let input_full = r#"
-            // Predicate first
+            // Predicate definition
             pred(X) = AND(
                 Gt(?X["a"], ?X["b"])
             )
 
-            // Then request
+            // Request definition
             REQUEST(
                 pred(?MyData)
                 Lt(?MyData["b"], ?Z["z"])
@@ -1386,7 +1362,6 @@ mod tests {
         });
         assert_eq!(result_full, expected_full);
 
-        // Document with only comments and whitespace
         let input_empty = "// comment 1\n   // comment 2 \n \n";
         let result_empty = build_test_document(input_empty);
         let expected_empty_doc = Ok(Document {
@@ -1394,7 +1369,6 @@ mod tests {
         });
         assert_eq!(result_empty, expected_empty_doc);
 
-        // Document with only predicate
         let input_pred_only = "pred_only() = OR()";
         let result_pred_only = build_test_document(input_pred_only);
         let expected_pred_only = Ok(Document {
@@ -1410,7 +1384,6 @@ mod tests {
         });
         assert_eq!(result_pred_only, expected_pred_only);
 
-        // Document with only request
         let input_req_only = "REQUEST( Equal(?A[\"k\"], ?B[\"k\"]) )";
         let result_req_only = build_test_document(input_req_only);
         let expected_req_only = Ok(Document {
@@ -1432,7 +1405,6 @@ mod tests {
         });
         assert_eq!(result_req_only, expected_req_only);
 
-        // Document with mixed order
         let input_mixed = r#"
             REQUEST(
                 pred1(?A)
