@@ -29,7 +29,8 @@ predicate_identifier = @{
 variable = @{ "?" ~ identifier }
 
 // Argument list (for predicate definition) - comma-separated identifiers
-def_arg_list = { identifier ~ ("," ~ identifier)* }
+public_arg_list = { identifier ~ ("," ~ identifier)* }  // For public args
+private_arg_list = { identifier ~ ("," ~ identifier)* } // For private args
 
 // Top-level items: Request or Custom Predicate Definition
 document = { SOI ~ (custom_predicate_def | request_def)* ~ EOI }
@@ -40,7 +41,7 @@ request_def = { "REQUEST" ~ "(" ~ statement_list? ~ ")" } // Allow empty REQUEST
 conjunction_type = { "AND" | "OR" }
 
 custom_predicate_def = {
-    predicate_identifier ~ "(" ~ def_arg_list? ~ ")" ~ // Use predicate_identifier for the name
+    predicate_identifier ~ "(" ~ public_arg_list? ~ ")" ~ // Use public_arg_list
     "=" ~
     conjunction_type ~ "(" ~ // Use the named rule here
     (private_args_def)? ~ // Optional private args
@@ -48,7 +49,7 @@ custom_predicate_def = {
     ")"
 }
 
-private_args_def = { "private" ~ "(" ~ def_arg_list? ~ ")" }
+private_args_def = { "private" ~ "(" ~ private_arg_list? ~ ")" } // Use private_arg_list
 
 // statement_list implicitly allows whitespace/comments between statements due to silent rules
 statement_list = { statement+ }
@@ -70,12 +71,10 @@ statement = {
 
 // Arguments for predicate calls
 // Can be a variable, a literal value, or an anchored key
-// Reordered to prioritize anchored_key
-call_arg = { anchored_key | variable | literal_value }
-call_arg_list = { call_arg ~ ("," ~ call_arg)* }
+custom_call_arg = { variable | literal_value } // Args allowed in custom calls
+call_arg_list = { custom_call_arg ~ ("," ~ custom_call_arg)* } // For custom calls
 
 // Anchored Key: ?Var[\"key_literal\" | ?KeyVar]
-// Make atomic
 anchored_key = { variable ~ "[" ~ (variable | literal_string) ~ "]" }
 
 // Literal Values (ordered to avoid ambiguity, e.g., string before int)
@@ -113,11 +112,11 @@ dict_pair = { literal_string ~ ":" ~ literal_value }
 
 
 // Rules for specific native predicate calls
-value_of_stmt = { "ValueOf" ~ "(" ~ anchored_key ~ "," ~ literal_value ~ ")" }
-equal_stmt = { "Equal" ~ "(" ~ anchored_key ~ "," ~ call_arg ~ ")" }
-not_equal_stmt = { "NotEqual" ~ "(" ~ anchored_key ~ "," ~ call_arg ~ ")" }
-gt_stmt = { "Gt" ~ "(" ~ anchored_key ~ "," ~ call_arg ~ ")" }
-lt_stmt = { "Lt" ~ "(" ~ anchored_key ~ "," ~ call_arg ~ ")" }
+value_of_stmt = { "ValueOf" ~ "(" ~ anchored_key ~ "," ~ literal_value ~ ")" } 
+equal_stmt = { "Equal" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ ")" } 
+not_equal_stmt = { "NotEqual" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ ")" }
+gt_stmt = { "Gt" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ ")" } 
+lt_stmt = { "Lt" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ ")" } 
 contains_stmt = { "Contains" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," ~ anchored_key ~ ")" }
 not_contains_stmt = { "NotContains" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ ")" }
 sum_of_stmt = { "SumOf" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," ~ anchored_key ~ ")" }
@@ -125,13 +124,12 @@ product_of_stmt = { "ProductOf" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," 
 max_of_stmt = { "MaxOf" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," ~ anchored_key ~ ")" }
 
 // Rule for a custom predicate call
-custom_predicate_call = { predicate_identifier ~ "(" ~ call_arg_list? ~ ")" }
+custom_predicate_call = { predicate_identifier ~ "(" ~ call_arg_list? ~ ")" } // Uses call_arg_list with custom_call_arg
 
 // --- Rules for testing full input matching ---
 test_identifier = { SOI ~ identifier ~ EOI }
 test_variable = { SOI ~ variable ~ EOI }
 test_literal_int = { SOI ~ literal_int ~ EOI }
-test_literal_raw = { SOI ~ literal_raw ~ EOI } // Update test rule for raw
-// Add others here if needed for specific assert_fails tests later
+test_literal_raw = { SOI ~ literal_raw ~ EOI } 
 test_literal_value = { SOI ~ literal_value ~ EOI }
-test_custom_predicate_call = { SOI ~ custom_predicate_call ~ EOI }
+test_custom_predicate_call = { SOI ~ custom_predicate_call ~ EOI } 
