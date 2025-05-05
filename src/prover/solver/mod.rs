@@ -31,27 +31,27 @@ use types::{Constraint, Domain, ExpectedType};
 
 use crate::prover::types::ConcreteValue;
 
-// Represents the overall state of the constraint solver
+/// Represents the state of the constraint solver during search and proof generation.
+/// Contains domains for wildcards, structural constraints, and proof chains.
 #[derive(Clone)]
 pub struct SolverState {
-    /// Middleware parameters used for configuration (e.g., field sizes).
+    /// Configuration parameters for the solver
     pub params: Params,
-    // Store Domain and its inferred ExpectedType together
+    /// Maps wildcards to their possible values and inferred types
     pub domains: HashMap<Wildcard, (Domain, ExpectedType)>,
-    // Store structural constraints derived from templates
+    /// Constraints derived from request templates
     pub constraints: Vec<Constraint>,
-    // Store generated proof chains, mapping the derived statement to its proof
+    /// Maps proven statements to their proof chains
     pub proof_chains: HashMap<Statement, ProofChain>,
-    // Store the set of base facts (from input PODs) used in the proofs
-    // The PodId indicates the origin of the base fact.
+    /// Base facts required to support the final proof chains
     pub scope: HashSet<(PodId, Statement)>,
 }
 
 impl SolverState {
-    /// Creates a new, empty SolverState with the given parameters.
+    /// Creates a new empty solver state with the given parameters
     pub fn new(params: Params) -> Self {
         Self {
-            params, // Store provided params
+            params,
             domains: HashMap::new(),
             constraints: Vec::new(),
             proof_chains: HashMap::new(),
@@ -60,13 +60,15 @@ impl SolverState {
     }
 }
 
+/// Solves a set of request templates by finding a consistent assignment of values to wildcards
+/// and generating proofs for the resulting statements.
 pub fn solve(
     request_templates: &[middleware::StatementTmpl],
     initial_facts: &[(PodId, Statement)],
     params: &Params,
     custom_definitions: &super::types::CustomDefinitions,
 ) -> Result<super::types::ProofSolution, super::error::ProverError> {
-    // --- Stage 1: Initialize Solver State & Get Potential Constant Info/SELF facts ---
+    // Initialize solver state and gather constant information
     let (mut state, potential_constant_info, self_facts) = initialize_solver_state(
         request_templates,
         &SolverContext {
@@ -76,23 +78,23 @@ pub fn solve(
         },
     )?;
 
-    // --- Stage 2: Combine facts & Build Indexes ---
+    // Build indexes from combined facts
     let mut combined_facts = initial_facts.to_vec();
     combined_facts.extend(self_facts);
     let solver_indexes = ProverIndexes::build(params.clone(), &combined_facts);
 
-    // --- Stage 3: Initial Pruning (using the correct indexes) ---
+    // Extract equality/inequality pairs and apply initial pruning
     let (equality_pairs, inequality_pairs) = extract_implied_pairs(request_templates);
-    let original_templates = request_templates.to_vec(); // Keep original templates
+    let original_templates = request_templates.to_vec();
 
     prune_initial_domains(
         &mut state,
-        &solver_indexes, // Pass the newly built index
+        &solver_indexes,
         &equality_pairs,
         &inequality_pairs,
     )?;
 
-    // 3. Iterative Constraint Propagation & Proof Generation (Loop)
+    // Iteratively propagate constraints and generate proofs
     let mut changed_in_iteration = true;
     let mut iteration = 0;
     const MAX_ITERATIONS: usize = 100;
@@ -102,7 +104,7 @@ pub fn solve(
         iteration += 1;
         println!("Solver iteration {}", iteration);
 
-        // 3a. Re-apply basic pruning based on current domains
+        // Re-apply basic pruning
         let pruning_changed = prune_initial_domains(
             &mut state,
             &solver_indexes,
@@ -114,17 +116,12 @@ pub fn solve(
             changed_in_iteration = true;
         }
 
-        // 3b. Generate candidate statements AND BINDINGS from templates if possible
-        let mut new_proofs_found_this_iter = false; // Track changes within this specific iteration step
+        // Try to generate and prove concrete statements
+        let mut new_proofs_found_this_iter = false;
 
         for tmpl in &original_templates {
-            // Iterate through original templates each time
             match try_generate_concrete_candidate_and_bindings(tmpl, &state) {
                 Ok(Some((target_statement, bindings))) => {
-                    // Successfully generated a concrete candidate and its bindings
-
-                    // 3c. Attempt to prove candidate statements
-                    // Skip if already proven
                     if state.proof_chains.contains_key(&target_statement) {
                         continue;
                     }
@@ -134,35 +131,25 @@ pub fn solve(
                         &target_statement,
                         &solver_indexes,
                         custom_definitions,
-                        &potential_constant_info, // Pass constant info
+                        &potential_constant_info,
                     ) {
                         Ok(_proof_chain) => {
                             println!("  - Successfully proved: {:?}", target_statement);
                             new_proofs_found_this_iter = true;
 
-                            // --- CALL NEW DYNAMIC PRUNING ---
-                            // Note: The logic inside prune_domains_after_proof needs adjustment
-                            //       to correctly use the template and bindings, but we call it here.
+                            // Apply dynamic pruning after successful proof
                             let pruned_dynamically = prune_domains_after_proof(
                                 &mut state,
-                                tmpl,              // Pass the template!
-                                &target_statement, // Pass the concrete statement
-                                &bindings,         // Pass the specific bindings
-                                &solver_indexes,   // Use solver_indexes
-                            )?; // Propagate errors
+                                tmpl,
+                                &target_statement,
+                                &bindings,
+                                &solver_indexes,
+                            )?;
 
                             if pruned_dynamically {
                                 println!("    - Dynamic pruning after proof changed domains.");
-                                changed_in_iteration = true; // Mark change for the outer loop
+                                changed_in_iteration = true;
                             }
-                            // --- END DYNAMIC PRUNING CALL ---
-
-                            // Optional: Re-run initial pruning immediately?
-                            // let pruned_after_proof = prune_initial_domains(&mut state, indexes)?;
-                            // if pruned_after_proof {
-                            //     println!("    - Initial pruning after new proof changed domains");
-                            //     changed_in_iteration = true;
-                            // }
                         }
                         Err(ProverError::Unsatisfiable(msg)) => {
                             println!(
@@ -176,44 +163,31 @@ pub fn solve(
                             )));
                         }
                         Err(ProverError::NotImplemented(op)) => {
-                            // If a specific operation needed for proof is not implemented,
-                            // we might not be able to prove this candidate *now*, but maybe later.
-                            // Log it but don't necessarily fail the whole solve yet.
                             println!(
                                 "  - Could not prove candidate {:?} due to unimplemented operation: {}. Skipping for now.",
                                 target_statement, op
                             );
-                            // We don't return Err here, allowing the solver to continue with other candidates/iterations.
                         }
                         Err(e) => {
-                            // Handle other potentially fatal errors
                             println!(
                                 "  - Error proving candidate {:?}: {:?}",
                                 target_statement, e
                             );
-                            return Err(e); // Propagate other errors
+                            return Err(e);
                         }
                     }
                 }
-                Ok(None) => {
-                    // Template wildcards were not all singletons, skip for this iteration
-                }
-                Err(e) => {
-                    // Error during candidate generation itself
-                    return Err(e);
-                }
+                Ok(None) => {}
+                Err(e) => return Err(e),
             }
-        } // End loop through original_templates
+        }
 
-        // If new proofs were found but didn't trigger dynamic pruning, still continue loop
         if new_proofs_found_this_iter && !changed_in_iteration {
             println!(
                 "  - New proofs found, but dynamic pruning didn't change domains. Continuing loop."
             );
             changed_in_iteration = true;
         }
-
-        // TODO: Add more sophisticated domain pruning logic here based on newly proven facts.
     }
 
     if iteration >= MAX_ITERATIONS {
@@ -223,30 +197,25 @@ pub fn solve(
         ));
     }
 
-    // 4. Search
+    // Perform search if domains are not all singletons
     if state.domains.values().any(|(domain, _)| domain.len() > 1) {
-        // Call the search function, taking ownership of the current state
-        // Pass the extracted pairs down to search
         match perform_search(
             state,
             &original_templates,
-            &solver_indexes, // Pass correct index
+            &solver_indexes,
             custom_definitions,
             &equality_pairs,
             &inequality_pairs,
-            &potential_constant_info, // Pass constant info
+            &potential_constant_info,
         ) {
             Ok(solved_state) => {
-                state = solved_state; // Update state with the solved one from search
+                state = solved_state;
             }
-            Err(e) => {
-                return Err(e); // Propagate the search error (e.g., Unsatisfiable)
-            }
+            Err(e) => return Err(e),
         }
     }
 
-    // 5. Solution Extraction
-
+    // Extract final bindings and scope
     let final_bindings: HashMap<Wildcard, ConcreteValue> = state
         .domains
         .iter()
@@ -254,19 +223,20 @@ pub fn solve(
             if domain.len() == 1 {
                 Some((wc.clone(), domain.iter().next().unwrap().clone()))
             } else {
-                // Should not happen if search phase is complete or wasn't needed
+                println!(
+                    "Warning: Wildcard {:?} still has non-singleton domain ({:?}) after solve/search.",
+                    wc, domain
+                );
                 None
             }
         })
         .collect();
 
-    // Determine minimal scope based on proof chains for *requested* templates
+    // Determine minimal scope based on proof chains
     let mut final_scope = HashSet::new();
     for tmpl in &original_templates {
-        // Re-generate the target statement based on final bindings
-        // Use the final bindings derived from the potentially pruned state domains
         let temp_state_for_generation = SolverState {
-            params: state.params.clone(), // Use params from the final state
+            params: state.params.clone(),
             domains: final_bindings
                 .iter()
                 .map(|(wc, cv)| {
@@ -277,9 +247,9 @@ pub fn solve(
                     (wc.clone(), (HashSet::from([cv.clone()]), expected_type))
                 })
                 .collect(),
-            constraints: vec![],          // Not needed for generation
-            proof_chains: HashMap::new(), // Not needed for generation
-            scope: HashSet::new(),        // Not needed for generation
+            constraints: vec![],
+            proof_chains: HashMap::new(),
+            scope: HashSet::new(),
         };
 
         if let Ok(Some((target_stmt, _))) =
@@ -291,29 +261,27 @@ pub fn solve(
                     &state.proof_chains,
                     &solver_indexes.exact_statement_lookup,
                 );
-            } else {
-                // This might happen if the final statement was a base fact itself
-                if let Some((pod_id, base_stmt)) = solver_indexes
-                    .exact_statement_lookup
-                    .iter()
-                    .find(|(_, stmt)| stmt == &target_stmt)
-                {
-                    final_scope.insert((*pod_id, base_stmt.clone()));
-                }
+            } else if let Some((pod_id, base_stmt)) = solver_indexes
+                .exact_statement_lookup
+                .iter()
+                .find(|(_, stmt)| stmt == &target_stmt)
+            {
+                final_scope.insert((*pod_id, base_stmt.clone()));
             }
         }
     }
 
     Ok(ProofSolution {
         bindings: final_bindings,
-        scope: final_scope.into_iter().collect(), // Convert HashSet to Vec
-        proof_chains: state.proof_chains,         // Return all generated chains
+        scope: final_scope.into_iter().collect(),
+        proof_chains: state.proof_chains,
     })
 }
 
 type WildcardPair = (Wildcard, Wildcard);
+type CandidateAndBindings = (Statement, HashMap<Wildcard, ConcreteValue>);
 
-// --- Helper function to extract implied pairs --- START ---
+/// Extracts equality and inequality pairs from request templates
 fn extract_implied_pairs(
     request_templates: &[middleware::StatementTmpl],
 ) -> (Vec<WildcardPair>, Vec<WildcardPair>) {
@@ -327,19 +295,15 @@ fn extract_implied_pairs(
             || tmpl.pred == Predicate::Native(NativePredicate::Lt);
 
         if (is_eq || is_neq) && tmpl.args.len() == 2 {
-            // Use the imported helper function
             let wcs1 = get_wildcards_from_tmpl_arg(&tmpl.args[0]);
             let wcs2 = get_wildcards_from_tmpl_arg(&tmpl.args[1]);
 
-            // Helper closure to add pairs for a specific type (Pod, Key, Val)
             let add_pairs =
                 |wc_list1: &[Wildcard],
                  wc_list2: &[Wildcard],
                  target_list: &mut Vec<(Wildcard, Wildcard)>| {
                     if let (Some(wc1), Some(wc2)) = (wc_list1.get(0), wc_list2.get(0)) {
-                        // Avoid adding pair if wildcards are identical
                         if wc1 != wc2 {
-                            // Ensure canonical ordering to help deduplication if needed later
                             if wc1.index <= wc2.index {
                                 target_list.push((wc1.clone(), wc2.clone()));
                             } else {
@@ -359,11 +323,8 @@ fn extract_implied_pairs(
             add_pairs(&wcs1.key_wcs, &wcs2.key_wcs, target_list);
             add_pairs(&wcs1.val_wcs, &wcs2.val_wcs, target_list);
         }
-        // TODO: Handle custom predicates? Recursively extract pairs from their definitions?
-        // For now, only handle native Eq/NEq/Gt/Lt.
     }
 
-    // Remove duplicates
     equality_pairs.sort_unstable_by_key(|(a, b)| (a.index, b.index));
     equality_pairs.dedup();
     inequality_pairs.sort_unstable_by_key(|(a, b)| (a.index, b.index));
@@ -371,48 +332,38 @@ fn extract_implied_pairs(
 
     (equality_pairs, inequality_pairs)
 }
-// --- Helper function to extract implied pairs --- END ---
-
-type CandidateAndBindings = (Statement, HashMap<Wildcard, ConcreteValue>);
 
 /// Tries to generate a concrete statement and its bindings from a template,
 /// succeeding only if all involved wildcards have singleton domains.
-// pub(super) so it can be used by search.rs
 pub(super) fn try_generate_concrete_candidate_and_bindings(
     tmpl: &middleware::StatementTmpl,
     state: &SolverState,
 ) -> Result<Option<CandidateAndBindings>, ProverError> {
-    // Output includes bindings
-    let mut bindings = HashMap::new(); // Track concrete values for this template
+    let mut bindings = HashMap::new();
 
-    // First pass: Check if all wildcards are singletons and collect bindings
+    // Check if all wildcards are singletons and collect bindings
     for arg_tmpl in &tmpl.args {
         match collect_singleton_bindings(arg_tmpl, state, &mut bindings) {
-            Ok(true) => {}                // Singleton found or no wildcard, continue
-            Ok(false) => return Ok(None), // Not a singleton, cannot generate concrete statement yet
-            Err(e) => return Err(e),      // Error during binding collection
+            Ok(true) => {}
+            Ok(false) => return Ok(None),
+            Err(e) => return Err(e),
         }
     }
 
-    // If we reach here, all necessary wildcards were singletons.
-
-    // Second pass: Construct the concrete statement based on the predicate type
+    // Construct concrete statement based on predicate type
     let concrete_statement = match &tmpl.pred {
         Predicate::Native(_) => {
-            // Build Vec<StatementArg> for native predicate
             let mut concrete_args = Vec::with_capacity(tmpl.args.len());
             for arg_tmpl in &tmpl.args {
                 match construct_concrete_arg(arg_tmpl, &bindings) {
                     Ok(Some(arg)) => concrete_args.push(arg),
-                    Ok(None) => { /* Skip None args */ }
-                    Err(e) => return Err(e), // Propagate construction errors
+                    Ok(None) => {}
+                    Err(e) => return Err(e),
                 }
             }
-            // Build the native statement
             build_concrete_statement(tmpl.pred.clone(), concrete_args)?
         }
         Predicate::Custom(custom_ref) => {
-            // Build Vec<WildcardValue> for custom predicate
             let mut custom_args = Vec::with_capacity(tmpl.args.len());
             for arg_tmpl in &tmpl.args {
                 match arg_tmpl {
@@ -423,13 +374,11 @@ pub(super) fn try_generate_concrete_candidate_and_bindings(
                                 wc.name
                             ))
                         })?;
-                        // Convert ConcreteValue to WildcardValue
                         let wc_value = match bound_value {
                             ConcreteValue::Pod(id) => WildcardValue::PodId(*id),
                             ConcreteValue::Key(k) => {
                                 WildcardValue::Key(middleware::Key::new(k.clone()))
                             }
-                            // ConcreteValue::Val should not be directly passed as a WildcardValue arg
                             ConcreteValue::Val(v) => {
                                 return Err(ProverError::Internal(format!(
                                     "Attempted to pass ConcreteValue::Val ({:?}) as WildcardValue for WC '{}' in Custom statement construction",
@@ -440,7 +389,6 @@ pub(super) fn try_generate_concrete_candidate_and_bindings(
                         custom_args.push(wc_value);
                     }
                     _ => {
-                        // Custom predicate templates should only use WildcardLiteral for args
                         return Err(ProverError::Internal(format!(
                             "Invalid argument type {:?} found in template for Custom predicate call",
                             arg_tmpl
@@ -448,13 +396,9 @@ pub(super) fn try_generate_concrete_candidate_and_bindings(
                     }
                 }
             }
-            // TODO: Verify arg count against custom_ref definition?
             Statement::Custom(custom_ref.clone(), custom_args)
         }
         Predicate::BatchSelf(_) => {
-            // BatchSelf *templates* should resolve to Predicate::Custom in the actual Statement
-            // This branch should ideally not be hit if the solver logic is correct,
-            // but handle it defensively.
             return Err(ProverError::Internal(
                 "Cannot directly construct concrete BatchSelf statement during generation"
                     .to_string(),
@@ -462,12 +406,34 @@ pub(super) fn try_generate_concrete_candidate_and_bindings(
         }
     };
 
-    // Return the concrete statement and the bindings used to create it
     Ok(Some((concrete_statement, bindings)))
 }
 
-/// Helper to check domain size and collect singleton bindings for a template argument.
-/// Returns Ok(true) if all involved wildcards are singletons, Ok(false) otherwise.
+/// Checks if a wildcard's domain is a singleton and adds it to bindings if so
+pub(super) fn check_and_bind_singleton(
+    wildcard: &Wildcard,
+    state: &SolverState,
+    bindings: &mut HashMap<Wildcard, ConcreteValue>,
+) -> Result<bool, ProverError> {
+    if let Some((domain, _)) = state.domains.get(wildcard) {
+        if domain.len() == 1 {
+            if !bindings.contains_key(wildcard) {
+                let concrete_value = domain.iter().next().unwrap().clone();
+                bindings.insert(wildcard.clone(), concrete_value);
+            }
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    } else {
+        Err(ProverError::Internal(format!(
+            "Wildcard '{}' from template not found in solver state domains.",
+            wildcard.name
+        )))
+    }
+}
+
+/// Checks if all wildcards in a template argument are singletons and collects their bindings
 pub(super) fn collect_singleton_bindings(
     arg_tmpl: &middleware::StatementTmplArg,
     state: &SolverState,
@@ -489,45 +455,16 @@ pub(super) fn collect_singleton_bindings(
                 return Ok(false);
             }
         }
-        middleware::StatementTmplArg::Literal(_) | middleware::StatementTmplArg::None => { /* No wildcards */
-        }
+        middleware::StatementTmplArg::Literal(_) | middleware::StatementTmplArg::None => {}
     }
     Ok(true)
 }
 
-/// Checks if a wildcard's domain is a singleton and adds it to bindings if so.
-pub(super) fn check_and_bind_singleton(
-    wildcard: &Wildcard,
-    state: &SolverState,
-    bindings: &mut HashMap<Wildcard, ConcreteValue>,
-) -> Result<bool, ProverError> {
-    if let Some((domain, _)) = state.domains.get(wildcard) {
-        if domain.len() == 1 {
-            if !bindings.contains_key(wildcard) {
-                // .next() is safe due to len() == 1 check
-                let concrete_value = domain.iter().next().unwrap().clone();
-                bindings.insert(wildcard.clone(), concrete_value);
-            }
-            Ok(true)
-        } else {
-            Ok(false) // Not a singleton
-        }
-    } else {
-        // Wildcard from template not found in domains - should not happen after init
-        Err(ProverError::Internal(format!(
-            "Wildcard '{}' from template not found in solver state domains.",
-            wildcard.name
-        )))
-    }
-}
-
-/// Helper to construct a concrete StatementArg from a template argument using bindings.
-/// Note: Returns Ok(None) for StatementTmplArg::None
+/// Constructs a concrete StatementArg from a template argument using bindings
 pub(super) fn construct_concrete_arg(
     arg_tmpl: &middleware::StatementTmplArg,
     bindings: &HashMap<Wildcard, ConcreteValue>,
 ) -> Result<Option<StatementArg>, ProverError> {
-    // Return Option<StatementArg>
     match arg_tmpl {
         middleware::StatementTmplArg::Key(wc_pod, key_or_wc) => {
             let pod_id = match bindings.get(wc_pod) {
@@ -551,30 +488,25 @@ pub(super) fn construct_concrete_arg(
                     }
                 },
             };
-            // Construct AnchoredKey directly
-            Ok(Some(StatementArg::Key(AnchoredKey::new(pod_id, key)))) // Use StatementArg::Key
+            Ok(Some(StatementArg::Key(AnchoredKey::new(pod_id, key))))
         }
-        middleware::StatementTmplArg::WildcardLiteral(wc_val) => {
-            match bindings.get(wc_val) {
-                Some(ConcreteValue::Val(v)) => Ok(Some(StatementArg::Literal(v.clone()))), // Use StatementArg::Literal
-                _ => Err(ProverError::Internal(format!(
-                    "Binding for Value wildcard '{}' not found or wrong type",
-                    wc_val.name
-                ))),
-            }
-        }
-        middleware::StatementTmplArg::Literal(v) => Ok(Some(StatementArg::Literal(v.clone()))), // Use StatementArg::Literal
+        middleware::StatementTmplArg::WildcardLiteral(wc_val) => match bindings.get(wc_val) {
+            Some(ConcreteValue::Val(v)) => Ok(Some(StatementArg::Literal(v.clone()))),
+            _ => Err(ProverError::Internal(format!(
+                "Binding for Value wildcard '{}' not found or wrong type",
+                wc_val.name
+            ))),
+        },
+        middleware::StatementTmplArg::Literal(v) => Ok(Some(StatementArg::Literal(v.clone()))),
         middleware::StatementTmplArg::None => Ok(None),
     }
 }
 
-/// Builds a concrete statement from a predicate and concrete arguments.
+/// Builds a concrete statement from a predicate and concrete arguments
 pub(super) fn build_concrete_statement(
     pred: Predicate,
     args: Vec<StatementArg>,
 ) -> Result<Statement, ProverError> {
-    // This is tedious but necessary to map Predicate enum back to Statement enum variants.
-    // We need to ensure the number and type of args match the expected structure for each predicate.
     match pred {
         Predicate::Native(NativePredicate::ValueOf) => {
             if args.len() == 2 {
@@ -724,20 +656,12 @@ pub(super) fn build_concrete_statement(
                 ))
             }
         }
-        Predicate::Custom(_) => {
-            // Need CustomPredicateRef and concrete values.
-            // TODO: Implement Custom statement construction.
-            Err(ProverError::NotImplemented(
-                "Building concrete Custom statements".to_string(),
-            ))
-        }
-        Predicate::BatchSelf(_) => {
-            // This shouldn't be directly constructed; it resolves to Custom.
-            Err(ProverError::Internal(
-                "Cannot directly build BatchSelf statement".to_string(),
-            ))
-        }
-        // Add other native predicates if they exist
+        Predicate::Custom(_) => Err(ProverError::NotImplemented(
+            "Building concrete Custom statements".to_string(),
+        )),
+        Predicate::BatchSelf(_) => Err(ProverError::Internal(
+            "Cannot directly build BatchSelf statement".to_string(),
+        )),
         _ => Err(ProverError::Internal(format!(
             "Unhandled predicate type in build_concrete_statement: {:?}",
             pred
@@ -745,8 +669,7 @@ pub(super) fn build_concrete_statement(
     }
 }
 
-// Helper function stub for ProofChain scope collection (needs proper implementation)
-// Add this within the SolverState impl or as a free function if preferred
+/// Recursively traverses proof steps to find all base facts needed
 impl ProofChain {
     fn collect_scope(
         &self,
@@ -755,9 +678,6 @@ impl ProofChain {
         base_facts: &HashSet<(PodId, Statement)>,
     ) {
         for step in &self.0 {
-            // Ensure we don't revisit steps to prevent potential infinite loops if chains somehow became cyclic
-            // This is a basic check; more robust cycle detection might be needed if complex recursive proofs arise.
-            // We check if the output of this step *leading to a base fact* is already in scope.
             let is_base_copy =
                 step.operation == OperationType::Native(NativeOperation::CopyStatement);
             let output_already_scoped = is_base_copy
@@ -770,7 +690,6 @@ impl ProofChain {
             }
 
             if is_base_copy {
-                // Input is a base fact, find its origin PodId
                 if let Some((pod_id, base_stmt)) =
                     base_facts.iter().find(|(_, stmt)| stmt == &step.inputs[0])
                 {
@@ -779,18 +698,12 @@ impl ProofChain {
                     println!("Warning: Could not find origin PodId for base fact in scope collection: {:?}", step.inputs[0]);
                 }
             } else {
-                // Recurse for inputs that were derived statements
                 for input_stmt in &step.inputs {
-                    // Check if the input itself is a base fact before looking for a chain
                     if let Some((pod_id, base_stmt)) =
                         base_facts.iter().find(|(_, stmt)| stmt == input_stmt)
                     {
                         final_scope.insert((*pod_id, base_stmt.clone()));
                     } else if let Some(input_chain) = all_chains.get(input_stmt) {
-                        // Only recurse if the input statement's chain hasn't been processed leading to base facts yet.
-                        // This simple check might not be perfect for complex shared sub-proofs.
-                        // We need a way to mark nodes/chains as visited during the collection traversal.
-                        // For now, recurse unconditionally, relying on HashSet uniqueness.
                         input_chain.collect_scope(final_scope, all_chains, base_facts);
                     } else {
                         println!("Warning: Could not find proof chain or base fact for input statement during scope collection: {:?}", input_stmt);

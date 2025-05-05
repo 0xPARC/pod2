@@ -1,9 +1,9 @@
-use super::*; // Import helpers from mod.rs
+use super::*;
 
 #[cfg(test)]
 mod search_tests {
     use super::*;
-    use crate::prover::solver::solve; // Make helpers available inside the module
+    use crate::prover::solver::solve;
 
     #[test]
     fn test_solve_requires_search() {

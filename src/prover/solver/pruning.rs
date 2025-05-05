@@ -17,24 +17,24 @@ use crate::{
 pub fn prune_by_type(state: &mut SolverState) -> Result<bool, ProverError> {
     let mut changed = false;
     for (wildcard, (domain, expected_type_ref)) in state.domains.iter_mut() {
-        // Dereference the mutable reference to get a copy, since ExpectedType derives Copy
         let expected_type = *expected_type_ref;
         let initial_size = domain.len();
 
-        domain.retain(|value| match (expected_type, value) {
-            // Closure now captures the copy
-            (ExpectedType::Pod, ConcreteValue::Pod(_)) => true,
-            (ExpectedType::Key, ConcreteValue::Key(_)) => true,
-            (ExpectedType::Val, ConcreteValue::Val(_)) => true,
-            (ExpectedType::Unknown, _) => true, // Don't prune if type is unknown
-            _ => false,                         // Prune if types mismatch
+        // Retain only values matching the expected type
+        domain.retain(|value| {
+            matches!(
+                (expected_type, value),
+                (ExpectedType::Pod, ConcreteValue::Pod(_))
+                    | (ExpectedType::Key, ConcreteValue::Key(_))
+                    | (ExpectedType::Val, ConcreteValue::Val(_))
+                    | (ExpectedType::Unknown, _)
+            )
         });
 
         if domain.is_empty() {
             return Err(ProverError::Unsatisfiable(format!(
                 "Type pruning made domain for wildcard '{}' empty (expected {:?})",
-                wildcard.name,
-                expected_type // Use the copied value here too
+                wildcard.name, expected_type
             )));
         }
 
@@ -51,7 +51,7 @@ pub fn prune_by_type(state: &mut SolverState) -> Result<bool, ProverError> {
 pub fn prune_by_literal_key(
     state: &mut SolverState,
     indexes: &ProverIndexes,
-    constraints: &[Constraint], // Pass constraints explicitly
+    constraints: &[Constraint],
 ) -> Result<bool, ProverError> {
     let mut changed = false;
 
@@ -63,24 +63,22 @@ pub fn prune_by_literal_key(
         {
             // Find the domain for the wildcard constrained by the literal key
             if let Some((domain, expected_type)) = state.domains.get_mut(pod_wildcard) {
-                // This should only apply to Pod domains
                 if *expected_type != ExpectedType::Pod {
                     continue; // Should have been caught by prune_by_type, but check defensively
                 }
 
                 let initial_size = domain.len();
 
-                // Find the set of PodIds known to have this literal_key
+                // Find PodIds that have this literal_key
                 let middleware_key = Key::new(literal_key.clone());
                 let allowed_pod_ids: HashSet<PodId> = indexes
                     .get_anchored_keys_for_key(&middleware_key)
                     .map(|anchored_keys| anchored_keys.iter().map(|ak| ak.pod_id).collect())
-                    .unwrap_or_default(); // If key not found in index, no PodIds are allowed
+                    .unwrap_or_default();
 
-                // Retain only PodIds present in the allowed set
                 domain.retain(|value| match value {
                     ConcreteValue::Pod(pod_id) => allowed_pod_ids.contains(pod_id),
-                    _ => false, // Remove non-Pod values (should be gone after prune_by_type)
+                    _ => false,
                 });
 
                 if domain.is_empty() {
@@ -92,11 +90,8 @@ pub fn prune_by_literal_key(
 
                 if domain.len() < initial_size {
                     changed = true;
-                    // We don't remove the constraint from the list as it might be needed
-                    // again if domains change due to other propagations.
                 }
             } else {
-                // Wildcard mentioned in constraint but not in domains? Should not happen.
                 return Err(ProverError::Internal(format!(
                     "Wildcard '{}' from LiteralKey constraint not found in domains",
                     pod_wildcard.name
@@ -124,37 +119,33 @@ pub fn prune_by_literal_origin(
             literal_pod_id,
         } = constraint
         {
-            // Find the domain for the wildcard constrained by the literal origin
             if let Some((domain, expected_type)) = state.domains.get_mut(key_wildcard) {
-                // This should only apply to Key domains
                 if *expected_type != ExpectedType::Key {
-                    continue; // Should have been caught by prune_by_type
+                    continue;
                 }
 
                 let initial_size = domain.len();
 
-                // Find the set of Keys (as Strings) known to exist for this literal_pod_id
+                // Find Keys that exist in this literal_pod_id
                 let allowed_keys: HashSet<String> = indexes
                     .get_anchored_keys_for_pod_id(literal_pod_id)
                     .map(|anchored_keys| {
                         anchored_keys
                             .iter()
-                            .map(|ak| ak.key.name().to_string()) // Extract key name as String
+                            .map(|ak| ak.key.name().to_string())
                             .collect()
                     })
-                    .unwrap_or_default(); // If pod_id not found in index, no keys are allowed
+                    .unwrap_or_default();
 
-                // Retain only Key strings present in the allowed set
                 domain.retain(|value| match value {
                     ConcreteValue::Key(key_string) => allowed_keys.contains(key_string),
-                    _ => false, // Remove non-Key values
+                    _ => false,
                 });
 
                 if domain.is_empty() {
                     return Err(ProverError::Unsatisfiable(format!(
                         "LiteralOrigin constraint ('{}[?{}]') made domain empty",
-                        literal_pod_id, // Display PodId
-                        key_wildcard.name
+                        literal_pod_id, key_wildcard.name
                     )));
                 }
 
@@ -178,7 +169,7 @@ pub fn prune_by_literal_origin(
 /// Returns Ok(true) if any domain changed, Ok(false) otherwise.
 pub fn prune_by_literal_value(
     state: &mut SolverState,
-    _indexes: &ProverIndexes, // Might not be needed
+    _indexes: &ProverIndexes,
     constraints: &[Constraint],
 ) -> Result<bool, ProverError> {
     let mut changed = false;
@@ -190,20 +181,15 @@ pub fn prune_by_literal_value(
         } = constraint
         {
             if let Some((domain, expected_type)) = state.domains.get_mut(wildcard) {
-                // This should only apply to Val domains
                 if *expected_type != ExpectedType::Val {
-                    // This might indicate an issue in constraint generation or type inference
-                    // if a non-Val wildcard gets a LiteralValue constraint.
-                    // For now, we'll just skip, assuming type pruning handled it.
                     continue;
                 }
 
                 let initial_size = domain.len();
 
-                // Retain only the ConcreteValue::Val that matches the literal_value
                 domain.retain(|value| match value {
                     ConcreteValue::Val(v) => v == literal_value,
-                    _ => false, // Remove non-Val values (should be gone after prune_by_type)
+                    _ => false,
                 });
 
                 if domain.is_empty() {
@@ -244,7 +230,7 @@ pub fn prune_by_wildcard_origin(
             pod_wildcard,
         } = constraint
         {
-            // Check if the pod_wildcard domain is now a singleton
+            // Check if pod_wildcard domain is a singleton PodId
             let mut literal_pod_id_opt: Option<PodId> = None;
             if let Some((pod_domain, pod_expected_type)) = state.domains.get(pod_wildcard) {
                 if *pod_expected_type == ExpectedType::Pod && pod_domain.len() == 1 {
@@ -252,13 +238,10 @@ pub fn prune_by_wildcard_origin(
                         literal_pod_id_opt = Some(*id);
                     }
                 }
-            } // Immutable borrow of state.domains ends here
+            }
 
-            // If pod domain was a singleton PodId, apply the constraint
             if let Some(literal_pod_id) = literal_pod_id_opt {
-                // Now get the mutable borrow for the key domain
                 if let Some((key_domain, key_expected_type)) = state.domains.get_mut(key_wildcard) {
-                    // Should be a Key domain
                     if *key_expected_type != ExpectedType::Key {
                         continue;
                     }
@@ -266,7 +249,7 @@ pub fn prune_by_wildcard_origin(
                     let initial_size = key_domain.len();
 
                     let allowed_keys: HashSet<String> = indexes
-                        .get_anchored_keys_for_pod_id(&literal_pod_id) // Use the extracted PodId
+                        .get_anchored_keys_for_pod_id(&literal_pod_id)
                         .map(|anchored_keys| {
                             anchored_keys
                                 .iter()
@@ -289,14 +272,9 @@ pub fn prune_by_wildcard_origin(
 
                     if key_domain.len() < initial_size {
                         changed = true;
-                        // Note: Unlike literal constraints, we might consider removing this
-                        // WildcardOrigin constraint now that it's been effectively applied once.
-                        // However, leaving it allows re-checking if domains change further.
                     }
                 }
-                // else: Key wildcard not found in domains (internal error)
             }
-            // else: Pod domain not yet a singleton PodId, cannot apply the constraint yet.
         }
     }
 
@@ -313,26 +291,22 @@ pub(super) fn prune_initial_domains(
 ) -> Result<bool, ProverError> {
     let mut overall_changed = false;
     let mut changed_this_pass = true;
-    // Keep track of constraints to avoid re-processing simple ones unnecessarily
-    // More complex propagation might need a different approach
-    let mut processed_type_pruning = false; // Track if type pruning has run and made changes
+    let mut processed_type_pruning = false;
 
     while changed_this_pass {
         changed_this_pass = false;
 
-        // Apply type constraints first (modifies domains in place)
+        // Apply type constraints first
         if !processed_type_pruning && prune_by_type(state)? {
             changed_this_pass = true;
             overall_changed = true;
-            processed_type_pruning = true; // Only mark after first change
+            processed_type_pruning = true;
         }
 
-        // Apply other literal/structural constraints
         let current_constraints = state.constraints.clone();
 
-        // --- Iterate through explicit constraints and apply pruning --- START ---
+        // Apply explicit constraints
         for constraint in &current_constraints {
-            // Reset changed flag for *this specific constraint type* check
             let mut constraint_changed = false;
             match constraint {
                 Constraint::LiteralKey { .. } => {
@@ -351,8 +325,6 @@ pub(super) fn prune_initial_domains(
                     constraint_changed =
                         prune_by_literal_value(state, indexes, &[constraint.clone()])?;
                 }
-                // Note: No Equal/NotEqual variants here
-                // Ignore other constraint types (like Type, handled elsewhere)
                 _ => {}
             };
 
@@ -361,18 +333,16 @@ pub(super) fn prune_initial_domains(
                 overall_changed = true;
             }
         }
-        // --- Iterate through explicit constraints and apply pruning --- END ---
 
-        // --- Apply IMPLICIT Equality constraints --- START ---
+        // Apply implicit equality constraints
         for (wc1, wc2) in equality_pairs {
             if propagate_or_intersect(&mut state.domains, wc1, wc2)? {
                 changed_this_pass = true;
                 overall_changed = true;
             }
         }
-        // --- Apply IMPLICIT Equality constraints --- END ---
 
-        // --- Apply IMPLICIT Inequality constraints --- START ---
+        // Apply implicit inequality constraints
         for (wc1, wc2) in inequality_pairs {
             if remove_singleton(&mut state.domains, wc1, wc2)? {
                 changed_this_pass = true;
@@ -383,14 +353,12 @@ pub(super) fn prune_initial_domains(
                 overall_changed = true;
             }
         }
-        // --- Apply IMPLICIT Inequality constraints --- END ---
 
-        // Reset type pruning check if other constraints made changes, potentially enabling more type pruning
         if changed_this_pass {
             processed_type_pruning = false;
         }
     }
-    Ok(overall_changed) // Return whether *any* change occurred
+    Ok(overall_changed)
 }
 
 /// Applies pruning logic directly based on a newly proven statement and its associated bindings.
@@ -398,36 +366,28 @@ pub(super) fn prune_initial_domains(
 pub(super) fn prune_domains_after_proof(
     state: &mut SolverState,
     proven_template: &StatementTmpl,
-    _proven_statement: &Statement, // Concrete statement might be useful for value checks later
+    _proven_statement: &Statement,
     bindings: &HashMap<Wildcard, ConcreteValue>,
     _indexes: &ProverIndexes,
 ) -> Result<bool, ProverError> {
     let mut changed = false;
 
     match proven_template.pred {
-        // Match on the *template's* predicate
         Predicate::Native(NativePredicate::Equal) => {
             if proven_template.args.len() == 2 {
-                // Get wildcards involved in arg1 and arg2 from the template
                 let wildcards1 = get_wildcards_from_tmpl_arg(&proven_template.args[0]);
                 let wildcards2 = get_wildcards_from_tmpl_arg(&proven_template.args[1]);
 
-                // Propagate/intersect based on wildcard type (Pod, Key)
-                // This assumes wildcards bind directly to components.
                 for wc1_pod in &wildcards1.pod_wcs {
                     for wc2_pod in &wildcards2.pod_wcs {
-                        // If ?A[?] == ?B[?], propagate/intersect domains of ?A and ?B
                         changed |= propagate_or_intersect(&mut state.domains, wc1_pod, wc2_pod)?;
                     }
                 }
                 for wc1_key in &wildcards1.key_wcs {
                     for wc2_key in &wildcards2.key_wcs {
-                        // If ?[?X] == ?[?Y], propagate/intersect domains of ?X and ?Y
                         changed |= propagate_or_intersect(&mut state.domains, wc1_key, wc2_key)?;
                     }
                 }
-                // Value wildcards usually aren't directly equated in Equal statements (which take AKs)
-                // but handle if necessary.
                 for wc1_val in &wildcards1.val_wcs {
                     for wc2_val in &wildcards2.val_wcs {
                         changed |= propagate_or_intersect(&mut state.domains, wc1_val, wc2_val)?;
@@ -436,7 +396,6 @@ pub(super) fn prune_domains_after_proof(
             }
         }
         Predicate::Native(NativePredicate::NotEqual) => {
-            // Apply NotEqual singleton removal logic.
             if proven_template.args.len() == 2 {
                 let wildcards1 = get_wildcards_from_tmpl_arg(&proven_template.args[0]);
                 let wildcards2 = get_wildcards_from_tmpl_arg(&proven_template.args[1]);
@@ -461,35 +420,29 @@ pub(super) fn prune_domains_after_proof(
             }
         }
         Predicate::Native(NativePredicate::Gt) | Predicate::Native(NativePredicate::Lt) => {
-            // Apply NotEqual singleton removal logic first.
             let mut neq_changed = false;
             if proven_template.args.len() == 2 {
                 let wildcards1 = get_wildcards_from_tmpl_arg(&proven_template.args[0]);
                 let wildcards2 = get_wildcards_from_tmpl_arg(&proven_template.args[1]);
-                // Apply NEq logic based on AK wildcards (Pod/Key components)
                 for wc1 in wildcards1.pod_wcs.iter().chain(wildcards1.key_wcs.iter()) {
                     for wc2 in wildcards2.pod_wcs.iter().chain(wildcards2.key_wcs.iter()) {
                         neq_changed |= remove_singleton(&mut state.domains, wc1, wc2)?;
                         neq_changed |= remove_singleton(&mut state.domains, wc2, wc1)?;
                     }
                 }
-                // Apply NEq logic based on Value wildcards (less common for Gt/Lt)
                 for wc1_val in &wildcards1.val_wcs {
                     for wc2_val in &wildcards2.val_wcs {
                         neq_changed |= remove_singleton(&mut state.domains, wc1_val, wc2_val)?;
                         neq_changed |= remove_singleton(&mut state.domains, wc2_val, wc1_val)?;
                     }
                 }
-                // Now, apply value-based pruning if applicable
                 if let (Some(tmpl_arg1), Some(tmpl_arg2)) =
                     (proven_template.args.get(0), proven_template.args.get(1))
                 {
-                    // Extract value wildcards associated with the Gt/Lt arguments
                     let val_wcs1 = get_wildcards_from_tmpl_arg(tmpl_arg1).val_wcs;
                     let val_wcs2 = get_wildcards_from_tmpl_arg(tmpl_arg2).val_wcs;
                     for wc1 in &val_wcs1 {
                         for wc2 in &val_wcs2 {
-                            // Attempt value-based pruning between wc1 and wc2
                             if let Predicate::Native(native_pred) = proven_template.pred {
                                 changed |=
                                     prune_gt_lt_values(&mut state.domains, wc1, wc2, native_pred)?;
@@ -498,16 +451,13 @@ pub(super) fn prune_domains_after_proof(
                     }
                 }
             }
-            changed |= neq_changed; // Combine results
+            changed |= neq_changed;
         }
         Predicate::Native(NativePredicate::ValueOf) => {
-            // ValueOf(?A[?X], ?V) or ValueOf(Literal, ?V) etc.
             if proven_template.args.len() == 2 {
-                // The second argument is the value argument.
                 if let Some(value_arg_tmpl) = proven_template.args.get(1) {
                     let value_wildcards = get_wildcards_from_tmpl_arg(value_arg_tmpl);
                     for wc_val in value_wildcards.val_wcs {
-                        // Find the concrete value this wildcard bound to
                         if let Some(ConcreteValue::Val(bound_val)) = bindings.get(&wc_val) {
                             if let Some((domain, _)) = state.domains.get_mut(&wc_val) {
                                 let initial_len = domain.len();
@@ -529,7 +479,6 @@ pub(super) fn prune_domains_after_proof(
             }
         }
         Predicate::Native(NativePredicate::SumOf) => {
-            // SumOf(?Sum, ?Add1, ?Add2)
             if proven_template.args.len() == 3 {
                 changed |= prune_arithmetic(
                     &mut state.domains,
@@ -538,12 +487,11 @@ pub(super) fn prune_domains_after_proof(
                     &proven_template.args[1],
                     &proven_template.args[2],
                     bindings,
-                    |a, b| a + b, // Summation
+                    |a, b| a + b,
                 )?;
             }
         }
         Predicate::Native(NativePredicate::ProductOf) => {
-            // ProductOf(?Prod, ?Fac1, ?Fac2)
             if proven_template.args.len() == 3 {
                 changed |= prune_arithmetic(
                     &mut state.domains,
@@ -552,12 +500,11 @@ pub(super) fn prune_domains_after_proof(
                     &proven_template.args[1],
                     &proven_template.args[2],
                     bindings,
-                    |a, b| a * b, // Multiplication
+                    |a, b| a * b,
                 )?;
             }
         }
         Predicate::Native(NativePredicate::MaxOf) => {
-            // MaxOf(?Max, ?Op1, ?Op2)
             if proven_template.args.len() == 3 {
                 changed |= prune_arithmetic(
                     &mut state.domains,
@@ -566,17 +513,11 @@ pub(super) fn prune_domains_after_proof(
                     &proven_template.args[1],
                     &proven_template.args[2],
                     bindings,
-                    std::cmp::max, // Max function
+                    std::cmp::max,
                 )?;
             }
         }
-        // TODO: Implement dynamic pruning for Contains/NotContains if beneficial
-        // Predicate::Native(NativePredicate::Contains)
-        // | Predicate::Native(NativePredicate::NotContains) => {
-        //     println!("Warning: Dynamic pruning for Contains/NotContains not yet implemented.");
-        // }
         Predicate::Native(NativePredicate::Contains) => {
-            // Contains(?Container, ?Key, ?Value)
             if proven_template.args.len() == 3 {
                 let container_arg = &proven_template.args[0];
                 let key_arg = &proven_template.args[1];
@@ -586,7 +527,6 @@ pub(super) fn prune_domains_after_proof(
                 let wcs_k = get_wildcards_from_tmpl_arg(key_arg);
                 let wcs_v = get_wildcards_from_tmpl_arg(value_arg);
 
-                // Get bound singleton values (if any)
                 let bound_container = wcs_c
                     .val_wcs
                     .get(0)
@@ -612,54 +552,38 @@ pub(super) fn prune_domains_after_proof(
                         _ => None,
                     });
 
-                // --- Pruning based on bound container ---
                 if let Some(container) = bound_container {
-                    // Prune Key wildcard domain
                     for wc_k in &wcs_k.val_wcs {
                         if let Some((domain_k, _)) = state.domains.get_mut(wc_k) {
-                            changed |= prune_domain_by_container_existence(
-                                domain_k, &container, true, // Keep keys that DO exist
-                            )?;
+                            changed |=
+                                prune_domain_by_container_existence(domain_k, &container, true)?;
                         }
                     }
-                    // Prune Value wildcard domain
                     for wc_v in &wcs_v.val_wcs {
                         if let Some((domain_v, _)) = state.domains.get_mut(wc_v) {
-                            // Prune value domain based on the known container
-                            // Keep only values that exist somewhere in the container
                             changed |= prune_domain_by_container_value_existence(
-                                domain_v, &container, true, // Keep values that DO exist
+                                domain_v, &container, true,
                             )?
                         }
                     }
                 }
 
-                // --- Pruning based on bound key ---
                 if let Some(key) = bound_key {
-                    // Prune Container wildcard domain
                     for wc_c in &wcs_c.val_wcs {
                         if let Some((domain_c, _)) = state.domains.get_mut(wc_c) {
-                            changed |= prune_container_domain_by_key_existence(
-                                domain_c, &key,
-                                true, // Keep containers that DO contain the key
-                            )?;
+                            changed |=
+                                prune_container_domain_by_key_existence(domain_c, &key, true)?;
                         }
                     }
-                    // Prune Value wildcard domain (based on Key)
                     for wc_v in &wcs_v.val_wcs {
                         if state.domains.contains_key(wc_v) {
-                            // Collect expected values associated with this key across possible containers
                             let mut possible_values = HashSet::new();
-                            let wc_c_target = wcs_c.val_wcs.get(0); // Assume single container wildcard
+                            let wc_c_target = wcs_c.val_wcs.get(0);
                             if let Some(wc_c_concrete) = wc_c_target {
-                                // Immutable borrow needed here
                                 let container_domain_view = state.domains.get(wc_c_concrete);
                                 if let Some((domain_c_concrete, _)) = container_domain_view {
                                     for cv_c in domain_c_concrete {
-                                        // Iterate over immutable view
                                         if let ConcreteValue::Val(container_val) = cv_c {
-                                            // cv_c is &ConcreteValue
-                                            // Use the bound key (&Value) for prove_existence. `key` is already &Value
                                             if let Ok((val, _)) =
                                                 container_val.prove_existence(&key)
                                             {
@@ -672,10 +596,9 @@ pub(super) fn prune_domains_after_proof(
                             }
 
                             if !possible_values.is_empty() {
-                                // Re-borrow state.domains mutably
                                 if let Some((domain_v_mut, _)) = state.domains.get_mut(wc_v) {
                                     let initial_len = domain_v_mut.len();
-                                    domain_v_mut.retain(|cv| possible_values.contains(cv)); // Use collected set
+                                    domain_v_mut.retain(|cv| possible_values.contains(cv));
                                     if domain_v_mut.is_empty() {
                                         return Err(ProverError::Unsatisfiable(format!(
                                             "Dynamic pruning (Contains/Key->Value) emptied domain for {}",
@@ -691,35 +614,24 @@ pub(super) fn prune_domains_after_proof(
                     }
                 }
 
-                // --- Pruning based on bound value ---
                 if let Some(value) = bound_value {
-                    // Prune Container wildcard domain
                     for wc_c in &wcs_c.val_wcs {
                         if let Some((domain_c, _)) = state.domains.get_mut(wc_c) {
-                            changed |= prune_container_domain_by_value_existence(
-                                domain_c, &value,
-                                true, // Keep containers that DO contain the value
-                            )?;
+                            changed |=
+                                prune_container_domain_by_value_existence(domain_c, &value, true)?;
                         }
                     }
-                    // Prune Key wildcard domain (based on Value)
                     if let Some(wc_k) = wcs_k.val_wcs.get(0) {
-                        // Get the key wildcard
                         if let Some(wc_c) = wcs_c.val_wcs.get(0) {
-                            // Get the container wildcard
                             let mut allowed_keys: HashSet<ConcreteValue> = HashSet::new();
 
-                            // Need immutable borrow of domains first to read container domain
                             if let Some((container_domain, _)) = state.domains.get(wc_c) {
                                 for cv_container in container_domain {
                                     if let ConcreteValue::Val(container_val) = cv_container {
-                                        // Check based on container type
                                         match container_val.typed() {
                                             TypedValue::Dictionary(dict) => {
                                                 for (key, val) in dict.kvs() {
                                                     if val == &value {
-                                                        // Compare with the bound value
-                                                        // Key is middleware::Key, convert to ConcreteValue::Val(Value::String)
                                                         allowed_keys.insert(ConcreteValue::Val(
                                                             Value::from(key.name()),
                                                         ));
@@ -727,44 +639,34 @@ pub(super) fn prune_domains_after_proof(
                                                 }
                                             }
                                             TypedValue::Array(arr) => {
-                                                // If Contains(Array, Index, Value) is supported this way
                                                 for (idx, val) in arr.array().iter().enumerate() {
                                                     if val == &value {
-                                                        // Key is the index, represented as ConcreteValue::Val(Value::Int)
                                                         allowed_keys.insert(ConcreteValue::Val(
                                                             Value::from(idx as i64),
                                                         ));
                                                     }
                                                 }
                                             }
-                                            // Set doesn't map keys to values in the Contains(C, K, V) sense.
                                             TypedValue::Set(_) => {}
-                                            _ => {} // Other types don't map keys to values like this
+                                            _ => {}
                                         }
                                     }
                                 }
-                            } // Immutable borrow ends
+                            }
 
-                            // Now get mutable borrow for the key domain and prune
                             if let Some((key_domain, _)) = state.domains.get_mut(wc_k) {
                                 let initial_len = key_domain.len();
                                 if allowed_keys.is_empty() {
-                                    // If no keys map to the bound value in any possible container,
-                                    // the key domain must become empty.
                                     if initial_len > 0 {
                                         key_domain.clear();
-                                        // Return error immediately as it's unsatisfiable
                                         return Err(ProverError::Unsatisfiable(format!(
                                             "Dynamic pruning (Contains/Value->Key) found no valid keys for value {:?}, emptied domain for {}",
                                             value, wc_k.name
                                         )));
                                     }
                                 } else {
-                                    // Otherwise, retain only the allowed keys
                                     key_domain.retain(|cv_key| allowed_keys.contains(cv_key));
                                     if key_domain.is_empty() && initial_len > 0 {
-                                        // This case shouldn't technically be hit if allowed_keys is non-empty,
-                                        // but handle for robustness.
                                         return Err(ProverError::Unsatisfiable(format!(
                                             "Dynamic pruning (Contains/Value->Key) emptied domain for {} after filtering",
                                             wc_k.name
@@ -781,7 +683,6 @@ pub(super) fn prune_domains_after_proof(
             }
         }
         Predicate::Native(NativePredicate::NotContains) => {
-            // NotContains(?Container, ?Key)
             if proven_template.args.len() == 2 {
                 let container_arg = &proven_template.args[0];
                 let key_arg = &proven_template.args[1];
@@ -789,7 +690,6 @@ pub(super) fn prune_domains_after_proof(
                 let wcs_c = get_wildcards_from_tmpl_arg(container_arg);
                 let wcs_k = get_wildcards_from_tmpl_arg(key_arg);
 
-                // Get bound singleton values (if any)
                 let bound_container = wcs_c
                     .val_wcs
                     .get(0)
@@ -807,45 +707,33 @@ pub(super) fn prune_domains_after_proof(
                         _ => None,
                     });
 
-                // --- Pruning based on bound container ---
                 if let Some(container) = bound_container {
-                    // Prune Key wildcard domain
                     for wc_k in &wcs_k.val_wcs {
                         if let Some((domain_k, _)) = state.domains.get_mut(wc_k) {
-                            changed |= prune_domain_by_container_existence(
-                                domain_k, &container, false, // Keep keys that DO NOT exist
-                            )?;
+                            changed |=
+                                prune_domain_by_container_existence(domain_k, &container, false)?;
                         }
                     }
                 }
 
-                // --- Pruning based on bound key ---
                 if let Some(key) = bound_key {
-                    // Prune Container wildcard domain
                     for wc_c in &wcs_c.val_wcs {
                         if let Some((domain_c, _)) = state.domains.get_mut(wc_c) {
-                            changed |= prune_container_domain_by_key_existence(
-                                domain_c, &key,
-                                false, // Keep containers that DO NOT contain the key
-                            )?;
+                            changed |=
+                                prune_container_domain_by_key_existence(domain_c, &key, false)?;
                         }
                     }
                 }
             }
         }
         Predicate::Custom(_) | Predicate::BatchSelf(_) => {
-            // Dynamic pruning for custom predicates would involve applying the logic
-            // based on the *internal* structure of the proven custom predicate. Complex.
             println!("Warning: Dynamic pruning for Custom predicates not yet implemented.");
         }
-        // Add back the catch-all for other unhandled predicates
         _ => {}
     }
 
     Ok(changed)
 }
-
-// --- NEW Helper Struct and Functions ---
 
 #[derive(Default)]
 pub(super) struct ExtractedWildcards {
@@ -880,7 +768,7 @@ pub(super) fn propagate_or_intersect(
     wc2: &Wildcard,
 ) -> Result<bool, ProverError> {
     if !domains.contains_key(wc1) || !domains.contains_key(wc2) {
-        return Ok(false); // Cannot prune if domains don't exist
+        return Ok(false);
     }
 
     let len1 = domains[wc1].0.len();
@@ -933,7 +821,7 @@ pub(super) fn propagate_or_intersect(
         let (domain2_mut, _) = domains.get_mut(wc2).unwrap();
         if intersection.len() < domain2_mut.len() {
             *domain2_mut = intersection;
-            changed = true; // Mark changed even if only domain2 changed
+            changed = true;
         }
     }
     Ok(changed)
@@ -943,18 +831,17 @@ pub(super) fn propagate_or_intersect(
 /// Modifies `domains` in place. Returns Ok(true) if domain changed.
 pub(super) fn remove_singleton(
     domains: &mut HashMap<Wildcard, (Domain, ExpectedType)>,
-    wc_singleton: &Wildcard, // Wildcard whose singleton value should be removed
-    wc_target: &Wildcard,    // Wildcard whose domain should be pruned
+    wc_singleton: &Wildcard,
+    wc_target: &Wildcard,
 ) -> Result<bool, ProverError> {
     if !domains.contains_key(wc_singleton) || !domains.contains_key(wc_target) {
         return Ok(false);
     }
     if domains[wc_singleton].0.len() == 1 && !domains[wc_target].0.is_empty() {
-        // Ensure target is not empty
         let val_to_remove = domains[wc_singleton].0.iter().next().unwrap().clone();
         let (target_domain_mut, _) = domains.get_mut(wc_target).unwrap();
         let initial_len = target_domain_mut.len();
-        target_domain_mut.remove(&val_to_remove); // remove returns bool, but we check length change
+        target_domain_mut.remove(&val_to_remove);
         if target_domain_mut.is_empty() {
             return Err(ProverError::Unsatisfiable(format!(
                 "Dynamic pruning (remove singleton) emptied domain for {}",
@@ -968,7 +855,6 @@ pub(super) fn remove_singleton(
     Ok(false)
 }
 
-// --- NEW Arithmetic Helper ---
 /// Prunes domains based on arithmetic operations like SumOf, ProductOf, MaxOf.
 /// Assumes operation is Result = Op(Arg1, Arg2) structure.
 fn prune_arithmetic(

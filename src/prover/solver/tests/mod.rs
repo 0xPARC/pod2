@@ -4,7 +4,6 @@ use std::{
     sync::Arc,
 };
 
-// Declare test modules
 pub mod proof;
 pub mod pruning;
 pub mod search;
@@ -95,7 +94,6 @@ pub(crate) fn setup_custom_definitions_for_test(
     custom_defs
 }
 
-// --- START: Container Helpers ---
 pub(crate) fn dict_val(kvs: Vec<(&str, i64)>) -> Value {
     let map: HashMap<Key, Value> = kvs.into_iter().map(|(k, v)| (key(k), val(v))).collect();
     Value::from(Dictionary::new(map).unwrap())
@@ -110,5 +108,3 @@ pub(crate) fn array_val(vals: Vec<i64>) -> Value {
     let array: Vec<Value> = vals.into_iter().map(val).collect();
     Value::from(Array::new(array).unwrap())
 }
-
-// --- END: Container Helpers ---
