@@ -24,8 +24,8 @@ pub enum ProcessorError {
     // TODO: Add span information to errors
     // #[error("Error at {span:?}: {message}")]
     // WithSpan { message: String, span: (usize, usize) },
-    #[error("Undefined variable: ?{0}")] // Prefix with ? for clarity
-    UndefinedVariable(String),
+    #[error("Undefined identifier: {0}")] // Can be variable or predicate name
+    UndefinedIdentifier(String),
     #[error("Duplicate definition: {0}")]
     DuplicateDefinition(String),
     #[error("Duplicate variable: ?{0}")] // Prefix with ? for clarity
@@ -54,18 +54,16 @@ pub struct ProcessedOutput {
     pub request_templates: Vec<StatementTmpl>,
 }
 
-/// Context used during the processing of custom predicate definitions.
+/// Context used during the processing phase.
+/// Contains parameters and information gathered in the first pass.
 struct ProcessingContext<'a> {
     params: &'a Params,
-    /// Maps custom predicate names (identifiers) to their index in the batch.
-    custom_predicate_indices: HashMap<String, usize>,
-    /// The definitions collected so far, to be put into the batch.
-    custom_predicates: Vec<CustomPredicate>,
+    /// Maps custom predicate names to their index and public arity.
+    custom_predicate_signatures: HashMap<String, (usize, usize)>, // (index, public_args_len)
 }
 
 /// Context specific to processing statements within a single definition (predicate or request).
 struct ScopeContext<'a> {
-    // Removed unused lifetime 'b
     processing_ctx: &'a ProcessingContext<'a>,
     /// Maps variable name to its Wildcard (index + name).
     /// We use BTreeMap to ensure deterministic iteration order if needed later.
@@ -105,30 +103,31 @@ pub fn process_document(
         }
     }
 
-    // 2. Process Custom Predicates
-    let mut processing_ctx = ProcessingContext {
-        params,
-        custom_predicate_indices: HashMap::new(),
-        custom_predicates: Vec::with_capacity(custom_definitions.len()),
-    };
-
+    // --- First Pass: Collect Signatures ---
+    let mut custom_predicate_signatures = HashMap::new();
     for (index, pred_def) in custom_definitions.iter().enumerate() {
         let name = &pred_def.name.0;
-        processing_ctx
-            .custom_predicate_indices
-            .insert(name.clone(), index);
+        let public_arity = pred_def.public_args.len();
+        custom_predicate_signatures.insert(name.clone(), (index, public_arity));
     }
 
-    // Now iterate again to process, using the created name->index map
+    // --- Second Pass: Process Bodies ---
+    let processing_ctx = ProcessingContext {
+        params,
+        custom_predicate_signatures,
+    };
+
+    // Process Custom Predicate Bodies
+    let mut processed_custom_predicates = Vec::with_capacity(custom_definitions.len());
     for pred_def in custom_definitions {
-        let middleware_pred = process_custom_predicate(pred_def, &processing_ctx)?;
-        processing_ctx.custom_predicates.push(middleware_pred);
+        // Use the context built from the first pass
+        let middleware_pred = process_custom_predicate_body(pred_def, &processing_ctx)?;
+        processed_custom_predicates.push(middleware_pred);
     }
 
     let custom_batch = Arc::new(CustomPredicateBatch {
-        // TODO: Allow batch name configuration later?
-        name: "PodlogBatch".to_string(),
-        predicates: processing_ctx.custom_predicates.clone(),
+        name: "PodlogBatch".to_string(), // TODO: Allow batch name configuration later?
+        predicates: processed_custom_predicates, // Use the processed predicates
     });
 
     // Check batch size limit
@@ -140,9 +139,9 @@ pub fn process_document(
         )));
     }
 
-    // 3. Process Request (if exists)
+    // Process Request (if exists) using the same context
     let request_templates = if let Some(req_def) = request_definition {
-        process_request(req_def, &processing_ctx)?
+        process_request(req_def, &processing_ctx)? // Pass the context
     } else {
         Vec::new() // No request defined
     };
@@ -153,14 +152,15 @@ pub fn process_document(
     })
 }
 
-// --- Helper Functions (to be implemented) ---
+// --- Renamed Helper Function ---
 
-fn process_custom_predicate(
+// Processes the body of a custom predicate definition using the pre-built context.
+fn process_custom_predicate_body(
     pred_def: ast::CustomPredicateDefinition,
     processing_ctx: &ProcessingContext,
 ) -> Result<CustomPredicate, ProcessorError> {
     let mut scope = ScopeContext {
-        processing_ctx,
+        processing_ctx, // Pass the main context
         variables: BTreeMap::new(),
         next_wildcard_index: 0,
     };
@@ -169,7 +169,6 @@ fn process_custom_predicate(
     for arg_var in &pred_def.public_args {
         let name = &arg_var.0;
         if scope.variables.contains_key(name) {
-            // This shouldn't happen if parser prevents duplicate args, but check anyway
             return Err(ProcessorError::DuplicateVariable(name.clone()));
         }
         let index = scope.next_wildcard_index;
@@ -182,13 +181,12 @@ fn process_custom_predicate(
         );
         scope.next_wildcard_index += 1;
     }
-    let public_args_len = pred_def.public_args.len();
+    let public_args_len = pred_def.public_args.len(); // Already checked against params in first pass
 
     // Register private args
     for arg_var in &pred_def.private_args {
         let name = &arg_var.0;
         if scope.variables.contains_key(name) {
-            // Check against public args and previous private args
             return Err(ProcessorError::DuplicateVariable(name.clone()));
         }
         let index = scope.next_wildcard_index;
@@ -202,7 +200,7 @@ fn process_custom_predicate(
         scope.next_wildcard_index += 1;
     }
 
-    // Check wildcard limit
+    // Check total wildcard limit
     let total_wildcards = scope.next_wildcard_index;
     if total_wildcards > processing_ctx.params.max_custom_predicate_wildcards {
         return Err(ProcessorError::Middleware(middleware::Error::max_length(
@@ -215,6 +213,7 @@ fn process_custom_predicate(
     // Process statements
     let mut middleware_statements = Vec::with_capacity(pred_def.statements.len());
     for statement in pred_def.statements {
+        // Pass the scope which contains the processing_ctx reference
         middleware_statements.push(process_statement(statement, &mut scope, false)?);
     }
 
@@ -224,24 +223,28 @@ fn process_custom_predicate(
     };
 
     // Construct the middleware CustomPredicate
-    // Middleware::Error handles max_custom_predicate_arity check within ::new
+    // Arity check for the definition itself happened in the first pass.
+    // Arity checks for calls *within* the body happened in process_statement.
     let middleware_pred = CustomPredicate::new(
         pred_def.name.0,
-        processing_ctx.params,
+        processing_ctx.params, // Pass params for internal middleware checks
         conjunction,
         middleware_statements,
         public_args_len,
-    )?;
+    )?; // Propagate potential middleware errors
 
     Ok(middleware_pred)
 }
 
+// --- Existing process_request, process_statement etc need minor adjustments ---
+
+// Processes the body of a request using the pre-built context.
 fn process_request(
     req_def: ast::RequestDefinition,
-    processing_ctx: &ProcessingContext,
+    processing_ctx: &ProcessingContext, // Changed parameter
 ) -> Result<Vec<StatementTmpl>, ProcessorError> {
     let mut scope = ScopeContext {
-        processing_ctx,
+        processing_ctx, // Pass the context
         variables: BTreeMap::new(),
         next_wildcard_index: 0,
     };
@@ -249,61 +252,20 @@ fn process_request(
     let mut request_templates = Vec::with_capacity(req_def.statements.len());
 
     for statement in req_def.statements {
+        // process_statement now uses the processing_ctx within scope
         request_templates.push(process_statement(statement, &mut scope, true)?);
     }
 
+    // Check request template count limit
+    if request_templates.len() > processing_ctx.params.max_statements {
+        return Err(ProcessorError::Middleware(middleware::Error::max_length(
+            "request statements".to_string(),
+            request_templates.len(),
+            processing_ctx.params.max_statements,
+        )));
+    }
+
     Ok(request_templates)
-}
-
-// Helper to map AST NativePredicate to middleware::NativePredicate
-fn map_native_predicate(ast_pred: ast::NativePredicate) -> NativePredicate {
-    match ast_pred {
-        ast::NativePredicate::ValueOf => NativePredicate::ValueOf,
-        ast::NativePredicate::Equal => NativePredicate::Equal,
-        ast::NativePredicate::NotEqual => NativePredicate::NotEqual,
-        ast::NativePredicate::Gt => NativePredicate::Gt,
-        ast::NativePredicate::Lt => NativePredicate::Lt,
-        ast::NativePredicate::Contains => NativePredicate::Contains,
-        ast::NativePredicate::NotContains => NativePredicate::NotContains,
-        ast::NativePredicate::SumOf => NativePredicate::SumOf,
-        ast::NativePredicate::ProductOf => NativePredicate::ProductOf,
-        ast::NativePredicate::MaxOf => NativePredicate::MaxOf,
-    }
-}
-
-// Helper to check argument count for native predicates
-fn check_native_arity(pred: NativePredicate, args_len: usize) -> Result<(), ProcessorError> {
-    let (expected_min, expected_max) = match pred {
-        NativePredicate::ValueOf => (2, 2),
-        NativePredicate::Equal => (2, 2),
-        NativePredicate::NotEqual => (2, 2),
-        NativePredicate::Gt => (2, 2),
-        NativePredicate::Lt => (2, 2),
-        NativePredicate::Contains => (3, 3),
-        NativePredicate::NotContains => (2, 2),
-        NativePredicate::SumOf => (3, 3),
-        NativePredicate::ProductOf => (3, 3),
-        NativePredicate::MaxOf => (3, 3),
-        NativePredicate::None => (0, 0),
-        // Syntactic sugar predicates shouldn't reach here in processor
-        _ => {
-            return Err(ProcessorError::Internal(format!(
-                "Unexpected native predicate {:?} in arity check",
-                pred
-            )))
-        }
-    };
-
-    if args_len < expected_min || args_len > expected_max {
-        Err(ProcessorError::ArgumentCountMismatch {
-            predicate: format!("{:?}", pred),
-            // For simplicity, just show expected min if range is used (though currently all are fixed)
-            expected: expected_min,
-            found: args_len,
-        })
-    } else {
-        Ok(())
-    }
 }
 
 fn process_statement(
@@ -330,11 +292,12 @@ fn process_statement(
         }
         ast::Statement::Custom(call) => {
             let pred_name = &call.name.0;
-            let pred_index = scope
+            // Use signatures from the context within the scope
+            let (pred_index, expected_arity) = scope
                 .processing_ctx
-                .custom_predicate_indices
+                .custom_predicate_signatures
                 .get(pred_name)
-                .ok_or_else(|| ProcessorError::UndefinedVariable(pred_name.clone()))?;
+                .ok_or_else(|| ProcessorError::UndefinedIdentifier(pred_name.clone()))?; // Use UndefinedIdentifier
 
             let middleware_args: Result<Vec<_>, _> = call
                 .args
@@ -343,29 +306,26 @@ fn process_statement(
                 .collect();
             let middleware_args = middleware_args?;
 
-            // Arity check for custom predicates: Compare parsed args with definition.
-            let custom_pred_def = scope
-                .processing_ctx
-                .custom_predicates
-                .get(*pred_index)
-                .ok_or_else(|| {
-                    ProcessorError::Internal(format!(
-                        "Custom predicate definition not found for index {}",
-                        pred_index
-                    ))
-                })?;
-
-            let expected_arity = custom_pred_def.args_len;
-            if middleware_args.len() != expected_arity {
+            // Arity check for custom predicate call
+            if middleware_args.len() != *expected_arity {
                 return Err(ProcessorError::ArgumentCountMismatch {
                     predicate: pred_name.clone(),
-                    expected: expected_arity,
+                    expected: *expected_arity,
                     found: middleware_args.len(),
                 });
             }
 
+            // Check arg count limit for the statement itself
+            if middleware_args.len() > scope.processing_ctx.params.max_statement_args {
+                return Err(ProcessorError::Middleware(middleware::Error::max_length(
+                    format!("arguments for custom call to {}", pred_name),
+                    middleware_args.len(),
+                    scope.processing_ctx.params.max_statement_args,
+                )));
+            }
+
             Ok(StatementTmpl {
-                pred: Predicate::BatchSelf(*pred_index),
+                pred: Predicate::BatchSelf(*pred_index), // Use the index from signatures
                 args: middleware_args,
             })
         }
@@ -495,10 +455,12 @@ fn resolve_variable(
     } else if create_if_missing {
         let index = scope.next_wildcard_index;
         // Check wildcard limit before adding
+        // Use max_custom_predicate_wildcards limit even for request wildcards for consistency? Check Params def.
+        // Assuming the same limit applies for now.
         if index >= scope.processing_ctx.params.max_custom_predicate_wildcards {
             return Err(ProcessorError::Middleware(middleware::Error::max_length(
-                "wildcards in request/predicate".to_string(),
-                index + 1, // We are about to add one more
+                "wildcards in request".to_string(), // Clarify context
+                index + 1,                          // We are about to add one more
                 scope.processing_ctx.params.max_custom_predicate_wildcards,
             )));
         }
@@ -512,7 +474,59 @@ fn resolve_variable(
         scope.next_wildcard_index += 1;
         Ok(new_wildcard)
     } else {
-        Err(ProcessorError::UndefinedVariable(var_name.clone()))
+        // If variable is not found in predicate scope (create_if_missing=false)
+        Err(ProcessorError::UndefinedIdentifier(var_name.clone())) // Use UndefinedIdentifier
+    }
+}
+
+// Helper to map AST NativePredicate to middleware::NativePredicate
+fn map_native_predicate(ast_pred: ast::NativePredicate) -> NativePredicate {
+    match ast_pred {
+        ast::NativePredicate::ValueOf => NativePredicate::ValueOf,
+        ast::NativePredicate::Equal => NativePredicate::Equal,
+        ast::NativePredicate::NotEqual => NativePredicate::NotEqual,
+        ast::NativePredicate::Gt => NativePredicate::Gt,
+        ast::NativePredicate::Lt => NativePredicate::Lt,
+        ast::NativePredicate::Contains => NativePredicate::Contains,
+        ast::NativePredicate::NotContains => NativePredicate::NotContains,
+        ast::NativePredicate::SumOf => NativePredicate::SumOf,
+        ast::NativePredicate::ProductOf => NativePredicate::ProductOf,
+        ast::NativePredicate::MaxOf => NativePredicate::MaxOf,
+    }
+}
+
+// Helper to check argument count for native predicates
+fn check_native_arity(pred: NativePredicate, args_len: usize) -> Result<(), ProcessorError> {
+    let (expected_min, expected_max) = match pred {
+        NativePredicate::ValueOf => (2, 2),
+        NativePredicate::Equal => (2, 2),
+        NativePredicate::NotEqual => (2, 2),
+        NativePredicate::Gt => (2, 2),
+        NativePredicate::Lt => (2, 2),
+        NativePredicate::Contains => (3, 3),
+        NativePredicate::NotContains => (2, 2),
+        NativePredicate::SumOf => (3, 3),
+        NativePredicate::ProductOf => (3, 3),
+        NativePredicate::MaxOf => (3, 3),
+        NativePredicate::None => (0, 0),
+        // Syntactic sugar predicates shouldn't reach here in processor
+        _ => {
+            return Err(ProcessorError::Internal(format!(
+                "Unexpected native predicate {:?} in arity check",
+                pred
+            )))
+        }
+    };
+
+    if args_len < expected_min || args_len > expected_max {
+        Err(ProcessorError::ArgumentCountMismatch {
+            predicate: format!("{:?}", pred),
+            // For simplicity, just show expected min if range is used (though currently all are fixed)
+            expected: expected_min,
+            found: args_len,
+        })
+    } else {
+        Ok(())
     }
 }
 
@@ -1111,7 +1125,7 @@ mod tests {
             )],
         };
         let result = process_document(doc_undef_var, &params);
-        assert!(matches!(result, Err(ProcessorError::UndefinedVariable(name)) if name == "B"));
+        assert!(matches!(result, Err(ProcessorError::UndefinedIdentifier(name)) if name == "B"));
 
         // Error: Undefined Predicate (in Request)
         let doc_undef_pred_call = Document {
@@ -1125,8 +1139,8 @@ mod tests {
         };
         let result = process_document(doc_undef_pred_call, &params);
         assert!(
-            matches!(result, Err(ProcessorError::UndefinedVariable(name)) if name == "missing_pred")
-        ); // Currently caught as UndefinedVariable
+            matches!(result, Err(ProcessorError::UndefinedIdentifier(name)) if name == "missing_pred")
+        );
 
         // Error: Arity Mismatch (Native)
         let doc_arity_native = Document {
@@ -1376,5 +1390,155 @@ mod tests {
             })
         );
     }
-    // TODO: Add more tests:
+
+    #[test]
+    fn test_process_forward_reference() {
+        // pred_b calls pred_a, but pred_b is defined first
+        // pred_b(Y) = AND( pred_a(?Y) )
+        // pred_a(X) = AND( Equal(?X["a"], ?X["b"]) )
+        // REQUEST( pred_b(?Z) )
+
+        let pred_b_def = CustomPredicateDefinition {
+            name: ident("pred_b"),
+            public_args: vec![var("Y")],
+            private_args: vec![],
+            type_: CustomPredicateType::And,
+            statements: vec![Statement::Custom(CustomPredicateCall {
+                name: ident("pred_a"), // Forward call
+                args: vec![Argument::Variable(var("Y"))],
+            })],
+        };
+
+        let pred_a_def = CustomPredicateDefinition {
+            name: ident("pred_a"),
+            public_args: vec![var("X")],
+            private_args: vec![],
+            type_: CustomPredicateType::And,
+            statements: vec![Statement::Native(NativePredicateCall {
+                predicate: ast::NativePredicate::Equal,
+                args: vec![
+                    Argument::AnchoredKey(AnchoredKey {
+                        pod_var: var("X"),
+                        key: AnchoredKeyKey::LiteralString("a".to_string()),
+                    }),
+                    Argument::AnchoredKey(AnchoredKey {
+                        pod_var: var("X"),
+                        key: AnchoredKeyKey::LiteralString("b".to_string()),
+                    }),
+                ],
+            })],
+        };
+
+        let request_def = ast::RequestDefinition {
+            statements: vec![Statement::Custom(CustomPredicateCall {
+                name: ident("pred_b"),
+                args: vec![Argument::Variable(var("Z"))],
+            })],
+        };
+
+        let doc = Document {
+            definitions: vec![
+                TopLevelDefinition::CustomPredicate(pred_b_def), // pred_b first (index 0)
+                TopLevelDefinition::CustomPredicate(pred_a_def), // pred_a second (index 1)
+                TopLevelDefinition::Request(request_def),
+            ],
+        };
+
+        let params = Params::default();
+        let result = process_document(doc, &params);
+
+        assert!(
+            result.is_ok(),
+            "Processing failed for forward reference: {:?}",
+            result.err()
+        );
+        let output = result.unwrap();
+
+        // Check batch
+        assert_eq!(output.custom_batch.predicates.len(), 2);
+        let processed_pred_b = &output.custom_batch.predicates[0]; // Index 0
+        let processed_pred_a = &output.custom_batch.predicates[1]; // Index 1
+
+        // Basic checks on pred_b
+        assert_eq!(processed_pred_b.name, "pred_b");
+        assert_eq!(processed_pred_b.args_len, 1);
+        assert_eq!(processed_pred_b.statements.len(), 1);
+
+        // Basic checks on pred_a
+        assert_eq!(processed_pred_a.name, "pred_a");
+        assert_eq!(processed_pred_a.args_len, 1);
+        assert_eq!(processed_pred_a.statements.len(), 1);
+
+        // Check statement inside pred_b calls pred_a (index 1)
+        let pred_b_stmt = &processed_pred_b.statements[0];
+        assert_eq!(pred_b_stmt.pred, MwPredicate::BatchSelf(1)); // Calls pred_a at index 1
+        assert_eq!(pred_b_stmt.args.len(), 1);
+        assert_eq!(
+            pred_b_stmt.args[0],
+            StatementTmplArg::WildcardLiteral(Wildcard {
+                name: "Y".to_string(),
+                index: 0 // Wildcard index within pred_b scope
+            })
+        );
+
+        // Check request calls pred_b (index 0)
+        assert_eq!(output.request_templates.len(), 1);
+        let req_stmt = &output.request_templates[0];
+        assert_eq!(req_stmt.pred, MwPredicate::BatchSelf(0)); // Calls pred_b at index 0
+        assert_eq!(req_stmt.args.len(), 1);
+        assert_eq!(
+            req_stmt.args[0],
+            StatementTmplArg::WildcardLiteral(Wildcard {
+                name: "Z".to_string(),
+                index: 0 // Wildcard index within request scope
+            })
+        );
+    }
+
+    #[test]
+    fn test_process_error_undefined_identifier() {
+        let params = Params::default();
+        // Error: Undefined Variable (in Predicate Body) - Now UndefinedIdentifier
+        let doc_undef_var = Document {
+            definitions: vec![TopLevelDefinition::CustomPredicate(
+                CustomPredicateDefinition {
+                    name: ident("undef_var_pred"),
+                    public_args: vec![var("A")],
+                    private_args: vec![],
+                    type_: CustomPredicateType::And,
+                    statements: vec![Statement::Native(NativePredicateCall {
+                        // Uses ?B which is not defined
+                        predicate: ast::NativePredicate::Equal,
+                        args: vec![
+                            Argument::AnchoredKey(AnchoredKey {
+                                pod_var: var("A"),
+                                key: AnchoredKeyKey::LiteralString("k".into()),
+                            }),
+                            Argument::AnchoredKey(AnchoredKey {
+                                pod_var: var("B"), // Undefined Variable
+                                key: AnchoredKeyKey::LiteralString("k".into()),
+                            }),
+                        ],
+                    })],
+                },
+            )],
+        };
+        let result = process_document(doc_undef_var, &params);
+        assert!(matches!(result, Err(ProcessorError::UndefinedIdentifier(name)) if name == "B"));
+
+        // Error: Undefined Predicate (in Request) - Now UndefinedIdentifier
+        let doc_undef_pred_call = Document {
+            definitions: vec![TopLevelDefinition::Request(ast::RequestDefinition {
+                statements: vec![Statement::Custom(CustomPredicateCall {
+                    // Calls undefined "missing_pred"
+                    name: ident("missing_pred"), // Undefined Predicate Name
+                    args: vec![],
+                })],
+            })],
+        };
+        let result = process_document(doc_undef_pred_call, &params);
+        assert!(
+            matches!(result, Err(ProcessorError::UndefinedIdentifier(name)) if name == "missing_pred")
+        );
+    }
 }

@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::lang::parse;
+    use crate::{lang::parse, middleware::Params};
 
     #[test]
     fn test_runtime() {
@@ -14,7 +14,7 @@ REQUEST(
   NotContains(?sanctions["sanctionsList"], ?gov["idNumber"])
 )
     "#;
-        let processed = parse(input).unwrap();
+        let processed = parse(input, &Params::default()).unwrap();
         println!("{:#?}", processed);
     }
 }

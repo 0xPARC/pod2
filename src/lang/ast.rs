@@ -1336,7 +1336,7 @@ mod tests {
             // Then request
             REQUEST(
                 pred(?MyData)
-                Lt(?MyData["b"], 100)
+                Lt(?MyData["b"], ?Z["z"])
             )
         "#;
         let result_full = build_test_document(input_full);
@@ -1353,7 +1353,10 @@ mod tests {
                         pod_var: Variable("X".to_string()),
                         key: AnchoredKeyKey::LiteralString("a".to_string()),
                     }),
-                    Argument::Literal(Literal::Int(0)),
+                    Argument::AnchoredKey(AnchoredKey {
+                        pod_var: Variable("X".to_string()),
+                        key: AnchoredKeyKey::LiteralString("b".to_string()),
+                    }),
                 ],
             })],
         });
@@ -1370,7 +1373,10 @@ mod tests {
                             pod_var: Variable("MyData".to_string()),
                             key: AnchoredKeyKey::LiteralString("b".to_string()),
                         }),
-                        Argument::Literal(Literal::Int(100)),
+                        Argument::AnchoredKey(AnchoredKey {
+                            pod_var: Variable("Z".to_string()),
+                            key: AnchoredKeyKey::LiteralString("z".to_string()),
+                        }),
                     ],
                 }),
             ],
