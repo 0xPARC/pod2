@@ -30,7 +30,7 @@ pub(super) fn try_prove_statement(
         return Ok(existing_chain.clone());
     }
 
-    // --- NEW: Check for potential SELF constant generation (for ValueOf) ---
+    // --- Check for potential SELF constant generation (for ValueOf) ---
     if let Statement::ValueOf(target_ak, target_value) = target {
         // Check if this (key, value) pair corresponds to a potential constant
         if let Some((holder_wc, const_key, _value)) = potential_constant_info
@@ -74,7 +74,7 @@ pub(super) fn try_prove_statement(
             }
         }
     }
-    // --- END NEW ---
+    // --- End SELF Check ---
 
     // 2. Check if it's a base fact (CopyStatement)
     let target_middleware_statement = target;
@@ -105,7 +105,7 @@ pub(super) fn try_prove_statement(
         return Ok(proof_chain);
     }
 
-    // 3. Attempt other proof methods (...FromEntries, GtToNEq, Transitive, Custom)
+    // 3. Attempt other proof methods (FromEntries, Transitive, Custom, etc.)
     match target.predicate() {
         Predicate::Native(NativePredicate::Equal) => {
             if let Statement::Equal(ak1, ak2) = target {
@@ -153,10 +153,10 @@ pub(super) fn try_prove_statement(
                 }
                 // End of EqualFromEntries attempt
 
-                // --- START: Transitive Equality Logic ---
-                // Attempt 2: If EqualFromEntries didn't work, try TransitiveEqualFromStatements
+                // --- Transitive Equality Logic ---
+                // Attempt 2: Prove via TransitiveEqualFromStatements
 
-                // Get IDs, handling cases where keys might not be indexed
+                // Get DSU IDs, requires keys to be indexed
                 let maybe_id1 = indexes.get_key_index(ak1);
                 let maybe_id2 = indexes.get_key_index(ak2);
 
@@ -166,7 +166,6 @@ pub(super) fn try_prove_statement(
 
                     // Optimization: If not in the same DSU set already, transitivity isn't provable this way.
                     if rep1 != rep2 {
-                        // Return error immediately if DSU check fails (cannot be proven transitively)
                         // Note: This path is hit BEFORE the generic fallback error at the end.
                         return Err(ProverError::Unsatisfiable(format!(
                             "Cannot prove Equal({:?}, {:?}) transitively: not in same DSU set (roots: {}, {})",
@@ -211,7 +210,7 @@ pub(super) fn try_prove_statement(
                                         &[], // Pass empty potential_constant_info
                                     ) {
                                         Ok(chain2) => {
-                                            // SUCCESS! Combine chains and add the transitive step.
+                                            // Found transitive path: A=Mid and Mid=C
                                             let mut combined_steps = chain1.0;
                                             combined_steps.extend(chain2.0);
 
@@ -235,23 +234,23 @@ pub(super) fn try_prove_statement(
 
                                             return Ok(final_chain);
                                         }
-                                        Err(_) => {} // Second part failed, continue search for ak_mid
+                                        Err(_) => {} // Second part Eq(Mid, C) failed, continue search for ak_mid
                                     }
                                 }
                                 Err(_) => {
-                                    // First part failed, continue search for ak_mid
+                                    // First part Eq(A, Mid) failed, continue search for ak_mid
                                 }
                             }
                         }
-                        // If loop finishes without returning, no transitive path was found via *this* method.
-                        // Fall through to the generic Unsatisfiable error at the end of the function.
+                        // If loop finishes, no transitive path found via this method.
+                        // Fall through to the generic Unsatisfiable error.
                     }
                 } else {
                     // If either key wasn't indexed, transitive proof via DSU/iteration is not possible.
-                    // Fall through to the generic Unsatisfiable error at the end.
+                    // Fall through to the generic Unsatisfiable error.
                     println!("Skipping transitive check for Equal({:?}, {:?}) as one or both keys not indexed.", ak1, ak2);
                 }
-                // --- END: Transitive Equality Logic ---
+                // --- END Transitive Equality Logic ---
             }
         }
         Predicate::Native(NativePredicate::NotEqual) => {
@@ -305,12 +304,11 @@ pub(super) fn try_prove_statement(
                 }
                 // End of NotEqualFromEntries attempt
 
-                // --- START: GtToNotEqual / LtToNotEqual Logic ---
-                // Attempt 2: Prove via GtToNotEqual
+                // --- GtToNotEqual / LtToNotEqual Logic ---
+                // Attempt 2: Prove via GtToNotEqual (A > B implies A != B)
                 let target_gt1 = Statement::Gt(ak1.clone(), ak2.clone());
                 let target_gt2 = Statement::Gt(ak2.clone(), ak1.clone()); // Check both directions
 
-                // Try proving Gt(ak1, ak2)
                 if let Ok(gt_chain1) = try_prove_statement(
                     state,
                     &target_gt1,
@@ -321,7 +319,7 @@ pub(super) fn try_prove_statement(
                     let mut combined_steps = gt_chain1.0;
                     let neq_step = ProofStep {
                         operation: OperationType::Native(NativeOperation::GtToNotEqual),
-                        inputs: vec![target_gt1.clone()], // The proven Gt statement
+                        inputs: vec![target_gt1.clone()],
                         output: target.clone(),
                     };
                     combined_steps.push(neq_step);
@@ -343,8 +341,8 @@ pub(super) fn try_prove_statement(
                     let mut combined_steps = gt_chain2.0;
                     let neq_step = ProofStep {
                         operation: OperationType::Native(NativeOperation::GtToNotEqual),
-                        inputs: vec![target_gt2.clone()], // The proven Gt statement
-                        output: target.clone(),           // Target is still NotEqual(ak1, ak2)
+                        inputs: vec![target_gt2.clone()],
+                        output: target.clone(),
                     };
                     combined_steps.push(neq_step);
                     let final_chain = ProofChain(combined_steps);
@@ -369,7 +367,7 @@ pub(super) fn try_prove_statement(
                     let mut combined_steps = lt_chain1.0;
                     let neq_step = ProofStep {
                         operation: OperationType::Native(NativeOperation::LtToNotEqual),
-                        inputs: vec![target_lt1.clone()], // The proven Lt statement
+                        inputs: vec![target_lt1.clone()],
                         output: target.clone(),
                     };
                     combined_steps.push(neq_step);
@@ -391,8 +389,8 @@ pub(super) fn try_prove_statement(
                     let mut combined_steps = lt_chain2.0;
                     let neq_step = ProofStep {
                         operation: OperationType::Native(NativeOperation::LtToNotEqual),
-                        inputs: vec![target_lt2.clone()], // The proven Lt statement
-                        output: target.clone(),           // Target is still NotEqual(ak1, ak2)
+                        inputs: vec![target_lt2.clone()],
+                        output: target.clone(),
                     };
                     combined_steps.push(neq_step);
                     let final_chain = ProofChain(combined_steps);
@@ -401,9 +399,7 @@ pub(super) fn try_prove_statement(
                         .insert(target.clone(), final_chain.clone());
                     return Ok(final_chain);
                 }
-                // --- END: GtToNotEqual / LtToNotEqual Logic ---
-
-                // If all NotEqual attempts fail, fall through to the generic Unsatisfiable error.
+                // --- END GtToNotEqual / LtToNotEqual Logic ---
             }
         }
         Predicate::Native(NativePredicate::Gt) => {
@@ -722,7 +718,6 @@ pub(super) fn try_prove_statement(
             // Statement::Contains takes AnchoredKeys directly
             if let Statement::Contains(container_ak, key_ak, value_ak) = target {
                 if let Some(container_val) = indexes.get_value(container_ak) {
-                    // Get the Value for the key_ak and value_ak
                     let mut needed_inputs = vec![];
                     let key_value = match indexes.get_value(key_ak) {
                         Some(v) => {
@@ -739,19 +734,15 @@ pub(super) fn try_prove_statement(
                         None => None,
                     };
 
-                    // Now proceed with the check using the resolved values
                     if let (Some(key_value), Some(target_value)) = (key_value, target_value) {
                         match container_val.prove_existence(&key_value) {
-                            // Use resolved key_value
                             Ok((proven_value, _merkle_proof)) if proven_value == &target_value => {
-                                // Compare resolved target_value
-                                // Proof via ContainsFromEntries
                                 let input_container =
                                     Statement::ValueOf(container_ak.clone(), container_val.clone());
 
-                                // Inputs are ValueOf for container AND the resolved AKs for key/value_target
+                                // Inputs: ValueOf(container), plus ValueOf(key) and ValueOf(value) if resolved
                                 let mut i = vec![input_container.clone()];
-                                i.extend(needed_inputs.clone()); // Adds ValueOf for key_ak and value_ak
+                                i.extend(needed_inputs.clone());
                                 let operation =
                                     OperationType::Native(NativeOperation::ContainsFromEntries);
                                 let proof_step = ProofStep {
@@ -761,7 +752,6 @@ pub(super) fn try_prove_statement(
                                 };
                                 let proof_chain = ProofChain(vec![proof_step]);
 
-                                // Find origin PodId for the container ValueOf statement
                                 if let Some((pod_id, _)) = indexes
                                     .exact_statement_lookup
                                     .iter()
@@ -774,7 +764,7 @@ pub(super) fn try_prove_statement(
                                         input_container
                                     )));
                                 }
-                                // Add origins for key/value_target inputs (already in needed_inputs)
+                                // Add origins for key/value_target inputs
                                 for input_stmt in needed_inputs {
                                     if let Some((pod_id, _)) = indexes
                                         .exact_statement_lookup
@@ -807,7 +797,6 @@ pub(super) fn try_prove_statement(
             // Statement::NotContains takes AnchoredKeys directly
             if let Statement::NotContains(container_ak, key_ak) = target {
                 if let Some(container_val) = indexes.get_value(container_ak) {
-                    // Get the Value for the key_ak
                     let mut needed_inputs = vec![];
                     let key_value = match indexes.get_value(key_ak) {
                         Some(v) => {
@@ -817,18 +806,15 @@ pub(super) fn try_prove_statement(
                         None => None,
                     };
 
-                    // Now proceed with the check using the resolved key_value
                     if let Some(key_value) = key_value {
                         match container_val.prove_nonexistence(&key_value) {
-                            // Use resolved key_value
                             Ok(_merkle_proof) => {
-                                // Proof via NotContainsFromEntries
                                 let input_container =
                                     Statement::ValueOf(container_ak.clone(), container_val.clone());
 
-                                // Inputs are ValueOf for container AND the resolved AK for key input
+                                // Inputs: ValueOf(container) and ValueOf(key)
                                 let mut i = vec![input_container.clone()];
-                                i.extend(needed_inputs.clone()); // Adds ValueOf for key_ak
+                                i.extend(needed_inputs.clone());
                                 let operation =
                                     OperationType::Native(NativeOperation::NotContainsFromEntries);
                                 let proof_step = ProofStep {
@@ -838,7 +824,6 @@ pub(super) fn try_prove_statement(
                                 };
                                 let proof_chain = ProofChain(vec![proof_step]);
 
-                                // Find origin PodId for the container ValueOf statement
                                 if let Some((pod_id, _)) = indexes
                                     .exact_statement_lookup
                                     .iter()
@@ -851,7 +836,7 @@ pub(super) fn try_prove_statement(
                                         input_container
                                     )));
                                 }
-                                // Add origins for key input (already in needed_inputs)
+                                // Add origins for key input
                                 for input_stmt in needed_inputs {
                                     if let Some((pod_id, _)) = indexes
                                         .exact_statement_lookup
@@ -881,7 +866,6 @@ pub(super) fn try_prove_statement(
         // --- START: Custom Predicate Logic ---
         Predicate::Custom(custom_ref) => {
             if let Statement::Custom(target_custom_ref, concrete_args) = target {
-                // Ensure the target ref matches the predicate branch we are in
                 if custom_ref != *target_custom_ref {
                     return Err(ProverError::Internal(
                         "Predicate mismatch in custom proof logic".to_string(),
@@ -899,7 +883,6 @@ pub(super) fn try_prove_statement(
                         let mut succeeded = true;
 
                         // Build public bindings map (index -> value)
-                        // TODO: Need a robust way to get the *order* of public wildcards from the definition.
                         // Assuming for now that `concrete_args` aligns positionally with public wildcards (index 0 to args_len-1).
                         let public_bindings: HashMap<usize, WildcardValue> =
                             concrete_args.iter().cloned().enumerate().collect();
@@ -912,7 +895,6 @@ pub(super) fn try_prove_statement(
                                 concrete_args,
                                 &public_bindings,
                                 state,
-                                // Pass the retrieved context
                                 Some((pred_def, batch_arc.clone())),
                             ) {
                                 Ok(stmt) => stmt,
@@ -979,7 +961,6 @@ pub(super) fn try_prove_statement(
                                 concrete_args,
                                 &public_bindings,
                                 state,
-                                // Pass the retrieved context
                                 Some((pred_def, batch_arc.clone())),
                             );
 
@@ -1060,7 +1041,6 @@ fn build_concrete_statement_from_bindings(
     // Context: The predicate definition and batch Arc containing this template
     outer_context: Option<(&CustomPredicate, std::sync::Arc<CustomPredicateBatch>)>,
 ) -> Result<Statement, ProverError> {
-    // Determine args_len from outer context if available
     let outer_args_len = outer_context.as_ref().map(|(def, _)| def.args_len);
 
     match &tmpl.pred {
@@ -1070,7 +1050,6 @@ fn build_concrete_statement_from_bindings(
             for arg_tmpl in &tmpl.args {
                 match arg_tmpl {
                     StatementTmplArg::Key(wc_pod, key_or_wc) => {
-                        // Resolve Pod Wildcard
                         let pod_id = match outer_args_len {
                             Some(args_len) if wc_pod.index < args_len => {
                                 // Public WC
@@ -1101,7 +1080,6 @@ fn build_concrete_statement_from_bindings(
                                 }
                             }
                         };
-                        // Resolve Key or Key Wildcard
                         let key = match key_or_wc {
                             KeyOrWildcard::Key(k) => k.clone(),
                             KeyOrWildcard::Wildcard(wc_key) => {
@@ -1152,7 +1130,6 @@ fn build_concrete_statement_from_bindings(
                             }
                             Some(_) | None => {
                                 // Private WC or no outer context
-                                // Resolve private Value wildcard
                                 let value = match state.domains.get(wc_val) {
                                     Some((domain, _)) if domain.len() == 1 => {
                                         match domain.iter().next().unwrap() {
@@ -1235,7 +1212,7 @@ fn build_concrete_statement_from_bindings(
                  )));
             }
 
-            // For Predicate::Custom, the concrete_custom_ref is just the one we matched on.
+            // For Predicate::Custom, the concrete CustomPredicateRef is the one from the template.
             Ok(Statement::Custom(custom_ref.clone(), nested_call_args))
         }
         Predicate::BatchSelf(idx) => {
@@ -1245,7 +1222,7 @@ fn build_concrete_statement_from_bindings(
 
             for arg_tmpl in &tmpl.args {
                 // Resolve the wildcard used in the argument template based on the *current* context
-                // (Same logic as in the Predicate::Custom arm)
+                // (Same logic as in the Predicate::Custom arm above)
                 let resolved_wc_value = match arg_tmpl {
                     StatementTmplArg::WildcardLiteral(wc) => {
                          match current_outer_args_len {
@@ -1278,7 +1255,6 @@ fn build_concrete_statement_from_bindings(
             }
 
             // Determine the correct CustomPredicateRef for the concrete BatchSelf statement
-            // Get the batch Arc directly from the outer_context.
             let (_outer_pred_def, batch_arc) = outer_context.ok_or_else(|| {
                 ProverError::Internal(
                     "Missing outer context needed to resolve BatchSelf predicate in template"
@@ -1291,7 +1267,6 @@ fn build_concrete_statement_from_bindings(
                 index: *idx,
             };
 
-            // Check if args length matches the resolved predicate
             let resolved_pred_def = batch_arc.predicates.get(*idx).ok_or_else(|| {
                 ProverError::Internal(format!(
                     "BatchSelf index {} out of bounds for batch '{}'",

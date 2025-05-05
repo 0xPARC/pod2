@@ -16,35 +16,31 @@ use crate::{
 /// Returns Ok(SolverState) if a solution is found, where the state's domains
 /// all have size 1. Returns Err(ProverError::Unsatisfiable) if no solution exists.
 pub(super) fn perform_search(
-    initial_state: SolverState,          // Take ownership to modify clones
-    request_templates: &[StatementTmpl], // <-- Add original templates
+    initial_state: SolverState,
+    request_templates: &[StatementTmpl],
     indexes: &ProverIndexes,
-    custom_definitions: &CustomDefinitions, // <-- Use this now
+    custom_definitions: &CustomDefinitions,
     equality_pairs: &[(Wildcard, Wildcard)],
     inequality_pairs: &[(Wildcard, Wildcard)],
-    potential_constant_info: &[(Wildcard, Key, Value)], // Change Wildcard -> Value
+    potential_constant_info: &[(Wildcard, Key, Value)],
 ) -> Result<SolverState, ProverError> {
-    // Check if already solved (base case for recursion)
+    // Base case: all domains are singletons
     if initial_state
         .domains
         .values()
         .all(|(domain, _)| domain.len() == 1)
     {
-        // --- Verify Provability --- START ---
-        // Need a mutable copy to pass to try_prove_statement
+        // Verify that all statements can be proven with the current assignment
         let mut verification_state = initial_state.clone_state_for_search();
         for tmpl in request_templates {
-            // Generate the concrete statement based on the current state's bindings
             match try_generate_concrete_candidate_and_bindings(tmpl, &verification_state) {
                 Ok(Some((target_statement, _))) => {
-                    // Attempt to prove this concrete statement
-                    // Pass a mutable reference to the *verification* state
                     match try_prove_statement(
-                        &mut verification_state, // Use mutable clone
+                        &mut verification_state,
                         &target_statement,
                         indexes,
                         custom_definitions,
-                        potential_constant_info, // Pass down
+                        potential_constant_info,
                     ) {
                         Ok(_) => {
                             // This specific statement is provable with this assignment
@@ -65,7 +61,6 @@ pub(super) fn perform_search(
                     }
                 }
                 Ok(None) => {
-                    // This shouldn't happen if all domains are singletons, but handle defensively
                     println!("    - Warning: Could not generate concrete statement from template {:?} in final check.", tmpl);
                     return Err(ProverError::Internal(format!(
                         "Failed to generate concrete statement in final verification: {:?}",
@@ -73,7 +68,6 @@ pub(super) fn perform_search(
                     )));
                 }
                 Err(e) => {
-                    // Error during generation itself
                     println!(
                         "    - Error generating concrete statement in final check: {:?}",
                         e
@@ -82,43 +76,40 @@ pub(super) fn perform_search(
                 }
             }
         }
-        // If all templates were successfully proven
         println!("  Base case: Verification successful.");
-        return Ok(verification_state); // <-- Return the state with the added proofs!
-                                       // --- Verify Provability --- END ---
+        return Ok(verification_state);
     }
 
-    // 1. Select an unassigned variable (first one found with domain > 1)
+    // Select first unassigned variable (domain size > 1)
     let (var_to_assign, (current_domain, _)) = initial_state
         .domains
         .iter()
         .find(|(_, (domain, _))| domain.len() > 1)
         .ok_or_else(|| {
-            // Should not happen if the initial check passed, but good to handle
             ProverError::Internal("Search called but no variable needs assignment?".to_string())
         })?;
 
-    let var_clone = var_to_assign.clone(); // Clone var name for printing/use
-    let domain_clone = current_domain.clone(); // Clone domain to iterate over
+    let var_clone = var_to_assign.clone();
+    let domain_clone = current_domain.clone();
 
     println!("  Selected variable: {}", var_clone.name);
 
-    // 2. Iterate through values in the variable's domain
+    // Try each value in the variable's domain
     for value in domain_clone {
         println!(
             "    Trying value: {:?} for variable {}",
             value, var_clone.name
         );
 
-        // 3. Create a hypothetical state with the tentative assignment
+        // Create new state with tentative assignment
         let mut hypothetical_state = initial_state.clone_state_for_search();
         let (target_domain, _) = hypothetical_state
             .domains
             .get_mut(&var_clone)
             .expect("Variable must exist in cloned state");
-        *target_domain = HashSet::from([value.clone()]); // Assign the value
+        *target_domain = HashSet::from([value.clone()]);
 
-        // 4. Propagate constraints in the hypothetical state
+        // Propagate constraints
         match prune_initial_domains(
             &mut hypothetical_state,
             indexes,
@@ -126,17 +117,15 @@ pub(super) fn perform_search(
             inequality_pairs,
         ) {
             Ok(_) => {
-                // Propagation succeeded, no immediate contradiction
                 println!("      Propagation succeeded.");
 
-                // --- NEq Consistency Check (Kept for potential early exit) ---
+                // Check for NotEqual constraint violations
                 if !check_final_state_consistency(&hypothetical_state, request_templates) {
                     println!("      State inconsistent with NEq templates after propagation. Backtracking...");
-                    continue; // Skip to the next value
+                    continue;
                 }
-                // --- END: NEq Check ---
 
-                // 5. Recursive call
+                // Recursively search with new state
                 match perform_search(
                     hypothetical_state,
                     request_templates,
@@ -144,41 +133,35 @@ pub(super) fn perform_search(
                     custom_definitions,
                     equality_pairs,
                     inequality_pairs,
-                    potential_constant_info, // Pass down (type should now match)
+                    potential_constant_info,
                 ) {
-                    // Pass custom_definitions
                     Ok(solved_state) => {
                         println!("      Recursive search found solution!");
-                        return Ok(solved_state); // Solution found down this path
+                        return Ok(solved_state);
                     }
                     Err(ProverError::Unsatisfiable(_)) => {
                         println!("      Recursive search failed, backtracking...");
-                        // Continue to the next value for var_to_assign
                     }
                     Err(e) => {
-                        // Propagate other errors
                         println!("      Recursive search returned error: {:?}", e);
                         return Err(e);
                     }
                 }
             }
             Err(ProverError::Unsatisfiable(msg)) => {
-                // Propagation led to an empty domain (contradiction)
                 println!(
                     "      Propagation failed for value {:?}: {}. Backtracking...",
                     value, msg
                 );
-                // Continue to the next value for var_to_assign
             }
             Err(e) => {
-                // Other error during propagation
                 println!("      Propagation returned error: {:?}", e);
                 return Err(e);
             }
         }
-    } // End loop through values
+    }
 
-    // 6. If all values for the selected variable failed, backtrack
+    // All values failed, backtrack
     println!(
         "  All values tried for variable {}, backtracking from this level.",
         var_clone.name
@@ -189,12 +172,11 @@ pub(super) fn perform_search(
     )))
 }
 
-/// Checks if a state (potentially partially assigned) violates NotEqual templates.
+/// Checks if a state violates NotEqual templates.
 /// Returns true if consistent, false if a violation is found.
 fn check_final_state_consistency(state: &SolverState, request_templates: &[StatementTmpl]) -> bool {
     for tmpl in request_templates {
         if tmpl.pred == Predicate::Native(NativePredicate::NotEqual) && tmpl.args.len() == 2 {
-            // Get the relevant wildcards for the NEq arguments
             let wcs1 = pruning::get_wildcards_from_tmpl_arg(&tmpl.args[0]);
             let wcs2 = pruning::get_wildcards_from_tmpl_arg(&tmpl.args[1]);
 
@@ -217,12 +199,10 @@ fn check_final_state_consistency(state: &SolverState, request_templates: &[State
                 }
             }
         }
-        // Add checks for other constraints if needed
     }
-    true // No inconsistency found
+    true
 }
 
-/// Helper for check_final_state_consistency.
 /// Checks if two wildcards violate a NotEqual constraint.
 fn check_neq_consistency_for_pair(state: &SolverState, wc1: &Wildcard, wc2: &Wildcard) -> bool {
     if let (Some((domain1, _)), Some((domain2, _))) =
@@ -236,22 +216,19 @@ fn check_neq_consistency_for_pair(state: &SolverState, wc1: &Wildcard, wc2: &Wil
                     "    Consistency Check Failed: NEq violated between {} ({:?}) and {} ({:?})",
                     wc1.name, val1, wc2.name, val2
                 );
-                return false; // Domains are singletons and equal, violates NEq
+                return false;
             }
         }
     }
-    true // Consistent or not enough info to determine inconsistency
+    true
 }
 
-// Add a basic clone method to SolverState, maybe move later
-// This is a simplified clone for search purposes, might need refinement
+// Simplified clone for search purposes
 impl SolverState {
     fn clone_state_for_search(&self) -> Self {
         SolverState {
-            // Deep clone domains and constraints as they are modified
             domains: self.domains.clone(),
             constraints: self.constraints.clone(),
-            // Proof chains and scope are built up, clone is okay for backtracking start point
             proof_chains: self.proof_chains.clone(),
             scope: self.scope.clone(),
             params: self.params.clone(),

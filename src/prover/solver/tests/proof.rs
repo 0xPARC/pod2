@@ -16,12 +16,19 @@ use crate::{
     },
 };
 
+/// Tests for the proof generation system's core operations:
+/// - Statement copying from base facts
+/// - Equality and inequality derivation
+/// - Arithmetic operations (sum, product, max)
+/// - Dictionary membership verification
+/// - Custom predicate evaluation
+/// - Transitive equality chains
 #[cfg(test)]
 mod proof_tests {
-    use super::*; // Make helpers available inside the module
-    // Use ToFields trait within the module
+    use super::*;
     use crate::middleware::ToFields;
 
+    /// Verifies the CopyStatement operation and proof caching behavior.
     #[test]
     fn test_try_prove_statement_copy_base_fact() {
         let pod_a = pod(1);
@@ -30,12 +37,10 @@ mod proof_tests {
         let base_fact_stmt =
             Statement::ValueOf(AnchoredKey::new(pod_a, key_foo.clone()), val_10.clone());
         let base_fact_prover: Statement = base_fact_stmt.clone();
-        // Destructure the result and pass &indexes
         let (indexes, _) = setup_indexes_with_facts(&vec![(pod_a, base_fact_stmt.clone())]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        // Pass &indexes
         let result = try_prove_statement(
             &mut state,
             &base_fact_prover,
@@ -78,7 +83,7 @@ mod proof_tests {
             "Scope should contain only the one base fact"
         );
 
-        // Pass &indexes
+        // Verify that reproving returns the cached proof
         let result_again = try_prove_statement(
             &mut state,
             &base_fact_prover,
@@ -95,6 +100,7 @@ mod proof_tests {
         assert_eq!(state.scope.len(), 1, "Scope size should not change");
     }
 
+    /// Verifies error handling when attempting to prove a statement without required base facts.
     #[test]
     fn test_try_prove_statement_not_found() {
         let pod_a = pod(1);
@@ -104,12 +110,10 @@ mod proof_tests {
             Statement::ValueOf(AnchoredKey::new(pod_a, key_foo.clone()), val_10.clone());
         let target_prover: Statement = target_stmt.clone();
 
-        // Destructure the result and pass &indexes
         let (indexes, _) = setup_indexes_with_facts(&[]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        // Pass &indexes
         let result = try_prove_statement(
             &mut state,
             &target_prover,
@@ -120,13 +124,11 @@ mod proof_tests {
 
         assert!(result.is_err(), "Proof should fail");
         match result.err().unwrap() {
-            // Check for Unsatisfiable error
             ProverError::Unsatisfiable(msg) => {
                 assert!(
                     msg.contains("Could not find or derive proof"),
                     "Error message mismatch"
                 );
-                // Use debug formatting for comparison
                 assert!(
                     msg.contains(&format!("{:?}", target_prover)),
                     "Error message mismatch"
@@ -139,6 +141,7 @@ mod proof_tests {
         assert!(state.scope.is_empty());
     }
 
+    /// Verifies that proof chains are cached and reused for repeated proof attempts.
     #[test]
     fn test_try_prove_statement_already_proven() {
         let pod_a = pod(1);
@@ -151,15 +154,12 @@ mod proof_tests {
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        // Instantiate dummy chain as tuple struct
         let dummy_chain = ProofChain(vec![]);
         state
             .proof_chains
             .insert(target_prover.clone(), dummy_chain.clone());
 
-        // Destructure the result and pass &indexes
         let (indexes, _) = setup_indexes_with_facts(&[]);
-        // Pass &indexes
         let result = try_prove_statement(
             &mut state,
             &target_prover,
@@ -182,6 +182,9 @@ mod proof_tests {
         assert!(state.scope.is_empty());
     }
 
+    /// Tests that equality between two values can be proven when they are equal.
+    ///
+    /// Verifies the EqualFromEntries operation using ValueOf statements.
     #[test]
     fn test_try_prove_statement_equal_from_entries_success() {
         let pod_a = pod(1);
@@ -197,13 +200,11 @@ mod proof_tests {
         let fact2 = Statement::ValueOf(ak2.clone(), val_10.clone());
         let target_stmt = Statement::Equal(ak1.clone(), ak2.clone());
 
-        // Destructure the result and pass &indexes
         let (indexes, _) =
             setup_indexes_with_facts(&vec![(pod_a, fact1.clone()), (pod_b, fact2.clone())]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        // Pass &indexes
         let result =
             try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(result.is_ok(), "Proof should succeed via EqualFromEntries");
@@ -226,6 +227,10 @@ mod proof_tests {
         assert!(state.scope.contains(&(pod_b, fact2)));
     }
 
+    /// Tests that equality cannot be proven when the values are different.
+    ///
+    /// This test verifies that the EqualFromEntries operation fails when attempting
+    /// to prove equality between two values that are not equal.
     #[test]
     fn test_try_prove_statement_equal_from_entries_fail_different_values() {
         let pod_a = pod(1);
@@ -242,7 +247,6 @@ mod proof_tests {
         let fact2 = Statement::ValueOf(ak2.clone(), val_20.clone()); // Different value
         let target_stmt = Statement::Equal(ak1.clone(), ak2.clone());
 
-        // Destructure the result and pass &indexes
         let (indexes, _) =
             setup_indexes_with_facts(&vec![(pod_a, fact1.clone()), (pod_b, fact2.clone())]);
         let custom_definitions = CustomDefinitions::default();
@@ -250,8 +254,7 @@ mod proof_tests {
 
         let result =
             try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
-        assert!(result.is_err());
-        // Should now fail specifically because DSU sets are different due to ValueOf derivation
+        assert!(result.is_err(), "Proof should fail with different values");
         match result.err().unwrap() {
             ProverError::Unsatisfiable(msg) => {
                 assert!(
@@ -260,7 +263,6 @@ mod proof_tests {
                     "Expected DSU set error message, got: {}",
                     msg
                 );
-                // Optionally check for the specific keys if needed, less brittle than full debug output
                 assert!(msg.contains("AnchoredKey { pod_id: PodId(Hash("));
             }
             e => panic!("Expected Unsatisfiable(DSU set error), got {:?}", e),
@@ -269,6 +271,9 @@ mod proof_tests {
         assert!(state.scope.is_empty());
     }
 
+    /// Tests that equality cannot be proven when one of the values is missing.
+    ///
+    /// Verifies that EqualFromEntries fails when a required ValueOf statement is absent.
     #[test]
     fn test_try_prove_statement_equal_from_entries_fail_missing_value() {
         let pod_a = pod(1);
@@ -387,6 +392,7 @@ mod proof_tests {
         }
     }
 
+    /// Tests that GtFromEntries operation succeeds with valid numeric values.
     #[test]
     fn test_try_prove_statement_gt_from_entries_success() {
         let pod_a = pod(1);
@@ -403,13 +409,11 @@ mod proof_tests {
         let fact_lt = Statement::ValueOf(ak_lt.clone(), val_10.clone());
         let target_stmt = Statement::Gt(ak_gt.clone(), ak_lt.clone());
 
-        // Destructure the result and pass &indexes
         let (indexes, _) =
             setup_indexes_with_facts(&vec![(pod_a, fact_gt.clone()), (pod_b, fact_lt.clone())]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        // Pass &indexes
         let result =
             try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(result.is_ok(), "Proof should succeed via GtFromEntries");
@@ -432,6 +436,7 @@ mod proof_tests {
         assert!(state.scope.contains(&(pod_b, fact_lt)));
     }
 
+    /// Tests that GtFromEntries fails when the first value is less than the second.
     #[test]
     fn test_try_prove_statement_gt_from_entries_fail_not_greater() {
         let pod_a = pod(1);
@@ -444,17 +449,48 @@ mod proof_tests {
         let ak_a = AnchoredKey::new(pod_a, key_a.clone());
         let ak_b = AnchoredKey::new(pod_b, key_b.clone());
 
-        let fact_a = Statement::ValueOf(ak_a.clone(), val_10.clone()); // 10
-        let fact_b = Statement::ValueOf(ak_b.clone(), val_20.clone()); // 20
-        let target_stmt = Statement::Gt(ak_a.clone(), ak_b.clone()); // Target: 10 > 20 (false)
+        let fact_a = Statement::ValueOf(ak_a.clone(), val_10.clone());
+        let fact_b = Statement::ValueOf(ak_b.clone(), val_20.clone());
+        let target_stmt = Statement::Gt(ak_a.clone(), ak_b.clone());
 
-        // Destructure the result and pass &indexes
         let (indexes, _) =
             setup_indexes_with_facts(&vec![(pod_a, fact_a.clone()), (pod_b, fact_b.clone())]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        // Pass &indexes
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+        assert!(result.is_err());
+        match result.err().unwrap() {
+            ProverError::Unsatisfiable(msg) => {
+                assert!(msg.contains("Could not find or derive proof"));
+            }
+            e => panic!("Expected Unsatisfiable error, got {:?}", e),
+        }
+    }
+
+    /// Tests that GtFromEntries fails when comparing incompatible value types.
+    #[test]
+    fn test_try_prove_statement_gt_from_entries_fail_wrong_type() {
+        let pod_a = pod(1);
+        let pod_b = pod(2);
+        let key_a = key("a");
+        let key_b = key("b");
+        let val_10 = val(10);
+        let val_str = Value::from("hello");
+
+        let ak_a = AnchoredKey::new(pod_a, key_a.clone());
+        let ak_b = AnchoredKey::new(pod_b, key_b.clone());
+
+        let fact_a = Statement::ValueOf(ak_a.clone(), val_10.clone());
+        let fact_b = Statement::ValueOf(ak_b.clone(), val_str.clone());
+        let target_stmt = Statement::Gt(ak_a.clone(), ak_b.clone());
+
+        let (indexes, _) =
+            setup_indexes_with_facts(&vec![(pod_a, fact_a.clone()), (pod_b, fact_b.clone())]);
+        let custom_definitions = CustomDefinitions::default();
+        let mut state = solver_state_with_domains(vec![]);
+
         let result =
             try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(result.is_err());
@@ -466,43 +502,7 @@ mod proof_tests {
         }
     }
 
-    #[test]
-    fn test_try_prove_statement_gt_from_entries_fail_wrong_type() {
-        let pod_a = pod(1);
-        let pod_b = pod(2);
-        let key_a = key("a");
-        let key_b = key("b");
-        let val_10 = val(10);
-        let val_str = Value::from("hello"); // String value
-
-        let ak_a = AnchoredKey::new(pod_a, key_a.clone());
-        let ak_b = AnchoredKey::new(pod_b, key_b.clone());
-
-        let fact_a = Statement::ValueOf(ak_a.clone(), val_10.clone());
-        let fact_b = Statement::ValueOf(ak_b.clone(), val_str.clone());
-        let target_stmt = Statement::Gt(ak_a.clone(), ak_b.clone());
-
-        // Destructure the result and pass &indexes
-        let (indexes, _) =
-            setup_indexes_with_facts(&vec![(pod_a, fact_a.clone()), (pod_b, fact_b.clone())]);
-        let custom_definitions = CustomDefinitions::default();
-        let mut state = solver_state_with_domains(vec![]);
-
-        // Pass &indexes
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
-        assert!(
-            result.is_err(),
-            "Should fail because types are incompatible for Gt"
-        );
-        match result.err().unwrap() {
-            ProverError::Unsatisfiable(msg) => {
-                assert!(msg.contains("Could not find or derive proof"));
-            }
-            e => panic!("Expected Unsatisfiable, got {:?}", e),
-        }
-    }
-
+    /// Tests successful derivation of Lt statement from ValueOf statements.
     #[test]
     fn test_try_prove_statement_lt_from_entries_success() {
         let pod_a = pod(1);
@@ -517,15 +517,13 @@ mod proof_tests {
 
         let fact_lt = Statement::ValueOf(ak_lt.clone(), val_10.clone());
         let fact_gt = Statement::ValueOf(ak_gt.clone(), val_20.clone());
-        let target_stmt = Statement::Lt(ak_lt.clone(), ak_gt.clone()); // Target: 10 < 20 (true)
+        let target_stmt = Statement::Lt(ak_lt.clone(), ak_gt.clone());
 
-        // Destructure the result and pass &indexes
         let (indexes, _) =
             setup_indexes_with_facts(&vec![(pod_a, fact_lt.clone()), (pod_b, fact_gt.clone())]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        // Pass &indexes
         let result =
             try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(result.is_ok(), "Proof should succeed via LtFromEntries");
@@ -548,6 +546,7 @@ mod proof_tests {
         assert!(state.scope.contains(&(pod_b, fact_gt)));
     }
 
+    /// Tests that LtFromEntries fails when the first value is not less than the second.
     #[test]
     fn test_try_prove_statement_lt_from_entries_fail_not_less() {
         let pod_a = pod(1);
@@ -560,17 +559,15 @@ mod proof_tests {
         let ak_a = AnchoredKey::new(pod_a, key_a.clone());
         let ak_b = AnchoredKey::new(pod_b, key_b.clone());
 
-        let fact_a = Statement::ValueOf(ak_a.clone(), val_20.clone()); // 20
-        let fact_b = Statement::ValueOf(ak_b.clone(), val_10.clone()); // 10
-        let target_stmt = Statement::Lt(ak_a.clone(), ak_b.clone()); // Target: 20 < 10 (false)
+        let fact_a = Statement::ValueOf(ak_a.clone(), val_20.clone());
+        let fact_b = Statement::ValueOf(ak_b.clone(), val_10.clone());
+        let target_stmt = Statement::Lt(ak_a.clone(), ak_b.clone());
 
-        // Destructure the result and pass &indexes
         let (indexes, _) =
             setup_indexes_with_facts(&vec![(pod_a, fact_a.clone()), (pod_b, fact_b.clone())]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        // Pass &indexes
         let result =
             try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(result.is_err());
@@ -582,8 +579,7 @@ mod proof_tests {
         }
     }
 
-    // --- SumOf Tests ---
-
+    /// Tests successful derivation of SumOf statement from three ValueOf statements.
     #[test]
     fn test_try_prove_statement_sumof_success() {
         let pod_a = pod(1);
@@ -605,7 +601,6 @@ mod proof_tests {
         let fact_add2 = Statement::ValueOf(ak_add2.clone(), val_20.clone());
         let target_stmt = Statement::SumOf(ak_sum.clone(), ak_add1.clone(), ak_add2.clone());
 
-        // Destructure the result and pass &indexes
         let (indexes, _) = setup_indexes_with_facts(&vec![
             (pod_a, fact_sum.clone()),
             (pod_b, fact_add1.clone()),
@@ -614,7 +609,6 @@ mod proof_tests {
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        // Pass &indexes
         let result =
             try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(result.is_ok(), "Proof should succeed via SumOf");
@@ -639,6 +633,7 @@ mod proof_tests {
         assert!(state.scope.contains(&(pod_c, fact_add2)));
     }
 
+    /// Tests that SumOf fails when the sum does not match the addends.
     #[test]
     fn test_try_prove_statement_sumof_fail_wrong_sum() {
         let pod_a = pod(1);
@@ -647,7 +642,7 @@ mod proof_tests {
         let key_sum = key("sum");
         let key_add1 = key("add1");
         let key_add2 = key("add2");
-        let val_35 = val(35); // Incorrect sum
+        let val_35 = val(35);
         let val_10 = val(10);
         let val_20 = val(20);
 
@@ -660,7 +655,6 @@ mod proof_tests {
         let fact_add2 = Statement::ValueOf(ak_add2.clone(), val_20.clone());
         let target_stmt = Statement::SumOf(ak_sum.clone(), ak_add1.clone(), ak_add2.clone());
 
-        // Destructure the result and pass &indexes
         let (indexes, _) = setup_indexes_with_facts(&vec![
             (pod_a, fact_sum.clone()),
             (pod_b, fact_add1.clone()),
@@ -669,7 +663,6 @@ mod proof_tests {
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        // Pass &indexes
         let result =
             try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(result.is_err());
@@ -681,6 +674,7 @@ mod proof_tests {
         }
     }
 
+    /// Tests that SumOf fails when comparing incompatible value types.
     #[test]
     fn test_try_prove_statement_sumof_fail_wrong_type() {
         let pod_a = pod(1);
@@ -690,7 +684,7 @@ mod proof_tests {
         let key_add1 = key("add1");
         let key_add2 = key("add2");
         let val_30 = val(30);
-        let val_str = Value::from("ten"); // Wrong type
+        let val_str = Value::from("ten");
         let val_20 = val(20);
 
         let ak_sum = AnchoredKey::new(pod_a, key_sum.clone());
@@ -702,7 +696,6 @@ mod proof_tests {
         let fact_add2 = Statement::ValueOf(ak_add2.clone(), val_20.clone());
         let target_stmt = Statement::SumOf(ak_sum.clone(), ak_add1.clone(), ak_add2.clone());
 
-        // Destructure the result and pass &indexes
         let (indexes, _) = setup_indexes_with_facts(&vec![
             (pod_a, fact_sum.clone()),
             (pod_b, fact_add1.clone()),
@@ -711,7 +704,6 @@ mod proof_tests {
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        // Pass &indexes
         let result =
             try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(result.is_err(), "Should fail due to wrong type");
@@ -723,6 +715,7 @@ mod proof_tests {
         }
     }
 
+    /// Tests that SumOf fails when a required ValueOf statement is missing.
     #[test]
     fn test_try_prove_statement_sumof_fail_missing_value() {
         let pod_a = pod(1);
@@ -733,7 +726,6 @@ mod proof_tests {
         let key_add2 = key("add2");
         let val_30 = val(30);
         let val_10 = val(10);
-        // Missing val_20
 
         let ak_sum = AnchoredKey::new(pod_a, key_sum.clone());
         let ak_add1 = AnchoredKey::new(pod_b, key_add1.clone());
@@ -741,19 +733,16 @@ mod proof_tests {
 
         let fact_sum = Statement::ValueOf(ak_sum.clone(), val_30.clone());
         let fact_add1 = Statement::ValueOf(ak_add1.clone(), val_10.clone());
-        // Missing fact_add2
         let target_stmt = Statement::SumOf(ak_sum.clone(), ak_add1.clone(), ak_add2.clone());
 
-        // Destructure the result and pass &indexes
         let (indexes, _) =
             setup_indexes_with_facts(&vec![(pod_a, fact_sum.clone()), (pod_b, fact_add1.clone())]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        // Pass &indexes
         let result =
             try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
-        assert!(result.is_err(), "Should fail due to missing value");
+        assert!(result.is_err());
         match result.err().unwrap() {
             ProverError::Unsatisfiable(msg) => {
                 assert!(msg.contains("Could not find or derive proof"));
@@ -763,7 +752,6 @@ mod proof_tests {
     }
 
     // --- ProductOf Tests ---
-
     #[test]
     fn test_try_prove_statement_productof_success() {
         let pod_a = pod(1);
@@ -985,6 +973,9 @@ mod proof_tests {
 
     // --- Contains/NotContains Tests (Dictionaries) ---
 
+    /// Tests successful verification of a key-value pair in a dictionary.
+    /// The test verifies that ContainsFromEntries correctly handles string values
+    /// and dictionary key lookups.
     #[test]
     fn test_try_prove_statement_contains_dict_success() {
         let pod_a = pod(1);
@@ -992,14 +983,14 @@ mod proof_tests {
         let pod_c = pod(3);
 
         let key_dict = key("my_dict");
-        let key_lookup = key("lookup_key"); // This is the AK for the Key("world")
-        let key_expected_val = key("expected_value"); // This is the AK for the Value("hello")
+        let key_lookup = key("lookup_key");
+        let key_expected_val = key("expected_value");
 
         let dict_val_str = Value::from("hello");
-        let dict_key = key("world"); // Use Key type for dictionary key
+        let dict_key = key("world");
 
         let mut map = HashMap::new();
-        map.insert(dict_key.clone(), dict_val_str.clone()); // Use Key as HashMap key
+        map.insert(dict_key.clone(), dict_val_str.clone());
         let dict_container = Value::from(Dictionary::new(map).unwrap());
 
         let ak_dict = AnchoredKey::new(pod_a, key_dict);
@@ -1007,12 +998,10 @@ mod proof_tests {
         let ak_val = AnchoredKey::new(pod_c, key_expected_val);
 
         let fact_dict = Statement::ValueOf(ak_dict.clone(), dict_container.clone());
-        // ValueOf statement for the *key* uses the Key type
         let fact_key = Statement::ValueOf(ak_key.clone(), Value::from(dict_key.name().to_string()));
         let fact_val = Statement::ValueOf(ak_val.clone(), dict_val_str.clone());
         let target_stmt = Statement::Contains(ak_dict.clone(), ak_key.clone(), ak_val.clone());
 
-        // Destructure the result and pass &indexes
         let (indexes, _) = setup_indexes_with_facts(&vec![
             (pod_a, fact_dict.clone()),
             (pod_b, fact_key.clone()),
@@ -1021,7 +1010,6 @@ mod proof_tests {
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        // Pass &indexes
         let result =
             try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(
@@ -1049,6 +1037,8 @@ mod proof_tests {
         assert!(state.scope.contains(&(pod_c, fact_val)));
     }
 
+    /// Tests that Contains fails when the key is not present in the dictionary.
+    /// This verifies that ContainsFromEntries correctly handles non-existent keys.
     #[test]
     fn test_try_prove_statement_contains_dict_fail_key_not_found() {
         let pod_a = pod(1);
@@ -1056,12 +1046,12 @@ mod proof_tests {
         let pod_c = pod(3);
 
         let key_dict = key("my_dict");
-        let key_lookup_missing = key("missing_key"); // This key isn't in the dict
+        let key_lookup_missing = key("missing_key");
         let key_expected_val = key("expected_value");
 
         let dict_val_str = Value::from("hello");
-        let dict_key = key("world"); // Use Key type
-        let missing_key = key("missing"); // Use Key type
+        let dict_key = key("world");
+        let missing_key = key("missing");
 
         let mut map = HashMap::new();
         map.insert(dict_key.clone(), dict_val_str.clone());
@@ -1072,16 +1062,14 @@ mod proof_tests {
         let ak_val = AnchoredKey::new(pod_c, key_expected_val);
 
         let fact_dict = Statement::ValueOf(ak_dict.clone(), dict_container.clone());
-        // ValueOf for the missing key
         let fact_key_missing = Statement::ValueOf(
             ak_key_missing.clone(),
             Value::from(missing_key.name().to_string()),
         );
-        let fact_val = Statement::ValueOf(ak_val.clone(), dict_val_str.clone()); // Value doesn't matter here
+        let fact_val = Statement::ValueOf(ak_val.clone(), dict_val_str.clone());
         let target_stmt =
             Statement::Contains(ak_dict.clone(), ak_key_missing.clone(), ak_val.clone());
 
-        // Destructure the result and pass &indexes
         let (indexes, _) = setup_indexes_with_facts(&vec![
             (pod_a, fact_dict.clone()),
             (pod_b, fact_key_missing.clone()),
@@ -1090,7 +1078,6 @@ mod proof_tests {
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        // Pass &indexes
         let result =
             try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(result.is_err());
@@ -1102,6 +1089,8 @@ mod proof_tests {
         }
     }
 
+    /// Tests that Contains fails when the value doesn't match the dictionary entry.
+    /// This verifies that ContainsFromEntries checks both key existence and value equality.
     #[test]
     fn test_try_prove_statement_contains_dict_fail_wrong_value() {
         let pod_a = pod(1);
@@ -1109,12 +1098,12 @@ mod proof_tests {
         let pod_c = pod(3);
 
         let key_dict = key("my_dict");
-        let key_lookup = key("lookup_key"); // AK for Key("the_key")
-        let key_wrong_val = key("wrong_value"); // AK for the wrong value
+        let key_lookup = key("lookup_key");
+        let key_wrong_val = key("wrong_value");
 
         let dict_val_str_actual = Value::from("actual_value");
-        let dict_key = key("the_key"); // Use Key type
-        let dict_val_str_wrong = Value::from("wrong_value"); // The value we incorrectly claim
+        let dict_key = key("the_key");
+        let dict_val_str_wrong = Value::from("wrong_value");
 
         let mut map = HashMap::new();
         map.insert(dict_key.clone(), dict_val_str_actual.clone());
@@ -1125,15 +1114,11 @@ mod proof_tests {
         let ak_val_wrong = AnchoredKey::new(pod_c, key_wrong_val);
 
         let fact_dict = Statement::ValueOf(ak_dict.clone(), dict_container.clone());
-        // ValueOf for the key
         let fact_key = Statement::ValueOf(ak_key.clone(), Value::from(dict_key.name().to_string()));
-        // ValueOf for the incorrect target value
         let fact_val_wrong = Statement::ValueOf(ak_val_wrong.clone(), dict_val_str_wrong.clone());
-        // Target claims the dict contains key->wrong_value
         let target_stmt =
             Statement::Contains(ak_dict.clone(), ak_key.clone(), ak_val_wrong.clone());
 
-        // Destructure the result and pass &indexes
         let (indexes, _) = setup_indexes_with_facts(&vec![
             (pod_a, fact_dict.clone()),
             (pod_b, fact_key.clone()),
@@ -1142,7 +1127,6 @@ mod proof_tests {
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        // Pass &indexes
         let result =
             try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(result.is_err());
@@ -1154,6 +1138,8 @@ mod proof_tests {
         }
     }
 
+    /// Tests that Contains fails when a required ValueOf statement is missing.
+    /// This verifies that ContainsFromEntries requires all three input statements.
     #[test]
     fn test_try_prove_statement_contains_dict_fail_missing_input_value() {
         let pod_a = pod(1);
@@ -1165,7 +1151,7 @@ mod proof_tests {
         let key_expected_val = key("expected_value");
 
         let dict_val_str = Value::from("hello");
-        let dict_key = key("world"); // Use Key type
+        let dict_key = key("world");
 
         let mut map = HashMap::new();
         map.insert(dict_key.clone(), dict_val_str.clone());
@@ -1176,27 +1162,17 @@ mod proof_tests {
         let ak_val = AnchoredKey::new(pod_c, key_expected_val);
 
         let fact_dict = Statement::ValueOf(ak_dict.clone(), dict_container.clone());
-        // ValueOf for the key
         let fact_key = Statement::ValueOf(ak_key.clone(), Value::from(dict_key.name().to_string()));
-        // Missing fact_val = Statement::ValueOf(ak_val.clone(), dict_val_str.clone());
         let target_stmt = Statement::Contains(ak_dict.clone(), ak_key.clone(), ak_val.clone());
 
-        // Destructure the result and pass &indexes
-        let (indexes, _) = setup_indexes_with_facts(&vec![
-            (pod_a, fact_dict.clone()),
-            (pod_b, fact_key.clone()),
-            // Missing fact_val
-        ]);
+        let (indexes, _) =
+            setup_indexes_with_facts(&vec![(pod_a, fact_dict.clone()), (pod_b, fact_key.clone())]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        // Pass &indexes
         let result =
             try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
-        assert!(
-            result.is_err(),
-            "Should fail due to missing ValueOf for value AK"
-        );
+        assert!(result.is_err());
         match result.err().unwrap() {
             ProverError::Unsatisfiable(msg) => {
                 assert!(msg.contains("Could not find or derive proof"));
@@ -1205,17 +1181,19 @@ mod proof_tests {
         }
     }
 
+    /// Tests successful verification that a key is not present in a dictionary.
+    /// This verifies that NotContainsFromEntries correctly handles non-existent keys.
     #[test]
     fn test_try_prove_statement_notcontains_dict_success() {
         let pod_a = pod(1);
         let pod_b = pod(2);
 
         let key_dict = key("my_dict");
-        let key_lookup_missing = key("missing_key"); // This key isn't in the dict
+        let key_lookup_missing = key("missing_key");
 
         let dict_val_str = Value::from("hello");
-        let dict_key = key("world"); // Use Key type
-        let missing_key = key("missing"); // Use Key type
+        let dict_key = key("world");
+        let missing_key = key("missing");
 
         let mut map = HashMap::new();
         map.insert(dict_key.clone(), dict_val_str.clone());
@@ -1225,14 +1203,12 @@ mod proof_tests {
         let ak_key_missing = AnchoredKey::new(pod_b, key_lookup_missing);
 
         let fact_dict = Statement::ValueOf(ak_dict.clone(), dict_container.clone());
-        // ValueOf for the key that should not be found
         let fact_key_missing = Statement::ValueOf(
             ak_key_missing.clone(),
             Value::from(missing_key.name().to_string()),
         );
         let target_stmt = Statement::NotContains(ak_dict.clone(), ak_key_missing.clone());
 
-        // Destructure the result and pass &indexes
         let (indexes, _) = setup_indexes_with_facts(&vec![
             (pod_a, fact_dict.clone()),
             (pod_b, fact_key_missing.clone()),
@@ -1240,7 +1216,6 @@ mod proof_tests {
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        // Pass &indexes
         let result =
             try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(
@@ -1255,7 +1230,7 @@ mod proof_tests {
             step.operation,
             OperationType::Native(NativeOperation::NotContainsFromEntries)
         );
-        assert_eq!(step.inputs.len(), 2); // ValueOf(dict), ValueOf(key)
+        assert_eq!(step.inputs.len(), 2);
         assert!(step.inputs.contains(&fact_dict));
         assert!(step.inputs.contains(&fact_key_missing));
         assert_eq!(step.output, target_stmt);
@@ -1266,16 +1241,18 @@ mod proof_tests {
         assert!(state.scope.contains(&(pod_b, fact_key_missing)));
     }
 
+    /// Tests that NotContains fails when the key exists in the dictionary.
+    /// This verifies that NotContainsFromEntries correctly handles existing keys.
     #[test]
     fn test_try_prove_statement_notcontains_dict_fail_key_found() {
         let pod_a = pod(1);
         let pod_b = pod(2);
 
         let key_dict = key("my_dict");
-        let key_lookup_exists = key("existing_key"); // This key *is* in the dict
+        let key_lookup_exists = key("existing_key");
 
         let dict_val_str = Value::from("hello");
-        let dict_key = key("world"); // Use Key type
+        let dict_key = key("world");
 
         let mut map = HashMap::new();
         map.insert(dict_key.clone(), dict_val_str.clone());
@@ -1285,15 +1262,12 @@ mod proof_tests {
         let ak_key_exists = AnchoredKey::new(pod_b, key_lookup_exists);
 
         let fact_dict = Statement::ValueOf(ak_dict.clone(), dict_container.clone());
-        // Use the key that exists in the dict for the ValueOf statement
         let fact_key_exists = Statement::ValueOf(
             ak_key_exists.clone(),
-            Value::from(dict_key.name().to_string()), // Use the key name as the value for this AK
+            Value::from(dict_key.name().to_string()),
         );
-        // Target claims the existing key is *not* contained
         let target_stmt = Statement::NotContains(ak_dict.clone(), ak_key_exists.clone());
 
-        // Destructure the result and pass &indexes
         let (indexes, _) = setup_indexes_with_facts(&vec![
             (pod_a, fact_dict.clone()),
             (pod_b, fact_key_exists.clone()),
@@ -1301,7 +1275,6 @@ mod proof_tests {
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        // Pass &indexes
         let result =
             try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
         assert!(
@@ -1499,12 +1472,9 @@ mod proof_tests {
         let ak1 = AnchoredKey::new(pod_a, key_a.clone());
         let ak2 = AnchoredKey::new(pod_b, key_b.clone());
 
-        // Input base fact: Lt(ak1, ak2)
         let input_lt_stmt = Statement::Lt(ak1.clone(), ak2.clone());
-        // Target: NotEqual(ak1, ak2)
         let target_neq_stmt = Statement::NotEqual(ak1.clone(), ak2.clone());
 
-        // Destructure the result and pass &indexes
         let (indexes, _) = setup_indexes_with_facts(&vec![(pod_a, input_lt_stmt.clone())]);
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
@@ -1649,12 +1619,17 @@ mod proof_tests {
 
     // --- START: Custom Predicate Tests ---
 
-    // Helper to build CustomPredicateRef easily
+    /// Helper function to create a CustomPredicateRef from a batch and index.
     fn build_custom_ref(batch: Arc<CustomPredicateBatch>, index: usize) -> CustomPredicateRef {
-        // Field should be Arc<CustomPredicateBatch>
         CustomPredicateRef { batch, index }
     }
 
+    /// Tests successful evaluation of a custom predicate with AND logic.
+    /// The predicate requires both a Gt and Equal statement to be satisfied.
+    /// This verifies that:
+    /// 1. Custom predicate definitions are correctly interpreted
+    /// 2. Multiple statement templates are properly evaluated
+    /// 3. AND logic correctly requires all conditions to be met
     #[test]
     fn test_try_prove_custom_and_success() {
         let pod_target = pod(1);
@@ -1666,7 +1641,6 @@ mod proof_tests {
         let const_val_key = key("const_val");
         let const_key_key = key("const_key");
 
-        // Base facts needed for sub-proofs
         let fact_target_val = Statement::ValueOf(ak(1, "val"), val(10));
         let fact_target_key = Statement::ValueOf(ak(1, "key"), Value::from("hello"));
         let fact_const_val = Statement::ValueOf(ak(10, "const_val"), val(5));
@@ -1678,47 +1652,46 @@ mod proof_tests {
             (pod_const1, fact_const_val.clone()),
             (pod_const2, fact_const_key.clone()),
         ];
+        let (indexes, params) = setup_indexes_with_facts(&facts);
 
-        // --- Custom Predicate Definition ---
         let custom_pred_index = 0;
-        let wc_a = wc("A", 0); // Public Arg 0: PodId
+        let wc_a = wc("A", 0);
 
+        // Define templates for Gt and Equal conditions
         let sub_tmpl_gt = StatementTmpl {
             pred: Predicate::Native(NativePredicate::Gt),
             args: vec![
-                StatementTmplArg::Key(wc_a.clone(), KeyOrWildcard::Key(val_key.clone())), // ?A["val"]
+                StatementTmplArg::Key(wc_a.clone(), KeyOrWildcard::Key(val_key.clone())),
                 StatementTmplArg::Key(
                     Wildcard {
                         index: 100,
                         name: "P_CONST_VAL".to_string(),
-                    }, // Use a non-public index
+                    },
                     KeyOrWildcard::Key(const_val_key.clone()),
-                ), // P_CONST_VAL["const_val"]
+                ),
             ],
         };
         let sub_tmpl_eq = StatementTmpl {
             pred: Predicate::Native(NativePredicate::Equal),
             args: vec![
-                StatementTmplArg::Key(wc_a.clone(), KeyOrWildcard::Key(key_key.clone())), // ?A["key"]
+                StatementTmplArg::Key(wc_a.clone(), KeyOrWildcard::Key(key_key.clone())),
                 StatementTmplArg::Key(
                     Wildcard {
                         index: 101,
                         name: "P_CONST_KEY".to_string(),
-                    }, // Use non-public index
+                    },
                     KeyOrWildcard::Key(const_key_key.clone()),
-                ), // P_CONST_KEY["const_key"]
+                ),
             ],
         };
 
-        // Add the 'name' field
         let custom_pred_def = CustomPredicate {
             name: "TestAndPredicate".to_string(),
             args_len: 1,
             statements: vec![sub_tmpl_gt.clone(), sub_tmpl_eq.clone()],
-            conjunction: true, // AND
+            conjunction: true,
         };
 
-        // Create Batch and Arc
         let custom_batch = Arc::new(CustomPredicateBatch {
             name: "TestAndBatch".to_string(),
             predicates: vec![custom_pred_def.clone()],
@@ -1726,176 +1699,16 @@ mod proof_tests {
         let custom_pred_ref = build_custom_ref(custom_batch.clone(), custom_pred_index);
         let custom_pred_variant = Predicate::Custom(custom_pred_ref.clone());
 
-        // Use the new helper to create the definitions map
-        // Destructure the result and pass &indexes
-        let (indexes, params) = setup_indexes_with_facts(&facts); // Clone facts here
-                                                                  // let custom_definitions = setup_custom_definitions_for_test(
-                                                                  //     vec![(custom_pred_variant.clone(), custom_pred_def, custom_batch.clone())],
-                                                                  //     &params,
-                                                                  // );
-                                                                  // Construct map manually due to issues with helper
         let mut custom_definitions = CustomDefinitions::new();
         let key = custom_pred_variant.to_fields(&params);
         custom_definitions.insert(key, (custom_pred_def, custom_batch.clone()));
-        // --- End Definition ---
 
-        // Target Statement uses the ref with the Arc'd batch
         let target_stmt = Statement::Custom(
-            custom_pred_ref.clone(), // This now holds the Arc
+            custom_pred_ref.clone(),
             vec![WildcardValue::PodId(pod_target)],
         );
 
         let mut state = solver_state_with_domains(vec![
-            // Need to define the domains for the *private* wildcards used in the definition
-            (
-                Wildcard {
-                    index: 100,
-                    name: "P_CONST_VAL".to_string(),
-                },
-                HashSet::from([cv_pod(10)]), // Must be singleton pod_const1
-                ExpectedType::Pod,
-            ),
-            (
-                Wildcard {
-                    index: 101,
-                    name: "P_CONST_KEY".to_string(),
-                },
-                HashSet::from([cv_pod(11)]), // Must be singleton pod_const2
-                ExpectedType::Pod,
-            ),
-        ]);
-
-        // Pass &indexes
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
-
-        assert!(result.is_ok(), "Proof failed: {:?}", result.err());
-        let proof_chain = result.unwrap();
-
-        // Expected sub-statements that needed proof
-        let expected_sub_gt = Statement::Gt(ak(1, "val"), ak(10, "const_val"));
-        let expected_sub_eq = Statement::Equal(ak(1, "key"), ak(11, "const_key"));
-
-        // Check final proof step
-        assert!(!proof_chain.0.is_empty());
-        let final_step = proof_chain.0.last().unwrap();
-        assert_eq!(
-            final_step.operation,
-            OperationType::Custom(custom_pred_ref) // The ref containing the Arc
-        );
-        assert_eq!(final_step.output, target_stmt);
-        assert_eq!(final_step.inputs.len(), 2); // Should contain the two concrete sub-statements
-        assert!(final_step.inputs.contains(&expected_sub_gt));
-        assert!(final_step.inputs.contains(&expected_sub_eq));
-
-        // Check that sub-proofs exist in the state
-        assert!(state.proof_chains.contains_key(&expected_sub_gt));
-        assert!(state.proof_chains.contains_key(&expected_sub_eq));
-
-        // Check scope contains base facts needed for sub-proofs
-        assert!(state.scope.contains(&(pod_target, fact_target_val)));
-        assert!(state.scope.contains(&(pod_target, fact_target_key)));
-        assert!(state.scope.contains(&(pod_const1, fact_const_val)));
-        assert!(state.scope.contains(&(pod_const2, fact_const_key)));
-    }
-
-    #[test]
-    fn test_try_prove_custom_or_first_branch_success() {
-        let pod_target = pod(1);
-        let pod_const1 = pod(10);
-        // pod_const2 and its facts are not needed for this path
-
-        let val_key = key("val");
-        let const_val_key = key("const_val");
-
-        // Base facts needed only for the first (Gt) branch
-        let fact_target_val = Statement::ValueOf(ak(1, "val"), val(10));
-        let fact_const_val = Statement::ValueOf(ak(10, "const_val"), val(5));
-
-        let facts = vec![
-            (pod_target, fact_target_val.clone()),
-            (pod_const1, fact_const_val.clone()),
-            // Add facts for the Eq branch even though they won't be used
-            (
-                pod_target,
-                Statement::ValueOf(ak(1, "key"), Value::from("hello")),
-            ),
-            (
-                pod(11),
-                Statement::ValueOf(ak(11, "const_key"), Value::from("different")),
-            ),
-        ];
-        // Destructure the result and pass &indexes
-        let (indexes, params) = setup_indexes_with_facts(&facts); // Clone facts here
-
-        // --- Custom Predicate Definition (Same as AND test, but conjunction=false) ---
-        let custom_pred_index = 0;
-        let wc_a = wc("A", 0); // Public Arg 0: PodId
-
-        let sub_tmpl_gt = StatementTmpl {
-            // First branch (will succeed)
-            pred: Predicate::Native(NativePredicate::Gt),
-            args: vec![
-                StatementTmplArg::Key(wc_a.clone(), KeyOrWildcard::Key(val_key)), // ?A["val"]
-                StatementTmplArg::Key(
-                    Wildcard {
-                        index: 100,
-                        name: "P_CONST_VAL".to_string(),
-                    },
-                    KeyOrWildcard::Key(const_val_key),
-                ), // P_CONST_VAL["const_val"]
-            ],
-        };
-        let sub_tmpl_eq = StatementTmpl {
-            // Second branch (will fail/not be reached)
-            pred: Predicate::Native(NativePredicate::Equal),
-            args: vec![
-                StatementTmplArg::Key(wc_a.clone(), KeyOrWildcard::Key(key("key"))), // ?A["key"]
-                StatementTmplArg::Key(
-                    Wildcard {
-                        index: 101,
-                        name: "P_CONST_KEY".to_string(),
-                    },
-                    KeyOrWildcard::Key(key("const_key")),
-                ), // P_CONST_KEY["const_key"]
-            ],
-        };
-
-        // Add the 'name' field
-        let custom_pred_def = CustomPredicate {
-            name: "TestOrPredicate".to_string(),
-            args_len: 1,
-            statements: vec![sub_tmpl_gt.clone(), sub_tmpl_eq.clone()],
-            conjunction: false, // OR
-        };
-
-        // Create Batch and Arc
-        let custom_batch = Arc::new(CustomPredicateBatch {
-            name: "TestOrBatch".to_string(),
-            predicates: vec![custom_pred_def.clone()],
-        });
-        let custom_pred_ref = build_custom_ref(custom_batch.clone(), custom_pred_index);
-        let custom_pred_variant = Predicate::Custom(custom_pred_ref.clone());
-
-        // Use the new helper
-        let custom_definitions = setup_custom_definitions_for_test(
-            vec![(
-                custom_pred_variant.clone(),
-                custom_pred_def,
-                custom_batch.clone(),
-            )],
-            &params,
-        );
-        // --- End Definition ---
-
-        // Target Statement uses the ref with the Arc'd batch
-        let target_stmt = Statement::Custom(
-            custom_pred_ref.clone(), // This now holds the Arc
-            vec![WildcardValue::PodId(pod_target)],
-        );
-
-        let mut state = solver_state_with_domains(vec![
-            // Correctly define Wildcard structs
             (
                 Wildcard {
                     index: 100,
@@ -1914,67 +1727,193 @@ mod proof_tests {
             ),
         ]);
 
-        // Pass &indexes
+        let result =
+            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+
+        assert!(result.is_ok(), "Proof failed: {:?}", result.err());
+        let proof_chain = result.unwrap();
+
+        let expected_sub_gt = Statement::Gt(ak(1, "val"), ak(10, "const_val"));
+        let expected_sub_eq = Statement::Equal(ak(1, "key"), ak(11, "const_key"));
+
+        assert!(!proof_chain.0.is_empty());
+        let final_step = proof_chain.0.last().unwrap();
+        assert_eq!(final_step.operation, OperationType::Custom(custom_pred_ref));
+        assert_eq!(final_step.output, target_stmt);
+        assert_eq!(final_step.inputs.len(), 2);
+        assert!(final_step.inputs.contains(&expected_sub_gt));
+        assert!(final_step.inputs.contains(&expected_sub_eq));
+
+        assert!(state.proof_chains.contains_key(&expected_sub_gt));
+        assert!(state.proof_chains.contains_key(&expected_sub_eq));
+
+        assert!(state.scope.contains(&(pod_target, fact_target_val)));
+        assert!(state.scope.contains(&(pod_target, fact_target_key)));
+        assert!(state.scope.contains(&(pod_const1, fact_const_val)));
+        assert!(state.scope.contains(&(pod_const2, fact_const_key)));
+    }
+
+    /// Tests successful evaluation of a custom predicate with OR logic.
+    /// The predicate requires either a Gt or Equal statement to be satisfied.
+    /// This verifies that:
+    /// 1. OR logic correctly succeeds when any condition is met
+    /// 2. Only the successful branch's statements are included in the proof
+    /// 3. The proof chain contains only the necessary operations
+    #[test]
+    fn test_try_prove_custom_or_first_branch_success() {
+        let pod_target = pod(1);
+        let pod_const1 = pod(10);
+
+        let val_key = key("val");
+        let const_val_key = key("const_val");
+
+        let fact_target_val = Statement::ValueOf(ak(1, "val"), val(10));
+        let fact_const_val = Statement::ValueOf(ak(10, "const_val"), val(5));
+
+        let facts = vec![
+            (pod_target, fact_target_val.clone()),
+            (pod_const1, fact_const_val.clone()),
+            (
+                pod_target,
+                Statement::ValueOf(ak(1, "key"), Value::from("hello")),
+            ),
+            (
+                pod(11),
+                Statement::ValueOf(ak(11, "const_key"), Value::from("different")),
+            ),
+        ];
+        let (indexes, params) = setup_indexes_with_facts(&facts);
+
+        let custom_pred_index = 0;
+        let wc_a = wc("A", 0);
+
+        let sub_tmpl_gt = StatementTmpl {
+            pred: Predicate::Native(NativePredicate::Gt),
+            args: vec![
+                StatementTmplArg::Key(wc_a.clone(), KeyOrWildcard::Key(val_key)),
+                StatementTmplArg::Key(
+                    Wildcard {
+                        index: 100,
+                        name: "P_CONST_VAL".to_string(),
+                    },
+                    KeyOrWildcard::Key(const_val_key),
+                ),
+            ],
+        };
+        let sub_tmpl_eq = StatementTmpl {
+            pred: Predicate::Native(NativePredicate::Equal),
+            args: vec![
+                StatementTmplArg::Key(wc_a.clone(), KeyOrWildcard::Key(key("key"))),
+                StatementTmplArg::Key(
+                    Wildcard {
+                        index: 101,
+                        name: "P_CONST_KEY".to_string(),
+                    },
+                    KeyOrWildcard::Key(key("const_key")),
+                ),
+            ],
+        };
+
+        let custom_pred_def = CustomPredicate {
+            name: "TestOrPredicate".to_string(),
+            args_len: 1,
+            statements: vec![sub_tmpl_gt.clone(), sub_tmpl_eq.clone()],
+            conjunction: false,
+        };
+
+        let custom_batch = Arc::new(CustomPredicateBatch {
+            name: "TestOrBatch".to_string(),
+            predicates: vec![custom_pred_def.clone()],
+        });
+        let custom_pred_ref = build_custom_ref(custom_batch.clone(), custom_pred_index);
+        let custom_pred_variant = Predicate::Custom(custom_pred_ref.clone());
+
+        let custom_definitions = setup_custom_definitions_for_test(
+            vec![(
+                custom_pred_variant.clone(),
+                custom_pred_def,
+                custom_batch.clone(),
+            )],
+            &params,
+        );
+
+        let target_stmt = Statement::Custom(
+            custom_pred_ref.clone(),
+            vec![WildcardValue::PodId(pod_target)],
+        );
+
+        let mut state = solver_state_with_domains(vec![
+            (
+                Wildcard {
+                    index: 100,
+                    name: "P_CONST_VAL".to_string(),
+                },
+                HashSet::from([cv_pod(10)]),
+                ExpectedType::Pod,
+            ),
+            (
+                Wildcard {
+                    index: 101,
+                    name: "P_CONST_KEY".to_string(),
+                },
+                HashSet::from([cv_pod(11)]),
+                ExpectedType::Pod,
+            ),
+        ]);
+
         let result =
             try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
 
         assert!(result.is_ok(), "Proof failed for OR: {:?}", result.err());
         let proof_chain = result.unwrap();
 
-        // Expected sub-statement from the successful (Gt) branch
         let expected_sub_gt = Statement::Gt(ak(1, "val"), ak(10, "const_val"));
 
-        // Check final proof step
         assert!(!proof_chain.0.is_empty());
         let final_step = proof_chain.0.last().unwrap();
-        assert_eq!(
-            final_step.operation,
-            OperationType::Custom(custom_pred_ref) // The ref containing the Arc
-        );
+        assert_eq!(final_step.operation, OperationType::Custom(custom_pred_ref));
         assert_eq!(final_step.output, target_stmt);
-        assert_eq!(final_step.inputs.len(), 1); // Only the successful branch's statement
+        assert_eq!(final_step.inputs.len(), 1);
         assert_eq!(final_step.inputs[0], expected_sub_gt);
 
-        // Check that only the Gt sub-proof exists
         assert!(state.proof_chains.contains_key(&expected_sub_gt));
-        let expected_sub_eq_fail = Statement::Equal(ak(1, "key"), ak(11, "const_key")); // This one shouldn't have been proven
+        let expected_sub_eq_fail = Statement::Equal(ak(1, "key"), ak(11, "const_key"));
         assert!(!state.proof_chains.contains_key(&expected_sub_eq_fail));
 
-        // Check scope contains only base facts needed for the successful Gt branch
         assert!(state.scope.contains(&(pod_target, fact_target_val)));
         assert!(state.scope.contains(&(pod_const1, fact_const_val)));
         assert!(!state.scope.contains(&(
             pod_target,
             Statement::ValueOf(ak(1, "key"), Value::from("hello"))
-        ))); // From failed branch
+        )));
     }
 
+    /// Tests that a custom predicate with AND logic fails when a required sub-statement cannot be proven.
+    /// This verifies that:
+    /// 1. AND logic correctly fails when any condition fails
+    /// 2. The error propagates from the failed sub-statement
+    /// 3. No proof chains are generated for the target statement
     #[test]
     fn test_try_prove_custom_and_fail_sub_proof() {
         let pod_target = pod(1);
-        let _pod_const1 = pod(10); // Pod for Gt constant
-        let pod_const2 = pod(11); // Pod for Eq constant
+        let pod_const2 = pod(11);
 
         let val_key = key("val");
         let key_key = key("key");
         let const_val_key = key("const_val");
         let const_key_key = key("const_key");
 
-        // Base facts - MISSING fact_const_val needed for Gt sub-proof
         let fact_target_val = Statement::ValueOf(ak(1, "val"), val(10));
         let fact_target_key = Statement::ValueOf(ak(1, "key"), Value::from("hello"));
-        // let fact_const_val = Statement::ValueOf(ak(10, "const_val"), val(5)); // REMOVED
         let fact_const_key = Statement::ValueOf(ak(11, "const_key"), Value::from("hello"));
 
         let facts = vec![
             (pod_target, fact_target_val.clone()),
             (pod_target, fact_target_key.clone()),
-            // Missing fact from pod_const1
             (pod_const2, fact_const_key.clone()),
         ];
-        let (indexes, params) = setup_indexes_with_facts(&facts); // Clone facts here
+        let (indexes, params) = setup_indexes_with_facts(&facts);
 
-        // --- Custom Predicate Definition (Same as success test) ---
         let custom_pred_index = 0;
         let wc_a = wc("A", 0);
 
@@ -2009,7 +1948,7 @@ mod proof_tests {
             name: "TestAndPredicateFail".to_string(),
             args_len: 1,
             statements: vec![sub_tmpl_gt.clone(), sub_tmpl_eq.clone()],
-            conjunction: true, // AND
+            conjunction: true,
         };
         let custom_batch = Arc::new(CustomPredicateBatch {
             name: "TestAndFailBatch".to_string(),
@@ -2018,7 +1957,6 @@ mod proof_tests {
         let custom_pred_ref = build_custom_ref(custom_batch.clone(), custom_pred_index);
         let custom_pred_variant = Predicate::Custom(custom_pred_ref.clone());
 
-        // Use the new helper
         let custom_definitions = setup_custom_definitions_for_test(
             vec![(
                 custom_pred_variant.clone(),
@@ -2027,9 +1965,7 @@ mod proof_tests {
             )],
             &params,
         );
-        // --- End Definition ---
 
-        // Target Statement to prove
         let target_stmt = Statement::Custom(
             custom_pred_ref.clone(),
             vec![WildcardValue::PodId(pod_target)],
@@ -2041,7 +1977,7 @@ mod proof_tests {
                     index: 100,
                     name: "P_CONST_VAL".to_string(),
                 },
-                HashSet::from([cv_pod(10)]), // Domain for the private wildcard
+                HashSet::from([cv_pod(10)]),
                 ExpectedType::Pod,
             ),
             (
@@ -2054,17 +1990,12 @@ mod proof_tests {
             ),
         ]);
 
-        // Pass &indexes
         let result =
             try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
 
-        assert!(
-            result.is_err(),
-            "Proof should fail because Gt sub-statement is unprovable"
-        );
+        assert!(result.is_err());
         match result.err().unwrap() {
             ProverError::Unsatisfiable(msg) => {
-                // The error originates from the recursive call failing for the Gt statement
                 assert!(
                     msg.contains("Could not find or derive proof for: Gt("),
                     "Expected Unsatisfiable from Gt sub-proof failure, got: {}",
@@ -2074,13 +2005,14 @@ mod proof_tests {
             e => panic!("Expected Unsatisfiable error, got {:?}", e),
         }
 
-        // Check state - no proof chain for the target should be added
         assert!(!state.proof_chains.contains_key(&target_stmt));
-        // The Eq sub-proof might have succeeded and been cached before the Gt failure stopped the AND
-        // let expected_sub_eq = Statement::Equal(ak(1, "key"), ak(11, "const_key"));
-        // assert!(state.proof_chains.contains_key(&expected_sub_eq)); // Optional check
     }
 
+    /// Tests that a custom predicate with OR logic fails when all branches fail.
+    /// This verifies that:
+    /// 1. OR logic correctly fails when all conditions fail
+    /// 2. The error propagates from the failed branches
+    /// 3. No proof chains are generated for the target statement
     #[test]
     fn test_try_prove_custom_or_fail_all_branches() {
         let pod_target = pod(1);
@@ -2221,28 +2153,27 @@ mod proof_tests {
         assert!(!state.proof_chains.contains_key(&target_stmt));
     }
 
+    /// Tests evaluation of nested custom predicates with wildcard aliasing.
+    /// This test verifies that:
+    /// 1. Nested predicates correctly share wildcards between outer and inner scopes
+    /// 2. Multiple conditions across different nesting levels are properly evaluated
+    /// 3. Proof chains correctly include all necessary intermediate steps
     #[test]
     fn test_try_prove_nested_custom_predicates() {
-        // Define Pods
-        let pod_a = pod(1); // For InnerP: ?X = A
-        let pod_b = pod(2); // For InnerP: ?Y = B
-        let pod_c = pod(3); // For InnerP: ?Z = C
-        let pod_d = pod(4); // For InnerP: ?W = D
-        let pod_m = pod(5); // For OuterP: ?M
-        let pod_n = pod(6); // For OuterP: ?N
+        let pod_a = pod(1);
+        let pod_b = pod(2);
+        let pod_c = pod(3);
+        let pod_d = pod(4);
+        let pod_m = pod(5);
+        let pod_n = pod(6);
 
-        // Define Keys
         let val_key = key("val");
         let key_key = key("key");
 
-        // --- Base Facts ---
-        // For Gt(A["val"], B["val"])
         let fact_a_val = Statement::ValueOf(ak(1, "val"), val(100));
         let fact_b_val = Statement::ValueOf(ak(2, "val"), val(50));
-        // For Equal(C["key"], D["key"])
         let fact_c_key = Statement::ValueOf(ak(3, "key"), Value::from("same_key"));
         let fact_d_key = Statement::ValueOf(ak(4, "key"), Value::from("same_key"));
-        // For Lt(M["val"], N["val"])
         let fact_m_val = Statement::ValueOf(ak(5, "val"), val(10));
         let fact_n_val = Statement::ValueOf(ak(6, "val"), val(20));
 
@@ -2254,78 +2185,73 @@ mod proof_tests {
             (pod_m, fact_m_val.clone()),
             (pod_n, fact_n_val.clone()),
         ];
-        let (indexes, params) = setup_indexes_with_facts(&facts); // Clone facts here
+        let (indexes, params) = setup_indexes_with_facts(&facts);
 
-        // --- Custom Predicate Definitions ---
-
-        // Inner Predicate Definition (index 0)
-        let wc_x = wc("X", 0); // Public 0
-        let wc_y = wc("Y", 1); // Public 1
-        let wc_z = wc("Z", 2); // Public 2
-        let wc_w = wc("W", 3); // Public 3
+        // Define inner predicate that requires both Gt and Equal conditions
+        let wc_x = wc("X", 0);
+        let wc_y = wc("Y", 1);
+        let wc_z = wc("Z", 2);
+        let wc_w = wc("W", 3);
 
         let inner_tmpl_gt = StatementTmpl {
             pred: Predicate::Native(NativePredicate::Gt),
             args: vec![
-                StatementTmplArg::Key(wc_x.clone(), KeyOrWildcard::Key(val_key.clone())), // ?X["val"]
-                StatementTmplArg::Key(wc_y.clone(), KeyOrWildcard::Key(val_key.clone())), // ?Y["val"]
+                StatementTmplArg::Key(wc_x.clone(), KeyOrWildcard::Key(val_key.clone())),
+                StatementTmplArg::Key(wc_y.clone(), KeyOrWildcard::Key(val_key.clone())),
             ],
         };
         let inner_tmpl_eq = StatementTmpl {
             pred: Predicate::Native(NativePredicate::Equal),
             args: vec![
-                StatementTmplArg::Key(wc_z.clone(), KeyOrWildcard::Key(key_key.clone())), // ?Z["key"]
-                StatementTmplArg::Key(wc_w.clone(), KeyOrWildcard::Key(key_key.clone())), // ?W["key"]
+                StatementTmplArg::Key(wc_z.clone(), KeyOrWildcard::Key(key_key.clone())),
+                StatementTmplArg::Key(wc_w.clone(), KeyOrWildcard::Key(key_key.clone())),
             ],
         };
         let inner_pred_def = CustomPredicate {
             name: "InnerP".to_string(),
-            args_len: 4, // X, Y, Z, W are public
+            args_len: 4,
             statements: vec![inner_tmpl_gt.clone(), inner_tmpl_eq.clone()],
-            conjunction: true, // AND
+            conjunction: true,
         };
 
-        // Outer Predicate Definition (index 1)
-        let wc_a = wc("A", 0); // Public 0
-        let wc_b = wc("B", 1); // Public 1
-        let wc_c = wc("C", 2); // Public 2
-        let wc_d = wc("D", 3); // Public 3
-        let wc_m = wc("M", 4); // Public 4
-        let wc_n = wc("N", 5); // Public 5
+        // Define outer predicate that combines inner predicate with Lt condition
+        let wc_a = wc("A", 0);
+        let wc_b = wc("B", 1);
+        let wc_c = wc("C", 2);
+        let wc_d = wc("D", 3);
+        let wc_m = wc("M", 4);
+        let wc_n = wc("N", 5);
 
         let outer_tmpl_inner = StatementTmpl {
-            pred: Predicate::BatchSelf(0), // Reference InnerP by index
+            pred: Predicate::BatchSelf(0),
             args: vec![
-                // Map OuterP public wildcards to InnerP public args positionally
-                StatementTmplArg::WildcardLiteral(wc_a.clone()), // InnerP.?X <- OuterP.?A
-                StatementTmplArg::WildcardLiteral(wc_b.clone()), // InnerP.?Y <- OuterP.?B
-                StatementTmplArg::WildcardLiteral(wc_c.clone()), // InnerP.?Z <- OuterP.?C
-                StatementTmplArg::WildcardLiteral(wc_d.clone()), // InnerP.?W <- OuterP.?D
+                StatementTmplArg::WildcardLiteral(wc_a.clone()),
+                StatementTmplArg::WildcardLiteral(wc_b.clone()),
+                StatementTmplArg::WildcardLiteral(wc_c.clone()),
+                StatementTmplArg::WildcardLiteral(wc_d.clone()),
             ],
         };
         let outer_tmpl_lt = StatementTmpl {
             pred: Predicate::Native(NativePredicate::Lt),
             args: vec![
-                StatementTmplArg::Key(wc_m.clone(), KeyOrWildcard::Key(val_key.clone())), // ?M["val"]
-                StatementTmplArg::Key(wc_n.clone(), KeyOrWildcard::Key(val_key.clone())), // ?N["val"]
+                StatementTmplArg::Key(wc_m.clone(), KeyOrWildcard::Key(val_key.clone())),
+                StatementTmplArg::Key(wc_n.clone(), KeyOrWildcard::Key(val_key.clone())),
             ],
         };
         let outer_pred_def = CustomPredicate {
             name: "OuterP".to_string(),
-            args_len: 6, // A, B, C, D, M, N are public
+            args_len: 6,
             statements: vec![outer_tmpl_inner.clone(), outer_tmpl_lt.clone()],
-            conjunction: true, // AND
+            conjunction: true,
         };
 
-        // Create Batch and Definitions Map
         let custom_batch = Arc::new(CustomPredicateBatch {
             name: "NestedBatch".to_string(),
-            predicates: vec![inner_pred_def.clone(), outer_pred_def.clone()], // Inner=0, Outer=1
+            predicates: vec![inner_pred_def.clone(), outer_pred_def.clone()],
         });
         let inner_pred_ref = build_custom_ref(custom_batch.clone(), 0);
         let outer_pred_ref = build_custom_ref(custom_batch.clone(), 1);
 
-        // Use the new helper
         let custom_definitions = setup_custom_definitions_for_test(
             vec![
                 (
@@ -2341,9 +2267,7 @@ mod proof_tests {
             ],
             &params,
         );
-        // --- End Definitions ---
 
-        // Target Statement: OuterP(A=1, B=2, C=3, D=4, M=5, N=6)
         let target_stmt = Statement::Custom(
             outer_pred_ref.clone(),
             vec![
@@ -2356,26 +2280,20 @@ mod proof_tests {
             ],
         );
 
-        // State: No private wildcards in this example
         let mut state = solver_state_with_domains(vec![]);
 
-        // --- Execution ---
-        // Pass &indexes
         let result =
             try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
 
-        // --- Assertions ---
         assert!(result.is_ok(), "Nested proof failed: {:?}", result.err());
         let proof_chain = result.unwrap();
 
-        // Expected concrete statements
         let expected_inner_gt = Statement::Gt(ak(1, "val"), ak(2, "val"));
         let expected_inner_eq = Statement::Equal(ak(3, "key"), ak(4, "key"));
         let expected_outer_lt = Statement::Lt(ak(5, "val"), ak(6, "val"));
         let expected_inner_custom = Statement::Custom(
             inner_pred_ref.clone(),
             vec![
-                // Arguments passed to InnerP
                 WildcardValue::PodId(pod_a),
                 WildcardValue::PodId(pod_b),
                 WildcardValue::PodId(pod_c),
@@ -2383,7 +2301,6 @@ mod proof_tests {
             ],
         );
 
-        // Check final proof step for OuterP
         assert!(!proof_chain.0.is_empty());
         let final_outer_step = proof_chain.0.last().unwrap();
         assert_eq!(
@@ -2391,33 +2308,29 @@ mod proof_tests {
             OperationType::Custom(outer_pred_ref.clone())
         );
         assert_eq!(final_outer_step.output, target_stmt);
-        assert_eq!(final_outer_step.inputs.len(), 2); // InnerP and Lt
+        assert_eq!(final_outer_step.inputs.len(), 2);
         assert!(final_outer_step.inputs.contains(&expected_inner_custom));
         assert!(final_outer_step.inputs.contains(&expected_outer_lt));
 
-        // Check that proof chains exist for the inputs to the final step
         assert!(state.proof_chains.contains_key(&expected_inner_custom));
         assert!(state.proof_chains.contains_key(&expected_outer_lt));
 
-        // Check the proof chain for the InnerP custom statement
         let inner_proof_chain = &state.proof_chains[&expected_inner_custom];
         assert!(!inner_proof_chain.0.is_empty());
         let final_inner_step = inner_proof_chain.0.last().unwrap();
         assert_eq!(
             final_inner_step.operation,
-            OperationType::Custom(inner_pred_ref.clone()) // Operation uses InnerP ref
+            OperationType::Custom(inner_pred_ref.clone())
         );
         assert_eq!(final_inner_step.output, expected_inner_custom);
-        assert_eq!(final_inner_step.inputs.len(), 2); // Gt and Eq
+        assert_eq!(final_inner_step.inputs.len(), 2);
         assert!(final_inner_step.inputs.contains(&expected_inner_gt));
         assert!(final_inner_step.inputs.contains(&expected_inner_eq));
 
-        // Check that proof chains exist for Gt, Eq, Lt (the base native proofs)
         assert!(state.proof_chains.contains_key(&expected_inner_gt));
         assert!(state.proof_chains.contains_key(&expected_inner_eq));
         assert!(state.proof_chains.contains_key(&expected_outer_lt));
 
-        // Check scope
         assert!(state.scope.contains(&(pod_a, fact_a_val)));
         assert!(state.scope.contains(&(pod_b, fact_b_val)));
         assert!(state.scope.contains(&(pod_c, fact_c_key)));

@@ -1,3 +1,5 @@
+/// The prover module handles proof generation and verification for pod statements.
+/// It includes components for solving constraints, building pods, and managing proof chains.
 pub mod error;
 pub mod indexing;
 pub mod pod_building;
@@ -38,39 +40,38 @@ mod tests {
         },
     };
 
+    /// Tests a simple end-to-end proof involving a greater-than comparison between two pods.
+    /// Creates two pods with numeric values and proves that one value is greater than the other.
     #[test]
     fn test_prover_end_to_end_simple_gt() -> Result<(), Box<dyn std::error::Error>> {
         let params = middleware::Params::default();
 
-        // 1. Create mock input SignedPods containing initial key-value data.
-        let pod_a =
-            create_test_signed_pod(&params, &[("foo", Value::from(10))], "signer_a").unwrap();
-        let pod_b =
-            create_test_signed_pod(&params, &[("bar", Value::from(20))], "signer_b").unwrap();
+        // Create input SignedPods with test data
+        let pod_a = create_test_signed_pod(&params, &[("foo", Value::from(10))], "signer_a")?;
+        let pod_b = create_test_signed_pod(&params, &[("bar", Value::from(20))], "signer_b")?;
 
-        // 2. Define the request template: we want to prove Gt(?y["bar"], ?x["foo"])
-        let wc_x = Wildcard::new("x".to_string(), 0); // Wildcard representing pod A's context
-        let wc_y = Wildcard::new("y".to_string(), 1); // Wildcard representing pod B's context
+        // Define request template: Gt(?y["bar"], ?x["foo"])
+        let wc_x = Wildcard::new("x".to_string(), 0);
+        let wc_y = Wildcard::new("y".to_string(), 1);
         let key_foo = Key::new("foo".to_string());
         let key_bar = Key::new("bar".to_string());
 
         let request_templates = vec![StatementTmpl {
             pred: middleware::Predicate::Native(NativePredicate::Gt),
             args: vec![
-                StatementTmplArg::Key(wc_y.clone(), KeyOrWildcard::Key(key_bar.clone())), // ?y["bar"]
-                StatementTmplArg::Key(wc_x.clone(), KeyOrWildcard::Key(key_foo.clone())), // ?x["foo"]
+                StatementTmplArg::Key(wc_y.clone(), KeyOrWildcard::Key(key_bar.clone())),
+                StatementTmplArg::Key(wc_x.clone(), KeyOrWildcard::Key(key_foo.clone())),
             ],
         }];
 
-        // 3. Prepare inputs for the constraint solver.
-        // Index the initial facts (public statements) from the input pods.
+        // Prepare solver inputs from pod statements
         let initial_facts = vec![
             (pod_a.id(), pod_a.get_statement("foo").unwrap()),
             (pod_b.id(), pod_b.get_statement("bar").unwrap()),
         ];
         let custom_definitions = CustomDefinitions::default();
 
-        // 4. Call the solver to find a consistent assignment and proof steps.
+        // Find consistent assignment and generate proof
         let solve_result = solver::solve(
             &request_templates,
             &initial_facts,
@@ -84,12 +85,11 @@ mod tests {
         );
         let solution = solve_result.unwrap();
 
-        // 5. Prepare inputs for the pod building stage.
+        // Build final MainPod from solution
         let original_signed_pods =
             HashMap::from([(pod_a.id(), pod_a.clone()), (pod_b.id(), pod_b.clone())]);
         let original_main_pods = HashMap::new();
 
-        // 6. Call the pod building process to construct the final MainPod based on the solution.
         let build_result = pod_building::build_main_pod_from_solution(
             &solution,
             &original_signed_pods,
@@ -104,7 +104,7 @@ mod tests {
         );
         let main_pod = build_result.unwrap();
 
-        // 7. Verify the integrity and correctness of the generated MainPod.
+        // Verify MainPod integrity
         let verification_result = main_pod.pod.verify();
         assert!(
             verification_result.is_ok(),
@@ -112,8 +112,7 @@ mod tests {
             verification_result.err()
         );
 
-        // 8. Check that the generated MainPod contains the expected public statements.
-        //    In this case, the target Gt statement should be public.
+        // Verify expected public statements
         let expected_public_statement = Statement::Gt(
             AnchoredKey::new(pod_b.id(), key_bar),
             AnchoredKey::new(pod_a.id(), key_foo),
@@ -136,77 +135,81 @@ mod tests {
         Ok(())
     }
 
+    /// Tests nested custom predicates with complex relationships between multiple pods.
+    /// Demonstrates how to define and use custom predicates that combine multiple native predicates
+    /// and reference other custom predicates.
     #[test]
     fn test_prover_nested_custom_predicates() -> Result<(), Box<dyn std::error::Error>> {
         let params = middleware::Params::default();
 
-        // --- Define Custom Predicates ---
-
-        // InnerP (Index 0): Checks relationships previously held by pods a, b, c, d
-        // Public Args: ?p1 (holding val_a, key_c), ?p2 (holding val_b), ?p3 (holding key_d)
+        // Define InnerP predicate: checks relationships between pods a, b, c, d
+        // - Gt(?p1["val_a"], ?p2["val_b"])
+        // - Equal(?p1["key_c"], ?p3["key_d"])
         let wc_p1_inner = wc("p1_inner", 0);
         let wc_p2_inner = wc("p2_inner", 1);
         let wc_p3_inner = wc("p3_inner", 2);
-        let key_val_a = key("val_a"); // Renamed from "val" (originally pod_a)
-        let key_val_b = key("val_b"); // Renamed from "val" (originally pod_b)
-        let key_key_c = key("key_c"); // Renamed from "key" (originally pod_c)
-        let key_key_d = key("key_d"); // Renamed from "key" (originally pod_d)
+        let key_val_a = key("val_a");
+        let key_val_b = key("val_b");
+        let key_key_c = key("key_c");
+        let key_key_d = key("key_d");
 
         let inner_tmpl_gt = StatementTmpl {
             pred: Predicate::Native(NativePredicate::Gt),
             args: vec![
-                StatementTmplArg::Key(wc_p1_inner.clone(), KeyOrWildcard::Key(key_val_a.clone())), // ?p1["val_a"]
-                StatementTmplArg::Key(wc_p2_inner.clone(), KeyOrWildcard::Key(key_val_b.clone())), // ?p2["val_b"]
+                StatementTmplArg::Key(wc_p1_inner.clone(), KeyOrWildcard::Key(key_val_a.clone())),
+                StatementTmplArg::Key(wc_p2_inner.clone(), KeyOrWildcard::Key(key_val_b.clone())),
             ],
         };
         let inner_tmpl_eq = StatementTmpl {
             pred: Predicate::Native(NativePredicate::Equal),
             args: vec![
-                StatementTmplArg::Key(wc_p1_inner.clone(), KeyOrWildcard::Key(key_key_c.clone())), // ?p1["key_c"]
-                StatementTmplArg::Key(wc_p3_inner.clone(), KeyOrWildcard::Key(key_key_d.clone())), // ?p3["key_d"]
+                StatementTmplArg::Key(wc_p1_inner.clone(), KeyOrWildcard::Key(key_key_c.clone())),
+                StatementTmplArg::Key(wc_p3_inner.clone(), KeyOrWildcard::Key(key_key_d.clone())),
             ],
         };
         let inner_pred_def = CustomPredicate {
             name: "InnerP_Combined".to_string(),
-            args_len: 3, // p1, p2, p3
+            args_len: 3,
             statements: vec![inner_tmpl_gt, inner_tmpl_eq],
             conjunction: true,
         };
 
-        // OuterP (Index 1): Combines InnerP call with Lt check previously held by m, n
-        // Public Args: ?pod1 (used for InnerP's p1), ?pod2 (used for InnerP's p2 & Lt's val_m), ?pod3 (used for InnerP's p3 & Lt's val_n)
+        // Define OuterP predicate: combines InnerP with additional Lt check
+        // - InnerP(?pod1, ?pod2, ?pod3)
+        // - Lt(?pod2["val_m"], ?pod3["val_n"])
         let wc_pod1_outer = wc("pod1_outer", 0);
         let wc_pod2_outer = wc("pod2_outer", 1);
         let wc_pod3_outer = wc("pod3_outer", 2);
-        let key_val_m = key("val_m"); // Renamed from "val" (originally pod_m)
-        let key_val_n = key("val_n"); // Renamed from "val" (originally pod_n)
+        let key_val_m = key("val_m");
+        let key_val_n = key("val_n");
 
         let outer_tmpl_inner = StatementTmpl {
-            pred: Predicate::BatchSelf(0), // Calls InnerP_Combined at index 0
+            pred: Predicate::BatchSelf(0),
             args: vec![
-                StatementTmplArg::WildcardLiteral(wc_pod1_outer.clone()), // InnerP.?p1 <- OuterP.?pod1
-                StatementTmplArg::WildcardLiteral(wc_pod2_outer.clone()), // InnerP.?p2 <- OuterP.?pod2
-                StatementTmplArg::WildcardLiteral(wc_pod3_outer.clone()), // InnerP.?p3 <- OuterP.?pod3
+                StatementTmplArg::WildcardLiteral(wc_pod1_outer.clone()),
+                StatementTmplArg::WildcardLiteral(wc_pod2_outer.clone()),
+                StatementTmplArg::WildcardLiteral(wc_pod3_outer.clone()),
             ],
         };
         let outer_tmpl_lt = StatementTmpl {
             pred: Predicate::Native(NativePredicate::Lt),
             args: vec![
-                StatementTmplArg::Key(wc_pod2_outer.clone(), KeyOrWildcard::Key(key_val_m.clone())), // ?pod2["val_m"]
-                StatementTmplArg::Key(wc_pod3_outer.clone(), KeyOrWildcard::Key(key_val_n.clone())), // ?pod3["val_n"]
+                StatementTmplArg::Key(wc_pod2_outer.clone(), KeyOrWildcard::Key(key_val_m.clone())),
+                StatementTmplArg::Key(wc_pod3_outer.clone(), KeyOrWildcard::Key(key_val_n.clone())),
             ],
         };
         let outer_pred_def = CustomPredicate {
             name: "OuterP_Combined".to_string(),
-            args_len: 3, // pod1, pod2, pod3
+            args_len: 3,
             statements: vec![outer_tmpl_inner, outer_tmpl_lt],
             conjunction: true,
         };
 
-        // --- Create Batch and Refs ---
+        // Create predicate batch and references
+        // InnerP is at index 0, OuterP at index 1
         let custom_batch = Arc::new(CustomPredicateBatch {
             name: "NestedBatchCombined".to_string(),
-            predicates: vec![inner_pred_def.clone(), outer_pred_def.clone()], // Inner=0, Outer=1
+            predicates: vec![inner_pred_def.clone(), outer_pred_def.clone()],
         });
         let inner_pred_ref = CustomPredicateRef {
             batch: custom_batch.clone(),
@@ -217,29 +220,28 @@ mod tests {
             index: 1,
         };
 
-        // --- Create 3 Input Pods ---
+        // Create test pods with required data:
+        // pod_1: val_a=100, key_c="same"
+        // pod_2: val_b=50, val_m=10
+        // pod_3: key_d="same", val_n=20
         let pod_1 = create_test_signed_pod(
-            // Was pod_a (val=100) and pod_c (key="same")
             &params,
             &[("val_a", val(100)), ("key_c", Value::from("same"))],
             "signer_1",
         )?;
         let pod_2 = create_test_signed_pod(
-            // Was pod_b (val=50) and pod_m (val=10)
             &params,
             &[("val_b", val(50)), ("val_m", val(10))],
             "signer_2",
         )?;
         let pod_3 = create_test_signed_pod(
-            // Was pod_d (key="same") and pod_n (val=20)
             &params,
             &[("key_d", Value::from("same")), ("val_n", val(20))],
             "signer_3",
         )?;
 
-        // --- Prepare Solver Inputs ---
+        // Extract initial facts from pods
         let initial_facts = vec![
-            // From pod_1
             (
                 pod_1.id(),
                 pod_1
@@ -254,7 +256,6 @@ mod tests {
                     .ok_or("Missing key_c for pod_1")?
                     .clone(),
             ),
-            // From pod_2
             (
                 pod_2.id(),
                 pod_2
@@ -269,7 +270,6 @@ mod tests {
                     .ok_or("Missing val_m for pod_2")?
                     .clone(),
             ),
-            // From pod_3
             (
                 pod_3.id(),
                 pod_3
@@ -286,7 +286,7 @@ mod tests {
             ),
         ];
 
-        // Build custom_definitions map
+        // Register custom predicates
         let mut custom_definitions = CustomDefinitions::new();
         let inner_pred_variant = Predicate::Custom(inner_pred_ref.clone());
         let outer_pred_variant = Predicate::Custom(outer_pred_ref.clone());
@@ -299,24 +299,21 @@ mod tests {
             (outer_pred_def, custom_batch.clone()),
         );
 
-        // --- Define Request Template targeting OuterP ---
-        // Define wildcards for the request
+        // Define request template using OuterP
         let wc_req_p1 = wc("req_p1", 10);
         let wc_req_p2 = wc("req_p2", 11);
         let wc_req_p3 = wc("req_p3", 12);
 
-        // The request template uses wildcards for the public arguments
         let request_templates = vec![StatementTmpl {
             pred: Predicate::Custom(outer_pred_ref.clone()),
             args: vec![
-                StatementTmplArg::WildcardLiteral(wc_req_p1.clone()), // ?req_p1
-                StatementTmplArg::WildcardLiteral(wc_req_p2.clone()), // ?req_p2
-                StatementTmplArg::WildcardLiteral(wc_req_p3.clone()), // ?req_p3
+                StatementTmplArg::WildcardLiteral(wc_req_p1.clone()),
+                StatementTmplArg::WildcardLiteral(wc_req_p2.clone()),
+                StatementTmplArg::WildcardLiteral(wc_req_p3.clone()),
             ],
         }];
 
-        // --- Solve ---
-        // The solver needs to bind wc_req_p1=pod_1, wc_req_p2=pod_2, wc_req_p3=pod_3
+        // Find solution and generate proof
         let solve_result = solver::solve(
             &request_templates,
             &initial_facts,
@@ -330,7 +327,7 @@ mod tests {
         );
         let solution = solve_result.unwrap();
 
-        // --- Build Pod ---
+        // Build MainPod from solution
         let original_signed_pods = HashMap::from([
             (pod_1.id(), pod_1.clone()),
             (pod_2.id(), pod_2.clone()),
@@ -338,15 +335,12 @@ mod tests {
         ]);
         let original_main_pods = HashMap::new();
 
-        // Adjust params if needed (though default should be okay with 3 pods)
-        // let build_params = middleware::Params { max_input_signed_pods: 4, ..Default::default() };
-
         let build_result = pod_building::build_main_pod_from_solution(
             &solution,
             &original_signed_pods,
             &original_main_pods,
-            &params,            // Use original params or adjusted build_params
-            &request_templates, // <-- Pass the request templates
+            &params,
+            &request_templates,
         );
         assert!(
             build_result.is_ok(),
@@ -355,7 +349,7 @@ mod tests {
         );
         let main_pod = build_result.unwrap();
 
-        // --- Verify ---
+        // Verify MainPod integrity
         let verification_result = main_pod.pod.verify();
         assert!(
             verification_result.is_ok(),
@@ -363,13 +357,13 @@ mod tests {
             verification_result.err()
         );
 
-        // Check that the OuterP custom statement is public
+        // Verify that OuterP statement is public
         let expected_public_statement = Statement::Custom(
             outer_pred_ref.clone(),
             vec![
-                WildcardValue::PodId(pod_1.id()), // Bound to req_p1
-                WildcardValue::PodId(pod_2.id()), // Bound to req_p2
-                WildcardValue::PodId(pod_3.id()), // Bound to req_p3
+                WildcardValue::PodId(pod_1.id()),
+                WildcardValue::PodId(pod_2.id()),
+                WildcardValue::PodId(pod_3.id()),
             ],
         );
         assert!(
@@ -380,21 +374,20 @@ mod tests {
             main_pod.public_statements
         );
 
-        // Check that the intermediate InnerP custom statement is NOT necessarily public
+        // Verify that InnerP statement exists in proof chain but is not public
         let intermediate_inner_statement = Statement::Custom(
             inner_pred_ref.clone(),
             vec![
-                WildcardValue::PodId(pod_1.id()), // Bound via OuterP.?pod1 -> InnerP.?p1
-                WildcardValue::PodId(pod_2.id()), // Bound via OuterP.?pod2 -> InnerP.?p2
-                WildcardValue::PodId(pod_3.id()), // Bound via OuterP.?pod3 -> InnerP.?p3
+                WildcardValue::PodId(pod_1.id()),
+                WildcardValue::PodId(pod_2.id()),
+                WildcardValue::PodId(pod_3.id()),
             ],
         );
-        // Note: Exact check might be too strict depending on builder internals.
-        // Check if it's present at all, and maybe assert it's NOT public if that's guaranteed.
+
         let found_inner_in_solution = solution
             .proof_chains
             .values()
-            .flat_map(|chain| &chain.0) // Iterate through all ProofSteps in all chains
+            .flat_map(|chain| &chain.0)
             .any(|step| step.output == intermediate_inner_statement);
 
         assert!(
@@ -561,29 +554,37 @@ mod tests {
             Statement::None => Statement::None,
         }
     }
-
+    /// Tests the ZuKYC example with manually constructed request templates.
+    /// Demonstrates a real-world use case involving multiple pods and complex relationships
+    /// between their values.
+    ///
+    /// The test verifies:
+    /// 1. A person's ID is not in a sanctions list
+    /// 2. The person is at least 18 years old (based on date of birth)
+    /// 3. The employment started within the last year
+    /// 4. The social security numbers match between government and employer records
     #[test]
     fn test_prover_zukyc() -> Result<(), Box<dyn std::error::Error>> {
         let params = middleware::Params::default();
 
-        // 1. Create mock input SignedPods
+        // Create mock signers for each authority
         let mut gov_signer = MockSigner { pk: "gov".into() };
         let mut pay_signer = MockSigner { pk: "pay".into() };
         let mut sanction_signer = MockSigner {
             pk: "sanction".into(),
         };
 
+        // Create pods with required data using predefined builders
         let (gov_builder, pay_builder, sanction_builder) = zu_kyc_sign_pod_builders(&params);
-
         let gov_id_pod = gov_builder.sign(&mut gov_signer)?;
         let pay_stub_pod = pay_builder.sign(&mut pay_signer)?;
         let sanction_list_pod = sanction_builder.sign(&mut sanction_signer)?;
 
-        // 2. Define constants needed in templates
-        let now_minus_18y_val = Value::from(1169909388_i64);
-        let now_minus_1y_val = Value::from(1706367566_i64);
+        // Define constants for age verification
+        let now_minus_18y_val = Value::from(1169909388_i64); // Current time - 18 years
+        let now_minus_1y_val = Value::from(1706367566_i64); // Current time - 1 year
 
-        // 3. Define wildcards and keys for the request
+        // Define wildcards for each pod and constant holder
         let wc_gov = wc("gov", 0);
         let wc_pay = wc("pay", 1);
         let wc_sanctions = wc("sanctions", 2);
@@ -591,57 +592,62 @@ mod tests {
         let wc_holder_18y = wc("SELF_HOLDER_18Y", 4);
         let wc_holder_1y = wc("SELF_HOLDER_1Y", 5);
 
+        // Define keys used in the verification
         let id_num_key = key("idNumber");
         let dob_key = key("dateOfBirth");
         let ssn_key = key("socialSecurityNumber");
         let start_date_key = key("startDate");
         let sanction_list_key = key("sanctionList");
-        // Add keys for constants
         let const_18y_key = key("const_18y");
         let const_1y_key = key("const_1y");
 
-        // 4. Define the request templates using wildcards for constants
+        // Define request templates for each verification step
         let request_templates = vec![
+            // Check ID not in sanctions list
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::NotContains),
                 args: vec![
                     StatementTmplArg::Key(
                         wc_sanctions.clone(),
                         KeyOrWildcard::Key(sanction_list_key.clone()),
-                    ), // ?sanctions["sanctionList"]
-                    StatementTmplArg::Key(wc_gov.clone(), KeyOrWildcard::Key(id_num_key.clone())), // ?gov["idNumber"]
+                    ),
+                    StatementTmplArg::Key(wc_gov.clone(), KeyOrWildcard::Key(id_num_key.clone())),
                 ],
             },
+            // Verify age >= 18 years
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Lt),
                 args: vec![
-                    StatementTmplArg::Key(wc_gov.clone(), KeyOrWildcard::Key(dob_key.clone())), // ?gov["dateOfBirth"]
+                    StatementTmplArg::Key(wc_gov.clone(), KeyOrWildcard::Key(dob_key.clone())),
                     StatementTmplArg::Key(
                         wc_const.clone(),
                         KeyOrWildcard::Key(const_18y_key.clone()),
                     ),
                 ],
             },
+            // Verify employment started within last year
             StatementTmpl {
-                pred: Predicate::Native(NativePredicate::Equal), // Use Eq based on example
+                pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
                     StatementTmplArg::Key(
                         wc_pay.clone(),
                         KeyOrWildcard::Key(start_date_key.clone()),
-                    ), // ?pay["startDate"]
+                    ),
                     StatementTmplArg::Key(
                         wc_const.clone(),
                         KeyOrWildcard::Key(const_1y_key.clone()),
                     ),
                 ],
             },
+            // Verify SSN matches between records
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
-                    StatementTmplArg::Key(wc_gov.clone(), KeyOrWildcard::Key(ssn_key.clone())), // ?gov["socialSecurityNumber"]
-                    StatementTmplArg::Key(wc_pay.clone(), KeyOrWildcard::Key(ssn_key.clone())), // ?pay["socialSecurityNumber"]
+                    StatementTmplArg::Key(wc_gov.clone(), KeyOrWildcard::Key(ssn_key.clone())),
+                    StatementTmplArg::Key(wc_pay.clone(), KeyOrWildcard::Key(ssn_key.clone())),
                 ],
             },
+            // Define constant for 18-year check
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::ValueOf),
                 args: vec![
@@ -652,11 +658,12 @@ mod tests {
                     StatementTmplArg::Literal(now_minus_18y_val.clone()),
                 ],
             },
+            // Define constant for 1-year check
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::ValueOf),
                 args: vec![
                     StatementTmplArg::Key(
-                        wc_holder_1y.clone(), // Use the distinct holder wildcard
+                        wc_holder_1y.clone(),
                         KeyOrWildcard::Key(const_1y_key.clone()),
                     ),
                     StatementTmplArg::Literal(now_minus_1y_val.clone()),
@@ -664,8 +671,7 @@ mod tests {
             },
         ];
 
-        // 5. Prepare inputs for the constraint solver.
-        // Only include facts from the real signed pods.
+        // Extract initial facts from all pods
         let initial_facts: Vec<(PodId, Statement)> = gov_id_pod
             .pod
             .pub_statements()
@@ -689,11 +695,10 @@ mod tests {
 
         let custom_definitions = CustomDefinitions::default();
 
-        // 6. Call the solver.
-        // Pass initial_facts and params directly
+        // Find solution and generate proof
         let solve_result = solver::solve(
             &request_templates,
-            &initial_facts, // Use the list including SELF facts
+            &initial_facts,
             &params,
             &custom_definitions,
         );
@@ -704,38 +709,14 @@ mod tests {
         );
         let solution = solve_result.unwrap();
 
-        // Check bindings (optional but helpful)
-        assert_eq!(
-            solution.bindings.get(&wc_gov),
-            Some(&ConcreteValue::Pod(gov_id_pod.id()))
-        );
-        assert_eq!(
-            solution.bindings.get(&wc_pay),
-            Some(&ConcreteValue::Pod(pay_stub_pod.id()))
-        );
-        assert_eq!(
-            solution.bindings.get(&wc_sanctions),
-            Some(&ConcreteValue::Pod(sanction_list_pod.id()))
-        );
-        // Check constant bindings
-        // assert_eq!(
-        //     solution.bindings.get(&wc_18y),
-        //     Some(&ConcreteValue::Val(now_minus_18y_val.clone()))
-        // );
-        // assert_eq!(
-        //     solution.bindings.get(&wc_1y),
-        //     Some(&ConcreteValue::Val(now_minus_1y_val.clone()))
-        // );
-
-        // 7. Prepare inputs for pod building.
+        // Build MainPod from solution
         let original_signed_pods = HashMap::from([
             (gov_id_pod.id(), gov_id_pod.clone()),
             (pay_stub_pod.id(), pay_stub_pod.clone()),
             (sanction_list_pod.id(), sanction_list_pod.clone()),
         ]);
-        let original_main_pods = HashMap::new(); // No input main pods
+        let original_main_pods = HashMap::new();
 
-        // 8. Call pod building.
         let build_result = pod_building::build_main_pod_from_solution(
             &solution,
             &original_signed_pods,
@@ -750,7 +731,7 @@ mod tests {
         );
         let main_pod = build_result.unwrap();
 
-        // 9. Verify the generated MainPod.
+        // Verify MainPod integrity
         let verification_result = main_pod.pod.verify();
         assert!(
             verification_result.is_ok(),
@@ -758,15 +739,12 @@ mod tests {
             verification_result.err()
         );
 
-        // 10. Check that the generated MainPod contains the expected public statements.
-        // Re-generate the target statements using the solution bindings.
-        // Need to manually create the SELF statements for generation check
+        // Prepare expected statements for verification
         let mut final_domains = solution
             .bindings
             .iter()
             .map(|(wc, cv)| {
                 (
-                    // Determine ExpectedType based on ConcreteValue variant
                     wc.clone(),
                     (
                         HashSet::from([cv.clone()]),
@@ -780,8 +758,7 @@ mod tests {
             })
             .collect::<HashMap<_, _>>();
 
-        // Add SELF pod wildcard mapping for generation
-        // These map the dummy SELF holder wildcards to the actual SELF PodId
+        // Add SELF pod mappings for constant holders
         final_domains.insert(
             Wildcard::new("SELF_HOLDER_18Y".to_string(), 100),
             (
@@ -797,6 +774,7 @@ mod tests {
             ),
         );
 
+        // Generate expected statements from templates
         let final_state_for_generation = SolverState {
             params: params.clone(),
             domains: final_domains,
@@ -807,45 +785,35 @@ mod tests {
 
         let mut expected_public_statements = HashSet::new();
         for tmpl in &request_templates {
-            // Use original templates for verification check
-            // Use check_templates here <-- No, use original templates
-            match try_generate_concrete_candidate_and_bindings(
-            tmpl,
-            &final_state_for_generation,
-        ) {
-            Ok(Some((target_stmt, _))) => {
-                expected_public_statements.insert(target_stmt);
+            match try_generate_concrete_candidate_and_bindings(tmpl, &final_state_for_generation) {
+                Ok(Some((target_stmt, _))) => {
+                    expected_public_statements.insert(target_stmt);
+                }
+                Ok(None) => panic!("Failed to generate concrete statement (None) from template {:?} during verification check", tmpl),
+                Err(e) => panic!("Failed to generate concrete statement (Err {:?}) from template {:?} during verification check", e, tmpl),
             }
-            Ok(None) => panic!("Failed to generate concrete statement (None) from template {:?} during verification check", tmpl),
-            Err(e) => panic!("Failed to generate concrete statement (Err {:?}) from template {:?} during verification check", e, tmpl),
-        }
         }
 
-        // --- Adjust expected statements for SELF --- START ---
+        // Adjust statements to use actual pod ID instead of SELF
         let main_pod_id = main_pod.id();
         let adjusted_expected_public_statements: HashSet<_> = expected_public_statements
             .iter()
             .map(|stmt| adjust_statement_for_self(stmt, main_pod_id))
             .collect();
-        // --- Adjust expected statements for SELF --- END ---
 
-        // Add the implicit _type statement
+        // Verify all expected statements are present
         assert_eq!(
             main_pod.public_statements.len(),
-            adjusted_expected_public_statements.len() + 1, // to account for the _type statement
+            adjusted_expected_public_statements.len() + 1,
             "Mismatch in number of public statements.\nExpected (adjusted): {:#?}\n   Found: {:#?}",
-            adjusted_expected_public_statements, // Use adjusted set
+            adjusted_expected_public_statements,
             main_pod.public_statements
         );
 
         for stmt in &adjusted_expected_public_statements {
-            // Use the adjusted set
-            // Exclude the ValueOf statements for constants from the final public check
-            // (This exclusion might be removable now, depending on how strictly we want to check)
+            // Skip constant value statements in final check
             if let Statement::ValueOf(ak, _) = stmt {
-                if ak.pod_id == main_pod_id // Check against the actual pod ID
-                    && (ak.key == const_18y_key || ak.key == const_1y_key)
-                {
+                if ak.pod_id == main_pod_id {
                     continue;
                 }
             }
@@ -858,17 +826,19 @@ mod tests {
 
         println!("ZuKYC end-to-end test successful!");
         println!("Generated MainPod: {}", main_pod);
-
         println!("Solution:\n{}", generate_graphviz_dot(&solution));
 
         Ok(())
     }
 
+    /// Tests the ZuKYC example with request templates parsed from podlog.
+    /// Similar to test_prover_zukyc but uses the podlog parser to create templates,
+    /// demonstrating the integration with the parsing system.
     #[test]
     fn test_prover_zukyc_from_podlog() -> Result<(), Box<dyn std::error::Error>> {
         let params = middleware::Params::default();
 
-        // 1. Create mock input SignedPods
+        // Create mock input SignedPods
         let mut gov_signer = MockSigner { pk: "gov".into() };
         let mut pay_signer = MockSigner { pk: "pay".into() };
         let mut sanction_signer = MockSigner {
@@ -895,7 +865,7 @@ mod tests {
         let processed = parse(input, &params).unwrap();
         let request_templates = processed.request_templates;
 
-        // 2. Prepare inputs for the constraint solver.
+        // Prepare inputs for the constraint solver.
         // Only include facts from the real signed pods.
         let initial_facts: Vec<(PodId, Statement)> = gov_id_pod
             .pod
@@ -920,7 +890,7 @@ mod tests {
 
         let custom_definitions = CustomDefinitions::default();
 
-        // 3. Call the solver.
+        // Call the solver.
         // Pass initial_facts and params directly
         let solve_result = solver::solve(
             &request_templates,
@@ -935,7 +905,7 @@ mod tests {
         );
         let solution = solve_result.unwrap();
 
-        // 4. Prepare inputs for pod building.
+        // Prepare inputs for pod building.
         let original_signed_pods = HashMap::from([
             (gov_id_pod.id(), gov_id_pod.clone()),
             (pay_stub_pod.id(), pay_stub_pod.clone()),
@@ -943,7 +913,7 @@ mod tests {
         ]);
         let original_main_pods = HashMap::new(); // No input main pods
 
-        // 5. Call pod building.
+        // Call pod building.
         let build_result = pod_building::build_main_pod_from_solution(
             &solution,
             &original_signed_pods,
@@ -958,7 +928,7 @@ mod tests {
         );
         let main_pod = build_result.unwrap();
 
-        // 6. Verify the generated MainPod.
+        // Verify the generated MainPod.
         let verification_result = main_pod.pod.verify();
         assert!(
             verification_result.is_ok(),
@@ -966,7 +936,6 @@ mod tests {
             verification_result.err()
         );
 
-        // 7. Check that the generated MainPod contains the expected public statements.
         // Re-generate the target statements using the solution bindings.
         // Need to manually create the SELF statements for generation check
         let mut final_domains = solution

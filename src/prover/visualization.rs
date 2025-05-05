@@ -1,5 +1,7 @@
-use std::collections::{HashMap, HashSet};
-use std::fmt::Write; // Import the Write trait
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Write,
+};
 
 use crate::{
     middleware::{OperationType, Statement},

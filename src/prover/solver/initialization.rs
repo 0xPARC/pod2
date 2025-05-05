@@ -18,7 +18,7 @@ use crate::{
         indexing::ProverIndexes,
         types::{ConcreteValue, CustomDefinitions},
     },
-}; // Need SolverState definition from mod.rs
+};
 
 // Helper to check for conflicting type assignments for a wildcard
 fn update_wildcard_type(
@@ -147,13 +147,12 @@ fn infer_argument_type(
                             if let Some((nested_pred_def, _)) =
                                 custom_definitions.get(&predicate_key)
                             {
-                                // Pass the nested predicate's batch
                                 type_from_recursive = infer_argument_type(
                                     nested_pred_def,
                                     nested_arg_pos,
                                     custom_definitions,
                                     params,
-                                    Some(&custom_ref.batch), // Pass Arc ref
+                                    Some(&custom_ref.batch),
                                     visited,
                                 );
                                 break; // Found the relevant argument, stop inner loop
@@ -178,7 +177,7 @@ fn infer_argument_type(
                                         nested_arg_pos,
                                         custom_definitions,
                                         params,
-                                        Some(batch_arc), // Pass the same batch Arc ref
+                                        Some(batch_arc),
                                         visited,
                                     );
                                     break; // Found the relevant argument, stop inner loop
@@ -204,17 +203,13 @@ fn infer_argument_type(
                 visited.remove(&visited_key);
                 return ExpectedType::Unknown;
             }
-            // If a definite type was found via recursion, no need to check further templates *for this arg_index*?
-            // Let's allow checking all templates to ensure consistency.
         }
     }
 
-    // Remove the key before returning
     visited.remove(&visited_key);
     final_type
 }
 
-// Define the type alias for the info tuple
 type PotentialConstantInfo = (Wildcard, Key, Value);
 
 /// Helper function to recursively parse templates and generate constraints.
@@ -283,18 +278,13 @@ fn parse_template_and_generate_constraints(
     // --- Pass 2: Predicate-Specific Constraints & Recursion ---
     match &tmpl.pred {
         Predicate::Native(NativePredicate::ValueOf) => {
-            // println!("INIT PARSE: Entered ValueOf handler. Arg count = {}", tmpl.args.len()); // DEBUG Arg0
-            // println!("INIT PARSE: ValueOf Arg1 = {:?}", &tmpl.args[1]); // DEBUG Arg1
-            // println!("INIT PARSE: ValueOf has 2 args, checking pattern..."); // DEBUG
             if tmpl.args.len() == 2 {
-                // println!("INIT PARSE: Matched ValueOf constant pattern! Holder={:?}, Key={:?}, Value={:?}", wc_pod_holder, const_key, literal_value);
                 if let (
                     StatementTmplArg::Key(wc_pod_holder, KeyOrWildcard::Key(const_key)),
                     StatementTmplArg::Literal(literal_value),
                 ) = (&tmpl.args[0], &tmpl.args[1])
                 {
                     // Matched the pattern!
-                    // println!("INIT PARSE: Matched ValueOf constant pattern! Holder={:?}, Key={:?}, Value={:?}", wc_pod_holder, const_key, literal_value);
                     constant_template_info.push((
                         wc_pod_holder.clone(),
                         const_key.clone(),
@@ -314,7 +304,6 @@ fn parse_template_and_generate_constraints(
                     });
                 } else {
                     // This is the branch for when the pattern doesn't match
-                    // println!("INIT PARSE: ValueOf pattern did NOT match args: ({:?}, {:?})", &tmpl.args[0], &tmpl.args[1]); // DEBUG
                     // Apply standard type inference/constraints if not the constant pattern
                     // (This part might need refinement depending on other ValueOf uses)
                     for arg in &tmpl.args {
@@ -888,7 +877,7 @@ pub(super) fn initialize_solver_state(
 ) -> Result<InitializationResult, ProverError> {
     let mut wildcard_types: HashMap<Wildcard, ExpectedType> = HashMap::new();
     let mut constraints = Vec::new();
-    let mut constant_template_info: Vec<PotentialConstantInfo> = Vec::new(); // Correct type
+    let mut constant_template_info: Vec<PotentialConstantInfo> = Vec::new();
 
     let initial_alias_map: HashMap<usize, Wildcard> = HashMap::new();
 
@@ -908,7 +897,6 @@ pub(super) fn initialize_solver_state(
     // --- Generate SELF facts from identified constants --- START ---
     let mut self_facts: Vec<(PodId, Statement)> = Vec::new();
     for (_holder_wc, key, literal_value) in &constant_template_info {
-        // We now have the literal value directly
         let self_ak = AnchoredKey::new(SELF, key.clone());
         let value_of_stmt = Statement::ValueOf(self_ak, literal_value.clone());
         self_facts.push((SELF, value_of_stmt));
@@ -916,12 +904,11 @@ pub(super) fn initialize_solver_state(
     // --- Generate SELF facts from identified constants --- END ---
 
     // --- Combine original facts with newly generated SELF facts ---
-    // println!("DEBUG: Length of self_facts before extend: {}", self_facts.len()); // Add length check
     let mut combined_initial_facts = context.initial_facts.to_vec();
     combined_initial_facts.extend(self_facts.clone()); // Clone self_facts here
 
     // --- Build Indexes using the combined facts ---
-    let solver_indexes = ProverIndexes::build(context.params.clone(), &combined_initial_facts); // <<-- MOVE THIS UP
+    let solver_indexes = ProverIndexes::build(context.params.clone(), &combined_initial_facts);
 
     // --- Initialize Domains (Simplified - Now has Index Access) ---
     let mut wildcard_domains: HashMap<Wildcard, (Domain, ExpectedType)> = HashMap::new();
@@ -931,20 +918,16 @@ pub(super) fn initialize_solver_state(
         // Pruning will refine these later using the actual index built in solve()
         let initial_domain: Domain = match expected_type {
             ExpectedType::Pod => {
-                // println!("INIT DOMAIN: Initializing Pod domain for {:?}", wildcard.name);
                 let pod_map = solver_indexes.pod_id_to_anchored_keys();
-                // println!("INIT DOMAIN: Index pod_map keys: {:?}", pod_map.keys());
                 let mut pods: HashSet<_> = pod_map
                     .keys()
                     .map(|pod_id| ConcreteValue::Pod(*pod_id))
                     .collect();
                 // Ensure SELF is included if relevant indexes exist for it
                 let self_present_in_index = pod_map.contains_key(&SELF);
-                // println!("INIT DOMAIN: Is SELF present in index pod_map? {}", self_present_in_index);
                 if self_present_in_index {
                     pods.insert(ConcreteValue::Pod(SELF));
                 }
-                // println!("INIT DOMAIN: Final initial domain for {:?}: {:?}", wildcard.name, pods);
                 pods
             }
             ExpectedType::Key => solver_indexes
@@ -992,5 +975,5 @@ pub(super) fn initialize_solver_state(
         scope: HashSet::new(),
     };
 
-    Ok((solver_state, constant_template_info, self_facts)) // <-- Return state, constant_info, self_facts
+    Ok((solver_state, constant_template_info, self_facts))
 }
