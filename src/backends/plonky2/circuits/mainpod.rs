@@ -615,10 +615,21 @@ mod tests {
             ])),
         )
         .into();
-        let prev_statements = [st1, st2, st3];
+        let st4: mainpod::Statement = Statement::ValueOf(
+            AnchoredKey::from((PodId(RawValue::from(74).into()), "mundo")),
+            Value::from(-55),
+        )
+        .into();
+        let st5: mainpod::Statement = Statement::ValueOf(
+            AnchoredKey::from((PodId(RawValue::from(70).into()), "que")),
+            Value::from(-56),
+        )
+        .into();
+
+        let prev_statements = [st1, st2, st3, st4, st5];
 
         [
-            // 56 < 55, 55 < 55, 56 <= 55 should fail to verify
+            // 56 < 55, 55 < 55, 56 <= 55, -55 < -55, -55 < -56, -55 <= -56 should fail to verify
             (
                 mainpod::Operation(
                     OperationType::Native(NativeOperation::LtFromEntries),
@@ -652,6 +663,42 @@ mod tests {
                 Statement::LtEq(
                     AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
                     AnchoredKey::from((SELF, "hello")),
+                )
+                .into(),
+            ),
+            (
+                mainpod::Operation(
+                    OperationType::Native(NativeOperation::LtFromEntries),
+                    vec![OperationArg::Index(3), OperationArg::Index(3)],
+                    OperationAux::None,
+                ),
+                Statement::Lt(
+                    AnchoredKey::from((PodId(RawValue::from(74).into()), "mundo")),
+                    AnchoredKey::from((PodId(RawValue::from(74).into()), "mundo")),
+                )
+                .into(),
+            ),
+            (
+                mainpod::Operation(
+                    OperationType::Native(NativeOperation::LtFromEntries),
+                    vec![OperationArg::Index(3), OperationArg::Index(4)],
+                    OperationAux::None,
+                ),
+                Statement::Lt(
+                    AnchoredKey::from((PodId(RawValue::from(74).into()), "mundo")),
+                    AnchoredKey::from((PodId(RawValue::from(70).into()), "que")),
+                )
+                .into(),
+            ),
+            (
+                mainpod::Operation(
+                    OperationType::Native(NativeOperation::LtEqFromEntries),
+                    vec![OperationArg::Index(3), OperationArg::Index(4)],
+                    OperationAux::None,
+                ),
+                Statement::LtEq(
+                    AnchoredKey::from((PodId(RawValue::from(74).into()), "mundo")),
+                    AnchoredKey::from((PodId(RawValue::from(70).into()), "que")),
                 )
                 .into(),
             ),
@@ -775,7 +822,43 @@ mod tests {
             vec![OperationArg::Index(0), OperationArg::Index(1)],
             OperationAux::None,
         );
-        let prev_statements = vec![st1.clone(), st2];
+        let prev_statements = vec![st1.clone(), st2.clone()];
+        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+        // Also check negative < negative
+        let st3: mainpod::Statement = Statement::ValueOf(
+            AnchoredKey::from((PodId(RawValue::from(89).into()), "hola")),
+            Value::from(-56),
+        )
+        .into();
+        let st4: mainpod::Statement = Statement::ValueOf(
+            AnchoredKey::from((PodId(RawValue::from(84).into()), "mundo")),
+            Value::from(-55),
+        )
+        .into();
+        let st: mainpod::Statement = Statement::Lt(
+            AnchoredKey::from((PodId(RawValue::from(89).into()), "hola")),
+            AnchoredKey::from((PodId(RawValue::from(84).into()), "mundo")),
+        )
+        .into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::LtFromEntries),
+            vec![OperationArg::Index(0), OperationArg::Index(1)],
+            OperationAux::None,
+        );
+        let prev_statements = vec![st3.clone(), st4];
+        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+        // Also check negative < positive
+        let st: mainpod::Statement = Statement::Lt(
+            AnchoredKey::from((PodId(RawValue::from(89).into()), "hola")),
+            AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
+        )
+        .into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::LtFromEntries),
+            vec![OperationArg::Index(0), OperationArg::Index(1)],
+            OperationAux::None,
+        );
+        let prev_statements = vec![st3.clone(), st2];
         operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
 
         // LtEq
@@ -794,7 +877,66 @@ mod tests {
             vec![OperationArg::Index(0), OperationArg::Index(1)],
             OperationAux::None,
         );
-        let prev_statements = vec![st1.clone(), st2];
+        let prev_statements = vec![st1.clone(), st2.clone()];
+        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+        // Also check negative <= negative
+        let st3: mainpod::Statement = Statement::ValueOf(
+            AnchoredKey::from((PodId(RawValue::from(89).into()), "hola")),
+            Value::from(-56),
+        )
+        .into();
+        let st4: mainpod::Statement = Statement::ValueOf(
+            AnchoredKey::from((PodId(RawValue::from(84).into()), "mundo")),
+            Value::from(-55),
+        )
+        .into();
+        let st: mainpod::Statement = Statement::LtEq(
+            AnchoredKey::from((PodId(RawValue::from(89).into()), "hola")),
+            AnchoredKey::from((PodId(RawValue::from(84).into()), "mundo")),
+        )
+        .into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::LtEqFromEntries),
+            vec![OperationArg::Index(0), OperationArg::Index(1)],
+            OperationAux::None,
+        );
+        let prev_statements = vec![st3.clone(), st4];
+        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+        // Also check negative <= positive
+        let st: mainpod::Statement = Statement::LtEq(
+            AnchoredKey::from((PodId(RawValue::from(89).into()), "hola")),
+            AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
+        )
+        .into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::LtEqFromEntries),
+            vec![OperationArg::Index(0), OperationArg::Index(1)],
+            OperationAux::None,
+        );
+        let prev_statements = vec![st3, st2];
+        operation_verify(st, op, prev_statements.clone(), merkle_proofs.clone())?;
+        // Also check equality, both positive and negative.
+        let st: mainpod::Statement = Statement::LtEq(
+            AnchoredKey::from((PodId(RawValue::from(89).into()), "hola")),
+            AnchoredKey::from((PodId(RawValue::from(89).into()), "hola")),
+        )
+        .into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::LtEqFromEntries),
+            vec![OperationArg::Index(0), OperationArg::Index(0)],
+            OperationAux::None,
+        );
+        operation_verify(st, op, prev_statements.clone(), merkle_proofs.clone())?;
+        let st: mainpod::Statement = Statement::LtEq(
+            AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
+            AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
+        )
+        .into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::LtEqFromEntries),
+            vec![OperationArg::Index(1), OperationArg::Index(1)],
+            OperationAux::None,
+        );
         operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
 
         // NotContainsFromEntries

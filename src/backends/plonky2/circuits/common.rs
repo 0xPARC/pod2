@@ -313,6 +313,9 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     /// consists of two `u32` limbs.
     fn assert_i64(&mut self, x: ValueTarget);
 
+    /// Checks whether an i64 is negative.
+    fn i64_is_negative(&mut self, x: ValueTarget) -> BoolTarget;
+
     /// Checks whether `x < y` if `b` is true. This assumes that `x`
     /// and `y` each consist of two `u32` limbs.
     fn assert_i64_less_if(&mut self, b: BoolTarget, x: ValueTarget, y: ValueTarget);
@@ -414,6 +417,13 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
         self.range_check(x.elements[1], NUM_BITS);
     }
 
+    fn i64_is_negative(&mut self, x: ValueTarget) -> BoolTarget {
+        // x is negative if the most significant bit of its most
+        // significant limb is 1.
+        let high_bits = self.split_le(x.elements[1], NUM_BITS);
+        high_bits[31]
+    }
+
     fn assert_i64_less_if(&mut self, b: BoolTarget, x: ValueTarget, y: ValueTarget) {
         // If b is false, replace `x` and `y` with dummy values.
         let zero = ValueTarget::zero(self);
@@ -429,6 +439,24 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
             let expr = builder.sub(y_minus_one, x);
             builder.range_check(expr, NUM_BITS);
         };
+
+        // First check if `x` and `y` have the same sign.
+        let x_is_negative = self.i64_is_negative(x);
+        let y_is_negative = self.i64_is_negative(y);
+        let same_sign_ind = self.is_equal(x_is_negative.target, y_is_negative.target);
+
+        // If not, bypass the lt check below.
+        let x = self.select_value(same_sign_ind, x, zero);
+        let y = self.select_value(same_sign_ind, y, one);
+
+        // If the signs are not the same, then we must have x negative
+        // and y nonnegative.
+        let y_is_nonnegative = self.not(y_is_negative);
+        let diff_signs_ok = self.and(x_is_negative, y_is_nonnegative);
+
+        // Altogether, either both signs are the same, or x < 0 <= y.
+        let signs_ok = self.or(same_sign_ind, diff_signs_ok);
+        self.assert_one(signs_ok.target);
 
         let big_limbs_eq = self.is_equal(x.elements[1], y.elements[1]);
         let lhs = self.select(big_limbs_eq, x.elements[0], x.elements[1]);
