@@ -1,5 +1,3 @@
-// src/lang/parser.rs
-
 use pest::{iterators::Pairs, Parser};
 use pest_derive::Parser;
 
