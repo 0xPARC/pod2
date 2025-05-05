@@ -892,7 +892,7 @@ mod tests {
         )
     "#;
 
-        let processed = parse(input).unwrap();
+        let processed = parse(input, &params).unwrap();
         let request_templates = processed.request_templates;
 
         // 2. Prepare inputs for the constraint solver.
