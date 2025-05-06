@@ -1,5 +1,6 @@
 use std::marker::PhantomData;
 
+use num::BigUint;
 use plonky2::{
     field::{
         extension::{Extendable, FieldExtension, OEF},
@@ -49,6 +50,16 @@ pub trait CircuitBuilderNNF<
         let one = self.nnf_one();
         self.nnf_div(&one, x)
     }
+    fn nnf_mul_generator(&mut self, x: &NNFTarget) -> NNFTarget;
+    fn nnf_mul_scalar(&mut self, x: Target, y: &NNFTarget) -> NNFTarget;
+    fn nnf_add_scalar_times_generator_power(
+        &mut self,
+        x: Target,
+        gen_power: usize,
+        y: &NNFTarget,
+    ) -> NNFTarget;
+    fn nnf_if(&mut self, b: BoolTarget, x_true: &NNFTarget, x_false: &NNFTarget) -> NNFTarget;
+    fn nnf_exp_biguint(&mut self, base: &NNFTarget, exponent: &BigUint) -> NNFTarget;
 
     // Equality check and connection
     fn nnf_eq(&mut self, x: &NNFTarget, y: &NNFTarget) -> BoolTarget;
@@ -80,7 +91,7 @@ impl<const DEG: usize, NNF: OEF<DEG>> Default for OEFTarget<DEG, NNF> {
 /// Quotient generator for OEF targets. Allows us to automagically
 /// generate quotients as witnesses.
 #[derive(Debug, Default)]
-pub struct QuotientGeneratorOEF<const DEG: usize, NNF: OEF<DEG>> {
+struct QuotientGeneratorOEF<const DEG: usize, NNF: OEF<DEG>> {
     numerator: OEFTarget<DEG, NNF>,
     denominator: OEFTarget<DEG, NNF>,
     quotient: OEFTarget<DEG, NNF>,
@@ -240,6 +251,56 @@ impl<const DEG: usize, NNF: OEF<DEG> + FieldExtension<DEG, BaseField = F>>
 
         quotient
     }
+    fn nnf_mul_generator(&mut self, x: &OEFTarget<DEG, NNF>) -> OEFTarget<DEG, NNF> {
+        OEFTarget::new(std::array::from_fn(|i| {
+            if i == 0 {
+                self.mul_const(NNF::W, x.components[DEG - 1])
+            } else {
+                x.components[i - 1]
+            }
+        }))
+    }
+    fn nnf_mul_scalar(&mut self, x: Target, y: &OEFTarget<DEG, NNF>) -> OEFTarget<DEG, NNF> {
+        OEFTarget::new(std::array::from_fn(|i| self.mul(x, y.components[i])))
+    }
+    fn nnf_add_scalar_times_generator_power(
+        &mut self,
+        x: Target,
+        gen_power: usize,
+        y: &OEFTarget<DEG, NNF>,
+    ) -> OEFTarget<DEG, NNF> {
+        OEFTarget::new(std::array::from_fn(|i| {
+            if i == gen_power {
+                self.add(x, y.components[i])
+            } else {
+                y.components[i]
+            }
+        }))
+    }
+    fn nnf_if(
+        &mut self,
+        b: BoolTarget,
+        x_true: &OEFTarget<DEG, NNF>,
+        x_false: &OEFTarget<DEG, NNF>,
+    ) -> OEFTarget<DEG, NNF> {
+        OEFTarget::new(std::array::from_fn(|i| {
+            self._if(b, x_true.components[i], x_false.components[i])
+        }))
+    }
+    fn nnf_exp_biguint(
+        &mut self,
+        base: &OEFTarget<DEG, NNF>,
+        exponent: &BigUint,
+    ) -> OEFTarget<DEG, NNF> {
+        let mut ans = self.nnf_one();
+        for i in (0..exponent.bits()).rev() {
+            ans = self.nnf_mul(&ans, &ans);
+            if exponent.bit(i) {
+                ans = self.nnf_mul(&ans, base);
+            }
+        }
+        ans
+    }
     fn nnf_eq(&mut self, x: &OEFTarget<DEG, NNF>, y: &OEFTarget<DEG, NNF>) -> BoolTarget {
         let eq_checks = std::iter::zip(&x.components, &y.components)
             .map(|(a, b)| self.is_equal(*a, *b))
@@ -252,6 +313,14 @@ impl<const DEG: usize, NNF: OEF<DEG> + FieldExtension<DEG, BaseField = F>>
     fn nnf_connect(&mut self, x: &OEFTarget<DEG, NNF>, y: &OEFTarget<DEG, NNF>) {
         std::iter::zip(&x.components, &y.components).for_each(|(a, b)| self.connect(*a, *b))
     }
+}
+
+pub(super) fn get_nnf_target<const DEG: usize, NNF: OEF<DEG>>(
+    witness: &impl Witness<NNF::BaseField>,
+    tgt: &OEFTarget<DEG, NNF>,
+) -> NNF {
+    let values = tgt.components.map(|x| witness.get_target(x));
+    NNF::from_basefield_array(values)
 }
 
 #[cfg(test)]
