@@ -846,7 +846,7 @@ mod tests {
             predicates: predicate_targets,
         };
 
-        // Calculate the id in constraints and compare it against the id calcualted natively
+        // Calculate the id in constraints and compare it against the id calculated natively
         let id_target = custom_predicate_batch_target.id(&mut builder);
         let id = custom_predicate_batch.id(&params);
 
