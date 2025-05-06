@@ -206,9 +206,11 @@ fn resolve_wildcard(args: &[&str], priv_args: &[&str], s: &str) -> Wildcard {
 mod tests {
     use super::*;
     use crate::{
+        backends::plonky2::mock::mainpod::MockProver,
         examples::custom::{eth_dos_batch, eth_friend_batch},
-        middleware,
-        middleware::{CustomPredicateRef, Params, PodType},
+        frontend::MainPodBuilder,
+        middleware::{self, CustomPredicateRef, Params, PodType},
+        op,
     };
 
     #[test]
@@ -234,6 +236,70 @@ mod tests {
             Arc::unwrap_or_clone(eth_dos_batch);
         let fields = eth_dos_batch_mw.to_fields(&params);
         println!("Batch b, serialized: {:?}", fields);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_lt_custom_pred() -> Result<()> {
+        let params = Params::default();
+        let mut builder = CustomPredicateBatchBuilder::new("lt_custom_pred".into());
+        builder.predicate_and(
+            "lt_custom_pred",
+            &params,
+            &["S1", "S2"],
+            &[],
+            &[StatementTmplBuilder::new(NativePredicate::Lt).arg(("S1", "S2"))],
+        )?;
+        let batch = builder.finish();
+        let lt_custom_pred = CustomPredicateRef::new(batch, 0);
+
+        let mut mp_builder = MainPodBuilder::new(&params);
+
+        // 1 < 2
+        let s1 = mp_builder.literal(true, Value::from(1))?;
+        let s2 = mp_builder.literal(true, Value::from(2))?;
+
+        let lt_st = mp_builder.pub_op(op!(lt, s1, s2))?;
+        println!("lt: {}", lt_st);
+
+        mp_builder.pub_op(op!(custom, lt_custom_pred, lt_st))?;
+
+        let mut prover = MockProver {};
+        let proof = mp_builder.prove(&mut prover, &params)?;
+        println!("{}", proof);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_gt_custom_pred() -> Result<()> {
+        let params = Params::default();
+        let mut builder = CustomPredicateBatchBuilder::new("gt_custom_pred".into());
+        builder.predicate_and(
+            "gt_custom_pred",
+            &params,
+            &["S1", "S2"],
+            &[],
+            &[StatementTmplBuilder::new(NativePredicate::Gt).arg(("S1", "S2"))],
+        )?;
+        let batch = builder.finish();
+        let gt_custom_pred = CustomPredicateRef::new(batch, 0);
+
+        let mut mp_builder = MainPodBuilder::new(&params);
+
+        // 2 > 1
+        let s1 = mp_builder.literal(true, Value::from(2))?;
+        let s2 = mp_builder.literal(true, Value::from(1))?;
+
+        let gt = mp_builder.pub_op(op!(gt, s1, s2))?;
+        println!("gt: {}", gt);
+
+        mp_builder.pub_op(op!(custom, gt_custom_pred, gt))?;
+
+        let mut prover = MockProver {};
+        let proof = mp_builder.prove(&mut prover, &params)?;
+        println!("{}", proof);
 
         Ok(())
     }
