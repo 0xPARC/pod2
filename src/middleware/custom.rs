@@ -5,7 +5,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::middleware::{
-    hash_fields, Error, Hash, Key, Params, Predicate, Result, ToFields, Value, F, HASH_SIZE,
+    hash_fields, Error, Hash, Key, Params, Predicate, Result, ToFields, Value, EMPTY_HASH, F,
+    HASH_SIZE,
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -190,26 +191,27 @@ pub struct CustomPredicate {
     // TODO: Add args type information?
 }
 
+// TODO: pass params first to follow the convention in the rest of the code base.
 impl CustomPredicate {
     pub fn and(
-        name: String,
         params: &Params,
+        name: String,
         statements: Vec<StatementTmpl>,
         args_len: usize,
     ) -> Result<Self> {
-        Self::new(name, params, true, statements, args_len)
+        Self::new(params, name, true, statements, args_len)
     }
     pub fn or(
-        name: String,
         params: &Params,
+        name: String,
         statements: Vec<StatementTmpl>,
         args_len: usize,
     ) -> Result<Self> {
-        Self::new(name, params, false, statements, args_len)
+        Self::new(params, name, false, statements, args_len)
     }
     pub fn new(
-        name: String,
         params: &Params,
+        name: String,
         conjunction: bool,
         statements: Vec<StatementTmpl>,
         args_len: usize,
@@ -283,8 +285,9 @@ impl fmt::Display for CustomPredicate {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CustomPredicateBatch {
+    id: Hash,
     pub name: String,
-    pub predicates: Vec<CustomPredicate>,
+    predicates: Vec<CustomPredicate>,
 }
 
 impl ToFields for CustomPredicateBatch {
@@ -311,13 +314,31 @@ impl ToFields for CustomPredicateBatch {
 }
 
 impl CustomPredicateBatch {
+    pub fn new(params: &Params, name: String, predicates: Vec<CustomPredicate>) -> Arc<Self> {
+        let mut cpb = Self {
+            id: EMPTY_HASH,
+            name,
+            predicates,
+        };
+        let id = cpb.calculate_id(params);
+        cpb.id = id;
+        Arc::new(cpb)
+    }
+
     /// Cryptographic identifier for the batch.
-    pub fn id(&self, params: &Params) -> Hash {
+    fn calculate_id(&self, params: &Params) -> Hash {
         // NOTE: This implementation just hashes the concatenation of all the custom predicates,
         // but ideally we want to use the root of a merkle tree built from the custom predicates.
         let input = self.to_fields(params);
 
         hash_fields(&input)
+    }
+
+    pub fn id(&self) -> Hash {
+        self.id
+    }
+    pub fn predicates(&self) -> &[CustomPredicate] {
+        &self.predicates
     }
 }
 
@@ -338,7 +359,7 @@ impl CustomPredicateRef {
 
 #[cfg(test)]
 mod tests {
-    use std::{array, sync::Arc};
+    use std::array;
 
     use plonky2::field::goldilocks_field::GoldilocksField;
 
@@ -377,11 +398,12 @@ mod tests {
         p:value_of(Constant, 2),
         p:product_of(S1, Constant, S2)
          */
-        let cust_pred_batch = Arc::new(CustomPredicateBatch {
-            name: "is_double".to_string(),
-            predicates: vec![CustomPredicate::and(
-                "_".into(),
+        let cust_pred_batch = CustomPredicateBatch::new(
+            &params,
+            "is_double".to_string(),
+            vec![CustomPredicate::and(
                 &params,
+                "_".into(),
                 vec![
                     st(
                         P::Native(NP::ValueOf),
@@ -398,7 +420,7 @@ mod tests {
                 ],
                 2,
             )?],
-        });
+        );
 
         let custom_statement = Statement::Custom(
             CustomPredicateRef::new(cust_pred_batch.clone(), 0),
@@ -433,8 +455,8 @@ mod tests {
         };
 
         let eth_friend_cp = CustomPredicate::and(
-            "eth_friend_cp".into(),
             &params,
+            "eth_friend_cp".into(),
             vec![
                 st(
                     P::Native(NP::ValueOf),
@@ -461,15 +483,13 @@ mod tests {
             4,
         )?;
 
-        let eth_friend_batch = Arc::new(CustomPredicateBatch {
-            name: "eth_friend".to_string(),
-            predicates: vec![eth_friend_cp],
-        });
+        let eth_friend_batch =
+            CustomPredicateBatch::new(&params, "eth_friend".to_string(), vec![eth_friend_cp]);
 
         // 0
         let eth_dos_base = CustomPredicate::and(
-            "eth_dos_base".into(),
             &params,
+            "eth_dos_base".into(),
             vec![
                 st(
                     P::Native(NP::Equal),
@@ -485,8 +505,8 @@ mod tests {
 
         // 1
         let eth_dos_ind = CustomPredicate::and(
-            "eth_dos_ind".into(),
             &params,
+            "eth_dos_ind".into(),
             vec![
                 st(
                     P::BatchSelf(2),
@@ -526,8 +546,8 @@ mod tests {
 
         // 2
         let eth_dos_distance_either = CustomPredicate::or(
-            "eth_dos_distance_either".into(),
             &params,
+            "eth_dos_distance_either".into(),
             vec![
                 st(
                     P::BatchSelf(0),
@@ -555,10 +575,11 @@ mod tests {
             6,
         )?;
 
-        let eth_dos_distance_batch = Arc::new(CustomPredicateBatch {
-            name: "ETHDoS_distance".to_string(),
-            predicates: vec![eth_dos_base, eth_dos_ind, eth_dos_distance_either],
-        });
+        let eth_dos_distance_batch = CustomPredicateBatch::new(
+            &params,
+            "ETHDoS_distance".to_string(),
+            vec![eth_dos_base, eth_dos_ind, eth_dos_distance_either],
+        );
 
         // Some POD IDs
         let pod_id1 = PodId(Hash(array::from_fn(|i| GoldilocksField(i as u64))));

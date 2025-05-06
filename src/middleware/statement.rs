@@ -117,7 +117,7 @@ impl ToFields for Predicate {
                 .collect(),
             Self::Custom(CustomPredicateRef { batch, index }) => {
                 iter::once(F::from_canonical_u64(3))
-                    .chain(batch.id(params).0)
+                    .chain(batch.id().0)
                     .chain(iter::once(F::from_canonical_usize(*index)))
                     .collect()
             }
@@ -136,7 +136,9 @@ impl fmt::Display for Predicate {
                 write!(
                     f,
                     "{}.{}[{}]",
-                    batch.name, index, batch.predicates[*index].name
+                    batch.name,
+                    index,
+                    batch.predicates()[*index].name
                 )
             }
         }

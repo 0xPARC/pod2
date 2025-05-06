@@ -814,7 +814,7 @@ mod tests {
 
         let custom_predicate_batch = eth_friend_batch(&params)?;
 
-        for (i, cp) in custom_predicate_batch.predicates.iter().enumerate() {
+        for (i, cp) in custom_predicate_batch.predicates().iter().enumerate() {
             let mut builder = CircuitBuilder::<F, D>::new(config.clone());
             let flattened = cp.to_fields(&params);
             let flatteend_target = flattened.iter().map(|v| builder.constant(*v)).collect_vec();
@@ -843,7 +843,7 @@ mod tests {
 
         let zero = builder.zero();
         let predicate_targets = custom_predicate_batch
-            .predicates
+            .predicates()
             .iter()
             .map(|cp| {
                 let flattened = cp.to_fields(params);
@@ -865,7 +865,7 @@ mod tests {
 
         // Calculate the id in constraints and compare it against the id calculated natively
         let id_target = custom_predicate_batch_target.id(&mut builder);
-        let id = custom_predicate_batch.id(params);
+        let id = custom_predicate_batch.id();
 
         let id_expected_target = HashOutTarget {
             elements: id
@@ -897,8 +897,8 @@ mod tests {
         };
 
         // Empty case
-        let mut cpb_builder = CustomPredicateBatchBuilder::new("empty".into());
-        _ = cpb_builder.predicate_and("empty", &params, &[], &[], &[])?;
+        let mut cpb_builder = CustomPredicateBatchBuilder::new(params.clone(), "empty".into());
+        _ = cpb_builder.predicate_and("empty", &[], &[], &[])?;
         let custom_predicate_batch = cpb_builder.finish();
         test_custom_predicate_batch_target_id(&params, &custom_predicate_batch)?;
 

@@ -43,7 +43,7 @@ impl ToFields for OperationType {
                 .collect(),
             Self::Custom(CustomPredicateRef { batch, index }) => {
                 iter::once(F::from_canonical_u64(3))
-                    .chain(batch.id(params).0)
+                    .chain(batch.id().0)
                     .chain(iter::once(F::from_canonical_usize(*index)))
                     .collect()
             }
@@ -386,7 +386,7 @@ fn check_custom_pred(
     args: &[Statement],
     s_args: &[WildcardValue],
 ) -> Result<bool> {
-    let pred = &batch.predicates[index];
+    let pred = &batch.predicates()[index];
     if pred.statements.len() != args.len() {
         return Err(Error::diff_amount(
             "custom predicate operation".to_string(),

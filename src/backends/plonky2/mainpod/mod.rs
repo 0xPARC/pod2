@@ -37,7 +37,30 @@ pub(crate) fn hash_statements(statements: &[Statement], _params: &Params) -> mid
     Hash(PoseidonHash::hash_no_pad(&field_elems).elements)
 }
 
-/// Extracts and pads Merkle proofs from Contains/NotContains ops.
+// TODO
+// /// Extracts unique `CustomPredicateBatch`es from Custom ops.
+// pub(crate) fn extract_custom_predicate_batches(
+//     params: &Params,
+//     operations: &[middleware::Operation],
+// ) -> Result<Vec<MerkleClaimAndProof>> {
+//     let custom_predicate_batches: Vec<_> = operations
+//         .iter()
+//         .flat_map(|op| match op {
+//             middleware::Operation::Custom(cpr, _) => Some(cpr.batch.clone()),
+//             _ => None,
+//         })
+//         .collect();
+//     if merkle_proofs.len() > params.max_merkle_proofs {
+//         return Err(Error::custom(format!(
+//             "The number of required Merkle proofs ({}) exceeds the maximum number ({}).",
+//             merkle_proofs.len(),
+//             params.max_merkle_proofs
+//         )));
+//     }
+//     Ok(merkle_proofs)
+// }
+
+/// Extracts Merkle proofs from Contains/NotContains ops.
 pub(crate) fn extract_merkle_proofs(
     params: &Params,
     operations: &[middleware::Operation],

@@ -12,10 +12,9 @@ use crate::{
 
 /// Instantiates an ETH friend batch
 pub fn eth_friend_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
-    let mut builder = CustomPredicateBatchBuilder::new("eth_friend".into());
+    let mut builder = CustomPredicateBatchBuilder::new(params.clone(), "eth_friend".into());
     let _eth_friend = builder.predicate_and(
         "eth_friend",
-        params,
         // arguments:
         &["src_ori", "src_key", "dst_ori", "dst_key"],
         // private arguments:
@@ -44,7 +43,8 @@ pub fn eth_friend_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
 /// Instantiates an ETHDoS batch
 pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
     let eth_friend = Predicate::Custom(CustomPredicateRef::new(eth_friend_batch(params)?, 0));
-    let mut builder = CustomPredicateBatchBuilder::new("eth_dos_distance_base".into());
+    let mut builder =
+        CustomPredicateBatchBuilder::new(params.clone(), "eth_dos_distance_base".into());
 
     // eth_dos_distance_base(src_or, src_key, dst_or, dst_key, distance_or, distance_key) = and<
     //   eq(src_or, src_key, dst_or, dst_key),
@@ -52,7 +52,6 @@ pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
     // >
     let eth_dos_distance_base = builder.predicate_and(
         "eth_dos_distance_base",
-        params,
         &[
             // arguments:
             "src_ori",
@@ -83,7 +82,6 @@ pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
 
     let eth_dos_distance_ind = builder.predicate_and(
         "eth_dos_distance_ind",
-        params,
         &[
             // arguments:
             "src_ori",
@@ -135,7 +133,6 @@ pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
 
     let _eth_dos_distance = builder.predicate_or(
         "eth_dos_distance",
-        params,
         &[
             "src_ori",
             "src_key",
