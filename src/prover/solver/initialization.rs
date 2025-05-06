@@ -20,6 +20,9 @@ use crate::{
     },
 };
 
+// Key for the visited set in parse_template_and_generate_constraints
+type VisitedPredicateParseKey = (*const CustomPredicateBatch, usize);
+
 // Helper to check for conflicting type assignments for a wildcard
 fn update_wildcard_type(
     wildcard_types: &mut HashMap<Wildcard, ExpectedType>,
@@ -222,6 +225,7 @@ fn parse_template_and_generate_constraints(
     context: &SolverContext,
     alias_map: &HashMap<usize, Wildcard>,
     constant_template_info: &mut Vec<PotentialConstantInfo>,
+    visited_parse: &mut HashSet<VisitedPredicateParseKey>,
 ) -> Result<(), ProverError> {
     let custom_definitions = context.custom_definitions;
     let params = context.params;
@@ -372,6 +376,15 @@ fn parse_template_and_generate_constraints(
         }
         Predicate::Custom(custom_ref) => {
             let predicate_key = Predicate::Custom(custom_ref.clone()).to_fields(context.params);
+
+            // --- Cycle Detection for Custom Predicate --- START ---
+            let visited_key: VisitedPredicateParseKey =
+                (Arc::as_ptr(&custom_ref.batch), custom_ref.index);
+            if !visited_parse.insert(visited_key) {
+                return Ok(()); // Cycle detected, already processing this predicate in this path
+            }
+            // --- Cycle Detection for Custom Predicate --- END ---
+
             if let Some((custom_pred_def, _batch_arc)) = custom_definitions.get(&predicate_key) {
                 if custom_pred_def.conjunction {
                     // --- AND Predicate Handling ---
@@ -459,6 +472,7 @@ fn parse_template_and_generate_constraints(
                             context,
                             &next_alias_map,
                             constant_template_info,
+                            visited_parse,
                         )?;
                     }
                 } else {
@@ -519,12 +533,13 @@ fn parse_template_and_generate_constraints(
                         // Pass the correct batch context (custom_ref.batch)
                         match parse_template_and_generate_constraints(
                             internal_tmpl,
-                            Some(custom_ref.batch.clone()), // Pass batch context
-                            &mut current_branch_types_map,  // Temporary types map
-                            &mut current_branch_constraints_vec, // Temporary constraints vec
+                            Some(custom_ref.batch.clone()),
+                            &mut current_branch_types_map,
+                            &mut current_branch_constraints_vec,
                             context,
-                            &next_alias_map,                   // Pass the alias map
-                            &mut current_branch_constant_info, // Temporary constants vec
+                            &next_alias_map,
+                            &mut current_branch_constant_info,
+                            visited_parse,
                         ) {
                             Ok(_) => {
                                 // Successfully parsed branch, store results
@@ -618,17 +633,29 @@ fn parse_template_and_generate_constraints(
                     custom_ref
                 )));
             }
+            visited_parse.remove(&visited_key); // Remove after processing this predicate's internals
         }
-        Predicate::BatchSelf(index) => {
+        Predicate::BatchSelf(target_idx) => {
             if let Some(current_batch_arc) = current_batch.as_ref() {
                 // Resolve the target predicate definition using the current batch context
                 let target_pred_def =
-                    current_batch_arc.predicates.get(*index).ok_or_else(|| {
-                        ProverError::Internal(format!(
+                    current_batch_arc
+                        .predicates
+                        .get(*target_idx)
+                        .ok_or_else(|| {
+                            ProverError::Internal(format!(
                             "BatchSelf index {} out of bounds for batch '{}' during initialization",
-                            index, current_batch_arc.name
+                            target_idx, current_batch_arc.name
                         ))
-                    })?;
+                        })?;
+
+                // --- Cycle Detection for BatchSelf --- START ---
+                let visited_key: VisitedPredicateParseKey =
+                    (Arc::as_ptr(current_batch_arc), *target_idx);
+                if !visited_parse.insert(visited_key) {
+                    return Ok(()); // Cycle detected
+                }
+                // --- Cycle Detection for BatchSelf --- END ---
 
                 // Now we have the target_pred_def. Proceed with AND/OR logic and recursion.
                 if target_pred_def.conjunction {
@@ -644,13 +671,13 @@ fn parse_template_and_generate_constraints(
                         match tmpl.args.get(i) {
                             Some(StatementTmplArg::WildcardLiteral(outer_wc_from_tmpl)) => {
                                 // Infer the type the target predicate expects for this argument index
-                                let mut visited = HashSet::new(); // Create visited set for this inference path
+                                let mut visited = HashSet::new();
                                 let expected_arg_type = infer_argument_type(
                                     target_pred_def,
                                     i,
                                     custom_definitions,
                                     params,
-                                    Some(current_batch_arc), // Pass the current batch
+                                    Some(current_batch_arc),
                                     &mut visited,
                                 );
 
@@ -714,6 +741,7 @@ fn parse_template_and_generate_constraints(
                             context,
                             &next_alias_map,
                             constant_template_info,
+                            visited_parse, // Pass visited set
                         )?;
                     }
                 } else {
@@ -769,12 +797,13 @@ fn parse_template_and_generate_constraints(
                         // Pass the current batch Arc ref
                         match parse_template_and_generate_constraints(
                             internal_tmpl,
-                            Some(current_batch_arc.clone()), // Pass current batch context
+                            Some(current_batch_arc.clone()),
                             &mut current_branch_types_map,
                             &mut current_branch_constraints_vec,
                             context,
                             &next_alias_map,
-                            &mut current_branch_constant_info, // Temporary constants vec
+                            &mut current_branch_constant_info,
+                            visited_parse,
                         ) {
                             Ok(_) => {
                                 let constraints_set: HashSet<Constraint> =
@@ -845,6 +874,7 @@ fn parse_template_and_generate_constraints(
                     }
                     // End of OR logic
                 }
+                visited_parse.remove(&visited_key); // Remove after processing this predicate's internals
             } else {
                 // BatchSelf encountered without a current_batch context
                 return Err(ProverError::Internal(
@@ -878,6 +908,7 @@ pub(super) fn initialize_solver_state(
     let mut wildcard_types: HashMap<Wildcard, ExpectedType> = HashMap::new();
     let mut constraints = Vec::new();
     let mut constant_template_info: Vec<PotentialConstantInfo> = Vec::new();
+    let mut visited_parse: HashSet<VisitedPredicateParseKey> = HashSet::new();
 
     let initial_alias_map: HashMap<usize, Wildcard> = HashMap::new();
 
@@ -891,6 +922,7 @@ pub(super) fn initialize_solver_state(
             context,
             &initial_alias_map,
             &mut constant_template_info,
+            &mut visited_parse,
         )?;
     }
 

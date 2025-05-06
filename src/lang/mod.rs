@@ -38,11 +38,6 @@ mod tests {
         KeyOrWildcard::Key(Key::new(name.to_string()))
     }
 
-    // Helper to create KeyOrWildcard::Wildcard
-    fn kw(name: &str, index: usize) -> KeyOrWildcard {
-        KeyOrWildcard::Wildcard(wc(name, index))
-    }
-
     // Helper to create StatementTmplArg::Key
     fn sta_k(pod_var: (&str, usize), key_or_wc: KeyOrWildcard) -> StatementTmplArg {
         StatementTmplArg::Key(wc(pod_var.0, pod_var.1), key_or_wc)
