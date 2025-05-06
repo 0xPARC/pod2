@@ -974,10 +974,7 @@ mod tests {
     }
 
     #[test]
-    fn test_operation_verify() -> Result<()> {
-        let params = Params::default();
-
-        // None
+    fn test_operation_verify_none() -> Result<()> {
         let st: mainpod::Statement = Statement::None.into();
         let op = mainpod::Operation(
             OperationType::Native(NativeOperation::None),
@@ -985,15 +982,11 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![Statement::None.into()];
-        let merkle_proofs = vec![];
-        operation_verify(
-            st.clone(),
-            op,
-            prev_statements.clone(),
-            merkle_proofs.clone(),
-        )?;
+        operation_verify(st, op, prev_statements, vec![])
+    }
 
-        // NewEntry
+    #[test]
+    fn test_operation_verify_newentry() -> Result<()> {
         let st1: mainpod::Statement =
             Statement::ValueOf(AnchoredKey::from((SELF, "hello")), Value::from(55)).into();
         let st2: mainpod::Statement = Statement::ValueOf(
@@ -1007,14 +1000,11 @@ mod tests {
             vec![],
             OperationAux::None,
         );
-        operation_verify(
-            st1.clone(),
-            op,
-            prev_statements.clone(),
-            merkle_proofs.clone(),
-        )?;
+        operation_verify(st1, op, prev_statements, vec![])
+    }
 
-        // Copy
+    #[test]
+    fn test_operation_verify_copy() -> Result<()> {
         let st: mainpod::Statement = Statement::None.into();
         let op = mainpod::Operation(
             OperationType::Native(NativeOperation::CopyStatement),
@@ -1022,9 +1012,13 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![Statement::None.into()];
-        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+        operation_verify(st, op, prev_statements, vec![])
+    }
 
-        // Eq
+    #[test]
+    fn test_operation_verify_eq() -> Result<()> {
+        let st1: mainpod::Statement =
+            Statement::ValueOf(AnchoredKey::from((SELF, "hello")), Value::from(55)).into();
         let st2: mainpod::Statement = Statement::ValueOf(
             AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
             Value::from(55),
@@ -1040,10 +1034,14 @@ mod tests {
             vec![OperationArg::Index(0), OperationArg::Index(1)],
             OperationAux::None,
         );
-        let prev_statements = vec![st1.clone(), st2];
-        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+        let prev_statements = vec![st1, st2];
+        operation_verify(st, op, prev_statements, vec![])
+    }
 
-        // NotEq
+    #[test]
+    fn test_operation_verify_neq() -> Result<()> {
+        let st1: mainpod::Statement =
+            Statement::ValueOf(AnchoredKey::from((SELF, "hello")), Value::from(55)).into();
         let st2: mainpod::Statement = Statement::ValueOf(
             AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
             Value::from(58),
@@ -1059,10 +1057,14 @@ mod tests {
             vec![OperationArg::Index(0), OperationArg::Index(1)],
             OperationAux::None,
         );
-        let prev_statements = vec![st1.clone(), st2];
-        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+        let prev_statements = vec![st1, st2];
+        operation_verify(st, op, prev_statements, vec![])
+    }
 
-        // Lt
+    #[test]
+    fn test_operation_verify_lt() -> Result<()> {
+        let st1: mainpod::Statement =
+            Statement::ValueOf(AnchoredKey::from((SELF, "hello")), Value::from(55)).into();
         let st2: mainpod::Statement = Statement::ValueOf(
             AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
             Value::from(56),
@@ -1078,8 +1080,9 @@ mod tests {
             vec![OperationArg::Index(0), OperationArg::Index(1)],
             OperationAux::None,
         );
-        let prev_statements = vec![st1.clone(), st2.clone()];
-        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+        let prev_statements = vec![st1, st2.clone()];
+        operation_verify(st, op, prev_statements, vec![])?;
+
         // Also check negative < negative
         let st3: mainpod::Statement = Statement::ValueOf(
             AnchoredKey::from((PodId(RawValue::from(89).into()), "hola")),
@@ -1102,7 +1105,8 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st3.clone(), st4];
-        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+        operation_verify(st, op, prev_statements, vec![])?;
+
         // Also check negative < positive
         let st: mainpod::Statement = Statement::Lt(
             AnchoredKey::from((PodId(RawValue::from(89).into()), "hola")),
@@ -1114,10 +1118,14 @@ mod tests {
             vec![OperationArg::Index(0), OperationArg::Index(1)],
             OperationAux::None,
         );
-        let prev_statements = vec![st3.clone(), st2];
-        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+        let prev_statements = vec![st3, st2];
+        operation_verify(st, op, prev_statements, vec![])
+    }
 
-        // LtEq
+    #[test]
+    fn test_operation_verify_lteq() -> Result<()> {
+        let st1: mainpod::Statement =
+            Statement::ValueOf(AnchoredKey::from((SELF, "hello")), Value::from(55)).into();
         let st2: mainpod::Statement = Statement::ValueOf(
             AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
             Value::from(56),
@@ -1133,8 +1141,9 @@ mod tests {
             vec![OperationArg::Index(0), OperationArg::Index(1)],
             OperationAux::None,
         );
-        let prev_statements = vec![st1.clone(), st2.clone()];
-        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+        let prev_statements = vec![st1, st2.clone()];
+        operation_verify(st, op, prev_statements, vec![])?;
+
         // Also check negative <= negative
         let st3: mainpod::Statement = Statement::ValueOf(
             AnchoredKey::from((PodId(RawValue::from(89).into()), "hola")),
@@ -1157,7 +1166,8 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st3.clone(), st4];
-        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+        operation_verify(st, op, prev_statements, vec![])?;
+
         // Also check negative <= positive
         let st: mainpod::Statement = Statement::LtEq(
             AnchoredKey::from((PodId(RawValue::from(89).into()), "hola")),
@@ -1170,7 +1180,8 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st3, st2];
-        operation_verify(st, op, prev_statements.clone(), merkle_proofs.clone())?;
+        operation_verify(st, op, prev_statements.clone(), vec![])?;
+
         // Also check equality, both positive and negative.
         let st: mainpod::Statement = Statement::LtEq(
             AnchoredKey::from((PodId(RawValue::from(89).into()), "hola")),
@@ -1182,7 +1193,7 @@ mod tests {
             vec![OperationArg::Index(0), OperationArg::Index(0)],
             OperationAux::None,
         );
-        operation_verify(st, op, prev_statements.clone(), merkle_proofs.clone())?;
+        operation_verify(st, op, prev_statements.clone(), vec![])?;
         let st: mainpod::Statement = Statement::LtEq(
             AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
             AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
@@ -1193,9 +1204,11 @@ mod tests {
             vec![OperationArg::Index(1), OperationArg::Index(1)],
             OperationAux::None,
         );
-        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+        operation_verify(st, op, prev_statements, vec![])
+    }
 
-        // HashOf
+    #[test]
+    fn test_operation_verify_hashof() -> Result<()> {
         let input_values = [
             Value::from(RawValue([
                 GoldilocksField(1),
@@ -1239,10 +1252,12 @@ mod tests {
             ],
             OperationAux::None,
         );
-        let prev_statements = vec![st1.clone(), st2, st3];
-        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+        let prev_statements = vec![st1, st2, st3];
+        operation_verify(st, op, prev_statements, vec![])
+    }
 
-        // LtToNeq
+    #[test]
+    fn test_operation_verify_lt_to_neq() -> Result<()> {
         let st: mainpod::Statement = Statement::NotEqual(
             AnchoredKey::from((SELF, "hello")),
             AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
@@ -1259,9 +1274,11 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1];
-        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+        operation_verify(st, op, prev_statements, vec![])
+    }
 
-        // TransitiveEq
+    #[test]
+    fn test_operation_verify_transitive_eq() -> Result<()> {
         let st: mainpod::Statement = Statement::Equal(
             AnchoredKey::from((SELF, "hello")),
             AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
@@ -1283,9 +1300,13 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2];
-        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+        operation_verify(st, op, prev_statements, vec![])
+    }
 
-        // NotContainsFromEntries
+    #[test]
+    fn test_operation_verify_sintains() -> Result<()> {
+        let params = Params::default();
+
         let kvs = [
             (1.into(), 55.into()),
             (2.into(), 88.into()),
@@ -1305,7 +1326,7 @@ mod tests {
 
         let root_st: mainpod::Statement = Statement::ValueOf(root_ak.clone(), root.clone()).into();
         let key_st: mainpod::Statement = Statement::ValueOf(key_ak.clone(), key.into()).into();
-        let st: mainpod::Statement = Statement::NotContains(root_ak.clone(), key_ak).into();
+        let st: mainpod::Statement = Statement::NotContains(root_ak, key_ak).into();
         let op = mainpod::Operation(
             OperationType::Native(NativeOperation::NotContainsFromEntries),
             vec![OperationArg::Index(0), OperationArg::Index(1)],
@@ -1318,16 +1339,33 @@ mod tests {
             None,
             no_key_pf,
         )];
-        let prev_statements = vec![root_st.clone(), key_st];
-        operation_verify(st, op, prev_statements, merkle_proofs)?;
+        let prev_statements = vec![root_st, key_st];
+        operation_verify(st, op, prev_statements, merkle_proofs)
+    }
 
-        // ContainsFromEntries
+    #[test]
+    fn test_operation_verify_contains() -> Result<()> {
+        let params = Params::default();
+
+        let kvs = [
+            (1.into(), 55.into()),
+            (2.into(), 88.into()),
+            (175.into(), 0.into()),
+        ]
+        .into_iter()
+        .collect();
+        let mt = MerkleTree::new(params.max_depth_mt_gadget, &kvs)?;
+
+        let root = Value::from(mt.root());
+        let root_ak = AnchoredKey::from((PodId(RawValue::from(88).into()), "merkle root"));
+
         let key = 175.into();
         let key_ak = AnchoredKey::from((PodId(RawValue::from(70).into()), "key"));
 
         let (value, key_pf) = mt.prove(&key)?;
         let value_ak = AnchoredKey::from((PodId(RawValue::from(72).into()), "value"));
 
+        let root_st: mainpod::Statement = Statement::ValueOf(root_ak.clone(), root.clone()).into();
         let key_st: mainpod::Statement = Statement::ValueOf(key_ak.clone(), key.into()).into();
         let value_st: mainpod::Statement =
             Statement::ValueOf(value_ak.clone(), value.into()).into();
@@ -1350,8 +1388,6 @@ mod tests {
             key_pf,
         )];
         let prev_statements = vec![root_st, key_st, value_st];
-        operation_verify(st, op, prev_statements, merkle_proofs)?;
-
-        Ok(())
+        operation_verify(st, op, prev_statements, merkle_proofs)
     }
 }
