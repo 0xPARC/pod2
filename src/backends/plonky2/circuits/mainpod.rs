@@ -405,15 +405,7 @@ impl MainPodVerifyGadget {
             .collect();
 
         // 2. Calculate the Pod Id from the public statements
-        let pub_statements_flattened = pub_statements
-            .iter()
-            .flat_map(|s| {
-                s.predicate
-                    .flatten()
-                    .into_iter()
-                    .chain(s.args.iter().flat_map(|a| &a.elements).cloned())
-            })
-            .collect();
+        let pub_statements_flattened = pub_statements.iter().flat_map(|s| s.flatten()).collect();
         let id = builder.hash_n_to_hash_no_pad::<PoseidonHash>(pub_statements_flattened);
 
         // 4. Verify type

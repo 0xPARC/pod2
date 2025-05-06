@@ -146,9 +146,8 @@ impl StatementTarget {
     ) -> Self {
         // if native_predicate is const then NativePredicate -> NativePredicateTarget
         // else just use as is
-        let native_predicate = native_predicate.build(builder, params);
         Self {
-            predicate: PredicateTarget::new_native(builder, &native_predicate),
+            predicate: PredicateTarget::new_native(builder, params, native_predicate),
             args: args
                 .iter()
                 .cloned()
@@ -183,8 +182,7 @@ impl StatementTarget {
         params: &Params,
         t: NativePredicate,
     ) -> BoolTarget {
-        let expected_t = NativePredicateTarget::constant(builder, params, t);
-        let expected_predicate = PredicateTarget::new_native(builder, &expected_t);
+        let expected_predicate = PredicateTarget::new_native(builder, params, &t);
         builder.is_equal_flattenable(&self.predicate, &expected_predicate)
     }
 }
@@ -265,10 +263,11 @@ pub struct PredicateTarget {
 impl PredicateTarget {
     pub fn new_native(
         builder: &mut CircuitBuilder<F, D>,
-        native_predicate: &NativePredicateTarget,
+        params: &Params,
+        native_predicate: impl Build<NativePredicateTarget>,
     ) -> Self {
         let prefix = builder.constant(F::from_canonical_usize(1));
-        let id = native_predicate.0;
+        let id = native_predicate.build(builder, params).0;
         let zero = builder.zero();
         Self {
             elements: [prefix, id, zero, zero, zero, zero],
