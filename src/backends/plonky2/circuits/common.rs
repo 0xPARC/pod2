@@ -515,7 +515,7 @@ impl Flattenable for StatementTmplTarget {
         let pred_end = Params::predicate_size();
         let pred = PredicateTarget::from_flattened(params, &v[..pred_end]);
         let sta_size = Params::statement_tmpl_arg_size();
-        let args = (0..params.max_custom_predicate_arity)
+        let args = (0..params.max_statement_args)
             .map(|i| {
                 let sta_v = &v[pred_end + sta_size * i..pred_end + sta_size * (i + 1)];
                 StatementTmplArgTarget::from_flattened(params, sta_v)
@@ -799,7 +799,13 @@ mod tests {
     use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
 
     use super::*;
-    use crate::{backends::plonky2::basetypes::C, examples::custom::eth_friend_batch, frontend};
+    use crate::{
+        backends::plonky2::basetypes::C,
+        examples::custom::{eth_dos_batch, eth_friend_batch},
+        frontend,
+        frontend::CustomPredicateBatchBuilder,
+        middleware::CustomPredicateBatch,
+    };
 
     #[test]
     fn custom_predicate_target() -> frontend::Result<()> {
@@ -828,27 +834,27 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn custom_predicate_batch_target() -> frontend::Result<()> {
-        let params = Params::default();
+    fn test_custom_predicate_batch_target_id(
+        params: &Params,
+        custom_predicate_batch: &CustomPredicateBatch,
+    ) -> frontend::Result<()> {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
 
-        let custom_predicate_batch = eth_friend_batch(&params)?;
         let zero = builder.zero();
         let predicate_targets = custom_predicate_batch
             .predicates
             .iter()
             .map(|cp| {
-                let flattened = cp.to_fields(&params);
+                let flattened = cp.to_fields(params);
                 let flatteend_target = flattened.iter().map(|v| builder.constant(*v)).collect_vec();
-                CustomPredicateTarget::from_flattened(&params, &flatteend_target)
+                CustomPredicateTarget::from_flattened(params, &flatteend_target)
             })
-            .chain(iter::once({
+            .chain(iter::repeat({
                 let empty_flatteend_target = iter::repeat(zero)
                     .take(params.custom_predicate_size())
                     .collect_vec();
-                CustomPredicateTarget::from_flattened(&params, &empty_flatteend_target)
+                CustomPredicateTarget::from_flattened(params, &empty_flatteend_target)
             }))
             .take(params.max_custom_batch_size)
             .collect();
@@ -859,11 +865,11 @@ mod tests {
 
         // Calculate the id in constraints and compare it against the id calculated natively
         let id_target = custom_predicate_batch_target.id(&mut builder);
-        let id = custom_predicate_batch.id(&params);
+        let id = custom_predicate_batch.id(params);
 
         let id_expected_target = HashOutTarget {
             elements: id
-                .to_fields(&params)
+                .to_fields(params)
                 .iter()
                 .map(|v| builder.constant(*v))
                 .collect_vec()
@@ -878,6 +884,30 @@ mod tests {
         let data = builder.build::<C>();
         let proof = data.prove(pw).unwrap();
         data.verify(proof.clone()).unwrap();
+
+        Ok(())
+    }
+
+    #[test]
+    fn custom_predicate_batch_target() -> frontend::Result<()> {
+        let params = Params {
+            max_statement_args: 6,
+            max_custom_predicate_wildcards: 12,
+            ..Default::default()
+        };
+
+        // Empty case
+        let mut cpb_builder = CustomPredicateBatchBuilder::new("empty".into());
+        _ = cpb_builder.predicate_and("empty", &params, &[], &[], &[])?;
+        let custom_predicate_batch = cpb_builder.finish();
+        test_custom_predicate_batch_target_id(&params, &custom_predicate_batch)?;
+
+        // Some cases from the examples
+        let custom_predicate_batch = eth_friend_batch(&params)?;
+        test_custom_predicate_batch_target_id(&params, &custom_predicate_batch)?;
+
+        let custom_predicate_batch = eth_dos_batch(&params)?;
+        test_custom_predicate_batch_target_id(&params, &custom_predicate_batch)?;
 
         Ok(())
     }
