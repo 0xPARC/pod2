@@ -43,7 +43,7 @@ impl ToFields for OperationType {
                 .collect(),
             Self::Custom(CustomPredicateRef { batch, index }) => {
                 iter::once(F::from_canonical_u64(3))
-                    .chain(batch.hash(params).0)
+                    .chain(batch.id(params).0)
                     .chain(iter::once(F::from_canonical_usize(*index)))
                     .collect()
             }

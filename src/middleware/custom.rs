@@ -5,7 +5,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::middleware::{
-    hash_fields, Error, Hash, Key, NativePredicate, Params, Result, ToFields, Value, F, HASH_SIZE,
+    hash_fields, Error, Hash, Key, Params, Predicate, Result, ToFields, Value, F, HASH_SIZE,
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -76,15 +76,14 @@ impl ToFields for StatementTmplArg {
     fn to_fields(&self, params: &Params) -> Vec<F> {
         // None => (0, ...)
         // Literal(value) => (1, [value], 0, 0, 0, 0)
-        // Key(wildcard1, key_or_wildcard2)
-        //    => (2, [wildcard1], [key_or_wildcard2])
-        // WildcardLiteral(wildcard) => (3, [wildcard], 0, 0, 0, 0)
+        // Key(wildcard1_index, key_or_wildcard2)
+        //    => (2, [wildcard1_index], 0, 0, 0, [key_or_wildcard2])
+        // WildcardLiteral(wildcard_index) => (3, [wildcard_index], 0, 0, 0, 0, 0, 0, 0)
         // In all three cases, we pad to 2 * hash_size + 1 = 9 field elements
-        let statement_tmpl_arg_size = 2 * HASH_SIZE + 1;
         match self {
             StatementTmplArg::None => {
                 let fields: Vec<F> = iter::repeat_with(|| F::from_canonical_u64(0))
-                    .take(statement_tmpl_arg_size)
+                    .take(Params::statement_tmpl_arg_size())
                     .collect();
                 fields
             }
@@ -312,7 +311,10 @@ impl ToFields for CustomPredicateBatch {
 }
 
 impl CustomPredicateBatch {
-    pub fn hash(&self, params: &Params) -> Hash {
+    /// Cryptographic identifier for the batch.
+    pub fn id(&self, params: &Params) -> Hash {
+        // NOTE: This implementation just hashes the concatenation of all the custom predicates,
+        // but ideally we want to use the root of a merkle tree built from the custom predicates.
         let input = self.to_fields(params);
 
         hash_fields(&input)
@@ -331,65 +333,6 @@ impl CustomPredicateRef {
     }
     pub fn arg_len(&self) -> usize {
         self.batch.predicates[self.index].args_len
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type", content = "value")]
-pub enum Predicate {
-    Native(NativePredicate),
-    BatchSelf(usize),
-    Custom(CustomPredicateRef),
-}
-
-impl From<NativePredicate> for Predicate {
-    fn from(v: NativePredicate) -> Self {
-        Self::Native(v)
-    }
-}
-
-impl ToFields for Predicate {
-    fn to_fields(&self, params: &Params) -> Vec<F> {
-        // serialize:
-        // NativePredicate(id) as (0, id, 0, 0, 0, 0) -- id: usize
-        // BatchSelf(i) as (1, i, 0, 0, 0, 0) -- i: usize
-        // CustomPredicateRef(pb, i) as
-        // (2, [hash of pb], i) -- pb hashes to 4 field elements
-        //                      -- i: usize
-
-        // in every case: pad to (hash_size + 2) field elements
-        let mut fields: Vec<F> = match self {
-            Self::Native(p) => iter::once(F::from_canonical_u64(1))
-                .chain(p.to_fields(params))
-                .collect(),
-            Self::BatchSelf(i) => iter::once(F::from_canonical_u64(2))
-                .chain(iter::once(F::from_canonical_usize(*i)))
-                .collect(),
-            Self::Custom(CustomPredicateRef { batch, index }) => {
-                iter::once(F::from_canonical_u64(3))
-                    .chain(batch.hash(params).0)
-                    .chain(iter::once(F::from_canonical_usize(*index)))
-                    .collect()
-            }
-        };
-        fields.resize_with(Params::predicate_size(), || F::from_canonical_u64(0));
-        fields
-    }
-}
-
-impl fmt::Display for Predicate {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Self::Native(p) => write!(f, "{:?}", p),
-            Self::BatchSelf(i) => write!(f, "self.{}", i),
-            Self::Custom(CustomPredicateRef { batch, index }) => {
-                write!(
-                    f,
-                    "{}.{}[{}]",
-                    batch.name, index, batch.predicates[*index].name
-                )
-            }
-        }
     }
 }
 

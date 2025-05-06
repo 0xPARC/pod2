@@ -10,8 +10,8 @@ use crate::{
         basetypes::D,
         circuits::{
             common::{
-                CircuitBuilderPod, Flattenable, MerkleClaimTarget, OperationTarget,
-                StatementArgTarget, StatementTarget, ValueTarget,
+                CircuitBuilderPod, Flattenable, MerkleClaimTarget, NativePredicateTarget,
+                OperationTarget, StatementArgTarget, StatementTarget, ValueTarget,
             },
             signedpod::{SignedPodVerifyGadget, SignedPodVerifyTarget},
         },
@@ -78,14 +78,14 @@ impl OperationVerifyGadget {
             op.args
                 .iter()
                 .flatten()
-                .map(|&i| builder.vec_ref(prev_statements, i))
+                .map(|&i| builder.vec_ref(&self.params, prev_statements, i))
                 .collect::<Vec<_>>()
         };
         // Certain operations (Contains/NotContains) will refer to one
         // of the provided Merkle proofs (if any). These proofs have already
         // been verified, so we need only look up the claim.
-        let resolved_merkle_claim =
-            (!merkle_claims.is_empty()).then(|| builder.vec_ref(merkle_claims, op.aux[0]));
+        let resolved_merkle_claim = (!merkle_claims.is_empty())
+            .then(|| builder.vec_ref(&self.params, merkle_claims, op.aux[0]));
 
         // The verification may require aux data which needs to be stored in the
         // `OperationVerifyTarget` so that we can set during witness generation.
@@ -169,7 +169,7 @@ impl OperationVerifyGadget {
         let expected_statement = StatementTarget::new_native(
             builder,
             &self.params,
-            NativePredicate::NotContains,
+            &NativePredicate::NotContains,
             &[arg1_key, arg2_key],
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
@@ -197,7 +197,7 @@ impl OperationVerifyGadget {
         let expected_statement = StatementTarget::new_native(
             builder,
             &self.params,
-            NativePredicate::Equal,
+            &NativePredicate::Equal,
             &[arg1_key, arg2_key],
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
@@ -284,7 +284,7 @@ impl OperationVerifyGadget {
         let op_code_ok = op.has_native_type(builder, NativeOperation::None);
 
         let expected_statement =
-            StatementTarget::new_native(builder, &self.params, NativePredicate::None, &[]);
+            StatementTarget::new_native(builder, &self.params, &NativePredicate::None, &[]);
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
         builder.all([op_code_ok, st_ok])
@@ -311,7 +311,7 @@ impl OperationVerifyGadget {
             let individual_checks = prev_statements
                 .iter()
                 .map(|ps| {
-                    let same_predicate = builder.is_equal_slice(&st.predicate, &ps.predicate);
+                    let same_predicate = builder.is_equal_flattenable(&st.predicate, &ps.predicate);
                     let same_anchored_key =
                         builder.is_equal_slice(&st.args[0].elements, &ps.args[0].elements);
                     builder.and(same_predicate, same_anchored_key)
@@ -373,7 +373,7 @@ impl MainPodVerifyGadget {
                 statements.push(StatementTarget::new_native(
                     builder,
                     &self.params,
-                    NativePredicate::None,
+                    &NativePredicate::None,
                     &[],
                 ))
             }
@@ -409,10 +409,10 @@ impl MainPodVerifyGadget {
             .iter()
             .flat_map(|s| {
                 s.predicate
-                    .iter()
-                    .chain(s.args.iter().flat_map(|a| &a.elements))
+                    .flatten()
+                    .into_iter()
+                    .chain(s.args.iter().flat_map(|a| &a.elements).cloned())
             })
-            .cloned()
             .collect();
         let id = builder.hash_n_to_hash_no_pad::<PoseidonHash>(pub_statements_flattened);
 
@@ -421,6 +421,7 @@ impl MainPodVerifyGadget {
         // TODO: Store this hash in a global static with lazy init so that we don't have to
         // compute it every time.
         let expected_type_statement = StatementTarget::from_flattened(
+            &self.params,
             &builder.constants(
                 &Statement::ValueOf(
                     AnchoredKey::from((SELF, KEY_TYPE)),

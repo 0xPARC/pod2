@@ -7,7 +7,10 @@ use plonky2::{
         extension::Extendable,
         types::{Field, PrimeField64},
     },
-    hash::hash_types::{HashOutTarget, RichField, NUM_HASH_OUT_ELTS},
+    hash::{
+        hash_types::{HashOutTarget, RichField, NUM_HASH_OUT_ELTS},
+        poseidon::PoseidonHash,
+    },
     iop::{
         target::{BoolTarget, Target},
         witness::{PartialWitness, WitnessWrite},
@@ -23,9 +26,9 @@ use crate::{
         primitives::merkletree::MerkleClaimAndProofTarget,
     },
     middleware::{
-        NativeOperation, NativePredicate, Params, Predicate, RawValue, StatementArg, ToFields,
-        EMPTY_VALUE, F, HASH_SIZE, OPERATION_ARG_F_LEN, OPERATION_AUX_F_LEN, STATEMENT_ARG_F_LEN,
-        VALUE_SIZE,
+        KeyOrWildcard, NativeOperation, NativePredicate, Params, Predicate, RawValue, StatementArg,
+        ToFields, EMPTY_VALUE, F, HASH_SIZE, OPERATION_ARG_F_LEN, OPERATION_AUX_F_LEN,
+        STATEMENT_ARG_F_LEN, VALUE_SIZE,
     },
 };
 
@@ -114,20 +117,38 @@ impl StatementArgTarget {
 
 #[derive(Clone)]
 pub struct StatementTarget {
-    pub predicate: [Target; Params::predicate_size()],
+    pub predicate: PredicateTarget,
     pub args: Vec<StatementArgTarget>,
+}
+
+trait Build<T> {
+    fn build(self, builder: &mut CircuitBuilder<F, D>, params: &Params) -> T;
+}
+
+impl Build<NativePredicateTarget> for &NativePredicate {
+    fn build(self, builder: &mut CircuitBuilder<F, D>, params: &Params) -> NativePredicateTarget {
+        NativePredicateTarget::constant(builder, params, *self)
+    }
+}
+
+impl<T> Build<T> for T {
+    fn build(self, builder: &mut CircuitBuilder<F, D>, params: &Params) -> T {
+        self
+    }
 }
 
 impl StatementTarget {
     pub fn new_native(
         builder: &mut CircuitBuilder<F, D>,
         params: &Params,
-        predicate: NativePredicate,
+        native_predicate: impl Build<NativePredicateTarget>,
         args: &[StatementArgTarget],
     ) -> Self {
-        let predicate_vec = builder.constants(&Predicate::Native(predicate).to_fields(params));
+        // if native_predicate is const then NativePredicate -> NativePredicateTarget
+        // else just use as is
+        let native_predicate = native_predicate.build(builder, params);
         Self {
-            predicate: array::from_fn(|i| predicate_vec[i]),
+            predicate: PredicateTarget::new_native(builder, &native_predicate),
             args: args
                 .iter()
                 .cloned()
@@ -143,7 +164,7 @@ impl StatementTarget {
         params: &Params,
         st: &Statement,
     ) -> Result<()> {
-        pw.set_target_arr(&self.predicate, &st.predicate().to_fields(params))?;
+        self.predicate.set_targets(pw, params, st.predicate())?;
         for (i, arg) in st
             .args()
             .iter()
@@ -162,8 +183,9 @@ impl StatementTarget {
         params: &Params,
         t: NativePredicate,
     ) -> BoolTarget {
-        let st_code = builder.constants(&Predicate::Native(t).to_fields(params));
-        builder.is_equal_slice(&self.predicate, &st_code)
+        let expected_t = NativePredicateTarget::constant(builder, params, t);
+        let expected_predicate = PredicateTarget::new_native(builder, &expected_t);
+        builder.is_equal_flattenable(&self.predicate, &expected_predicate)
     }
 }
 
@@ -209,11 +231,159 @@ impl OperationTarget {
     }
 }
 
+#[derive(Clone)]
+pub struct NativePredicateTarget(Target);
+
+impl NativePredicateTarget {
+    pub fn constant(
+        builder: &mut CircuitBuilder<F, D>,
+        params: &Params,
+        native_predicate: NativePredicate,
+    ) -> Self {
+        let id = native_predicate.to_fields(params);
+        assert_eq!(1, id.len());
+        Self(builder.constant(id[0]))
+    }
+
+    pub fn set_targets(
+        &self,
+        pw: &mut PartialWitness<F>,
+        params: &Params,
+        native_predicate: NativePredicate,
+    ) -> Result<()> {
+        let id = native_predicate.to_fields(params);
+        assert_eq!(1, id.len());
+        Ok(pw.set_target(self.0, id[0])?)
+    }
+}
+
+#[derive(Clone)]
+pub struct PredicateTarget {
+    elements: [Target; Params::predicate_size()],
+}
+
+impl PredicateTarget {
+    pub fn new_native(
+        builder: &mut CircuitBuilder<F, D>,
+        native_predicate: &NativePredicateTarget,
+    ) -> Self {
+        let prefix = builder.constant(F::from_canonical_usize(1));
+        let id = native_predicate.0;
+        let zero = builder.zero();
+        Self {
+            elements: [prefix, id, zero, zero, zero, zero],
+        }
+    }
+
+    pub fn new_batch_self(builder: &mut CircuitBuilder<F, D>, index: Target) -> Self {
+        let prefix = builder.constant(F::from_canonical_usize(2));
+        let zero = builder.zero();
+        Self {
+            elements: [prefix, index, zero, zero, zero, zero],
+        }
+    }
+
+    pub fn new_custom(
+        builder: &mut CircuitBuilder<F, D>,
+        batch_id: HashOutTarget,
+        index: Target,
+    ) -> Self {
+        let prefix = builder.constant(F::from_canonical_usize(3));
+        let id = batch_id.elements;
+        Self {
+            elements: [prefix, id[0], id[1], id[2], id[3], index],
+        }
+    }
+
+    pub fn set_targets(
+        &self,
+        pw: &mut PartialWitness<F>,
+        params: &Params,
+        predicate: Predicate,
+    ) -> Result<()> {
+        Ok(pw.set_target_arr(&self.elements, &predicate.to_fields(params))?)
+    }
+}
+
+#[derive(Clone)]
+pub struct KeyOrWildcardTarget {
+    pub elements: [Target; VALUE_SIZE],
+}
+
+impl KeyOrWildcardTarget {
+    fn from_slice(v: &[Target]) -> Self {
+        Self {
+            elements: v.try_into().expect("len is VALUE_SIZE"),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct StatementTmplArgTarget {
+    pub elements: [Target; Params::statement_tmpl_arg_size()],
+}
+
+impl StatementTmplArgTarget {
+    pub fn as_none(&self, builder: &mut CircuitBuilder<F, D>) -> BoolTarget {
+        let none_prefix = builder.constant(F::from_canonical_usize(0));
+        let case_ok = builder.is_equal(self.elements[0], none_prefix);
+        case_ok
+    }
+    pub fn as_literal(&self, builder: &mut CircuitBuilder<F, D>) -> (BoolTarget, ValueTarget) {
+        let none_prefix = builder.constant(F::from_canonical_usize(1));
+        let case_ok = builder.is_equal(self.elements[0], none_prefix);
+        let value = ValueTarget::from_slice(&self.elements[1..5]);
+        (case_ok, value)
+    }
+    pub fn as_key(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+    ) -> (BoolTarget, Target, KeyOrWildcardTarget) {
+        let none_prefix = builder.constant(F::from_canonical_usize(2));
+        let case_ok = builder.is_equal(self.elements[0], none_prefix);
+        let id_wildcard_index = self.elements[1];
+        let value_key_or_wildcard = KeyOrWildcardTarget::from_slice(&self.elements[5..9]);
+        (case_ok, id_wildcard_index, value_key_or_wildcard)
+    }
+    pub fn as_wildcard_literal(&self, builder: &mut CircuitBuilder<F, D>) -> (BoolTarget, Target) {
+        let none_prefix = builder.constant(F::from_canonical_usize(3));
+        let case_ok = builder.is_equal(self.elements[0], none_prefix);
+        let wildcard_index = self.elements[1];
+        (case_ok, wildcard_index)
+    }
+}
+
+#[derive(Clone)]
+pub struct StatementTmplTarget {
+    pub pred: PredicateTarget,
+    pub args: Vec<StatementTmplArgTarget>,
+}
+
+#[derive(Clone)]
+pub struct CustomPredicateTarget {
+    pub conjunction: BoolTarget,
+    // len = params.max_custom_predicate_arity
+    pub statements: Vec<StatementTmplTarget>,
+    pub args_len: Target,
+}
+
+#[derive(Clone)]
+pub struct CustomPredicateBatchTarget {
+    pub predicates: Vec<CustomPredicateTarget>,
+}
+
+impl CustomPredicateBatchTarget {
+    pub fn id(&self, builder: &mut CircuitBuilder<F, D>) -> HashOutTarget {
+        let flattened = self.predicates.iter().flat_map(|cp| cp.flatten()).collect();
+        builder.hash_n_to_hash_no_pad::<PoseidonHash>(flattened)
+    }
+}
+
 /// Trait for target structs that may be converted to and from vectors
 /// of targets.
 pub trait Flattenable {
     fn flatten(&self) -> Vec<Target>;
-    fn from_flattened(vs: &[Target]) -> Self;
+    fn from_flattened(params: &Params, vs: &[Target]) -> Self;
 }
 
 /// For the purpose of op verification, we need only look up the
@@ -251,7 +421,7 @@ impl Flattenable for MerkleClaimTarget {
         .concat()
     }
 
-    fn from_flattened(vs: &[Target]) -> Self {
+    fn from_flattened(_params: &Params, vs: &[Target]) -> Self {
         Self {
             enabled: BoolTarget::new_unsafe(vs[0]),
             root: HashOutTarget::from_vec(vs[1..1 + NUM_HASH_OUT_ELTS].to_vec()),
@@ -266,22 +436,34 @@ impl Flattenable for MerkleClaimTarget {
     }
 }
 
+impl Flattenable for PredicateTarget {
+    fn flatten(&self) -> Vec<Target> {
+        self.elements.to_vec()
+    }
+
+    fn from_flattened(_params: &Params, v: &[Target]) -> Self {
+        Self {
+            elements: v.try_into().expect("len is predicate_size"),
+        }
+    }
+}
+
 impl Flattenable for StatementTarget {
     fn flatten(&self) -> Vec<Target> {
         self.predicate
-            .iter()
-            .chain(self.args.iter().flat_map(|a| &a.elements))
-            .cloned()
+            .flatten()
+            .into_iter()
+            .chain(self.args.iter().flat_map(|a| &a.elements).cloned())
             .collect()
     }
 
-    fn from_flattened(v: &[Target]) -> Self {
+    fn from_flattened(params: &Params, v: &[Target]) -> Self {
         let num_args = (v.len() - Params::predicate_size()) / STATEMENT_ARG_F_LEN;
         assert_eq!(
             v.len(),
             Params::predicate_size() + num_args * STATEMENT_ARG_F_LEN
         );
-        let predicate: [Target; Params::predicate_size()] = array::from_fn(|i| v[i]);
+        let predicate = PredicateTarget::from_flattened(params, &v[..Params::predicate_size()]);
         let args = (0..num_args)
             .map(|i| StatementArgTarget {
                 elements: array::from_fn(|j| {
@@ -294,11 +476,75 @@ impl Flattenable for StatementTarget {
     }
 }
 
+impl Flattenable for CustomPredicateTarget {
+    fn flatten(&self) -> Vec<Target> {
+        iter::once(self.conjunction.target)
+            .chain(iter::once(self.args_len))
+            .chain(self.statements.iter().flat_map(|s| s.flatten()))
+            .collect()
+    }
+
+    fn from_flattened(params: &Params, v: &[Target]) -> Self {
+        // We assume that `from_flattened` is always called with the output of `flattened`, so
+        // this `BoolTarget` should actually safe.
+        let conjunction = BoolTarget::new_unsafe(v[0]);
+        let args_len = v[1];
+        let st_tmpl_size = params.statement_tmpl_size();
+        let statements = (0..params.max_custom_predicate_arity)
+            .map(|i| {
+                let st_v = &v[2 + st_tmpl_size * i..2 + st_tmpl_size * (i + 1)];
+                StatementTmplTarget::from_flattened(params, st_v)
+            })
+            .collect();
+        Self {
+            conjunction,
+            statements,
+            args_len,
+        }
+    }
+}
+
+impl Flattenable for StatementTmplTarget {
+    fn flatten(&self) -> Vec<Target> {
+        self.pred
+            .flatten()
+            .into_iter()
+            .chain(self.args.iter().flat_map(|sta| sta.flatten()))
+            .collect()
+    }
+
+    fn from_flattened(params: &Params, v: &[Target]) -> Self {
+        let pred_end = Params::predicate_size();
+        let pred = PredicateTarget::from_flattened(params, &v[..pred_end]);
+        let sta_size = Params::statement_tmpl_arg_size();
+        let args = (0..params.max_custom_predicate_arity)
+            .map(|i| {
+                let sta_v = &v[pred_end + sta_size * i..pred_end + sta_size * (i + 1)];
+                StatementTmplArgTarget::from_flattened(params, sta_v)
+            })
+            .collect();
+        Self { pred, args }
+    }
+}
+
+impl Flattenable for StatementTmplArgTarget {
+    fn flatten(&self) -> Vec<Target> {
+        self.elements.to_vec()
+    }
+
+    fn from_flattened(_params: &Params, v: &[Target]) -> Self {
+        Self {
+            elements: v.try_into().expect("len is statement_tmpl_arg_size"),
+        }
+    }
+}
+
 pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     fn connect_values(&mut self, x: ValueTarget, y: ValueTarget);
     fn connect_slice(&mut self, xs: &[Target], ys: &[Target]);
     fn add_virtual_value(&mut self) -> ValueTarget;
     fn add_virtual_statement(&mut self, params: &Params) -> StatementTarget;
+    fn add_virtual_predicate(&mut self) -> PredicateTarget;
     fn add_virtual_operation(&mut self, params: &Params) -> OperationTarget;
     fn select_value(&mut self, b: BoolTarget, x: ValueTarget, y: ValueTarget) -> ValueTarget;
     fn select_bool(&mut self, b: BoolTarget, x: BoolTarget, y: BoolTarget) -> BoolTarget;
@@ -322,8 +568,14 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
 
     // Convenience methods for accessing and connecting elements of
     // (vectors of) flattenables.
-    fn vec_ref<T: Flattenable>(&mut self, ts: &[T], i: Target) -> T;
-    fn select_flattenable<T: Flattenable>(&mut self, b: BoolTarget, x: &T, y: &T) -> T;
+    fn vec_ref<T: Flattenable>(&mut self, params: &Params, ts: &[T], i: Target) -> T;
+    fn select_flattenable<T: Flattenable>(
+        &mut self,
+        params: &Params,
+        b: BoolTarget,
+        x: &T,
+        y: &T,
+    ) -> T;
     fn connect_flattenable<T: Flattenable>(&mut self, xs: &T, ys: &T);
     fn is_equal_flattenable<T: Flattenable>(&mut self, xs: &T, ys: &T) -> BoolTarget;
 
@@ -351,13 +603,20 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
     }
 
     fn add_virtual_statement(&mut self, params: &Params) -> StatementTarget {
+        let predicate = self.add_virtual_predicate();
         StatementTarget {
-            predicate: self.add_virtual_target_arr(),
+            predicate,
             args: (0..params.max_statement_args)
                 .map(|_| StatementArgTarget {
                     elements: self.add_virtual_target_arr(),
                 })
                 .collect(),
+        }
+    }
+
+    fn add_virtual_predicate(&mut self) -> PredicateTarget {
+        PredicateTarget {
+            elements: self.add_virtual_target_arr(),
         }
     }
 
@@ -455,7 +714,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
         assert_limb_lt(self, lhs, rhs);
     }
 
-    fn vec_ref<T: Flattenable>(&mut self, ts: &[T], i: Target) -> T {
+    fn vec_ref<T: Flattenable>(&mut self, params: &Params, ts: &[T], i: Target) -> T {
         // TODO: Revisit this when we need more than 64 statements.
         let vector_ref = |builder: &mut CircuitBuilder<F, D>, v: &[Target], i| {
             assert!(v.len() <= 64);
@@ -483,14 +742,21 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
         };
 
         let flattened_ts = ts.iter().map(|t| t.flatten()).collect::<Vec<_>>();
-        T::from_flattened(&matrix_row_ref(self, &flattened_ts, i))
+        T::from_flattened(params, &matrix_row_ref(self, &flattened_ts, i))
     }
 
-    fn select_flattenable<T: Flattenable>(&mut self, b: BoolTarget, x: &T, y: &T) -> T {
+    fn select_flattenable<T: Flattenable>(
+        &mut self,
+        params: &Params,
+        b: BoolTarget,
+        x: &T,
+        y: &T,
+    ) -> T {
         let flattened_x = x.flatten();
         let flattened_y = y.flatten();
 
         T::from_flattened(
+            params,
             &iter::zip(flattened_x, flattened_y)
                 .map(|(x, y)| self.select(b, x, y))
                 .collect::<Vec<_>>(),
@@ -515,5 +781,95 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
         xs.into_iter()
             .reduce(|a, b| self.or(a, b))
             .unwrap_or(self._false())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use itertools::Itertools;
+    use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
+
+    use super::*;
+    use crate::{backends::plonky2::basetypes::C, examples::custom::eth_friend_batch, frontend};
+
+    #[test]
+    fn custom_predicate_target() -> frontend::Result<()> {
+        let params = Params::default();
+        let config = CircuitConfig::standard_recursion_config();
+
+        let custom_predicate_batch = eth_friend_batch(&params)?;
+
+        for (i, cp) in custom_predicate_batch.predicates.iter().enumerate() {
+            let mut builder = CircuitBuilder::<F, D>::new(config.clone());
+            let flattened = cp.to_fields(&params);
+            let flatteend_target = flattened.iter().map(|v| builder.constant(*v)).collect_vec();
+            let cp_target = CustomPredicateTarget::from_flattened(&params, &flatteend_target);
+            // Round trip of from_flattened to flattened
+            let flatteend_target_rt = cp_target.flatten();
+            builder.connect_slice(&flatteend_target, &flatteend_target_rt);
+
+            let pw = PartialWitness::<F>::new();
+
+            // generate & verify proof
+            let data = builder.build::<C>();
+            let proof = data.prove(pw).expect(&format!("predicate {}", i));
+            data.verify(proof.clone()).unwrap();
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn custom_predicate_batch_target() -> frontend::Result<()> {
+        let params = Params::default();
+        let config = CircuitConfig::standard_recursion_config();
+        let mut builder = CircuitBuilder::<F, D>::new(config);
+
+        let custom_predicate_batch = eth_friend_batch(&params)?;
+        let zero = builder.zero();
+        let predicate_targets = custom_predicate_batch
+            .predicates
+            .iter()
+            .map(|cp| {
+                let flattened = cp.to_fields(&params);
+                let flatteend_target = flattened.iter().map(|v| builder.constant(*v)).collect_vec();
+                CustomPredicateTarget::from_flattened(&params, &flatteend_target)
+            })
+            .chain(iter::once({
+                let empty_flatteend_target = iter::repeat(zero)
+                    .take(params.custom_predicate_size())
+                    .collect_vec();
+                CustomPredicateTarget::from_flattened(&params, &empty_flatteend_target)
+            }))
+            .take(params.max_custom_batch_size)
+            .collect();
+
+        let custom_predicate_batch_target = CustomPredicateBatchTarget {
+            predicates: predicate_targets,
+        };
+
+        // Calculate the id in constraints and compare it against the id calcualted natively
+        let id_target = custom_predicate_batch_target.id(&mut builder);
+        let id = custom_predicate_batch.id(&params);
+
+        let id_expected_target = HashOutTarget {
+            elements: id
+                .to_fields(&params)
+                .iter()
+                .map(|v| builder.constant(*v))
+                .collect_vec()
+                .try_into()
+                .unwrap(),
+        };
+        builder.connect_array(id_target.elements, id_expected_target.elements);
+
+        let pw = PartialWitness::<F>::new();
+
+        // generate & verify proof
+        let data = builder.build::<C>();
+        let proof = data.prove(pw).unwrap();
+        data.verify(proof.clone()).unwrap();
+
+        Ok(())
     }
 }

@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use strum_macros::FromRepr;
 
 use crate::middleware::{
-    AnchoredKey, CustomPredicateRef, Error, Key, Params, PodId, Predicate, RawValue, Result,
-    ToFields, Value, F, VALUE_SIZE,
+    AnchoredKey, CustomPredicateRef, Error, Key, Params, PodId, RawValue, Result, ToFields, Value,
+    F, VALUE_SIZE,
 };
 
 // TODO: Maybe store KEY_SIGNER and KEY_TYPE as Key with lazy_static
@@ -79,6 +79,65 @@ impl ToFields for WildcardValue {
         match self {
             WildcardValue::PodId(pod_id) => pod_id.to_fields(params),
             WildcardValue::Key(key) => key.to_fields(params),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", content = "value")]
+pub enum Predicate {
+    Native(NativePredicate),
+    BatchSelf(usize),
+    Custom(CustomPredicateRef),
+}
+
+impl From<NativePredicate> for Predicate {
+    fn from(v: NativePredicate) -> Self {
+        Self::Native(v)
+    }
+}
+
+impl ToFields for Predicate {
+    fn to_fields(&self, params: &Params) -> Vec<F> {
+        // serialize:
+        // NativePredicate(id) as (1, id, 0, 0, 0, 0) -- id: usize
+        // BatchSelf(i) as (2, i, 0, 0, 0, 0) -- i: usize
+        // CustomPredicateRef(pb, i) as
+        // (3, [hash of pb], i) -- pb hashes to 4 field elements
+        //                      -- i: usize
+
+        // in every case: pad to (hash_size + 2) field elements
+        let mut fields: Vec<F> = match self {
+            Self::Native(p) => iter::once(F::from_canonical_u64(1))
+                .chain(p.to_fields(params))
+                .collect(),
+            Self::BatchSelf(i) => iter::once(F::from_canonical_u64(2))
+                .chain(iter::once(F::from_canonical_usize(*i)))
+                .collect(),
+            Self::Custom(CustomPredicateRef { batch, index }) => {
+                iter::once(F::from_canonical_u64(3))
+                    .chain(batch.id(params).0)
+                    .chain(iter::once(F::from_canonical_usize(*index)))
+                    .collect()
+            }
+        };
+        fields.resize_with(Params::predicate_size(), || F::from_canonical_u64(0));
+        fields
+    }
+}
+
+impl fmt::Display for Predicate {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Native(p) => write!(f, "{:?}", p),
+            Self::BatchSelf(i) => write!(f, "self.{}", i),
+            Self::Custom(CustomPredicateRef { batch, index }) => {
+                write!(
+                    f,
+                    "{}.{}[{}]",
+                    batch.name, index, batch.predicates[*index].name
+                )
+            }
         }
     }
 }
