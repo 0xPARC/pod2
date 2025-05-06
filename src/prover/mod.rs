@@ -10,7 +10,48 @@ pub mod translation;
 pub mod types;
 pub mod visualization;
 
+use std::{collections::HashMap, sync::Arc};
+
 pub use error::ProverError;
+use types::CustomDefinitions;
+
+use crate::middleware::{
+    CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Params, Pod, PodId, Predicate,
+    Statement, ToFields, F,
+};
+
+pub fn facts_from_pods(pods: &[Box<dyn Pod>]) -> Vec<(PodId, Statement)> {
+    pods.iter()
+        .flat_map(|pod| {
+            let statements = pod.pub_statements();
+            statements
+                .iter()
+                .map(|stmt| (pod.id(), stmt.clone()))
+                .collect::<Vec<(PodId, Statement)>>()
+        })
+        .collect()
+}
+
+pub fn custom_definitions_from_batches(
+    batches: &[Arc<CustomPredicateBatch>],
+    params: &Params,
+) -> CustomDefinitions {
+    HashMap::from_iter(batches.iter().flat_map(|batch| {
+        batch
+            .predicates
+            .iter()
+            .enumerate()
+            .map(|(index, pred)| {
+                let key = Predicate::Custom(CustomPredicateRef {
+                    batch: batch.clone(),
+                    index,
+                })
+                .to_fields(params);
+                (key, (pred.clone(), batch.clone()))
+            })
+            .collect::<Vec<(Vec<F>, (CustomPredicate, Arc<CustomPredicateBatch>))>>()
+    }))
+}
 
 #[cfg(test)]
 mod tests {
@@ -21,15 +62,15 @@ mod tests {
 
     use crate::{
         backends::plonky2::mock::signedpod::MockSigner,
-        examples::zu_kyc_sign_pod_builders,
-        lang::parse,
+        examples::{eth_friend_signed_pod_builder, zu_kyc_sign_pod_builders},
+        lang::{self, parse},
         middleware::{
             self, AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key,
             KeyOrWildcard, NativePredicate, PodId, Predicate, Statement, StatementTmpl,
             StatementTmplArg, ToFields, Value, Wildcard, WildcardValue,
         },
         prover::{
-            pod_building,
+            custom_definitions_from_batches, facts_from_pods, pod_building,
             solver::{
                 self, try_generate_concrete_candidate_and_bindings, types::ExpectedType,
                 SolverState,
@@ -1037,6 +1078,101 @@ mod tests {
         println!("Generated MainPod: {}", main_pod);
 
         println!("Solution:\n{}", generate_graphviz_dot(&solution));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_prover_ethdos_from_podlog() -> Result<(), Box<dyn std::error::Error>> {
+        let params = middleware::Params {
+            max_input_signed_pods: 3,
+            max_input_main_pods: 3,
+            max_statements: 31,
+            max_signed_pod_values: 8,
+            max_public_statements: 10,
+            max_statement_args: 6,
+            max_operation_args: 5,
+            max_custom_predicate_arity: 5,
+            max_custom_batch_size: 5,
+            max_custom_predicate_wildcards: 12,
+            ..Default::default()
+        };
+
+        let input = r#"
+            eth_friend(src_ori, src_key, dst_ori, dst_key) = AND(
+                private(attestation_pod)
+                // ValueOf(?attestation_pod["__type__"], "MockSigned")
+                Equal(?attestation_pod["_signer"], ?src_ori[?src_key])
+                Equal(?attestation_pod["attestation"], ?dst_ori[?dst_key])
+            )
+
+            eth_dos_distance_base(src_ori, src_key, dst_ori, dst_key, distance_ori, distance_key) = AND(
+                Equal(?src_ori[?src_key], ?dst_ori[?dst_key])
+                ValueOf(?distance_ori[?distance_key], 0)
+            )
+
+            eth_dos_distance_ind(src_ori, src_key, dst_ori, dst_key, distance_ori, distance_key) = AND(
+                private(one_ori, one_key, shorter_distance_ori, shorter_distance_key, intermed_ori, intermed_key)
+                eth_dos_distance(?src_ori, ?src_key, ?intermed_ori, ?intermed_key, ?shorter_distance_ori, ?shorter_distance_key)
+                ValueOf(?one_ori[?one_key], 1)
+                SumOf(?distance_ori[?distance_key], ?shorter_distance_ori[?shorter_distance_key], ?one_ori[?one_key])
+                eth_friend(?intermed_ori, ?intermed_key, ?dst_ori, ?dst_key)
+            )
+
+            eth_dos_distance(src_ori, src_key, dst_ori, dst_key, distance_ori, distance_key) = OR(
+                eth_dos_distance_base(?src_ori, ?src_key, ?dst_ori, ?dst_key, ?distance_ori, ?distance_key)
+                eth_dos_distance_ind(?src_ori, ?src_key, ?dst_ori, ?dst_key, ?distance_ori, ?distance_key)
+            )
+
+            REQUEST(
+                eth_dos_distance(?src_ori, ?src_key, ?dst_ori, ?dst_key, ?distance_ori, ?distance_key)
+            )
+        "#;
+
+        let processed = lang::parse(input, &params)?;
+
+        // --- DEBUGGING START ---
+        println!("--- Debugging Request Templates (test_prover_ethdos_from_podlog) ---");
+        for (i, tmpl) in processed.request_templates.iter().enumerate() {
+            println!("Template {}: pred = {:?}", i, tmpl.pred);
+        }
+        println!("--- DEBUGGING END ---");
+
+        assert_eq!(
+            processed.request_templates.len(),
+            1,
+            "Expected 1 request template"
+        );
+        assert_eq!(
+            processed.custom_batch.predicates.len(),
+            4,
+            "Expected 4 custom predicates"
+        );
+
+        let mut alice = MockSigner { pk: "Alice".into() };
+        let bob = MockSigner { pk: "Bob".into() };
+        let mut charlie = MockSigner {
+            pk: "Charlie".into(),
+        };
+
+        // Alice attests that she is ETH friends with Charlie and Charlie
+        // attests that he is ETH friends with Bob.
+        let alice_attestation =
+            eth_friend_signed_pod_builder(&params, charlie.pubkey().into()).sign(&mut alice)?;
+        let charlie_attestation =
+            eth_friend_signed_pod_builder(&params, bob.pubkey().into()).sign(&mut charlie)?;
+
+        let initial_facts = facts_from_pods(&[alice_attestation.pod, charlie_attestation.pod]);
+        let custom_definitions =
+            custom_definitions_from_batches(&[processed.custom_batch], &params);
+
+        // TODO: Add max depth, fix parameters to proof request
+        // let solve_result = solver::solve(
+        //     &processed.request_templates,
+        //     &initial_facts,
+        //     &params,
+        //     &custom_definitions,
+        // )?;
 
         Ok(())
     }

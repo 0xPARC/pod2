@@ -9,24 +9,22 @@ use plonky2::field::types::Field;
 use crate::{
     lang::ast::{self, TopLevelDefinition},
     middleware::{
-        self, basetypes::VALUE_SIZE, CustomPredicate, CustomPredicateBatch, Key, KeyOrWildcard,
-        NativePredicate, Params, Predicate, StatementTmpl, StatementTmplArg, Value, Wildcard, F,
+        self, basetypes::VALUE_SIZE, CustomPredicate, CustomPredicateBatch, CustomPredicateRef,
+        Key, KeyOrWildcard, NativePredicate, Params, Predicate, StatementTmpl, StatementTmplArg,
+        Value, Wildcard, F,
     },
 };
 
-// Using thiserror for structured processor errors
+/// Errors that can occur during the processing of Podlog AST into middleware structures.
 #[derive(thiserror::Error, Debug)]
 pub enum ProcessorError {
     #[error("Semantic error: {0}")]
     Semantic(String),
-    // TODO: Add span information to errors
-    // #[error("Error at {span:?}: {message}")]
-    // WithSpan { message: String, span: (usize, usize) },
-    #[error("Undefined identifier: {0}")] // Can be variable or predicate name
+    #[error("Undefined identifier: {0}")]
     UndefinedIdentifier(String),
     #[error("Duplicate definition: {0}")]
     DuplicateDefinition(String),
-    #[error("Duplicate variable: ?{0}")] // Prefix with ? for clarity
+    #[error("Duplicate variable: ?{0}")]
     DuplicateVariable(String),
     #[error("Expected {expected}, found {found}")]
     TypeError { expected: String, found: String },
@@ -39,44 +37,54 @@ pub enum ProcessorError {
     #[error("Multiple REQUEST definitions found. Only one is allowed.")]
     MultipleRequestDefinitions,
     #[error("Internal processing error: {0}")]
-    Internal(String), // For unexpected logic errors during processing
+    Internal(String),
     #[error("Middleware error: {0}")]
     Middleware(#[from] middleware::Error),
 }
 
-/// Holds the processed output: a single batch of custom predicates
-/// and the list of statement templates for the main request.
+/// Result of processing a Podlog document.
+/// Contains the batch of custom predicates and the request statement templates.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProcessedOutput {
+    /// The batch containing all custom predicate definitions
     pub custom_batch: Arc<CustomPredicateBatch>,
+    /// Statement templates that form the main request
     pub request_templates: Vec<StatementTmpl>,
 }
 
-/// Context used during the processing phase.
-/// Contains parameters and information gathered in the first pass.
+/// Maintains state during the processing phase.
+/// Used to track predicate signatures and validate references.
 struct ProcessingContext<'a> {
+    /// Parameters for middleware validation
     params: &'a Params,
-    /// Maps custom predicate names to their index and public arity.
-    custom_predicate_signatures: HashMap<String, (usize, usize)>, // (index, public_args_len)
+    /// Maps predicate names to their batch index and public argument count
+    custom_predicate_signatures: HashMap<String, (usize, usize)>,
 }
 
-/// Context specific to processing statements within a single definition (predicate or request).
+/// Maintains state for a single definition scope (predicate or request).
+/// Used to track variable bindings and generate wildcards.
 struct ScopeContext<'a> {
+    /// Reference to the global processing context
     processing_ctx: &'a ProcessingContext<'a>,
-    /// Maps variable name to its Wildcard (index + name).
-    /// We use BTreeMap to ensure deterministic iteration order if needed later.
+    /// Maps variable names to their wildcard definitions.
+    /// BTreeMap ensures deterministic iteration order.
     variables: BTreeMap<String, Wildcard>,
+    /// Next available index for wildcard generation
     next_wildcard_index: usize,
 }
 
-/// Processes the parsed Podlog AST into middleware structures.
+/// Processes a Podlog AST into middleware structures.
 ///
-/// This involves two passes:
-/// 1. Collect signatures (name, arity, index) of all custom predicates.
-/// 2. Process the bodies of predicates and the request, resolving references using the signatures.
+/// The processing happens in two phases:
+/// 1. First pass collects all predicate signatures to enable forward references
+/// 2. Second pass processes predicate bodies and request templates
 ///
-/// Takes the AST `Document` and `Params` (needed for middleware validation).
-/// Returns the processed output or an error.
+/// This two-pass approach allows predicates to reference each other regardless of definition order.
+/// The processor also validates:
+/// - Uniqueness of predicate names and variables
+/// - Correct argument counts for predicate calls
+/// - Existence of referenced variables and predicates
+/// - Compliance with middleware parameter limits
 pub fn process_document(
     document: ast::Document,
     params: &Params,
@@ -85,7 +93,7 @@ pub fn process_document(
     let mut request_definition: Option<ast::RequestDefinition> = None;
     let mut defined_names = HashSet::new();
 
-    // 1. Separate definitions and check for duplicates/multiple requests
+    // Separate definitions and validate uniqueness
     for definition in document.definitions {
         match definition {
             TopLevelDefinition::CustomPredicate(pred_def) => {
@@ -105,7 +113,7 @@ pub fn process_document(
         }
     }
 
-    // --- First Pass: Collect Signatures ---
+    // First pass: collect predicate signatures
     let mut custom_predicate_signatures = HashMap::new();
     for (index, pred_def) in custom_definitions.iter().enumerate() {
         let name = &pred_def.name.0;
@@ -113,26 +121,23 @@ pub fn process_document(
         custom_predicate_signatures.insert(name.clone(), (index, public_arity));
     }
 
-    // --- Second Pass: Process Bodies ---
     let processing_ctx = ProcessingContext {
         params,
         custom_predicate_signatures,
     };
 
-    // Process Custom Predicate Bodies
+    // Second pass: process predicate bodies
     let mut processed_custom_predicates = Vec::with_capacity(custom_definitions.len());
     for pred_def in custom_definitions {
-        // Use the context built from the first pass
         let middleware_pred = process_custom_predicate_body(pred_def, &processing_ctx)?;
         processed_custom_predicates.push(middleware_pred);
     }
 
     let custom_batch = Arc::new(CustomPredicateBatch {
-        name: "PodlogBatch".to_string(), // TODO: Allow batch name configuration later?
-        predicates: processed_custom_predicates, // Use the processed predicates
+        name: "PodlogBatch".to_string(),
+        predicates: processed_custom_predicates,
     });
 
-    // Check batch size limit
     if custom_batch.predicates.len() > params.max_custom_batch_size {
         return Err(ProcessorError::Middleware(middleware::Error::max_length(
             "custom predicates".to_string(),
@@ -141,11 +146,11 @@ pub fn process_document(
         )));
     }
 
-    // Process Request (if exists) using the same context
+    // Process request if present
     let request_templates = if let Some(req_def) = request_definition {
-        process_request(req_def, &processing_ctx)?
+        process_request(req_def, &processing_ctx, &custom_batch)?
     } else {
-        Vec::new() // No request defined
+        Vec::new()
     };
 
     Ok(ProcessedOutput {
@@ -154,15 +159,22 @@ pub fn process_document(
     })
 }
 
-// --- Renamed Helper Function ---
-
-// Processes the body of a custom predicate definition using the pre-built context.
+/// Processes a custom predicate definition into its middleware representation.
+///
+/// This function:
+/// 1. Creates a new scope for the predicate's variables
+/// 2. Registers public and private arguments as wildcards
+/// 3. Processes each statement in the predicate body
+/// 4. Validates wildcard count against middleware limits
+///
+/// The function maintains consistent wildcard indices within the predicate's scope,
+/// which is important for the middleware's constraint system.
 fn process_custom_predicate_body(
     pred_def: ast::CustomPredicateDefinition,
     processing_ctx: &ProcessingContext,
 ) -> Result<CustomPredicate, ProcessorError> {
     let mut scope = ScopeContext {
-        processing_ctx, // Pass the main context
+        processing_ctx,
         variables: BTreeMap::new(),
         next_wildcard_index: 0,
     };
@@ -183,7 +195,7 @@ fn process_custom_predicate_body(
         );
         scope.next_wildcard_index += 1;
     }
-    let public_args_len = pred_def.public_args.len(); // Already checked against params in first pass
+    let public_args_len = pred_def.public_args.len();
 
     // Register private args
     for arg_var in &pred_def.private_args {
@@ -215,8 +227,7 @@ fn process_custom_predicate_body(
     // Process statements
     let mut middleware_statements = Vec::with_capacity(pred_def.statements.len());
     for statement in pred_def.statements {
-        // Pass the scope which contains the processing_ctx reference
-        middleware_statements.push(process_statement(statement, &mut scope, false)?);
+        middleware_statements.push(process_statement(statement, &mut scope, false, None)?);
     }
 
     let conjunction = match pred_def.type_ {
@@ -224,29 +235,30 @@ fn process_custom_predicate_body(
         ast::CustomPredicateType::Or => false,
     };
 
-    // Construct the middleware CustomPredicate
-    // Arity check for the definition itself happened in the first pass.
-    // Arity checks for calls *within* the body happened in process_statement.
     let middleware_pred = CustomPredicate::new(
         pred_def.name.0,
-        processing_ctx.params, // Pass params for internal middleware checks
+        processing_ctx.params,
         conjunction,
         middleware_statements,
         public_args_len,
-    )?; // Propagate potential middleware errors
+    )?;
 
     Ok(middleware_pred)
 }
 
-// --- Existing process_request, process_statement etc need minor adjustments ---
-
-// Processes the body of a request using the pre-built context.
+/// Processes a request definition into middleware statement templates.
+///
+/// Unlike predicate processing, request processing:
+/// - Creates new wildcards for undefined variables
+/// - Does not require variables to be pre-declared
+/// - Validates statement count against middleware limits
 fn process_request(
     req_def: ast::RequestDefinition,
-    processing_ctx: &ProcessingContext, // Changed parameter
+    processing_ctx: &ProcessingContext,
+    custom_batch: &Arc<CustomPredicateBatch>,
 ) -> Result<Vec<StatementTmpl>, ProcessorError> {
     let mut scope = ScopeContext {
-        processing_ctx, // Pass the context
+        processing_ctx,
         variables: BTreeMap::new(),
         next_wildcard_index: 0,
     };
@@ -254,11 +266,14 @@ fn process_request(
     let mut request_templates = Vec::with_capacity(req_def.statements.len());
 
     for statement in req_def.statements {
-        // process_statement now uses the processing_ctx within scope
-        request_templates.push(process_statement(statement, &mut scope, true)?);
+        request_templates.push(process_statement(
+            statement,
+            &mut scope,
+            true,
+            Some(custom_batch),
+        )?);
     }
 
-    // Check request template count limit
     if request_templates.len() > processing_ctx.params.max_statements {
         return Err(ProcessorError::Middleware(middleware::Error::max_length(
             "request statements".to_string(),
@@ -270,17 +285,28 @@ fn process_request(
     Ok(request_templates)
 }
 
+/// Processes a statement into its middleware representation.
+///
+/// Handles both native and custom predicate calls by:
+/// - Converting arguments to middleware format
+/// - Validating argument counts
+/// - Resolving predicate references
+/// - Checking argument limits
+///
+/// The is_request parameter controls whether undefined variables
+/// should create new wildcards (true for requests) or raise an error (false for predicates).
 fn process_statement(
     statement: ast::Statement,
     scope: &mut ScopeContext,
-    create_vars_if_missing: bool,
+    is_request: bool,
+    custom_batch: Option<&Arc<CustomPredicateBatch>>,
 ) -> Result<StatementTmpl, ProcessorError> {
     match statement {
         ast::Statement::Native(call) => {
             let middleware_args: Result<Vec<_>, _> = call
                 .args
                 .into_iter()
-                .map(|arg| process_argument(arg, scope, create_vars_if_missing))
+                .map(|arg| process_argument(arg, scope, is_request))
                 .collect();
             let middleware_args = middleware_args?;
             let middleware_pred = map_native_predicate(call.predicate);
@@ -294,21 +320,19 @@ fn process_statement(
         }
         ast::Statement::Custom(call) => {
             let pred_name = &call.name.0;
-            // Use signatures from the context within the scope
             let (pred_index, expected_arity) = scope
                 .processing_ctx
                 .custom_predicate_signatures
                 .get(pred_name)
-                .ok_or_else(|| ProcessorError::UndefinedIdentifier(pred_name.clone()))?; // Use UndefinedIdentifier
+                .ok_or_else(|| ProcessorError::UndefinedIdentifier(pred_name.clone()))?;
 
             let middleware_args: Result<Vec<_>, _> = call
                 .args
                 .into_iter()
-                .map(|arg| process_argument(arg, scope, create_vars_if_missing))
+                .map(|arg| process_argument(arg, scope, is_request))
                 .collect();
             let middleware_args = middleware_args?;
 
-            // Arity check for custom predicate call
             if middleware_args.len() != *expected_arity {
                 return Err(ProcessorError::ArgumentCountMismatch {
                     predicate: pred_name.clone(),
@@ -317,7 +341,6 @@ fn process_statement(
                 });
             }
 
-            // Check arg count limit for the statement itself
             if middleware_args.len() > scope.processing_ctx.params.max_statement_args {
                 return Err(ProcessorError::Middleware(middleware::Error::max_length(
                     format!("arguments for custom call to {}", pred_name),
@@ -326,14 +349,32 @@ fn process_statement(
                 )));
             }
 
+            let pred = if is_request {
+                Predicate::Custom(CustomPredicateRef::new(
+                    custom_batch.unwrap().clone(),
+                    *pred_index,
+                ))
+            } else {
+                Predicate::BatchSelf(*pred_index)
+            };
+
             Ok(StatementTmpl {
-                pred: Predicate::BatchSelf(*pred_index), // Use the index from signatures
+                pred,
                 args: middleware_args,
             })
         }
     }
 }
 
+/// Processes an argument into its middleware representation.
+///
+/// Handles three types of arguments:
+/// - Literals (values like numbers, strings, containers)
+/// - Variables (converted to wildcards)
+/// - Anchored keys (combinations of pod variables and keys)
+///
+/// For variables, the create_if_missing parameter determines whether
+/// undefined variables create new wildcards or raise errors.
 fn process_argument(
     arg: ast::Argument,
     scope: &mut ScopeContext,
@@ -362,14 +403,22 @@ fn process_argument(
     }
 }
 
-// Converts an AST Literal to a middleware Value
+/// Converts an AST literal into a middleware Value.
+///
+/// Handles:
+/// - Basic types (int, bool, string)
+/// - Raw byte values (with size validation)
+/// - Container types (arrays, sets, dictionaries)
+///
+/// For raw values, ensures the byte length doesn't exceed VALUE_SIZE * 8.
+/// For containers, recursively processes their elements and validates structure.
 fn process_literal(literal: ast::Literal) -> Result<Value, ProcessorError> {
     match literal {
         ast::Literal::Int(i) => Ok(Value::from(i)),
         ast::Literal::Bool(b) => Ok(Value::from(b)),
         ast::Literal::String(s) => Ok(Value::from(s)),
         ast::Literal::Raw(bytes) => {
-            const MAX_RAW_BYTES: usize = VALUE_SIZE * 8; // 4 * 8 = 32 bytes
+            const MAX_RAW_BYTES: usize = VALUE_SIZE * 8;
             if bytes.len() > MAX_RAW_BYTES {
                 return Err(ProcessorError::Semantic(format!(
                     "Raw literal 0x{} is too long (max {} bytes)",
@@ -377,11 +426,8 @@ fn process_literal(literal: ast::Literal) -> Result<Value, ProcessorError> {
                     MAX_RAW_BYTES
                 )));
             }
-            // Encode bytes back to hex string
             let hex_str = hex::encode(&bytes);
-            // Pad with leading zeros to 64 characters (representing 32 bytes)
             let padded_hex_str = format!("{:0>64}", hex_str);
-            // Parse the 64-char hex string into [F; VALUE_SIZE]
             parse_hex_to_raw_value(&padded_hex_str).map(Value::from)
         }
         ast::Literal::Array(elements) => {
@@ -416,7 +462,10 @@ fn process_literal(literal: ast::Literal) -> Result<Value, ProcessorError> {
     }
 }
 
-// Helper function similar to middleware::serialization::deserialize_field_tuple
+/// Converts a hex string into a RawValue.
+///
+/// Expects a 64-character hex string representing 32 bytes.
+/// Each 16 characters are converted into a field element.
 fn parse_hex_to_raw_value(hex_str: &str) -> Result<middleware::RawValue, ProcessorError> {
     if hex_str.len() != 64 {
         return Err(ProcessorError::Internal(format!(
@@ -443,9 +492,14 @@ fn parse_hex_to_raw_value(hex_str: &str) -> Result<middleware::RawValue, Process
     Ok(middleware::RawValue(v))
 }
 
-// Resolves a variable name within the current scope.
-// If `create_if_missing` is true (for requests), assigns a new wildcard index if not found.
-// If `create_if_missing` is false (for predicates), returns an error if not found.
+/// Resolves a variable name to a wildcard within the current scope.
+///
+/// The resolution process depends on the context:
+/// - In predicates (create_if_missing=false): variables must be pre-declared
+/// - In requests (create_if_missing=true): undefined variables create new wildcards
+///
+/// When creating new wildcards, validates against the maximum wildcard limit.
+/// Uses consistent index generation to maintain deterministic behavior.
 fn resolve_variable(
     var: ast::Variable,
     scope: &mut ScopeContext,
@@ -456,12 +510,10 @@ fn resolve_variable(
         Ok(wildcard.clone())
     } else if create_if_missing {
         let index = scope.next_wildcard_index;
-        // Check wildcard limit before adding
-        // Use max_custom_predicate_wildcards limit even for request wildcards for consistency
         if index >= scope.processing_ctx.params.max_custom_predicate_wildcards {
             return Err(ProcessorError::Middleware(middleware::Error::max_length(
-                "wildcards in request".to_string(), // Clarify context if this is request-specific
-                index + 1,                          // We are about to add one more
+                "wildcards in request".to_string(),
+                index + 1,
                 scope.processing_ctx.params.max_custom_predicate_wildcards,
             )));
         }
@@ -475,12 +527,14 @@ fn resolve_variable(
         scope.next_wildcard_index += 1;
         Ok(new_wildcard)
     } else {
-        // Variable not found and create_if_missing is false (inside predicate definition)
         Err(ProcessorError::UndefinedIdentifier(var_name.clone()))
     }
 }
 
-// Helper to map AST NativePredicate to middleware::NativePredicate
+/// Maps AST native predicates to their middleware counterparts.
+///
+/// This is a direct mapping with no validation, as the AST parser
+/// ensures only valid predicates are present.
 fn map_native_predicate(ast_pred: ast::NativePredicate) -> NativePredicate {
     match ast_pred {
         ast::NativePredicate::ValueOf => NativePredicate::ValueOf,
@@ -496,7 +550,14 @@ fn map_native_predicate(ast_pred: ast::NativePredicate) -> NativePredicate {
     }
 }
 
-// Helper to check argument count for native predicates
+/// Validates argument count for native predicates.
+///
+/// Each native predicate has a fixed expected number of arguments:
+/// - ValueOf, Equal, NotEqual, Gt, Lt: 2 arguments
+/// - Contains, SumOf, ProductOf, MaxOf: 3 arguments
+/// - NotContains: 2 arguments
+///
+/// Returns an error if the argument count doesn't match the predicate's requirements.
 fn check_native_arity(pred: NativePredicate, args_len: usize) -> Result<(), ProcessorError> {
     let (expected_min, expected_max) = match pred {
         NativePredicate::ValueOf => (2, 2),
@@ -510,7 +571,6 @@ fn check_native_arity(pred: NativePredicate, args_len: usize) -> Result<(), Proc
         NativePredicate::ProductOf => (3, 3),
         NativePredicate::MaxOf => (3, 3),
         NativePredicate::None => (0, 0),
-        // Syntactic sugar predicates shouldn't reach here in processor
         _ => {
             return Err(ProcessorError::Internal(format!(
                 "Unexpected native predicate {:?} in arity check",
@@ -522,7 +582,6 @@ fn check_native_arity(pred: NativePredicate, args_len: usize) -> Result<(), Proc
     if args_len < expected_min || args_len > expected_max {
         Err(ProcessorError::ArgumentCountMismatch {
             predicate: format!("{:?}", pred),
-            // For simplicity, just show expected min if range is used (currently all are fixed)
             expected: expected_min,
             found: args_len,
         })
