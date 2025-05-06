@@ -5,33 +5,157 @@
  * and run json-schema-to-typescript to regenerate this file.
  */
 
-export type StatementArg =
+/**
+ * Type encapsulating statements with their associated arguments.
+ */
+export type Statement =
   | {
-      Literal: Value;
+      predicate: "None";
     }
   | {
-      Key: AnchoredKey;
+      /**
+       * @minItems 2
+       * @maxItems 2
+       */
+      args: [AnchoredKey, Value];
+      predicate: "ValueOf";
+    }
+  | {
+      /**
+       * @minItems 2
+       * @maxItems 2
+       */
+      args: [AnchoredKey, AnchoredKey];
+      predicate: "Equal";
+    }
+  | {
+      /**
+       * @minItems 2
+       * @maxItems 2
+       */
+      args: [AnchoredKey, AnchoredKey];
+      predicate: "NotEqual";
+    }
+  | {
+      /**
+       * @minItems 2
+       * @maxItems 2
+       */
+      args: [AnchoredKey, AnchoredKey];
+      predicate: "Gt";
+    }
+  | {
+      /**
+       * @minItems 2
+       * @maxItems 2
+       */
+      args: [AnchoredKey, AnchoredKey];
+      predicate: "Lt";
+    }
+  | {
+      /**
+       * @minItems 3
+       * @maxItems 3
+       */
+      args: [AnchoredKey, AnchoredKey, AnchoredKey];
+      predicate: "Contains";
+    }
+  | {
+      /**
+       * @minItems 2
+       * @maxItems 2
+       */
+      args: [AnchoredKey, AnchoredKey];
+      predicate: "NotContains";
+    }
+  | {
+      /**
+       * @minItems 3
+       * @maxItems 3
+       */
+      args: [AnchoredKey, AnchoredKey, AnchoredKey];
+      predicate: "SumOf";
+    }
+  | {
+      /**
+       * @minItems 3
+       * @maxItems 3
+       */
+      args: [AnchoredKey, AnchoredKey, AnchoredKey];
+      predicate: "ProductOf";
+    }
+  | {
+      /**
+       * @minItems 3
+       * @maxItems 3
+       */
+      args: [AnchoredKey, AnchoredKey, AnchoredKey];
+      predicate: "MaxOf";
+    }
+  | {
+      /**
+       * @minItems 2
+       * @maxItems 2
+       */
+      args: [CustomPredicateRef, WildcardValue[]];
+      predicate: "Custom";
     };
+export type Key = string;
+export type Hash = string;
+/**
+ * Represents various POD value types. Array, String, and Bool variants are represented untagged in JSON.
+ */
 export type Value =
   | {
-      Set: Value[];
+      Set: Set;
     }
   | {
-      Dictionary: {
-        [k: string]: Value;
-      };
+      Dictionary: Dictionary;
     }
   | {
+      /**
+       * An i64 represented as a string.
+       */
       Int: string;
     }
   | {
-      Raw: MiddlewareValue;
+      Raw: RawValue;
     }
+  | Array
   | string
-  | boolean
-  | Value[];
-export type MiddlewareValue = string;
-export type Hash = string;
+  | boolean;
+export type Set = Value[];
+export type RawValue = string;
+export type Array = Value[];
+export type StatementTmplArg =
+  | {
+      type: "None";
+    }
+  | {
+      type: "Literal";
+      value: Value;
+    }
+  | {
+      type: "Key";
+      /**
+       * @minItems 2
+       * @maxItems 2
+       */
+      value: [Wildcard, KeyOrWildcard];
+    }
+  | {
+      type: "WildcardLiteral";
+      value: Wildcard;
+    };
+export type KeyOrWildcard =
+  | {
+      type: "Key";
+      value: Key;
+    }
+  | {
+      type: "Wildcard";
+      value: Wildcard;
+    };
 export type Predicate =
   | {
       type: "Native";
@@ -52,6 +176,8 @@ export type NativePredicate =
   | "NotEqual"
   | "Gt"
   | "Lt"
+  | "Contains"
+  | "NotContains"
   | "SumOf"
   | "ProductOf"
   | "MaxOf"
@@ -60,37 +186,12 @@ export type NativePredicate =
   | "SetContains"
   | "SetNotContains"
   | "ArrayContains";
-export type StatementTmplArg =
+export type WildcardValue =
   | {
-      type: "None";
+      PodId: Hash;
     }
   | {
-      type: "Literal";
-      value: Value;
-    }
-  | {
-      type: "Key";
-      /**
-       * @minItems 2
-       * @maxItems 2
-       */
-      value: [KeyPartOrWildcard, KeyPartOrWildcard];
-    };
-/**
- * Represents a key or resolved wildcard
- */
-export type KeyPartOrWildcard =
-  | {
-      type: "Key";
-      value: string;
-    }
-  | {
-      type: "Origin";
-      value: Origin;
-    }
-  | {
-      type: "Wildcard";
-      value: IndexedWildcard;
+      Key: Key;
     };
 
 export interface SchemaContainer {
@@ -98,21 +199,17 @@ export interface SchemaContainer {
   signedpod: SignedPod;
 }
 export interface MainPod {
-  pod_class: string;
-  pod_type: string;
+  podClass: string;
+  podType: string;
   proof: string;
-  public_statements: Statement[];
-}
-export interface Statement {
-  args: StatementArg[];
-  predicate: Predicate;
+  publicStatements: Statement[];
 }
 export interface AnchoredKey {
-  key: string;
-  origin: Origin;
+  key: Key;
+  podId: Hash;
 }
-export interface Origin {
-  pod_id: Hash;
+export interface Dictionary {
+  [k: string]: Value;
 }
 export interface CustomPredicateRef {
   batch: CustomPredicateBatch;
@@ -122,32 +219,34 @@ export interface CustomPredicateBatch {
   name: string;
   predicates: CustomPredicate[];
 }
+/**
+ * NOTE: fields are not public (outside of crate) to enforce the struct instantiation through the `::and/or` methods, which performs checks on the values.
+ */
 export interface CustomPredicate {
+  argsLen: number;
   /**
    * true for "and", false for "or"
    */
   conjunction: boolean;
   name: string;
-  private_args: string[];
-  public_args: string[];
   statements: StatementTmpl[];
 }
+/**
+ * Statement Template for a Custom Predicate
+ */
 export interface StatementTmpl {
   args: StatementTmplArg[];
   pred: Predicate;
 }
-/**
- * Represents a wildcard identified by its index in the argument list
- */
-export interface IndexedWildcard {
+export interface Wildcard {
   index: number;
-  wildcard: string;
+  name: string;
 }
 export interface SignedPod {
   entries: {
     [k: string]: Value;
   };
-  pod_class: string;
-  pod_type: string;
+  podClass: string;
+  podType: string;
   proof: string;
 }
