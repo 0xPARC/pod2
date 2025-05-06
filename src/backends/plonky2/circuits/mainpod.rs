@@ -169,7 +169,7 @@ impl OperationVerifyGadget {
         let expected_statement = StatementTarget::new_native(
             builder,
             &self.params,
-            &NativePredicate::NotContains,
+            NativePredicate::NotContains,
             &[arg1_key, arg2_key],
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
@@ -197,7 +197,7 @@ impl OperationVerifyGadget {
         let expected_statement = StatementTarget::new_native(
             builder,
             &self.params,
-            &NativePredicate::Equal,
+            NativePredicate::Equal,
             &[arg1_key, arg2_key],
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
@@ -284,7 +284,7 @@ impl OperationVerifyGadget {
         let op_code_ok = op.has_native_type(builder, NativeOperation::None);
 
         let expected_statement =
-            StatementTarget::new_native(builder, &self.params, &NativePredicate::None, &[]);
+            StatementTarget::new_native(builder, &self.params, NativePredicate::None, &[]);
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
         builder.all([op_code_ok, st_ok])
@@ -373,7 +373,7 @@ impl MainPodVerifyGadget {
                 statements.push(StatementTarget::new_native(
                     builder,
                     &self.params,
-                    &NativePredicate::None,
+                    NativePredicate::None,
                     &[],
                 ))
             }

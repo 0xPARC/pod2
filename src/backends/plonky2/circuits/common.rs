@@ -125,9 +125,9 @@ pub trait Build<T> {
     fn build(self, builder: &mut CircuitBuilder<F, D>, params: &Params) -> T;
 }
 
-impl Build<NativePredicateTarget> for &NativePredicate {
+impl Build<NativePredicateTarget> for NativePredicate {
     fn build(self, builder: &mut CircuitBuilder<F, D>, params: &Params) -> NativePredicateTarget {
-        NativePredicateTarget::constant(builder, params, *self)
+        NativePredicateTarget::constant(builder, params, self)
     }
 }
 
@@ -182,7 +182,7 @@ impl StatementTarget {
         params: &Params,
         t: NativePredicate,
     ) -> BoolTarget {
-        let expected_predicate = PredicateTarget::new_native(builder, params, &t);
+        let expected_predicate = PredicateTarget::new_native(builder, params, t);
         builder.is_equal_flattenable(&self.predicate, &expected_predicate)
     }
 }

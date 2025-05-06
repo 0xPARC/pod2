@@ -91,7 +91,7 @@ impl SignedPodVerifyTarget {
     ) -> Vec<StatementTarget> {
         let mut statements = Vec::new();
         let predicate =
-            PredicateTarget::new_native(builder, &self.params, &NativePredicate::ValueOf);
+            PredicateTarget::new_native(builder, &self.params, NativePredicate::ValueOf);
         let pod_id = if self_id {
             builder.constant_value(SELF.0.into())
         } else {
