@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use itertools::zip_eq;
 use plonky2::{
     hash::{hash_types::HashOutTarget, poseidon::PoseidonHash},
@@ -23,8 +25,8 @@ use crate::{
         signedpod::SignedPod,
     },
     middleware::{
-        AnchoredKey, NativeOperation, NativePredicate, Params, PodType, Statement, StatementArg,
-        ToFields, Value, F, KEY_TYPE, SELF, VALUE_SIZE,
+        AnchoredKey, CustomPredicateBatch, NativeOperation, NativePredicate, Params, PodType,
+        Statement, StatementArg, ToFields, Value, F, KEY_TYPE, SELF, VALUE_SIZE,
     },
 };
 
@@ -496,6 +498,7 @@ pub struct MainPodVerifyInput {
     pub statements: Vec<mainpod::Statement>,
     pub operations: Vec<mainpod::Operation>,
     pub merkle_proofs: Vec<MerkleClaimAndProof>,
+    pub custom_predicate_batches: Vec<Arc<CustomPredicateBatch>>,
 }
 
 impl MainPodVerifyTarget {

@@ -1,6 +1,6 @@
 pub mod operation;
 pub mod statement;
-use std::any::Any;
+use std::{any::Any, sync::Arc};
 
 use itertools::Itertools;
 pub use operation::*;
@@ -23,8 +23,9 @@ use crate::{
         signedpod::SignedPod,
     },
     middleware::{
-        self, AnchoredKey, DynError, Hash, MainPodInputs, NativeOperation, NonePod, OperationType,
-        Params, Pod, PodId, PodProver, PodType, StatementArg, ToFields, F, KEY_TYPE, SELF,
+        self, AnchoredKey, CustomPredicateBatch, DynError, Hash, MainPodInputs, NativeOperation,
+        NonePod, OperationType, Params, Pod, PodId, PodProver, PodType, StatementArg, ToFields, F,
+        KEY_TYPE, SELF,
     },
 };
 
@@ -37,28 +38,28 @@ pub(crate) fn hash_statements(statements: &[Statement], _params: &Params) -> mid
     Hash(PoseidonHash::hash_no_pad(&field_elems).elements)
 }
 
-// TODO
-// /// Extracts unique `CustomPredicateBatch`es from Custom ops.
-// pub(crate) fn extract_custom_predicate_batches(
-//     params: &Params,
-//     operations: &[middleware::Operation],
-// ) -> Result<Vec<MerkleClaimAndProof>> {
-//     let custom_predicate_batches: Vec<_> = operations
-//         .iter()
-//         .flat_map(|op| match op {
-//             middleware::Operation::Custom(cpr, _) => Some(cpr.batch.clone()),
-//             _ => None,
-//         })
-//         .collect();
-//     if merkle_proofs.len() > params.max_merkle_proofs {
-//         return Err(Error::custom(format!(
-//             "The number of required Merkle proofs ({}) exceeds the maximum number ({}).",
-//             merkle_proofs.len(),
-//             params.max_merkle_proofs
-//         )));
-//     }
-//     Ok(merkle_proofs)
-// }
+/// Extracts unique `CustomPredicateBatch`es from Custom ops.
+pub(crate) fn extract_custom_predicate_batches(
+    params: &Params,
+    operations: &[middleware::Operation],
+) -> Result<Vec<Arc<CustomPredicateBatch>>> {
+    let custom_predicate_batches: Vec<_> = operations
+        .iter()
+        .flat_map(|op| match op {
+            middleware::Operation::Custom(cpr, _) => Some(cpr.batch.clone()),
+            _ => None,
+        })
+        .unique_by(|cpr| cpr.id())
+        .collect();
+    if custom_predicate_batches.len() > params.max_custom_predicate_batches {
+        return Err(Error::custom(format!(
+            "The number of required `CustomPredicateBatch`es ({}) exceeds the maximum number ({}).",
+            custom_predicate_batches.len(),
+            params.max_custom_predicate_batches
+        )));
+    }
+    Ok(custom_predicate_batches)
+}
 
 /// Extracts Merkle proofs from Contains/NotContains ops.
 pub(crate) fn extract_merkle_proofs(
@@ -324,6 +325,7 @@ impl Prover {
             .collect_vec();
 
         let merkle_proofs = extract_merkle_proofs(params, inputs.operations)?;
+        let custom_predicate_batches = extract_custom_predicate_batches(params, inputs.operations)?;
 
         let statements = layout_statements(params, &inputs);
         let operations = process_private_statements_operations(
@@ -344,6 +346,7 @@ impl Prover {
             statements: statements[statements.len() - params.max_statements..].to_vec(),
             operations,
             merkle_proofs,
+            custom_predicate_batches,
         };
         main_pod.set_targets(&mut pw, &input)?;
 
