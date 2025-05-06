@@ -10,8 +10,8 @@ use crate::{
         basetypes::D,
         circuits::{
             common::{
-                CircuitBuilderPod, Flattenable, MerkleClaimTarget, NativePredicateTarget,
-                OperationTarget, StatementArgTarget, StatementTarget, ValueTarget,
+                CircuitBuilderPod, Flattenable, MerkleClaimTarget, OperationTarget,
+                StatementArgTarget, StatementTarget, ValueTarget,
             },
             signedpod::{SignedPodVerifyGadget, SignedPodVerifyTarget},
         },

@@ -26,9 +26,9 @@ use crate::{
         primitives::merkletree::MerkleClaimAndProofTarget,
     },
     middleware::{
-        KeyOrWildcard, NativeOperation, NativePredicate, Params, Predicate, RawValue, StatementArg,
-        ToFields, EMPTY_VALUE, F, HASH_SIZE, OPERATION_ARG_F_LEN, OPERATION_AUX_F_LEN,
-        STATEMENT_ARG_F_LEN, VALUE_SIZE,
+        NativeOperation, NativePredicate, Params, Predicate, RawValue, StatementArg, ToFields,
+        EMPTY_VALUE, F, HASH_SIZE, OPERATION_ARG_F_LEN, OPERATION_AUX_F_LEN, STATEMENT_ARG_F_LEN,
+        VALUE_SIZE,
     },
 };
 
@@ -121,7 +121,7 @@ pub struct StatementTarget {
     pub args: Vec<StatementArgTarget>,
 }
 
-trait Build<T> {
+pub trait Build<T> {
     fn build(self, builder: &mut CircuitBuilder<F, D>, params: &Params) -> T;
 }
 
@@ -132,7 +132,7 @@ impl Build<NativePredicateTarget> for &NativePredicate {
 }
 
 impl<T> Build<T> for T {
-    fn build(self, builder: &mut CircuitBuilder<F, D>, params: &Params) -> T {
+    fn build(self, _builder: &mut CircuitBuilder<F, D>, _params: &Params) -> T {
         self
     }
 }
@@ -325,8 +325,7 @@ pub struct StatementTmplArgTarget {
 impl StatementTmplArgTarget {
     pub fn as_none(&self, builder: &mut CircuitBuilder<F, D>) -> BoolTarget {
         let none_prefix = builder.constant(F::from_canonical_usize(0));
-        let case_ok = builder.is_equal(self.elements[0], none_prefix);
-        case_ok
+        builder.is_equal(self.elements[0], none_prefix)
     }
     pub fn as_literal(&self, builder: &mut CircuitBuilder<F, D>) -> (BoolTarget, ValueTarget) {
         let none_prefix = builder.constant(F::from_canonical_usize(1));

@@ -11,8 +11,7 @@ use crate::{
     backends::plonky2::{
         basetypes::D,
         circuits::common::{
-            CircuitBuilderPod, NativePredicateTarget, PredicateTarget, StatementArgTarget,
-            StatementTarget, ValueTarget,
+            CircuitBuilderPod, PredicateTarget, StatementArgTarget, StatementTarget, ValueTarget,
         },
         error::Result,
         primitives::{
