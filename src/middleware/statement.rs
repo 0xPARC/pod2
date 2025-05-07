@@ -386,14 +386,14 @@ impl StatementArg {
 }
 
 impl ToFields for StatementArg {
-    fn to_fields(&self, _params: &Params) -> Vec<F> {
-        // NOTE: current version returns always the same amount of field elements in the returned
-        // vector, which means that the `None` case is padded with 8 zeroes, and the `Literal` case
-        // is padded with 4 zeroes. Since the returned vector will mostly be hashed (and reproduced
-        // in-circuit), we might be interested into reducing the length of it. If that's the case,
-        // we can check if it makes sense to make it dependant on the concrete StatementArg; that
-        // is, when dealing with a `None` it would be a single field element (zero value), and when
-        // dealing with `Literal` it would be of length 4.
+    /// Encoding:
+    /// - None => [0, 0, 0, 0, 0, 0, 0, 0]
+    /// - Literal(v) => [[v], 0, 0, 0, 0]
+    /// - Key(pod_id, key) => [[pod_id], [key]]
+    /// - WildcardLiteral(v) => [[v], 0, 0, 0, 0]
+    fn to_fields(&self, params: &Params) -> Vec<F> {
+        // NOTE for @ax0: I removed the old comment because may `to_fields` implementations do
+        // padding and we need fixed output length for the circuits.
         let f = match self {
             StatementArg::None => vec![F::ZERO; STATEMENT_ARG_F_LEN],
             StatementArg::Literal(v) => v
@@ -403,8 +403,8 @@ impl ToFields for StatementArg {
                 .chain(iter::repeat(F::ZERO).take(STATEMENT_ARG_F_LEN - VALUE_SIZE))
                 .collect(),
             StatementArg::Key(ak) => {
-                let mut fields = ak.pod_id.to_fields(_params);
-                fields.extend(ak.key.to_fields(_params));
+                let mut fields = ak.pod_id.to_fields(params);
+                fields.extend(ak.key.to_fields(params));
                 fields
             }
             StatementArg::WildcardLiteral(v) => v

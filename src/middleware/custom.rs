@@ -193,6 +193,14 @@ pub struct CustomPredicate {
 
 // TODO: pass params first to follow the convention in the rest of the code base.
 impl CustomPredicate {
+    pub fn empty() -> Self {
+        Self {
+            name: "empty".to_string(),
+            conjunction: false,
+            statements: vec![],
+            args_len: 0,
+        }
+    }
     pub fn and(
         params: &Params,
         name: String,

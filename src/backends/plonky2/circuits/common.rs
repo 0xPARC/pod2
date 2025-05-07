@@ -26,9 +26,9 @@ use crate::{
         primitives::merkletree::MerkleClaimAndProofTarget,
     },
     middleware::{
-        NativeOperation, NativePredicate, Params, Predicate, RawValue, StatementArg, ToFields,
-        EMPTY_VALUE, F, HASH_SIZE, OPERATION_ARG_F_LEN, OPERATION_AUX_F_LEN, STATEMENT_ARG_F_LEN,
-        VALUE_SIZE,
+        CustomPredicate, CustomPredicateBatch, NativeOperation, NativePredicate, Params, Predicate,
+        RawValue, StatementArg, ToFields, EMPTY_VALUE, F, HASH_SIZE, OPERATION_ARG_F_LEN,
+        OPERATION_AUX_F_LEN, STATEMENT_ARG_F_LEN, VALUE_SIZE,
     },
 };
 
@@ -227,6 +227,17 @@ impl OperationTarget {
         let op_code_matches = builder.is_equal(self.op_type[1], op_code);
         builder.and(op_is_native, op_code_matches)
     }
+
+    pub fn type_as_custom(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+    ) -> (BoolTarget, HashOutTarget, Target) {
+        let three = builder.constant(F::from_canonical_usize(3));
+        let op_is_custom = builder.is_equal(self.op_type[0], three);
+        let batch_id = HashOutTarget::from_vec(self.op_type[1..5].to_vec());
+        let index = self.op_type[5];
+        (op_is_custom, batch_id, index)
+    }
 }
 
 #[derive(Clone)]
@@ -365,6 +376,17 @@ pub struct CustomPredicateTarget {
     pub args_len: Target,
 }
 
+impl CustomPredicateTarget {
+    pub fn set_targets(
+        &self,
+        pw: &mut PartialWitness<F>,
+        params: &Params,
+        custom_predicate: &CustomPredicate,
+    ) -> Result<()> {
+        Ok(pw.set_target_arr(&self.flatten(), &custom_predicate.to_fields(params))?)
+    }
+}
+
 #[derive(Clone)]
 pub struct CustomPredicateBatchTarget {
     pub predicates: Vec<CustomPredicateTarget>,
@@ -374,6 +396,25 @@ impl CustomPredicateBatchTarget {
     pub fn id(&self, builder: &mut CircuitBuilder<F, D>) -> HashOutTarget {
         let flattened = self.predicates.iter().flat_map(|cp| cp.flatten()).collect();
         builder.hash_n_to_hash_no_pad::<PoseidonHash>(flattened)
+    }
+
+    pub fn set_targets(
+        &self,
+        pw: &mut PartialWitness<F>,
+        params: &Params,
+        custom_predicate_batch: &CustomPredicateBatch,
+    ) -> Result<()> {
+        let pad_predicate = CustomPredicate::empty();
+        for (i, predicate) in custom_predicate_batch
+            .predicates()
+            .iter()
+            .chain(iter::repeat(&pad_predicate))
+            .take(params.max_custom_batch_size)
+            .enumerate()
+        {
+            self.predicates[i].set_targets(pw, params, predicate)?;
+        }
+        Ok(())
     }
 }
 
@@ -544,6 +585,11 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     fn add_virtual_statement(&mut self, params: &Params) -> StatementTarget;
     fn add_virtual_predicate(&mut self) -> PredicateTarget;
     fn add_virtual_operation(&mut self, params: &Params) -> OperationTarget;
+    fn add_virtual_statement_tmpl_arg(&mut self) -> StatementTmplArgTarget;
+    fn add_virtual_statement_tmpl(&mut self, params: &Params) -> StatementTmplTarget;
+    fn add_virtual_custom_predicate(&mut self, params: &Params) -> CustomPredicateTarget;
+    fn add_virtual_custom_predicate_batch(&mut self, params: &Params)
+        -> CustomPredicateBatchTarget;
     fn select_value(&mut self, b: BoolTarget, x: ValueTarget, y: ValueTarget) -> ValueTarget;
     fn select_bool(&mut self, b: BoolTarget, x: BoolTarget, y: BoolTarget) -> BoolTarget;
     fn constant_value(&mut self, v: RawValue) -> ValueTarget;
@@ -628,6 +674,44 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
                 .map(|_| self.add_virtual_target_arr())
                 .collect(),
             aux: self.add_virtual_target_arr(),
+        }
+    }
+
+    fn add_virtual_statement_tmpl_arg(&mut self) -> StatementTmplArgTarget {
+        StatementTmplArgTarget {
+            elements: self.add_virtual_target_arr(),
+        }
+    }
+
+    fn add_virtual_statement_tmpl(&mut self, params: &Params) -> StatementTmplTarget {
+        let args = (0..params.max_statement_args)
+            .map(|_| self.add_virtual_statement_tmpl_arg())
+            .collect();
+        StatementTmplTarget {
+            pred: self.add_virtual_predicate(),
+            args,
+        }
+    }
+
+    fn add_virtual_custom_predicate(&mut self, params: &Params) -> CustomPredicateTarget {
+        let statements = (0..params.max_custom_predicate_arity)
+            .map(|_| self.add_virtual_statement_tmpl(params))
+            .collect();
+        CustomPredicateTarget {
+            conjunction: self.add_virtual_bool_target_safe(),
+            statements,
+            args_len: self.add_virtual_target(),
+        }
+    }
+
+    fn add_virtual_custom_predicate_batch(
+        &mut self,
+        params: &Params,
+    ) -> CustomPredicateBatchTarget {
+        CustomPredicateBatchTarget {
+            predicates: (0..params.max_custom_batch_size)
+                .map(|_| self.add_virtual_custom_predicate(params))
+                .collect(),
         }
     }
 
@@ -723,6 +807,12 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
         )
     }
 
+    // TODO: Implement a version of vec_ref for types `T` which are big and support hashing.
+    // The idea would be the following: Take the array `ts` and hash each element.  Then do the
+    // random access on the hash result.  Finally "unhash" to recover the resolved element.
+    // We don't want to hash each element from the array each time, so we should cache the hashed
+    // result.  For that we can create a wrapper over `T: Flattenable` that caches the hash, and
+    // then do `ts: &[HashCache<T>]`.
     fn vec_ref<T: Flattenable>(&mut self, params: &Params, ts: &[T], i: Target) -> T {
         // TODO: Revisit this when we need more than 64 statements.
         let vector_ref = |builder: &mut CircuitBuilder<F, D>, v: &[Target], i| {

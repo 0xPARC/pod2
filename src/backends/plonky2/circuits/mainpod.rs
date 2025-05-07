@@ -12,8 +12,8 @@ use crate::{
         basetypes::D,
         circuits::{
             common::{
-                CircuitBuilderPod, Flattenable, MerkleClaimTarget, OperationTarget,
-                StatementArgTarget, StatementTarget, ValueTarget,
+                CircuitBuilderPod, CustomPredicateBatchTarget, Flattenable, MerkleClaimTarget,
+                OperationTarget, PredicateTarget, StatementArgTarget, StatementTarget, ValueTarget,
             },
             signedpod::{SignedPodVerifyGadget, SignedPodVerifyTarget},
         },
@@ -378,6 +378,56 @@ impl OperationVerifyGadget {
     }
 }
 
+struct CustomOperationVerifyGadget {
+    params: Params,
+}
+
+impl CustomOperationVerifyGadget {
+    fn eval(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        st: &StatementTarget,
+        op: &OperationTarget,
+        op_args: &[StatementTarget],
+        custom_predicate_batches: &[CustomPredicateBatchTarget],
+        custom_predicate_batch_ids: &[HashOutTarget],
+        args: &[ValueTarget], // arguments to the custom predicate, public and private
+    ) -> Result<BoolTarget> {
+        // Some sanity checks
+        assert_eq!(self.params.max_operation_args, op_args.len());
+        assert_eq!(self.params.max_custom_predicate_wildcards, args.len());
+        assert_eq!(
+            self.params.max_custom_predicate_batches,
+            custom_predicate_batches.len()
+        );
+        assert_eq!(
+            self.params.max_custom_predicate_batches,
+            custom_predicate_batch_ids.len()
+        );
+
+        let custom_predicate_batch_index = builder.add_virtual_target(); // TODO
+
+        let resolved_custom_predicate_batch = builder.vec_ref(
+            &self.params,
+            custom_predicate_batches,
+            custom_predicate_batch_index,
+        );
+        let (op_is_custom, batch_id, index) = op.type_as_custom(builder);
+
+        let expected_predicate = PredicateTarget::new_custom(builder, batch_id, index);
+        let arg_none = StatementArgTarget::none(builder);
+        let expected_args = (0..self.params.max_statement_args)
+            .map(|i| todo!())
+            .collect();
+        let expected_statement = StatementTarget {
+            predicate: expected_predicate,
+            args: expected_args,
+        };
+        let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+        Ok(builder.all([op_is_custom, st_ok]))
+    }
+}
+
 struct MainPodVerifyGadget {
     params: Params,
 }
@@ -441,6 +491,15 @@ impl MainPodVerifyGadget {
             .map(|pf| pf.into())
             .collect();
 
+        // Add `CustomPredicateBatch` targets
+        let custom_predicate_batches: Vec<_> = (0..params.max_custom_predicate_batches)
+            .map(|_| builder.add_virtual_custom_predicate_batch(&self.params))
+            .collect();
+        let custom_predicate_batch_ids: Vec<_> = custom_predicate_batches
+            .iter()
+            .map(|cpb| cpb.id(builder))
+            .collect();
+
         // 2. Calculate the Pod Id from the public statements
         let pub_statements_flattened = pub_statements.iter().flat_map(|s| s.flatten()).collect();
         let id = builder.hash_n_to_hash_no_pad::<PoseidonHash>(pub_statements_flattened);
@@ -479,6 +538,7 @@ impl MainPodVerifyGadget {
             statements: input_statements.to_vec(),
             operations,
             merkle_proofs,
+            custom_predicate_batches,
         })
     }
 }
@@ -491,6 +551,7 @@ pub struct MainPodVerifyTarget {
     statements: Vec<StatementTarget>,
     operations: Vec<OperationTarget>,
     merkle_proofs: Vec<MerkleClaimAndProofTarget>,
+    custom_predicate_batches: Vec<CustomPredicateBatchTarget>,
 }
 
 pub struct MainPodVerifyInput {
@@ -531,6 +592,16 @@ impl MainPodVerifyTarget {
         for i in input.merkle_proofs.len()..self.params.max_merkle_proofs {
             self.merkle_proofs[i].set_targets(pw, false, &pad_mp)?;
         }
+        assert!(input.custom_predicate_batches.len() <= self.params.max_custom_predicate_batches);
+        for (i, mp) in input.custom_predicate_batches.iter().enumerate() {
+            self.custom_predicate_batches[i].set_targets(pw, &self.params, mp)?;
+        }
+        // Padding
+        let pad_cpb = CustomPredicateBatch::new(&self.params, "empty".to_string(), vec![]);
+        for i in input.custom_predicate_batches.len()..self.params.max_custom_predicate_batches {
+            self.custom_predicate_batches[i].set_targets(pw, &self.params, &pad_cpb)?;
+        }
+
         Ok(())
     }
 }
