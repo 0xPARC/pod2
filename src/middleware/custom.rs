@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::middleware::{
     hash_fields, Error, Hash, Key, Params, Predicate, Result, ToFields, Value, EMPTY_HASH, F,
-    HASH_SIZE,
+    HASH_SIZE, VALUE_SIZE,
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -50,12 +50,15 @@ impl fmt::Display for KeyOrWildcard {
 }
 
 impl ToFields for KeyOrWildcard {
+    // Encoding:
+    // - Key(k) => [[k]]
+    // - Wildcard(index) => [[index], 0, 0, 0]
     fn to_fields(&self, params: &Params) -> Vec<F> {
         match self {
             KeyOrWildcard::Key(k) => k.hash().to_fields(params),
-            KeyOrWildcard::Wildcard(wc) => iter::once(F::ZERO)
-                .take(HASH_SIZE - 1)
-                .chain(iter::once(F::from_canonical_u64(wc.index as u64)))
+            KeyOrWildcard::Wildcard(wc) => iter::once(F::from_canonical_u64(wc.index as u64))
+                .chain(iter::repeat(F::ZERO))
+                .take(HASH_SIZE)
                 .collect(),
         }
     }
@@ -67,7 +70,7 @@ pub enum StatementTmplArg {
     None,
     Literal(Value),
     // AnchoredKey
-    Key(Wildcard, KeyOrWildcard),
+    AnchoredKey(Wildcard, KeyOrWildcard),
     // TODO: This naming is a bit confusing: a WildcardLiteral that contains a Wildcard...
     // Could we merge WildcardValue and Value and allow wildcard value apart from pod_id and key?
     WildcardLiteral(Wildcard),
@@ -77,7 +80,7 @@ pub enum StatementTmplArg {
 pub enum StatementTmplArgPrefix {
     None = 0,
     Literal = 1,
-    Key = 2,
+    AnchoredKey = 2,
     WildcardLiteral = 3,
 }
 
@@ -89,11 +92,11 @@ impl From<StatementTmplArgPrefix> for F {
 
 impl ToFields for StatementTmplArg {
     fn to_fields(&self, params: &Params) -> Vec<F> {
-        // None => (0, ...)
-        // Literal(value) => (1, [value], 0, 0, 0, 0)
-        // Key(wildcard1_index, key_or_wildcard2)
-        //    => (2, [wildcard1_index], 0, 0, 0, [key_or_wildcard2])
-        // WildcardLiteral(wildcard_index) => (3, [wildcard_index], 0, 0, 0, 0, 0, 0, 0)
+        // Encoding:
+        // None =>                      (0,          0, 0, 0, 0,  0, 0, 0, 0)
+        // Literal(v) =>                (1,        [v         ],  0, 0, 0, 0)
+        // Key(wc_index, key_or_wc) =>  (2, [wc_index], 0, 0, 0, [key_or_wc])
+        // WildcardLiteral(wc_index) => (3, [wc_index], 0, 0, 0,  0, 0, 0, 0)
         // In all three cases, we pad to 2 * hash_size + 1 = 9 field elements
         match self {
             StatementTmplArg::None => {
@@ -106,13 +109,15 @@ impl ToFields for StatementTmplArg {
             StatementTmplArg::Literal(v) => {
                 let fields: Vec<F> = iter::once(F::from(StatementTmplArgPrefix::Literal))
                     .chain(v.raw().to_fields(params))
-                    .chain(iter::repeat(F::ZERO).take(HASH_SIZE))
+                    .chain(iter::repeat(F::ZERO))
+                    .take(Params::statement_tmpl_arg_size())
                     .collect();
                 fields
             }
-            StatementTmplArg::Key(wc1, kw2) => {
-                let fields: Vec<F> = iter::once(F::from(StatementTmplArgPrefix::Key))
+            StatementTmplArg::AnchoredKey(wc1, kw2) => {
+                let fields: Vec<F> = iter::once(F::from(StatementTmplArgPrefix::AnchoredKey))
                     .chain(wc1.to_fields(params))
+                    .chain(iter::repeat(F::ZERO).take(VALUE_SIZE - 1))
                     .chain(kw2.to_fields(params))
                     .collect();
                 fields
@@ -120,7 +125,8 @@ impl ToFields for StatementTmplArg {
             StatementTmplArg::WildcardLiteral(wc) => {
                 let fields: Vec<F> = iter::once(F::from(StatementTmplArgPrefix::WildcardLiteral))
                     .chain(wc.to_fields(params))
-                    .chain(iter::repeat(F::ZERO).take(HASH_SIZE))
+                    .chain(iter::repeat(F::ZERO))
+                    .take(Params::statement_tmpl_arg_size())
                     .collect();
                 fields
             }
@@ -133,7 +139,7 @@ impl fmt::Display for StatementTmplArg {
         match self {
             Self::None => write!(f, "none"),
             Self::Literal(v) => write!(f, "{}", v),
-            Self::Key(pod_id, key) => write!(f, "({}, {})", pod_id, key),
+            Self::AnchoredKey(pod_id, key) => write!(f, "({}, {})", pod_id, key),
             Self::WildcardLiteral(v) => write!(f, "{}", v),
         }
     }
@@ -430,14 +436,14 @@ mod tests {
                 vec![
                     st(
                         P::Native(NP::ValueOf),
-                        vec![STA::Key(wc(4), kow_wc(5)), STA::Literal(2.into())],
+                        vec![STA::AnchoredKey(wc(4), kow_wc(5)), STA::Literal(2.into())],
                     ),
                     st(
                         P::Native(NP::ProductOf),
                         vec![
-                            STA::Key(wc(0), kow_wc(1)),
-                            STA::Key(wc(4), kow_wc(5)),
-                            STA::Key(wc(2), kow_wc(3)),
+                            STA::AnchoredKey(wc(0), kow_wc(1)),
+                            STA::AnchoredKey(wc(4), kow_wc(5)),
+                            STA::AnchoredKey(wc(2), kow_wc(3)),
                         ],
                     ),
                 ],
@@ -484,22 +490,22 @@ mod tests {
                 st(
                     P::Native(NP::ValueOf),
                     vec![
-                        STA::Key(wc(4), KeyOrWildcard::Key("type".into())),
+                        STA::AnchoredKey(wc(4), KeyOrWildcard::Key("type".into())),
                         STA::Literal(PodType::Signed.into()),
                     ],
                 ),
                 st(
                     P::Native(NP::Equal),
                     vec![
-                        STA::Key(wc(4), KeyOrWildcard::Key("signer".into())),
-                        STA::Key(wc(0), kow_wc(1)),
+                        STA::AnchoredKey(wc(4), KeyOrWildcard::Key("signer".into())),
+                        STA::AnchoredKey(wc(0), kow_wc(1)),
                     ],
                 ),
                 st(
                     P::Native(NP::Equal),
                     vec![
-                        STA::Key(wc(4), KeyOrWildcard::Key("attestation".into())),
-                        STA::Key(wc(2), kow_wc(3)),
+                        STA::AnchoredKey(wc(4), KeyOrWildcard::Key("attestation".into())),
+                        STA::AnchoredKey(wc(2), kow_wc(3)),
                     ],
                 ),
             ],
@@ -516,11 +522,14 @@ mod tests {
             vec![
                 st(
                     P::Native(NP::Equal),
-                    vec![STA::Key(wc(0), kow_wc(1)), STA::Key(wc(2), kow_wc(3))],
+                    vec![
+                        STA::AnchoredKey(wc(0), kow_wc(1)),
+                        STA::AnchoredKey(wc(2), kow_wc(3)),
+                    ],
                 ),
                 st(
                     P::Native(NP::ValueOf),
-                    vec![STA::Key(wc(4), kow_wc(5)), STA::Literal(0.into())],
+                    vec![STA::AnchoredKey(wc(4), kow_wc(5)), STA::Literal(0.into())],
                 ),
             ],
             6,
@@ -544,14 +553,14 @@ mod tests {
                 ),
                 st(
                     P::Native(NP::ValueOf),
-                    vec![STA::Key(wc(6), kow_wc(7)), STA::Literal(1.into())],
+                    vec![STA::AnchoredKey(wc(6), kow_wc(7)), STA::Literal(1.into())],
                 ),
                 st(
                     P::Native(NP::SumOf),
                     vec![
-                        STA::Key(wc(4), kow_wc(5)),
-                        STA::Key(wc(8), kow_wc(9)),
-                        STA::Key(wc(6), kow_wc(7)),
+                        STA::AnchoredKey(wc(4), kow_wc(5)),
+                        STA::AnchoredKey(wc(8), kow_wc(9)),
+                        STA::AnchoredKey(wc(6), kow_wc(7)),
                     ],
                 ),
                 st(

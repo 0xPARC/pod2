@@ -151,7 +151,7 @@ impl CustomPredicateBatchBuilder {
                     .iter()
                     .map(|a| match a {
                         BuilderArg::Literal(v) => StatementTmplArg::Literal(v.clone()),
-                        BuilderArg::Key(pod_id, key) => StatementTmplArg::Key(
+                        BuilderArg::Key(pod_id, key) => StatementTmplArg::AnchoredKey(
                             resolve_wildcard(args, priv_args, pod_id),
                             resolve_key_or_wildcard(args, priv_args, key),
                         ),

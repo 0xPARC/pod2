@@ -27,8 +27,9 @@ use crate::{
     },
     middleware::{
         CustomPredicate, CustomPredicateBatch, NativeOperation, NativePredicate, Params, Predicate,
-        PredicatePrefix, RawValue, StatementArg, StatementTmplArgPrefix, ToFields, EMPTY_VALUE, F,
-        HASH_SIZE, OPERATION_ARG_F_LEN, OPERATION_AUX_F_LEN, STATEMENT_ARG_F_LEN, VALUE_SIZE,
+        PredicatePrefix, RawValue, StatementArg, StatementTmpl, StatementTmplArg,
+        StatementTmplArgPrefix, ToFields, Value, EMPTY_VALUE, F, HASH_SIZE, OPERATION_ARG_F_LEN,
+        OPERATION_AUX_F_LEN, STATEMENT_ARG_F_LEN, VALUE_SIZE,
     },
 };
 
@@ -65,6 +66,10 @@ impl ValueTarget {
             elements: array::from_fn(|i| xs[i]),
         }
     }
+
+    pub fn set_targets(&self, pw: &mut PartialWitness<F>, value: &Value) -> Result<()> {
+        Ok(pw.set_target_arr(&self.elements, &value.raw().0)?)
+    }
 }
 
 #[derive(Clone)]
@@ -82,7 +87,7 @@ impl StatementArgTarget {
         Ok(pw.set_target_arr(&self.elements, &arg.to_fields(params))?)
     }
 
-    fn new(first: ValueTarget, second: ValueTarget) -> Self {
+    pub fn new(first: ValueTarget, second: ValueTarget) -> Self {
         let elements: Vec<_> = first.elements.into_iter().chain(second.elements).collect();
         StatementArgTarget {
             elements: elements.try_into().expect("size STATEMENT_ARG_F_LEN"),
@@ -105,6 +110,11 @@ impl StatementArgTarget {
         key: &ValueTarget,
     ) -> Self {
         Self::new(*pod_id, *key)
+    }
+
+    pub fn wildcard_literal(builder: &mut CircuitBuilder<F, D>, value: &ValueTarget) -> Self {
+        let empty = builder.constant_value(EMPTY_VALUE);
+        Self::new(*value, empty)
     }
 
     /// StatementArgTarget to ValueTarget coercion. Make sure to check
@@ -315,16 +325,36 @@ impl PredicateTarget {
     }
 }
 
+/// Mirrors `middleware::KeyOrWildcard`
 #[derive(Clone)]
-pub struct KeyOrWildcardTarget {
+pub struct LiteralOrWildcardTarget {
     pub elements: [Target; VALUE_SIZE],
 }
 
-impl KeyOrWildcardTarget {
+impl LiteralOrWildcardTarget {
     fn from_slice(v: &[Target]) -> Self {
         Self {
             elements: v.try_into().expect("len is VALUE_SIZE"),
         }
+    }
+    /// cases: ((is_key, key), (is_wildcard, wildcard_index))
+    pub fn cases(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+    ) -> ((BoolTarget, ValueTarget), (BoolTarget, Target)) {
+        let zero = builder.zero();
+        let is_zero_tail: Vec<_> = (1..4)
+            .map(|i| builder.is_equal(self.elements[i], zero))
+            .collect();
+        let is_wildcard = is_zero_tail
+            .into_iter()
+            .reduce(|acc, x| builder.and(acc, x))
+            .expect("len > 1");
+        let is_key = builder.not(is_wildcard);
+        let key = ValueTarget::from_slice(&self.elements);
+        let wildcard_index = self.elements[0];
+
+        ((is_key, key), (is_wildcard, wildcard_index))
     }
 }
 
@@ -338,27 +368,39 @@ impl StatementTmplArgTarget {
         let prefix = builder.constant(F::from(StatementTmplArgPrefix::None));
         builder.is_equal(self.elements[0], prefix)
     }
+
     pub fn as_literal(&self, builder: &mut CircuitBuilder<F, D>) -> (BoolTarget, ValueTarget) {
         let prefix = builder.constant(F::from(StatementTmplArgPrefix::Literal));
         let case_ok = builder.is_equal(self.elements[0], prefix);
         let value = ValueTarget::from_slice(&self.elements[1..5]);
         (case_ok, value)
     }
-    pub fn as_key(
+
+    pub fn as_anchored_key(
         &self,
         builder: &mut CircuitBuilder<F, D>,
-    ) -> (BoolTarget, Target, KeyOrWildcardTarget) {
-        let prefix = builder.constant(F::from(StatementTmplArgPrefix::Key));
+    ) -> (BoolTarget, Target, LiteralOrWildcardTarget) {
+        let prefix = builder.constant(F::from(StatementTmplArgPrefix::AnchoredKey));
         let case_ok = builder.is_equal(self.elements[0], prefix);
         let id_wildcard_index = self.elements[1];
-        let value_key_or_wildcard = KeyOrWildcardTarget::from_slice(&self.elements[5..9]);
+        let value_key_or_wildcard = LiteralOrWildcardTarget::from_slice(&self.elements[5..9]);
         (case_ok, id_wildcard_index, value_key_or_wildcard)
     }
+
     pub fn as_wildcard_literal(&self, builder: &mut CircuitBuilder<F, D>) -> (BoolTarget, Target) {
         let prefix = builder.constant(F::from(StatementTmplArgPrefix::WildcardLiteral));
         let case_ok = builder.is_equal(self.elements[0], prefix);
         let wildcard_index = self.elements[1];
         (case_ok, wildcard_index)
+    }
+
+    pub fn set_targets(
+        &self,
+        pw: &mut PartialWitness<F>,
+        params: &Params,
+        st_tmpl_arg: &StatementTmplArg,
+    ) -> Result<()> {
+        Ok(pw.set_target_arr(&self.elements, &st_tmpl_arg.to_fields(params))?)
     }
 }
 
@@ -366,6 +408,17 @@ impl StatementTmplArgTarget {
 pub struct StatementTmplTarget {
     pub pred: PredicateTarget,
     pub args: Vec<StatementTmplArgTarget>,
+}
+
+impl StatementTmplTarget {
+    pub fn set_targets(
+        &self,
+        pw: &mut PartialWitness<F>,
+        params: &Params,
+        st_tmpl: &StatementTmpl,
+    ) -> Result<()> {
+        Ok(pw.set_target_arr(&self.flatten(), &st_tmpl.to_fields(params))?)
+    }
 }
 
 #[derive(Clone)]
@@ -446,6 +499,27 @@ impl From<MerkleClaimAndProofTarget> for MerkleClaimTarget {
             value: pf.value,
             existence: pf.existence,
         }
+    }
+}
+
+impl Flattenable for HashOutTarget {
+    fn flatten(&self) -> Vec<Target> {
+        self.elements.to_vec()
+    }
+    fn from_flattened(_params: &Params, vs: &[Target]) -> Self {
+        assert_eq!(vs.len(), HASH_SIZE);
+        Self {
+            elements: array::from_fn(|i| vs[i]),
+        }
+    }
+}
+
+impl Flattenable for ValueTarget {
+    fn flatten(&self) -> Vec<Target> {
+        self.elements.to_vec()
+    }
+    fn from_flattened(_params: &Params, vs: &[Target]) -> Self {
+        Self::from_slice(vs)
     }
 }
 
@@ -584,6 +658,7 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     fn connect_slice(&mut self, xs: &[Target], ys: &[Target]);
     fn add_virtual_value(&mut self) -> ValueTarget;
     fn add_virtual_statement(&mut self, params: &Params) -> StatementTarget;
+    fn add_virtual_statement_arg(&mut self) -> StatementArgTarget;
     fn add_virtual_predicate(&mut self) -> PredicateTarget;
     fn add_virtual_operation(&mut self, params: &Params) -> OperationTarget;
     fn add_virtual_statement_tmpl_arg(&mut self) -> StatementTmplArgTarget;
@@ -630,6 +705,9 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     // Convenience methods for Boolean into-iters.
     fn all(&mut self, xs: impl IntoIterator<Item = BoolTarget>) -> BoolTarget;
     fn any(&mut self, xs: impl IntoIterator<Item = BoolTarget>) -> BoolTarget;
+
+    // Return a bit-mask of size `len` that selects all positions lower than `n`
+    fn lt_mask(&mut self, len: usize, n: Target) -> Vec<BoolTarget>;
 }
 
 impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
@@ -655,10 +733,14 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
         StatementTarget {
             predicate,
             args: (0..params.max_statement_args)
-                .map(|_| StatementArgTarget {
-                    elements: self.add_virtual_target_arr(),
-                })
+                .map(|_| self.add_virtual_statement_arg())
                 .collect(),
+        }
+    }
+
+    fn add_virtual_statement_arg(&mut self) -> StatementArgTarget {
+        StatementArgTarget {
+            elements: self.add_virtual_target_arr(),
         }
     }
 
@@ -882,6 +964,28 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
             .reduce(|a, b| self.or(a, b))
             .unwrap_or(self._false())
     }
+
+    fn lt_mask(&mut self, len: usize, n: Target) -> Vec<BoolTarget> {
+        let zero = self.zero();
+        let mask: Vec<_> = (0..len)
+            .map(|_| self.add_virtual_bool_target_safe())
+            .collect();
+        // We have `n` ones in the mask
+        let mask_sum = mask
+            .iter()
+            .map(|b| b.target)
+            .reduce(|acc, x| self.add(acc, x))
+            .unwrap_or(zero);
+        self.connect(n, mask_sum);
+
+        // The elements in the mask can only transition from 1 to 0 or 0 to 0.
+        for i in 0..len - 1 {
+            let diff = self.sub(mask[i].target, mask[i + 1].target);
+            self.assert_bool(BoolTarget::new_unsafe(diff));
+        }
+
+        mask
+    }
 }
 
 #[cfg(test)]
@@ -980,7 +1084,7 @@ mod tests {
     }
 
     #[test]
-    fn custom_predicate_batch_target() -> frontend::Result<()> {
+    fn test_custom_predicate_batch_target() -> frontend::Result<()> {
         let params = Params {
             max_statement_args: 6,
             max_custom_predicate_wildcards: 12,

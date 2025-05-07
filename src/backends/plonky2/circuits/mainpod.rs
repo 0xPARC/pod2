@@ -1,7 +1,8 @@
-use std::{array, sync::Arc};
+use std::{array, iter, sync::Arc};
 
-use itertools::zip_eq;
+use itertools::{zip_eq, Itertools};
 use plonky2::{
+    field::types::Field,
     hash::{hash_types::HashOutTarget, poseidon::PoseidonHash},
     iop::{
         target::{BoolTarget, Target},
@@ -17,7 +18,7 @@ use crate::{
             common::{
                 CircuitBuilderPod, CustomPredicateBatchTarget, CustomPredicateTarget, Flattenable,
                 MerkleClaimTarget, OperationTarget, PredicateTarget, StatementArgTarget,
-                StatementTarget, ValueTarget,
+                StatementTarget, StatementTmplArgTarget, StatementTmplTarget, ValueTarget,
             },
             signedpod::{SignedPodVerifyGadget, SignedPodVerifyTarget},
         },
@@ -30,7 +31,8 @@ use crate::{
     },
     middleware::{
         AnchoredKey, CustomPredicateBatch, NativeOperation, NativePredicate, Params, PodType,
-        Statement, StatementArg, ToFields, Value, F, KEY_TYPE, SELF, VALUE_SIZE,
+        Statement, StatementArg, StatementTmplArg, StatementTmplArgPrefix, ToFields, Value, F,
+        KEY_TYPE, SELF, VALUE_SIZE,
     },
 };
 
@@ -525,36 +527,159 @@ struct CustomPredicateEntryTarget {
     predicate: CustomPredicateTarget,
 }
 
+impl Flattenable for CustomPredicateEntryTarget {
+    fn flatten(&self) -> Vec<Target> {
+        self.id
+            .elements
+            .iter()
+            .chain(iter::once(&self.index))
+            .chain(self.predicate.flatten().iter())
+            .cloned()
+            .collect()
+    }
+    fn from_flattened(params: &Params, vs: &[Target]) -> Self {
+        Self {
+            id: HashOutTarget::from_flattened(params, &vs[0..4]),
+            index: vs[4],
+            predicate: CustomPredicateTarget::from_flattened(params, &vs[5..]),
+        }
+    }
+}
+
+impl CustomPredicateEntryTarget {
+    fn hash(&self, builder: &mut CircuitBuilder<F, D>) -> HashOutTarget {
+        builder.hash_n_to_hash_no_pad::<PoseidonHash>(self.flatten())
+    }
+}
+
 impl CustomOperationVerifyGadget {
+    fn statement_arg_from_template(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        st_tmpl_arg: &StatementTmplArgTarget,
+        args: &[ValueTarget],
+    ) -> StatementArgTarget {
+        let zero = builder.zero();
+        let (is_literal, value_literal) = st_tmpl_arg.as_literal(builder);
+        let (is_ak, ak_id_wc_index, ak_key_lit_or_wc) = st_tmpl_arg.as_anchored_key(builder);
+        let (is_wc_literal, wc_index) = st_tmpl_arg.as_wildcard_literal(builder);
+
+        let ((_is_ak_key_lit, ak_key_lit), (is_ak_key_wc, ak_key_wc_index)) =
+            ak_key_lit_or_wc.cases(builder);
+
+        // optimization: ak_id_wc_index and wc_index use the same signals, so we only need to do one
+        // random access to resolve both of them
+        assert_eq!(ak_id_wc_index, wc_index);
+        // If the index is not used, use a 0 instead to still pass the range constraints from
+        // vec_ref
+        let first_index = ak_id_wc_index;
+        let is_first_index_valid = builder.or(is_ak, is_wc_literal);
+        let first_index = builder.select(is_first_index_valid, first_index, zero);
+        let resolved_ak_id = builder.vec_ref(&self.params, args, first_index);
+        let resolved_wc = resolved_ak_id;
+
+        // If the index is not used, use a 0 instead to still pass the range constraints from
+        // vec_ref
+        let second_index = ak_key_wc_index;
+        let is_second_index_valid = builder.and(is_ak, is_ak_key_wc);
+        let second_index = builder.select(is_second_index_valid, second_index, zero);
+        let resolved_ak_key = builder.vec_ref(&self.params, args, second_index);
+
+        let ak_key = ak_key_lit; // is_ak_key_lit
+        let ak_key =
+            builder.select_flattenable(&self.params, is_ak_key_wc, &resolved_ak_key, &ak_key);
+
+        let first = ValueTarget::zero(builder); // is_none
+        let first = builder.select_flattenable(&self.params, is_literal, &value_literal, &first);
+        let first = builder.select_flattenable(&self.params, is_ak, &resolved_ak_id, &first);
+        let first = builder.select_flattenable(&self.params, is_wc_literal, &resolved_wc, &first);
+
+        let second = ValueTarget::zero(builder); // is_none or is_literal or is_wc_literal
+        let second = builder.select_flattenable(&self.params, is_ak, &ak_key, &second);
+
+        StatementArgTarget::new(first, second)
+    }
+
+    fn statement_from_template(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        st_tmpl: &StatementTmplTarget,
+        args: &[ValueTarget],
+    ) -> StatementTarget {
+        let args = st_tmpl
+            .args
+            .iter()
+            .map(|st_tmpl_arg| self.statement_arg_from_template(builder, st_tmpl_arg, args))
+            .collect();
+        StatementTarget {
+            predicate: st_tmpl.pred.clone(),
+            args,
+        }
+    }
+
     fn eval(
         &self,
         builder: &mut CircuitBuilder<F, D>,
         st: &StatementTarget,
         op: &OperationTarget,
-        op_args: &[StatementTarget], // resolved operation arguments
-        args: &[ValueTarget],        // arguments to the custom predicate, public and private
-        // Resolved custom predicate
-        custom_predicate: &CustomPredicateEntryTarget,
+        resolved_op_args: &[StatementTarget],
+        resolved_custom_predicate: &CustomPredicateEntryTarget,
+        args: &[ValueTarget], // arguments to the custom predicate, public and private
     ) -> Result<BoolTarget> {
         // Some sanity checks
-        assert_eq!(self.params.max_operation_args, op_args.len());
+        assert_eq!(self.params.max_operation_args, resolved_op_args.len());
         assert_eq!(self.params.max_custom_predicate_wildcards, args.len());
 
+        // Check the statement predicate
         let (op_is_custom, batch_id, index) = op.type_as_custom(builder);
-        let id_ok = builder.is_equal_slice(&batch_id.elements, &custom_predicate.id.elements);
-        let index_ok = builder.is_equal(index, custom_predicate.index);
+        let id_ok =
+            builder.is_equal_slice(&batch_id.elements, &resolved_custom_predicate.id.elements);
+        let index_ok = builder.is_equal(index, resolved_custom_predicate.index);
 
+        // Check the statement arguments
         let expected_predicate = PredicateTarget::new_custom(builder, batch_id, index);
-        let arg_none = StatementArgTarget::none(builder);
+        let arg_none = ValueTarget::zero(builder);
+        let lt_mask = builder.lt_mask(
+            self.params.max_statement_args,
+            resolved_custom_predicate.predicate.args_len,
+        );
         let expected_args = (0..self.params.max_statement_args)
-            .map(|i| todo!())
+            .map(|i| {
+                let v = builder.select_flattenable(&self.params, lt_mask[i], &args[i], &arg_none);
+                StatementArgTarget::wildcard_literal(builder, &v)
+            })
             .collect();
         let expected_statement = StatementTarget {
             predicate: expected_predicate,
             args: expected_args,
         };
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
-        Ok(builder.all([id_ok, index_ok, op_is_custom, st_ok]))
+
+        // Check the operation arguments
+        // From each statement template we generate an expected statement using replacing the
+        // wildcards by the arguments.  Then we compare the expected statement with the operation
+        // argument.
+        let expected_sts: Vec<_> = resolved_custom_predicate
+            .predicate
+            .statements
+            .iter()
+            .map(|st_tmpl| self.statement_from_template(builder, st_tmpl, args))
+            .collect();
+        let sts_eq: Vec<_> = expected_sts
+            .iter()
+            .zip_eq(resolved_op_args.iter())
+            .map(|(expected_st, st)| builder.is_equal_flattenable(expected_st, st))
+            .collect();
+        let all_st_eq = builder.all(sts_eq.clone());
+        let some_st_eq = builder.any(sts_eq);
+        // NOTE: This BoolTarget is safe because both inputs to the select are safe
+        let is_op_args_ok = BoolTarget::new_unsafe(builder.select(
+            resolved_custom_predicate.predicate.conjunction,
+            all_st_eq.target,
+            some_st_eq.target,
+        ));
+
+        Ok(builder.all([op_is_custom, id_ok, index_ok, st_ok, is_op_args_ok]))
     }
 }
 
@@ -621,14 +746,25 @@ impl MainPodVerifyGadget {
             .map(|pf| pf.into())
             .collect();
 
-        // Add `CustomPredicateBatch` targets
+        // Calculate `CustomPredicateBatch` ids and build a table of available custom predicates.
         let custom_predicate_batches: Vec<_> = (0..params.max_custom_predicate_batches)
             .map(|_| builder.add_virtual_custom_predicate_batch(&self.params))
-            .collect();
-        let custom_predicate_batch_ids: Vec<_> = custom_predicate_batches
-            .iter()
-            .map(|cpb| cpb.id(builder))
-            .collect();
+            .collect_vec();
+
+        let mut custom_predicate_table =
+            Vec::with_capacity(params.max_custom_predicate_batches * params.max_custom_batch_size);
+        for cpb in custom_predicate_batches.iter() {
+            let id = cpb.id(builder);
+            for (index, cp) in cpb.predicates.iter().enumerate() {
+                let cpe_hash = CustomPredicateEntryTarget {
+                    id,
+                    index: builder.constant(F::from_canonical_usize(index)),
+                    predicate: cp.clone(),
+                }
+                .hash(builder);
+                custom_predicate_table.push(cpe_hash);
+            }
+        }
 
         // 2. Calculate the Pod Id from the public statements
         let pub_statements_flattened = pub_statements.iter().flat_map(|s| s.flatten()).collect();
@@ -765,7 +901,10 @@ mod tests {
             mainpod::{OperationArg, OperationAux},
             primitives::merkletree::{MerkleClaimAndProof, MerkleTree},
         },
-        middleware::{hash_values, Hash, OperationType, PodId, RawValue},
+        middleware::{
+            hash_str, hash_values, Hash, Key, KeyOrWildcard, OperationType, PodId, Predicate,
+            RawValue, StatementTmpl, Wildcard, WildcardValue,
+        },
     };
 
     fn operation_verify(
@@ -1438,5 +1577,149 @@ mod tests {
         )];
         let prev_statements = vec![root_st, key_st, value_st];
         operation_verify(st, op, prev_statements, merkle_proofs)
+    }
+
+    fn helper_statement_arg_from_template(
+        params: &Params,
+        st_tmpl_arg: StatementTmplArg,
+        args: Vec<Value>,
+        expected_st_arg: StatementArg,
+    ) -> Result<()> {
+        let config = CircuitConfig::standard_recursion_config();
+        let mut builder = CircuitBuilder::<F, D>::new(config);
+        let gadget = CustomOperationVerifyGadget {
+            params: params.clone(),
+        };
+
+        let st_tmpl_arg_target = builder.add_virtual_statement_tmpl_arg();
+        let args_target: Vec<_> = (0..args.len())
+            .map(|_| builder.add_virtual_value())
+            .collect();
+        let st_arg_target =
+            gadget.statement_arg_from_template(&mut builder, &st_tmpl_arg_target, &args_target);
+        let expected_st_arg_target = builder.add_virtual_statement_arg();
+        builder.connect_array(expected_st_arg_target.elements, st_arg_target.elements);
+
+        let mut pw = PartialWitness::<F>::new();
+
+        st_tmpl_arg_target.set_targets(&mut pw, params, &st_tmpl_arg)?;
+        for (arg_target, arg) in args_target.iter().zip(args.iter()) {
+            arg_target.set_targets(&mut pw, arg)?;
+        }
+        expected_st_arg_target.set_targets(&mut pw, params, &expected_st_arg)?;
+
+        // generate & verify proof
+        let data = builder.build::<C>();
+        let proof = data.prove(pw).unwrap();
+        data.verify(proof.clone()).unwrap();
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_statement_arg_from_template() -> Result<()> {
+        let params = Params::default();
+
+        let pod_id = PodId(hash_str("pod_id"));
+
+        // case: None
+        let st_tmpl_arg = StatementTmplArg::None;
+        let args = vec![Value::from(1), Value::from(2), Value::from(3)];
+        let expected_st_arg = StatementArg::None;
+        helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
+
+        // case: Literal
+        let st_tmpl_arg = StatementTmplArg::Literal(Value::from("foo"));
+        let args = vec![Value::from(1), Value::from(2), Value::from(3)];
+        let expected_st_arg = StatementArg::Literal(Value::from("foo"));
+        helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
+
+        // case: AnchoredKey(id_wildcard, key_literal)
+        let st_tmpl_arg = StatementTmplArg::AnchoredKey(
+            Wildcard::new("a".to_string(), 1),
+            KeyOrWildcard::Key(Key::from("foo")),
+        );
+        let args = vec![Value::from(1), Value::from(pod_id.0), Value::from(3)];
+        let expected_st_arg = StatementArg::Key(AnchoredKey::new(pod_id, Key::from("foo")));
+        helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
+
+        // case: AnchoredKey(id_wildcard, key_wildcard)
+        let st_tmpl_arg = StatementTmplArg::AnchoredKey(
+            Wildcard::new("a".to_string(), 1),
+            KeyOrWildcard::Wildcard(Wildcard::new("b".to_string(), 2)),
+        );
+        let args = vec![Value::from(1), Value::from(pod_id.0), Value::from("key")];
+        let expected_st_arg = StatementArg::Key(AnchoredKey::new(pod_id, Key::from("key")));
+        helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
+
+        // case: WildcardLiteral(wildcard)
+        let st_tmpl_arg = StatementTmplArg::WildcardLiteral(Wildcard::new("a".to_string(), 1));
+        let args = vec![Value::from(1), Value::from("key"), Value::from(3)];
+        let expected_st_arg = StatementArg::WildcardLiteral(WildcardValue::Key(Key::from("key")));
+        helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
+
+        Ok(())
+    }
+
+    fn helper_statement_from_template(
+        params: &Params,
+        st_tmpl: StatementTmpl,
+        args: Vec<Value>,
+        expected_st: Statement,
+    ) -> Result<()> {
+        let config = CircuitConfig::standard_recursion_config();
+        let mut builder = CircuitBuilder::<F, D>::new(config);
+        let gadget = CustomOperationVerifyGadget {
+            params: params.clone(),
+        };
+
+        let st_tmpl_target = builder.add_virtual_statement_tmpl(params);
+        let args_target: Vec<_> = (0..args.len())
+            .map(|_| builder.add_virtual_value())
+            .collect();
+        let st_target = gadget.statement_from_template(&mut builder, &st_tmpl_target, &args_target);
+        let expected_st_target = builder.add_virtual_statement(params);
+        builder.connect_flattenable(&expected_st_target, &st_target);
+
+        let mut pw = PartialWitness::<F>::new();
+
+        st_tmpl_target.set_targets(&mut pw, params, &st_tmpl)?;
+        for (arg_target, arg) in args_target.iter().zip(args.iter()) {
+            arg_target.set_targets(&mut pw, arg)?;
+        }
+        expected_st_target.set_targets(&mut pw, params, &expected_st.into())?;
+
+        // generate & verify proof
+        let data = builder.build::<C>();
+        let proof = data.prove(pw).unwrap();
+        data.verify(proof.clone()).unwrap();
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_statement_from_template() -> Result<()> {
+        let params = Params::default();
+
+        let pod_id = PodId(hash_str("pod_id"));
+
+        let st_tmpl = StatementTmpl {
+            pred: Predicate::Native(NativePredicate::ValueOf),
+            args: vec![
+                StatementTmplArg::AnchoredKey(
+                    Wildcard::new("a".to_string(), 1),
+                    KeyOrWildcard::Key(Key::from("key")),
+                ),
+                StatementTmplArg::Literal(Value::from("value")),
+            ],
+        };
+        let args = vec![Value::from(1), Value::from(pod_id.0), Value::from(3)];
+        let expected_st = Statement::ValueOf(
+            AnchoredKey::new(pod_id, Key::from("key")),
+            Value::from("value"),
+        );
+        helper_statement_from_template(&params, st_tmpl, args, expected_st)?;
+
+        Ok(())
     }
 }

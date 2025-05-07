@@ -363,7 +363,7 @@ pub fn check_st_tmpl(
         (StatementTmplArg::None, StatementArg::None) => true,
         (StatementTmplArg::Literal(lhs), StatementArg::Literal(rhs)) if lhs == rhs => true,
         (
-            StatementTmplArg::Key(pod_id_wc, key_or_wc),
+            StatementTmplArg::AnchoredKey(pod_id_wc, key_or_wc),
             StatementArg::Key(AnchoredKey { pod_id, key }),
         ) => {
             let pod_id_ok = check_or_set(WildcardValue::PodId(*pod_id), pod_id_wc, wildcard_map);
