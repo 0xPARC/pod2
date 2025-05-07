@@ -1,0 +1,159 @@
+// Grammar for the "Podlog" language. Used for describing POD2 Custom
+// Predicates and Proof Requests.
+
+// Silent rules (`_`) are automatically handled by Pest between other rules.
+// WHITESPACE matches one or more spaces, tabs, or newlines.
+WHITESPACE = _{ (" " | "\t" | NEWLINE)+ }
+
+// COMMENT matches '//' followed by any characters until the end of the line.
+// Also silent.
+COMMENT = _{ "//" ~ (!NEWLINE ~ ANY)* }
+
+// Define rules for identifiers (predicate names, variable names without '?')
+// Must start with alpha or _, followed by alpha, numeric, or _
+identifier = @{ !("private") ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+
+private_kw = { "private:" }
+
+// Keywords for native statements (used to prevent collision with custom predicate names)
+native_statement_keyword = @{
+    "ValueOf" | "Equal" | "NotEqual" | "Gt" | "GtEq" | "Lt" | "LtEq" | "Contains" |
+    "NotContains" | "SumOf" | "ProductOf" | "MaxOf" | "HashOf" | "DictContains" |
+    "DictNotContains" | "ArrayContains"
+    // "SetContains" | "SetNotContains"
+}
+
+// An identifier specifically for predicate names, cannot be a native keyword.
+predicate_identifier = @{
+    // Negative lookahead: ensure the matched text is not exactly a native keyword.
+    !native_statement_keyword ~ identifier
+}
+
+// Define variable names (start with '?')
+variable = @{ "?" ~ identifier }
+
+arg_section      = {
+    // Case A: one or more public args, optionally followed by ", private: …"
+    public_arg_list ~ ("," ~ private_kw ~ private_arg_list)?
+  | // Case B: private-only
+    private_kw ~ private_arg_list
+}
+
+// Argument list (for predicate definition) - comma-separated identifiers
+public_arg_list = { identifier ~ ("," ~ identifier)* } 
+private_arg_list = { identifier ~ ("," ~ identifier)* }
+
+// Top-level items: Request or Custom Predicate Definition
+document = { SOI ~ (custom_predicate_def | request_def)* ~ EOI }
+
+request_def = { "REQUEST" ~ "(" ~ statement_list? ~ ")" } // Allow empty REQUEST?
+
+// Define conjunction type explicitly
+conjunction_type = { "AND" | "OR" }
+
+custom_predicate_def = {
+    predicate_identifier
+  ~ "(" ~ arg_section ~ ")"
+  ~ "="
+  ~ conjunction_type
+  ~ "(" ~ statement_list ~ ")" 
+}
+
+// statement_list implicitly allows whitespace/comments between statements due to silent rules
+statement_list = { statement+ }
+
+// Combined statement rule
+statement = {
+    value_of_stmt |
+    equal_stmt |
+    not_equal_stmt |
+    gt_stmt |
+    gt_eq_stmt |
+    lt_stmt |
+    lt_eq_stmt |
+    contains_stmt |
+    not_contains_stmt |
+    sum_of_stmt |
+    product_of_stmt |
+    max_of_stmt |
+    hash_of_stmt |
+    dict_contains_stmt |
+    dict_not_contains_stmt |
+  //  set_contains_stmt |
+  //  set_not_contains_stmt |
+    array_contains_stmt |
+    custom_predicate_call // Should come last
+}
+
+// Arguments for predicate calls
+// Can be a variable, a literal value, or an anchored key
+custom_call_arg = { variable | literal_value } // Args allowed in custom calls
+call_arg_list = { custom_call_arg ~ ("," ~ custom_call_arg)* } // For custom calls
+
+// Anchored Key: ?Var[\"key_literal\" | ?KeyVar]
+anchored_key = { variable ~ "[" ~ (variable | literal_string) ~ "]" }
+
+// Literal Values (ordered to avoid ambiguity, e.g., string before int)
+literal_value = {
+    literal_dict |
+    literal_set |
+    literal_array |
+    literal_bool |
+    literal_raw |
+    literal_string |
+    literal_int
+}
+
+// Primitive literal types
+literal_int = @{ "-"? ~ ASCII_DIGIT+ }
+literal_bool = @{ "true" | "false" }
+// literal_raw: 0x followed by one or more PAIRS of hex digits
+literal_raw = @{ "0x" ~ (ASCII_HEX_DIGIT ~ ASCII_HEX_DIGIT)+ }
+
+// -- New String Literal Parsing Strategy (based on Pest JSON example) --
+literal_string = ${ "\"" ~ inner ~ "\"" } // Compound atomic string rule
+inner = @{ char* } // Atomic rule for the raw inner content
+char = { // Rule for a single logical character (unescaped or escaped)
+    !("\"" | "\\") ~ ANY // Any char except quote or backslash
+    | "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t") // Simple escape sequences
+    | "\\" ~ ("u" ~ ASCII_HEX_DIGIT{4}) // Unicode escape sequence
+}
+// -- End New String Literal Parsing Strategy --
+
+// Container Literals (recursive definition using literal_value)
+literal_array = { "[" ~ (literal_value ~ ("," ~ literal_value)*)? ~ "]" }
+literal_set = { "#[" ~ (literal_value ~ ("," ~ literal_value)*)? ~ "]" }
+literal_dict = { "{" ~ (dict_pair ~ ("," ~ dict_pair)*)? ~ "}" }
+dict_pair = { literal_string ~ ":" ~ literal_value }
+
+
+// Rules for specific native predicate calls
+value_of_stmt = { "ValueOf" ~ "(" ~ anchored_key ~ "," ~ literal_value ~ ")" } 
+equal_stmt = { "Equal" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ ")" } 
+not_equal_stmt = { "NotEqual" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ ")" }
+gt_stmt = { "Gt" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ ")" } 
+gt_eq_stmt = { "GtEq" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ ")" }
+lt_stmt = { "Lt" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ ")" } 
+lt_eq_stmt = { "LtEq" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ ")" }
+contains_stmt = { "Contains" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," ~ anchored_key ~ ")" }
+not_contains_stmt = { "NotContains" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ ")" }
+sum_of_stmt = { "SumOf" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," ~ anchored_key ~ ")" }
+product_of_stmt = { "ProductOf" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," ~ anchored_key ~ ")" }
+max_of_stmt = { "MaxOf" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," ~ anchored_key ~ ")" }
+hash_of_stmt = { "HashOf" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," ~ anchored_key ~ ")" }
+dict_contains_stmt = { "DictContains" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," ~ anchored_key ~ ")" }
+dict_not_contains_stmt = { "DictNotContains" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ ")" }
+// set_contains_stmt = { "SetContains" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ ")" }
+// set_not_contains_stmt = { "SetNotContains" ~ "(" ~ anchored_key ~ ")" }
+array_contains_stmt = { "ArrayContains" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," ~ anchored_key ~ ")" }
+
+// Rule for a custom predicate call
+custom_predicate_call = { predicate_identifier ~ "(" ~ call_arg_list? ~ ")" } // Uses call_arg_list with custom_call_arg
+
+// --- Rules for testing full input matching ---
+test_identifier = { SOI ~ identifier ~ EOI }
+test_variable = { SOI ~ variable ~ EOI }
+test_literal_int = { SOI ~ literal_int ~ EOI }
+test_literal_raw = { SOI ~ literal_raw ~ EOI } 
+test_literal_value = { SOI ~ literal_value ~ EOI }
+test_custom_predicate_call = { SOI ~ custom_predicate_call ~ EOI } test_custom_predicate_def = { SOI ~ custom_predicate_def ~ EOI } 
