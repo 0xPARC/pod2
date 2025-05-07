@@ -24,6 +24,7 @@ pub fn key(s: &str) -> KeyOrWildcardStr {
 }
 
 /// Builder Argument for the StatementTmplBuilder
+#[derive(Clone)]
 pub enum BuilderArg {
     Literal(Value),
     /// Key: (origin, key), where origin is a Wildcard and key can be both Key or Wildcard
@@ -64,6 +65,7 @@ pub fn literal(v: impl Into<Value>) -> BuilderArg {
     BuilderArg::Literal(v.into())
 }
 
+#[derive(Clone)]
 pub struct StatementTmplBuilder {
     predicate: Predicate,
     args: Vec<BuilderArg>,
@@ -80,6 +82,41 @@ impl StatementTmplBuilder {
     pub fn arg(mut self, a: impl Into<BuilderArg>) -> Self {
         self.args.push(a.into());
         self
+    }
+
+    /// Desugar the predicate to a simpler form
+    /// Should mirror the logic in `MainPodBuilder::lower_op`
+    fn desugar(self) -> StatementTmplBuilder {
+        match self.predicate {
+            Predicate::Native(NativePredicate::Gt) => {
+                let mut stb = StatementTmplBuilder {
+                    predicate: Predicate::Native(NativePredicate::Lt),
+                    args: self.args,
+                };
+                stb.args.swap(0, 1);
+                stb
+            }
+            Predicate::Native(NativePredicate::GtEq) => {
+                let mut stb = StatementTmplBuilder {
+                    predicate: Predicate::Native(NativePredicate::LtEq),
+                    args: self.args,
+                };
+                stb.args.swap(0, 1);
+                stb
+            }
+            Predicate::Native(NativePredicate::ArrayContains)
+            | Predicate::Native(NativePredicate::DictContains) => StatementTmplBuilder {
+                predicate: Predicate::Native(NativePredicate::Contains),
+                args: self.args,
+            },
+            Predicate::Native(NativePredicate::DictNotContains)
+            | Predicate::Native(NativePredicate::SetNotContains) => StatementTmplBuilder {
+                predicate: Predicate::Native(NativePredicate::NotContains),
+                args: self.args,
+            },
+            // TODO: SetContains
+            _ => self,
+        }
     }
 }
 
@@ -147,7 +184,8 @@ impl CustomPredicateBatchBuilder {
         let statements = sts
             .iter()
             .map(|sb| {
-                let args = sb
+                let stb = sb.clone().desugar();
+                let args = stb
                     .args
                     .iter()
                     .map(|a| match a {
@@ -162,7 +200,7 @@ impl CustomPredicateBatchBuilder {
                     })
                     .collect();
                 StatementTmpl {
-                    pred: sb.predicate.clone(),
+                    pred: stb.predicate.clone(),
                     args,
                 }
             })
@@ -206,9 +244,11 @@ fn resolve_wildcard(args: &[&str], priv_args: &[&str], s: &str) -> Wildcard {
 mod tests {
     use super::*;
     use crate::{
+        backends::plonky2::mock::mainpod::MockProver,
         examples::custom::{eth_dos_batch, eth_friend_batch},
-        middleware,
-        middleware::{CustomPredicateRef, Params, PodType},
+        frontend::MainPodBuilder,
+        middleware::{self, CustomPredicateRef, Params, PodType},
+        op,
     };
 
     #[test]
@@ -234,6 +274,55 @@ mod tests {
             Arc::unwrap_or_clone(eth_dos_batch);
         let fields = eth_dos_batch_mw.to_fields(&params);
         println!("Batch b, serialized: {:?}", fields);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_desugared_gt_custom_pred() -> Result<()> {
+        let params = Params::default();
+        let mut builder = CustomPredicateBatchBuilder::new("gt_custom_pred".into());
+
+        let gt_stb = StatementTmplBuilder::new(NativePredicate::Gt)
+            .arg(("s1_origin", "s1_key"))
+            .arg(("s2_origin", "s2_key"));
+
+        builder.predicate_and(
+            "gt_custom_pred",
+            &params,
+            &["s1_origin", "s1_key", "s2_origin", "s2_key"],
+            &[],
+            &[gt_stb],
+        )?;
+        let batch = builder.finish();
+        let batch_clone = batch.clone();
+        let gt_custom_pred = CustomPredicateRef::new(batch, 0);
+
+        let mut mp_builder = MainPodBuilder::new(&params);
+
+        // 2 > 1
+        let s1 = mp_builder.literal(true, Value::from(2))?;
+        let s2 = mp_builder.literal(true, Value::from(1))?;
+
+        // Adding a gt operation will produce a desugared lt operation
+        let desugared_gt = mp_builder.pub_op(op!(gt, s1, s2))?;
+        assert_eq!(
+            desugared_gt.predicate(),
+            Predicate::Native(NativePredicate::Lt)
+        );
+        // Check that the desugared predicate is the same as the one in the statement template
+        assert_eq!(
+            desugared_gt.predicate(),
+            *batch_clone.predicates[0].statements[0].pred()
+        );
+
+        // Check that our custom predicate matches the statement template
+        // against the desugared gt statement (actually a lt statement)
+        mp_builder.pub_op(op!(custom, gt_custom_pred, desugared_gt))?;
+
+        // Check that the POD builds
+        let mut prover = MockProver {};
+        let proof = mp_builder.prove(&mut prover, &params)?;
 
         Ok(())
     }
