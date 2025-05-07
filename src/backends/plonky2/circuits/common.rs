@@ -241,56 +241,6 @@ impl OperationTarget {
 }
 
 #[derive(Clone)]
-pub struct CustomPredicateTarget {
-    pub conjunction: BoolTarget,
-    // len = params.max_custom_predicate_arity
-    pub statements: Vec<StatementTmplTarget>,
-    pub args_len: Target,
-}
-
-impl CustomPredicateTarget {
-    pub fn set_targets(
-        &self,
-        pw: &mut PartialWitness<F>,
-        params: &Params,
-        custom_predicate: &CustomPredicate,
-    ) -> Result<()> {
-        Ok(pw.set_target_arr(&self.flatten(), &custom_predicate.to_fields(params))?)
-    }
-}
-
-#[derive(Clone)]
-pub struct CustomPredicateBatchTarget {
-    pub predicates: Vec<CustomPredicateTarget>,
-}
-
-impl CustomPredicateBatchTarget {
-    pub fn id(&self, builder: &mut CircuitBuilder<F, D>) -> HashOutTarget {
-        let flattened = self.predicates.iter().flat_map(|cp| cp.flatten()).collect();
-        builder.hash_n_to_hash_no_pad::<PoseidonHash>(flattened)
-    }
-
-    pub fn set_targets(
-        &self,
-        pw: &mut PartialWitness<F>,
-        params: &Params,
-        custom_predicate_batch: &CustomPredicateBatch,
-    ) -> Result<()> {
-        let pad_predicate = CustomPredicate::empty();
-        for (i, predicate) in custom_predicate_batch
-            .predicates()
-            .iter()
-            .chain(iter::repeat(&pad_predicate))
-            .take(params.max_custom_batch_size)
-            .enumerate()
-        {
-            self.predicates[i].set_targets(pw, params, predicate)?;
-        }
-        Ok(())
-    }
-}
-
-#[derive(Clone)]
 pub struct NativePredicateTarget(Target);
 
 impl NativePredicateTarget {
@@ -416,6 +366,56 @@ impl StatementTmplArgTarget {
 pub struct StatementTmplTarget {
     pub pred: PredicateTarget,
     pub args: Vec<StatementTmplArgTarget>,
+}
+
+#[derive(Clone)]
+pub struct CustomPredicateTarget {
+    pub conjunction: BoolTarget,
+    // len = params.max_custom_predicate_arity
+    pub statements: Vec<StatementTmplTarget>,
+    pub args_len: Target,
+}
+
+impl CustomPredicateTarget {
+    pub fn set_targets(
+        &self,
+        pw: &mut PartialWitness<F>,
+        params: &Params,
+        custom_predicate: &CustomPredicate,
+    ) -> Result<()> {
+        Ok(pw.set_target_arr(&self.flatten(), &custom_predicate.to_fields(params))?)
+    }
+}
+
+#[derive(Clone)]
+pub struct CustomPredicateBatchTarget {
+    pub predicates: Vec<CustomPredicateTarget>,
+}
+
+impl CustomPredicateBatchTarget {
+    pub fn id(&self, builder: &mut CircuitBuilder<F, D>) -> HashOutTarget {
+        let flattened = self.predicates.iter().flat_map(|cp| cp.flatten()).collect();
+        builder.hash_n_to_hash_no_pad::<PoseidonHash>(flattened)
+    }
+
+    pub fn set_targets(
+        &self,
+        pw: &mut PartialWitness<F>,
+        params: &Params,
+        custom_predicate_batch: &CustomPredicateBatch,
+    ) -> Result<()> {
+        let pad_predicate = CustomPredicate::empty();
+        for (i, predicate) in custom_predicate_batch
+            .predicates()
+            .iter()
+            .chain(iter::repeat(&pad_predicate))
+            .take(params.max_custom_batch_size)
+            .enumerate()
+        {
+            self.predicates[i].set_targets(pw, params, predicate)?;
+        }
+        Ok(())
+    }
 }
 
 /// Trait for target structs that may be converted to and from vectors
