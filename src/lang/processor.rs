@@ -825,16 +825,16 @@ mod tests {
 
     #[test]
     fn test_process_literal_args() {
-        // process_lits(Data) = AND(
+        // process_literals(Data) = AND(
         //   ValueOf(?Data["num"], 123)
         //   ValueOf(?Data["flag"], true)
         //   ValueOf(?Data["msg"], "hello")
         // )
         // REQUEST(
-        //   process_lits(?Pod)
+        //   process_literals(?Pod)
         // )
         let pred_def = CustomPredicateDefinition {
-            name: ident("process_lits"),
+            name: ident("process_literals"),
             public_args: vec![var("Data")],
             private_args: vec![],
             type_: CustomPredicateType::And,
@@ -874,7 +874,7 @@ mod tests {
 
         let request_def = ast::RequestDefinition {
             statements: vec![Statement::Custom(CustomPredicateCall {
-                name: ident("process_lits"),
+                name: ident("process_literals"),
                 args: vec![Argument::Variable(var("Pod"))],
             })],
         };
