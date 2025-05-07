@@ -4,6 +4,7 @@
 pub mod backends;
 pub mod constants;
 pub mod frontend;
+pub mod lang;
 pub mod middleware;
 
 #[cfg(test)]
