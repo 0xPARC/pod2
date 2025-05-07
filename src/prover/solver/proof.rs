@@ -304,53 +304,53 @@ pub(super) fn try_prove_statement(
                 }
                 // End of NotEqualFromEntries attempt
 
-                // --- GtToNotEqual / LtToNotEqual Logic ---
-                // Attempt 2: Prove via GtToNotEqual (A > B implies A != B)
-                let target_gt1 = Statement::Gt(ak1.clone(), ak2.clone());
-                let target_gt2 = Statement::Gt(ak2.clone(), ak1.clone()); // Check both directions
+                // // --- GtToNotEqual / LtToNotEqual Logic ---
+                // // Attempt 2: Prove via GtToNotEqual (A > B implies A != B)
+                // let target_gt1 = Statement::Gt(ak1.clone(), ak2.clone());
+                // let target_gt2 = Statement::Gt(ak2.clone(), ak1.clone()); // Check both directions
 
-                if let Ok(gt_chain1) = try_prove_statement(
-                    state,
-                    &target_gt1,
-                    indexes,
-                    custom_definitions,
-                    &[], // Pass empty
-                ) {
-                    let mut combined_steps = gt_chain1.0;
-                    let neq_step = ProofStep {
-                        operation: OperationType::Native(NativeOperation::GtToNotEqual),
-                        inputs: vec![target_gt1.clone()],
-                        output: target.clone(),
-                    };
-                    combined_steps.push(neq_step);
-                    let final_chain = ProofChain(combined_steps);
-                    state
-                        .proof_chains
-                        .insert(target.clone(), final_chain.clone());
-                    return Ok(final_chain);
-                }
+                // if let Ok(gt_chain1) = try_prove_statement(
+                //     state,
+                //     &target_gt1,
+                //     indexes,
+                //     custom_definitions,
+                //     &[], // Pass empty
+                // ) {
+                //     let mut combined_steps = gt_chain1.0;
+                //     let neq_step = ProofStep {
+                //         operation: OperationType::Native(NativeOperation::GtToNotEqual),
+                //         inputs: vec![target_gt1.clone()],
+                //         output: target.clone(),
+                //     };
+                //     combined_steps.push(neq_step);
+                //     let final_chain = ProofChain(combined_steps);
+                //     state
+                //         .proof_chains
+                //         .insert(target.clone(), final_chain.clone());
+                //     return Ok(final_chain);
+                // }
 
-                // Try proving Gt(ak2, ak1)
-                if let Ok(gt_chain2) = try_prove_statement(
-                    state,
-                    &target_gt2,
-                    indexes,
-                    custom_definitions,
-                    &[], // Pass empty
-                ) {
-                    let mut combined_steps = gt_chain2.0;
-                    let neq_step = ProofStep {
-                        operation: OperationType::Native(NativeOperation::GtToNotEqual),
-                        inputs: vec![target_gt2.clone()],
-                        output: target.clone(),
-                    };
-                    combined_steps.push(neq_step);
-                    let final_chain = ProofChain(combined_steps);
-                    state
-                        .proof_chains
-                        .insert(target.clone(), final_chain.clone());
-                    return Ok(final_chain);
-                }
+                // // Try proving Gt(ak2, ak1)
+                // if let Ok(gt_chain2) = try_prove_statement(
+                //     state,
+                //     &target_gt2,
+                //     indexes,
+                //     custom_definitions,
+                //     &[], // Pass empty
+                // ) {
+                //     let mut combined_steps = gt_chain2.0;
+                //     let neq_step = ProofStep {
+                //         operation: OperationType::Native(NativeOperation::GtToNotEqual),
+                //         inputs: vec![target_gt2.clone()],
+                //         output: target.clone(),
+                //     };
+                //     combined_steps.push(neq_step);
+                //     let final_chain = ProofChain(combined_steps);
+                //     state
+                //         .proof_chains
+                //         .insert(target.clone(), final_chain.clone());
+                //     return Ok(final_chain);
+                // }
 
                 // Attempt 3: Prove via LtToNotEqual
                 let target_lt1 = Statement::Lt(ak1.clone(), ak2.clone());
@@ -402,61 +402,61 @@ pub(super) fn try_prove_statement(
                 // --- END GtToNotEqual / LtToNotEqual Logic ---
             }
         }
-        Predicate::Native(NativePredicate::Gt) => {
-            if let Statement::Gt(ak1, ak2) = target {
-                // Correctly extract and compare integers from Value -> TypedValue::Int
-                if let (Some(TypedValue::Int(int1)), Some(TypedValue::Int(int2))) = (
-                    indexes.get_value(ak1).map(|v| v.typed()), // Get &TypedValue
-                    indexes.get_value(ak2).map(|v| v.typed()), // Get &TypedValue
-                ) {
-                    if int1 > int2 {
-                        // Proof via GtFromEntries
-                        let input1_val = indexes.get_value(ak1).unwrap().clone(); // Already checked Some
-                        let input2_val = indexes.get_value(ak2).unwrap().clone();
-                        let input1 = Statement::ValueOf(ak1.clone(), input1_val);
-                        let input2 = Statement::ValueOf(ak2.clone(), input2_val);
-                        let operation = OperationType::Native(NativeOperation::GtFromEntries);
-                        let proof_step = ProofStep {
-                            operation,
-                            inputs: vec![input1.clone(), input2.clone()],
-                            output: target.clone(),
-                        };
-                        let proof_chain = ProofChain(vec![proof_step]);
+        // Predicate::Native(NativePredicate::Gt) => {
+        //     if let Statement::Gt(ak1, ak2) = target {
+        //         // Correctly extract and compare integers from Value -> TypedValue::Int
+        //         if let (Some(TypedValue::Int(int1)), Some(TypedValue::Int(int2))) = (
+        //             indexes.get_value(ak1).map(|v| v.typed()), // Get &TypedValue
+        //             indexes.get_value(ak2).map(|v| v.typed()), // Get &TypedValue
+        //         ) {
+        //             if int1 > int2 {
+        //                 // Proof via GtFromEntries
+        //                 let input1_val = indexes.get_value(ak1).unwrap().clone(); // Already checked Some
+        //                 let input2_val = indexes.get_value(ak2).unwrap().clone();
+        //                 let input1 = Statement::ValueOf(ak1.clone(), input1_val);
+        //                 let input2 = Statement::ValueOf(ak2.clone(), input2_val);
+        //                 let operation = OperationType::Native(NativeOperation::GtFromEntries);
+        //                 let proof_step = ProofStep {
+        //                     operation,
+        //                     inputs: vec![input1.clone(), input2.clone()],
+        //                     output: target.clone(),
+        //                 };
+        //                 let proof_chain = ProofChain(vec![proof_step]);
 
-                        // Find origin PodIds for ValueOf statements
-                        if let Some((pod_id1, _)) = indexes
-                            .exact_statement_lookup
-                            .iter()
-                            .find(|(_, stmt)| stmt == &input1)
-                        {
-                            state.scope.insert((*pod_id1, input1));
-                        } else {
-                            return Err(ProverError::Internal(format!(
-                                "Could not find origin Pod for ValueOf: {:?}",
-                                input1
-                            )));
-                        }
-                        if let Some((pod_id2, _)) = indexes
-                            .exact_statement_lookup
-                            .iter()
-                            .find(|(_, stmt)| stmt == &input2)
-                        {
-                            state.scope.insert((*pod_id2, input2));
-                        } else {
-                            return Err(ProverError::Internal(format!(
-                                "Could not find origin Pod for ValueOf: {:?}",
-                                input2
-                            )));
-                        }
+        //                 // Find origin PodIds for ValueOf statements
+        //                 if let Some((pod_id1, _)) = indexes
+        //                     .exact_statement_lookup
+        //                     .iter()
+        //                     .find(|(_, stmt)| stmt == &input1)
+        //                 {
+        //                     state.scope.insert((*pod_id1, input1));
+        //                 } else {
+        //                     return Err(ProverError::Internal(format!(
+        //                         "Could not find origin Pod for ValueOf: {:?}",
+        //                         input1
+        //                     )));
+        //                 }
+        //                 if let Some((pod_id2, _)) = indexes
+        //                     .exact_statement_lookup
+        //                     .iter()
+        //                     .find(|(_, stmt)| stmt == &input2)
+        //                 {
+        //                     state.scope.insert((*pod_id2, input2));
+        //                 } else {
+        //                     return Err(ProverError::Internal(format!(
+        //                         "Could not find origin Pod for ValueOf: {:?}",
+        //                         input2
+        //                     )));
+        //                 }
 
-                        state
-                            .proof_chains
-                            .insert(target.clone(), proof_chain.clone());
-                        return Ok(proof_chain);
-                    }
-                }
-            }
-        }
+        //                 state
+        //                     .proof_chains
+        //                     .insert(target.clone(), proof_chain.clone());
+        //                 return Ok(proof_chain);
+        //             }
+        //         }
+        //     }
+        // }
         Predicate::Native(NativePredicate::Lt) => {
             if let Statement::Lt(ak1, ak2) = target {
                 // Correctly extract and compare integers from Value -> TypedValue::Int

@@ -235,15 +235,15 @@ impl ProverIndexes {
                         indexes.neq_set.insert(normalize_pair_id(root1, root2));
                     }
                 }
-                Statement::Gt(ak1, ak2) => {
-                    let id1 = indexes.key_to_id[ak1];
-                    let id2 = indexes.key_to_id[ak2];
-                    let root1 = indexes.dsu.find(id1);
-                    let root2 = indexes.dsu.find(id2);
-                    if root1 != root2 {
-                        indexes.neq_set.insert(normalize_pair_id(root1, root2));
-                    }
-                }
+                // Statement::Gt(ak1, ak2) => {
+                //     let id1 = indexes.key_to_id[ak1];
+                //     let id2 = indexes.key_to_id[ak2];
+                //     let root1 = indexes.dsu.find(id1);
+                //     let root2 = indexes.dsu.find(id2);
+                //     if root1 != root2 {
+                //         indexes.neq_set.insert(normalize_pair_id(root1, root2));
+                //     }
+                // }
                 Statement::Lt(ak1, ak2) => {
                     let id1 = indexes.key_to_id[ak1];
                     let id2 = indexes.key_to_id[ak2];
@@ -469,7 +469,7 @@ mod tests {
             ),
             (
                 pod_a,
-                Statement::Gt(ak(pod_a, "gt_key"), ak(pod_b, "lt_key")),
+                Statement::Lt(ak(pod_a, "lt_key"), ak(pod_b, "gt_key")),
             ), // Implies NEq
         ];
         (params, facts, pod_a, pod_b)
@@ -503,10 +503,8 @@ mod tests {
         assert!(keys_for_pod_a.contains(&ak(pod_a, "key2")));
         assert!(keys_for_pod_a.contains(&ak(pod_a, "key3"))); // From Equal
         assert!(keys_for_pod_a.contains(&ak(pod_a, "key4"))); // From NotEqual
-        assert!(keys_for_pod_a.contains(&ak(pod_a, "gt_key"))); // From Gt
-                                                                // Verify that a key anchored to another pod (pod_b) is not included,
-                                                                // even if it appeared in a statement involving pod_a's keys (like the Gt statement).
-        assert!(!keys_for_pod_a.contains(&ak(pod_b, "lt_key")));
+        assert!(keys_for_pod_a.contains(&ak(pod_a, "lt_key")));
+        assert!(!keys_for_pod_a.contains(&ak(pod_b, "gt_key")));
         assert_eq!(keys_for_pod_a.len(), 5);
         assert!(indexes
             .get_anchored_keys_for_pod_id(&pod_id("unknown"))
@@ -565,12 +563,12 @@ mod tests {
     }
 
     #[test]
-    fn test_neq_derived_gt_lt() {
+    fn test_neq_derived_lt() {
         let (params, facts, pod_a, pod_b) = basic_setup();
         let indexes = ProverIndexes::build(params, &facts);
-        let key_gt = ak(pod_a, "gt_key");
-        let key_lt = ak(pod_b, "lt_key");
-        // Gt(pod_a, gt_key, pod_b, lt_key) implies NotEqual
+        let key_lt = ak(pod_a, "lt_key");
+        let key_gt = ak(pod_b, "gt_key");
+        // Lt(pod_a, lt_key, pod_b, gt_key) implies NotEqual
         assert!(indexes.are_not_equal(&key_gt, &key_lt));
         assert!(indexes.are_not_equal(&key_lt, &key_gt));
     }

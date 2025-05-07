@@ -413,47 +413,49 @@ mod pruning_tests {
         let v15 = cv_val(15);
         let v20 = cv_val(20);
 
-        // Case 1: Gt(A, B) prunes both domains based on value constraints
-        let mut state1 = solver_state_with_domains(vec![
-            (
-                wc_a.clone(),
-                HashSet::from([v10.clone(), v20.clone()]),
-                ExpectedType::Val,
-            ),
-            (
-                wc_b.clone(),
-                HashSet::from([v5.clone(), v15.clone()]),
-                ExpectedType::Val,
-            ),
-        ]);
-        let template_gt = StatementTmpl {
-            pred: Predicate::Native(NativePredicate::Gt),
-            args: vec![
-                StatementTmplArg::WildcardLiteral(wc_a.clone()),
-                StatementTmplArg::WildcardLiteral(wc_b.clone()),
-            ],
-        };
-        let proven_stmt_gt = Statement::Gt(ak(0, "a"), ak(0, "b"));
+        // // Case 1: Gt(A, B) prunes both domains based on value constraints
+        // let mut state1 = solver_state_with_domains(vec![
+        //     (
+        //         wc_a.clone(),
+        //         HashSet::from([v10.clone(), v20.clone()]),
+        //         ExpectedType::Val,
+        //     ),
+        //     (
+        //         wc_b.clone(),
+        //         HashSet::from([v5.clone(), v15.clone()]),
+        //         ExpectedType::Val,
+        //     ),
+        // ]);
+        // let template_gt = StatementTmpl {
+        //     pred: Predicate::Native(NativePredicate::Gt),
+        //     args: vec![
+        //         StatementTmplArg::WildcardLiteral(wc_a.clone()),
+        //         StatementTmplArg::WildcardLiteral(wc_b.clone()),
+        //     ],
+        // };
+        // let proven_stmt_gt = Statement::Gt(ak(0, "a"), ak(0, "b"));
+        // let bindings = HashMap::new();
+        // let changed1 = prune_domains_after_proof(
+        //     &mut state1,
+        //     &template_gt,
+        //     &proven_stmt_gt,
+        //     &bindings,
+        //     &dummy_prover_indexes(),
+        // )
+        // .unwrap();
+        // assert!(changed1, "Case 1: Domains should be pruned for Gt");
+        // assert_eq!(
+        //     state1.domains[&wc_a].0,
+        //     HashSet::from([v20.clone()]),
+        //     "A must be greater than max(B)=15"
+        // );
+        // assert_eq!(
+        //     state1.domains[&wc_b].0,
+        //     HashSet::from([v5.clone()]),
+        //     "B must be less than min(A)=10"
+        // );
+
         let bindings = HashMap::new();
-        let changed1 = prune_domains_after_proof(
-            &mut state1,
-            &template_gt,
-            &proven_stmt_gt,
-            &bindings,
-            &dummy_prover_indexes(),
-        )
-        .unwrap();
-        assert!(changed1, "Case 1: Domains should be pruned for Gt");
-        assert_eq!(
-            state1.domains[&wc_a].0,
-            HashSet::from([v20.clone()]),
-            "A must be greater than max(B)=15"
-        );
-        assert_eq!(
-            state1.domains[&wc_b].0,
-            HashSet::from([v5.clone()]),
-            "B must be less than min(A)=10"
-        );
 
         // Case 2: Lt(A, B) prunes both domains based on value constraints
         let mut state2 = solver_state_with_domains(vec![
@@ -497,32 +499,32 @@ mod pruning_tests {
         );
 
         // Case 3: Gt(A, B) fails when value constraints cannot be satisfied
-        let mut state3 = solver_state_with_domains(vec![
-            (
-                wc_a.clone(),
-                HashSet::from([v10.clone()]),
-                ExpectedType::Val,
-            ),
-            (
-                wc_b.clone(),
-                HashSet::from([v15.clone()]),
-                ExpectedType::Val,
-            ),
-        ]);
-        let result3 = prune_domains_after_proof(
-            &mut state3,
-            &template_gt,
-            &proven_stmt_gt,
-            &bindings,
-            &dummy_prover_indexes(),
-        );
-        assert!(result3.is_err(), "Case 3: Should fail when A ≤ B");
-        match result3.err().unwrap() {
-            ProverError::Unsatisfiable(msg) => {
-                assert!(msg.contains("Gt/Lt values") && msg.contains("emptied domain"))
-            }
-            _ => panic!("Expected Unsatisfiable error"),
-        }
+        // let mut state3 = solver_state_with_domains(vec![
+        //     (
+        //         wc_a.clone(),
+        //         HashSet::from([v10.clone()]),
+        //         ExpectedType::Val,
+        //     ),
+        //     (
+        //         wc_b.clone(),
+        //         HashSet::from([v15.clone()]),
+        //         ExpectedType::Val,
+        //     ),
+        // ]);
+        // let result3 = prune_domains_after_proof(
+        //     &mut state3,
+        //     &template_gt,
+        //     &proven_stmt_gt,
+        //     &bindings,
+        //     &dummy_prover_indexes(),
+        // );
+        // assert!(result3.is_err(), "Case 3: Should fail when A ≤ B");
+        // match result3.err().unwrap() {
+        //     ProverError::Unsatisfiable(msg) => {
+        //         assert!(msg.contains("Gt/Lt values") && msg.contains("emptied domain"))
+        //     }
+        //     _ => panic!("Expected Unsatisfiable error"),
+        // }
     }
 
     // --- START: Dynamic Pruning Tests for Contains/NotContains ---

@@ -81,24 +81,24 @@ mod tests {
         },
     };
 
-    /// Tests a simple end-to-end proof involving a greater-than comparison between two pods.
-    /// Creates two pods with numeric values and proves that one value is greater than the other.
+    /// Tests a simple end-to-end proof involving a less-than comparison between two pods.
+    /// Creates two pods with numeric values and proves that one value is less than the other.
     #[test]
-    fn test_prover_end_to_end_simple_gt() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_prover_end_to_end_simple_lt() -> Result<(), Box<dyn std::error::Error>> {
         let params = middleware::Params::default();
 
         // Create input SignedPods with test data
-        let pod_a = create_test_signed_pod(&params, &[("foo", Value::from(10))], "signer_a")?;
-        let pod_b = create_test_signed_pod(&params, &[("bar", Value::from(20))], "signer_b")?;
+        let pod_a = create_test_signed_pod(&params, &[("foo", Value::from(20))], "signer_a")?;
+        let pod_b = create_test_signed_pod(&params, &[("bar", Value::from(10))], "signer_b")?;
 
-        // Define request template: Gt(?y["bar"], ?x["foo"])
+        // Define request template: Lt(?y["bar"], ?x["foo"])
         let wc_x = Wildcard::new("x".to_string(), 0);
         let wc_y = Wildcard::new("y".to_string(), 1);
         let key_foo = Key::new("foo".to_string());
         let key_bar = Key::new("bar".to_string());
 
         let request_templates = vec![StatementTmpl {
-            pred: middleware::Predicate::Native(NativePredicate::Gt),
+            pred: middleware::Predicate::Native(NativePredicate::Lt),
             args: vec![
                 StatementTmplArg::Key(wc_y.clone(), KeyOrWildcard::Key(key_bar.clone())),
                 StatementTmplArg::Key(wc_x.clone(), KeyOrWildcard::Key(key_foo.clone())),
@@ -154,20 +154,20 @@ mod tests {
         );
 
         // Verify expected public statements
-        let expected_public_statement = Statement::Gt(
+        let expected_public_statement = Statement::Lt(
             AnchoredKey::new(pod_b.id(), key_bar),
             AnchoredKey::new(pod_a.id(), key_foo),
         );
         assert_eq!(
             main_pod.public_statements.len(),
             2,
-            "Expected exactly two public statements (Gt and ValueOf for _type)"
+            "Expected exactly two public statements (Lt and ValueOf for _type)"
         );
         assert!(
             main_pod
                 .public_statements
                 .contains(&expected_public_statement),
-            "Expected Gt statement missing from public statements"
+            "Expected Lt statement missing from public statements"
         );
 
         println!("End-to-end test successful!");
@@ -184,7 +184,7 @@ mod tests {
         let params = middleware::Params::default();
 
         // Define InnerP predicate: checks relationships between pods a, b, c, d
-        // - Gt(?p1["val_a"], ?p2["val_b"])
+        // - Lt(?p1["val_b"], ?p2["val_a"])
         // - Equal(?p1["key_c"], ?p3["key_d"])
         let wc_p1_inner = wc("p1_inner", 0);
         let wc_p2_inner = wc("p2_inner", 1);
@@ -194,11 +194,11 @@ mod tests {
         let key_key_c = key("key_c");
         let key_key_d = key("key_d");
 
-        let inner_tmpl_gt = StatementTmpl {
-            pred: Predicate::Native(NativePredicate::Gt),
+        let inner_tmpl_lt = StatementTmpl {
+            pred: Predicate::Native(NativePredicate::Lt),
             args: vec![
-                StatementTmplArg::Key(wc_p1_inner.clone(), KeyOrWildcard::Key(key_val_a.clone())),
                 StatementTmplArg::Key(wc_p2_inner.clone(), KeyOrWildcard::Key(key_val_b.clone())),
+                StatementTmplArg::Key(wc_p1_inner.clone(), KeyOrWildcard::Key(key_val_a.clone())),
             ],
         };
         let inner_tmpl_eq = StatementTmpl {
@@ -211,7 +211,7 @@ mod tests {
         let inner_pred_def = CustomPredicate {
             name: "InnerP_Combined".to_string(),
             args_len: 3,
-            statements: vec![inner_tmpl_gt, inner_tmpl_eq],
+            statements: vec![inner_tmpl_lt, inner_tmpl_eq],
             conjunction: true,
         };
 
@@ -481,7 +481,19 @@ mod tests {
                     ak2.clone()
                 },
             ),
-            Statement::Gt(ak1, ak2) => Statement::Gt(
+            // Statement::Gt(ak1, ak2) => Statement::Gt(
+            //     if ak1.pod_id == middleware::SELF {
+            //         AnchoredKey::new(final_pod_id, ak1.key.clone())
+            //     } else {
+            //         ak1.clone()
+            //     },
+            //     if ak2.pod_id == middleware::SELF {
+            //         AnchoredKey::new(final_pod_id, ak2.key.clone())
+            //     } else {
+            //         ak2.clone()
+            //     },
+            // ),
+            Statement::Lt(ak1, ak2) => Statement::Lt(
                 if ak1.pod_id == middleware::SELF {
                     AnchoredKey::new(final_pod_id, ak1.key.clone())
                 } else {
@@ -493,7 +505,7 @@ mod tests {
                     ak2.clone()
                 },
             ),
-            Statement::Lt(ak1, ak2) => Statement::Lt(
+            Statement::LtEq(ak1, ak2) => Statement::LtEq(
                 if ak1.pod_id == middleware::SELF {
                     AnchoredKey::new(final_pod_id, ak1.key.clone())
                 } else {
@@ -583,6 +595,23 @@ mod tests {
                     AnchoredKey::new(final_pod_id, ak2.key.clone())
                 } else {
                     ak2.clone()
+                },
+            ),
+            Statement::HashOf(ak1, ak2, ak3) => Statement::HashOf(
+                if ak1.pod_id == middleware::SELF {
+                    AnchoredKey::new(final_pod_id, ak1.key.clone())
+                } else {
+                    ak1.clone()
+                },
+                if ak2.pod_id == middleware::SELF {
+                    AnchoredKey::new(final_pod_id, ak2.key.clone())
+                } else {
+                    ak2.clone()
+                },
+                if ak3.pod_id == middleware::SELF {
+                    AnchoredKey::new(final_pod_id, ak3.key.clone())
+                } else {
+                    ak3.clone()
                 },
             ),
             // Add other statement variants if they use AnchoredKeys...

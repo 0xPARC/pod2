@@ -392,115 +392,115 @@ mod proof_tests {
         }
     }
 
-    /// Tests that GtFromEntries operation succeeds with valid numeric values.
-    #[test]
-    fn test_try_prove_statement_gt_from_entries_success() {
-        let pod_a = pod(1);
-        let pod_b = pod(2);
-        let key_gt = key("greater");
-        let key_lt = key("less");
-        let val_20 = val(20);
-        let val_10 = val(10);
+    // /// Tests that GtFromEntries operation succeeds with valid numeric values.
+    // #[test]
+    // fn test_try_prove_statement_gt_from_entries_success() {
+    //     let pod_a = pod(1);
+    //     let pod_b = pod(2);
+    //     let key_gt = key("greater");
+    //     let key_lt = key("less");
+    //     let val_20 = val(20);
+    //     let val_10 = val(10);
 
-        let ak_gt = AnchoredKey::new(pod_a, key_gt.clone());
-        let ak_lt = AnchoredKey::new(pod_b, key_lt.clone());
+    //     let ak_gt = AnchoredKey::new(pod_a, key_gt.clone());
+    //     let ak_lt = AnchoredKey::new(pod_b, key_lt.clone());
 
-        let fact_gt = Statement::ValueOf(ak_gt.clone(), val_20.clone());
-        let fact_lt = Statement::ValueOf(ak_lt.clone(), val_10.clone());
-        let target_stmt = Statement::Gt(ak_gt.clone(), ak_lt.clone());
+    //     let fact_gt = Statement::ValueOf(ak_gt.clone(), val_20.clone());
+    //     let fact_lt = Statement::ValueOf(ak_lt.clone(), val_10.clone());
+    //     let target_stmt = Statement::Gt(ak_gt.clone(), ak_lt.clone());
 
-        let (indexes, _) =
-            setup_indexes_with_facts(&vec![(pod_a, fact_gt.clone()), (pod_b, fact_lt.clone())]);
-        let custom_definitions = CustomDefinitions::default();
-        let mut state = solver_state_with_domains(vec![]);
+    //     let (indexes, _) =
+    //         setup_indexes_with_facts(&vec![(pod_a, fact_gt.clone()), (pod_b, fact_lt.clone())]);
+    //     let custom_definitions = CustomDefinitions::default();
+    //     let mut state = solver_state_with_domains(vec![]);
 
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
-        assert!(result.is_ok(), "Proof should succeed via GtFromEntries");
-        let proof_chain = result.unwrap();
+    //     let result =
+    //         try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+    //     assert!(result.is_ok(), "Proof should succeed via GtFromEntries");
+    //     let proof_chain = result.unwrap();
 
-        assert_eq!(proof_chain.0.len(), 1);
-        let step = &proof_chain.0[0];
-        assert_eq!(
-            step.operation,
-            OperationType::Native(NativeOperation::GtFromEntries)
-        );
-        assert_eq!(step.inputs.len(), 2);
-        assert!(step.inputs.contains(&fact_gt));
-        assert!(step.inputs.contains(&fact_lt));
-        assert_eq!(step.output, target_stmt);
+    //     assert_eq!(proof_chain.0.len(), 1);
+    //     let step = &proof_chain.0[0];
+    //     assert_eq!(
+    //         step.operation,
+    //         OperationType::Native(NativeOperation::GtFromEntries)
+    //     );
+    //     assert_eq!(step.inputs.len(), 2);
+    //     assert!(step.inputs.contains(&fact_gt));
+    //     assert!(step.inputs.contains(&fact_lt));
+    //     assert_eq!(step.output, target_stmt);
 
-        assert!(state.proof_chains.contains_key(&target_stmt));
-        assert_eq!(state.scope.len(), 2);
-        assert!(state.scope.contains(&(pod_a, fact_gt)));
-        assert!(state.scope.contains(&(pod_b, fact_lt)));
-    }
+    //     assert!(state.proof_chains.contains_key(&target_stmt));
+    //     assert_eq!(state.scope.len(), 2);
+    //     assert!(state.scope.contains(&(pod_a, fact_gt)));
+    //     assert!(state.scope.contains(&(pod_b, fact_lt)));
+    // }
 
-    /// Tests that GtFromEntries fails when the first value is less than the second.
-    #[test]
-    fn test_try_prove_statement_gt_from_entries_fail_not_greater() {
-        let pod_a = pod(1);
-        let pod_b = pod(2);
-        let key_a = key("a");
-        let key_b = key("b");
-        let val_10 = val(10);
-        let val_20 = val(20);
+    // /// Tests that GtFromEntries fails when the first value is less than the second.
+    // #[test]
+    // fn test_try_prove_statement_gt_from_entries_fail_not_greater() {
+    //     let pod_a = pod(1);
+    //     let pod_b = pod(2);
+    //     let key_a = key("a");
+    //     let key_b = key("b");
+    //     let val_10 = val(10);
+    //     let val_20 = val(20);
 
-        let ak_a = AnchoredKey::new(pod_a, key_a.clone());
-        let ak_b = AnchoredKey::new(pod_b, key_b.clone());
+    //     let ak_a = AnchoredKey::new(pod_a, key_a.clone());
+    //     let ak_b = AnchoredKey::new(pod_b, key_b.clone());
 
-        let fact_a = Statement::ValueOf(ak_a.clone(), val_10.clone());
-        let fact_b = Statement::ValueOf(ak_b.clone(), val_20.clone());
-        let target_stmt = Statement::Gt(ak_a.clone(), ak_b.clone());
+    //     let fact_a = Statement::ValueOf(ak_a.clone(), val_10.clone());
+    //     let fact_b = Statement::ValueOf(ak_b.clone(), val_20.clone());
+    //     let target_stmt = Statement::Gt(ak_a.clone(), ak_b.clone());
 
-        let (indexes, _) =
-            setup_indexes_with_facts(&vec![(pod_a, fact_a.clone()), (pod_b, fact_b.clone())]);
-        let custom_definitions = CustomDefinitions::default();
-        let mut state = solver_state_with_domains(vec![]);
+    //     let (indexes, _) =
+    //         setup_indexes_with_facts(&vec![(pod_a, fact_a.clone()), (pod_b, fact_b.clone())]);
+    //     let custom_definitions = CustomDefinitions::default();
+    //     let mut state = solver_state_with_domains(vec![]);
 
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
-        assert!(result.is_err());
-        match result.err().unwrap() {
-            ProverError::Unsatisfiable(msg) => {
-                assert!(msg.contains("Could not find or derive proof"));
-            }
-            e => panic!("Expected Unsatisfiable error, got {:?}", e),
-        }
-    }
+    //     let result =
+    //         try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+    //     assert!(result.is_err());
+    //     match result.err().unwrap() {
+    //         ProverError::Unsatisfiable(msg) => {
+    //             assert!(msg.contains("Could not find or derive proof"));
+    //         }
+    //         e => panic!("Expected Unsatisfiable error, got {:?}", e),
+    //     }
+    // }
 
-    /// Tests that GtFromEntries fails when comparing incompatible value types.
-    #[test]
-    fn test_try_prove_statement_gt_from_entries_fail_wrong_type() {
-        let pod_a = pod(1);
-        let pod_b = pod(2);
-        let key_a = key("a");
-        let key_b = key("b");
-        let val_10 = val(10);
-        let val_str = Value::from("hello");
+    // /// Tests that GtFromEntries fails when comparing incompatible value types.
+    // #[test]
+    // fn test_try_prove_statement_gt_from_entries_fail_wrong_type() {
+    //     let pod_a = pod(1);
+    //     let pod_b = pod(2);
+    //     let key_a = key("a");
+    //     let key_b = key("b");
+    //     let val_10 = val(10);
+    //     let val_str = Value::from("hello");
 
-        let ak_a = AnchoredKey::new(pod_a, key_a.clone());
-        let ak_b = AnchoredKey::new(pod_b, key_b.clone());
+    //     let ak_a = AnchoredKey::new(pod_a, key_a.clone());
+    //     let ak_b = AnchoredKey::new(pod_b, key_b.clone());
 
-        let fact_a = Statement::ValueOf(ak_a.clone(), val_10.clone());
-        let fact_b = Statement::ValueOf(ak_b.clone(), val_str.clone());
-        let target_stmt = Statement::Gt(ak_a.clone(), ak_b.clone());
+    //     let fact_a = Statement::ValueOf(ak_a.clone(), val_10.clone());
+    //     let fact_b = Statement::ValueOf(ak_b.clone(), val_str.clone());
+    //     let target_stmt = Statement::Gt(ak_a.clone(), ak_b.clone());
 
-        let (indexes, _) =
-            setup_indexes_with_facts(&vec![(pod_a, fact_a.clone()), (pod_b, fact_b.clone())]);
-        let custom_definitions = CustomDefinitions::default();
-        let mut state = solver_state_with_domains(vec![]);
+    //     let (indexes, _) =
+    //         setup_indexes_with_facts(&vec![(pod_a, fact_a.clone()), (pod_b, fact_b.clone())]);
+    //     let custom_definitions = CustomDefinitions::default();
+    //     let mut state = solver_state_with_domains(vec![]);
 
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
-        assert!(result.is_err());
-        match result.err().unwrap() {
-            ProverError::Unsatisfiable(msg) => {
-                assert!(msg.contains("Could not find or derive proof"));
-            }
-            e => panic!("Expected Unsatisfiable, got {:?}", e),
-        }
-    }
+    //     let result =
+    //         try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+    //     assert!(result.is_err());
+    //     match result.err().unwrap() {
+    //         ProverError::Unsatisfiable(msg) => {
+    //             assert!(msg.contains("Could not find or derive proof"));
+    //         }
+    //         e => panic!("Expected Unsatisfiable, got {:?}", e),
+    //     }
+    // }
 
     /// Tests successful derivation of Lt statement from ValueOf statements.
     #[test]
@@ -1404,63 +1404,63 @@ mod proof_tests {
 
     // --- START: New Tests for GtToNotEqual / LtToNotEqual ---
 
-    #[test]
-    fn test_try_prove_statement_neq_from_gt_base_fact() {
-        let pod_a = pod(1);
-        let pod_b = pod(2);
-        let key_a = key("a");
-        let key_b = key("b");
+    // #[test]
+    // fn test_try_prove_statement_neq_from_gt_base_fact() {
+    //     let pod_a = pod(1);
+    //     let pod_b = pod(2);
+    //     let key_a = key("a");
+    //     let key_b = key("b");
 
-        let ak1 = AnchoredKey::new(pod_a, key_a.clone());
-        let ak2 = AnchoredKey::new(pod_b, key_b.clone());
+    //     let ak1 = AnchoredKey::new(pod_a, key_a.clone());
+    //     let ak2 = AnchoredKey::new(pod_b, key_b.clone());
 
-        // Input base fact: Gt(ak1, ak2)
-        let input_gt_stmt = Statement::Gt(ak1.clone(), ak2.clone());
-        // Target: NotEqual(ak1, ak2)
-        let target_neq_stmt = Statement::NotEqual(ak1.clone(), ak2.clone());
+    //     // Input base fact: Gt(ak1, ak2)
+    //     let input_gt_stmt = Statement::Gt(ak1.clone(), ak2.clone());
+    //     // Target: NotEqual(ak1, ak2)
+    //     let target_neq_stmt = Statement::NotEqual(ak1.clone(), ak2.clone());
 
-        // Destructure the result and pass &indexes
-        let (indexes, _) = setup_indexes_with_facts(&vec![(pod_a, input_gt_stmt.clone())]);
-        let custom_definitions = CustomDefinitions::default();
-        let mut state = solver_state_with_domains(vec![]);
+    //     // Destructure the result and pass &indexes
+    //     let (indexes, _) = setup_indexes_with_facts(&vec![(pod_a, input_gt_stmt.clone())]);
+    //     let custom_definitions = CustomDefinitions::default();
+    //     let mut state = solver_state_with_domains(vec![]);
 
-        // Pass &indexes
-        let result = try_prove_statement(
-            &mut state,
-            &target_neq_stmt,
-            &indexes,
-            &custom_definitions,
-            &[],
-        );
-        assert!(result.is_ok(), "Proof should succeed via GtToNotEqual");
-        let proof_chain = result.unwrap();
+    //     // Pass &indexes
+    //     let result = try_prove_statement(
+    //         &mut state,
+    //         &target_neq_stmt,
+    //         &indexes,
+    //         &custom_definitions,
+    //         &[],
+    //     );
+    //     assert!(result.is_ok(), "Proof should succeed via GtToNotEqual");
+    //     let proof_chain = result.unwrap();
 
-        // Expect 2 steps: CopyStatement for Gt, then GtToNotEqual
-        assert_eq!(proof_chain.0.len(), 2);
+    //     // Expect 2 steps: CopyStatement for Gt, then GtToNotEqual
+    //     assert_eq!(proof_chain.0.len(), 2);
 
-        // Check step 1: CopyStatement for the Gt input
-        let step1 = &proof_chain.0[0];
-        assert_eq!(
-            step1.operation,
-            OperationType::Native(NativeOperation::CopyStatement)
-        );
-        assert_eq!(step1.output, input_gt_stmt);
+    //     // Check step 1: CopyStatement for the Gt input
+    //     let step1 = &proof_chain.0[0];
+    //     assert_eq!(
+    //         step1.operation,
+    //         OperationType::Native(NativeOperation::CopyStatement)
+    //     );
+    //     assert_eq!(step1.output, input_gt_stmt);
 
-        // Check step 2: GtToNotEqual
-        let step2 = &proof_chain.0[1];
-        assert_eq!(
-            step2.operation,
-            OperationType::Native(NativeOperation::GtToNotEqual)
-        );
-        assert_eq!(step2.inputs.len(), 1);
-        assert_eq!(step2.inputs[0], input_gt_stmt); // Input is the Gt statement
-        assert_eq!(step2.output, target_neq_stmt); // Output is the NotEqual statement
+    //     // Check step 2: GtToNotEqual
+    //     let step2 = &proof_chain.0[1];
+    //     assert_eq!(
+    //         step2.operation,
+    //         OperationType::Native(NativeOperation::GtToNotEqual)
+    //     );
+    //     assert_eq!(step2.inputs.len(), 1);
+    //     assert_eq!(step2.inputs[0], input_gt_stmt); // Input is the Gt statement
+    //     assert_eq!(step2.output, target_neq_stmt); // Output is the NotEqual statement
 
-        assert!(state.proof_chains.contains_key(&target_neq_stmt));
-        assert!(state.proof_chains.contains_key(&input_gt_stmt)); // Sub-proof should also be cached
-        assert_eq!(state.scope.len(), 1);
-        assert!(state.scope.contains(&(pod_a, input_gt_stmt))); // Scope contains original base fact
-    }
+    //     assert!(state.proof_chains.contains_key(&target_neq_stmt));
+    //     assert!(state.proof_chains.contains_key(&input_gt_stmt)); // Sub-proof should also be cached
+    //     assert_eq!(state.scope.len(), 1);
+    //     assert!(state.scope.contains(&(pod_a, input_gt_stmt))); // Scope contains original base fact
+    // }
 
     #[test]
     fn test_try_prove_statement_neq_from_lt_base_fact() {
@@ -1569,16 +1569,16 @@ mod proof_tests {
         let ak1 = AnchoredKey::new(pod_a, key_a.clone());
         let ak2 = AnchoredKey::new(pod_b, key_b.clone());
 
-        let fact_a = Statement::ValueOf(ak1.clone(), val_20.clone());
-        let fact_b = Statement::ValueOf(ak2.clone(), val_10.clone());
-        let input_gt_stmt = Statement::Gt(ak1.clone(), ak2.clone()); // Also true and a base fact
+        let fact_a = Statement::ValueOf(ak1.clone(), val_10.clone());
+        let fact_b = Statement::ValueOf(ak2.clone(), val_20.clone());
+        let input_lt_stmt = Statement::Lt(ak1.clone(), ak2.clone()); // Also true and a base fact
         let target_neq_stmt = Statement::NotEqual(ak1.clone(), ak2.clone());
 
         // Destructure the result and pass &indexes
         let facts_vec = vec![
             (pod_a, fact_a.clone()),
             (pod_b, fact_b.clone()),
-            (pod_a, input_gt_stmt.clone()), // Add the Gt base fact
+            (pod_a, input_lt_stmt.clone()), // Add the Lt base fact
         ];
         let (indexes, _) = setup_indexes_with_facts(&facts_vec);
         let custom_definitions = CustomDefinitions::default();
@@ -1611,8 +1611,8 @@ mod proof_tests {
         assert_eq!(state.scope.len(), 2);
         assert!(state.scope.contains(&(pod_a, fact_a)));
         assert!(state.scope.contains(&(pod_b, fact_b)));
-        // Gt statement should NOT be in scope because it wasn't used for this proof path
-        assert!(!state.scope.contains(&(pod_a, input_gt_stmt)));
+        // Lt statement should NOT be in scope because it wasn't used for this proof path
+        assert!(!state.scope.contains(&(pod_a, input_lt_stmt)));
     }
 
     // --- END: New Tests for GtToNotEqual / LtToNotEqual ---
@@ -1641,9 +1641,9 @@ mod proof_tests {
         let const_val_key = key("const_val");
         let const_key_key = key("const_key");
 
-        let fact_target_val = Statement::ValueOf(ak(1, "val"), val(10));
+        let fact_target_val = Statement::ValueOf(ak(1, "val"), val(5));
         let fact_target_key = Statement::ValueOf(ak(1, "key"), Value::from("hello"));
-        let fact_const_val = Statement::ValueOf(ak(10, "const_val"), val(5));
+        let fact_const_val = Statement::ValueOf(ak(10, "const_val"), val(10));
         let fact_const_key = Statement::ValueOf(ak(11, "const_key"), Value::from("hello"));
 
         let facts = vec![
@@ -1657,9 +1657,9 @@ mod proof_tests {
         let custom_pred_index = 0;
         let wc_a = wc("A", 0);
 
-        // Define templates for Gt and Equal conditions
-        let sub_tmpl_gt = StatementTmpl {
-            pred: Predicate::Native(NativePredicate::Gt),
+        // Define templates for Lt and Equal conditions
+        let sub_tmpl_lt = StatementTmpl {
+            pred: Predicate::Native(NativePredicate::Lt),
             args: vec![
                 StatementTmplArg::Key(wc_a.clone(), KeyOrWildcard::Key(val_key.clone())),
                 StatementTmplArg::Key(
@@ -1688,7 +1688,7 @@ mod proof_tests {
         let custom_pred_def = CustomPredicate {
             name: "TestAndPredicate".to_string(),
             args_len: 1,
-            statements: vec![sub_tmpl_gt.clone(), sub_tmpl_eq.clone()],
+            statements: vec![sub_tmpl_lt.clone(), sub_tmpl_eq.clone()],
             conjunction: true,
         };
 
@@ -1733,7 +1733,7 @@ mod proof_tests {
         assert!(result.is_ok(), "Proof failed: {:?}", result.err());
         let proof_chain = result.unwrap();
 
-        let expected_sub_gt = Statement::Gt(ak(1, "val"), ak(10, "const_val"));
+        let expected_sub_gt = Statement::Lt(ak(1, "val"), ak(10, "const_val"));
         let expected_sub_eq = Statement::Equal(ak(1, "key"), ak(11, "const_key"));
 
         assert!(!proof_chain.0.is_empty());
@@ -1767,8 +1767,8 @@ mod proof_tests {
         let val_key = key("val");
         let const_val_key = key("const_val");
 
-        let fact_target_val = Statement::ValueOf(ak(1, "val"), val(10));
-        let fact_const_val = Statement::ValueOf(ak(10, "const_val"), val(5));
+        let fact_target_val = Statement::ValueOf(ak(1, "val"), val(5));
+        let fact_const_val = Statement::ValueOf(ak(10, "const_val"), val(10));
 
         let facts = vec![
             (pod_target, fact_target_val.clone()),
@@ -1788,7 +1788,7 @@ mod proof_tests {
         let wc_a = wc("A", 0);
 
         let sub_tmpl_gt = StatementTmpl {
-            pred: Predicate::Native(NativePredicate::Gt),
+            pred: Predicate::Native(NativePredicate::Lt),
             args: vec![
                 StatementTmplArg::Key(wc_a.clone(), KeyOrWildcard::Key(val_key)),
                 StatementTmplArg::Key(
@@ -1867,16 +1867,16 @@ mod proof_tests {
         assert!(result.is_ok(), "Proof failed for OR: {:?}", result.err());
         let proof_chain = result.unwrap();
 
-        let expected_sub_gt = Statement::Gt(ak(1, "val"), ak(10, "const_val"));
+        let expected_sub_lt = Statement::Lt(ak(1, "val"), ak(10, "const_val"));
 
         assert!(!proof_chain.0.is_empty());
         let final_step = proof_chain.0.last().unwrap();
         assert_eq!(final_step.operation, OperationType::Custom(custom_pred_ref));
         assert_eq!(final_step.output, target_stmt);
         assert_eq!(final_step.inputs.len(), 1);
-        assert_eq!(final_step.inputs[0], expected_sub_gt);
+        assert_eq!(final_step.inputs[0], expected_sub_lt);
 
-        assert!(state.proof_chains.contains_key(&expected_sub_gt));
+        assert!(state.proof_chains.contains_key(&expected_sub_lt));
         let expected_sub_eq_fail = Statement::Equal(ak(1, "key"), ak(11, "const_key"));
         assert!(!state.proof_chains.contains_key(&expected_sub_eq_fail));
 
@@ -1917,8 +1917,8 @@ mod proof_tests {
         let custom_pred_index = 0;
         let wc_a = wc("A", 0);
 
-        let sub_tmpl_gt = StatementTmpl {
-            pred: Predicate::Native(NativePredicate::Gt),
+        let sub_tmpl_lt = StatementTmpl {
+            pred: Predicate::Native(NativePredicate::Lt),
             args: vec![
                 StatementTmplArg::Key(wc_a.clone(), KeyOrWildcard::Key(val_key.clone())),
                 StatementTmplArg::Key(
@@ -1947,7 +1947,7 @@ mod proof_tests {
         let custom_pred_def = CustomPredicate {
             name: "TestAndPredicateFail".to_string(),
             args_len: 1,
-            statements: vec![sub_tmpl_gt.clone(), sub_tmpl_eq.clone()],
+            statements: vec![sub_tmpl_lt.clone(), sub_tmpl_eq.clone()],
             conjunction: true,
         };
         let custom_batch = Arc::new(CustomPredicateBatch {
@@ -1997,8 +1997,8 @@ mod proof_tests {
         match result.err().unwrap() {
             ProverError::Unsatisfiable(msg) => {
                 assert!(
-                    msg.contains("Could not find or derive proof for: Gt("),
-                    "Expected Unsatisfiable from Gt sub-proof failure, got: {}",
+                    msg.contains("Could not find or derive proof for: Lt("),
+                    "Expected Unsatisfiable from Lt sub-proof failure, got: {}",
                     msg
                 );
             }
@@ -2170,8 +2170,8 @@ mod proof_tests {
         let val_key = key("val");
         let key_key = key("key");
 
-        let fact_a_val = Statement::ValueOf(ak(1, "val"), val(100));
-        let fact_b_val = Statement::ValueOf(ak(2, "val"), val(50));
+        let fact_a_val = Statement::ValueOf(ak(1, "val"), val(50));
+        let fact_b_val = Statement::ValueOf(ak(2, "val"), val(100));
         let fact_c_key = Statement::ValueOf(ak(3, "key"), Value::from("same_key"));
         let fact_d_key = Statement::ValueOf(ak(4, "key"), Value::from("same_key"));
         let fact_m_val = Statement::ValueOf(ak(5, "val"), val(10));
@@ -2187,14 +2187,14 @@ mod proof_tests {
         ];
         let (indexes, params) = setup_indexes_with_facts(&facts);
 
-        // Define inner predicate that requires both Gt and Equal conditions
+        // Define inner predicate that requires both Lt and Equal conditions
         let wc_x = wc("X", 0);
         let wc_y = wc("Y", 1);
         let wc_z = wc("Z", 2);
         let wc_w = wc("W", 3);
 
-        let inner_tmpl_gt = StatementTmpl {
-            pred: Predicate::Native(NativePredicate::Gt),
+        let inner_tmpl_lt = StatementTmpl {
+            pred: Predicate::Native(NativePredicate::Lt),
             args: vec![
                 StatementTmplArg::Key(wc_x.clone(), KeyOrWildcard::Key(val_key.clone())),
                 StatementTmplArg::Key(wc_y.clone(), KeyOrWildcard::Key(val_key.clone())),
@@ -2210,7 +2210,7 @@ mod proof_tests {
         let inner_pred_def = CustomPredicate {
             name: "InnerP".to_string(),
             args_len: 4,
-            statements: vec![inner_tmpl_gt.clone(), inner_tmpl_eq.clone()],
+            statements: vec![inner_tmpl_lt.clone(), inner_tmpl_eq.clone()],
             conjunction: true,
         };
 
@@ -2288,7 +2288,7 @@ mod proof_tests {
         assert!(result.is_ok(), "Nested proof failed: {:?}", result.err());
         let proof_chain = result.unwrap();
 
-        let expected_inner_gt = Statement::Gt(ak(1, "val"), ak(2, "val"));
+        let expected_inner_lt = Statement::Lt(ak(1, "val"), ak(2, "val"));
         let expected_inner_eq = Statement::Equal(ak(3, "key"), ak(4, "key"));
         let expected_outer_lt = Statement::Lt(ak(5, "val"), ak(6, "val"));
         let expected_inner_custom = Statement::Custom(
@@ -2324,10 +2324,10 @@ mod proof_tests {
         );
         assert_eq!(final_inner_step.output, expected_inner_custom);
         assert_eq!(final_inner_step.inputs.len(), 2);
-        assert!(final_inner_step.inputs.contains(&expected_inner_gt));
+        assert!(final_inner_step.inputs.contains(&expected_inner_lt));
         assert!(final_inner_step.inputs.contains(&expected_inner_eq));
 
-        assert!(state.proof_chains.contains_key(&expected_inner_gt));
+        assert!(state.proof_chains.contains_key(&expected_inner_lt));
         assert!(state.proof_chains.contains_key(&expected_inner_eq));
         assert!(state.proof_chains.contains_key(&expected_outer_lt));
 

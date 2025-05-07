@@ -551,19 +551,19 @@ pub(super) fn build_concrete_statement(
                 ))
             }
         }
-        Predicate::Native(NativePredicate::Gt) => {
-            if args.len() == 2 {
-                if let (StatementArg::Key(ak1), StatementArg::Key(ak2)) = (&args[0], &args[1]) {
-                    Ok(Statement::Gt(ak1.clone(), ak2.clone()))
-                } else {
-                    Err(ProverError::Internal("Invalid args for Gt".to_string()))
-                }
-            } else {
-                Err(ProverError::Internal(
-                    "Invalid arg count for Gt".to_string(),
-                ))
-            }
-        }
+        // Predicate::Native(NativePredicate::Gt) => {
+        //     if args.len() == 2 {
+        //         if let (StatementArg::Key(ak1), StatementArg::Key(ak2)) = (&args[0], &args[1]) {
+        //             Ok(Statement::Gt(ak1.clone(), ak2.clone()))
+        //         } else {
+        //             Err(ProverError::Internal("Invalid args for Gt".to_string()))
+        //         }
+        //     } else {
+        //         Err(ProverError::Internal(
+        //             "Invalid arg count for Gt".to_string(),
+        //         ))
+        //     }
+        // }
         Predicate::Native(NativePredicate::Lt) => {
             if args.len() == 2 {
                 if let (StatementArg::Key(ak1), StatementArg::Key(ak2)) = (&args[0], &args[1]) {
