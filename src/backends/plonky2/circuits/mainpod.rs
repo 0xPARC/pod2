@@ -1,3 +1,5 @@
+use std::array;
+
 use itertools::zip_eq;
 use plonky2::{
     hash::{hash_types::HashOutTarget, poseidon::PoseidonHash},
@@ -37,13 +39,16 @@ struct OperationVerifyGadget {
 }
 
 impl OperationVerifyGadget {
-    fn first_n_args_are_valueofs(
+    /// Checks whether the first `N` arguments to an op are ValueOf
+    /// statements, returning a boolean target indicating whether this
+    /// is the case as well as the value targets derived from each
+    /// argument.
+    fn first_n_args_as_values<const N: usize>(
         &self,
         builder: &mut CircuitBuilder<F, D>,
-        n: usize,
         resolved_op_args: &[StatementTarget],
-    ) -> BoolTarget {
-        let arg_is_valueof = resolved_op_args[..n]
+    ) -> (BoolTarget, [ValueTarget; N]) {
+        let arg_is_valueof = resolved_op_args[..N]
             .iter()
             .map(|arg| {
                 let st_type_ok =
@@ -52,10 +57,12 @@ impl OperationVerifyGadget {
                 builder.and(st_type_ok, value_arg_ok)
             })
             .collect::<Vec<_>>();
-        arg_is_valueof
+        let first_n_args_are_valueofs = arg_is_valueof
             .into_iter()
             .reduce(|a, b| builder.and(a, b))
-            .expect("No args specified.")
+            .expect("No args specified.");
+        let values = array::from_fn(|i| resolved_op_args[i].args[1].as_value());
+        (first_n_args_are_valueofs, values)
     }
 
     fn eval(
@@ -154,11 +161,8 @@ impl OperationVerifyGadget {
     ) -> BoolTarget {
         let op_code_ok = op.has_native_type(builder, NativeOperation::ContainsFromEntries);
 
-        let arg_types_ok = self.first_n_args_are_valueofs(builder, 3, resolved_op_args);
-
-        let merkle_root_value = resolved_op_args[0].args[1].as_value();
-        let key_value = resolved_op_args[1].args[1].as_value();
-        let value_value = resolved_op_args[2].args[1].as_value();
+        let (arg_types_ok, [merkle_root_value, key_value, value_value]) =
+            self.first_n_args_as_values(builder, resolved_op_args);
 
         // Check Merkle proof (verified elsewhere) against op args.
         let merkle_proof_checks = [
@@ -202,10 +206,8 @@ impl OperationVerifyGadget {
     ) -> BoolTarget {
         let op_code_ok = op.has_native_type(builder, NativeOperation::NotContainsFromEntries);
 
-        let arg_types_ok = self.first_n_args_are_valueofs(builder, 2, resolved_op_args);
-
-        let merkle_root_value = resolved_op_args[0].args[1].as_value();
-        let key_value = resolved_op_args[1].args[1].as_value();
+        let (arg_types_ok, [merkle_root_value, key_value]) =
+            self.first_n_args_as_values(builder, resolved_op_args);
 
         // Check Merkle proof (verified elsewhere) against op args.
         let merkle_proof_checks = [
@@ -258,10 +260,9 @@ impl OperationVerifyGadget {
         };
         let op_st_code_ok = builder.or(eq_op_st_code_ok, neq_op_st_code_ok);
 
-        let arg_types_ok = self.first_n_args_are_valueofs(builder, 2, resolved_op_args);
+        let (arg_types_ok, [arg1_value, arg2_value]) =
+            self.first_n_args_as_values(builder, resolved_op_args);
 
-        let arg1_value = &resolved_op_args[0].args[1].as_value();
-        let arg2_value = resolved_op_args[1].args[1].as_value();
         let op_args_eq = builder.is_equal_slice(&arg1_value.elements, &arg2_value.elements);
         let op_args_ok = builder.is_equal(op_args_eq.target, eq_op_st_code_ok.target);
 
@@ -310,10 +311,8 @@ impl OperationVerifyGadget {
         };
         let op_st_code_ok = builder.or(lt_op_st_code_ok, lteq_op_st_code_ok);
 
-        let arg_types_ok = self.first_n_args_are_valueofs(builder, 2, resolved_op_args);
-
-        let arg1_value = resolved_op_args[0].args[1].as_value();
-        let arg2_value = resolved_op_args[1].args[1].as_value();
+        let (arg_types_ok, [arg1_value, arg2_value]) =
+            self.first_n_args_as_values(builder, resolved_op_args);
 
         // If we are not dealing with the right op & statement types,
         // replace args with dummy values in the following checks.
@@ -365,11 +364,8 @@ impl OperationVerifyGadget {
     ) -> BoolTarget {
         let op_code_ok = op.has_native_type(builder, NativeOperation::HashOf);
 
-        let arg_types_ok = self.first_n_args_are_valueofs(builder, 3, resolved_op_args);
-
-        let arg1_value = resolved_op_args[0].args[1].as_value();
-        let arg2_value = resolved_op_args[1].args[1].as_value();
-        let arg3_value = resolved_op_args[2].args[1].as_value();
+        let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) =
+            self.first_n_args_as_values(builder, resolved_op_args);
 
         let expected_hash_value = builder.hash_values(arg2_value, arg3_value);
 
@@ -482,30 +478,21 @@ impl OperationVerifyGadget {
     ) -> BoolTarget {
         let op_code_ok = op.has_native_type(builder, NativeOperation::LtToNotEqual);
 
-        let st_code_ok = st.has_native_type(builder, &self.params, NativePredicate::NotEqual);
-
         let arg_type_ok =
             resolved_op_args[0].has_native_type(builder, &self.params, NativePredicate::Lt);
 
         let arg1_key = resolved_op_args[0].args[0].clone();
         let arg2_key = resolved_op_args[0].args[1].clone();
 
-        let expected_st_args: Vec<_> = [arg1_key, arg2_key]
-            .into_iter()
-            .chain(std::iter::repeat_with(|| StatementArgTarget::none(builder)))
-            .take(self.params.max_statement_args)
-            .flat_map(|arg| arg.elements)
-            .collect();
-
-        let st_args_ok = builder.is_equal_slice(
-            &expected_st_args,
-            &st.args
-                .iter()
-                .flat_map(|arg| arg.elements)
-                .collect::<Vec<_>>(),
+        let expected_statement = StatementTarget::new_native(
+            builder,
+            &self.params,
+            NativePredicate::NotEqual,
+            &[arg1_key, arg2_key],
         );
+        let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-        builder.all([op_code_ok, st_code_ok, arg_type_ok, st_args_ok])
+        builder.all([op_code_ok, arg_type_ok, st_ok])
     }
 
     fn eval_copy(
