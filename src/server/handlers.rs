@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 // Use the ConnectionPool type alias from db
-use crate::{backends::plonky2::mock::signedpod::MockSigner, frontend::{SignedPod, SignedPodBuilder}, server::db::ConnectionPool};
+use crate::{backends::plonky2::mock::signedpod::MockSigner, frontend::{MainPod, SignedPod, SignedPodBuilder}, lang::parse, prover, server::db::ConnectionPool};
 // Import necessary types for signing
 use crate::middleware::Params;
 use std::collections::HashMap;
@@ -32,6 +32,13 @@ pub struct PodInfo {
 pub struct SignRequest {
     private_key: String,
     entries: HashMap<String, PodValue>, // Use the PodValue type
+}
+
+#[derive(Deserialize)]
+pub struct ProveRequest {
+    signed_pods: Vec<SignedPod>,
+    main_pods: Vec<MainPod>,
+    proof_request: String
 }
 
 // Handler for GET /api/pods/:space
@@ -205,6 +212,27 @@ pub async fn hash_string(body: String) -> Result<Json<Hash>, AppError> {
     log::debug!("Computed hash: {}", hash_result);
     Ok(Json(hash_result))
 }
+
+// // Handler for POST /api/pods/prove
+// pub async fn prove_pod(
+//     // Although we don't use the DB pool here, we keep it for consistency
+//     // State(_pool): State<ConnectionPool>,
+//     Json(payload): Json<ProveRequest>,
+// ) -> Result<Json<>, AppError> {
+//     let params = Params::default();
+//     let proof_request = parse(&payload.proof_request, &params)
+//         .context("Failed to parse proof request")?;
+
+//     let pods = payload.signed_pods.iter().map(|pod| pod.pod).chain(payload.main_pods.iter().map(|pod| pod.pod)).collect::<Vec<_>>();
+//     let input_facts = prover::facts_from_pods(&pods);
+//     let custom_definitions = prover::custom_definitions_from_batches(&[proof_request.custom_batch], &params);
+//     let proof = prover::solver::solve(&proof_request.request_templates, &input_facts, &params, &custom_definitions)
+//         .context("Failed to solve proof request")?;
+
+//    // let main_pod = MainPod::new(payload.main_pods, payload.signed_pods, proof_request);
+//   //  Ok(Json())
+// }
+
 
 // Updated error handling to distinguish Not Found from other errors
 pub enum AppError {
