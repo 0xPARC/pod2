@@ -27,8 +27,8 @@ use crate::{
     },
     middleware::{
         CustomPredicate, CustomPredicateBatch, NativeOperation, NativePredicate, Params, Predicate,
-        RawValue, StatementArg, ToFields, EMPTY_VALUE, F, HASH_SIZE, OPERATION_ARG_F_LEN,
-        OPERATION_AUX_F_LEN, STATEMENT_ARG_F_LEN, VALUE_SIZE,
+        PredicatePrefix, RawValue, StatementArg, StatementTmplArgPrefix, ToFields, EMPTY_VALUE, F,
+        HASH_SIZE, OPERATION_ARG_F_LEN, OPERATION_AUX_F_LEN, STATEMENT_ARG_F_LEN, VALUE_SIZE,
     },
 };
 
@@ -241,134 +241,6 @@ impl OperationTarget {
 }
 
 #[derive(Clone)]
-pub struct NativePredicateTarget(Target);
-
-impl NativePredicateTarget {
-    pub fn constant(
-        builder: &mut CircuitBuilder<F, D>,
-        params: &Params,
-        native_predicate: NativePredicate,
-    ) -> Self {
-        let id = native_predicate.to_fields(params);
-        assert_eq!(1, id.len());
-        Self(builder.constant(id[0]))
-    }
-
-    pub fn set_targets(
-        &self,
-        pw: &mut PartialWitness<F>,
-        params: &Params,
-        native_predicate: NativePredicate,
-    ) -> Result<()> {
-        let id = native_predicate.to_fields(params);
-        assert_eq!(1, id.len());
-        Ok(pw.set_target(self.0, id[0])?)
-    }
-}
-
-#[derive(Clone)]
-pub struct PredicateTarget {
-    elements: [Target; Params::predicate_size()],
-}
-
-impl PredicateTarget {
-    pub fn new_native(
-        builder: &mut CircuitBuilder<F, D>,
-        params: &Params,
-        native_predicate: impl Build<NativePredicateTarget>,
-    ) -> Self {
-        let prefix = builder.constant(F::from_canonical_usize(1));
-        let id = native_predicate.build(builder, params).0;
-        let zero = builder.zero();
-        Self {
-            elements: [prefix, id, zero, zero, zero, zero],
-        }
-    }
-
-    pub fn new_batch_self(builder: &mut CircuitBuilder<F, D>, index: Target) -> Self {
-        let prefix = builder.constant(F::from_canonical_usize(2));
-        let zero = builder.zero();
-        Self {
-            elements: [prefix, index, zero, zero, zero, zero],
-        }
-    }
-
-    pub fn new_custom(
-        builder: &mut CircuitBuilder<F, D>,
-        batch_id: HashOutTarget,
-        index: Target,
-    ) -> Self {
-        let prefix = builder.constant(F::from_canonical_usize(3));
-        let id = batch_id.elements;
-        Self {
-            elements: [prefix, id[0], id[1], id[2], id[3], index],
-        }
-    }
-
-    pub fn set_targets(
-        &self,
-        pw: &mut PartialWitness<F>,
-        params: &Params,
-        predicate: Predicate,
-    ) -> Result<()> {
-        Ok(pw.set_target_arr(&self.elements, &predicate.to_fields(params))?)
-    }
-}
-
-#[derive(Clone)]
-pub struct KeyOrWildcardTarget {
-    pub elements: [Target; VALUE_SIZE],
-}
-
-impl KeyOrWildcardTarget {
-    fn from_slice(v: &[Target]) -> Self {
-        Self {
-            elements: v.try_into().expect("len is VALUE_SIZE"),
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct StatementTmplArgTarget {
-    pub elements: [Target; Params::statement_tmpl_arg_size()],
-}
-
-impl StatementTmplArgTarget {
-    pub fn as_none(&self, builder: &mut CircuitBuilder<F, D>) -> BoolTarget {
-        let none_prefix = builder.constant(F::from_canonical_usize(0));
-        builder.is_equal(self.elements[0], none_prefix)
-    }
-    pub fn as_literal(&self, builder: &mut CircuitBuilder<F, D>) -> (BoolTarget, ValueTarget) {
-        let none_prefix = builder.constant(F::from_canonical_usize(1));
-        let case_ok = builder.is_equal(self.elements[0], none_prefix);
-        let value = ValueTarget::from_slice(&self.elements[1..5]);
-        (case_ok, value)
-    }
-    pub fn as_key(
-        &self,
-        builder: &mut CircuitBuilder<F, D>,
-    ) -> (BoolTarget, Target, KeyOrWildcardTarget) {
-        let none_prefix = builder.constant(F::from_canonical_usize(2));
-        let case_ok = builder.is_equal(self.elements[0], none_prefix);
-        let id_wildcard_index = self.elements[1];
-        let value_key_or_wildcard = KeyOrWildcardTarget::from_slice(&self.elements[5..9]);
-        (case_ok, id_wildcard_index, value_key_or_wildcard)
-    }
-    pub fn as_wildcard_literal(&self, builder: &mut CircuitBuilder<F, D>) -> (BoolTarget, Target) {
-        let none_prefix = builder.constant(F::from_canonical_usize(3));
-        let case_ok = builder.is_equal(self.elements[0], none_prefix);
-        let wildcard_index = self.elements[1];
-        (case_ok, wildcard_index)
-    }
-}
-
-#[derive(Clone)]
-pub struct StatementTmplTarget {
-    pub pred: PredicateTarget,
-    pub args: Vec<StatementTmplArgTarget>,
-}
-
-#[derive(Clone)]
 pub struct CustomPredicateTarget {
     pub conjunction: BoolTarget,
     // len = params.max_custom_predicate_arity
@@ -418,6 +290,134 @@ impl CustomPredicateBatchTarget {
     }
 }
 
+#[derive(Clone)]
+pub struct NativePredicateTarget(Target);
+
+impl NativePredicateTarget {
+    pub fn constant(
+        builder: &mut CircuitBuilder<F, D>,
+        params: &Params,
+        native_predicate: NativePredicate,
+    ) -> Self {
+        let id = native_predicate.to_fields(params);
+        assert_eq!(1, id.len());
+        Self(builder.constant(id[0]))
+    }
+
+    pub fn set_targets(
+        &self,
+        pw: &mut PartialWitness<F>,
+        params: &Params,
+        native_predicate: NativePredicate,
+    ) -> Result<()> {
+        let id = native_predicate.to_fields(params);
+        assert_eq!(1, id.len());
+        Ok(pw.set_target(self.0, id[0])?)
+    }
+}
+
+#[derive(Clone)]
+pub struct PredicateTarget {
+    elements: [Target; Params::predicate_size()],
+}
+
+impl PredicateTarget {
+    pub fn new_native(
+        builder: &mut CircuitBuilder<F, D>,
+        params: &Params,
+        native_predicate: impl Build<NativePredicateTarget>,
+    ) -> Self {
+        let prefix = builder.constant(F::from(PredicatePrefix::Native));
+        let id = native_predicate.build(builder, params).0;
+        let zero = builder.zero();
+        Self {
+            elements: [prefix, id, zero, zero, zero, zero],
+        }
+    }
+
+    pub fn new_batch_self(builder: &mut CircuitBuilder<F, D>, index: Target) -> Self {
+        let prefix = builder.constant(F::from(PredicatePrefix::BatchSelf));
+        let zero = builder.zero();
+        Self {
+            elements: [prefix, index, zero, zero, zero, zero],
+        }
+    }
+
+    pub fn new_custom(
+        builder: &mut CircuitBuilder<F, D>,
+        batch_id: HashOutTarget,
+        index: Target,
+    ) -> Self {
+        let prefix = builder.constant(F::from(PredicatePrefix::Custom));
+        let id = batch_id.elements;
+        Self {
+            elements: [prefix, id[0], id[1], id[2], id[3], index],
+        }
+    }
+
+    pub fn set_targets(
+        &self,
+        pw: &mut PartialWitness<F>,
+        params: &Params,
+        predicate: Predicate,
+    ) -> Result<()> {
+        Ok(pw.set_target_arr(&self.elements, &predicate.to_fields(params))?)
+    }
+}
+
+#[derive(Clone)]
+pub struct KeyOrWildcardTarget {
+    pub elements: [Target; VALUE_SIZE],
+}
+
+impl KeyOrWildcardTarget {
+    fn from_slice(v: &[Target]) -> Self {
+        Self {
+            elements: v.try_into().expect("len is VALUE_SIZE"),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct StatementTmplArgTarget {
+    pub elements: [Target; Params::statement_tmpl_arg_size()],
+}
+
+impl StatementTmplArgTarget {
+    pub fn as_none(&self, builder: &mut CircuitBuilder<F, D>) -> BoolTarget {
+        let prefix = builder.constant(F::from(StatementTmplArgPrefix::None));
+        builder.is_equal(self.elements[0], prefix)
+    }
+    pub fn as_literal(&self, builder: &mut CircuitBuilder<F, D>) -> (BoolTarget, ValueTarget) {
+        let prefix = builder.constant(F::from(StatementTmplArgPrefix::Literal));
+        let case_ok = builder.is_equal(self.elements[0], prefix);
+        let value = ValueTarget::from_slice(&self.elements[1..5]);
+        (case_ok, value)
+    }
+    pub fn as_key(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+    ) -> (BoolTarget, Target, KeyOrWildcardTarget) {
+        let prefix = builder.constant(F::from(StatementTmplArgPrefix::Key));
+        let case_ok = builder.is_equal(self.elements[0], prefix);
+        let id_wildcard_index = self.elements[1];
+        let value_key_or_wildcard = KeyOrWildcardTarget::from_slice(&self.elements[5..9]);
+        (case_ok, id_wildcard_index, value_key_or_wildcard)
+    }
+    pub fn as_wildcard_literal(&self, builder: &mut CircuitBuilder<F, D>) -> (BoolTarget, Target) {
+        let prefix = builder.constant(F::from(StatementTmplArgPrefix::WildcardLiteral));
+        let case_ok = builder.is_equal(self.elements[0], prefix);
+        let wildcard_index = self.elements[1];
+        (case_ok, wildcard_index)
+    }
+}
+
+#[derive(Clone)]
+pub struct StatementTmplTarget {
+    pub pred: PredicateTarget,
+    pub args: Vec<StatementTmplArgTarget>,
+}
+
 /// Trait for target structs that may be converted to and from vectors
 /// of targets.
 pub trait Flattenable {
@@ -428,6 +428,7 @@ pub trait Flattenable {
 /// For the purpose of op verification, we need only look up the
 /// Merkle claim rather than the Merkle proof since it is verified
 /// elsewhere.
+#[derive(Copy, Clone)]
 pub struct MerkleClaimTarget {
     pub(crate) enabled: BoolTarget,
     pub(crate) root: HashOutTarget,

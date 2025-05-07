@@ -1,9 +1,12 @@
-use std::sync::Arc;
+use std::{array, sync::Arc};
 
 use itertools::zip_eq;
 use plonky2::{
     hash::{hash_types::HashOutTarget, poseidon::PoseidonHash},
-    iop::{target::BoolTarget, witness::PartialWitness},
+    iop::{
+        target::{BoolTarget, Target},
+        witness::PartialWitness,
+    },
     plonk::circuit_builder::CircuitBuilder,
 };
 
@@ -12,8 +15,9 @@ use crate::{
         basetypes::D,
         circuits::{
             common::{
-                CircuitBuilderPod, CustomPredicateBatchTarget, Flattenable, MerkleClaimTarget,
-                OperationTarget, PredicateTarget, StatementArgTarget, StatementTarget, ValueTarget,
+                CircuitBuilderPod, CustomPredicateBatchTarget, CustomPredicateTarget, Flattenable,
+                MerkleClaimTarget, OperationTarget, PredicateTarget, StatementArgTarget,
+                StatementTarget, ValueTarget,
             },
             signedpod::{SignedPodVerifyGadget, SignedPodVerifyTarget},
         },
@@ -39,13 +43,16 @@ struct OperationVerifyGadget {
 }
 
 impl OperationVerifyGadget {
-    fn first_n_args_are_valueofs(
+    /// Checks whether the first `N` arguments to an op are ValueOf
+    /// statements, returning a boolean target indicating whether this
+    /// is the case as well as the value targets derived from each
+    /// argument.
+    fn first_n_args_as_values<const N: usize>(
         &self,
         builder: &mut CircuitBuilder<F, D>,
-        n: usize,
         resolved_op_args: &[StatementTarget],
-    ) -> BoolTarget {
-        let arg_is_valueof = resolved_op_args[..n]
+    ) -> (BoolTarget, [ValueTarget; N]) {
+        let arg_is_valueof = resolved_op_args[..N]
             .iter()
             .map(|arg| {
                 let st_type_ok =
@@ -54,10 +61,12 @@ impl OperationVerifyGadget {
                 builder.and(st_type_ok, value_arg_ok)
             })
             .collect::<Vec<_>>();
-        arg_is_valueof
+        let first_n_args_are_valueofs = arg_is_valueof
             .into_iter()
             .reduce(|a, b| builder.and(a, b))
-            .expect("No args specified.")
+            .expect("No args specified.");
+        let values = array::from_fn(|i| resolved_op_args[i].args[1].as_value());
+        (first_n_args_are_valueofs, values)
     }
 
     fn eval(
@@ -108,20 +117,31 @@ impl OperationVerifyGadget {
             } else {
                 vec![
                     self.eval_copy(builder, st, op, &resolved_op_args)?,
-                    self.eval_eq_from_entries(builder, st, op, &resolved_op_args),
+                    self.eval_eq_neq_from_entries(builder, st, op, &resolved_op_args),
                     self.eval_lt_lteq_from_entries(builder, st, op, &resolved_op_args),
+                    self.eval_transitive_eq(builder, st, op, &resolved_op_args),
+                    self.eval_lt_to_neq(builder, st, op, &resolved_op_args),
                     self.eval_hash_of(builder, st, op, &resolved_op_args),
                 ]
             },
             // Skip these if there are no resolved Merkle claims
             if let Some(resolved_merkle_claim) = resolved_merkle_claim {
-                vec![self.eval_not_contains_from_entries(
-                    builder,
-                    st,
-                    op,
-                    resolved_merkle_claim,
-                    &resolved_op_args,
-                )]
+                vec![
+                    self.eval_contains_from_entries(
+                        builder,
+                        st,
+                        op,
+                        resolved_merkle_claim,
+                        &resolved_op_args,
+                    ),
+                    self.eval_not_contains_from_entries(
+                        builder,
+                        st,
+                        op,
+                        resolved_merkle_claim,
+                        &resolved_op_args,
+                    ),
+                ]
             } else {
                 vec![]
             },
@@ -135,6 +155,51 @@ impl OperationVerifyGadget {
         Ok(())
     }
 
+    fn eval_contains_from_entries(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        st: &StatementTarget,
+        op: &OperationTarget,
+        resolved_merkle_claim: MerkleClaimTarget,
+        resolved_op_args: &[StatementTarget],
+    ) -> BoolTarget {
+        let op_code_ok = op.has_native_type(builder, NativeOperation::ContainsFromEntries);
+
+        let (arg_types_ok, [merkle_root_value, key_value, value_value]) =
+            self.first_n_args_as_values(builder, resolved_op_args);
+
+        // Check Merkle proof (verified elsewhere) against op args.
+        let merkle_proof_checks = [
+            /* The supplied Merkle proof must be enabled. */
+            resolved_merkle_claim.enabled,
+            /* ...and it must be an existence proof. */
+            resolved_merkle_claim.existence,
+            /* ...for the root-key-value triple in the resolved op args. */
+            builder.is_equal_slice(
+                &merkle_root_value.elements,
+                &resolved_merkle_claim.root.elements,
+            ),
+            builder.is_equal_slice(&key_value.elements, &resolved_merkle_claim.key.elements),
+            builder.is_equal_slice(&value_value.elements, &resolved_merkle_claim.value.elements),
+        ];
+
+        let merkle_proof_ok = builder.all(merkle_proof_checks);
+
+        // Check output statement
+        let arg1_key = resolved_op_args[0].args[0].clone();
+        let arg2_key = resolved_op_args[1].args[0].clone();
+        let arg3_key = resolved_op_args[2].args[0].clone();
+        let expected_statement = StatementTarget::new_native(
+            builder,
+            &self.params,
+            NativePredicate::Contains,
+            &[arg1_key, arg2_key, arg3_key],
+        );
+        let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+
+        builder.all([op_code_ok, arg_types_ok, merkle_proof_ok, st_ok])
+    }
+
     fn eval_not_contains_from_entries(
         &self,
         builder: &mut CircuitBuilder<F, D>,
@@ -145,10 +210,8 @@ impl OperationVerifyGadget {
     ) -> BoolTarget {
         let op_code_ok = op.has_native_type(builder, NativeOperation::NotContainsFromEntries);
 
-        let arg_types_ok = self.first_n_args_are_valueofs(builder, 2, resolved_op_args);
-
-        let merkle_root_value = resolved_op_args[0].args[1].as_value();
-        let key_value = resolved_op_args[1].args[1].as_value();
+        let (arg_types_ok, [merkle_root_value, key_value]) =
+            self.first_n_args_as_values(builder, resolved_op_args);
 
         // Check Merkle proof (verified elsewhere) against op args.
         let merkle_proof_checks = [
@@ -180,32 +243,52 @@ impl OperationVerifyGadget {
         builder.all([op_code_ok, arg_types_ok, merkle_proof_ok, st_ok])
     }
 
-    fn eval_eq_from_entries(
+    /// Carries out the checks necessary for EqualFromEntries and
+    /// NotEqualFromEntries.
+    fn eval_eq_neq_from_entries(
         &self,
         builder: &mut CircuitBuilder<F, D>,
         st: &StatementTarget,
         op: &OperationTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
-        let op_code_ok = op.has_native_type(builder, NativeOperation::EqualFromEntries);
+        let eq_op_st_code_ok = {
+            let op_code_ok = op.has_native_type(builder, NativeOperation::EqualFromEntries);
+            let st_code_ok = st.has_native_type(builder, &self.params, NativePredicate::Equal);
+            builder.and(op_code_ok, st_code_ok)
+        };
+        let neq_op_st_code_ok = {
+            let op_code_ok = op.has_native_type(builder, NativeOperation::NotEqualFromEntries);
+            let st_code_ok = st.has_native_type(builder, &self.params, NativePredicate::NotEqual);
+            builder.and(op_code_ok, st_code_ok)
+        };
+        let op_st_code_ok = builder.or(eq_op_st_code_ok, neq_op_st_code_ok);
 
-        let arg_types_ok = self.first_n_args_are_valueofs(builder, 2, resolved_op_args);
+        let (arg_types_ok, [arg1_value, arg2_value]) =
+            self.first_n_args_as_values(builder, resolved_op_args);
 
-        let arg1_value = &resolved_op_args[0].args[1].as_value();
-        let arg2_value = resolved_op_args[1].args[1].as_value();
         let op_args_eq = builder.is_equal_slice(&arg1_value.elements, &arg2_value.elements);
+        let op_args_ok = builder.is_equal(op_args_eq.target, eq_op_st_code_ok.target);
 
         let arg1_key = resolved_op_args[0].args[0].clone();
         let arg2_key = resolved_op_args[1].args[0].clone();
-        let expected_statement = StatementTarget::new_native(
-            builder,
-            &self.params,
-            NativePredicate::Equal,
-            &[arg1_key, arg2_key],
-        );
-        let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-        builder.all([op_code_ok, arg_types_ok, op_args_eq, st_ok])
+        let expected_st_args: Vec<_> = [arg1_key, arg2_key]
+            .into_iter()
+            .chain(std::iter::repeat_with(|| StatementArgTarget::none(builder)))
+            .take(self.params.max_statement_args)
+            .flat_map(|arg| arg.elements)
+            .collect();
+
+        let st_args_ok = builder.is_equal_slice(
+            &expected_st_args,
+            &st.args
+                .iter()
+                .flat_map(|arg| arg.elements)
+                .collect::<Vec<_>>(),
+        );
+
+        builder.all([op_st_code_ok, arg_types_ok, op_args_ok, st_args_ok])
     }
 
     /// Carries out the checks necessary for LtFromEntries and
@@ -232,10 +315,8 @@ impl OperationVerifyGadget {
         };
         let op_st_code_ok = builder.or(lt_op_st_code_ok, lteq_op_st_code_ok);
 
-        let arg_types_ok = self.first_n_args_are_valueofs(builder, 2, resolved_op_args);
-
-        let arg1_value = resolved_op_args[0].args[1].as_value();
-        let arg2_value = resolved_op_args[1].args[1].as_value();
+        let (arg_types_ok, [arg1_value, arg2_value]) =
+            self.first_n_args_as_values(builder, resolved_op_args);
 
         // If we are not dealing with the right op & statement types,
         // replace args with dummy values in the following checks.
@@ -287,11 +368,8 @@ impl OperationVerifyGadget {
     ) -> BoolTarget {
         let op_code_ok = op.has_native_type(builder, NativeOperation::HashOf);
 
-        let arg_types_ok = self.first_n_args_are_valueofs(builder, 3, resolved_op_args);
-
-        let arg1_value = resolved_op_args[0].args[1].as_value();
-        let arg2_value = resolved_op_args[1].args[1].as_value();
-        let arg3_value = resolved_op_args[2].args[1].as_value();
+        let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) =
+            self.first_n_args_as_values(builder, resolved_op_args);
 
         let expected_hash_value = builder.hash_values(arg2_value, arg3_value);
 
@@ -312,6 +390,39 @@ impl OperationVerifyGadget {
         builder.all([op_code_ok, arg_types_ok, hash_value_ok, st_ok])
     }
 
+    fn eval_transitive_eq(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        st: &StatementTarget,
+        op: &OperationTarget,
+        resolved_op_args: &[StatementTarget],
+    ) -> BoolTarget {
+        let op_code_ok =
+            op.has_native_type(builder, NativeOperation::TransitiveEqualFromStatements);
+
+        let arg1_type_ok =
+            resolved_op_args[0].has_native_type(builder, &self.params, NativePredicate::Equal);
+        let arg2_type_ok =
+            resolved_op_args[1].has_native_type(builder, &self.params, NativePredicate::Equal);
+        let arg_types_ok = builder.all([arg1_type_ok, arg2_type_ok]);
+
+        let arg1_key1 = &resolved_op_args[0].args[0];
+        let arg1_key2 = &resolved_op_args[0].args[1];
+        let arg2_key1 = &resolved_op_args[1].args[0];
+        let arg2_key2 = &resolved_op_args[1].args[1];
+
+        let inner_keys_match = builder.is_equal_slice(&arg1_key2.elements, &arg2_key1.elements);
+
+        let expected_statement = StatementTarget::new_native(
+            builder,
+            &self.params,
+            NativePredicate::Equal,
+            &[arg1_key1.clone(), arg2_key2.clone()],
+        );
+        let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+
+        builder.all([op_code_ok, arg_types_ok, inner_keys_match, st_ok])
+    }
     fn eval_none(
         &self,
         builder: &mut CircuitBuilder<F, D>,
@@ -362,6 +473,32 @@ impl OperationVerifyGadget {
         builder.all([op_code_ok, st_code_ok, arg_prefix_ok, no_dupes_ok])
     }
 
+    fn eval_lt_to_neq(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        st: &StatementTarget,
+        op: &OperationTarget,
+        resolved_op_args: &[StatementTarget],
+    ) -> BoolTarget {
+        let op_code_ok = op.has_native_type(builder, NativeOperation::LtToNotEqual);
+
+        let arg_type_ok =
+            resolved_op_args[0].has_native_type(builder, &self.params, NativePredicate::Lt);
+
+        let arg1_key = resolved_op_args[0].args[0].clone();
+        let arg2_key = resolved_op_args[0].args[1].clone();
+
+        let expected_statement = StatementTarget::new_native(
+            builder,
+            &self.params,
+            NativePredicate::NotEqual,
+            &[arg1_key, arg2_key],
+        );
+        let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+
+        builder.all([op_code_ok, arg_type_ok, st_ok])
+    }
+
     fn eval_copy(
         &self,
         builder: &mut CircuitBuilder<F, D>,
@@ -382,37 +519,30 @@ struct CustomOperationVerifyGadget {
     params: Params,
 }
 
+struct CustomPredicateEntryTarget {
+    id: HashOutTarget,
+    index: Target,
+    predicate: CustomPredicateTarget,
+}
+
 impl CustomOperationVerifyGadget {
     fn eval(
         &self,
         builder: &mut CircuitBuilder<F, D>,
         st: &StatementTarget,
         op: &OperationTarget,
-        op_args: &[StatementTarget],
-        custom_predicate_batches: &[CustomPredicateBatchTarget],
-        custom_predicate_batch_ids: &[HashOutTarget],
-        args: &[ValueTarget], // arguments to the custom predicate, public and private
+        op_args: &[StatementTarget], // resolved operation arguments
+        args: &[ValueTarget],        // arguments to the custom predicate, public and private
+        // Resolved custom predicate
+        custom_predicate: &CustomPredicateEntryTarget,
     ) -> Result<BoolTarget> {
         // Some sanity checks
         assert_eq!(self.params.max_operation_args, op_args.len());
         assert_eq!(self.params.max_custom_predicate_wildcards, args.len());
-        assert_eq!(
-            self.params.max_custom_predicate_batches,
-            custom_predicate_batches.len()
-        );
-        assert_eq!(
-            self.params.max_custom_predicate_batches,
-            custom_predicate_batch_ids.len()
-        );
 
-        let custom_predicate_batch_index = builder.add_virtual_target(); // TODO
-
-        let resolved_custom_predicate_batch = builder.vec_ref(
-            &self.params,
-            custom_predicate_batches,
-            custom_predicate_batch_index,
-        );
         let (op_is_custom, batch_id, index) = op.type_as_custom(builder);
+        let id_ok = builder.is_equal_slice(&batch_id.elements, &custom_predicate.id.elements);
+        let index_ok = builder.is_equal(index, custom_predicate.index);
 
         let expected_predicate = PredicateTarget::new_custom(builder, batch_id, index);
         let arg_none = StatementArgTarget::none(builder);
@@ -424,7 +554,7 @@ impl CustomOperationVerifyGadget {
             args: expected_args,
         };
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
-        Ok(builder.all([op_is_custom, st_ok]))
+        Ok(builder.all([id_ok, index_ok, op_is_custom, st_ok]))
     }
 }
 
@@ -839,10 +969,61 @@ mod tests {
     }
 
     #[test]
-    fn test_operation_verify() -> Result<()> {
-        let params = Params::default();
+    fn test_eq_neq_verify_failures() {
+        let st1: mainpod::Statement =
+            Statement::ValueOf(AnchoredKey::from((SELF, "hello")), Value::from(55)).into();
+        let st2: mainpod::Statement = Statement::ValueOf(
+            AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
+            Value::from(56),
+        )
+        .into();
+        let st3: mainpod::Statement = Statement::ValueOf(
+            AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
+            Value::from(RawValue([
+                GoldilocksField::NEG_ONE,
+                GoldilocksField::ZERO,
+                GoldilocksField::ZERO,
+                GoldilocksField::ZERO,
+            ])),
+        )
+        .into();
+        let prev_statements = [st1, st2, st3];
 
-        // None
+        [
+            // 56 == 55, 55 != 55 should fail to verify
+            (
+                mainpod::Operation(
+                    OperationType::Native(NativeOperation::EqualFromEntries),
+                    vec![OperationArg::Index(1), OperationArg::Index(0)],
+                    OperationAux::None,
+                ),
+                Statement::Equal(
+                    AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
+                    AnchoredKey::from((SELF, "hello")),
+                )
+                .into(),
+            ),
+            (
+                mainpod::Operation(
+                    OperationType::Native(NativeOperation::NotEqualFromEntries),
+                    vec![OperationArg::Index(0), OperationArg::Index(0)],
+                    OperationAux::None,
+                ),
+                Statement::NotEqual(
+                    AnchoredKey::from((SELF, "hello")),
+                    AnchoredKey::from((SELF, "hello")),
+                )
+                .into(),
+            ),
+        ]
+        .into_iter()
+        .for_each(|(op, st)| {
+            assert!(operation_verify(st, op, prev_statements.to_vec(), vec![]).is_err())
+        });
+    }
+
+    #[test]
+    fn test_operation_verify_none() -> Result<()> {
         let st: mainpod::Statement = Statement::None.into();
         let op = mainpod::Operation(
             OperationType::Native(NativeOperation::None),
@@ -850,15 +1031,11 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![Statement::None.into()];
-        let merkle_proofs = vec![];
-        operation_verify(
-            st.clone(),
-            op,
-            prev_statements.clone(),
-            merkle_proofs.clone(),
-        )?;
+        operation_verify(st, op, prev_statements, vec![])
+    }
 
-        // NewEntry
+    #[test]
+    fn test_operation_verify_newentry() -> Result<()> {
         let st1: mainpod::Statement =
             Statement::ValueOf(AnchoredKey::from((SELF, "hello")), Value::from(55)).into();
         let st2: mainpod::Statement = Statement::ValueOf(
@@ -872,14 +1049,11 @@ mod tests {
             vec![],
             OperationAux::None,
         );
-        operation_verify(
-            st1.clone(),
-            op,
-            prev_statements.clone(),
-            merkle_proofs.clone(),
-        )?;
+        operation_verify(st1, op, prev_statements, vec![])
+    }
 
-        // Copy
+    #[test]
+    fn test_operation_verify_copy() -> Result<()> {
         let st: mainpod::Statement = Statement::None.into();
         let op = mainpod::Operation(
             OperationType::Native(NativeOperation::CopyStatement),
@@ -887,9 +1061,13 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![Statement::None.into()];
-        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+        operation_verify(st, op, prev_statements, vec![])
+    }
 
-        // Eq
+    #[test]
+    fn test_operation_verify_eq() -> Result<()> {
+        let st1: mainpod::Statement =
+            Statement::ValueOf(AnchoredKey::from((SELF, "hello")), Value::from(55)).into();
         let st2: mainpod::Statement = Statement::ValueOf(
             AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
             Value::from(55),
@@ -905,10 +1083,37 @@ mod tests {
             vec![OperationArg::Index(0), OperationArg::Index(1)],
             OperationAux::None,
         );
-        let prev_statements = vec![st1.clone(), st2];
-        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+        let prev_statements = vec![st1, st2];
+        operation_verify(st, op, prev_statements, vec![])
+    }
 
-        // Lt
+    #[test]
+    fn test_operation_verify_neq() -> Result<()> {
+        let st1: mainpod::Statement =
+            Statement::ValueOf(AnchoredKey::from((SELF, "hello")), Value::from(55)).into();
+        let st2: mainpod::Statement = Statement::ValueOf(
+            AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
+            Value::from(58),
+        )
+        .into();
+        let st: mainpod::Statement = Statement::NotEqual(
+            AnchoredKey::from((SELF, "hello")),
+            AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
+        )
+        .into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::NotEqualFromEntries),
+            vec![OperationArg::Index(0), OperationArg::Index(1)],
+            OperationAux::None,
+        );
+        let prev_statements = vec![st1, st2];
+        operation_verify(st, op, prev_statements, vec![])
+    }
+
+    #[test]
+    fn test_operation_verify_lt() -> Result<()> {
+        let st1: mainpod::Statement =
+            Statement::ValueOf(AnchoredKey::from((SELF, "hello")), Value::from(55)).into();
         let st2: mainpod::Statement = Statement::ValueOf(
             AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
             Value::from(56),
@@ -924,8 +1129,9 @@ mod tests {
             vec![OperationArg::Index(0), OperationArg::Index(1)],
             OperationAux::None,
         );
-        let prev_statements = vec![st1.clone(), st2.clone()];
-        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+        let prev_statements = vec![st1, st2.clone()];
+        operation_verify(st, op, prev_statements, vec![])?;
+
         // Also check negative < negative
         let st3: mainpod::Statement = Statement::ValueOf(
             AnchoredKey::from((PodId(RawValue::from(89).into()), "hola")),
@@ -948,7 +1154,8 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st3.clone(), st4];
-        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+        operation_verify(st, op, prev_statements, vec![])?;
+
         // Also check negative < positive
         let st: mainpod::Statement = Statement::Lt(
             AnchoredKey::from((PodId(RawValue::from(89).into()), "hola")),
@@ -960,10 +1167,14 @@ mod tests {
             vec![OperationArg::Index(0), OperationArg::Index(1)],
             OperationAux::None,
         );
-        let prev_statements = vec![st3.clone(), st2];
-        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+        let prev_statements = vec![st3, st2];
+        operation_verify(st, op, prev_statements, vec![])
+    }
 
-        // LtEq
+    #[test]
+    fn test_operation_verify_lteq() -> Result<()> {
+        let st1: mainpod::Statement =
+            Statement::ValueOf(AnchoredKey::from((SELF, "hello")), Value::from(55)).into();
         let st2: mainpod::Statement = Statement::ValueOf(
             AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
             Value::from(56),
@@ -979,8 +1190,9 @@ mod tests {
             vec![OperationArg::Index(0), OperationArg::Index(1)],
             OperationAux::None,
         );
-        let prev_statements = vec![st1.clone(), st2.clone()];
-        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+        let prev_statements = vec![st1, st2.clone()];
+        operation_verify(st, op, prev_statements, vec![])?;
+
         // Also check negative <= negative
         let st3: mainpod::Statement = Statement::ValueOf(
             AnchoredKey::from((PodId(RawValue::from(89).into()), "hola")),
@@ -1003,7 +1215,8 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st3.clone(), st4];
-        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+        operation_verify(st, op, prev_statements, vec![])?;
+
         // Also check negative <= positive
         let st: mainpod::Statement = Statement::LtEq(
             AnchoredKey::from((PodId(RawValue::from(89).into()), "hola")),
@@ -1016,7 +1229,8 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st3, st2];
-        operation_verify(st, op, prev_statements.clone(), merkle_proofs.clone())?;
+        operation_verify(st, op, prev_statements.clone(), vec![])?;
+
         // Also check equality, both positive and negative.
         let st: mainpod::Statement = Statement::LtEq(
             AnchoredKey::from((PodId(RawValue::from(89).into()), "hola")),
@@ -1028,7 +1242,7 @@ mod tests {
             vec![OperationArg::Index(0), OperationArg::Index(0)],
             OperationAux::None,
         );
-        operation_verify(st, op, prev_statements.clone(), merkle_proofs.clone())?;
+        operation_verify(st, op, prev_statements.clone(), vec![])?;
         let st: mainpod::Statement = Statement::LtEq(
             AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
             AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
@@ -1039,9 +1253,11 @@ mod tests {
             vec![OperationArg::Index(1), OperationArg::Index(1)],
             OperationAux::None,
         );
-        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+        operation_verify(st, op, prev_statements, vec![])
+    }
 
-        // HashOf
+    #[test]
+    fn test_operation_verify_hashof() -> Result<()> {
         let input_values = [
             Value::from(RawValue([
                 GoldilocksField(1),
@@ -1086,9 +1302,60 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2, st3];
-        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+        operation_verify(st, op, prev_statements, vec![])
+    }
 
-        // NotContainsFromEntries
+    #[test]
+    fn test_operation_verify_lt_to_neq() -> Result<()> {
+        let st: mainpod::Statement = Statement::NotEqual(
+            AnchoredKey::from((SELF, "hello")),
+            AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
+        )
+        .into();
+        let st1: mainpod::Statement = Statement::Lt(
+            AnchoredKey::from((SELF, "hello")),
+            AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
+        )
+        .into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::LtToNotEqual),
+            vec![OperationArg::Index(0)],
+            OperationAux::None,
+        );
+        let prev_statements = vec![st1];
+        operation_verify(st, op, prev_statements, vec![])
+    }
+
+    #[test]
+    fn test_operation_verify_transitive_eq() -> Result<()> {
+        let st: mainpod::Statement = Statement::Equal(
+            AnchoredKey::from((SELF, "hello")),
+            AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
+        )
+        .into();
+        let st1: mainpod::Statement = Statement::Equal(
+            AnchoredKey::from((SELF, "hello")),
+            AnchoredKey::from((PodId(RawValue::from(89).into()), "world")),
+        )
+        .into();
+        let st2: mainpod::Statement = Statement::Equal(
+            AnchoredKey::from((PodId(RawValue::from(89).into()), "world")),
+            AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
+        )
+        .into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::TransitiveEqualFromStatements),
+            vec![OperationArg::Index(0), OperationArg::Index(1)],
+            OperationAux::None,
+        );
+        let prev_statements = vec![st1, st2];
+        operation_verify(st, op, prev_statements, vec![])
+    }
+
+    #[test]
+    fn test_operation_verify_sintains() -> Result<()> {
+        let params = Params::default();
+
         let kvs = [
             (1.into(), 55.into()),
             (2.into(), 88.into()),
@@ -1122,8 +1389,54 @@ mod tests {
             no_key_pf,
         )];
         let prev_statements = vec![root_st, key_st];
-        operation_verify(st, op, prev_statements, merkle_proofs.clone())?;
+        operation_verify(st, op, prev_statements, merkle_proofs)
+    }
 
-        Ok(())
+    #[test]
+    fn test_operation_verify_contains() -> Result<()> {
+        let params = Params::default();
+
+        let kvs = [
+            (1.into(), 55.into()),
+            (2.into(), 88.into()),
+            (175.into(), 0.into()),
+        ]
+        .into_iter()
+        .collect();
+        let mt = MerkleTree::new(params.max_depth_mt_gadget, &kvs)?;
+
+        let root = Value::from(mt.root());
+        let root_ak = AnchoredKey::from((PodId(RawValue::from(88).into()), "merkle root"));
+
+        let key = 175.into();
+        let key_ak = AnchoredKey::from((PodId(RawValue::from(70).into()), "key"));
+
+        let (value, key_pf) = mt.prove(&key)?;
+        let value_ak = AnchoredKey::from((PodId(RawValue::from(72).into()), "value"));
+
+        let root_st: mainpod::Statement = Statement::ValueOf(root_ak.clone(), root.clone()).into();
+        let key_st: mainpod::Statement = Statement::ValueOf(key_ak.clone(), key.into()).into();
+        let value_st: mainpod::Statement =
+            Statement::ValueOf(value_ak.clone(), value.into()).into();
+
+        let st: mainpod::Statement = Statement::Contains(root_ak, key_ak, value_ak).into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::ContainsFromEntries),
+            vec![
+                OperationArg::Index(0),
+                OperationArg::Index(1),
+                OperationArg::Index(2),
+            ],
+            OperationAux::MerkleProofIndex(0),
+        );
+
+        let merkle_proofs = vec![MerkleClaimAndProof::new(
+            Hash::from(root.raw()),
+            key,
+            Some(value),
+            key_pf,
+        )];
+        let prev_statements = vec![root_st, key_st, value_st];
+        operation_verify(st, op, prev_statements, merkle_proofs)
     }
 }

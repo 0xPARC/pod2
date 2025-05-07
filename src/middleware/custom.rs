@@ -73,6 +73,20 @@ pub enum StatementTmplArg {
     WildcardLiteral(Wildcard),
 }
 
+#[derive(Clone, Copy)]
+pub enum StatementTmplArgPrefix {
+    None = 0,
+    Literal = 1,
+    Key = 2,
+    WildcardLiteral = 3,
+}
+
+impl From<StatementTmplArgPrefix> for F {
+    fn from(prefix: StatementTmplArgPrefix) -> Self {
+        Self::from_canonical_usize(prefix as usize)
+    }
+}
+
 impl ToFields for StatementTmplArg {
     fn to_fields(&self, params: &Params) -> Vec<F> {
         // None => (0, ...)
@@ -83,29 +97,30 @@ impl ToFields for StatementTmplArg {
         // In all three cases, we pad to 2 * hash_size + 1 = 9 field elements
         match self {
             StatementTmplArg::None => {
-                let fields: Vec<F> = iter::repeat_with(|| F::from_canonical_u64(0))
+                let fields: Vec<F> = iter::once(F::from(StatementTmplArgPrefix::None))
+                    .chain(iter::repeat(F::ZERO))
                     .take(Params::statement_tmpl_arg_size())
                     .collect();
                 fields
             }
             StatementTmplArg::Literal(v) => {
-                let fields: Vec<F> = iter::once(F::from_canonical_u64(1))
+                let fields: Vec<F> = iter::once(F::from(StatementTmplArgPrefix::Literal))
                     .chain(v.raw().to_fields(params))
-                    .chain(iter::repeat_with(|| F::from_canonical_u64(0)).take(HASH_SIZE))
+                    .chain(iter::repeat(F::ZERO).take(HASH_SIZE))
                     .collect();
                 fields
             }
             StatementTmplArg::Key(wc1, kw2) => {
-                let fields: Vec<F> = iter::once(F::from_canonical_u64(2))
+                let fields: Vec<F> = iter::once(F::from(StatementTmplArgPrefix::Key))
                     .chain(wc1.to_fields(params))
                     .chain(kw2.to_fields(params))
                     .collect();
                 fields
             }
             StatementTmplArg::WildcardLiteral(wc) => {
-                let fields: Vec<F> = iter::once(F::from_canonical_u64(3))
+                let fields: Vec<F> = iter::once(F::from(StatementTmplArgPrefix::WildcardLiteral))
                     .chain(wc.to_fields(params))
-                    .chain(iter::repeat_with(|| F::from_canonical_u64(0)).take(HASH_SIZE))
+                    .chain(iter::repeat(F::ZERO).take(HASH_SIZE))
                     .collect();
                 fields
             }
