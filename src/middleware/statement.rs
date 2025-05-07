@@ -98,6 +98,19 @@ impl From<NativePredicate> for Predicate {
     }
 }
 
+#[derive(Clone, Copy)]
+pub enum PredicatePrefix {
+    Native = 1,
+    BatchSelf = 2,
+    Custom = 3,
+}
+
+impl From<PredicatePrefix> for F {
+    fn from(prefix: PredicatePrefix) -> Self {
+        Self::from_canonical_usize(prefix as usize)
+    }
+}
+
 impl ToFields for Predicate {
     fn to_fields(&self, params: &Params) -> Vec<F> {
         // serialize:
@@ -109,14 +122,14 @@ impl ToFields for Predicate {
 
         // in every case: pad to (hash_size + 2) field elements
         let mut fields: Vec<F> = match self {
-            Self::Native(p) => iter::once(F::from_canonical_u64(1))
+            Self::Native(p) => iter::once(F::from(PredicatePrefix::Native))
                 .chain(p.to_fields(params))
                 .collect(),
-            Self::BatchSelf(i) => iter::once(F::from_canonical_u64(2))
+            Self::BatchSelf(i) => iter::once(F::from(PredicatePrefix::BatchSelf))
                 .chain(iter::once(F::from_canonical_usize(*i)))
                 .collect(),
             Self::Custom(CustomPredicateRef { batch, index }) => {
-                iter::once(F::from_canonical_u64(3))
+                iter::once(F::from(PredicatePrefix::Custom))
                     .chain(batch.id(params).0)
                     .chain(iter::once(F::from_canonical_usize(*index)))
                     .collect()
