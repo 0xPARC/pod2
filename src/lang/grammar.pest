@@ -19,8 +19,7 @@ private_kw = { "private:" }
 native_statement_keyword = @{
     "ValueOf" | "Equal" | "NotEqual" | "Gt" | "GtEq" | "Lt" | "LtEq" | "Contains" |
     "NotContains" | "SumOf" | "ProductOf" | "MaxOf" | "HashOf" | "DictContains" |
-    "DictNotContains" | "ArrayContains"
-    // "SetContains" | "SetNotContains"
+    "DictNotContains" | "ArrayContains" | "SetContains" | "SetNotContains"
 }
 
 // An identifier specifically for predicate names, cannot be a native keyword.
@@ -79,8 +78,8 @@ statement = {
     hash_of_stmt |
     dict_contains_stmt |
     dict_not_contains_stmt |
-  //  set_contains_stmt |
-  //  set_not_contains_stmt |
+    set_contains_stmt |
+    set_not_contains_stmt |
     array_contains_stmt |
     custom_predicate_call // Should come last
 }
@@ -143,8 +142,8 @@ max_of_stmt = { "MaxOf" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," ~ anchor
 hash_of_stmt = { "HashOf" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," ~ anchored_key ~ ")" }
 dict_contains_stmt = { "DictContains" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," ~ anchored_key ~ ")" }
 dict_not_contains_stmt = { "DictNotContains" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ ")" }
-// set_contains_stmt = { "SetContains" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ ")" }
-// set_not_contains_stmt = { "SetNotContains" ~ "(" ~ anchored_key ~ ")" }
+set_contains_stmt = { "SetContains" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," ~ anchored_key ~ ")" }
+set_not_contains_stmt = { "SetNotContains" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ ")" }
 array_contains_stmt = { "ArrayContains" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," ~ anchored_key ~ ")" }
 
 // Rule for a custom predicate call
