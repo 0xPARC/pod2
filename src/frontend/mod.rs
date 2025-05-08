@@ -9,8 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::middleware::{
     self, check_st_tmpl, hash_str, hash_values, AnchoredKey, Hash, Key, MainPodInputs,
     NativeOperation, NativePredicate, OperationAux, OperationType, Params, PodId, PodProver,
-    PodSigner, Predicate, Statement, StatementArg, Value, WildcardValue, EMPTY_VALUE, KEY_TYPE,
-    SELF,
+    PodSigner, Predicate, Statement, StatementArg, Value, WildcardValue, KEY_TYPE, SELF,
 };
 
 mod custom;
