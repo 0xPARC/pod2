@@ -251,8 +251,11 @@ impl MainPodBuilder {
             }
             Native(SetContainsFromEntries) => {
                 let [set, value] = op.1.try_into().unwrap(); // TODO: Error handling
-                let empty = OperationArg::Literal(Value::from(EMPTY_VALUE));
-                Operation(Native(ContainsFromEntries), vec![set, value, empty], op.2)
+                Operation(
+                    Native(ContainsFromEntries),
+                    vec![set, value.clone(), value],
+                    op.2,
+                )
             }
             Native(SetNotContainsFromEntries) => {
                 let [set, value] = op.1.try_into().unwrap(); // TODO: Error handling

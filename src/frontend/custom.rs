@@ -114,7 +114,14 @@ impl StatementTmplBuilder {
                 predicate: Predicate::Native(NativePredicate::NotContains),
                 args: self.args,
             },
-            // TODO: SetContains
+            Predicate::Native(NativePredicate::SetContains) => {
+                let mut new_args = self.args.clone();
+                new_args.push(self.args[1].clone());
+                StatementTmplBuilder {
+                    predicate: Predicate::Native(NativePredicate::Contains),
+                    args: new_args,
+                }
+            }
             _ => self,
         }
     }
@@ -242,12 +249,14 @@ fn resolve_wildcard(args: &[&str], priv_args: &[&str], s: &str) -> Wildcard {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
     use crate::{
         backends::plonky2::mock::mainpod::MockProver,
         examples::custom::{eth_dos_batch, eth_friend_batch},
         frontend::MainPodBuilder,
-        middleware::{self, CustomPredicateRef, Params, PodType},
+        middleware::{self, containers::Set, CustomPredicateRef, Params, PodType},
         op,
     };
 
@@ -321,6 +330,50 @@ mod tests {
         mp_builder.pub_op(op!(custom, gt_custom_pred, desugared_gt))?;
 
         // Check that the POD builds
+        let mut prover = MockProver {};
+        let proof = mp_builder.prove(&mut prover, &params)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_desugared_set_contains_custom_pred() -> Result<()> {
+        let params = Params::default();
+        let mut builder = CustomPredicateBatchBuilder::new("set_contains_custom_pred".into());
+
+        let set_contains_stb = StatementTmplBuilder::new(NativePredicate::SetContains)
+            .arg(("s1_origin", "s1_key"))
+            .arg(("s2_origin", "s2_key"));
+
+        builder.predicate_and(
+            "set_contains_custom_pred",
+            &params,
+            &["s1_origin", "s1_key", "s2_origin", "s2_key"],
+            &[],
+            &[set_contains_stb],
+        )?;
+        let batch = builder.finish();
+        let batch_clone = batch.clone();
+
+        let mut mp_builder = MainPodBuilder::new(&params);
+
+        let set_values: HashSet<Value> = [1, 2, 3].iter().map(|i| Value::from(*i)).collect();
+        let s1 = mp_builder.literal(true, Value::from(Set::new(set_values)?))?;
+        let s2 = mp_builder.literal(true, Value::from(1))?;
+
+        let set_contains = mp_builder.pub_op(op!(set_contains, s1, s2))?;
+        assert_eq!(
+            set_contains.predicate(),
+            Predicate::Native(NativePredicate::Contains)
+        );
+        assert_eq!(
+            set_contains.predicate(),
+            *batch_clone.predicates[0].statements[0].pred()
+        );
+
+        let set_contains_custom_pred = CustomPredicateRef::new(batch, 0);
+        mp_builder.pub_op(op!(custom, set_contains_custom_pred, set_contains))?;
+
         let mut prover = MockProver {};
         let proof = mp_builder.prove(&mut prover, &params)?;
 
