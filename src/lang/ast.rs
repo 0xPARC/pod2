@@ -397,8 +397,8 @@ fn build_statement(pair: Pair<'_, Rule>) -> Result<Statement, AstBuildError> {
         | Rule::hash_of_stmt
         | Rule::dict_contains_stmt
         | Rule::dict_not_contains_stmt
-        // | Rule::set_contains_stmt
-        // | Rule::set_not_contains_stmt
+        | Rule::set_contains_stmt
+        | Rule::set_not_contains_stmt
         | Rule::array_contains_stmt => Ok(Statement::Native(build_native_call(inner_pair)?)),
         Rule::custom_predicate_call => Ok(Statement::Custom(build_custom_call(inner_pair)?)),
         _ => Err(ast_err!(UnexpectedRule, &inner_pair)),
@@ -422,8 +422,8 @@ fn build_native_call(pair: Pair<'_, Rule>) -> Result<NativePredicateCall, AstBui
         Rule::hash_of_stmt => NativePredicate::HashOf,
         Rule::dict_contains_stmt => NativePredicate::DictContains,
         Rule::dict_not_contains_stmt => NativePredicate::DictNotContains,
-        // Rule::set_contains_stmt => NativePredicate::SetContains,
-        // Rule::set_not_contains_stmt => NativePredicate::SetNotContains,
+        Rule::set_contains_stmt => NativePredicate::SetContains,
+        Rule::set_not_contains_stmt => NativePredicate::SetNotContains,
         Rule::array_contains_stmt => NativePredicate::ArrayContains,
         _ => return Err(ast_err!(UnexpectedRule, &pair)), // Should not happen if called correctly
     };
