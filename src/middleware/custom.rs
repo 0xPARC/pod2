@@ -382,7 +382,10 @@ impl CustomPredicateRef {
         Self { batch, index }
     }
     pub fn arg_len(&self) -> usize {
-        self.batch.predicates[self.index].args_len
+        self.predicate().args_len
+    }
+    pub fn predicate(&self) -> &CustomPredicate {
+        &self.batch.predicates[self.index]
     }
 }
 

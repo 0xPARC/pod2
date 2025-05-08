@@ -17,8 +17,9 @@ use crate::{
         circuits::{
             common::{
                 CircuitBuilderPod, CustomPredicateBatchTarget, CustomPredicateTarget, Flattenable,
-                MerkleClaimTarget, OperationTarget, PredicateTarget, StatementArgTarget,
-                StatementTarget, StatementTmplArgTarget, StatementTmplTarget, ValueTarget,
+                MerkleClaimTarget, OperationTarget, OperationTypeTarget, PredicateTarget,
+                StatementArgTarget, StatementTarget, StatementTmplArgTarget, StatementTmplTarget,
+                ValueTarget,
             },
             signedpod::{SignedPodVerifyGadget, SignedPodVerifyTarget},
         },
@@ -165,7 +166,9 @@ impl OperationVerifyGadget {
         resolved_merkle_claim: MerkleClaimTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
-        let op_code_ok = op.has_native_type(builder, NativeOperation::ContainsFromEntries);
+        let op_code_ok = op
+            .op_type
+            .has_native(builder, NativeOperation::ContainsFromEntries);
 
         let (arg_types_ok, [merkle_root_value, key_value, value_value]) =
             self.first_n_args_as_values(builder, resolved_op_args);
@@ -210,7 +213,9 @@ impl OperationVerifyGadget {
         resolved_merkle_claim: MerkleClaimTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
-        let op_code_ok = op.has_native_type(builder, NativeOperation::NotContainsFromEntries);
+        let op_code_ok = op
+            .op_type
+            .has_native(builder, NativeOperation::NotContainsFromEntries);
 
         let (arg_types_ok, [merkle_root_value, key_value]) =
             self.first_n_args_as_values(builder, resolved_op_args);
@@ -255,12 +260,16 @@ impl OperationVerifyGadget {
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
         let eq_op_st_code_ok = {
-            let op_code_ok = op.has_native_type(builder, NativeOperation::EqualFromEntries);
+            let op_code_ok = op
+                .op_type
+                .has_native(builder, NativeOperation::EqualFromEntries);
             let st_code_ok = st.has_native_type(builder, &self.params, NativePredicate::Equal);
             builder.and(op_code_ok, st_code_ok)
         };
         let neq_op_st_code_ok = {
-            let op_code_ok = op.has_native_type(builder, NativeOperation::NotEqualFromEntries);
+            let op_code_ok = op
+                .op_type
+                .has_native(builder, NativeOperation::NotEqualFromEntries);
             let st_code_ok = st.has_native_type(builder, &self.params, NativePredicate::NotEqual);
             builder.and(op_code_ok, st_code_ok)
         };
@@ -306,12 +315,16 @@ impl OperationVerifyGadget {
         let one = ValueTarget::one(builder);
 
         let lt_op_st_code_ok = {
-            let op_code_ok = op.has_native_type(builder, NativeOperation::LtFromEntries);
+            let op_code_ok = op
+                .op_type
+                .has_native(builder, NativeOperation::LtFromEntries);
             let st_code_ok = st.has_native_type(builder, &self.params, NativePredicate::Lt);
             builder.and(op_code_ok, st_code_ok)
         };
         let lteq_op_st_code_ok = {
-            let op_code_ok = op.has_native_type(builder, NativeOperation::LtEqFromEntries);
+            let op_code_ok = op
+                .op_type
+                .has_native(builder, NativeOperation::LtEqFromEntries);
             let st_code_ok = st.has_native_type(builder, &self.params, NativePredicate::LtEq);
             builder.and(op_code_ok, st_code_ok)
         };
@@ -368,7 +381,7 @@ impl OperationVerifyGadget {
         op: &OperationTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
-        let op_code_ok = op.has_native_type(builder, NativeOperation::HashOf);
+        let op_code_ok = op.op_type.has_native(builder, NativeOperation::HashOf);
 
         let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) =
             self.first_n_args_as_values(builder, resolved_op_args);
@@ -399,8 +412,9 @@ impl OperationVerifyGadget {
         op: &OperationTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
-        let op_code_ok =
-            op.has_native_type(builder, NativeOperation::TransitiveEqualFromStatements);
+        let op_code_ok = op
+            .op_type
+            .has_native(builder, NativeOperation::TransitiveEqualFromStatements);
 
         let arg1_type_ok =
             resolved_op_args[0].has_native_type(builder, &self.params, NativePredicate::Equal);
@@ -431,7 +445,7 @@ impl OperationVerifyGadget {
         st: &StatementTarget,
         op: &OperationTarget,
     ) -> BoolTarget {
-        let op_code_ok = op.has_native_type(builder, NativeOperation::None);
+        let op_code_ok = op.op_type.has_native(builder, NativeOperation::None);
 
         let expected_statement =
             StatementTarget::new_native(builder, &self.params, NativePredicate::None, &[]);
@@ -447,7 +461,7 @@ impl OperationVerifyGadget {
         op: &OperationTarget,
         prev_statements: &[StatementTarget],
     ) -> BoolTarget {
-        let op_code_ok = op.has_native_type(builder, NativeOperation::NewEntry);
+        let op_code_ok = op.op_type.has_native(builder, NativeOperation::NewEntry);
 
         let st_code_ok = st.has_native_type(builder, &self.params, NativePredicate::ValueOf);
 
@@ -482,7 +496,9 @@ impl OperationVerifyGadget {
         op: &OperationTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
-        let op_code_ok = op.has_native_type(builder, NativeOperation::LtToNotEqual);
+        let op_code_ok = op
+            .op_type
+            .has_native(builder, NativeOperation::LtToNotEqual);
 
         let arg_type_ok =
             resolved_op_args[0].has_native_type(builder, &self.params, NativePredicate::Lt);
@@ -508,7 +524,9 @@ impl OperationVerifyGadget {
         op: &OperationTarget,
         resolved_op_args: &[StatementTarget],
     ) -> Result<BoolTarget> {
-        let op_code_ok = op.has_native_type(builder, NativeOperation::CopyStatement);
+        let op_code_ok = op
+            .op_type
+            .has_native(builder, NativeOperation::CopyStatement);
 
         let expected_statement = &resolved_op_args[0];
         let st_ok = builder.is_equal_flattenable(st, expected_statement);
@@ -521,6 +539,7 @@ struct CustomOperationVerifyGadget {
     params: Params,
 }
 
+// Custom predicate table entry
 struct CustomPredicateEntryTarget {
     id: HashOutTarget,
     index: Target,
@@ -547,6 +566,60 @@ impl Flattenable for CustomPredicateEntryTarget {
 }
 
 impl CustomPredicateEntryTarget {
+    fn hash(&self, builder: &mut CircuitBuilder<F, D>) -> HashOutTarget {
+        builder.hash_n_to_hash_no_pad::<PoseidonHash>(self.flatten())
+    }
+}
+
+// Custom preidcate verification table entry
+struct CustomPredicateVerifyEntryTarget {
+    id: HashOutTarget,
+    index: Target,
+    predicate: CustomPredicateTarget,
+    args: Vec<ValueTarget>,
+    query: CustomPredicateVerifyQueryTarget,
+}
+
+struct CustomPredicateVerifyQueryTarget {
+    statement: StatementTarget,
+    op_type: OperationTypeTarget,
+    op_args: Vec<StatementTarget>,
+}
+
+impl Flattenable for CustomPredicateVerifyQueryTarget {
+    fn flatten(&self) -> Vec<Target> {
+        self.statement
+            .flatten()
+            .iter()
+            .chain(self.op_type.elements.iter())
+            .cloned()
+            .chain(self.op_args.iter().flat_map(|op_arg| op_arg.flatten()))
+            .collect()
+    }
+    fn from_flattened(params: &Params, vs: &[Target]) -> Self {
+        let (pos, size) = (0, params.statement_size());
+        let statement = StatementTarget::from_flattened(params, &vs[pos..pos + size]);
+        let (pos, size) = (pos + size, params.operation_size());
+        let op_type = OperationTypeTarget {
+            elements: vs[pos..pos + size]
+                .try_into()
+                .expect("len = operation_type_size"),
+        };
+        let (pos, size) = (pos + size, params.statement_size());
+        let op_args = (0..params.max_operation_args)
+            .map(|i| {
+                StatementTarget::from_flattened(params, &vs[pos + i * size..pos + (1 + i) * size])
+            })
+            .collect();
+        Self {
+            statement,
+            op_type,
+            op_args,
+        }
+    }
+}
+
+impl CustomPredicateVerifyQueryTarget {
     fn hash(&self, builder: &mut CircuitBuilder<F, D>) -> HashOutTarget {
         builder.hash_n_to_hash_no_pad::<PoseidonHash>(self.flatten())
     }
@@ -631,7 +704,7 @@ impl CustomOperationVerifyGadget {
         assert_eq!(self.params.max_custom_predicate_wildcards, args.len());
 
         // Check the statement predicate
-        let (op_is_custom, batch_id, index) = op.type_as_custom(builder);
+        let (op_is_custom, batch_id, index) = op.op_type.as_custom(builder);
         let id_ok =
             builder.is_equal_slice(&batch_id.elements, &resolved_custom_predicate.id.elements);
         let index_ok = builder.is_equal(index, resolved_custom_predicate.index);
@@ -750,7 +823,8 @@ impl MainPodVerifyGadget {
         let custom_predicate_batches: Vec<_> = (0..params.max_custom_predicate_batches)
             .map(|_| builder.add_virtual_custom_predicate_batch(&self.params))
             .collect_vec();
-
+        // Table of [batch_id, custom_predicate_index, custom_predicate] with queriable part as
+        // hash([batch_id, custom_predicate_index, custom_predicate])
         let mut custom_predicate_table =
             Vec::with_capacity(params.max_custom_predicate_batches * params.max_custom_batch_size);
         for cpb in custom_predicate_batches.iter() {
@@ -765,6 +839,12 @@ impl MainPodVerifyGadget {
                 custom_predicate_table.push(cpe_hash);
             }
         }
+
+        // Verify operations that use custom predicates in a separate area.  Generate a table from
+        // the result
+
+        // Table of [batch_id, custom_predicate_index, custom_predicate, args, st, op, op_args]
+        // with queriable part as hash([st, op, op_args])
 
         // 2. Calculate the Pod Id from the public statements
         let pub_statements_flattened = pub_statements.iter().flat_map(|s| s.flatten()).collect();

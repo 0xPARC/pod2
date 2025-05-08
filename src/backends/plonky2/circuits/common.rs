@@ -26,10 +26,10 @@ use crate::{
         primitives::merkletree::MerkleClaimAndProofTarget,
     },
     middleware::{
-        CustomPredicate, CustomPredicateBatch, NativeOperation, NativePredicate, Params, Predicate,
-        PredicatePrefix, RawValue, StatementArg, StatementTmpl, StatementTmplArg,
-        StatementTmplArgPrefix, ToFields, Value, EMPTY_VALUE, F, HASH_SIZE, OPERATION_ARG_F_LEN,
-        OPERATION_AUX_F_LEN, STATEMENT_ARG_F_LEN, VALUE_SIZE,
+        CustomPredicate, CustomPredicateBatch, NativeOperation, NativePredicate, OperationType,
+        Params, Predicate, PredicatePrefix, RawValue, StatementArg, StatementTmpl,
+        StatementTmplArg, StatementTmplArgPrefix, ToFields, Value, EMPTY_VALUE, F, HASH_SIZE,
+        OPERATION_ARG_F_LEN, OPERATION_AUX_F_LEN, STATEMENT_ARG_F_LEN, VALUE_SIZE,
     },
 };
 
@@ -197,10 +197,47 @@ impl StatementTarget {
     }
 }
 
+#[derive(Clone)]
+pub struct OperationTypeTarget {
+    pub elements: [Target; Params::operation_type_size()],
+}
+
+impl OperationTypeTarget {
+    pub fn as_custom(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+    ) -> (BoolTarget, HashOutTarget, Target) {
+        // TODO: Use an enum for these prefixes
+        let three = builder.constant(F::from_canonical_usize(3));
+        let op_is_custom = builder.is_equal(self.elements[0], three);
+        let batch_id = HashOutTarget::from_vec(self.elements[1..5].to_vec());
+        let index = self.elements[5];
+        (op_is_custom, batch_id, index)
+    }
+
+    pub fn has_native(&self, builder: &mut CircuitBuilder<F, D>, t: NativeOperation) -> BoolTarget {
+        // TODO: Use an enum for these prefixes
+        let one = builder.one();
+        let op_is_native = builder.is_equal(self.elements[0], one);
+        let op_code = builder.constant(F::from_canonical_u64(t as u64));
+        let op_code_matches = builder.is_equal(self.elements[1], op_code);
+        builder.and(op_is_native, op_code_matches)
+    }
+
+    pub fn set_targets(
+        &self,
+        pw: &mut PartialWitness<F>,
+        params: &Params,
+        op_type: &OperationType,
+    ) -> Result<()> {
+        Ok(pw.set_target_arr(&self.elements, &op_type.to_fields(params))?)
+    }
+}
+
 // TODO: Implement Operation::to_field to determine the size of each element
 #[derive(Clone)]
 pub struct OperationTarget {
-    pub op_type: [Target; Params::operation_type_size()],
+    pub op_type: OperationTypeTarget,
     pub args: Vec<[Target; OPERATION_ARG_F_LEN]>,
     pub aux: [Target; OPERATION_AUX_F_LEN],
 }
@@ -212,7 +249,7 @@ impl OperationTarget {
         params: &Params,
         op: &Operation,
     ) -> Result<()> {
-        pw.set_target_arr(&self.op_type, &op.op_type().to_fields(params))?;
+        self.op_type.set_targets(pw, params, &op.op_type())?;
         for (i, arg) in op
             .args()
             .iter()
@@ -224,29 +261,6 @@ impl OperationTarget {
         }
         pw.set_target_arr(&self.aux, &op.aux().to_fields(params))?;
         Ok(())
-    }
-
-    pub fn has_native_type(
-        &self,
-        builder: &mut CircuitBuilder<F, D>,
-        t: NativeOperation,
-    ) -> BoolTarget {
-        let one = builder.one();
-        let op_is_native = builder.is_equal(self.op_type[0], one);
-        let op_code = builder.constant(F::from_canonical_u64(t as u64));
-        let op_code_matches = builder.is_equal(self.op_type[1], op_code);
-        builder.and(op_is_native, op_code_matches)
-    }
-
-    pub fn type_as_custom(
-        &self,
-        builder: &mut CircuitBuilder<F, D>,
-    ) -> (BoolTarget, HashOutTarget, Target) {
-        let three = builder.constant(F::from_canonical_usize(3));
-        let op_is_custom = builder.is_equal(self.op_type[0], three);
-        let batch_id = HashOutTarget::from_vec(self.op_type[1..5].to_vec());
-        let index = self.op_type[5];
-        (op_is_custom, batch_id, index)
     }
 }
 
@@ -752,7 +766,9 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
 
     fn add_virtual_operation(&mut self, params: &Params) -> OperationTarget {
         OperationTarget {
-            op_type: self.add_virtual_target_arr(),
+            op_type: OperationTypeTarget {
+                elements: self.add_virtual_target_arr(),
+            },
             args: (0..params.max_operation_args)
                 .map(|_| self.add_virtual_target_arr())
                 .collect(),

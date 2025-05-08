@@ -23,9 +23,9 @@ use crate::{
         signedpod::SignedPod,
     },
     middleware::{
-        self, AnchoredKey, CustomPredicateBatch, DynError, Hash, MainPodInputs, NativeOperation,
-        NonePod, OperationType, Params, Pod, PodId, PodProver, PodType, StatementArg, ToFields, F,
-        KEY_TYPE, SELF,
+        self, AnchoredKey, CustomPredicateBatch, CustomPredicateRef, DynError, Hash, MainPodInputs,
+        NativeOperation, NonePod, OperationType, Params, Pod, PodId, PodProver, PodType,
+        StatementArg, ToFields, F, KEY_TYPE, SELF,
     },
 };
 
@@ -60,6 +60,28 @@ pub(crate) fn extract_custom_predicate_batches(
     }
     Ok(custom_predicate_batches)
 }
+
+// /// Extracts all custom predicate operations with all the data required to verify them.
+// pub(crate) fn extract_custom_predicate_operations(
+//     params: &Params,
+//     operations: &[middleware::Operation],
+// ) -> Result<Vec<(CustomPredicateRef, Vec<Statement>)>> {
+//     let custom_predicate_ops: Vec<_> = operations
+//         .iter()
+//         .flat_map(|op| match op {
+//             middleware::Operation::Custom(cpr, sts) => Some((cpr, sts)),
+//             _ => None,
+//         })
+//         .collect();
+//     if custom_predicate_ops.len() > params.max_custom_predicate_verificatios {
+//         return Err(Error::custom(format!(
+//             "The number of required custom predicate verifications ({}) exceeds the maximum number ({}).",
+//             custom_predicate_ops.len(),
+//             params.max_custom_predicate_verificatios
+//         )));
+//     }
+//     Ok(custom_predicate_ops)
+// }
 
 /// Extracts Merkle proofs from Contains/NotContains ops.
 pub(crate) fn extract_merkle_proofs(
