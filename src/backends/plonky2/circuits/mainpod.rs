@@ -16,10 +16,11 @@ use crate::{
         basetypes::D,
         circuits::{
             common::{
-                CircuitBuilderPod, CustomPredicateBatchTarget, CustomPredicateTarget, Flattenable,
-                MerkleClaimTarget, OperationTarget, OperationTypeTarget, PredicateTarget,
-                StatementArgTarget, StatementTarget, StatementTmplArgTarget, StatementTmplTarget,
-                ValueTarget,
+                CircuitBuilderPod, CustomPredicateBatchTarget, CustomPredicateEntryTarget,
+                CustomPredicateTarget, CustomPredicateVerifyEntryTarget,
+                CustomPredicateVerifyQueryTarget, Flattenable, MerkleClaimTarget, OperationTarget,
+                OperationTypeTarget, PredicateTarget, StatementArgTarget, StatementTarget,
+                StatementTmplArgTarget, StatementTmplTarget, ValueTarget,
             },
             signedpod::{SignedPodVerifyGadget, SignedPodVerifyTarget},
         },
@@ -31,9 +32,9 @@ use crate::{
         signedpod::SignedPod,
     },
     middleware::{
-        AnchoredKey, CustomPredicateBatch, NativeOperation, NativePredicate, Params, PodType,
-        Statement, StatementArg, StatementTmplArg, StatementTmplArgPrefix, ToFields, Value, F,
-        KEY_TYPE, SELF, VALUE_SIZE,
+        AnchoredKey, CustomPredicateBatch, CustomPredicateRef, NativeOperation, NativePredicate,
+        Params, PodType, Statement, StatementArg, StatementTmplArg, StatementTmplArgPrefix,
+        ToFields, Value, WildcardValue, F, KEY_TYPE, SELF, VALUE_SIZE,
     },
 };
 
@@ -79,6 +80,7 @@ impl OperationVerifyGadget {
         op: &OperationTarget,
         prev_statements: &[StatementTarget],
         merkle_claims: &[MerkleClaimTarget],
+        custom_predicate_verification_table: &[HashOutTarget],
     ) -> Result<()> {
         let _true = builder._true();
         let _false = builder._false();
@@ -95,11 +97,29 @@ impl OperationVerifyGadget {
                 .map(|&i| builder.vec_ref(&self.params, prev_statements, i))
                 .collect::<Vec<_>>()
         };
+        // TODO: Can we have a single table with merkel claims and verified custom predicates
+        // together (with an identifying prefix) and then we only need one random access instead of
+        // two?
+        // Currently we use one slot of aux for the index to merkle claim and another slot of aux
+        // for the index to the verified custom predicate.  We can't use the same slot because then
+        // if one table is different size the random access to the smaller one may use an index
+        // that is too big and not pass the constraints.  Possible solutions to use a single slot
+        // are:
+        //  - a. Use a single table (mux both tables)
+        //  - b. select the index or 0 by checking the operation type here; but that breaks the
+        //    current abstraction a little bit.
+
         // Certain operations (Contains/NotContains) will refer to one
         // of the provided Merkle proofs (if any). These proofs have already
         // been verified, so we need only look up the claim.
         let resolved_merkle_claim = (!merkle_claims.is_empty())
             .then(|| builder.vec_ref(&self.params, merkle_claims, op.aux[0]));
+
+        // Operations from custom statements will refer to one
+        // of the provided custom predicates verifications (if any). These operations have already
+        // been verified, so we need only look up the entry.
+        let resolved_custom_pred_verification = (!custom_predicate_verification_table.is_empty())
+            .then(|| builder.vec_ref(&self.params, custom_predicate_verification_table, op.aux[1]));
 
         // The verification may require aux data which needs to be stored in the
         // `OperationVerifyTarget` so that we can set during witness generation.
@@ -111,20 +131,20 @@ impl OperationVerifyGadget {
         // lie outside of the domain.
         let op_checks = [
             vec![
-                self.eval_none(builder, st, op),
-                self.eval_new_entry(builder, st, op, prev_statements),
+                self.eval_none(builder, st, &op.op_type),
+                self.eval_new_entry(builder, st, &op.op_type, prev_statements),
             ],
             // Skip these if there are no resolved op args
             if resolved_op_args.is_empty() {
                 vec![]
             } else {
                 vec![
-                    self.eval_copy(builder, st, op, &resolved_op_args)?,
-                    self.eval_eq_neq_from_entries(builder, st, op, &resolved_op_args),
-                    self.eval_lt_lteq_from_entries(builder, st, op, &resolved_op_args),
-                    self.eval_transitive_eq(builder, st, op, &resolved_op_args),
-                    self.eval_lt_to_neq(builder, st, op, &resolved_op_args),
-                    self.eval_hash_of(builder, st, op, &resolved_op_args),
+                    self.eval_copy(builder, st, &op.op_type, &resolved_op_args)?,
+                    self.eval_eq_neq_from_entries(builder, st, &op.op_type, &resolved_op_args),
+                    self.eval_lt_lteq_from_entries(builder, st, &op.op_type, &resolved_op_args),
+                    self.eval_transitive_eq(builder, st, &op.op_type, &resolved_op_args),
+                    self.eval_lt_to_neq(builder, st, &op.op_type, &resolved_op_args),
+                    self.eval_hash_of(builder, st, &op.op_type, &resolved_op_args),
                 ]
             },
             // Skip these if there are no resolved Merkle claims
@@ -133,18 +153,30 @@ impl OperationVerifyGadget {
                     self.eval_contains_from_entries(
                         builder,
                         st,
-                        op,
+                        &op.op_type,
                         resolved_merkle_claim,
                         &resolved_op_args,
                     ),
                     self.eval_not_contains_from_entries(
                         builder,
                         st,
-                        op,
+                        &op.op_type,
                         resolved_merkle_claim,
                         &resolved_op_args,
                     ),
                 ]
+            } else {
+                vec![]
+            },
+            // Skip these if there are no resolved custom predicate verifications
+            if let Some(resolved_custom_pred_verification) = resolved_custom_pred_verification {
+                vec![self.eval_custom(
+                    builder,
+                    st,
+                    &op.op_type,
+                    resolved_custom_pred_verification,
+                    &resolved_op_args,
+                )]
             } else {
                 vec![]
             },
@@ -162,13 +194,11 @@ impl OperationVerifyGadget {
         &self,
         builder: &mut CircuitBuilder<F, D>,
         st: &StatementTarget,
-        op: &OperationTarget,
+        op_type: &OperationTypeTarget,
         resolved_merkle_claim: MerkleClaimTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
-        let op_code_ok = op
-            .op_type
-            .has_native(builder, NativeOperation::ContainsFromEntries);
+        let op_code_ok = op_type.has_native(builder, NativeOperation::ContainsFromEntries);
 
         let (arg_types_ok, [merkle_root_value, key_value, value_value]) =
             self.first_n_args_as_values(builder, resolved_op_args);
@@ -209,13 +239,11 @@ impl OperationVerifyGadget {
         &self,
         builder: &mut CircuitBuilder<F, D>,
         st: &StatementTarget,
-        op: &OperationTarget,
+        op_type: &OperationTypeTarget,
         resolved_merkle_claim: MerkleClaimTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
-        let op_code_ok = op
-            .op_type
-            .has_native(builder, NativeOperation::NotContainsFromEntries);
+        let op_code_ok = op_type.has_native(builder, NativeOperation::NotContainsFromEntries);
 
         let (arg_types_ok, [merkle_root_value, key_value]) =
             self.first_n_args_as_values(builder, resolved_op_args);
@@ -250,26 +278,42 @@ impl OperationVerifyGadget {
         builder.all([op_code_ok, arg_types_ok, merkle_proof_ok, st_ok])
     }
 
+    fn eval_custom(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        st: &StatementTarget,
+        op_type: &OperationTypeTarget,
+        resolved_custom_pred_verification: HashOutTarget,
+        resolved_op_args: &[StatementTarget],
+    ) -> BoolTarget {
+        let query = CustomPredicateVerifyQueryTarget {
+            statement: st.clone(),
+            op_type: op_type.clone(),
+            op_args: resolved_op_args.to_vec(),
+        };
+        let query_hash = query.hash(builder);
+        builder.is_equal_slice(
+            &resolved_custom_pred_verification.elements,
+            &query_hash.elements,
+        )
+    }
+
     /// Carries out the checks necessary for EqualFromEntries and
     /// NotEqualFromEntries.
     fn eval_eq_neq_from_entries(
         &self,
         builder: &mut CircuitBuilder<F, D>,
         st: &StatementTarget,
-        op: &OperationTarget,
+        op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
         let eq_op_st_code_ok = {
-            let op_code_ok = op
-                .op_type
-                .has_native(builder, NativeOperation::EqualFromEntries);
+            let op_code_ok = op_type.has_native(builder, NativeOperation::EqualFromEntries);
             let st_code_ok = st.has_native_type(builder, &self.params, NativePredicate::Equal);
             builder.and(op_code_ok, st_code_ok)
         };
         let neq_op_st_code_ok = {
-            let op_code_ok = op
-                .op_type
-                .has_native(builder, NativeOperation::NotEqualFromEntries);
+            let op_code_ok = op_type.has_native(builder, NativeOperation::NotEqualFromEntries);
             let st_code_ok = st.has_native_type(builder, &self.params, NativePredicate::NotEqual);
             builder.and(op_code_ok, st_code_ok)
         };
@@ -308,23 +352,19 @@ impl OperationVerifyGadget {
         &self,
         builder: &mut CircuitBuilder<F, D>,
         st: &StatementTarget,
-        op: &OperationTarget,
+        op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
         let zero = ValueTarget::zero(builder);
         let one = ValueTarget::one(builder);
 
         let lt_op_st_code_ok = {
-            let op_code_ok = op
-                .op_type
-                .has_native(builder, NativeOperation::LtFromEntries);
+            let op_code_ok = op_type.has_native(builder, NativeOperation::LtFromEntries);
             let st_code_ok = st.has_native_type(builder, &self.params, NativePredicate::Lt);
             builder.and(op_code_ok, st_code_ok)
         };
         let lteq_op_st_code_ok = {
-            let op_code_ok = op
-                .op_type
-                .has_native(builder, NativeOperation::LtEqFromEntries);
+            let op_code_ok = op_type.has_native(builder, NativeOperation::LtEqFromEntries);
             let st_code_ok = st.has_native_type(builder, &self.params, NativePredicate::LtEq);
             builder.and(op_code_ok, st_code_ok)
         };
@@ -378,10 +418,10 @@ impl OperationVerifyGadget {
         &self,
         builder: &mut CircuitBuilder<F, D>,
         st: &StatementTarget,
-        op: &OperationTarget,
+        op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
-        let op_code_ok = op.op_type.has_native(builder, NativeOperation::HashOf);
+        let op_code_ok = op_type.has_native(builder, NativeOperation::HashOf);
 
         let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) =
             self.first_n_args_as_values(builder, resolved_op_args);
@@ -409,12 +449,11 @@ impl OperationVerifyGadget {
         &self,
         builder: &mut CircuitBuilder<F, D>,
         st: &StatementTarget,
-        op: &OperationTarget,
+        op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
-        let op_code_ok = op
-            .op_type
-            .has_native(builder, NativeOperation::TransitiveEqualFromStatements);
+        let op_code_ok =
+            op_type.has_native(builder, NativeOperation::TransitiveEqualFromStatements);
 
         let arg1_type_ok =
             resolved_op_args[0].has_native_type(builder, &self.params, NativePredicate::Equal);
@@ -443,9 +482,9 @@ impl OperationVerifyGadget {
         &self,
         builder: &mut CircuitBuilder<F, D>,
         st: &StatementTarget,
-        op: &OperationTarget,
+        op_type: &OperationTypeTarget,
     ) -> BoolTarget {
-        let op_code_ok = op.op_type.has_native(builder, NativeOperation::None);
+        let op_code_ok = op_type.has_native(builder, NativeOperation::None);
 
         let expected_statement =
             StatementTarget::new_native(builder, &self.params, NativePredicate::None, &[]);
@@ -458,10 +497,10 @@ impl OperationVerifyGadget {
         &self,
         builder: &mut CircuitBuilder<F, D>,
         st: &StatementTarget,
-        op: &OperationTarget,
+        op_type: &OperationTypeTarget,
         prev_statements: &[StatementTarget],
     ) -> BoolTarget {
-        let op_code_ok = op.op_type.has_native(builder, NativeOperation::NewEntry);
+        let op_code_ok = op_type.has_native(builder, NativeOperation::NewEntry);
 
         let st_code_ok = st.has_native_type(builder, &self.params, NativePredicate::ValueOf);
 
@@ -493,12 +532,10 @@ impl OperationVerifyGadget {
         &self,
         builder: &mut CircuitBuilder<F, D>,
         st: &StatementTarget,
-        op: &OperationTarget,
+        op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
-        let op_code_ok = op
-            .op_type
-            .has_native(builder, NativeOperation::LtToNotEqual);
+        let op_code_ok = op_type.has_native(builder, NativeOperation::LtToNotEqual);
 
         let arg_type_ok =
             resolved_op_args[0].has_native_type(builder, &self.params, NativePredicate::Lt);
@@ -521,12 +558,10 @@ impl OperationVerifyGadget {
         &self,
         builder: &mut CircuitBuilder<F, D>,
         st: &StatementTarget,
-        op: &OperationTarget,
+        op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
     ) -> Result<BoolTarget> {
-        let op_code_ok = op
-            .op_type
-            .has_native(builder, NativeOperation::CopyStatement);
+        let op_code_ok = op_type.has_native(builder, NativeOperation::CopyStatement);
 
         let expected_statement = &resolved_op_args[0];
         let st_ok = builder.is_equal_flattenable(st, expected_statement);
@@ -539,92 +574,11 @@ struct CustomOperationVerifyGadget {
     params: Params,
 }
 
-// Custom predicate table entry
-struct CustomPredicateEntryTarget {
-    id: HashOutTarget,
-    index: Target,
-    predicate: CustomPredicateTarget,
-}
-
-impl Flattenable for CustomPredicateEntryTarget {
-    fn flatten(&self) -> Vec<Target> {
-        self.id
-            .elements
-            .iter()
-            .chain(iter::once(&self.index))
-            .chain(self.predicate.flatten().iter())
-            .cloned()
-            .collect()
-    }
-    fn from_flattened(params: &Params, vs: &[Target]) -> Self {
-        Self {
-            id: HashOutTarget::from_flattened(params, &vs[0..4]),
-            index: vs[4],
-            predicate: CustomPredicateTarget::from_flattened(params, &vs[5..]),
-        }
-    }
-}
-
-impl CustomPredicateEntryTarget {
-    fn hash(&self, builder: &mut CircuitBuilder<F, D>) -> HashOutTarget {
-        builder.hash_n_to_hash_no_pad::<PoseidonHash>(self.flatten())
-    }
-}
-
-// Custom preidcate verification table entry
-struct CustomPredicateVerifyEntryTarget {
-    id: HashOutTarget,
-    index: Target,
-    predicate: CustomPredicateTarget,
-    args: Vec<ValueTarget>,
-    query: CustomPredicateVerifyQueryTarget,
-}
-
-struct CustomPredicateVerifyQueryTarget {
-    statement: StatementTarget,
-    op_type: OperationTypeTarget,
-    op_args: Vec<StatementTarget>,
-}
-
-impl Flattenable for CustomPredicateVerifyQueryTarget {
-    fn flatten(&self) -> Vec<Target> {
-        self.statement
-            .flatten()
-            .iter()
-            .chain(self.op_type.elements.iter())
-            .cloned()
-            .chain(self.op_args.iter().flat_map(|op_arg| op_arg.flatten()))
-            .collect()
-    }
-    fn from_flattened(params: &Params, vs: &[Target]) -> Self {
-        let (pos, size) = (0, params.statement_size());
-        let statement = StatementTarget::from_flattened(params, &vs[pos..pos + size]);
-        let (pos, size) = (pos + size, params.operation_size());
-        let op_type = OperationTypeTarget {
-            elements: vs[pos..pos + size]
-                .try_into()
-                .expect("len = operation_type_size"),
-        };
-        let (pos, size) = (pos + size, params.statement_size());
-        let op_args = (0..params.max_operation_args)
-            .map(|i| {
-                StatementTarget::from_flattened(params, &vs[pos + i * size..pos + (1 + i) * size])
-            })
-            .collect();
-        Self {
-            statement,
-            op_type,
-            op_args,
-        }
-    }
-}
-
-impl CustomPredicateVerifyQueryTarget {
-    fn hash(&self, builder: &mut CircuitBuilder<F, D>) -> HashOutTarget {
-        builder.hash_n_to_hash_no_pad::<PoseidonHash>(self.flatten())
-    }
-}
-
+// NOTE: This is a bit messy.  The target types are defined in `common.rs` because they are used in
+// `add_virtual_foo` methods in the trait for the `CircuitBuilder`.  But the constraint logic is
+// here.  Maybe we want to move everything related to custom predicates to its own module, but then
+// should we add a new trait for the `add_virtual_foo` methods so that everything is contained in a
+// module?
 impl CustomOperationVerifyGadget {
     fn statement_arg_from_template(
         &self,
@@ -690,49 +644,48 @@ impl CustomOperationVerifyGadget {
         }
     }
 
+    /// Given a custom predicate, a list of operation arguments (statements) and a list of wildcard
+    /// values (args):
+    /// - Verify that the custom predicate is satisfied with the given statements
+    /// - Build the output statement
+    /// - Build the expected operation type
     fn eval(
         &self,
         builder: &mut CircuitBuilder<F, D>,
-        st: &StatementTarget,
-        op: &OperationTarget,
-        resolved_op_args: &[StatementTarget],
-        resolved_custom_predicate: &CustomPredicateEntryTarget,
+        op_args: &[StatementTarget],
+        custom_predicate: &CustomPredicateEntryTarget,
         args: &[ValueTarget], // arguments to the custom predicate, public and private
-    ) -> Result<BoolTarget> {
+    ) -> Result<(StatementTarget, OperationTypeTarget)> {
         // Some sanity checks
-        assert_eq!(self.params.max_operation_args, resolved_op_args.len());
+        assert_eq!(self.params.max_operation_args, op_args.len());
         assert_eq!(self.params.max_custom_predicate_wildcards, args.len());
 
-        // Check the statement predicate
-        let (op_is_custom, batch_id, index) = op.op_type.as_custom(builder);
-        let id_ok =
-            builder.is_equal_slice(&batch_id.elements, &resolved_custom_predicate.id.elements);
-        let index_ok = builder.is_equal(index, resolved_custom_predicate.index);
+        let (batch_id, index) = (custom_predicate.id, custom_predicate.index);
+        let op_type = OperationTypeTarget::new_custom(builder, batch_id, index);
 
-        // Check the statement arguments
-        let expected_predicate = PredicateTarget::new_custom(builder, batch_id, index);
+        // Build the statement
+        let st_predicate = PredicateTarget::new_custom(builder, batch_id, index);
         let arg_none = ValueTarget::zero(builder);
         let lt_mask = builder.lt_mask(
             self.params.max_statement_args,
-            resolved_custom_predicate.predicate.args_len,
+            custom_predicate.predicate.args_len,
         );
-        let expected_args = (0..self.params.max_statement_args)
+        let st_args = (0..self.params.max_statement_args)
             .map(|i| {
                 let v = builder.select_flattenable(&self.params, lt_mask[i], &args[i], &arg_none);
                 StatementArgTarget::wildcard_literal(builder, &v)
             })
             .collect();
-        let expected_statement = StatementTarget {
-            predicate: expected_predicate,
-            args: expected_args,
+        let statement = StatementTarget {
+            predicate: st_predicate,
+            args: st_args,
         };
-        let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
         // Check the operation arguments
         // From each statement template we generate an expected statement using replacing the
         // wildcards by the arguments.  Then we compare the expected statement with the operation
         // argument.
-        let expected_sts: Vec<_> = resolved_custom_predicate
+        let expected_sts: Vec<_> = custom_predicate
             .predicate
             .statements
             .iter()
@@ -740,19 +693,20 @@ impl CustomOperationVerifyGadget {
             .collect();
         let sts_eq: Vec<_> = expected_sts
             .iter()
-            .zip_eq(resolved_op_args.iter())
+            .zip_eq(op_args.iter())
             .map(|(expected_st, st)| builder.is_equal_flattenable(expected_st, st))
             .collect();
         let all_st_eq = builder.all(sts_eq.clone());
         let some_st_eq = builder.any(sts_eq);
         // NOTE: This BoolTarget is safe because both inputs to the select are safe
         let is_op_args_ok = BoolTarget::new_unsafe(builder.select(
-            resolved_custom_predicate.predicate.conjunction,
+            custom_predicate.predicate.conjunction,
             all_st_eq.target,
             some_st_eq.target,
         ));
 
-        Ok(builder.all([op_is_custom, id_ok, index_ok, st_ok, is_op_args_ok]))
+        builder.assert_one(is_op_args_ok.target);
+        Ok((statement, op_type))
     }
 }
 
@@ -819,32 +773,74 @@ impl MainPodVerifyGadget {
             .map(|pf| pf.into())
             .collect();
 
-        // Calculate `CustomPredicateBatch` ids and build a table of available custom predicates.
-        let custom_predicate_batches: Vec<_> = (0..params.max_custom_predicate_batches)
-            .map(|_| builder.add_virtual_custom_predicate_batch(&self.params))
-            .collect_vec();
         // Table of [batch_id, custom_predicate_index, custom_predicate] with queriable part as
-        // hash([batch_id, custom_predicate_index, custom_predicate])
+        // hash([batch_id, custom_predicate_index, custom_predicate]).  While building the table we
+        // calculate the id of each batch.
         let mut custom_predicate_table =
             Vec::with_capacity(params.max_custom_predicate_batches * params.max_custom_batch_size);
-        for cpb in custom_predicate_batches.iter() {
-            let id = cpb.id(builder);
+        let mut custom_predicate_batches = Vec::with_capacity(params.max_custom_predicate_batches);
+        for _ in 0..params.max_custom_predicate_batches {
+            let cpb = builder.add_virtual_custom_predicate_batch(&self.params);
+            let id = cpb.id(builder); // constrain the id
             for (index, cp) in cpb.predicates.iter().enumerate() {
-                let cpe_hash = CustomPredicateEntryTarget {
-                    id,
-                    index: builder.constant(F::from_canonical_usize(index)),
-                    predicate: cp.clone(),
-                }
-                .hash(builder);
-                custom_predicate_table.push(cpe_hash);
+                let entry = CustomPredicateEntryTarget {
+                    id,                                                      // output
+                    index: builder.constant(F::from_canonical_usize(index)), // constant
+                    predicate: cp.clone(),                                   // input
+                };
+                let entry_hash = entry.hash(builder);
+                custom_predicate_table.push(entry_hash);
             }
+            custom_predicate_batches.push(cpb); // We keep this for witness assignment
         }
 
-        // Verify operations that use custom predicates in a separate area.  Generate a table from
-        // the result
-
         // Table of [batch_id, custom_predicate_index, custom_predicate, args, st, op, op_args]
-        // with queriable part as hash([st, op, op_args])
+        // with queriable part as hash([st, op, op_args]).  While building the table we verify each
+        // custom predicate against the operation and statement.
+        let mut custom_predicate_verifications =
+            Vec::with_capacity(params.max_custom_predicate_verifications);
+        let mut custom_predicate_verification_table =
+            Vec::with_capacity(params.max_custom_predicate_verifications);
+        for _ in 0..params.max_custom_predicate_verifications {
+            let custom_predicate_table_index = builder.add_virtual_target();
+            let custom_predicate = builder.add_virtual_custom_predicate_entry(&self.params);
+            let args = (0..params.max_custom_predicate_wildcards)
+                .map(|_| builder.add_virtual_value())
+                .collect_vec();
+            let op_args = (0..params.max_operation_args)
+                .map(|_| builder.add_virtual_statement(&self.params))
+                .collect_vec();
+
+            // Verify the custom predicate operation
+            let (statement, op_type) = CustomOperationVerifyGadget {
+                params: params.clone(),
+            }
+            .eval(builder, &op_args, &custom_predicate, &args)?;
+            let query = CustomPredicateVerifyQueryTarget {
+                statement, // output
+                op_type,   // output
+                op_args,   // input
+            };
+
+            // Check that the batch id is correct by querying the custom predicate batches table
+            let table_query_hash = builder.vec_ref(
+                &self.params,
+                &custom_predicate_table,
+                custom_predicate_table_index,
+            );
+            let query_hash = query.hash(builder);
+            builder.connect_array(table_query_hash.elements, query_hash.elements);
+
+            let entry = CustomPredicateVerifyEntryTarget {
+                custom_predicate_table_index, // input
+                custom_predicate,             // input
+                args,                         // input
+                query,
+            };
+            let query_hash = entry.query.hash(builder);
+            custom_predicate_verification_table.push(query_hash);
+            custom_predicate_verifications.push(entry); // We keep this for witness assignment
+        }
 
         // 2. Calculate the Pod Id from the public statements
         let pub_statements_flattened = pub_statements.iter().flat_map(|s| s.flatten()).collect();
@@ -874,7 +870,14 @@ impl MainPodVerifyGadget {
             OperationVerifyGadget {
                 params: params.clone(),
             }
-            .eval(builder, st, op, prev_statements, &merkle_claims)?;
+            .eval(
+                builder,
+                st,
+                op,
+                prev_statements,
+                &merkle_claims,
+                &custom_predicate_verification_table,
+            )?;
         }
 
         Ok(MainPodVerifyTarget {
@@ -885,6 +888,7 @@ impl MainPodVerifyGadget {
             operations,
             merkle_proofs,
             custom_predicate_batches,
+            custom_predicate_verifications,
         })
     }
 }
@@ -898,6 +902,14 @@ pub struct MainPodVerifyTarget {
     operations: Vec<OperationTarget>,
     merkle_proofs: Vec<MerkleClaimAndProofTarget>,
     custom_predicate_batches: Vec<CustomPredicateBatchTarget>,
+    custom_predicate_verifications: Vec<CustomPredicateVerifyEntryTarget>,
+}
+
+pub struct CustomPredicateVerification {
+    pub custom_predicate_table_index: usize,
+    pub custom_predicate: CustomPredicateRef,
+    pub args: Vec<WildcardValue>,
+    pub op_args: Vec<mainpod::Statement>,
 }
 
 pub struct MainPodVerifyInput {
@@ -906,6 +918,7 @@ pub struct MainPodVerifyInput {
     pub operations: Vec<mainpod::Operation>,
     pub merkle_proofs: Vec<MerkleClaimAndProof>,
     pub custom_predicate_batches: Vec<Arc<CustomPredicateBatch>>,
+    pub custom_predicate_verifications: Vec<CustomPredicateVerification>,
 }
 
 impl MainPodVerifyTarget {
@@ -929,6 +942,7 @@ impl MainPodVerifyTarget {
             self.statements[i].set_targets(pw, &self.params, st)?;
             self.operations[i].set_targets(pw, &self.params, op)?;
         }
+
         assert!(input.merkle_proofs.len() <= self.params.max_merkle_proofs);
         for (i, mp) in input.merkle_proofs.iter().enumerate() {
             self.merkle_proofs[i].set_targets(pw, true, mp)?;
@@ -938,14 +952,40 @@ impl MainPodVerifyTarget {
         for i in input.merkle_proofs.len()..self.params.max_merkle_proofs {
             self.merkle_proofs[i].set_targets(pw, false, &pad_mp)?;
         }
+
         assert!(input.custom_predicate_batches.len() <= self.params.max_custom_predicate_batches);
-        for (i, mp) in input.custom_predicate_batches.iter().enumerate() {
-            self.custom_predicate_batches[i].set_targets(pw, &self.params, mp)?;
+        for (i, cpb) in input.custom_predicate_batches.iter().enumerate() {
+            self.custom_predicate_batches[i].set_targets(pw, &self.params, cpb)?;
         }
         // Padding
         let pad_cpb = CustomPredicateBatch::new(&self.params, "empty".to_string(), vec![]);
         for i in input.custom_predicate_batches.len()..self.params.max_custom_predicate_batches {
             self.custom_predicate_batches[i].set_targets(pw, &self.params, &pad_cpb)?;
+        }
+
+        assert!(
+            input.custom_predicate_verifications.len()
+                <= self.params.max_custom_predicate_verifications
+        );
+        for (i, cpv) in input.custom_predicate_verifications.iter().enumerate() {
+            self.custom_predicate_verifications[i].set_targets(pw, &self.params, cpv)?;
+        }
+        // Padding.  Use the first input if it exists.  If it doesnt, all batches in this MainPod
+        // are padding so refer to the first padding entry.
+        let empty_cpv = CustomPredicateVerification {
+            custom_predicate_table_index: 0,
+            custom_predicate: CustomPredicateRef::new(pad_cpb, 0),
+            args: vec![],
+            op_args: vec![],
+        };
+        let pad_cpv = input
+            .custom_predicate_verifications
+            .first()
+            .unwrap_or(&empty_cpv);
+        for i in input.custom_predicate_verifications.len()
+            ..self.params.max_custom_predicate_verifications
+        {
+            self.custom_predicate_verifications[i].set_targets(pw, &self.params, &pad_cpv)?;
         }
 
         Ok(())
@@ -993,7 +1033,11 @@ mod tests {
         prev_statements: Vec<mainpod::Statement>,
         merkle_proofs: Vec<MerkleClaimAndProof>,
     ) -> Result<()> {
-        let params = Params::default();
+        let params = Params {
+            max_custom_predicate_batches: 0,
+            max_custom_predicate_verifications: 0,
+            ..Default::default()
+        };
         let mp_gadget = MerkleProofGadget {
             max_depth: params.max_depth_mt_gadget,
         };
@@ -1015,6 +1059,7 @@ mod tests {
             .into_iter()
             .map(|pf| pf.into())
             .collect();
+        let custom_predicate_verification_table = vec![];
 
         OperationVerifyGadget {
             params: params.clone(),
@@ -1025,6 +1070,7 @@ mod tests {
             &op_target,
             &prev_statements_target,
             &merkle_claims_target,
+            &custom_predicate_verification_table,
         )?;
 
         let mut pw = PartialWitness::<F>::new();

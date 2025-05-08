@@ -7,7 +7,7 @@ use strum_macros::FromRepr;
 
 use crate::middleware::{
     AnchoredKey, CustomPredicateRef, Error, Key, Params, PodId, RawValue, Result, ToFields, Value,
-    F, VALUE_SIZE,
+    EMPTY_VALUE, F, VALUE_SIZE,
 };
 
 // TODO: Maybe store KEY_SIGNER and KEY_TYPE as Key with lazy_static
@@ -17,7 +17,7 @@ pub const KEY_SIGNER: &str = "_signer";
 pub const KEY_TYPE: &str = "_type";
 pub const STATEMENT_ARG_F_LEN: usize = 8;
 pub const OPERATION_ARG_F_LEN: usize = 1;
-pub const OPERATION_AUX_F_LEN: usize = 1;
+pub const OPERATION_AUX_F_LEN: usize = 2;
 
 #[derive(Clone, Copy, Debug, FromRepr, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum NativePredicate {
@@ -53,6 +53,7 @@ impl ToFields for NativePredicate {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub enum WildcardValue {
+    None,
     PodId(PodId),
     Key(Key),
 }
@@ -60,6 +61,7 @@ pub enum WildcardValue {
 impl WildcardValue {
     pub fn raw(&self) -> RawValue {
         match self {
+            WildcardValue::None => EMPTY_VALUE,
             WildcardValue::PodId(pod_id) => RawValue::from(pod_id.0),
             WildcardValue::Key(key) => key.raw(),
         }
@@ -69,6 +71,7 @@ impl WildcardValue {
 impl fmt::Display for WildcardValue {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            WildcardValue::None => write!(f, "none"),
             WildcardValue::PodId(pod_id) => write!(f, "{}", pod_id),
             WildcardValue::Key(key) => write!(f, "{}", key),
         }
@@ -77,10 +80,7 @@ impl fmt::Display for WildcardValue {
 
 impl ToFields for WildcardValue {
     fn to_fields(&self, params: &Params) -> Vec<F> {
-        match self {
-            WildcardValue::PodId(pod_id) => pod_id.to_fields(params),
-            WildcardValue::Key(key) => key.to_fields(params),
-        }
+        self.raw().to_fields(params)
     }
 }
 

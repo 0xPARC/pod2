@@ -17,15 +17,17 @@ pub use statement::*;
 use crate::{
     backends::plonky2::{
         basetypes::{C, D},
-        circuits::mainpod::{MainPodVerifyCircuit, MainPodVerifyInput},
+        circuits::mainpod::{
+            CustomPredicateVerification, MainPodVerifyCircuit, MainPodVerifyInput,
+        },
         error::{Error, Result},
         primitives::merkletree::MerkleClaimAndProof,
         signedpod::SignedPod,
     },
     middleware::{
-        self, AnchoredKey, CustomPredicateBatch, CustomPredicateRef, DynError, Hash, MainPodInputs,
-        NativeOperation, NonePod, OperationType, Params, Pod, PodId, PodProver, PodType,
-        StatementArg, ToFields, F, KEY_TYPE, SELF,
+        self, resolve_wildcard_values, AnchoredKey, CustomPredicateBatch, CustomPredicateRef,
+        DynError, Hash, MainPodInputs, NativeOperation, NonePod, OperationType, Params, Pod, PodId,
+        PodProver, PodType, StatementArg, ToFields, WildcardValue, F, KEY_TYPE, SELF,
     },
 };
 
@@ -61,27 +63,46 @@ pub(crate) fn extract_custom_predicate_batches(
     Ok(custom_predicate_batches)
 }
 
-// /// Extracts all custom predicate operations with all the data required to verify them.
-// pub(crate) fn extract_custom_predicate_operations(
-//     params: &Params,
-//     operations: &[middleware::Operation],
-// ) -> Result<Vec<(CustomPredicateRef, Vec<Statement>)>> {
-//     let custom_predicate_ops: Vec<_> = operations
-//         .iter()
-//         .flat_map(|op| match op {
-//             middleware::Operation::Custom(cpr, sts) => Some((cpr, sts)),
-//             _ => None,
-//         })
-//         .collect();
-//     if custom_predicate_ops.len() > params.max_custom_predicate_verificatios {
-//         return Err(Error::custom(format!(
-//             "The number of required custom predicate verifications ({}) exceeds the maximum number ({}).",
-//             custom_predicate_ops.len(),
-//             params.max_custom_predicate_verificatios
-//         )));
-//     }
-//     Ok(custom_predicate_ops)
-// }
+/// Extracts all custom predicate operations with all the data required to verify them.
+pub(crate) fn extract_custom_predicate_verifications(
+    params: &Params,
+    operations: &[middleware::Operation],
+    custom_predicate_batches: &[Arc<CustomPredicateBatch>],
+) -> Result<Vec<CustomPredicateVerification>> {
+    let custom_predicate_data: Vec<_> = operations
+        .iter()
+        .flat_map(|op| match op {
+            middleware::Operation::Custom(cpr, sts) => Some((cpr, sts)),
+            _ => None,
+        })
+        .map(|(cpr, sts)| {
+            let wildcard_values =
+                resolve_wildcard_values(params, cpr.predicate(), sts).expect("resolved wildcards");
+            let sts = sts.iter().map(|s| Statement::from(s.clone())).collect();
+            let batch_index = custom_predicate_batches
+                .iter()
+                .enumerate()
+                .find_map(|(i, cpb)| (cpb.id() == cpr.batch.id()).then_some(i))
+                .expect("find the custom predicate from the extracted unique list");
+            let custom_predicate_table_index =
+                batch_index * params.max_custom_predicate_batches + cpr.index;
+            CustomPredicateVerification {
+                custom_predicate_table_index,
+                custom_predicate: cpr.clone(),
+                args: wildcard_values,
+                op_args: sts,
+            }
+        })
+        .collect();
+    if custom_predicate_data.len() > params.max_custom_predicate_verifications {
+        return Err(Error::custom(format!(
+            "The number of required custom predicate verifications ({}) exceeds the maximum number ({}).",
+            custom_predicate_data.len(),
+            params.max_custom_predicate_verifications
+        )));
+    }
+    Ok(custom_predicate_data)
+}
 
 /// Extracts Merkle proofs from Contains/NotContains ops.
 pub(crate) fn extract_merkle_proofs(
@@ -348,8 +369,15 @@ impl Prover {
 
         let merkle_proofs = extract_merkle_proofs(params, inputs.operations)?;
         let custom_predicate_batches = extract_custom_predicate_batches(params, inputs.operations)?;
+        let custom_predicate_verifications = extract_custom_predicate_verifications(
+            params,
+            inputs.operations,
+            &custom_predicate_batches,
+        )?;
 
         let statements = layout_statements(params, &inputs);
+        // TODO: Pass custom_predicate_verifications and add the index to aux in the operations
+        // with custom predicates
         let operations = process_private_statements_operations(
             params,
             &statements,
@@ -369,6 +397,7 @@ impl Prover {
             operations,
             merkle_proofs,
             custom_predicate_batches,
+            custom_predicate_verifications,
         };
         main_pod.set_targets(&mut pw, &input)?;
 

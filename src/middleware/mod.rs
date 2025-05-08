@@ -587,7 +587,7 @@ pub struct Params {
     // max number of custom predicates batches that a MainPod can use
     pub max_custom_predicate_batches: usize,
     // max number of operations using custom predicates that can be verified in the MainPod
-    pub max_custom_predicate_verificatios: usize,
+    pub max_custom_predicate_verifications: usize,
     // max number of statements that can be ANDed or ORed together
     // in a custom predicate
     pub max_custom_predicate_arity: usize,
@@ -610,7 +610,7 @@ impl Default for Params {
             max_statement_args: 5,
             max_operation_args: 5,
             max_custom_predicate_batches: 2,
-            max_custom_predicate_verificatios: 5,
+            max_custom_predicate_verifications: 5,
             max_custom_predicate_arity: 5,
             max_custom_predicate_wildcards: 10,
             max_custom_batch_size: 5,

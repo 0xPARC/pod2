@@ -410,7 +410,7 @@ pub fn resolve_wildcard_values(
     Some(
         wildcard_map
             .into_iter()
-            .map(|opt| opt.unwrap_or(WildcardValue::PodId(PodId(EMPTY_HASH))))
+            .map(|opt| opt.unwrap_or(WildcardValue::None))
             .collect(),
     )
 }

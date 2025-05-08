@@ -2,6 +2,7 @@
 
 use std::{array, iter};
 
+use itertools::Itertools;
 use plonky2::{
     field::{
         extension::Extendable,
@@ -21,15 +22,17 @@ use plonky2::{
 use crate::{
     backends::plonky2::{
         basetypes::D,
+        circuits::mainpod::CustomPredicateVerification,
         error::Result,
         mainpod::{Operation, OperationArg, Statement},
         primitives::merkletree::MerkleClaimAndProofTarget,
     },
     middleware::{
-        CustomPredicate, CustomPredicateBatch, NativeOperation, NativePredicate, OperationType,
-        Params, Predicate, PredicatePrefix, RawValue, StatementArg, StatementTmpl,
-        StatementTmplArg, StatementTmplArgPrefix, ToFields, Value, EMPTY_VALUE, F, HASH_SIZE,
-        OPERATION_ARG_F_LEN, OPERATION_AUX_F_LEN, STATEMENT_ARG_F_LEN, VALUE_SIZE,
+        CustomPredicate, CustomPredicateBatch, CustomPredicateRef, NativeOperation,
+        NativePredicate, OperationType, Params, Predicate, PredicatePrefix, RawValue, StatementArg,
+        StatementTmpl, StatementTmplArg, StatementTmplArgPrefix, ToFields, Value, WildcardValue,
+        EMPTY_VALUE, F, HASH_SIZE, OPERATION_ARG_F_LEN, OPERATION_AUX_F_LEN, STATEMENT_ARG_F_LEN,
+        VALUE_SIZE,
     },
 };
 
@@ -203,6 +206,19 @@ pub struct OperationTypeTarget {
 }
 
 impl OperationTypeTarget {
+    pub fn new_custom(
+        builder: &mut CircuitBuilder<F, D>,
+        batch_id: HashOutTarget,
+        index: Target,
+    ) -> Self {
+        // TODO: Use an enum for these prefixes
+        let three = builder.constant(F::from_canonical_usize(3));
+        let id = batch_id.elements;
+        Self {
+            elements: [three, id[0], id[1], id[2], id[3], index],
+        }
+    }
+
     pub fn as_custom(
         &self,
         builder: &mut CircuitBuilder<F, D>,
@@ -485,6 +501,142 @@ impl CustomPredicateBatchTarget {
     }
 }
 
+/// Custom predicate table entry
+pub struct CustomPredicateEntryTarget {
+    pub id: HashOutTarget,
+    pub index: Target,
+    pub predicate: CustomPredicateTarget,
+}
+
+impl CustomPredicateEntryTarget {
+    fn set_targets(
+        &self,
+        pw: &mut PartialWitness<F>,
+        params: &Params,
+        predicate: &CustomPredicateRef,
+    ) -> Result<()> {
+        pw.set_target_arr(&self.id.elements, &predicate.batch.id().0)?;
+        pw.set_target(self.index, F::from_canonical_usize(predicate.index))?;
+        self.predicate
+            .set_targets(pw, params, predicate.predicate())?;
+        Ok(())
+    }
+}
+
+impl Flattenable for CustomPredicateEntryTarget {
+    fn flatten(&self) -> Vec<Target> {
+        self.id
+            .elements
+            .iter()
+            .chain(iter::once(&self.index))
+            .chain(self.predicate.flatten().iter())
+            .cloned()
+            .collect()
+    }
+    fn from_flattened(params: &Params, vs: &[Target]) -> Self {
+        Self {
+            id: HashOutTarget::from_flattened(params, &vs[0..4]),
+            index: vs[4],
+            predicate: CustomPredicateTarget::from_flattened(params, &vs[5..]),
+        }
+    }
+}
+
+impl CustomPredicateEntryTarget {
+    pub fn hash(&self, builder: &mut CircuitBuilder<F, D>) -> HashOutTarget {
+        builder.hash_n_to_hash_no_pad::<PoseidonHash>(self.flatten())
+    }
+}
+
+// Custom predicate verification table entry
+pub struct CustomPredicateVerifyEntryTarget {
+    pub custom_predicate_table_index: Target,
+    pub custom_predicate: CustomPredicateEntryTarget,
+    pub args: Vec<ValueTarget>,
+    pub query: CustomPredicateVerifyQueryTarget,
+}
+
+impl CustomPredicateVerifyEntryTarget {
+    pub fn set_targets(
+        &self,
+        pw: &mut PartialWitness<F>,
+        params: &Params,
+        cpv: &CustomPredicateVerification,
+    ) -> Result<()> {
+        pw.set_target(
+            self.custom_predicate_table_index,
+            F::from_canonical_usize(cpv.custom_predicate_table_index),
+        )?;
+        self.custom_predicate
+            .set_targets(pw, params, &cpv.custom_predicate)?;
+        let pad_arg = WildcardValue::None;
+        for (arg_target, arg) in self.args.iter().zip_eq(
+            cpv.args
+                .iter()
+                .chain(iter::repeat(&pad_arg))
+                .take(params.max_custom_predicate_wildcards),
+        ) {
+            arg_target.set_targets(pw, &Value::from(arg.raw()))?;
+        }
+        let pad_op_arg = Statement(Predicate::Native(NativePredicate::None), vec![]);
+        for (op_arg_target, op_arg) in self.query.op_args.iter().zip_eq(
+            cpv.op_args
+                .iter()
+                .chain(iter::repeat(&pad_op_arg))
+                .take(params.max_operation_args),
+        ) {
+            op_arg_target.set_targets(pw, params, op_arg)?
+        }
+        Ok(())
+    }
+}
+
+/// Query for the custom predicate verification table
+pub struct CustomPredicateVerifyQueryTarget {
+    pub statement: StatementTarget,
+    pub op_type: OperationTypeTarget,
+    pub op_args: Vec<StatementTarget>,
+}
+
+impl CustomPredicateVerifyQueryTarget {
+    pub fn hash(&self, builder: &mut CircuitBuilder<F, D>) -> HashOutTarget {
+        builder.hash_n_to_hash_no_pad::<PoseidonHash>(self.flatten())
+    }
+}
+
+impl Flattenable for CustomPredicateVerifyQueryTarget {
+    fn flatten(&self) -> Vec<Target> {
+        self.statement
+            .flatten()
+            .iter()
+            .chain(self.op_type.elements.iter())
+            .cloned()
+            .chain(self.op_args.iter().flat_map(|op_arg| op_arg.flatten()))
+            .collect()
+    }
+    fn from_flattened(params: &Params, vs: &[Target]) -> Self {
+        let (pos, size) = (0, params.statement_size());
+        let statement = StatementTarget::from_flattened(params, &vs[pos..pos + size]);
+        let (pos, size) = (pos + size, params.operation_size());
+        let op_type = OperationTypeTarget {
+            elements: vs[pos..pos + size]
+                .try_into()
+                .expect("len = operation_type_size"),
+        };
+        let (pos, size) = (pos + size, params.statement_size());
+        let op_args = (0..params.max_operation_args)
+            .map(|i| {
+                StatementTarget::from_flattened(params, &vs[pos + i * size..pos + (1 + i) * size])
+            })
+            .collect();
+        Self {
+            statement,
+            op_type,
+            op_args,
+        }
+    }
+}
+
 /// Trait for target structs that may be converted to and from vectors
 /// of targets.
 pub trait Flattenable {
@@ -674,12 +826,15 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     fn add_virtual_statement(&mut self, params: &Params) -> StatementTarget;
     fn add_virtual_statement_arg(&mut self) -> StatementArgTarget;
     fn add_virtual_predicate(&mut self) -> PredicateTarget;
+    fn add_virtual_operation_type(&mut self) -> OperationTypeTarget;
     fn add_virtual_operation(&mut self, params: &Params) -> OperationTarget;
     fn add_virtual_statement_tmpl_arg(&mut self) -> StatementTmplArgTarget;
     fn add_virtual_statement_tmpl(&mut self, params: &Params) -> StatementTmplTarget;
     fn add_virtual_custom_predicate(&mut self, params: &Params) -> CustomPredicateTarget;
     fn add_virtual_custom_predicate_batch(&mut self, params: &Params)
         -> CustomPredicateBatchTarget;
+    fn add_virtual_custom_predicate_entry(&mut self, params: &Params)
+        -> CustomPredicateEntryTarget;
     fn select_value(&mut self, b: BoolTarget, x: ValueTarget, y: ValueTarget) -> ValueTarget;
     fn select_bool(&mut self, b: BoolTarget, x: BoolTarget, y: BoolTarget) -> BoolTarget;
     fn constant_value(&mut self, v: RawValue) -> ValueTarget;
@@ -764,11 +919,15 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
         }
     }
 
+    fn add_virtual_operation_type(&mut self) -> OperationTypeTarget {
+        OperationTypeTarget {
+            elements: self.add_virtual_target_arr(),
+        }
+    }
+
     fn add_virtual_operation(&mut self, params: &Params) -> OperationTarget {
         OperationTarget {
-            op_type: OperationTypeTarget {
-                elements: self.add_virtual_target_arr(),
-            },
+            op_type: self.add_virtual_operation_type(),
             args: (0..params.max_operation_args)
                 .map(|_| self.add_virtual_target_arr())
                 .collect(),
@@ -811,6 +970,17 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
             predicates: (0..params.max_custom_batch_size)
                 .map(|_| self.add_virtual_custom_predicate(params))
                 .collect(),
+        }
+    }
+
+    fn add_virtual_custom_predicate_entry(
+        &mut self,
+        params: &Params,
+    ) -> CustomPredicateEntryTarget {
+        CustomPredicateEntryTarget {
+            id: self.add_virtual_hash(),
+            index: self.add_virtual_target(),
+            predicate: self.add_virtual_custom_predicate(params),
         }
     }
 
