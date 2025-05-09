@@ -165,11 +165,32 @@ fn find_op_arg(statements: &[Statement], op_arg: &middleware::Statement) -> Resu
 }
 
 /// Find the operation auxiliary data in the list of auxiliary data and return the index.
+// NOTE: The `custom_predicate_verifications` is optional because in the MainPod we want to store
+// the index of a custom predicate verification in the aux data, but in the MockMainPod we don't
+// need that because we keep a reference to the custom predicate in the opertaion type, which
+// removes the need for indexing.  We could change the OperationType and Predicate for the backend
+// to not keep a reference to the custom predicate and instead just keep the id and index and then
+// do the same double indexing that the MainPod does to verify custom predicates.
 fn find_op_aux(
     merkle_proofs: &[MerkleClaimAndProof],
-    op_aux: &middleware::OperationAux,
+    custom_predicate_verifications: Option<&[CustomPredicateVerification]>,
+    op: &middleware::Operation,
 ) -> Result<OperationAux> {
-    match op_aux {
+    let op_aux = op.aux();
+    let op_type = op.op_type();
+    if let (OperationType::Custom(cpr), Some(cpvs)) = (op_type, custom_predicate_verifications) {
+        return Ok(cpvs
+            .iter()
+            .enumerate()
+            .find_map(|(i, cpv)| {
+                (cpv.custom_predicate.batch.id() == cpr.batch.id()
+                    && cpv.custom_predicate.index == cpr.index)
+                    .then_some(i)
+            })
+            .map(OperationAux::CustomPredVerifyIndex)
+            .expect("custom predicate verification in the list"));
+    }
+    match &op_aux {
         middleware::OperationAux::None => Ok(OperationAux::None),
         middleware::OperationAux::MerkleProof(pf_arg) => merkle_proofs
             .iter()
@@ -284,6 +305,7 @@ pub(crate) fn process_private_statements_operations(
     params: &Params,
     statements: &[Statement],
     merkle_proofs: &[MerkleClaimAndProof],
+    custom_predicate_verifications: Option<&[CustomPredicateVerification]>,
     input_operations: &[middleware::Operation],
 ) -> Result<Vec<Operation>> {
     let mut operations = Vec::new();
@@ -298,8 +320,7 @@ pub(crate) fn process_private_statements_operations(
             .map(|mid_arg| find_op_arg(statements, mid_arg))
             .collect::<Result<Vec<_>>>()?;
 
-        let mid_aux = op.aux();
-        let aux = find_op_aux(merkle_proofs, &mid_aux)?;
+        let aux = find_op_aux(merkle_proofs, custom_predicate_verifications, &op)?;
 
         pad_operation_args(params, &mut args);
         operations.push(Operation(op.op_type(), args, aux));
@@ -382,6 +403,7 @@ impl Prover {
             params,
             &statements,
             &merkle_proofs,
+            Some(&custom_predicate_verifications),
             inputs.operations,
         )?;
         let operations = process_public_statements_operations(params, &statements, operations)?;
