@@ -167,7 +167,7 @@ fn find_op_arg(statements: &[Statement], op_arg: &middleware::Statement) -> Resu
 /// Find the operation auxiliary data in the list of auxiliary data and return the index.
 // NOTE: The `custom_predicate_verifications` is optional because in the MainPod we want to store
 // the index of a custom predicate verification in the aux data, but in the MockMainPod we don't
-// need that because we keep a reference to the custom predicate in the opertaion type, which
+// need that because we keep a reference to the custom predicate in the operation type, which
 // removes the need for indexing.  We could change the OperationType and Predicate for the backend
 // to not keep a reference to the custom predicate and instead just keep the id and index and then
 // do the same double indexing that the MainPod does to verify custom predicates.

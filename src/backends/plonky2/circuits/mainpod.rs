@@ -770,7 +770,7 @@ impl MainPodVerifyGadget {
             .map(|pf| pf.into())
             .collect();
 
-        // Table of [batch_id, custom_predicate_index, custom_predicate] with queriable part as
+        // Table of [batch_id, custom_predicate_index, custom_predicate] with queryable part as
         // hash([batch_id, custom_predicate_index, custom_predicate]).  While building the table we
         // calculate the id of each batch.
         let mut custom_predicate_table =
@@ -792,7 +792,7 @@ impl MainPodVerifyGadget {
         }
 
         // Table of [batch_id, custom_predicate_index, custom_predicate, args, st, op, op_args]
-        // with queriable part as hash([st, op, op_args]).  While building the table we verify each
+        // with queryable part as hash([st, op, op_args]).  While building the table we verify each
         // custom predicate against the operation and statement.
         let mut custom_predicate_verifications =
             Vec::with_capacity(params.max_custom_predicate_verifications);
