@@ -780,10 +780,9 @@ impl MainPodVerifyGadget {
         // Table of [batch_id, custom_predicate_index, custom_predicate] with queryable part as
         // hash([batch_id, custom_predicate_index, custom_predicate]).  While building the table we
         // calculate the id of each batch.
-        // let mut custom_predicate_table =
-        //     Vec::with_capacity(params.max_custom_predicate_batches * params.max_custom_batch_size);
+        let mut custom_predicate_table =
+            Vec::with_capacity(params.max_custom_predicate_batches * params.max_custom_batch_size);
         let mut custom_predicate_batches = Vec::with_capacity(params.max_custom_predicate_batches);
-        let mut tmp_dbg = Vec::new();
         for _ in 0..params.max_custom_predicate_batches {
             let cpb = builder.add_virtual_custom_predicate_batch(&self.params);
             let id = cpb.id(builder); // constrain the id
@@ -793,9 +792,8 @@ impl MainPodVerifyGadget {
                     index: builder.constant(F::from_canonical_usize(index)), // constant
                     predicate: cp.clone(),                                   // input
                 };
-                // let in_query_hash = entry.hash(builder);
-                // custom_predicate_table.push(in_query_hash);
-                tmp_dbg.push(entry);
+                let in_query_hash = entry.hash(builder);
+                custom_predicate_table.push(in_query_hash);
             }
             custom_predicate_batches.push(cpb); // We keep this for witness assignment
         }
@@ -824,19 +822,13 @@ impl MainPodVerifyGadget {
             .eval(builder, &custom_predicate, &op_args, &args)?;
 
             // Check that the batch id is correct by querying the custom predicate batches table
-            // let table_query_hash = builder.vec_ref(
-            //     &self.params,
-            //     &custom_predicate_table,
-            //     custom_predicate_table_index,
-            // );
-            // let out_query_hash = custom_predicate.hash(builder);
-            // TODO(Edu): DBG This is failing
-            // builder.connect_array(table_query_hash.elements, out_query_hash.elements);
-            // builder.connect_flattenable(&tmp_dbg[0], &custom_predicate);
-            // builder.connect(tmp_dbg[0].index, custom_predicate.index); // OK
-            builder.connect_array(tmp_dbg[0].id.elements, custom_predicate.id.elements); // KO
-
-            // builder.connect_flattenable(&tmp_dbg[0].predicate, &custom_predicate.predicate); // OK
+            let table_query_hash = builder.vec_ref(
+                &self.params,
+                &custom_predicate_table,
+                custom_predicate_table_index,
+            );
+            let out_query_hash = custom_predicate.hash(builder);
+            builder.connect_array(table_query_hash.elements, out_query_hash.elements);
 
             let entry = CustomPredicateVerifyEntryTarget {
                 custom_predicate_table_index, // input

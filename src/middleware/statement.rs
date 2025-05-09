@@ -21,18 +21,19 @@ pub const OPERATION_AUX_F_LEN: usize = 2;
 
 #[derive(Clone, Copy, Debug, FromRepr, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum NativePredicate {
-    None = 0,
-    ValueOf = 1,
-    Equal = 2,
-    NotEqual = 3,
-    LtEq = 4,
-    Lt = 5,
-    Contains = 6,
-    NotContains = 7,
-    SumOf = 8,
-    ProductOf = 9,
-    MaxOf = 10,
-    HashOf = 11,
+    None = 0,  // Always true
+    False = 1, // Always false
+    ValueOf = 2,
+    Equal = 3,
+    NotEqual = 4,
+    LtEq = 5,
+    Lt = 6,
+    Contains = 7,
+    NotContains = 8,
+    SumOf = 9,
+    ProductOf = 10,
+    MaxOf = 11,
+    HashOf = 12,
 
     // Syntactic sugar predicates.  These predicates are not supported by the backend.  The
     // frontend compiler is responsible of translating these predicates into the predicates above.

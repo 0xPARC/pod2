@@ -153,7 +153,7 @@ impl<T> Build<T> for T {
 }
 
 impl StatementTarget {
-    /// Build a new native StatementTarget and pad the arguments as necessary.
+    /// Build a new native StatementTarget
     pub fn new_native(
         builder: &mut CircuitBuilder<F, D>,
         params: &Params,
@@ -1264,52 +1264,22 @@ mod tests {
         Ok(())
     }
 
-    fn test_custom_predicate_batch_target_id(
+    fn helper_custom_predicate_batch_target_id(
         params: &Params,
         custom_predicate_batch: &CustomPredicateBatch,
-    ) -> frontend::Result<()> {
+    ) -> Result<()> {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
 
-        let zero = builder.zero();
-        let predicate_targets = custom_predicate_batch
-            .predicates()
-            .iter()
-            .map(|cp| {
-                let flattened = cp.to_fields(params);
-                let flatteend_target = flattened.iter().map(|v| builder.constant(*v)).collect_vec();
-                CustomPredicateTarget::from_flattened(params, &flatteend_target)
-            })
-            .chain(iter::repeat({
-                let empty_flatteend_target = iter::repeat(zero)
-                    .take(params.custom_predicate_size())
-                    .collect_vec();
-                CustomPredicateTarget::from_flattened(params, &empty_flatteend_target)
-            }))
-            .take(params.max_custom_batch_size)
-            .collect();
-
-        let custom_predicate_batch_target = CustomPredicateBatchTarget {
-            predicates: predicate_targets,
-        };
+        let custom_predicate_batch_target = builder.add_virtual_custom_predicate_batch(params);
 
         // Calculate the id in constraints and compare it against the id calculated natively
         let id_target = custom_predicate_batch_target.id(&mut builder);
+
+        let mut pw = PartialWitness::<F>::new();
+        custom_predicate_batch_target.set_targets(&mut pw, params, custom_predicate_batch)?;
         let id = custom_predicate_batch.id();
-
-        // TODO: Instead of connect, assign witness to result
-        let id_expected_target = HashOutTarget {
-            elements: id
-                .to_fields(params)
-                .iter()
-                .map(|v| builder.constant(*v))
-                .collect_vec()
-                .try_into()
-                .unwrap(),
-        };
-        builder.connect_array(id_target.elements, id_expected_target.elements);
-
-        let pw = PartialWitness::<F>::new();
+        pw.set_target_arr(&id_target.elements, &id.0)?;
 
         // generate & verify proof
         let data = builder.build::<C>();
@@ -1320,7 +1290,7 @@ mod tests {
     }
 
     #[test]
-    fn test_custom_predicate_batch_target() -> frontend::Result<()> {
+    fn test_custom_predicate_batch_target_id() -> frontend::Result<()> {
         let params = Params {
             max_statement_args: 6,
             max_custom_predicate_wildcards: 12,
@@ -1331,14 +1301,18 @@ mod tests {
         let mut cpb_builder = CustomPredicateBatchBuilder::new(params.clone(), "empty".into());
         _ = cpb_builder.predicate_and("empty", &[], &[], &[])?;
         let custom_predicate_batch = cpb_builder.finish();
-        test_custom_predicate_batch_target_id(&params, &custom_predicate_batch)?;
+        helper_custom_predicate_batch_target_id(&params, &custom_predicate_batch).unwrap();
 
         // Some cases from the examples
         let custom_predicate_batch = eth_friend_batch(&params)?;
-        test_custom_predicate_batch_target_id(&params, &custom_predicate_batch)?;
+        helper_custom_predicate_batch_target_id(&params, &custom_predicate_batch).unwrap();
 
         let custom_predicate_batch = eth_dos_batch(&params)?;
-        test_custom_predicate_batch_target_id(&params, &custom_predicate_batch)?;
+        helper_custom_predicate_batch_target_id(&params, &custom_predicate_batch).unwrap();
+
+        let custom_predicate_batch =
+            CustomPredicateBatch::new(&params, "empty".to_string(), vec![CustomPredicate::empty()]);
+        helper_custom_predicate_batch_target_id(&params, &custom_predicate_batch).unwrap();
 
         Ok(())
     }

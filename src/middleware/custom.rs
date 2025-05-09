@@ -274,6 +274,16 @@ impl CustomPredicate {
             args_len,
         })
     }
+    pub fn pad_statement_tmpl(&self) -> StatementTmpl {
+        StatementTmpl {
+            pred: Predicate::Native(if self.conjunction {
+                NativePredicate::False
+            } else {
+                NativePredicate::None
+            }),
+            args: vec![],
+        }
+    }
 }
 
 impl ToFields for CustomPredicate {
@@ -292,11 +302,17 @@ impl ToFields for CustomPredicate {
             panic!("Custom predicate depends on too many statements");
         }
 
-        let mut fields: Vec<F> = iter::once(F::from_bool(self.conjunction))
+        let pad_st = self.pad_statement_tmpl();
+        let fields: Vec<F> = iter::once(F::from_bool(self.conjunction))
             .chain(iter::once(F::from_canonical_usize(self.args_len)))
-            .chain(self.statements.iter().flat_map(|st| st.to_fields(params)))
+            .chain(
+                self.statements
+                    .iter()
+                    .chain(iter::repeat(&pad_st))
+                    .take(params.max_custom_predicate_arity)
+                    .flat_map(|st| st.to_fields(params)),
+            )
             .collect();
-        fields.resize_with(params.custom_predicate_size(), || F::from_canonical_u64(0));
         fields
     }
 }
@@ -344,14 +360,14 @@ impl ToFields for CustomPredicateBatch {
             panic!("Predicate batch exceeds maximum size");
         }
 
-        let mut fields: Vec<F> = self
+        let pad_pred = CustomPredicate::empty();
+        let fields: Vec<F> = self
             .predicates
             .iter()
+            .chain(iter::repeat(&pad_pred))
+            .take(params.max_custom_batch_size)
             .flat_map(|p| p.to_fields(params))
             .collect();
-        fields.resize_with(params.custom_predicate_batch_size_field_elts(), || {
-            F::from_canonical_u64(0)
-        });
         fields
     }
 }
