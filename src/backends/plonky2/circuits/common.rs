@@ -565,6 +565,14 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     /// and `y` each consist of two `u32` limbs.
     fn assert_i64_less_if(&mut self, b: BoolTarget, x: ValueTarget, y: ValueTarget);
 
+    /// Computes `x + y` assuming `x` and `y` are assigned `i64`
+    /// values.
+    fn i64_add(&mut self, x: ValueTarget, y: ValueTarget) -> ValueTarget;
+
+    /// Computes `x * y` assuming `x` and `y` are assigned `i64`
+    /// values.
+    fn i64_mul(&mut self, x: ValueTarget, y: ValueTarget) -> ValueTarget;
+
     /// Creates value target that is a hash of two given values.
     fn hash_values(&mut self, x: ValueTarget, y: ValueTarget) -> ValueTarget;
 
@@ -716,6 +724,50 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
         assert_limb_lt(self, lhs, rhs);
     }
 
+    fn i64_add(&mut self, x: ValueTarget, y: ValueTarget) -> ValueTarget {
+        let zero = self.zero();
+
+        // Add components and carry where appropriate.
+        let (_, sum) = std::iter::zip(&x.elements[..2], &y.elements[..2]).fold(
+            (zero, vec![]),
+            |(carry, out), (&a, &b)| {
+                let sum = [a, b, carry]
+                    .into_iter()
+                    .reduce(|alpha, beta| self.add(alpha, beta))
+                    .expect("Iterator should be nonempty.");
+                let (sum_residue, sum_quotient) = self.split_low_high(sum, NUM_BITS, F::BITS);
+                (sum_quotient, [out, vec![sum_residue]].concat())
+            },
+        );
+
+        ValueTarget::from_slice(&[sum[0], sum[1], zero, zero])
+    }
+
+    fn i64_mul(&mut self, x: ValueTarget, y: ValueTarget) -> ValueTarget {
+        let zero = self.zero();
+        let x = x.elements[..2].to_vec();
+        let y = y.elements[..2].to_vec();
+
+        let prods = [
+            self.mul(x[0], y[0]),
+            self.mul(x[0], y[1]),
+            self.mul(x[1], y[0]),
+        ]
+        .into_iter()
+        .map(|p| self.split_low_high(p, NUM_BITS, F::BITS))
+        .collect::<Vec<_>>();
+
+        let prod_lower = prods[0].0;
+
+        let prod_upper = {
+            let sum1 = self.add(prods[1].0, prods[2].0);
+            let sum2 = self.add(sum1, prods[0].1);
+            self.split_low_high(sum2, NUM_BITS, F::BITS).0
+        };
+
+        ValueTarget::from_slice(&[prod_lower, prod_upper, zero, zero])
+    }
+
     fn hash_values(&mut self, x: ValueTarget, y: ValueTarget) -> ValueTarget {
         ValueTarget::from_slice(
             &self
@@ -795,9 +847,12 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use itertools::Itertools;
-    use plonky2::plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig};
+    use plonky2::plonk::{
+        circuit_builder::CircuitBuilder, circuit_data::CircuitConfig,
+        config::PoseidonGoldilocksConfig,
+    };
 
     use super::*;
     use crate::{
@@ -807,6 +862,25 @@ mod tests {
         frontend::CustomPredicateBatchBuilder,
         middleware::CustomPredicateBatch,
     };
+
+    pub(crate) const I64_TEST_PAIRS: [(i64, i64); 13] = [
+        (0i64, 0i64),
+        // Positive numbers
+        (35, 50),
+        (1 << 62, 1 << 62),
+        (i64::MAX, 1 << 62),
+        (i64::MAX, i64::MAX),
+        // Negative numbers
+        (-35, -50),
+        (-(1 << 62), -(1 << 62)),
+        (i64::MIN, -(1 << 62)),
+        (i64::MIN, i64::MIN),
+        // Both positive and negative numbers
+        (-35, 50),
+        (-(1 << 62), (1 << 62)),
+        (i64::MIN, (1 << 62)),
+        (i64::MIN, i64::MAX),
+    ];
 
     #[test]
     fn custom_predicate_target() -> frontend::Result<()> {
@@ -828,7 +902,7 @@ mod tests {
 
             // generate & verify proof
             let data = builder.build::<C>();
-            let proof = data.prove(pw).expect(&format!("predicate {}", i));
+            let proof = data.prove(pw).unwrap_or_else(|_| panic!("predicate {}", i));
             data.verify(proof.clone()).unwrap();
         }
 
@@ -911,5 +985,59 @@ mod tests {
         test_custom_predicate_batch_target_id(&params, &custom_predicate_batch)?;
 
         Ok(())
+    }
+
+    #[test]
+    fn test_i64_addition() -> Result<(), anyhow::Error> {
+        // Circuit declaration
+        let config = CircuitConfig::standard_recursion_config();
+        let mut builder = CircuitBuilder::<F, D>::new(config);
+        let x_target = ValueTarget::from_slice(&builder.add_virtual_target_arr::<VALUE_SIZE>());
+        let y_target = ValueTarget::from_slice(&builder.add_virtual_target_arr::<VALUE_SIZE>());
+
+        let sum_target = builder.i64_add(x_target, y_target);
+
+        let data = builder.build::<PoseidonGoldilocksConfig>();
+        let params = Params::default();
+
+        I64_TEST_PAIRS.into_iter().try_for_each(|(x, y)| {
+            let mut pw = PartialWitness::<F>::new();
+            pw.set_target_arr(&x_target.elements, &RawValue::from(x).to_fields(&params))?;
+            pw.set_target_arr(&y_target.elements, &RawValue::from(y).to_fields(&params))?;
+            pw.set_target_arr(
+                &sum_target.elements,
+                &RawValue::from(x + y).to_fields(&params),
+            )?;
+
+            let proof = data.prove(pw)?;
+            data.verify(proof)
+        })
+    }
+
+    #[test]
+    fn test_i64_multiplication() -> Result<(), anyhow::Error> {
+        // Circuit declaration
+        let config = CircuitConfig::standard_recursion_config();
+        let mut builder = CircuitBuilder::<F, D>::new(config);
+        let x_target = ValueTarget::from_slice(&builder.add_virtual_target_arr::<VALUE_SIZE>());
+        let y_target = ValueTarget::from_slice(&builder.add_virtual_target_arr::<VALUE_SIZE>());
+
+        let sum_target = builder.i64_mul(x_target, y_target);
+
+        let data = builder.build::<PoseidonGoldilocksConfig>();
+        let params = Params::default();
+
+        I64_TEST_PAIRS.into_iter().try_for_each(|(x, y)| {
+            let mut pw = PartialWitness::<F>::new();
+            pw.set_target_arr(&x_target.elements, &RawValue::from(x).to_fields(&params))?;
+            pw.set_target_arr(&y_target.elements, &RawValue::from(y).to_fields(&params))?;
+            pw.set_target_arr(
+                &sum_target.elements,
+                &RawValue::from(x * y).to_fields(&params),
+            )?;
+
+            let proof = data.prove(pw)?;
+            data.verify(proof)
+        })
     }
 }
