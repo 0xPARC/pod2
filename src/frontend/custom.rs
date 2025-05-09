@@ -128,13 +128,15 @@ impl StatementTmplBuilder {
 }
 
 pub struct CustomPredicateBatchBuilder {
+    params: Params,
     pub name: String,
     pub predicates: Vec<CustomPredicate>,
 }
 
 impl CustomPredicateBatchBuilder {
-    pub fn new(name: String) -> Self {
+    pub fn new(params: Params, name: String) -> Self {
         Self {
+            params,
             name,
             predicates: Vec::new(),
         }
@@ -143,23 +145,21 @@ impl CustomPredicateBatchBuilder {
     pub fn predicate_and(
         &mut self,
         name: &str,
-        params: &Params,
         args: &[&str],
         priv_args: &[&str],
         sts: &[StatementTmplBuilder],
     ) -> Result<Predicate> {
-        self.predicate(name, params, true, args, priv_args, sts)
+        self.predicate(name, true, args, priv_args, sts)
     }
 
     pub fn predicate_or(
         &mut self,
         name: &str,
-        params: &Params,
         args: &[&str],
         priv_args: &[&str],
         sts: &[StatementTmplBuilder],
     ) -> Result<Predicate> {
-        self.predicate(name, params, false, args, priv_args, sts)
+        self.predicate(name, false, args, priv_args, sts)
     }
 
     /// creates the custom predicate from the given input, adds it to the
@@ -167,24 +167,23 @@ impl CustomPredicateBatchBuilder {
     fn predicate(
         &mut self,
         name: &str,
-        params: &Params,
         conjunction: bool,
         args: &[&str],
         priv_args: &[&str],
         sts: &[StatementTmplBuilder],
     ) -> Result<Predicate> {
-        if args.len() > params.max_statement_args {
+        if args.len() > self.params.max_statement_args {
             return Err(Error::max_length(
                 "args.len".to_string(),
                 args.len(),
-                params.max_statement_args,
+                self.params.max_statement_args,
             ));
         }
-        if (args.len() + priv_args.len()) > params.max_custom_predicate_wildcards {
+        if (args.len() + priv_args.len()) > self.params.max_custom_predicate_wildcards {
             return Err(Error::max_length(
                 "wildcards.len".to_string(),
                 args.len() + priv_args.len(),
-                params.max_custom_predicate_wildcards,
+                self.params.max_custom_predicate_wildcards,
             ));
         }
 
@@ -197,7 +196,7 @@ impl CustomPredicateBatchBuilder {
                     .iter()
                     .map(|a| match a {
                         BuilderArg::Literal(v) => StatementTmplArg::Literal(v.clone()),
-                        BuilderArg::Key(pod_id, key) => StatementTmplArg::Key(
+                        BuilderArg::Key(pod_id, key) => StatementTmplArg::AnchoredKey(
                             resolve_wildcard(args, priv_args, pod_id),
                             resolve_key_or_wildcard(args, priv_args, key),
                         ),
@@ -212,17 +211,19 @@ impl CustomPredicateBatchBuilder {
                 }
             })
             .collect();
-        let custom_predicate =
-            CustomPredicate::new(name.into(), params, conjunction, statements, args.len())?;
+        let custom_predicate = CustomPredicate::new(
+            &self.params,
+            name.into(),
+            conjunction,
+            statements,
+            args.len(),
+        )?;
         self.predicates.push(custom_predicate);
         Ok(Predicate::BatchSelf(self.predicates.len() - 1))
     }
 
     pub fn finish(self) -> Arc<CustomPredicateBatch> {
-        Arc::new(CustomPredicateBatch {
-            name: self.name,
-            predicates: self.predicates,
-        })
+        CustomPredicateBatch::new(&self.params, self.name, self.predicates)
     }
 }
 

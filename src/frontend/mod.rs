@@ -466,7 +466,7 @@ impl MainPodBuilder {
                 )))?,
             },
             OperationType::Custom(cpr) => {
-                let pred = &cpr.batch.predicates[cpr.index];
+                let pred = &cpr.batch.predicates()[cpr.index];
                 if pred.statements.len() != args.len() {
                     return Err(Error::custom(format!(
                         "Custom predicate operation needs {} statements but has {}.",

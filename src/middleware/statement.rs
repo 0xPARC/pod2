@@ -7,7 +7,7 @@ use strum_macros::FromRepr;
 
 use crate::middleware::{
     AnchoredKey, CustomPredicateRef, Error, Key, Params, PodId, RawValue, Result, ToFields, Value,
-    F, VALUE_SIZE,
+    EMPTY_VALUE, F, VALUE_SIZE,
 };
 
 // TODO: Maybe store KEY_SIGNER and KEY_TYPE as Key with lazy_static
@@ -17,22 +17,23 @@ pub const KEY_SIGNER: &str = "_signer";
 pub const KEY_TYPE: &str = "_type";
 pub const STATEMENT_ARG_F_LEN: usize = 8;
 pub const OPERATION_ARG_F_LEN: usize = 1;
-pub const OPERATION_AUX_F_LEN: usize = 1;
+pub const OPERATION_AUX_F_LEN: usize = 2;
 
 #[derive(Clone, Copy, Debug, FromRepr, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum NativePredicate {
-    None = 0,
-    ValueOf = 1,
-    Equal = 2,
-    NotEqual = 3,
-    LtEq = 4,
-    Lt = 5,
-    Contains = 6,
-    NotContains = 7,
-    SumOf = 8,
-    ProductOf = 9,
-    MaxOf = 10,
-    HashOf = 11,
+    None = 0,  // Always true
+    False = 1, // Always false
+    ValueOf = 2,
+    Equal = 3,
+    NotEqual = 4,
+    LtEq = 5,
+    Lt = 6,
+    Contains = 7,
+    NotContains = 8,
+    SumOf = 9,
+    ProductOf = 10,
+    MaxOf = 11,
+    HashOf = 12,
 
     // Syntactic sugar predicates.  These predicates are not supported by the backend.  The
     // frontend compiler is responsible of translating these predicates into the predicates above.
@@ -53,6 +54,7 @@ impl ToFields for NativePredicate {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub enum WildcardValue {
+    None,
     PodId(PodId),
     Key(Key),
 }
@@ -60,6 +62,7 @@ pub enum WildcardValue {
 impl WildcardValue {
     pub fn raw(&self) -> RawValue {
         match self {
+            WildcardValue::None => EMPTY_VALUE,
             WildcardValue::PodId(pod_id) => RawValue::from(pod_id.0),
             WildcardValue::Key(key) => key.raw(),
         }
@@ -69,6 +72,7 @@ impl WildcardValue {
 impl fmt::Display for WildcardValue {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            WildcardValue::None => write!(f, "none"),
             WildcardValue::PodId(pod_id) => write!(f, "{}", pod_id),
             WildcardValue::Key(key) => write!(f, "{}", key),
         }
@@ -77,10 +81,7 @@ impl fmt::Display for WildcardValue {
 
 impl ToFields for WildcardValue {
     fn to_fields(&self, params: &Params) -> Vec<F> {
-        match self {
-            WildcardValue::PodId(pod_id) => pod_id.to_fields(params),
-            WildcardValue::Key(key) => key.to_fields(params),
-        }
+        self.raw().to_fields(params)
     }
 }
 
@@ -130,7 +131,7 @@ impl ToFields for Predicate {
                 .collect(),
             Self::Custom(CustomPredicateRef { batch, index }) => {
                 iter::once(F::from(PredicatePrefix::Custom))
-                    .chain(batch.id(params).0)
+                    .chain(batch.id().0)
                     .chain(iter::once(F::from_canonical_usize(*index)))
                     .collect()
             }
@@ -149,7 +150,9 @@ impl fmt::Display for Predicate {
                 write!(
                     f,
                     "{}.{}[{}]",
-                    batch.name, index, batch.predicates[*index].name
+                    batch.name,
+                    index,
+                    batch.predicates()[*index].name
                 )
             }
         }
@@ -397,14 +400,14 @@ impl StatementArg {
 }
 
 impl ToFields for StatementArg {
-    fn to_fields(&self, _params: &Params) -> Vec<F> {
-        // NOTE: current version returns always the same amount of field elements in the returned
-        // vector, which means that the `None` case is padded with 8 zeroes, and the `Literal` case
-        // is padded with 4 zeroes. Since the returned vector will mostly be hashed (and reproduced
-        // in-circuit), we might be interested into reducing the length of it. If that's the case,
-        // we can check if it makes sense to make it dependant on the concrete StatementArg; that
-        // is, when dealing with a `None` it would be a single field element (zero value), and when
-        // dealing with `Literal` it would be of length 4.
+    /// Encoding:
+    /// - None => [0, 0, 0, 0, 0, 0, 0, 0]
+    /// - Literal(v) => [[v], 0, 0, 0, 0]
+    /// - Key(pod_id, key) => [[pod_id], [key]]
+    /// - WildcardLiteral(v) => [[v], 0, 0, 0, 0]
+    fn to_fields(&self, params: &Params) -> Vec<F> {
+        // NOTE for @ax0: I removed the old comment because may `to_fields` implementations do
+        // padding and we need fixed output length for the circuits.
         let f = match self {
             StatementArg::None => vec![F::ZERO; STATEMENT_ARG_F_LEN],
             StatementArg::Literal(v) => v
@@ -414,8 +417,8 @@ impl ToFields for StatementArg {
                 .chain(iter::repeat(F::ZERO).take(STATEMENT_ARG_F_LEN - VALUE_SIZE))
                 .collect(),
             StatementArg::Key(ak) => {
-                let mut fields = ak.pod_id.to_fields(_params);
-                fields.extend(ak.key.to_fields(_params));
+                let mut fields = ak.pod_id.to_fields(params);
+                fields.extend(ak.key.to_fields(params));
                 fields
             }
             StatementArg::WildcardLiteral(v) => v

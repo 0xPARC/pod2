@@ -147,6 +147,7 @@ impl MockMainPod {
             params,
             &statements,
             &merkle_proofs,
+            None,
             inputs.operations,
         )?;
         let operations = process_public_statements_operations(params, &statements, operations)?;
