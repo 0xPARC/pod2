@@ -25,9 +25,9 @@ use crate::{
         signedpod::SignedPod,
     },
     middleware::{
-        self, resolve_wildcard_values, AnchoredKey, CustomPredicateBatch, CustomPredicateRef,
-        DynError, Hash, MainPodInputs, NativeOperation, NonePod, OperationType, Params, Pod, PodId,
-        PodProver, PodType, StatementArg, ToFields, WildcardValue, F, KEY_TYPE, SELF,
+        self, resolve_wildcard_values, AnchoredKey, CustomPredicateBatch, DynError, Hash,
+        MainPodInputs, NativeOperation, NonePod, OperationType, Params, Pod, PodId, PodProver,
+        PodType, StatementArg, ToFields, F, KEY_TYPE, SELF,
     },
 };
 

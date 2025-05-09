@@ -1,4 +1,4 @@
-use std::{fmt, iter, sync::Arc};
+use std::{fmt, iter};
 
 use log::error;
 use plonky2::field::types::Field;
@@ -8,8 +8,8 @@ use crate::{
     backends::plonky2::primitives::merkletree::MerkleProof,
     middleware::{
         custom::KeyOrWildcard, AnchoredKey, CustomPredicate, CustomPredicateRef, Error,
-        NativePredicate, Params, PodId, Predicate, Result, Statement, StatementArg,
-        StatementTmplArg, ToFields, Wildcard, WildcardValue, EMPTY_HASH, F, SELF,
+        NativePredicate, Params, Predicate, Result, Statement, StatementArg, StatementTmplArg,
+        ToFields, Wildcard, WildcardValue, F, SELF,
     },
 };
 

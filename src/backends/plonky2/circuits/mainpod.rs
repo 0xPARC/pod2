@@ -1,13 +1,10 @@
-use std::{array, iter, sync::Arc};
+use std::{array, sync::Arc};
 
 use itertools::{zip_eq, Itertools};
 use plonky2::{
     field::types::Field,
     hash::{hash_types::HashOutTarget, poseidon::PoseidonHash},
-    iop::{
-        target::{BoolTarget, Target},
-        witness::PartialWitness,
-    },
+    iop::{target::BoolTarget, witness::PartialWitness},
     plonk::circuit_builder::CircuitBuilder,
 };
 
@@ -17,10 +14,10 @@ use crate::{
         circuits::{
             common::{
                 CircuitBuilderPod, CustomPredicateBatchTarget, CustomPredicateEntryTarget,
-                CustomPredicateTarget, CustomPredicateVerifyEntryTarget,
-                CustomPredicateVerifyQueryTarget, Flattenable, MerkleClaimTarget, OperationTarget,
-                OperationTypeTarget, PredicateTarget, StatementArgTarget, StatementTarget,
-                StatementTmplArgTarget, StatementTmplTarget, ValueTarget,
+                CustomPredicateVerifyEntryTarget, CustomPredicateVerifyQueryTarget, Flattenable,
+                MerkleClaimTarget, OperationTarget, OperationTypeTarget, PredicateTarget,
+                StatementArgTarget, StatementTarget, StatementTmplArgTarget, StatementTmplTarget,
+                ValueTarget,
             },
             signedpod::{SignedPodVerifyGadget, SignedPodVerifyTarget},
         },
@@ -33,8 +30,8 @@ use crate::{
     },
     middleware::{
         AnchoredKey, CustomPredicateBatch, CustomPredicateRef, NativeOperation, NativePredicate,
-        Params, PodType, Statement, StatementArg, StatementTmplArg, StatementTmplArgPrefix,
-        ToFields, Value, WildcardValue, F, KEY_TYPE, SELF, VALUE_SIZE,
+        Params, PodType, Statement, StatementArg, ToFields, Value, WildcardValue, F, KEY_TYPE,
+        SELF, VALUE_SIZE,
     },
 };
 
@@ -985,7 +982,7 @@ impl MainPodVerifyTarget {
         for i in input.custom_predicate_verifications.len()
             ..self.params.max_custom_predicate_verifications
         {
-            self.custom_predicate_verifications[i].set_targets(pw, &self.params, &pad_cpv)?;
+            self.custom_predicate_verifications[i].set_targets(pw, &self.params, pad_cpv)?;
         }
 
         Ok(())
