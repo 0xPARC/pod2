@@ -1128,8 +1128,7 @@ mod tests {
         };
 
         let input = r#"
-            eth_friend(src_ori, src_key, dst_ori, dst_key) = AND(
-                private(attestation_pod)
+            eth_friend(src_ori, src_key, dst_ori, dst_key, private: attestation_pod) = AND(
                 // ValueOf(?attestation_pod["__type__"], "MockSigned")
                 Equal(?attestation_pod["_signer"], ?src_ori[?src_key])
                 Equal(?attestation_pod["attestation"], ?dst_ori[?dst_key])
@@ -1140,8 +1139,8 @@ mod tests {
                 ValueOf(?distance_ori[?distance_key], 0)
             )
 
-            eth_dos_distance_ind(src_ori, src_key, dst_ori, dst_key, distance_ori, distance_key) = AND(
-                private(one_ori, one_key, shorter_distance_ori, shorter_distance_key, intermed_ori, intermed_key)
+            eth_dos_distance_ind(src_ori, src_key, dst_ori, dst_key, distance_ori, distance_key,
+              private: one_ori, one_key, shorter_distance_ori, shorter_distance_key, intermed_ori, intermed_key) = AND(
                 eth_dos_distance(?src_ori, ?src_key, ?intermed_ori, ?intermed_key, ?shorter_distance_ori, ?shorter_distance_key)
                 ValueOf(?one_ori[?one_key], 1)
                 SumOf(?distance_ori[?distance_key], ?shorter_distance_ori[?shorter_distance_key], ?one_ori[?one_key])

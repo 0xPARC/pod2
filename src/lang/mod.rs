@@ -22,10 +22,13 @@ pub fn parse(input: &str, params: &Params) -> Result<ProcessedOutput, LangError>
 mod tests {
     use std::sync::Arc;
 
+    use pretty_assertions::assert_eq;
+
     use super::{ast::build_ast, *};
     use crate::middleware::{
-        CustomPredicate, CustomPredicateBatch, Key, KeyOrWildcard, NativePredicate, Params,
-        Predicate, StatementTmpl, StatementTmplArg, Value, Wildcard,
+        CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key, KeyOrWildcard,
+        NativePredicate, Params, PodType, Predicate, StatementTmpl, StatementTmplArg, Value,
+        Wildcard,
     };
 
     // Helper to create Wildcard
@@ -36,6 +39,11 @@ mod tests {
     // Helper to create KeyOrWildcard::Key
     fn k(name: &str) -> KeyOrWildcard {
         KeyOrWildcard::Key(Key::new(name.to_string()))
+    }
+
+    // Helper to create KeyOrWildcard::Wildcard
+    fn ko_wc(name: &str, index: usize) -> KeyOrWildcard {
+        KeyOrWildcard::Wildcard(Wildcard::new(name.to_string(), index))
     }
 
     // Helper to create StatementTmplArg::Key
@@ -141,8 +149,7 @@ mod tests {
     #[test]
     fn test_e2e_predicate_with_private_var() -> Result<(), LangError> {
         let input = r#"
-            uses_private(A) = AND(
-                private(Temp) // Private variable
+            uses_private(A, private: Temp) = AND(
                 Equal(?A["input_key"], ?Temp["const_key"])
                 ValueOf(?Temp["const_key"], "some_value")
             )
@@ -244,7 +251,7 @@ mod tests {
         // Expected Request structure
         // Pod1 -> Wildcard 0, Pod2 -> Wildcard 1
         let expected_request_templates = vec![StatementTmpl {
-            pred: Predicate::BatchSelf(0), // Refers to my_pred within the same batch
+            pred: Predicate::Custom(CustomPredicateRef::new(expected_batch, 0)),
             args: vec![
                 StatementTmplArg::WildcardLiteral(wc("Pod1", 0)),
                 StatementTmplArg::WildcardLiteral(wc("Pod2", 1)),
@@ -259,7 +266,7 @@ mod tests {
     #[test]
     fn test_e2e_request_with_various_args() -> Result<(), LangError> {
         let input = r#"
-            some_pred(A, B, C) = AND() // Dummy predicate body
+            some_pred(A, B, C) = AND( Equal(?A["foo"], ?B["bar"]) ) 
 
             REQUEST(
                 some_pred(
@@ -291,7 +298,7 @@ mod tests {
         // Expected structure
         let expected_templates = vec![
             StatementTmpl {
-                pred: Predicate::BatchSelf(0), // Refers to some_pred
+                pred: Predicate::Custom(CustomPredicateRef::new(batch_result, 0)), // Refers to some_pred
                 args: vec![
                     StatementTmplArg::WildcardLiteral(wc("Var1", 0)), // ?Var1
                     StatementTmplArg::Literal(Value::from(12345i64)), // 12345
@@ -305,6 +312,66 @@ mod tests {
                     sta_k(("AnotherPod", 1), k("another_key")),
                     // ?Var1["some_field"] -> Wildcard(0), Key("some_field")
                     sta_k(("Var1", 0), k("some_field")),
+                ],
+            },
+        ];
+
+        assert_eq!(request_templates, expected_templates);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_e2e_syntactic_sugar_predicates() -> Result<(), LangError> {
+        let input = r#"
+            REQUEST(
+                GtEq(?A["foo"], ?B["bar"])
+                Gt(?C["baz"], ?D["qux"])
+                DictContains(?A["foo"], ?B["bar"], ?C["baz"])
+                DictNotContains(?A["foo"], ?B["bar"])
+                ArrayContains(?A["foo"], ?B["bar"], ?C["baz"])
+            )
+        "#;
+
+        let params = Params::default();
+        let pairs = parse_podlog(input)?;
+        let ast = build_ast(pairs)?;
+        let processed = process_document(ast, &params)?;
+        let batch_result = processed.custom_batch;
+        let request_templates = processed.request_templates;
+
+        assert_eq!(batch_result.predicates.len(), 0);
+        assert!(!request_templates.is_empty());
+
+        let request_templates = request_templates;
+
+        let expected_templates = vec![
+            StatementTmpl {
+                pred: Predicate::Native(NativePredicate::LtEq),
+                args: vec![sta_k(("B", 1), k("bar")), sta_k(("A", 0), k("foo"))],
+            },
+            StatementTmpl {
+                pred: Predicate::Native(NativePredicate::Lt),
+                args: vec![sta_k(("D", 3), k("qux")), sta_k(("C", 2), k("baz"))],
+            },
+            StatementTmpl {
+                pred: Predicate::Native(NativePredicate::Contains),
+                args: vec![
+                    sta_k(("A", 0), k("foo")),
+                    sta_k(("B", 1), k("bar")),
+                    sta_k(("C", 2), k("baz")),
+                ],
+            },
+            StatementTmpl {
+                pred: Predicate::Native(NativePredicate::NotContains),
+                args: vec![sta_k(("A", 0), k("foo")), sta_k(("B", 1), k("bar"))],
+            },
+            StatementTmpl {
+                pred: Predicate::Native(NativePredicate::Contains),
+                args: vec![
+                    sta_k(("A", 0), k("foo")),
+                    sta_k(("B", 1), k("bar")),
+                    sta_k(("C", 2), k("baz")),
                 ],
             },
         ];
@@ -454,23 +521,21 @@ mod tests {
         };
 
         let input = r#"
-            eth_friend(src_ori, src_key, dst_ori, dst_key) = AND(
-                private(attestation_pod)
-                ValueOf(?attestation_pod["__type__"], "MockSigned")
-                Equal(?attestation_pod["__signer__"], ?src_ori["src_key"])
-                Equal(?attestation_pod["attestation"], ?dst_ori["dst_key"])
+            eth_friend(src_ori, src_key, dst_ori, dst_key, private: attestation_pod) = AND(
+                ValueOf(?attestation_pod["_type"], 1)
+                Equal(?attestation_pod["_signer"], ?src_ori[?src_key])
+                Equal(?attestation_pod["attestation"], ?dst_ori[?dst_key])
             )
 
             eth_dos_distance_base(src_ori, src_key, dst_ori, dst_key, distance_ori, distance_key) = AND(
-                Equal(?src_ori["src_key"], ?dst_ori["dst_key"])
-                ValueOf(?distance_ori["distance_key"], 0)
+                Equal(?src_ori[?src_key], ?dst_ori[?dst_key])
+                ValueOf(?distance_ori[?distance_key], 0)
             )
 
-            eth_dos_distance_ind(src_ori, src_key, dst_ori, dst_key, distance_ori, distance_key) = AND(
-                private(one_ori, one_key, shorter_distance_ori, shorter_distance_key, intermed_ori, intermed_key)
+            eth_dos_distance_ind(src_ori, src_key, dst_ori, dst_key, distance_ori, distance_key, private: one_ori, one_key, shorter_distance_ori, shorter_distance_key, intermed_ori, intermed_key) = AND(
                 eth_dos_distance(?src_ori, ?src_key, ?intermed_ori, ?intermed_key, ?shorter_distance_ori, ?shorter_distance_key)
-                ValueOf(?one_ori["one_key"], 1)
-                SumOf(?distance_ori["distance_key"], ?shorter_distance_ori["shorter_distance_key"], ?one_ori["one_key"])
+                ValueOf(?one_ori[?one_key], 1)
+                SumOf(?distance_ori[?distance_key], ?shorter_distance_ori[?shorter_distance_key], ?one_ori[?one_key])
                 eth_friend(?intermed_ori, ?intermed_key, ?dst_ori, ?dst_key)
             )
 
@@ -501,22 +566,22 @@ mod tests {
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::ValueOf),
                 args: vec![
-                    sta_k(("attestation_pod", 4), k("__type__")), // Pub(0-3), Priv(4)
-                    sta_lit("MockSigned"),
+                    sta_k(("attestation_pod", 4), k("_type")), // Pub(0-3), Priv(4)
+                    sta_lit(PodType::MockSigned),
                 ],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
-                    sta_k(("attestation_pod", 4), k("__signer__")),
-                    sta_k(("src_ori", 0), k("src_key")), // Pub arg 0
+                    sta_k(("attestation_pod", 4), k("_signer")),
+                    sta_k(("src_ori", 0), ko_wc("src_key", 1)), // Pub arg 0
                 ],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
                     sta_k(("attestation_pod", 4), k("attestation")),
-                    sta_k(("dst_ori", 2), k("dst_key")), // Pub arg 2
+                    sta_k(("dst_ori", 2), ko_wc("dst_key", 3)), // Pub arg 2
                 ],
             },
         ];
@@ -533,13 +598,16 @@ mod tests {
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
-                    sta_k(("src_ori", 0), k("src_key")),
-                    sta_k(("dst_ori", 2), k("dst_key")),
+                    sta_k(("src_ori", 0), ko_wc("src_key", 1)),
+                    sta_k(("dst_ori", 2), ko_wc("dst_key", 3)),
                 ],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::ValueOf),
-                args: vec![sta_k(("distance_ori", 4), k("distance_key")), sta_lit(0i64)],
+                args: vec![
+                    sta_k(("distance_ori", 4), ko_wc("distance_key", 5)),
+                    sta_lit(0i64),
+                ],
             },
         ];
         let expected_base_pred = CustomPredicate::new(
@@ -569,16 +637,19 @@ mod tests {
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::ValueOf),
                 args: vec![
-                    sta_k(("one_ori", 6), k("one_key")), // private arg
+                    sta_k(("one_ori", 6), ko_wc("one_key", 7)), // private arg
                     sta_lit(1i64),
                 ],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::SumOf),
                 args: vec![
-                    sta_k(("distance_ori", 4), k("distance_key")), // public arg
-                    sta_k(("shorter_distance_ori", 8), k("shorter_distance_key")), // private arg
-                    sta_k(("one_ori", 6), k("one_key")),           // private arg
+                    sta_k(("distance_ori", 4), ko_wc("distance_key", 5)), // public arg
+                    sta_k(
+                        ("shorter_distance_ori", 8),
+                        ko_wc("shorter_distance_key", 9),
+                    ), // private arg
+                    sta_k(("one_ori", 6), ko_wc("one_key", 7)),           // private arg
                 ],
             },
             StatementTmpl {

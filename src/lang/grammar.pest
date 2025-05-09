@@ -11,12 +11,15 @@ COMMENT = _{ "//" ~ (!NEWLINE ~ ANY)* }
 
 // Define rules for identifiers (predicate names, variable names without '?')
 // Must start with alpha or _, followed by alpha, numeric, or _
-identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+identifier = @{ !("private") ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+
+private_kw = { "private:" }
 
 // Keywords for native statements (used to prevent collision with custom predicate names)
 native_statement_keyword = @{
-    "ValueOf" | "Equal" | "NotEqual" | "Gt" | "Lt" | "Contains" |
-    "NotContains" | "SumOf" | "ProductOf" | "MaxOf"
+    "ValueOf" | "Equal" | "NotEqual" | "Gt" | "GtEq" | "Lt" | "LtEq" | "Contains" |
+    "NotContains" | "SumOf" | "ProductOf" | "MaxOf" | "HashOf" | "DictContains" |
+    "DictNotContains" | "ArrayContains" | "SetContains" | "SetNotContains"
 }
 
 // An identifier specifically for predicate names, cannot be a native keyword.
@@ -28,9 +31,16 @@ predicate_identifier = @{
 // Define variable names (start with '?')
 variable = @{ "?" ~ identifier }
 
+arg_section      = {
+    // Case A: one or more public args, optionally followed by ", private: …"
+    public_arg_list ~ ("," ~ private_kw ~ private_arg_list)?
+  | // Case B: private-only
+    private_kw ~ private_arg_list
+}
+
 // Argument list (for predicate definition) - comma-separated identifiers
-public_arg_list = { identifier ~ ("," ~ identifier)* }  // For public args
-private_arg_list = { identifier ~ ("," ~ identifier)* } // For private args
+public_arg_list = { identifier ~ ("," ~ identifier)* } 
+private_arg_list = { identifier ~ ("," ~ identifier)* }
 
 // Top-level items: Request or Custom Predicate Definition
 document = { SOI ~ (custom_predicate_def | request_def)* ~ EOI }
@@ -41,15 +51,12 @@ request_def = { "REQUEST" ~ "(" ~ statement_list? ~ ")" } // Allow empty REQUEST
 conjunction_type = { "AND" | "OR" }
 
 custom_predicate_def = {
-    predicate_identifier ~ "(" ~ public_arg_list? ~ ")" ~ // Use public_arg_list
-    "=" ~
-    conjunction_type ~ "(" ~ // Use the named rule here
-    (private_args_def)? ~ // Optional private args
-    statement_list? ~     // Statement templates
-    ")"
+    predicate_identifier
+  ~ "(" ~ arg_section ~ ")"
+  ~ "="
+  ~ conjunction_type
+  ~ "(" ~ statement_list ~ ")" 
 }
-
-private_args_def = { "private" ~ "(" ~ private_arg_list? ~ ")" } // Use private_arg_list
 
 // statement_list implicitly allows whitespace/comments between statements due to silent rules
 statement_list = { statement+ }
@@ -60,12 +67,20 @@ statement = {
     equal_stmt |
     not_equal_stmt |
     gt_stmt |
+    gt_eq_stmt |
     lt_stmt |
+    lt_eq_stmt |
     contains_stmt |
     not_contains_stmt |
     sum_of_stmt |
     product_of_stmt |
     max_of_stmt |
+    hash_of_stmt |
+    dict_contains_stmt |
+    dict_not_contains_stmt |
+    set_contains_stmt |
+    set_not_contains_stmt |
+    array_contains_stmt |
     custom_predicate_call // Should come last
 }
 
@@ -116,12 +131,20 @@ value_of_stmt = { "ValueOf" ~ "(" ~ anchored_key ~ "," ~ literal_value ~ ")" }
 equal_stmt = { "Equal" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ ")" } 
 not_equal_stmt = { "NotEqual" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ ")" }
 gt_stmt = { "Gt" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ ")" } 
+gt_eq_stmt = { "GtEq" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ ")" }
 lt_stmt = { "Lt" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ ")" } 
+lt_eq_stmt = { "LtEq" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ ")" }
 contains_stmt = { "Contains" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," ~ anchored_key ~ ")" }
 not_contains_stmt = { "NotContains" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ ")" }
 sum_of_stmt = { "SumOf" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," ~ anchored_key ~ ")" }
 product_of_stmt = { "ProductOf" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," ~ anchored_key ~ ")" }
 max_of_stmt = { "MaxOf" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," ~ anchored_key ~ ")" }
+hash_of_stmt = { "HashOf" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," ~ anchored_key ~ ")" }
+dict_contains_stmt = { "DictContains" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," ~ anchored_key ~ ")" }
+dict_not_contains_stmt = { "DictNotContains" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ ")" }
+set_contains_stmt = { "SetContains" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," ~ anchored_key ~ ")" }
+set_not_contains_stmt = { "SetNotContains" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ ")" }
+array_contains_stmt = { "ArrayContains" ~ "(" ~ anchored_key ~ "," ~ anchored_key ~ "," ~ anchored_key ~ ")" }
 
 // Rule for a custom predicate call
 custom_predicate_call = { predicate_identifier ~ "(" ~ call_arg_list? ~ ")" } // Uses call_arg_list with custom_call_arg
@@ -132,4 +155,4 @@ test_variable = { SOI ~ variable ~ EOI }
 test_literal_int = { SOI ~ literal_int ~ EOI }
 test_literal_raw = { SOI ~ literal_raw ~ EOI } 
 test_literal_value = { SOI ~ literal_value ~ EOI }
-test_custom_predicate_call = { SOI ~ custom_predicate_call ~ EOI } 
+test_custom_predicate_call = { SOI ~ custom_predicate_call ~ EOI } test_custom_predicate_def = { SOI ~ custom_predicate_def ~ EOI } 

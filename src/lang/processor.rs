@@ -9,9 +9,9 @@ use plonky2::field::types::Field;
 use crate::{
     lang::ast::{self, TopLevelDefinition},
     middleware::{
-        self, basetypes::VALUE_SIZE, CustomPredicate, CustomPredicateBatch, CustomPredicateRef,
-        Key, KeyOrWildcard, NativePredicate, Params, Predicate, StatementTmpl, StatementTmplArg,
-        Value, Wildcard, F,
+        self, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key, KeyOrWildcard,
+        NativePredicate, Params, Predicate, StatementTmpl, StatementTmplArg, Value, Wildcard, F,
+        VALUE_SIZE,
     },
 };
 
@@ -303,19 +303,29 @@ fn process_statement(
 ) -> Result<StatementTmpl, ProcessorError> {
     match statement {
         ast::Statement::Native(call) => {
-            let middleware_args: Result<Vec<_>, _> = call
+            let mut processed_args: Vec<StatementTmplArg> = call // Make mutable
                 .args
                 .into_iter()
                 .map(|arg| process_argument(arg, scope, is_request))
-                .collect();
-            let middleware_args = middleware_args?;
-            let middleware_pred = map_native_predicate(call.predicate);
+                .collect::<Result<_, _>>()?; // Collect into Result<Vec<StatementTmplArg>, ProcessorError>
 
-            check_native_arity(middleware_pred, middleware_args.len())?;
+            // map_native_predicate will convert to middleware NativePredicate
+            // and will de-sugar Gt, SetContains, etc.
+            let final_middleware_pred = map_native_predicate(call.predicate);
+
+            match call.predicate {
+                ast::NativePredicate::Gt | ast::NativePredicate::GtEq => {
+                    processed_args.swap(0, 1);
+                }
+                _ => (),
+            }
+
+            // Arity check is performed using the final_middleware_pred (e.g., Lt)
+            check_native_arity(final_middleware_pred, processed_args.len())?;
 
             Ok(StatementTmpl {
-                pred: Predicate::Native(middleware_pred),
-                args: middleware_args,
+                pred: Predicate::Native(final_middleware_pred),
+                args: processed_args,
             })
         }
         ast::Statement::Custom(call) => {
@@ -540,13 +550,23 @@ fn map_native_predicate(ast_pred: ast::NativePredicate) -> NativePredicate {
         ast::NativePredicate::ValueOf => NativePredicate::ValueOf,
         ast::NativePredicate::Equal => NativePredicate::Equal,
         ast::NativePredicate::NotEqual => NativePredicate::NotEqual,
-        ast::NativePredicate::Gt => NativePredicate::Gt,
+        // Gt syntactic sugar
+        ast::NativePredicate::Gt => NativePredicate::Lt,
+        ast::NativePredicate::GtEq => NativePredicate::LtEq,
         ast::NativePredicate::Lt => NativePredicate::Lt,
+        ast::NativePredicate::LtEq => NativePredicate::LtEq,
         ast::NativePredicate::Contains => NativePredicate::Contains,
         ast::NativePredicate::NotContains => NativePredicate::NotContains,
         ast::NativePredicate::SumOf => NativePredicate::SumOf,
         ast::NativePredicate::ProductOf => NativePredicate::ProductOf,
         ast::NativePredicate::MaxOf => NativePredicate::MaxOf,
+        ast::NativePredicate::HashOf => NativePredicate::HashOf,
+        // Container syntactic sugar
+        ast::NativePredicate::DictContains => NativePredicate::Contains,
+        ast::NativePredicate::DictNotContains => NativePredicate::NotContains,
+        ast::NativePredicate::SetContains => NativePredicate::Contains,
+        ast::NativePredicate::SetNotContains => NativePredicate::NotContains,
+        ast::NativePredicate::ArrayContains => NativePredicate::Contains,
     }
 }
 
@@ -563,20 +583,20 @@ fn check_native_arity(pred: NativePredicate, args_len: usize) -> Result<(), Proc
         NativePredicate::ValueOf => (2, 2),
         NativePredicate::Equal => (2, 2),
         NativePredicate::NotEqual => (2, 2),
-        NativePredicate::Gt => (2, 2),
-        NativePredicate::Lt => (2, 2),
+        NativePredicate::Gt | NativePredicate::GtEq => (2, 2),
+        NativePredicate::Lt | NativePredicate::LtEq => (2, 2),
         NativePredicate::Contains => (3, 3),
         NativePredicate::NotContains => (2, 2),
         NativePredicate::SumOf => (3, 3),
         NativePredicate::ProductOf => (3, 3),
         NativePredicate::MaxOf => (3, 3),
+        NativePredicate::HashOf => (3, 3),
+        NativePredicate::DictContains => (3, 3),
+        NativePredicate::DictNotContains => (2, 2),
+        NativePredicate::SetContains => (3, 3),
+        NativePredicate::SetNotContains => (2, 2),
+        NativePredicate::ArrayContains => (3, 3),
         NativePredicate::None => (0, 0),
-        _ => {
-            return Err(ProcessorError::Internal(format!(
-                "Unexpected native predicate {:?} in arity check",
-                pred
-            )))
-        }
     };
 
     if args_len < expected_min || args_len > expected_max {
@@ -600,7 +620,7 @@ mod tests {
             CustomPredicateType, Document, Identifier, Literal, NativePredicateCall, Statement,
             TopLevelDefinition, Variable,
         },
-        middleware::{KeyOrWildcard, NativePredicate as MwNativePred, Predicate as MwPredicate},
+        middleware::{KeyOrWildcard, NativePredicate, Predicate},
     };
 
     // Helper to create Variable
@@ -676,7 +696,7 @@ mod tests {
 
         // Check the statement inside the custom predicate
         let pred_stmt = &processed_pred.statements[0];
-        assert_eq!(pred_stmt.pred, MwPredicate::Native(MwNativePred::Equal));
+        assert_eq!(pred_stmt.pred, Predicate::Native(NativePredicate::Equal));
         assert_eq!(pred_stmt.args.len(), 2);
         // Expected: Equal( ?A["val"], ?B["val"] )
         // ?A -> Wildcard{ name: "A", index: 0 }
@@ -711,7 +731,10 @@ mod tests {
         // is_eq -> BatchSelf(0)
         // ?X -> Wildcard { name: "X", index: 0 } (Indices restart in request scope)
         // ?Y -> Wildcard { name: "Y", index: 1 }
-        assert_eq!(req_stmt.pred, MwPredicate::BatchSelf(0));
+        assert_eq!(
+            req_stmt.pred,
+            Predicate::Custom(CustomPredicateRef::new(output.custom_batch, 0))
+        );
         assert_eq!(req_stmt.args.len(), 2);
         assert_eq!(
             req_stmt.args[0],
@@ -731,14 +754,13 @@ mod tests {
 
     #[test]
     fn test_process_private_vars() {
-        // is_eq_priv(Pub) = AND(
-        //   private(Priv)
+        // is_eq_priv(Pub, private: Priv) = AND(
         //   Equal(?Pub["pub_key"], ?Priv["priv_key"])
         // )
         let pred_def = CustomPredicateDefinition {
             name: ident("is_eq_priv"),
             public_args: vec![var("Pub")],
-            private_args: vec![var("Priv")], // Declare private var
+            private_args: vec![var("Priv")], // private_args now populated directly
             type_: CustomPredicateType::And,
             statements: vec![Statement::Native(NativePredicateCall {
                 predicate: ast::NativePredicate::Equal,
@@ -773,7 +795,7 @@ mod tests {
         assert_eq!(processed_pred.statements.len(), 1);
 
         let pred_stmt = &processed_pred.statements[0];
-        assert_eq!(pred_stmt.pred, MwPredicate::Native(MwNativePred::Equal));
+        assert_eq!(pred_stmt.pred, Predicate::Native(NativePredicate::Equal));
         assert_eq!(pred_stmt.args.len(), 2);
 
         // Check wildcards: Pub should be index 0, Priv should be index 1
@@ -803,16 +825,16 @@ mod tests {
 
     #[test]
     fn test_process_literal_args() {
-        // process_lits(Data) = AND(
+        // process_literals(Data) = AND(
         //   ValueOf(?Data["num"], 123)
         //   ValueOf(?Data["flag"], true)
         //   ValueOf(?Data["msg"], "hello")
         // )
         // REQUEST(
-        //   process_lits(?Pod)
+        //   process_literals(?Pod)
         // )
         let pred_def = CustomPredicateDefinition {
-            name: ident("process_lits"),
+            name: ident("process_literals"),
             public_args: vec![var("Data")],
             private_args: vec![],
             type_: CustomPredicateType::And,
@@ -852,7 +874,7 @@ mod tests {
 
         let request_def = ast::RequestDefinition {
             statements: vec![Statement::Custom(CustomPredicateCall {
-                name: ident("process_lits"),
+                name: ident("process_literals"),
                 args: vec![Argument::Variable(var("Pod"))],
             })],
         };
@@ -891,7 +913,10 @@ mod tests {
         // Check request processing
         assert_eq!(output.request_templates.len(), 1);
         let req_stmt = &output.request_templates[0];
-        assert_eq!(req_stmt.pred, MwPredicate::BatchSelf(0));
+        assert_eq!(
+            req_stmt.pred,
+            Predicate::Custom(CustomPredicateRef::new(output.custom_batch, 0))
+        );
         assert_eq!(req_stmt.args.len(), 1);
         assert_eq!(
             req_stmt.args[0],
@@ -1081,7 +1106,7 @@ mod tests {
 
         // Check statement inside pred2 calls pred1 (index 0)
         let pred2_stmt = &processed_pred2.statements[0];
-        assert_eq!(pred2_stmt.pred, MwPredicate::BatchSelf(0)); // Calls pred1 at index 0
+        assert_eq!(pred2_stmt.pred, Predicate::BatchSelf(0)); // Calls pred1 at index 0
         assert_eq!(pred2_stmt.args.len(), 1);
         assert_eq!(
             pred2_stmt.args[0],
@@ -1094,7 +1119,10 @@ mod tests {
         // Check request calls pred2 (index 1)
         assert_eq!(output.request_templates.len(), 1);
         let req_stmt = &output.request_templates[0];
-        assert_eq!(req_stmt.pred, MwPredicate::BatchSelf(1)); // Calls pred2 at index 1
+        assert_eq!(
+            req_stmt.pred,
+            Predicate::Custom(CustomPredicateRef::new(output.custom_batch.clone(), 1))
+        ); // Calls pred2 at index 1
         assert_eq!(req_stmt.args.len(), 1);
         assert_eq!(
             req_stmt.args[0],
@@ -1440,7 +1468,10 @@ mod tests {
         // Check request processing
         assert_eq!(output.request_templates.len(), 1);
         let req_stmt = &output.request_templates[0];
-        assert_eq!(req_stmt.pred, MwPredicate::BatchSelf(0));
+        assert_eq!(
+            req_stmt.pred,
+            Predicate::Custom(CustomPredicateRef::new(output.custom_batch, 0))
+        );
         assert_eq!(req_stmt.args.len(), 1);
         assert_eq!(
             req_stmt.args[0],
@@ -1531,7 +1562,7 @@ mod tests {
 
         // Check statement inside pred_b calls pred_a (index 1)
         let pred_b_stmt = &processed_pred_b.statements[0];
-        assert_eq!(pred_b_stmt.pred, MwPredicate::BatchSelf(1)); // Calls pred_a at index 1
+        assert_eq!(pred_b_stmt.pred, Predicate::BatchSelf(1)); // Calls pred_a at index 1
         assert_eq!(pred_b_stmt.args.len(), 1);
         assert_eq!(
             pred_b_stmt.args[0],
@@ -1544,7 +1575,10 @@ mod tests {
         // Check request calls pred_b (index 0)
         assert_eq!(output.request_templates.len(), 1);
         let req_stmt = &output.request_templates[0];
-        assert_eq!(req_stmt.pred, MwPredicate::BatchSelf(0)); // Calls pred_b at index 0
+        assert_eq!(
+            req_stmt.pred,
+            Predicate::Custom(CustomPredicateRef::new(output.custom_batch, 0))
+        ); // Calls pred_b at index 0
         assert_eq!(req_stmt.args.len(), 1);
         assert_eq!(
             req_stmt.args[0],

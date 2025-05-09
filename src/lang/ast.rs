@@ -123,12 +123,20 @@ pub enum NativePredicate {
     Equal,
     NotEqual,
     Gt,
+    GtEq,
     Lt,
+    LtEq,
     Contains,
     NotContains,
     SumOf,
     ProductOf,
     MaxOf,
+    HashOf,
+    DictContains,
+    DictNotContains,
+    SetContains,
+    SetNotContains,
+    ArrayContains,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -243,38 +251,40 @@ fn build_custom_predicate(
                 }
                 name_opt = Some(build_identifier(inner_pair)?);
             }
-            Rule::public_arg_list => {
-                // Should only parse once
-                if !public_args.is_empty() {
-                    return Err(ast_err!(
-                        Generic,
-                        &inner_pair,
-                        "Duplicate public_arg_list found"
-                    ));
+            Rule::arg_section => {
+                for arg_pair in inner_pair.into_inner() {
+                    match arg_pair.as_rule() {
+                        Rule::public_arg_list => {
+                            if !public_args.is_empty() {
+                                return Err(ast_err!(
+                                    Generic,
+                                    &arg_pair,
+                                    "Duplicate public_arg_list found"
+                                ));
+                            }
+                            public_args = arg_pair
+                                .into_inner()
+                                .map(|p| build_identifier(p).map(|ident| Variable(ident.0)))
+                                .collect::<Result<Vec<Variable>, _>>()?;
+                        }
+                        Rule::private_arg_list => {
+                            if !private_args.is_empty() {
+                                return Err(ast_err!(
+                                    Generic,
+                                    &arg_pair,
+                                    "Duplicate private_arg_list found"
+                                ));
+                            }
+                            private_args = arg_pair
+                                .into_inner()
+                                .map(|p| build_identifier(p).map(|ident| Variable(ident.0)))
+                                .collect::<Result<Vec<Variable>, _>>()?;
+                        }
+                        Rule::private_kw | Rule::COMMENT | Rule::WHITESPACE => {}
+                        _ if [","].contains(&arg_pair.as_str().trim()) => {}
+                        _ => return Err(ast_err!(UnexpectedRule, &arg_pair)),
+                    }
                 }
-                public_args = inner_pair
-                    .into_inner()
-                    .map(|p| build_identifier(p).map(|ident| Variable(ident.0)))
-                    .collect::<Result<Vec<Variable>, _>>()?;
-            }
-            Rule::private_args_def => {
-                // Should only parse once
-                if !private_args.is_empty() {
-                    return Err(ast_err!(
-                        Generic,
-                        &inner_pair,
-                        "Duplicate private_args_def found"
-                    ));
-                }
-                private_args = inner_pair
-                    .into_inner() // Get inner of private_args_def
-                    .find(|p| p.as_rule() == Rule::private_arg_list) // Find the private_arg_list within it
-                    .map_or(Ok(Vec::new()), |arg_list_pair| {
-                        arg_list_pair
-                            .into_inner()
-                            .map(|p| build_identifier(p).map(|ident| Variable(ident.0)))
-                            .collect::<Result<Vec<Variable>, _>>()
-                    })?;
             }
             Rule::statement_list => {
                 statements = inner_pair
@@ -307,7 +317,8 @@ fn build_custom_predicate(
             }
             // Ignore known syntax/comments/whitespace, error on others
             Rule::COMMENT | Rule::WHITESPACE => { /* Ignore */ }
-            _ if ["=", "(", ")", "private"].contains(&inner_pair.as_str().trim()) => { /* Ignore */
+            // Updated the list of ignored syntactic literals
+            _ if ["=", "(", ")", ",", "private:"].contains(&inner_pair.as_str().trim()) => { /* Ignore */
             }
             _ => {
                 // If it's not a handled rule or known syntax/ignored rules, it's unexpected
@@ -375,12 +386,20 @@ fn build_statement(pair: Pair<'_, Rule>) -> Result<Statement, AstBuildError> {
         | Rule::equal_stmt
         | Rule::not_equal_stmt
         | Rule::gt_stmt
+        | Rule::gt_eq_stmt
         | Rule::lt_stmt
+        | Rule::lt_eq_stmt
         | Rule::contains_stmt
         | Rule::not_contains_stmt
         | Rule::sum_of_stmt
         | Rule::product_of_stmt
-        | Rule::max_of_stmt => Ok(Statement::Native(build_native_call(inner_pair)?)),
+        | Rule::max_of_stmt
+        | Rule::hash_of_stmt
+        | Rule::dict_contains_stmt
+        | Rule::dict_not_contains_stmt
+        | Rule::set_contains_stmt
+        | Rule::set_not_contains_stmt
+        | Rule::array_contains_stmt => Ok(Statement::Native(build_native_call(inner_pair)?)),
         Rule::custom_predicate_call => Ok(Statement::Custom(build_custom_call(inner_pair)?)),
         _ => Err(ast_err!(UnexpectedRule, &inner_pair)),
     }
@@ -392,12 +411,20 @@ fn build_native_call(pair: Pair<'_, Rule>) -> Result<NativePredicateCall, AstBui
         Rule::equal_stmt => NativePredicate::Equal,
         Rule::not_equal_stmt => NativePredicate::NotEqual,
         Rule::gt_stmt => NativePredicate::Gt,
+        Rule::gt_eq_stmt => NativePredicate::GtEq,
         Rule::lt_stmt => NativePredicate::Lt,
+        Rule::lt_eq_stmt => NativePredicate::LtEq,
         Rule::contains_stmt => NativePredicate::Contains,
         Rule::not_contains_stmt => NativePredicate::NotContains,
         Rule::sum_of_stmt => NativePredicate::SumOf,
         Rule::product_of_stmt => NativePredicate::ProductOf,
         Rule::max_of_stmt => NativePredicate::MaxOf,
+        Rule::hash_of_stmt => NativePredicate::HashOf,
+        Rule::dict_contains_stmt => NativePredicate::DictContains,
+        Rule::dict_not_contains_stmt => NativePredicate::DictNotContains,
+        Rule::set_contains_stmt => NativePredicate::SetContains,
+        Rule::set_not_contains_stmt => NativePredicate::SetNotContains,
+        Rule::array_contains_stmt => NativePredicate::ArrayContains,
         _ => return Err(ast_err!(UnexpectedRule, &pair)), // Should not happen if called correctly
     };
 
@@ -1154,8 +1181,7 @@ mod tests {
         });
         assert_eq!(result_and, expected_and);
 
-        let input_priv = r#"with_priv(Pub) = OR(
-            private(Priv1, Priv2)
+        let input_priv = r#"with_priv(Pub, private: Priv1, Priv2) = OR(
             Lt(?Pub["x"], ?Priv1["y"])
             Gt(?Priv1["y"], ?Priv2["z"])
         )"#;
@@ -1195,28 +1221,6 @@ mod tests {
             ],
         });
         assert_eq!(result_priv, expected_priv);
-
-        let input_empty = "empty_pred() = AND()";
-        let result_empty = build_test_custom_predicate(input_empty);
-        let expected_empty = Ok(CustomPredicateDefinition {
-            name: Identifier("empty_pred".to_string()),
-            public_args: vec![],
-            private_args: vec![],
-            type_: CustomPredicateType::And,
-            statements: vec![],
-        });
-        assert_eq!(result_empty, expected_empty);
-
-        let input_no_stmts = "no_stmts(A, B) = OR()";
-        let result_no_stmts = build_test_custom_predicate(input_no_stmts);
-        let expected_no_stmts = Ok(CustomPredicateDefinition {
-            name: Identifier("no_stmts".to_string()),
-            public_args: vec![Variable("A".to_string()), Variable("B".to_string())],
-            private_args: vec![],
-            type_: CustomPredicateType::Or,
-            statements: vec![],
-        });
-        assert_eq!(result_no_stmts, expected_no_stmts);
     }
 
     // Helper to parse and build a request definition
@@ -1369,21 +1373,6 @@ mod tests {
         });
         assert_eq!(result_empty, expected_empty_doc);
 
-        let input_pred_only = "pred_only() = OR()";
-        let result_pred_only = build_test_document(input_pred_only);
-        let expected_pred_only = Ok(Document {
-            definitions: vec![TopLevelDefinition::CustomPredicate(
-                CustomPredicateDefinition {
-                    name: Identifier("pred_only".to_string()),
-                    public_args: vec![],
-                    private_args: vec![],
-                    type_: CustomPredicateType::Or,
-                    statements: vec![],
-                },
-            )],
-        });
-        assert_eq!(result_pred_only, expected_pred_only);
-
         let input_req_only = "REQUEST( Equal(?A[\"k\"], ?B[\"k\"]) )";
         let result_req_only = build_test_document(input_req_only);
         let expected_req_only = Ok(Document {
@@ -1409,8 +1398,12 @@ mod tests {
             REQUEST(
                 pred1(?A)
             )
-            pred2(Y) = OR()
-            pred1(X) = AND()
+            pred2(Y) = OR(
+                Equal(?Y["foo"], ?Y["bar"])
+            )
+            pred1(X) = AND(
+                Equal(?X["foo"], ?X["bar"])
+            )
         "#;
         let result_mixed = build_test_document(input_mixed);
         let expected_req_mixed = TopLevelDefinition::Request(RequestDefinition {
@@ -1424,14 +1417,38 @@ mod tests {
             public_args: vec![Variable("Y".to_string())],
             private_args: vec![],
             type_: CustomPredicateType::Or,
-            statements: vec![],
+            statements: vec![Statement::Native(NativePredicateCall {
+                predicate: NativePredicate::Equal,
+                args: vec![
+                    Argument::AnchoredKey(AnchoredKey {
+                        pod_var: Variable("Y".to_string()),
+                        key: AnchoredKeyKey::LiteralString("foo".to_string()),
+                    }),
+                    Argument::AnchoredKey(AnchoredKey {
+                        pod_var: Variable("Y".to_string()),
+                        key: AnchoredKeyKey::LiteralString("bar".to_string()),
+                    }),
+                ],
+            })],
         });
         let expected_pred1_mixed = TopLevelDefinition::CustomPredicate(CustomPredicateDefinition {
             name: Identifier("pred1".to_string()),
             public_args: vec![Variable("X".to_string())],
             private_args: vec![],
             type_: CustomPredicateType::And,
-            statements: vec![],
+            statements: vec![Statement::Native(NativePredicateCall {
+                predicate: NativePredicate::Equal,
+                args: vec![
+                    Argument::AnchoredKey(AnchoredKey {
+                        pod_var: Variable("X".to_string()),
+                        key: AnchoredKeyKey::LiteralString("foo".to_string()),
+                    }),
+                    Argument::AnchoredKey(AnchoredKey {
+                        pod_var: Variable("X".to_string()),
+                        key: AnchoredKeyKey::LiteralString("bar".to_string()),
+                    }),
+                ],
+            })],
         });
         let expected_mixed_doc = Ok(Document {
             definitions: vec![

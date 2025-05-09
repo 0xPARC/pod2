@@ -167,29 +167,22 @@ mod tests {
     #[test]
     fn test_parse_simple_custom_def() {
         assert_parses(
-            Rule::custom_predicate_def,
+            Rule::test_custom_predicate_def,
             // Trimmed leading/trailing whitespace
             r#"my_pred(A, B) = AND(
                 Equal(?A["foo"], ?B["bar"])
             )"#,
         );
         assert_parses(
-            Rule::custom_predicate_def,
+            Rule::test_custom_predicate_def,
             // Trimmed leading/trailing whitespace
-            r#"pred_with_private(X) = OR(
-                private(TempKey) // Declare private var
+            r#"pred_with_private(X, private: TempKey) = OR(
                 Equal(?X[?TempKey], ?X["other"])
             )"#,
         );
-        assert_parses(
-            Rule::custom_predicate_def,
-            // Trimmed
-            r#"pred_no_args() = AND()"#,
-        );
-        assert_parses(
-            Rule::custom_predicate_def,
-            // Trimmed
-            r#"pred_no_private_or_stmts(A,B) = AND()"#,
+        assert_fails(
+            Rule::test_custom_predicate_def,
+            r#"pred_no_stmts(A,B) = AND()"#,
         );
     }
 
@@ -197,10 +190,8 @@ mod tests {
     fn test_parse_document() {
         assert_parses(
             Rule::document,
-            // Trimmed leading/trailing whitespace
             r#"// File defining one predicate and one request
-            is_valid_user(UserPod) = AND(
-                private(ConstVal) // Private variable for const
+            is_valid_user(UserPod, private: ConstVal) = AND(
                 // User age must be > 18 (using a constant value)
                 ValueOf(?ConstVal["min_age"], 18)
                 Gt(?UserPod["age"], ?ConstVal["min_age"])
@@ -235,17 +226,17 @@ mod tests {
     fn test_parser_rejects_keyword_as_predicate_name() {
         // Should fail defining a predicate named like a native statement
         assert_fails(
-            Rule::custom_predicate_def,
-            "Equal(A) = AND()",
+            Rule::test_custom_predicate_def,
+            r#"Equal(A) = AND( Lt(?A["x"], ?A["y"]) )"#,
             // "Parser should reject native keyword 'Equal' as custom predicate name"
         );
         assert_fails(
-            Rule::custom_predicate_def,
+            Rule::test_custom_predicate_def,
             "valueOf(X, Y) = OR( Lt(?X, ?Y) )", // Check different case variation if needed later
                                                 // "Parser should reject 'valueOf' (even if case differs) if grammar was case-insensitive"
         );
         assert_fails(
-            Rule::custom_predicate_def,
+            Rule::test_custom_predicate_def,
             "Gt() = AND()",
             // "Parser should reject native keyword 'Gt' as custom predicate name"
         );
@@ -271,9 +262,15 @@ mod tests {
         );
 
         // Valid cases (should parse)
-        assert_parses(Rule::custom_predicate_def, "MyEqual(A) = AND()");
+        assert_parses(
+            Rule::custom_predicate_def,
+            r#"MyEqual(A) = AND( Equal(?A["foo"], ?A["bar"]) )"#,
+        );
         assert_parses(Rule::test_custom_predicate_call, "my_Lt()");
         assert_parses(Rule::document, "REQUEST( some_pred() )");
-        assert_parses(Rule::document, "pred(X) = AND() REQUEST( pred(?A) ) ");
+        assert_parses(
+            Rule::document,
+            r#"pred(X) = AND( Equal(?X["foo"], ?X["bar"]) ) REQUEST( pred(?A) ) "#,
+        );
     }
 }
