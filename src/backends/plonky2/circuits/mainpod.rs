@@ -1020,7 +1020,7 @@ mod tests {
         },
         middleware::{
             hash_str, hash_values, Hash, Key, KeyOrWildcard, OperationType, PodId, Predicate,
-            RawValue, StatementTmpl, Wildcard, WildcardValue,
+            RawValue, StatementTmpl, StatementTmplArg, Wildcard, WildcardValue,
         },
     };
 
