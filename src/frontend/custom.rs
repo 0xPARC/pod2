@@ -24,6 +24,7 @@ pub fn key(s: &str) -> KeyOrWildcardStr {
 }
 
 /// Builder Argument for the StatementTmplBuilder
+#[derive(Clone)]
 pub enum BuilderArg {
     Literal(Value),
     /// Key: (origin, key), where origin is a Wildcard and key can be both Key or Wildcard
@@ -64,6 +65,7 @@ pub fn literal(v: impl Into<Value>) -> BuilderArg {
     BuilderArg::Literal(v.into())
 }
 
+#[derive(Clone)]
 pub struct StatementTmplBuilder {
     predicate: Predicate,
     args: Vec<BuilderArg>,

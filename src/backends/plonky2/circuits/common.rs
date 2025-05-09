@@ -13,10 +13,12 @@ use plonky2::{
         poseidon::PoseidonHash,
     },
     iop::{
+        generator::{GeneratedValues, SimpleGenerator},
         target::{BoolTarget, Target},
-        witness::{PartialWitness, WitnessWrite},
+        witness::{PartialWitness, PartitionWitness, Witness, WitnessWrite},
     },
-    plonk::circuit_builder::CircuitBuilder,
+    plonk::{circuit_builder::CircuitBuilder, circuit_data::CommonCircuitData},
+    util::serialization::{Buffer, IoResult, Read, Write},
 };
 
 use crate::{
@@ -509,7 +511,7 @@ pub struct CustomPredicateEntryTarget {
 }
 
 impl CustomPredicateEntryTarget {
-    fn set_targets(
+    pub fn set_targets(
         &self,
         pw: &mut PartialWitness<F>,
         params: &Params,
@@ -1156,6 +1158,10 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
         let mask: Vec<_> = (0..len)
             .map(|_| self.add_virtual_bool_target_safe())
             .collect();
+        self.add_simple_generator(LtMaskGenerator {
+            n: n.clone(),
+            mask: mask.iter().map(|bt| bt.target).collect(),
+        });
         // We have `n` ones in the mask
         let mask_sum = mask
             .iter()
@@ -1171,6 +1177,47 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
         }
 
         mask
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct LtMaskGenerator {
+    pub(crate) n: Target,
+    pub(crate) mask: Vec<Target>,
+}
+
+impl<F: RichField + Extendable<D>, const D: usize> SimpleGenerator<F, D> for LtMaskGenerator {
+    fn id(&self) -> String {
+        "LtMaskGenerator".to_string()
+    }
+
+    fn dependencies(&self) -> Vec<Target> {
+        vec![self.n]
+    }
+
+    fn run_once(
+        &self,
+        witness: &PartitionWitness<F>,
+        out_buffer: &mut GeneratedValues<F>,
+    ) -> anyhow::Result<()> {
+        let n = witness.get_target(self.n).to_canonical_u64();
+
+        for (i, mask_i) in self.mask.iter().enumerate() {
+            let v = if (i as u64) < n { F::ONE } else { F::ZERO };
+            out_buffer.set_target(*mask_i, v)?;
+        }
+        Ok(())
+    }
+
+    fn serialize(&self, dst: &mut Vec<u8>, _common_data: &CommonCircuitData<F, D>) -> IoResult<()> {
+        dst.write_target(self.n)?;
+        dst.write_target_vec(&self.mask)
+    }
+
+    fn deserialize(src: &mut Buffer, _common_data: &CommonCircuitData<F, D>) -> IoResult<Self> {
+        let n = src.read_target()?;
+        let mask = src.read_target_vec()?;
+        Ok(Self { n, mask })
     }
 }
 
@@ -1202,6 +1249,7 @@ mod tests {
             let cp_target = CustomPredicateTarget::from_flattened(&params, &flatteend_target);
             // Round trip of from_flattened to flattened
             let flatteend_target_rt = cp_target.flatten();
+            // TODO: Instead of connect, assign witness to result
             builder.connect_slice(&flatteend_target, &flatteend_target_rt);
 
             let pw = PartialWitness::<F>::new();
@@ -1248,6 +1296,7 @@ mod tests {
         let id_target = custom_predicate_batch_target.id(&mut builder);
         let id = custom_predicate_batch.id();
 
+        // TODO: Instead of connect, assign witness to result
         let id_expected_target = HashOutTarget {
             elements: id
                 .to_fields(params)

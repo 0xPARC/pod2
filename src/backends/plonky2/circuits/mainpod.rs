@@ -649,8 +649,8 @@ impl CustomOperationVerifyGadget {
     fn eval(
         &self,
         builder: &mut CircuitBuilder<F, D>,
-        op_args: &[StatementTarget],
         custom_predicate: &CustomPredicateEntryTarget,
+        op_args: &[StatementTarget],
         args: &[ValueTarget], // arguments to the custom predicate, public and private
     ) -> Result<(StatementTarget, OperationTypeTarget)> {
         // Some sanity checks
@@ -812,7 +812,7 @@ impl MainPodVerifyGadget {
             let (statement, op_type) = CustomOperationVerifyGadget {
                 params: params.clone(),
             }
-            .eval(builder, &op_args, &custom_predicate, &args)?;
+            .eval(builder, &custom_predicate, &op_args, &args)?;
             let query = CustomPredicateVerifyQueryTarget {
                 statement, // output
                 op_type,   // output
@@ -1018,6 +1018,7 @@ mod tests {
             mainpod::{OperationArg, OperationAux},
             primitives::merkletree::{MerkleClaimAndProof, MerkleTree},
         },
+        frontend::{self, key, literal, CustomPredicateBatchBuilder, StatementTmplBuilder},
         middleware::{
             hash_str, hash_values, Hash, Key, KeyOrWildcard, OperationType, PodId, Predicate,
             RawValue, StatementTmpl, StatementTmplArg, Wildcard, WildcardValue,
@@ -1720,6 +1721,7 @@ mod tests {
             .collect();
         let st_arg_target =
             gadget.statement_arg_from_template(&mut builder, &st_tmpl_arg_target, &args_target);
+        // TODO: Instead of connect, assign witness to result
         let expected_st_arg_target = builder.add_virtual_statement_arg();
         builder.connect_array(expected_st_arg_target.elements, st_arg_target.elements);
 
@@ -1801,6 +1803,7 @@ mod tests {
             .map(|_| builder.add_virtual_value())
             .collect();
         let st_target = gadget.statement_from_template(&mut builder, &st_tmpl_target, &args_target);
+        // TODO: Instead of connect, assign witness to result
         let expected_st_target = builder.add_virtual_statement(params);
         builder.connect_flattenable(&expected_st_target, &st_target);
 
@@ -1842,6 +1845,173 @@ mod tests {
             Value::from("value"),
         );
         helper_statement_from_template(&params, st_tmpl, args, expected_st)?;
+
+        Ok(())
+    }
+
+    fn helper_custom_operation_verify_gadget(
+        params: &Params,
+        custom_predicate: CustomPredicateRef,
+        op_args: Vec<Statement>,
+        args: Vec<WildcardValue>,
+        expected_st: Statement,
+    ) -> Result<()> {
+        let config = CircuitConfig::standard_recursion_config();
+        let mut builder = CircuitBuilder::<F, D>::new(config);
+        let gadget = CustomOperationVerifyGadget {
+            params: params.clone(),
+        };
+
+        let custom_predicate_target = builder.add_virtual_custom_predicate_entry(params);
+        let op_args_target: Vec<_> = (0..args.len())
+            .map(|_| builder.add_virtual_statement(params))
+            .collect();
+        let args_target: Vec<_> = (0..args.len())
+            .map(|_| builder.add_virtual_value())
+            .collect();
+        let (st_target, op_type_target) = gadget.eval(
+            &mut builder,
+            &custom_predicate_target,
+            &op_args_target,
+            &args_target,
+        )?;
+
+        let mut pw = PartialWitness::<F>::new();
+
+        // Input
+        custom_predicate_target.set_targets(&mut pw, params, &custom_predicate)?;
+        for (op_arg_target, op_arg) in op_args_target.iter().zip(op_args.into_iter()) {
+            op_arg_target.set_targets(&mut pw, params, &op_arg.into())?;
+        }
+        for (arg_target, arg) in args_target.iter().zip(args.iter()) {
+            arg_target.set_targets(&mut pw, &Value::from(arg.raw()))?;
+        }
+        // Expected Output
+        st_target.set_targets(&mut pw, params, &expected_st.into())?;
+
+        let expected_op_type = OperationType::Custom(custom_predicate);
+        op_type_target.set_targets(&mut pw, params, &expected_op_type)?;
+
+        // generate & verify proof
+        let data = builder.build::<C>();
+        let proof = data.prove(pw).unwrap();
+        data.verify(proof.clone()).unwrap();
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_custom_operation_verify_gadget() -> frontend::Result<()> {
+        // We set the parameters to the exact sizes we have in the test so that we don't have to
+        // pad.
+        let params = Params {
+            max_custom_predicate_arity: 2,
+            max_custom_predicate_wildcards: 2,
+            max_operation_args: 2,
+            max_statement_args: 2,
+            ..Default::default()
+        };
+
+        use NativePredicate as NP;
+        use StatementTmplBuilder as STB;
+        let mut builder = CustomPredicateBatchBuilder::new(params.clone(), "batch".into());
+        let stb0 = STB::new(NP::ValueOf)
+            .arg(("id", key("score")))
+            .arg(literal(42));
+        let stb1 = STB::new(NP::ValueOf)
+            .arg(("id", "secret_key"))
+            .arg(literal(1234));
+        let _ = builder.predicate_and(
+            "pred_and",
+            &["id"],
+            &["secret_key"],
+            &[stb0.clone(), stb1.clone()],
+        )?;
+        let _ = builder.predicate_or("pred_or", &["id"], &["secret_key"], &[stb0, stb1])?;
+        let batch = builder.finish();
+
+        let pod_id = PodId(hash_str("pod_id"));
+
+        // AND
+        let custom_predicate = CustomPredicateRef::new(batch.clone(), 0);
+        let op_args = vec![
+            Statement::ValueOf(
+                AnchoredKey::new(pod_id, Key::from("score")),
+                Value::from(42),
+            ),
+            Statement::ValueOf(
+                AnchoredKey::new(pod_id, Key::from("foo")),
+                Value::from(1234),
+            ),
+        ];
+        let args = vec![
+            WildcardValue::PodId(pod_id),
+            WildcardValue::Key(Key::from("foo")),
+        ];
+        let expected_st = Statement::Custom(
+            custom_predicate.clone(),
+            vec![args[0].clone(), WildcardValue::None],
+        );
+
+        helper_custom_operation_verify_gadget(
+            &params,
+            custom_predicate,
+            op_args,
+            args,
+            expected_st,
+        )
+        .unwrap();
+
+        // OR (1)
+        let custom_predicate = CustomPredicateRef::new(batch.clone(), 1);
+        let op_args = vec![
+            Statement::ValueOf(
+                AnchoredKey::new(pod_id, Key::from("score")),
+                Value::from(42),
+            ),
+            Statement::None,
+        ];
+        let args = vec![WildcardValue::PodId(pod_id), WildcardValue::None];
+        let expected_st = Statement::Custom(
+            custom_predicate.clone(),
+            vec![args[0].clone(), WildcardValue::None],
+        );
+
+        helper_custom_operation_verify_gadget(
+            &params,
+            custom_predicate,
+            op_args,
+            args,
+            expected_st,
+        )
+        .unwrap();
+
+        // OR (2)
+        let custom_predicate = CustomPredicateRef::new(batch.clone(), 1);
+        let op_args = vec![
+            Statement::None,
+            Statement::ValueOf(
+                AnchoredKey::new(pod_id, Key::from("foo")),
+                Value::from(1234),
+            ),
+        ];
+        let args = vec![
+            WildcardValue::PodId(pod_id),
+            WildcardValue::Key(Key::from("foo")),
+        ];
+        let expected_st = Statement::Custom(
+            custom_predicate.clone(),
+            vec![args[0].clone(), WildcardValue::None],
+        );
+
+        helper_custom_operation_verify_gadget(
+            &params,
+            custom_predicate,
+            op_args,
+            args,
+            expected_st,
+        )
+        .unwrap();
 
         Ok(())
     }
