@@ -5,8 +5,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::middleware::{
-    hash_fields, Error, Hash, Key, Params, Predicate, Result, ToFields, Value, EMPTY_HASH, F,
-    HASH_SIZE, VALUE_SIZE,
+    hash_fields, Error, Hash, Key, NativePredicate, Params, Predicate, Result, ToFields, Value,
+    EMPTY_HASH, F, HASH_SIZE, VALUE_SIZE,
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -222,7 +222,10 @@ impl CustomPredicate {
         Self {
             name: "empty".to_string(),
             conjunction: false,
-            statements: vec![],
+            statements: vec![StatementTmpl {
+                pred: Predicate::Native(NativePredicate::None),
+                args: vec![],
+            }],
             args_len: 0,
         }
     }
