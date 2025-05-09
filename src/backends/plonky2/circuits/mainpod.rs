@@ -29,9 +29,9 @@ use crate::{
         signedpod::SignedPod,
     },
     middleware::{
-        AnchoredKey, CustomPredicateBatch, CustomPredicateRef, NativeOperation, NativePredicate,
-        Params, PodType, Statement, StatementArg, ToFields, Value, WildcardValue, F, KEY_TYPE,
-        SELF, VALUE_SIZE,
+        AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, NativeOperation,
+        NativePredicate, Params, PodType, Statement, StatementArg, ToFields, Value, WildcardValue,
+        F, KEY_TYPE, SELF, VALUE_SIZE,
     },
 };
 
@@ -86,7 +86,11 @@ impl OperationVerifyGadget {
         // can reference any of the `prev_statements`.
         // TODO: Clean this up.
         let resolved_op_args = if prev_statements.is_empty() {
-            vec![]
+            (0..self.params.max_operation_args)
+                .map(|_| {
+                    StatementTarget::new_native(builder, &self.params, NativePredicate::None, &[])
+                })
+                .collect_vec()
         } else {
             op.args
                 .iter()
@@ -688,9 +692,12 @@ impl CustomOperationVerifyGadget {
             .iter()
             .map(|st_tmpl| self.statement_from_template(builder, st_tmpl, args))
             .collect();
+        // expected_sts.len() == self.params.max_custom_predicate_arity
+        // op_args.len() == self.params.max_operation_args;
+        assert!(self.params.max_custom_predicate_arity <= self.params.max_operation_args);
         let sts_eq: Vec<_> = expected_sts
             .iter()
-            .zip_eq(op_args.iter())
+            .zip(op_args.iter())
             .map(|(expected_st, st)| builder.is_equal_flattenable(expected_st, st))
             .collect();
         let all_st_eq = builder.all(sts_eq.clone());
@@ -929,10 +936,14 @@ impl MainPodVerifyTarget {
             self.signed_pods[i].set_targets(pw, signed_pod)?;
         }
         // Padding
-        // TODO: Instead of using an input for padding, use a canonical minimal SignedPod
-        let pad_pod = &input.signed_pods[0];
-        for i in input.signed_pods.len()..self.params.max_input_signed_pods {
-            self.signed_pods[i].set_targets(pw, pad_pod)?;
+        if self.params.max_input_signed_pods > 0 {
+            // TODO: Instead of using an input for padding, use a canonical minimal SignedPod,
+            // without it a MainPod configured to support input signed pods must have at least one
+            // input signed pod :(
+            let pad_pod = &input.signed_pods[0];
+            for i in input.signed_pods.len()..self.params.max_input_signed_pods {
+                self.signed_pods[i].set_targets(pw, pad_pod)?;
+            }
         }
         assert_eq!(input.statements.len(), self.params.max_statements);
         for (i, (st, op)) in zip_eq(&input.statements, &input.operations).enumerate() {
@@ -955,7 +966,11 @@ impl MainPodVerifyTarget {
             self.custom_predicate_batches[i].set_targets(pw, &self.params, cpb)?;
         }
         // Padding
-        let pad_cpb = CustomPredicateBatch::new(&self.params, "empty".to_string(), vec![]);
+        let pad_cpb = CustomPredicateBatch::new(
+            &self.params,
+            "empty".to_string(),
+            vec![CustomPredicate::empty()],
+        );
         for i in input.custom_predicate_batches.len()..self.params.max_custom_predicate_batches {
             self.custom_predicate_batches[i].set_targets(pw, &self.params, &pad_cpb)?;
         }
@@ -1900,6 +1915,7 @@ mod tests {
         Ok(())
     }
 
+    // TODO: Add negative tests
     #[test]
     fn test_custom_operation_verify_gadget() -> frontend::Result<()> {
         // We set the parameters to the exact sizes we have in the test so that we don't have to

@@ -604,4 +604,41 @@ pub mod tests {
         let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
         pod.verify().unwrap()
     }
+
+    #[test]
+    fn test_mainpod_small_empty() {
+        let params = middleware::Params {
+            max_input_signed_pods: 0,
+            max_input_main_pods: 0,
+            max_statements: 5,
+            max_signed_pod_values: 2,
+            max_public_statements: 2,
+            max_statement_args: 2,
+            max_operation_args: 3,
+            max_custom_predicate_batches: 2,
+            max_custom_predicate_verifications: 2,
+            max_custom_predicate_arity: 2,
+            max_custom_predicate_wildcards: 2,
+            max_custom_batch_size: 2,
+            max_merkle_proofs: 2,
+            max_depth_mt_gadget: 4,
+        };
+
+        let pod_builder = frontend::MainPodBuilder::new(&params);
+
+        // Mock
+        let mut prover = MockProver {};
+        let kyc_pod = pod_builder.prove(&mut prover, &params).unwrap();
+        let pod = (kyc_pod.pod as Box<dyn Any>)
+            .downcast::<MockMainPod>()
+            .unwrap();
+        pod.verify().unwrap();
+        println!("{:#}", pod);
+
+        // Real
+        let mut prover = Prover {};
+        let kyc_pod = pod_builder.prove(&mut prover, &params).unwrap();
+        let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
+        pod.verify().unwrap()
+    }
 }
