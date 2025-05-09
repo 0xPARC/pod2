@@ -184,7 +184,11 @@ impl ToFields for StatementTmpl {
         // instead of at the `to_fields` method, where we should assume that the
         // values are already valid
         if self.args.len() > params.max_statement_args {
-            panic!("Statement template has too many arguments");
+            panic!(
+                "Statement template has too many arguments {} > {}",
+                self.args.len(),
+                params.max_statement_args
+            );
         }
 
         let mut fields: Vec<F> = self
@@ -250,6 +254,13 @@ impl CustomPredicate {
                 "statements.len".to_string(),
                 statements.len(),
                 params.max_custom_predicate_arity,
+            ));
+        }
+        if args_len > params.max_statement_args {
+            return Err(Error::max_length(
+                "statement_args.len".to_string(),
+                args_len,
+                params.max_statement_args,
             ));
         }
 
@@ -483,6 +494,7 @@ mod tests {
     fn ethdos_test() -> Result<()> {
         let params = Params {
             max_custom_predicate_wildcards: 12,
+            max_statement_args: 6,
             ..Default::default()
         };
 

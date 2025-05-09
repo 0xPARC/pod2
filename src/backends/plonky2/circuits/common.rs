@@ -1159,7 +1159,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
             .map(|_| self.add_virtual_bool_target_safe())
             .collect();
         self.add_simple_generator(LtMaskGenerator {
-            n: n.clone(),
+            n,
             mask: mask.iter().map(|bt| bt.target).collect(),
         });
         // We have `n` ones in the mask

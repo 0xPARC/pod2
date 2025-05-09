@@ -461,7 +461,7 @@ fn check_custom_pred(
 
     // Check that the resolved wildcard match the statement arguments.
     for (s_arg, wc_value) in s_args.iter().zip(wildcard_map.iter()) {
-        if *wc_value == *s_arg {
+        if *wc_value != *s_arg {
             return Ok(false);
         }
     }
