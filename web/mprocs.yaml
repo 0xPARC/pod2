@@ -1,0 +1,8 @@
+procs:
+  server:
+    cwd: ..
+    shell: just server
+  ui:
+    cwd: ..
+    shell: just ui
+

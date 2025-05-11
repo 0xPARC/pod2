@@ -77,7 +77,7 @@ mod tests {
             },
             test_utils::*,
             types::{ConcreteValue, CustomDefinitions},
-            visualization::generate_graphviz_dot,
+            visualization::{generate_graphviz_dot, generate_mermaid_markdown},
         },
     };
 
@@ -1106,7 +1106,7 @@ mod tests {
         println!("ZuKYC end-to-end test successful!");
         println!("Generated MainPod: {}", main_pod);
 
-        println!("Solution:\n{}", generate_graphviz_dot(&solution));
+        println!("Solution:\n{}", generate_mermaid_markdown(&solution));
 
         Ok(())
     }

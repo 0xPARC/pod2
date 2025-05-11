@@ -12,6 +12,15 @@ export default defineConfig({
     viteReact(),
     tailwindcss(),
   ],
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+     //   rewrite: (path) => path.replace(/^\/api/, ''),
+      },
+    }
+  },
   test: {
     globals: true,
     environment: 'jsdom',

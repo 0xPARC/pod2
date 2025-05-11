@@ -15,14 +15,18 @@
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
     "@tailwindcss/vite": "^4.0.6",
+    "@tanstack/react-query": "^5.75.7",
     "@tanstack/react-router": "^1.114.3",
     "@tanstack/react-router-devtools": "^1.114.3",
     "@tanstack/router-plugin": "^1.114.3",
+    "ajv": "^8.17.1",
+    "localforage": "^1.10.0",
     "monaco-editor": "^0.52.2",
     "monaco-languageclient": "^9.6.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "tailwindcss": "^4.0.6"
+    "tailwindcss": "^4.0.6",
+    "zustand": "^5.0.4"
   },
   "devDependencies": {
     "@tanstack/eslint-config": "^0.1.0",
