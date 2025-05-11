@@ -1002,11 +1002,12 @@ pub(crate) mod tests {
 
         I64_TEST_PAIRS.into_iter().try_for_each(|(x, y)| {
             let mut pw = PartialWitness::<F>::new();
+            let (sum, _) = x.overflowing_add(y);
             pw.set_target_arr(&x_target.elements, &RawValue::from(x).to_fields(&params))?;
             pw.set_target_arr(&y_target.elements, &RawValue::from(y).to_fields(&params))?;
             pw.set_target_arr(
                 &sum_target.elements,
-                &RawValue::from(x + y).to_fields(&params),
+                &RawValue::from(sum).to_fields(&params),
             )?;
 
             let proof = data.prove(pw)?;
@@ -1022,18 +1023,19 @@ pub(crate) mod tests {
         let x_target = ValueTarget::from_slice(&builder.add_virtual_target_arr::<VALUE_SIZE>());
         let y_target = ValueTarget::from_slice(&builder.add_virtual_target_arr::<VALUE_SIZE>());
 
-        let sum_target = builder.i64_mul(x_target, y_target);
+        let prod_target = builder.i64_mul(x_target, y_target);
 
         let data = builder.build::<PoseidonGoldilocksConfig>();
         let params = Params::default();
 
         I64_TEST_PAIRS.into_iter().try_for_each(|(x, y)| {
             let mut pw = PartialWitness::<F>::new();
+            let (prod, _) = x.overflowing_mul(y);
             pw.set_target_arr(&x_target.elements, &RawValue::from(x).to_fields(&params))?;
             pw.set_target_arr(&y_target.elements, &RawValue::from(y).to_fields(&params))?;
             pw.set_target_arr(
-                &sum_target.elements,
-                &RawValue::from(x * y).to_fields(&params),
+                &prod_target.elements,
+                &RawValue::from(prod).to_fields(&params),
             )?;
 
             let proof = data.prove(pw)?;
