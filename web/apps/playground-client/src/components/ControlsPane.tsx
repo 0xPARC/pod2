@@ -1,17 +1,42 @@
-import React from 'react';
-import { useAppStore } from '../lib/store';
-import { executeCode } from '../lib/backendServiceClient';
+import React from "react";
+import { useAppStore } from "../lib/store";
+import { executeCode } from "../lib/backendServiceClient";
+import { ModeToggle } from "./mode-toggle";
+import { Button } from "./ui/button";
+import { GitFork, Github } from "lucide-react";
 
 // Basic SVG Icon Components
 const GreenCheckIcon: React.FC<{ className?: string }> = ({ className }) => (
-  <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+  <svg
+    className={className}
+    xmlns="http://www.w3.org/2000/svg"
+    fill="none"
+    viewBox="0 0 24 24"
+    strokeWidth={1.5}
+    stroke="currentColor"
+  >
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+    />
   </svg>
 );
 
 const RedCrossIcon: React.FC<{ className?: string }> = ({ className }) => (
-  <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-    <path strokeLinecap="round" strokeLinejoin="round" d="m9.75 9.75 4.5 4.5m0-4.5-4.5 4.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+  <svg
+    className={className}
+    xmlns="http://www.w3.org/2000/svg"
+    fill="none"
+    viewBox="0 0 24 24"
+    strokeWidth={1.5}
+    stroke="currentColor"
+  >
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      d="m9.75 9.75 4.5 4.5m0-4.5-4.5 4.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+    />
   </svg>
 );
 
@@ -23,10 +48,11 @@ const ControlsPane: React.FC = () => {
   const setLoadingExecution = useAppStore((state) => state.setLoadingExecution);
   const setExecutionResult = useAppStore((state) => state.setExecutionResult);
   const setExecutionError = useAppStore((state) => state.setExecutionError);
+  const setIsResultsPaneOpen = useAppStore((state) => state.setIsResultsPaneOpen);
 
   const handleExecute = async () => {
     if (hasErrors) {
-      console.warn('Cannot execute code with errors.');
+      console.warn("Cannot execute code with errors.");
       return;
     }
     setLoadingExecution(true);
@@ -39,10 +65,11 @@ const ControlsPane: React.FC = () => {
       if (error instanceof Error) {
         setExecutionError(error.message);
       } else {
-        setExecutionError('An unknown error occurred during execution.');
+        setExecutionError("An unknown error occurred during execution.");
       }
     }
     setLoadingExecution(false);
+    setIsResultsPaneOpen(true);
   };
 
   let errorDisplayMessage = "Code has errors";
@@ -59,36 +86,55 @@ const ControlsPane: React.FC = () => {
   }
 
   return (
-    <div className="p-2 bg-gray-200 dark:bg-gray-800 border-b border-gray-300 dark:border-gray-700 flex items-center space-x-3">
-      <button
-        onClick={handleExecute}
-        disabled={hasErrors || isLoadingExecution}
-        className={`px-4 py-2 rounded font-semibold flex items-center justify-center
-                    ${(hasErrors || isLoadingExecution)
-            ? 'bg-gray-400 dark:bg-gray-600 text-gray-600 dark:text-gray-400 cursor-not-allowed'
-            : 'bg-blue-500 hover:bg-blue-600 text-white'}
+    <div className="flex items-center justify-between bg-gray-200 dark:bg-gray-800">
+      <div className="p-2 bg-gray-200 dark:bg-gray-800 flex items-center space-x-4">
+        <div className="font-bold uppercase text-lg tracking-wider text-gray-800 dark:text-gray-200 pr-6 pl-2">POD Playground</div>
+        <button
+          onClick={handleExecute}
+          disabled={hasErrors || isLoadingExecution}
+          className={`px-4 py-2 rounded font-semibold flex items-center justify-center
+                    ${hasErrors || isLoadingExecution
+              ? "bg-gray-400 dark:bg-gray-600 text-gray-600 dark:text-gray-400 cursor-not-allowed"
+              : "bg-blue-500 hover:bg-blue-600 text-white"
+            }
                   `}
-      >
-        {isLoadingExecution ? 'Executing...' : 'Execute'}
-      </button>
+        >
+          {isLoadingExecution ? "Executing..." : "Execute"}
+        </button>
 
-      {!isLoadingExecution && (
-        hasErrors ? (
-          <div title={fullErrorMessageForTooltip} className="flex items-center space-x-1">
-            <RedCrossIcon className="h-6 w-6 text-red-500 dark:text-red-400 flex-shrink-0" />
-            <span className="text-sm text-red-600 dark:text-red-400 truncate max-w-md" title={fullErrorMessageForTooltip}>
-              {errorDisplayMessage}
-            </span>
-          </div>
-        ) : (
-          <div title="Code is valid" className="flex items-center space-x-1">
-            <GreenCheckIcon className="h-6 w-6 text-green-500 dark:text-green-400 flex-shrink-0" />
-            <span className="text-sm text-green-600 dark:text-green-400">Code is valid</span>
-          </div>
-        )
-      )}
-    </div>
+        {!isLoadingExecution &&
+          (hasErrors ? (
+            <div
+              title={fullErrorMessageForTooltip}
+              className="flex items-center space-x-1"
+            >
+              <RedCrossIcon className="h-6 w-6 text-red-500 dark:text-red-400 flex-shrink-0" />
+              <span
+                className="text-sm text-red-600 dark:text-red-400 truncate max-w-md"
+                title={fullErrorMessageForTooltip}
+              >
+                {errorDisplayMessage}
+              </span>
+            </div>
+          ) : (
+            <div title="Code is valid" className="flex items-center space-x-1">
+              <GreenCheckIcon className="h-6 w-6 text-green-500 dark:text-green-400 flex-shrink-0" />
+              <span className="text-sm text-green-600 dark:text-green-400">
+                Code is valid
+              </span>
+            </div>
+          ))}
+      </div>
+      <div className="p-2 flex items-center space-x-3">
+        <a href="https://github.com/0xPARC/pod2/" target="_blank" rel="noopener noreferrer">
+          <Button variant="outline" size="icon">
+            <Github className="h-4 w-4" />
+          </Button>
+        </a>
+        <ModeToggle />
+      </div>
+    </div >
   );
 };
 
-export default ControlsPane; 
+export default ControlsPane;

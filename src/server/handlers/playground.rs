@@ -1,11 +1,14 @@
 use std::collections::{HashMap, HashSet};
 
+use anyhow::Result;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
-use rusqlite::OptionalExtension;
+use chrono::Utc;
+use hex::ToHex;
+use rusqlite::{params, OptionalExtension};
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::pod_management::PodInfo;
+use super::pod_management::{PodData, PodInfo};
 use crate::{
     backends::plonky2::mock::signedpod::MockSigner,
     frontend::{
@@ -349,7 +352,11 @@ pub async fn execute_code_handler(
                     id: row.get(0)?,
                     pod_type: row.get(1)?,
                     pod_class: row.get(2)?,
-                    data: data_value,
+                    data: serde_json::from_value(data_value).map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            3, rusqlite::types::Type::Blob, Box::new(e)
+                        )
+                    })?,
                     label: row.get(4)?,
                     created_at: row.get(5)?,
                     space: row.get(6)?,
@@ -383,85 +390,59 @@ pub async fn execute_code_handler(
     let mut original_main_pods: HashMap<PodId, MainPod> = HashMap::new();
 
     for pod_info in fetched_pod_infos {
-        match pod_info.pod_type.as_str() {
-            "signed" => match serde_json::from_value::<SignedPodHelper>(pod_info.data.clone()) {
-                Ok(helper) => match SignedPod::try_from(helper) {
-                    Ok(signed_pod) => {
-                        let pod_id = signed_pod.id();
-                        all_pods_for_facts.push(signed_pod.pod.clone());
-                        original_signed_pods.insert(pod_id, signed_pod);
-                    }
-                    Err(e) => {
-                        log::error!(
-                            "Failed to convert SignedPodHelper to SignedPod (id: {}): {:?}",
-                            pod_info.id,
-                            e
-                        );
-                        return Err(PlaygroundApiError::Internal(anyhow::anyhow!(
-                            "Failed to convert pod data for pod id {} in space {}: {:?}",
-                            pod_info.id,
-                            payload.space_id,
-                            e
-                        )));
-                    }
-                },
+        // Sanity check: Ensure the pod_type string from DB matches the PodData enum variant type
+        if pod_info.pod_type != pod_info.data.type_str() {
+            log::warn!(
+                "Data inconsistency for pod_id '{}' in space '{}' during execution: DB pod_type is '{}' but deserialized PodData is for '{}'. Trusting PodData enum.",
+                pod_info.id, payload.space_id, pod_info.pod_type, pod_info.data.type_str()
+            );
+            // If they mismatch, we should probably trust the actual data content (the enum variant)
+            // but it indicates a potential issue elsewhere (e.g., during import or manual DB edit).
+        }
+
+        match pod_info.data {
+            PodData::Signed(helper) => match SignedPod::try_from(helper) {
+                Ok(signed_pod) => {
+                    let pod_id = signed_pod.id();
+                    all_pods_for_facts.push(signed_pod.pod.clone());
+                    original_signed_pods.insert(pod_id, signed_pod);
+                }
                 Err(e) => {
                     log::error!(
-                        "Failed to deserialize pod data to SignedPodHelper (id: {}): {:?}",
+                        "Failed to convert SignedPodHelper to SignedPod (id: {}, space: {}): {:?}",
                         pod_info.id,
+                        payload.space_id,
                         e
                     );
                     return Err(PlaygroundApiError::Internal(anyhow::anyhow!(
-                        "Invalid pod data format for pod id {} in space {}: {:?}",
+                        "Failed to process stored pod data for pod id {} in space {}: {:?}",
                         pod_info.id,
                         payload.space_id,
                         e
                     )));
                 }
             },
-            "main" => match serde_json::from_value::<MainPodHelper>(pod_info.data.clone()) {
-                Ok(helper) => match MainPod::try_from(helper) {
-                    Ok(main_pod) => {
-                        let pod_id = main_pod.id();
-                        all_pods_for_facts.push(main_pod.pod.clone());
-                        original_main_pods.insert(pod_id, main_pod);
-                    }
-                    Err(e) => {
-                        log::error!(
-                            "Failed to convert MainPodHelper to MainPod (id: {}): {:?}",
-                            pod_info.id,
-                            e
-                        );
-                        return Err(PlaygroundApiError::Internal(anyhow::anyhow!(
-                            "Failed to convert pod data for pod id {} in space {}: {:?}",
-                            pod_info.id,
-                            payload.space_id,
-                            e
-                        )));
-                    }
-                },
+            PodData::Main(helper) => match MainPod::try_from(helper) {
+                Ok(main_pod) => {
+                    let pod_id = main_pod.id();
+                    all_pods_for_facts.push(main_pod.pod.clone());
+                    original_main_pods.insert(pod_id, main_pod);
+                }
                 Err(e) => {
                     log::error!(
-                        "Failed to deserialize pod data to MainPodHelper (id: {}): {:?}",
+                        "Failed to convert MainPodHelper to MainPod (id: {}, space: {}): {:?}",
                         pod_info.id,
+                        payload.space_id,
                         e
                     );
                     return Err(PlaygroundApiError::Internal(anyhow::anyhow!(
-                        "Invalid pod data format for pod id {} in space {}: {:?}",
+                        "Failed to process stored pod data for pod id {} in space {}: {:?}",
                         pod_info.id,
                         payload.space_id,
                         e
                     )));
                 }
             },
-            other => {
-                log::warn!(
-                    "Unknown pod_type '{}' for pod id '{}' in space '{}'. Skipping.",
-                    other,
-                    pod_info.id,
-                    payload.space_id
-                );
-            }
         }
     }
 
@@ -577,6 +558,86 @@ impl From<anyhow::Error> for PlaygroundApiError {
     }
 }
 
+pub async fn setup_zukyc_space(pool: &ConnectionPool) -> anyhow::Result<()> {
+    let conn = pool.get().await?;
+    let space_id = "zukyc";
+    let now_str = Utc::now().to_rfc3339();
+    conn.interact(move |conn_inner| {
+        conn_inner.execute(
+            "INSERT INTO spaces (id, created_at) VALUES (?1, ?2) ON CONFLICT(id) DO NOTHING",
+            params![&space_id, &now_str],
+        )
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("Interaction error: {}", e))?
+    .map_err(anyhow::Error::from)?;
+
+    let params_for_test = Params::default();
+    let mut gov_signer = MockSigner { pk: "gov".into() };
+    let mut pay_signer = MockSigner { pk: "pay".into() };
+    let mut sanction_signer = MockSigner {
+        pk: "sanction".into(),
+    };
+
+    let mut gov_id_builder = SignedPodBuilder::new(&params_for_test);
+    gov_id_builder.insert("idNumber", "4242424242");
+    gov_id_builder.insert("dateOfBirth", 1169909384);
+    gov_id_builder.insert("socialSecurityNumber", "G2121210");
+    let gov_id_pod_signed = gov_id_builder.sign(&mut gov_signer).unwrap();
+    let gov_id_helper: SignedPodHelper = gov_id_pod_signed.clone().into();
+    let gov_pod_id_str: String = gov_id_pod_signed.id().encode_hex();
+
+    // Import pod directly into DB for test setup
+    let data_blob_gov = serde_json::to_vec(&PodData::Signed(gov_id_helper.clone())).unwrap(); // Wrap helper in PodData
+    let space_id_clone_gov = space_id.to_string();
+    let conn_gov = pool.get().await.unwrap();
+    conn_gov.interact(move |conn_inner| {
+        conn_inner.execute(
+            "INSERT INTO pods (id, pod_type, pod_class, data, label, created_at, space) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(space, id) DO NOTHING",
+            rusqlite::params![gov_pod_id_str, "signed", "mock", data_blob_gov, "Gov ID", Utc::now().to_rfc3339(), space_id_clone_gov],
+        )
+    }).await.unwrap().unwrap();
+
+    let mut pay_stub_builder = SignedPodBuilder::new(&params_for_test);
+    pay_stub_builder.insert("socialSecurityNumber", "G2121210");
+    pay_stub_builder.insert("startDate", 1706367566);
+    let pay_stub_pod_signed = pay_stub_builder.sign(&mut pay_signer).unwrap();
+    let pay_stub_helper: SignedPodHelper = pay_stub_pod_signed.clone().into();
+    let pay_pod_id_str: String = pay_stub_pod_signed.id().encode_hex();
+
+    let data_blob_pay = serde_json::to_vec(&PodData::Signed(pay_stub_helper.clone())).unwrap(); // Wrap helper in PodData
+    let space_id_clone_pay = space_id.to_string();
+    let conn_pay = pool.get().await.unwrap();
+    conn_pay.interact(move |conn_inner| {
+        conn_inner.execute(
+            "INSERT INTO pods (id, pod_type, pod_class, data, label, created_at, space) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(space, id) DO NOTHING",
+            rusqlite::params![pay_pod_id_str, "signed", "mock", data_blob_pay, "Pay Stub", Utc::now().to_rfc3339(), space_id_clone_pay],
+        )
+    }).await.unwrap().unwrap();
+
+    let sanctions_values_set: HashSet<PodValue> =
+        ["A343434340"].iter().map(|s| PodValue::from(*s)).collect();
+    let sanction_set_val = PodValue::from(Set::new(sanctions_values_set).unwrap());
+    let mut sanction_list_builder = SignedPodBuilder::new(&params_for_test);
+    sanction_list_builder.insert("sanctionList", sanction_set_val);
+    let sanction_list_pod_signed = sanction_list_builder.sign(&mut sanction_signer).unwrap();
+    let sanction_list_helper: SignedPodHelper = sanction_list_pod_signed.clone().into();
+    let sanction_pod_id_str: String = sanction_list_pod_signed.id().encode_hex();
+
+    let data_blob_sanction =
+        serde_json::to_vec(&PodData::Signed(sanction_list_helper.clone())).unwrap(); // Wrap helper in PodData
+    let space_id_clone_sanction = space_id.to_string();
+    let conn_sanction = pool.get().await.unwrap();
+    conn_sanction.interact(move |conn_inner| {
+        conn_inner.execute(
+            "INSERT INTO pods (id, pod_type, pod_class, data, label, created_at, space) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(space, id) DO NOTHING",
+            rusqlite::params![sanction_pod_id_str, "signed", "mock", data_blob_sanction, "Sanctions List", Utc::now().to_rfc3339(), space_id_clone_sanction],
+        )
+    }).await.unwrap().unwrap();
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::{io::Write, sync::Once};
@@ -666,35 +727,43 @@ mod tests {
         gov_id_builder.insert("socialSecurityNumber", "G2121210");
         let gov_id_pod_signed = gov_id_builder.sign(&mut gov_signer).unwrap();
         let gov_id_helper: SignedPodHelper = gov_id_pod_signed.clone().into();
-        let gov_pod_id_str = serde_json::to_string(&gov_id_pod_signed.id().0).unwrap();
+        let gov_pod_id_str: String = gov_id_pod_signed.id().encode_hex();
 
         // Import pod directly into DB for test setup
-        let data_blob_gov = serde_json::to_vec(&gov_id_helper).unwrap();
+        let data_blob_gov = serde_json::to_vec(&PodData::Signed(gov_id_helper.clone())).unwrap(); // Wrap helper in PodData
         let space_id_clone_gov = space_id.to_string();
         let conn_gov = pool.get().await.unwrap();
-        conn_gov.interact(move |conn_inner| {
-            conn_inner.execute(
-                "INSERT INTO pods (id, pod_type, pod_class, data, label, created_at, space) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                rusqlite::params![gov_pod_id_str, "signed", "mock", data_blob_gov, "Gov ID", Utc::now().to_rfc3339(), space_id_clone_gov],
-            )
-        }).await.unwrap().unwrap();
+        conn_gov
+            .interact(move |conn_inner| {
+                conn_inner.execute(
+                    "INSERT INTO pods (id, pod_type, pod_class, data, label, created_at, space) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    rusqlite::params![gov_pod_id_str, "signed", "mock", data_blob_gov, "Gov ID", Utc::now().to_rfc3339(), space_id_clone_gov],
+                )
+            })
+            .await
+            .unwrap()
+            .unwrap();
 
         let mut pay_stub_builder = SignedPodBuilder::new(&params_for_test);
         pay_stub_builder.insert("socialSecurityNumber", "G2121210");
         pay_stub_builder.insert("startDate", 1706367566);
         let pay_stub_pod_signed = pay_stub_builder.sign(&mut pay_signer).unwrap();
         let pay_stub_helper: SignedPodHelper = pay_stub_pod_signed.clone().into();
-        let pay_pod_id_str = serde_json::to_string(&pay_stub_pod_signed.id().0).unwrap();
+        let pay_pod_id_str: String = pay_stub_pod_signed.id().encode_hex();
 
-        let data_blob_pay = serde_json::to_vec(&pay_stub_helper).unwrap();
+        let data_blob_pay = serde_json::to_vec(&PodData::Signed(pay_stub_helper.clone())).unwrap(); // Wrap helper in PodData
         let space_id_clone_pay = space_id.to_string();
         let conn_pay = pool.get().await.unwrap();
-        conn_pay.interact(move |conn_inner| {
-            conn_inner.execute(
-                "INSERT INTO pods (id, pod_type, pod_class, data, label, created_at, space) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                rusqlite::params![pay_pod_id_str, "signed", "mock", data_blob_pay, "Pay Stub", Utc::now().to_rfc3339(), space_id_clone_pay],
-            )
-        }).await.unwrap().unwrap();
+        conn_pay
+            .interact(move |conn_inner| {
+                conn_inner.execute(
+                    "INSERT INTO pods (id, pod_type, pod_class, data, label, created_at, space) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    rusqlite::params![pay_pod_id_str, "signed", "mock", data_blob_pay, "Pay Stub", Utc::now().to_rfc3339(), space_id_clone_pay],
+                )
+            })
+            .await
+            .unwrap()
+            .unwrap();
 
         let sanctions_values_set: HashSet<PodValue> =
             ["A343434340"].iter().map(|s| PodValue::from(*s)).collect();
@@ -703,17 +772,22 @@ mod tests {
         sanction_list_builder.insert("sanctionList", sanction_set_val);
         let sanction_list_pod_signed = sanction_list_builder.sign(&mut sanction_signer).unwrap();
         let sanction_list_helper: SignedPodHelper = sanction_list_pod_signed.clone().into();
-        let sanction_pod_id_str = serde_json::to_string(&sanction_list_pod_signed.id().0).unwrap();
+        let sanction_pod_id_str: String = sanction_list_pod_signed.id().encode_hex();
 
-        let data_blob_sanction = serde_json::to_vec(&sanction_list_helper).unwrap();
+        let data_blob_sanction =
+            serde_json::to_vec(&PodData::Signed(sanction_list_helper.clone())).unwrap(); // Wrap helper in PodData
         let space_id_clone_sanction = space_id.to_string();
         let conn_sanction = pool.get().await.unwrap();
-        conn_sanction.interact(move |conn_inner| {
-            conn_inner.execute(
-                "INSERT INTO pods (id, pod_type, pod_class, data, label, created_at, space) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                rusqlite::params![sanction_pod_id_str, "signed", "mock", data_blob_sanction, "Sanctions List", Utc::now().to_rfc3339(), space_id_clone_sanction],
-            )
-        }).await.unwrap().unwrap();
+        conn_sanction
+            .interact(move |conn_inner| {
+                conn_inner.execute(
+                    "INSERT INTO pods (id, pod_type, pod_class, data, label, created_at, space) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    rusqlite::params![sanction_pod_id_str, "signed", "mock", data_blob_sanction, "Sanctions List", Utc::now().to_rfc3339(), space_id_clone_sanction],
+                )
+            })
+            .await
+            .unwrap()
+            .unwrap();
 
         let valid_zukyc_podlog = r#"
         REQUEST(

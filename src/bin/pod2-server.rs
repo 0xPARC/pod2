@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use pod2::server::{config::Config, db, routes};
+use pod2::server::{config::Config, db, handlers::playground, routes};
 use tokio::net::TcpListener;
 
 #[derive(Parser, Debug)]
@@ -30,6 +30,14 @@ async fn main() -> Result<()> {
     let db_pool = db::init_db_pool(Some(&config.db_path))
         .await
         .context("Failed to initialize database pool")?;
+
+    db::create_schema(&db_pool)
+        .await
+        .context("Failed to create schema")?;
+
+    playground::setup_zukyc_space(&db_pool)
+        .await
+        .context("Failed to setup Zukyc space")?;
 
     // Create the Axum router
     let app = routes::create_router(db_pool);

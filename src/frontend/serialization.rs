@@ -9,14 +9,14 @@ use crate::{
     middleware::{containers::Dictionary, Key, PodId, Value},
 };
 
-#[derive(Serialize, Deserialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[schemars(title = "SignedPod")]
 pub struct SignedPodHelper {
-    entries: HashMap<Key, Value>,
-    proof: String,
-    pod_class: String,
-    pod_type: String,
+    pub entries: HashMap<Key, Value>,
+    pub proof: String,
+    pub pod_class: String,
+    pub pod_type: String,
 }
 
 impl TryFrom<SignedPodHelper> for SignedPod {
@@ -51,14 +51,14 @@ impl From<SignedPod> for SignedPodHelper {
     }
 }
 
-#[derive(Serialize, Deserialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, PartialEq)]
 #[schemars(title = "MainPod")]
 #[serde(rename_all = "camelCase")]
 pub struct MainPodHelper {
-    public_statements: Vec<Statement>,
-    proof: String,
-    pod_class: String,
-    pod_type: String,
+    pub public_statements: Vec<Statement>,
+    pub proof: String,
+    pub pod_class: String,
+    pub pod_type: String,
 }
 
 impl TryFrom<MainPodHelper> for MainPod {

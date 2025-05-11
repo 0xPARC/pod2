@@ -10,12 +10,12 @@ pub fn create_router(pool: ConnectionPool) -> Router {
     Router::new()
         .route(
             "/api/pods/:space_id",
-            get(handlers::pod_management::list_pods_in_space),
+            get(handlers::pod_management::list_pods_in_space)
+                .post(handlers::pod_management::import_pod_to_space),
         )
         .route(
             "/api/pods/:space_id/:pod_id",
             get(handlers::pod_management::get_pod_by_id)
-                .post(handlers::pod_management::import_pod_to_space)
                 .delete(handlers::pod_management::delete_pod_from_space),
         )
         .route("/api/pods/sign", post(handlers::pod_management::sign_pod))

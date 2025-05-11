@@ -1,8 +1,8 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute } from "@tanstack/react-router";
 
-export const Route = createFileRoute('/')({
+export const Route = createFileRoute("/")({
   component: IndexPage,
-})
+});
 
 function IndexPage() {
   // For the MVP, AppLayout in __root.tsx provides the main UI.
@@ -12,5 +12,5 @@ function IndexPage() {
       {/* Content for index page, if any, would go here. */}
       {/* For MVP, this might be empty as App.tsx handles the full layout */}
     </div>
-  )
+  );
 }

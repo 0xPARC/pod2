@@ -9,6 +9,7 @@ use std::{
 };
 
 use containers::{Array, Dictionary, Set};
+use hex::ToHex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 pub mod containers;
@@ -550,6 +551,16 @@ pub struct PodId(pub Hash);
 impl ToFields for PodId {
     fn to_fields(&self, params: &Params) -> Vec<F> {
         self.0.to_fields(params)
+    }
+}
+
+impl ToHex for PodId {
+    fn encode_hex<T: std::iter::FromIterator<char>>(&self) -> T {
+        self.0.encode_hex()
+    }
+
+    fn encode_hex_upper<T: std::iter::FromIterator<char>>(&self) -> T {
+        self.0.encode_hex_upper()
     }
 }
 

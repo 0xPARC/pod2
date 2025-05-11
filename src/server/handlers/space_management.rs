@@ -6,12 +6,13 @@ use axum::{
     Json,
 };
 use chrono::Utc;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::AppError;
 use crate::server::db::ConnectionPool;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct SpaceInfo {
     id: String,
     created_at: String,

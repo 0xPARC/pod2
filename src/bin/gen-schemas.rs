@@ -1,5 +1,8 @@
 use anyhow::Result;
-use pod2::frontend::serialization::{MainPodHelper, SignedPodHelper};
+use pod2::{
+    frontend::serialization::{MainPodHelper, SignedPodHelper},
+    server::handlers::{pod_management::PodInfo, space_management::SpaceInfo},
+};
 use schemars::{gen::SchemaSettings, JsonSchema};
 
 #[allow(dead_code)]
@@ -7,6 +10,8 @@ use schemars::{gen::SchemaSettings, JsonSchema};
 struct SchemaContainer {
     mainpod: MainPodHelper,
     signedpod: SignedPodHelper,
+    space_info: SpaceInfo,
+    pod_info: PodInfo,
 }
 
 fn main() -> Result<()> {

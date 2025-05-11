@@ -45,7 +45,7 @@ use std::{
     fmt,
 };
 
-use hex::{FromHex, FromHexError};
+use hex::{FromHex, FromHexError, ToHex};
 use plonky2::{
     field::{
         goldilocks_field::GoldilocksField,
@@ -216,6 +216,27 @@ impl FromHex for Hash {
             inner[i] = F::from_canonical_u64(u64::from_le_bytes(buf));
         }
         Ok(Self(inner))
+    }
+}
+
+impl ToHex for Hash {
+    fn encode_hex<T: std::iter::FromIterator<char>>(&self) -> T {
+        format!(
+            "{:016x}{:016x}{:016x}{:016x}",
+            self.0[0].0, self.0[1].0, self.0[2].0, self.0[3].0
+        )
+        .chars()
+        .collect()
+    }
+
+    fn encode_hex_upper<T: std::iter::FromIterator<char>>(&self) -> T {
+        format!(
+            "{:016x}{:016x}{:016x}{:016x}",
+            self.0[0].0, self.0[1].0, self.0[2].0, self.0[3].0
+        )
+        .to_uppercase()
+        .chars()
+        .collect()
     }
 }
 
