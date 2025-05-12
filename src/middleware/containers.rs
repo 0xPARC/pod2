@@ -11,7 +11,7 @@ use super::serialization::{ordered_map, ordered_set};
 use crate::backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree};
 use crate::{
     constants::MAX_DEPTH,
-    middleware::{hash_value, Error, Hash, Key, RawValue, Result, Value, EMPTY_VALUE},
+    middleware::{hash_value, Error, Hash, Key, RawValue, Result, Value},
 };
 
 /// Dictionary: the user original keys and values are hashed to be used in the leaf.
@@ -129,7 +129,7 @@ impl Set {
             .iter()
             .map(|e| {
                 let h = hash_value(&e.raw());
-                (RawValue::from(h), EMPTY_VALUE)
+                (RawValue::from(h), RawValue::from(h))
             })
             .collect();
         Ok(Self {
@@ -159,7 +159,7 @@ impl Set {
             root,
             proof,
             &RawValue::from(h),
-            &EMPTY_VALUE,
+            &RawValue::from(h),
         )?)
     }
     pub fn verify_nonexistence(root: Hash, proof: &MerkleProof, value: &Value) -> Result<()> {
