@@ -7,19 +7,21 @@ import {
 } from "./ui/resizable"; // Keep shadcn components
 import type { ImperativePanelGroupHandle } from "react-resizable-panels"; // Import type from base library
 import { PanelLeftClose, PanelLeftOpen, PanelBottomClose, PanelBottomOpen } from "lucide-react"; // Example icons
-
+import MainAreaTabs from "./MainAreaTabs"; // Import MainAreaTabs
+import PodViewerPane from "./PodViewerPane"; // Import PodViewerPane
+import { LeftSidebar } from "./LeftSidebar";
 const COLLAPSED_RESULTS_PANE_SIZE = 4; // Percentage
 
 const IdeLayout: React.FC<{
   explorerContent: React.ReactNode;
   editorContent: React.ReactNode;
   resultsContent: React.ReactNode;
-  controlsContent: React.ReactNode;
+  // controlsContent: React.ReactNode;
 }> = ({
   explorerContent,
   editorContent,
   resultsContent,
-  controlsContent,
+  //  controlsContent,
 }) => {
     const isExplorerCollapsed = useAppStore(
       (state) => state.isExplorerCollapsed
@@ -33,6 +35,7 @@ const IdeLayout: React.FC<{
     const resultsPaneSize = useAppStore((state) => state.resultsPaneSize);
     const setResultsPaneSize = useAppStore((state) => state.setResultsPaneSize);
     const isStoreInitialized = useAppStore((state) => state.isStoreInitialized); // Get isStoreInitialized
+    const activeMainAreaTab = useAppStore((state) => state.activeMainAreaTab); // Get active tab
 
     const verticalPanelGroupRef = useRef<ImperativePanelGroupHandle>(null);
 
@@ -81,51 +84,12 @@ const IdeLayout: React.FC<{
     return (
       <div className="flex flex-col h-screen">
         {/* Controls Pane (e.g., Execute button) could go here or above App.tsx layout */}
-        {controlsContent}
         <ResizablePanelGroup
           direction="horizontal"
           className="flex-grow border dark:border-gray-700"
           onLayout={(sizes: number[]) => handleHorizontalResize(sizes)}
         >
-          {/* Left Explorer Panel */}
-          {!isExplorerCollapsed && (
-            <ResizablePanel
-              defaultSize={20} // Default to 20% width
-              minSize={15}
-              collapsible={true}
-              collapsedSize={0} // Effectively hides it when collapsed via prop
-              onCollapse={toggleExplorer} // Or setExplorerCollapsed(true)
-              // onExpand={() => setExplorerCollapsed(false)} // If using internal collapse
-              className="min-w-[200px]" // Example min width in pixels
-            >
-              <div className="h-full p-2 flex flex-col bg-gray-200 dark:bg-gray-800">
-                <div className="flex items-center space-x-2 mb-2">
-                  <button
-                    onClick={toggleExplorer}
-                    className="p-1 mb-0 self-start hover:bg-gray-200 dark:hover:bg-gray-700 rounded text-gray-600 dark:text-gray-400"
-                    title={isExplorerCollapsed ? "Open Explorer" : "Collapse Explorer"}
-                  >
-                    <PanelLeftClose size={20} />
-                  </button>
-                  <div className="text-gray-800 dark:text-gray-200 font-medium uppercase text-xs tracking-wide">Browse</div>
-                </div>
-                {explorerContent}
-              </div>
-            </ResizablePanel>
-          )}
-          {isExplorerCollapsed && (
-            <div className="relative h-full flex flex-col items-center p-2 bg-gray-100 dark:bg-gray-800 border-r dark:border-gray-700 space-y-2">
-              <button
-                onClick={toggleExplorer}
-                className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded text-gray-600 dark:text-gray-400"
-                title={isExplorerCollapsed ? "Open Explorer" : "Collapse Explorer"}
-              >
-                <PanelLeftOpen size={20} />
-              </button>
-              <div className="text-gray-800 dark:text-gray-200 font-medium uppercase text-xs tracking-wide rotate-270 absolute top-[68px]">Browse</div>
-            </div>
-          )}
-
+          <LeftSidebar toggleExplorer={toggleExplorer} isExplorerCollapsed={isExplorerCollapsed} explorerContent={explorerContent} />
           {!isExplorerCollapsed && <ResizableHandle withHandle className="bg-gray-100 dark:bg-gray-800" />}
 
           {/* Right Main Content Panel */}
@@ -149,7 +113,14 @@ const IdeLayout: React.FC<{
                 minSize={30}
                 order={1}
               >
-                <div className="h-full bg-gray-200 dark:bg-gray-800 py-1">{editorContent}</div>
+                <div className="h-full bg-gray-200 dark:bg-gray-800 py-1">
+                  {/* Render MainAreaTabs and then conditionally EditorPane or PodViewerPane */}
+                  <MainAreaTabs />
+                  <div className="flex-grow overflow-auto h-[calc(100%-2.5rem)]"> {/* Adjust height based on tab bar height */}
+                    {activeMainAreaTab === "editor" && editorContent}
+                    {activeMainAreaTab === "podViewer" && <PodViewerPane />}
+                  </div>
+                </div>
               </ResizablePanel>
 
               {/* Results Pane Handle - always show */}

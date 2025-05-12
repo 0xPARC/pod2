@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import Ajv, { type ValidateFunction, type Schema } from "ajv/dist/2019";
 import { useAppStore } from "../lib/store";
-import PodCard from "./PodCard"; // Assuming PodCard.tsx is in the same directory
+import MainPodCard from "./MainPodCard";
 import type { MainPod } from "../types/pod2";
 import fullSchema from "../schemas.json"; // Import the full schema
 import AddToSpaceDialog from "./AddToSpaceDialog"; // Import the dialog
@@ -93,10 +93,10 @@ const ResultsPane: React.FC = () => {
     try {
       const parsedResult = JSON.parse(executionResult);
       if (isMainPod(parsedResult)) {
-        // If it's a MainPod, display PodCard and an "Add to Space" button
+        // If it's a MainPod, display MainPodCard and an "Add to Space" button
         content = (
           <div className="p-2 space-y-2">
-            <PodCard pod={parsedResult} />
+            <MainPodCard mainPod={parsedResult} />
             <Button
               onClick={() => handleOpenAddToSpaceDialog(parsedResult)}
               variant="outline"

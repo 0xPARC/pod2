@@ -10,6 +10,7 @@ import {
 import { podlogMonarchLanguage } from "../lib/podlogMonarchLanguage";
 import * as monaco from 'monaco-editor';
 import { useTheme } from "./theme-provider";
+import ControlsPane from "./ControlsPane";
 
 loader.config({ monaco });
 
@@ -145,23 +146,26 @@ const EditorPane: React.FC = () => {
   }
 
   return (
-    <div className="border-bg bg-gray-100 dark:bg-[#1e1e1e] rounded-lg h-full w-full px-1 py-2">
-      <Editor
-        height="100%"
-        width="100%"
-        language="podlog"
-        theme={theme === "dark" ? "vs-dark" : theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches ? "vs-dark" : "vs-light"}
-        value={fileContent}
-        onChange={handleEditorChange}
-        onMount={handleEditorDidMount}
-        options={{
-          minimap: { enabled: false },
-          fontSize: 14,
-          wordWrap: "on",
-          scrollBeyondLastLine: false,
-          automaticLayout: true,
-        }}
-      />
+    <div className="flex flex-col h-full">
+      <ControlsPane />
+      <div className="border-bg bg-gray-100 dark:bg-[#1e1e1e] h-full w-full px-1 py-2">
+        <Editor
+          height="100%"
+          width="100%"
+          language="podlog"
+          theme={theme === "dark" ? "vs-dark" : theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches ? "vs-dark" : "vs-light"}
+          value={fileContent}
+          onChange={handleEditorChange}
+          onMount={handleEditorDidMount}
+          options={{
+            minimap: { enabled: false },
+            fontSize: 14,
+            wordWrap: "on",
+            scrollBeyondLastLine: false,
+            automaticLayout: true,
+          }}
+        />
+      </div>
     </div>
   );
 };

@@ -1,13 +1,13 @@
 import React from "react";
 import type { MainPod } from "../types/pod2"; // Adjusted path
 
-interface PodCardProps {
-  pod: MainPod;
+interface MainPodCardProps {
+  mainPod: MainPod;
   // onClick?: () => void; // For future "open in tab" functionality
 }
 
-const PodCard: React.FC<PodCardProps> = ({ pod }) => {
-  const statementCount = pod.publicStatements?.length || 0;
+const MainPodCard: React.FC<MainPodCardProps> = ({ mainPod }) => {
+  const statementCount = mainPod.publicStatements?.length || 0;
 
   // Placeholder icon, can be replaced with an SVG or icon library component
   const PodIcon = () => <span style={{ marginRight: "8px" }}>🗃️</span>;
@@ -19,10 +19,10 @@ const PodCard: React.FC<PodCardProps> = ({ pod }) => {
       </div>
       <div className="text-sm text-gray-700 dark:text-gray-300 space-y-0.5">
         <p>
-          <span className="font-medium">Class:</span> {pod.podClass}
+          <span className="font-medium">Class:</span> {mainPod.podClass}
         </p>
         <p>
-          <span className="font-medium">Type:</span> {pod.podType}
+          <span className="font-medium">Type:</span> {mainPod.podType}
         </p>
         <p>
           <span className="font-medium">Public Statements:</span>{" "}
@@ -35,4 +35,4 @@ const PodCard: React.FC<PodCardProps> = ({ pod }) => {
   );
 };
 
-export default PodCard;
+export default MainPodCard;

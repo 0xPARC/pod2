@@ -39,9 +39,10 @@ interface PodListItemProps {
   activeSpaceId: string | null; // Needed for the delete dialog message
   deleteMutation: ReturnType<typeof useMutation<void, Error, { spaceId: string; podId: string }>>;
   onDeletePod: (podId: string) => void;
+  onSelectPod: (pod: PodInfo) => void; // Added prop for selecting a POD
 }
 
-const PodListItem: React.FC<PodListItemProps> = ({ pod, activeSpaceId, deleteMutation, onDeletePod }) => {
+const PodListItem: React.FC<PodListItemProps> = ({ pod, activeSpaceId, deleteMutation, onDeletePod, onSelectPod }) => {
   let icon = <FileText className="mr-2 h-4 w-4 flex-shrink-0 text-gray-500 dark:text-gray-400" />;
   let displayType = pod.pod_type; // e.g., "main" or "signed"
 
@@ -56,8 +57,9 @@ const PodListItem: React.FC<PodListItemProps> = ({ pod, activeSpaceId, deleteMut
   return (
     <li
       key={pod.id}
-      className="flex items-center justify-between px-2 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md group cursor-default"
+      className="flex items-center justify-between px-2 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md group cursor-pointer"
       title={`ID: ${pod.id}\nClass: ${pod.pod_class}\nLabel: ${pod.label || 'None'}\nCreated: ${new Date(pod.created_at).toLocaleString()}`}
+      onClick={() => onSelectPod(pod)} // Call onSelectPod when the item is clicked
     >
       <div className="flex items-center truncate flex-grow">
         {icon}
@@ -108,6 +110,8 @@ const PodListItem: React.FC<PodListItemProps> = ({ pod, activeSpaceId, deleteMut
 function PodList() {
   const activeSpaceId = useAppStore((state) => state.activeSpaceId);
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false); // State for dialog
+  const setActiveMainAreaTab = useAppStore((state) => state.setActiveMainAreaTab); // Get action
+  const setSelectedPodForViewing = useAppStore((state) => state.setSelectedPodForViewing); // Get action
   const {
     data: pods = [],
     isLoading,
@@ -141,6 +145,11 @@ function PodList() {
       return;
     }
     deleteMutation.mutate({ spaceId: activeSpaceId, podId });
+  };
+
+  const handleSelectPod = (pod: PodInfo) => {
+    setSelectedPodForViewing(pod);
+    setActiveMainAreaTab("podViewer");
   };
 
   if (!activeSpaceId) {
@@ -206,6 +215,7 @@ function PodList() {
               activeSpaceId={activeSpaceId}
               deleteMutation={deleteMutation}
               onDeletePod={handleDeletePod}
+              onSelectPod={handleSelectPod} // Pass the handler to PodListItem
             />
           ))}
         </ul>

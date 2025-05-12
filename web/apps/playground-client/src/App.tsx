@@ -23,7 +23,7 @@ function App({ children }: AppProps) {
   return (
     <>
       <IdeLayout
-        controlsContent={<ControlsPane />}
+        //   controlsContent={<ControlsPane />}
         explorerContent={explorerPaneContent}
         editorContent={<EditorPane />}
         resultsContent={<ResultsPane />}

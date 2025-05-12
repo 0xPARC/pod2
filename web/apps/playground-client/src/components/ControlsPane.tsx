@@ -88,11 +88,10 @@ const ControlsPane: React.FC = () => {
   return (
     <div className="flex items-center justify-between bg-gray-200 dark:bg-gray-800">
       <div className="p-2 bg-gray-200 dark:bg-gray-800 flex items-center space-x-4">
-        <div className="font-bold uppercase text-lg tracking-wider text-gray-800 dark:text-gray-200 pr-6 pl-2">POD Playground</div>
         <button
           onClick={handleExecute}
           disabled={hasErrors || isLoadingExecution}
-          className={`px-4 py-2 rounded font-semibold flex items-center justify-center
+          className={`text-sm px-4 py-2 rounded font-semibold flex items-center justify-center
                     ${hasErrors || isLoadingExecution
               ? "bg-gray-400 dark:bg-gray-600 text-gray-600 dark:text-gray-400 cursor-not-allowed"
               : "bg-blue-500 hover:bg-blue-600 text-white"
@@ -124,14 +123,6 @@ const ControlsPane: React.FC = () => {
               </span>
             </div>
           ))}
-      </div>
-      <div className="p-2 flex items-center space-x-3">
-        <a href="https://github.com/0xPARC/pod2/" target="_blank" rel="noopener noreferrer">
-          <Button variant="outline" size="icon">
-            <Github className="h-4 w-4" />
-          </Button>
-        </a>
-        <ModeToggle />
       </div>
     </div >
   );

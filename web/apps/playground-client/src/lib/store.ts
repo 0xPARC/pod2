@@ -1,10 +1,13 @@
 import { create } from "zustand";
 import localForage from "localforage";
+import type { PodInfo } from "../types/pod2";
 
 const PODLOG_MVP_FILE_KEY = "podlogMvpFile";
 const ACTIVE_SPACE_ID_KEY = "activeSpaceId";
 
 // Define the state shape
+export type MainAreaTab = "editor" | "podViewer";
+
 interface AppState {
   fileContent: string;
   isLoadingExecution: boolean;
@@ -33,6 +36,12 @@ interface AppState {
   setResultsPaneSize: (size: number) => void;
   saveToLocalForage: () => Promise<void>;
   loadFromLocalForage: () => Promise<void>;
+
+  // --- Main Area Tab State & Actions ---
+  activeMainAreaTab: MainAreaTab;
+  selectedPodForViewing: PodInfo | null; // Using PodInfo from backendServiceClient
+  setActiveMainAreaTab: (tab: MainAreaTab) => void;
+  setSelectedPodForViewing: (pod: PodInfo | null) => void;
 }
 
 // Create the store
@@ -129,6 +138,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       }); // Fallback content
     }
   },
+
+  // --- Main Area Tab State & Actions ---
+  activeMainAreaTab: "editor", // Default to editor tab
+  selectedPodForViewing: null,
+  setActiveMainAreaTab: (tab) => set({ activeMainAreaTab: tab }),
+  setSelectedPodForViewing: (pod) => set({ selectedPodForViewing: pod }),
 }));
 
 // Initialize by loading from localForage when the app starts
