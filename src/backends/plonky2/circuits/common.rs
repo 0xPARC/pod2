@@ -752,8 +752,6 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
             },
         );
 
-        
-
         ValueTarget::from_slice(&[sum[0], sum[1], zero, zero])
     }
 
@@ -845,7 +843,6 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
 
         // Take sign into account.
         let minus_abs_prod = self.i64_inv(abs_prod);
-        
 
         self.select_value(prod_sign, minus_abs_prod, abs_prod)
     }
