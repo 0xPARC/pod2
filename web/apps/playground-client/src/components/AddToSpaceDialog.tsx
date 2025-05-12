@@ -2,9 +2,9 @@ import React, { useState, useEffect } from "react";
 import { useAppStore } from "../lib/store";
 import { useSpaces } from "../hooks/useSpaceData";
 import { importPodDataToSpace, type ImportPodClientPayload } from "../lib/backendServiceClient";
-import type { MainPod, PodInfo, SpaceInfo } from "../types/pod2"; // Ensure SpaceInfo is imported
+import type { MainPod, SpaceInfo } from "@/types/pod2";
 import { useQueryClient } from "@tanstack/react-query";
-import { podKeys } from "../hooks/useSpaceData"; // For invalidating queries
+import { podKeys } from "../hooks/useSpaceData";
 
 import { Button } from "./ui/button";
 import {
@@ -42,12 +42,10 @@ const AddToSpaceDialog: React.FC<AddToSpaceDialogProps> = ({
 }) => {
   const { data: spaces, isLoading: isLoadingSpaces } = useSpaces();
   const activeStoreSpaceId = useAppStore((state) => state.activeSpaceId);
-  const setActiveSpaceId = useAppStore((state) => state.setActiveSpaceId);
   const queryClient = useQueryClient();
 
   const [targetSpaceId, setTargetSpaceId] = useState<string>("");
   const [podLabel, setPodLabel] = useState<string>("");
-  const [podClass, setPodClass] = useState<string>("default-class"); // Or derive from mainPodToSave.podClass
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -57,9 +55,6 @@ const AddToSpaceDialog: React.FC<AddToSpaceDialogProps> = ({
       setPodLabel("");
       setSaveError(null);
       setIsSaving(false);
-      if (mainPodToSave) {
-        setPodClass(mainPodToSave.podClass || "default-class");
-      }
       // Set target space ID
       const initialSpaceId = defaultSpaceId || activeStoreSpaceId;
       if (initialSpaceId) {
@@ -88,7 +83,6 @@ const AddToSpaceDialog: React.FC<AddToSpaceDialogProps> = ({
 
     const payload: ImportPodClientPayload = {
       podType: "main",
-      podClass: podClass, // Use state for podClass
       data: mainPodToSave,
       label: podLabel.trim() === "" ? undefined : podLabel.trim(),
     };

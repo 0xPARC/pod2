@@ -225,7 +225,7 @@ mod tests {
         let p_data_blob = serde_json::to_vec(&json!({})).unwrap();
         let now_str = Utc::now().to_rfc3339();
         conn_setup.interact(move |conn| {
-            conn.execute("INSERT INTO pods (id, pod_type, pod_class, data, created_at, space) VALUES (?1, 't', 'c', ?2, ?3, ?4)", 
+            conn.execute("INSERT INTO pods (id, pod_type, data, created_at, space) VALUES (?1, 't', ?2, ?3, ?4)",
                          rusqlite::params![pod_id1, p_data_blob, now_str, s1_c])
         }).await.unwrap().unwrap();
 
@@ -234,7 +234,7 @@ mod tests {
         let p_data_blob2 = serde_json::to_vec(&json!({})).unwrap();
         let now_str2 = Utc::now().to_rfc3339();
         conn_setup2.interact(move |conn| {
-            conn.execute("INSERT INTO pods (id, pod_type, pod_class, data, created_at, space) VALUES (?1, 't', 'c', ?2, ?3, ?4)", 
+            conn.execute("INSERT INTO pods (id, pod_type, data, created_at, space) VALUES (?1, 't', ?2, ?3, ?4)", 
                          rusqlite::params!["another-pod", p_data_blob2, now_str2, s1_c2])
         }).await.unwrap().unwrap();
 
@@ -243,7 +243,7 @@ mod tests {
         let p_data_blob3 = serde_json::to_vec(&json!({})).unwrap();
         let now_str3 = Utc::now().to_rfc3339();
         conn_setup3.interact(move |conn| {
-            conn.execute("INSERT INTO pods (id, pod_type, pod_class, data, created_at, space) VALUES (?1, 't', 'c', ?2, ?3, ?4)", 
+            conn.execute("INSERT INTO pods (id, pod_type, data, created_at, space) VALUES (?1, 't', ?2, ?3, ?4)", 
                          rusqlite::params![pod_id2, p_data_blob3, now_str3, s2_c])
         }).await.unwrap().unwrap();
 

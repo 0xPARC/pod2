@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::{
-    backends::plonky2::mock::mainpod::MockProver,
+    backends::plonky2::{mainpod::Prover, mock::mainpod::MockProver},
     frontend::{self, MainPod, MainPodBuilder, Operation as FrontendOperation, SignedPod},
     middleware::{self, NativeOperation, OperationAux, OperationType, PodId, Statement, SELF},
     op,
@@ -220,7 +220,7 @@ pub fn build_main_pod_from_solution(
     }
 
     // Invoke the backend prover to complete the POD construction
-    let mut prover = MockProver {};
+    let mut prover = Prover {};
     builder
         .prove(&mut prover, params)
         .map_err(ProverError::FrontendError)

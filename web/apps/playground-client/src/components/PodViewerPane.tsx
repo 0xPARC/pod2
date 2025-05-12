@@ -1,7 +1,7 @@
 import React from "react";
 import { useAppStore } from "../lib/store";
 import MainPodCard from "./MainPodCard";
-import type { PodData } from "../types/pod2"; // For type checking, added PodData and SignedPod
+import type { PodData } from "@/types/pod2"; // For type checking, added PodData and SignedPod
 import SignedPodCard from "./SignedPodCard";
 
 const PodViewerPane: React.FC = () => {
@@ -34,7 +34,6 @@ const PodViewerPane: React.FC = () => {
         signedPod={signedPodPayload}
         podId={selectedPod.id}
         label={selectedPod.label}
-        podClass={selectedPod.pod_class}
       />
     );
   } else {

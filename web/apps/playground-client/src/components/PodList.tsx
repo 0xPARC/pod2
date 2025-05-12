@@ -4,7 +4,7 @@ import { deletePodFromSpace } from "../lib/backendServiceClient";
 import { useAppStore } from "../lib/store";
 import { usePodsInSpace, podKeys } from "../hooks/useSpaceData";
 import { AlertTriangle, Loader2, FileText, FileCheck2, FilePenLine, Trash2, PlusCircle } from "lucide-react"; // Added PlusCircle
-import type { PodInfo } from "../types/pod2";
+import type { PodInfo } from "@/types/pod2";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import ImportPodDialog from "./ImportPodDialog"; // Import the new dialog
@@ -48,17 +48,17 @@ const PodListItem: React.FC<PodListItemProps> = ({ pod, activeSpaceId, deleteMut
 
   if (pod.data.pod_data_variant === "Main") {
     icon = <FileCheck2 className="mr-2 h-4 w-4 flex-shrink-0 text-sky-500 dark:text-sky-400" />;
-    displayType = `Main (${pod.data.pod_data_payload.podType || 'N/A'})`;
+    displayType = `${pod.data.pod_data_payload.podType || 'N/A'}`;
   } else if (pod.data.pod_data_variant === "Signed") {
     icon = <FilePenLine className="mr-2 h-4 w-4 flex-shrink-0 text-teal-500 dark:text-teal-400" />;
-    displayType = `Signed (${pod.data.pod_data_payload.podType || 'N/A'})`;
+    displayType = `${pod.data.pod_data_payload.podType || 'N/A'}`;
   }
 
   return (
     <li
       key={pod.id}
       className="flex items-center justify-between px-2 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md group cursor-pointer"
-      title={`ID: ${pod.id}\nClass: ${pod.pod_class}\nLabel: ${pod.label || 'None'}\nCreated: ${new Date(pod.created_at).toLocaleString()}`}
+      title={`ID: ${pod.id}\nLabel: ${pod.label || 'None'}\nCreated: ${new Date(pod.created_at).toLocaleString()}`}
       onClick={() => onSelectPod(pod)} // Call onSelectPod when the item is clicked
     >
       <div className="flex items-center truncate flex-grow">

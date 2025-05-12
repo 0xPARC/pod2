@@ -1,17 +1,16 @@
 import React from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { FileSignature } from "lucide-react";
-import type { SignedPod } from "../types/pod2";
+import type { SignedPod } from "@/types/pod2";
 import ValueRenderer from "./ValueRenderer";
 
 interface SignedPodCardProps {
   signedPod: SignedPod;
   podId?: string;
   label?: string | null;
-  podClass?: string;
 }
 
-const SignedPodCard: React.FC<SignedPodCardProps> = ({ signedPod, podId, label, podClass }) => {
+const SignedPodCard: React.FC<SignedPodCardProps> = ({ signedPod, podId, label }) => {
   return (
     <Card className="w-full mx-auto">
       <CardHeader>
@@ -31,7 +30,7 @@ const SignedPodCard: React.FC<SignedPodCardProps> = ({ signedPod, podId, label, 
         <h4 className="font-semibold mb-2 text-sm text-muted-foreground">Entries:</h4>
         {Object.keys(signedPod.entries).length > 0 ? (
           <div className="border rounded-md">
-            {Object.entries(signedPod.entries).map(([key, value], index, arr) => (
+            {Object.entries(signedPod.entries).sort((a, b) => a[0].localeCompare(b[0])).map(([key, value], index, arr) => (
               <div
                 key={key}
                 className={`flex p-2 text-sm ${index < arr.length - 1 ? 'border-b' : ''}`}

@@ -48,7 +48,6 @@ pub async fn create_schema(pool: &ConnectionPool) -> Result<()> {
                 "CREATE TABLE IF NOT EXISTS pods (
                 id TEXT NOT NULL,
                 pod_type TEXT NOT NULL,
-                pod_class TEXT NOT NULL,
                 data BLOB NOT NULL,
                 label TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

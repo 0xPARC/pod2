@@ -27,7 +27,6 @@
       "title": "MainPod",
       "type": "object",
       "required": [
-        "podClass",
         "podType",
         "proof",
         "publicStatements"
@@ -40,9 +39,6 @@
           }
         },
         "proof": {
-          "type": "string"
-        },
-        "podClass": {
           "type": "string"
         },
         "podType": {
@@ -870,7 +866,6 @@
       "type": "object",
       "required": [
         "entries",
-        "podClass",
         "podType",
         "proof"
       ],
@@ -882,9 +877,6 @@
           }
         },
         "proof": {
-          "type": "string"
-        },
-        "podClass": {
           "type": "string"
         },
         "podType": {
@@ -913,7 +905,6 @@
         "created_at",
         "data",
         "id",
-        "pod_class",
         "pod_type",
         "space"
       ],
@@ -922,9 +913,6 @@
           "type": "string"
         },
         "pod_type": {
-          "type": "string"
-        },
-        "pod_class": {
           "type": "string"
         },
         "data": {

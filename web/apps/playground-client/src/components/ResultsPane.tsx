@@ -1,9 +1,9 @@
 import React, { useState } from "react";
-import Ajv, { type ValidateFunction, type Schema } from "ajv/dist/2019";
+import Ajv, { type ValidateFunction } from "ajv/dist/2019";
 import { useAppStore } from "../lib/store";
 import MainPodCard from "./MainPodCard";
-import type { MainPod } from "../types/pod2";
-import fullSchema from "../schemas.json"; // Import the full schema
+import type { MainPod } from "@/types/pod2";
+import fullSchema from "@/schemas.json"; // Import the full schema
 import AddToSpaceDialog from "./AddToSpaceDialog"; // Import the dialog
 import { Button } from "./ui/button"; // Import Button for "Add to Space"
 import { PlusCircle } from "lucide-react"; // Icon for the button

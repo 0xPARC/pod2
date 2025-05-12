@@ -1,5 +1,5 @@
 import React from "react";
-import type { MainPod } from "../types/pod2"; // Adjusted path
+import type { MainPod } from "@/types/pod2"; // Adjusted path
 
 interface MainPodCardProps {
   mainPod: MainPod;
@@ -18,9 +18,6 @@ const MainPodCard: React.FC<MainPodCardProps> = ({ mainPod }) => {
         <PodIcon /> MainPod
       </div>
       <div className="text-sm text-gray-700 dark:text-gray-300 space-y-0.5">
-        <p>
-          <span className="font-medium">Class:</span> {mainPod.podClass}
-        </p>
         <p>
           <span className="font-medium">Type:</span> {mainPod.podType}
         </p>

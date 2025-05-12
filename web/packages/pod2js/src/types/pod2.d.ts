@@ -223,7 +223,6 @@ export interface SchemaContainer {
 export interface MainPod {
   publicStatements: Statement[];
   proof: string;
-  podClass: string;
   podType: string;
 }
 export interface AnchoredKey {
@@ -269,7 +268,6 @@ export interface SignedPod {
     [k: string]: Value;
   };
   proof: string;
-  podClass: string;
   podType: string;
 }
 export interface SpaceInfo {
@@ -279,7 +277,6 @@ export interface SpaceInfo {
 export interface PodInfo {
   id: string;
   pod_type: string;
-  pod_class: string;
   data: PodData;
   label?: string | null;
   created_at: string;

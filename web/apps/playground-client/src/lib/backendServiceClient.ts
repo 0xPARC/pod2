@@ -1,5 +1,5 @@
 import { useAppStore } from "./store";
-import type { SpaceInfo, PodInfo, MainPod, SignedPod } from "../types/pod2";
+import type { SpaceInfo, PodInfo, MainPod, SignedPod } from "@/types/pod2";
 
 // --- Type definitions (mirroring Rust structs from src/server/api_types.rs) ---
 
@@ -265,7 +265,6 @@ export async function listPodsInSpace(spaceId: string): Promise<PodInfo[]> {
 // --- Client-side specific payload for importing a MainPod ---
 export interface ImportPodClientPayload {
   podType: "main" | "signed"; // To distinguish between MainPod and SignedPod
-  podClass: string;
   data: MainPod | Omit<SignedPod, "id" | "verify">; // Use MainPod or SignedPod from types/pod2.d.ts. For SignedPod, we might not have id/verify on client before sending.
   label?: string;
 }
@@ -292,7 +291,6 @@ export async function importPodDataToSpace(
 
   const backendPayload = {
     podType: payload.podType,
-    podClass: payload.podClass,
     data: payload.data, // This should be serialized by JSON.stringify automatically
     label: payload.label,
   };

@@ -10,10 +10,12 @@ use serde_json::Value;
 
 use super::pod_management::{PodData, PodInfo};
 use crate::{
-    backends::plonky2::mock::signedpod::MockSigner,
+    backends::plonky2::{
+        mock::signedpod::MockSigner, primitives::signature::SecretKey, signedpod::Signer,
+    },
     frontend::{serialization::SignedPodHelper, MainPod, SignedPod, SignedPodBuilder},
     lang::{self, ast, parser, LangError},
-    middleware::{containers::Set, Params, Pod, PodId, Value as PodValue},
+    middleware::{containers::Set, Params, Pod, PodId, RawValue, Value as PodValue},
     prover::{
         self, custom_definitions_from_batches, facts_from_pods, pod_building, solver,
         ProverError as ActualProverError,
@@ -169,15 +171,18 @@ pub async fn execute_mvp_handler(
     );
 
     pest::set_error_detail(true);
-    let params = Params::default();
+    let params = Params {
+        // Currently the circuit uses random access that only supports vectors of length 64.
+        // With max_input_main_pods=3 we need random access to a vector of length 73.
+        max_input_main_pods: 1,
+        ..Default::default()
+    };
 
     let processed_output = lang::parse(&payload.code, &params)?;
 
-    let mut gov_signer = MockSigner { pk: "gov".into() };
-    let mut pay_signer = MockSigner { pk: "pay".into() };
-    let mut sanction_signer = MockSigner {
-        pk: "sanction".into(),
-    };
+    let mut gov_signer = Signer(SecretKey(RawValue::from(1)));
+    let mut pay_signer = Signer(SecretKey(RawValue::from(2)));
+    let mut sanction_signer = Signer(SecretKey(RawValue::from(3)));
 
     let sanctions_values: HashSet<PodValue> =
         ["A343434340"].iter().map(|s| PodValue::from(*s)).collect();
@@ -254,7 +259,12 @@ pub async fn execute_code_handler(
     );
 
     pest::set_error_detail(true);
-    let params = Params::default();
+    let params = Params {
+        // Currently the circuit uses random access that only supports vectors of length 64.
+        // With max_input_main_pods=3 we need random access to a vector of length 73.
+        max_input_main_pods: 1,
+        ..Default::default()
+    };
 
     let processed_output = match lang::parse(&payload.code, &params) {
         Ok(output) => output,
@@ -335,44 +345,54 @@ pub async fn execute_code_handler(
     let fetched_pod_infos = match conn
         .interact(move |conn_inner| {
             let mut stmt = conn_inner.prepare(
-                "SELECT id, pod_type, pod_class, data, label, created_at, space FROM pods WHERE space = ?1",
+                "SELECT id, pod_type, data, label, created_at, space FROM pods WHERE space = ?1",
             )?;
             let pod_iter = stmt.query_map([&space_id_clone], |row| {
-                let data_blob: Vec<u8> = row.get(3)?;
+                let data_blob: Vec<u8> = row.get(2)?;
                 let data_value: Value = serde_json::from_slice(&data_blob).map_err(|e| {
                     rusqlite::Error::FromSqlConversionFailure(
-                        3, rusqlite::types::Type::Blob, Box::new(e)
+                        2,
+                        rusqlite::types::Type::Blob,
+                        Box::new(e),
                     )
                 })?;
                 Ok(PodInfo {
                     id: row.get(0)?,
                     pod_type: row.get(1)?,
-                    pod_class: row.get(2)?,
                     data: serde_json::from_value(data_value).map_err(|e| {
                         rusqlite::Error::FromSqlConversionFailure(
-                            3, rusqlite::types::Type::Blob, Box::new(e)
+                            2,
+                            rusqlite::types::Type::Blob,
+                            Box::new(e),
                         )
                     })?,
-                    label: row.get(4)?,
-                    created_at: row.get(5)?,
-                    space: row.get(6)?,
+                    label: row.get(3)?,
+                    created_at: row.get(4)?,
+                    space: row.get(5)?,
                 })
             })?;
             pod_iter.collect::<Result<Vec<_>, _>>()
         })
-        .await {
-            Ok(result) => match result {
-                Ok(pods) => pods,
-                Err(e) => {
-                    log::error!("Database error while fetching pods: {}", e);
-                    return Err(PlaygroundApiError::Internal(anyhow::anyhow!("Database error: {}", e)));
-                }
-            },
+        .await
+    {
+        Ok(result) => match result {
+            Ok(pods) => pods,
             Err(e) => {
-                log::error!("Deadpool interact error while fetching pods: {}", e);
-                return Err(PlaygroundApiError::Internal(anyhow::anyhow!("Connection pool error: {}", e)));
+                log::error!("Database error while fetching pods: {}", e);
+                return Err(PlaygroundApiError::Internal(anyhow::anyhow!(
+                    "Database error: {}",
+                    e
+                )));
             }
-        };
+        },
+        Err(e) => {
+            log::error!("Deadpool interact error while fetching pods: {}", e);
+            return Err(PlaygroundApiError::Internal(anyhow::anyhow!(
+                "Connection pool error: {}",
+                e
+            )));
+        }
+    };
 
     if fetched_pod_infos.is_empty() {
         log::warn!(
@@ -564,6 +584,19 @@ impl From<anyhow::Error> for PlaygroundApiError {
 pub async fn setup_zukyc_space(pool: &ConnectionPool) -> anyhow::Result<()> {
     let conn = pool.get().await?;
     let space_id = "zukyc";
+
+    let space_exists = conn
+        .interact(move |conn_inner| {
+            conn_inner.execute(
+                "SELECT EXISTS(SELECT 1 FROM spaces WHERE id = ?1)",
+                params![&space_id],
+            )
+        })
+        .await;
+    if space_exists.is_ok() {
+        return Ok(());
+    }
+
     let now_str = Utc::now().to_rfc3339();
     conn.interact(move |conn_inner| {
         conn_inner.execute(
@@ -576,11 +609,9 @@ pub async fn setup_zukyc_space(pool: &ConnectionPool) -> anyhow::Result<()> {
     .map_err(anyhow::Error::from)?;
 
     let params_for_test = Params::default();
-    let mut gov_signer = MockSigner { pk: "gov".into() };
-    let mut pay_signer = MockSigner { pk: "pay".into() };
-    let mut sanction_signer = MockSigner {
-        pk: "sanction".into(),
-    };
+    let mut gov_signer = Signer(SecretKey(RawValue::from(1)));
+    let mut pay_signer = Signer(SecretKey(RawValue::from(2)));
+    let mut sanction_signer = Signer(SecretKey(RawValue::from(3)));
 
     let mut gov_id_builder = SignedPodBuilder::new(&params_for_test);
     gov_id_builder.insert("idNumber", "4242424242");
@@ -594,12 +625,16 @@ pub async fn setup_zukyc_space(pool: &ConnectionPool) -> anyhow::Result<()> {
     let data_blob_gov = serde_json::to_vec(&PodData::Signed(gov_id_helper.clone())).unwrap(); // Wrap helper in PodData
     let space_id_clone_gov = space_id.to_string();
     let conn_gov = pool.get().await.unwrap();
-    conn_gov.interact(move |conn_inner| {
-        conn_inner.execute(
-            "INSERT INTO pods (id, pod_type, pod_class, data, label, created_at, space) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(space, id) DO NOTHING",
-            rusqlite::params![gov_pod_id_str, "signed", "mock", data_blob_gov, "Gov ID", Utc::now().to_rfc3339(), space_id_clone_gov],
-        )
-    }).await.unwrap().unwrap();
+    conn_gov
+        .interact(move |conn_inner| {
+            conn_inner.execute(
+                "INSERT INTO pods (id, pod_type, data, label, created_at, space) VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(space, id) DO NOTHING",
+                rusqlite::params![gov_pod_id_str, "signed", data_blob_gov, "Gov ID", Utc::now().to_rfc3339(), space_id_clone_gov],
+            )
+        })
+        .await
+        .unwrap()
+        .unwrap();
 
     let mut pay_stub_builder = SignedPodBuilder::new(&params_for_test);
     pay_stub_builder.insert("socialSecurityNumber", "G2121210");
@@ -611,12 +646,16 @@ pub async fn setup_zukyc_space(pool: &ConnectionPool) -> anyhow::Result<()> {
     let data_blob_pay = serde_json::to_vec(&PodData::Signed(pay_stub_helper.clone())).unwrap(); // Wrap helper in PodData
     let space_id_clone_pay = space_id.to_string();
     let conn_pay = pool.get().await.unwrap();
-    conn_pay.interact(move |conn_inner| {
-        conn_inner.execute(
-            "INSERT INTO pods (id, pod_type, pod_class, data, label, created_at, space) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(space, id) DO NOTHING",
-            rusqlite::params![pay_pod_id_str, "signed", "mock", data_blob_pay, "Pay Stub", Utc::now().to_rfc3339(), space_id_clone_pay],
-        )
-    }).await.unwrap().unwrap();
+    conn_pay
+        .interact(move |conn_inner| {
+            conn_inner.execute(
+                "INSERT INTO pods (id, pod_type, data, label, created_at, space) VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(space, id) DO NOTHING",
+                rusqlite::params![pay_pod_id_str, "signed", data_blob_pay, "Pay Stub", Utc::now().to_rfc3339(), space_id_clone_pay],
+            )
+        })
+        .await
+        .unwrap()
+        .unwrap();
 
     let sanctions_values_set: HashSet<PodValue> =
         ["A343434340"].iter().map(|s| PodValue::from(*s)).collect();
@@ -631,12 +670,16 @@ pub async fn setup_zukyc_space(pool: &ConnectionPool) -> anyhow::Result<()> {
         serde_json::to_vec(&PodData::Signed(sanction_list_helper.clone())).unwrap(); // Wrap helper in PodData
     let space_id_clone_sanction = space_id.to_string();
     let conn_sanction = pool.get().await.unwrap();
-    conn_sanction.interact(move |conn_inner| {
-        conn_inner.execute(
-            "INSERT INTO pods (id, pod_type, pod_class, data, label, created_at, space) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(space, id) DO NOTHING",
-            rusqlite::params![sanction_pod_id_str, "signed", "mock", data_blob_sanction, "Sanctions List", Utc::now().to_rfc3339(), space_id_clone_sanction],
-        )
-    }).await.unwrap().unwrap();
+    conn_sanction
+        .interact(move |conn_inner| {
+            conn_inner.execute(
+                "INSERT INTO pods (id, pod_type, data, label, created_at, space) VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(space, id) DO NOTHING",
+                rusqlite::params![sanction_pod_id_str, "signed", data_blob_sanction, "Sanctions List", Utc::now().to_rfc3339(), space_id_clone_sanction],
+            )
+        })
+        .await
+        .unwrap()
+        .unwrap();
 
     Ok(())
 }
@@ -739,8 +782,8 @@ mod tests {
         conn_gov
             .interact(move |conn_inner| {
                 conn_inner.execute(
-                    "INSERT INTO pods (id, pod_type, pod_class, data, label, created_at, space) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                    rusqlite::params![gov_pod_id_str, "signed", "mock", data_blob_gov, "Gov ID", Utc::now().to_rfc3339(), space_id_clone_gov],
+                    "INSERT INTO pods (id, pod_type, data, label, created_at, space) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    rusqlite::params![gov_pod_id_str, "signed", data_blob_gov, "Gov ID", Utc::now().to_rfc3339(), space_id_clone_gov],
                 )
             })
             .await
@@ -760,8 +803,8 @@ mod tests {
         conn_pay
             .interact(move |conn_inner| {
                 conn_inner.execute(
-                    "INSERT INTO pods (id, pod_type, pod_class, data, label, created_at, space) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                    rusqlite::params![pay_pod_id_str, "signed", "mock", data_blob_pay, "Pay Stub", Utc::now().to_rfc3339(), space_id_clone_pay],
+                    "INSERT INTO pods (id, pod_type, data, label, created_at, space) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    rusqlite::params![pay_pod_id_str, "signed", data_blob_pay, "Pay Stub", Utc::now().to_rfc3339(), space_id_clone_pay],
                 )
             })
             .await
@@ -784,8 +827,8 @@ mod tests {
         conn_sanction
             .interact(move |conn_inner| {
                 conn_inner.execute(
-                    "INSERT INTO pods (id, pod_type, pod_class, data, label, created_at, space) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                    rusqlite::params![sanction_pod_id_str, "signed", "mock", data_blob_sanction, "Sanctions List", Utc::now().to_rfc3339(), space_id_clone_sanction],
+                    "INSERT INTO pods (id, pod_type, data, label, created_at, space) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    rusqlite::params![sanction_pod_id_str, "signed", data_blob_sanction, "Sanctions List", Utc::now().to_rfc3339(), space_id_clone_sanction],
                 )
             })
             .await

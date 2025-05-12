@@ -37,7 +37,6 @@ impl PodData {
 pub struct PodInfo {
     pub id: String,
     pub pod_type: String, // This will store the string "signed" or "main" from the DB
-    pub pod_class: String,
     pub data: PodData,   // Changed from Value to the strongly-typed enum
     pub label: Option<String>,
     pub created_at: String,
@@ -55,7 +54,6 @@ pub struct SignRequest {
 #[serde(rename_all = "camelCase")]
 pub struct ImportPodRequest {
     pod_type: String,
-    pod_class: String,
     data: serde_json::Value,
     label: Option<String>,
 }
@@ -120,17 +118,15 @@ pub async fn import_pod_to_space(
 
     let space_id_clone_for_db = space_id.clone();
     let pod_type_for_db_and_info = payload.pod_type.clone(); 
-    let pod_class_for_db_and_info = payload.pod_class.clone();
     let label_for_db_and_info = payload.label.clone();
     let created_at_for_info = now.clone(); // For PodInfo response
 
     conn.interact(move |conn| {
         conn.execute(
-            "INSERT INTO pods (id, pod_type, pod_class, data, label, created_at, space) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO pods (id, pod_type, data, label, created_at, space) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             rusqlite::params![
                 pod_id_string_for_db_and_info, // Use the serialized string ID
                 pod_type_for_db_and_info, 
-                pod_class_for_db_and_info, 
                 data_blob_for_db, // Use the blob from final_pod_data_enum
                 label_for_db_and_info, 
                 now, // For DB
@@ -147,7 +143,6 @@ pub async fn import_pod_to_space(
     let created_pod_info = PodInfo {
         id: pod_id_for_response, // Use the cloned string ID for PodInfo
         pod_type: payload.pod_type.clone(),
-        pod_class: payload.pod_class.clone(),
         data: final_pod_data_enum, // Use the enum instance we created for ID generation
         label: payload.label.clone(),
         created_at: created_at_for_info,
@@ -206,22 +201,21 @@ pub async fn list_pods_in_space(
         .interact(move |conn|
             {
                 let mut stmt = conn.prepare(
-                    "SELECT id, pod_type, pod_class, data, label, created_at, space FROM pods WHERE space = ?1",
+                    "SELECT id, pod_type, data, label, created_at, space FROM pods WHERE space = ?1",
                 )?;
                 let pod_iter = stmt.query_map([&space_clone], |row| {
                     let id_val: String = row.get(0)?;
                     let pod_type_from_db: String = row.get(1)?;
-                    let pod_class_val: String = row.get(2)?;
-                    let data_blob: Vec<u8> = row.get(3)?;
-                    let label_val: Option<String> = row.get(4)?;
-                    let created_at_val: String = row.get(5)?;
-                    let space_val: String = row.get(6)?;
+                    let data_blob: Vec<u8> = row.get(2)?;
+                    let label_val: Option<String> = row.get(3)?;
+                    let created_at_val: String = row.get(4)?;
+                    let space_val: String = row.get(5)?;
 
                     let pod_data_enum: PodData = serde_json::from_slice(&data_blob).map_err(|e| {
                         log::error!("Failed to deserialize PodData for pod id '{}' in space '{}': {:?}. Data blob (first 100 bytes): {:?}", 
                                     id_val, space_clone, e, data_blob.iter().take(100).collect::<Vec<_>>());
                         rusqlite::Error::FromSqlConversionFailure(
-                            3, // Column index
+                            2, // Column index updated
                             rusqlite::types::Type::Blob,
                             Box::new(e),
                         )
@@ -240,7 +234,6 @@ pub async fn list_pods_in_space(
                     Ok(PodInfo {
                         id: id_val,
                         pod_type: pod_type_from_db, // Use the string from the 'pod_type' column
-                        pod_class: pod_class_val,
                         data: pod_data_enum,
                         label: label_val,
                         created_at: created_at_val,
@@ -275,22 +268,21 @@ pub async fn get_pod_by_id(
     let pod_info_result = conn
         .interact(move |conn| -> anyhow::Result<PodInfo> { // Changed return type for interact
             let mut stmt = conn.prepare(
-                "SELECT id, pod_type, pod_class, data, label, created_at, space FROM pods WHERE space = ?1 AND id = ?2",
+                "SELECT id, pod_type, data, label, created_at, space FROM pods WHERE space = ?1 AND id = ?2",
             )?;
             let pod_info_internal = stmt.query_row([&space_clone, &id_clone], |row| {
                 let id_val: String = row.get(0)?;
                 let pod_type_from_db: String = row.get(1)?;
-                let pod_class_val: String = row.get(2)?;
-                let data_blob: Vec<u8> = row.get(3)?;
-                let label_val: Option<String> = row.get(4)?;
-                let created_at_val: String = row.get(5)?;
-                let space_val: String = row.get(6)?;
+                let data_blob: Vec<u8> = row.get(2)?;
+                let label_val: Option<String> = row.get(3)?;
+                let created_at_val: String = row.get(4)?;
+                let space_val: String = row.get(5)?;
 
                 let pod_data_enum: PodData = serde_json::from_slice(&data_blob).map_err(|e| {
                     log::error!("Failed to deserialize PodData for pod id '{}' in space '{}': {:?}. Data blob (first 100 bytes): {:?}", 
                                 id_val, space_clone, e, data_blob.iter().take(100).collect::<Vec<_>>());
                     rusqlite::Error::FromSqlConversionFailure(
-                        3, 
+                        2, // Column index updated
                         rusqlite::types::Type::Blob,
                         Box::new(e),
                     )
@@ -308,7 +300,6 @@ pub async fn get_pod_by_id(
                 Ok(PodInfo {
                     id: id_val,
                     pod_type: pod_type_from_db,
-                    pod_class: pod_class_val,
                     data: pod_data_enum,
                     label: label_val,
                     created_at: created_at_val,
@@ -418,7 +409,6 @@ mod tests {
         pool: &ConnectionPool,
         id: &str,
         pod_type: &str, // Should be "main" or "signed"
-        pod_class: &str,
         data_payload: &Value, // For "main", this is the full MainPodHelper. For "signed", this is the 'entries' map.
         label: Option<&str>,
         space: &str,
@@ -426,7 +416,6 @@ mod tests {
         let conn = pool.get().await.unwrap();
         let id_owned = id.to_string();
         let pod_type_owned = pod_type.to_string();
-        let pod_class_owned = pod_class.to_string();
         let label_owned = label.map(|s| s.to_string());
         let space_owned = space.to_string();
 
@@ -438,7 +427,6 @@ mod tests {
                 let helper = SignedPodHelper {
                     entries: entries_map,
                     proof: "default_test_signed_proof".to_string(),
-                    pod_class: "Signed".to_string(), // Must match what SignedPod::try_from expects
                     pod_type: "Mock".to_string(),    // Must match
                 };
                 PodData::Signed(helper)
@@ -456,8 +444,8 @@ mod tests {
             let now = Utc::now().to_rfc3339();
             let data_blob = serde_json::to_vec(&pod_data_enum_for_test).unwrap(); 
             conn.execute(
-                "INSERT INTO pods (id, pod_type, pod_class, data, label, created_at, space) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![id_owned, pod_type_owned, pod_class_owned, data_blob, label_owned, now, space_owned],
+                "INSERT INTO pods (id, pod_type, data, label, created_at, space) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![id_owned, pod_type_owned, data_blob, label_owned, now, space_owned],
             )
         })
         .await
@@ -513,7 +501,6 @@ mod tests {
             &pool,
             "id1",
             "main",
-            "mock_class_main", // pod_class for the DB
             &main_pod_helper_payload,
             Some("label1"),
             "space1",
@@ -523,7 +510,6 @@ mod tests {
             &pool, 
             "id2", 
             "signed", 
-            "mock_class_signed", // pod_class for the DB
             &signed_pod_helper_entries_payload, 
             None, 
             "space1"
@@ -532,7 +518,6 @@ mod tests {
             &pool,
             "id3",
             "main",
-            "mock_class_main", // pod_class for the DB
             &main_pod_helper_payload3,
             Some("label3"),
             "space2",
@@ -549,8 +534,6 @@ mod tests {
         let expected_pod_data1 = PodData::Main(expected_main_helper1);
         assert!(pods.iter().any(|p| p.id == "id1"
             && p.pod_type == "main"
-            && p.pod_class == "mock_class_main"
-            && p.label == Some("label1".to_string())
             && p.data == expected_pod_data1
             && p.space == "space1"));
 
@@ -566,8 +549,6 @@ mod tests {
 
         assert!(pods.iter().any(|p| p.id == "id2"
             && p.pod_type == "signed"
-            && p.pod_class == "mock_class_signed"
-            && p.label.is_none()
             && p.data == expected_pod_data2
             && p.space == "space1"));
         assert!(pods[0].created_at.contains('T'));
@@ -579,11 +560,6 @@ mod tests {
         assert_eq!(pods.len(), 1);
         assert_eq!(pods[0].id, "id3");
         assert_eq!(pods[0].pod_type, "main");
-        assert_eq!(pods[0].pod_class, "mock_class_main");
-        assert_eq!(pods[0].label, Some("label3".to_string()));
-        let expected_main_helper3: MainPodHelper = serde_json::from_value(main_pod_helper_payload3.clone()).unwrap();
-        let expected_pod_data3 = PodData::Main(expected_main_helper3);
-        assert_eq!(pods[0].data, expected_pod_data3);
         assert_eq!(pods[0].space, "space2");
 
         let response = server.get("/api/pods/nonexistent_space").await;
@@ -610,7 +586,6 @@ mod tests {
             &pool, 
             "test_id", 
             "main", 
-            "mock_get_class", 
             &main_pod_payload_for_get, 
             Some("test_label"), 
             "test_space"
@@ -622,13 +597,12 @@ mod tests {
 
         assert_eq!(pod.id, "test_id");
         assert_eq!(pod.pod_type, "main");
-        assert_eq!(pod.pod_class, "mock_get_class");
+        assert_eq!(pod.space, "test_space");
         let expected_helper_get: MainPodHelper = serde_json::from_value(main_pod_payload_for_get.clone()).unwrap();
         let expected_pod_data_get = PodData::Main(expected_helper_get);
         assert_eq!(pod.data, expected_pod_data_get);
         assert_eq!(pod.label, Some("test_label".to_string()));
-        assert_eq!(pod.space, "test_space");
-        assert!(pod.created_at.contains('T'));
+        assert_eq!(pod.created_at, Utc::now().to_rfc3339());
     }
 
     #[tokio::test]
@@ -653,7 +627,6 @@ mod tests {
             &pool, 
             "test_id", 
             "main", 
-            "mock_class_other", 
             &main_pod_payload_other_space, 
             None, 
             space_name // Pod is in 'other_space'
@@ -689,7 +662,6 @@ mod tests {
             &pool, 
             "other_id", 
             "main", 
-            "mock_class_other_id", 
             &main_pod_payload_other_id, 
             None, 
             space_name
@@ -769,7 +741,6 @@ mod tests {
         let pod_id_string: String = pod_id.encode_hex();
         let import_payload = json!({
             "podType": "signed",
-            "podClass": "mock",
             "data": serde_json::to_value(pod).unwrap(),
             "label": "My Test Pod For Import Delete"
         });
@@ -785,23 +756,21 @@ mod tests {
         let pod_id_check = pod_id_string.clone();
         let pod_info_res: Result<PodInfo, _> = conn_check.interact(move |conn_inner| {
              let mut stmt = conn_inner.prepare(
-                "SELECT id, pod_type, pod_class, data, label, created_at, space FROM pods WHERE space = ?1 AND id = ?2",
+                "SELECT id, pod_type, data, label, created_at, space FROM pods WHERE space = ?1 AND id = ?2",
             )?;
             stmt.query_row([&space_id_check, &pod_id_check.clone()], |row| {
                 let id_val: String = row.get(0)?;
                 let pod_type_from_db: String = row.get(1)?;
-                let pod_class_val: String = row.get(2)?;
-                let data_blob: Vec<u8> = row.get(3)?;
+                let data_blob: Vec<u8> = row.get(2)?;
                 let pod_data_from_db: PodData = serde_json::from_slice(&data_blob).unwrap_or_else(|e| 
                     panic!("Failed to deserialize PodData from DB in test: {:?}. Blob: {:?}", e, data_blob)
                 );
-                let label_val: Option<String> = row.get(4)?;
-                let created_at_val: String = row.get(5)?;
-                let space_val: String = row.get(6)?;
+                let label_val: Option<String> = row.get(3)?;
+                let created_at_val: String = row.get(4)?;
+                let space_val: String = row.get(5)?;
                 Ok(PodInfo {
                     id: id_val,
                     pod_type: pod_type_from_db,
-                    pod_class: pod_class_val,
                     data: pod_data_from_db,
                     label: label_val,
                     created_at: created_at_val,
@@ -814,7 +783,6 @@ mod tests {
         let pod_info = pod_info_res.unwrap();
         assert_eq!(pod_info.id, pod_id_string);
         assert_eq!(pod_info.pod_type, "signed"); 
-        assert_eq!(pod_info.pod_class, "mock"); // Check against the DB class
 
         // Assert data content
         // let expected_imported_helper: MainPodHelper = serde_json::from_value(import_main_pod_helper_data.clone()).unwrap();

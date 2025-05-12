@@ -1,5 +1,5 @@
 import React from "react";
-import type { AnchoredKey, MainPod, Value } from "../types/pod2"; // Adjusted path
+import type { AnchoredKey, MainPod, Value } from "@/types/pod2"; // Adjusted path
 import ValueRenderer from "./ValueRenderer";
 import { FileCheck2 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "./ui/card";

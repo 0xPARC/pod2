@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import localForage from "localforage";
-import type { PodInfo } from "../types/pod2";
+import type { PodInfo } from "@/types/pod2";
 
 const PODLOG_MVP_FILE_KEY = "podlogMvpFile";
 const ACTIVE_SPACE_ID_KEY = "activeSpaceId";
