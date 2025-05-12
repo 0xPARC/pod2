@@ -29,6 +29,7 @@ export interface ValidateCodeResponse {
 
 export interface ExecuteCodeRequest {
   code: string;
+  space_id: string;
 }
 
 // Assuming the success response for execute might be a generic JSON value for now
@@ -119,11 +120,15 @@ export async function validateCode(
  * @returns A promise that resolves to the execution response.
  */
 export async function executeCode(
-  source: string
+  source: string,
+  spaceId: string
 ): Promise<ExecuteCodeResponse> {
   try {
-    const requestPayload: ExecuteCodeRequest = { code: source };
-    const response = await fetch(`${API_BASE_URL}/executeMvp`, {
+    const requestPayload: ExecuteCodeRequest = {
+      code: source,
+      space_id: spaceId,
+    };
+    const response = await fetch(`${API_BASE_URL}/execute`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

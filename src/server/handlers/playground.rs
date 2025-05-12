@@ -5,20 +5,17 @@ use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use chrono::Utc;
 use hex::ToHex;
 use rusqlite::{params, OptionalExtension};
-use serde::Deserialize;
+use serde::Serialize;
 use serde_json::Value;
 
 use super::pod_management::{PodData, PodInfo};
 use crate::{
     backends::plonky2::mock::signedpod::MockSigner,
-    frontend::{
-        serialization::{MainPodHelper, SignedPodHelper},
-        MainPod, SignedPod, SignedPodBuilder,
-    },
+    frontend::{serialization::SignedPodHelper, MainPod, SignedPod, SignedPodBuilder},
     lang::{self, ast, parser, LangError},
     middleware::{containers::Set, Params, Pod, PodId, Value as PodValue},
     prover::{
-        custom_definitions_from_batches, facts_from_pods, pod_building, solver,
+        self, custom_definitions_from_batches, facts_from_pods, pod_building, solver,
         ProverError as ActualProverError,
     },
     server::{
@@ -26,15 +23,14 @@ use crate::{
             Diagnostic, DiagnosticSeverity, ExecuteCodeRequest, ExecuteMvpRequest,
             ValidateCodeRequest, ValidateCodeResponse,
         },
-        db::{self, ConnectionPool},
+        db::ConnectionPool,
     },
 };
 
-#[derive(Deserialize)]
-pub struct ProveRequest {
-    signed_pods: Vec<SignedPod>,
-    main_pods: Vec<MainPod>,
-    proof_request: String,
+#[derive(Serialize)]
+pub struct ExecuteResult {
+    main_pod: MainPod,
+    diagram: String,
 }
 
 // --- Playground API Handlers ---
@@ -250,7 +246,7 @@ pub async fn execute_mvp_handler(
 pub async fn execute_code_handler(
     State(pool): State<ConnectionPool>,
     Json(payload): Json<ExecuteCodeRequest>,
-) -> Result<Json<MainPod>, PlaygroundApiError> {
+) -> Result<Json<ExecuteResult>, PlaygroundApiError> {
     log::debug!(
         "Received execute_code request for space '{}' with code starting with: {:?}",
         payload.space_id,
@@ -481,7 +477,14 @@ pub async fn execute_code_handler(
         }
     };
 
-    Ok(Json(result_main_pod))
+    let diagram = prover::visualization::generate_mermaid_markdown(&solution);
+
+    let result = ExecuteResult {
+        main_pod: result_main_pod,
+        diagram,
+    };
+
+    Ok(Json(result))
 }
 
 #[derive(Debug)]

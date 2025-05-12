@@ -7,6 +7,7 @@ import fullSchema from "../schemas.json"; // Import the full schema
 import AddToSpaceDialog from "./AddToSpaceDialog"; // Import the dialog
 import { Button } from "./ui/button"; // Import Button for "Add to Space"
 import { PlusCircle } from "lucide-react"; // Icon for the button
+import { MermaidDiagram } from "@lightenna/react-mermaid-diagram";
 
 // --- AJV Setup ---
 // Make AJV less strict about unknown formats like "uint"
@@ -92,13 +93,13 @@ const ResultsPane: React.FC = () => {
   } else if (executionResult) {
     try {
       const parsedResult = JSON.parse(executionResult);
-      if (isMainPod(parsedResult)) {
+      if (isMainPod(parsedResult.main_pod)) {
         // If it's a MainPod, display MainPodCard and an "Add to Space" button
         content = (
           <div className="p-2 space-y-2">
-            <MainPodCard mainPod={parsedResult} />
+            <MainPodCard mainPod={parsedResult.main_pod} />
             <Button
-              onClick={() => handleOpenAddToSpaceDialog(parsedResult)}
+              onClick={() => handleOpenAddToSpaceDialog(parsedResult.main_pod)}
               variant="outline"
               size="sm"
               className="mt-2 w-full flex items-center justify-center"
@@ -106,6 +107,10 @@ const ResultsPane: React.FC = () => {
               <PlusCircle className="mr-2 h-4 w-4" />
               Add to Space
             </Button>
+            <div className="bg-gray-300 dark:bg-gray-400 p-1">
+              <h3 className="text-sm font-bold">Proof</h3>
+              <MermaidDiagram>{parsedResult.diagram}</MermaidDiagram>
+            </div>
           </div>
         );
       } else {

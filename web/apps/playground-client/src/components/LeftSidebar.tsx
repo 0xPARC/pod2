@@ -20,7 +20,7 @@ export function LeftSidebar({ toggleExplorer, isExplorerCollapsed, explorerConte
         >
           <div className="h-full p-2 flex flex-col bg-gray-200 dark:bg-gray-800 justify-between">
             <div>
-              <div className="font-bold uppercase text-lg tracking-wider text-gray-800 dark:text-gray-200 px-2 mb-4">POD Playground</div>
+              <div className="font-bold uppercase text-lg tracking-wider text-gray-800/90 dark:text-gray-200 px-2 mb-4">POD Playground</div>
               <div className="flex items-center justify-between mb-2">
 
                 <div className="text-gray-800 dark:text-gray-200 font-medium uppercase text-xs tracking-wide pl-1">Browse</div>
@@ -35,7 +35,7 @@ export function LeftSidebar({ toggleExplorer, isExplorerCollapsed, explorerConte
               {explorerContent}
             </div>
             <div className="px-2 pt-2 flex items-center space-x-3">
-              <a href="https://github.com/0xPARC/pod2/" target="_blank" rel="noopener noreferrer">
+              <a href="https://github.com/0xPARC/pod2/" target="_blank" rel="noopener noreferrer" title="POD2 source code">
                 <Button variant="outline" size="icon">
                   <Github className="h-4 w-4" />
                 </Button>

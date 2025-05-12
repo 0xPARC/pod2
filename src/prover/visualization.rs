@@ -183,12 +183,12 @@ pub fn generate_mermaid_markdown(solution: &ProofSolution) -> String {
     // --- Define Styles ---
     writeln!(
         mermaid,
-        "  classDef baseFact fill:#lightblue,stroke:#333,stroke-width:2px;"
+        "  classDef baseFact fill:#ffffcc,stroke:#333,stroke-width:2px;"
     )
     .unwrap();
     writeln!(
         mermaid,
-        "  classDef operation fill:#lightgrey,stroke:#333,stroke-width:2px;"
+        "  classDef operation fill:#e0e0e0,stroke:#333,stroke-width:2px;"
     )
     .unwrap();
 
@@ -201,8 +201,8 @@ pub fn generate_mermaid_markdown(solution: &ProofSolution) -> String {
                 format_mermaid_label(&format!("Origin: {}\n{}", pod_id, stmt_label_str));
             writeln!(
                 mermaid,
-                "  {}[\"{}\"]:::baseFact;", // Mermaid: id["label"]
-                node_id, label_content
+                "  {}[\"{}\"];\nclass {} baseFact;", // Mermaid: id["label"]
+                node_id, label_content, node_id
             )
             .unwrap();
         }
@@ -233,7 +233,7 @@ pub fn generate_mermaid_markdown(solution: &ProofSolution) -> String {
             let op_label_str = format!("{:?}", step.operation);
             writeln!(
                 mermaid,
-                "  {}[\"{}\"]:::operation;", // Mermaid: id["label"]
+                "  {}(\"{}\"):::operation;", // Mermaid: id["label"]
                 op_node_id,
                 format_mermaid_label(&op_label_str)
             )

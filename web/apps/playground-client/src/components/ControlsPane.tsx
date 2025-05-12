@@ -1,9 +1,6 @@
 import React from "react";
 import { useAppStore } from "../lib/store";
 import { executeCode } from "../lib/backendServiceClient";
-import { ModeToggle } from "./mode-toggle";
-import { Button } from "./ui/button";
-import { GitFork, Github } from "lucide-react";
 
 // Basic SVG Icon Components
 const GreenCheckIcon: React.FC<{ className?: string }> = ({ className }) => (
@@ -49,6 +46,7 @@ const ControlsPane: React.FC = () => {
   const setExecutionResult = useAppStore((state) => state.setExecutionResult);
   const setExecutionError = useAppStore((state) => state.setExecutionError);
   const setIsResultsPaneOpen = useAppStore((state) => state.setIsResultsPaneOpen);
+  const activeSpaceId = useAppStore((state) => state.activeSpaceId);
 
   const handleExecute = async () => {
     if (hasErrors) {
@@ -59,7 +57,7 @@ const ControlsPane: React.FC = () => {
     setExecutionError(null);
     setExecutionResult(null);
     try {
-      const result = await executeCode(fileContent);
+      const result = await executeCode(fileContent, activeSpaceId ?? "");
       setExecutionResult(JSON.stringify(result, null, 2));
     } catch (error) {
       if (error instanceof Error) {
