@@ -216,7 +216,6 @@ pub struct CustomPredicate {
     // TODO: Add args type information?
 }
 
-// TODO: pass params first to follow the convention in the rest of the code base.
 impl CustomPredicate {
     pub fn empty() -> Self {
         Self {

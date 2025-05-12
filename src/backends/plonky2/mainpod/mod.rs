@@ -397,8 +397,6 @@ impl Prover {
         )?;
 
         let statements = layout_statements(params, &inputs);
-        // TODO: Pass custom_predicate_verifications and add the index to aux in the operations
-        // with custom predicates
         let operations = process_private_statements_operations(
             params,
             &statements,
