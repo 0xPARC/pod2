@@ -396,12 +396,18 @@ impl OperationVerifyGadget {
         op: &OperationTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
+        let value_zero = ValueTarget::zero(builder);
+
         let op_code_ok = op.has_native_type(builder, NativeOperation::SumOf);
 
         let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) =
             self.first_n_args_as_values(builder, resolved_op_args);
 
-        let expected_sum = builder.i64_add(arg2_value, arg3_value);
+        // Select to avoid overflow.
+        let summand1 = builder.select_value(op_code_ok, arg2_value, value_zero);
+        let summand2 = builder.select_value(op_code_ok, arg3_value, value_zero);
+
+        let expected_sum = builder.i64_add(summand1, summand2);
 
         let sum_ok = builder.is_equal_slice(&arg1_value.elements, &expected_sum.elements);
 
@@ -426,12 +432,18 @@ impl OperationVerifyGadget {
         op: &OperationTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
+        let value_zero = ValueTarget::zero(builder);
+
         let op_code_ok = op.has_native_type(builder, NativeOperation::ProductOf);
 
         let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) =
             self.first_n_args_as_values(builder, resolved_op_args);
 
-        let expected_product = builder.i64_mul(arg2_value, arg3_value);
+        // Select to avoid overflow.
+        let factor1 = builder.select_value(op_code_ok, arg2_value, value_zero);
+        let factor2 = builder.select_value(op_code_ok, arg3_value, value_zero);
+
+        let expected_product = builder.i64_mul(factor1, factor2);
 
         let product_ok = builder.is_equal_slice(&arg1_value.elements, &expected_product.elements);
 
@@ -790,6 +802,8 @@ impl MainPodVerifyCircuit {
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Not;
+
     use plonky2::{
         field::{goldilocks_field::GoldilocksField, types::Field},
         plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig},
@@ -1345,86 +1359,96 @@ mod tests {
 
     #[test]
     fn test_operation_verify_sumof() -> Result<()> {
-        I64_TEST_PAIRS.into_iter().try_for_each(|(a, b)| {
-            let sum = a + b;
-            let st1: mainpod::Statement = Statement::ValueOf(
-                AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
-                sum.into(),
-            )
-            .into();
+        I64_TEST_PAIRS
+            .into_iter()
+            .flat_map(|(a, b)| {
+                let (sum, overflow) = a.overflowing_add(b);
+                overflow.not().then_some((a, b, sum))
+            })
+            .try_for_each(|(a, b, sum)| {
+                let st1: mainpod::Statement = Statement::ValueOf(
+                    AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
+                    sum.into(),
+                )
+                .into();
 
-            let st2: mainpod::Statement = Statement::ValueOf(
-                AnchoredKey::from((PodId(RawValue::from(128).into()), "mundo")),
-                a.into(),
-            )
-            .into();
+                let st2: mainpod::Statement = Statement::ValueOf(
+                    AnchoredKey::from((PodId(RawValue::from(128).into()), "mundo")),
+                    a.into(),
+                )
+                .into();
 
-            let st3: mainpod::Statement = Statement::ValueOf(
-                AnchoredKey::from((PodId(RawValue::from(256).into()), "!")),
-                b.into(),
-            )
-            .into();
+                let st3: mainpod::Statement = Statement::ValueOf(
+                    AnchoredKey::from((PodId(RawValue::from(256).into()), "!")),
+                    b.into(),
+                )
+                .into();
 
-            let st: mainpod::Statement = Statement::SumOf(
-                AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
-                AnchoredKey::from((PodId(RawValue::from(128).into()), "mundo")),
-                AnchoredKey::from((PodId(RawValue::from(256).into()), "!")),
-            )
-            .into();
-            let op = mainpod::Operation(
-                OperationType::Native(NativeOperation::SumOf),
-                vec![
-                    OperationArg::Index(0),
-                    OperationArg::Index(1),
-                    OperationArg::Index(2),
-                ],
-                OperationAux::None,
-            );
-            let prev_statements = vec![st1, st2, st3];
-            operation_verify(st, op, prev_statements, vec![])
-        })
+                let st: mainpod::Statement = Statement::SumOf(
+                    AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
+                    AnchoredKey::from((PodId(RawValue::from(128).into()), "mundo")),
+                    AnchoredKey::from((PodId(RawValue::from(256).into()), "!")),
+                )
+                .into();
+                let op = mainpod::Operation(
+                    OperationType::Native(NativeOperation::SumOf),
+                    vec![
+                        OperationArg::Index(0),
+                        OperationArg::Index(1),
+                        OperationArg::Index(2),
+                    ],
+                    OperationAux::None,
+                );
+                let prev_statements = vec![st1, st2, st3];
+                operation_verify(st, op, prev_statements, vec![])
+            })
     }
 
     #[test]
     fn test_operation_verify_productof() -> Result<()> {
-        I64_TEST_PAIRS.into_iter().try_for_each(|(a, b)| {
-            let prod = a * b;
-            let st1: mainpod::Statement = Statement::ValueOf(
-                AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
-                prod.into(),
-            )
-            .into();
+        I64_TEST_PAIRS
+            .into_iter()
+            .flat_map(|(a, b)| {
+                let (prod, overflow) = a.overflowing_mul(b);
+                overflow.not().then_some((a, b, prod))
+            })
+            .try_for_each(|(a, b, prod)| {
+                let st1: mainpod::Statement = Statement::ValueOf(
+                    AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
+                    prod.into(),
+                )
+                .into();
 
-            let st2: mainpod::Statement = Statement::ValueOf(
-                AnchoredKey::from((PodId(RawValue::from(128).into()), "mundo")),
-                a.into(),
-            )
-            .into();
+                let st2: mainpod::Statement = Statement::ValueOf(
+                    AnchoredKey::from((PodId(RawValue::from(128).into()), "mundo")),
+                    a.into(),
+                )
+                .into();
 
-            let st3: mainpod::Statement = Statement::ValueOf(
-                AnchoredKey::from((PodId(RawValue::from(256).into()), "!")),
-                b.into(),
-            )
-            .into();
+                let st3: mainpod::Statement = Statement::ValueOf(
+                    AnchoredKey::from((PodId(RawValue::from(256).into()), "!")),
+                    b.into(),
+                )
+                .into();
 
-            let st: mainpod::Statement = Statement::ProductOf(
-                AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
-                AnchoredKey::from((PodId(RawValue::from(128).into()), "mundo")),
-                AnchoredKey::from((PodId(RawValue::from(256).into()), "!")),
-            )
-            .into();
-            let op = mainpod::Operation(
-                OperationType::Native(NativeOperation::ProductOf),
-                vec![
-                    OperationArg::Index(0),
-                    OperationArg::Index(1),
-                    OperationArg::Index(2),
-                ],
-                OperationAux::None,
-            );
-            let prev_statements = vec![st1, st2, st3];
-            operation_verify(st, op, prev_statements, vec![])
-        })
+                let st: mainpod::Statement = Statement::ProductOf(
+                    AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
+                    AnchoredKey::from((PodId(RawValue::from(128).into()), "mundo")),
+                    AnchoredKey::from((PodId(RawValue::from(256).into()), "!")),
+                )
+                .into();
+                let op = mainpod::Operation(
+                    OperationType::Native(NativeOperation::ProductOf),
+                    vec![
+                        OperationArg::Index(0),
+                        OperationArg::Index(1),
+                        OperationArg::Index(2),
+                    ],
+                    OperationAux::None,
+                );
+                let prev_statements = vec![st1, st2, st3];
+                operation_verify(st, op, prev_statements, vec![])
+            })
     }
 
     #[test]
