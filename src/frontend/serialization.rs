@@ -1,19 +1,28 @@
 use std::{any::Any, collections::HashMap};
 
+use plonky2::{
+    plonk::{
+        circuit_builder::CircuitBuilder, circuit_data::CircuitConfig, proof::ProofWithPublicInputs,
+    },
+    util::serialization::{Buffer, Read},
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::Error;
 use crate::{
     backends::plonky2::{
+        basetypes::{C, D},
+        circuits::mainpod::MainPodVerifyCircuit,
         mainpod::{pad_statement, MainPod as Plonky2MainPod, Statement as BackendStatement},
         mock::{mainpod::MockMainPod, signedpod::MockSignedPod},
+        primitives::signature::{Signature, VP},
         signedpod::SignedPod as Plonky2SignedPod,
     },
     frontend::{MainPod, SignedPod},
     middleware::{
         self, containers::Dictionary, serialization::ordered_map, AnchoredKey, Key, Params, PodId,
-        Statement, StatementArg, Value, SELF,
+        Statement, StatementArg, Value, F, SELF,
     },
 };
 
@@ -67,13 +76,36 @@ impl From<SignedPod> for SerializedSignedPod {
     }
 }
 
+fn decode_signature(signature: &str) -> Result<Signature, Error> {
+    use plonky2::util::serialization::Read;
+
+    let decoded = hex::decode(signature).map_err(|e| {
+        Error::custom(format!(
+            "Failed to decode signature: {}. Value: {}",
+            e, signature
+        ))
+    })?;
+    let mut buf = Buffer::new(&decoded);
+
+    let proof = buf.read_proof(&VP.0.common).map_err(|e| {
+        Error::custom(format!(
+            "Failed to decode signature: {}. Value: {}",
+            e, signature
+        ))
+    })?;
+
+    let sig = Signature(proof);
+
+    Ok(sig)
+}
+
 impl From<SerializedSignedPod> for SignedPod {
     fn from(serialized: SerializedSignedPod) -> Self {
         match serialized.pod_type {
             SignedPodType::Signed => SignedPod {
                 pod: Box::new(Plonky2SignedPod {
                     id: serialized.id,
-                    signature: serde_json::from_str(&serialized.proof).unwrap(),
+                    signature: decode_signature(&serialized.proof).unwrap(),
                     dict: Dictionary::new(serialized.entries.clone()).unwrap(),
                 }),
                 kvs: serialized.entries,
@@ -109,6 +141,41 @@ impl From<MainPod> for SerializedMainPod {
     }
 }
 
+fn decode_proof(proof: &str, params: &Params) -> Result<ProofWithPublicInputs<F, C, D>, Error> {
+    let decoded = hex::decode(proof).map_err(|e| {
+        Error::custom(format!(
+            "Failed to decode proof from hex: {}. Value: {}",
+            e, proof
+        ))
+    })?;
+    let mut buf = Buffer::new(&decoded);
+    let config = CircuitConfig::standard_recursion_config();
+    let mut builder = CircuitBuilder::<F, D>::new(config);
+    let _main_pod = MainPodVerifyCircuit {
+        params: params.clone(),
+    }
+    .eval(&mut builder)
+    .map_err(|e| {
+        Error::custom(format!(
+            "Failed to evaluate MainPodVerifyCircuit: {}. Value: {}",
+            e, proof
+        ))
+    })?;
+
+    let data = builder.build::<C>();
+
+    let proof = buf
+        .read_proof_with_public_inputs(&data.common)
+        .map_err(|e| {
+            Error::custom(format!(
+                "Failed to read proof from buffer: {}. Value: {}",
+                e, proof
+            ))
+        })?;
+
+    Ok(proof)
+}
+
 impl TryFrom<SerializedMainPod> for MainPod {
     type Error = Error;
 
@@ -116,7 +183,7 @@ impl TryFrom<SerializedMainPod> for MainPod {
         match serialized.pod_type {
             MainPodType::Main => Ok(MainPod {
                 pod: Box::new(Plonky2MainPod::new(
-                    serde_json::from_str(&serialized.proof).map_err(|e| {
+                    decode_proof(&serialized.proof, &serialized.params).map_err(|e| {
                         Error::custom(format!(
                             "Failed to deserialize MainPod proof: {}. Value: {}",
                             e, serialized.proof

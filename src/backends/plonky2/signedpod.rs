@@ -115,7 +115,10 @@ impl Pod for SignedPod {
     }
 
     fn serialized_proof(&self) -> String {
-        serde_json::to_string(&self.signature).unwrap()
+        let mut buffer = Vec::new();
+        use plonky2::util::serialization::Write;
+        buffer.write_proof(&self.signature.0).unwrap();
+        hex::encode(buffer)
     }
 }
 

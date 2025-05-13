@@ -8,7 +8,6 @@ use std::{
     hash,
 };
 
-use base64::{prelude::BASE64_STANDARD, Engine};
 use containers::{Array, Dictionary, Set};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
