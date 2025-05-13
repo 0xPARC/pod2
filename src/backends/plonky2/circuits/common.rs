@@ -842,6 +842,7 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     fn select_bool(&mut self, b: BoolTarget, x: BoolTarget, y: BoolTarget) -> BoolTarget;
     fn constant_value(&mut self, v: RawValue) -> ValueTarget;
     fn is_equal_slice(&mut self, xs: &[Target], ys: &[Target]) -> BoolTarget;
+    fn safer_range_check(&mut self, x: Target, num_bits: usize);
 
     // Convenience methods for checking values.
     /// Checks whether `xs` is right-padded with 0s so as to represent a `Value`.
@@ -1034,6 +1035,13 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
         })
     }
 
+    fn safer_range_check(&mut self, x: Target, num_bits: usize) {
+        assert!(num_bits <= F::BITS);
+        let zero = self.zero();
+        let (_, x_high) = self.split_low_high(x, num_bits, F::BITS);
+        self.connect(x_high, zero);
+    }
+
     fn statement_arg_is_value(&mut self, arg: &StatementArgTarget) -> BoolTarget {
         let zeros = iter::repeat(self.zero())
             .take(STATEMENT_ARG_F_LEN - VALUE_SIZE)
@@ -1049,8 +1057,8 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
             .for_each(|l| self.assert_zero(l));
 
         // 32-bit range check.
-        self.range_check(x.elements[0], NUM_BITS);
-        self.range_check(x.elements[1], NUM_BITS);
+        self.safer_range_check(x.elements[0], NUM_BITS);
+        self.safer_range_check(x.elements[1], NUM_BITS);
     }
 
     fn i64_is_negative(&mut self, x: ValueTarget) -> BoolTarget {
@@ -1073,7 +1081,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
             let one = builder.one();
             let y_minus_one = builder.sub(y, one);
             let expr = builder.sub(y_minus_one, x);
-            builder.range_check(expr, NUM_BITS);
+            builder.safer_range_check(expr, NUM_BITS);
         };
 
         // Check if `x` and `y` have the same sign. If not, swap.
