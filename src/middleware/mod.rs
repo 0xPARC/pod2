@@ -673,10 +673,6 @@ impl Params {
         );
         println!();
     }
-
-    fn serialized_proof(&self) -> String {
-        BASE64_STANDARD.encode(serde_json::to_string(self).unwrap())
-    }
 }
 
 pub type DynError = dyn std::error::Error + Send + Sync;
@@ -695,6 +691,8 @@ pub trait Pod: fmt::Debug + DynClone + Any {
             })
             .collect()
     }
+
+    fn serialized_proof(&self) -> String;
 }
 
 // impl Clone for Box<dyn SignedPod>
@@ -722,6 +720,9 @@ impl Pod for NonePod {
     }
     fn pub_statements(&self) -> Vec<Statement> {
         Vec::new()
+    }
+    fn serialized_proof(&self) -> String {
+        "".to_string()
     }
 }
 

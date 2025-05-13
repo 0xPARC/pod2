@@ -4,7 +4,9 @@
 use std::{collections::HashMap, convert::From, fmt};
 
 use itertools::Itertools;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serialization::{SerializedMainPod, SerializedSignedPod};
 
 use crate::middleware::{
     self, check_st_tmpl, hash_str, hash_values, AnchoredKey, Hash, Key, MainPodInputs,
@@ -59,8 +61,8 @@ impl SignedPodBuilder {
 
 /// SignedPod is a wrapper on top of backend::SignedPod, which additionally stores the
 /// string<-->hash relation of the keys.
-#[derive(Debug, Clone)]
-//#[serde(try_from = "SignedPodHelper", into = "SignedPodHelper")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(from = "SerializedSignedPod", into = "SerializedSignedPod")]
 pub struct SignedPod {
     pub pod: Box<dyn middleware::Pod>,
     // We store a copy of the key values for quick access
@@ -609,16 +611,18 @@ impl MainPodBuilder {
 
         Ok(MainPod {
             pod,
+            params: self.params.clone(),
             public_statements,
         })
     }
 }
 
-#[derive(Debug, Clone)]
-//#[serde(try_from = "MainPodHelper", into = "MainPodHelper")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "SerializedMainPod", into = "SerializedMainPod")]
 pub struct MainPod {
     pub pod: Box<dyn middleware::Pod>,
     pub public_statements: Vec<Statement>,
+    pub params: Params,
 }
 
 impl fmt::Display for MainPod {

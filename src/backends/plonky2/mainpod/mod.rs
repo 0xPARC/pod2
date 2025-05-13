@@ -215,7 +215,7 @@ fn fill_pad<T: Clone>(v: &mut Vec<T>, pad_value: T, len: usize) {
     }
 }
 
-fn pad_statement(params: &Params, s: &mut Statement) {
+pub fn pad_statement(params: &Params, s: &mut Statement) {
     fill_pad(&mut s.1, StatementArg::None, params.max_statement_args)
 }
 
@@ -452,8 +452,7 @@ pub type MainPodProof = Proof<F, C, D>;
 pub struct MainPod {
     params: Params,
     id: PodId,
-    // TODO remove pub
-    pub public_statements: Vec<Statement>,
+    public_statements: Vec<Statement>,
     proof: MainPodProof,
 }
 
@@ -540,6 +539,10 @@ impl Pod for MainPod {
             .cloned()
             .map(|statement| normalize_statement(&statement, self.id()))
             .collect()
+    }
+
+    fn serialized_proof(&self) -> String {
+        serde_json::to_string(&self.proof).unwrap()
     }
 }
 

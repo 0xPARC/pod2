@@ -133,6 +133,10 @@ impl Pod for MockSignedPod {
             .map(|(k, v)| Statement::ValueOf(AnchoredKey::from((id, k)), v))
             .collect()
     }
+
+    fn serialized_proof(&self) -> String {
+        serde_json::to_string(&self.signature).unwrap()
+    }
 }
 
 #[cfg(test)]
