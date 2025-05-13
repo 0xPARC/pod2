@@ -8,6 +8,7 @@ use std::{
     hash,
 };
 
+use base64::{prelude::BASE64_STANDARD, Engine};
 use containers::{Array, Dictionary, Set};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -553,7 +554,7 @@ impl ToFields for PodId {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum PodType {
     None = 0,
     MockSigned = 1,
@@ -574,7 +575,7 @@ impl fmt::Display for PodType {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Params {
     pub max_input_signed_pods: usize,
@@ -666,6 +667,10 @@ impl Params {
         );
         println!();
     }
+
+    fn serialized_proof(&self) -> String {
+        BASE64_STANDARD.encode(serde_json::to_string(self).unwrap())
+    }
 }
 
 pub type DynError = dyn std::error::Error + Send + Sync;
@@ -684,15 +689,6 @@ pub trait Pod: fmt::Debug + DynClone + Any {
             })
             .collect()
     }
-    // Front-end Pods keep references to middleware Pods. Most of the
-    // middleware data can be derived directly from front-end data, but the
-    // "proof" data is only created at the point of proving/signing, and
-    // cannot be reconstructed. As such, we need to serialize it whenever
-    // we serialize a front-end Pod. Since the front-end does not understand
-    // the implementation details of the middleware, this method allows the
-    // middleware to provide some serialized data that can be used to
-    // reconstruct the proof.
-    fn serialized_proof(&self) -> String;
 }
 
 // impl Clone for Box<dyn SignedPod>
@@ -720,9 +716,6 @@ impl Pod for NonePod {
     }
     fn pub_statements(&self) -> Vec<Statement> {
         Vec::new()
-    }
-    fn serialized_proof(&self) -> String {
-        "".to_string()
     }
 }
 

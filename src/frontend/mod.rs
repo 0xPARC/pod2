@@ -21,14 +21,6 @@ pub use error::*;
 pub use operation::*;
 use serialization::*;
 
-/// This type is just for presentation purposes.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub enum PodClass {
-    #[default]
-    Signed,
-    Main,
-}
-
 #[derive(Clone, Debug)]
 pub struct SignedPodBuilder {
     pub params: Params,
@@ -67,8 +59,8 @@ impl SignedPodBuilder {
 
 /// SignedPod is a wrapper on top of backend::SignedPod, which additionally stores the
 /// string<-->hash relation of the keys.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(try_from = "SignedPodHelper", into = "SignedPodHelper")]
+#[derive(Debug, Clone)]
+//#[serde(try_from = "SignedPodHelper", into = "SignedPodHelper")]
 pub struct SignedPod {
     pub pod: Box<dyn middleware::Pod>,
     // We store a copy of the key values for quick access
@@ -622,8 +614,8 @@ impl MainPodBuilder {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(try_from = "MainPodHelper", into = "MainPodHelper")]
+#[derive(Debug, Clone)]
+//#[serde(try_from = "MainPodHelper", into = "MainPodHelper")]
 pub struct MainPod {
     pub pod: Box<dyn middleware::Pod>,
     pub public_statements: Vec<Statement>,

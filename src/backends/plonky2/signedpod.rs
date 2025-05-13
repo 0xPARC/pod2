@@ -113,13 +113,6 @@ impl Pod for SignedPod {
             .map(|(k, v)| Statement::ValueOf(AnchoredKey::from((id, k)), v))
             .collect()
     }
-
-    fn serialized_proof(&self) -> String {
-        let mut buffer = Vec::new();
-        use plonky2::util::serialization::Write;
-        buffer.write_proof(&self.signature.0).unwrap();
-        hex::encode(buffer)
-    }
 }
 
 #[cfg(test)]

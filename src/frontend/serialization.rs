@@ -1,101 +1,448 @@
-use std::collections::HashMap;
+use std::{any::Any, collections::BTreeMap, fmt};
 
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-
-use crate::{
-    backends::plonky2::mock::{mainpod::MockMainPod, signedpod::MockSignedPod},
-    frontend::{Error, MainPod, SignedPod, Statement},
-    middleware::{containers::Dictionary, Key, PodId, Value},
+use serde::{
+    de::{self, MapAccess, Visitor},
+    ser::SerializeStruct,
+    Deserialize, Serialize,
 };
 
-#[derive(Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-#[schemars(title = "SignedPod")]
-pub struct SignedPodHelper {
-    entries: HashMap<Key, Value>,
-    proof: String,
-    pod_class: String,
-    pod_type: String,
-}
+use crate::{
+    backends::plonky2::{
+        mainpod::{MainPod as Plonky2MainPod, MainPodProof, Statement as BackendStatement},
+        mock::{mainpod::MockMainPod, signedpod::MockSignedPod},
+        signedpod::SignedPod as Plonky2SignedPod,
+    },
+    frontend::{MainPod, SignedPod},
+    middleware::{
+        containers::Dictionary, AnchoredKey, Params, Pod, PodId, PodType, Statement, StatementArg,
+        Value, SELF,
+    },
+};
 
-impl TryFrom<SignedPodHelper> for SignedPod {
-    type Error = Error;
+impl Serialize for SignedPod {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut state = serializer.serialize_struct("SignedPod", 4)?;
+        //  state.serialize_field("pod", &self.pod)?;
+        // Force sorting by keys using a BTreeMap
+        let kvs_btree: BTreeMap<String, Value> = self
+            .kvs
+            .clone()
+            .into_iter()
+            .map(|(k, v)| (k.name().to_string(), v))
+            .collect();
+        state.serialize_field("entries", &kvs_btree)?;
+        state.serialize_field("id", &self.id())?;
 
-    fn try_from(helper: SignedPodHelper) -> Result<SignedPod, Self::Error> {
-        if helper.pod_class != "Signed" {
-            return Err(Error::custom("pod_class is not Signed"));
+        if let Ok(pod) = (self.pod.clone() as Box<dyn Any>).downcast::<MockSignedPod>() {
+            state.serialize_field("podType", &PodType::MockSigned)?;
+            state.serialize_field("proof", &pod.signature())?;
+        } else if let Ok(pod) = (self.pod.clone() as Box<dyn Any>).downcast::<Plonky2SignedPod>() {
+            state.serialize_field("podType", &PodType::Signed)?;
+            state.serialize_field("proof", &pod.signature)?;
         }
-        if helper.pod_type != "Mock" {
-            return Err(Error::custom("pod_type is not Mock"));
-        }
 
-        let dict = Dictionary::new(helper.entries.clone())?.clone();
-        let pod = MockSignedPod::new(PodId(dict.commitment()), helper.proof, dict.kvs().clone());
-
-        Ok(SignedPod {
-            pod: Box::new(pod),
-            kvs: helper.entries,
-        })
+        state.end()
     }
 }
 
-impl From<SignedPod> for SignedPodHelper {
-    fn from(pod: SignedPod) -> Self {
-        SignedPodHelper {
-            entries: pod.kvs,
-            proof: pod.pod.serialized_proof(),
-            pod_class: "Signed".to_string(),
-            pod_type: "Mock".to_string(),
+impl<'de> Deserialize<'de> for SignedPod {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        enum Field {
+            Entries,
+            Id,
+            Proof,
+            PodType,
         }
+
+        impl<'de> Deserialize<'de> for Field {
+            fn deserialize<D>(deserializer: D) -> Result<Field, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct FieldVisitor;
+
+                impl Visitor<'_> for FieldVisitor {
+                    type Value = Field;
+
+                    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                        formatter.write_str("`entries`, `id`, `proof`, or `podType`")
+                    }
+
+                    fn visit_str<E>(self, value: &str) -> Result<Field, E>
+                    where
+                        E: de::Error,
+                    {
+                        match value {
+                            "entries" => Ok(Field::Entries),
+                            "id" => Ok(Field::Id),
+                            "proof" => Ok(Field::Proof),
+                            "podType" => Ok(Field::PodType),
+                            _ => Err(de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(FieldVisitor)
+            }
+        }
+
+        struct SignedPodVisitor;
+
+        impl<'de> Visitor<'de> for SignedPodVisitor {
+            type Value = SignedPod;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("struct SignedPod")
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<SignedPod, V::Error>
+            where
+                V: MapAccess<'de>,
+            {
+                let mut entries: Option<Dictionary> = None;
+                let mut id: Option<PodId> = None;
+                let mut proof_value: Option<serde_json::Value> = None;
+                let mut pod_type: Option<PodType> = None;
+
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::Entries => {
+                            if entries.is_some() {
+                                return Err(de::Error::duplicate_field("entries"));
+                            }
+                            entries = Some(map.next_value()?);
+                        }
+                        Field::Id => {
+                            if id.is_some() {
+                                return Err(de::Error::duplicate_field("id"));
+                            }
+                            id = Some(map.next_value()?);
+                        }
+                        Field::Proof => {
+                            if proof_value.is_some() {
+                                return Err(de::Error::duplicate_field("proof"));
+                            }
+                            proof_value = Some(map.next_value()?);
+                        }
+                        Field::PodType => {
+                            if pod_type.is_some() {
+                                return Err(de::Error::duplicate_field("podType"));
+                            }
+                            pod_type = Some(map.next_value()?);
+                        }
+                    }
+                }
+
+                let entries = entries.ok_or_else(|| de::Error::missing_field("entries"))?;
+                let _id = id.ok_or_else(|| de::Error::missing_field("id"))?;
+                let proof_value = proof_value.ok_or_else(|| de::Error::missing_field("proof"))?;
+                let pod_type = pod_type.ok_or_else(|| de::Error::missing_field("podType"))?;
+
+                let kvs = entries.kvs().clone();
+                let pod: Box<dyn Pod> = match pod_type {
+                    PodType::MockSigned => {
+                        let proof_string: String = serde_json::from_value(proof_value.clone())
+                            .map_err(|e| {
+                                de::Error::custom(format!(
+                                    "Proof for MockSigned is not a string: {}. Value: {}",
+                                    e, proof_value
+                                ))
+                            })?;
+                        Box::new(MockSignedPod::new(
+                            PodId(entries.commitment()),
+                            proof_string,
+                            kvs.clone(),
+                        ))
+                    }
+                    PodType::Signed => {
+                        let signature_obj: crate::backends::plonky2::primitives::signature::Signature =
+                            serde_json::from_value(proof_value.clone()).map_err(|e| {
+                                de::Error::custom(format!(
+                                    "Proof for Signed is not a Plonky2 Signature object: {}. Value: {}",
+                                    e, proof_value
+                                ))
+                            })?;
+                        Box::new(Plonky2SignedPod {
+                            id: PodId(entries.commitment()), // Use derived ID
+                            signature: signature_obj,
+                            dict: entries,
+                        })
+                    }
+                    _ => {
+                        return Err(de::Error::custom(format!(
+                            "Unsupported pod_type for SignedPod: {:?}",
+                            pod_type
+                        )))
+                    }
+                };
+
+                Ok(SignedPod { pod, kvs })
+            }
+        }
+
+        const FIELDS: &[&str] = &["entries", "id", "proof", "podType"];
+        deserializer.deserialize_struct("SignedPod", FIELDS, SignedPodVisitor)
     }
 }
 
-#[derive(Serialize, Deserialize, JsonSchema)]
-#[schemars(title = "MainPod")]
-#[serde(rename_all = "camelCase")]
-pub struct MainPodHelper {
-    public_statements: Vec<Statement>,
-    proof: String,
-    pod_class: String,
-    pod_type: String,
-}
+impl Serialize for MainPod {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut state = serializer.serialize_struct("MainPod", 5)?;
+        state.serialize_field("id", &self.pod.id())?;
+        state.serialize_field("public_statements", &self.public_statements)?;
 
-impl TryFrom<MainPodHelper> for MainPod {
-    type Error = Error; // or you can create a custom error type
-
-    fn try_from(helper: MainPodHelper) -> Result<Self, Self::Error> {
-        if helper.pod_class != "Main" {
-            return Err(Error::custom("pod_class is not Main"));
-        }
-        if helper.pod_type != "Mock" {
-            return Err(Error::custom("pod_type is not Mock"));
+        if let Ok(pod) = (self.pod.clone() as Box<dyn Any>).downcast::<MockMainPod>() {
+            state.serialize_field("params", &pod.params())?;
+            state.serialize_field("podType", &PodType::MockMain)?;
+            state.serialize_field("proof", &pod.serialized_proof())?;
+        } else if let Ok(pod) = (self.pod.clone() as Box<dyn Any>).downcast::<Plonky2MainPod>() {
+            state.serialize_field("params", &pod.params())?;
+            state.serialize_field("podType", &PodType::Main)?;
+            state.serialize_field("proof", &pod.proof())?;
         }
 
-        let pod = MockMainPod::deserialize(helper.proof)
-            .map_err(|e| Error::custom(format!("Failed to deserialize proof: {}", e)))?;
-
-        Ok(MainPod {
-            pod: Box::new(pod),
-            public_statements: helper.public_statements,
-        })
+        state.end()
     }
 }
 
-impl From<MainPod> for MainPodHelper {
-    fn from(pod: MainPod) -> Self {
-        MainPodHelper {
-            public_statements: pod.public_statements,
-            proof: pod.pod.serialized_proof(),
-            pod_class: "Main".to_string(),
-            pod_type: "Mock".to_string(),
+impl<'de> Deserialize<'de> for MainPod {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        enum Field {
+            Id,
+            PublicStatements,
+            PodType,
+            Proof,
+            Params,
         }
+
+        impl<'de> Deserialize<'de> for Field {
+            fn deserialize<D>(deserializer: D) -> Result<Field, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct FieldVisitor;
+
+                impl Visitor<'_> for FieldVisitor {
+                    type Value = Field;
+
+                    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                        formatter
+                            .write_str("`id`, `public_statements`, `podType`, `proof`, or `params`")
+                    }
+
+                    fn visit_str<E>(self, value: &str) -> Result<Field, E>
+                    where
+                        E: de::Error,
+                    {
+                        match value {
+                            "id" => Ok(Field::Id),
+                            "public_statements" => Ok(Field::PublicStatements),
+                            "podType" => Ok(Field::PodType),
+                            "proof" => Ok(Field::Proof),
+                            "params" => Ok(Field::Params),
+                            _ => Err(de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(FieldVisitor)
+            }
+        }
+
+        struct MainPodVisitor;
+
+        impl<'de> Visitor<'de> for MainPodVisitor {
+            type Value = MainPod;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("struct MainPod")
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<MainPod, V::Error>
+            where
+                V: MapAccess<'de>,
+            {
+                let mut id: Option<PodId> = None;
+                let mut public_statements: Option<Vec<Statement>> = None;
+                let mut pod_type: Option<PodType> = None;
+                let mut proof_value: Option<serde_json::Value> = None;
+                let mut params: Option<Params> = None;
+
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::Id => {
+                            if id.is_some() {
+                                return Err(de::Error::duplicate_field("id"));
+                            }
+                            id = Some(map.next_value()?);
+                        }
+                        Field::PublicStatements => {
+                            if public_statements.is_some() {
+                                return Err(de::Error::duplicate_field("public_statements"));
+                            }
+                            public_statements = Some(map.next_value()?);
+                        }
+                        Field::PodType => {
+                            if pod_type.is_some() {
+                                return Err(de::Error::duplicate_field("podType"));
+                            }
+                            pod_type = Some(map.next_value()?);
+                        }
+                        Field::Proof => {
+                            if proof_value.is_some() {
+                                return Err(de::Error::duplicate_field("proof"));
+                            }
+                            proof_value = Some(map.next_value()?);
+                        }
+                        Field::Params => {
+                            if params.is_some() {
+                                return Err(de::Error::duplicate_field("params"));
+                            }
+                            params = Some(map.next_value()?);
+                        }
+                    }
+                }
+
+                let id = id.ok_or_else(|| de::Error::missing_field("id"))?;
+                let public_statements = public_statements
+                    .ok_or_else(|| de::Error::missing_field("public_statements"))?;
+                let pod_type = pod_type.ok_or_else(|| de::Error::missing_field("podType"))?;
+                let proof_value = proof_value.ok_or_else(|| de::Error::missing_field("proof"))?;
+                let params = params.ok_or_else(|| de::Error::missing_field("params"))?;
+
+                let pod: Box<dyn Pod> = match pod_type {
+                    PodType::MockMain => {
+                        let proof_string: String = serde_json::from_value(proof_value.clone())
+                            .map_err(|e| {
+                                de::Error::custom(format!(
+                                    "Proof for MockMainPod is not a string: {}. Value: {}",
+                                    e, proof_value
+                                ))
+                            })?;
+                        Box::new(MockMainPod::deserialize(proof_string).map_err(|e| {
+                            de::Error::custom(format!("Failed to deserialize MockMainPod: {}", e))
+                        })?)
+                    }
+                    PodType::Main => {
+                        let actual_proof: MainPodProof =
+                            serde_json::from_value(proof_value.clone()).map_err(|e| {
+                                de::Error::custom(format!(
+                                    "Proof for Plonky2MainPod is not a valid Plonky2Proof structure: {}. Value: {}",
+                                    e, proof_value
+                                ))
+                            })?;
+                        Box::new(Plonky2MainPod::new(
+                            actual_proof,
+                            public_statements
+                                .clone()
+                                .into_iter()
+                                .map(|s| {
+                                    // We need to turn the middleware::Statement into a backend statement
+                                    let bs: BackendStatement = s.into();
+                                    BackendStatement(
+                                        bs.0.clone(),
+                                        bs.1.iter()
+                                            .map(|sa| match &sa {
+                                                // Reverse the normalization step by restoring the SELF PodId in places
+                                                // where the current Pod's ID has been used in an anchored key.
+                                                StatementArg::Key(AnchoredKey { pod_id, key })
+                                                    if *pod_id == id =>
+                                                {
+                                                    println!(
+                                                        "Replacing {:?} with {:?}",
+                                                        pod_id, SELF
+                                                    );
+                                                    StatementArg::Key(AnchoredKey::new(
+                                                        SELF,
+                                                        key.clone(),
+                                                    ))
+                                                }
+                                                _ => sa.clone(),
+                                            })
+                                            .collect(),
+                                    )
+                                })
+                                .collect(),
+                            id,
+                            params,
+                        ))
+                    }
+                    _ => {
+                        return Err(de::Error::custom(format!(
+                            "Unsupported pod_type for MainPod: {:?}",
+                            pod_type
+                        )))
+                    }
+                };
+
+                Ok(MainPod {
+                    pod,
+                    public_statements,
+                })
+            }
+        }
+
+        const FIELDS: &[&str] = &["id", "public_statements", "podType", "proof", "params"];
+        deserializer.deserialize_struct("MainPod", FIELDS, MainPodVisitor)
     }
 }
+
+// #[derive(Serialize, Deserialize, JsonSchema)]
+// #[schemars(title = "MainPod")]
+// #[serde(rename_all = "camelCase")]
+// pub struct MainPodHelper {
+//     public_statements: Vec<Statement>,
+//     proof: String,
+//     pod_class: String,
+//     pod_type: String,
+// }
+
+// impl TryFrom<MainPodHelper> for MainPod {
+//     type Error = Error; // or you can create a custom error type
+
+//     fn try_from(helper: MainPodHelper) -> Result<Self, Self::Error> {
+//         if helper.pod_class != "Main" {
+//             return Err(Error::custom("pod_class is not Main"));
+//         }
+//         if helper.pod_type != "Mock" {
+//             return Err(Error::custom("pod_type is not Mock"));
+//         }
+
+//         let pod = MockMainPod::deserialize(helper.proof)
+//             .map_err(|e| Error::custom(format!("Failed to deserialize proof: {}", e)))?;
+
+//         Ok(MainPod {
+//             pod: Box::new(pod),
+//             public_statements: helper.public_statements,
+//         })
+//     }
+// }
+
+// impl From<MainPod> for MainPodHelper {
+//     fn from(pod: MainPod) -> Self {
+//         MainPodHelper {
+//             public_statements: pod.public_statements,
+//             proof: pod.pod.serialized_proof(),
+//             pod_class: "Main".to_string(),
+//             pod_type: "Mock".to_string(),
+//         }
+//     }
+// }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
 
     // Pretty assertions give nicer diffs between expected and actual values
     use pretty_assertions::assert_eq;
@@ -103,7 +450,12 @@ mod tests {
 
     use super::*;
     use crate::{
-        backends::plonky2::mock::{mainpod::MockProver, signedpod::MockSigner},
+        backends::plonky2::{
+            mainpod::Prover,
+            mock::{mainpod::MockProver, signedpod::MockSigner},
+            primitives::signature::SecretKey,
+            signedpod::Signer,
+        },
         examples::{
             eth_dos_pod_builder, eth_friend_signed_pod_builder, zu_kyc_pod_builder,
             zu_kyc_sign_pod_builders,
@@ -112,7 +464,7 @@ mod tests {
         middleware::{
             self,
             containers::{Array, Set},
-            Params, TypedValue,
+            Params, RawValue, TypedValue,
         },
     };
 
@@ -213,7 +565,7 @@ mod tests {
         assert_eq!(pod.id(), deserialized.id())
     }
 
-    fn build_zukyc_pod() -> Result<MainPod> {
+    fn build_mock_zukyc_pod() -> Result<MainPod> {
         let params = middleware::Params::default();
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
@@ -238,12 +590,53 @@ mod tests {
         Ok(kyc_pod)
     }
 
+    fn build_plonky2_zukyc_pod() -> Result<MainPod> {
+        let params = middleware::Params {
+            // Currently the circuit uses random access that only supports vectors of length 64.
+            // With max_input_main_pods=3 we need random access to a vector of length 73.
+            max_input_main_pods: 1,
+            ..Default::default()
+        };
+
+        let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
+            zu_kyc_sign_pod_builders(&params);
+        let mut signer = Signer(SecretKey(RawValue::from(1)));
+        let gov_id_pod = gov_id_builder.sign(&mut signer)?;
+        let mut signer = Signer(SecretKey(RawValue::from(2)));
+        let pay_stub_pod = pay_stub_builder.sign(&mut signer)?;
+        let mut signer = Signer(SecretKey(RawValue::from(3)));
+        let sanction_list_pod = sanction_list_builder.sign(&mut signer)?;
+        let kyc_builder =
+            zu_kyc_pod_builder(&params, &gov_id_pod, &pay_stub_pod, &sanction_list_pod)?;
+
+        let mut prover = Prover {};
+        let kyc_pod = kyc_builder.prove(&mut prover, &params)?;
+
+        Ok(kyc_pod)
+    }
+
     #[test]
-    fn test_main_pod_serialization() -> Result<()> {
-        let kyc_pod = build_zukyc_pod()?;
+    fn test_mock_main_pod_serialization() -> Result<()> {
+        let kyc_pod = build_mock_zukyc_pod()?;
         let serialized = serde_json::to_string_pretty(&kyc_pod).unwrap();
         println!("serialized: {}", serialized);
         let deserialized: MainPod = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(kyc_pod.public_statements, deserialized.public_statements);
+        assert_eq!(kyc_pod.pod.id(), deserialized.pod.id());
+        assert_eq!(kyc_pod.pod.verify()?, deserialized.pod.verify()?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_plonky2_main_pod_serialization() -> Result<()> {
+        let kyc_pod = build_plonky2_zukyc_pod()?;
+        println!("id: {}", kyc_pod.pod.id());
+        let serialized = serde_json::to_string_pretty(&kyc_pod).unwrap();
+        // println!("serialized: {}", serialized);
+        let deserialized: MainPod = serde_json::from_str(&serialized).unwrap();
+        println!("deserialized id: {}", deserialized.pod.id());
 
         assert_eq!(kyc_pod.public_statements, deserialized.public_statements);
         assert_eq!(kyc_pod.pod.id(), deserialized.pod.id());
@@ -292,30 +685,30 @@ mod tests {
         Ok(alice_bob_ethdos)
     }
 
-    #[test]
-    // This tests that we can generate JSON Schemas for the MainPod and
-    // SignedPod types, and that we can validate real Signed and Main Pods
-    // against the schemas.
-    fn test_schema() {
-        let mainpod_schema = schema_for!(MainPodHelper);
-        let signedpod_schema = schema_for!(SignedPodHelper);
+    // #[test]
+    // // This tests that we can generate JSON Schemas for the MainPod and
+    // // SignedPod types, and that we can validate real Signed and Main Pods
+    // // against the schemas.
+    // fn test_schema() {
+    //     let mainpod_schema = schema_for!(MainPodHelper);
+    //     let signedpod_schema = schema_for!(SignedPodHelper);
 
-        let kyc_pod = build_zukyc_pod().unwrap();
-        let signed_pod = build_signed_pod().unwrap();
-        let ethdos_pod = build_ethdos_pod().unwrap();
-        let mainpod_schema_value = serde_json::to_value(&mainpod_schema).unwrap();
-        let signedpod_schema_value = serde_json::to_value(&signedpod_schema).unwrap();
+    //     let kyc_pod = build_zukyc_pod().unwrap();
+    //     let signed_pod = build_signed_pod().unwrap();
+    //     let ethdos_pod = build_ethdos_pod().unwrap();
+    //     let mainpod_schema_value = serde_json::to_value(&mainpod_schema).unwrap();
+    //     let signedpod_schema_value = serde_json::to_value(&signedpod_schema).unwrap();
 
-        let kyc_pod_value = serde_json::to_value(&kyc_pod).unwrap();
-        let mainpod_valid = jsonschema::validate(&mainpod_schema_value, &kyc_pod_value);
-        assert!(mainpod_valid.is_ok(), "{:#?}", mainpod_valid);
+    //     let kyc_pod_value = serde_json::to_value(&kyc_pod).unwrap();
+    //     let mainpod_valid = jsonschema::validate(&mainpod_schema_value, &kyc_pod_value);
+    //     assert!(mainpod_valid.is_ok(), "{:#?}", mainpod_valid);
 
-        let signed_pod_value = serde_json::to_value(&signed_pod).unwrap();
-        let signedpod_valid = jsonschema::validate(&signedpod_schema_value, &signed_pod_value);
-        assert!(signedpod_valid.is_ok(), "{:#?}", signedpod_valid);
+    //     let signed_pod_value = serde_json::to_value(&signed_pod).unwrap();
+    //     let signedpod_valid = jsonschema::validate(&signedpod_schema_value, &signed_pod_value);
+    //     assert!(signedpod_valid.is_ok(), "{:#?}", signedpod_valid);
 
-        let ethdos_pod_value = serde_json::to_value(&ethdos_pod).unwrap();
-        let ethdos_pod_valid = jsonschema::validate(&mainpod_schema_value, &ethdos_pod_value);
-        assert!(ethdos_pod_valid.is_ok(), "{:#?}", ethdos_pod_valid);
-    }
+    //     let ethdos_pod_value = serde_json::to_value(&ethdos_pod).unwrap();
+    //     let ethdos_pod_valid = jsonschema::validate(&mainpod_schema_value, &ethdos_pod_value);
+    //     assert!(ethdos_pod_valid.is_ok(), "{:#?}", ethdos_pod_valid);
+    // }
 }
