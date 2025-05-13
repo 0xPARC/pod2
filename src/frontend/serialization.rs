@@ -633,10 +633,19 @@ mod tests {
     fn test_plonky2_main_pod_serialization() -> Result<()> {
         let kyc_pod = build_plonky2_zukyc_pod()?;
         println!("id: {}", kyc_pod.pod.id());
+        let pod = (kyc_pod.pod.clone() as Box<dyn Any>)
+            .downcast::<Plonky2MainPod>()
+            .unwrap();
+        let stmts = pod.public_statements.clone();
         let serialized = serde_json::to_string_pretty(&kyc_pod).unwrap();
         // println!("serialized: {}", serialized);
         let deserialized: MainPod = serde_json::from_str(&serialized).unwrap();
         println!("deserialized id: {}", deserialized.pod.id());
+        let dpod = (deserialized.pod.clone() as Box<dyn Any>)
+            .downcast::<Plonky2MainPod>()
+            .unwrap();
+        let dstmts = dpod.public_statements.clone();
+        assert_eq!(stmts, dstmts);
 
         assert_eq!(kyc_pod.public_statements, deserialized.public_statements);
         assert_eq!(kyc_pod.pod.id(), deserialized.pod.id());
