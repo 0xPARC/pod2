@@ -452,7 +452,8 @@ pub type MainPodProof = Proof<F, C, D>;
 pub struct MainPod {
     params: Params,
     id: PodId,
-    public_statements: Vec<Statement>,
+    // TODO remove pub
+    pub public_statements: Vec<Statement>,
     proof: MainPodProof,
 }
 
