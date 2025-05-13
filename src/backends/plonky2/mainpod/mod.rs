@@ -440,7 +440,10 @@ impl Pod for MainPod {
     }
 
     fn serialized_proof(&self) -> String {
-        serde_json::to_string(&self.proof).unwrap()
+        let mut buffer = Vec::new();
+        use plonky2::util::serialization::Write;
+        buffer.write_proof_with_public_inputs(&self.proof).unwrap();
+        hex::encode(buffer)
     }
 }
 

@@ -4,7 +4,6 @@
 use std::{collections::HashMap, convert::From, fmt};
 
 use itertools::Itertools;
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serialization::{SerializedMainPod, SerializedSignedPod};
 
@@ -21,7 +20,6 @@ mod serialization;
 pub use custom::*;
 pub use error::*;
 pub use operation::*;
-use serialization::*;
 
 #[derive(Clone, Debug)]
 pub struct SignedPodBuilder {
