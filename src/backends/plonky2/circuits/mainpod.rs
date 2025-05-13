@@ -1362,7 +1362,19 @@ mod tests {
         ]
         .into_iter()
         .for_each(|(op, st)| {
-            assert!(operation_verify(st, op, prev_statements.to_vec(), vec![]).is_err())
+            let check = std::panic::catch_unwind(|| {
+                operation_verify(st, op, prev_statements.to_vec(), vec![])
+            });
+            match check {
+                Err(e) => {
+                    let err_string = e.downcast_ref::<String>().unwrap();
+                    if !err_string.contains("Integer too large to fit") {
+                        panic!("Test failed with an unexpected error: {}", err_string);
+                    }
+                }
+                Ok(Err(_)) => {}
+                _ => panic!("Test passed, yet it should have failed!"),
+            }
         });
     }
 
@@ -1877,8 +1889,21 @@ mod tests {
                     ],
                     OperationAux::None,
                 );
-                let prev_statements = vec![st1, st2, st3];
-                assert!(operation_verify(st, op, prev_statements, vec![]).is_err())
+                let prev_statements = [st1, st2, st3];
+
+                let check = std::panic::catch_unwind(|| {
+                    operation_verify(st, op, prev_statements.to_vec(), vec![])
+                });
+                match check {
+                    Err(e) => {
+                        let err_string = e.downcast_ref::<String>().unwrap();
+                        if !err_string.contains("Integer too large to fit") {
+                            panic!("Test failed with an unexpected error: {}", err_string);
+                        }
+                    }
+                    Ok(Err(_)) => {}
+                    _ => panic!("Test passed, yet it should have failed!"),
+                }
             })
     }
 
