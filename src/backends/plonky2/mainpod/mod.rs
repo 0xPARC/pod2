@@ -8,8 +8,10 @@ use plonky2::{
     hash::poseidon::PoseidonHash,
     iop::witness::PartialWitness,
     plonk::{
-        circuit_builder::CircuitBuilder, circuit_data::CircuitConfig, config::Hasher,
-        proof::ProofWithPublicInputs,
+        circuit_builder::CircuitBuilder,
+        circuit_data::CircuitConfig,
+        config::Hasher,
+        proof::{Proof, ProofWithPublicInputs},
     },
 };
 pub use statement::*;
@@ -423,13 +425,13 @@ impl Prover {
 
         // generate & verify proof
         let data = builder.build::<C>();
-        let proof = data.prove(pw)?;
+        let proof_with_pis = data.prove(pw)?;
 
         Ok(MainPod {
             params: params.clone(),
             id,
             public_statements,
-            proof,
+            proof: proof_with_pis.proof,
         })
     }
 }
@@ -449,7 +451,7 @@ pub struct MainPod {
     params: Params,
     id: PodId,
     public_statements: Vec<Statement>,
-    proof: ProofWithPublicInputs<F, C, D>,
+    proof: Proof<F, C, D>,
 }
 
 /// Convert a Statement into middleware::Statement and replace references to SELF by `self_id`.
@@ -489,8 +491,11 @@ impl MainPod {
         .eval(&mut builder)?;
 
         let data = builder.build::<C>();
-        data.verify(self.proof.clone())
-            .map_err(|e| Error::custom(format!("MainPod proof verification failure: {:?}", e)))
+        data.verify(ProofWithPublicInputs {
+            proof: self.proof.clone(),
+            public_inputs: id.to_fields(&self.params),
+        })
+        .map_err(|e| Error::custom(format!("MainPod proof verification failure: {:?}", e)))
     }
 }
 
