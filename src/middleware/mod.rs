@@ -686,6 +686,16 @@ pub trait Pod: fmt::Debug + DynClone + Any {
             .collect()
     }
 
+    // Front-end Pods keep references to middleware Pods. Most of the
+    // middleware data can be derived directly from front-end data, but the
+    // "proof" data is only created at the point of proving/signing, and
+    // cannot be reconstructed. As such, we need to serialize it whenever
+    // we serialize a front-end Pod. Since the front-end does not understand
+    // the implementation details of the middleware, this method allows the
+    // middleware to provide some serialized data that can be used to
+    // reconstruct the proof.
+    // It is an important principle that this data is opaque to the front-end
+    // and any third-party code.
     fn serialized_proof(&self) -> String;
 }
 
