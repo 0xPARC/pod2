@@ -276,9 +276,9 @@ impl CustomPredicate {
     pub fn pad_statement_tmpl(&self) -> StatementTmpl {
         StatementTmpl {
             pred: Predicate::Native(if self.conjunction {
-                NativePredicate::False
-            } else {
                 NativePredicate::None
+            } else {
+                NativePredicate::False
             }),
             args: vec![],
         }

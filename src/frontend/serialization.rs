@@ -276,16 +276,17 @@ mod tests {
         // Alice attests that she is ETH friends with Charlie and Charlie
         // attests that he is ETH friends with Bob.
         let alice_attestation =
-            eth_friend_signed_pod_builder(&params, charlie.pubkey().into()).sign(&mut alice)?;
+            eth_friend_signed_pod_builder(&params, charlie.public_key().into()).sign(&mut alice)?;
         let charlie_attestation =
-            eth_friend_signed_pod_builder(&params, bob.pubkey().into()).sign(&mut charlie)?;
+            eth_friend_signed_pod_builder(&params, bob.public_key().into()).sign(&mut charlie)?;
 
         let mut prover = MockProver {};
         let alice_bob_ethdos = eth_dos_pod_builder(
             &params,
+            true,
             &alice_attestation,
             &charlie_attestation,
-            &bob.pubkey().into(),
+            bob.public_key().into(),
         )?
         .prove(&mut prover, &params)?;
 

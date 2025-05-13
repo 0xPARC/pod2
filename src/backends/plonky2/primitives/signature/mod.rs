@@ -55,7 +55,7 @@ pub struct VerifierParams(pub(crate) VerifierCircuitData<F, C, D>);
 pub struct SecretKey(pub(crate) RawValue);
 
 #[derive(Clone, Debug)]
-pub struct PublicKey(pub(crate) RawValue);
+pub struct PublicKey(pub RawValue);
 
 #[derive(Clone, Debug)]
 pub struct Signature(pub(crate) Proof);

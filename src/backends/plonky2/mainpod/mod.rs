@@ -531,10 +531,16 @@ pub mod tests {
             primitives::signature::SecretKey,
             signedpod::Signer,
         },
-        examples::{zu_kyc_pod_builder, zu_kyc_sign_pod_builders},
-        frontend::{self},
+        examples::{
+            eth_dos_pod_builder, eth_friend_signed_pod_builder, zu_kyc_pod_builder,
+            zu_kyc_sign_pod_builders,
+        },
+        frontend::{
+            key, literal, CustomPredicateBatchBuilder, MainPodBuilder, StatementTmplBuilder as STB,
+            {self},
+        },
         middleware,
-        middleware::RawValue,
+        middleware::{CustomPredicateRef, NativePredicate as NP, RawValue},
         op,
     };
 
@@ -643,5 +649,114 @@ pub mod tests {
         let kyc_pod = pod_builder.prove(&mut prover, &params).unwrap();
         let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
         pod.verify().unwrap()
+    }
+
+    #[test]
+    fn test_main_ethdos() -> frontend::Result<()> {
+        let params = Params {
+            max_input_signed_pods: 2,
+            max_input_main_pods: 1,
+            max_statements: 31,
+            max_signed_pod_values: 8,
+            max_public_statements: 10,
+            max_statement_args: 6,
+            max_operation_args: 5,
+            max_custom_predicate_arity: 5,
+            max_custom_batch_size: 5,
+            max_custom_predicate_wildcards: 12,
+            max_custom_predicate_verifications: 8,
+            ..Default::default()
+        };
+
+        let mut alice = Signer(SecretKey(RawValue::from(1)));
+        let bob = Signer(SecretKey(RawValue::from(2)));
+        let mut charlie = Signer(SecretKey(RawValue::from(3)));
+
+        // Alice attests that she is ETH friends with Charlie and Charlie
+        // attests that he is ETH friends with Bob.
+        let alice_attestation =
+            eth_friend_signed_pod_builder(&params, charlie.public_key().0.into())
+                .sign(&mut alice)?;
+        let charlie_attestation =
+            eth_friend_signed_pod_builder(&params, bob.public_key().0.into()).sign(&mut charlie)?;
+
+        let mut prover = Prover {};
+        let alice_bob_ethdos_builder = eth_dos_pod_builder(
+            &params,
+            false,
+            &alice_attestation,
+            &charlie_attestation,
+            bob.public_key().0.into(),
+        )?;
+        // println!("Builder:\n{}", alice_bob_ethdos_builder);
+        let alice_bob_ethdos = alice_bob_ethdos_builder.prove(&mut prover, &params)?;
+
+        let pod = (alice_bob_ethdos.pod as Box<dyn Any>)
+            .downcast::<MainPod>()
+            .unwrap();
+
+        Ok(pod.verify()?)
+    }
+
+    #[test]
+    fn test_main_mini_custom_1() -> frontend::Result<()> {
+        let params = Params {
+            max_input_signed_pods: 0,
+            max_input_main_pods: 0,
+            max_statements: 9,
+            max_public_statements: 4,
+            max_statement_args: 3,
+            max_operation_args: 3,
+            max_custom_predicate_arity: 3,
+            max_custom_batch_size: 3,
+            max_custom_predicate_wildcards: 4,
+            max_custom_predicate_verifications: 2,
+            ..Default::default()
+        };
+
+        let mut cpb_builder = CustomPredicateBatchBuilder::new(params.clone(), "cpb".into());
+        let stb0 = STB::new(NP::ValueOf)
+            .arg(("id", key("score")))
+            .arg(literal(42));
+        let stb1 = STB::new(NP::Equal)
+            .arg(("id", "secret_key"))
+            .arg(("id", key("score")));
+        let _ = cpb_builder.predicate_and(
+            "pred_and",
+            &["id"],
+            &["secret_key"],
+            &[stb0.clone(), stb1.clone()],
+        )?;
+        let _ = cpb_builder.predicate_or("pred_or", &["id"], &["secret_key"], &[stb0, stb1])?;
+        let cpb = cpb_builder.finish();
+
+        let cpb_and = CustomPredicateRef::new(cpb.clone(), 0);
+        let _cpb_or = CustomPredicateRef::new(cpb.clone(), 1);
+
+        let mut pod_builder = MainPodBuilder::new(&params);
+
+        // TODO: Introduce a fixed statement::none at index 0
+        let stx = pod_builder.priv_op(frontend::Operation(
+            OperationType::Native(NativeOperation::None),
+            vec![],
+            middleware::OperationAux::None,
+        ))?;
+        let st0 = pod_builder.priv_op(op!(new_entry, ("score", 42)))?;
+        let st1 = pod_builder.priv_op(op!(new_entry, ("foo", 42)))?;
+        let st2 = pod_builder.priv_op(op!(eq, st1.clone(), st0.clone()))?;
+
+        let _st3 = pod_builder.priv_op(op!(custom, cpb_and.clone(), st0, st2))?;
+
+        let mut prover = MockProver {};
+        let pod = pod_builder.prove(&mut prover, &params)?;
+        assert!(pod.pod.verify().is_ok());
+
+        let mut prover = Prover {};
+        // println!("Builder:\n{}", alice_bob_ethdos_builder);
+        let pod = pod_builder.prove(&mut prover, &params)?;
+
+        let pod = (pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
+
+        Ok(pod.verify()?)
     }
 }

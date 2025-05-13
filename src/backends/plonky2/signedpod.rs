@@ -36,6 +36,10 @@ impl Signer {
             dict,
         })
     }
+
+    pub fn public_key(&self) -> PublicKey {
+        self.0.public_key()
+    }
 }
 
 impl PodSigner for Signer {

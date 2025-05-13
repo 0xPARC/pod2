@@ -19,7 +19,7 @@ pub struct MockSigner {
 }
 
 impl MockSigner {
-    pub fn pubkey(&self) -> Hash {
+    pub fn public_key(&self) -> Hash {
         hash_str(&self.pk)
     }
 }
@@ -27,7 +27,7 @@ impl MockSigner {
 impl MockSigner {
     fn _sign(&mut self, _params: &Params, kvs: &HashMap<Key, Value>) -> Result<MockSignedPod> {
         let mut kvs = kvs.clone();
-        let pubkey = self.pubkey();
+        let pubkey = self.public_key();
         kvs.insert(Key::from(KEY_SIGNER), Value::from(pubkey));
         kvs.insert(Key::from(KEY_TYPE), Value::from(PodType::MockSigned));
 

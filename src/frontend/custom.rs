@@ -274,12 +274,12 @@ mod tests {
         params.print_serialized_sizes();
 
         // ETH friend custom predicate batch
-        let eth_friend = eth_friend_batch(&params)?;
+        let eth_friend = eth_friend_batch(&params, true)?;
 
         // This batch only has 1 predicate, so we pick it already for convenience
         let eth_friend = Predicate::Custom(CustomPredicateRef::new(eth_friend, 0));
 
-        let eth_dos_batch = eth_dos_batch(&params)?;
+        let eth_dos_batch = eth_dos_batch(&params, true)?;
         let eth_dos_batch_mw: middleware::CustomPredicateBatch =
             Arc::unwrap_or_clone(eth_dos_batch);
         let fields = eth_dos_batch_mw.to_fields(&params);

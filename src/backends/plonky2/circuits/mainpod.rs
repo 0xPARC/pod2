@@ -2,10 +2,18 @@ use std::{array, sync::Arc};
 
 use itertools::{zip_eq, Itertools};
 use plonky2::{
-    field::types::Field,
-    hash::{hash_types::HashOutTarget, poseidon::PoseidonHash},
-    iop::{target::BoolTarget, witness::PartialWitness},
-    plonk::circuit_builder::CircuitBuilder,
+    field::{extension::Extendable, types::Field},
+    hash::{
+        hash_types::{HashOutTarget, RichField},
+        poseidon::PoseidonHash,
+    },
+    iop::{
+        generator::{GeneratedValues, SimpleGenerator},
+        target::{BoolTarget, Target},
+        witness::{PartialWitness, PartitionWitness, Witness},
+    },
+    plonk::{circuit_builder::CircuitBuilder, circuit_data::CommonCircuitData},
+    util::serialization::{Buffer, IoResult, Read, Write},
 };
 
 use crate::{
@@ -295,6 +303,12 @@ impl OperationVerifyGadget {
             op_type: op_type.clone(),
             op_args: resolved_op_args.to_vec(),
         };
+        // let mut id = ID_1.lock().unwrap();
+        // builder.add_simple_generator(DebugGenerator::new(
+        //     format!("eval_custom_query_{}", id),
+        //     query.flatten(),
+        // ));
+        // *id += 1;
         let out_query_hash = query.hash(builder);
         builder.is_equal_slice(
             &resolved_custom_pred_verification.elements,
@@ -689,6 +703,57 @@ impl OperationVerifyGadget {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct DebugGenerator {
+    pub(crate) name: String,
+    pub(crate) xs: Vec<Target>,
+}
+
+impl DebugGenerator {
+    pub fn new(name: String, xs: Vec<Target>) -> Self {
+        Self { name, xs }
+    }
+}
+
+impl<F: RichField + Extendable<D>, const D: usize> SimpleGenerator<F, D> for DebugGenerator {
+    fn id(&self) -> String {
+        "DebugGenerator".to_string()
+    }
+
+    fn dependencies(&self) -> Vec<Target> {
+        self.xs.clone()
+    }
+
+    fn run_once(
+        &self,
+        witness: &PartitionWitness<F>,
+        _out_buffer: &mut GeneratedValues<F>,
+    ) -> anyhow::Result<()> {
+        let xs = witness.get_targets(&self.xs);
+
+        println!("debug: values of {}", self.name);
+        for (i, x) in xs.iter().enumerate() {
+            println!("- {:03}: {}", i, x);
+        }
+        Ok(())
+    }
+
+    fn serialize(&self, dst: &mut Vec<u8>, _common_data: &CommonCircuitData<F, D>) -> IoResult<()> {
+        dst.write_usize(self.name.len())?;
+        dst.write_all(self.name.as_bytes())?;
+        dst.write_target_vec(&self.xs)
+    }
+
+    fn deserialize(src: &mut Buffer, _common_data: &CommonCircuitData<F, D>) -> IoResult<Self> {
+        let name_len = src.read_usize()?;
+        let mut name_buf = vec![0; name_len];
+        src.read_exact(&mut name_buf)?;
+        let name = unsafe { String::from_utf8_unchecked(name_buf) };
+        let xs = src.read_target_vec()?;
+        Ok(Self { name, xs })
+    }
+}
+
 struct CustomOperationVerifyGadget {
     params: Params,
 }
@@ -813,12 +878,26 @@ impl CustomOperationVerifyGadget {
         // expected_sts.len() == self.params.max_custom_predicate_arity
         // op_args.len() == self.params.max_operation_args;
         assert!(self.params.max_custom_predicate_arity <= self.params.max_operation_args);
+        // let mut id = ID.lock().unwrap();
+        // for (i, (expected_st, op_arg)) in expected_sts.iter().zip(op_args.iter()).enumerate() {
+        //     builder.add_simple_generator(DebugGenerator::new(
+        //         format!("expected_st_{}_{}", id, i),
+        //         expected_st.flatten(),
+        //     ));
+        //     builder.add_simple_generator(DebugGenerator::new(
+        //         format!("op_arg_{}_{}", id, i),
+        //         op_arg.flatten(),
+        //     ));
+        // }
+        // *id += 1;
+
         let sts_eq: Vec<_> = expected_sts
             .iter()
             .zip(op_args.iter())
             .map(|(expected_st, st)| builder.is_equal_flattenable(expected_st, st))
             .collect();
-        let all_st_eq = builder.all(sts_eq.clone());
+        let all_st_eq = builder.all(sts_eq.clone()); // DBG is false
+                                                     // let all_st_eq = builder._true(); // FIXME
         let some_st_eq = builder.any(sts_eq);
         // NOTE: This BoolTarget is safe because both inputs to the select are safe
         let is_op_args_ok = BoolTarget::new_unsafe(builder.select(
@@ -831,6 +910,10 @@ impl CustomOperationVerifyGadget {
         Ok((statement, op_type))
     }
 }
+
+use std::sync::Mutex;
+static ID_1: Mutex<usize> = Mutex::new(0);
+static ID_2: Mutex<usize> = Mutex::new(0);
 
 struct MainPodVerifyGadget {
     params: Params,
@@ -958,6 +1041,12 @@ impl MainPodVerifyGadget {
                     op_args,   // input
                 },
             };
+            // let mut id = ID_2.lock().unwrap();
+            // builder.add_simple_generator(DebugGenerator::new(
+            //     format!("table_custom_query_{}", id),
+            //     entry.query.flatten(),
+            // ));
+            // *id += 1;
             let in_query_hash = entry.query.hash(builder);
             custom_predicate_verification_table.push(in_query_hash);
             custom_predicate_verifications.push(entry); // We keep this for witness assignment
@@ -1098,6 +1187,11 @@ impl MainPodVerifyTarget {
         );
         for (i, cpv) in input.custom_predicate_verifications.iter().enumerate() {
             self.custom_predicate_verifications[i].set_targets(pw, &self.params, cpv)?;
+            println!("DBG cpv{}:", i);
+            println!(
+                "    {:?}",
+                cpv.op_args.iter().map(|s| format!("{}", s)).collect_vec()
+            );
         }
         // Padding.  Use the first input if it exists.  If it doesnt, all batches in this MainPod
         // are padding so refer to the first padding entry.
@@ -2168,7 +2262,7 @@ mod tests {
         custom_predicate: CustomPredicateRef,
         op_args: Vec<Statement>,
         args: Vec<WildcardValue>,
-        expected_st: Statement,
+        expected_st: Option<Statement>,
     ) -> Result<()> {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
@@ -2201,22 +2295,22 @@ mod tests {
             arg_target.set_targets(&mut pw, &Value::from(arg.raw()))?;
         }
         // Expected Output
-        st_target.set_targets(&mut pw, params, &expected_st.into())?;
+        if let Some(expected_st) = expected_st {
+            st_target.set_targets(&mut pw, params, &expected_st.into())?;
+        }
 
         let expected_op_type = OperationType::Custom(custom_predicate);
         op_type_target.set_targets(&mut pw, params, &expected_op_type)?;
 
         // generate & verify proof
         let data = builder.build::<C>();
-        let proof = data.prove(pw).unwrap();
-        data.verify(proof.clone()).unwrap();
-
-        Ok(())
+        let proof = data.prove(pw)?;
+        Ok(data.verify(proof.clone())?)
     }
 
     // TODO: Add negative tests
     #[test]
-    fn test_custom_operation_verify_gadget() -> frontend::Result<()> {
+    fn test_custom_operation_verify_gadget_positive() -> frontend::Result<()> {
         // We set the parameters to the exact sizes we have in the test so that we don't have to
         // pad.
         let params = Params {
@@ -2273,7 +2367,7 @@ mod tests {
             custom_predicate,
             op_args,
             args,
-            expected_st,
+            Some(expected_st),
         )
         .unwrap();
 
@@ -2297,7 +2391,7 @@ mod tests {
             custom_predicate,
             op_args,
             args,
-            expected_st,
+            Some(expected_st),
         )
         .unwrap();
 
@@ -2324,9 +2418,189 @@ mod tests {
             custom_predicate,
             op_args,
             args,
-            expected_st,
+            Some(expected_st),
         )
         .unwrap();
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_custom_operation_verify_gadget_negative() -> frontend::Result<()> {
+        // We set the parameters to the exact sizes we have in the test so that we don't have to
+        // pad.
+        let params = Params {
+            max_custom_predicate_arity: 2,
+            max_custom_predicate_wildcards: 2,
+            max_operation_args: 2,
+            max_statement_args: 2,
+            ..Default::default()
+        };
+
+        use NativePredicate as NP;
+        use StatementTmplBuilder as STB;
+        let mut builder = CustomPredicateBatchBuilder::new(params.clone(), "batch".into());
+        let stb0 = STB::new(NP::ValueOf)
+            .arg(("id", key("score")))
+            .arg(literal(42));
+        let stb1 = STB::new(NP::Equal)
+            .arg(("id", "secret_key"))
+            .arg(("id", key("score")));
+        let _ = builder.predicate_and(
+            "pred_and",
+            &["id"],
+            &["secret_key"],
+            &[stb0.clone(), stb1.clone()],
+        )?;
+        let _ = builder.predicate_or("pred_or", &["id"], &["secret_key"], &[stb0, stb1])?;
+        let batch = builder.finish();
+
+        let pod_id = PodId(hash_str("pod_id"));
+
+        // AND (0) Sanity check with correct values
+        let custom_predicate = CustomPredicateRef::new(batch.clone(), 0);
+        let op_args = vec![
+            Statement::ValueOf(
+                AnchoredKey::new(pod_id, Key::from("score")),
+                Value::from(42),
+            ),
+            Statement::Equal(
+                AnchoredKey::new(pod_id, Key::from("foo")),
+                AnchoredKey::new(pod_id, Key::from("score")),
+            ),
+        ];
+        let args = vec![
+            WildcardValue::PodId(pod_id),
+            WildcardValue::Key(Key::from("foo")),
+        ];
+        let expected_st = Statement::Custom(
+            custom_predicate.clone(),
+            vec![args[0].clone(), WildcardValue::None],
+        );
+
+        helper_custom_operation_verify_gadget(
+            &params,
+            custom_predicate,
+            op_args,
+            args,
+            Some(expected_st),
+        )
+        .unwrap();
+
+        // AND (1) Different pod_id for same wildcard
+        let custom_predicate = CustomPredicateRef::new(batch.clone(), 0);
+        let op_args = vec![
+            Statement::ValueOf(
+                AnchoredKey::new(pod_id, Key::from("score")),
+                Value::from(42),
+            ),
+            Statement::Equal(
+                AnchoredKey::new(PodId(hash_str("BAD")), Key::from("foo")),
+                AnchoredKey::new(pod_id, Key::from("score")),
+            ),
+        ];
+        let args = vec![
+            WildcardValue::PodId(pod_id),
+            WildcardValue::Key(Key::from("foo")),
+        ];
+
+        assert!(helper_custom_operation_verify_gadget(
+            &params,
+            custom_predicate,
+            op_args,
+            args,
+            None,
+        )
+        .is_err());
+
+        // AND (2) key doesn't match template
+        let custom_predicate = CustomPredicateRef::new(batch.clone(), 0);
+        let op_args = vec![
+            Statement::ValueOf(AnchoredKey::new(pod_id, Key::from("BAD")), Value::from(42)),
+            Statement::Equal(
+                AnchoredKey::new(pod_id, Key::from("foo")),
+                AnchoredKey::new(pod_id, Key::from("score")),
+            ),
+        ];
+        let args = vec![
+            WildcardValue::PodId(pod_id),
+            WildcardValue::Key(Key::from("foo")),
+        ];
+
+        assert!(helper_custom_operation_verify_gadget(
+            &params,
+            custom_predicate,
+            op_args,
+            args,
+            None,
+        )
+        .is_err());
+
+        // AND (3) literal doesn't match template
+        let custom_predicate = CustomPredicateRef::new(batch.clone(), 0);
+        let op_args = vec![
+            Statement::ValueOf(
+                AnchoredKey::new(pod_id, Key::from("score")),
+                Value::from(0xbad),
+            ),
+            Statement::Equal(
+                AnchoredKey::new(pod_id, Key::from("foo")),
+                AnchoredKey::new(pod_id, Key::from("score")),
+            ),
+        ];
+        let args = vec![
+            WildcardValue::PodId(pod_id),
+            WildcardValue::Key(Key::from("foo")),
+        ];
+
+        assert!(helper_custom_operation_verify_gadget(
+            &params,
+            custom_predicate,
+            op_args,
+            args,
+            None,
+        )
+        .is_err());
+
+        // AND (4) predicate doesn't match template
+        let custom_predicate = CustomPredicateRef::new(batch.clone(), 0);
+        let op_args = vec![
+            Statement::ValueOf(
+                AnchoredKey::new(pod_id, Key::from("score")),
+                Value::from(42),
+            ),
+            Statement::NotEqual(
+                AnchoredKey::new(pod_id, Key::from("foo")),
+                AnchoredKey::new(pod_id, Key::from("score")),
+            ),
+        ];
+        let args = vec![
+            WildcardValue::PodId(pod_id),
+            WildcardValue::Key(Key::from("foo")),
+        ];
+
+        assert!(helper_custom_operation_verify_gadget(
+            &params,
+            custom_predicate,
+            op_args,
+            args,
+            None,
+        )
+        .is_err());
+
+        // OR (1) Two Nones
+        let custom_predicate = CustomPredicateRef::new(batch.clone(), 1);
+        let op_args = vec![Statement::None, Statement::None];
+        let args = vec![WildcardValue::PodId(pod_id), WildcardValue::None];
+
+        assert!(helper_custom_operation_verify_gadget(
+            &params,
+            custom_predicate,
+            op_args,
+            args,
+            None
+        )
+        .is_err());
 
         Ok(())
     }
