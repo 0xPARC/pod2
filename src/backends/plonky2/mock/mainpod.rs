@@ -264,6 +264,14 @@ impl MockMainPod {
         }
         Ok(())
     }
+
+    pub fn serialized_proof(&self) -> String {
+        BASE64_STANDARD.encode(serde_json::to_string(self).unwrap())
+    }
+
+    pub fn params(&self) -> &Params {
+        &self.params
+    }
 }
 
 impl Pod for MockMainPod {
@@ -282,10 +290,6 @@ impl Pod for MockMainPod {
             .cloned()
             .map(|statement| normalize_statement(&statement, self.id()))
             .collect()
-    }
-
-    fn serialized_proof(&self) -> String {
-        BASE64_STANDARD.encode(serde_json::to_string(self).unwrap())
     }
 }
 

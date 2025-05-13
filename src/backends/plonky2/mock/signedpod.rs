@@ -59,6 +59,10 @@ impl MockSignedPod {
     pub(crate) fn new(id: PodId, signature: String, kvs: HashMap<Key, Value>) -> Self {
         Self { id, signature, kvs }
     }
+
+    pub fn signature(&self) -> String {
+        self.signature.clone()
+    }
 }
 
 impl MockSignedPod {
@@ -128,10 +132,6 @@ impl Pod for MockSignedPod {
             .chain(kvs.into_iter().sorted_by_key(|kv| kv.0.hash()))
             .map(|(k, v)| Statement::ValueOf(AnchoredKey::from((id, k)), v))
             .collect()
-    }
-
-    fn serialized_proof(&self) -> String {
-        self.signature.to_string()
     }
 }
 
