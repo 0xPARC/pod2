@@ -450,6 +450,7 @@ mod tests {
 
     use super::*;
     use crate::{
+        backends,
         backends::plonky2::{
             mainpod::Prover,
             mock::{mainpod::MockProver, signedpod::MockSigner},
@@ -637,6 +638,17 @@ mod tests {
         // println!("serialized: {}", serialized);
         let deserialized: MainPod = serde_json::from_str(&serialized).unwrap();
         println!("deserialized id: {}", deserialized.pod.id());
+
+        let kyc_pod_mp = (&*kyc_pod.pod as &dyn Any)
+            .downcast_ref::<backends::plonky2::mainpod::MainPod>()
+            .unwrap();
+        let deserialized_pod_mp = (&*deserialized.pod as &dyn Any)
+            .downcast_ref::<backends::plonky2::mainpod::MainPod>()
+            .unwrap();
+        assert_eq!(
+            kyc_pod_mp.public_statements,
+            deserialized_pod_mp.public_statements
+        );
 
         assert_eq!(kyc_pod.public_statements, deserialized.public_statements);
         assert_eq!(kyc_pod.pod.id(), deserialized.pod.id());

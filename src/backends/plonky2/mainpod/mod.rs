@@ -353,7 +353,7 @@ pub type MainPodProof = ProofWithPublicInputs<F, C, D>;
 pub struct MainPod {
     params: Params,
     id: PodId,
-    public_statements: Vec<Statement>,
+    pub public_statements: Vec<Statement>,
     proof: MainPodProof,
 }
 
