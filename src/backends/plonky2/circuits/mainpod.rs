@@ -22,10 +22,10 @@ use crate::{
         circuits::{
             common::{
                 CircuitBuilderPod, CustomPredicateBatchTarget, CustomPredicateEntryTarget,
-                CustomPredicateVerifyEntryTarget, CustomPredicateVerifyQueryTarget, Flattenable,
-                MerkleClaimTarget, OperationTarget, OperationTypeTarget, PredicateTarget,
-                StatementArgTarget, StatementTarget, StatementTmplArgTarget, StatementTmplTarget,
-                ValueTarget,
+                CustomPredicateTarget, CustomPredicateVerifyEntryTarget,
+                CustomPredicateVerifyQueryTarget, Flattenable, MerkleClaimTarget, OperationTarget,
+                OperationTypeTarget, PredicateTarget, StatementArgTarget, StatementTarget,
+                StatementTmplArgTarget, StatementTmplTarget, ValueTarget,
             },
             signedpod::{SignedPodVerifyGadget, SignedPodVerifyTarget},
         },
@@ -38,8 +38,8 @@ use crate::{
     },
     middleware::{
         AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, NativeOperation,
-        NativePredicate, Params, PodType, Statement, StatementArg, ToFields, Value, WildcardValue,
-        F, KEY_TYPE, SELF, VALUE_SIZE,
+        NativePredicate, Params, PodType, PredicatePrefix, Statement, StatementArg, ToFields,
+        Value, WildcardValue, F, KEY_TYPE, SELF, VALUE_SIZE,
     },
 };
 
@@ -196,8 +196,7 @@ impl OperationVerifyGadget {
         .concat();
 
         let ok = builder.any(op_checks);
-
-        builder.connect(ok.target, _true.target);
+        builder.assert_one(ok.target);
 
         Ok(())
     }
@@ -303,12 +302,6 @@ impl OperationVerifyGadget {
             op_type: op_type.clone(),
             op_args: resolved_op_args.to_vec(),
         };
-        // let mut id = ID_1.lock().unwrap();
-        // builder.add_simple_generator(DebugGenerator::new(
-        //     format!("eval_custom_query_{}", id),
-        //     query.flatten(),
-        // ));
-        // *id += 1;
         let out_query_hash = query.hash(builder);
         builder.is_equal_slice(
             &resolved_custom_pred_verification.elements,
@@ -703,57 +696,6 @@ impl OperationVerifyGadget {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct DebugGenerator {
-    pub(crate) name: String,
-    pub(crate) xs: Vec<Target>,
-}
-
-impl DebugGenerator {
-    pub fn new(name: String, xs: Vec<Target>) -> Self {
-        Self { name, xs }
-    }
-}
-
-impl<F: RichField + Extendable<D>, const D: usize> SimpleGenerator<F, D> for DebugGenerator {
-    fn id(&self) -> String {
-        "DebugGenerator".to_string()
-    }
-
-    fn dependencies(&self) -> Vec<Target> {
-        self.xs.clone()
-    }
-
-    fn run_once(
-        &self,
-        witness: &PartitionWitness<F>,
-        _out_buffer: &mut GeneratedValues<F>,
-    ) -> anyhow::Result<()> {
-        let xs = witness.get_targets(&self.xs);
-
-        println!("debug: values of {}", self.name);
-        for (i, x) in xs.iter().enumerate() {
-            println!("- {:03}: {}", i, x);
-        }
-        Ok(())
-    }
-
-    fn serialize(&self, dst: &mut Vec<u8>, _common_data: &CommonCircuitData<F, D>) -> IoResult<()> {
-        dst.write_usize(self.name.len())?;
-        dst.write_all(self.name.as_bytes())?;
-        dst.write_target_vec(&self.xs)
-    }
-
-    fn deserialize(src: &mut Buffer, _common_data: &CommonCircuitData<F, D>) -> IoResult<Self> {
-        let name_len = src.read_usize()?;
-        let mut name_buf = vec![0; name_len];
-        src.read_exact(&mut name_buf)?;
-        let name = unsafe { String::from_utf8_unchecked(name_buf) };
-        let xs = src.read_target_vec()?;
-        Ok(Self { name, xs })
-    }
-}
-
 struct CustomOperationVerifyGadget {
     params: Params,
 }
@@ -878,26 +820,13 @@ impl CustomOperationVerifyGadget {
         // expected_sts.len() == self.params.max_custom_predicate_arity
         // op_args.len() == self.params.max_operation_args;
         assert!(self.params.max_custom_predicate_arity <= self.params.max_operation_args);
-        // let mut id = ID.lock().unwrap();
-        // for (i, (expected_st, op_arg)) in expected_sts.iter().zip(op_args.iter()).enumerate() {
-        //     builder.add_simple_generator(DebugGenerator::new(
-        //         format!("expected_st_{}_{}", id, i),
-        //         expected_st.flatten(),
-        //     ));
-        //     builder.add_simple_generator(DebugGenerator::new(
-        //         format!("op_arg_{}_{}", id, i),
-        //         op_arg.flatten(),
-        //     ));
-        // }
-        // *id += 1;
 
         let sts_eq: Vec<_> = expected_sts
             .iter()
             .zip(op_args.iter())
             .map(|(expected_st, st)| builder.is_equal_flattenable(expected_st, st))
             .collect();
-        let all_st_eq = builder.all(sts_eq.clone()); // DBG is false
-                                                     // let all_st_eq = builder._true(); // FIXME
+        let all_st_eq = builder.all(sts_eq.clone());
         let some_st_eq = builder.any(sts_eq);
         // NOTE: This BoolTarget is safe because both inputs to the select are safe
         let is_op_args_ok = BoolTarget::new_unsafe(builder.select(
@@ -905,15 +834,12 @@ impl CustomOperationVerifyGadget {
             all_st_eq.target,
             some_st_eq.target,
         ));
+        // let is_op_args_ok = builder._true();
 
         builder.assert_one(is_op_args_ok.target);
         Ok((statement, op_type))
     }
 }
-
-use std::sync::Mutex;
-static ID_1: Mutex<usize> = Mutex::new(0);
-static ID_2: Mutex<usize> = Mutex::new(0);
 
 struct MainPodVerifyGadget {
     params: Params,
@@ -993,6 +919,36 @@ impl MainPodVerifyGadget {
             let cpb = builder.add_virtual_custom_predicate_batch(&self.params);
             let id = cpb.id(builder); // constrain the id
             for (index, cp) in cpb.predicates.iter().enumerate() {
+                // TODO: Move this to a method
+                // Replace statement templates of batch-self with (id,index)
+                // let CustomPredicateTarget{conjunction, statements, args_len} = cp;
+                let statements = cp
+                    .statements
+                    .iter()
+                    .map(|st_tmpl| {
+                        let prefix_batch_self =
+                            builder.constant(F::from(PredicatePrefix::BatchSelf));
+                        let is_batch_self =
+                            builder.is_equal(st_tmpl.pred.elements[0], prefix_batch_self);
+                        let pred_index = st_tmpl.pred.elements[1];
+                        let custom_pred = PredicateTarget::new_custom(builder, id, pred_index);
+                        let pred = builder.select_flattenable(
+                            &self.params,
+                            is_batch_self,
+                            &custom_pred,
+                            &st_tmpl.pred,
+                        );
+                        StatementTmplTarget {
+                            pred,
+                            args: st_tmpl.args.clone(),
+                        }
+                    })
+                    .collect_vec();
+                let cp = CustomPredicateTarget {
+                    conjunction: cp.conjunction,
+                    statements,
+                    args_len: cp.args_len,
+                };
                 let entry = CustomPredicateEntryTarget {
                     id,                                                      // output
                     index: builder.constant(F::from_canonical_usize(index)), // constant
@@ -1041,17 +997,6 @@ impl MainPodVerifyGadget {
                 custom_predicate_table_index,
             );
             let out_query_hash = custom_predicate.hash(builder);
-            // let mut id = ID_1.lock().unwrap();
-            // builder.add_simple_generator(DebugGenerator::new(
-            //     format!("index_{}", id),
-            //     vec![custom_predicate_table_index],
-            // ));
-            // builder.add_simple_generator(DebugGenerator::new(
-            //     format!("out_query_{}", id),
-            //     custom_predicate.flatten(),
-            // ));
-            // *id += 1;
-            // FIXME
             builder.connect_array(table_query_hash.elements, out_query_hash.elements);
 
             let entry = CustomPredicateVerifyEntryTarget {
@@ -1210,11 +1155,6 @@ impl MainPodVerifyTarget {
         );
         for (i, cpv) in input.custom_predicate_verifications.iter().enumerate() {
             self.custom_predicate_verifications[i].set_targets(pw, &self.params, cpv)?;
-            // println!("DBG cpv{}:", i);
-            // println!(
-            //     "    {:?}",
-            //     cpv.op_args.iter().map(|s| format!("{}", s)).collect_vec()
-            // );
         }
         // Padding.  Use the first input if it exists.  If it doesnt, all batches in this MainPod
         // are padding so refer to the first padding entry.

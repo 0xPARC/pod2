@@ -88,7 +88,6 @@ pub(crate) fn extract_custom_predicate_verifications(
                 .expect("find the custom predicate from the extracted unique list");
             let custom_predicate_table_index =
                 batch_index * params.max_custom_batch_size + cpr.index;
-            println!("DBG index={}", custom_predicate_table_index);
             CustomPredicateVerification {
                 custom_predicate_table_index,
                 custom_predicate: cpr.clone(),
@@ -178,15 +177,21 @@ fn find_op_aux(
     op: &middleware::Operation,
 ) -> Result<OperationAux> {
     let op_aux = op.aux();
-    let op_type = op.op_type();
-    if let (OperationType::Custom(cpr), Some(cpvs)) = (op_type, custom_predicate_verifications) {
+    if let (middleware::Operation::Custom(cpr, op_args), Some(cpvs)) =
+        (op, custom_predicate_verifications)
+    {
         return Ok(cpvs
             .iter()
             .enumerate()
             .find_map(|(i, cpv)| {
                 (cpv.custom_predicate.batch.id() == cpr.batch.id()
-                    && cpv.custom_predicate.index == cpr.index)
-                    .then_some(i)
+                    && cpv.custom_predicate.index == cpr.index
+                    && cpv
+                        .op_args
+                        .iter()
+                        .zip_eq(op_args.iter())
+                        .all(|(a0, a1)| a0.0 == a1.predicate() && a0.1 == a1.args()))
+                .then_some(i)
             })
             .map(OperationAux::CustomPredVerifyIndex)
             .expect("custom predicate verification in the list"));
@@ -659,9 +664,9 @@ pub mod tests {
         let params = Params {
             max_input_signed_pods: 2,
             max_input_main_pods: 1,
-            max_statements: 31,
+            max_statements: 26,
+            max_public_statements: 5,
             max_signed_pod_values: 8,
-            max_public_statements: 10,
             max_statement_args: 6,
             max_operation_args: 4,
             max_custom_predicate_arity: 4,
@@ -693,10 +698,8 @@ pub mod tests {
 
         let mut prover = MockProver {};
         let pod = alice_bob_ethdos_builder.prove(&mut prover, &params)?;
-        println!("DBG Mock prove complete");
         assert!(pod.pod.verify().is_ok());
 
-        // println!("Builder:\n{}", alice_bob_ethdos_builder);
         let mut prover = Prover {};
         let alice_bob_ethdos = alice_bob_ethdos_builder.prove(&mut prover, &params)?;
         let pod = (alice_bob_ethdos.pod as Box<dyn Any>)
@@ -754,7 +757,6 @@ pub mod tests {
         assert!(pod.pod.verify().is_ok());
 
         let mut prover = Prover {};
-        // println!("Builder:\n{}", alice_bob_ethdos_builder);
         let pod = pod_builder.prove(&mut prover, &params)?;
 
         let pod = (pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();

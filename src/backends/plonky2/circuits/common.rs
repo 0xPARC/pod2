@@ -311,7 +311,7 @@ impl NativePredicateTarget {
 
 #[derive(Clone)]
 pub struct PredicateTarget {
-    elements: [Target; Params::predicate_size()],
+    pub(crate) elements: [Target; Params::predicate_size()],
 }
 
 impl PredicateTarget {
@@ -520,8 +520,35 @@ impl CustomPredicateEntryTarget {
     ) -> Result<()> {
         pw.set_target_arr(&self.id.elements, &predicate.batch.id().0)?;
         pw.set_target(self.index, F::from_canonical_usize(predicate.index))?;
-        self.predicate
-            .set_targets(pw, params, predicate.predicate())?;
+
+        // Replace statement templates of batch-self with (id,index)
+        let batch = &predicate.batch;
+        let predicate = predicate.predicate();
+        let statements = predicate
+            .statements
+            .clone()
+            .into_iter()
+            .map(|st_tmpl| {
+                let pred = match st_tmpl.pred {
+                    Predicate::BatchSelf(i) => Predicate::Custom(CustomPredicateRef {
+                        batch: batch.clone(),
+                        index: i,
+                    }),
+                    p => p,
+                };
+                StatementTmpl {
+                    pred,
+                    args: st_tmpl.args,
+                }
+            })
+            .collect_vec();
+        let predicate = CustomPredicate {
+            name: predicate.name.clone(),
+            conjunction: predicate.conjunction,
+            statements,
+            args_len: predicate.args_len,
+        };
+        self.predicate.set_targets(pw, params, &predicate)?;
         Ok(())
     }
 }
@@ -570,6 +597,7 @@ impl CustomPredicateVerifyEntryTarget {
             self.custom_predicate_table_index,
             F::from_canonical_usize(cpv.custom_predicate_table_index),
         )?;
+        // Replace statement templates of batch-self with (id,index)
         self.custom_predicate
             .set_targets(pw, params, &cpv.custom_predicate)?;
         let pad_arg = WildcardValue::None;
