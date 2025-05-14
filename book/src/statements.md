@@ -24,18 +24,19 @@ The following table summarises the natively-supported statements, where we write
 
 | Code | Identifier    | Args                | Meaning                                                           |
 |------|---------------|---------------------|-------------------------------------------------------------------|
-| 0    | `None`        |                     | no statement (useful for padding)                                 |
-| 1    | `ValueOf`     | `ak`, `value`       | `value_of(ak) = value`                                            |
-| 2    | `Eq`          | `ak1`, `ak2`        | `value_of(ak1) = value_of(ak2)`                                   |
-| 3    | `NEq`         | `ak1`, `ak2`        | `value_of(ak1) != value_of(ak2)`                                  |
-| 4    | `Gt`          | `ak1`, `ak2`        | `value_of(ak1) > value_of(ak2)`                                   |
-| 5    | `LEq`         | `ak1`, `ak2`        | `value_of(ak1) <= value_of(ak2)`                                  |
-| 6    | `Contains`    | `ak1`, `ak2`        | `(key_of(ak2), value_of(ak2)) ∈ value_of(ak1)` (Merkle inclusion) |
-| 7    | `NotContains` | `ak1`, `ak2`        | `(key_of(ak2), value_of(ak2)) ∉ value_of(ak1)` (Merkle exclusion) |
-| 8    | `SumOf`       | `ak1`, `ak2`, `ak3` | `value_of(ak1) = value_of(ak2) + value_of(ak3)`                   |
-| 9    | `ProductOf`   | `ak1`, `ak2`, `ak3` | `value_of(ak1) = value_of(ak2) * value_of(ak3)`                   |
-| 10   | `MaxOf`       | `ak1`, `ak2`, `ak3` | `value_of(ak1) = max(value_of(ak2), value_of(ak3))`               |
-| 11   | `HashOf`      | `ak1`, `ak2`, `ak3` | `value_of(ak1) = hash(value_of(ak2), value_of(ak3))`              |
+| 0    | `None`        |                     | no statement, always true (useful for padding)                    |
+| 1    | `False`       |                     | always false (useful for padding disjunctions)                    |
+| 2    | `ValueOf`     | `ak`, `value`       | `value_of(ak) = value`                                            |
+| 3    | `Eq`          | `ak1`, `ak2`        | `value_of(ak1) = value_of(ak2)`                                   |
+| 4    | `NEq`         | `ak1`, `ak2`        | `value_of(ak1) != value_of(ak2)`                                  |
+| 5    | `Gt`          | `ak1`, `ak2`        | `value_of(ak1) > value_of(ak2)`                                   |
+| 6    | `LEq`         | `ak1`, `ak2`        | `value_of(ak1) <= value_of(ak2)`                                  |
+| 7    | `Contains`    | `ak1`, `ak2`        | `(key_of(ak2), value_of(ak2)) ∈ value_of(ak1)` (Merkle inclusion) |
+| 8    | `NotContains` | `ak1`, `ak2`        | `(key_of(ak2), value_of(ak2)) ∉ value_of(ak1)` (Merkle exclusion) |
+| 9    | `SumOf`       | `ak1`, `ak2`, `ak3` | `value_of(ak1) = value_of(ak2) + value_of(ak3)`                   |
+| 10   | `ProductOf`   | `ak1`, `ak2`, `ak3` | `value_of(ak1) = value_of(ak2) * value_of(ak3)`                   |
+| 11   | `MaxOf`       | `ak1`, `ak2`, `ak3` | `value_of(ak1) = max(value_of(ak2), value_of(ak3))`               |
+| 12   | `HashOf`      | `ak1`, `ak2`, `ak3` | `value_of(ak1) = hash(value_of(ak2), value_of(ak3))`              |
 
 ### Frontend statements
 

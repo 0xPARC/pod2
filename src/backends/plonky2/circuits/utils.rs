@@ -15,7 +15,7 @@ use plonky2::{
 /// monitor targets and print their values once they are available.
 ///
 /// Example usage:
-/// ```
+/// ```rust,ignore
 /// builder.add_simple_generator(DebugGenerator::new(
 ///     format!("values_{}", i),
 ///     vec![v1, v2, v3],
