@@ -2,7 +2,8 @@ use std::{any::Any, collections::HashMap};
 
 use plonky2::{
     plonk::{
-        circuit_builder::CircuitBuilder, circuit_data::CircuitConfig, proof::ProofWithPublicInputs,
+        circuit_builder::CircuitBuilder,
+        circuit_data::{CircuitConfig, CommonCircuitData},
     },
     util::serialization::{Buffer, Read},
 };
@@ -14,7 +15,9 @@ use crate::{
     backends::plonky2::{
         basetypes::{C, D},
         circuits::mainpod::MainPodVerifyCircuit,
-        mainpod::{pad_statement, MainPod as Plonky2MainPod, Statement as BackendStatement},
+        mainpod::{
+            pad_statement, MainPod as Plonky2MainPod, MainPodProof, Statement as BackendStatement,
+        },
         mock::{mainpod::MockMainPod, signedpod::MockSignedPod},
         primitives::signature::{Signature, VP},
         signedpod::SignedPod as Plonky2SignedPod,
@@ -143,7 +146,24 @@ impl From<MainPod> for SerializedMainPod {
     }
 }
 
-fn decode_proof(proof: &str, params: &Params) -> Result<ProofWithPublicInputs<F, C, D>, Error> {
+// This is a helper function to get the CommonCircuitData necessary to decode
+// a serialized proof. At some point in the future, this data may be available
+// as a constant or with static initialization, but in the meantime we can
+// generate it on-demand.
+fn get_common_data(params: &Params) -> Result<CommonCircuitData<F, D>, Error> {
+    let config = CircuitConfig::standard_recursion_config();
+    let mut builder = CircuitBuilder::<F, D>::new(config);
+    let _main_pod = MainPodVerifyCircuit {
+        params: params.clone(),
+    }
+    .eval(&mut builder)
+    .map_err(|e| Error::custom(format!("Failed to evaluate MainPodVerifyCircuit: {}", e)))?;
+
+    let data = builder.build::<C>();
+    Ok(data.common)
+}
+
+fn decode_proof(proof: &str, params: &Params) -> Result<MainPodProof, Error> {
     let decoded = hex::decode(proof).map_err(|e| {
         Error::custom(format!(
             "Failed to decode proof from hex: {}. Value: {}",
@@ -151,29 +171,14 @@ fn decode_proof(proof: &str, params: &Params) -> Result<ProofWithPublicInputs<F,
         ))
     })?;
     let mut buf = Buffer::new(&decoded);
-    let config = CircuitConfig::standard_recursion_config();
-    let mut builder = CircuitBuilder::<F, D>::new(config);
-    let _main_pod = MainPodVerifyCircuit {
-        params: params.clone(),
-    }
-    .eval(&mut builder)
-    .map_err(|e| {
+    let common = get_common_data(params)?;
+
+    let proof = buf.read_proof_with_public_inputs(&common).map_err(|e| {
         Error::custom(format!(
-            "Failed to evaluate MainPodVerifyCircuit: {}. Value: {}",
+            "Failed to read proof from buffer: {}. Value: {}",
             e, proof
         ))
     })?;
-
-    let data = builder.build::<C>();
-
-    let proof = buf
-        .read_proof_with_public_inputs(&data.common)
-        .map_err(|e| {
-            Error::custom(format!(
-                "Failed to read proof from buffer: {}. Value: {}",
-                e, proof
-            ))
-        })?;
 
     Ok(proof)
 }
