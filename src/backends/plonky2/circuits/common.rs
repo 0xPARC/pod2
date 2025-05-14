@@ -153,7 +153,7 @@ impl<T> Build<T> for T {
 }
 
 impl StatementTarget {
-    /// Build a new native StatementTarget
+    /// Build a new native StatementTarget.  Pads the arguments.
     pub fn new_native(
         builder: &mut CircuitBuilder<F, D>,
         params: &Params,
