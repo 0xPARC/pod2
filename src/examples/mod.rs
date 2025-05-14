@@ -105,6 +105,8 @@ pub fn eth_dos_pod_builder(
         .expect("Could not find Charlie's public key!")
         .clone();
 
+    println!("DBG === eth_dos_pod_builder ===");
+
     // Include Alice and Bob's keys as public statements. We don't
     // want to reveal the middleman.
     let alice_pubkey_copy = alice_bob_ethdos.pub_op(op!(new_entry, ("Alice", alice_pubkey)))?;

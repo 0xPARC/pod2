@@ -225,10 +225,12 @@ impl MainPodBuilder {
     }
 
     pub fn pub_op(&mut self, op: Operation) -> Result<Statement> {
+        // println!("DBG pub_op: {}", op);
         self.op(true, op)
     }
 
     pub fn priv_op(&mut self, op: Operation) -> Result<Statement> {
+        // println!("DBG priv_op: {}", op);
         self.op(false, op)
     }
 
@@ -481,6 +483,7 @@ impl MainPodBuilder {
                         _ => Err(Error::custom(format!("Invalid argument {} to operation corresponding to custom predicate {:?}.", a, cpr)))
                     }
                 ).collect::<Result<Vec<_>>>()?;
+                println!("DBG custom op args.len={}", args.len());
 
                 let mut wildcard_map =
                     vec![Option::None; self.params.max_custom_predicate_wildcards];
@@ -707,11 +710,22 @@ impl MainPodCompiler {
             op.1.iter()
                 .flat_map(|arg| self.compile_op_arg(arg))
                 .collect_vec();
+        println!(
+            "DBG compile_op args.len(): {} -> {}",
+            op.1.len(),
+            mop_args.len()
+        );
         Ok(middleware::Operation::op(op.0.clone(), &mop_args, &op.2)?)
     }
 
     fn compile_st_op(&mut self, st: &Statement, op: &Operation, params: &Params) -> Result<()> {
         let middle_op = self.compile_op(op)?;
+        match &middle_op {
+            middleware::Operation::Custom(_, args) => {
+                println!("DBG middle_op_args.len={}", args.len())
+            }
+            _ => {}
+        }
         let is_correct = middle_op.check(params, st)?;
         if !is_correct {
             // todo: improve error handling
@@ -793,7 +807,7 @@ pub mod build_utils {
         (max_of, $($arg:expr),+) => { $crate::frontend::Operation(
             $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::MaxOf),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
-        (custom, $op:expr, $($arg:expr),+) => { $crate::frontend::Operation(
+        (custom, $op:expr, $($arg:expr),*) => { $crate::frontend::Operation(
             $crate::middleware::OperationType::Custom($op),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (dict_contains, $dict:expr, $key:expr, $value:expr) => { $crate::frontend::Operation(

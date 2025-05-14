@@ -57,11 +57,14 @@ impl fmt::Display for MockMainPod {
         writeln!(f, "MockMainPod ({}):", self.id)?;
         // TODO print input signed pods id and type
         // TODO print input main pods id and type
+        let offset_input_signed_pods = Self::offset_input_signed_pods();
         let offset_input_main_pods = self.offset_input_main_pods();
         let offset_input_statements = self.offset_input_statements();
         let offset_public_statements = self.offset_public_statements();
         for (i, st) in self.statements.iter().enumerate() {
-            if (i < self.offset_input_main_pods()) && (i % self.params.max_signed_pod_values == 0) {
+            if (i >= offset_input_signed_pods && i < offset_input_main_pods)
+                && ((i - offset_input_signed_pods) % self.params.max_signed_pod_values == 0)
+            {
                 writeln!(
                     f,
                     "  from input SignedPod {}:",
@@ -125,8 +128,12 @@ fn fmt_statement_index(
 /// - private Statements
 /// - public Statements
 impl MockMainPod {
+    fn offset_input_signed_pods() -> usize {
+        1
+    }
     fn offset_input_main_pods(&self) -> usize {
-        self.params.max_input_signed_pods * self.params.max_signed_pod_values
+        Self::offset_input_signed_pods()
+            + self.params.max_input_signed_pods * self.params.max_signed_pod_values
     }
     fn offset_input_statements(&self) -> usize {
         self.offset_input_main_pods()

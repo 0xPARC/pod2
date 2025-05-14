@@ -934,12 +934,17 @@ impl MainPodVerifyGadget {
 
         // Build the statement array
         let mut statements = Vec::new();
+        // Statement at index 0 is always None to be used for padding operation arguments in custom
+        // predicate statements
+        let st_none =
+            StatementTarget::new_native(builder, &self.params, NativePredicate::None, &[]);
+        statements.push(st_none);
         for signed_pod in &signed_pods {
             statements.extend_from_slice(signed_pod.pub_statements(builder, false).as_slice());
         }
         debug_assert_eq!(
             statements.len(),
-            self.params.max_input_signed_pods * self.params.max_signed_pod_values
+            1 + self.params.max_input_signed_pods * self.params.max_signed_pod_values
         );
         // TODO: Fill with input main pods
         for _main_pod in 0..self.params.max_input_main_pods {
@@ -1185,14 +1190,14 @@ impl MainPodVerifyTarget {
             input.custom_predicate_verifications.len()
                 <= self.params.max_custom_predicate_verifications
         );
-        for (i, cpv) in input.custom_predicate_verifications.iter().enumerate() {
-            self.custom_predicate_verifications[i].set_targets(pw, &self.params, cpv)?;
-            println!("DBG cpv{}:", i);
-            println!(
-                "    {:?}",
-                cpv.op_args.iter().map(|s| format!("{}", s)).collect_vec()
-            );
-        }
+        // for (i, cpv) in input.custom_predicate_verifications.iter().enumerate() {
+        //     self.custom_predicate_verifications[i].set_targets(pw, &self.params, cpv)?;
+        //     println!("DBG cpv{}:", i);
+        //     println!(
+        //         "    {:?}",
+        //         cpv.op_args.iter().map(|s| format!("{}", s)).collect_vec()
+        //     );
+        // }
         // Padding.  Use the first input if it exists.  If it doesnt, all batches in this MainPod
         // are padding so refer to the first padding entry.
         let empty_cpv = CustomPredicateVerification {

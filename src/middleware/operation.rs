@@ -324,6 +324,7 @@ impl Operation {
             (Self::Custom(CustomPredicateRef { batch, index }, args), Custom(cpr, s_args))
                 if batch == &cpr.batch && index == &cpr.index =>
             {
+                println!("DBG check args.len={}", args.len());
                 check_custom_pred(params, cpr, args, s_args)
             }
             _ => Err(Error::invalid_deduction(
@@ -423,6 +424,11 @@ fn check_custom_pred(
 ) -> Result<bool> {
     let pred = custom_pred_ref.predicate();
     if pred.statements.len() != args.len() {
+        use itertools::Itertools;
+        println!(
+            "DBG args: {:?}",
+            args.iter().map(|s| format!("{}", s)).collect_vec()
+        );
         return Err(Error::diff_amount(
             "custom predicate operation".to_string(),
             "statements".to_string(),

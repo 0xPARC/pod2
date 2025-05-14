@@ -150,20 +150,18 @@ pub(crate) fn extract_merkle_proofs(
 
 /// Find the operation argument statement in the list of previous statements and return the index.
 fn find_op_arg(statements: &[Statement], op_arg: &middleware::Statement) -> Result<OperationArg> {
-    match op_arg {
-        middleware::Statement::None => Ok(OperationArg::None),
-        _ => statements
-            .iter()
-            .enumerate()
-            .find_map(|(i, s)| {
-                (&middleware::Statement::try_from(s.clone()).ok()? == op_arg).then_some(i)
-            })
-            .map(OperationArg::Index)
-            .ok_or(Error::custom(format!(
-                "Statement corresponding to op arg {} not found",
-                op_arg
-            ))),
-    }
+    // NOTE: The `None` `Statement` always exists as a constant at index 0
+    statements
+        .iter()
+        .enumerate()
+        .find_map(|(i, s)| {
+            (&middleware::Statement::try_from(s.clone()).ok()? == op_arg).then_some(i)
+        })
+        .map(OperationArg::Index)
+        .ok_or(Error::custom(format!(
+            "Statement corresponding to op arg {} not found",
+            op_arg
+        )))
 }
 
 /// Find the operation auxiliary data in the list of auxiliary data and return the index.
@@ -227,6 +225,10 @@ fn pad_operation_args(params: &Params, args: &mut Vec<OperationArg>) {
 /// respective max lengths defined at the given Params.
 pub(crate) fn layout_statements(params: &Params, inputs: &MainPodInputs) -> Vec<Statement> {
     let mut statements = Vec::new();
+
+    // Statement at index 0 is always None to be used for padding operation arguments in custom
+    // predicate statements
+    statements.push(middleware::Statement::None.into());
 
     // Input signed pods region
     let none_sig_pod_box: Box<dyn Pod> = Box::new(NonePod {});
@@ -680,7 +682,6 @@ pub mod tests {
         let charlie_attestation =
             eth_friend_signed_pod_builder(&params, bob.public_key().0.into()).sign(&mut charlie)?;
 
-        let mut prover = Prover {};
         let alice_bob_ethdos_builder = eth_dos_pod_builder(
             &params,
             false,
@@ -688,12 +689,16 @@ pub mod tests {
             &charlie_attestation,
             bob.public_key().0.into(),
         )?;
-        // println!("Builder:\n{}", alice_bob_ethdos_builder);
-        let alice_bob_ethdos = alice_bob_ethdos_builder.prove(&mut prover, &params)?;
 
-        let pod = (alice_bob_ethdos.pod as Box<dyn Any>)
-            .downcast::<MainPod>()
-            .unwrap();
+        let mut prover = MockProver {};
+        let pod = alice_bob_ethdos_builder.prove(&mut prover, &params)?;
+        println!("DBG Mock prove complete");
+        assert!(pod.pod.verify().is_ok());
+
+        // println!("Builder:\n{}", alice_bob_ethdos_builder);
+        let mut prover = Prover {};
+        let pod = alice_bob_ethdos_builder.prove(&mut prover, &params)?;
+        let pod = (pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
 
         Ok(pod.verify()?)
     }
@@ -735,12 +740,6 @@ pub mod tests {
 
         let mut pod_builder = MainPodBuilder::new(&params);
 
-        // TODO: Introduce a fixed statement::none at index 0
-        let stx = pod_builder.priv_op(frontend::Operation(
-            OperationType::Native(NativeOperation::None),
-            vec![],
-            middleware::OperationAux::None,
-        ))?;
         let st0 = pod_builder.priv_op(op!(new_entry, ("score", 42)))?;
         let st1 = pod_builder.priv_op(op!(new_entry, ("foo", 42)))?;
         let st2 = pod_builder.priv_op(op!(eq, st1.clone(), st0.clone()))?;

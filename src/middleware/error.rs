@@ -16,7 +16,7 @@ pub enum MiddlewareInnerError {
     InvalidStatementArg(StatementArg, String),
     #[error("{0} {1} is over the limit {2}")]
     MaxLength(String, usize, usize),
-    #[error("{0} amount of {1} should be {1} but it's {2}")]
+    #[error("{0} amount of {1} should be {2} but it's {3}")]
     DiffAmount(String, String, usize, usize),
     // Other
     #[error("{0}")]
