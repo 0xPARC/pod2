@@ -24,7 +24,7 @@ try {
 
   // Get the specific validator for MainPodHelper using its path within the full schema.
   const specificValidator = ajv.getSchema<MainPod>(
-    "#/definitions/MainPodHelper"
+    "#/definitions/MainPod"
   );
 
   if (specificValidator) {
@@ -36,7 +36,7 @@ try {
     // This case should ideally not be hit if the schema path is correct
     // and MainPodHelper is defined in fullSchema.definitions.
     throw new Error(
-      "Could not get validator for #/definitions/MainPodHelper from compiled schema."
+      "Could not get validator for #/definitions/MainPod from compiled schema."
     );
   }
 } catch (e) {

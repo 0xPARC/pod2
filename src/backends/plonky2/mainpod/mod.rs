@@ -125,7 +125,7 @@ fn fill_pad<T: Clone>(v: &mut Vec<T>, pad_value: T, len: usize) {
     }
 }
 
-fn pad_statement(params: &Params, s: &mut Statement) {
+pub fn pad_statement(params: &Params, s: &mut Statement) {
     fill_pad(&mut s.1, StatementArg::None, params.max_statement_args)
 }
 
@@ -347,12 +347,14 @@ impl PodProver for Prover {
     }
 }
 
+pub type MainPodProof = ProofWithPublicInputs<F, C, D>;
+
 #[derive(Clone, Debug)]
 pub struct MainPod {
     params: Params,
     id: PodId,
     public_statements: Vec<Statement>,
-    proof: ProofWithPublicInputs<F, C, D>,
+    proof: MainPodProof,
 }
 
 /// Convert a Statement into middleware::Statement and replace references to SELF by `self_id`.
@@ -395,6 +397,28 @@ impl MainPod {
         data.verify(self.proof.clone())
             .map_err(|e| Error::custom(format!("MainPod proof verification failure: {:?}", e)))
     }
+
+    pub fn proof(&self) -> MainPodProof {
+        self.proof.clone()
+    }
+
+    pub fn params(&self) -> &Params {
+        &self.params
+    }
+
+    pub fn new(
+        proof: MainPodProof,
+        public_statements: Vec<Statement>,
+        id: PodId,
+        params: Params,
+    ) -> Self {
+        Self {
+            params,
+            id,
+            public_statements,
+            proof,
+        }
+    }
 }
 
 impl Pod for MainPod {
@@ -416,7 +440,10 @@ impl Pod for MainPod {
     }
 
     fn serialized_proof(&self) -> String {
-        todo!()
+        let mut buffer = Vec::new();
+        use plonky2::util::serialization::Write;
+        buffer.write_proof_with_public_inputs(&self.proof).unwrap();
+        hex::encode(buffer)
     }
 }
 

@@ -1,7 +1,7 @@
 procs:
   server:
     cwd: ..
-    shell: RUST_BACKTRACE=1 RUST_LOG=info cargo run  --bin pod2-server 
+    shell: RUST_LOG=info cargo run  --release --bin pod2-server
   ui:
     cwd: ./apps/playground-client
     shell: pnpm dev
@@ -10,4 +10,3 @@ procs:
     autostart: false
     cwd: ./apps/pod2-issuer-client
     shell: pnpm dev
-

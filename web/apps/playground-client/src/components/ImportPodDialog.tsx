@@ -31,18 +31,18 @@ let ajvSuccessfullySetup = false;
 
 try {
   ajv.compile(fullSchema);
-  const mainPodValidator = ajv.getSchema<MainPod>("#/definitions/MainPodHelper");
-  const signedPodValidator = ajv.getSchema<Omit<SignedPod, 'id' | 'verify'>>("#/definitions/SignedPodHelper");
+  const mainPodValidator = ajv.getSchema<MainPod>("#/definitions/MainPod");
+  const signedPodValidator = ajv.getSchema<Omit<SignedPod, 'id' | 'verify'>>("#/definitions/SignedPod");
 
   if (mainPodValidator) {
     validateMainPod = mainPodValidator;
   } else {
-    throw new Error("Could not get validator for MainPodHelper");
+    throw new Error("Could not get validator for MainPod");
   }
   if (signedPodValidator) {
     validateSignedPod = signedPodValidator;
   } else {
-    throw new Error("Could not get validator for SignedPodHelper");
+    throw new Error("Could not get validator for SignedPod");
   }
   ajvSuccessfullySetup = true; // Mark AJV as successfully set up
 } catch (e) {

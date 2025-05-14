@@ -1,8 +1,12 @@
 use axum::{
+    http::Method,
     routing::{delete, get, post},
     Router,
 };
-use tower_http::trace::{DefaultMakeSpan, TraceLayer};
+use tower_http::{
+    cors::{Any, CorsLayer},
+    trace::{DefaultMakeSpan, TraceLayer},
+};
 
 use crate::server::{db::ConnectionPool, handlers};
 
@@ -48,5 +52,25 @@ pub fn create_router(pool: ConnectionPool) -> Router {
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::default().include_headers(true)),
+        )
+        .layer(
+            CorsLayer::new() // Allow requests from any origin
+                .allow_origin(Any)
+                // Allow all common HTTP methods
+                .allow_methods([
+                    Method::GET,
+                    Method::POST,
+                    Method::PUT,
+                    Method::DELETE,
+                    Method::PATCH,
+                    Method::OPTIONS,
+                    Method::HEAD,
+                ])
+                // Allow common headers
+                .allow_headers(Any)
+                // Allow credentials (cookies, etc.)
+                // .allow_credentials(true)
+                // Support preflight caching
+                .max_age(std::time::Duration::from_secs(86400)),
         )
 }

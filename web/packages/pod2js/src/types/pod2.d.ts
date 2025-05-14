@@ -5,6 +5,7 @@
  * and run json-schema-to-typescript to regenerate this file.
  */
 
+export type PodId = string;
 /**
  * Type encapsulating statements with their associated arguments.
  */
@@ -108,7 +109,6 @@ export type Statement =
        */
       args: [CustomPredicateRef, WildcardValue[]];
     };
-export type PodId = string;
 export type Key = string;
 /**
  * Represents various POD value types. Array, String, and Bool variants are represented untagged in JSON.
@@ -204,6 +204,8 @@ export type WildcardValue =
   | {
       Key: Key;
     };
+export type MainPodType = "Main" | "MockMain";
+export type SignedPodType = "Signed" | "MockSigned";
 export type PodData =
   | {
       pod_data_variant: "Signed";
@@ -221,9 +223,11 @@ export interface SchemaContainer {
   pod_info: PodInfo;
 }
 export interface MainPod {
+  id: PodId;
   publicStatements: Statement[];
   proof: string;
-  podType: string;
+  params: Params;
+  podType: MainPodType;
 }
 export interface AnchoredKey {
   podId: PodId;
@@ -263,12 +267,27 @@ export interface Wildcard {
   name: string;
   index: number;
 }
+export interface Params {
+  maxInputSignedPods: number;
+  maxInputMainPods: number;
+  maxStatements: number;
+  maxSignedPodValues: number;
+  maxPublicStatements: number;
+  maxStatementArgs: number;
+  maxOperationArgs: number;
+  maxCustomPredicateArity: number;
+  maxCustomPredicateWildcards: number;
+  maxCustomBatchSize: number;
+  maxMerkleProofs: number;
+  maxDepthMtGadget: number;
+}
 export interface SignedPod {
+  id: PodId;
   entries: {
     [k: string]: Value;
   };
   proof: string;
-  podType: string;
+  podType: SignedPodType;
 }
 export interface SpaceInfo {
   id: string;

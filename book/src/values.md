@@ -40,9 +40,9 @@ The array, set and dictionary types are similar types. While all of them use [a 
 - **array**: the elements are placed at the value field of each leaf, and the key field is just the array index (integer)
     - `leaf.key=i` 
     - `leaf.value=original_value` 
-- **set**: the value field of the leaf is unused, and the key contains the hash of the element
-    -  `leaf.key=hash(original_value)`
-    - `leaf.value=0`
+- **set**: both the key and the value are set to the hash of the value.
+    - `leaf.key=hash(original_value)`
+    - `leaf.value=hash(original_value)`
 
 In the three types, the merkletree under the hood allows to prove inclusion & non-inclusion of the particular entry of the {dictionary/array/set} element.
 

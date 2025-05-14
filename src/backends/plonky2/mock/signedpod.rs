@@ -59,6 +59,10 @@ impl MockSignedPod {
     pub(crate) fn new(id: PodId, signature: String, kvs: HashMap<Key, Value>) -> Self {
         Self { id, signature, kvs }
     }
+
+    pub fn signature(&self) -> String {
+        self.signature.clone()
+    }
 }
 
 impl MockSignedPod {
@@ -131,7 +135,7 @@ impl Pod for MockSignedPod {
     }
 
     fn serialized_proof(&self) -> String {
-        self.signature.to_string()
+        serde_json::to_string(&self.signature).unwrap()
     }
 }
 

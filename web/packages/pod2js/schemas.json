@@ -10,10 +10,10 @@
   ],
   "properties": {
     "mainpod": {
-      "$ref": "#/definitions/MainPodHelper"
+      "$ref": "#/definitions/MainPod"
     },
     "signedpod": {
-      "$ref": "#/definitions/SignedPodHelper"
+      "$ref": "#/definitions/SignedPod"
     },
     "space_info": {
       "$ref": "#/definitions/SpaceInfo"
@@ -23,15 +23,19 @@
     }
   },
   "definitions": {
-    "MainPodHelper": {
-      "title": "MainPod",
+    "MainPod": {
       "type": "object",
       "required": [
+        "id",
+        "params",
         "podType",
         "proof",
         "publicStatements"
       ],
       "properties": {
+        "id": {
+          "$ref": "#/definitions/PodId"
+        },
         "publicStatements": {
           "type": "array",
           "items": {
@@ -41,10 +45,20 @@
         "proof": {
           "type": "string"
         },
+        "params": {
+          "$ref": "#/definitions/Params"
+        },
         "podType": {
-          "type": "string"
+          "$ref": "#/definitions/MainPodType"
         }
       }
+    },
+    "PodId": {
+      "$ref": "#/definitions/Hash"
+    },
+    "Hash": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
     },
     "Statement": {
       "description": "Type encapsulating statements with their associated arguments.",
@@ -433,13 +447,6 @@
           "$ref": "#/definitions/Key"
         }
       }
-    },
-    "PodId": {
-      "$ref": "#/definitions/Hash"
-    },
-    "Hash": {
-      "type": "string",
-      "pattern": "^[0-9a-fA-F]{64}$"
     },
     "Key": {
       "type": "string"
@@ -861,15 +868,104 @@
         }
       ]
     },
-    "SignedPodHelper": {
-      "title": "SignedPod",
+    "Params": {
+      "type": "object",
+      "required": [
+        "maxCustomBatchSize",
+        "maxCustomPredicateArity",
+        "maxCustomPredicateWildcards",
+        "maxDepthMtGadget",
+        "maxInputMainPods",
+        "maxInputSignedPods",
+        "maxMerkleProofs",
+        "maxOperationArgs",
+        "maxPublicStatements",
+        "maxSignedPodValues",
+        "maxStatementArgs",
+        "maxStatements"
+      ],
+      "properties": {
+        "maxInputSignedPods": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "maxInputMainPods": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "maxStatements": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "maxSignedPodValues": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "maxPublicStatements": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "maxStatementArgs": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "maxOperationArgs": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "maxCustomPredicateArity": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "maxCustomPredicateWildcards": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "maxCustomBatchSize": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "maxMerkleProofs": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "maxDepthMtGadget": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      }
+    },
+    "MainPodType": {
+      "type": "string",
+      "enum": [
+        "Main",
+        "MockMain"
+      ]
+    },
+    "SignedPod": {
       "type": "object",
       "required": [
         "entries",
+        "id",
         "podType",
         "proof"
       ],
       "properties": {
+        "id": {
+          "$ref": "#/definitions/PodId"
+        },
         "entries": {
           "type": "object",
           "additionalProperties": {
@@ -880,9 +976,16 @@
           "type": "string"
         },
         "podType": {
-          "type": "string"
+          "$ref": "#/definitions/SignedPodType"
         }
       }
+    },
+    "SignedPodType": {
+      "type": "string",
+      "enum": [
+        "Signed",
+        "MockSigned"
+      ]
     },
     "SpaceInfo": {
       "type": "object",
@@ -948,7 +1051,7 @@
               ]
             },
             "pod_data_payload": {
-              "$ref": "#/definitions/SignedPodHelper"
+              "$ref": "#/definitions/SignedPod"
             }
           }
         },
@@ -966,7 +1069,7 @@
               ]
             },
             "pod_data_payload": {
-              "$ref": "#/definitions/MainPodHelper"
+              "$ref": "#/definitions/MainPod"
             }
           }
         }
