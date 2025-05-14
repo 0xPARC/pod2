@@ -313,15 +313,20 @@ fn extract_implied_pairs(
                     }
                 };
 
-            let target_list = if is_eq {
-                &mut equality_pairs
-            } else {
-                &mut inequality_pairs
-            };
+            if is_eq {
+                // For Equal predicates, only infer equality for wildcards directly representing values.
+                // Equality of AnchoredKeys (e.g., Equal(?P1[?K1], ?P2[?K2])) means the *values*
+                // at those anchored keys are equal, not necessarily that ?P1=?P2 or ?K1=?K2.
+                add_pairs(&wcs1.val_wcs, &wcs2.val_wcs, &mut equality_pairs);
+            }
 
-            add_pairs(&wcs1.pod_wcs, &wcs2.pod_wcs, target_list);
-            add_pairs(&wcs1.key_wcs, &wcs2.key_wcs, target_list);
-            add_pairs(&wcs1.val_wcs, &wcs2.val_wcs, target_list);
+            if is_neq {
+                // For NotEqual, Gt, Lt, if the values at AnchoredKeys are different,
+                // it's safer to infer potential distinctness for the component wildcards.
+                add_pairs(&wcs1.pod_wcs, &wcs2.pod_wcs, &mut inequality_pairs);
+                add_pairs(&wcs1.key_wcs, &wcs2.key_wcs, &mut inequality_pairs);
+                add_pairs(&wcs1.val_wcs, &wcs2.val_wcs, &mut inequality_pairs);
+            }
         }
     }
 

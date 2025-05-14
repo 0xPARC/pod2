@@ -378,16 +378,11 @@ pub(super) fn prune_domains_after_proof(
                 let wildcards1 = get_wildcards_from_tmpl_arg(&proven_template.args[0]);
                 let wildcards2 = get_wildcards_from_tmpl_arg(&proven_template.args[1]);
 
-                for wc1_pod in &wildcards1.pod_wcs {
-                    for wc2_pod in &wildcards2.pod_wcs {
-                        changed |= propagate_or_intersect(&mut state.domains, wc1_pod, wc2_pod)?;
-                    }
-                }
-                for wc1_key in &wildcards1.key_wcs {
-                    for wc2_key in &wildcards2.key_wcs {
-                        changed |= propagate_or_intersect(&mut state.domains, wc1_key, wc2_key)?;
-                    }
-                }
+                // For Equal predicates, only propagate/intersect for wildcards directly representing values.
+                // Equality of AnchoredKeys (e.g., Equal(P1[K1], P2[K2])) means the *values*
+                // at those anchored keys are equal. This equality is handled by DSU updates
+                // in the indexing phase or by EqualFromEntries in the proof phase.
+                // We should not attempt to equate the domains of P1 and P2, or K1 and K2 here.
                 for wc1_val in &wildcards1.val_wcs {
                     for wc2_val in &wildcards2.val_wcs {
                         changed |= propagate_or_intersect(&mut state.domains, wc1_val, wc2_val)?;

@@ -308,8 +308,8 @@ mod search_tests {
 
     #[test]
     fn test_solve_search_is_unsatisfiable() {
-        // Scenario: Prove Eq(?A["k"], ?B["k"]) AND NEq(?A, ?B)
-        // Facts: p1["k"]=10, p2["k"]=10.
+        // Scenario: Prove Eq(?A["k"], ?B["k"]) AND NEq(?A["k"], ?B["k"])
+        // Facts: p1["k"]=10, p2["k"]=20.
         // Initial domains: ?A={p1,p2}, ?B={p1,p2}.
         // Search is needed for NEq. Eq requires A=B (either p1 or p2).
         // The constraints are contradictory.
@@ -323,7 +323,7 @@ mod search_tests {
 
         let facts = vec![
             (p1, Statement::ValueOf(ak(1, "k"), val(10))),
-            (p2, Statement::ValueOf(ak(2, "k"), val(10))),
+            (p2, Statement::ValueOf(ak(2, "k"), val(20))),
             // Add auxiliary facts to represent Pod IDs as values
             (p1, Statement::ValueOf(ak(1, "_pod_id_val"), val(1))),
             (p2, Statement::ValueOf(ak(2, "_pod_id_val"), val(2))),
