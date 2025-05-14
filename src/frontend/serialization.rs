@@ -34,6 +34,7 @@ pub enum SignedPodType {
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+#[schemars(rename = "SignedPod")]
 pub struct SerializedSignedPod {
     id: PodId,
     #[serde(serialize_with = "ordered_map")]
@@ -50,6 +51,7 @@ pub enum MainPodType {
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+#[schemars(rename = "MainPod")]
 pub struct SerializedMainPod {
     id: PodId,
     public_statements: Vec<Statement>,
