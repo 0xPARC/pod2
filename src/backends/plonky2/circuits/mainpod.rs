@@ -838,7 +838,7 @@ struct MainPodVerifyGadget {
 }
 
 impl MainPodVerifyGadget {
-    // Replace predicates of batch-self with the corresponding globa custom predicate batch_id and
+    // Replace predicates of batch-self with the corresponding global custom predicate batch_id and
     // index
     fn normalize_st_tmpl(
         &self,
@@ -1014,7 +1014,7 @@ impl MainPodVerifyGadget {
             .map(|pf| pf.into())
             .collect();
 
-        // Table of custom predicate batches with batch_id calcuation
+        // Table of custom predicate batches with batch_id calculation
         let (custom_predicate_table, custom_predicate_batches) =
             self.build_custom_predicate_table(builder)?;
 
