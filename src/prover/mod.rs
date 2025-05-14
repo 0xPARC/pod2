@@ -20,7 +20,7 @@ use crate::middleware::{
     Statement, ToFields, F,
 };
 
-pub fn facts_from_pods(pods: &[Box<dyn Pod>]) -> Vec<(PodId, Statement)> {
+pub fn facts_from_pods(pods: &[&Box<dyn Pod>]) -> Vec<(PodId, Statement)> {
     pods.iter()
         .flat_map(|pod| {
             let statements = pod.pub_statements();
@@ -127,8 +127,7 @@ mod tests {
         let solution = solve_result.unwrap();
 
         // Build final MainPod from solution
-        let original_signed_pods =
-            HashMap::from([(pod_a.id(), pod_a.clone()), (pod_b.id(), pod_b.clone())]);
+        let original_signed_pods = HashMap::from([(pod_a.id(), &pod_a), (pod_b.id(), &pod_b)]);
         let original_main_pods = HashMap::new();
 
         let build_result = pod_building::build_main_pod_from_solution(
@@ -370,9 +369,9 @@ mod tests {
 
         // Build MainPod from solution
         let original_signed_pods = HashMap::from([
-            (pod_1.id(), pod_1.clone()),
-            (pod_2.id(), pod_2.clone()),
-            (pod_3.id(), pod_3.clone()),
+            (pod_1.id(), &pod_1),
+            (pod_2.id(), &pod_2),
+            (pod_3.id(), &pod_3),
         ]);
         let original_main_pods = HashMap::new();
 
@@ -781,9 +780,9 @@ mod tests {
 
         // Build MainPod from solution
         let original_signed_pods = HashMap::from([
-            (gov_id_pod.id(), gov_id_pod.clone()),
-            (pay_stub_pod.id(), pay_stub_pod.clone()),
-            (sanction_list_pod.id(), sanction_list_pod.clone()),
+            (gov_id_pod.id(), &gov_id_pod),
+            (pay_stub_pod.id(), &pay_stub_pod),
+            (sanction_list_pod.id(), &sanction_list_pod),
         ]);
         let original_main_pods = HashMap::new();
 
@@ -937,26 +936,8 @@ mod tests {
 
         // Prepare inputs for the constraint solver.
         // Only include facts from the real signed pods.
-        let initial_facts: Vec<(PodId, Statement)> = gov_id_pod
-            .pod
-            .pub_statements()
-            .into_iter()
-            .map(|stmt| (gov_id_pod.id(), stmt))
-            .chain(
-                pay_stub_pod
-                    .pod
-                    .pub_statements()
-                    .into_iter()
-                    .map(|stmt| (pay_stub_pod.id(), stmt)),
-            )
-            .chain(
-                sanction_list_pod
-                    .pod
-                    .pub_statements()
-                    .into_iter()
-                    .map(|stmt| (sanction_list_pod.id(), stmt)),
-            )
-            .collect();
+        let initial_facts: Vec<(PodId, Statement)> =
+            facts_from_pods(&[&gov_id_pod.pod, &pay_stub_pod.pod, &sanction_list_pod.pod]);
 
         let custom_definitions = CustomDefinitions::default();
 
@@ -977,9 +958,9 @@ mod tests {
 
         // Prepare inputs for pod building.
         let original_signed_pods = HashMap::from([
-            (gov_id_pod.id(), gov_id_pod.clone()),
-            (pay_stub_pod.id(), pay_stub_pod.clone()),
-            (sanction_list_pod.id(), sanction_list_pod.clone()),
+            (gov_id_pod.id(), &gov_id_pod),
+            (pay_stub_pod.id(), &pay_stub_pod),
+            (sanction_list_pod.id(), &sanction_list_pod),
         ]);
         let original_main_pods = HashMap::new(); // No input main pods
 
@@ -1103,6 +1084,19 @@ mod tests {
             );
         }
 
+        let sol = solver::solve(
+            &request_templates,
+            &facts_from_pods(&[&main_pod.pod]),
+            &params,
+            &custom_definitions,
+        );
+
+        assert!(
+            sol.is_ok(),
+            "Pod building failed for ZuKYC: {:?}",
+            sol.err()
+        );
+
         println!("ZuKYC end-to-end test successful!");
         println!("Generated MainPod: {}", main_pod);
 
@@ -1190,7 +1184,7 @@ mod tests {
         let charlie_attestation =
             eth_friend_signed_pod_builder(&params, bob.pubkey().into()).sign(&mut charlie)?;
 
-        let initial_facts = facts_from_pods(&[alice_attestation.pod, charlie_attestation.pod]);
+        let initial_facts = facts_from_pods(&[&alice_attestation.pod, &charlie_attestation.pod]);
         let custom_definitions =
             custom_definitions_from_batches(&[processed.custom_batch], &params);
 

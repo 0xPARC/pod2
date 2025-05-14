@@ -211,11 +211,8 @@ pub async fn execute_mvp_handler(
         )
     })?;
 
-    let all_pods_for_facts: Vec<Box<dyn Pod>> = vec![
-        gov_id_pod.pod.clone(),
-        pay_stub_pod.pod.clone(),
-        sanction_list_pod.pod.clone(),
-    ];
+    let all_pods_for_facts: Vec<&Box<dyn Pod>> =
+        vec![&gov_id_pod.pod, &pay_stub_pod.pod, &sanction_list_pod.pod];
     let initial_facts = facts_from_pods(&all_pods_for_facts);
 
     let custom_definitions =
@@ -230,9 +227,9 @@ pub async fn execute_mvp_handler(
     )?;
 
     let mut original_signed_pods = HashMap::new();
-    original_signed_pods.insert(gov_id_pod.id(), gov_id_pod.clone());
-    original_signed_pods.insert(pay_stub_pod.id(), pay_stub_pod.clone());
-    original_signed_pods.insert(sanction_list_pod.id(), sanction_list_pod.clone());
+    original_signed_pods.insert(gov_id_pod.id(), &gov_id_pod);
+    original_signed_pods.insert(pay_stub_pod.id(), &pay_stub_pod);
+    original_signed_pods.insert(sanction_list_pod.id(), &sanction_list_pod);
 
     let original_main_pods = HashMap::new();
 
@@ -400,9 +397,8 @@ pub async fn execute_code_handler(
         );
     }
 
-    let mut all_pods_for_facts: Vec<Box<dyn Pod>> = Vec::new();
-    let mut original_signed_pods: HashMap<PodId, SignedPod> = HashMap::new();
-    let mut original_main_pods: HashMap<PodId, MainPod> = HashMap::new();
+    let mut owned_signed_pods: Vec<SignedPod> = Vec::new();
+    let mut owned_main_pods: Vec<MainPod> = Vec::new();
 
     for pod_info in fetched_pod_infos {
         // Sanity check: Ensure the pod_type string from DB matches the PodData enum variant type
@@ -417,16 +413,11 @@ pub async fn execute_code_handler(
 
         match pod_info.data {
             PodData::Signed(helper) => {
-                let signed_pod = SignedPod::from(helper);
-                let pod_id = signed_pod.id();
-                all_pods_for_facts.push(signed_pod.pod.clone());
-                original_signed_pods.insert(pod_id, signed_pod);
+                owned_signed_pods.push(SignedPod::from(helper));
             }
             PodData::Main(helper) => match MainPod::try_from(helper) {
                 Ok(main_pod) => {
-                    let pod_id = main_pod.id();
-                    all_pods_for_facts.push(main_pod.pod.clone());
-                    original_main_pods.insert(pod_id, main_pod);
+                    owned_main_pods.push(main_pod);
                 }
                 Err(e) => {
                     log::error!(
@@ -444,6 +435,20 @@ pub async fn execute_code_handler(
                 }
             },
         }
+    }
+
+    let mut all_pods_for_facts: Vec<&Box<dyn Pod>> = Vec::new();
+    let mut original_signed_pods: HashMap<PodId, &SignedPod> = HashMap::new();
+    let mut original_main_pods: HashMap<PodId, &MainPod> = HashMap::new();
+
+    for signed_pod_ref in &owned_signed_pods {
+        all_pods_for_facts.push(&signed_pod_ref.pod);
+        original_signed_pods.insert(signed_pod_ref.id(), signed_pod_ref);
+    }
+
+    for main_pod_ref in &owned_main_pods {
+        all_pods_for_facts.push(&main_pod_ref.pod);
+        original_main_pods.insert(main_pod_ref.id(), main_pod_ref);
     }
 
     let initial_facts = facts_from_pods(&all_pods_for_facts);

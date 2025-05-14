@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::{
-    backends::plonky2::mainpod::Prover,
+    backends::plonky2::{mainpod::Prover, mock::mainpod::MockProver},
     frontend::{self, MainPod, MainPodBuilder, Operation as FrontendOperation, SignedPod},
     middleware::{self, NativeOperation, OperationAux, OperationType, PodId, Statement, SELF},
     op,
@@ -33,8 +33,8 @@ use crate::{
 /// A Result containing the built frontend::MainPod or a ProverError.
 pub fn build_main_pod_from_solution(
     solution: &ProofSolution,
-    original_signed_pods: &HashMap<PodId, SignedPod>,
-    original_main_pods: &HashMap<PodId, MainPod>,
+    original_signed_pods: &HashMap<PodId, &SignedPod>,
+    original_main_pods: &HashMap<PodId, &MainPod>,
     params: &middleware::Params,
     request_templates: &[middleware::StatementTmpl],
 ) -> Result<MainPod, ProverError> {
@@ -68,7 +68,7 @@ pub fn build_main_pod_from_solution(
             if let Some(signed_pod) = original_signed_pods.get(pod_id) {
                 builder.add_signed_pod(signed_pod);
             } else if let Some(main_pod) = original_main_pods.get(pod_id) {
-                builder.add_main_pod(main_pod.clone());
+                builder.add_main_pod((*main_pod).clone());
             } else {
                 return Err(ProverError::Internal(format!(
                     "Original pod not found for ID required by scope: {:?}",
@@ -220,7 +220,7 @@ pub fn build_main_pod_from_solution(
     }
 
     // Invoke the backend prover to complete the POD construction
-    let mut prover = Prover {};
+    let mut prover = MockProver {};
     builder
         .prove(&mut prover, params)
         .map_err(ProverError::FrontendError)
