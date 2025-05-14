@@ -87,7 +87,8 @@ pub(crate) fn extract_custom_predicate_verifications(
                 .find_map(|(i, cpb)| (cpb.id() == cpr.batch.id()).then_some(i))
                 .expect("find the custom predicate from the extracted unique list");
             let custom_predicate_table_index =
-                batch_index * params.max_custom_predicate_batches + cpr.index;
+                batch_index * params.max_custom_batch_size + cpr.index;
+            println!("DBG index={}", custom_predicate_table_index);
             CustomPredicateVerification {
                 custom_predicate_table_index,
                 custom_predicate: cpr.clone(),
@@ -662,9 +663,9 @@ pub mod tests {
             max_signed_pod_values: 8,
             max_public_statements: 10,
             max_statement_args: 6,
-            max_operation_args: 5,
-            max_custom_predicate_arity: 5,
-            max_custom_batch_size: 5,
+            max_operation_args: 4,
+            max_custom_predicate_arity: 4,
+            max_custom_batch_size: 3,
             max_custom_predicate_wildcards: 12,
             max_custom_predicate_verifications: 8,
             ..Default::default()

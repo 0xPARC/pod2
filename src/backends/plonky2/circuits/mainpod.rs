@@ -998,6 +998,13 @@ impl MainPodVerifyGadget {
                     index: builder.constant(F::from_canonical_usize(index)), // constant
                     predicate: cp.clone(),                                   // input
                 };
+                // let mut id = ID_2.lock().unwrap();
+                // builder.add_simple_generator(DebugGenerator::new(
+                //     format!("table_entry_{}", id),
+                //     entry.flatten(),
+                // ));
+                // *id += 1;
+
                 let in_query_hash = entry.hash(builder);
                 custom_predicate_table.push(in_query_hash);
             }
@@ -1034,6 +1041,17 @@ impl MainPodVerifyGadget {
                 custom_predicate_table_index,
             );
             let out_query_hash = custom_predicate.hash(builder);
+            // let mut id = ID_1.lock().unwrap();
+            // builder.add_simple_generator(DebugGenerator::new(
+            //     format!("index_{}", id),
+            //     vec![custom_predicate_table_index],
+            // ));
+            // builder.add_simple_generator(DebugGenerator::new(
+            //     format!("out_query_{}", id),
+            //     custom_predicate.flatten(),
+            // ));
+            // *id += 1;
+            // FIXME
             builder.connect_array(table_query_hash.elements, out_query_hash.elements);
 
             let entry = CustomPredicateVerifyEntryTarget {
