@@ -2,18 +2,10 @@ use std::{array, sync::Arc};
 
 use itertools::{zip_eq, Itertools};
 use plonky2::{
-    field::{extension::Extendable, types::Field},
-    hash::{
-        hash_types::{HashOutTarget, RichField},
-        poseidon::PoseidonHash,
-    },
-    iop::{
-        generator::{GeneratedValues, SimpleGenerator},
-        target::{BoolTarget, Target},
-        witness::{PartialWitness, PartitionWitness, Witness},
-    },
-    plonk::{circuit_builder::CircuitBuilder, circuit_data::CommonCircuitData},
-    util::serialization::{Buffer, IoResult, Read, Write},
+    field::types::Field,
+    hash::{hash_types::HashOutTarget, poseidon::PoseidonHash},
+    iop::{target::BoolTarget, witness::PartialWitness},
+    plonk::circuit_builder::CircuitBuilder,
 };
 
 use crate::{
@@ -846,6 +838,119 @@ struct MainPodVerifyGadget {
 }
 
 impl MainPodVerifyGadget {
+    // Replace predicates of batch-self with the corresponding globa custom predicate batch_id and
+    // index
+    fn normalize_st_tmpl(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        st_tmpl: &StatementTmplTarget,
+        id: HashOutTarget,
+    ) -> StatementTmplTarget {
+        let params = &self.params;
+        let prefix_batch_self = builder.constant(F::from(PredicatePrefix::BatchSelf));
+        let is_batch_self = builder.is_equal(st_tmpl.pred.elements[0], prefix_batch_self);
+        let pred_index = st_tmpl.pred.elements[1];
+        let custom_pred = PredicateTarget::new_custom(builder, id, pred_index);
+        let pred = builder.select_flattenable(params, is_batch_self, &custom_pred, &st_tmpl.pred);
+        StatementTmplTarget {
+            pred,
+            args: st_tmpl.args.clone(),
+        }
+    }
+    /// Build a table of [batch_id, custom_predicate_index, custom_predicate] with queryable part as
+    /// hash([batch_id, custom_predicate_index, custom_predicate]).  While building the table we
+    /// calculate the id of each batch.
+    fn build_custom_predicate_table(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+    ) -> Result<(Vec<HashOutTarget>, Vec<CustomPredicateBatchTarget>)> {
+        let params = &self.params;
+        let mut custom_predicate_table =
+            Vec::with_capacity(params.max_custom_predicate_batches * params.max_custom_batch_size);
+        let mut custom_predicate_batches = Vec::with_capacity(params.max_custom_predicate_batches);
+        for _ in 0..params.max_custom_predicate_batches {
+            let cpb = builder.add_virtual_custom_predicate_batch(params);
+            let id = cpb.id(builder); // constrain the id
+            for (index, cp) in cpb.predicates.iter().enumerate() {
+                let statements = cp
+                    .statements
+                    .iter()
+                    .map(|st_tmpl| self.normalize_st_tmpl(builder, st_tmpl, id))
+                    .collect_vec();
+                let cp = CustomPredicateTarget {
+                    conjunction: cp.conjunction,
+                    statements,
+                    args_len: cp.args_len,
+                };
+                let entry = CustomPredicateEntryTarget {
+                    id,                                                      // output
+                    index: builder.constant(F::from_canonical_usize(index)), // constant
+                    predicate: cp.clone(),                                   // input
+                };
+
+                let in_query_hash = entry.hash(builder);
+                custom_predicate_table.push(in_query_hash);
+            }
+            custom_predicate_batches.push(cpb); // We keep this for witness assignment
+        }
+        Ok((custom_predicate_table, custom_predicate_batches))
+    }
+
+    /// Build table of [batch_id, custom_predicate_index, custom_predicate, args, st, op, op_args]
+    /// with queryable part as hash([st, op, op_args]).  While building the table we verify each
+    /// custom predicate against the operation and statement.
+    fn build_custom_predicate_verification_table(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        custom_predicate_table: &[HashOutTarget],
+    ) -> Result<(Vec<HashOutTarget>, Vec<CustomPredicateVerifyEntryTarget>)> {
+        let params = &self.params;
+        let mut custom_predicate_verifications =
+            Vec::with_capacity(params.max_custom_predicate_verifications);
+        let mut custom_predicate_verification_table =
+            Vec::with_capacity(params.max_custom_predicate_verifications);
+        for _ in 0..params.max_custom_predicate_verifications {
+            let custom_predicate_table_index = builder.add_virtual_target();
+            let custom_predicate = builder.add_virtual_custom_predicate_entry(params);
+            let args = (0..params.max_custom_predicate_wildcards)
+                .map(|_| builder.add_virtual_value())
+                .collect_vec();
+            let op_args = (0..params.max_operation_args)
+                .map(|_| builder.add_virtual_statement(params))
+                .collect_vec();
+
+            // Verify the custom predicate operation
+            let (statement, op_type) = CustomOperationVerifyGadget {
+                params: params.clone(),
+            }
+            .eval(builder, &custom_predicate, &op_args, &args)?;
+
+            // Check that the batch id is correct by querying the custom predicate batches table
+            let table_query_hash =
+                builder.vec_ref(params, custom_predicate_table, custom_predicate_table_index);
+            let out_query_hash = custom_predicate.hash(builder);
+            builder.connect_array(table_query_hash.elements, out_query_hash.elements);
+
+            let entry = CustomPredicateVerifyEntryTarget {
+                custom_predicate_table_index, // input
+                custom_predicate,             // input
+                args,                         // input
+                query: CustomPredicateVerifyQueryTarget {
+                    statement, // output
+                    op_type,   // output
+                    op_args,   // input
+                },
+            };
+            let in_query_hash = entry.query.hash(builder);
+            custom_predicate_verification_table.push(in_query_hash);
+            custom_predicate_verifications.push(entry); // We keep this for witness assignment
+        }
+        Ok((
+            custom_predicate_verification_table,
+            custom_predicate_verifications,
+        ))
+    }
+
     fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MainPodVerifyTarget> {
         let params = &self.params;
         // 1. Verify all input signed pods
@@ -909,116 +1014,13 @@ impl MainPodVerifyGadget {
             .map(|pf| pf.into())
             .collect();
 
-        // Table of [batch_id, custom_predicate_index, custom_predicate] with queryable part as
-        // hash([batch_id, custom_predicate_index, custom_predicate]).  While building the table we
-        // calculate the id of each batch.
-        let mut custom_predicate_table =
-            Vec::with_capacity(params.max_custom_predicate_batches * params.max_custom_batch_size);
-        let mut custom_predicate_batches = Vec::with_capacity(params.max_custom_predicate_batches);
-        for _ in 0..params.max_custom_predicate_batches {
-            let cpb = builder.add_virtual_custom_predicate_batch(&self.params);
-            let id = cpb.id(builder); // constrain the id
-            for (index, cp) in cpb.predicates.iter().enumerate() {
-                // TODO: Move this to a method
-                // Replace statement templates of batch-self with (id,index)
-                // let CustomPredicateTarget{conjunction, statements, args_len} = cp;
-                let statements = cp
-                    .statements
-                    .iter()
-                    .map(|st_tmpl| {
-                        let prefix_batch_self =
-                            builder.constant(F::from(PredicatePrefix::BatchSelf));
-                        let is_batch_self =
-                            builder.is_equal(st_tmpl.pred.elements[0], prefix_batch_self);
-                        let pred_index = st_tmpl.pred.elements[1];
-                        let custom_pred = PredicateTarget::new_custom(builder, id, pred_index);
-                        let pred = builder.select_flattenable(
-                            &self.params,
-                            is_batch_self,
-                            &custom_pred,
-                            &st_tmpl.pred,
-                        );
-                        StatementTmplTarget {
-                            pred,
-                            args: st_tmpl.args.clone(),
-                        }
-                    })
-                    .collect_vec();
-                let cp = CustomPredicateTarget {
-                    conjunction: cp.conjunction,
-                    statements,
-                    args_len: cp.args_len,
-                };
-                let entry = CustomPredicateEntryTarget {
-                    id,                                                      // output
-                    index: builder.constant(F::from_canonical_usize(index)), // constant
-                    predicate: cp.clone(),                                   // input
-                };
-                // let mut id = ID_2.lock().unwrap();
-                // builder.add_simple_generator(DebugGenerator::new(
-                //     format!("table_entry_{}", id),
-                //     entry.flatten(),
-                // ));
-                // *id += 1;
+        // Table of custom predicate batches with batch_id calcuation
+        let (custom_predicate_table, custom_predicate_batches) =
+            self.build_custom_predicate_table(builder)?;
 
-                let in_query_hash = entry.hash(builder);
-                custom_predicate_table.push(in_query_hash);
-            }
-            custom_predicate_batches.push(cpb); // We keep this for witness assignment
-        }
-
-        // Table of [batch_id, custom_predicate_index, custom_predicate, args, st, op, op_args]
-        // with queryable part as hash([st, op, op_args]).  While building the table we verify each
-        // custom predicate against the operation and statement.
-        let mut custom_predicate_verifications =
-            Vec::with_capacity(params.max_custom_predicate_verifications);
-        let mut custom_predicate_verification_table =
-            Vec::with_capacity(params.max_custom_predicate_verifications);
-        for _ in 0..params.max_custom_predicate_verifications {
-            let custom_predicate_table_index = builder.add_virtual_target();
-            let custom_predicate = builder.add_virtual_custom_predicate_entry(&self.params);
-            let args = (0..params.max_custom_predicate_wildcards)
-                .map(|_| builder.add_virtual_value())
-                .collect_vec();
-            let op_args = (0..params.max_operation_args)
-                .map(|_| builder.add_virtual_statement(&self.params))
-                .collect_vec();
-
-            // Verify the custom predicate operation
-            let (statement, op_type) = CustomOperationVerifyGadget {
-                params: params.clone(),
-            }
-            .eval(builder, &custom_predicate, &op_args, &args)?;
-
-            // Check that the batch id is correct by querying the custom predicate batches table
-            let table_query_hash = builder.vec_ref(
-                &self.params,
-                &custom_predicate_table,
-                custom_predicate_table_index,
-            );
-            let out_query_hash = custom_predicate.hash(builder);
-            builder.connect_array(table_query_hash.elements, out_query_hash.elements);
-
-            let entry = CustomPredicateVerifyEntryTarget {
-                custom_predicate_table_index, // input
-                custom_predicate,             // input
-                args,                         // input
-                query: CustomPredicateVerifyQueryTarget {
-                    statement, // output
-                    op_type,   // output
-                    op_args,   // input
-                },
-            };
-            // let mut id = ID_2.lock().unwrap();
-            // builder.add_simple_generator(DebugGenerator::new(
-            //     format!("table_custom_query_{}", id),
-            //     entry.query.flatten(),
-            // ));
-            // *id += 1;
-            let in_query_hash = entry.query.hash(builder);
-            custom_predicate_verification_table.push(in_query_hash);
-            custom_predicate_verifications.push(entry); // We keep this for witness assignment
-        }
+        // Table of custom predicate statements verification against operations
+        let (custom_predicate_verification_table, custom_predicate_verifications) =
+            self.build_custom_predicate_verification_table(builder, &custom_predicate_table)?;
 
         // 2. Calculate the Pod Id from the public statements
         let pub_statements_flattened = pub_statements.iter().flat_map(|s| s.flatten()).collect();
