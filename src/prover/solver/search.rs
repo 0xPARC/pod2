@@ -41,6 +41,7 @@ pub(super) fn perform_search(
                         indexes,
                         custom_definitions,
                         potential_constant_info,
+                        0,
                     ) {
                         Ok(_) => {
                             // This specific statement is provable with this assignment

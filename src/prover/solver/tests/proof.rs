@@ -47,6 +47,7 @@ mod proof_tests {
             &indexes,
             &custom_definitions,
             &[],
+            0, // current_depth
         );
         assert!(result.is_ok(), "Proof should succeed via CopyStatement");
         let proof_chain = result.unwrap();
@@ -90,6 +91,7 @@ mod proof_tests {
             &indexes,
             &custom_definitions,
             &[],
+            0, // current_depth
         );
         assert!(result_again.is_ok(), "Second proof should succeed");
         assert_eq!(
@@ -120,6 +122,7 @@ mod proof_tests {
             &indexes,
             &custom_definitions,
             &[],
+            0, // current_depth
         );
 
         assert!(result.is_err(), "Proof should fail");
@@ -166,6 +169,7 @@ mod proof_tests {
             &indexes,
             &custom_definitions,
             &[],
+            0, // current_depth
         );
 
         assert!(
@@ -205,8 +209,14 @@ mod proof_tests {
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+        let result = try_prove_statement(
+            &mut state,
+            &target_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+            0,
+        );
         assert!(result.is_ok(), "Proof should succeed via EqualFromEntries");
         let proof_chain = result.unwrap();
 
@@ -252,8 +262,14 @@ mod proof_tests {
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+        let result = try_prove_statement(
+            &mut state,
+            &target_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+            0,
+        );
         assert!(result.is_err(), "Proof should fail with different values");
         match result.err().unwrap() {
             ProverError::Unsatisfiable(msg) => {
@@ -295,8 +311,14 @@ mod proof_tests {
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+        let result = try_prove_statement(
+            &mut state,
+            &target_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+            0,
+        );
         // Should now fall through to the generic Unsatisfiable error because the transitive check
         // will see that ak2 is not indexed and skip that path.
         assert!(result.is_err());
@@ -335,8 +357,14 @@ mod proof_tests {
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+        let result = try_prove_statement(
+            &mut state,
+            &target_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+            0,
+        );
         assert!(
             result.is_ok(),
             "Proof should succeed via NotEqualFromEntries"
@@ -381,8 +409,14 @@ mod proof_tests {
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+        let result = try_prove_statement(
+            &mut state,
+            &target_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+            0,
+        );
         assert!(result.is_err());
         match result.err().unwrap() {
             ProverError::Unsatisfiable(msg) => {
@@ -415,7 +449,7 @@ mod proof_tests {
     //     let mut state = solver_state_with_domains(vec![]);
 
     //     let result =
-    //         try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+    //         try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[], 0);
     //     assert!(result.is_ok(), "Proof should succeed via GtFromEntries");
     //     let proof_chain = result.unwrap();
 
@@ -459,7 +493,7 @@ mod proof_tests {
     //     let mut state = solver_state_with_domains(vec![]);
 
     //     let result =
-    //         try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+    //         try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[], 0);
     //     assert!(result.is_err());
     //     match result.err().unwrap() {
     //         ProverError::Unsatisfiable(msg) => {
@@ -492,7 +526,7 @@ mod proof_tests {
     //     let mut state = solver_state_with_domains(vec![]);
 
     //     let result =
-    //         try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+    //         try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[], 0);
     //     assert!(result.is_err());
     //     match result.err().unwrap() {
     //         ProverError::Unsatisfiable(msg) => {
@@ -524,8 +558,14 @@ mod proof_tests {
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+        let result = try_prove_statement(
+            &mut state,
+            &target_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+            0,
+        );
         assert!(result.is_ok(), "Proof should succeed via LtFromEntries");
         let proof_chain = result.unwrap();
 
@@ -568,8 +608,14 @@ mod proof_tests {
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+        let result = try_prove_statement(
+            &mut state,
+            &target_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+            0,
+        );
         assert!(result.is_err());
         match result.err().unwrap() {
             ProverError::Unsatisfiable(msg) => {
@@ -609,8 +655,14 @@ mod proof_tests {
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+        let result = try_prove_statement(
+            &mut state,
+            &target_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+            0,
+        );
         assert!(result.is_ok(), "Proof should succeed via SumOf");
         let proof_chain = result.unwrap();
 
@@ -663,8 +715,14 @@ mod proof_tests {
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+        let result = try_prove_statement(
+            &mut state,
+            &target_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+            0,
+        );
         assert!(result.is_err());
         match result.err().unwrap() {
             ProverError::Unsatisfiable(msg) => {
@@ -704,8 +762,14 @@ mod proof_tests {
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+        let result = try_prove_statement(
+            &mut state,
+            &target_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+            0,
+        );
         assert!(result.is_err(), "Should fail due to wrong type");
         match result.err().unwrap() {
             ProverError::Unsatisfiable(msg) => {
@@ -740,8 +804,14 @@ mod proof_tests {
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+        let result = try_prove_statement(
+            &mut state,
+            &target_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+            0,
+        );
         assert!(result.is_err());
         match result.err().unwrap() {
             ProverError::Unsatisfiable(msg) => {
@@ -783,8 +853,14 @@ mod proof_tests {
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+        let result = try_prove_statement(
+            &mut state,
+            &target_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+            0,
+        );
         assert!(result.is_ok(), "Proof should succeed via ProductOf");
         let proof_chain = result.unwrap();
 
@@ -838,8 +914,14 @@ mod proof_tests {
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+        let result = try_prove_statement(
+            &mut state,
+            &target_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+            0,
+        );
         assert!(result.is_err());
         match result.err().unwrap() {
             ProverError::Unsatisfiable(msg) => {
@@ -882,8 +964,14 @@ mod proof_tests {
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+        let result = try_prove_statement(
+            &mut state,
+            &target_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+            0,
+        );
         assert!(result.is_ok(), "Proof should succeed via MaxOf (case 1)");
         let proof_chain = result.unwrap();
 
@@ -925,6 +1013,7 @@ mod proof_tests {
             &indexes2,
             &custom_definitions,
             &[],
+            0, // current_depth
         );
         assert!(result2.is_ok(), "Proof should succeed via MaxOf (case 2)");
     }
@@ -960,8 +1049,14 @@ mod proof_tests {
         let mut state = solver_state_with_domains(vec![]);
 
         // Pass &indexes
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+        let result = try_prove_statement(
+            &mut state,
+            &target_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+            0,
+        );
         assert!(result.is_err());
         match result.err().unwrap() {
             ProverError::Unsatisfiable(msg) => {
@@ -1010,8 +1105,14 @@ mod proof_tests {
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+        let result = try_prove_statement(
+            &mut state,
+            &target_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+            0,
+        );
         assert!(
             result.is_ok(),
             "Proof should succeed via ContainsFromEntries"
@@ -1078,8 +1179,14 @@ mod proof_tests {
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+        let result = try_prove_statement(
+            &mut state,
+            &target_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+            0,
+        );
         assert!(result.is_err());
         match result.err().unwrap() {
             ProverError::Unsatisfiable(msg) => {
@@ -1127,8 +1234,14 @@ mod proof_tests {
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+        let result = try_prove_statement(
+            &mut state,
+            &target_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+            0,
+        );
         assert!(result.is_err());
         match result.err().unwrap() {
             ProverError::Unsatisfiable(msg) => {
@@ -1170,8 +1283,14 @@ mod proof_tests {
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+        let result = try_prove_statement(
+            &mut state,
+            &target_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+            0,
+        );
         assert!(result.is_err());
         match result.err().unwrap() {
             ProverError::Unsatisfiable(msg) => {
@@ -1216,8 +1335,14 @@ mod proof_tests {
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+        let result = try_prove_statement(
+            &mut state,
+            &target_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+            0,
+        );
         assert!(
             result.is_ok(),
             "Proof should succeed via NotContainsFromEntries"
@@ -1275,8 +1400,14 @@ mod proof_tests {
         let custom_definitions = CustomDefinitions::default();
         let mut state = solver_state_with_domains(vec![]);
 
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+        let result = try_prove_statement(
+            &mut state,
+            &target_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+            0,
+        );
         assert!(
             result.is_err(),
             "Should fail because key exists in dictionary"
@@ -1324,6 +1455,7 @@ mod proof_tests {
             &indexes,
             &custom_definitions,
             &[],
+            0, // current_depth
         );
 
         // --- Assertions ---
@@ -1431,6 +1563,7 @@ mod proof_tests {
     //         &indexes,
     //         &custom_definitions,
     //         &[],
+    //         0, // current_depth
     //     );
     //     assert!(result.is_ok(), "Proof should succeed via GtToNotEqual");
     //     let proof_chain = result.unwrap();
@@ -1486,6 +1619,7 @@ mod proof_tests {
             &indexes,
             &custom_definitions,
             &[],
+            0, // current_depth
         );
         assert!(result.is_ok(), "Proof should succeed via LtToNotEqual");
         let proof_chain = result.unwrap();
@@ -1543,6 +1677,7 @@ mod proof_tests {
             &indexes,
             &custom_definitions,
             &[],
+            0, // current_depth
         );
         assert!(result.is_err());
         match result.err().unwrap() {
@@ -1591,6 +1726,7 @@ mod proof_tests {
             &indexes,
             &custom_definitions,
             &[],
+            0, // current_depth
         );
         assert!(result.is_ok(), "Proof should succeed");
         let proof_chain = result.unwrap();
@@ -1727,8 +1863,14 @@ mod proof_tests {
             ),
         ]);
 
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+        let result = try_prove_statement(
+            &mut state,
+            &target_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+            0,
+        );
 
         assert!(result.is_ok(), "Proof failed: {:?}", result.err());
         let proof_chain = result.unwrap();
@@ -1861,8 +2003,14 @@ mod proof_tests {
             ),
         ]);
 
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+        let result = try_prove_statement(
+            &mut state,
+            &target_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+            0,
+        );
 
         assert!(result.is_ok(), "Proof failed for OR: {:?}", result.err());
         let proof_chain = result.unwrap();
@@ -1990,8 +2138,14 @@ mod proof_tests {
             ),
         ]);
 
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+        let result = try_prove_statement(
+            &mut state,
+            &target_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+            0,
+        );
 
         assert!(result.is_err());
         match result.err().unwrap() {
@@ -2124,8 +2278,14 @@ mod proof_tests {
         ]);
 
         // Pass &indexes
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+        let result = try_prove_statement(
+            &mut state,
+            &target_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+            0,
+        );
 
         assert!(
             result.is_err(),
@@ -2282,8 +2442,14 @@ mod proof_tests {
 
         let mut state = solver_state_with_domains(vec![]);
 
-        let result =
-            try_prove_statement(&mut state, &target_stmt, &indexes, &custom_definitions, &[]);
+        let result = try_prove_statement(
+            &mut state,
+            &target_stmt,
+            &indexes,
+            &custom_definitions,
+            &[],
+            0,
+        );
 
         assert!(result.is_ok(), "Nested proof failed: {:?}", result.err());
         let proof_chain = result.unwrap();

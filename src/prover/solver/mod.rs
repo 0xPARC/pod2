@@ -132,6 +132,7 @@ pub fn solve(
                         &solver_indexes,
                         custom_definitions,
                         &potential_constant_info,
+                        0,
                     ) {
                         Ok(_proof_chain) => {
                             println!("  - Successfully proved: {:?}", target_statement);

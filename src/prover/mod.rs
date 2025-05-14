@@ -1188,13 +1188,12 @@ mod tests {
         let custom_definitions =
             custom_definitions_from_batches(&[processed.custom_batch], &params);
 
-        // TODO: Add max depth, fix parameters to proof request
-        // let solve_result = solver::solve(
-        //     &processed.request_templates,
-        //     &initial_facts,
-        //     &params,
-        //     &custom_definitions,
-        // )?;
+        let solve_result = solver::solve(
+            &processed.request_templates,
+            &initial_facts,
+            &params,
+            &custom_definitions,
+        )?;
 
         Ok(())
     }

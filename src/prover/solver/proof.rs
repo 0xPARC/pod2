@@ -16,6 +16,8 @@ use crate::{
     },
 };
 
+const MAX_CUSTOM_PREDICATE_RECURSION_DEPTH: usize = 20; // Define the constant
+
 /// Attempts to find or generate a proof chain for a given target statement.
 /// If successful, updates the solver state (proof_chains, scope) and returns the chain.
 pub(super) fn try_prove_statement(
@@ -24,7 +26,16 @@ pub(super) fn try_prove_statement(
     indexes: &ProverIndexes,
     custom_definitions: &CustomDefinitions,
     potential_constant_info: &[(Wildcard, Key, Value)],
+    current_depth: usize, // New parameter
 ) -> Result<ProofChain, ProverError> {
+    // Add Depth Check
+    if current_depth > MAX_CUSTOM_PREDICATE_RECURSION_DEPTH {
+        return Err(ProverError::MaxDepthExceeded(format!(
+            "Max recursion depth ({}) exceeded while proving {:?}",
+            MAX_CUSTOM_PREDICATE_RECURSION_DEPTH, target
+        )));
+    }
+
     // 1. Check if proof already exists
     if let Some(existing_chain) = state.proof_chains.get(target) {
         return Ok(existing_chain.clone());
@@ -198,7 +209,8 @@ pub(super) fn try_prove_statement(
                                 &target1_mid,
                                 indexes,
                                 custom_definitions,
-                                &[], // Pass empty potential_constant_info
+                                &[],               // Pass empty potential_constant_info
+                                current_depth + 1, // Increment depth
                             ) {
                                 Ok(chain1) => {
                                     // Now try the second part
@@ -207,7 +219,8 @@ pub(super) fn try_prove_statement(
                                         &target_mid_2,
                                         indexes,
                                         custom_definitions,
-                                        &[], // Pass empty potential_constant_info
+                                        &[],               // Pass empty potential_constant_info
+                                        current_depth + 1, // Increment depth
                                     ) {
                                         Ok(chain2) => {
                                             // Found transitive path: A=Mid and Mid=C
@@ -234,10 +247,28 @@ pub(super) fn try_prove_statement(
 
                                             return Ok(final_chain);
                                         }
-                                        Err(_) => {} // Second part Eq(Mid, C) failed, continue search for ak_mid
+                                        Err(ProverError::MaxDepthExceeded(msg)) => {
+                                            // This branch failed due to depth, try the next one. Log the error.
+                                            println!(
+                                                "Sub-proof for AND branch sub-statement {:?} failed due to max depth (depth {}): {}",
+                                                target_mid_2, current_depth + 1, msg
+                                            );
+                                            return Err(ProverError::MaxDepthExceeded(msg));
+                                        }
+                                        Err(e) => {
+                                            // Second part Eq(Mid, C) failed, continue search for ak_mid
+                                        }
                                     }
                                 }
-                                Err(_) => {
+                                Err(ProverError::MaxDepthExceeded(msg)) => {
+                                    // This branch failed due to depth, try the next one. Log the error.
+                                    println!(
+                                        "Sub-proof for AND branch sub-statement {:?} failed due to max depth (depth {}): {}",
+                                        target1_mid, current_depth + 1, msg
+                                    );
+                                    return Err(ProverError::MaxDepthExceeded(msg));
+                                }
+                                Err(e) => {
                                     // First part Eq(A, Mid) failed, continue search for ak_mid
                                 }
                             }
@@ -315,6 +346,7 @@ pub(super) fn try_prove_statement(
                 //     indexes,
                 //     custom_definitions,
                 //     &[], // Pass empty
+                //     current_depth + 1, // Increment depth
                 // ) {
                 //     let mut combined_steps = gt_chain1.0;
                 //     let neq_step = ProofStep {
@@ -337,6 +369,7 @@ pub(super) fn try_prove_statement(
                 //     indexes,
                 //     custom_definitions,
                 //     &[], // Pass empty
+                //     current_depth + 1, // Increment depth
                 // ) {
                 //     let mut combined_steps = gt_chain2.0;
                 //     let neq_step = ProofStep {
@@ -362,7 +395,8 @@ pub(super) fn try_prove_statement(
                     &target_lt1,
                     indexes,
                     custom_definitions,
-                    &[], // Pass empty
+                    &[],               // Pass empty
+                    current_depth + 1, // Increment depth
                 ) {
                     let mut combined_steps = lt_chain1.0;
                     let neq_step = ProofStep {
@@ -384,7 +418,8 @@ pub(super) fn try_prove_statement(
                     &target_lt2,
                     indexes,
                     custom_definitions,
-                    &[], // Pass empty
+                    &[],               // Pass empty
+                    current_depth + 1, // Increment depth
                 ) {
                     let mut combined_steps = lt_chain2.0;
                     let neq_step = ProofStep {
@@ -896,6 +931,7 @@ pub(super) fn try_prove_statement(
                                 &public_bindings,
                                 state,
                                 Some((pred_def, batch_arc.clone())),
+                                current_depth + 1, // Increment depth
                             ) {
                                 Ok(stmt) => stmt,
                                 Err(e @ ProverError::Unsatisfiable(_)) => {
@@ -915,10 +951,19 @@ pub(super) fn try_prove_statement(
                                 &concrete_sub_stmt,
                                 indexes,
                                 custom_definitions,
-                                &[], // Pass empty potential_constant_info
+                                &[],               // Pass empty potential_constant_info
+                                current_depth + 1, // Increment depth
                             ) {
                                 Ok(sub_chain) => {
                                     combined_steps.extend(sub_chain.0);
+                                }
+                                Err(ProverError::MaxDepthExceeded(msg)) => {
+                                    // This branch failed due to depth, try the next one. Log the error.
+                                    println!(
+                                        "Sub-proof for AND branch sub-statement {:?} failed due to max depth (depth {}): {}",
+                                        concrete_sub_stmt, current_depth + 1, msg
+                                    );
+                                    return Err(ProverError::MaxDepthExceeded(msg));
                                 }
                                 Err(e) => {
                                     // If any sub-proof fails in an AND, the whole thing fails.
@@ -962,6 +1007,7 @@ pub(super) fn try_prove_statement(
                                 &public_bindings,
                                 state,
                                 Some((pred_def, batch_arc.clone())),
+                                current_depth + 1, // Increment depth
                             );
 
                             if let Ok(concrete_sub_stmt) = concrete_sub_stmt_res {
@@ -971,7 +1017,8 @@ pub(super) fn try_prove_statement(
                                     &concrete_sub_stmt,
                                     indexes,
                                     custom_definitions,
-                                    &[], // Pass empty potential_constant_info
+                                    &[],               // Pass empty potential_constant_info
+                                    current_depth + 1, // Increment depth
                                 ) {
                                     Ok(sub_chain) => {
                                         // SUCCESS! First successful branch wins.
@@ -989,10 +1036,18 @@ pub(super) fn try_prove_statement(
                                             .insert(target.clone(), final_chain.clone());
                                         return Ok(final_chain);
                                     }
-                                    Err(e) => {
-                                        // This branch failed, try the next one. Log the error.
+                                    Err(ProverError::MaxDepthExceeded(msg)) => {
+                                        // This branch failed due to depth, try the next one. Log the error.
                                         println!(
-                                            "OR branch failed to prove sub-statement {:?}: {:?}",
+                                            "OR branch failed for sub-statement {:?} due to max depth (depth {}): {}. Trying next branch.",
+                                            concrete_sub_stmt, current_depth + 1, msg
+                                        );
+                                        // No return Err here, just continue to next iteration of OR loop
+                                    }
+                                    Err(e) => {
+                                        // This branch failed for other reasons, try the next one. Log the error.
+                                        println!(
+                                            "OR branch failed for sub-statement {:?}: {:?}",
                                             concrete_sub_stmt, e
                                         );
                                     }
@@ -1040,6 +1095,7 @@ fn build_concrete_statement_from_bindings(
     state: &SolverState,
     // Context: The predicate definition and batch Arc containing this template
     outer_context: Option<(&CustomPredicate, std::sync::Arc<CustomPredicateBatch>)>,
+    current_depth: usize, // New parameter
 ) -> Result<Statement, ProverError> {
     let outer_args_len = outer_context.as_ref().map(|(def, _)| def.args_len);
 

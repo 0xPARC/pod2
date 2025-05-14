@@ -30,4 +30,7 @@ pub enum ProverError {
 
     #[error("An unexpected error occurred: {0}")]
     Other(String),
+
+    #[error("Maximum recursion depth exceeded: {0}")]
+    MaxDepthExceeded(String),
 }
