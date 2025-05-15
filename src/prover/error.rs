@@ -33,4 +33,7 @@ pub enum ProverError {
 
     #[error("Maximum recursion depth exceeded: {0}")]
     MaxDepthExceeded(String),
+
+    #[error("Proof deferred due to unresolved ambiguity: {0}")]
+    ProofDeferred(String),
 }

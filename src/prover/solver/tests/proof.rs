@@ -2198,11 +2198,10 @@ mod proof_tests {
         let custom_pred_index = 0;
         let wc_a = wc("A", 0); // Public Arg 0: PodId
 
-        let sub_tmpl_gt = StatementTmpl {
+        let sub_tmpl_lt = StatementTmpl {
             // First branch (will fail)
-            pred: Predicate::Native(NativePredicate::Gt),
+            pred: Predicate::Native(NativePredicate::Lt),
             args: vec![
-                StatementTmplArg::Key(wc_a.clone(), KeyOrWildcard::Key(val_key.clone())),
                 StatementTmplArg::Key(
                     Wildcard {
                         index: 100,
@@ -2210,6 +2209,7 @@ mod proof_tests {
                     },
                     KeyOrWildcard::Key(const_val_key.clone()),
                 ),
+                StatementTmplArg::Key(wc_a.clone(), KeyOrWildcard::Key(val_key.clone())),
             ],
         };
         let sub_tmpl_eq = StatementTmpl {
@@ -2230,7 +2230,7 @@ mod proof_tests {
         let custom_pred_def = CustomPredicate {
             name: "TestOrFailPredicate".to_string(),
             args_len: 1,
-            statements: vec![sub_tmpl_gt.clone(), sub_tmpl_eq.clone()],
+            statements: vec![sub_tmpl_lt.clone(), sub_tmpl_eq.clone()],
             conjunction: false, // OR
         };
         let custom_batch = Arc::new(CustomPredicateBatch {

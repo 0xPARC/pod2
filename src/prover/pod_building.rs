@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::{
-    backends::plonky2::{mainpod::Prover, mock::mainpod::MockProver},
+    backends::plonky2::mock::mainpod::MockProver,
     frontend::{self, MainPod, MainPodBuilder, Operation as FrontendOperation, SignedPod},
     middleware::{self, NativeOperation, OperationAux, OperationType, PodId, Statement, SELF},
     op,

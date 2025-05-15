@@ -118,8 +118,13 @@ pub fn solve(
 
         // Try to generate and prove concrete statements
         let mut new_proofs_found_this_iter = false;
+        let mut unsatisfiable_request_found = false;
 
         for tmpl in &original_templates {
+            if unsatisfiable_request_found {
+                break;
+            }
+
             match try_generate_concrete_candidate_and_bindings(tmpl, &state) {
                 Ok(Some((target_statement, bindings))) => {
                     if state.proof_chains.contains_key(&target_statement) {
@@ -134,9 +139,15 @@ pub fn solve(
                         &potential_constant_info,
                         0,
                     ) {
-                        Ok(_proof_chain) => {
-                            println!("  - Successfully proved: {:?}", target_statement);
+                        Ok(chain) => {
+                            println!(
+                                "  \\-> Proof found for request template {:?} (concrete: {:?}) -> {:?}",
+                                tmpl.pred,
+                                target_statement,
+                                chain
+                            );
                             new_proofs_found_this_iter = true;
+                            changed_in_iteration = true;
 
                             // Apply dynamic pruning after successful proof
                             let pruned_dynamically = prune_domains_after_proof(
@@ -154,20 +165,40 @@ pub fn solve(
                         }
                         Err(ProverError::Unsatisfiable(msg)) => {
                             println!(
-                                "  - Definitive failure proving required candidate {:?}: {}",
-                                target_statement, msg
+                                "  -> Unsatisfiable for request template {:?} (concrete: {:?}): {}. This path fails.",
+                                tmpl.pred,
+                                target_statement,
+                                msg
                             );
-                            return Err(ProverError::Unsatisfiable(format!(
+                            // This path is unsatisfiable, mark for this search branch and potentially backtrack/fail search.
+                            unsatisfiable_request_found = true;
+                            break; // Stop processing other templates for this search node if one is unsatisfiable
+                        }
+                        Err(ProverError::ProofDeferred(msg)) => {
+                            println!(
+                                "  -> ProofDeferred for request template {:?} (concrete: {:?}): {}. Will re-attempt later.",
+                                tmpl.pred,
+                                target_statement,
+                                msg
+                            );
+                            // Don't mark as unsatisfiable, don't necessarily break.
+                            // The proof might become available in a later iteration if other WCs get constrained.
+                            // We also don't set new_proofs_found_this_iter = true for a deferral.
+                        }
+                        Err(ProverError::MaxDepthExceeded(msg)) => {
+                            println!(
+                                "  -> MaxDepthExceeded for request template {:?} (concrete: {:?}): {}. This path fails.",
+                                tmpl.pred,
+                                target_statement,
+                                msg
+                            );
+                            unsatisfiable_request_found = true; // Treat as failure for this search path
+                            break;
+                            return Err(ProverError::MaxDepthExceeded(format!(
                                 "Failed to prove required candidate statement derived from request templates: {:?}. Reason: {}",
                                 target_statement,
                                 msg
                             )));
-                        }
-                        Err(ProverError::NotImplemented(op)) => {
-                            println!(
-                                "  - Could not prove candidate {:?} due to unimplemented operation: {}. Skipping for now.",
-                                target_statement, op
-                            );
                         }
                         Err(e) => {
                             println!(
@@ -393,6 +424,22 @@ pub(super) fn try_generate_concrete_candidate_and_bindings(
                             }
                         };
                         custom_args.push(wc_value);
+                    }
+                    middleware::StatementTmplArg::Literal(value) => {
+                        // Handle literal arguments when a template calls a custom predicate.
+                        // Per user clarification, these literals are expected to be strings for Keys.
+                        match value.typed() {
+                            crate::middleware::TypedValue::String(s) => {
+                                custom_args
+                                    .push(WildcardValue::Key(middleware::Key::new(s.clone())));
+                            }
+                            _ => {
+                                return Err(ProverError::Internal(format!(
+                                    "Invalid literal argument type {:?} found in template for Custom predicate call. Expected String for Key.",
+                                    value.typed()
+                                )));
+                            }
+                        }
                     }
                     _ => {
                         return Err(ProverError::Internal(format!(

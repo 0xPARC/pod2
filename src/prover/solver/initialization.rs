@@ -401,13 +401,13 @@ fn parse_template_and_generate_constraints(
                         match tmpl.args.get(i) {
                             Some(StatementTmplArg::WildcardLiteral(outer_wc_from_tmpl)) => {
                                 // Infer the type the target predicate expects for this argument index
-                                let mut visited = HashSet::new(); // Create visited set for this inference path
+                                let mut visited = HashSet::new();
                                 let expected_arg_type = infer_argument_type(
                                     custom_pred_def,
                                     i,
                                     custom_definitions,
                                     params,
-                                    Some(&custom_ref.batch), // Pass batch from the Custom ref
+                                    Some(&custom_ref.batch),
                                     &mut visited,
                                 );
 
@@ -434,13 +434,48 @@ fn parse_template_and_generate_constraints(
                                 // Map: Inner Predicate Arg Index -> Actual Outer Wildcard
                                 next_alias_map.insert(i, actual_outer_wc.clone());
                             }
-                            Some(arg) => {
-                                // Invalid Argument Type: Expected StatementTmplArg::WildcardLiteral when
-                                // processing arguments for a custom predicate call, but found a different
-                                // variant. This likely indicates an invalid template structure.
+                            Some(StatementTmplArg::Literal(value)) => {
+                                // This argument is a literal value.
+                                let mut visited_lit = HashSet::new();
+                                let expected_arg_type_for_literal = infer_argument_type(
+                                    custom_pred_def,
+                                    i,
+                                    custom_definitions,
+                                    params,
+                                    Some(&custom_ref.batch),
+                                    &mut visited_lit,
+                                );
+
+                                match (expected_arg_type_for_literal, value.typed()) {
+                                    (
+                                        ExpectedType::Key,
+                                        crate::middleware::TypedValue::String(_),
+                                    ) => {
+                                        // Compatible: Expected a Key, got a String literal.
+                                    }
+                                    (ExpectedType::Key, actual_value_type) => {
+                                        // Expected a Key, but got a non-String literal.
+                                        return Err(ProverError::Internal(format!(
+                                            "Type mismatch for literal argument (Custom Predicate AND branch): Predicate '{}' expects a Key at argument index {}, but received a non-String literal {:?} (type {:?}). Literal arguments for Keys must be Strings.",
+                                            custom_pred_def.name, i, value, actual_value_type
+                                        )));
+                                    }
+                                    (expected_formal_type, actual_value_type) => {
+                                        // Expected something other than a Key, or String for non-Key.
+                                        return Err(ProverError::Internal(format!(
+                                            "Invalid literal argument (Custom Predicate AND branch): Predicate '{}' expects a {:?} at argument index {}, but String literal {:?} (type {:?}) was provided. Literals are only for Key arguments and must be Strings.",
+                                            custom_pred_def.name, expected_formal_type, i, value, actual_value_type
+                                        )));
+                                    }
+                                }
+                                // No wildcard type to update or alias map entry for literals.
+                            }
+                            Some(other_arg) => {
+                                // Invalid Argument Type: Expected StatementTmplArg::WildcardLiteral or Literal(String)
+                                // when processing arguments for a custom predicate call.
                                 return Err(ProverError::Internal(format!(
-                                    "Expected WildcardLiteral arg at index {} when calling Custom predicate '{}', found {:?}",
-                                    i, custom_pred_def.name, arg
+                                    "Expected WildcardLiteral or String Literal for arg at index {} when calling Custom predicate '{}', found {:?}. Original error was: Expected WildcardLiteral arg...",
+                                    i, custom_pred_def.name, other_arg
                                 )));
                             }
                             None => {
@@ -501,15 +536,50 @@ fn parse_template_and_generate_constraints(
                                 // as the type might depend on the branch taken.
                                 // We'll infer types within each branch's analysis below.
                             }
-                            Some(arg) => {
+                            Some(StatementTmplArg::Literal(value)) => {
+                                // This argument is a literal value.
+                                let mut visited_lit = HashSet::new();
+                                let expected_arg_type_for_literal = infer_argument_type(
+                                    custom_pred_def,
+                                    i,
+                                    custom_definitions,
+                                    params,
+                                    Some(&custom_ref.batch),
+                                    &mut visited_lit,
+                                );
+
+                                match (expected_arg_type_for_literal, value.typed()) {
+                                    (
+                                        ExpectedType::Key,
+                                        crate::middleware::TypedValue::String(_),
+                                    ) => {
+                                        // Compatible: Expected a Key, got a String literal.
+                                    }
+                                    (ExpectedType::Key, actual_value_type) => {
+                                        // Expected a Key, but got a non-String literal.
+                                        return Err(ProverError::Internal(format!(
+                                            "Type mismatch for literal argument (Custom Predicate OR branch): Predicate '{}' expects a Key at argument index {}, but received a non-String literal {:?} (type {:?}). Literal arguments for Keys must be Strings.",
+                                            custom_pred_def.name, i, value, actual_value_type
+                                        )));
+                                    }
+                                    (expected_formal_type, actual_value_type) => {
+                                        // Expected something other than a Key, or String for non-Key.
+                                        return Err(ProverError::Internal(format!(
+                                            "Invalid literal argument (Custom Predicate OR branch): Predicate '{}' expects a {:?} at argument index {}, but String literal {:?} (type {:?}) was provided. Literals are only for Key arguments and must be Strings.",
+                                            custom_pred_def.name, expected_formal_type, i, value, actual_value_type
+                                        )));
+                                    }
+                                }
+                                // No wildcard type to update or alias map entry for literals.
+                            }
+                            Some(other_arg) => {
                                 // Error handling similar to AND
                                 return Err(ProverError::Internal(format!(
-                                    "OR: Expected WildcardLiteral arg at index {} when calling Custom predicate '{}', found {:?}",
-                                    i, custom_pred_def.name, arg
+                                    "OR: Expected WildcardLiteral or Literal arg at index {} when calling Custom predicate '{}', found {:?}",
+                                    i, custom_pred_def.name, other_arg
                                 )));
                             }
                             None => {
-                                // Error handling similar to AND
                                 return Err(ProverError::Internal(format!(
                                     "OR: Argument count mismatch: Custom predicate '{}' expects {} args, but caller template provided fewer.",
                                     custom_pred_def.name, public_args_count
@@ -664,7 +734,7 @@ fn parse_template_and_generate_constraints(
                         get_wildcards_from_definition_stmts(&target_pred_def.statements);
                     let public_args_count = target_pred_def.args_len;
 
-                    // Create the next alias map (Step 3)
+                    // Create the next alias map
                     let mut next_alias_map: HashMap<usize, Wildcard> =
                         HashMap::with_capacity(public_args_count);
                     for i in 0..public_args_count {
@@ -704,13 +774,46 @@ fn parse_template_and_generate_constraints(
                                 // Map: Inner Predicate Arg Index -> Actual Outer Wildcard
                                 next_alias_map.insert(i, actual_outer_wc.clone());
                             }
-                            Some(arg) => {
-                                // Invalid Argument Type: Expected StatementTmplArg::WildcardLiteral when
-                                // processing arguments for a BatchSelf predicate call, but found a different
-                                // variant. This likely indicates an invalid template structure.
+                            Some(StatementTmplArg::Literal(value)) => {
+                                // This argument is a literal value.
+                                let mut visited_lit = HashSet::new();
+                                let expected_arg_type_for_literal = infer_argument_type(
+                                    target_pred_def,
+                                    i,
+                                    custom_definitions,
+                                    params,
+                                    Some(current_batch_arc),
+                                    &mut visited_lit,
+                                );
+
+                                match (expected_arg_type_for_literal, value.typed()) {
+                                    (
+                                        ExpectedType::Key,
+                                        crate::middleware::TypedValue::String(_),
+                                    ) => {
+                                        // Compatible: Expected a Key, got a String literal.
+                                    }
+                                    (ExpectedType::Key, actual_value_type) => {
+                                        // Expected a Key, but got a non-String literal.
+                                        return Err(ProverError::Internal(format!(
+                                            "Type mismatch for literal argument (BatchSelf AND branch): Predicate '{}' expects a Key at argument index {}, but received a non-String literal {:?} (type {:?}). Literal arguments for Keys must be Strings.",
+                                            target_pred_def.name, i, value, actual_value_type
+                                        )));
+                                    }
+                                    (expected_formal_type, actual_value_type) => {
+                                        // Expected something other than a Key, or String for non-Key.
+                                        return Err(ProverError::Internal(format!(
+                                            "Invalid literal argument (BatchSelf AND branch): Predicate '{}' expects a {:?} at argument index {}, but String literal {:?} (type {:?}) was provided. Literals are only for Key arguments and must be Strings.",
+                                            target_pred_def.name, expected_formal_type, i, value, actual_value_type
+                                        )));
+                                    }
+                                }
+                                // No wildcard type to update or alias map entry for literals.
+                            }
+                            Some(other_arg) => {
                                 return Err(ProverError::Internal(format!(
-                                    "Expected WildcardLiteral arg at index {} when calling BatchSelf predicate '{}', found {:?}",
-                                    i, target_pred_def.name, arg
+                                    "Expected WildcardLiteral or Literal arg at index {} when calling BatchSelf predicate '{}', found {:?}",
+                                    i, target_pred_def.name, other_arg
                                 )));
                             }
                             None => {
@@ -722,7 +825,7 @@ fn parse_template_and_generate_constraints(
                         }
                     }
 
-                    // Identify and Register Private Wildcards (Step 6 - verification needed)
+                    // Identify and Register Private Wildcards
                     for inner_wc in &inner_wildcards {
                         if inner_wc.index >= public_args_count {
                             wildcard_types
@@ -731,7 +834,7 @@ fn parse_template_and_generate_constraints(
                         }
                     }
 
-                    // Recursively Parse Internal Templates (Step 4)
+                    // Recursively Parse Internal Templates
                     for internal_tmpl in &target_pred_def.statements {
                         parse_template_and_generate_constraints(
                             internal_tmpl,
@@ -741,60 +844,83 @@ fn parse_template_and_generate_constraints(
                             context,
                             &next_alias_map,
                             constant_template_info,
-                            visited_parse, // Pass visited set
+                            visited_parse,
                         )?;
                     }
                 } else {
                     // --- OR Predicate Handling ---
-                    // Collect constraints and types from each branch.
+                    // (This part will be fixed in the next edit)
                     let mut branch_constraints_sets: Vec<HashSet<Constraint>> = Vec::new();
                     let mut branch_types_maps: Vec<HashMap<Wildcard, ExpectedType>> = Vec::new();
-                    let public_args_count = target_pred_def.args_len; // Needed for alias map
-
-                    // 1. Build the alias map for this level (same as AND)
+                    let public_args_count = target_pred_def.args_len;
                     let mut next_alias_map: HashMap<usize, Wildcard> =
                         HashMap::with_capacity(public_args_count);
-                    // Similar logic as AND to build next_alias_map...
                     for i in 0..public_args_count {
                         match tmpl.args.get(i) {
                             Some(StatementTmplArg::WildcardLiteral(outer_wc_from_tmpl)) => {
-                                // Resolve the outer wildcard using the current alias map
                                 let actual_outer_wc = match alias_map.get(&outer_wc_from_tmpl.index)
                                 {
                                     Some(outer_wc) => outer_wc,
                                     None => outer_wc_from_tmpl,
                                 };
-                                // Map: Inner Predicate Arg Index -> Actual Outer Wildcard
                                 next_alias_map.insert(i, actual_outer_wc.clone());
-                                // NOTE: Type constraints handled within branch analysis below.
                             }
-                            Some(arg) => {
-                                // Error handling similar to AND
+                            Some(StatementTmplArg::Literal(value)) => {
+                                // This argument is a literal value.
+                                let mut visited_lit = HashSet::new();
+                                let expected_arg_type_for_literal = infer_argument_type(
+                                    target_pred_def,
+                                    i,
+                                    custom_definitions,
+                                    params,
+                                    Some(current_batch_arc),
+                                    &mut visited_lit,
+                                );
+
+                                match (expected_arg_type_for_literal, value.typed()) {
+                                    (
+                                        ExpectedType::Key,
+                                        crate::middleware::TypedValue::String(_),
+                                    ) => {
+                                        // Compatible: Expected a Key, got a String literal.
+                                    }
+                                    (ExpectedType::Key, actual_value_type) => {
+                                        // Expected a Key, but got a non-String literal.
+                                        return Err(ProverError::Internal(format!(
+                                            "Type mismatch for literal argument (BatchSelf OR branch): Predicate '{}' expects a Key at argument index {}, but received a non-String literal {:?} (type {:?}). Literal arguments for Keys must be Strings.",
+                                            target_pred_def.name, i, value, actual_value_type
+                                        )));
+                                    }
+                                    (expected_formal_type, actual_value_type) => {
+                                        // Expected something other than a Key, or String for non-Key.
+                                        return Err(ProverError::Internal(format!(
+                                            "Invalid literal argument (BatchSelf OR branch): Predicate '{}' expects a {:?} at argument index {}, but String literal {:?} (type {:?}) was provided. Literals are only for Key arguments and must be Strings.",
+                                            target_pred_def.name, expected_formal_type, i, value, actual_value_type
+                                        )));
+                                    }
+                                }
+                                // No wildcard type to update or alias map entry for literals.
+                            }
+                            Some(other_arg) => {
                                 return Err(ProverError::Internal(format!(
-                                     "OR/BatchSelf: Expected WildcardLiteral arg at index {} when calling BatchSelf predicate '{}', found {:?}",
-                                     i, target_pred_def.name, arg
-                                 )));
+                                      "OR/BatchSelf: Expected WildcardLiteral or Literal arg at index {} when calling BatchSelf predicate '{}', found {:?}",
+                                      i, target_pred_def.name, other_arg
+                                  )));
                             }
                             None => {
-                                // Error handling similar to AND
                                 return Err(ProverError::Internal(format!(
-                                     "OR/BatchSelf: Argument count mismatch: BatchSelf predicate '{}' expects {} args, but caller template provided fewer.",
-                                     target_pred_def.name, public_args_count
-                                 )));
+                                      "OR/BatchSelf: Argument count mismatch: BatchSelf predicate '{}' expects {} args, but caller template provided fewer.",
+                                      target_pred_def.name, public_args_count
+                                  )));
                             }
                         }
                     }
-
-                    // 2. Analyze each branch recursively
                     for internal_tmpl in &target_pred_def.statements {
                         let mut current_branch_constraints_vec: Vec<Constraint> = Vec::new();
                         let mut current_branch_types_map: HashMap<Wildcard, ExpectedType> =
                             HashMap::new();
                         let mut current_branch_constant_info: Vec<PotentialConstantInfo> =
                             Vec::new();
-
-                        // Recursively parse, collecting constraints and types into temporary buffers
-                        // Pass the current batch Arc ref
                         match parse_template_and_generate_constraints(
                             internal_tmpl,
                             Some(current_batch_arc.clone()),
@@ -812,19 +938,16 @@ fn parse_template_and_generate_constraints(
                                 branch_types_maps.push(current_branch_types_map);
                             }
                             Err(e) => {
-                                eprintln!( // Use eprintln for warnings/errors
+                                eprintln!(
                                      "Warning: Failed to parse OR/BatchSelf branch template {:?}: {:?}",
                                      internal_tmpl, e
                                  );
-                                // Clear and break if one branch fails.
                                 branch_constraints_sets.clear();
                                 branch_types_maps.clear();
                                 break;
                             }
                         }
                     }
-
-                    // 3. Find and add common constraints (same logic as Custom OR)
                     if let Some(first_set) = branch_constraints_sets.first() {
                         let mut common_constraints = first_set.clone();
                         for other_set in branch_constraints_sets.iter().skip(1) {
@@ -832,19 +955,15 @@ fn parse_template_and_generate_constraints(
                         }
                         constraints.extend(common_constraints);
                     }
-
-                    // 4. Find and add common wildcard types (same logic as Custom OR)
                     if !branch_types_maps.is_empty() {
                         let mut all_wcs_in_or: HashSet<Wildcard> = HashSet::new();
                         for map in &branch_types_maps {
                             all_wcs_in_or.extend(map.keys().cloned());
                         }
-
                         for wc in all_wcs_in_or {
                             let mut common_type = ExpectedType::Unknown;
                             let mut first_type_found = false;
                             let mut conflict = false;
-
                             for map in &branch_types_maps {
                                 match map.get(&wc) {
                                     Some(&branch_type) if branch_type != ExpectedType::Unknown => {
@@ -859,7 +978,6 @@ fn parse_template_and_generate_constraints(
                                     _ => {}
                                 }
                             }
-
                             if first_type_found && !conflict {
                                 update_wildcard_type(wildcard_types, &wc, common_type)?;
                                 let type_constraint = Constraint::Type {
@@ -872,9 +990,8 @@ fn parse_template_and_generate_constraints(
                             }
                         }
                     }
-                    // End of OR logic
                 }
-                visited_parse.remove(&visited_key); // Remove after processing this predicate's internals
+                visited_parse.remove(&visited_key); // Correctly placed after AND/OR blocks
             } else {
                 // BatchSelf encountered without a current_batch context
                 return Err(ProverError::Internal(
