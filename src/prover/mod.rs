@@ -1271,13 +1271,14 @@ mod tests {
 
             eth_dos_distance_base(src_ori, src_key, dst_ori, dst_key, distance_ori, distance_key) = AND(
                 Equal(?src_ori[?src_key], ?dst_ori[?dst_key])
-                ValueOf(?distance_ori["distance"], 0)
+                ValueOf(?distance_ori[?distance_key], 0)
             )
 
             eth_dos_distance_ind(src_ori, src_key, dst_ori, dst_key, distance_ori, distance_key,
               private: one_ori, one_key, shorter_distance_ori, shorter_distance_key, intermed_ori, intermed_key) = AND(
+                NotEqual(?src_ori[?src_key], ?dst_ori[?dst_key])
                 eth_dos_distance(?src_ori, ?src_key, ?intermed_ori, ?intermed_key, ?shorter_distance_ori, ?shorter_distance_key)
-                ValueOf(?one_ori["one"], 1)
+                ValueOf(?one_ori[?one_key], 1)
                 SumOf(?distance_ori[?distance_key], ?shorter_distance_ori[?shorter_distance_key], ?one_ori[?one_key])
                 eth_friend(?intermed_ori, ?intermed_key, ?dst_ori, ?dst_key)
             )
@@ -1289,15 +1290,16 @@ mod tests {
 
             REQUEST(
                 ValueOf(?CONST["alice"], 0x{})
+                ValueOf(?CONST["bob"], 0x{})
                 ValueOf(?CONST["charlie"], 0x{})
-                eth_dos_distance_base(?CONST, "alice", ?CONST, "alice", ?distance_ori, ?distance_key)
+                ValueOf(?CONST["zero"], 0)
+                ValueOf(?CONST["one"], 1)
             //    eth_friend(?CONST, "alice", ?CONST, "charlie")
-            //    Equal(?CONST[?me], ?src_ori[?src_key])
-            //    Equal(?CONST[?target], ?dst_ori[?dst_key])
-            //    eth_dos_distance(?CONST, "alice", ?CONST, "charlie", ?distance_ori, ?distance_key)
+                eth_dos_distance(?CONST, "alice", ?CONST, "alice", ?distance_ori, ?distance_key)
             )
         "#,
             alice.pubkey().encode_hex::<String>(),
+            bob.pubkey().encode_hex::<String>(),
             charlie.pubkey().encode_hex::<String>(),
         );
 

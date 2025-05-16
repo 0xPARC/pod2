@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    sync::Arc,
+};
 
 use crate::{
     backends::plonky2::mock::mainpod::MockProver,
@@ -223,7 +226,7 @@ pub fn build_main_pod_from_solution(
     let mut prover = MockProver {};
     builder
         .prove(&mut prover, params)
-        .map_err(ProverError::FrontendError)
+        .map_err(|e| ProverError::FrontendError(Arc::new(e)))
 }
 
 /// Translates a ProofStep into the components needed for a frontend::Operation.

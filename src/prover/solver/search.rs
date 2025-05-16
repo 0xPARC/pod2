@@ -23,7 +23,16 @@ pub(super) fn perform_search(
     equality_pairs: &[(Wildcard, Wildcard)],
     inequality_pairs: &[(Wildcard, Wildcard)],
     potential_constant_info: &[(Wildcard, Key, Value)],
+    current_search_depth: usize,
 ) -> Result<SolverState, ProverError> {
+    const MAX_SEARCH_DEPTH: usize = 50;
+    if current_search_depth > MAX_SEARCH_DEPTH {
+        return Err(ProverError::MaxDepthExceeded(format!(
+            "Search recursion depth exceeded maximum of {}",
+            MAX_SEARCH_DEPTH
+        )));
+    }
+
     // Base case: all domains are singletons
     if initial_state
         .domains
@@ -135,6 +144,7 @@ pub(super) fn perform_search(
                     equality_pairs,
                     inequality_pairs,
                     potential_constant_info,
+                    current_search_depth + 1,
                 ) {
                     Ok(solved_state) => {
                         println!("      Recursive search found solution!");

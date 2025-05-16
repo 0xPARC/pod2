@@ -40,15 +40,11 @@ pub(super) fn try_prove_statement(
     }
 
     if let Statement::ValueOf(target_ak, target_value) = target {
-        if let Some((holder_wc, const_key, _value)) = potential_constant_info
+        if let Some((_holder_wc, const_key, _value)) = potential_constant_info
             .iter()
             .find(|(_, k, v)| k == &target_ak.key && v == target_value)
         {
-            if state
-                .domains
-                .get(holder_wc)
-                .is_some_and(|(dom, _)| dom.contains(&ConcreteValue::Pod(SELF)))
-            {
+            if target_ak.pod_id == SELF {
                 let self_output_ak = AnchoredKey::new(SELF, const_key.clone());
                 let self_output_stmt = Statement::ValueOf(self_output_ak, target_value.clone());
                 let proof_step = ProofStep {
@@ -724,10 +720,12 @@ pub(super) fn try_prove_statement(
                     } else {
                         let public_bindings: HashMap<usize, WildcardValue> =
                             concrete_args.iter().cloned().enumerate().collect();
-                        let mut or_branch_deferred = false;
+                        let mut or_branch_deferred_occurred = false;
                         let mut last_or_branch_error: Option<ProverError> = None;
 
                         for internal_tmpl in &pred_def.statements {
+                            let mut current_branch_had_fatal_error = false;
+
                             let concrete_sub_stmt_res = build_concrete_statement_from_bindings(
                                 internal_tmpl,
                                 concrete_args,
@@ -738,6 +736,7 @@ pub(super) fn try_prove_statement(
                                 indexes,
                                 custom_definitions,
                             );
+
                             if let Ok(concrete_sub_stmt) = concrete_sub_stmt_res.as_ref() {
                                 match try_prove_statement(
                                     state,
@@ -761,49 +760,74 @@ pub(super) fn try_prove_statement(
                                             .insert(target.clone(), final_chain.clone());
                                         return Ok(final_chain);
                                     }
-                                    Err(ProverError::ProofDeferred(msg)) => {
-                                        println!("OR branch deferred for sub-statement {:?} of {}: {}. Trying next branch.", concrete_sub_stmt, pred_def.name, msg);
-                                        or_branch_deferred = true;
-                                        last_or_branch_error =
-                                            Some(ProverError::ProofDeferred(msg));
-                                    }
-                                    Err(ProverError::MaxDepthExceeded(msg)) => {
-                                        return Err(ProverError::MaxDepthExceeded(msg));
-                                    }
-                                    Err(e) => {
-                                        println!(
-                                            "OR branch failed for sub-statement {:?}: {:?}",
-                                            concrete_sub_stmt, e
-                                        );
-                                        if !or_branch_deferred {
-                                            last_or_branch_error = Some(e);
+                                    Err(prove_err) => {
+                                        println!("OR branch proof failed for sub-statement {:?} of {}: {:?}", concrete_sub_stmt, pred_def.name, prove_err);
+                                        last_or_branch_error = Some(prove_err.clone());
+                                        match prove_err {
+                                            ProverError::ProofDeferred(_) => {
+                                                or_branch_deferred_occurred = true;
+                                            }
+                                            ProverError::Internal(_)
+                                            | ProverError::MaxDepthExceeded(_)
+                                            | ProverError::NotImplemented(_)
+                                            | ProverError::Configuration(_)
+                                            | ProverError::FrontendError(_)
+                                            | ProverError::Serialization(_)
+                                            | ProverError::Io(_)
+                                            | ProverError::Other(_) => {
+                                                current_branch_had_fatal_error = true;
+                                            }
+                                            ProverError::Unsatisfiable(_)
+                                            | ProverError::InconsistentWildcard(_) => {}
                                         }
                                     }
                                 }
                             } else {
-                                let err_val = concrete_sub_stmt_res.err();
-                                println!("OR branch failed to build concrete sub-statement from template {:?} for {}: {:?}", internal_tmpl.pred, pred_def.name, err_val);
-                                if let Some(ProverError::ProofDeferred(msg_defer)) = err_val {
-                                    or_branch_deferred = true;
-                                    last_or_branch_error =
-                                        Some(ProverError::ProofDeferred(msg_defer));
-                                } else if !or_branch_deferred {
-                                    last_or_branch_error = err_val;
+                                let build_err = concrete_sub_stmt_res.unwrap_err();
+                                println!("OR branch failed to build concrete sub-statement from template {:?} for {}: {:?}", internal_tmpl.pred, pred_def.name, build_err);
+                                last_or_branch_error = Some(build_err.clone());
+                                match build_err {
+                                    ProverError::ProofDeferred(_) => {
+                                        or_branch_deferred_occurred = true;
+                                    }
+                                    ProverError::Internal(_)
+                                    | ProverError::MaxDepthExceeded(_)
+                                    | ProverError::NotImplemented(_)
+                                    | ProverError::Configuration(_)
+                                    | ProverError::FrontendError(_)
+                                    | ProverError::Serialization(_)
+                                    | ProverError::Io(_)
+                                    | ProverError::Other(_) => {
+                                        current_branch_had_fatal_error = true;
+                                    }
+                                    ProverError::Unsatisfiable(_)
+                                    | ProverError::InconsistentWildcard(_) => {}
                                 }
                             }
+
+                            if current_branch_had_fatal_error {
+                                println!(
+                                    "OR predicate {} failed due to a fatal error in one of its branches: {:?}",
+                                    pred_def.name, last_or_branch_error.as_ref().unwrap()
+                                );
+                                return Err(last_or_branch_error.unwrap());
+                            }
                         }
-                        if or_branch_deferred {
-                            return Err(last_or_branch_error.unwrap_or_else(|| ProverError::ProofDeferred(format!("All OR branches for {} either failed or were deferred, with at least one deferral.", pred_def.name))));
-                        } else if let Some(err) = last_or_branch_error {
-                            println!(
-                                "All OR branches for custom predicate {} failed. Last error: {:?}",
-                                pred_def.name, err
-                            );
+
+                        if or_branch_deferred_occurred {
+                            return Err(last_or_branch_error.unwrap_or_else(|| ProverError::ProofDeferred(format!(
+                                "All OR branches for {} either failed (softly) or were deferred, with at least one deferral, but no fatal error or specific deferred error recorded.",
+                                 pred_def.name
+                            ))));
+                        }
+
+                        if let Some(err) = last_or_branch_error {
+                            println!("All OR branches for custom predicate {} resulted in failure. Last error: {:?}", pred_def.name, err);
                             return Err(err);
                         } else {
-                            println!("All OR branches failed for custom predicate (or no branches): {:?}", custom_ref);
+                            println!("All OR branches for custom predicate {:?} failed (or no branches were viable/produced a specific error). Defaulting to Unsatisfiable.", custom_ref);
                             return Err(ProverError::Unsatisfiable(format!(
-                                "No satisfiable OR branch found for {}",
+                                "No satisfiable OR branch found for {} (no errors, deferrals, or fatal issues reported from branches).",
                                 pred_def.name
                             )));
                         }
@@ -840,63 +864,70 @@ fn build_concrete_statement_from_bindings(
     match &tmpl.pred {
         Predicate::Native(_) => {
             let mut concrete_args = Vec::with_capacity(tmpl.args.len());
-            for arg_tmpl in &tmpl.args {
+            for (arg_idx, arg_tmpl) in tmpl.args.iter().enumerate() {
                 match arg_tmpl {
                     StatementTmplArg::Key(wc_pod, key_or_wc) => {
-                        let pod_id_result = match outer_args_len {
-                            Some(args_len) if wc_pod.index < args_len => {
-                                match public_bindings.get(&wc_pod.index) {
-                                    Some(WildcardValue::PodId(id)) => Ok(*id),
-                                    _ => Err(ProverError::Internal(format!(
-                                        "Missing/wrong public binding for Pod WC {}",
-                                        wc_pod
-                                    ))),
-                                }
-                            }
-                            Some(_) | None => {
-                                // Private WC
-                                match state.domains.get(wc_pod) {
-                                    Some((domain, _)) if domain.len() == 1 => {
-                                        match domain.iter().next().unwrap() {
-                                            ConcreteValue::Pod(id) => Ok(*id),
-                                            _ => Err(ProverError::Internal(format!("Private Pod WC {} domain wrong type", wc_pod))),
-                                        }
+                        let outer_predicate_args_len = outer_context.as_ref().map_or(0, |(def, _)| def.args_len);
+                        let is_private_wc_in_valueof_key_arg = tmpl.pred == Predicate::Native(NativePredicate::ValueOf) &&
+                                                               arg_idx == 0 &&
+                                                               outer_context.is_some() &&
+                                                               wc_pod.index >= outer_predicate_args_len;
+
+                        let pod_id_result = if is_private_wc_in_valueof_key_arg {
+                            Ok(crate::middleware::SELF)
+                        } else {
+                             match outer_args_len {
+                                Some(args_len) if wc_pod.index < args_len => {
+                                    match public_bindings.get(&wc_pod.index) {
+                                        Some(WildcardValue::PodId(id)) => Ok(*id),
+                                        _ => Err(ProverError::Internal(format!(
+                                            "Missing/wrong public binding for Pod WC {}",
+                                            wc_pod
+                                        ))),
                                     }
-                                    Some((domain, _)) if outer_context.is_some() => { // Attempt lookahead
-                                        let (outer_pred_def, _) = outer_context.as_ref().unwrap();
-                                        let mut resolved_candidate_pod_ids = Vec::new();
-                                        for candidate_cv in domain {
-                                            if let ConcreteValue::Pod(candidate_pod_id) = candidate_cv {
-                                                let mut consistent_candidate = true;
-                                                for internal_stmt_tmpl in &outer_pred_def.statements {
-                                                    // Check if this internal_stmt_tmpl involves wc_pod and public args
-                                                    // This is a simplified lookahead focusing on common patterns like Equal.
-                                                    if !check_consistency_for_lookahead(
-                                                        internal_stmt_tmpl, wc_pod, *candidate_pod_id,
-                                                        public_bindings, outer_pred_def.args_len, state, indexes
-                                                    ) {
-                                                        consistent_candidate = false;
-                                                        break;
-                                                    }
-                                                }
-                                                if consistent_candidate {
-                                                    resolved_candidate_pod_ids.push(*candidate_pod_id);
-                                                }
+                                }
+                                Some(_) | None => {
+                                    match state.domains.get(wc_pod) {
+                                        Some((domain, _)) if domain.len() == 1 => {
+                                            match domain.iter().next().unwrap() {
+                                                ConcreteValue::Pod(id) => Ok(*id),
+                                                _ => Err(ProverError::Internal(format!("Private Pod WC {} domain wrong type", wc_pod))),
                                             }
                                         }
-                                        if resolved_candidate_pod_ids.len() == 1 {
-                                            Ok(resolved_candidate_pod_ids[0])
-                                        } else {
-                                            Err(ProverError::ProofDeferred(format!(
-                                                "Private Pod WC {} in {} domain has {} candidates after lookahead (domain size {}), expected 1.",
-                                                wc_pod.name, outer_pred_def.name, resolved_candidate_pod_ids.len(), domain.len()
-                                            )))
+                                        Some((domain, _)) if outer_context.is_some() => {
+                                            let (outer_pred_def, _) = outer_context.as_ref().unwrap();
+                                            let mut resolved_candidate_pod_ids = Vec::new();
+                                            for candidate_cv in domain {
+                                                if let ConcreteValue::Pod(candidate_pod_id) = candidate_cv {
+                                                    let mut consistent_candidate = true;
+                                                    for internal_stmt_tmpl in &outer_pred_def.statements {
+                                                        if !check_consistency_for_lookahead(
+                                                            internal_stmt_tmpl, wc_pod, *candidate_pod_id,
+                                                            public_bindings, outer_pred_def.args_len, state, indexes
+                                                        ) {
+                                                            consistent_candidate = false;
+                                                            break;
+                                                        }
+                                                    }
+                                                    if consistent_candidate {
+                                                        resolved_candidate_pod_ids.push(*candidate_pod_id);
+                                                    }
+                                                }
+                                            }
+                                            if resolved_candidate_pod_ids.len() == 1 {
+                                                Ok(resolved_candidate_pod_ids[0])
+                                            } else {
+                                                Err(ProverError::ProofDeferred(format!(
+                                                    "Private Pod WC {} in {} domain has {} candidates after lookahead (domain size {}), expected 1.",
+                                                    wc_pod.name, outer_pred_def.name, resolved_candidate_pod_ids.len(), domain.len()
+                                                )))
+                                            }
                                         }
+                                        _ => Err(ProverError::ProofDeferred(format!(
+                                            "Private Pod WC {} in {} domain not singleton and lookahead not applicable/failed (domain size {}).",
+                                            wc_pod.name, outer_context.as_ref().map_or("<unknown>", |(d,_)|d.name.as_str()), state.domains.get(wc_pod).map_or(0, |(d,_)|d.len())
+                                        ))),
                                     }
-                                    _ => Err(ProverError::ProofDeferred(format!(
-                                        "Private Pod WC {} in {} domain not singleton and lookahead not applicable/failed (domain size {}).",
-                                        wc_pod.name, outer_context.as_ref().map_or("<unknown>", |(d,_)|d.name.as_str()), state.domains.get(wc_pod).map_or(0, |(d,_)|d.len())
-                                    ))),
                                 }
                             }
                         };
@@ -907,7 +938,6 @@ fn build_concrete_statement_from_bindings(
                             KeyOrWildcard::Wildcard(wc_key) => {
                                 match outer_args_len {
                                     Some(args_len) if wc_key.index < args_len => {
-                                        // Public key wildcard
                                         match public_bindings.get(&wc_key.index) {
                                             Some(WildcardValue::Key(k)) => k.clone(),
                                             _ => {
@@ -919,7 +949,6 @@ fn build_concrete_statement_from_bindings(
                                         }
                                     }
                                     Some(_) | None => {
-                                        // Private key wildcard
                                         match state.domains.get(wc_key) {
                                             Some((dom, _)) if dom.len() == 1 => {
                                                 match dom.iter().next().unwrap() {
@@ -948,7 +977,6 @@ fn build_concrete_statement_from_bindings(
                         concrete_args.push(StatementArg::Key(AnchoredKey::new(pod_id, key)));
                     }
                     StatementTmplArg::WildcardLiteral(wc_val) => {
-                        // Private Value WC
                         match outer_args_len {
                             Some(args_len) if wc_val.index < args_len => return Err(ProverError::Internal(format!("Invalid Use: StatementTmplArg::WildcardLiteral ({}) used for public index", wc_val))),
                             _ => {
@@ -959,7 +987,7 @@ fn build_concrete_statement_from_bindings(
                                             _ => return Err(ProverError::Internal(format!("Private Value WC {} domain wrong type", wc_val))),
                                         }
                                     }
-                                    _ => return Err(ProverError::ProofDeferred(format!("Private Value WC {} domain not singleton", wc_val))), // TODO: Lookahead for Val WC
+                                    _ => return Err(ProverError::ProofDeferred(format!("Private Value WC {} domain not singleton", wc_val))),
                                 }
                             }
                         }
@@ -970,7 +998,6 @@ fn build_concrete_statement_from_bindings(
                     StatementTmplArg::None => {}
                 }
             }
-            // Call the original build_concrete_statement for native predicates
             crate::prover::solver::build_concrete_statement(tmpl.pred.clone(), concrete_args)
         }
         Predicate::Custom(custom_ref) => {

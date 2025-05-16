@@ -97,7 +97,7 @@ pub fn solve(
     // Iteratively propagate constraints and generate proofs
     let mut changed_in_iteration = true;
     let mut iteration = 0;
-    const MAX_ITERATIONS: usize = 100;
+    const MAX_ITERATIONS: usize = 20;
 
     while changed_in_iteration && iteration < MAX_ITERATIONS {
         changed_in_iteration = false;
@@ -239,6 +239,7 @@ pub fn solve(
             &equality_pairs,
             &inequality_pairs,
             &potential_constant_info,
+            0,
         ) {
             Ok(solved_state) => {
                 state = solved_state;
