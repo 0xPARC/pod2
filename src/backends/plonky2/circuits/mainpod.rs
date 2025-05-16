@@ -826,7 +826,6 @@ impl CustomOperationVerifyGadget {
             all_st_eq.target,
             some_st_eq.target,
         ));
-        // let is_op_args_ok = builder._true();
 
         builder.assert_one(is_op_args_ok.target);
         Ok((statement, op_type))
