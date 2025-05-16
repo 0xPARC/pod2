@@ -18,7 +18,7 @@ use crate::{
             merkletree::{
                 MerkleClaimAndProof, MerkleProofExistenceGadget, MerkleProofExistenceTarget,
             },
-            signature::{PublicKey, SignatureVerifyGadget, SignatureVerifyTarget},
+            signature::{SignatureVerifyGadget, SignatureVerifyTarget},
         },
         signedpod::SignedPod,
     },
@@ -56,11 +56,12 @@ impl SignedPodVerifyGadget {
         // 3.a. Verify signature
         let signature = SignatureVerifyGadget {}.eval(builder)?;
 
-        // 3.b. Verify signer (ie. signature.pk == merkletree.signer_leaf)
+        // 3.b. Verify signer (ie. hash(signature.pk) == merkletree.signer_leaf)
         let signer_mt_proof = &mt_proofs[1];
         let key_signer = builder.constant_value(Key::from(KEY_SIGNER).raw());
+        let pk_hash = signature.pk.to_value(builder);
         builder.connect_values(signer_mt_proof.key, key_signer);
-        builder.connect_values(signer_mt_proof.value, signature.pk);
+        builder.connect_values(signer_mt_proof.value, pk_hash);
 
         // 3.c. connect signed message to pod.id
         builder.connect_values(ValueTarget::from_slice(&id.elements), signature.msg);
@@ -171,7 +172,7 @@ impl SignedPodVerifyTarget {
         }
 
         // get the signer pk
-        let pk = PublicKey(key_signer_value.raw());
+        let pk = key_signer_value.typed().clone().try_into()?;
         // the msg signed is the pod.id
         let msg = RawValue::from(pod.id.0);
 
@@ -196,7 +197,7 @@ pub mod tests {
     use crate::{
         backends::plonky2::{
             basetypes::C,
-            primitives::signature::SecretKey,
+            primitives::ec::schnorr::SecretKey,
             signedpod::{SignedPod, Signer},
         },
         middleware::F,
