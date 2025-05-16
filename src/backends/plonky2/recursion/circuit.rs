@@ -31,6 +31,10 @@ use hashbrown::HashMap;
 use plonky2::{
     self,
     gates::noop::NoopGate,
+    hash::{
+        hash_types::{HashOut, HashOutTarget},
+        poseidon::PoseidonHash,
+    },
     iop::{
         target::{BoolTarget, Target},
         witness::{PartialWitness, WitnessWrite},
@@ -41,6 +45,7 @@ use plonky2::{
             CircuitConfig, CircuitData, CommonCircuitData, ProverCircuitData, VerifierCircuitData,
             VerifierCircuitTarget,
         },
+        config::Hasher,
         proof::{ProofWithPublicInputs, ProofWithPublicInputsTarget},
     },
     recursion::dummy_circuit::{dummy_circuit, dummy_proof as plonky2_dummy_proof},
@@ -314,13 +319,16 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
             ..params.arity)
             .map(|_| params.dummy_verifier_data.clone())
             .collect();
-        let _verifier_datas: Vec<VerifierCircuitData<F, C, D>> =
+        let verifier_datas: Vec<VerifierCircuitData<F, C, D>> =
             [verifier_datas, dummy_verifier_datas].concat();
+
+        let h = hash_verifier_datas(verifier_datas);
 
         [
             public_inputs,
-            // add verifier_datas
-            // TODO-PUBINP uncomment to use public inputs
+            // add verifier_datas hash
+            // h.elements.to_vec(), // TODO WIP
+            //
             // verifier_datas
             //     .iter()
             //     .flat_map(|verifier_data| {
@@ -340,6 +348,57 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         ]
         .concat()
     }
+}
+
+fn hash_verifier_datas(verifier_datas: Vec<VerifierCircuitData<F, C, D>>) -> HashOut<F> {
+    let hashes: Vec<F> = verifier_datas
+        .iter()
+        .flat_map(|vd| hash_verifier_data(vd).elements)
+        .collect();
+
+    PoseidonHash::hash_no_pad(&hashes)
+}
+fn hash_verifier_data(verifier_data: &VerifierCircuitData<F, C, D>) -> HashOut<F> {
+    let f: Vec<F> = [
+        verifier_data.verifier_only.circuit_digest.elements.to_vec(),
+        verifier_data
+            .verifier_only
+            .constants_sigmas_cap
+            .0
+            .iter()
+            .flat_map(|e| e.elements)
+            .collect(),
+    ]
+    .concat();
+    PoseidonHash::hash_no_pad(&f)
+}
+
+fn gadget_hash_verifier_datas(
+    builder: &mut CircuitBuilder<F, D>,
+    verifier_datas: Vec<VerifierCircuitTarget>,
+) -> HashOutTarget {
+    let hashes: Vec<Target> = verifier_datas
+        .iter()
+        .flat_map(|vd| gadget_hash_verifier_data(builder, vd).elements)
+        .collect();
+
+    builder.hash_n_to_hash_no_pad::<PoseidonHash>(hashes)
+}
+fn gadget_hash_verifier_data(
+    builder: &mut CircuitBuilder<F, D>,
+    verifier_data: &VerifierCircuitTarget,
+) -> HashOutTarget {
+    let f: Vec<Target> = [
+        verifier_data.circuit_digest.elements.to_vec(),
+        verifier_data
+            .constants_sigmas_cap
+            .0
+            .iter()
+            .flat_map(|e| e.elements)
+            .collect(),
+    ]
+    .concat();
+    builder.hash_n_to_hash_no_pad::<PoseidonHash>(f)
 }
 
 fn common_data_for_recursion<I: InnerCircuit>(
@@ -605,16 +664,48 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_hash_verifier_datas() -> Result<()> {
+        let circuit_data = RecursiveCircuit::<Circuit1>::circuit_data(1, &())?;
+        let verifier_data = circuit_data.verifier_data();
+
+        let h = hash_verifier_datas(vec![verifier_data.clone(), verifier_data.clone()]);
+
+        let config = CircuitConfig::standard_recursion_config();
+        let mut builder = CircuitBuilder::<F, D>::new(config);
+        let mut pw = PartialWitness::<F>::new();
+
+        // circuit logic
+        let vd_targ1 = builder.add_virtual_verifier_data(builder.config.fri_config.cap_height);
+        let vd_targ2 = builder.add_virtual_verifier_data(builder.config.fri_config.cap_height);
+        let expected_h = builder.add_virtual_hash();
+        let h_targ =
+            gadget_hash_verifier_datas(&mut builder, vec![vd_targ1.clone(), vd_targ2.clone()]);
+        builder.connect_hashes(expected_h, h_targ);
+
+        // set targets
+        pw.set_verifier_data_target(&vd_targ1, &verifier_data.verifier_only)?;
+        pw.set_verifier_data_target(&vd_targ2, &verifier_data.verifier_only)?;
+        pw.set_hash_target(expected_h, h)?;
+
+        // generate & verify proof
+        let data = builder.build::<C>();
+        let proof = data.prove(pw)?;
+        data.verify(proof.clone())?;
+
+        Ok(())
+    }
+
     /*
     - c1 = RecursiveCircuit<Circuit1>
-    - c2 = Circuit2
+    - c2 = Recursive<Circuit2>
     // c1 & c2
 
     - proof_1a = c1.prove([null, null], [null, null])
-    - proof_1b = c1.prove([proof_1a, null], [verifier_data_c1, null])
-    - proof_2 = c2.prove(c2_inputs)
+    - proof_1b = c1.prove([proof_1a, null], [verifier_data_1, null])
+    - proof_2 = c2.prove([proof_1b, null], [verifier_data_1, null])
 
-    - proof_1c = c1.prove([proof_1b, proof_2], [verifier_data_c1, verifier_data_c2])
+    - proof_1c = c1.prove([proof_1b, proof_2], [verifier_data_1, verifier_data_2])
 
 
     */
