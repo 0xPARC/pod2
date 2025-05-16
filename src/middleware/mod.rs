@@ -553,7 +553,7 @@ impl ToFields for PodId {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum PodType {
     None = 0,
     MockSigned = 1,
@@ -574,7 +574,7 @@ impl fmt::Display for PodType {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Params {
     pub max_input_signed_pods: usize,
@@ -690,6 +690,7 @@ pub trait Pod: fmt::Debug + DynClone + Any {
             })
             .collect()
     }
+
     // Front-end Pods keep references to middleware Pods. Most of the
     // middleware data can be derived directly from front-end data, but the
     // "proof" data is only created at the point of proving/signing, and
@@ -698,6 +699,8 @@ pub trait Pod: fmt::Debug + DynClone + Any {
     // the implementation details of the middleware, this method allows the
     // middleware to provide some serialized data that can be used to
     // reconstruct the proof.
+    // It is an important principle that this data is opaque to the front-end
+    // and any third-party code.
     fn serialized_proof(&self) -> String;
 }
 

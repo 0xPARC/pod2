@@ -1,13 +1,15 @@
 use std::collections::HashMap;
 
+use base64::{prelude::BASE64_STANDARD, Engine};
 use itertools::Itertools;
+use plonky2::util::serialization::Buffer;
 
 use crate::{
     backends::plonky2::{
         error::{Error, Result},
         primitives::{
             merkletree::MerkleTree,
-            signature::{PublicKey, SecretKey, Signature},
+            signature::{PublicKey, SecretKey, Signature, VP},
         },
     },
     constants::MAX_DEPTH,
@@ -92,6 +94,29 @@ impl SignedPod {
 
         Ok(())
     }
+
+    pub fn decode_signature(signature: &str) -> Result<Signature, Error> {
+        use plonky2::util::serialization::Read;
+
+        let decoded = BASE64_STANDARD.decode(signature).map_err(|e| {
+            Error::custom(format!(
+                "Failed to decode signature from base64: {}. Value: {}",
+                e, signature
+            ))
+        })?;
+        let mut buf = Buffer::new(&decoded);
+
+        let proof = buf.read_proof(&VP.0.common).map_err(|e| {
+            Error::custom(format!(
+                "Failed to read signature from buffer: {}. Value: {}",
+                e, signature
+            ))
+        })?;
+
+        let sig = Signature(proof);
+
+        Ok(sig)
+    }
 }
 
 impl Pod for SignedPod {
@@ -122,7 +147,7 @@ impl Pod for SignedPod {
         let mut buffer = Vec::new();
         use plonky2::util::serialization::Write;
         buffer.write_proof(&self.signature.0).unwrap();
-        hex::encode(buffer)
+        BASE64_STANDARD.encode(buffer)
     }
 }
 

@@ -271,6 +271,10 @@ impl MockMainPod {
         }
         Ok(())
     }
+
+    pub fn params(&self) -> &Params {
+        &self.params
+    }
 }
 
 impl Pod for MockMainPod {

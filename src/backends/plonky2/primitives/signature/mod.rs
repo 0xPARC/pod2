@@ -21,6 +21,7 @@ use plonky2::{
 
 pub mod circuit;
 pub use circuit::*;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::{
@@ -57,7 +58,8 @@ pub struct SecretKey(pub(crate) RawValue);
 #[derive(Clone, Debug)]
 pub struct PublicKey(pub RawValue);
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct Signature(pub(crate) Proof);
 
 /// Implements the key generation and the computation of proof-based signatures.

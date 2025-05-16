@@ -5,6 +5,7 @@ use std::{collections::HashMap, convert::From, fmt};
 
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
+use serialization::{SerializedMainPod, SerializedSignedPod};
 
 use crate::middleware::{
     self, check_st_tmpl, hash_str, hash_values, AnchoredKey, Hash, Key, MainPodInputs,
@@ -19,15 +20,6 @@ mod serialization;
 pub use custom::*;
 pub use error::*;
 pub use operation::*;
-use serialization::*;
-
-/// This type is just for presentation purposes.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub enum PodClass {
-    #[default]
-    Signed,
-    Main,
-}
 
 #[derive(Clone, Debug)]
 pub struct SignedPodBuilder {
@@ -68,7 +60,7 @@ impl SignedPodBuilder {
 /// SignedPod is a wrapper on top of backend::SignedPod, which additionally stores the
 /// string<-->hash relation of the keys.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(try_from = "SignedPodHelper", into = "SignedPodHelper")]
+#[serde(from = "SerializedSignedPod", into = "SerializedSignedPod")]
 pub struct SignedPod {
     pub pod: Box<dyn middleware::Pod>,
     // We store a copy of the key values for quick access
@@ -617,16 +609,18 @@ impl MainPodBuilder {
 
         Ok(MainPod {
             pod,
+            params: self.params.clone(),
             public_statements,
         })
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(try_from = "MainPodHelper", into = "MainPodHelper")]
+#[serde(try_from = "SerializedMainPod", into = "SerializedMainPod")]
 pub struct MainPod {
     pub pod: Box<dyn middleware::Pod>,
     pub public_statements: Vec<Statement>,
+    pub params: Params,
 }
 
 impl fmt::Display for MainPod {
