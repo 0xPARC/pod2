@@ -1,31 +1,19 @@
 use std::{any::Any, collections::HashMap};
 
-use plonky2::{
-    plonk::{
-        circuit_builder::CircuitBuilder,
-        circuit_data::{CircuitConfig, CommonCircuitData},
-    },
-    util::serialization::{Buffer, Read},
-};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::Error;
 use crate::{
     backends::plonky2::{
-        basetypes::{C, D},
-        circuits::mainpod::MainPodVerifyCircuit,
-        mainpod::{
-            pad_statement, MainPod as Plonky2MainPod, MainPodProof, Statement as BackendStatement,
-        },
+        mainpod::{pad_statement, MainPod as Plonky2MainPod, Statement as BackendStatement},
         mock::{mainpod::MockMainPod, signedpod::MockSignedPod},
-        primitives::signature::{Signature, VP},
         signedpod::SignedPod as Plonky2SignedPod,
     },
     frontend::{MainPod, SignedPod},
     middleware::{
         self, containers::Dictionary, serialization::ordered_map, AnchoredKey, Key, Params, PodId,
-        Statement, StatementArg, Value, F, SELF,
+        Statement, StatementArg, Value, SELF,
     },
 };
 
@@ -74,34 +62,16 @@ impl From<SignedPod> for SerializedSignedPod {
                 .is_some()
             {
                 SignedPodType::Signed
-            } else {
+            } else if (&*pod.pod as &dyn Any)
+                .downcast_ref::<MockSignedPod>()
+                .is_some()
+            {
                 SignedPodType::MockSigned
+            } else {
+                unreachable!()
             },
         }
     }
-}
-
-fn decode_signature(signature: &str) -> Result<Signature, Error> {
-    use plonky2::util::serialization::Read;
-
-    let decoded = hex::decode(signature).map_err(|e| {
-        Error::custom(format!(
-            "Failed to decode signature: {}. Value: {}",
-            e, signature
-        ))
-    })?;
-    let mut buf = Buffer::new(&decoded);
-
-    let proof = buf.read_proof(&VP.0.common).map_err(|e| {
-        Error::custom(format!(
-            "Failed to decode signature: {}. Value: {}",
-            e, signature
-        ))
-    })?;
-
-    let sig = Signature(proof);
-
-    Ok(sig)
 }
 
 impl From<SerializedSignedPod> for SignedPod {
@@ -110,7 +80,7 @@ impl From<SerializedSignedPod> for SignedPod {
             SignedPodType::Signed => SignedPod {
                 pod: Box::new(Plonky2SignedPod {
                     id: serialized.id,
-                    signature: decode_signature(&serialized.proof).unwrap(),
+                    signature: Plonky2SignedPod::decode_signature(&serialized.proof).unwrap(),
                     dict: Dictionary::new(serialized.entries.clone()).unwrap(),
                 }),
                 kvs: serialized.entries,
@@ -138,49 +108,17 @@ impl From<MainPod> for SerializedMainPod {
                 .is_some()
             {
                 MainPodType::Main
-            } else {
+            } else if (&*pod.pod as &dyn Any)
+                .downcast_ref::<MockMainPod>()
+                .is_some()
+            {
                 MainPodType::MockMain
+            } else {
+                unreachable!()
             },
             public_statements: pod.public_statements.clone(),
         }
     }
-}
-
-// This is a helper function to get the CommonCircuitData necessary to decode
-// a serialized proof. At some point in the future, this data may be available
-// as a constant or with static initialization, but in the meantime we can
-// generate it on-demand.
-fn get_common_data(params: &Params) -> Result<CommonCircuitData<F, D>, Error> {
-    let config = CircuitConfig::standard_recursion_config();
-    let mut builder = CircuitBuilder::<F, D>::new(config);
-    let _main_pod = MainPodVerifyCircuit {
-        params: params.clone(),
-    }
-    .eval(&mut builder)
-    .map_err(|e| Error::custom(format!("Failed to evaluate MainPodVerifyCircuit: {}", e)))?;
-
-    let data = builder.build::<C>();
-    Ok(data.common)
-}
-
-fn decode_proof(proof: &str, params: &Params) -> Result<MainPodProof, Error> {
-    let decoded = hex::decode(proof).map_err(|e| {
-        Error::custom(format!(
-            "Failed to decode proof from hex: {}. Value: {}",
-            e, proof
-        ))
-    })?;
-    let mut buf = Buffer::new(&decoded);
-    let common = get_common_data(params)?;
-
-    let proof = buf.read_proof_with_public_inputs(&common).map_err(|e| {
-        Error::custom(format!(
-            "Failed to read proof from buffer: {}. Value: {}",
-            e, proof
-        ))
-    })?;
-
-    Ok(proof)
 }
 
 impl TryFrom<SerializedMainPod> for MainPod {
@@ -190,12 +128,14 @@ impl TryFrom<SerializedMainPod> for MainPod {
         match serialized.pod_type {
             MainPodType::Main => Ok(MainPod {
                 pod: Box::new(Plonky2MainPod::new(
-                    decode_proof(&serialized.proof, &serialized.params).map_err(|e| {
-                        Error::custom(format!(
-                            "Failed to deserialize MainPod proof: {}. Value: {}",
-                            e, serialized.proof
-                        ))
-                    })?,
+                    Plonky2MainPod::decode_proof(&serialized.proof, &serialized.params).map_err(
+                        |e| {
+                            Error::custom(format!(
+                                "Failed to deserialize MainPod proof: {}. Value: {}",
+                                e, serialized.proof
+                            ))
+                        },
+                    )?,
                     middleware_statements_to_backend(
                         serialized.public_statements.clone(),
                         &serialized.params,
@@ -223,6 +163,8 @@ impl TryFrom<SerializedMainPod> for MainPod {
     }
 }
 
+// To deserialize a backend MainPod, we need to convert the middleware
+// statements to backend statements, and padding the list with None statements.
 fn middleware_statements_to_backend(
     mid_statements: Vec<Statement>,
     params: &Params,
@@ -247,7 +189,6 @@ fn middleware_statements_to_backend(
                 })
                 .collect(),
         );
-
         pad_statement(params, &mut st);
         statements.push(st);
     }
@@ -259,7 +200,6 @@ fn middleware_statements_to_backend(
 mod tests {
     use std::collections::{HashMap, HashSet};
 
-    // Pretty assertions give nicer diffs between expected and actual values
     use pretty_assertions::assert_eq;
     use schemars::schema_for;
 
@@ -519,8 +459,9 @@ mod tests {
 
     #[test]
     // This tests that we can generate JSON Schemas for the MainPod and
-    // SignedPod types, and that we can validate real Signed and Main Pods
-    // against the schemas.
+    // SignedPod types, and that we can validate Signed and Main Pods
+    // against the schemas. Since both Mock and Plonky2 PODs have the same
+    // public interface, we can assume that the schema works for both.
     fn test_schema() {
         let mainpod_schema = schema_for!(SerializedMainPod);
         let signedpod_schema = schema_for!(SerializedSignedPod);

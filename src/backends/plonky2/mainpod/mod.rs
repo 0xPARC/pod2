@@ -2,6 +2,7 @@ pub mod operation;
 pub mod statement;
 use std::{any::Any, sync::Arc};
 
+use base64::{prelude::BASE64_STANDARD, Engine};
 use itertools::Itertools;
 pub use operation::*;
 use plonky2::{
@@ -9,10 +10,11 @@ use plonky2::{
     iop::witness::PartialWitness,
     plonk::{
         circuit_builder::CircuitBuilder,
-        circuit_data::CircuitConfig,
+        circuit_data::{CircuitConfig, CommonCircuitData},
         config::Hasher,
         proof::{Proof, ProofWithPublicInputs},
     },
+    util::serialization::{Buffer, Read},
 };
 pub use statement::*;
 
@@ -475,6 +477,23 @@ pub(crate) fn normalize_statement(statement: &Statement, self_id: PodId) -> midd
     .unwrap()
 }
 
+// This is a helper function to get the CommonCircuitData necessary to decode
+// a serialized proof. At some point in the future, this data may be available
+// as a constant or with static initialization, but in the meantime we can
+// generate it on-demand.
+fn get_common_data(params: &Params) -> Result<CommonCircuitData<F, D>, Error> {
+    let config = CircuitConfig::standard_recursion_config();
+    let mut builder = CircuitBuilder::<F, D>::new(config);
+    let _main_pod = MainPodVerifyCircuit {
+        params: params.clone(),
+    }
+    .eval(&mut builder)
+    .map_err(|e| Error::custom(format!("Failed to evaluate MainPodVerifyCircuit: {}", e)))?;
+
+    let data = builder.build::<C>();
+    Ok(data.common)
+}
+
 impl MainPod {
     fn _verify(&self) -> Result<()> {
         // 2. get the id out of the public statements
@@ -508,7 +527,7 @@ impl MainPod {
         &self.params
     }
 
-    pub fn new(
+    pub(crate) fn new(
         proof: MainPodProof,
         public_statements: Vec<Statement>,
         id: PodId,
@@ -520,6 +539,26 @@ impl MainPod {
             public_statements,
             proof,
         }
+    }
+
+    pub fn decode_proof(proof: &str, params: &Params) -> Result<MainPodProof, Error> {
+        let decoded = BASE64_STANDARD.decode(proof).map_err(|e| {
+            Error::custom(format!(
+                "Failed to decode proof from base64: {}. Value: {}",
+                e, proof
+            ))
+        })?;
+        let mut buf = Buffer::new(&decoded);
+        let common = get_common_data(params)?;
+
+        let proof = buf.read_proof(&common).map_err(|e| {
+            Error::custom(format!(
+                "Failed to read proof from buffer: {}. Value: {}",
+                e, proof
+            ))
+        })?;
+
+        Ok(proof)
     }
 }
 
@@ -544,8 +583,8 @@ impl Pod for MainPod {
     fn serialized_proof(&self) -> String {
         let mut buffer = Vec::new();
         use plonky2::util::serialization::Write;
-        buffer.write_proof_with_public_inputs(&self.proof).unwrap();
-        hex::encode(buffer)
+        buffer.write_proof(&self.proof).unwrap();
+        BASE64_STANDARD.encode(buffer)
     }
 }
 
