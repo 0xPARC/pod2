@@ -1122,6 +1122,8 @@ pub(super) fn initialize_solver_state(
         constraints,
         proof_chains: HashMap::new(),
         scope: HashSet::new(),
+        memoization_cache: HashMap::new(),
+        active_custom_calls: HashSet::new(),
     };
 
     Ok((solver_state, constant_template_info, self_facts))

@@ -852,6 +852,8 @@ mod tests {
             constraints: Vec::new(),
             proof_chains: HashMap::new(),
             scope: HashSet::new(),
+            memoization_cache: HashMap::new(),
+            active_custom_calls: HashSet::new(),
         };
 
         let mut expected_public_statements = HashSet::new();
@@ -1033,6 +1035,8 @@ mod tests {
             constraints: Vec::new(),
             proof_chains: HashMap::new(),
             scope: HashSet::new(),
+            memoization_cache: HashMap::new(),
+            active_custom_calls: HashSet::new(),
         };
 
         let mut expected_public_statements = HashSet::new();
@@ -1160,7 +1164,7 @@ mod tests {
                 ValueOf(?CONST[?me], 0x{})
                 Equal(?CONST[?me], ?src_ori[?src_key])
                 Equal(?CONST[?target], ?dst_ori[?dst_key])
-             //   eth_dos_distance(?src_ori, ?src_key, ?dst_ori, ?dst_key, ?distance_ori, ?distance_key)
+                eth_dos_distance(?src_ori, ?src_key, ?dst_ori, ?dst_key, ?distance_ori, ?distance_key)
             )
         "#,
             alice.pubkey().encode_hex::<String>(),
@@ -1276,11 +1280,10 @@ mod tests {
 
             eth_dos_distance_ind(src_ori, src_key, dst_ori, dst_key, distance_ori, distance_key,
               private: one_ori, one_key, shorter_distance_ori, shorter_distance_key, intermed_ori, intermed_key) = AND(
-                NotEqual(?src_ori[?src_key], ?dst_ori[?dst_key])
+                eth_friend(?intermed_ori, ?intermed_key, ?dst_ori, ?dst_key)
                 eth_dos_distance(?src_ori, ?src_key, ?intermed_ori, ?intermed_key, ?shorter_distance_ori, ?shorter_distance_key)
                 ValueOf(?one_ori[?one_key], 1)
                 SumOf(?distance_ori[?distance_key], ?shorter_distance_ori[?shorter_distance_key], ?one_ori[?one_key])
-                eth_friend(?intermed_ori, ?intermed_key, ?dst_ori, ?dst_key)
             )
 
             eth_dos_distance(src_ori, src_key, dst_ori, dst_key, distance_ori, distance_key) = OR(
@@ -1295,7 +1298,7 @@ mod tests {
                 ValueOf(?CONST["zero"], 0)
                 ValueOf(?CONST["one"], 1)
             //    eth_friend(?CONST, "alice", ?CONST, "charlie")
-                eth_dos_distance(?CONST, "alice", ?CONST, "alice", ?distance_ori, ?distance_key)
+                eth_dos_distance(?CONST, "alice", ?CONST, "charlie", ?distance_ori, ?distance_key)
             )
         "#,
             alice.pubkey().encode_hex::<String>(),

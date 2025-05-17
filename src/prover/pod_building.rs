@@ -98,6 +98,8 @@ pub fn build_main_pod_from_solution(
         constraints: Vec::new(),
         proof_chains: HashMap::new(),
         scope: HashSet::new(),
+        memoization_cache: HashMap::new(),
+        active_custom_calls: HashSet::new(),
     };
 
     for tmpl in request_templates {

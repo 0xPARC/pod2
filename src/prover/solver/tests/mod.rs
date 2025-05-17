@@ -69,6 +69,8 @@ pub(crate) fn solver_state_with_domains(
         proof_chains: HashMap::new(),
         scope: HashSet::new(),
         params: middleware::Params::default(),
+        memoization_cache: HashMap::new(),
+        active_custom_calls: HashSet::new(),
     }
 }
 

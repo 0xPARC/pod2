@@ -233,16 +233,3 @@ fn check_neq_consistency_for_pair(state: &SolverState, wc1: &Wildcard, wc2: &Wil
     }
     true
 }
-
-// Simplified clone for search purposes
-impl SolverState {
-    fn clone_state_for_search(&self) -> Self {
-        SolverState {
-            domains: self.domains.clone(),
-            constraints: self.constraints.clone(),
-            proof_chains: self.proof_chains.clone(),
-            scope: self.scope.clone(),
-            params: self.params.clone(),
-        }
-    }
-}

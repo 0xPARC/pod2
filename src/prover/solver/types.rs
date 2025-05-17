@@ -1,8 +1,13 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::{
-    middleware::{PodId, Value},
-    prover::types::ConcreteValue,
+    middleware::{
+        PodId, Predicate, Statement, StatementArg, ToFields, Value, Wildcard, WildcardValue, F,
+    },
+    prover::{
+        error::ProverError,
+        types::{ConcreteValue, ProofChain},
+    },
 };
 
 // Represents the set of possible concrete values for a wildcard
@@ -45,4 +50,19 @@ pub enum ExpectedType {
     Key,
     Val,
     Unknown, // Initial state before type is inferred
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub enum MemoizationKey {
+    Native(Statement),
+    Custom {
+        predicate_ref_id: Vec<F>, // Canonical ID for the CustomPredicateRef
+        args: Vec<WildcardValue>, // Concrete arguments to the custom predicate
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum MemoizedProofOutcome {
+    Success(ProofChain, HashSet<(PodId, Statement)>), // Proof chain and its specific scope fragment
+    Failure(ProverError),
 }

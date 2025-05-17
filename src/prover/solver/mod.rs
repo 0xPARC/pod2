@@ -27,7 +27,7 @@ use initialization::{initialize_solver_state, SolverContext};
 use proof::try_prove_statement; // Import try_prove_statement
 use pruning::{get_wildcards_from_tmpl_arg, prune_domains_after_proof, prune_initial_domains}; // Import helper
 use search::perform_search;
-use types::{Constraint, Domain, ExpectedType};
+use types::{Constraint, Domain, ExpectedType, MemoizationKey, MemoizedProofOutcome};
 
 use crate::prover::types::ConcreteValue;
 
@@ -45,6 +45,10 @@ pub struct SolverState {
     pub proof_chains: HashMap<Statement, ProofChain>,
     /// Base facts required to support the final proof chains
     pub scope: HashSet<(PodId, Statement)>,
+    /// Cache for memoizing proof outcomes to avoid re-computation.
+    pub memoization_cache: HashMap<MemoizationKey, MemoizedProofOutcome>,
+    /// Tracks active custom predicate calls to detect cycles.
+    pub active_custom_calls: HashSet<MemoizationKey>,
 }
 
 impl SolverState {
@@ -56,6 +60,20 @@ impl SolverState {
             constraints: Vec::new(),
             proof_chains: HashMap::new(),
             scope: HashSet::new(),
+            memoization_cache: HashMap::new(),
+            active_custom_calls: HashSet::new(),
+        }
+    }
+
+    pub(super) fn clone_state_for_search(&self) -> Self {
+        Self {
+            params: self.params.clone(),
+            domains: self.domains.clone(),
+            constraints: self.constraints.clone(),
+            proof_chains: self.proof_chains.clone(),
+            scope: self.scope.clone(),
+            memoization_cache: self.memoization_cache.clone(),
+            active_custom_calls: self.active_custom_calls.clone(),
         }
     }
 }
@@ -283,6 +301,8 @@ pub fn solve(
             constraints: vec![],
             proof_chains: HashMap::new(),
             scope: HashSet::new(),
+            memoization_cache: HashMap::new(),
+            active_custom_calls: HashSet::new(),
         };
 
         if let Ok(Some((target_stmt, _))) =
