@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use plonky2::{
     field::extension::Extendable,
     hash::hash_types::RichField,
@@ -6,9 +8,11 @@ use plonky2::{
         target::Target,
         witness::{PartitionWitness, Witness},
     },
-    plonk::circuit_data::CommonCircuitData,
+    plonk::{circuit_builder::CircuitBuilder, circuit_data::CommonCircuitData},
     util::serialization::{Buffer, IoResult, Read, Write},
 };
+
+use crate::{backends::plonky2::basetypes::D, middleware::F};
 
 /// Plonky2 generator that allows debugging values assigned to targets.  This generator doesn't
 /// actually generate any value and doesn't assign any witness.  Instead it can be registered to
@@ -69,5 +73,116 @@ impl<F: RichField + Extendable<D>, const D: usize> SimpleGenerator<F, D> for Deb
         let name = unsafe { String::from_utf8_unchecked(name_buf) };
         let xs = src.read_target_vec()?;
         Ok(Self { name, xs })
+    }
+}
+
+use std::sync::{LazyLock, Mutex};
+
+pub static METRICS: LazyLock<Mutex<Metrics>> = LazyLock::new(|| Mutex::new(Metrics::default()));
+
+#[derive(Default)]
+pub struct Metrics {
+    gates: Vec<(String, usize)>,
+    stack: Vec<String>,
+}
+
+pub struct MetricsMeasure {
+    name: String,
+    start_num_gates: usize,
+    ended: bool,
+}
+
+impl Drop for MetricsMeasure {
+    fn drop(&mut self) {
+        if !self.ended {
+            panic!("Measure \"{}\" not ended", self.name);
+        }
+    }
+}
+
+impl Metrics {
+    #[must_use]
+    pub fn begin(
+        &mut self,
+        builder: &CircuitBuilder<F, D>,
+        name: impl Into<String>,
+    ) -> MetricsMeasure {
+        let name = name.into();
+        self.stack.push(name);
+        MetricsMeasure {
+            name: self.stack.join("/"),
+            start_num_gates: builder.num_gates(),
+            ended: false,
+        }
+    }
+    pub fn end(&mut self, builder: &CircuitBuilder<F, D>, mut measure: MetricsMeasure) {
+        self.stack.pop();
+        measure.ended = true;
+        let num_gates = builder.num_gates();
+        let delta_gates = num_gates - measure.start_num_gates;
+        self.gates.push((measure.name.clone(), delta_gates));
+    }
+    pub fn print(&self) {
+        println!("Gate count:");
+        let mut count = HashMap::new();
+        for (name, num_gates) in &self.gates {
+            let n = count.entry(name).or_insert(0);
+            *n += 1;
+            println!("- {} [{}]: {}", name, *n, num_gates);
+        }
+    }
+}
+
+#[cfg(feature = "metrics")]
+pub mod measure_macros {
+    #[macro_export]
+    macro_rules! measure_gates_begin {
+        ($builder:expr, $name:expr) => {{
+            use $crate::backends::plonky2::circuits::utils::METRICS;
+            let mut metrics = METRICS.lock().unwrap();
+            metrics.begin($builder, $name)
+        }};
+    }
+
+    #[macro_export]
+    macro_rules! measure_gates_end {
+        ($builder:expr, $measure:expr) => {{
+            use $crate::backends::plonky2::circuits::utils::METRICS;
+            let mut metrics = METRICS.lock().unwrap();
+            metrics.end($builder, $measure);
+        }};
+    }
+
+    #[macro_export]
+    macro_rules! measure_gates_print {
+        () => {{
+            use $crate::backends::plonky2::circuits::utils::METRICS;
+            let metrics = METRICS.lock().unwrap();
+            metrics.print();
+        }};
+    }
+}
+
+#[cfg(not(feature = "metrics"))]
+pub mod measure_macros {
+    #[macro_export]
+    macro_rules! measure_gates_begin {
+        ($builder:expr, $name:expr) => {
+            ()
+        };
+    }
+
+    #[macro_export]
+    macro_rules! measure_gates_end {
+        ($builder:expr, $measure:expr) => {
+            let _ = $measure;
+        };
+    }
+
+    #[macro_export]
+    macro_rules! measure_gates_print {
+        () => {{
+            println!("Gate count disabled: \"metrics\" feature not enabled.");
+        }};
     }
 }

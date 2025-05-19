@@ -28,6 +28,7 @@ use crate::{
         },
         signedpod::SignedPod,
     },
+    measure_gates_begin, measure_gates_end,
     middleware::{
         AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, NativeOperation,
         NativePredicate, Params, PodType, PredicatePrefix, Statement, StatementArg, ToFields,
@@ -79,12 +80,14 @@ impl OperationVerifyGadget {
         merkle_claims: &[MerkleClaimTarget],
         custom_predicate_verification_table: &[HashOutTarget],
     ) -> Result<()> {
+        let measure = measure_gates_begin!(builder, "OperationVerify");
         let _true = builder._true();
         let _false = builder._false();
 
         // Verify that the operation `op` correctly generates the statement `st`.  The operation
         // can reference any of the `prev_statements`.
         // TODO: Clean this up.
+        let measure_resolve_op_args = measure_gates_begin!(builder, "ResolveOpArgs");
         let resolved_op_args = if prev_statements.is_empty() {
             (0..self.params.max_operation_args)
                 .map(|_| {
@@ -98,6 +101,7 @@ impl OperationVerifyGadget {
                 .map(|&i| builder.vec_ref(&self.params, prev_statements, i))
                 .collect::<Vec<_>>()
         };
+        measure_gates_end!(builder, measure_resolve_op_args);
         // TODO: Can we have a single table with merkel claims and verified custom predicates
         // together (with an identifying prefix) and then we only need one random access instead of
         // two?
@@ -113,14 +117,19 @@ impl OperationVerifyGadget {
         // Certain operations (Contains/NotContains) will refer to one
         // of the provided Merkle proofs (if any). These proofs have already
         // been verified, so we need only look up the claim.
+        let measure_resolve_merkle_claim = measure_gates_begin!(builder, "ResolveMerkleClaim");
         let resolved_merkle_claim = (!merkle_claims.is_empty())
             .then(|| builder.vec_ref(&self.params, merkle_claims, op.aux[0]));
+        measure_gates_end!(builder, measure_resolve_merkle_claim);
 
         // Operations from custom statements will refer to one
         // of the provided custom predicates verifications (if any). These operations have already
         // been verified, so we need only look up the entry.
+        let measure_resolve_custom_pred_verification =
+            measure_gates_begin!(builder, "ResolveCustomPredVerification");
         let resolved_custom_pred_verification = (!custom_predicate_verification_table.is_empty())
             .then(|| builder.vec_ref(&self.params, custom_predicate_verification_table, op.aux[1]));
+        measure_gates_end!(builder, measure_resolve_custom_pred_verification);
 
         // The verification may require aux data which needs to be stored in the
         // `OperationVerifyTarget` so that we can set during witness generation.
@@ -140,7 +149,7 @@ impl OperationVerifyGadget {
                 vec![]
             } else {
                 vec![
-                    self.eval_copy(builder, st, &op.op_type, &resolved_op_args)?,
+                    self.eval_copy(builder, st, &op.op_type, &resolved_op_args),
                     self.eval_eq_neq_from_entries(builder, st, &op.op_type, &resolved_op_args),
                     self.eval_lt_lteq_from_entries(builder, st, &op.op_type, &resolved_op_args),
                     self.eval_transitive_eq(builder, st, &op.op_type, &resolved_op_args),
@@ -190,6 +199,7 @@ impl OperationVerifyGadget {
         let ok = builder.any(op_checks);
         builder.assert_one(ok.target);
 
+        measure_gates_end!(builder, measure);
         Ok(())
     }
 
@@ -201,6 +211,7 @@ impl OperationVerifyGadget {
         resolved_merkle_claim: MerkleClaimTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpContainsFromEntries");
         let op_code_ok = op_type.has_native(builder, NativeOperation::ContainsFromEntries);
 
         let (arg_types_ok, [merkle_root_value, key_value, value_value]) =
@@ -235,7 +246,9 @@ impl OperationVerifyGadget {
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-        builder.all([op_code_ok, arg_types_ok, merkle_proof_ok, st_ok])
+        let ok = builder.all([op_code_ok, arg_types_ok, merkle_proof_ok, st_ok]);
+        measure_gates_end!(builder, measure);
+        ok
     }
 
     fn eval_not_contains_from_entries(
@@ -246,6 +259,7 @@ impl OperationVerifyGadget {
         resolved_merkle_claim: MerkleClaimTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpNotContainsFromEntries");
         let op_code_ok = op_type.has_native(builder, NativeOperation::NotContainsFromEntries);
 
         let (arg_types_ok, [merkle_root_value, key_value]) =
@@ -278,7 +292,9 @@ impl OperationVerifyGadget {
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-        builder.all([op_code_ok, arg_types_ok, merkle_proof_ok, st_ok])
+        let ok = builder.all([op_code_ok, arg_types_ok, merkle_proof_ok, st_ok]);
+        measure_gates_end!(builder, measure);
+        ok
     }
 
     fn eval_custom(
@@ -289,16 +305,19 @@ impl OperationVerifyGadget {
         resolved_custom_pred_verification: HashOutTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpCustom");
         let query = CustomPredicateVerifyQueryTarget {
             statement: st.clone(),
             op_type: op_type.clone(),
             op_args: resolved_op_args.to_vec(),
         };
         let out_query_hash = query.hash(builder);
-        builder.is_equal_slice(
+        let ok = builder.is_equal_slice(
             &resolved_custom_pred_verification.elements,
             &out_query_hash.elements,
-        )
+        );
+        measure_gates_end!(builder, measure);
+        ok
     }
 
     /// Carries out the checks necessary for EqualFromEntries and
@@ -310,6 +329,7 @@ impl OperationVerifyGadget {
         op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpEqNeqFromEntries");
         let eq_op_st_code_ok = {
             let op_code_ok = op_type.has_native(builder, NativeOperation::EqualFromEntries);
             let st_code_ok = st.has_native_type(builder, &self.params, NativePredicate::Equal);
@@ -346,7 +366,9 @@ impl OperationVerifyGadget {
                 .collect::<Vec<_>>(),
         );
 
-        builder.all([op_st_code_ok, arg_types_ok, op_args_ok, st_args_ok])
+        let ok = builder.all([op_st_code_ok, arg_types_ok, op_args_ok, st_args_ok]);
+        measure_gates_end!(builder, measure);
+        ok
     }
 
     /// Carries out the checks necessary for LtFromEntries and
@@ -358,6 +380,7 @@ impl OperationVerifyGadget {
         op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpLtLteqFromEntries");
         let zero = ValueTarget::zero(builder);
         let one = ValueTarget::one(builder);
 
@@ -414,7 +437,9 @@ impl OperationVerifyGadget {
                 .collect::<Vec<_>>(),
         );
 
-        builder.all([op_st_code_ok, arg_types_ok, st_args_ok])
+        let ok = builder.all([op_st_code_ok, arg_types_ok, st_args_ok]);
+        measure_gates_end!(builder, measure);
+        ok
     }
 
     fn eval_hash_of(
@@ -424,6 +449,7 @@ impl OperationVerifyGadget {
         op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpHashOf");
         let op_code_ok = op_type.has_native(builder, NativeOperation::HashOf);
 
         let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) =
@@ -445,7 +471,9 @@ impl OperationVerifyGadget {
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-        builder.all([op_code_ok, arg_types_ok, hash_value_ok, st_ok])
+        let ok = builder.all([op_code_ok, arg_types_ok, hash_value_ok, st_ok]);
+        measure_gates_end!(builder, measure);
+        ok
     }
 
     fn eval_sum_of(
@@ -455,6 +483,7 @@ impl OperationVerifyGadget {
         op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpSumOf");
         let value_zero = ValueTarget::zero(builder);
 
         let op_code_ok = op_type.has_native(builder, NativeOperation::SumOf);
@@ -481,7 +510,9 @@ impl OperationVerifyGadget {
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-        builder.all([op_code_ok, arg_types_ok, sum_ok, st_ok])
+        let ok = builder.all([op_code_ok, arg_types_ok, sum_ok, st_ok]);
+        measure_gates_end!(builder, measure);
+        ok
     }
 
     fn eval_product_of(
@@ -491,6 +522,7 @@ impl OperationVerifyGadget {
         op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpProductOf");
         let value_zero = ValueTarget::zero(builder);
 
         let op_code_ok = op_type.has_native(builder, NativeOperation::ProductOf);
@@ -517,7 +549,9 @@ impl OperationVerifyGadget {
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-        builder.all([op_code_ok, arg_types_ok, product_ok, st_ok])
+        let ok = builder.all([op_code_ok, arg_types_ok, product_ok, st_ok]);
+        measure_gates_end!(builder, measure);
+        ok
     }
 
     fn eval_max_of(
@@ -527,6 +561,7 @@ impl OperationVerifyGadget {
         op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpMaxOf");
         let op_code_ok = op_type.has_native(builder, NativeOperation::MaxOf);
 
         let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) =
@@ -560,7 +595,9 @@ impl OperationVerifyGadget {
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-        builder.all([op_code_ok, arg_types_ok, arg1_check, st_ok])
+        let ok = builder.all([op_code_ok, arg_types_ok, arg1_check, st_ok]);
+        measure_gates_end!(builder, measure);
+        ok
     }
 
     fn eval_transitive_eq(
@@ -570,6 +607,7 @@ impl OperationVerifyGadget {
         op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpTransitiveEq");
         let op_code_ok =
             op_type.has_native(builder, NativeOperation::TransitiveEqualFromStatements);
 
@@ -594,7 +632,9 @@ impl OperationVerifyGadget {
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-        builder.all([op_code_ok, arg_types_ok, inner_keys_match, st_ok])
+        let ok = builder.all([op_code_ok, arg_types_ok, inner_keys_match, st_ok]);
+        measure_gates_end!(builder, measure);
+        ok
     }
     fn eval_none(
         &self,
@@ -602,13 +642,16 @@ impl OperationVerifyGadget {
         st: &StatementTarget,
         op_type: &OperationTypeTarget,
     ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpNone");
         let op_code_ok = op_type.has_native(builder, NativeOperation::None);
 
         let expected_statement =
             StatementTarget::new_native(builder, &self.params, NativePredicate::None, &[]);
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-        builder.all([op_code_ok, st_ok])
+        let ok = builder.all([op_code_ok, st_ok]);
+        measure_gates_end!(builder, measure);
+        ok
     }
 
     fn eval_new_entry(
@@ -618,6 +661,7 @@ impl OperationVerifyGadget {
         op_type: &OperationTypeTarget,
         prev_statements: &[StatementTarget],
     ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpNewEntry");
         let op_code_ok = op_type.has_native(builder, NativeOperation::NewEntry);
 
         let st_code_ok = st.has_native_type(builder, &self.params, NativePredicate::ValueOf);
@@ -643,7 +687,9 @@ impl OperationVerifyGadget {
 
         let no_dupes_ok = builder.not(dupe_check);
 
-        builder.all([op_code_ok, st_code_ok, arg_prefix_ok, no_dupes_ok])
+        let ok = builder.all([op_code_ok, st_code_ok, arg_prefix_ok, no_dupes_ok]);
+        measure_gates_end!(builder, measure);
+        ok
     }
 
     fn eval_lt_to_neq(
@@ -653,6 +699,7 @@ impl OperationVerifyGadget {
         op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpLtToNeq");
         let op_code_ok = op_type.has_native(builder, NativeOperation::LtToNotEqual);
 
         let arg_type_ok =
@@ -669,7 +716,9 @@ impl OperationVerifyGadget {
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-        builder.all([op_code_ok, arg_type_ok, st_ok])
+        let ok = builder.all([op_code_ok, arg_type_ok, st_ok]);
+        measure_gates_end!(builder, measure);
+        ok
     }
 
     fn eval_copy(
@@ -678,13 +727,16 @@ impl OperationVerifyGadget {
         st: &StatementTarget,
         op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
-    ) -> Result<BoolTarget> {
+    ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpCopy");
         let op_code_ok = op_type.has_native(builder, NativeOperation::CopyStatement);
 
         let expected_statement = &resolved_op_args[0];
         let st_ok = builder.is_equal_flattenable(st, expected_statement);
 
-        Ok(builder.all([op_code_ok, st_ok]))
+        let ok = builder.all([op_code_ok, st_ok]);
+        measure_gates_end!(builder, measure);
+        ok
     }
 }
 
@@ -751,11 +803,13 @@ impl CustomOperationVerifyGadget {
         st_tmpl: &StatementTmplTarget,
         args: &[ValueTarget],
     ) -> StatementTarget {
+        let measure = measure_gates_begin!(builder, "StatementArgFromTemplate");
         let args = st_tmpl
             .args
             .iter()
             .map(|st_tmpl_arg| self.statement_arg_from_template(builder, st_tmpl_arg, args))
             .collect();
+        measure_gates_end!(builder, measure);
         StatementTarget {
             predicate: st_tmpl.pred.clone(),
             args,
@@ -774,6 +828,7 @@ impl CustomOperationVerifyGadget {
         op_args: &[StatementTarget],
         args: &[ValueTarget], // arguments to the custom predicate, public and private
     ) -> Result<(StatementTarget, OperationTypeTarget)> {
+        let measure = measure_gates_begin!(builder, "CustomOperationVerify");
         // Some sanity checks
         assert_eq!(self.params.max_operation_args, op_args.len());
         assert_eq!(self.params.max_custom_predicate_wildcards, args.len());
@@ -828,6 +883,7 @@ impl CustomOperationVerifyGadget {
         ));
 
         builder.assert_one(is_op_args_ok.target);
+        measure_gates_end!(builder, measure);
         Ok((statement, op_type))
     }
 }
@@ -863,6 +919,7 @@ impl MainPodVerifyGadget {
         &self,
         builder: &mut CircuitBuilder<F, D>,
     ) -> Result<(Vec<HashOutTarget>, Vec<CustomPredicateBatchTarget>)> {
+        let measure = measure_gates_begin!(builder, "BuildCustomPredicateTable");
         let params = &self.params;
         let mut custom_predicate_table =
             Vec::with_capacity(params.max_custom_predicate_batches * params.max_custom_batch_size);
@@ -892,6 +949,7 @@ impl MainPodVerifyGadget {
             }
             custom_predicate_batches.push(cpb); // We keep this for witness assignment
         }
+        measure_gates_end!(builder, measure);
         Ok((custom_predicate_table, custom_predicate_batches))
     }
 
@@ -903,6 +961,7 @@ impl MainPodVerifyGadget {
         builder: &mut CircuitBuilder<F, D>,
         custom_predicate_table: &[HashOutTarget],
     ) -> Result<(Vec<HashOutTarget>, Vec<CustomPredicateVerifyEntryTarget>)> {
+        let measure = measure_gates_begin!(builder, "BuildCustomPredicateVerificationTable");
         let params = &self.params;
         let mut custom_predicate_verifications =
             Vec::with_capacity(params.max_custom_predicate_verifications);
@@ -944,6 +1003,7 @@ impl MainPodVerifyGadget {
             custom_predicate_verification_table.push(in_query_hash);
             custom_predicate_verifications.push(entry); // We keep this for witness assignment
         }
+        measure_gates_end!(builder, measure);
         Ok((
             custom_predicate_verification_table,
             custom_predicate_verifications,
@@ -951,6 +1011,7 @@ impl MainPodVerifyGadget {
     }
 
     fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MainPodVerifyTarget> {
+        let measure = measure_gates_begin!(builder, "MainPodVerify");
         let params = &self.params;
         // 1. Verify all input signed pods
         let mut signed_pods = Vec::new();
@@ -1022,8 +1083,10 @@ impl MainPodVerifyGadget {
             self.build_custom_predicate_verification_table(builder, &custom_predicate_table)?;
 
         // 2. Calculate the Pod Id from the public statements
+        let measure_calc_id = measure_gates_begin!(builder, "MainPodId");
         let pub_statements_flattened = pub_statements.iter().flat_map(|s| s.flatten()).collect();
         let id = builder.hash_n_to_hash_no_pad::<PoseidonHash>(pub_statements_flattened);
+        measure_gates_end!(builder, measure_calc_id);
 
         // 4. Verify type
         let type_statement = &pub_statements[0];
@@ -1059,6 +1122,7 @@ impl MainPodVerifyGadget {
             )?;
         }
 
+        measure_gates_end!(builder, measure);
         Ok(MainPodVerifyTarget {
             params: params.clone(),
             id,

@@ -30,6 +30,7 @@ use crate::{
         error::Result,
         primitives::merkletree::MerkleClaimAndProof,
     },
+    measure_gates_begin, measure_gates_end,
     middleware::{EMPTY_HASH, EMPTY_VALUE, F, HASH_SIZE},
 };
 
@@ -59,6 +60,7 @@ pub struct MerkleClaimAndProofTarget {
 impl MerkleProofGadget {
     /// creates the targets and defines the logic of the circuit
     pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MerkleClaimAndProofTarget> {
+        let measure = measure_gates_begin!(builder, format!("MerkleProof_{}", self.max_depth));
         let enabled = builder.add_virtual_bool_target_safe();
         let root = builder.add_virtual_hash();
         let key = builder.add_virtual_value();
@@ -139,6 +141,7 @@ impl MerkleProofGadget {
         for j in 0..HASH_SIZE {
             builder.connect(computed_root[j], expected_root[j]);
         }
+        measure_gates_end!(builder, measure);
 
         Ok(MerkleClaimAndProofTarget {
             max_depth: self.max_depth,
@@ -221,6 +224,8 @@ pub struct MerkleProofExistenceTarget {
 impl MerkleProofExistenceGadget {
     /// creates the targets and defines the logic of the circuit
     pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MerkleProofExistenceTarget> {
+        let measure =
+            measure_gates_begin!(builder, format!("MerkleProofExistence_{}", self.max_depth));
         let enabled = builder.add_virtual_bool_target_safe();
         let root = builder.add_virtual_hash();
         let key = builder.add_virtual_value();
@@ -249,6 +254,7 @@ impl MerkleProofExistenceGadget {
         for j in 0..HASH_SIZE {
             builder.connect(computed_root[j], expected_root[j]);
         }
+        measure_gates_end!(builder, measure);
 
         Ok(MerkleProofExistenceTarget {
             max_depth: self.max_depth,
@@ -494,6 +500,7 @@ pub mod tests {
         for max_depth in [10, 16, 32, 40, 64, 128, 130, 250, 256] {
             test_merkleproof_verify_opt(max_depth, true)?;
         }
+        crate::measure_gates_print!();
         Ok(())
     }
 

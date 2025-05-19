@@ -30,6 +30,7 @@ use crate::{
             PublicKey, SecretKey, Signature, DUMMY_PUBLIC_INPUTS, DUMMY_SIGNATURE, VP,
         },
     },
+    measure_gates_begin, measure_gates_end,
     middleware::{Hash, RawValue, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE},
 };
 
@@ -65,6 +66,7 @@ impl SignatureVerifyGadget {
 impl SignatureVerifyGadget {
     /// creates the targets and defines the logic of the circuit
     pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<SignatureVerifyTarget> {
+        let measure = measure_gates_begin!(builder, "SignatureVerify");
         let enabled = builder.add_virtual_bool_target_safe();
 
         let common_data = VP.0.common.clone();
@@ -115,6 +117,7 @@ impl SignatureVerifyGadget {
 
         builder.verify_proof::<C>(&proof_targ, &verifier_data_targ, &common_data);
 
+        measure_gates_end!(builder, measure);
         Ok(SignatureVerifyTarget {
             verifier_data_targ,
             enabled,

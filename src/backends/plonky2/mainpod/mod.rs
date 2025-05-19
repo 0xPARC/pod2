@@ -626,6 +626,7 @@ pub mod tests {
             max_input_main_pods: 1,
             ..Default::default()
         };
+        println!("{:#?}", params);
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params);
@@ -640,6 +641,7 @@ pub mod tests {
 
         let mut prover = Prover {};
         let kyc_pod = kyc_builder.prove(&mut prover, &params)?;
+        crate::measure_gates_print!();
         let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
 
         Ok(pod.verify()?)
@@ -741,6 +743,7 @@ pub mod tests {
             max_custom_predicate_verifications: 8,
             ..Default::default()
         };
+        println!("{:#?}", params);
 
         let mut alice = Signer(SecretKey(RawValue::from(1)));
         let bob = Signer(SecretKey(RawValue::from(2)));
@@ -768,6 +771,7 @@ pub mod tests {
 
         let mut prover = Prover {};
         let alice_bob_ethdos = alice_bob_ethdos_builder.prove(&mut prover, &params)?;
+        crate::measure_gates_print!();
         let pod = (alice_bob_ethdos.pod as Box<dyn Any>)
             .downcast::<MainPod>()
             .unwrap();
@@ -790,6 +794,7 @@ pub mod tests {
             max_custom_predicate_verifications: 2,
             ..Default::default()
         };
+        println!("{:#?}", params);
 
         let mut cpb_builder = CustomPredicateBatchBuilder::new(params.clone(), "cpb".into());
         let stb0 = STB::new(NP::ValueOf)
@@ -824,6 +829,7 @@ pub mod tests {
 
         let mut prover = Prover {};
         let pod = pod_builder.prove(&mut prover, &params)?;
+        crate::measure_gates_print!();
 
         let pod = (pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
 

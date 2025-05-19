@@ -22,6 +22,7 @@ use crate::{
         },
         signedpod::SignedPod,
     },
+    measure_gates_begin, measure_gates_end,
     middleware::{
         hash_str, Key, NativePredicate, Params, PodType, RawValue, Value, F, KEY_SIGNER, KEY_TYPE,
         SELF,
@@ -34,6 +35,7 @@ pub struct SignedPodVerifyGadget {
 
 impl SignedPodVerifyGadget {
     pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<SignedPodVerifyTarget> {
+        let measure = measure_gates_begin!(builder, "SignedPodVerify");
         // 1. Verify id
         let id = builder.add_virtual_hash();
         let mut mt_proofs = Vec::new();
@@ -65,6 +67,7 @@ impl SignedPodVerifyGadget {
         // 3.c. connect signed message to pod.id
         builder.connect_values(ValueTarget::from_slice(&id.elements), signature.msg);
 
+        measure_gates_end!(builder, measure);
         Ok(SignedPodVerifyTarget {
             params: self.params.clone(),
             id,
