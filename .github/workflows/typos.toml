@@ -7,3 +7,4 @@ aks = "aks" # anchored keys
 nin = "nin" # not in
 kow = "kow" # key or wildcard
 KOW = "KOW" # Key Or Wildcard
+datas = "datas" # plural (for 'verifier_datas', a vector of 'verifier_data')
