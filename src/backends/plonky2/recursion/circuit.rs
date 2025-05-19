@@ -144,7 +144,6 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         dummy_proof: Proof,
         innercircuit_input: I::Input,
         recursive_proofs: Vec<Proof>,
-        non_base_node: bool,
     ) -> Result<()> {
         let n = recursive_proofs.len();
         assert!(n <= self.params.arity);
@@ -155,9 +154,9 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
             .collect();
         let recursive_proofs: Vec<Proof> = [recursive_proofs, dummy_proofs].concat();
 
-        // set the first n selectors to `non_base_node`, and the rest to false
+        // set the first n selectors to true, and the rest to false
         for i in 0..n {
-            pw.set_bool_target(self.selectors_targ[i], non_base_node)?;
+            pw.set_bool_target(self.selectors_targ[i], true)?;
         }
         for i in n..self.params.arity {
             pw.set_bool_target(self.selectors_targ[i], false)?;
@@ -556,8 +555,6 @@ mod tests {
 
             // loop over the nodes of each recursion tree level
             for j in 0..arity {
-                let non_base_node: bool = i > 0;
-
                 // do the recursive step
                 let start = Instant::now();
                 let mut pw = PartialWitness::new();
@@ -566,7 +563,6 @@ mod tests {
                     dummy_proof.clone(),
                     inner_inputs,              // innercircuit_input
                     proofs_at_level_i.clone(), // recursive_proofs
-                    non_base_node,
                 )?;
                 let new_proof = prover.prove(pw)?.proof;
                 println!(
@@ -598,7 +594,6 @@ mod tests {
             dummy_proof.clone(),
             inner_inputs,              // innercircuit_input
             proofs_at_level_i.clone(), // recursive_proofs
-            true,
         )?;
         let new_proof = prover.prove(pw)?.proof;
         let public_inputs = RC::<Circuit2>::prepare_public_inputs(vec![], verifier_data.clone());
@@ -616,7 +611,6 @@ mod tests {
             dummy_proof.clone(),
             inner_inputs,    // innercircuit_input
             vec![new_proof], // recursive_proofs
-            true,
         )?;
         let new_proof = prover.prove(pw)?.proof;
         let public_inputs = RC::<Circuit3>::prepare_public_inputs(vec![], verifier_data.clone());
