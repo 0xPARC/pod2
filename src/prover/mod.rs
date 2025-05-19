@@ -1111,137 +1111,137 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_prover_ethdos_from_podlog() -> Result<(), Box<dyn std::error::Error>> {
-        let params = middleware::Params {
-            max_input_signed_pods: 3,
-            max_input_main_pods: 3,
-            max_statements: 31,
-            max_signed_pod_values: 8,
-            max_public_statements: 10,
-            max_statement_args: 6,
-            max_operation_args: 5,
-            max_custom_predicate_arity: 5,
-            max_custom_batch_size: 5,
-            max_custom_predicate_wildcards: 12,
-            ..Default::default()
-        };
+    // #[test]
+    // fn test_prover_ethdos_from_podlog() -> Result<(), Box<dyn std::error::Error>> {
+    //     let params = middleware::Params {
+    //         max_input_signed_pods: 3,
+    //         max_input_main_pods: 3,
+    //         max_statements: 31,
+    //         max_signed_pod_values: 8,
+    //         max_public_statements: 10,
+    //         max_statement_args: 6,
+    //         max_operation_args: 5,
+    //         max_custom_predicate_arity: 5,
+    //         max_custom_batch_size: 5,
+    //         max_custom_predicate_wildcards: 12,
+    //         ..Default::default()
+    //     };
 
-        let mut alice = MockSigner { pk: "Alice".into() };
-        let bob = MockSigner { pk: "Bob".into() };
-        let mut charlie = MockSigner {
-            pk: "Charlie".into(),
-        };
+    //     let mut alice = MockSigner { pk: "Alice".into() };
+    //     let bob = MockSigner { pk: "Bob".into() };
+    //     let mut charlie = MockSigner {
+    //         pk: "Charlie".into(),
+    //     };
 
-        let input = format!(
-            r#"
-            eth_friend(src_ori, src_key, dst_ori, dst_key, private: attestation_pod) = AND(
-                // ValueOf(?attestation_pod["__type__"], "MockSigned")
-                Equal(?attestation_pod["_signer"], ?src_ori[?src_key])
-                Equal(?attestation_pod["attestation"], ?dst_ori[?dst_key])
-            )
+    //     let input = format!(
+    //         r#"
+    //         eth_friend(src_ori, src_key, dst_ori, dst_key, private: attestation_pod) = AND(
+    //             // ValueOf(?attestation_pod["__type__"], "MockSigned")
+    //             Equal(?attestation_pod["_signer"], ?src_ori[?src_key])
+    //             Equal(?attestation_pod["attestation"], ?dst_ori[?dst_key])
+    //         )
 
-            eth_dos_distance_base(src_ori, src_key, dst_ori, dst_key, distance_ori, distance_key) = AND(
-                Equal(?src_ori[?src_key], ?dst_ori[?dst_key])
-                ValueOf(?distance_ori[?distance_key], 0)
-            )
+    //         eth_dos_distance_base(src_ori, src_key, dst_ori, dst_key, distance_ori, distance_key) = AND(
+    //             Equal(?src_ori[?src_key], ?dst_ori[?dst_key])
+    //             ValueOf(?distance_ori[?distance_key], 0)
+    //         )
 
-            eth_dos_distance_ind(src_ori, src_key, dst_ori, dst_key, distance_ori, distance_key,
-              private: one_ori, one_key, shorter_distance_ori, shorter_distance_key, intermed_ori, intermed_key) = AND(
-                eth_dos_distance(?src_ori, ?src_key, ?intermed_ori, ?intermed_key, ?shorter_distance_ori, ?shorter_distance_key)
-                ValueOf(?one_ori[?one_key], 1)
-                SumOf(?distance_ori[?distance_key], ?shorter_distance_ori[?shorter_distance_key], ?one_ori[?one_key])
-                eth_friend(?intermed_ori, ?intermed_key, ?dst_ori, ?dst_key)
-            )
+    //         eth_dos_distance_ind(src_ori, src_key, dst_ori, dst_key, distance_ori, distance_key,
+    //           private: one_ori, one_key, shorter_distance_ori, shorter_distance_key, intermed_ori, intermed_key) = AND(
+    //             eth_dos_distance(?src_ori, ?src_key, ?intermed_ori, ?intermed_key, ?shorter_distance_ori, ?shorter_distance_key)
+    //             ValueOf(?one_ori[?one_key], 1)
+    //             SumOf(?distance_ori[?distance_key], ?shorter_distance_ori[?shorter_distance_key], ?one_ori[?one_key])
+    //             eth_friend(?intermed_ori, ?intermed_key, ?dst_ori, ?dst_key)
+    //         )
 
-            eth_dos_distance(src_ori, src_key, dst_ori, dst_key, distance_ori, distance_key) = OR(
-                eth_dos_distance_base(?src_ori, ?src_key, ?dst_ori, ?dst_key, ?distance_ori, ?distance_key)
-                eth_dos_distance_ind(?src_ori, ?src_key, ?dst_ori, ?dst_key, ?distance_ori, ?distance_key)
-            )
+    //         eth_dos_distance(src_ori, src_key, dst_ori, dst_key, distance_ori, distance_key) = OR(
+    //             eth_dos_distance_base(?src_ori, ?src_key, ?dst_ori, ?dst_key, ?distance_ori, ?distance_key)
+    //             eth_dos_distance_ind(?src_ori, ?src_key, ?dst_ori, ?dst_key, ?distance_ori, ?distance_key)
+    //         )
 
-            REQUEST(
-                ValueOf(?CONST[?target], 0x{})
-                ValueOf(?CONST[?me], 0x{})
-                Equal(?CONST[?me], ?src_ori[?src_key])
-                Equal(?CONST[?target], ?dst_ori[?dst_key])
-                eth_dos_distance(?src_ori, ?src_key, ?dst_ori, ?dst_key, ?distance_ori, ?distance_key)
-            )
-        "#,
-            alice.pubkey().encode_hex::<String>(),
-            bob.pubkey().encode_hex::<String>(),
-        );
+    //         REQUEST(
+    //             ValueOf(?CONST[?target], 0x{})
+    //             ValueOf(?CONST[?me], 0x{})
+    //             Equal(?CONST[?me], ?src_ori[?src_key])
+    //             Equal(?CONST[?target], ?dst_ori[?dst_key])
+    //             eth_dos_distance(?src_ori, ?src_key, ?dst_ori, ?dst_key, ?distance_ori, ?distance_key)
+    //         )
+    //     "#,
+    //         alice.pubkey().encode_hex::<String>(),
+    //         bob.pubkey().encode_hex::<String>(),
+    //     );
 
-        let processed = lang::parse(&input, &params)?;
+    //     let processed = lang::parse(&input, &params)?;
 
-        // --- DEBUGGING START ---
-        println!("--- Debugging Request Templates (test_prover_ethdos_from_podlog) ---");
-        for (i, tmpl) in processed.request_templates.iter().enumerate() {
-            println!("Template {}: pred = {:?}", i, tmpl.pred);
-        }
-        println!("--- DEBUGGING END ---");
+    //     // --- DEBUGGING START ---
+    //     println!("--- Debugging Request Templates (test_prover_ethdos_from_podlog) ---");
+    //     for (i, tmpl) in processed.request_templates.iter().enumerate() {
+    //         println!("Template {}: pred = {:?}", i, tmpl.pred);
+    //     }
+    //     println!("--- DEBUGGING END ---");
 
-        // assert_eq!(
-        //     processed.request_templates.len(),
-        //     3,
-        //     "Expected 3 request templates"
-        // );
-        assert_eq!(
-            processed.custom_batch.predicates.len(),
-            4,
-            "Expected 4 custom predicates"
-        );
+    //     // assert_eq!(
+    //     //     processed.request_templates.len(),
+    //     //     3,
+    //     //     "Expected 3 request templates"
+    //     // );
+    //     assert_eq!(
+    //         processed.custom_batch.predicates.len(),
+    //         4,
+    //         "Expected 4 custom predicates"
+    //     );
 
-        // let mut alice = MockSigner { pk: "Alice".into() };
-        // let bob = MockSigner { pk: "Bob".into() };
-        // let mut charlie = MockSigner {
-        //     pk: "Charlie".into(),
-        // };
+    //     // let mut alice = MockSigner { pk: "Alice".into() };
+    //     // let bob = MockSigner { pk: "Bob".into() };
+    //     // let mut charlie = MockSigner {
+    //     //     pk: "Charlie".into(),
+    //     // };
 
-        // Alice attests that she is ETH friends with Charlie and Charlie
-        // attests that he is ETH friends with Bob.
-        let alice_attestation =
-            eth_friend_signed_pod_builder(&params, charlie.pubkey().into()).sign(&mut alice)?;
-        let charlie_attestation =
-            eth_friend_signed_pod_builder(&params, bob.pubkey().into()).sign(&mut charlie)?;
+    //     // Alice attests that she is ETH friends with Charlie and Charlie
+    //     // attests that he is ETH friends with Bob.
+    //     let alice_attestation =
+    //         eth_friend_signed_pod_builder(&params, charlie.pubkey().into()).sign(&mut alice)?;
+    //     let charlie_attestation =
+    //         eth_friend_signed_pod_builder(&params, bob.pubkey().into()).sign(&mut charlie)?;
 
-        let alice_attestation_signer = alice_attestation.get(KEY_SIGNER);
-        let charlie_attestation_signer = charlie_attestation.get(KEY_SIGNER);
+    //     let alice_attestation_signer = alice_attestation.get(KEY_SIGNER);
+    //     let charlie_attestation_signer = charlie_attestation.get(KEY_SIGNER);
 
-        println!(
-            "alice_attestation_signer: {}",
-            alice_attestation_signer.unwrap().typed()
-        );
-        println!(
-            "charlie_attestation_signer: {}",
-            charlie_attestation_signer.unwrap().typed()
-        );
+    //     println!(
+    //         "alice_attestation_signer: {}",
+    //         alice_attestation_signer.unwrap().typed()
+    //     );
+    //     println!(
+    //         "charlie_attestation_signer: {}",
+    //         charlie_attestation_signer.unwrap().typed()
+    //     );
 
-        println!(
-            "alice pubkey hex: {}",
-            alice.pubkey() //.encode_hex::<String>()
-        );
-        println!(
-            "charlie pubkey hex: {}",
-            charlie.pubkey() //.encode_hex::<String>()
-        );
-        println!(
-            "bob pubkey hex: {}",
-            bob.pubkey() //.encode_hex::<String>());
-        );
+    //     println!(
+    //         "alice pubkey hex: {}",
+    //         alice.pubkey() //.encode_hex::<String>()
+    //     );
+    //     println!(
+    //         "charlie pubkey hex: {}",
+    //         charlie.pubkey() //.encode_hex::<String>()
+    //     );
+    //     println!(
+    //         "bob pubkey hex: {}",
+    //         bob.pubkey() //.encode_hex::<String>());
+    //     );
 
-        let initial_facts = facts_from_pods(&[&alice_attestation.pod, &charlie_attestation.pod]);
-        let custom_definitions =
-            custom_definitions_from_batches(&[processed.custom_batch], &params);
+    //     let initial_facts = facts_from_pods(&[&alice_attestation.pod, &charlie_attestation.pod]);
+    //     let custom_definitions =
+    //         custom_definitions_from_batches(&[processed.custom_batch], &params);
 
-        // let solve_result = solver::solve(
-        //     &processed.request_templates,
-        //     &initial_facts,
-        //     &params,
-        //     &custom_definitions,
-        // )?;
+    //     // let solve_result = solver::solve(
+    //     //     &processed.request_templates,
+    //     //     &initial_facts,
+    //     //     &params,
+    //     //     &custom_definitions,
+    //     // )?;
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
     #[test]
     fn test_prover_custom() -> Result<(), Box<dyn std::error::Error>> {

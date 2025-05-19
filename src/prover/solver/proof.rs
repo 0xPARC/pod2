@@ -14,7 +14,6 @@ use crate::{
     prover::{
         error::ProverError,
         indexing::ProverIndexes,
-        solver::build_concrete_statement,
         types::{ConcreteValue, CustomDefinitions, ProofChain, ProofStep},
     },
 };
@@ -228,13 +227,9 @@ pub(super) fn try_prove_statement(
 
 fn build_concrete_statement_from_bindings(
     tmpl: &StatementTmpl,
-    _public_args: &[WildcardValue],
     public_bindings: &HashMap<usize, WildcardValue>,
     state: &SolverState,
     outer_context: Option<(&CustomPredicate, std::sync::Arc<CustomPredicateBatch>)>,
-    current_depth: usize,
-    indexes: &ProverIndexes,
-    custom_definitions: &CustomDefinitions,
 ) -> Result<Statement, ProverError> {
     let outer_args_len = outer_context.as_ref().map(|(def, _)| def.args_len);
 
@@ -244,16 +239,18 @@ fn build_concrete_statement_from_bindings(
             for (arg_idx, arg_tmpl) in tmpl.args.iter().enumerate() {
                 match arg_tmpl {
                     StatementTmplArg::Key(wc_pod, key_or_wc) => {
-                        let outer_predicate_args_len = outer_context.as_ref().map_or(0, |(def, _)| def.args_len);
-                        let is_private_wc_in_valueof_key_arg = tmpl.pred == Predicate::Native(NativePredicate::ValueOf) &&
-                                                               arg_idx == 0 &&
-                                                               outer_context.is_some() &&
-                                                               wc_pod.index >= outer_predicate_args_len;
+                        let outer_predicate_args_len =
+                            outer_context.as_ref().map_or(0, |(def, _)| def.args_len);
+                        let is_private_wc_in_valueof_key_arg = tmpl.pred
+                            == Predicate::Native(NativePredicate::ValueOf)
+                            && arg_idx == 0
+                            && outer_context.is_some()
+                            && wc_pod.index >= outer_predicate_args_len;
 
                         let pod_id_result = if is_private_wc_in_valueof_key_arg {
                             Ok(crate::middleware::SELF)
                         } else {
-                             match outer_args_len {
+                            match outer_args_len {
                                 Some(args_len) if wc_pod.index < args_len => {
                                     match public_bindings.get(&wc_pod.index) {
                                         Some(WildcardValue::PodId(id)) => Ok(*id),
@@ -264,45 +261,27 @@ fn build_concrete_statement_from_bindings(
                                     }
                                 }
                                 Some(_) | None => {
+                                    // Private WC
                                     match state.domains.get(wc_pod) {
-                                        Some((domain, _)) if domain.len() == 1 => {
-                                            match domain.iter().next().unwrap() {
-                                                ConcreteValue::Pod(id) => Ok(*id),
-                                                _ => Err(ProverError::Internal(format!("Private Pod WC {} domain wrong type", wc_pod))),
-                                            }
-                                        }
-                                        Some((domain, _)) if outer_context.is_some() => {
-                                            let (outer_pred_def, _) = outer_context.as_ref().unwrap();
-                                            let mut resolved_candidate_pod_ids = Vec::new();
-                                            for candidate_cv in domain {
-                                                if let ConcreteValue::Pod(candidate_pod_id) = candidate_cv {
-                                                    let mut consistent_candidate = true;
-                                                    for internal_stmt_tmpl in &outer_pred_def.statements {
-                                                        if !check_consistency_for_lookahead(
-                                                            internal_stmt_tmpl, wc_pod, *candidate_pod_id,
-                                                            public_bindings, outer_pred_def.args_len, state, indexes
-                                                        ) {
-                                                            consistent_candidate = false;
-                                                            break;
-                                                        }
-                                                    }
-                                                    if consistent_candidate {
-                                                        resolved_candidate_pod_ids.push(*candidate_pod_id);
-                                                    }
-                                                }
-                                            }
-                                            if resolved_candidate_pod_ids.len() == 1 {
-                                                Ok(resolved_candidate_pod_ids[0])
-                                            } else {
-                                                Err(ProverError::ProofDeferred(format!(
-                                                    "Private Pod WC {} in {} domain has {} candidates after lookahead (domain size {}), expected 1.",
-                                                    wc_pod.name, outer_pred_def.name, resolved_candidate_pod_ids.len(), domain.len()
-                                                )))
-                                            }
-                                        }
-                                        _ => Err(ProverError::ProofDeferred(format!(
-                                            "Private Pod WC {} in {} domain not singleton and lookahead not applicable/failed (domain size {}).",
-                                            wc_pod.name, outer_context.as_ref().map_or("<unknown>", |(d,_)|d.name.as_str()), state.domains.get(wc_pod).map_or(0, |(d,_)|d.len())
+                                        Some((domain, _)) if domain.len() == 1 => match domain.iter().next().unwrap() {
+                                                    ConcreteValue::Pod(id) => Ok(*id),
+                                                    cv => Err(ProverError::Internal(format!("Private Pod WC {} resolved to non-Pod ConcreteValue: {:?} in singleton domain", wc_pod.name, cv))),
+                                                },
+                                        Some((domain, _)) if domain.len() > 1 => Err(ProverError::ProofDeferred(format!(
+                                                    "Private Pod WC {} in custom predicate {} has non-singleton domain (size {}), deferring.",
+                                                    wc_pod.name,
+                                                    outer_context.as_ref().map_or("<unknown_pred>", |(def, _)| def.name.as_str()),
+                                                    domain.len()
+                                                ))),
+                                        Some((domain, _)) => Err(ProverError::Unsatisfiable(format!(
+                                                    "Private Pod WC {} in custom predicate {} has empty domain.",
+                                                    wc_pod.name,
+                                                    outer_context.as_ref().map_or("<unknown_pred>", |(def, _)| def.name.as_str())
+                                                ))),
+                                        None => Err(ProverError::Internal(format!(
+                                            "Private Pod WC {} not found in solver state domains for custom predicate {}.",
+                                            wc_pod.name,
+                                            outer_context.as_ref().map_or("<unknown_pred>", |(def, _)| def.name.as_str())
                                         ))),
                                     }
                                 }
@@ -326,25 +305,39 @@ fn build_concrete_statement_from_bindings(
                                         }
                                     }
                                     Some(_) | None => {
+                                        // Private WC for Key
                                         match state.domains.get(wc_key) {
-                                            Some((dom, _)) if dom.len() == 1 => {
-                                                match dom.iter().next().unwrap() {
-                                                    ConcreteValue::Key(k_str) => {
-                                                        Key::new(k_str.clone())
-                                                    }
-                                                    _ => {
-                                                        return Err(ProverError::Internal(format!(
-                                                            "Private Key WC {} domain wrong type",
-                                                            wc_key
-                                                        )))
-                                                    }
-                                                }
+                                            Some((domain, _)) if domain.len() == 1 => match domain.iter().next().unwrap() {
+                                                        ConcreteValue::Key(k_str) => Key::new(k_str.clone()),
+                                                        cv => {
+                                                            return Err(ProverError::Internal(format!(
+                                                                "Private Key WC {} resolved to non-Key ConcreteValue: {:?} in singleton domain",
+                                                                wc_key.name, cv
+                                                            )))
+                                                        }
+                                                    },
+                                            Some((domain, _)) if domain.len() > 1 => {
+                                                return Err(ProverError::ProofDeferred(format!(
+                                                    "Private Key WC {} in custom predicate {} has non-singleton domain (size {}), deferring.",
+                                                    wc_key.name,
+                                                    outer_context.as_ref().map_or("<unknown_pred>", |(def, _)| def.name.as_str()),
+                                                    domain.len()
+                                                )));
                                             }
-                                            _ => {
-                                                return Err(ProverError::ProofDeferred(
-                                                    "Lookahead: Other private Key WC not singleton"
-                                                        .to_string(),
-                                                ))
+                                            Some((domain, _)) => {
+                                                // domain is empty
+                                                return Err(ProverError::Unsatisfiable(format!(
+                                                    "Private Key WC {} in custom predicate {} has empty domain.",
+                                                    wc_key.name,
+                                                    outer_context.as_ref().map_or("<unknown_pred>", |(def, _)| def.name.as_str())
+                                                )));
+                                            }
+                                            None => {
+                                                return Err(ProverError::Internal(format!(
+                                                    "Private Key WC {} not found in solver state domains for custom predicate {}.",
+                                                    wc_key.name,
+                                                    outer_context.as_ref().map_or("<unknown_pred>", |(def, _)| def.name.as_str())
+                                                )));
                                             }
                                         }
                                     }
@@ -356,15 +349,34 @@ fn build_concrete_statement_from_bindings(
                     StatementTmplArg::WildcardLiteral(wc_val) => {
                         match outer_args_len {
                             Some(args_len) if wc_val.index < args_len => return Err(ProverError::Internal(format!("Invalid Use: StatementTmplArg::WildcardLiteral ({}) used for public index", wc_val))),
-                            _ => {
+                            _ => { // Private WC for Value
                                 match state.domains.get(wc_val) {
-                                    Some((domain, _)) if domain.len() == 1 => {
-                                        match domain.iter().next().unwrap() {
-                                            ConcreteValue::Val(v) => concrete_args.push(StatementArg::Literal(v.clone())),
-                                            _ => return Err(ProverError::Internal(format!("Private Value WC {} domain wrong type", wc_val))),
-                                        }
+                                    Some((domain, _)) if domain.len() == 1 => match domain.iter().next().unwrap() {
+                                                ConcreteValue::Val(v) => concrete_args.push(StatementArg::Literal(v.clone())),
+                                                cv => return Err(ProverError::Internal(format!("Private Value WC {} resolved to non-Val ConcreteValue: {:?} in singleton domain", wc_val.name, cv))),
+                                            },
+                                    Some((domain, _)) if domain.len() > 1 => {
+                                        return Err(ProverError::ProofDeferred(format!(
+                                            "Private Value WC {} in custom predicate {} has non-singleton domain (size {}), deferring.",
+                                            wc_val.name,
+                                            outer_context.as_ref().map_or("<unknown_pred>", |(def, _)| def.name.as_str()),
+                                            domain.len()
+                                        )));
                                     }
-                                    _ => return Err(ProverError::ProofDeferred(format!("Private Value WC {} domain not singleton", wc_val))),
+                                    Some((domain, _)) => { // domain is empty
+                                        return Err(ProverError::Unsatisfiable(format!(
+                                            "Private Value WC {} in custom predicate {} has empty domain.",
+                                            wc_val.name,
+                                            outer_context.as_ref().map_or("<unknown_pred>", |(def, _)| def.name.as_str())
+                                        )));
+                                    }
+                                    None => {
+                                        return Err(ProverError::Internal(format!(
+                                            "Private Value WC {} not found in solver state domains for custom predicate {}.",
+                                            wc_val.name,
+                                            outer_context.as_ref().map_or("<unknown_pred>", |(def, _)| def.name.as_str())
+                                        )));
+                                    }
                                 }
                             }
                         }
@@ -506,196 +518,6 @@ fn build_concrete_statement_from_bindings(
                 ));
             }
             Ok(Statement::Custom(concrete_custom_ref, nested_call_args))
-        }
-    }
-}
-
-// Helper for build_concrete_statement_from_bindings lookahead
-fn check_consistency_for_lookahead(
-    internal_tmpl: &StatementTmpl,
-    private_wc_being_resolved: &Wildcard,
-    candidate_value_for_private_wc: PodId, // Assuming PodId for now, generalize if needed
-    public_bindings: &HashMap<usize, WildcardValue>,
-    outer_predicate_args_len: usize,
-    state: &SolverState, // Main solver state for other private WCs
-    indexes: &ProverIndexes,
-) -> bool {
-    // This function tries to evaluate `internal_tmpl` by substituting:
-    // 1. `private_wc_being_resolved` with `candidate_value_for_private_wc`.
-    // 2. Public wildcards of the outer predicate (from `public_bindings`).
-    // 3. Other private wildcards of the outer predicate (must be singleton in `state`).
-    // Then checks if the resulting (hopefully) concrete statement holds against `indexes`.
-
-    match &internal_tmpl.pred {
-        Predicate::Native(NativePredicate::Equal) => {
-            if internal_tmpl.args.len() == 2 {
-                let arg0 = &internal_tmpl.args[0];
-                let arg1 = &internal_tmpl.args[1];
-
-                // Try to get concrete values for both sides of the Equal
-                let val0_opt = resolve_tmpl_arg_to_value(
-                    arg0,
-                    private_wc_being_resolved,
-                    candidate_value_for_private_wc,
-                    public_bindings,
-                    outer_predicate_args_len,
-                    state,
-                    indexes,
-                );
-                let val1_opt = resolve_tmpl_arg_to_value(
-                    arg1,
-                    private_wc_being_resolved,
-                    candidate_value_for_private_wc,
-                    public_bindings,
-                    outer_predicate_args_len,
-                    state,
-                    indexes,
-                );
-
-                match (val0_opt, val1_opt) {
-                    (Ok(Some(val0)), Ok(Some(val1))) => return val0 == val1,
-                    (Err(ProverError::ProofDeferred(_)), _)
-                    | (_, Err(ProverError::ProofDeferred(_))) => {
-                        // If resolving an arg part of the internal check itself defers, this candidate is not (yet) verifiable.
-                        return false; // Treat as not consistent for this candidate
-                    }
-                    (Err(_), _) | (_, Err(_)) => return false, // Hard error during resolution
-                    _ => return true, // Cannot form a concrete check from this internal_tmpl, assume consistent by default (conservative)
-                                      // Or, could return false if strict checking is required.
-                                      // For eth_friend, we need this to be strict: if we can't verify, it's not a match.
-                                      // Let's make it false if not fully resolvable to concrete values.
-                                      // This means resolve_tmpl_arg_to_value must not return Ok(None) if it was expected to resolve.
-                }
-            }
-        }
-        // TODO: Handle other native predicates if needed for more complex lookaheads.
-        _ => return true, // For non-Equal or complex internal statements, assume consistent by default for this simplified lookahead.
-    }
-    true // Default if not an Equal or not fitting pattern
-}
-
-// Helper to resolve a StatementTmplArg to a concrete Value for lookahead
-fn resolve_tmpl_arg_to_value(
-    arg: &StatementTmplArg,
-    private_wc_being_resolved: &Wildcard,
-    candidate_value_for_private_wc: PodId, // Assuming PodId
-    public_bindings: &HashMap<usize, WildcardValue>,
-    outer_predicate_args_len: usize,
-    state: &SolverState,
-    indexes: &ProverIndexes,
-) -> Result<Option<Value>, ProverError> {
-    match arg {
-        StatementTmplArg::Key(wc_pod, key_or_wc) => {
-            let pod_id = if wc_pod == private_wc_being_resolved {
-                candidate_value_for_private_wc
-            } else if wc_pod.index < outer_predicate_args_len {
-                // Public pod wildcard
-                match public_bindings.get(&wc_pod.index) {
-                    Some(WildcardValue::PodId(id)) => *id,
-                    _ => {
-                        return Err(ProverError::Internal(
-                            "Lookahead: Public Pod WC binding error".to_string(),
-                        ))
-                    }
-                }
-            } else {
-                // Other private pod wildcard
-                match state.domains.get(wc_pod) {
-                    Some((dom, _)) if dom.len() == 1 => match dom.iter().next().unwrap() {
-                        ConcreteValue::Pod(id) => *id,
-                        _ => {
-                            return Err(ProverError::Internal(
-                                "Lookahead: Other private Pod WC type error".to_string(),
-                            ))
-                        }
-                    },
-                    _ => {
-                        return Err(ProverError::ProofDeferred(
-                            "Lookahead: Other private Pod WC not singleton".to_string(),
-                        ))
-                    }
-                }
-            };
-
-            let key_name = match key_or_wc {
-                KeyOrWildcard::Key(k) => k.name().to_string(),
-                KeyOrWildcard::Wildcard(wc_key) => {
-                    // Assuming wc_key is NOT private_wc_being_resolved (which is a PodId wildcard)
-                    if wc_key.index < outer_predicate_args_len {
-                        // Public key wildcard
-                        match public_bindings.get(&wc_key.index) {
-                            Some(WildcardValue::Key(k)) => k.name().to_string(),
-                            _ => {
-                                return Err(ProverError::Internal(
-                                    "Lookahead: Public Key WC binding error".to_string(),
-                                ))
-                            }
-                        }
-                    } else {
-                        // Other private key wildcard
-                        match state.domains.get(wc_key) {
-                            Some((dom, _)) if dom.len() == 1 => match dom.iter().next().unwrap() {
-                                ConcreteValue::Key(k_str) => k_str.clone(),
-                                _ => {
-                                    return Err(ProverError::Internal(
-                                        "Lookahead: Other private Key WC type error".to_string(),
-                                    ))
-                                }
-                            },
-                            _ => {
-                                return Err(ProverError::ProofDeferred(
-                                    "Lookahead: Other private Key WC not singleton".to_string(),
-                                ))
-                            }
-                        }
-                    }
-                }
-            };
-            Ok(indexes
-                .get_value(&AnchoredKey::new(pod_id, Key::new(key_name)))
-                .cloned())
-        }
-        StatementTmplArg::Literal(val) => Ok(Some(val.clone())),
-        StatementTmplArg::WildcardLiteral(wc_val) => {
-            // Note: `wc_val` represents a Value-typed wildcard.
-            // It is distinct from `private_wc_being_resolved`, which is the PodId-typed wildcard
-            // currently undergoing lookahead.
-            if wc_val.index < outer_predicate_args_len {
-                // Public value wildcard `wc_val`.
-                // `public_bindings` stores arguments passed to the custom predicate as `WildcardValue`.
-                // `WildcardValue` can only be `PodId` or `Key`.
-                // `resolve_tmpl_arg_to_value` needs to return an `Option<Value>`.
-                // A `Value` cannot be directly resolved from a `PodId` or `Key` in this context
-                // if `wc_val` (a Value-typed wildcard) is expected.
-                // This indicates a type mismatch in how the public argument is used or defined.
-                Err(ProverError::Internal(format!(
-                    "Lookahead: Cannot resolve Value-typed public argument '{}' (wc_val) from its PodId/Key representation in public_bindings for custom predicate.",
-                    wc_val.name
-                )))
-            } else {
-                // Other private value wildcard
-                match state.domains.get(wc_val) {
-                    Some((dom, _)) if dom.len() == 1 => match dom.iter().next().unwrap() {
-                        ConcreteValue::Val(v) => Ok(Some(v.clone())),
-                        _ => Err(ProverError::Internal(
-                            "Lookahead: Other private Val WC type error".to_string(),
-                        )),
-                    },
-                    _ => Err(ProverError::ProofDeferred(
-                        "Lookahead: Other private Val WC not singleton".to_string(),
-                    )),
-                }
-            }
-        }
-        StatementTmplArg::None => Ok(None),
-    }
-}
-
-impl StatementTmplArg {
-    fn get_pod_wildcard(&self) -> Option<Wildcard> {
-        match self {
-            StatementTmplArg::Key(wc_pod, _) => Some(wc_pod.clone()),
-            _ => None,
         }
     }
 }
@@ -1277,15 +1099,9 @@ fn try_prove_custom_predicate_statement_internal(
     // Add to active calls before diving deeper
     state.active_custom_calls.insert(memo_key.clone());
 
-    // ... (existing logic for AND/OR predicates, recursive calls to try_prove_statement)
-    // The existing logic needs to be wrapped or adapted carefully here.
-    // The current structure of this function is complex.
-    // For now, I'll assume the core logic of proving the custom predicate happens below,
-    // and then we cache the result.
-
     let predicate_key = Predicate::Custom(target_custom_ref.clone()).to_fields(&state.params);
-    let (custom_pred_def, _batch_arc) = match custom_definitions.get(&predicate_key) {
-        Some(def) => def,
+    let (custom_pred_def, batch_arc) = match custom_definitions.get(&predicate_key) {
+        Some(def) => def.clone(), // Clone to avoid lifetime issues with outer_context
         None => {
             state.active_custom_calls.remove(&memo_key); // Remove before erroring
             return Err(ProverError::Internal(format!(
@@ -1301,76 +1117,46 @@ fn try_prove_custom_predicate_statement_internal(
 
     if custom_pred_def.conjunction {
         // AND
-        for (tmpl_idx, tmpl) in custom_pred_def.statements.iter().enumerate() {
-            // Resolve public arguments for the current template
+        for tmpl in &custom_pred_def.statements {
+            // Construct public_bindings for the call to build_concrete_statement_from_bindings
             let mut public_bindings_for_tmpl = HashMap::new();
             for (arg_idx, arg_val) in concrete_args.iter().enumerate() {
-                // Assuming concrete_args are ordered according to custom_pred_def.args_len
                 if arg_idx < custom_pred_def.args_len {
                     public_bindings_for_tmpl.insert(arg_idx, arg_val.clone());
                 }
             }
 
-            // Try to build a concrete version of the template statement
-            // This part is complex as it might involve resolving private wildcards if the tmpl itself
-            // introduces them and they are not bound by the public_bindings.
-            // For now, we assume build_concrete_statement_from_bindings can handle this
-            // or that templates inside custom predicates mostly use public wildcards.
-
-            // A more robust approach for `build_concrete_statement_from_bindings` would be needed here
-            // if templates *within* a custom predicate definition can introduce *new* wildcards
-            // that aren't simply pass-throughs of the custom predicate's own public/private args.
-            // The current `build_concrete_statement_from_bindings` might not be sufficient as is.
-
-            // Placeholder: This needs to correctly form the sub-target statement
-            // based on tmpl and the concrete_args of the custom predicate.
-            // This is the most complex part to get right without full solver logic here.
-            // We are trying to prove `tmpl` given that `target_custom_statement` is true.
-
-            // For now, let's assume `try_generate_concrete_candidate_and_bindings` from `solver/mod.rs`
-            // or a similar utility can be adapted. The key is mapping the custom predicate's
-            // concrete arguments to the wildcards in `tmpl`.
-
-            // Let's simplify: we need to prove each `tmpl` in the AND.
-            // Each `tmpl` will be resolved by `try_prove_statement` called recursively.
-            // The `Statement` to prove for `tmpl` needs to be constructed.
-
-            // This construction is non-trivial. It requires mapping the WILDCARDS in `tmpl`
-            // to the CONCRETE VALUES passed to `target_custom_statement`.
-            // Example: target_custom_statement = MyPred(Val1, Val2)
-            //          tmpl = Equal(?arg0["foo"], ?arg1["bar"])
-            //          Here, ?arg0 maps to Val1, ?arg1 to Val2.
-            //          So we need to prove Equal(Val1["foo"], Val2["bar"])
-
-            // This is what `build_concrete_statement_from_bindings` was attempting.
-            // Let's assume we can construct `sub_target_statement`
-            // This is a critical simplification point for now.
-            let sub_target_statement =
-                match crate::prover::solver::try_generate_concrete_candidate_and_bindings(
-                    tmpl,
-                    // We need a temporary state here that reflects the bindings from concrete_args
-                    // mapped to the wildcards as defined in custom_pred_def.
-                    // This is intricate. For now, this call will likely fail or be incorrect.
-                    // A proper mapping from custom_pred_def.args (which define ?0, ?1..)
-                    // to concrete_args and then to tmpl's wildcards is needed.
-                    state, // Passing the main state is not quite right for sub-template resolution
-                ) {
-                    Ok(Some((stmt, _bindings))) => stmt,
-                    Ok(None) => {
-                        state.active_custom_calls.remove(&memo_key);
-                        return Err(ProverError::Unsatisfiable(format!(
-                        "AND branch: Could not form concrete sub-statement for tmpl {:?} of custom pred {:?}",
-                        tmpl, target_custom_statement
+            let sub_target_statement = match build_concrete_statement_from_bindings(
+                tmpl,
+                &public_bindings_for_tmpl,
+                state, // Current solver state
+                Some((&custom_pred_def, batch_arc.clone())),
+            ) {
+                Ok(stmt) => stmt,
+                Err(ProverError::ProofDeferred(msg)) => {
+                    // If a sub-statement defers, the whole custom predicate defers for this path.
+                    state.active_custom_calls.remove(&memo_key);
+                    // No caching of deferred as failure for the *custom predicate itself* yet,
+                    // as other branches of search might resolve the deferral.
+                    // The deferral is for the *sub-statement*.
+                    return Err(ProverError::ProofDeferred(format!(
+                        "Custom predicate {}: sub-statement deferred: {}",
+                        custom_pred_def.name, msg
                     )));
-                    }
-                    Err(e) => {
-                        state.active_custom_calls.remove(&memo_key);
-                        return Err(e);
-                    }
-                };
+                }
+                Err(e) => {
+                    // Any other error (Unsatisfiable, Internal)
+                    state.active_custom_calls.remove(&memo_key);
+                    // Cache this error for the custom predicate itself
+                    state
+                        .memoization_cache
+                        .insert(memo_key.clone(), MemoizedProofOutcome::Failure(e.clone()));
+                    return Err(e);
+                }
+            };
 
             match try_prove_statement(
-                state, // Pass mutable state for sub-proofs
+                state,
                 &sub_target_statement,
                 indexes,
                 custom_definitions,
@@ -1401,28 +1187,13 @@ fn try_prove_custom_predicate_statement_internal(
         let mut first_or_error = None;
 
         for tmpl in &custom_pred_def.statements {
-            // Similar to AND, construct sub_target_statement for the OR branch
-            let sub_target_statement =
-                match crate::prover::solver::try_generate_concrete_candidate_and_bindings(
-                    tmpl, state, // This still has the same issue as in AND branch
-                ) {
-                    Ok(Some((stmt, _bindings))) => stmt,
-                    Ok(None) => {
-                        if first_or_error.is_none() {
-                            first_or_error = Some(ProverError::Unsatisfiable(format!(
-                            "OR branch: Could not form concrete sub-statement for tmpl {:?} of custom pred {:?}",
-                            tmpl, target_custom_statement
-                        )));
-                        }
-                        continue; // Try next OR branch
-                    }
-                    Err(e) => {
-                        if first_or_error.is_none() {
-                            first_or_error = Some(e);
-                        }
-                        continue; // Try next OR branch
-                    }
-                };
+            // Construct public_bindings for the call to build_concrete_statement_from_bindings
+            let mut public_bindings_for_tmpl = HashMap::new();
+            for (arg_idx, arg_val) in concrete_args.iter().enumerate() {
+                if arg_idx < custom_pred_def.args_len {
+                    public_bindings_for_tmpl.insert(arg_idx, arg_val.clone());
+                }
+            }
 
             // For OR, we need to be careful with state modifications if a branch fails.
             // We should try proving one branch. If it works, great. If not, state changes should be reverted.
@@ -1431,8 +1202,33 @@ fn try_prove_custom_predicate_statement_internal(
             // Ensure the active_custom_calls for the *current* predicate is part of the temp state's active set
             // It was added to `state` before, so `clone_state_for_search` should copy it.
 
+            let sub_target_statement = match build_concrete_statement_from_bindings(
+                tmpl,
+                &public_bindings_for_tmpl,
+                &temp_state_for_or_branch, // Use the temporary state for concretization attempt
+                Some((&custom_pred_def, batch_arc.clone())),
+            ) {
+                Ok(stmt) => stmt,
+                Err(ProverError::ProofDeferred(msg)) => {
+                    if first_or_error.is_none() {
+                        first_or_error = Some(ProverError::ProofDeferred(format!(
+                            "Custom predicate {}: OR branch sub-statement deferred: {}",
+                            custom_pred_def.name, msg
+                        )));
+                    }
+                    continue; // Try next OR branch, this one deferred.
+                }
+                Err(e) => {
+                    // Any other error (Unsatisfiable, Internal)
+                    if first_or_error.is_none() {
+                        first_or_error = Some(e);
+                    }
+                    continue; // Try next OR branch
+                }
+            };
+
             match try_prove_statement(
-                &mut temp_state_for_or_branch, // Use a temporary state
+                &mut temp_state_for_or_branch, // Use a temporary state for proving this branch
                 &sub_target_statement,
                 indexes,
                 custom_definitions,
@@ -1486,22 +1282,35 @@ fn try_prove_custom_predicate_statement_internal(
         output: target_custom_statement.clone(),
     }]);
 
-    // Add the custom predicate's own proof step to the combined chain
-    // combined_proof_chain_steps.push(final_custom_step);
-    // let resulting_proof_chain = ProofChain(combined_proof_chain_steps);
-    // The `final_chain_for_custom_pred` IS the proof for the custom predicate itself.
-    // The `combined_proof_chain_steps` are supporting steps for its inputs.
-    // The `state.proof_chains` will store the chains for these inputs.
-    // The chain returned by *this* function should be `final_chain_for_custom_pred`.
+    // Collect the scope fragment for this custom predicate's proof.
+    // This comprises the scopes of its direct input statements.
+    let mut custom_pred_scope_fragment = HashSet::new();
+    if let Some(custom_proof_step) = final_chain_for_custom_pred.0.get(0) {
+        for input_stmt in &custom_proof_step.inputs {
+            if let Some(input_chain) = state.proof_chains.get(input_stmt) {
+                // Recursively collect scope for this input's chain
+                input_chain.collect_scope(
+                    &mut custom_pred_scope_fragment,
+                    &state.proof_chains,
+                    &indexes.exact_statement_lookup,
+                );
+            } else if let Some((pod_id, base_stmt)) = indexes
+                .exact_statement_lookup
+                .iter()
+                .find(|(_, stmt)| stmt == input_stmt)
+            {
+                // If the input is a base fact not part of another chain (e.g. direct from initial facts)
+                custom_pred_scope_fragment.insert((*pod_id, base_stmt.clone()));
+            }
+            // If an input_stmt is neither in proof_chains nor a base_fact,
+            // it implies an issue, as it should have been proven or be a base fact.
+            // However, `try_prove_statement` for sub-targets should have handled this.
+        }
+    }
 
-    // The scope fragment for this custom predicate would be the union of scopes of its direct inputs,
-    // if those inputs were themselves complex. But `try_prove_statement` updates global scope.
-    // For now, we'll use an empty scope_fragment for the custom predicate itself,
-    // relying on the sub-proofs having updated the main `state.scope`.
-    // A more precise scope_fragment would require tracking what `state.scope` items were added by sub-proofs.
     let success_outcome = MemoizedProofOutcome::Success(
         final_chain_for_custom_pred.clone(),
-        HashSet::<(PodId, Statement)>::new(),
+        custom_pred_scope_fragment, // Use the collected scope fragment
     );
     state
         .memoization_cache
