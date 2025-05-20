@@ -531,6 +531,15 @@ mod tests {
         }
         out
     }
+    // out-of-circuit input-output computation for Circuit3
+    fn circuit3_io(inp: HashOut<F>) -> HashOut<F> {
+        let mut out: HashOut<F> = inp;
+        for _ in 0..2000 {
+            out = PoseidonHash::hash_no_pad(&out.elements)
+        }
+        out
+    }
+
     #[derive(Clone, Debug)]
     pub struct Circuit1 {
         input: HashOutTarget,
@@ -600,6 +609,40 @@ mod tests {
             Ok(())
         }
     }
+    #[derive(Clone, Debug)]
+    pub struct Circuit3 {
+        input: HashOutTarget,
+        output: HashOutTarget,
+    }
+    impl InnerCircuit for Circuit3 {
+        type Input = (HashOut<F>, HashOut<F>); // (input, output)
+        type Params = ();
+        fn build(
+            builder: &mut CircuitBuilder<F, D>,
+            _params: &Self::Params,
+            _selectors: Vec<BoolTarget>,
+        ) -> Result<Self> {
+            let input_targ = builder.add_virtual_hash();
+
+            let mut output_targ: HashOutTarget = input_targ.clone();
+            for _ in 0..2000 {
+                output_targ = builder
+                    .hash_n_to_hash_no_pad::<PoseidonHash>(output_targ.elements.clone().to_vec());
+            }
+
+            builder.register_public_inputs(&output_targ.elements.to_vec());
+
+            Ok(Self {
+                input: input_targ,
+                output: output_targ,
+            })
+        }
+        fn set_targets(&self, pw: &mut PartialWitness<F>, input: &Self::Input) -> Result<()> {
+            pw.set_hash_target(self.input, input.0)?;
+            pw.set_hash_target(self.output, input.1)?;
+            Ok(())
+        }
+    }
 
     #[test]
     fn test_circuit_i() -> Result<()> {
@@ -611,6 +654,9 @@ mod tests {
 
         let inner_inputs = (inp, circuit2_io(inp));
         test_circuit_i_opt::<Circuit2>(&inner_params, inner_inputs)?;
+
+        let inner_inputs = (inp, circuit3_io(inp));
+        test_circuit_i_opt::<Circuit3>(&inner_params, inner_inputs)?;
 
         Ok(())
     }
@@ -681,6 +727,15 @@ mod tests {
         Ok(())
     }
 
+    // test that recurses with the following shape:
+    //          proof_1d
+    //            ▲  ▲
+    //          ┌─┘  └──┐
+    //     proof_1b   proof2
+    //       ▲  ▲       ▲  ▲
+    //     ┌─┘  └─┐   ┌─┘  └─┐
+    // proof_1a   0  proof3 proof_1c
+    //
     #[test]
     fn test_recursive_circuit() -> Result<()> {
         let arity: usize = 2;
@@ -697,13 +752,17 @@ mod tests {
         let circuit_data_2 = RC::<Circuit2>::circuit_data(arity, &inner_params)?;
         let verifier_data_2 = circuit_data_2.verifier_data();
 
+        let circuit_data_3 = RC::<Circuit3>::circuit_data(arity, &inner_params)?;
+        let verifier_data_3 = circuit_data_3.verifier_data();
+
         println!(
-            "new_params & (c1, c2).circuit_data generated {:?}",
+            "new_params & (c1, c2, c3).circuit_data generated {:?}",
             start.elapsed()
         );
 
         let mut circuit1 = RC::<Circuit1>::build(&params, &())?;
         let mut circuit2 = RC::<Circuit2>::build(&params, &())?;
+        let mut circuit3 = RC::<Circuit3>::build(&params, &())?;
 
         println!("circuit1.prove");
         let inp = HashOut::<F>::ZERO;
@@ -738,15 +797,40 @@ mod tests {
             public_inputs: public_inputs.clone(),
         })?;
 
-        // generate a proof of Circuit2, which internally verifies the proof_1b
-        println!("circuit2.prove, which internally verifies the proof_1b");
+        println!("circuit3.prove");
+        let inp = HashOut::<F>::ZERO;
+        let inner_inputs = (inp, circuit3_io(inp));
+        let (proof_3, vds_hash_3) = circuit3.prove(inner_inputs, vec![], vec![], vec![], vec![])?;
+        let inner_publicinputs_3 = circuit3_io(inp).elements.to_vec();
+        let public_inputs =
+            RC::<Circuit3>::prepare_public_inputs(vds_hash_3, inner_publicinputs_3.clone());
+        verifier_data_3.clone().verify(ProofWithPublicInputs {
+            proof: proof_3.clone(),
+            public_inputs: public_inputs.clone(),
+        })?;
+
+        println!("circuit1.prove");
+        let inp = HashOut::<F>::ZERO;
+        let inner_inputs = (inp, circuit1_io(inp));
+        let (proof_1c, vds_hash_1c) =
+            circuit1.prove(inner_inputs, vec![], vec![], vec![], vec![])?;
+        let inner_publicinputs_1c = circuit1_io(inp).elements.to_vec();
+        let public_inputs =
+            RC::<Circuit1>::prepare_public_inputs(vds_hash_1c, inner_publicinputs_1c.clone());
+        verifier_data_1.clone().verify(ProofWithPublicInputs {
+            proof: proof_1c.clone(),
+            public_inputs: public_inputs.clone(),
+        })?;
+
+        // generate a proof of Circuit2, which internally verifies the proof_3
+        println!("circuit2.prove, which internally verifies the proof_3");
         let inner_inputs = (inp, circuit2_io(inp));
         let (proof_2, vds_hash_2) = circuit2.prove(
             inner_inputs,
-            vec![proof_1b.clone()],
-            vec![inner_publicinputs_1b.clone()],
-            vec![vds_hash_1b],
-            vec![verifier_data_1.clone()],
+            vec![proof_3.clone(), proof_1c],
+            vec![inner_publicinputs_3.clone(), inner_publicinputs_1c.clone()],
+            vec![vds_hash_3, vds_hash_1c],
+            vec![verifier_data_3.clone(), verifier_data_1.clone()],
         )?;
         let inner_publicinputs_2 = circuit2_io(inp).elements.to_vec();
         let public_inputs =
@@ -757,10 +841,10 @@ mod tests {
         })?;
 
         // verify the last proof of circuit2, inside a new circuit1's proof
-        println!("proof_1c = c1.prove([proof_1b, proof_2], [verifier_data_1, verifier_data_2])");
+        println!("proof_1d = c1.prove([proof_1b, proof_2], [verifier_data_1, verifier_data_2])");
         let inp = HashOut::<F>::ZERO;
         let inner_inputs = (inp, circuit1_io(inp));
-        let (proof_1c, vds_hash_1c) = circuit1.prove(
+        let (proof_1d, vds_hash_1d) = circuit1.prove(
             inner_inputs,
             // NOTE: if it makes external usage easier, we could group as a
             // single input the: proof + inner_publicinputs + vds_hash, in a
@@ -771,9 +855,9 @@ mod tests {
             vec![verifier_data_1.clone(), verifier_data_2.clone()],
         )?;
         let inner_publicinputs = circuit1_io(inp).elements.to_vec();
-        let public_inputs = RC::<Circuit1>::prepare_public_inputs(vds_hash_1c, inner_publicinputs);
+        let public_inputs = RC::<Circuit1>::prepare_public_inputs(vds_hash_1d, inner_publicinputs);
         verifier_data_1.clone().verify(ProofWithPublicInputs {
-            proof: proof_1c.clone(),
+            proof: proof_1d.clone(),
             public_inputs: public_inputs.clone(),
         })?;
 

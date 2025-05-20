@@ -28,7 +28,7 @@ hashbrown = { version = "0.14.3", default-features = false, features = ["serde"]
 
 # Uncomment for debugging with https://github.com/ed255/plonky2/ at branch `feat/debug`.  The repo directory needs to be checked out next to the pod2 repo directory.
 # [patch."https://github.com/0xPolygonZero/plonky2"]
-# plonky2 = { path = "../../plonky2/plonky2" }
+# plonky2 = { path = "../plonky2/plonky2" }
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"
