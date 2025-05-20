@@ -623,7 +623,9 @@ pub mod tests {
         let params = middleware::Params {
             // Currently the circuit uses random access that only supports vectors of length 64.
             // With max_input_main_pods=3 we need random access to a vector of length 73.
-            max_input_main_pods: 1,
+            max_input_main_pods: 0,
+            max_custom_predicate_batches: 0,
+            max_custom_predicate_verifications: 0,
             ..Default::default()
         };
         println!("{:#?}", params);
