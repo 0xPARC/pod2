@@ -2244,6 +2244,24 @@ mod tests {
         let expected_st_arg = StatementArg::Key(AnchoredKey::new(pod_id, Key::from("key")));
         helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
 
+        // case: AnchoredKey(SELF, key_literal)
+        let st_tmpl_arg = StatementTmplArg::AnchoredKey(
+            SelfOrWildcard::SELF,
+            KeyOrWildcard::Key(Key::from("foo")),
+        );
+        let args = vec![Value::from(1), Value::from(pod_id.0), Value::from(3)];
+        let expected_st_arg = StatementArg::Key(AnchoredKey::new(SELF, Key::from("foo")));
+        helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
+
+        // case: AnchoredKey(SELF, key_wildcard)
+        let st_tmpl_arg = StatementTmplArg::AnchoredKey(
+            SelfOrWildcard::SELF,
+            KeyOrWildcard::Wildcard(Wildcard::new("b".to_string(), 2)),
+        );
+        let args = vec![Value::from(1), Value::from(pod_id.0), Value::from("key")];
+        let expected_st_arg = StatementArg::Key(AnchoredKey::new(SELF, Key::from("key")));
+        helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
+
         // case: WildcardLiteral(wildcard)
         let st_tmpl_arg = StatementTmplArg::WildcardLiteral(Wildcard::new("a".to_string(), 1));
         let args = vec![Value::from(1), Value::from("key"), Value::from(3)];
