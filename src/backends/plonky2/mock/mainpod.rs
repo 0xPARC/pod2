@@ -11,7 +11,7 @@ use crate::{
     backends::plonky2::{
         error::{Error, Result},
         mainpod::{
-            extract_merkle_proofs, hash_statements, layout_statements, normalize_statement,
+            calculate_id, extract_merkle_proofs, layout_statements, normalize_statement,
             process_private_statements_operations, process_public_statements_operations, Operation,
             Statement,
         },
@@ -163,7 +163,7 @@ impl MockMainPod {
             statements[statements.len() - params.max_public_statements..].to_vec();
 
         // get the id out of the public statements
-        let id: PodId = PodId(hash_statements(&public_statements, params));
+        let id: PodId = PodId(calculate_id(&public_statements, params));
 
         Ok(Self {
             params: params.clone(),
@@ -197,7 +197,7 @@ impl MockMainPod {
         // get the input_statements from the self.statements
         let input_statements = &self.statements[input_statement_offset..];
         // 2. get the id out of the public statements, and ensure it is equal to self.id
-        let ids_match = self.id == PodId(hash_statements(&self.public_statements, &self.params));
+        let ids_match = self.id == PodId(calculate_id(&self.public_statements, &self.params));
         // find a ValueOf statement from the public statements with key=KEY_TYPE and check that the
         // value is PodType::MockMainPod
         let has_type_statement = self.public_statements.iter().any(|s| {

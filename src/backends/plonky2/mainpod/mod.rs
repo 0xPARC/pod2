@@ -1,6 +1,6 @@
 pub mod operation;
 pub mod statement;
-use std::{any::Any, sync::Arc};
+use std::{any::Any, iter, sync::Arc};
 
 use base64::{prelude::BASE64_STANDARD, Engine};
 use itertools::Itertools;
@@ -35,11 +35,30 @@ use crate::{
     },
 };
 
-/// Hash a list of public statements to derive the PodId
-pub(crate) fn hash_statements(statements: &[Statement], _params: &Params) -> middleware::Hash {
-    let field_elems = statements
+/// Hash a list of public statements to derive the PodId.  To make circuits with different number
+/// of `max_public_statements compatible we pad the statements up to `num_public_statements_id`.
+/// As an optimization we front pad with none-statements so that circuits with a small
+/// `max_public_statements` only pay for `max_public_statements` by starting the poseidon state
+/// with a precomputed constant corresponding to the front-padding part:
+/// `id = hash(serialize(reverse(statements || none-statements)))`
+pub(crate) fn calculate_id(statements: &[Statement], params: &Params) -> middleware::Hash {
+    assert_eq!(params.max_public_statements, statements.len());
+    assert!(params.max_public_statements <= params.num_public_statements_id);
+    statements
         .iter()
-        .flat_map(|statement| statement.clone().to_fields(_params))
+        .for_each(|st| assert_eq!(params.max_statement_args, st.1.len()));
+
+    let mut none_st: Statement = middleware::Statement::None.into();
+    pad_statement(params, &mut none_st);
+    let statements_back_padded = statements
+        .iter()
+        .chain(iter::repeat(&none_st))
+        .take(params.num_public_statements_id)
+        .collect_vec();
+    let field_elems = statements_back_padded
+        .iter()
+        .rev()
+        .flat_map(|statement| statement.to_fields(params))
         .collect::<Vec<_>>();
     Hash(PoseidonHash::hash_no_pad(&field_elems).elements)
 }
@@ -421,7 +440,7 @@ impl Prover {
         let public_statements =
             statements[statements.len() - params.max_public_statements..].to_vec();
         // get the id out of the public statements
-        let id: PodId = PodId(hash_statements(&public_statements, params));
+        let id: PodId = PodId(calculate_id(&public_statements, params));
 
         let input = MainPodVerifyInput {
             signed_pods: signed_pods_input,
@@ -505,7 +524,7 @@ fn get_common_data(params: &Params) -> Result<CommonCircuitData<F, D>, Error> {
 impl MainPod {
     fn _verify(&self) -> Result<()> {
         // 2. get the id out of the public statements
-        let id: PodId = PodId(hash_statements(&self.public_statements, &self.params));
+        let id: PodId = PodId(calculate_id(&self.public_statements, &self.params));
         if id != self.id {
             return Err(Error::id_not_equal(self.id, id));
         }
@@ -700,6 +719,7 @@ pub mod tests {
             max_statements: 5,
             max_signed_pod_values: 2,
             max_public_statements: 2,
+            num_public_statements_id: 4,
             max_statement_args: 2,
             max_operation_args: 3,
             max_custom_predicate_batches: 2,

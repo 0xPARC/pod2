@@ -582,6 +582,9 @@ pub struct Params {
     pub max_statements: usize,
     pub max_signed_pod_values: usize,
     pub max_public_statements: usize,
+    // Number of public statements to hash to calculate the id.  Must be equal or greater than
+    // `max_public_statements`.
+    pub num_public_statements_id: usize,
     pub max_statement_args: usize,
     pub max_operation_args: usize,
     // max number of custom predicates batches that a MainPod can use
@@ -607,6 +610,7 @@ impl Default for Params {
             max_statements: 20,
             max_signed_pod_values: 8,
             max_public_statements: 10,
+            num_public_statements_id: 16,
             max_statement_args: 5,
             max_operation_args: 5,
             max_custom_predicate_batches: 2,
