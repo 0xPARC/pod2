@@ -115,7 +115,7 @@ pub fn eth_dos_pod_builder(
     let zero = alice_bob_ethdos.priv_literal(0)?;
     let alice_equals_alice = alice_bob_ethdos.priv_op(op!(
         eq,
-        (alice_attestation, KEY_SIGNER),
+        alice_pubkey_copy.clone(),
         alice_pubkey_copy.clone()
     ))?;
     let ethdos_alice_alice_is_zero_base = alice_bob_ethdos.priv_op(op!(

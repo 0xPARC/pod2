@@ -737,11 +737,11 @@ pub mod tests {
             max_statements: 26,
             max_public_statements: 5,
             max_signed_pod_values: 8,
-            max_statement_args: 6,
+            max_statement_args: 3,
             max_operation_args: 4,
             max_custom_predicate_arity: 4,
             max_custom_batch_size: 3,
-            max_custom_predicate_wildcards: 12,
+            max_custom_predicate_wildcards: 6,
             max_custom_predicate_verifications: 8,
             ..Default::default()
         };

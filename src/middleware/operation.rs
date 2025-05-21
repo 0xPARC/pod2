@@ -8,8 +8,8 @@ use crate::{
     backends::plonky2::primitives::merkletree::MerkleProof,
     middleware::{
         custom::KeyOrWildcard, AnchoredKey, CustomPredicate, CustomPredicateRef, Error,
-        NativePredicate, Params, Predicate, Result, Statement, StatementArg, StatementTmplArg,
-        ToFields, Wildcard, WildcardValue, F, SELF,
+        NativePredicate, Params, Predicate, Result, SelfOrWildcard, Statement, StatementArg,
+        StatementTmplArg, ToFields, Wildcard, WildcardValue, F, SELF,
     },
 };
 
@@ -363,10 +363,15 @@ pub fn check_st_tmpl(
         (StatementTmplArg::None, StatementArg::None) => true,
         (StatementTmplArg::Literal(lhs), StatementArg::Literal(rhs)) if lhs == rhs => true,
         (
-            StatementTmplArg::AnchoredKey(pod_id_wc, key_or_wc),
+            StatementTmplArg::AnchoredKey(self_or_wc, key_or_wc),
             StatementArg::Key(AnchoredKey { pod_id, key }),
         ) => {
-            let pod_id_ok = check_or_set(WildcardValue::PodId(*pod_id), pod_id_wc, wildcard_map);
+            let pod_id_ok = match self_or_wc {
+                SelfOrWildcard::SELF => SELF == *pod_id,
+                SelfOrWildcard::Wildcard(pod_id_wc) => {
+                    check_or_set(WildcardValue::PodId(*pod_id), pod_id_wc, wildcard_map)
+                }
+            };
             let key_ok = match key_or_wc {
                 KeyOrWildcard::Key(tmpl_key) => tmpl_key == key,
                 KeyOrWildcard::Wildcard(key_wc) => {

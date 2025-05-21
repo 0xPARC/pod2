@@ -67,7 +67,7 @@ pub mod measure_macros {
     #[macro_export]
     macro_rules! measure_gates_begin {
         ($builder:expr, $name:expr) => {{
-            use $crate::backends::plonky2::circuits::utils::METRICS;
+            use $crate::backends::plonky2::circuits::metrics::METRICS;
             let mut metrics = METRICS.lock().unwrap();
             metrics.begin($builder, $name)
         }};
@@ -76,7 +76,7 @@ pub mod measure_macros {
     #[macro_export]
     macro_rules! measure_gates_end {
         ($builder:expr, $measure:expr) => {{
-            use $crate::backends::plonky2::circuits::utils::METRICS;
+            use $crate::backends::plonky2::circuits::metrics::METRICS;
             let mut metrics = METRICS.lock().unwrap();
             metrics.end($builder, $measure);
         }};
@@ -85,7 +85,7 @@ pub mod measure_macros {
     #[macro_export]
     macro_rules! measure_gates_print {
         () => {{
-            use $crate::backends::plonky2::circuits::utils::METRICS;
+            use $crate::backends::plonky2::circuits::metrics::METRICS;
             let metrics = METRICS.lock().unwrap();
             metrics.print();
         }};

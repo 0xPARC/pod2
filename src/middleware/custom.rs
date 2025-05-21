@@ -29,7 +29,7 @@ impl fmt::Display for Wildcard {
 
 impl ToFields for Wildcard {
     fn to_fields(&self, _params: &Params) -> Vec<F> {
-        vec![F::from_canonical_u64(self.index as u64)]
+        vec![F::from_canonical_u64(self.index as u64 + 1)]
     }
 }
 
@@ -52,14 +52,42 @@ impl fmt::Display for KeyOrWildcard {
 impl ToFields for KeyOrWildcard {
     // Encoding:
     // - Key(k) => [[k]]
-    // - Wildcard(index) => [[index], 0, 0, 0]
+    // - Wildcard(index) => [[index + 1], 0, 0, 0]
     fn to_fields(&self, params: &Params) -> Vec<F> {
         match self {
             KeyOrWildcard::Key(k) => k.hash().to_fields(params),
-            KeyOrWildcard::Wildcard(wc) => iter::once(F::from_canonical_u64(wc.index as u64))
+            KeyOrWildcard::Wildcard(wc) => iter::once(F::from_canonical_u64(wc.index as u64 + 1))
                 .chain(iter::repeat(F::ZERO))
                 .take(HASH_SIZE)
                 .collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", content = "value")]
+pub enum SelfOrWildcard {
+    SELF,
+    Wildcard(Wildcard),
+}
+
+impl fmt::Display for SelfOrWildcard {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::SELF => write!(f, "SELF"),
+            Self::Wildcard(wc) => write!(f, "{}", wc),
+        }
+    }
+}
+
+impl ToFields for SelfOrWildcard {
+    // Encoding:
+    // - Self => [0]
+    // - Wildcard(index) => [index+1]
+    fn to_fields(&self, _params: &Params) -> Vec<F> {
+        match self {
+            SelfOrWildcard::SELF => vec![F::ZERO],
+            SelfOrWildcard::Wildcard(wc) => vec![F::from_canonical_u64(wc.index as u64 + 1)],
         }
     }
 }
@@ -70,7 +98,7 @@ pub enum StatementTmplArg {
     None,
     Literal(Value),
     // AnchoredKey
-    AnchoredKey(Wildcard, KeyOrWildcard),
+    AnchoredKey(SelfOrWildcard, KeyOrWildcard),
     // TODO: This naming is a bit confusing: a WildcardLiteral that contains a Wildcard...
     // Could we merge WildcardValue and Value and allow wildcard value apart from pod_id and key?
     WildcardLiteral(Wildcard),
@@ -438,6 +466,9 @@ mod tests {
     fn kow_wc(i: usize) -> KOW {
         KOW::Wildcard(wc(i))
     }
+    fn sow_wc(i: usize) -> SOW {
+        SOW::Wildcard(wc(i))
+    }
     fn wc(i: usize) -> Wildcard {
         Wildcard {
             name: format!("{}", i),
@@ -447,6 +478,7 @@ mod tests {
 
     type STA = StatementTmplArg;
     type KOW = KeyOrWildcard;
+    type SOW = SelfOrWildcard;
     type P = Predicate;
     type NP = NativePredicate;
 
@@ -468,14 +500,17 @@ mod tests {
                 vec![
                     st(
                         P::Native(NP::ValueOf),
-                        vec![STA::AnchoredKey(wc(4), kow_wc(5)), STA::Literal(2.into())],
+                        vec![
+                            STA::AnchoredKey(sow_wc(4), kow_wc(5)),
+                            STA::Literal(2.into()),
+                        ],
                     ),
                     st(
                         P::Native(NP::ProductOf),
                         vec![
-                            STA::AnchoredKey(wc(0), kow_wc(1)),
-                            STA::AnchoredKey(wc(4), kow_wc(5)),
-                            STA::AnchoredKey(wc(2), kow_wc(3)),
+                            STA::AnchoredKey(sow_wc(0), kow_wc(1)),
+                            STA::AnchoredKey(sow_wc(4), kow_wc(5)),
+                            STA::AnchoredKey(sow_wc(2), kow_wc(3)),
                         ],
                     ),
                 ],
@@ -523,22 +558,22 @@ mod tests {
                 st(
                     P::Native(NP::ValueOf),
                     vec![
-                        STA::AnchoredKey(wc(4), KeyOrWildcard::Key("type".into())),
+                        STA::AnchoredKey(sow_wc(4), KeyOrWildcard::Key("type".into())),
                         STA::Literal(PodType::Signed.into()),
                     ],
                 ),
                 st(
                     P::Native(NP::Equal),
                     vec![
-                        STA::AnchoredKey(wc(4), KeyOrWildcard::Key("signer".into())),
-                        STA::AnchoredKey(wc(0), kow_wc(1)),
+                        STA::AnchoredKey(sow_wc(4), KeyOrWildcard::Key("signer".into())),
+                        STA::AnchoredKey(sow_wc(0), kow_wc(1)),
                     ],
                 ),
                 st(
                     P::Native(NP::Equal),
                     vec![
-                        STA::AnchoredKey(wc(4), KeyOrWildcard::Key("attestation".into())),
-                        STA::AnchoredKey(wc(2), kow_wc(3)),
+                        STA::AnchoredKey(sow_wc(4), KeyOrWildcard::Key("attestation".into())),
+                        STA::AnchoredKey(sow_wc(2), kow_wc(3)),
                     ],
                 ),
             ],
@@ -556,13 +591,16 @@ mod tests {
                 st(
                     P::Native(NP::Equal),
                     vec![
-                        STA::AnchoredKey(wc(0), kow_wc(1)),
-                        STA::AnchoredKey(wc(2), kow_wc(3)),
+                        STA::AnchoredKey(sow_wc(0), kow_wc(1)),
+                        STA::AnchoredKey(sow_wc(2), kow_wc(3)),
                     ],
                 ),
                 st(
                     P::Native(NP::ValueOf),
-                    vec![STA::AnchoredKey(wc(4), kow_wc(5)), STA::Literal(0.into())],
+                    vec![
+                        STA::AnchoredKey(sow_wc(4), kow_wc(5)),
+                        STA::Literal(0.into()),
+                    ],
                 ),
             ],
             6,
@@ -586,14 +624,17 @@ mod tests {
                 ),
                 st(
                     P::Native(NP::ValueOf),
-                    vec![STA::AnchoredKey(wc(6), kow_wc(7)), STA::Literal(1.into())],
+                    vec![
+                        STA::AnchoredKey(sow_wc(6), kow_wc(7)),
+                        STA::Literal(1.into()),
+                    ],
                 ),
                 st(
                     P::Native(NP::SumOf),
                     vec![
-                        STA::AnchoredKey(wc(4), kow_wc(5)),
-                        STA::AnchoredKey(wc(8), kow_wc(9)),
-                        STA::AnchoredKey(wc(6), kow_wc(7)),
+                        STA::AnchoredKey(sow_wc(4), kow_wc(5)),
+                        STA::AnchoredKey(sow_wc(8), kow_wc(9)),
+                        STA::AnchoredKey(sow_wc(6), kow_wc(7)),
                     ],
                 ),
                 st(
