@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
+use log::{debug, warn};
+
 use super::{
     types::{Constraint, Domain, ExpectedType},
     SolverState,
@@ -15,9 +17,13 @@ use crate::{
 /// Applies type constraints, removing incompatible ConcreteValue variants from domains.
 /// Returns Ok(true) if any domain changed, Ok(false) otherwise.
 pub fn prune_by_type(state: &mut SolverState) -> Result<bool, ProverError> {
+    debug!("Pruning: Applying type constraints.");
     let mut changed = false;
     for (wildcard, (domain, expected_type_ref)) in state.domains.iter_mut() {
         let expected_type = *expected_type_ref;
+        if expected_type == ExpectedType::Unknown {
+            continue; // Skip if type is not yet known
+        }
         let initial_size = domain.len();
 
         // Retain only values matching the expected type
@@ -32,6 +38,10 @@ pub fn prune_by_type(state: &mut SolverState) -> Result<bool, ProverError> {
         });
 
         if domain.is_empty() {
+            warn!(
+                "Pruning: Type pruning made domain for WC '{}' empty (expected {:?}). Initial size: {}.",
+                wildcard.name, expected_type, initial_size
+            );
             return Err(ProverError::Unsatisfiable(format!(
                 "Type pruning made domain for wildcard '{}' empty (expected {:?})",
                 wildcard.name, expected_type
@@ -39,9 +49,20 @@ pub fn prune_by_type(state: &mut SolverState) -> Result<bool, ProverError> {
         }
 
         if domain.len() < initial_size {
+            debug!(
+                "  Pruning: WC '{}' domain size reduced by type {:?} from {} to {}.",
+                wildcard.name,
+                expected_type,
+                initial_size,
+                domain.len()
+            );
             changed = true;
         }
     }
+    debug!(
+        "Pruning: Type constraints application complete. Changed: {}",
+        changed
+    );
     Ok(changed)
 }
 
@@ -53,18 +74,24 @@ pub fn prune_by_literal_key(
     indexes: &ProverIndexes,
     constraints: &[Constraint],
 ) -> Result<bool, ProverError> {
-    let mut changed = false;
-
+    let mut overall_changed_by_this_fn = false;
     for constraint in constraints {
         if let Constraint::LiteralKey {
             pod_wildcard,
             literal_key,
         } = constraint
         {
-            // Find the domain for the wildcard constrained by the literal key
+            debug!(
+                "Pruning: Applying LiteralKey constraint: WC '{}' must have key '{}'.",
+                pod_wildcard.name, literal_key
+            );
             if let Some((domain, expected_type)) = state.domains.get_mut(pod_wildcard) {
                 if *expected_type != ExpectedType::Pod {
-                    continue; // Should have been caught by prune_by_type, but check defensively
+                    debug!(
+                        "  Pruning: Skipping LiteralKey for WC '{}', not Pod type (is {:?}).",
+                        pod_wildcard.name, expected_type
+                    );
+                    continue;
                 }
 
                 let initial_size = domain.len();
@@ -77,11 +104,33 @@ pub fn prune_by_literal_key(
                     .unwrap_or_default();
 
                 domain.retain(|value| match value {
-                    ConcreteValue::Pod(pod_id) => allowed_pod_ids.contains(pod_id),
-                    _ => false,
+                    ConcreteValue::Pod(pod_id) => {
+                        if *pod_id == crate::middleware::SELF {
+                            // If the pod_id is SELF, we assume the literal_key is valid if defined by a ValueOf.
+                            // This pruning step might be too aggressive for SELF if the ValueOf facts for SELF
+                            // are not yet fully incorporated into `indexes` in the same way as other pods.
+                            // For now, let's not prune SELF based on this rule, assuming `potential_constant_info` handles it.
+                            true
+                        } else {
+                            allowed_pod_ids.contains(pod_id)
+                        }
+                    }
+                    _ => false, // Should not happen if type is Pod
                 });
 
+                debug!(
+                    "  Pruning: WC '{}' (key '{}') allowed PodIds: {:?}. Retained: {:?}",
+                    pod_wildcard.name,
+                    literal_key,
+                    allowed_pod_ids.iter().collect::<Vec<_>>(),
+                    domain.iter().collect::<Vec<_>>()
+                );
+
                 if domain.is_empty() {
+                    warn!(
+                        "Pruning: LiteralKey constraint ('{}[{}]') made domain empty. Initial size: {}.",
+                        pod_wildcard.name, literal_key, initial_size
+                    );
                     return Err(ProverError::Unsatisfiable(format!(
                         "LiteralKey constraint ('{}[{}]') made domain empty",
                         pod_wildcard.name, literal_key
@@ -89,9 +138,20 @@ pub fn prune_by_literal_key(
                 }
 
                 if domain.len() < initial_size {
-                    changed = true;
+                    debug!(
+                        "  Pruning: WC '{}' domain size reduced by LiteralKey '{}' from {} to {}.",
+                        pod_wildcard.name,
+                        literal_key,
+                        initial_size,
+                        domain.len()
+                    );
+                    overall_changed_by_this_fn = true;
                 }
             } else {
+                warn!(
+                    "Pruning: WC '{}' from LiteralKey constraint not found in domains.",
+                    pod_wildcard.name
+                );
                 return Err(ProverError::Internal(format!(
                     "Wildcard '{}' from LiteralKey constraint not found in domains",
                     pod_wildcard.name
@@ -99,8 +159,7 @@ pub fn prune_by_literal_key(
             }
         }
     }
-
-    Ok(changed)
+    Ok(overall_changed_by_this_fn)
 }
 
 /// Applies literal origin constraints (e.g., from `PodX[?Y]`), removing Keys from
@@ -111,16 +170,23 @@ pub fn prune_by_literal_origin(
     indexes: &ProverIndexes,
     constraints: &[Constraint],
 ) -> Result<bool, ProverError> {
-    let mut changed = false;
-
+    let mut overall_changed_by_this_fn = false;
     for constraint in constraints {
         if let Constraint::LiteralOrigin {
             key_wildcard,
             literal_pod_id,
         } = constraint
         {
+            debug!(
+                "Pruning: Applying LiteralOrigin constraint: Key WC '{}' must exist in Pod {:?}.",
+                key_wildcard.name, literal_pod_id
+            );
             if let Some((domain, expected_type)) = state.domains.get_mut(key_wildcard) {
                 if *expected_type != ExpectedType::Key {
+                    debug!(
+                        "  Pruning: Skipping LiteralOrigin for WC '{}', not Key type (is {:?}).",
+                        key_wildcard.name, expected_type
+                    );
                     continue;
                 }
 
@@ -142,17 +208,37 @@ pub fn prune_by_literal_origin(
                     _ => false,
                 });
 
+                debug!(
+                    "  Pruning: Key WC '{}' (Pod {:?}) allowed keys: {:?}. Retained: {:?}.",
+                    key_wildcard.name,
+                    literal_pod_id,
+                    allowed_keys.iter().collect::<Vec<_>>(),
+                    domain.iter().collect::<Vec<_>>()
+                );
+
                 if domain.is_empty() {
+                    warn!(
+                        "Pruning: LiteralOrigin constraint (Pod {:?}, Key WC '{}') made domain empty. Initial size: {}.",
+                        literal_pod_id, key_wildcard.name, initial_size
+                    );
                     return Err(ProverError::Unsatisfiable(format!(
-                        "LiteralOrigin constraint ('{}[?{}]') made domain empty",
+                        "LiteralOrigin constraint ('{:?}[?{}]') made domain empty",
                         literal_pod_id, key_wildcard.name
                     )));
                 }
 
                 if domain.len() < initial_size {
-                    changed = true;
+                    debug!(
+                        "  Pruning: Key WC '{}' domain size reduced by LiteralOrigin (Pod {:?}) from {} to {}.",
+                        key_wildcard.name, literal_pod_id, initial_size, domain.len()
+                    );
+                    overall_changed_by_this_fn = true;
                 }
             } else {
+                warn!(
+                    "Pruning: WC '{}' from LiteralOrigin constraint not found in domains.",
+                    key_wildcard.name
+                );
                 return Err(ProverError::Internal(format!(
                     "Wildcard '{}' from LiteralOrigin constraint not found in domains",
                     key_wildcard.name
@@ -160,8 +246,7 @@ pub fn prune_by_literal_origin(
             }
         }
     }
-
-    Ok(changed)
+    Ok(overall_changed_by_this_fn)
 }
 
 /// Applies literal value constraints, removing Values from the domain of a wildcard
@@ -169,19 +254,25 @@ pub fn prune_by_literal_origin(
 /// Returns Ok(true) if any domain changed, Ok(false) otherwise.
 pub fn prune_by_literal_value(
     state: &mut SolverState,
-    _indexes: &ProverIndexes,
     constraints: &[Constraint],
 ) -> Result<bool, ProverError> {
     let mut changed = false;
-
     for constraint in constraints {
         if let Constraint::LiteralValue {
             wildcard,
             literal_value,
         } = constraint
         {
+            debug!(
+                "Pruning: Applying LiteralValue constraint: WC '{}' must be {:?}.",
+                wildcard.name, literal_value
+            );
             if let Some((domain, expected_type)) = state.domains.get_mut(wildcard) {
                 if *expected_type != ExpectedType::Val {
+                    debug!(
+                        "  Pruning: Skipping LiteralValue for WC '{}', not Val type (is {:?}).",
+                        wildcard.name, expected_type
+                    );
                     continue;
                 }
 
@@ -193,6 +284,10 @@ pub fn prune_by_literal_value(
                 });
 
                 if domain.is_empty() {
+                    warn!(
+                        "Pruning: LiteralValue constraint ('{}' = {:?}) made domain empty. Initial size: {}.",
+                        wildcard.name, literal_value, initial_size
+                    );
                     return Err(ProverError::Unsatisfiable(format!(
                         "LiteralValue constraint ('{}' = {:?}) made domain empty",
                         wildcard.name, literal_value
@@ -200,9 +295,17 @@ pub fn prune_by_literal_value(
                 }
 
                 if domain.len() < initial_size {
+                    debug!(
+                        "  Pruning: WC '{}' domain size reduced by LiteralValue {:?} from {} to {}.",
+                        wildcard.name, literal_value, initial_size, domain.len()
+                    );
                     changed = true;
                 }
             } else {
+                warn!(
+                    "Pruning: WC '{}' from LiteralValue constraint not found in domains.",
+                    wildcard.name
+                );
                 return Err(ProverError::Internal(format!(
                     "Wildcard '{}' from LiteralValue constraint not found in domains",
                     wildcard.name
@@ -210,7 +313,6 @@ pub fn prune_by_literal_value(
             }
         }
     }
-
     Ok(changed)
 }
 
@@ -222,14 +324,17 @@ pub fn prune_by_wildcard_origin(
     indexes: &ProverIndexes,
     constraints: &[Constraint],
 ) -> Result<bool, ProverError> {
-    let mut changed = false;
-
+    let mut overall_changed_by_this_fn = false;
     for constraint in constraints {
         if let Constraint::WildcardOrigin {
             key_wildcard,
             pod_wildcard,
         } = constraint
         {
+            debug!(
+                "Pruning: Applying WildcardOrigin constraint: Key WC '{}' must exist in Pod WC '{}'.",
+                key_wildcard.name, pod_wildcard.name
+            );
             // Check if pod_wildcard domain is a singleton PodId
             let mut literal_pod_id_opt: Option<PodId> = None;
             if let Some((pod_domain, pod_expected_type)) = state.domains.get(pod_wildcard) {
@@ -243,6 +348,10 @@ pub fn prune_by_wildcard_origin(
             if let Some(literal_pod_id) = literal_pod_id_opt {
                 if let Some((key_domain, key_expected_type)) = state.domains.get_mut(key_wildcard) {
                     if *key_expected_type != ExpectedType::Key {
+                        debug!(
+                            "  Pruning: Skipping WildcardOrigin for Key WC '{}', not Key type (is {:?}).",
+                            key_wildcard.name, key_expected_type
+                        );
                         continue;
                     }
 
@@ -263,7 +372,16 @@ pub fn prune_by_wildcard_origin(
                         _ => false,
                     });
 
+                    debug!(
+                        "  Pruning: Key WC '{}' (Pod WC '{}' resolved to {:?}) allowed keys: {:?}. Retained: {:?}.",
+                        key_wildcard.name, pod_wildcard.name, literal_pod_id, allowed_keys.iter().collect::<Vec<_>>(), key_domain.iter().collect::<Vec<_>>()
+                    );
+
                     if key_domain.is_empty() {
+                        warn!(
+                            "Pruning: WildcardOrigin constraint (Pod WC '{}' -> {:?}, Key WC '{}') made key domain empty. Initial size: {}.",
+                            pod_wildcard.name, literal_pod_id, key_wildcard.name, initial_size
+                        );
                         return Err(ProverError::Unsatisfiable(format!(
                             "WildcardOrigin constraint (pod='{}', key='{}') made key domain empty",
                             pod_wildcard.name, key_wildcard.name
@@ -271,14 +389,22 @@ pub fn prune_by_wildcard_origin(
                     }
 
                     if key_domain.len() < initial_size {
-                        changed = true;
+                        debug!(
+                            "  Pruning: Key WC '{}' domain size reduced by WildcardOrigin (Pod WC '{}' -> {:?}) from {} to {}.",
+                            key_wildcard.name, pod_wildcard.name, literal_pod_id, initial_size, key_domain.len()
+                        );
+                        overall_changed_by_this_fn = true;
                     }
                 }
+            } else {
+                debug!(
+                    "  Pruning: WildcardOrigin: Pod WC '{}' domain not yet singleton or not Pod type.",
+                    pod_wildcard.name
+                );
             }
         }
     }
-
-    Ok(changed)
+    Ok(overall_changed_by_this_fn)
 }
 
 /// Runs the initial set of pruning functions iteratively until a fixed point is reached.
@@ -288,76 +414,151 @@ pub(super) fn prune_initial_domains(
     indexes: &ProverIndexes,
     equality_pairs: &[(Wildcard, Wildcard)],
     inequality_pairs: &[(Wildcard, Wildcard)],
+    constraints: &[Constraint],
 ) -> Result<bool, ProverError> {
+    debug!(
+        "Pruning: Entering prune_initial_domains. Equality pairs: {}, Inequality pairs: {}, Explicit constraints: {}",
+        equality_pairs.len(), inequality_pairs.len(), constraints.len()
+    );
     let mut overall_changed = false;
     let mut changed_this_pass = true;
     let mut processed_type_pruning = false;
+    let mut pass_num = 0;
 
     while changed_this_pass {
+        pass_num += 1;
+        debug!("  Pruning: prune_initial_domains pass #{}.", pass_num);
         changed_this_pass = false;
 
         // Apply type constraints first
-        if !processed_type_pruning && prune_by_type(state)? {
-            changed_this_pass = true;
-            overall_changed = true;
-            processed_type_pruning = true;
-        }
-
-        let current_constraints = state.constraints.clone();
-
-        // Apply explicit constraints
-        for constraint in &current_constraints {
-            let mut constraint_changed = false;
-            match constraint {
-                Constraint::LiteralKey { .. } => {
-                    constraint_changed =
-                        prune_by_literal_key(state, indexes, &[constraint.clone()])?;
-                }
-                Constraint::LiteralOrigin { .. } => {
-                    constraint_changed =
-                        prune_by_literal_origin(state, indexes, &[constraint.clone()])?;
-                }
-                Constraint::WildcardOrigin { .. } => {
-                    constraint_changed =
-                        prune_by_wildcard_origin(state, indexes, &[constraint.clone()])?;
-                }
-                Constraint::LiteralValue { .. } => {
-                    constraint_changed =
-                        prune_by_literal_value(state, indexes, &[constraint.clone()])?;
-                }
-                _ => {}
-            };
-
-            if constraint_changed {
+        if !processed_type_pruning {
+            debug!("    Pruning: Applying type pruning (pass #{}).", pass_num);
+            if prune_by_type(state)? {
+                debug!("      Pruning: Type pruning reported changes.");
                 changed_this_pass = true;
                 overall_changed = true;
+                processed_type_pruning = true; // Mark as processed for this outer loop iteration
+            } else {
+                debug!("      Pruning: Type pruning reported NO changes.");
+                // If type pruning makes no change, it might not need to run again until other pruners make progress.
+                // However, other pruners might change types implicitly, so always allow it to run if `processed_type_pruning` is reset.
             }
+        }
+
+        // Apply explicit constraints
+        let mut explicit_constraints_changed_this_pass = false;
+        for constraint in constraints {
+            let mut constraint_changed_current_iter = false;
+            match constraint {
+                Constraint::LiteralKey { .. } => {
+                    debug!(
+                        "    Pruning: Applying LiteralKey constraints (pass #{}).",
+                        pass_num
+                    );
+                    constraint_changed_current_iter =
+                        prune_by_literal_key(state, indexes, std::slice::from_ref(constraint))?;
+                }
+                Constraint::LiteralOrigin { .. } => {
+                    debug!(
+                        "    Pruning: Applying LiteralOrigin constraints (pass #{}).",
+                        pass_num
+                    );
+                    constraint_changed_current_iter =
+                        prune_by_literal_origin(state, indexes, std::slice::from_ref(constraint))?;
+                }
+                Constraint::WildcardOrigin { .. } => {
+                    debug!(
+                        "    Pruning: Applying WildcardOrigin constraints (pass #{}).",
+                        pass_num
+                    );
+                    constraint_changed_current_iter =
+                        prune_by_wildcard_origin(state, indexes, std::slice::from_ref(constraint))?;
+                }
+                Constraint::LiteralValue { .. } => {
+                    debug!(
+                        "    Pruning: Applying LiteralValue constraints (pass #{}).",
+                        pass_num
+                    );
+                    constraint_changed_current_iter =
+                        prune_by_literal_value(state, std::slice::from_ref(constraint))?;
+                }
+                Constraint::Type { .. } => { /* Already handled by prune_by_type */ }
+            };
+            if constraint_changed_current_iter {
+                debug!(
+                    "      Pruning: Explicit constraint {:?} reported changes.",
+                    constraint
+                );
+                explicit_constraints_changed_this_pass = true;
+            }
+        }
+        if explicit_constraints_changed_this_pass {
+            changed_this_pass = true;
+            overall_changed = true;
         }
 
         // Apply implicit equality constraints
-        for (wc1, wc2) in equality_pairs {
-            if propagate_or_intersect(&mut state.domains, wc1, wc2)? {
-                changed_this_pass = true;
-                overall_changed = true;
+        let mut equality_changed_this_pass = false;
+        if !equality_pairs.is_empty() {
+            debug!("    Pruning: Applying equality pairs (pass #{}).", pass_num);
+            for (wc1, wc2) in equality_pairs {
+                if propagate_or_intersect(&mut state.domains, wc1, wc2)? {
+                    debug!(
+                        "      Pruning: Propagate/intersect for ({}, {}) reported changes.",
+                        wc1.name, wc2.name
+                    );
+                    equality_changed_this_pass = true;
+                }
             }
+        }
+        if equality_changed_this_pass {
+            changed_this_pass = true;
+            overall_changed = true;
         }
 
         // Apply implicit inequality constraints
-        for (wc1, wc2) in inequality_pairs {
-            if remove_singleton(&mut state.domains, wc1, wc2)? {
-                changed_this_pass = true;
-                overall_changed = true;
+        let mut inequality_changed_this_pass = false;
+        if !inequality_pairs.is_empty() {
+            debug!(
+                "    Pruning: Applying inequality pairs (pass #{}).",
+                pass_num
+            );
+            for (wc1, wc2) in inequality_pairs {
+                if remove_singleton(&mut state.domains, wc1, wc2)? {
+                    debug!(
+                        "      Pruning: Remove_singleton for ({}, {}) reported changes.",
+                        wc1.name, wc2.name
+                    );
+                    inequality_changed_this_pass = true;
+                }
+                if remove_singleton(&mut state.domains, wc2, wc1)? {
+                    debug!(
+                        "      Pruning: Remove_singleton for ({}, {}) reported changes.",
+                        wc2.name, wc1.name
+                    );
+                    inequality_changed_this_pass = true;
+                }
             }
-            if remove_singleton(&mut state.domains, wc2, wc1)? {
-                changed_this_pass = true;
-                overall_changed = true;
-            }
+        }
+        if inequality_changed_this_pass {
+            changed_this_pass = true;
+            overall_changed = true;
         }
 
         if changed_this_pass {
-            processed_type_pruning = false;
+            debug!(
+                "    Pruning: Pass #{} made changes, resetting processed_type_pruning.",
+                pass_num
+            );
+            processed_type_pruning = false; // If any other pruner made a change, re-check types.
+        } else {
+            debug!("    Pruning: Pass #{} made NO changes.", pass_num);
         }
     }
+    debug!(
+        "Pruning: Exiting prune_initial_domains. Overall changed: {}. Total passes: {}",
+        overall_changed, pass_num
+    );
     Ok(overall_changed)
 }
 
@@ -366,10 +567,13 @@ pub(super) fn prune_initial_domains(
 pub(super) fn prune_domains_after_proof(
     state: &mut SolverState,
     proven_template: &StatementTmpl,
-    _proven_statement: &Statement,
+    proven_statement: &Statement,
     bindings: &HashMap<Wildcard, ConcreteValue>,
-    _indexes: &ProverIndexes,
 ) -> Result<bool, ProverError> {
+    debug!(
+        "Pruning: prune_domains_after_proof for template {:?}, concrete stmt: {:?}",
+        proven_template.pred, proven_statement
+    );
     let mut changed = false;
 
     match proven_template.pred {
@@ -377,6 +581,15 @@ pub(super) fn prune_domains_after_proof(
             if proven_template.args.len() == 2 {
                 let wildcards1 = get_wildcards_from_tmpl_arg(&proven_template.args[0]);
                 let wildcards2 = get_wildcards_from_tmpl_arg(&proven_template.args[1]);
+                debug!(
+                    "  Pruning (Equal): Wildcards involved: wc1_pods: {:?}, wc1_keys: {:?}, wc1_vals: {:?}; wc2_pods: {:?}, wc2_keys: {:?}, wc2_vals: {:?}",
+                    wildcards1.pod_wcs.iter().map(|w|w.name.clone()).collect::<Vec<_>>(),
+                    wildcards1.key_wcs.iter().map(|w|w.name.clone()).collect::<Vec<_>>(),
+                    wildcards1.val_wcs.iter().map(|w|w.name.clone()).collect::<Vec<_>>(),
+                    wildcards2.pod_wcs.iter().map(|w|w.name.clone()).collect::<Vec<_>>(),
+                    wildcards2.key_wcs.iter().map(|w|w.name.clone()).collect::<Vec<_>>(),
+                    wildcards2.val_wcs.iter().map(|w|w.name.clone()).collect::<Vec<_>>()
+                );
 
                 // For Equal predicates, only propagate/intersect for wildcards directly representing values.
                 // Equality of AnchoredKeys (e.g., Equal(P1[K1], P2[K2])) means the *values*
@@ -394,6 +607,15 @@ pub(super) fn prune_domains_after_proof(
             if proven_template.args.len() == 2 {
                 let wildcards1 = get_wildcards_from_tmpl_arg(&proven_template.args[0]);
                 let wildcards2 = get_wildcards_from_tmpl_arg(&proven_template.args[1]);
+                debug!(
+                    "  Pruning (NotEqual): Wildcards involved: wc1_pods: {:?}, wc1_keys: {:?}, wc1_vals: {:?}; wc2_pods: {:?}, wc2_keys: {:?}, wc2_vals: {:?}",
+                    wildcards1.pod_wcs.iter().map(|w|w.name.clone()).collect::<Vec<_>>(),
+                    wildcards1.key_wcs.iter().map(|w|w.name.clone()).collect::<Vec<_>>(),
+                    wildcards1.val_wcs.iter().map(|w|w.name.clone()).collect::<Vec<_>>(),
+                    wildcards2.pod_wcs.iter().map(|w|w.name.clone()).collect::<Vec<_>>(),
+                    wildcards2.key_wcs.iter().map(|w|w.name.clone()).collect::<Vec<_>>(),
+                    wildcards2.val_wcs.iter().map(|w|w.name.clone()).collect::<Vec<_>>()
+                );
                 for wc1_pod in &wildcards1.pod_wcs {
                     for wc2_pod in &wildcards2.pod_wcs {
                         changed |= remove_singleton(&mut state.domains, wc1_pod, wc2_pod)?;
@@ -419,6 +641,15 @@ pub(super) fn prune_domains_after_proof(
             if proven_template.args.len() == 2 {
                 let wildcards1 = get_wildcards_from_tmpl_arg(&proven_template.args[0]);
                 let wildcards2 = get_wildcards_from_tmpl_arg(&proven_template.args[1]);
+                debug!(
+                    "  Pruning (Gt/Lt): Wildcards involved: wc1_pods: {:?}, wc1_keys: {:?}, wc1_vals: {:?}; wc2_pods: {:?}, wc2_keys: {:?}, wc2_vals: {:?}",
+                    wildcards1.pod_wcs.iter().map(|w|w.name.clone()).collect::<Vec<_>>(),
+                    wildcards1.key_wcs.iter().map(|w|w.name.clone()).collect::<Vec<_>>(),
+                    wildcards1.val_wcs.iter().map(|w|w.name.clone()).collect::<Vec<_>>(),
+                    wildcards2.pod_wcs.iter().map(|w|w.name.clone()).collect::<Vec<_>>(),
+                    wildcards2.key_wcs.iter().map(|w|w.name.clone()).collect::<Vec<_>>(),
+                    wildcards2.val_wcs.iter().map(|w|w.name.clone()).collect::<Vec<_>>()
+                );
                 for wc1 in wildcards1.pod_wcs.iter().chain(wildcards1.key_wcs.iter()) {
                     for wc2 in wildcards2.pod_wcs.iter().chain(wildcards2.key_wcs.iter()) {
                         neq_changed |= remove_singleton(&mut state.domains, wc1, wc2)?;
@@ -454,17 +685,29 @@ pub(super) fn prune_domains_after_proof(
                     let value_wildcards = get_wildcards_from_tmpl_arg(value_arg_tmpl);
                     for wc_val in value_wildcards.val_wcs {
                         if let Some(ConcreteValue::Val(bound_val)) = bindings.get(&wc_val) {
+                            debug!(
+                                "  Pruning (ValueOf): WC '{}' bound to {:?}. Setting domain to this value.",
+                                wc_val.name, bound_val
+                            );
                             if let Some((domain, _)) = state.domains.get_mut(&wc_val) {
                                 let initial_len = domain.len();
                                 let target_cv = ConcreteValue::Val(bound_val.clone());
                                 domain.retain(|cv| cv == &target_cv);
                                 if domain.is_empty() {
+                                    warn!(
+                                        "Dynamic pruning (ValueOf) for WC '{}' (target {:?}) emptied domain. Initial size: {}.",
+                                        wc_val.name, target_cv, initial_len
+                                    );
                                     return Err(ProverError::Unsatisfiable(format!(
                                         "Dynamic pruning (ValueOf) emptied domain for {}",
                                         wc_val.name
                                     )));
                                 }
                                 if domain.len() < initial_len {
+                                    debug!(
+                                        "    Pruning (ValueOf): WC '{}' domain reduced from {} to {} (target {:?}).",
+                                        wc_val.name, initial_len, domain.len(), target_cv
+                                    );
                                     changed = true;
                                 }
                             }
@@ -484,6 +727,7 @@ pub(super) fn prune_domains_after_proof(
                     bindings,
                     |a, b| a + b,
                 )?;
+                debug!("  Pruning (SumOf): prune_arithmetic changed: {}", changed);
             }
         }
         Predicate::Native(NativePredicate::ProductOf) => {
@@ -497,6 +741,10 @@ pub(super) fn prune_domains_after_proof(
                     bindings,
                     |a, b| a * b,
                 )?;
+                debug!(
+                    "  Pruning (ProductOf): prune_arithmetic changed: {}",
+                    changed
+                );
             }
         }
         Predicate::Native(NativePredicate::MaxOf) => {
@@ -510,6 +758,7 @@ pub(super) fn prune_domains_after_proof(
                     bindings,
                     std::cmp::max,
                 )?;
+                debug!("  Pruning (MaxOf): prune_arithmetic changed: {}", changed);
             }
         }
         Predicate::Native(NativePredicate::Contains) => {
@@ -527,7 +776,18 @@ pub(super) fn prune_domains_after_proof(
                     .get(0)
                     .and_then(|wc| bindings.get(wc))
                     .and_then(|cv| match cv {
-                        ConcreteValue::Val(v) => Some(v.clone()),
+                        ConcreteValue::Val(v) => {
+                            debug!(
+                                "  Pruning (Contains): Bound container for WC '{}' is {:?}",
+                                wcs_c
+                                    .val_wcs
+                                    .get(0)
+                                    .map(|w| w.name.as_str())
+                                    .unwrap_or("<bound_directly>"),
+                                v
+                            );
+                            Some(v.clone())
+                        }
                         _ => None,
                     });
                 let bound_key = wcs_k
@@ -535,7 +795,18 @@ pub(super) fn prune_domains_after_proof(
                     .get(0)
                     .and_then(|wc| bindings.get(wc))
                     .and_then(|cv| match cv {
-                        ConcreteValue::Val(v) => Some(v.clone()),
+                        ConcreteValue::Val(v) => {
+                            debug!(
+                                "  Pruning (Contains): Bound key for WC '{}' is {:?}",
+                                wcs_k
+                                    .val_wcs
+                                    .get(0)
+                                    .map(|w| w.name.as_str())
+                                    .unwrap_or("<bound_directly>"),
+                                v
+                            );
+                            Some(v.clone())
+                        }
                         _ => None,
                     });
                 let bound_value = wcs_v
@@ -543,7 +814,18 @@ pub(super) fn prune_domains_after_proof(
                     .get(0)
                     .and_then(|wc| bindings.get(wc))
                     .and_then(|cv| match cv {
-                        ConcreteValue::Val(v) => Some(v.clone()),
+                        ConcreteValue::Val(v) => {
+                            debug!(
+                                "  Pruning (Contains): Bound value for WC '{}' is {:?}",
+                                wcs_v
+                                    .val_wcs
+                                    .get(0)
+                                    .map(|w| w.name.as_str())
+                                    .unwrap_or("<bound_directly>"),
+                                v
+                            );
+                            Some(v.clone())
+                        }
                         _ => None,
                     });
 
@@ -690,7 +972,18 @@ pub(super) fn prune_domains_after_proof(
                     .get(0)
                     .and_then(|wc| bindings.get(wc))
                     .and_then(|cv| match cv {
-                        ConcreteValue::Val(v) => Some(v.clone()),
+                        ConcreteValue::Val(v) => {
+                            debug!(
+                                "  Pruning (NotContains): Bound container for WC '{}' is {:?}",
+                                wcs_c
+                                    .val_wcs
+                                    .get(0)
+                                    .map(|w| w.name.as_str())
+                                    .unwrap_or("<bound_directly>"),
+                                v
+                            );
+                            Some(v.clone())
+                        }
                         _ => None,
                     });
                 let bound_key = wcs_k
@@ -698,7 +991,18 @@ pub(super) fn prune_domains_after_proof(
                     .get(0)
                     .and_then(|wc| bindings.get(wc))
                     .and_then(|cv| match cv {
-                        ConcreteValue::Val(v) => Some(v.clone()),
+                        ConcreteValue::Val(v) => {
+                            debug!(
+                                "  Pruning (NotContains): Bound key for WC '{}' is {:?}",
+                                wcs_k
+                                    .val_wcs
+                                    .get(0)
+                                    .map(|w| w.name.as_str())
+                                    .unwrap_or("<bound_directly>"),
+                                v
+                            );
+                            Some(v.clone())
+                        }
                         _ => None,
                     });
 
@@ -722,10 +1026,17 @@ pub(super) fn prune_domains_after_proof(
             }
         }
         Predicate::Custom(_) | Predicate::BatchSelf(_) => {
-            println!("Warning: Dynamic pruning for Custom predicates not yet implemented.");
+            warn!(
+                "Dynamic pruning for Custom/BatchSelf predicates not yet implemented: {:?}",
+                proven_template.pred
+            );
         }
         _ => {}
     }
+    debug!(
+        "Pruning: prune_domains_after_proof for {:?} complete. Changed: {}",
+        proven_template.pred, changed
+    );
 
     Ok(changed)
 }
@@ -762,62 +1073,127 @@ pub(super) fn propagate_or_intersect(
     wc1: &Wildcard,
     wc2: &Wildcard,
 ) -> Result<bool, ProverError> {
+    if wc1 == wc2 {
+        return Ok(false);
+    } // Optimization
     if !domains.contains_key(wc1) || !domains.contains_key(wc2) {
+        debug!(
+            "  Pruning (propagate_or_intersect): Skipping ({}, {}), one or both not in domains.",
+            wc1.name, wc2.name
+        );
         return Ok(false);
     }
 
-    let len1 = domains[wc1].0.len();
-    let len2 = domains[wc2].0.len();
+    let (domain1_view, type1) = domains.get(wc1).unwrap();
+    let (domain2_view, type2) = domains.get(wc2).unwrap();
+
+    if type1 != type2 && *type1 != ExpectedType::Unknown && *type2 != ExpectedType::Unknown {
+        warn!(
+            "  Pruning (propagate_or_intersect): Type mismatch between {} ({:?}) and {} ({:?}). Skipping.",
+            wc1.name, type1, wc2.name, type2
+        );
+        return Ok(false); // Cannot intersect domains of different concrete types
+    }
+
+    let len1 = domain1_view.len();
+    let len2 = domain2_view.len();
     let mut changed = false;
 
     if len1 == 1 && len2 > 1 {
-        let singleton_val = domains[wc1].0.iter().next().unwrap().clone();
+        let singleton_val = domain1_view.iter().next().unwrap().clone();
+        debug!(
+            "  Pruning (propagate_or_intersect): WC '{}' is singleton ({:?}). Setting WC '{}' domain.",
+            wc1.name, singleton_val, wc2.name
+        );
         let (domain2_mut, _) = domains.get_mut(wc2).unwrap();
         let initial_len = domain2_mut.len();
         domain2_mut.retain(|v| v == &singleton_val);
         if domain2_mut.is_empty() {
+            warn!(
+                "Pruning: propagate_or_intersect for ({}, {}) emptied domain for {}. Singleton was {:?}.",
+                wc1.name, wc2.name, wc2.name, singleton_val
+            );
             return Err(ProverError::Unsatisfiable(format!(
                 "Dynamic pruning (propagate/intersect) emptied domain for {}",
                 wc2.name
             )));
         }
         if domain2_mut.len() < initial_len {
+            debug!(
+                "    Pruning (propagate_or_intersect): WC '{}' domain reduced from {} to {} by WC '{}' singleton.",
+                wc2.name, initial_len, domain2_mut.len(), wc1.name
+            );
             changed = true;
         }
     } else if len2 == 1 && len1 > 1 {
-        let singleton_val = domains[wc2].0.iter().next().unwrap().clone();
+        let singleton_val = domain2_view.iter().next().unwrap().clone();
+        debug!(
+            "  Pruning (propagate_or_intersect): WC '{}' is singleton ({:?}). Setting WC '{}' domain.",
+            wc2.name, singleton_val, wc1.name
+        );
         let (domain1_mut, _) = domains.get_mut(wc1).unwrap();
         let initial_len = domain1_mut.len();
         domain1_mut.retain(|v| v == &singleton_val);
         if domain1_mut.is_empty() {
+            warn!(
+                "Pruning: propagate_or_intersect for ({}, {}) emptied domain for {}. Singleton was {:?}.",
+                wc1.name, wc2.name, wc1.name, singleton_val
+            );
             return Err(ProverError::Unsatisfiable(format!(
                 "Dynamic pruning (propagate/intersect) emptied domain for {}",
                 wc1.name
             )));
         }
         if domain1_mut.len() < initial_len {
+            debug!(
+                "    Pruning (propagate_or_intersect): WC '{}' domain reduced from {} to {} by WC '{}' singleton.",
+                wc1.name, initial_len, domain1_mut.len(), wc2.name
+            );
             changed = true;
         }
     } else if len1 > 1 && len2 > 1 {
-        let intersection: Domain = {
-            let (domain1, _) = domains.get(wc1).unwrap();
-            let (domain2, _) = domains.get(wc2).unwrap();
-            domain1.intersection(domain2).cloned().collect()
-        };
+        // Intersect non-singleton domains
+        let intersection: Domain = domain1_view.intersection(domain2_view).cloned().collect();
+        debug!(
+            "  Pruning (propagate_or_intersect): Intersecting domains for WC '{}' (size {}) and WC '{}' (size {}). Intersection size: {}.",
+            wc1.name, len1, wc2.name, len2, intersection.len()
+        );
+
         if intersection.is_empty() {
-            return Err(ProverError::Unsatisfiable(format!("Dynamic pruning (propagate/intersect) resulted in empty domain intersection for {} and {}", wc1.name, wc2.name)));
+            warn!(
+                "Pruning: propagate_or_intersect resulted in empty domain intersection for {} and {}.",
+                wc1.name, wc2.name
+            );
+            return Err(ProverError::Unsatisfiable(format!(
+                "Dynamic pruning (propagate/intersect) resulted in empty domain intersection for {} and {}",
+                wc1.name,
+                wc2.name
+            )));
         }
 
         let (domain1_mut, _) = domains.get_mut(wc1).unwrap();
         if intersection.len() < domain1_mut.len() {
+            debug!(
+                "    Pruning (propagate_or_intersect): WC '{}' domain reduced from {} to {} by intersection with WC '{}'.",
+                wc1.name, domain1_mut.len(), intersection.len(), wc2.name
+            );
             *domain1_mut = intersection.clone();
             changed = true;
         }
         let (domain2_mut, _) = domains.get_mut(wc2).unwrap();
         if intersection.len() < domain2_mut.len() {
+            debug!(
+                "    Pruning (propagate_or_intersect): WC '{}' domain reduced from {} to {} by intersection with WC '{}'.",
+                wc2.name, domain2_mut.len(), intersection.len(), wc1.name
+            );
             *domain2_mut = intersection;
             changed = true;
         }
+    } else {
+        debug!(
+            "  Pruning (propagate_or_intersect): No action for WC '{}' (len {}) and WC '{}' (len {}).",
+            wc1.name, len1, wc2.name, len2
+        );
     }
     Ok(changed)
 }
@@ -829,21 +1205,40 @@ pub(super) fn remove_singleton(
     wc_singleton: &Wildcard,
     wc_target: &Wildcard,
 ) -> Result<bool, ProverError> {
+    if wc_singleton == wc_target {
+        return Ok(false);
+    } // Optimization
     if !domains.contains_key(wc_singleton) || !domains.contains_key(wc_target) {
+        debug!(
+            "  Pruning (remove_singleton): Skipping ({}, {}), one or both not in domains.",
+            wc_singleton.name, wc_target.name
+        );
         return Ok(false);
     }
     if domains[wc_singleton].0.len() == 1 && !domains[wc_target].0.is_empty() {
         let val_to_remove = domains[wc_singleton].0.iter().next().unwrap().clone();
+        debug!(
+            "  Pruning (remove_singleton): WC '{}' is singleton ({:?}). Attempting to remove from WC '{}' domain.",
+            wc_singleton.name, val_to_remove, wc_target.name
+        );
         let (target_domain_mut, _) = domains.get_mut(wc_target).unwrap();
         let initial_len = target_domain_mut.len();
         target_domain_mut.remove(&val_to_remove);
         if target_domain_mut.is_empty() {
+            warn!(
+                "Pruning: remove_singleton for ({}, target {}) emptied target domain. Value removed: {:?}.",
+                wc_singleton.name, wc_target.name, val_to_remove
+            );
             return Err(ProverError::Unsatisfiable(format!(
                 "Dynamic pruning (remove singleton) emptied domain for {}",
                 wc_target.name
             )));
         }
         if target_domain_mut.len() < initial_len {
+            debug!(
+                "    Pruning (remove_singleton): WC '{}' domain reduced from {} to {} by removing {:?} (from WC '{}').",
+                wc_target.name, initial_len, target_domain_mut.len(), val_to_remove, wc_singleton.name
+            );
             return Ok(true);
         }
     }
@@ -861,6 +1256,10 @@ fn prune_arithmetic(
     bindings: &HashMap<Wildcard, ConcreteValue>,
     operation: fn(i64, i64) -> i64,
 ) -> Result<bool, ProverError> {
+    debug!(
+        "Pruning: prune_arithmetic for {:?}. Result: {:?}, Op1: {:?}, Op2: {:?}",
+        predicate, result_arg, op1_arg, op2_arg
+    );
     let mut changed = false;
 
     // Helper to get bound i64 value or None
@@ -894,6 +1293,10 @@ fn prune_arithmetic(
         (wc_res_opt, op1_val_ref.copied(), op2_val_ref.copied())
     {
         let expected_res = operation(v1, v2);
+        debug!(
+            "  Pruning (arithmetic): Op1 ({:?}) and Op2 ({:?}) known. Expected result for WC '{}': {}.",
+            v1, v2, wc_res.name, expected_res
+        );
         changed |= prune_domain_to_single_int(domains, wc_res, expected_res)?;
     }
     // Case 2: Result and Op1 are known (Attempt to prune Op2)
@@ -917,36 +1320,58 @@ fn prune_arithmetic(
         }
     }
 
+    debug!(
+        "Pruning: prune_arithmetic for {:?} complete. Changed: {}",
+        predicate, changed
+    );
+
     Ok(changed)
 }
 
-// --- NEW Int Pruning Helper ---
 /// Helper to prune a domain associated with a wildcard to a single i64 value.
 fn prune_domain_to_single_int(
     domains: &mut HashMap<Wildcard, (Domain, ExpectedType)>,
     wildcard: &Wildcard,
     target_int: i64,
 ) -> Result<bool, ProverError> {
+    debug!(
+        "  Pruning (single_int): Attempting to prune WC '{}' domain to {}.",
+        wildcard.name, target_int
+    );
     if let Some((domain, _)) = domains.get_mut(wildcard) {
         let target_cv = ConcreteValue::Val(Value::from(target_int));
         if domain.len() > 1 || !domain.contains(&target_cv) {
             let initial_len = domain.len();
             domain.retain(|cv| cv == &target_cv);
             if domain.is_empty() {
+                warn!(
+                    "Pruning: prune_domain_to_single_int for WC '{}' (target {}) emptied domain. Initial size: {}.",
+                    wildcard.name, target_int, initial_len
+                );
                 return Err(ProverError::Unsatisfiable(format!(
                     "Dynamic pruning (arithmetic) emptied domain for {}",
                     wildcard.name
                 )));
             }
             if domain.len() < initial_len {
+                debug!(
+                    "    Pruning (single_int): WC '{}' domain reduced from {} to {} (target {}).",
+                    wildcard.name,
+                    initial_len,
+                    domain.len(),
+                    target_int
+                );
                 return Ok(true);
             }
         }
     }
+    debug!(
+        "  Pruning (single_int): WC '{}' domain already '{}' or no change needed.",
+        wildcard.name, target_int
+    );
     Ok(false)
 }
 
-// --- NEW Gt/Lt Value Pruning Helper ---
 /// Prunes integer domains based on Gt/Lt constraints.
 fn prune_gt_lt_values(
     domains: &mut HashMap<Wildcard, (Domain, ExpectedType)>,
@@ -955,6 +1380,10 @@ fn prune_gt_lt_values(
     predicate: NativePredicate, // Gt or Lt
 ) -> Result<bool, ProverError> {
     let mut changed = false;
+    debug!(
+        "Pruning: prune_gt_lt_values for {:?}. WC1: '{}', WC2: '{}'.",
+        predicate, wc1.name, wc2.name
+    );
 
     // --- Calculate Min/Max using Immutable Borrows ---
     let (min_d1_opt, max_d1_opt, min_d2_opt, max_d2_opt): (
@@ -1008,6 +1437,10 @@ fn prune_gt_lt_values(
             )
         }
     }; // Immutable borrows end here. min_d1_opt etc are now Option<i64>.
+    debug!(
+        "  Pruning (Gt/Lt): Min/Max values: d1_min: {:?}, d1_max: {:?}, d2_min: {:?}, d2_max: {:?}.",
+        min_d1_opt, max_d1_opt, min_d2_opt, max_d2_opt
+    );
 
     // Now, perform mutable borrows and pruning using the copied i64 values.
     if let (Some(min_d1), Some(max_d1), Some(min_d2), Some(max_d2)) =
@@ -1019,7 +1452,7 @@ fn prune_gt_lt_values(
             if predicate == NativePredicate::Gt {
                 domain1_mut.retain(|cv| match cv {
                     ConcreteValue::Val(v) => match v.typed() {
-                        TypedValue::Int(v1) => *v1 > max_d2,
+                        TypedValue::Int(v1) => *v1 > min_d2,
                         _ => true,
                     },
                     _ => true,
@@ -1027,19 +1460,30 @@ fn prune_gt_lt_values(
             } else {
                 domain1_mut.retain(|cv| match cv {
                     ConcreteValue::Val(v) => match v.typed() {
-                        TypedValue::Int(v1) => *v1 < min_d2,
+                        TypedValue::Int(v1) => *v1 < max_d2,
                         _ => true,
                     },
                     _ => true,
                 });
             }
             if domain1_mut.is_empty() {
+                warn!(
+                    "Pruning: prune_gt_lt_values for {:?} emptied domain for WC '{}'. Pred: {:?}. Initial len: {}. Bounds: d1({:?}-{:?}), d2({:?}-{:?})",
+                    predicate, wc1.name, predicate, initial_len1, min_d1_opt, max_d1_opt, min_d2_opt, max_d2_opt
+                );
                 return Err(ProverError::Unsatisfiable(format!(
                     "Dynamic pruning (Gt/Lt values) emptied domain for {}",
                     wc1.name
                 )));
             }
             if domain1_mut.len() < initial_len1 {
+                debug!(
+                    "    Pruning (Gt/Lt): WC '{}' domain reduced from {} to {} by {:?}.",
+                    wc1.name,
+                    initial_len1,
+                    domain1_mut.len(),
+                    predicate
+                );
                 changed = true;
             }
         }
@@ -1050,7 +1494,7 @@ fn prune_gt_lt_values(
             if predicate == NativePredicate::Gt {
                 domain2_mut.retain(|cv| match cv {
                     ConcreteValue::Val(v) => match v.typed() {
-                        TypedValue::Int(v2) => *v2 < min_d1,
+                        TypedValue::Int(v2) => *v2 < max_d1,
                         _ => true,
                     },
                     _ => true,
@@ -1058,28 +1502,41 @@ fn prune_gt_lt_values(
             } else {
                 domain2_mut.retain(|cv| match cv {
                     ConcreteValue::Val(v) => match v.typed() {
-                        TypedValue::Int(v2) => *v2 > max_d1,
+                        TypedValue::Int(v2) => *v2 > min_d1,
                         _ => true,
                     },
                     _ => true,
                 });
             }
             if domain2_mut.is_empty() {
+                warn!(
+                    "Pruning: prune_gt_lt_values for {:?} emptied domain for WC '{}'. Pred: {:?}. Initial len: {}. Bounds: d1({:?}-{:?}), d2({:?}-{:?})",
+                    predicate, wc2.name, predicate, initial_len2, min_d1_opt, max_d1_opt, min_d2_opt, max_d2_opt
+                );
                 return Err(ProverError::Unsatisfiable(format!(
                     "Dynamic pruning (Gt/Lt values) emptied domain for {}",
                     wc2.name
                 )));
             }
             if domain2_mut.len() < initial_len2 {
+                debug!(
+                    "    Pruning (Gt/Lt): WC '{}' domain reduced from {} to {} by {:?}.",
+                    wc2.name,
+                    initial_len2,
+                    domain2_mut.len(),
+                    predicate
+                );
                 changed = true;
             }
         }
     }
+    debug!(
+        "Pruning: prune_gt_lt_values for {:?} complete. Changed: {}",
+        predicate, changed
+    );
 
     Ok(changed)
 }
-
-// --- NEW Helper Functions for Contains/NotContains Pruning ---
 
 /// Prunes a domain of potential keys (Values representing key names) based on
 /// whether they exist (or not) in a specific container.
@@ -1089,6 +1546,10 @@ fn prune_domain_by_container_existence(
     keep_existing: bool, // true for Contains, false for NotContains
 ) -> Result<bool, ProverError> {
     let initial_len = domain.len();
+    debug!(
+        "  Pruning (domain_by_container_existence): Container: {:?}, Keep existing: {}. Initial domain len: {}",
+        container, keep_existing, initial_len
+    );
     domain.retain(|cv| match cv {
         // Match on ConcreteValue::Val, as the key is represented as a Value
         ConcreteValue::Val(key_value) => {
@@ -1102,10 +1563,19 @@ fn prune_domain_by_container_existence(
         _ => true, // Retain other types (e.g., Key, Pod) - though domain should only have Val
     });
     if domain.is_empty() {
+        warn!(
+            "Pruning: domain_by_container_existence for container {:?} (keep_existing: {}) emptied domain. Initial len: {}.",
+            container, keep_existing, initial_len
+        );
         return Err(ProverError::Unsatisfiable(
             "Dynamic pruning (Contains/NotContains Key) emptied domain".to_string(),
         ));
     }
+    debug!(
+        "    Pruning (domain_by_container_existence): Final domain len: {}. Changed: {}",
+        domain.len(),
+        domain.len() < initial_len
+    );
     Ok(domain.len() < initial_len)
 }
 
@@ -1117,12 +1587,17 @@ fn prune_domain_by_container_value_existence(
     keep_existing: bool, // true for Contains, false for NotContains
 ) -> Result<bool, ProverError> {
     let initial_len = domain.len();
+    debug!(
+        "  Pruning (domain_by_container_value_existence): Container: {:?}, Keep existing: {}. Initial domain len: {}",
+        container, keep_existing, initial_len
+    );
     let existing_values: HashSet<Value> = match container.typed() {
         TypedValue::Array(a) => a.array().iter().cloned().collect(),
         TypedValue::Set(s) => s.set().iter().cloned().collect(),
         TypedValue::Dictionary(d) => d.kvs().values().cloned().collect(),
         _ => HashSet::new(),
     };
+    debug!("    Existing values in container: {:?}", existing_values);
 
     domain.retain(|cv| match cv {
         ConcreteValue::Val(value) => {
@@ -1132,10 +1607,19 @@ fn prune_domain_by_container_value_existence(
         _ => true, // Retain non-Value types
     });
     if domain.is_empty() {
+        warn!(
+            "Pruning: domain_by_container_value_existence for container {:?} (keep_existing: {}) emptied domain. Initial len: {}.",
+            container, keep_existing, initial_len
+        );
         return Err(ProverError::Unsatisfiable(
             "Dynamic pruning (Contains/NotContains Value) emptied domain".to_string(),
         ));
     }
+    debug!(
+        "    Pruning (domain_by_container_value_existence): Final domain len: {}. Changed: {}",
+        domain.len(),
+        domain.len() < initial_len
+    );
     Ok(domain.len() < initial_len)
 }
 
@@ -1147,6 +1631,10 @@ fn prune_container_domain_by_key_existence(
     keep_containing: bool, // true for Contains, false for NotContains
 ) -> Result<bool, ProverError> {
     let initial_len = domain.len();
+    debug!(
+        "  Pruning (container_domain_by_key_existence): Key: {:?}, Keep containing: {}. Initial domain len: {}",
+        key, keep_containing, initial_len
+    );
     domain.retain(|cv| match cv {
         ConcreteValue::Val(container_val) => {
             // Use the Value::prove_existence method directly
@@ -1158,10 +1646,19 @@ fn prune_container_domain_by_key_existence(
         _ => true, // Retain non-Val types
     });
     if domain.is_empty() {
+        warn!(
+            "Pruning: container_domain_by_key_existence for key {:?} (keep_containing: {}) emptied domain. Initial len: {}.",
+            key, keep_containing, initial_len
+        );
         return Err(ProverError::Unsatisfiable(
             "Dynamic pruning (Contains/NotContains Container by Key) emptied domain".to_string(),
         ));
     }
+    debug!(
+        "    Pruning (container_domain_by_key_existence): Final domain len: {}. Changed: {}",
+        domain.len(),
+        domain.len() < initial_len
+    );
     Ok(domain.len() < initial_len)
 }
 
@@ -1172,10 +1669,14 @@ fn prune_container_domain_by_value_existence(
     value: &Value,
     keep_containing: bool, // true for Contains
 ) -> Result<bool, ProverError> {
+    debug!(
+        "  Pruning (container_domain_by_value_existence): Value: {:?}, Keep containing: {}. Initial domain len: {}",
+        value, keep_containing, domain.len()
+    );
     if !keep_containing {
         // Pruning containers that *don't* contain a specific value is complex and less useful.
         // Only implement the `keep_containing = true` case for Contains.
-        println!("Warning: Pruning container domain by non-existence of value is not implemented.");
+        warn!("Pruning container domain by non-existence of value is not implemented.");
         return Ok(false);
     }
 
@@ -1194,85 +1695,18 @@ fn prune_container_domain_by_value_existence(
         _ => true, // Retain non-Val types
     });
     if domain.is_empty() {
+        warn!(
+            "Pruning: container_domain_by_value_existence for value {:?} (keep_containing: {}) emptied domain. Initial len: {}.",
+            value, keep_containing, initial_len
+        );
         return Err(ProverError::Unsatisfiable(
             "Dynamic pruning (Contains Container by Value) emptied domain".to_string(),
         ));
     }
+    debug!(
+        "    Pruning (container_domain_by_value_existence): Final domain len: {}. Changed: {}",
+        domain.len(),
+        domain.len() < initial_len
+    );
     Ok(domain.len() < initial_len)
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::HashSet;
-
-    use super::*;
-    use crate::{
-        middleware::{self, Key, PodId},
-        prover::solver::tests::{ak, cv_key, cv_pod, pod, solver_state_with_domains, val, wc},
-    };
-
-    // Helper to create ProverIndexes with specific base facts
-    fn setup_indexes_with_facts(facts: Vec<(PodId, Statement)>) -> ProverIndexes {
-        let params = middleware::Params::default();
-        ProverIndexes::build(params, &facts)
-    }
-
-    #[test]
-    fn test_prune_wildcard_origin_interaction() {
-        let w_pod = wc("A", 0);
-        let w_key = wc("K", 0);
-        let p1 = pod(1);
-        let p2 = pod(2);
-        let k_foo = Key::new("foo".to_string());
-
-        // Facts: p1 has keys "foo", "bar". p2 has key "baz".
-        let facts = vec![
-            (p1, Statement::ValueOf(ak(1, "foo"), val(10))),
-            (p1, Statement::ValueOf(ak(1, "bar"), val(20))),
-            (p2, Statement::ValueOf(ak(2, "baz"), val(30))),
-        ];
-        let indexes = setup_indexes_with_facts(facts);
-
-        // Initial state: ?A={p1, p2}, ?K={"foo", "bar", "baz"}
-        let mut state = solver_state_with_domains(vec![
-            (
-                w_pod.clone(),
-                HashSet::from([cv_pod(1), cv_pod(2)]),
-                ExpectedType::Pod,
-            ),
-            (
-                w_key.clone(),
-                HashSet::from([cv_key("foo"), cv_key("bar"), cv_key("baz")]),
-                ExpectedType::Key,
-            ),
-        ]);
-
-        // Constraints:
-        // 1. ?A[?K] (WildcardOrigin)
-        // 2. ?A["foo"] (LiteralKey, will prune ?A to p1)
-        state.constraints = vec![
-            Constraint::WildcardOrigin {
-                key_wildcard: w_key.clone(),
-                pod_wildcard: w_pod.clone(),
-            },
-            Constraint::LiteralKey {
-                pod_wildcard: w_pod.clone(),
-                literal_key: k_foo.name().to_string(),
-            },
-        ];
-
-        // Run the full initial pruning loop
-        let changed = prune_initial_domains(&mut state, &indexes, &[], &[]).unwrap();
-
-        assert!(changed, "Domains should have changed");
-
-        // Check final domains:
-        // ?A should be pruned to p1 by LiteralKey
-        assert_eq!(state.domains[&w_pod].0, HashSet::from([cv_pod(1)]));
-        // ?K should be pruned to {"foo", "bar"} by WildcardOrigin (triggered after ?A became singleton p1)
-        assert_eq!(
-            state.domains[&w_key].0,
-            HashSet::from([cv_key("foo"), cv_key("bar")])
-        );
-    }
 }

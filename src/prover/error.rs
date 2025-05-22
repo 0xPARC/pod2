@@ -4,6 +4,39 @@ use thiserror::Error;
 
 use crate::frontend; // Import frontend error
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeferralReason {
+    AmbiguousPrivateWildcard {
+        wildcard_name: String,
+        domain_size: usize,
+    },
+    AmbiguousSearchTarget {
+        wildcard_name: String,
+        domain_size: usize,
+    },
+    General(String),
+}
+
+impl std::fmt::Display for DeferralReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DeferralReason::AmbiguousPrivateWildcard {
+                wildcard_name,
+                domain_size,
+            } => {
+                write!(f, "Private wildcard '{}' in custom predicate scope needs resolution (not singleton, domain size: {}).", wildcard_name, domain_size)
+            }
+            DeferralReason::AmbiguousSearchTarget {
+                wildcard_name,
+                domain_size,
+            } => {
+                write!(f, "Search target wildcard '{}' needs resolution (not singleton, domain size: {}).", wildcard_name, domain_size)
+            }
+            DeferralReason::General(msg) => write!(f, "{}", msg),
+        }
+    }
+}
+
 #[derive(Error, Debug, Clone)]
 pub enum ProverError {
     #[error("I/O error: {0}")]
@@ -36,8 +69,8 @@ pub enum ProverError {
     #[error("Maximum recursion depth exceeded: {0}")]
     MaxDepthExceeded(String),
 
-    #[error("Proof deferred due to unresolved ambiguity: {0}")]
-    ProofDeferred(String),
+    #[error("Proof deferred: {0}")]
+    ProofDeferred(DeferralReason),
 }
 
 impl From<std::io::Error> for ProverError {

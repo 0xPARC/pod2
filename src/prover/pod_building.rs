@@ -6,12 +6,19 @@ use std::{
 use crate::{
     backends::plonky2::mock::mainpod::MockProver,
     frontend::{self, MainPod, MainPodBuilder, Operation as FrontendOperation, SignedPod},
-    middleware::{self, NativeOperation, OperationAux, OperationType, PodId, Statement, SELF},
+    middleware::{
+        self, KeyOrWildcard, NativeOperation, OperationAux, OperationType, PodId, Statement,
+        StatementTmplArg, Wildcard, SELF,
+    },
     op,
     prover::{
         error::ProverError,
-        solver::{self, types::ExpectedType, SolverState},
-        types::{ProofSolution, ProofStep},
+        solver::{
+            self,
+            types::{ExpectedType, GlobalContext, ResolveScope, WildcardInterpretation},
+            SolverState,
+        },
+        types::{ConcreteValue, ProofSolution, ProofStep},
     },
 };
 
@@ -84,28 +91,89 @@ pub fn build_main_pod_from_solution(
     // Generate concrete target statements from templates using final bindings
     let mut target_statements = HashSet::new();
     let final_state_for_generation = SolverState {
-        params: params.clone(),
         domains: solution
             .bindings
             .iter()
             .map(|(wc, cv)| {
+                // Determine ExpectedType based on ConcreteValue variant
                 (
                     wc.clone(),
-                    (HashSet::from([cv.clone()]), ExpectedType::Unknown),
+                    (
+                        HashSet::from([cv.clone()]),
+                        match cv {
+                            ConcreteValue::Pod(_) => ExpectedType::Pod,
+                            ConcreteValue::Key(_) => ExpectedType::Key,
+                            ConcreteValue::Val(_) => ExpectedType::Val,
+                        },
+                    ),
                 )
             })
             .collect(),
-        constraints: Vec::new(),
-        proof_chains: HashMap::new(),
-        scope: HashSet::new(),
+        proof_chains: HashMap::new(), // Not needed for statement generation from bindings
+        scope: HashSet::new(),        // Not needed for statement generation from bindings
         memoization_cache: HashMap::new(),
         active_custom_calls: HashSet::new(),
+        local_potential_constant_info: Vec::new(), // Add the missing field
+    };
+
+    // Create a ResolveScope for generating final target statements
+    let mut top_level_wildcard_interpretation_map = HashMap::new();
+    let mut all_wcs_in_request = HashSet::new();
+    for tmpl in request_templates {
+        // Replicated logic from solver::mod::get_all_wildcards_from_tmpl
+        for arg in &tmpl.args {
+            match arg {
+                StatementTmplArg::Key(w, kw_opt) => {
+                    all_wcs_in_request.insert(w.clone());
+                    if let KeyOrWildcard::Wildcard(ref kw) = kw_opt {
+                        all_wcs_in_request.insert(kw.clone());
+                    }
+                }
+                StatementTmplArg::WildcardLiteral(w) => {
+                    all_wcs_in_request.insert(w.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+    for wc in all_wcs_in_request {
+        top_level_wildcard_interpretation_map
+            .insert(wc.clone(), WildcardInterpretation::Global(wc));
+    }
+
+    let top_level_resolve_scope = ResolveScope {
+        templates_to_resolve: request_templates, // Though we iterate them directly
+        constraints: Vec::new(),                 // Not strictly needed for this generation step
+        search_targets: None,
+        wildcard_interpretation_map: top_level_wildcard_interpretation_map,
+        public_arg_bindings: None,
+        current_depth: 0, // Depth is not critical here
+        parent_custom_call_key: None,
+    };
+
+    // Construct GlobalContext for the call to try_generate_concrete_candidate_and_bindings
+    // This is a simplified construction for pod_building. A more robust solution
+    // might involve passing more context from the solver.
+    let facts_for_indexes: Vec<(PodId, Statement)> = solution.scope.iter().cloned().collect();
+    let indexes_for_pod_building =
+        crate::prover::indexing::ProverIndexes::build(params.clone(), &facts_for_indexes);
+    let custom_definitions_for_pod_building = crate::prover::types::CustomDefinitions::new(); // Assuming empty for now
+    let potential_constants_for_pod_building: Vec<(Wildcard, middleware::Key, middleware::Value)> =
+        Vec::new(); // Assuming empty
+
+    let global_context_for_pod_building = GlobalContext {
+        indexes: &indexes_for_pod_building,
+        custom_definitions: &custom_definitions_for_pod_building,
+        params,
+        potential_constant_info: &potential_constants_for_pod_building,
     };
 
     for tmpl in request_templates {
         match solver::try_generate_concrete_candidate_and_bindings(
             tmpl,
             &final_state_for_generation,
+            &top_level_resolve_scope,
+            &global_context_for_pod_building, // Pass the constructed GlobalContext
         ) {
             Ok(Some((target_stmt, _))) => {
                 target_statements.insert(target_stmt);
