@@ -373,7 +373,7 @@ impl fmt::Display for CustomPredicate {
 pub struct CustomPredicateBatch {
     id: Hash,
     pub name: String,
-    predicates: Vec<CustomPredicate>,
+    pub(crate) predicates: Vec<CustomPredicate>,
 }
 
 impl ToFields for CustomPredicateBatch {
