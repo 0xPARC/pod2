@@ -296,11 +296,12 @@ pub fn great_boy_pod_builder(
     Ok(great_boy)
 }
 
-pub fn great_boy_pod_full_flow() -> Result<MainPodBuilder> {
+pub fn great_boy_pod_full_flow() -> Result<(Params, MainPodBuilder)> {
     let params = Params {
         max_input_signed_pods: 6,
         max_statements: 100,
         max_public_statements: 50,
+        num_public_statements_id: 50,
         ..Default::default()
     };
 
@@ -349,7 +350,7 @@ pub fn great_boy_pod_full_flow() -> Result<MainPodBuilder> {
         good_boy_issuers.into_iter().map(Value::from).collect(),
     )?);
 
-    great_boy_pod_builder(
+    let builder = great_boy_pod_builder(
         &params,
         [
             &bob_good_boys[0],
@@ -360,7 +361,9 @@ pub fn great_boy_pod_full_flow() -> Result<MainPodBuilder> {
         [&alice_friend_pods[0], &alice_friend_pods[1]],
         &good_boy_issuers,
         alice,
-    )
+    )?;
+
+    Ok((params, builder))
 }
 
 // Tickets

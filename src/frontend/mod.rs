@@ -940,7 +940,7 @@ pub mod tests {
 
     #[test]
     fn test_front_great_boy() -> Result<()> {
-        let great_boy = great_boy_pod_full_flow()?;
+        let (_, great_boy) = great_boy_pod_full_flow()?;
         println!("{}", great_boy);
 
         // TODO: prove great_boy with MockProver and print it
