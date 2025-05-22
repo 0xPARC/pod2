@@ -767,8 +767,8 @@ impl CustomOperationVerifyGadget {
         // optimization: ak_id_wc_index and wc_index use the same signals, so we only need to do one
         // random access to resolve both of them
         assert_eq!(ak_id_wc_index, wc_index);
-        // optimization: the wildcard indexes have an offset of +1.  This allows us to set a fixed
-        // SELF in args[0] to resolve SelfOrWildcard::SELF encoded as a wildcard at inde x0.
+        // optimization: the wildcard indices have an offset of +1.  This allows us to set a fixed
+        // SELF in args[0] to resolve SelfOrWildcard::SELF encoded as a wildcard at index 0.
         let value_self = ValueTarget::from_slice(&builder.constants(&SELF.0 .0));
         let args = iter::once(value_self)
             .chain(args.iter().cloned())
