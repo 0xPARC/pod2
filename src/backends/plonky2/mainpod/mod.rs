@@ -10,7 +10,7 @@ use plonky2::{
     iop::witness::PartialWitness,
     plonk::{
         circuit_builder::CircuitBuilder,
-        circuit_data::{CircuitConfig, CommonCircuitData},
+        circuit_data::{CircuitConfig, CommonCircuitData, ProverCircuitData},
         config::Hasher,
         proof::{Proof, ProofWithPublicInputs},
     },
@@ -23,15 +23,17 @@ use crate::{
         basetypes::{C, D},
         circuits::mainpod::{
             CustomPredicateVerification, MainPodVerifyCircuit, MainPodVerifyInput,
+            MainPodVerifyTarget, NUM_PUBLIC_INPUTS,
         },
         error::{Error, Result},
         primitives::merkletree::MerkleClaimAndProof,
+        recursion::{self, RecursiveCircuit},
         signedpod::SignedPod,
     },
     middleware::{
         self, resolve_wildcard_values, AnchoredKey, CustomPredicateBatch, DynError, Hash,
         MainPodInputs, NativeOperation, NonePod, OperationType, Params, Pod, PodId, PodProver,
-        PodType, StatementArg, ToFields, F, KEY_TYPE, SELF,
+        PodType, StatementArg, ToFields, EMPTY_HASH, F, KEY_TYPE, SELF,
     },
 };
 
@@ -402,10 +404,24 @@ impl Prover {
     fn _prove(&mut self, params: &Params, inputs: MainPodInputs) -> Result<MainPod> {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
-        let main_pod = MainPodVerifyCircuit {
-            params: params.clone(),
-        }
-        .eval(&mut builder)?;
+
+        // TODO: Cache this somehow
+        let rec_params = recursion::new_params::<MainPodVerifyTarget>(
+            params.max_input_main_pods,
+            NUM_PUBLIC_INPUTS,
+            params,
+        )?;
+        let main_pod_target = RecursiveCircuit::<MainPodVerifyTarget>::build_targets(
+            &mut builder,
+            &rec_params,
+            params,
+        )?;
+        let prover: ProverCircuitData<F, C, D> = builder.build_prover::<C>();
+        let main_pod = RecursiveCircuit {
+            params: rec_params,
+            prover,
+            target: main_pod_target,
+        };
 
         let mut pw = PartialWitness::<F>::new();
         let signed_pods_input: Vec<SignedPod> = inputs
@@ -415,6 +431,17 @@ impl Prover {
                 let p = (*p as &dyn Any)
                     .downcast_ref::<SignedPod>()
                     .expect("type SignedPod");
+                p.clone()
+            })
+            .collect_vec();
+
+        let main_pods_input: Vec<MainPod> = inputs
+            .main_pods
+            .iter()
+            .map(|p| {
+                let p = (*p as &dyn Any)
+                    .downcast_ref::<MainPod>()
+                    .expect("type MainPod");
                 p.clone()
             })
             .collect_vec();
@@ -443,18 +470,18 @@ impl Prover {
         let id: PodId = PodId(calculate_id(&public_statements, params));
 
         let input = MainPodVerifyInput {
+            vds_root: EMPTY_HASH, // TODO
             signed_pods: signed_pods_input,
+            main_pods: main_pods_input,
             statements: statements[statements.len() - params.max_statements..].to_vec(),
             operations,
             merkle_proofs,
             custom_predicate_batches,
             custom_predicate_verifications,
         };
-        main_pod.set_targets(&mut pw, &input)?;
-
-        // generate & verify proof
-        let data = builder.build::<C>();
-        let proof_with_pis = data.prove(pw)?;
+        let proofs = todo!();
+        let verifier_datas = todo!();
+        let proof_with_pis = main_pod.prove(&input, proofs, verifier_datas)?;
 
         Ok(MainPod {
             params: params.clone(),
@@ -509,16 +536,13 @@ pub(crate) fn normalize_statement(statement: &Statement, self_id: PodId) -> midd
 // as a constant or with static initialization, but in the meantime we can
 // generate it on-demand.
 fn get_common_data(params: &Params) -> Result<CommonCircuitData<F, D>, Error> {
-    let config = CircuitConfig::standard_recursion_config();
-    let mut builder = CircuitBuilder::<F, D>::new(config);
-    let _main_pod = MainPodVerifyCircuit {
-        params: params.clone(),
-    }
-    .eval(&mut builder)
-    .map_err(|e| Error::custom(format!("Failed to evaluate MainPodVerifyCircuit: {}", e)))?;
-
-    let data = builder.build::<C>();
-    Ok(data.common)
+    // TODO: Cache this somehow
+    let rec_params = recursion::new_params::<MainPodVerifyTarget>(
+        params.max_input_main_pods,
+        NUM_PUBLIC_INPUTS,
+        params,
+    )?;
+    Ok(rec_params.common_data().clone())
 }
 
 impl MainPod {
@@ -531,19 +555,18 @@ impl MainPod {
 
         // 1, 3, 4, 5 verification via the zkSNARK proof
         // TODO: cache these artefacts
-        let config = CircuitConfig::standard_recursion_config();
-        let mut builder = CircuitBuilder::<F, D>::new(config);
-        let _main_pod = MainPodVerifyCircuit {
-            params: self.params.clone(),
-        }
-        .eval(&mut builder)?;
-
-        let data = builder.build::<C>();
-        data.verify(ProofWithPublicInputs {
-            proof: self.proof.clone(),
-            public_inputs: id.to_fields(&self.params),
-        })
-        .map_err(|e| Error::custom(format!("MainPod proof verification failure: {:?}", e)))
+        let rec_params = recursion::new_params::<MainPodVerifyTarget>(
+            self.params.max_input_main_pods,
+            NUM_PUBLIC_INPUTS,
+            &self.params,
+        )?;
+        rec_params
+            .verifier_data()
+            .verify(ProofWithPublicInputs {
+                proof: self.proof.clone(),
+                public_inputs: id.to_fields(&self.params),
+            })
+            .map_err(|e| Error::custom(format!("MainPod proof verification failure: {:?}", e)))
     }
 
     pub fn proof(&self) -> MainPodProof {

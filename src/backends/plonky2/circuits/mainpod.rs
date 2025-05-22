@@ -10,7 +10,7 @@ use plonky2::{
     },
     iop::{
         target::{BoolTarget, Target},
-        witness::PartialWitness,
+        witness::{PartialWitness, WitnessWrite},
     },
     plonk::{circuit_builder::CircuitBuilder, config::AlgebraicHasher},
 };
@@ -29,7 +29,7 @@ use crate::{
             signedpod::{SignedPodVerifyGadget, SignedPodVerifyTarget},
         },
         error::Result,
-        mainpod::{self, pad_statement},
+        mainpod::{self, pad_statement, MainPod},
         primitives::merkletree::{
             MerkleClaimAndProof, MerkleClaimAndProofTarget, MerkleProofGadget,
         },
@@ -38,15 +38,22 @@ use crate::{
     },
     measure_gates_begin, measure_gates_end,
     middleware::{
-        AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, NativeOperation,
-        NativePredicate, Params, PodType, PredicatePrefix, Statement, StatementArg, ToFields,
-        Value, WildcardValue, F, KEY_TYPE, SELF, VALUE_SIZE,
+        AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash,
+        NativeOperation, NativePredicate, Params, Pod, PodType, PredicatePrefix, Statement,
+        StatementArg, ToFields, Value, WildcardValue, F, KEY_TYPE, SELF, VALUE_SIZE,
     },
 };
 
 //
 // MainPod verification
 //
+
+/// Offset in public inputs where we store the pod id
+const PI_OFFSET_ID: usize = 0;
+/// Offset in public inputs where we store the verified data array root
+const PI_OFFSET_VDSROOT: usize = 4;
+
+pub const NUM_PUBLIC_INPUTS: usize = 8;
 
 struct OperationVerifyGadget {
     params: Params,
@@ -1105,6 +1112,8 @@ impl MainPodVerifyGadget {
         builder: &mut CircuitBuilder<F, D>,
         verified_proofs: &[VerifiedProofTarget],
     ) -> Result<MainPodVerifyTarget> {
+        assert_eq!(self.params.max_input_main_pods, verified_proofs.len());
+
         let measure = measure_gates_begin!(builder, "MainPodVerify");
         let params = &self.params;
         // 1. Verify all input signed pods
@@ -1131,16 +1140,37 @@ impl MainPodVerifyGadget {
             statements.len(),
             1 + self.params.max_input_signed_pods * self.params.max_signed_pod_values
         );
-        // TODO: Fill with input main pods
-        for _main_pod in 0..self.params.max_input_main_pods {
-            for _statement in 0..self.params.max_public_statements {
-                statements.push(StatementTarget::new_native(
-                    builder,
-                    &self.params,
-                    NativePredicate::None,
-                    &[],
-                ))
+
+        let id_gadget = CalculateIdGadget {
+            params: params.clone(),
+        };
+        let mut input_pods_statements: Vec<Vec<StatementTarget>> = Vec::new();
+        for verified_proof in verified_proofs {
+            let mut input_pod_statements = Vec::new();
+            for _statement in 0..self.params.num_public_statements_id {
+                let st = builder.add_virtual_statement(params);
+                statements.push(st.clone());
+                input_pod_statements.push(st);
             }
+            let id = id_gadget.eval(builder, &input_pod_statements);
+            let expected_id = HashOutTarget::try_from(
+                &verified_proof.public_inputs[PI_OFFSET_ID..PI_OFFSET_ID + 4],
+            )
+            .expect("4 elements");
+            builder.connect_hashes(expected_id, id);
+            input_pods_statements.push(input_pod_statements);
+        }
+
+        let vds_root = builder.add_virtual_hash();
+        // TODO: verify that all input pod proofs use verifier data from the public input VD array
+
+        // Verify that VD array that input pod uses is the same we use now.
+        for verified_proof in verified_proofs {
+            let verified_proof_vds_root = HashOutTarget::try_from(
+                &verified_proof.public_inputs[PI_OFFSET_VDSROOT..PI_OFFSET_VDSROOT + 4],
+            )
+            .expect("4 elements");
+            builder.connect_hashes(vds_root, verified_proof_vds_root);
         }
 
         // Add the input (private and public) statements and corresponding operations
@@ -1219,8 +1249,10 @@ impl MainPodVerifyGadget {
         measure_gates_end!(builder, measure);
         Ok(MainPodVerifyTarget {
             params: params.clone(),
+            vds_root,
             id,
             signed_pods,
+            input_pods_statements,
             statements: input_statements.to_vec(),
             operations,
             merkle_proofs,
@@ -1232,8 +1264,10 @@ impl MainPodVerifyGadget {
 
 pub struct MainPodVerifyTarget {
     params: Params,
+    vds_root: HashOutTarget,
     id: HashOutTarget,
     signed_pods: Vec<SignedPodVerifyTarget>,
+    input_pods_statements: Vec<Vec<StatementTarget>>,
     // The KEY_TYPE statement must be the first public one
     statements: Vec<StatementTarget>,
     operations: Vec<OperationTarget>,
@@ -1250,12 +1284,36 @@ pub struct CustomPredicateVerification {
 }
 
 pub struct MainPodVerifyInput {
+    pub vds_root: Hash,
     pub signed_pods: Vec<SignedPod>,
+    pub main_pods: Vec<MainPod>,
     pub statements: Vec<mainpod::Statement>,
     pub operations: Vec<mainpod::Operation>,
     pub merkle_proofs: Vec<MerkleClaimAndProof>,
     pub custom_predicate_batches: Vec<Arc<CustomPredicateBatch>>,
     pub custom_predicate_verifications: Vec<CustomPredicateVerification>,
+}
+
+fn set_targets_in_statements(
+    pw: &mut PartialWitness<F>,
+    params: &Params,
+    statements_target: &[StatementTarget],
+    statements: &[Statement],
+) -> Result<()> {
+    assert_eq!(statements_target.len(), params.num_public_statements_id);
+
+    assert!(statements.len() <= params.num_public_statements_id);
+    // Front-padding (so that the id calculation matches with dynamic size)
+    let mut none_st = mainpod::Statement::from(Statement::None);
+    pad_statement(params, &mut none_st);
+    for i in 0..params.num_public_statements_id - statements.len() {
+        statements_target[i].set_targets(pw, params, &none_st)?;
+    }
+    for (i, statement) in statements.iter().enumerate() {
+        let i = i + statements.len();
+        statements_target[i].set_targets(pw, params, &statement.clone().into())?;
+    }
+    Ok(())
 }
 
 impl MainPodVerifyTarget {
@@ -1264,6 +1322,8 @@ impl MainPodVerifyTarget {
         pw: &mut PartialWitness<F>,
         input: &MainPodVerifyInput,
     ) -> Result<()> {
+        pw.set_target_arr(&self.vds_root.elements, &input.vds_root.0);
+
         assert!(input.signed_pods.len() <= self.params.max_input_signed_pods);
         for (i, signed_pod) in input.signed_pods.iter().enumerate() {
             self.signed_pods[i].set_targets(pw, signed_pod)?;
@@ -1278,6 +1338,32 @@ impl MainPodVerifyTarget {
                 self.signed_pods[i].set_targets(pw, pad_pod)?;
             }
         }
+
+        assert!(input.main_pods.len() <= self.params.max_input_main_pods);
+        for (i, main_pod) in input.main_pods.iter().enumerate() {
+            set_targets_in_statements(
+                pw,
+                &self.params,
+                &self.input_pods_statements[i],
+                &main_pod.pub_statements(),
+            )?;
+        }
+        // Padding
+        if self.params.max_input_main_pods > 0 {
+            // TODO: Instead of using an input for padding, use a canonical minimal MainPod,
+            // without it a MainPod configured to support input signed pods must have at least one
+            // input signed pod :(
+            let pad_pod = &input.main_pods[0];
+            for i in input.main_pods.len()..self.params.max_input_signed_pods {
+                set_targets_in_statements(
+                    pw,
+                    &self.params,
+                    &self.input_pods_statements[i],
+                    &pad_pod.pub_statements(),
+                )?;
+            }
+        }
+
         assert_eq!(input.statements.len(), self.params.max_statements);
         for (i, (st, op)) in zip_eq(&input.statements, &input.operations).enumerate() {
             self.statements[i].set_targets(pw, &self.params, st)?;
@@ -1353,6 +1439,7 @@ impl MainPodVerifyCircuit {
         }
         .eval(builder, verified_proofs)?;
         builder.register_public_inputs(&main_pod.id.elements);
+        builder.register_public_inputs(&main_pod.vds_root.elements);
         Ok(main_pod)
     }
 }

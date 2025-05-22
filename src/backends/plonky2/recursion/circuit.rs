@@ -81,8 +81,17 @@ pub struct RecursiveParams {
     /// determines the arity of the RecursiveCircuit
     arity: usize,
     common_data: CommonCircuitData<F, D>,
+    verifier_data: VerifierCircuitData<F, C, D>,
     dummy_proof_pi: ProofWithPublicInputs<F, C, D>,
-    dummy_verifier_data: VerifierCircuitData<F, C, D>,
+}
+
+impl RecursiveParams {
+    pub fn common_data(&self) -> &CommonCircuitData<F, D> {
+        &self.common_data
+    }
+    pub fn verifier_data(&self) -> &VerifierCircuitData<F, C, D> {
+        &self.verifier_data
+    }
 }
 
 pub fn new_params<I: InnerCircuit>(
@@ -98,15 +107,15 @@ pub fn new_params<I: InnerCircuit>(
         arity,
         common_data,
         dummy_proof_pi,
-        dummy_verifier_data: verifier_data,
+        verifier_data,
     })
 }
 
 /// RecursiveCircuit defines the circuit that verifies `arity` proofs.
 pub struct RecursiveCircuit<I: InnerCircuit> {
-    params: RecursiveParams,
-    prover: ProverCircuitData<F, C, D>,
-    targets: RecursiveCircuitTarget<I>,
+    pub(crate) params: RecursiveParams,
+    pub(crate) prover: ProverCircuitData<F, C, D>,
+    pub(crate) target: RecursiveCircuitTarget<I>,
 }
 
 #[derive(Clone, Debug)]
@@ -121,14 +130,14 @@ pub struct RecursiveCircuitTarget<I: InnerCircuit> {
 impl<I: InnerCircuit> RecursiveCircuit<I> {
     pub fn prove(
         &mut self,
-        inner_inputs: I::Input,
+        inner_inputs: &I::Input,
         proofs: Vec<ProofWithPublicInputs<F, C, D>>,
         verifier_datas: Vec<VerifierCircuitData<F, C, D>>,
     ) -> Result<ProofWithPublicInputs<F, C, D>> {
         let mut pw = PartialWitness::new();
         self.set_targets(
             &mut pw,
-            inner_inputs, // innercircuit_input
+            &inner_inputs, // innercircuit_input
             proofs,
             verifier_datas,
         )?;
@@ -149,12 +158,12 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         Ok(Self {
             params: params.clone(),
             prover,
-            targets,
+            target: targets,
         })
     }
 
     /// builds the targets
-    fn build_targets(
+    pub fn build_targets(
         builder: &mut CircuitBuilder<F, D>,
         params: &RecursiveParams,
         inner_params: &I::Params,
@@ -231,7 +240,7 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
     fn set_targets(
         &mut self,
         pw: &mut PartialWitness<F>,
-        innercircuit_input: I::Input,
+        innercircuit_input: &I::Input,
         recursive_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
         verifier_datas: Vec<VerifierCircuitData<F, C, D>>,
     ) -> Result<()> {
@@ -251,28 +260,28 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
 
         // fill the missing verifier_datas with dummy_verifier_datas
         let dummy_verifier_datas: Vec<VerifierCircuitData<F, C, D>> = (n..self.params.arity)
-            .map(|_| self.params.dummy_verifier_data.clone())
+            .map(|_| self.params.verifier_data.clone())
             .collect();
         let verifier_datas: Vec<VerifierCircuitData<F, C, D>> =
             [verifier_datas, dummy_verifier_datas].concat();
 
         // set the first n selectors to true, and the rest to false
         for i in 0..n {
-            pw.set_bool_target(self.targets.selectors_targ[i], true)?;
+            pw.set_bool_target(self.target.selectors_targ[i], true)?;
         }
         for i in n..self.params.arity {
-            pw.set_bool_target(self.targets.selectors_targ[i], false)?;
+            pw.set_bool_target(self.target.selectors_targ[i], false)?;
         }
 
         // set the InnerCircuit related values
-        self.targets
+        self.target
             .innercircuit_targ
-            .set_targets(pw, &innercircuit_input)?;
+            .set_targets(pw, innercircuit_input)?;
 
         #[allow(clippy::needless_range_loop)]
         for i in 0..self.params.arity {
             pw.set_verifier_data_target(
-                &self.targets.verifier_datas_targ[i],
+                &self.target.verifier_datas_targ[i],
                 &verifier_datas[i].verifier_only,
             )?;
 
@@ -283,7 +292,7 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
             //     recursive_proofs_inp[i].clone(),
             // );
 
-            pw.set_proof_with_pis_target(&self.targets.proofs_targ[i], &recursive_proofs[i])?;
+            pw.set_proof_with_pis_target(&self.target.proofs_targ[i], &recursive_proofs[i])?;
         }
 
         // vds_hash is returned since it will be used as public input to verify
@@ -313,7 +322,7 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
             arity,
             common_data,
             dummy_proof_pi,
-            dummy_verifier_data: verifier_data,
+            verifier_data,
         };
 
         // build the actual RecursiveCircuit circuit data

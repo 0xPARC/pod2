@@ -578,6 +578,8 @@ impl fmt::Display for PodType {
 #[serde(rename_all = "camelCase")]
 pub struct Params {
     pub max_input_signed_pods: usize,
+    // TODO: In the future, rename this to max_input_plonky2_pods to generalize this to include
+    // MainPods but also introduction gadget pods.
     pub max_input_main_pods: usize,
     pub max_statements: usize,
     pub max_signed_pod_values: usize,

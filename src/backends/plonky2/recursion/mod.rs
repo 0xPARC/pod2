@@ -1,2 +1,4 @@
 pub mod circuit;
-pub use circuit::{InnerCircuit, RecursiveCircuit, RecursiveParams, VerifiedProofTarget};
+pub use circuit::{
+    new_params, InnerCircuit, RecursiveCircuit, RecursiveParams, VerifiedProofTarget,
+};
