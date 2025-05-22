@@ -1,21 +1,21 @@
-use pest::{iterators::Pairs, Parser};
+use pest::{iterators::Pairs as PestPairs, Parser};
 use pest_derive::Parser;
 
-// Link to the grammar file
+// Derive the parser from the grammar file
+// The Rust analyzer will only reload the grammar file when *this* file is recompiled,
+// and changes to the grammar file will not automatically trigger a recompile.
 #[derive(Parser)]
 #[grammar = "lang/grammar.pest"]
 pub struct PodlogParser;
 
-// Enum of possible parsing errors (can be expanded later)
-// Using thiserror for structured errors
+pub type Pairs<'a, R> = PestPairs<'a, R>;
+
 #[derive(thiserror::Error, Debug)]
 pub enum ParseError {
     #[error("Pest parsing error: {0}")]
-    Pest(#[from] Box<pest::error::Error<Rule>>),
-    // Add more specific semantic errors later if needed during AST construction
+    Pest(Box<pest::error::Error<Rule>>),
 }
 
-// Implement From so `?` can convert the original error to the Boxed version
 impl From<pest::error::Error<Rule>> for ParseError {
     fn from(err: pest::error::Error<Rule>) -> Self {
         ParseError::Pest(Box::new(err))
@@ -23,22 +23,15 @@ impl From<pest::error::Error<Rule>> for ParseError {
 }
 
 /// Parses a Podlog input string according to the grammar rules.
-///
-/// Returns a Result containing the parsed pairs or a ParseError.
 pub fn parse_podlog(input: &str) -> Result<Pairs<'_, Rule>, ParseError> {
     let pairs = PodlogParser::parse(Rule::document, input)?;
-    // The result of parse is Pairs<'i, Rule>
-    // At this stage, we just return the successful parse result (Pairs)
-    // or the Pest error wrapped in our ParseError.
     Ok(pairs)
 }
 
-// Basic test module
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // Helper function to check if a string parses successfully for a given rule
     fn assert_parses(rule: Rule, input: &str) {
         match PodlogParser::parse(rule, input) {
             Ok(_) => (), // Successfully parsed
@@ -46,7 +39,6 @@ mod tests {
         }
     }
 
-    // Helper function to check if a string fails to parse for a given rule
     fn assert_fails(rule: Rule, input: &str) {
         match PodlogParser::parse(rule, input) {
             Ok(pairs) => panic!(
@@ -82,21 +74,23 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_variable() {
-        assert_parses(Rule::variable, "?Var");
-        assert_parses(Rule::variable, "?_Internal");
-        assert_parses(Rule::variable, "?X1");
-        assert_fails(Rule::test_variable, "NotAVar"); // Use test rule
-        assert_fails(Rule::test_variable, "?"); // Use test rule
-        assert_fails(Rule::test_variable, "?invalid-char"); // Use test rule
+    fn test_parse_wildcard() {
+        assert_parses(Rule::wildcard, "?Var");
+        assert_parses(Rule::wildcard, "?_Internal");
+        assert_parses(Rule::wildcard, "?X1");
+        assert_fails(Rule::test_wildcard, "NotAVar"); // Use test rule
+        assert_fails(Rule::test_wildcard, "?"); // Use test rule
+        assert_fails(Rule::test_wildcard, "?invalid-char"); // Use test rule
     }
 
     #[test]
     fn test_parse_anchored_key() {
         assert_parses(Rule::anchored_key, "?PodVar[\"literal_key\"]");
         assert_parses(Rule::anchored_key, "?PodVar[?KeyVar]");
-        assert_fails(Rule::anchored_key, "PodVar[\"key\"]"); // Needs variable for pod
-        assert_fails(Rule::anchored_key, "?PodVar[invalid_key]"); // Key must be literal string or var
+        assert_parses(Rule::anchored_key, "SELF[?KeyVar]");
+        assert_parses(Rule::anchored_key, "SELF[\"literal_key\"]");
+        assert_fails(Rule::anchored_key, "PodVar[\"key\"]"); // Needs wildcard for pod
+        assert_fails(Rule::anchored_key, "?PodVar[invalid_key]"); // Key must be literal string or wildcard
         assert_fails(Rule::anchored_key, "?PodVar[]"); // Key cannot be empty
     }
 
@@ -111,20 +105,23 @@ mod tests {
         assert_parses(Rule::literal_bool, "true");
         assert_parses(Rule::literal_bool, "false");
 
-        // Raw - Allow any even number of hex digits >= 2
-        assert_parses(Rule::literal_raw, "0x00"); // 2 digits is 1 pair
-        assert_parses(Rule::literal_raw, "0xabcd");
-        assert_parses(Rule::literal_raw, "0xDEADbeef0123");
-        let long_valid_raw = format!("0x{}", "a".repeat(64)); // 64 is even
+        // Raw - Require 64 hex digits
+        assert_parses(
+            Rule::literal_raw,
+            "0x0000000000000000000000000000000000000000000000000000000000000000",
+        );
+        assert_parses(
+            Rule::literal_raw,
+            "0xabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd",
+        );
+        let long_valid_raw = format!("0x{}", "a".repeat(64));
         assert_parses(Rule::literal_raw, &long_valid_raw);
 
         // Use anchored rule for failure cases
-        assert_fails(Rule::test_literal_raw, "0xabc"); // Fails (odd number of digits)
-        assert_fails(Rule::test_literal_raw, "0x1"); // Fails (odd number of digits)
+        assert_fails(Rule::test_literal_raw, "0xabc"); // Fails (string is too short)
         assert_fails(Rule::test_literal_raw, "0x"); // Fails (needs at least one pair)
         assert_fails(Rule::test_literal_raw, "0xGG"); // Fails (invalid hex chars)
-                                                      // assert_fails(Rule::test_literal_raw, &format!("0x{}", "a".repeat(62))); // This should pass now
-                                                      // assert_fails(Rule::test_literal_raw, &format!("0x{}", "a".repeat(66))); // This should pass now
+        assert_fails(Rule::test_literal_raw, &format!("0x{}", "a".repeat(66))); // Fails (string is too long)
 
         // String
         assert_parses(Rule::literal_string, "\"hello\"");
@@ -135,17 +132,23 @@ mod tests {
         // Array
         assert_parses(Rule::literal_array, "[]");
         assert_parses(Rule::literal_array, "[1, \"two\", true]");
-        assert_parses(Rule::literal_array, "[ [1], #[2] ]"); // Nested
-                                                             // Set
+        assert_parses(Rule::literal_array, "[ [1], #[2] ]");
+        // Set
         assert_parses(Rule::literal_set, "#[]");
         assert_parses(Rule::literal_set, "#[1, 2, 3]");
-        assert_parses(Rule::literal_set, "#[ \"a\", 0x0102 ]"); // Use even digits
-                                                                // Dict
+        assert_parses(
+            Rule::literal_set,
+            "#[ \"a\", 0x0000000000000000000000000000000000000000000000000000000000000000 ]",
+        );
+        // Dict
         assert_parses(Rule::literal_dict, "{}");
         assert_parses(Rule::literal_dict, "{ \"name\": \"Alice\", \"age\": 30 }");
         assert_parses(Rule::literal_dict, "{ \"nested\": { \"key\": 1 } }");
-        assert_parses(Rule::literal_dict, "{ \"raw_val\": 0xab } "); // Use even digits
-        assert_fails(Rule::literal_dict, "{ name: \"Alice\" }"); // Key must be string literal
+        assert_parses(
+            Rule::literal_dict,
+            "{ \"raw_val\": 0x0000000000000000000000000000000000000000000000000000000000000000 } ",
+        );
+        assert_fails(Rule::literal_dict, "{ name: \"Alice\" }"); // Key must be string literal with quotes
     }
 
     #[test]
@@ -203,74 +206,6 @@ mod tests {
                 is_valid_user(?SomeUser)
                 Equal(?SomeUser["country"], ?Other["country"])
             )"#,
-        );
-    }
-
-    #[test]
-    fn test_custom_call() {
-        assert_parses(Rule::custom_predicate_call, "my_pred()"); // No args
-        assert_parses(Rule::custom_predicate_call, "pred_one(?A)"); // One var arg
-        assert_parses(Rule::custom_predicate_call, "pred_lit(123)"); // One lit arg
-        assert_fails(Rule::test_custom_predicate_call, "pred_ak(?P[\"k\"])"); // Should fail now
-        assert_parses(
-            Rule::custom_predicate_call,
-            "pred_mixed(?A, 123, \"lit\", #[])", // Removed AK arg
-        ); // Mixed args (Var, Lit, Lit, Lit)
-        assert_fails(
-            Rule::test_custom_predicate_call,
-            "pred_fail(?A, ?P[\"k\"])", // Should fail with AK
-        );
-    }
-
-    #[test]
-    fn test_parser_rejects_keyword_as_predicate_name() {
-        // Should fail defining a predicate named like a native statement
-        assert_fails(
-            Rule::test_custom_predicate_def,
-            r#"Equal(A) = AND( Lt(?A["x"], ?A["y"]) )"#,
-            // "Parser should reject native keyword 'Equal' as custom predicate name"
-        );
-        assert_fails(
-            Rule::test_custom_predicate_def,
-            "valueOf(X, Y) = OR( Lt(?X, ?Y) )", // Check different case variation if needed later
-                                                // "Parser should reject 'valueOf' (even if case differs) if grammar was case-insensitive"
-        );
-        assert_fails(
-            Rule::test_custom_predicate_def,
-            "Gt() = AND()",
-            // "Parser should reject native keyword 'Gt' as custom predicate name"
-        );
-
-        // Should fail calling a predicate named like a native statement using the test rule
-        assert_fails(
-            Rule::test_custom_predicate_call,
-            "Lt()",
-            // "Parser should reject native keyword 'Lt' in a custom call context"
-        );
-        assert_fails(
-            Rule::test_custom_predicate_call,
-            "Contains(?A, ?B)",
-            // "Parser should reject native keyword 'Contains' in a custom call context"
-        );
-
-        // Should also fail within a REQUEST block
-        assert_fails(
-            Rule::document, // Test within the context of a document
-            "REQUEST( Equal(?X) )", // Assuming Equal(?X) doesn't match native Equal due to args
-                            // It should fail because Equal is not a valid predicate_identifier here.
-                            // "Parser should reject native keyword 'Equal' as custom call inside REQUEST"
-        );
-
-        // Valid cases (should parse)
-        assert_parses(
-            Rule::custom_predicate_def,
-            r#"MyEqual(A) = AND( Equal(?A["foo"], ?A["bar"]) )"#,
-        );
-        assert_parses(Rule::test_custom_predicate_call, "my_Lt()");
-        assert_parses(Rule::document, "REQUEST( some_pred() )");
-        assert_parses(
-            Rule::document,
-            r#"pred(X) = AND( Equal(?X["foo"], ?X["bar"]) ) REQUEST( pred(?A) ) "#,
         );
     }
 }

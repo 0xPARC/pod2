@@ -1,154 +1,217 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     sync::Arc,
 };
 
-use hex;
+use pest::iterators::{Pair, Pairs};
 use plonky2::field::types::Field;
 
+use super::error::ProcessorError;
 use crate::{
-    lang::ast::{self, TopLevelDefinition},
+    frontend::{
+        BuilderArg, CustomPredicateBatchBuilder, KeyOrWildcardStr, SelfOrWildcardStr,
+        StatementTmplBuilder,
+    },
+    lang::parser::Rule,
     middleware::{
-        self, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key, KeyOrWildcard,
-        NativePredicate, Params, Predicate, StatementTmpl, StatementTmplArg, Value, Wildcard, F,
-        VALUE_SIZE,
+        self, CustomPredicateBatch, CustomPredicateRef, Key, KeyOrWildcard, NativePredicate,
+        Params, Predicate, SelfOrWildcard as MiddlewareSelfOrWildcard, StatementTmpl,
+        StatementTmplArg, Value, Wildcard, F, VALUE_SIZE,
     },
 };
 
-/// Errors that can occur during the processing of Podlog AST into middleware structures.
-#[derive(thiserror::Error, Debug)]
-pub enum ProcessorError {
-    #[error("Semantic error: {0}")]
-    Semantic(String),
-    #[error("Undefined identifier: {0}")]
-    UndefinedIdentifier(String),
-    #[error("Duplicate definition: {0}")]
-    DuplicateDefinition(String),
-    #[error("Duplicate variable: ?{0}")]
-    DuplicateVariable(String),
-    #[error("Expected {expected}, found {found}")]
-    TypeError { expected: String, found: String },
-    #[error("Invalid argument count for {predicate}: expected {expected}, found {found}")]
-    ArgumentCountMismatch {
-        predicate: String,
-        expected: usize,
-        found: usize,
-    },
-    #[error("Multiple REQUEST definitions found. Only one is allowed.")]
-    MultipleRequestDefinitions,
-    #[error("Internal processing error: {0}")]
-    Internal(String),
-    #[error("Middleware error: {0}")]
-    Middleware(#[from] middleware::Error),
+fn get_span(pair: &Pair<Rule>) -> (usize, usize) {
+    let span = pair.as_span();
+    (span.start(), span.end())
 }
 
-/// Result of processing a Podlog document.
-/// Contains the batch of custom predicates and the request statement templates.
+pub fn native_predicate_from_string_case_insensitive(s: &str) -> Option<NativePredicate> {
+    match s.to_lowercase().as_str() {
+        "valueof" => Some(NativePredicate::ValueOf),
+        "equal" => Some(NativePredicate::Equal),
+        "notequal" => Some(NativePredicate::NotEqual),
+        // Syntactic sugar for Gt/GtEq is handled at a later stage
+        "gt" => Some(NativePredicate::Gt),
+        "gteq" => Some(NativePredicate::GtEq),
+        "lt" => Some(NativePredicate::Lt),
+        "lteq" => Some(NativePredicate::LtEq),
+        "contains" => Some(NativePredicate::Contains),
+        "notcontains" => Some(NativePredicate::NotContains),
+        "sumof" => Some(NativePredicate::SumOf),
+        "productof" => Some(NativePredicate::ProductOf),
+        "maxof" => Some(NativePredicate::MaxOf),
+        "hashof" => Some(NativePredicate::HashOf),
+        "dictcontains" => Some(NativePredicate::DictContains),
+        "dictnotcontains" => Some(NativePredicate::DictNotContains),
+        "arraycontains" => Some(NativePredicate::ArrayContains),
+        "setcontains" => Some(NativePredicate::SetContains),
+        "setnotcontains" => Some(NativePredicate::SetNotContains),
+        "none" => Some(NativePredicate::None),
+        "false" => Some(NativePredicate::False),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProcessedOutput {
-    /// The batch containing all custom predicate definitions
     pub custom_batch: Arc<CustomPredicateBatch>,
-    /// Statement templates that form the main request
     pub request_templates: Vec<StatementTmpl>,
 }
 
-/// Maintains state during the processing phase.
-/// Used to track predicate signatures and validate references.
 struct ProcessingContext<'a> {
-    /// Parameters for middleware validation
     params: &'a Params,
-    /// Maps predicate names to their batch index and public argument count
+    /// Maps predicate names to their batch index and public argument count (from Pass 1)
     custom_predicate_signatures: HashMap<String, (usize, usize)>,
+    /// Stores the original Pest pairs for custom predicate definitions for Pass 2
+    custom_predicate_pairs: Vec<Pair<'a, Rule>>,
+    /// Stores the original Pest pair for the request definition for Pass 2
+    request_pair: Option<Pair<'a, Rule>>,
 }
 
-/// Maintains state for a single definition scope (predicate or request).
-/// Used to track variable bindings and generate wildcards.
-struct ScopeContext<'a> {
-    /// Reference to the global processing context
-    processing_ctx: &'a ProcessingContext<'a>,
-    /// Maps variable names to their wildcard definitions.
-    /// BTreeMap ensures deterministic iteration order.
-    variables: BTreeMap<String, Wildcard>,
-    /// Next available index for wildcard generation
-    next_wildcard_index: usize,
-}
-
-/// Processes a Podlog AST into middleware structures.
-///
-/// The processing happens in two phases:
-/// 1. First pass collects all predicate signatures to enable forward references
-/// 2. Second pass processes predicate bodies and request templates
-///
-/// This two-pass approach allows predicates to reference each other regardless of definition order.
-/// The processor also validates:
-/// - Uniqueness of predicate names and variables
-/// - Correct argument counts for predicate calls
-/// - Existence of referenced variables and predicates
-/// - Compliance with middleware parameter limits
-pub fn process_document(
-    document: ast::Document,
+pub fn process_pest_tree(
+    mut pairs_iterator_for_document_rule: Pairs<'_, Rule>,
     params: &Params,
 ) -> Result<ProcessedOutput, ProcessorError> {
-    let mut custom_definitions = Vec::new();
-    let mut request_definition: Option<ast::RequestDefinition> = None;
-    let mut defined_names = HashSet::new();
-
-    // Separate definitions and validate uniqueness
-    for definition in document.definitions {
-        match definition {
-            TopLevelDefinition::CustomPredicate(pred_def) => {
-                let name = &pred_def.name.0;
-                if defined_names.contains(name) {
-                    return Err(ProcessorError::DuplicateDefinition(name.clone()));
-                }
-                defined_names.insert(name.clone());
-                custom_definitions.push(pred_def);
-            }
-            TopLevelDefinition::Request(req_def) => {
-                if request_definition.is_some() {
-                    return Err(ProcessorError::MultipleRequestDefinitions);
-                }
-                request_definition = Some(req_def);
-            }
-        }
-    }
-
-    // First pass: collect predicate signatures
-    let mut custom_predicate_signatures = HashMap::new();
-    for (index, pred_def) in custom_definitions.iter().enumerate() {
-        let name = &pred_def.name.0;
-        let public_arity = pred_def.public_args.len();
-        custom_predicate_signatures.insert(name.clone(), (index, public_arity));
-    }
-
-    let processing_ctx = ProcessingContext {
+    let mut processing_ctx = ProcessingContext {
         params,
-        custom_predicate_signatures,
+        custom_predicate_signatures: HashMap::new(),
+        custom_predicate_pairs: Vec::new(),
+        request_pair: None,
     };
 
-    // Second pass: process predicate bodies
-    let mut processed_custom_predicates = Vec::with_capacity(custom_definitions.len());
-    for pred_def in custom_definitions {
-        let middleware_pred = process_custom_predicate_body(pred_def, &processing_ctx)?;
-        processed_custom_predicates.push(middleware_pred);
-    }
+    let document_node = pairs_iterator_for_document_rule.next().ok_or_else(|| {
+        ProcessorError::Internal(format!(
+            "Parser returned no pairs for the expected top-level rule: {:?}.",
+            Rule::document
+        ))
+    })?;
 
-    let custom_batch = Arc::new(CustomPredicateBatch {
-        name: "PodlogBatch".to_string(),
-        predicates: processed_custom_predicates,
-    });
-
-    if custom_batch.predicates.len() > params.max_custom_batch_size {
-        return Err(ProcessorError::Middleware(middleware::Error::max_length(
-            "custom predicates".to_string(),
-            custom_batch.predicates.len(),
-            params.max_custom_batch_size,
+    if document_node.as_rule() != Rule::document {
+        return Err(ProcessorError::Internal(format!(
+            "Expected top-level pair to be Rule::{:?}, but found Rule::{:?}.",
+            Rule::document,
+            document_node.as_rule()
         )));
     }
 
-    // Process request if present
-    let request_templates = if let Some(req_def) = request_definition {
-        process_request(req_def, &processing_ctx, &custom_batch)?
+    let document_content_pairs = document_node.into_inner();
+
+    first_pass(document_content_pairs, &mut processing_ctx)?;
+
+    second_pass(&mut processing_ctx)
+}
+
+/// Pass 1: Iterates through top-level definitions, records custom predicate
+/// signatures and stores pairs for Pass 2.
+fn first_pass<'a>(
+    document_pairs: Pairs<'a, Rule>,
+    ctx: &mut ProcessingContext<'a>,
+) -> Result<(), ProcessorError> {
+    let mut defined_custom_names: HashSet<String> = HashSet::new();
+    let mut first_request_span: Option<(usize, usize)> = None;
+
+    for pair in document_pairs {
+        match pair.as_rule() {
+            Rule::custom_predicate_def => {
+                let pred_name_pair = pair
+                    .clone()
+                    .into_inner()
+                    .find(|p| p.as_rule() == Rule::identifier)
+                    .ok_or_else(|| ProcessorError::MissingElement {
+                        element_type: "predicate name".to_string(),
+                        context: "custom_predicate_def".to_string(),
+                        span: Some(get_span(&pair)),
+                    })?;
+                let pred_name = pred_name_pair.as_str().to_string();
+
+                if defined_custom_names.contains(&pred_name) {
+                    return Err(ProcessorError::DuplicateDefinition {
+                        name: pred_name,
+                        span: Some(get_span(&pred_name_pair)),
+                    });
+                }
+                defined_custom_names.insert(pred_name.clone());
+
+                let public_arity = count_public_args(&pair)?;
+                ctx.custom_predicate_signatures.insert(
+                    pred_name.clone(),
+                    (ctx.custom_predicate_pairs.len(), public_arity),
+                );
+                ctx.custom_predicate_pairs.push(pair);
+            }
+            Rule::request_def => {
+                if ctx.request_pair.is_some() {
+                    return Err(ProcessorError::MultipleRequestDefinitions {
+                        first_span: first_request_span,
+                        second_span: Some(get_span(&pair)),
+                    });
+                }
+                first_request_span = Some(get_span(&pair));
+                ctx.request_pair = Some(pair);
+            }
+            Rule::EOI => break,
+            Rule::COMMENT | Rule::WHITESPACE => {}
+            _ => {
+                return Err(ProcessorError::RuleMismatch {
+                    expected_rule: Rule::custom_predicate_def,
+                    found_rule: pair.as_rule(),
+                    context: "top-level document content (expected custom_predicate_def, request_def, or EOI)".to_string(),
+                    span: Some(get_span(&pair)),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn count_public_args(pred_def_pair: &Pair<Rule>) -> Result<usize, ProcessorError> {
+    let arg_section_pair = pred_def_pair
+        .clone()
+        .into_inner()
+        .find(|p| p.as_rule() == Rule::arg_section)
+        .ok_or_else(|| ProcessorError::MissingElement {
+            element_type: "arg_section".to_string(),
+            context: "custom_predicate_def (count_public_args)".to_string(),
+            span: Some(get_span(pred_def_pair)),
+        })?;
+
+    let arg_section_span = get_span(&arg_section_pair);
+
+    let public_arg_list_pair = arg_section_pair
+        .into_inner()
+        .find(|p| p.as_rule() == Rule::public_arg_list)
+        .ok_or_else(|| ProcessorError::MissingElement {
+            element_type: "public_arg_list".to_string(),
+            context: "arg_section in custom_predicate_def (count_public_args)".to_string(),
+            span: Some(arg_section_span),
+        })?;
+
+    Ok(public_arg_list_pair
+        .into_inner()
+        .filter(|p| p.as_rule() == Rule::identifier)
+        .count())
+}
+
+fn second_pass(ctx: &mut ProcessingContext) -> Result<ProcessedOutput, ProcessorError> {
+    let mut cpb_builder =
+        CustomPredicateBatchBuilder::new(ctx.params.clone(), "PodlogBatch".to_string());
+
+    for pred_pair in &ctx.custom_predicate_pairs {
+        process_and_add_custom_predicate_to_batch(pred_pair, ctx, &mut cpb_builder)?;
+    }
+
+    let custom_batch = cpb_builder.finish();
+
+    if custom_batch.predicates.len() > ctx.params.max_custom_batch_size {
+        return Err(ProcessorError::Middleware(middleware::Error::max_length(
+            "custom predicates".to_string(),
+            custom_batch.predicates.len(),
+            ctx.params.max_custom_batch_size,
+        )));
+    }
+
+    let request_templates = if let Some(req_pair) = &ctx.request_pair {
+        process_request_def(req_pair, ctx, &custom_batch)?
     } else {
         Vec::new()
     };
@@ -159,119 +222,441 @@ pub fn process_document(
     })
 }
 
-/// Processes a custom predicate definition into its middleware representation.
-///
-/// This function:
-/// 1. Creates a new scope for the predicate's variables
-/// 2. Registers public and private arguments as wildcards
-/// 3. Processes each statement in the predicate body
-/// 4. Validates wildcard count against middleware limits
-///
-/// The function maintains consistent wildcard indices within the predicate's scope,
-/// which is important for the middleware's constraint system.
-fn process_custom_predicate_body(
-    pred_def: ast::CustomPredicateDefinition,
-    processing_ctx: &ProcessingContext,
-) -> Result<CustomPredicate, ProcessorError> {
-    let mut scope = ScopeContext {
-        processing_ctx,
-        variables: BTreeMap::new(),
-        next_wildcard_index: 0,
-    };
-
-    // Register public args
-    for arg_var in &pred_def.public_args {
-        let name = &arg_var.0;
-        if scope.variables.contains_key(name) {
-            return Err(ProcessorError::DuplicateVariable(name.clone()));
+fn pest_pair_to_builder_arg(
+    arg_content_pair: &Pair<Rule>,
+    context_stmt_name: &str,
+) -> Result<BuilderArg, ProcessorError> {
+    match arg_content_pair.as_rule() {
+        Rule::literal_value => {
+            let value = process_literal_value(arg_content_pair, context_stmt_name)?;
+            Ok(BuilderArg::Literal(value))
         }
-        let index = scope.next_wildcard_index;
-        scope.variables.insert(
-            name.clone(),
-            Wildcard {
-                name: name.clone(),
-                index,
-            },
-        );
-        scope.next_wildcard_index += 1;
-    }
-    let public_args_len = pred_def.public_args.len();
-
-    // Register private args
-    for arg_var in &pred_def.private_args {
-        let name = &arg_var.0;
-        if scope.variables.contains_key(name) {
-            return Err(ProcessorError::DuplicateVariable(name.clone()));
+        Rule::wildcard => {
+            let full_name = arg_content_pair.as_str();
+            let name_only =
+                full_name
+                    .strip_prefix("?")
+                    .ok_or_else(|| ProcessorError::Semantic {
+                        message: format!("Invalid wildcard format for BuilderArg: {}", full_name),
+                        span: Some(get_span(arg_content_pair)),
+                    })?;
+            if name_only.is_empty() {
+                return Err(ProcessorError::Semantic {
+                    message: "Wildcard name cannot be empty after '?' for BuilderArg".to_string(),
+                    span: Some(get_span(arg_content_pair)),
+                });
+            }
+            Ok(BuilderArg::WildcardLiteral(name_only.to_string()))
         }
-        let index = scope.next_wildcard_index;
-        scope.variables.insert(
-            name.clone(),
-            Wildcard {
-                name: name.clone(),
-                index,
-            },
-        );
-        scope.next_wildcard_index += 1;
+        Rule::anchored_key => {
+            let mut inner_ak_pairs = arg_content_pair.clone().into_inner();
+            let pod_id_pair =
+                inner_ak_pairs
+                    .next()
+                    .ok_or_else(|| ProcessorError::MissingElement {
+                        element_type: "pod identifier (SELF or ?Var) for BuilderArg".to_string(),
+                        context: format!("anchored key in {}", context_stmt_name),
+                        span: Some(get_span(arg_content_pair)),
+                    })?;
+
+            let pod_self_or_wc_str = match pod_id_pair.as_rule() {
+                Rule::wildcard => {
+                    let name = pod_id_pair.as_str().strip_prefix("?").unwrap_or_default();
+                    if name.is_empty() {
+                        return Err(ProcessorError::Semantic {
+                            message: "Wildcard name for pod_id cannot be empty after '?'"
+                                .to_string(),
+                            span: Some(get_span(&pod_id_pair)),
+                        });
+                    }
+                    SelfOrWildcardStr::Wildcard(name.to_string())
+                }
+                Rule::self_keyword => SelfOrWildcardStr::SELF,
+                _ => {
+                    return Err(ProcessorError::RuleMismatch {
+                        expected_rule: Rule::wildcard, // Or Rule::self_keyword
+                        found_rule: pod_id_pair.as_rule(),
+                        context: format!(
+                            "pod identifier part of anchored key in {} for BuilderArg",
+                            context_stmt_name
+                        ),
+                        span: Some(get_span(&pod_id_pair)),
+                    });
+                }
+            };
+
+            let key_part_pair = inner_ak_pairs.next().ok_or_else(|| {
+                println!("inner_ak_pairs: {:?}", inner_ak_pairs.clone());
+                ProcessorError::MissingElement {
+                    element_type: "key part ([?KeyVar] or [\"key_str\"]) for BuilderArg"
+                        .to_string(),
+                    context: format!(
+                        "anchored key {} in {}",
+                        pod_id_pair.as_str(),
+                        context_stmt_name
+                    ),
+                    span: Some(get_span(arg_content_pair)),
+                }
+            })?;
+
+            let key_or_wildcard_str = match key_part_pair.as_rule() {
+                Rule::wildcard => {
+                    let key_wildcard_name =
+                        key_part_pair.as_str().strip_prefix("?").unwrap_or_default();
+                    if key_wildcard_name.is_empty() {
+                        return Err(ProcessorError::Semantic {
+                            message: "Wildcard name for key_part cannot be empty after '?'"
+                                .to_string(),
+                            span: Some(get_span(&key_part_pair)),
+                        });
+                    }
+                    KeyOrWildcardStr::Wildcard(key_wildcard_name.to_string())
+                }
+                Rule::literal_string => {
+                    let key_str_literal = parse_pest_string_literal(&key_part_pair)?;
+                    KeyOrWildcardStr::Key(key_str_literal)
+                }
+                _ => {
+                    return Err(ProcessorError::RuleMismatch {
+                        expected_rule: Rule::wildcard,
+                        found_rule: key_part_pair.as_rule(),
+                        context: format!(
+                            "key part of anchored key {} in {} for BuilderArg",
+                            pod_id_pair.as_str(),
+                            context_stmt_name
+                        ),
+                        span: Some(get_span(&key_part_pair)),
+                    });
+                }
+            };
+            Ok(BuilderArg::Key(pod_self_or_wc_str, key_or_wildcard_str))
+        }
+        _ => Err(ProcessorError::RuleMismatch {
+            expected_rule: Rule::statement_arg,
+            found_rule: arg_content_pair.as_rule(),
+            context: format!("argument parsing for BuilderArg in {}", context_stmt_name),
+            span: Some(get_span(arg_content_pair)),
+        }),
     }
-
-    // Check total wildcard limit
-    let total_wildcards = scope.next_wildcard_index;
-    if total_wildcards > processing_ctx.params.max_custom_predicate_wildcards {
-        return Err(ProcessorError::Middleware(middleware::Error::max_length(
-            format!("wildcards in predicate {}", pred_def.name.0),
-            total_wildcards,
-            processing_ctx.params.max_custom_predicate_wildcards,
-        )));
-    }
-
-    // Process statements
-    let mut middleware_statements = Vec::with_capacity(pred_def.statements.len());
-    for statement in pred_def.statements {
-        middleware_statements.push(process_statement(statement, &mut scope, false, None)?);
-    }
-
-    let conjunction = match pred_def.type_ {
-        ast::CustomPredicateType::And => true,
-        ast::CustomPredicateType::Or => false,
-    };
-
-    let middleware_pred = CustomPredicate::new(
-        pred_def.name.0,
-        processing_ctx.params,
-        conjunction,
-        middleware_statements,
-        public_args_len,
-    )?;
-
-    Ok(middleware_pred)
 }
 
-/// Processes a request definition into middleware statement templates.
-///
-/// Unlike predicate processing, request processing:
-/// - Creates new wildcards for undefined variables
-/// - Does not require variables to be pre-declared
-/// - Validates statement count against middleware limits
-fn process_request(
-    req_def: ast::RequestDefinition,
+fn validate_and_build_statement_template(
+    stmt_name_str: &str,
+    pred: &Predicate,
+    args: Vec<BuilderArg>,
+    processing_ctx: &ProcessingContext,
+    stmt_span: (usize, usize),
+    stmt_name_span: (usize, usize),
+) -> Result<StatementTmplBuilder, ProcessorError> {
+    match pred {
+        Predicate::Native(native_pred) => {
+            let (expected_arity, mapped_pred_for_arity_check) = match native_pred {
+                NativePredicate::Gt => (2, NativePredicate::Lt),
+                NativePredicate::GtEq => (2, NativePredicate::LtEq),
+                NativePredicate::ValueOf
+                | NativePredicate::Equal
+                | NativePredicate::NotEqual
+                | NativePredicate::Lt
+                | NativePredicate::LtEq
+                | NativePredicate::SetContains
+                | NativePredicate::DictNotContains
+                | NativePredicate::SetNotContains => (2, *native_pred),
+                NativePredicate::NotContains
+                | NativePredicate::Contains
+                | NativePredicate::ArrayContains
+                | NativePredicate::DictContains
+                | NativePredicate::SumOf
+                | NativePredicate::ProductOf
+                | NativePredicate::MaxOf
+                | NativePredicate::HashOf => (3, *native_pred),
+                NativePredicate::None | NativePredicate::False => (0, *native_pred),
+            };
+
+            if args.len() != expected_arity {
+                return Err(ProcessorError::ArgumentCountMismatch {
+                    predicate: stmt_name_str.to_string(),
+                    expected: expected_arity,
+                    found: args.len(),
+                    span: Some(stmt_name_span),
+                });
+            }
+
+            if mapped_pred_for_arity_check == NativePredicate::ValueOf {
+                if !matches!(args.get(0), Some(BuilderArg::Key(..))) {
+                    return Err(ProcessorError::TypeError {
+                        expected: "Anchored Key".to_string(),
+                        found: args
+                            .get(0)
+                            .map_or("None".to_string(), |a| format!("{:?}", a)),
+                        item: format!("argument 1 of native predicate '{}'", stmt_name_str),
+                        span: Some(stmt_span),
+                    });
+                }
+                if !matches!(args.get(1), Some(BuilderArg::Literal(..))) {
+                    return Err(ProcessorError::TypeError {
+                        expected: "Literal".to_string(),
+                        found: args
+                            .get(1)
+                            .map_or("None".to_string(), |a| format!("{:?}", a)),
+                        item: format!("argument 2 of native predicate '{}'", stmt_name_str),
+                        span: Some(stmt_span),
+                    });
+                }
+            } else if expected_arity > 0 {
+                for (i, arg) in args.iter().enumerate() {
+                    if !matches!(arg, BuilderArg::Key(..)) {
+                        return Err(ProcessorError::TypeError {
+                            expected: "Anchored Key".to_string(),
+                            found: format!("{:?}", arg),
+                            item: format!(
+                                "argument {} of native predicate '{}'",
+                                i + 1,
+                                stmt_name_str
+                            ),
+                            span: Some(stmt_span),
+                        });
+                    }
+                }
+            }
+        }
+        Predicate::Custom(_) | Predicate::BatchSelf(_) => {
+            let (_original_pred_idx, expected_arity_val) = processing_ctx
+                .custom_predicate_signatures
+                .get(stmt_name_str)
+                .ok_or_else(|| {
+                    ProcessorError::Internal(format!(
+                        "Custom predicate signature not found for '{}' during validation",
+                        stmt_name_str
+                    ))
+                })?;
+
+            if args.len() != *expected_arity_val {
+                return Err(ProcessorError::ArgumentCountMismatch {
+                    predicate: stmt_name_str.to_string(),
+                    expected: *expected_arity_val,
+                    found: args.len(),
+                    span: Some(stmt_name_span),
+                });
+            }
+
+            for (idx, arg) in args.iter().enumerate() {
+                if !matches!(arg, BuilderArg::WildcardLiteral(_) | BuilderArg::Literal(_)) {
+                    return Err(ProcessorError::TypeError {
+                        expected: "Wildcard or Literal".to_string(),
+                        found: format!("{:?}", arg),
+                        item: format!(
+                            "argument {} of custom predicate call '{}'",
+                            idx + 1,
+                            stmt_name_str
+                        ),
+                        span: Some(stmt_span),
+                    });
+                }
+            }
+        }
+    }
+
+    let mut stb = StatementTmplBuilder::new(pred.clone());
+    for arg in args {
+        stb = stb.arg(arg);
+    }
+    Ok(stb.desugar())
+}
+
+fn process_and_add_custom_predicate_to_batch(
+    pred_def_pair: &Pair<Rule>,
+    processing_ctx: &ProcessingContext,
+    cpb_builder: &mut CustomPredicateBatchBuilder,
+) -> Result<(), ProcessorError> {
+    let mut inner_pairs = pred_def_pair.clone().into_inner();
+    let name_pair = inner_pairs
+        .find(|p| p.as_rule() == Rule::identifier)
+        .ok_or_else(|| ProcessorError::MissingElement {
+            element_type: "predicate name".to_string(),
+            context: "custom_predicate_def".to_string(),
+            span: Some(get_span(pred_def_pair)),
+        })?;
+    let name = name_pair.as_str().to_string();
+
+    let arg_section_pair = inner_pairs
+        .find(|p| p.as_rule() == Rule::arg_section)
+        .ok_or_else(|| ProcessorError::MissingElement {
+            element_type: "arg_section".to_string(),
+            context: "custom_predicate_def".to_string(),
+            span: Some(get_span(pred_def_pair)),
+        })?;
+
+    let mut public_arg_strings: Vec<String> = Vec::new();
+    let mut private_arg_strings: Vec<String> = Vec::new();
+    let mut defined_arg_names: HashSet<String> = HashSet::new();
+
+    for arg_part_pair in arg_section_pair.into_inner() {
+        match arg_part_pair.as_rule() {
+            Rule::public_arg_list => {
+                for arg_ident_pair in arg_part_pair
+                    .into_inner()
+                    .filter(|p| p.as_rule() == Rule::identifier)
+                {
+                    let arg_name = arg_ident_pair.as_str().to_string();
+                    if !defined_arg_names.insert(arg_name.clone()) {
+                        return Err(ProcessorError::DuplicateWildcard {
+                            name: arg_name,
+                            span: Some(get_span(&arg_ident_pair)),
+                        });
+                    }
+                    public_arg_strings.push(arg_name);
+                }
+            }
+            Rule::private_arg_list => {
+                for arg_ident_pair in arg_part_pair
+                    .into_inner()
+                    .filter(|p| p.as_rule() == Rule::identifier)
+                {
+                    let arg_name = arg_ident_pair.as_str().to_string();
+                    if !defined_arg_names.insert(arg_name.clone()) {
+                        return Err(ProcessorError::DuplicateWildcard {
+                            name: arg_name,
+                            span: Some(get_span(&arg_ident_pair)),
+                        });
+                    }
+                    private_arg_strings.push(arg_name);
+                }
+            }
+            Rule::private_kw | Rule::COMMENT | Rule::WHITESPACE => {}
+            _ if arg_part_pair.as_str() == "," => {}
+            _ => {
+                return Err(ProcessorError::RuleMismatch {
+                    expected_rule: Rule::public_arg_list,
+                    found_rule: arg_part_pair.as_rule(),
+                    context: format!("arguments for predicate {}", name),
+                    span: Some(get_span(&arg_part_pair)),
+                });
+            }
+        }
+    }
+
+    let conjunction_type_pair = inner_pairs
+        .find(|p| p.as_rule() == Rule::conjunction_type)
+        .ok_or_else(|| ProcessorError::MissingElement {
+            element_type: "conjunction type (AND/OR)".to_string(),
+            context: format!("definition of predicate {}", name),
+            span: Some(get_span(pred_def_pair)),
+        })?;
+    let conjunction = match conjunction_type_pair.as_str() {
+        "AND" => true,
+        "OR" => false,
+        _ => {
+            return Err(ProcessorError::Semantic {
+                message: format!(
+                    "Invalid conjunction type: {}",
+                    conjunction_type_pair.as_str()
+                ),
+                span: Some(get_span(&conjunction_type_pair)),
+            })
+        }
+    };
+
+    let statement_list_pair = inner_pairs
+        .find(|p| p.as_rule() == Rule::statement_list)
+        .ok_or_else(|| ProcessorError::MissingElement {
+            element_type: "statement list".to_string(),
+            context: format!("definition of predicate {}", name),
+            span: Some(get_span(pred_def_pair)),
+        })?;
+
+    let mut statement_builders = Vec::new();
+    for stmt_pair in statement_list_pair
+        .into_inner()
+        .filter(|p| p.as_rule() == Rule::statement)
+    {
+        let mut inner_stmt_pairs = stmt_pair.clone().into_inner();
+        let stmt_name_pair = inner_stmt_pairs
+            .find(|p| p.as_rule() == Rule::identifier)
+            .ok_or_else(|| ProcessorError::MissingElement {
+                element_type: "statement name".to_string(),
+                context: "statement parsing".to_string(),
+                span: Some(get_span(&stmt_pair)),
+            })?;
+        let stmt_name_str = stmt_name_pair.as_str();
+
+        let builder_args = parse_statement_args(&stmt_pair, stmt_name_str)?;
+
+        let middleware_predicate_type = if let Some(native_pred) =
+            native_predicate_from_string_case_insensitive(stmt_name_str)
+        {
+            Predicate::Native(native_pred)
+        } else if let Some((pred_index, _expected_arity)) = processing_ctx
+            .custom_predicate_signatures
+            .get(stmt_name_str)
+        {
+            Predicate::BatchSelf(*pred_index)
+        } else {
+            return Err(ProcessorError::UndefinedIdentifier {
+                name: stmt_name_str.to_string(),
+                span: Some(get_span(&stmt_name_pair)),
+            });
+        };
+
+        let stb = validate_and_build_statement_template(
+            stmt_name_str,
+            &middleware_predicate_type,
+            builder_args, // Consumed
+            processing_ctx,
+            get_span(&stmt_pair),
+            get_span(&stmt_name_pair),
+        )?;
+        statement_builders.push(stb);
+    }
+
+    let public_args_strs: Vec<&str> = public_arg_strings.iter().map(AsRef::as_ref).collect();
+    let private_args_strs: Vec<&str> = private_arg_strings.iter().map(AsRef::as_ref).collect();
+    let sts_slice: &[StatementTmplBuilder] = &statement_builders;
+
+    if conjunction {
+        cpb_builder.predicate_and(&name, &public_args_strs, &private_args_strs, sts_slice)?;
+    } else {
+        cpb_builder.predicate_or(&name, &public_args_strs, &private_args_strs, sts_slice)?;
+    }
+
+    Ok(())
+}
+
+fn process_request_def(
+    req_def_pair: &Pair<Rule>,
     processing_ctx: &ProcessingContext,
     custom_batch: &Arc<CustomPredicateBatch>,
 ) -> Result<Vec<StatementTmpl>, ProcessorError> {
-    let mut scope = ScopeContext {
-        processing_ctx,
-        variables: BTreeMap::new(),
-        next_wildcard_index: 0,
-    };
+    let mut request_wildcard_names: Vec<String> = Vec::new();
+    let mut defined_request_wildcards: HashSet<String> = HashSet::new();
 
-    let mut request_templates = Vec::with_capacity(req_def.statements.len());
+    let mut request_statement_builders: Vec<StatementTmplBuilder> = Vec::new();
 
-    for statement in req_def.statements {
-        request_templates.push(process_statement(
-            statement,
-            &mut scope,
-            true,
-            Some(custom_batch),
-        )?);
+    if let Some(statement_list_pair) = req_def_pair
+        .clone()
+        .into_inner()
+        .find(|p| p.as_rule() == Rule::statement_list)
+    {
+        for stmt_pair in statement_list_pair
+            .into_inner()
+            .filter(|p| p.as_rule() == Rule::statement)
+        {
+            let built_stb = process_proof_request_statement_template(
+                &stmt_pair,
+                processing_ctx,
+                Some(custom_batch), // Pass as Option<&Arc<...>>
+                &mut request_wildcard_names,
+                &mut defined_request_wildcards,
+            )?;
+            request_statement_builders.push(built_stb);
+        }
+    }
+
+    let mut request_templates: Vec<StatementTmpl> =
+        Vec::with_capacity(request_statement_builders.len());
+    for stb in request_statement_builders {
+        let tmpl =
+            resolve_request_statement_builder(stb, &request_wildcard_names, processing_ctx.params)?;
+        request_templates.push(tmpl);
     }
 
     if request_templates.len() > processing_ctx.params.max_statements {
@@ -281,1358 +666,682 @@ fn process_request(
             processing_ctx.params.max_statements,
         )));
     }
-
     Ok(request_templates)
 }
 
-/// Processes a statement into its middleware representation.
-///
-/// Handles both native and custom predicate calls by:
-/// - Converting arguments to middleware format
-/// - Validating argument counts
-/// - Resolving predicate references
-/// - Checking argument limits
-///
-/// The is_request parameter controls whether undefined variables
-/// should create new wildcards (true for requests) or raise an error (false for predicates).
-fn process_statement(
-    statement: ast::Statement,
-    scope: &mut ScopeContext,
-    is_request: bool,
-    custom_batch: Option<&Arc<CustomPredicateBatch>>,
-) -> Result<StatementTmpl, ProcessorError> {
-    match statement {
-        ast::Statement::Native(call) => {
-            let mut processed_args: Vec<StatementTmplArg> = call // Make mutable
-                .args
-                .into_iter()
-                .map(|arg| process_argument(arg, scope, is_request))
-                .collect::<Result<_, _>>()?; // Collect into Result<Vec<StatementTmplArg>, ProcessorError>
+fn process_proof_request_statement_template(
+    stmt_pair: &Pair<Rule>,
+    processing_ctx: &ProcessingContext,
+    custom_batch_for_request: Option<&Arc<CustomPredicateBatch>>,
+    request_wildcard_names: &mut Vec<String>,
+    defined_request_wildcards: &mut HashSet<String>,
+) -> Result<StatementTmplBuilder, ProcessorError> {
+    let mut inner_stmt_pairs = stmt_pair.clone().into_inner();
+    let name_pair = inner_stmt_pairs
+        .find(|p| p.as_rule() == Rule::identifier)
+        .ok_or_else(|| ProcessorError::MissingElement {
+            element_type: "statement name".to_string(),
+            context: "statement parsing".to_string(),
+            span: Some(get_span(stmt_pair)),
+        })?;
+    let stmt_name_str = name_pair.as_str();
 
-            // map_native_predicate will convert to middleware NativePredicate
-            // and will de-sugar Gt, SetContains, etc.
-            let final_middleware_pred = map_native_predicate(call.predicate);
+    let builder_args = parse_statement_args(stmt_pair, stmt_name_str)?;
+    let mut temp_stmt_wildcard_names: Vec<String> = Vec::new();
 
-            match call.predicate {
-                ast::NativePredicate::Gt | ast::NativePredicate::GtEq => {
-                    processed_args.swap(0, 1);
+    for arg in &builder_args {
+        match arg {
+            BuilderArg::WildcardLiteral(name) => temp_stmt_wildcard_names.push(name.clone()),
+            BuilderArg::Key(pod_id_str, key_wc_str) => {
+                if let SelfOrWildcardStr::Wildcard(name) = pod_id_str {
+                    temp_stmt_wildcard_names.push(name.clone());
                 }
-                _ => (),
+                if let KeyOrWildcardStr::Wildcard(key_wc_name) = key_wc_str {
+                    temp_stmt_wildcard_names.push(key_wc_name.clone());
+                }
             }
-
-            // Arity check is performed using the final_middleware_pred (e.g., Lt)
-            check_native_arity(final_middleware_pred, processed_args.len())?;
-
-            Ok(StatementTmpl {
-                pred: Predicate::Native(final_middleware_pred),
-                args: processed_args,
-            })
+            _ => {}
         }
-        ast::Statement::Custom(call) => {
-            let pred_name = &call.name.0;
-            let (pred_index, expected_arity) = scope
-                .processing_ctx
-                .custom_predicate_signatures
-                .get(pred_name)
-                .ok_or_else(|| ProcessorError::UndefinedIdentifier(pred_name.clone()))?;
+    }
 
-            let middleware_args: Result<Vec<_>, _> = call
-                .args
-                .into_iter()
-                .map(|arg| process_argument(arg, scope, is_request))
-                .collect();
-            let middleware_args = middleware_args?;
+    for name in temp_stmt_wildcard_names {
+        if defined_request_wildcards.insert(name.clone()) {
+            request_wildcard_names.push(name);
+        }
+    }
 
-            if middleware_args.len() != *expected_arity {
-                return Err(ProcessorError::ArgumentCountMismatch {
-                    predicate: pred_name.clone(),
-                    expected: *expected_arity,
-                    found: middleware_args.len(),
-                });
-            }
-
-            if middleware_args.len() > scope.processing_ctx.params.max_statement_args {
-                return Err(ProcessorError::Middleware(middleware::Error::max_length(
-                    format!("arguments for custom call to {}", pred_name),
-                    middleware_args.len(),
-                    scope.processing_ctx.params.max_statement_args,
-                )));
-            }
-
-            let pred = if is_request {
-                Predicate::Custom(CustomPredicateRef::new(
-                    custom_batch.unwrap().clone(),
-                    *pred_index,
-                ))
+    let middleware_predicate_type =
+        if let Some(native_pred) = native_predicate_from_string_case_insensitive(stmt_name_str) {
+            Predicate::Native(native_pred)
+        } else if let Some((pred_index, _expected_arity)) = processing_ctx
+            .custom_predicate_signatures
+            .get(stmt_name_str)
+        {
+            if let Some(batch_ref) = custom_batch_for_request {
+                Predicate::Custom(CustomPredicateRef::new(batch_ref.clone(), *pred_index))
             } else {
-                Predicate::BatchSelf(*pred_index)
-            };
-
-            Ok(StatementTmpl {
-                pred,
-                args: middleware_args,
-            })
-        }
-    }
-}
-
-/// Processes an argument into its middleware representation.
-///
-/// Handles three types of arguments:
-/// - Literals (values like numbers, strings, containers)
-/// - Variables (converted to wildcards)
-/// - Anchored keys (combinations of pod variables and keys)
-///
-/// For variables, the create_if_missing parameter determines whether
-/// undefined variables create new wildcards or raise errors.
-fn process_argument(
-    arg: ast::Argument,
-    scope: &mut ScopeContext,
-    create_if_missing: bool,
-) -> Result<StatementTmplArg, ProcessorError> {
-    match arg {
-        ast::Argument::Literal(lit) => {
-            let value = process_literal(lit)?;
-            Ok(StatementTmplArg::Literal(value))
-        }
-        ast::Argument::Variable(var) => {
-            let wildcard = resolve_variable(var, scope, create_if_missing)?;
-            Ok(StatementTmplArg::WildcardLiteral(wildcard))
-        }
-        ast::Argument::AnchoredKey(ak) => {
-            let pod_wildcard = resolve_variable(ak.pod_var, scope, create_if_missing)?;
-            let key_or_wildcard = match ak.key {
-                ast::AnchoredKeyKey::LiteralString(s) => KeyOrWildcard::Key(Key::new(s)),
-                ast::AnchoredKeyKey::Variable(var) => {
-                    let key_wildcard = resolve_variable(var, scope, create_if_missing)?;
-                    KeyOrWildcard::Wildcard(key_wildcard)
-                }
-            };
-            Ok(StatementTmplArg::Key(pod_wildcard, key_or_wildcard))
-        }
-    }
-}
-
-/// Converts an AST literal into a middleware Value.
-///
-/// Handles:
-/// - Basic types (int, bool, string)
-/// - Raw byte values (with size validation)
-/// - Container types (arrays, sets, dictionaries)
-///
-/// For raw values, ensures the byte length doesn't exceed VALUE_SIZE * 8.
-/// For containers, recursively processes their elements and validates structure.
-fn process_literal(literal: ast::Literal) -> Result<Value, ProcessorError> {
-    match literal {
-        ast::Literal::Int(i) => Ok(Value::from(i)),
-        ast::Literal::Bool(b) => Ok(Value::from(b)),
-        ast::Literal::String(s) => Ok(Value::from(s)),
-        ast::Literal::Raw(bytes) => {
-            const MAX_RAW_BYTES: usize = VALUE_SIZE * 8;
-            if bytes.len() > MAX_RAW_BYTES {
-                return Err(ProcessorError::Semantic(format!(
-                    "Raw literal 0x{} is too long (max {} bytes)",
-                    hex::encode(&bytes),
-                    MAX_RAW_BYTES
-                )));
+                return Err(ProcessorError::Internal(format!(
+                "Custom predicate '{}' found but no custom batch provided for request processing.",
+                stmt_name_str
+            )));
             }
-            let hex_str = hex::encode(&bytes);
-            let padded_hex_str = format!("{:0>64}", hex_str);
-            parse_hex_to_raw_value(&padded_hex_str).map(Value::from)
+        } else {
+            return Err(ProcessorError::UndefinedIdentifier {
+                name: stmt_name_str.to_string(),
+                span: Some(get_span(&name_pair)),
+            });
+        };
+
+    let stb = validate_and_build_statement_template(
+        stmt_name_str,
+        &middleware_predicate_type,
+        builder_args,
+        processing_ctx,
+        get_span(stmt_pair),
+        get_span(&name_pair),
+    )?;
+
+    Ok(stb.desugar())
+}
+
+fn process_literal_value(
+    lit_val_pair: &Pair<Rule>,
+    context_stmt_name: &str,
+) -> Result<Value, ProcessorError> {
+    let inner_lit =
+        lit_val_pair
+            .clone()
+            .into_inner()
+            .next()
+            .ok_or_else(|| ProcessorError::MissingElement {
+                element_type: "literal content".to_string(),
+                context: format!("literal in {}", context_stmt_name),
+                span: Some(get_span(lit_val_pair)),
+            })?;
+
+    match inner_lit.as_rule() {
+        Rule::literal_int => {
+            let val = inner_lit.as_str().parse::<i64>().map_err(|_e| {
+                ProcessorError::InvalidLiteralFormat {
+                    kind: "int".to_string(),
+                    value: inner_lit.as_str().to_string(),
+                    span: Some(get_span(&inner_lit)),
+                }
+            })?;
+            Ok(Value::from(val))
         }
-        ast::Literal::Array(elements) => {
-            let processed_elements = elements
-                .into_iter()
-                .map(process_literal)
-                .collect::<Result<Vec<_>, _>>()?;
-            let middleware_array = middleware::containers::Array::new(processed_elements)
+        Rule::literal_bool => {
+            let val = inner_lit.as_str().parse::<bool>().map_err(|_e| {
+                ProcessorError::InvalidLiteralFormat {
+                    kind: "bool".to_string(),
+                    value: inner_lit.as_str().to_string(),
+                    span: Some(get_span(&inner_lit)),
+                }
+            })?;
+            Ok(Value::from(val))
+        }
+        Rule::literal_raw => {
+            let full_literal_str = inner_lit.as_str();
+            let hex_str_no_prefix = full_literal_str
+                .strip_prefix("0x")
+                .unwrap_or(full_literal_str);
+
+            parse_hex_str_to_raw_value(hex_str_no_prefix)
+                .map_err(|e| match e {
+                    ProcessorError::InvalidLiteralFormat { kind, value, .. } => {
+                        ProcessorError::InvalidLiteralFormat {
+                            kind,
+                            value,
+                            span: Some(get_span(&inner_lit)),
+                        }
+                    }
+                    ProcessorError::Internal(message) => ProcessorError::InvalidLiteralFormat {
+                        kind: format!("raw hex processing (internal: {})", message),
+                        value: full_literal_str.to_string(),
+                        span: Some(get_span(&inner_lit)),
+                    },
+                    _ => ProcessorError::InvalidLiteralFormat {
+                        kind: "raw hex processing error".to_string(),
+                        value: full_literal_str.to_string(),
+                        span: Some(get_span(&inner_lit)),
+                    },
+                })
+                .map(Value::from)
+        }
+        Rule::literal_string => Ok(Value::from(parse_pest_string_literal(&inner_lit)?)),
+        Rule::literal_array => {
+            let elements: Result<Vec<Value>, ProcessorError> = inner_lit
+                .into_inner()
+                .map(|elem_pair| process_literal_value(&elem_pair, context_stmt_name))
+                .collect();
+            let middleware_array = middleware::containers::Array::new(elements?)
                 .map_err(|e| ProcessorError::Internal(format!("Failed to create Array: {}", e)))?;
             Ok(Value::from(middleware_array))
         }
-        ast::Literal::Set(elements) => {
-            let processed_elements = elements
-                .into_iter()
-                .map(process_literal)
-                .collect::<Result<HashSet<_>, _>>()?;
-            let middleware_set = middleware::containers::Set::new(processed_elements)
+        Rule::literal_set => {
+            let elements: Result<HashSet<Value>, ProcessorError> = inner_lit
+                .into_inner()
+                .map(|elem_pair| process_literal_value(&elem_pair, context_stmt_name))
+                .collect();
+            let middleware_set = middleware::containers::Set::new(elements?)
                 .map_err(|e| ProcessorError::Internal(format!("Failed to create Set: {}", e)))?;
             Ok(Value::from(middleware_set))
         }
-        ast::Literal::Dict(map) => {
-            let processed_map = map
-                .into_iter()
-                .map(|(k, v)| process_literal(v).map(|val| (Key::new(k), val)))
-                .collect::<Result<HashMap<_, _>, _>>()?;
-            let middleware_dict =
-                middleware::containers::Dictionary::new(processed_map).map_err(|e| {
-                    ProcessorError::Internal(format!("Failed to create Dictionary: {}", e))
-                })?;
+        Rule::literal_dict => {
+            let pairs: Result<HashMap<Key, Value>, ProcessorError> = inner_lit
+                .into_inner()
+                .map(|dict_entry_pair| {
+                    let mut entry_inner = dict_entry_pair.clone().into_inner();
+                    let key_pair =
+                        entry_inner
+                            .next()
+                            .ok_or_else(|| ProcessorError::MissingElement {
+                                element_type: "dict key".to_string(),
+                                context: format!("dict in {}", context_stmt_name),
+                                span: Some(get_span(&dict_entry_pair)),
+                            })?;
+                    let val_pair =
+                        entry_inner
+                            .next()
+                            .ok_or_else(|| ProcessorError::MissingElement {
+                                element_type: "dict value".to_string(),
+                                context: format!("dict in {}", context_stmt_name),
+                                span: Some(get_span(&dict_entry_pair)),
+                            })?;
+                    let key_str = parse_pest_string_literal(&key_pair)?;
+                    let val = process_literal_value(&val_pair, context_stmt_name)?;
+                    Ok((Key::new(key_str), val))
+                })
+                .collect();
+            let middleware_dict = middleware::containers::Dictionary::new(pairs?).map_err(|e| {
+                ProcessorError::Internal(format!("Failed to create Dictionary: {}", e))
+            })?;
             Ok(Value::from(middleware_dict))
         }
+        _ => Err(ProcessorError::RuleMismatch {
+            expected_rule: Rule::literal_value,
+            found_rule: inner_lit.as_rule(),
+            context: format!("literal parsing for {}", context_stmt_name),
+            span: Some(get_span(&inner_lit)),
+        }),
     }
 }
 
-/// Converts a hex string into a RawValue.
-///
-/// Expects a 64-character hex string representing 32 bytes.
-/// Each 16 characters are converted into a field element.
-fn parse_hex_to_raw_value(hex_str: &str) -> Result<middleware::RawValue, ProcessorError> {
-    if hex_str.len() != 64 {
-        return Err(ProcessorError::Internal(format!(
-            "Internal error: Expected 64 hex chars for RawValue, got {}",
-            hex_str.len()
-        )));
+fn parse_pest_string_literal(pair: &Pair<Rule>) -> Result<String, ProcessorError> {
+    if pair.as_rule() != Rule::literal_string && pair.as_rule() != Rule::inner {
+        let actual_rule = if pair.as_rule() == Rule::literal_string {
+            pair.clone().into_inner().next().map(|p| p.as_rule())
+        } else {
+            Some(pair.as_rule())
+        };
+
+        if actual_rule != Some(Rule::inner) {
+            return Err(ProcessorError::RuleMismatch {
+                expected_rule: Rule::literal_string,
+                found_rule: pair.as_rule(),
+                context: "string literal parsing".to_string(),
+                span: Some(get_span(pair)),
+            });
+        }
     }
-    if !hex_str.chars().all(|c| c.is_ascii_hexdigit()) {
+
+    let inner_pair = if pair.as_rule() == Rule::literal_string {
+        pair.clone()
+            .into_inner()
+            .next()
+            .ok_or_else(|| ProcessorError::MissingElement {
+                element_type: "string content".to_string(),
+                context: "string literal".to_string(),
+                span: Some(get_span(pair)),
+            })?
+    } else {
+        pair.clone()
+    };
+
+    let raw_content = inner_pair.as_str();
+    let mut result = String::with_capacity(raw_content.len());
+    let mut chars = raw_content.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('"') => result.push('"'),
+                Some('\\') => result.push('\\'),
+                Some('/') => result.push('/'),
+                Some('b') => result.push('\x08'),
+                Some('f') => result.push('\x0C'),
+                Some('n') => result.push('\n'),
+                Some('r') => result.push('\r'),
+                Some('t') => result.push('\t'),
+                Some('u') => {
+                    let mut hex_code = String::with_capacity(4);
+                    for _ in 0..4 {
+                        hex_code.push(chars.next().ok_or_else(|| {
+                            ProcessorError::InvalidLiteralFormat {
+                                kind: "unicode escape".to_string(),
+                                value: format!("\\u{}... (incomplete)", hex_code),
+                                span: Some(get_span(&inner_pair)),
+                            }
+                        })?);
+                    }
+                    let char_code = u32::from_str_radix(&hex_code, 16).map_err(|_| {
+                        ProcessorError::InvalidLiteralFormat {
+                            kind: "unicode escape".to_string(),
+                            value: format!("\\u{}", hex_code),
+                            span: Some(get_span(&inner_pair)),
+                        }
+                    })?;
+                    result.push(std::char::from_u32(char_code).ok_or_else(|| {
+                        ProcessorError::InvalidLiteralFormat {
+                            kind: "unicode escape (invalid code point)".to_string(),
+                            value: format!("\\u{}", hex_code),
+                            span: Some(get_span(&inner_pair)),
+                        }
+                    })?);
+                }
+                Some(other) => {
+                    return Err(ProcessorError::InvalidLiteralFormat {
+                        kind: "escape sequence".to_string(),
+                        value: format!("\\{}", other),
+                        span: Some(get_span(&inner_pair)),
+                    })
+                }
+                None => {
+                    return Err(ProcessorError::InvalidLiteralFormat {
+                        kind: "escape sequence".to_string(),
+                        value: "\\ (ends with escape)".to_string(),
+                        span: Some(get_span(&inner_pair)),
+                    })
+                }
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    Ok(result)
+}
+
+fn parse_hex_str_to_raw_value(hex_str: &str) -> Result<middleware::RawValue, ProcessorError> {
+    const EXPECTED_HEX_CHARS_PER_FELT: usize = 16; // Each F element is a u64, requiring 16 hex characters
+    const EXPECTED_TOTAL_HEX_CHARS: usize = VALUE_SIZE * EXPECTED_HEX_CHARS_PER_FELT;
+
+    if hex_str.len() != EXPECTED_TOTAL_HEX_CHARS {
         return Err(ProcessorError::Internal(format!(
-            "Internal error: Invalid hex char found in {}",
-            hex_str
+            "Internal error: Expected {} hex characters for RawValue ({} F elements * {} hex/F), got {}.",
+            EXPECTED_TOTAL_HEX_CHARS,
+            VALUE_SIZE,
+            EXPECTED_HEX_CHARS_PER_FELT,
+            hex_str.len()
         )));
     }
 
     let mut v = [F::ZERO; VALUE_SIZE];
-    for (i, element) in v.iter_mut().enumerate() {
-        let start = i * 16;
-        let end = start + 16;
-        let hex_part = &hex_str[start..end];
-        *element = F::from_canonical_u64(u64::from_str_radix(hex_part, 16).map_err(|e| {
-            ProcessorError::Internal(format!("Failed to parse hex chunk '{}': {}", hex_part, e))
-        })?);
+    let value_range = 0..VALUE_SIZE;
+    for i in value_range {
+        let start_idx = i * EXPECTED_HEX_CHARS_PER_FELT;
+        let end_idx = start_idx + EXPECTED_HEX_CHARS_PER_FELT;
+        let hex_part = &hex_str[start_idx..end_idx];
+
+        let u64_val = u64::from_str_radix(hex_part, 16).map_err(|e| {
+            ProcessorError::InvalidLiteralFormat {
+                kind: format!("raw hex (parse error for segment '{}')", hex_part),
+                value: e.to_string(),
+                span: None,
+            }
+        })?;
+        v[i] = F::from_canonical_u64(u64_val);
     }
     Ok(middleware::RawValue(v))
 }
 
-/// Resolves a variable name to a wildcard within the current scope.
-///
-/// The resolution process depends on the context:
-/// - In predicates (create_if_missing=false): variables must be pre-declared
-/// - In requests (create_if_missing=true): undefined variables create new wildcards
-///
-/// When creating new wildcards, validates against the maximum wildcard limit.
-/// Uses consistent index generation to maintain deterministic behavior.
-fn resolve_variable(
-    var: ast::Variable,
-    scope: &mut ScopeContext,
-    create_if_missing: bool,
+// Helper to resolve a wildcard name string to an indexed middleware::Wildcard
+// based on an ordered list of names from the current scope (e.g., request or predicate def).
+fn resolve_wildcard(
+    ordered_scope_wildcard_names: &[String],
+    name_to_resolve: &str,
 ) -> Result<Wildcard, ProcessorError> {
-    let var_name = &var.0;
-    if let Some(wildcard) = scope.variables.get(var_name) {
-        Ok(wildcard.clone())
-    } else if create_if_missing {
-        let index = scope.next_wildcard_index;
-        if index >= scope.processing_ctx.params.max_custom_predicate_wildcards {
-            return Err(ProcessorError::Middleware(middleware::Error::max_length(
-                "wildcards in request".to_string(),
-                index + 1,
-                scope.processing_ctx.params.max_custom_predicate_wildcards,
-            )));
-        }
-        let new_wildcard = Wildcard {
-            name: var_name.clone(),
-            index,
-        };
-        scope
-            .variables
-            .insert(var_name.clone(), new_wildcard.clone());
-        scope.next_wildcard_index += 1;
-        Ok(new_wildcard)
-    } else {
-        Err(ProcessorError::UndefinedIdentifier(var_name.clone()))
-    }
-}
-
-/// Maps AST native predicates to their middleware counterparts.
-///
-/// This is a direct mapping with no validation, as the AST parser
-/// ensures only valid predicates are present.
-fn map_native_predicate(ast_pred: ast::NativePredicate) -> NativePredicate {
-    match ast_pred {
-        ast::NativePredicate::ValueOf => NativePredicate::ValueOf,
-        ast::NativePredicate::Equal => NativePredicate::Equal,
-        ast::NativePredicate::NotEqual => NativePredicate::NotEqual,
-        // Gt syntactic sugar
-        ast::NativePredicate::Gt => NativePredicate::Lt,
-        ast::NativePredicate::GtEq => NativePredicate::LtEq,
-        ast::NativePredicate::Lt => NativePredicate::Lt,
-        ast::NativePredicate::LtEq => NativePredicate::LtEq,
-        ast::NativePredicate::Contains => NativePredicate::Contains,
-        ast::NativePredicate::NotContains => NativePredicate::NotContains,
-        ast::NativePredicate::SumOf => NativePredicate::SumOf,
-        ast::NativePredicate::ProductOf => NativePredicate::ProductOf,
-        ast::NativePredicate::MaxOf => NativePredicate::MaxOf,
-        ast::NativePredicate::HashOf => NativePredicate::HashOf,
-        // Container syntactic sugar
-        ast::NativePredicate::DictContains => NativePredicate::Contains,
-        ast::NativePredicate::DictNotContains => NativePredicate::NotContains,
-        ast::NativePredicate::SetContains => NativePredicate::Contains,
-        ast::NativePredicate::SetNotContains => NativePredicate::NotContains,
-        ast::NativePredicate::ArrayContains => NativePredicate::Contains,
-    }
-}
-
-/// Validates argument count for native predicates.
-///
-/// Each native predicate has a fixed expected number of arguments:
-/// - ValueOf, Equal, NotEqual, Gt, Lt: 2 arguments
-/// - Contains, SumOf, ProductOf, MaxOf: 3 arguments
-/// - NotContains: 2 arguments
-///
-/// Returns an error if the argument count doesn't match the predicate's requirements.
-fn check_native_arity(pred: NativePredicate, args_len: usize) -> Result<(), ProcessorError> {
-    let (expected_min, expected_max) = match pred {
-        NativePredicate::ValueOf => (2, 2),
-        NativePredicate::Equal => (2, 2),
-        NativePredicate::NotEqual => (2, 2),
-        NativePredicate::Gt | NativePredicate::GtEq => (2, 2),
-        NativePredicate::Lt | NativePredicate::LtEq => (2, 2),
-        NativePredicate::Contains => (3, 3),
-        NativePredicate::NotContains => (2, 2),
-        NativePredicate::SumOf => (3, 3),
-        NativePredicate::ProductOf => (3, 3),
-        NativePredicate::MaxOf => (3, 3),
-        NativePredicate::HashOf => (3, 3),
-        NativePredicate::DictContains => (3, 3),
-        NativePredicate::DictNotContains => (2, 2),
-        NativePredicate::SetContains => (3, 3),
-        NativePredicate::SetNotContains => (2, 2),
-        NativePredicate::ArrayContains => (3, 3),
-        NativePredicate::None => (0, 0),
-    };
-
-    if args_len < expected_min || args_len > expected_max {
-        Err(ProcessorError::ArgumentCountMismatch {
-            predicate: format!("{:?}", pred),
-            expected: expected_min,
-            found: args_len,
+    ordered_scope_wildcard_names
+        .iter()
+        .position(|n| n == name_to_resolve)
+        .map(|index| Wildcard::new(name_to_resolve.to_string(), index))
+        .ok_or_else(|| ProcessorError::UndefinedWildcard {
+            name: name_to_resolve.to_string(),
+            span: None,
         })
-    } else {
-        Ok(())
+}
+
+fn resolve_key_or_wildcard_str(
+    ordered_scope_wildcard_names: &[String],
+    kows: &KeyOrWildcardStr,
+) -> Result<KeyOrWildcard, ProcessorError> {
+    match kows {
+        KeyOrWildcardStr::Key(k_str) => Ok(KeyOrWildcard::Key(Key::new(k_str.clone()))),
+        KeyOrWildcardStr::Wildcard(wc_name_str) => {
+            let resolved_wc = resolve_wildcard(ordered_scope_wildcard_names, wc_name_str)?;
+            Ok(KeyOrWildcard::Wildcard(resolved_wc))
+        }
     }
+}
+
+fn resolve_request_statement_builder(
+    stb: StatementTmplBuilder,
+    ordered_request_wildcard_names: &[String],
+    params: &Params,
+) -> Result<StatementTmpl, ProcessorError> {
+    let stb = stb.desugar();
+
+    let mut middleware_args = Vec::with_capacity(stb.args.len());
+    for builder_arg in stb.args {
+        let mw_arg = match builder_arg {
+            BuilderArg::Literal(v) => StatementTmplArg::Literal(v),
+            BuilderArg::Key(pod_id_str, key_wc_str) => {
+                let pod_sowc = match pod_id_str {
+                    SelfOrWildcardStr::SELF => MiddlewareSelfOrWildcard::SELF,
+                    SelfOrWildcardStr::Wildcard(name) => MiddlewareSelfOrWildcard::Wildcard(
+                        resolve_wildcard(ordered_request_wildcard_names, &name)?,
+                    ),
+                };
+                let key_or_wc =
+                    resolve_key_or_wildcard_str(ordered_request_wildcard_names, &key_wc_str)?;
+                StatementTmplArg::AnchoredKey(pod_sowc, key_or_wc)
+            }
+            BuilderArg::WildcardLiteral(wc_name) => {
+                let pod_wc = resolve_wildcard(ordered_request_wildcard_names, &wc_name)?;
+                StatementTmplArg::WildcardLiteral(pod_wc)
+            }
+        };
+        middleware_args.push(mw_arg);
+    }
+
+    if middleware_args.len() > params.max_statement_args {
+        return Err(ProcessorError::Middleware(middleware::Error::max_length(
+            format!("Arguments for predicate {:?}", stb.predicate),
+            middleware_args.len(),
+            params.max_statement_args,
+        )));
+    }
+
+    Ok(StatementTmpl {
+        pred: stb.predicate,
+        args: middleware_args,
+    })
+}
+
+fn parse_statement_args(
+    stmt_pair: &Pair<Rule>,
+    context_stmt_name: &str,
+) -> Result<Vec<BuilderArg>, ProcessorError> {
+    let mut builder_args = Vec::new();
+    let mut inner_stmt_pairs = stmt_pair.clone().into_inner();
+
+    if let Some(arg_list_pair) = inner_stmt_pairs.find(|p| p.as_rule() == Rule::statement_arg_list)
+    {
+        let arg_list_span = get_span(&arg_list_pair);
+        for arg_pair in arg_list_pair
+            .into_inner()
+            .filter(|p| p.as_rule() == Rule::statement_arg)
+        {
+            let arg_content_pair =
+                arg_pair
+                    .into_inner()
+                    .next()
+                    .ok_or_else(|| ProcessorError::MissingElement {
+                        element_type: "argument content for BuilderArg".to_string(),
+                        context: format!(
+                            "argument in statement {} during parse_statement_args",
+                            context_stmt_name
+                        ),
+                        span: Some(arg_list_span),
+                    })?;
+            let builder_arg = pest_pair_to_builder_arg(&arg_content_pair, context_stmt_name)?;
+            builder_args.push(builder_arg);
+        }
+    }
+    Ok(builder_args)
 }
 
 #[cfg(test)]
-mod tests {
+mod first_pass_tests {
+    use std::collections::HashMap;
 
-    use super::*;
+    use pest::iterators::Pairs;
+
+    use super::{first_pass, ProcessingContext};
     use crate::{
-        lang::ast::{
-            AnchoredKey, AnchoredKeyKey, Argument, CustomPredicateCall, CustomPredicateDefinition,
-            CustomPredicateType, Document, Identifier, Literal, NativePredicateCall, Statement,
-            TopLevelDefinition, Variable,
+        lang::{
+            error::ProcessorError,
+            parser::{parse_podlog, Rule},
         },
-        middleware::{KeyOrWildcard, NativePredicate, Predicate},
+        middleware::Params,
     };
 
-    // Helper to create Variable
-    fn var(name: &str) -> Variable {
-        Variable(name.to_string())
-    }
+    fn get_document_content_pairs(input: &str) -> Result<Pairs<Rule>, ProcessorError> {
+        let full_parse_tree = parse_podlog(input)
+            .map_err(|e| ProcessorError::Internal(format!("Test parsing failed: {:?}", e)))?;
 
-    // Helper to create Identifier
-    fn ident(name: &str) -> Identifier {
-        Identifier(name.to_string())
-    }
+        let document_node = full_parse_tree.peek().ok_or_else(|| {
+            ProcessorError::Internal("Parser returned no pairs for the document rule.".to_string())
+        })?;
 
-    #[test]
-    fn test_process_simple_doc() {
-        // Manually construct the AST for:
-        // is_eq(A, B) = AND(
-        //   Equal(?A["val"], ?B["val"])
-        // )
-        // REQUEST(
-        //   is_eq(?X, ?Y)
-        // )
-
-        let is_eq_pred = CustomPredicateDefinition {
-            name: ident("is_eq"),
-            public_args: vec![var("A"), var("B")],
-            private_args: vec![],
-            type_: CustomPredicateType::And,
-            statements: vec![Statement::Native(NativePredicateCall {
-                predicate: ast::NativePredicate::Equal,
-                args: vec![
-                    Argument::AnchoredKey(AnchoredKey {
-                        pod_var: var("A"),
-                        key: AnchoredKeyKey::LiteralString("val".to_string()),
-                    }),
-                    Argument::AnchoredKey(AnchoredKey {
-                        pod_var: var("B"),
-                        key: AnchoredKeyKey::LiteralString("val".to_string()),
-                    }),
-                ],
-            })],
-        };
-
-        let request_def = ast::RequestDefinition {
-            statements: vec![Statement::Custom(CustomPredicateCall {
-                name: ident("is_eq"),
-                args: vec![Argument::Variable(var("X")), Argument::Variable(var("Y"))],
-            })],
-        };
-
-        let doc = Document {
-            definitions: vec![
-                TopLevelDefinition::CustomPredicate(is_eq_pred),
-                TopLevelDefinition::Request(request_def),
-            ],
-        };
-
-        let params = Params::default();
-        let result = process_document(doc, &params);
-
-        // Assert basic success
-        assert!(result.is_ok(), "Processing failed: {:?}", result.err());
-        let output = result.unwrap();
-
-        // --- Check Custom Predicate Batch ---
-        assert_eq!(output.custom_batch.predicates.len(), 1);
-        assert_eq!(output.custom_batch.name, "PodlogBatch");
-        let processed_pred = &output.custom_batch.predicates[0];
-
-        assert_eq!(processed_pred.name, "is_eq");
-        assert!(processed_pred.conjunction); // AND
-        assert_eq!(processed_pred.args_len, 2); // A, B
-        assert_eq!(processed_pred.statements.len(), 1);
-
-        // Check the statement inside the custom predicate
-        let pred_stmt = &processed_pred.statements[0];
-        assert_eq!(pred_stmt.pred, Predicate::Native(NativePredicate::Equal));
-        assert_eq!(pred_stmt.args.len(), 2);
-        // Expected: Equal( ?A["val"], ?B["val"] )
-        // ?A -> Wildcard{ name: "A", index: 0 }
-        // ?B -> Wildcard{ name: "B", index: 1 }
-        // "val" -> KeyOrWildcard::Key
-        assert_eq!(
-            pred_stmt.args[0],
-            StatementTmplArg::Key(
-                Wildcard {
-                    name: "A".to_string(),
-                    index: 0
-                },
-                KeyOrWildcard::Key(Key::new("val".to_string()))
-            )
-        );
-        assert_eq!(
-            pred_stmt.args[1],
-            StatementTmplArg::Key(
-                Wildcard {
-                    name: "B".to_string(),
-                    index: 1
-                },
-                KeyOrWildcard::Key(Key::new("val".to_string()))
-            )
-        );
-
-        // --- Check Request Templates ---
-        assert_eq!(output.request_templates.len(), 1);
-        let req_stmt = &output.request_templates[0];
-
-        // Expected: is_eq(?X, ?Y)
-        // is_eq -> BatchSelf(0)
-        // ?X -> Wildcard { name: "X", index: 0 } (Indices restart in request scope)
-        // ?Y -> Wildcard { name: "Y", index: 1 }
-        assert_eq!(
-            req_stmt.pred,
-            Predicate::Custom(CustomPredicateRef::new(output.custom_batch, 0))
-        );
-        assert_eq!(req_stmt.args.len(), 2);
-        assert_eq!(
-            req_stmt.args[0],
-            StatementTmplArg::WildcardLiteral(Wildcard {
-                name: "X".to_string(),
-                index: 0
-            })
-        );
-        assert_eq!(
-            req_stmt.args[1],
-            StatementTmplArg::WildcardLiteral(Wildcard {
-                name: "Y".to_string(),
-                index: 1
-            })
-        );
+        if document_node.as_rule() != Rule::document {
+            return Err(ProcessorError::Internal(format!(
+                "Expected top-level pair to be Rule::document, but found {:?}.",
+                document_node.as_rule()
+            )));
+        }
+        Ok(full_parse_tree.into_iter().next().unwrap().into_inner())
     }
 
     #[test]
-    fn test_process_private_vars() {
-        // is_eq_priv(Pub, private: Priv) = AND(
-        //   Equal(?Pub["pub_key"], ?Priv["priv_key"])
-        // )
-        let pred_def = CustomPredicateDefinition {
-            name: ident("is_eq_priv"),
-            public_args: vec![var("Pub")],
-            private_args: vec![var("Priv")], // private_args now populated directly
-            type_: CustomPredicateType::And,
-            statements: vec![Statement::Native(NativePredicateCall {
-                predicate: ast::NativePredicate::Equal,
-                args: vec![
-                    Argument::AnchoredKey(AnchoredKey {
-                        pod_var: var("Pub"),
-                        key: AnchoredKeyKey::LiteralString("pub_key".to_string()),
-                    }),
-                    Argument::AnchoredKey(AnchoredKey {
-                        pod_var: var("Priv"),
-                        key: AnchoredKeyKey::LiteralString("priv_key".to_string()),
-                    }),
-                ],
-            })],
-        };
-
-        let doc = Document {
-            definitions: vec![TopLevelDefinition::CustomPredicate(pred_def)],
-        };
+    fn test_fp_empty_input() -> Result<(), ProcessorError> {
+        let input = "";
+        let pairs = get_document_content_pairs(input)?;
         let params = Params::default();
-        let result = process_document(doc, &params);
-
-        assert!(result.is_ok(), "Processing failed: {:?}", result.err());
-        let output = result.unwrap();
-
-        assert_eq!(output.custom_batch.predicates.len(), 1);
-        let processed_pred = &output.custom_batch.predicates[0];
-
-        assert_eq!(processed_pred.name, "is_eq_priv");
-        assert!(processed_pred.conjunction);
-        assert_eq!(processed_pred.args_len, 1); // Only Pub is public
-        assert_eq!(processed_pred.statements.len(), 1);
-
-        let pred_stmt = &processed_pred.statements[0];
-        assert_eq!(pred_stmt.pred, Predicate::Native(NativePredicate::Equal));
-        assert_eq!(pred_stmt.args.len(), 2);
-
-        // Check wildcards: Pub should be index 0, Priv should be index 1
-        assert_eq!(
-            pred_stmt.args[0],
-            StatementTmplArg::Key(
-                Wildcard {
-                    name: "Pub".to_string(),
-                    index: 0
-                },
-                KeyOrWildcard::Key(Key::new("pub_key".to_string()))
-            )
-        );
-        assert_eq!(
-            pred_stmt.args[1],
-            StatementTmplArg::Key(
-                Wildcard {
-                    name: "Priv".to_string(),
-                    index: 1
-                }, // Index 1
-                KeyOrWildcard::Key(Key::new("priv_key".to_string()))
-            )
-        );
-        // No request, so request_templates should be empty
-        assert!(output.request_templates.is_empty());
+        let mut ctx = ProcessingContext {
+            params: &params,
+            custom_predicate_signatures: HashMap::new(),
+            custom_predicate_pairs: Vec::new(),
+            request_pair: None,
+        };
+        first_pass(pairs, &mut ctx)?;
+        assert!(ctx.custom_predicate_signatures.is_empty());
+        assert!(ctx.custom_predicate_pairs.is_empty());
+        assert!(ctx.request_pair.is_none());
+        Ok(())
     }
 
     #[test]
-    fn test_process_literal_args() {
-        // process_literals(Data) = AND(
-        //   ValueOf(?Data["num"], 123)
-        //   ValueOf(?Data["flag"], true)
-        //   ValueOf(?Data["msg"], "hello")
-        // )
-        // REQUEST(
-        //   process_literals(?Pod)
-        // )
-        let pred_def = CustomPredicateDefinition {
-            name: ident("process_literals"),
-            public_args: vec![var("Data")],
-            private_args: vec![],
-            type_: CustomPredicateType::And,
-            statements: vec![
-                Statement::Native(NativePredicateCall {
-                    predicate: ast::NativePredicate::ValueOf,
-                    args: vec![
-                        Argument::AnchoredKey(AnchoredKey {
-                            pod_var: var("Data"),
-                            key: AnchoredKeyKey::LiteralString("num".to_string()),
-                        }),
-                        Argument::Literal(Literal::Int(123)),
-                    ],
-                }),
-                Statement::Native(NativePredicateCall {
-                    predicate: ast::NativePredicate::ValueOf,
-                    args: vec![
-                        Argument::AnchoredKey(AnchoredKey {
-                            pod_var: var("Data"),
-                            key: AnchoredKeyKey::LiteralString("flag".to_string()),
-                        }),
-                        Argument::Literal(Literal::Bool(true)),
-                    ],
-                }),
-                Statement::Native(NativePredicateCall {
-                    predicate: ast::NativePredicate::ValueOf,
-                    args: vec![
-                        Argument::AnchoredKey(AnchoredKey {
-                            pod_var: var("Data"),
-                            key: AnchoredKeyKey::LiteralString("msg".to_string()),
-                        }),
-                        Argument::Literal(Literal::String("hello".to_string())),
-                    ],
-                }),
-            ],
-        };
-
-        let request_def = ast::RequestDefinition {
-            statements: vec![Statement::Custom(CustomPredicateCall {
-                name: ident("process_literals"),
-                args: vec![Argument::Variable(var("Pod"))],
-            })],
-        };
-
-        let doc = Document {
-            definitions: vec![
-                TopLevelDefinition::CustomPredicate(pred_def),
-                TopLevelDefinition::Request(request_def),
-            ],
-        };
-
+    fn test_fp_only_request() -> Result<(), ProcessorError> {
+        let input = "REQUEST( Equal(?A[\"k\"],?B[\"k\"]) )"; // Escaped quotes
+        let pairs = get_document_content_pairs(input)?;
         let params = Params::default();
-        let result = process_document(doc, &params);
-
-        assert!(result.is_ok(), "Processing failed: {:?}", result.err());
-        let output = result.unwrap();
-
-        // Check predicate processing (ensure literals were handled)
-        assert_eq!(output.custom_batch.predicates.len(), 1);
-        let processed_pred = &output.custom_batch.predicates[0];
-        assert_eq!(processed_pred.statements.len(), 3);
-
+        let mut ctx = ProcessingContext {
+            params: &params,
+            custom_predicate_signatures: HashMap::new(),
+            custom_predicate_pairs: Vec::new(),
+            request_pair: None,
+        };
+        first_pass(pairs, &mut ctx)?;
+        assert!(ctx.custom_predicate_signatures.is_empty());
+        assert!(ctx.custom_predicate_pairs.is_empty());
+        assert!(ctx.request_pair.is_some());
         assert_eq!(
-            processed_pred.statements[0].args[1],
-            StatementTmplArg::Literal(Value::from(123i64))
+            ctx.request_pair.as_ref().unwrap().as_rule(),
+            Rule::request_def
         );
-        assert_eq!(
-            processed_pred.statements[1].args[1],
-            StatementTmplArg::Literal(Value::from(true))
-        );
-        assert_eq!(
-            processed_pred.statements[2].args[1],
-            StatementTmplArg::Literal(Value::from("hello"))
-        );
-
-        // Check request processing
-        assert_eq!(output.request_templates.len(), 1);
-        let req_stmt = &output.request_templates[0];
-        assert_eq!(
-            req_stmt.pred,
-            Predicate::Custom(CustomPredicateRef::new(output.custom_batch, 0))
-        );
-        assert_eq!(req_stmt.args.len(), 1);
-        assert_eq!(
-            req_stmt.args[0],
-            StatementTmplArg::WildcardLiteral(Wildcard {
-                name: "Pod".to_string(),
-                index: 0
-            })
-        );
+        Ok(())
     }
 
     #[test]
-    fn test_process_variable_key() {
-        // pred(Pod, KeyVar) = AND(
-        //   Equal(?Pod[?KeyVar], ?Pod["fixed_key"])
-        // )
-        // REQUEST(
-        //   pred(?MyPod, ?TheKey)
-        // )
-        let pred_def = CustomPredicateDefinition {
-            name: ident("pred"),
-            public_args: vec![var("Pod"), var("KeyVar")],
-            private_args: vec![],
-            type_: CustomPredicateType::And,
-            statements: vec![Statement::Native(NativePredicateCall {
-                predicate: ast::NativePredicate::Equal,
-                args: vec![
-                    Argument::AnchoredKey(AnchoredKey {
-                        pod_var: var("Pod"),
-                        key: AnchoredKeyKey::Variable(var("KeyVar")), // Variable Key
-                    }),
-                    Argument::AnchoredKey(AnchoredKey {
-                        pod_var: var("Pod"),
-                        key: AnchoredKeyKey::LiteralString("fixed_key".to_string()),
-                    }),
-                ],
-            })],
-        };
-
-        let request_def = ast::RequestDefinition {
-            statements: vec![Statement::Custom(CustomPredicateCall {
-                name: ident("pred"),
-                args: vec![
-                    Argument::Variable(var("MyPod")),
-                    Argument::Variable(var("TheKey")),
-                ],
-            })],
-        };
-
-        let doc = Document {
-            definitions: vec![
-                TopLevelDefinition::CustomPredicate(pred_def),
-                TopLevelDefinition::Request(request_def),
-            ],
-        };
-
+    fn test_fp_simple_predicate() -> Result<(), ProcessorError> {
+        let input = "my_pred(A, B) = AND( Equal(?A[\"k\"],?B[\"k\"]) )"; // Escaped quotes
+        let pairs = get_document_content_pairs(input)?;
         let params = Params::default();
-        let result = process_document(doc, &params);
+        let mut ctx = ProcessingContext {
+            params: &params,
+            custom_predicate_signatures: HashMap::new(),
+            custom_predicate_pairs: Vec::new(),
+            request_pair: None,
+        };
+        first_pass(pairs, &mut ctx)?;
+        assert_eq!(ctx.custom_predicate_signatures.len(), 1);
+        assert_eq!(ctx.custom_predicate_pairs.len(), 1);
+        assert!(ctx.request_pair.is_none());
 
-        assert!(result.is_ok(), "Processing failed: {:?}", result.err());
-        let output = result.unwrap();
-
-        // Check predicate processing
-        assert_eq!(output.custom_batch.predicates.len(), 1);
-        let processed_pred = &output.custom_batch.predicates[0];
-        assert_eq!(processed_pred.statements.len(), 1);
-        let pred_stmt = &processed_pred.statements[0];
-
-        // ?Pod -> index 0
-        // ?KeyVar -> index 1
+        let (index, arity) = ctx.custom_predicate_signatures.get("my_pred").unwrap();
+        assert_eq!(*index, 0);
+        assert_eq!(*arity, 2); // A, B
         assert_eq!(
-            pred_stmt.args[0],
-            StatementTmplArg::Key(
-                Wildcard {
-                    name: "Pod".to_string(),
-                    index: 0
-                },
-                KeyOrWildcard::Wildcard(Wildcard {
-                    name: "KeyVar".to_string(),
-                    index: 1
-                })
-            )
+            ctx.custom_predicate_pairs[0].as_rule(),
+            Rule::custom_predicate_def
         );
-        assert_eq!(
-            pred_stmt.args[1],
-            StatementTmplArg::Key(
-                Wildcard {
-                    name: "Pod".to_string(),
-                    index: 0
-                },
-                KeyOrWildcard::Key(Key::new("fixed_key".to_string()))
-            )
-        );
-
-        // Check request processing
-        assert_eq!(output.request_templates.len(), 1);
-        let req_stmt = &output.request_templates[0];
-        // ?MyPod -> index 0 (request scope)
-        // ?TheKey -> index 1 (request scope)
-        assert_eq!(
-            req_stmt.args[0],
-            StatementTmplArg::WildcardLiteral(Wildcard {
-                name: "MyPod".to_string(),
-                index: 0
-            })
-        );
-        assert_eq!(
-            req_stmt.args[1],
-            StatementTmplArg::WildcardLiteral(Wildcard {
-                name: "TheKey".to_string(),
-                index: 1
-            })
-        );
+        Ok(())
     }
 
     #[test]
-    fn test_process_multiple_predicates() {
-        // pred1(X) = AND( Equal(?X["a"], ?X["b"]) )
-        // pred2(Y) = AND( pred1(?Y) )
-        // REQUEST( pred2(?Z) )
-
-        let pred1_def = CustomPredicateDefinition {
-            name: ident("pred1"),
-            public_args: vec![var("X")],
-            private_args: vec![],
-            type_: CustomPredicateType::And,
-            statements: vec![Statement::Native(NativePredicateCall {
-                predicate: ast::NativePredicate::Equal,
-                args: vec![
-                    Argument::AnchoredKey(AnchoredKey {
-                        pod_var: var("X"),
-                        key: AnchoredKeyKey::LiteralString("a".to_string()),
-                    }),
-                    Argument::AnchoredKey(AnchoredKey {
-                        pod_var: var("X"),
-                        key: AnchoredKeyKey::LiteralString("b".to_string()),
-                    }),
-                ],
-            })],
-        };
-
-        let pred2_def = CustomPredicateDefinition {
-            name: ident("pred2"),
-            public_args: vec![var("Y")],
-            private_args: vec![],
-            type_: CustomPredicateType::And,
-            statements: vec![Statement::Custom(CustomPredicateCall {
-                name: ident("pred1"), // Call the first predicate
-                args: vec![Argument::Variable(var("Y"))],
-            })],
-        };
-
-        let request_def = ast::RequestDefinition {
-            statements: vec![Statement::Custom(CustomPredicateCall {
-                name: ident("pred2"),
-                args: vec![Argument::Variable(var("Z"))],
-            })],
-        };
-
-        let doc = Document {
-            definitions: vec![
-                TopLevelDefinition::CustomPredicate(pred1_def),
-                TopLevelDefinition::CustomPredicate(pred2_def),
-                TopLevelDefinition::Request(request_def),
-            ],
-        };
-
+    fn test_fp_multiple_predicates() -> Result<(), ProcessorError> {
+        let input = r#"
+            pred1(X) = AND( Equal(?X["k"],?X["k"]) )
+            pred2(Y, Z) = OR( ValueOf(?Y["v"], 123) )
+        "#;
+        let pairs = get_document_content_pairs(input)?;
         let params = Params::default();
-        let result = process_document(doc, &params);
+        let mut ctx = ProcessingContext {
+            params: &params,
+            custom_predicate_signatures: HashMap::new(),
+            custom_predicate_pairs: Vec::new(),
+            request_pair: None,
+        };
+        first_pass(pairs, &mut ctx)?;
+        assert_eq!(ctx.custom_predicate_signatures.len(), 2);
+        assert_eq!(ctx.custom_predicate_pairs.len(), 2);
 
-        assert!(result.is_ok(), "Processing failed: {:?}", result.err());
-        let output = result.unwrap();
+        let (idx1, arity1) = ctx.custom_predicate_signatures.get("pred1").unwrap();
+        assert_eq!(*idx1, 0);
+        assert_eq!(*arity1, 1);
 
-        // Check batch
-        assert_eq!(output.custom_batch.predicates.len(), 2);
-        let processed_pred1 = &output.custom_batch.predicates[0];
-        let processed_pred2 = &output.custom_batch.predicates[1];
-
-        // Basic checks on pred1
-        assert_eq!(processed_pred1.name, "pred1");
-        assert_eq!(processed_pred1.args_len, 1);
-        assert_eq!(processed_pred1.statements.len(), 1);
-
-        // Basic checks on pred2
-        assert_eq!(processed_pred2.name, "pred2");
-        assert_eq!(processed_pred2.args_len, 1);
-        assert_eq!(processed_pred2.statements.len(), 1);
-
-        // Check statement inside pred2 calls pred1 (index 0)
-        let pred2_stmt = &processed_pred2.statements[0];
-        assert_eq!(pred2_stmt.pred, Predicate::BatchSelf(0)); // Calls pred1 at index 0
-        assert_eq!(pred2_stmt.args.len(), 1);
-        assert_eq!(
-            pred2_stmt.args[0],
-            StatementTmplArg::WildcardLiteral(Wildcard {
-                name: "Y".to_string(),
-                index: 0
-            })
-        );
-
-        // Check request calls pred2 (index 1)
-        assert_eq!(output.request_templates.len(), 1);
-        let req_stmt = &output.request_templates[0];
-        assert_eq!(
-            req_stmt.pred,
-            Predicate::Custom(CustomPredicateRef::new(output.custom_batch.clone(), 1))
-        ); // Calls pred2 at index 1
-        assert_eq!(req_stmt.args.len(), 1);
-        assert_eq!(
-            req_stmt.args[0],
-            StatementTmplArg::WildcardLiteral(Wildcard {
-                name: "Z".to_string(),
-                index: 0
-            })
-        );
+        let (idx2, arity2) = ctx.custom_predicate_signatures.get("pred2").unwrap();
+        assert_eq!(*idx2, 1);
+        assert_eq!(*arity2, 2);
+        Ok(())
     }
 
     #[test]
-    fn test_process_errors() {
-        let params = Params::default();
+    fn test_fp_predicate_public_args_count() -> Result<(), ProcessorError> {
+        let inputs_and_expected_arities = vec![
+            ("p1(A) = AND(None()) // One public arg", 1),
+            ("p3(A,B,C) = AND(None()) // Three public args", 3),
+            ("p_pub_priv(Pub1, private: Priv1) = AND(None())", 1),
+        ];
 
-        // Error: Duplicate Predicate Definition
-        let doc_dup_pred = Document {
-            definitions: vec![
-                TopLevelDefinition::CustomPredicate(CustomPredicateDefinition {
-                    name: ident("dup"),
-                    public_args: vec![],
-                    private_args: vec![],
-                    type_: CustomPredicateType::And,
-                    statements: vec![],
-                }),
-                TopLevelDefinition::CustomPredicate(CustomPredicateDefinition {
-                    name: ident("dup"),
-                    public_args: vec![],
-                    private_args: vec![],
-                    type_: CustomPredicateType::And,
-                    statements: vec![],
-                }),
-            ],
-        };
-        let result = process_document(doc_dup_pred, &params);
-        assert!(matches!(result, Err(ProcessorError::DuplicateDefinition(name)) if name == "dup"));
-
-        // Error: Multiple Request Definitions
-        let doc_multi_req = Document {
-            definitions: vec![
-                TopLevelDefinition::Request(ast::RequestDefinition { statements: vec![] }),
-                TopLevelDefinition::Request(ast::RequestDefinition { statements: vec![] }),
-            ],
-        };
-        let result = process_document(doc_multi_req, &params);
-        assert!(matches!(
-            result,
-            Err(ProcessorError::MultipleRequestDefinitions)
-        ));
-
-        // Error: Duplicate Variable (Public/Private)
-        let doc_dup_var = Document {
-            definitions: vec![TopLevelDefinition::CustomPredicate(
-                CustomPredicateDefinition {
-                    name: ident("dup_var_pred"),
-                    public_args: vec![var("A")],
-                    private_args: vec![var("A")], // Duplicate!
-                    type_: CustomPredicateType::And,
-                    statements: vec![],
-                },
-            )],
-        };
-        let result = process_document(doc_dup_var, &params);
-        assert!(matches!(result, Err(ProcessorError::DuplicateVariable(name)) if name == "A"));
-
-        // Error: Undefined Variable (in Predicate Body)
-        let doc_undef_var = Document {
-            definitions: vec![TopLevelDefinition::CustomPredicate(
-                CustomPredicateDefinition {
-                    name: ident("undef_var_pred"),
-                    public_args: vec![var("A")],
-                    private_args: vec![],
-                    type_: CustomPredicateType::And,
-                    statements: vec![Statement::Native(NativePredicateCall {
-                        // Uses ?B which is not defined
-                        predicate: ast::NativePredicate::Equal,
-                        args: vec![
-                            Argument::AnchoredKey(AnchoredKey {
-                                pod_var: var("A"),
-                                key: AnchoredKeyKey::LiteralString("k".into()),
-                            }),
-                            Argument::AnchoredKey(AnchoredKey {
-                                pod_var: var("B"),
-                                key: AnchoredKeyKey::LiteralString("k".into()),
-                            }),
-                        ],
-                    })],
-                },
-            )],
-        };
-        let result = process_document(doc_undef_var, &params);
-        assert!(matches!(result, Err(ProcessorError::UndefinedIdentifier(name)) if name == "B"));
-
-        // Error: Undefined Predicate (in Request)
-        let doc_undef_pred_call = Document {
-            definitions: vec![TopLevelDefinition::Request(ast::RequestDefinition {
-                statements: vec![Statement::Custom(CustomPredicateCall {
-                    // Calls undefined "missing_pred"
-                    name: ident("missing_pred"),
-                    args: vec![],
-                })],
-            })],
-        };
-        let result = process_document(doc_undef_pred_call, &params);
-        assert!(
-            matches!(result, Err(ProcessorError::UndefinedIdentifier(name)) if name == "missing_pred")
-        );
-
-        // Error: Arity Mismatch (Native)
-        let doc_arity_native = Document {
-            definitions: vec![TopLevelDefinition::Request(ast::RequestDefinition {
-                statements: vec![Statement::Native(NativePredicateCall {
-                    predicate: ast::NativePredicate::Equal,   // Expects 2 args
-                    args: vec![Argument::Variable(var("X"))], // Only 1 provided
-                })],
-            })],
-        };
-        let result = process_document(doc_arity_native, &params);
-        assert!(
-            matches!(result, Err(ProcessorError::ArgumentCountMismatch { predicate, expected, found }) if predicate == "Equal" && expected == 2 && found == 1)
-        );
-
-        // Error: Arity Mismatch (Custom Call in Request)
-        let doc_arity_custom = Document {
-            definitions: vec![
-                TopLevelDefinition::CustomPredicate(CustomPredicateDefinition {
-                    name: ident("arity_pred"),
-                    public_args: vec![var("P1"), var("P2")], // Expects 2 args
-                    private_args: vec![],
-                    type_: CustomPredicateType::And,
-                    statements: vec![],
-                }),
-                TopLevelDefinition::Request(ast::RequestDefinition {
-                    statements: vec![Statement::Custom(CustomPredicateCall {
-                        name: ident("arity_pred"),
-                        args: vec![Argument::Variable(var("X"))], // Only 1 provided
-                    })],
-                }),
-            ],
-        };
-        let result = process_document(doc_arity_custom, &params);
-        assert!(
-            matches!(result, Err(ProcessorError::ArgumentCountMismatch { predicate, expected, found }) if predicate == "arity_pred" && expected == 2 && found == 1)
-        );
+        for (input_str, expected_arity) in inputs_and_expected_arities {
+            let pairs = get_document_content_pairs(input_str)?;
+            let params = Params::default();
+            let mut ctx = ProcessingContext {
+                params: &params,
+                custom_predicate_signatures: HashMap::new(),
+                custom_predicate_pairs: Vec::new(),
+                request_pair: None,
+            };
+            first_pass(pairs, &mut ctx)?;
+            let pred_name = ctx
+                .custom_predicate_signatures
+                .keys()
+                .next()
+                .expect("No predicate found in test string");
+            let (_, arity) = ctx.custom_predicate_signatures.get(pred_name).unwrap();
+            assert_eq!(*arity, expected_arity, "Mismatch for input: {}", input_str);
+        }
+        Ok(())
     }
 
     #[test]
-    fn test_process_request_variations() {
+    fn test_fp_duplicate_predicate() {
+        let input = r#"
+            my_pred(A) = AND(None())
+            my_pred(B) = OR(None())
+        "#;
+        let pairs = get_document_content_pairs(input).unwrap();
         let params = Params::default();
-
-        // Document with predicate but no request
-        let doc_no_req = Document {
-            definitions: vec![TopLevelDefinition::CustomPredicate(
-                CustomPredicateDefinition {
-                    name: ident("no_req_pred"),
-                    public_args: vec![],
-                    private_args: vec![],
-                    type_: CustomPredicateType::And,
-                    statements: vec![],
-                },
-            )],
+        let mut ctx = ProcessingContext {
+            params: &params,
+            custom_predicate_signatures: HashMap::new(),
+            custom_predicate_pairs: Vec::new(),
+            request_pair: None,
         };
-        let result_no_req = process_document(doc_no_req, &params);
-        assert!(result_no_req.is_ok());
-        let output_no_req = result_no_req.unwrap(); // Store unwrapped value
-        assert_eq!(output_no_req.request_templates.len(), 0);
-        assert_eq!(output_no_req.custom_batch.predicates.len(), 1);
-
-        // Document with only a request
-        let doc_req_only = Document {
-            definitions: vec![TopLevelDefinition::Request(ast::RequestDefinition {
-                statements: vec![Statement::Native(NativePredicateCall {
-                    predicate: ast::NativePredicate::Equal,
-                    args: vec![Argument::Variable(var("X")), Argument::Variable(var("Y"))],
-                })],
-            })],
-        };
-        let result_req_only = process_document(doc_req_only, &params);
-        assert!(result_req_only.is_ok());
-        let output_req_only = result_req_only.unwrap(); // Store unwrapped value
-        assert_eq!(output_req_only.request_templates.len(), 1);
-        assert_eq!(output_req_only.custom_batch.predicates.len(), 0);
-
-        // Document with empty request
-        let doc_empty_req = Document {
-            definitions: vec![TopLevelDefinition::Request(ast::RequestDefinition {
-                statements: vec![],
-            })],
-        };
-        let result_empty_req = process_document(doc_empty_req, &params);
-        assert!(result_empty_req.is_ok());
-        let output_empty_req = result_empty_req.unwrap(); // Store unwrapped value
-        assert_eq!(output_empty_req.request_templates.len(), 0);
-        assert_eq!(output_empty_req.custom_batch.predicates.len(), 0);
-
-        // Empty document
-        let doc_empty = Document {
-            definitions: vec![],
-        };
-        let result_empty = process_document(doc_empty, &params);
-        assert!(result_empty.is_ok());
-        let output_empty = result_empty.unwrap(); // Store unwrapped value
-        assert_eq!(output_empty.request_templates.len(), 0);
-        assert_eq!(output_empty.custom_batch.predicates.len(), 0);
+        let result = first_pass(pairs, &mut ctx);
+        assert!(result.is_err());
+        match result.err().unwrap() {
+            // Use .err().unwrap() for ProcessorError
+            ProcessorError::DuplicateDefinition { name, .. } => {
+                assert_eq!(name, "my_pred");
+            }
+            e => panic!("Expected DuplicateDefinition, got {:?}", e),
+        }
     }
 
     #[test]
-    fn test_process_container_literals() {
-        // containers_pred(Pod) = AND(
-        //   ValueOf(?Pod["arr"], [1, true])
-        //   ValueOf(?Pod["set"], #[ "a", 2 ])
-        //   ValueOf(?Pod["dict"], { "k1": false, "k2": [ ] })
-        // )
-        // REQUEST( containers_pred(?ThePod) )
-
-        let pred_def = CustomPredicateDefinition {
-            name: ident("containers_pred"),
-            public_args: vec![var("Pod")],
-            private_args: vec![],
-            type_: CustomPredicateType::And,
-            statements: vec![
-                // Array
-                Statement::Native(NativePredicateCall {
-                    predicate: ast::NativePredicate::ValueOf,
-                    args: vec![
-                        Argument::AnchoredKey(AnchoredKey {
-                            pod_var: var("Pod"),
-                            key: AnchoredKeyKey::LiteralString("arr".to_string()),
-                        }),
-                        Argument::Literal(Literal::Array(vec![
-                            Literal::Int(1),
-                            Literal::Bool(true),
-                        ])),
-                    ],
-                }),
-                // Set
-                Statement::Native(NativePredicateCall {
-                    predicate: ast::NativePredicate::ValueOf,
-                    args: vec![
-                        Argument::AnchoredKey(AnchoredKey {
-                            pod_var: var("Pod"),
-                            key: AnchoredKeyKey::LiteralString("set".to_string()),
-                        }),
-                        Argument::Literal(Literal::Set(vec![
-                            Literal::String("a".to_string()),
-                            Literal::Int(2),
-                        ])),
-                    ],
-                }),
-                // Dict
-                Statement::Native(NativePredicateCall {
-                    predicate: ast::NativePredicate::ValueOf,
-                    args: vec![
-                        Argument::AnchoredKey(AnchoredKey {
-                            pod_var: var("Pod"),
-                            key: AnchoredKeyKey::LiteralString("dict".to_string()),
-                        }),
-                        Argument::Literal(Literal::Dict(
-                            vec![
-                                ("k1".to_string(), Literal::Bool(false)),
-                                ("k2".to_string(), Literal::Array(vec![])), // Empty nested array
-                            ]
-                            .into_iter()
-                            .collect(),
-                        )),
-                    ],
-                }),
-            ],
-        };
-
-        let request_def = ast::RequestDefinition {
-            statements: vec![Statement::Custom(CustomPredicateCall {
-                name: ident("containers_pred"),
-                args: vec![Argument::Variable(var("ThePod"))],
-            })],
-        };
-
-        let doc = Document {
-            definitions: vec![
-                TopLevelDefinition::CustomPredicate(pred_def),
-                TopLevelDefinition::Request(request_def),
-            ],
-        };
-
+    fn test_fp_multiple_requests() {
+        let input = r#"
+            REQUEST(None())
+            REQUEST(None())
+        "#;
+        let pairs = get_document_content_pairs(input).unwrap();
         let params = Params::default();
-        let result = process_document(doc, &params);
-
-        assert!(result.is_ok(), "Processing failed: {:?}", result.err());
-        let output = result.unwrap();
-
-        // Check predicate processing
-        assert_eq!(output.custom_batch.predicates.len(), 1);
-        let processed_pred = &output.custom_batch.predicates[0];
-        assert_eq!(processed_pred.statements.len(), 3);
-
-        // Expected middleware values
-        let expected_arr_val = Value::from(
-            middleware::containers::Array::new(vec![Value::from(1i64), Value::from(true)]).unwrap(),
-        );
-        let expected_set_val = Value::from(
-            middleware::containers::Set::new(
-                vec![Value::from("a"), Value::from(2i64)]
-                    .into_iter()
-                    .collect(),
-            )
-            .unwrap(),
-        );
-        let expected_dict_val = Value::from(
-            middleware::containers::Dictionary::new(
-                vec![
-                    (Key::new("k1".to_string()), Value::from(false)),
-                    (
-                        Key::new("k2".to_string()),
-                        Value::from(middleware::containers::Array::new(vec![]).unwrap()),
-                    ),
-                ]
-                .into_iter()
-                .collect(),
-            )
-            .unwrap(),
-        );
-
-        // Check Array statement
-        assert_eq!(processed_pred.statements[0].args.len(), 2);
-        assert_eq!(
-            processed_pred.statements[0].args[1],
-            StatementTmplArg::Literal(expected_arr_val)
-        );
-
-        // Check Set statement
-        assert_eq!(processed_pred.statements[1].args.len(), 2);
-        assert_eq!(
-            processed_pred.statements[1].args[1],
-            StatementTmplArg::Literal(expected_set_val)
-        );
-
-        // Check Dict statement
-        assert_eq!(processed_pred.statements[2].args.len(), 2);
-        assert_eq!(
-            processed_pred.statements[2].args[1],
-            StatementTmplArg::Literal(expected_dict_val)
-        );
-
-        // Check request processing
-        assert_eq!(output.request_templates.len(), 1);
-        let req_stmt = &output.request_templates[0];
-        assert_eq!(
-            req_stmt.pred,
-            Predicate::Custom(CustomPredicateRef::new(output.custom_batch, 0))
-        );
-        assert_eq!(req_stmt.args.len(), 1);
-        assert_eq!(
-            req_stmt.args[0],
-            StatementTmplArg::WildcardLiteral(Wildcard {
-                name: "ThePod".to_string(),
-                index: 0
-            })
-        );
+        let mut ctx = ProcessingContext {
+            params: &params,
+            custom_predicate_signatures: HashMap::new(),
+            custom_predicate_pairs: Vec::new(),
+            request_pair: None,
+        };
+        let result = first_pass(pairs, &mut ctx);
+        assert!(result.is_err());
+        match result.err().unwrap() {
+            // Use .err().unwrap() for ProcessorError
+            ProcessorError::MultipleRequestDefinitions { .. } => { /* Correct error */ }
+            e => panic!("Expected MultipleRequestDefinitions, got {:?}", e),
+        }
     }
 
     #[test]
-    fn test_process_forward_reference() {
-        // pred_b calls pred_a, but pred_b is defined first
-        // pred_b(Y) = AND( pred_a(?Y) )
-        // pred_a(X) = AND( Equal(?X["a"], ?X["b"]) )
-        // REQUEST( pred_b(?Z) )
-
-        let pred_b_def = CustomPredicateDefinition {
-            name: ident("pred_b"),
-            public_args: vec![var("Y")],
-            private_args: vec![],
-            type_: CustomPredicateType::And,
-            statements: vec![Statement::Custom(CustomPredicateCall {
-                name: ident("pred_a"), // Forward call
-                args: vec![Argument::Variable(var("Y"))],
-            })],
-        };
-
-        let pred_a_def = CustomPredicateDefinition {
-            name: ident("pred_a"),
-            public_args: vec![var("X")],
-            private_args: vec![],
-            type_: CustomPredicateType::And,
-            statements: vec![Statement::Native(NativePredicateCall {
-                predicate: ast::NativePredicate::Equal,
-                args: vec![
-                    Argument::AnchoredKey(AnchoredKey {
-                        pod_var: var("X"),
-                        key: AnchoredKeyKey::LiteralString("a".to_string()),
-                    }),
-                    Argument::AnchoredKey(AnchoredKey {
-                        pod_var: var("X"),
-                        key: AnchoredKeyKey::LiteralString("b".to_string()),
-                    }),
-                ],
-            })],
-        };
-
-        let request_def = ast::RequestDefinition {
-            statements: vec![Statement::Custom(CustomPredicateCall {
-                name: ident("pred_b"),
-                args: vec![Argument::Variable(var("Z"))],
-            })],
-        };
-
-        let doc = Document {
-            definitions: vec![
-                TopLevelDefinition::CustomPredicate(pred_b_def), // pred_b first (index 0)
-                TopLevelDefinition::CustomPredicate(pred_a_def), // pred_a second (index 1)
-                TopLevelDefinition::Request(request_def),
-            ],
-        };
-
+    fn test_fp_mixed_content() -> Result<(), ProcessorError> {
+        let input = r#"
+            pred_one(X) = AND(None())
+            REQUEST( pred_one(?A) )
+            pred_two(Y, Z) = OR(None())
+        "#;
+        let pairs = get_document_content_pairs(input)?;
         let params = Params::default();
-        let result = process_document(doc, &params);
-
-        assert!(
-            result.is_ok(),
-            "Processing failed for forward reference: {:?}",
-            result.err()
-        );
-        let output = result.unwrap();
-
-        // Check batch
-        assert_eq!(output.custom_batch.predicates.len(), 2);
-        let processed_pred_b = &output.custom_batch.predicates[0]; // Index 0
-        let processed_pred_a = &output.custom_batch.predicates[1]; // Index 1
-
-        // Basic checks on pred_b
-        assert_eq!(processed_pred_b.name, "pred_b");
-        assert_eq!(processed_pred_b.args_len, 1);
-        assert_eq!(processed_pred_b.statements.len(), 1);
-
-        // Basic checks on pred_a
-        assert_eq!(processed_pred_a.name, "pred_a");
-        assert_eq!(processed_pred_a.args_len, 1);
-        assert_eq!(processed_pred_a.statements.len(), 1);
-
-        // Check statement inside pred_b calls pred_a (index 1)
-        let pred_b_stmt = &processed_pred_b.statements[0];
-        assert_eq!(pred_b_stmt.pred, Predicate::BatchSelf(1)); // Calls pred_a at index 1
-        assert_eq!(pred_b_stmt.args.len(), 1);
-        assert_eq!(
-            pred_b_stmt.args[0],
-            StatementTmplArg::WildcardLiteral(Wildcard {
-                name: "Y".to_string(),
-                index: 0 // Wildcard index within pred_b scope
-            })
-        );
-
-        // Check request calls pred_b (index 0)
-        assert_eq!(output.request_templates.len(), 1);
-        let req_stmt = &output.request_templates[0];
-        assert_eq!(
-            req_stmt.pred,
-            Predicate::Custom(CustomPredicateRef::new(output.custom_batch, 0))
-        ); // Calls pred_b at index 0
-        assert_eq!(req_stmt.args.len(), 1);
-        assert_eq!(
-            req_stmt.args[0],
-            StatementTmplArg::WildcardLiteral(Wildcard {
-                name: "Z".to_string(),
-                index: 0 // Wildcard index within request scope
-            })
-        );
-    }
-
-    #[test]
-    fn test_process_error_undefined_identifier() {
-        let params = Params::default();
-        // Error: Undefined Variable (in Predicate Body) - Now UndefinedIdentifier
-        let doc_undef_var = Document {
-            definitions: vec![TopLevelDefinition::CustomPredicate(
-                CustomPredicateDefinition {
-                    name: ident("undef_var_pred"),
-                    public_args: vec![var("A")],
-                    private_args: vec![],
-                    type_: CustomPredicateType::And,
-                    statements: vec![Statement::Native(NativePredicateCall {
-                        // Uses ?B which is not defined
-                        predicate: ast::NativePredicate::Equal,
-                        args: vec![
-                            Argument::AnchoredKey(AnchoredKey {
-                                pod_var: var("A"),
-                                key: AnchoredKeyKey::LiteralString("k".into()),
-                            }),
-                            Argument::AnchoredKey(AnchoredKey {
-                                pod_var: var("B"), // Undefined Variable
-                                key: AnchoredKeyKey::LiteralString("k".into()),
-                            }),
-                        ],
-                    })],
-                },
-            )],
+        let mut ctx = ProcessingContext {
+            params: &params,
+            custom_predicate_signatures: HashMap::new(),
+            custom_predicate_pairs: Vec::new(),
+            request_pair: None,
         };
-        let result = process_document(doc_undef_var, &params);
-        assert!(matches!(result, Err(ProcessorError::UndefinedIdentifier(name)) if name == "B"));
+        first_pass(pairs, &mut ctx)?;
 
-        // Error: Undefined Predicate (in Request) - Now UndefinedIdentifier
-        let doc_undef_pred_call = Document {
-            definitions: vec![TopLevelDefinition::Request(ast::RequestDefinition {
-                statements: vec![Statement::Custom(CustomPredicateCall {
-                    // Calls undefined "missing_pred"
-                    name: ident("missing_pred"), // Undefined Predicate Name
-                    args: vec![],
-                })],
-            })],
-        };
-        let result = process_document(doc_undef_pred_call, &params);
-        assert!(
-            matches!(result, Err(ProcessorError::UndefinedIdentifier(name)) if name == "missing_pred")
-        );
+        assert_eq!(ctx.custom_predicate_signatures.len(), 2);
+        assert_eq!(ctx.custom_predicate_pairs.len(), 2);
+        assert!(ctx.request_pair.is_some());
+
+        let (idx1, arity1) = ctx.custom_predicate_signatures.get("pred_one").unwrap();
+        assert_eq!(*idx1, 0);
+        assert_eq!(*arity1, 1);
+
+        let (idx2, arity2) = ctx.custom_predicate_signatures.get("pred_two").unwrap();
+        assert_eq!(*idx2, 1);
+        assert_eq!(*arity2, 2);
+
+        // Check that the pairs were stored in the correct order and have the correct content (simplistic check)
+        assert!(ctx.custom_predicate_pairs[0].as_str().contains("pred_one"));
+        assert!(ctx.custom_predicate_pairs[1].as_str().contains("pred_two"));
+        assert!(ctx
+            .request_pair
+            .as_ref()
+            .unwrap()
+            .as_str()
+            .contains("pred_one(?A)"));
+
+        Ok(())
     }
 }

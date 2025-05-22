@@ -1,57 +1,55 @@
-pub mod ast;
 pub mod error;
 pub mod parser;
 pub mod processor;
 
-use ast::build_ast;
 pub use error::LangError;
-pub use parser::{parse_podlog, ParseError};
-pub use processor::process_document;
+pub use parser::{parse_podlog, Pairs, ParseError, Rule};
+pub use processor::process_pest_tree;
 use processor::ProcessedOutput;
 
 use crate::middleware::Params;
 
 pub fn parse(input: &str, params: &Params) -> Result<ProcessedOutput, LangError> {
     let pairs = parse_podlog(input)?;
-    let ast = build_ast(pairs)?;
-    let processed = process_document(ast, params)?;
-    Ok(processed)
+    processor::process_pest_tree(pairs, params).map_err(LangError::from)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
 
     use pretty_assertions::assert_eq;
 
-    use super::{ast::build_ast, *};
+    use super::*;
     use crate::middleware::{
         CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key, KeyOrWildcard,
-        NativePredicate, Params, PodType, Predicate, StatementTmpl, StatementTmplArg, Value,
-        Wildcard,
+        NativePredicate, Params, PodType, Predicate, SelfOrWildcard, StatementTmpl,
+        StatementTmplArg, Value, Wildcard, SELF_ID_HASH,
     };
 
-    // Helper to create Wildcard
+    // Helper functions
     fn wc(name: &str, index: usize) -> Wildcard {
         Wildcard::new(name.to_string(), index)
     }
 
-    // Helper to create KeyOrWildcard::Key
     fn k(name: &str) -> KeyOrWildcard {
         KeyOrWildcard::Key(Key::new(name.to_string()))
     }
 
-    // Helper to create KeyOrWildcard::Wildcard
     fn ko_wc(name: &str, index: usize) -> KeyOrWildcard {
         KeyOrWildcard::Wildcard(Wildcard::new(name.to_string(), index))
     }
 
-    // Helper to create StatementTmplArg::Key
-    fn sta_k(pod_var: (&str, usize), key_or_wc: KeyOrWildcard) -> StatementTmplArg {
-        StatementTmplArg::Key(wc(pod_var.0, pod_var.1), key_or_wc)
+    fn sta_ak(pod_var: (&str, usize), key_or_wc: KeyOrWildcard) -> StatementTmplArg {
+        StatementTmplArg::AnchoredKey(
+            SelfOrWildcard::Wildcard(wc(pod_var.0, pod_var.1)),
+            key_or_wc,
+        )
     }
 
-    // Helper to create StatementTmplArg::Literal
+    fn sta_ak_self(key_or_wc: KeyOrWildcard) -> StatementTmplArg {
+        StatementTmplArg::AnchoredKey(SelfOrWildcard::SELF, key_or_wc)
+    }
+
     fn sta_lit(value: impl Into<Value>) -> StatementTmplArg {
         StatementTmplArg::Literal(value.into())
     }
@@ -59,7 +57,6 @@ mod tests {
     #[test]
     fn test_e2e_simple_predicate() -> Result<(), LangError> {
         let input = r#"
-            // Simple predicate checking equality on a specific key
             is_equal(PodA, PodB) = AND(
                 Equal(?PodA["the_key"], ?PodB["the_key"])
             )
@@ -67,8 +64,7 @@ mod tests {
 
         let params = Params::default();
         let pairs = parse_podlog(input)?;
-        let ast = build_ast(pairs)?;
-        let processed = process_document(ast, &params)?;
+        let processed = process_pest_tree(pairs, &params)?;
         let batch_result = processed.custom_batch;
         let request_result = processed.request_templates;
 
@@ -81,20 +77,18 @@ mod tests {
         let expected_statements = vec![StatementTmpl {
             pred: Predicate::Native(NativePredicate::Equal),
             args: vec![
-                sta_k(("PodA", 0), k("the_key")), // ?PodA["the_key"] -> Wildcard(0), Key("the_key")
-                sta_k(("PodB", 1), k("the_key")), // ?PodB["the_key"] -> Wildcard(1), Key("the_key")
+                sta_ak(("PodA", 0), k("the_key")), // ?PodA["the_key"] -> Wildcard(0), Key("the_key")
+                sta_ak(("PodB", 1), k("the_key")), // ?PodB["the_key"] -> Wildcard(1), Key("the_key")
             ],
         }];
         let expected_predicate = CustomPredicate::and(
-            "is_equal".to_string(),
             &params,
+            "is_equal".to_string(),
             expected_statements,
             2, // args_len (PodA, PodB)
         )?;
-        let expected_batch = Arc::new(CustomPredicateBatch {
-            name: "PodlogBatch".to_string(), // Default batch name
-            predicates: vec![expected_predicate],
-        });
+        let expected_batch =
+            CustomPredicateBatch::new(&params, "PodlogBatch".to_string(), vec![expected_predicate]);
 
         assert_eq!(batch, expected_batch);
 
@@ -104,17 +98,15 @@ mod tests {
     #[test]
     fn test_e2e_simple_request() -> Result<(), LangError> {
         let input = r#"
-            // Simple request
             REQUEST(
-                ValueOf(?ConstPod["my_val"], 123)
+                ValueOf(?ConstPod["my_val"], 0x0000000000000001000000000000000000000000000000000000000000000000)
                 Lt(?GovPod["dob"], ?ConstPod["my_val"])
             )
         "#;
 
         let params = Params::default();
         let pairs = parse_podlog(input)?;
-        let ast = build_ast(pairs)?;
-        let processed = process_document(ast, &params)?;
+        let processed = process_pest_tree(pairs, &params)?;
         let batch_result = processed.custom_batch;
         let request_templates = processed.request_templates;
 
@@ -128,15 +120,15 @@ mod tests {
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::ValueOf),
                 args: vec![
-                    sta_k(("ConstPod", 0), k("my_val")), // ?ConstPod["my_val"] -> Wildcard(0), Key("my_val")
-                    sta_lit(123i64),                     // Literal(123)
+                    sta_ak(("ConstPod", 0), k("my_val")), // ?ConstPod["my_val"] -> Wildcard(0), Key("my_val")
+                    sta_lit(SELF_ID_HASH),
                 ],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Lt),
                 args: vec![
-                    sta_k(("GovPod", 1), k("dob")), // ?GovPod["dob"] -> Wildcard(1), Key("dob")
-                    sta_k(("ConstPod", 0), k("my_val")), // ?ConstPod["my_val"] -> Wildcard(0), Key("my_val")
+                    sta_ak(("GovPod", 1), k("dob")), // ?GovPod["dob"] -> Wildcard(1), Key("dob")
+                    sta_ak(("ConstPod", 0), k("my_val")), // ?ConstPod["my_val"] -> Wildcard(0), Key("my_val")
                 ],
             },
         ];
@@ -157,8 +149,7 @@ mod tests {
 
         let params = Params::default();
         let pairs = parse_podlog(input)?;
-        let ast = build_ast(pairs)?;
-        let processed = process_document(ast, &params)?;
+        let processed = process_pest_tree(pairs, &params)?;
         let batch_result = processed.custom_batch;
         let request_result = processed.request_templates;
 
@@ -172,32 +163,28 @@ mod tests {
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
-                    sta_k(("A", 0), k("input_key")), // ?A["input_key"] -> Wildcard(0), Key("input_key")
-                    sta_k(("Temp", 1), k("const_key")), // ?Temp["const_key"] -> Wildcard(1), Key("const_key")
+                    sta_ak(("A", 0), k("input_key")), // ?A["input_key"] -> Wildcard(0), Key("input_key")
+                    sta_ak(("Temp", 1), k("const_key")), // ?Temp["const_key"] -> Wildcard(1), Key("const_key")
                 ],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::ValueOf),
                 args: vec![
-                    sta_k(("Temp", 1), k("const_key")), // ?Temp["const_key"] -> Wildcard(1), Key("const_key")
-                    sta_lit("some_value"),              // Literal("some_value")
+                    sta_ak(("Temp", 1), k("const_key")), // ?Temp["const_key"] -> Wildcard(1), Key("const_key")
+                    sta_lit("some_value"),               // Literal("some_value")
                 ],
             },
         ];
         let expected_predicate = CustomPredicate::and(
-            "uses_private".to_string(),
             &params,
+            "uses_private".to_string(),
             expected_statements,
             1, // args_len (A)
         )?;
-        let expected_batch = Arc::new(CustomPredicateBatch {
-            name: "PodlogBatch".to_string(),
-            predicates: vec![expected_predicate],
-        });
+        let expected_batch =
+            CustomPredicateBatch::new(&params, "PodlogBatch".to_string(), vec![expected_predicate]);
 
         assert_eq!(batch, expected_batch);
-        // We might also want to check private arg count/order if the AST/processor exposes it,
-        // but for now, checking the wildcard indices in the statements suffices.
 
         Ok(())
     }
@@ -216,8 +203,7 @@ mod tests {
 
         let params = Params::default();
         let pairs = parse_podlog(input)?;
-        let ast = build_ast(pairs)?;
-        let processed = process_document(ast, &params)?;
+        let processed = process_pest_tree(pairs, &params)?;
         let batch_result = processed.custom_batch;
         let request_templates = processed.request_templates;
 
@@ -231,20 +217,18 @@ mod tests {
         let expected_pred_statements = vec![StatementTmpl {
             pred: Predicate::Native(NativePredicate::Equal),
             args: vec![
-                sta_k(("X", 0), k("val")), // ?X["val"] -> Wildcard(0), Key("val")
-                sta_k(("Y", 1), k("val")), // ?Y["val"] -> Wildcard(1), Key("val")
+                sta_ak(("X", 0), k("val")), // ?X["val"] -> Wildcard(0), Key("val")
+                sta_ak(("Y", 1), k("val")), // ?Y["val"] -> Wildcard(1), Key("val")
             ],
         }];
         let expected_predicate = CustomPredicate::and(
-            "my_pred".to_string(),
             &params,
+            "my_pred".to_string(),
             expected_pred_statements,
             2, // args_len (X, Y)
         )?;
-        let expected_batch = Arc::new(CustomPredicateBatch {
-            name: "PodlogBatch".to_string(),
-            predicates: vec![expected_predicate],
-        });
+        let expected_batch =
+            CustomPredicateBatch::new(&params, "PodlogBatch".to_string(), vec![expected_predicate]);
 
         assert_eq!(batch, expected_batch);
 
@@ -270,19 +254,17 @@ mod tests {
 
             REQUEST(
                 some_pred(
-                    ?Var1,                  // Variable
+                    ?Var1,                  // Wildcard
                     12345,                  // Int Literal
                     "hello_string"         // String Literal (Removed invalid AK args)
                 )
-                // Check that variable indices are unique across statements
                 Equal(?AnotherPod["another_key"], ?Var1["some_field"])
             )
         "#;
 
         let params = Params::default();
         let pairs = parse_podlog(input)?;
-        let ast = build_ast(pairs)?;
-        let processed = process_document(ast, &params)?;
+        let processed = process_pest_tree(pairs, &params)?;
         let batch_result = processed.custom_batch;
         let request_templates = processed.request_templates;
 
@@ -309,9 +291,9 @@ mod tests {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
                     // ?AnotherPod["another_key"] -> Wildcard(1), Key("another_key")
-                    sta_k(("AnotherPod", 1), k("another_key")),
+                    sta_ak(("AnotherPod", 1), k("another_key")),
                     // ?Var1["some_field"] -> Wildcard(0), Key("some_field")
-                    sta_k(("Var1", 0), k("some_field")),
+                    sta_ak(("Var1", 0), k("some_field")),
                 ],
             },
         ];
@@ -335,8 +317,7 @@ mod tests {
 
         let params = Params::default();
         let pairs = parse_podlog(input)?;
-        let ast = build_ast(pairs)?;
-        let processed = process_document(ast, &params)?;
+        let processed = process_pest_tree(pairs, &params)?;
         let batch_result = processed.custom_batch;
         let request_templates = processed.request_templates;
 
@@ -348,30 +329,30 @@ mod tests {
         let expected_templates = vec![
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::LtEq),
-                args: vec![sta_k(("B", 1), k("bar")), sta_k(("A", 0), k("foo"))],
+                args: vec![sta_ak(("B", 1), k("bar")), sta_ak(("A", 0), k("foo"))],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Lt),
-                args: vec![sta_k(("D", 3), k("qux")), sta_k(("C", 2), k("baz"))],
+                args: vec![sta_ak(("D", 3), k("qux")), sta_ak(("C", 2), k("baz"))],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Contains),
                 args: vec![
-                    sta_k(("A", 0), k("foo")),
-                    sta_k(("B", 1), k("bar")),
-                    sta_k(("C", 2), k("baz")),
+                    sta_ak(("A", 0), k("foo")),
+                    sta_ak(("B", 1), k("bar")),
+                    sta_ak(("C", 2), k("baz")),
                 ],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::NotContains),
-                args: vec![sta_k(("A", 0), k("foo")), sta_k(("B", 1), k("bar"))],
+                args: vec![sta_ak(("A", 0), k("foo")), sta_ak(("B", 1), k("bar"))],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Contains),
                 args: vec![
-                    sta_k(("A", 0), k("foo")),
-                    sta_k(("B", 1), k("bar")),
-                    sta_k(("C", 2), k("baz")),
+                    sta_ak(("A", 0), k("foo")),
+                    sta_ak(("B", 1), k("bar")),
+                    sta_ak(("C", 2), k("baz")),
                 ],
             },
         ];
@@ -385,8 +366,8 @@ mod tests {
     fn test_e2e_zukyc_request_parsing() -> Result<(), LangError> {
         let input = r#"
             REQUEST(
-                // Order matters for comparison, match the hardcoded order
-                NotContains(?sanctions["sanctionList"], ?gov["idNumber"]) 
+                // Order matters for comparison with the hardcoded templates
+                SetNotContains(?sanctions["sanctionList"], ?gov["idNumber"]) 
                 Lt(?gov["dateOfBirth"], ?SELF_HOLDER_18Y["const_18y"])      
                 Equal(?pay["startDate"], ?SELF_HOLDER_1Y["const_1y"])         
                 Equal(?gov["socialSecurityNumber"], ?pay["socialSecurityNumber"]) 
@@ -399,12 +380,11 @@ mod tests {
         let processed = super::parse(input, &Params::default())?;
         let parsed_templates = processed.request_templates;
 
-        // --- Define Expected Templates (Copied from prover/mod.rs) ---
-        // 2. Define constants needed in templates
+        //  Define Expected Templates (Copied from prover/mod.rs)
         let now_minus_18y_val = Value::from(1169909388_i64);
         let now_minus_1y_val = Value::from(1706367566_i64);
 
-        // 3. Define wildcards and keys for the request
+        // Define wildcards and keys for the request
         // Note: Indices must match the order of appearance in the *parsed* request
         // Order: sanctions, gov, SELF_HOLDER_18Y, pay, SELF_HOLDER_1Y
         let wc_sanctions = wc("sanctions", 0);
@@ -422,25 +402,24 @@ mod tests {
         let sanction_list_key = k("sanctionList");
 
         // 4. Define the request templates using wildcards for constants
-        // ORDER MUST MATCH THE PARSED INPUT STRING
         let expected_templates = vec![
             // 1. NotContains(?sanctions["sanctionList"], ?gov["idNumber"])
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::NotContains),
                 args: vec![
-                    sta_k(
+                    sta_ak(
                         (wc_sanctions.name.as_str(), wc_sanctions.index),
                         sanction_list_key.clone(),
                     ),
-                    sta_k((wc_gov.name.as_str(), wc_gov.index), id_num_key.clone()),
+                    sta_ak((wc_gov.name.as_str(), wc_gov.index), id_num_key.clone()),
                 ],
             },
             // 2. Lt(?gov["dateOfBirth"], ?SELF_HOLDER_18Y["const_18y"])
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Lt),
                 args: vec![
-                    sta_k((wc_gov.name.as_str(), wc_gov.index), dob_key.clone()),
-                    sta_k(
+                    sta_ak((wc_gov.name.as_str(), wc_gov.index), dob_key.clone()),
+                    sta_ak(
                         (wc_self_18y.name.as_str(), wc_self_18y.index),
                         const_18y_key.clone(),
                     ),
@@ -450,8 +429,8 @@ mod tests {
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
-                    sta_k((wc_pay.name.as_str(), wc_pay.index), start_date_key.clone()),
-                    sta_k(
+                    sta_ak((wc_pay.name.as_str(), wc_pay.index), start_date_key.clone()),
+                    sta_ak(
                         (wc_self_1y.name.as_str(), wc_self_1y.index),
                         const_1y_key.clone(),
                     ),
@@ -461,15 +440,15 @@ mod tests {
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
-                    sta_k((wc_gov.name.as_str(), wc_gov.index), ssn_key.clone()),
-                    sta_k((wc_pay.name.as_str(), wc_pay.index), ssn_key.clone()),
+                    sta_ak((wc_gov.name.as_str(), wc_gov.index), ssn_key.clone()),
+                    sta_ak((wc_pay.name.as_str(), wc_pay.index), ssn_key.clone()),
                 ],
             },
             // 5. ValueOf(?SELF_HOLDER_18Y["const_18y"], 1169909388)
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::ValueOf),
                 args: vec![
-                    sta_k(
+                    sta_ak(
                         (wc_self_18y.name.as_str(), wc_self_18y.index),
                         const_18y_key.clone(),
                     ),
@@ -480,7 +459,7 @@ mod tests {
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::ValueOf),
                 args: vec![
-                    sta_k(
+                    sta_ak(
                         (wc_self_1y.name.as_str(), wc_self_1y.index),
                         const_1y_key.clone(),
                     ),
@@ -489,13 +468,11 @@ mod tests {
             },
         ];
 
-        // Compare parsed templates with expected ones
         assert_eq!(
             parsed_templates, expected_templates,
             "Parsed ZuKYC request templates do not match the expected hard-coded version"
         );
 
-        // Check that no custom predicates were generated
         assert!(
             processed.custom_batch.predicates.is_empty(),
             "Expected no custom predicates for a REQUEST only input"
@@ -521,27 +498,27 @@ mod tests {
         };
 
         let input = r#"
-            eth_friend(src_ori, src_key, dst_ori, dst_key, private: attestation_pod) = AND(
+            eth_friend(src_key, dst_key, private: attestation_pod) = AND(
                 ValueOf(?attestation_pod["_type"], 1)
-                Equal(?attestation_pod["_signer"], ?src_ori[?src_key])
-                Equal(?attestation_pod["attestation"], ?dst_ori[?dst_key])
+                Equal(?attestation_pod["_signer"], SELF[?src_key])
+                Equal(?attestation_pod["attestation"], SELF[?dst_key])
             )
 
-            eth_dos_distance_base(src_ori, src_key, dst_ori, dst_key, distance_ori, distance_key) = AND(
-                Equal(?src_ori[?src_key], ?dst_ori[?dst_key])
-                ValueOf(?distance_ori[?distance_key], 0)
+            eth_dos_distance_base(src_key, dst_key, distance_key) = AND(
+                Equal(SELF[?src_key], SELF[?dst_key])
+                ValueOf(SELF[?distance_key], 0)
             )
 
-            eth_dos_distance_ind(src_ori, src_key, dst_ori, dst_key, distance_ori, distance_key, private: one_ori, one_key, shorter_distance_ori, shorter_distance_key, intermed_ori, intermed_key) = AND(
-                eth_dos_distance(?src_ori, ?src_key, ?intermed_ori, ?intermed_key, ?shorter_distance_ori, ?shorter_distance_key)
-                ValueOf(?one_ori[?one_key], 1)
-                SumOf(?distance_ori[?distance_key], ?shorter_distance_ori[?shorter_distance_key], ?one_ori[?one_key])
-                eth_friend(?intermed_ori, ?intermed_key, ?dst_ori, ?dst_key)
+            eth_dos_distance_ind(src_key, dst_key, distance_key, private: one_key, shorter_distance_key, intermed_key) = AND(
+                eth_dos_distance(?src_key, ?dst_key, ?distance_key)
+                ValueOf(SELF[?one_key], 1)
+                SumOf(SELF[?distance_key], SELF[?shorter_distance_key], SELF[?one_key])
+                eth_friend(?intermed_key, ?dst_key)
             )
 
-            eth_dos_distance(src_ori, src_key, dst_ori, dst_key, distance_ori, distance_key) = OR(
-                eth_dos_distance_base(?src_ori, ?src_key, ?dst_ori, ?dst_key, ?distance_ori, ?distance_key)
-                eth_dos_distance_ind(?src_ori, ?src_key, ?dst_ori, ?dst_key, ?distance_ori, ?distance_key)
+            eth_dos_distance(src_key, dst_key, distance_key, private: intermed_key, shorter_distance_key) = OR(
+                eth_dos_distance_base(?src_key, ?dst_key, ?distance_key)
+                eth_dos_distance_ind(?src_key, ?dst_key, ?distance_key)
             )
         "#;
 
@@ -557,167 +534,144 @@ mod tests {
             "Expected 4 custom predicates"
         );
 
-        // --- Define Expected Structures ---
-
         // Predicate Order: eth_friend (0), base (1), ind (2), distance (3)
 
-        // --- Expected eth_friend (Index 0) ---
+        // eth_friend (Index 0)
         let expected_friend_stmts = vec![
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::ValueOf),
                 args: vec![
-                    sta_k(("attestation_pod", 4), k("_type")), // Pub(0-3), Priv(4)
+                    sta_ak(("attestation_pod", 2), k("_type")), // Pub(0-1), Priv(2)
                     sta_lit(PodType::MockSigned),
                 ],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
-                    sta_k(("attestation_pod", 4), k("_signer")),
-                    sta_k(("src_ori", 0), ko_wc("src_key", 1)), // Pub arg 0
+                    sta_ak(("attestation_pod", 2), k("_signer")),
+                    sta_ak_self(ko_wc("src_key", 0)), // Pub arg 0
                 ],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
-                    sta_k(("attestation_pod", 4), k("attestation")),
-                    sta_k(("dst_ori", 2), ko_wc("dst_key", 3)), // Pub arg 2
+                    sta_ak(("attestation_pod", 2), k("attestation")),
+                    sta_ak_self(ko_wc("dst_key", 1)), // Pub arg 1
                 ],
             },
         ];
         let expected_friend_pred = CustomPredicate::new(
-            "eth_friend".to_string(),
             &params,
+            "eth_friend".to_string(),
             true, // AND
             expected_friend_stmts,
-            4, // public_args_len: src_ori, src_key, dst_ori, dst_key
+            2, // public_args_len: src_key, dst_key
         )?;
 
-        // --- Expected eth_dos_distance_base (Index 1) ---
+        // eth_dos_distance_base (Index 1)
         let expected_base_stmts = vec![
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
-                    sta_k(("src_ori", 0), ko_wc("src_key", 1)),
-                    sta_k(("dst_ori", 2), ko_wc("dst_key", 3)),
+                    sta_ak_self(ko_wc("src_key", 0)),
+                    sta_ak_self(ko_wc("dst_key", 1)),
                 ],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::ValueOf),
-                args: vec![
-                    sta_k(("distance_ori", 4), ko_wc("distance_key", 5)),
-                    sta_lit(0i64),
-                ],
+                args: vec![sta_ak_self(ko_wc("distance_key", 2)), sta_lit(0i64)],
             },
         ];
         let expected_base_pred = CustomPredicate::new(
-            "eth_dos_distance_base".to_string(),
             &params,
+            "eth_dos_distance_base".to_string(),
             true, // AND
             expected_base_stmts,
-            6, // public_args_len
+            3, // public_args_len
         )?;
 
-        // --- Expected eth_dos_distance_ind (Index 2) ---
-        // Public args indices: 0-5
-        // Private args indices: 6-11 (one_ori, one_key, shorter_distance_ori, shorter_distance_key, intermed_ori, intermed_key)
+        // eth_dos_distance_ind (Index 2)
+        // Public args indices: 0-2
+        // Private args indices: 3-5 (one_key, shorter_distance_key, intermed_key)
         let expected_ind_stmts = vec![
             StatementTmpl {
                 pred: Predicate::BatchSelf(3), // Calls eth_dos_distance (index 3)
                 args: vec![
                     // WildcardLiteral args
-                    StatementTmplArg::WildcardLiteral(wc("src_ori", 0)),
-                    StatementTmplArg::WildcardLiteral(wc("src_key", 1)),
-                    StatementTmplArg::WildcardLiteral(wc("intermed_ori", 10)), // private arg
-                    StatementTmplArg::WildcardLiteral(wc("intermed_key", 11)), // private arg
-                    StatementTmplArg::WildcardLiteral(wc("shorter_distance_ori", 8)), // private arg
-                    StatementTmplArg::WildcardLiteral(wc("shorter_distance_key", 9)), // private arg
+                    StatementTmplArg::WildcardLiteral(wc("src_key", 0)),
+                    StatementTmplArg::WildcardLiteral(wc("dst_key", 1)), // private arg
+                    StatementTmplArg::WildcardLiteral(wc("distance_key", 2)), // private arg
                 ],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::ValueOf),
-                args: vec![
-                    sta_k(("one_ori", 6), ko_wc("one_key", 7)), // private arg
-                    sta_lit(1i64),
-                ],
+                args: vec![sta_ak_self(ko_wc("one_key", 3)), sta_lit(1i64)], // private arg
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::SumOf),
                 args: vec![
-                    sta_k(("distance_ori", 4), ko_wc("distance_key", 5)), // public arg
-                    sta_k(
-                        ("shorter_distance_ori", 8),
-                        ko_wc("shorter_distance_key", 9),
-                    ), // private arg
-                    sta_k(("one_ori", 6), ko_wc("one_key", 7)),           // private arg
+                    sta_ak_self(ko_wc("distance_key", 2)),         // public arg
+                    sta_ak_self(ko_wc("shorter_distance_key", 4)), // private arg
+                    sta_ak_self(ko_wc("one_key", 3)),              // private arg
                 ],
             },
             StatementTmpl {
                 pred: Predicate::BatchSelf(0), // Calls eth_friend (index 0)
                 args: vec![
                     // WildcardLiteral args
-                    StatementTmplArg::WildcardLiteral(wc("intermed_ori", 10)), // private arg
-                    StatementTmplArg::WildcardLiteral(wc("intermed_key", 11)), // private arg
-                    StatementTmplArg::WildcardLiteral(wc("dst_ori", 2)),       // public arg
-                    StatementTmplArg::WildcardLiteral(wc("dst_key", 3)),       // public arg
+                    StatementTmplArg::WildcardLiteral(wc("intermed_key", 5)), // private arg
+                    StatementTmplArg::WildcardLiteral(wc("dst_key", 1)),      // public arg
                 ],
             },
         ];
         let expected_ind_pred = CustomPredicate::new(
-            "eth_dos_distance_ind".to_string(),
             &params,
+            "eth_dos_distance_ind".to_string(),
             true, // AND
             expected_ind_stmts,
-            6, // public_args_len
+            3, // public_args_len
         )?;
 
-        // --- Expected eth_dos_distance (Index 3) ---
+        // eth_dos_distance (Index 3)
         let expected_dist_stmts = vec![
             StatementTmpl {
                 pred: Predicate::BatchSelf(1), // Calls eth_dos_distance_base (index 1)
                 args: vec![
                     // WildcardLiteral args
-                    StatementTmplArg::WildcardLiteral(wc("src_ori", 0)),
-                    StatementTmplArg::WildcardLiteral(wc("src_key", 1)),
-                    StatementTmplArg::WildcardLiteral(wc("dst_ori", 2)),
-                    StatementTmplArg::WildcardLiteral(wc("dst_key", 3)),
-                    StatementTmplArg::WildcardLiteral(wc("distance_ori", 4)),
-                    StatementTmplArg::WildcardLiteral(wc("distance_key", 5)),
+                    StatementTmplArg::WildcardLiteral(wc("src_key", 0)),
+                    StatementTmplArg::WildcardLiteral(wc("dst_key", 1)),
+                    StatementTmplArg::WildcardLiteral(wc("distance_key", 2)),
                 ],
             },
             StatementTmpl {
                 pred: Predicate::BatchSelf(2), // Calls eth_dos_distance_ind (index 2)
                 args: vec![
                     // WildcardLiteral args
-                    StatementTmplArg::WildcardLiteral(wc("src_ori", 0)),
-                    StatementTmplArg::WildcardLiteral(wc("src_key", 1)),
-                    StatementTmplArg::WildcardLiteral(wc("dst_ori", 2)),
-                    StatementTmplArg::WildcardLiteral(wc("dst_key", 3)),
-                    StatementTmplArg::WildcardLiteral(wc("distance_ori", 4)),
-                    StatementTmplArg::WildcardLiteral(wc("distance_key", 5)),
+                    StatementTmplArg::WildcardLiteral(wc("src_key", 0)),
+                    StatementTmplArg::WildcardLiteral(wc("dst_key", 1)),
+                    StatementTmplArg::WildcardLiteral(wc("distance_key", 2)),
                 ],
             },
         ];
         let expected_dist_pred = CustomPredicate::new(
-            "eth_dos_distance".to_string(),
             &params,
+            "eth_dos_distance".to_string(),
             false, // OR
             expected_dist_stmts,
-            6, // public_args_len
+            3, // public_args_len
         )?;
 
-        // --- Final Expected Batch ---
-        let expected_batch = Arc::new(CustomPredicateBatch {
-            name: "PodlogBatch".to_string(),
-            predicates: vec![
+        let expected_batch = CustomPredicateBatch::new(
+            &params,
+            "PodlogBatch".to_string(),
+            vec![
                 expected_friend_pred,
                 expected_base_pred,
                 expected_ind_pred,
                 expected_dist_pred,
             ],
-        });
+        );
 
-        // Compare processed batch with expected batch
         assert_eq!(
             processed.custom_batch, expected_batch,
             "Processed ETHDoS predicates do not match expected structure"
