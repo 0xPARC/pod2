@@ -401,7 +401,7 @@ mod tests {
         let ssn_key = k("socialSecurityNumber");
         let sanction_list_key = k("sanctionList");
 
-        // 4. Define the request templates using wildcards for constants
+        // Define the request templates using wildcards for constants
         let expected_templates = vec![
             // 1. NotContains(?sanctions["sanctionList"], ?gov["idNumber"])
             StatementTmpl {
