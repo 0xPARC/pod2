@@ -1294,7 +1294,7 @@ pub struct MainPodVerifyInput {
     pub custom_predicate_verifications: Vec<CustomPredicateVerification>,
 }
 
-fn set_targets_in_statements(
+fn set_targets_statements(
     pw: &mut PartialWitness<F>,
     params: &Params,
     statements_target: &[StatementTarget],
@@ -1303,15 +1303,14 @@ fn set_targets_in_statements(
     assert_eq!(statements_target.len(), params.num_public_statements_id);
 
     assert!(statements.len() <= params.num_public_statements_id);
-    // Front-padding (so that the id calculation matches with dynamic size)
+    for (i, statement) in statements.iter().enumerate() {
+        statements_target[i].set_targets(pw, params, &statement.clone().into())?;
+    }
+    // Padding
     let mut none_st = mainpod::Statement::from(Statement::None);
     pad_statement(params, &mut none_st);
-    for i in 0..params.num_public_statements_id - statements.len() {
+    for i in statements.len()..params.num_public_statements_id {
         statements_target[i].set_targets(pw, params, &none_st)?;
-    }
-    for (i, statement) in statements.iter().enumerate() {
-        let i = i + statements.len();
-        statements_target[i].set_targets(pw, params, &statement.clone().into())?;
     }
     Ok(())
 }
@@ -1322,7 +1321,7 @@ impl MainPodVerifyTarget {
         pw: &mut PartialWitness<F>,
         input: &MainPodVerifyInput,
     ) -> Result<()> {
-        pw.set_target_arr(&self.vds_root.elements, &input.vds_root.0);
+        pw.set_target_arr(&self.vds_root.elements, &input.vds_root.0)?;
 
         assert!(input.signed_pods.len() <= self.params.max_input_signed_pods);
         for (i, signed_pod) in input.signed_pods.iter().enumerate() {
@@ -1341,7 +1340,7 @@ impl MainPodVerifyTarget {
 
         assert!(input.main_pods.len() <= self.params.max_input_main_pods);
         for (i, main_pod) in input.main_pods.iter().enumerate() {
-            set_targets_in_statements(
+            set_targets_statements(
                 pw,
                 &self.params,
                 &self.input_pods_statements[i],
@@ -1355,7 +1354,7 @@ impl MainPodVerifyTarget {
             // input signed pod :(
             let pad_pod = &input.main_pods[0];
             for i in input.main_pods.len()..self.params.max_input_signed_pods {
-                set_targets_in_statements(
+                set_targets_statements(
                     pw,
                     &self.params,
                     &self.input_pods_statements[i],
