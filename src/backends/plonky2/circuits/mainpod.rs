@@ -33,6 +33,7 @@ use crate::{
         primitives::merkletree::{
             MerkleClaimAndProof, MerkleClaimAndProofTarget, MerkleProofGadget,
         },
+        recursion::{self, InnerCircuit, VerifiedProofTarget},
         signedpod::SignedPod,
     },
     measure_gates_begin, measure_gates_end,
@@ -1099,7 +1100,11 @@ impl MainPodVerifyGadget {
         ))
     }
 
-    fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MainPodVerifyTarget> {
+    fn eval(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        verified_proofs: &[VerifiedProofTarget],
+    ) -> Result<MainPodVerifyTarget> {
         let measure = measure_gates_begin!(builder, "MainPodVerify");
         let params = &self.params;
         // 1. Verify all input signed pods
@@ -1336,14 +1341,40 @@ pub struct MainPodVerifyCircuit {
     pub params: Params,
 }
 
+// TODO: Remove this type and implement it's logic directly in `impl InnerCircuit for MainPodVerifyTarget`
 impl MainPodVerifyCircuit {
-    pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MainPodVerifyTarget> {
+    pub fn eval(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        verified_proofs: &[VerifiedProofTarget],
+    ) -> Result<MainPodVerifyTarget> {
         let main_pod = MainPodVerifyGadget {
             params: self.params.clone(),
         }
-        .eval(builder)?;
+        .eval(builder, verified_proofs)?;
         builder.register_public_inputs(&main_pod.id.elements);
         Ok(main_pod)
+    }
+}
+
+impl InnerCircuit for MainPodVerifyTarget {
+    type Input = MainPodVerifyInput;
+    type Params = Params;
+
+    fn build(
+        builder: &mut CircuitBuilder<F, D>,
+        params: &Self::Params,
+        verified_proofs: &[VerifiedProofTarget],
+    ) -> Result<Self> {
+        MainPodVerifyCircuit {
+            params: params.clone(),
+        }
+        .eval(builder, verified_proofs)
+    }
+
+    /// assigns the values to the targets
+    fn set_targets(&self, pw: &mut PartialWitness<F>, input: &Self::Input) -> Result<()> {
+        self.set_targets(pw, input)
     }
 }
 
