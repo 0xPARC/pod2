@@ -223,120 +223,58 @@ fn second_pass(ctx: &mut ProcessingContext) -> Result<ProcessedOutput, Processor
 }
 
 fn pest_pair_to_builder_arg(
-    arg_content_pair: &Pair<Rule>,
+    arg_content_pair: Pair<Rule>,
     context_stmt_name: &str,
 ) -> Result<BuilderArg, ProcessorError> {
     match arg_content_pair.as_rule() {
         Rule::literal_value => {
-            let value = process_literal_value(arg_content_pair, context_stmt_name)?;
+            let value = process_literal_value(&arg_content_pair, context_stmt_name)?;
             Ok(BuilderArg::Literal(value))
         }
         Rule::wildcard => {
-            let full_name = arg_content_pair.as_str();
-            let name_only =
-                full_name
-                    .strip_prefix("?")
-                    .ok_or_else(|| ProcessorError::Semantic {
-                        message: format!("Invalid wildcard format for BuilderArg: {}", full_name),
-                        span: Some(get_span(arg_content_pair)),
-                    })?;
-            if name_only.is_empty() {
-                return Err(ProcessorError::Semantic {
-                    message: "Wildcard name cannot be empty after '?' for BuilderArg".to_string(),
-                    span: Some(get_span(arg_content_pair)),
-                });
-            }
-            Ok(BuilderArg::WildcardLiteral(name_only.to_string()))
+            let name = arg_content_pair
+                .into_inner()
+                .nth(0)
+                .expect("identifier")
+                .as_str();
+            Ok(BuilderArg::WildcardLiteral(name.to_string()))
         }
         Rule::anchored_key => {
             let mut inner_ak_pairs = arg_content_pair.clone().into_inner();
-            let pod_id_pair =
-                inner_ak_pairs
-                    .next()
-                    .ok_or_else(|| ProcessorError::MissingElement {
-                        element_type: "pod identifier (SELF or ?Var) for BuilderArg".to_string(),
-                        context: format!("anchored key in {}", context_stmt_name),
-                        span: Some(get_span(arg_content_pair)),
-                    })?;
 
+            let pod_id_pair = inner_ak_pairs.next().expect("pod_id_pair");
             let pod_self_or_wc_str = match pod_id_pair.as_rule() {
                 Rule::wildcard => {
-                    let name = pod_id_pair.as_str().strip_prefix("?").unwrap_or_default();
-                    if name.is_empty() {
-                        return Err(ProcessorError::Semantic {
-                            message: "Wildcard name for pod_id cannot be empty after '?'"
-                                .to_string(),
-                            span: Some(get_span(&pod_id_pair)),
-                        });
-                    }
+                    let name = pod_id_pair
+                        .into_inner()
+                        .nth(0)
+                        .expect("identifier")
+                        .as_str();
                     SelfOrWildcardStr::Wildcard(name.to_string())
                 }
                 Rule::self_keyword => SelfOrWildcardStr::SELF,
-                _ => {
-                    return Err(ProcessorError::RuleMismatch {
-                        expected_rule: Rule::wildcard, // Or Rule::self_keyword
-                        found_rule: pod_id_pair.as_rule(),
-                        context: format!(
-                            "pod identifier part of anchored key in {} for BuilderArg",
-                            context_stmt_name
-                        ),
-                        span: Some(get_span(&pod_id_pair)),
-                    });
-                }
+                _ => unreachable!("pod_id = (self_keyword | wildcard)"),
             };
 
-            let key_part_pair = inner_ak_pairs.next().ok_or_else(|| {
-                println!("inner_ak_pairs: {:?}", inner_ak_pairs.clone());
-                ProcessorError::MissingElement {
-                    element_type: "key part ([?KeyVar] or [\"key_str\"]) for BuilderArg"
-                        .to_string(),
-                    context: format!(
-                        "anchored key {} in {}",
-                        pod_id_pair.as_str(),
-                        context_stmt_name
-                    ),
-                    span: Some(get_span(arg_content_pair)),
-                }
-            })?;
-
+            let key_part_pair = inner_ak_pairs.next().expect("key_part_pair");
             let key_or_wildcard_str = match key_part_pair.as_rule() {
                 Rule::wildcard => {
-                    let key_wildcard_name =
-                        key_part_pair.as_str().strip_prefix("?").unwrap_or_default();
-                    if key_wildcard_name.is_empty() {
-                        return Err(ProcessorError::Semantic {
-                            message: "Wildcard name for key_part cannot be empty after '?'"
-                                .to_string(),
-                            span: Some(get_span(&key_part_pair)),
-                        });
-                    }
-                    KeyOrWildcardStr::Wildcard(key_wildcard_name.to_string())
+                    let name = key_part_pair
+                        .into_inner()
+                        .nth(0)
+                        .expect("identifier")
+                        .as_str();
+                    KeyOrWildcardStr::Wildcard(name.to_string())
                 }
                 Rule::literal_string => {
                     let key_str_literal = parse_pest_string_literal(&key_part_pair)?;
                     KeyOrWildcardStr::Key(key_str_literal)
                 }
-                _ => {
-                    return Err(ProcessorError::RuleMismatch {
-                        expected_rule: Rule::wildcard,
-                        found_rule: key_part_pair.as_rule(),
-                        context: format!(
-                            "key part of anchored key {} in {} for BuilderArg",
-                            pod_id_pair.as_str(),
-                            context_stmt_name
-                        ),
-                        span: Some(get_span(&key_part_pair)),
-                    });
-                }
+                _ => unreachable!("key_part = (wildcard | literal_string)"),
             };
             Ok(BuilderArg::Key(pod_self_or_wc_str, key_or_wildcard_str))
         }
-        _ => Err(ProcessorError::RuleMismatch {
-            expected_rule: Rule::statement_arg,
-            found_rule: arg_content_pair.as_rule(),
-            context: format!("argument parsing for BuilderArg in {}", context_stmt_name),
-            span: Some(get_span(arg_content_pair)),
-        }),
+        _ => unreachable!("statement_arg = (anchored_key | wildcard | literal_value)"),
     }
 }
 
@@ -1093,7 +1031,7 @@ fn parse_statement_args(
                         ),
                         span: Some(arg_list_span),
                     })?;
-            let builder_arg = pest_pair_to_builder_arg(&arg_content_pair, context_stmt_name)?;
+            let builder_arg = pest_pair_to_builder_arg(arg_content_pair, context_stmt_name)?;
             builder_args.push(builder_arg);
         }
     }

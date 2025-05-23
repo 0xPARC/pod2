@@ -102,13 +102,7 @@ pub enum ProcessorError {
         span: Option<(usize, usize)>,
     },
     #[error("Frontend error: {0}")]
-    Frontend(frontend::Error),
-}
-
-impl From<frontend::Error> for ProcessorError {
-    fn from(err: frontend::Error) -> Self {
-        ProcessorError::Frontend(err)
-    }
+    Frontend(#[from] frontend::Error),
 }
 
 // We need to manually implement From for the boxed types because

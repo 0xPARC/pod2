@@ -18,7 +18,7 @@ private_kw = { "private:" }
 self_keyword = @{ "SELF" }
 
 // Define wildcard names (start with '?')
-wildcard = @{ "?" ~ identifier }
+wildcard = ${ "?" ~ identifier }
 
 arg_section = {
     public_arg_list ~ ("," ~ private_kw ~ private_arg_list)?
