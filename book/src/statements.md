@@ -58,7 +58,7 @@ In the future, we may also reserve statement IDs for "precompiles" such as:
 EcdsaPrivToPubOf(A.pubkey, B.privkey),
 ```
 as well as for low-level operations on Merkle trees and compound types.
-<font color="red">NOTE</font> Merkle trees and compound types explained in a seperate markdown file `./merklestatements.md` which is no longer part of these docs, but saved in the github repo in case we need to restore it in the future.
+<font color="red">NOTE</font> Merkle trees and compound types explained in a separate markdown file `./merklestatements.md` which is no longer part of these docs, but saved in the github repo in case we need to restore it in the future.
 
 ### Built-in statements for entries of any type
 
