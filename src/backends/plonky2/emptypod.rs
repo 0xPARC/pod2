@@ -82,6 +82,8 @@ type CircuitData = circuit_data::CircuitData<F, C, D>;
 static STANDARD_EMPTY_POD_DATA: LazyLock<(EmptyPodVerifyTarget, CircuitData)> =
     LazyLock::new(|| build().expect("successful build"));
 
+/// build the circuit of EmptyPodVerifyCircuit, padded to the amount of gates
+/// needed to make it compatible with the RecursiveCircuit
 fn build() -> Result<(EmptyPodVerifyTarget, CircuitData)> {
     let params = &*DEFAULT_PARAMS;
     let config = CircuitConfig::standard_recursion_config();
