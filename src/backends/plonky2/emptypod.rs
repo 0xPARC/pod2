@@ -78,7 +78,7 @@ pub struct EmptyPod {
 }
 
 // TODO: Cache this (this comes from the recursive circuit instantiated with the MainPod circuit)
-fn get_circuit_data(params: &Params) -> Result<CircuitData<F, C, D>> {
+pub(crate) fn get_circuit_data(params: &Params) -> Result<CircuitData<F, C, D>> {
     let circuit_data = RecursiveCircuit::<MainPodVerifyTarget>::circuit_data(
         params.max_input_main_pods,
         NUM_PUBLIC_INPUTS,
@@ -88,7 +88,10 @@ fn get_circuit_data(params: &Params) -> Result<CircuitData<F, C, D>> {
 }
 
 /// Pad the circuit to match a given `CommonCircuitData`.
-fn pad_circuit(builder: &mut CircuitBuilder<F, D>, common_data: &CommonCircuitData<F, D>) {
+pub(crate) fn pad_circuit(
+    builder: &mut CircuitBuilder<F, D>,
+    common_data: &CommonCircuitData<F, D>,
+) {
     assert_eq!(common_data.config, builder.config);
     assert_eq!(common_data.num_public_inputs, builder.num_public_inputs());
     // TODO: We need to figure this out once we enable zero-knowledge
