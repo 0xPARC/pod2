@@ -53,42 +53,12 @@ The frontend also exposes the following syntactic sugar predicates.  These predi
 | 1006 | Gt | `Gt(a, b) -> Lt(b, a)` |
 
 
-
-The following statements relate to Merkle trees and compound types; they are explained in detail on a [separate page](./merklestatements.md).
-
-```
-Branches(parent: AnchoredKey::MerkleTree, left: AnchoredKey::MerkleTree, right: AnchoredKey::MerkleTree)
-
-Leaf(node: AnchoredKey::MerkleTree, key: AnchoredKey, value: AnchoredKey)
-
-IsNullTree(node: AnchoredKey::MerkleTree)
-
-GoesLeft(key: AnchoredKey, depth: Value::Integer)
-
-GoesRight(key: AnchoredKey, depth: Value::Integer)
-
-Contains(root: AnchoredKey::MerkleTree, key: AnchoredKey, value: AnchoredKey)
-
-MerkleSubtree(root: AnchoredKey::MerkleTree, node: AnchoredKey::MerkleTree)
-
-MerkleCorrectPath(root: AnchoredKey::MerkleTree, node: AnchoredKey::MerkleTree, key: AnchoredKey, depth: Value::Integer)
-
-Contains(root: AnchoredKey::MerkleTree, key: AnchoredKey, value: AnchoredKey)
-
-NotContains(root: AnchoredKey::MerkleTree, key: AnchoredKey)
-
-ContainsHashedKey(root: AnchoredKey::DictOrSet, key: AnchoredKey)
-
-NotContainsHashedKey(root: AnchoredKey::DictOrSet, key: AnchoredKey)
-
-ContainsValue(root: AnchoredKey::Array, value: AnchoredKey)
-```
-
-
 In the future, we may also reserve statement IDs for "precompiles" such as:
 ```
-EcdsaPrivToPubOf(A.pubkey, B.privkey)
+EcdsaPrivToPubOf(A.pubkey, B.privkey),
 ```
+as well as for low-level operations on Merkle trees and compound types.
+<font color="red">NOTE</font> Merkle trees and compound types explained in a seperate markdown file `./merklestatements.md` which is no longer part of these docs, but saved in the github repo in case we need to restore it in the future.
 
 ### Built-in statements for entries of any type
 
@@ -129,10 +99,6 @@ poseidon_hash_of(A.hash, B.preimage) // perhaps a hash_of predicate can be param
 ```
 ecdsa_priv_to_pub_of(A.pubkey, B.privkey)
 ```
-
-##### Primitive Built-in Statements for Merkle Roots
-
-[See separate page](./merklestatements.md).
 
 
 
