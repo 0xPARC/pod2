@@ -2,7 +2,10 @@
 //!
 //! We roughly follow pornin/ecgfp5.
 use core::ops::{Add, Mul};
-use std::{ops::AddAssign, sync::LazyLock};
+use std::{
+    ops::{AddAssign, Neg, Sub},
+    sync::LazyLock,
+};
 
 use num::{bigint::BigUint, traits::Zero, Num, One};
 use plonky2::{
@@ -24,6 +27,7 @@ use crate::backends::plonky2::{
     primitives::ec::{
         bits::BigUInt320Target,
         field::{get_nnf_target, CircuitBuilderNNF, OEFTarget},
+        gates::{curve::ECAddHomog, generic::SimpleGate},
     },
 };
 
@@ -49,25 +53,98 @@ struct HomogPoint {
     pub t: ECField,
 }
 
-fn mul_field_gen(field_elt: ECField, factor: u32) -> ECField {
-    let in_arr: [GoldilocksField; 5] = field_elt.to_basefield_array();
-    let field_factor = GoldilocksField::from_canonical_u32(factor);
-    let field_factor_norm = GoldilocksField::from_canonical_u32(3 * factor);
-    let out_arr = [
-        in_arr[4] * field_factor_norm,
-        in_arr[0] * field_factor,
-        in_arr[1] * field_factor,
-        in_arr[2] * field_factor,
-        in_arr[3] * field_factor,
-    ];
-    ECField::from_basefield_array(out_arr)
+pub(super) trait ECFieldExt<const D: usize>:
+    Sized
+    + Copy
+    + Mul<Self, Output = Self>
+    + Add<Self, Output = Self>
+    + Sub<Self, Output = Self>
+    + Neg<Output = Self>
+{
+    type Base: FieldExtension<D, BaseField = GoldilocksField>;
+
+    fn to_base(self) -> [Self::Base; 5];
+    fn from_base(components: [Self::Base; 5]) -> Self;
+
+    fn mul_field_gen(self, factor: u32) -> Self {
+        let in_arr = self.to_base();
+        let field_factor = GoldilocksField::from_canonical_u32(factor);
+        let field_factor_norm = GoldilocksField::from_canonical_u32(3 * factor);
+        let out_arr = [
+            in_arr[4].scalar_mul(field_factor_norm),
+            in_arr[0].scalar_mul(field_factor),
+            in_arr[1].scalar_mul(field_factor),
+            in_arr[2].scalar_mul(field_factor),
+            in_arr[3].scalar_mul(field_factor),
+        ];
+        Self::from_base(out_arr)
+    }
+
+    fn add_field_gen(self, factor: GoldilocksField) -> Self {
+        let mut b1 = self.to_base();
+        let mut b2 = b1[1].to_basefield_array();
+        b2[0] += factor;
+        b1[1] = Self::Base::from_basefield_array(b2);
+        Self::from_base(b1)
+    }
+
+    fn add_scalar(self, scalar: GoldilocksField) -> Self {
+        let mut b1 = self.to_base();
+        let mut b2 = b1[0].to_basefield_array();
+        b2[0] += scalar;
+        b1[0] = Self::Base::from_basefield_array(b2);
+        Self::from_base(b1)
+    }
+
+    fn double(self) -> Self {
+        self + self
+    }
 }
 
-fn mul_scalar(field_elt: ECField, factor: u32) -> ECField {
-    <ECField as FieldExtension<5>>::scalar_mul(
-        &field_elt,
-        GoldilocksField::from_canonical_u32(factor),
-    )
+impl ECFieldExt<1> for ECField {
+    type Base = GoldilocksField;
+    fn to_base(self) -> [Self::Base; 5] {
+        self.to_basefield_array()
+    }
+    fn from_base(components: [Self::Base; 5]) -> Self {
+        Self::from_basefield_array(components)
+    }
+}
+
+pub(super) fn add_homog<const D: usize, F: ECFieldExt<D>>(x1: F, u1: F, x2: F, u2: F) -> [F; 4] {
+    let t1 = x1 * x2;
+    let t3 = u1 * u2;
+    let t5 = x1 + x2;
+    let t6 = u1 + u2;
+    let t7 = t1.add_field_gen(Point::B1);
+    let t9 = t3 * (t5.mul_field_gen(2 * Point::B1_U32) + t7.double());
+    let t10 = t3.double().add_scalar(GoldilocksField::ONE) * (t5 + t7);
+    let x = (t10 - t7).mul_field_gen(Point::B1_U32);
+    let z = t7 - t9;
+    let u = t6 * (-t1).add_field_gen(Point::B1);
+    let t = t7 + t9;
+    [x, z, u, t]
+}
+
+// See CircuitBuilderEllptic::add_point for an explanation of why we need this function.
+pub(super) fn add_homog_offset<const D: usize, F: ECFieldExt<D>>(
+    x1: F,
+    u1: F,
+    x2: F,
+    u2: F,
+) -> [F; 4] {
+    let t1 = x1 * x2;
+    let t3 = u1 * u2;
+    let t5 = x1 + x2;
+    let t6 = u1 + u2;
+    let t7 = t1.add_field_gen(Point::B1);
+    let t9 = t3 * (t5.mul_field_gen(2 * Point::B1_U32) + t7.double());
+    let t10 = t3.double().add_scalar(GoldilocksField::ONE) * (t5 + t7);
+    let x = (t10 - t7).mul_field_gen(Point::B1_U32);
+    let z = t1 - t9;
+    let u = t6 * (-t1).add_field_gen(Point::B1);
+    let t = t1 + t9;
+    [x, z, u, t]
 }
 
 const GROUP_ORDER_STR: &str = "1067993516717146951041484916571792702745057740581727230159139685185762082554198619328292418486241";
@@ -81,12 +158,13 @@ static GROUP_ORDER_HALF_ROUND_UP: LazyLock<BigUint> =
     LazyLock::new(|| (&*GROUP_ORDER + BigUint::one()) >> 1);
 
 impl Point {
-    const B1: u32 = 263;
+    const B1_U32: u32 = 263;
+    const B1: GoldilocksField = GoldilocksField(Self::B1_U32 as u64);
 
     pub fn b() -> ECField {
         ECField::from_basefield_array([
             GoldilocksField::ZERO,
-            GoldilocksField::from_canonical_u32(Self::B1),
+            Self::B1,
             GoldilocksField::ZERO,
             GoldilocksField::ZERO,
             GoldilocksField::ZERO,
@@ -112,28 +190,16 @@ impl Point {
     }
 
     fn add_homog(self, rhs: Point) -> HomogPoint {
-        let t1 = self.x * rhs.x;
-        let t3 = self.u * rhs.u;
-        let t5 = self.x + rhs.x;
-        let t6 = self.u + rhs.u;
-        let t7 = t1 + Self::b();
-        let t9 = t3 * (mul_field_gen(t5, 2 * Self::B1) + t7.double());
-        let t10 = (ECField::ONE + t3.double()) * (t5 + t7);
-        let x = mul_field_gen(t10 - t7, Self::B1);
-        let z = t7 - t9;
-        let u = t6 * (Self::b() - t1);
-        let t = t7 + t9;
+        let [x, z, u, t] = add_homog(self.x, self.u, rhs.x, rhs.u);
         HomogPoint { x, z, u, t }
     }
 
     fn double_homog(self) -> HomogPoint {
-        let t3 = self.u.square();
-        let w1 = ECField::ONE - (self.x + ECField::ONE).double() * t3;
-        let x = mul_field_gen(t3, 4 * Self::B1);
-        let z = w1.square();
-        let u = (w1 + self.u).square() - t3 - z;
-        let t = ECField::TWO - mul_scalar(t3, 4) - z;
+        self.add_homog(self)
+        /*
+        let [x, z, u, t] = double_homog(self.x, self.u);
         HomogPoint { x, z, u, t }
+        */
     }
 
     pub fn double(self) -> Self {
@@ -344,11 +410,30 @@ impl CircuitBuilderElliptic for CircuitBuilder<GoldilocksField, 2> {
     }
 
     fn add_point(&mut self, p1: &PointTarget, p2: &PointTarget) -> PointTarget {
+        let mut inputs = Vec::with_capacity(20);
+        inputs.extend_from_slice(&p1.x.components);
+        inputs.extend_from_slice(&p1.u.components);
+        inputs.extend_from_slice(&p2.x.components);
+        inputs.extend_from_slice(&p2.u.components);
+        let mut outputs = ECAddHomog::apply(self, &inputs);
+        // plonky2 expects all gate constraints to be satisfied by the zero vector.
+        // So our elliptic curve addition gate computes [x,z-b,u,t-b], and we have to add the b here.
+        let b1 = self.constant(Point::B1);
+        outputs[6] = self.add(outputs[6], b1);
+        outputs[16] = self.add(outputs[16], b1);
+        let x = FieldTarget::new(outputs[0..5].try_into().unwrap());
+        let z = FieldTarget::new(outputs[5..10].try_into().unwrap());
+        let u = FieldTarget::new(outputs[10..15].try_into().unwrap());
+        let t = FieldTarget::new(outputs[15..20].try_into().unwrap());
+        let xq = self.nnf_div(&x, &z);
+        let uq = self.nnf_div(&u, &t);
+        PointTarget { x: xq, u: uq }
+        /*
         let t1 = self.nnf_mul(&p1.x, &p2.x);
         let t3 = self.nnf_mul(&p1.u, &p2.u);
         let t5 = self.nnf_add(&p1.x, &p2.x);
         let t6 = self.nnf_add(&p1.u, &p2.u);
-        let b1 = self.constant(GoldilocksField::from_canonical_u32(Point::B1));
+        let b1 = self.constant(GoldilocksField::from_canonical_u32(Point::B1_U32));
         let t7 = self.nnf_add_scalar_times_generator_power(b1, 1, &t1);
         let t9_1 = self.nnf_mul_generator(&t5);
         let t9_2 = self.nnf_mul_scalar(b1, &t9_1);
@@ -372,15 +457,18 @@ impl CircuitBuilderElliptic for CircuitBuilder<GoldilocksField, 2> {
         let xq = self.nnf_div(&x, &z);
         let uq = self.nnf_div(&u, &t);
         PointTarget { x: xq, u: uq }
+        */
     }
 
     fn double_point(&mut self, p: &PointTarget) -> PointTarget {
+        self.add_point(p, p)
+        /*
         let t3 = self.nnf_mul(&p.u, &p.u);
         let one = self.one();
         let neg_one = self.neg_one();
         let two = self.two();
         let neg_four = self.constant(GoldilocksField::from_noncanonical_i64(-4));
-        let four_b = self.constant(GoldilocksField::from_canonical_u32(4 * Point::B1));
+        let four_b = self.constant(GoldilocksField::from_canonical_u32(4 * Point::B1_U32));
         let w1_1 = self.nnf_add_scalar_times_generator_power(one, 0, &p.x);
         let w1_2 = self.nnf_add(&w1_1, &w1_1);
         let w1_3 = self.nnf_mul(&w1_2, &t3);
@@ -399,6 +487,7 @@ impl CircuitBuilderElliptic for CircuitBuilder<GoldilocksField, 2> {
         let xq = self.nnf_div(&x, &z);
         let uq = self.nnf_div(&u, &t);
         PointTarget { x: xq, u: uq }
+        */
     }
 
     fn linear_combination_points(
@@ -451,7 +540,7 @@ impl CircuitBuilderElliptic for CircuitBuilder<GoldilocksField, 2> {
         let two = self.two();
         let t2 = self.nnf_add_scalar_times_generator_power(two, 0, &p.x);
         let t3 = self.nnf_mul(&p.x, &t2);
-        let b1 = self.constant(GoldilocksField::from_canonical_u32(Point::B1));
+        let b1 = self.constant(Point::B1);
         let t4 = self.nnf_add_scalar_times_generator_power(b1, 1, &t3);
         let t5 = self.nnf_mul(&t1, &t4);
         self.nnf_connect(&p.x, &t5);

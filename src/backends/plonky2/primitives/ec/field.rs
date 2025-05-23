@@ -16,7 +16,14 @@ use plonky2::{
     util::serialization::{Buffer, IoError, Read, Write},
 };
 
-use crate::{backends::plonky2::basetypes::D, middleware::F};
+//use super::gates::field::NNFMulGate;
+use crate::{
+    backends::plonky2::{
+        basetypes::D,
+        primitives::ec::gates::{field::NNFMulSimple, generic::SimpleGate},
+    },
+    middleware::F,
+};
 
 /// Trait for incorporating non-native field (NNF) arithmetic into a
 /// circuit.
@@ -197,43 +204,11 @@ impl<const DEG: usize, NNF: OEF<DEG> + FieldExtension<DEG, BaseField = F>>
         OEFTarget::new(std::array::from_fn(|i| sub_targets[i]))
     }
     fn nnf_mul(&mut self, x: &OEFTarget<DEG, NNF>, y: &OEFTarget<DEG, NNF>) -> OEFTarget<DEG, NNF> {
-        let zero = self.zero();
-        let mul_targets = (0..DEG - 1)
-            .map(|k| {
-                let term1 = (0..=k)
-                    .map(|i| self.mul(x.components[i], y.components[k - i]))
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .reduce(|sum, summand| self.add(sum, summand))
-                    .expect("Missing summands");
-                let term2 = (k + 1..DEG)
-                    .map(|i| {
-                        self.arithmetic(
-                            NNF::W,
-                            F::ZERO,
-                            x.components[i],
-                            y.components[DEG + k - i],
-                            zero,
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .reduce(|sum, summand| self.add(sum, summand))
-                    .expect("Missing summands");
-                self.add(term1, term2)
-            })
-            .collect::<Vec<_>>()
-            .into_iter()
-            .chain(std::iter::once(
-                (0..DEG)
-                    .map(|i| self.mul(x.components[i], y.components[DEG - 1 - i]))
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .reduce(|sum, summand| self.add(sum, summand))
-                    .expect("Missing summands"),
-            ))
-            .collect::<Vec<_>>();
-        OEFTarget::new(std::array::from_fn(|i| mul_targets[i]))
+        let mut inputs = Vec::with_capacity(10);
+        inputs.extend_from_slice(&x.components);
+        inputs.extend_from_slice(&y.components);
+        let outputs = NNFMulSimple::<DEG, NNF>::apply(self, &inputs);
+        OEFTarget::new(outputs.try_into().unwrap())
     }
     fn nnf_div(&mut self, x: &OEFTarget<DEG, NNF>, y: &OEFTarget<DEG, NNF>) -> OEFTarget<DEG, NNF> {
         // Determine quotient witness from numerator & denominator

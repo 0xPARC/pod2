@@ -64,7 +64,7 @@ pub enum TypedValue {
     #[serde(untagged)]
     String(String),
     #[serde(untagged)]
-    Bool(bool)
+    Bool(bool),
 }
 
 impl From<&str> for TypedValue {

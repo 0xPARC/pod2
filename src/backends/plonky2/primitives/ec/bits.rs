@@ -179,9 +179,7 @@ impl CircuitBuilderBits for CircuitBuilder<GoldilocksField, 2> {
         let digits = n.to_u32_digits();
         let targets = array::from_fn(|i| {
             let d = digits.get(i).copied().unwrap_or(0);
-            let t = self.constant(GoldilocksField::from_canonical_u32(d));
-            self.range_check(t, 32);
-            t
+            self.constant(GoldilocksField::from_canonical_u32(d))
         });
         BigUInt320Target(targets)
     }
