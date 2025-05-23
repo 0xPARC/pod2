@@ -470,7 +470,7 @@ impl Prover {
         let id: PodId = PodId(calculate_id(&public_statements, params));
 
         let input = MainPodVerifyInput {
-            vds_root: EMPTY_HASH, // TODO
+            vds_root: inputs.vds_root,
             signed_pods: signed_pods_input,
             main_pods: main_pods_input,
             statements: statements[statements.len() - params.max_statements..].to_vec(),
@@ -486,6 +486,7 @@ impl Prover {
         Ok(MainPod {
             params: params.clone(),
             id,
+            vds_root: inputs.vds_root,
             public_statements,
             proof: proof_with_pis.proof,
         })
@@ -508,6 +509,7 @@ pub type MainPodProof = Proof<F, C, D>;
 pub struct MainPod {
     params: Params,
     id: PodId,
+    vds_root: Hash,
     public_statements: Vec<Statement>,
     proof: MainPodProof,
 }
@@ -548,7 +550,7 @@ fn get_common_data(params: &Params) -> Result<CommonCircuitData<F, D>, Error> {
 impl MainPod {
     fn _verify(&self) -> Result<()> {
         // 2. get the id out of the public statements
-        let id: PodId = PodId(calculate_id(&self.public_statements, &self.params));
+        let id = PodId(calculate_id(&self.public_statements, &self.params));
         if id != self.id {
             return Err(Error::id_not_equal(self.id, id));
         }
@@ -560,17 +562,27 @@ impl MainPod {
             NUM_PUBLIC_INPUTS,
             &self.params,
         )?;
+        let public_inputs = id
+            .to_fields(&self.params)
+            .iter()
+            .chain(self.vds_root.0.iter())
+            .cloned()
+            .collect_vec();
         rec_params
             .verifier_data()
             .verify(ProofWithPublicInputs {
                 proof: self.proof.clone(),
-                public_inputs: id.to_fields(&self.params),
+                public_inputs,
             })
             .map_err(|e| Error::custom(format!("MainPod proof verification failure: {:?}", e)))
     }
 
     pub fn proof(&self) -> MainPodProof {
         self.proof.clone()
+    }
+
+    pub fn vds_root(&self) -> Hash {
+        self.vds_root
     }
 
     pub fn params(&self) -> &Params {
@@ -581,11 +593,13 @@ impl MainPod {
         proof: MainPodProof,
         public_statements: Vec<Statement>,
         id: PodId,
+        vds_root: Hash,
         params: Params,
     ) -> Self {
         Self {
             params,
             id,
+            vds_root,
             public_statements,
             proof,
         }

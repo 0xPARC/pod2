@@ -560,6 +560,7 @@ pub enum PodType {
     MockMain = 2,
     Signed = 3,
     Main = 4,
+    Empty = 5,
 }
 
 impl fmt::Display for PodType {
@@ -570,6 +571,7 @@ impl fmt::Display for PodType {
             PodType::MockMain => write!(f, "MockMain"),
             PodType::Signed => write!(f, "Signed"),
             PodType::Main => write!(f, "Main"),
+            PodType::Empty => write!(f, "Empty"),
         }
     }
 }
@@ -750,6 +752,7 @@ pub struct MainPodInputs<'a> {
     /// Statements that need to be made public (they can come from input pods or input
     /// statements)
     pub public_statements: &'a [Statement],
+    pub vds_root: Hash, // TODO: Figure out if we use Hash or a Map here
 }
 
 pub trait PodProver {

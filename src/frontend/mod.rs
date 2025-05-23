@@ -561,6 +561,7 @@ impl MainPodBuilder {
             statements: &statements,
             operations: &operations,
             public_statements: &public_statements,
+            vds_root: todo!(),
         };
         let pod = prover.prove(&self.params, inputs)?;
 

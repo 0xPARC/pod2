@@ -40,7 +40,7 @@ use crate::{
     middleware::{
         AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash,
         NativeOperation, NativePredicate, Params, Pod, PodType, PredicatePrefix, Statement,
-        StatementArg, ToFields, Value, WildcardValue, F, KEY_TYPE, SELF, VALUE_SIZE,
+        StatementArg, ToFields, Value, WildcardValue, F, HASH_SIZE, KEY_TYPE, SELF, VALUE_SIZE,
     },
 };
 
@@ -49,9 +49,9 @@ use crate::{
 //
 
 /// Offset in public inputs where we store the pod id
-const PI_OFFSET_ID: usize = 0;
+pub const PI_OFFSET_ID: usize = 0;
 /// Offset in public inputs where we store the verified data array root
-const PI_OFFSET_VDSROOT: usize = 4;
+pub const PI_OFFSET_VDSROOT: usize = 4;
 
 pub const NUM_PUBLIC_INPUTS: usize = 8;
 
@@ -903,8 +903,8 @@ impl CustomOperationVerifyGadget {
     }
 }
 
-struct CalculateIdGadget {
-    params: Params,
+pub struct CalculateIdGadget {
+    pub params: Params,
 }
 
 impl CalculateIdGadget {
@@ -955,7 +955,7 @@ impl CalculateIdGadget {
         }
     }
 
-    fn eval(
+    pub fn eval(
         &self,
         builder: &mut CircuitBuilder<F, D>,
         statements: &[StatementTarget],
@@ -1123,6 +1123,7 @@ impl MainPodVerifyGadget {
                 params: params.clone(),
             }
             .eval(builder)?;
+            builder.assert_one(signed_pod.signature.enabled.target);
             signed_pods.push(signed_pod);
         }
 
@@ -1154,7 +1155,7 @@ impl MainPodVerifyGadget {
             }
             let id = id_gadget.eval(builder, &input_pod_statements);
             let expected_id = HashOutTarget::try_from(
-                &verified_proof.public_inputs[PI_OFFSET_ID..PI_OFFSET_ID + 4],
+                &verified_proof.public_inputs[PI_OFFSET_ID..PI_OFFSET_ID + HASH_SIZE],
             )
             .expect("4 elements");
             builder.connect_hashes(expected_id, id);
@@ -1167,7 +1168,7 @@ impl MainPodVerifyGadget {
         // Verify that VD array that input pod uses is the same we use now.
         for verified_proof in verified_proofs {
             let verified_proof_vds_root = HashOutTarget::try_from(
-                &verified_proof.public_inputs[PI_OFFSET_VDSROOT..PI_OFFSET_VDSROOT + 4],
+                &verified_proof.public_inputs[PI_OFFSET_VDSROOT..PI_OFFSET_VDSROOT + HASH_SIZE],
             )
             .expect("4 elements");
             builder.connect_hashes(vds_root, verified_proof_vds_root);

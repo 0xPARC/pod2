@@ -83,7 +83,7 @@ pub struct SignedPodVerifyTarget {
     // the KEY_TYPE entry must be the first one
     // the KEY_SIGNER entry must be the second one
     mt_proofs: Vec<MerkleProofExistenceTarget>,
-    signature: SignatureVerifyTarget,
+    pub(crate) signature: SignatureVerifyTarget,
 }
 
 impl SignedPodVerifyTarget {

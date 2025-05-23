@@ -12,8 +12,8 @@ use crate::{
     },
     frontend::{MainPod, SignedPod},
     middleware::{
-        self, containers::Dictionary, serialization::ordered_map, AnchoredKey, Key, Params, PodId,
-        Statement, StatementArg, Value, SELF,
+        self, containers::Dictionary, serialization::ordered_map, AnchoredKey, Hash, Key, Params,
+        PodId, Statement, StatementArg, Value, EMPTY_HASH, SELF,
     },
 };
 
@@ -45,6 +45,7 @@ pub enum MainPodType {
 #[schemars(rename = "MainPod")]
 pub struct SerializedMainPod {
     id: PodId,
+    vds_root: Hash,
     public_statements: Vec<Statement>,
     proof: String,
     params: Params,
@@ -99,23 +100,20 @@ impl From<SerializedSignedPod> for SignedPod {
 
 impl From<MainPod> for SerializedMainPod {
     fn from(pod: MainPod) -> Self {
-        SerializedMainPod {
-            id: pod.id(),
-            proof: pod.pod.serialized_proof(),
-            params: pod.params.clone(),
-            pod_type: if (&*pod.pod as &dyn Any)
-                .downcast_ref::<Plonky2MainPod>()
-                .is_some()
-            {
-                MainPodType::Main
-            } else if (&*pod.pod as &dyn Any)
-                .downcast_ref::<MockMainPod>()
-                .is_some()
-            {
-                MainPodType::MockMain
+        let (pod_type, vds_root) =
+            if let Some(pod) = (&*pod.pod as &dyn Any).downcast_ref::<Plonky2MainPod>() {
+                (MainPodType::Main, pod.vds_root())
+            } else if let Some(_) = (&*pod.pod as &dyn Any).downcast_ref::<MockMainPod>() {
+                (MainPodType::MockMain, EMPTY_HASH)
             } else {
                 unreachable!()
-            },
+            };
+        SerializedMainPod {
+            id: pod.id(),
+            vds_root,
+            proof: pod.pod.serialized_proof(),
+            params: pod.params.clone(),
+            pod_type,
             public_statements: pod.public_statements.clone(),
         }
     }
@@ -142,6 +140,7 @@ impl TryFrom<SerializedMainPod> for MainPod {
                         serialized.id,
                     ),
                     serialized.id,
+                    serialized.vds_root,
                     serialized.params.clone(),
                 )),
                 public_statements: serialized.public_statements,
