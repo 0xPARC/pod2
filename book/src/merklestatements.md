@@ -1,3 +1,33 @@
+# Copied from statements.md
+
+```
+Branches(parent: AnchoredKey::MerkleTree, left: AnchoredKey::MerkleTree, right: AnchoredKey::MerkleTree)
+
+Leaf(node: AnchoredKey::MerkleTree, key: AnchoredKey, value: AnchoredKey)
+
+IsNullTree(node: AnchoredKey::MerkleTree)
+
+GoesLeft(key: AnchoredKey, depth: Value::Integer)
+
+GoesRight(key: AnchoredKey, depth: Value::Integer)
+
+Contains(root: AnchoredKey::MerkleTree, key: AnchoredKey, value: AnchoredKey)
+
+MerkleSubtree(root: AnchoredKey::MerkleTree, node: AnchoredKey::MerkleTree)
+
+MerkleCorrectPath(root: AnchoredKey::MerkleTree, node: AnchoredKey::MerkleTree, key: AnchoredKey, depth: Value::Integer)
+
+Contains(root: AnchoredKey::MerkleTree, key: AnchoredKey, value: AnchoredKey)
+
+NotContains(root: AnchoredKey::MerkleTree, key: AnchoredKey)
+
+ContainsHashedKey(root: AnchoredKey::DictOrSet, key: AnchoredKey)
+
+NotContainsHashedKey(root: AnchoredKey::DictOrSet, key: AnchoredKey)
+
+ContainsValue(root: AnchoredKey::Array, value: AnchoredKey)
+```
+
 # Statements involving compound types and Merkle trees
 
 The front end has three compound types
