@@ -1,5 +1,9 @@
 use std::array;
 
+use base64::{
+    prelude::BASE64_STANDARD,
+    Engine,
+};
 use num::BigUint;
 use num_bigint::RandBigInt;
 use plonky2::{
@@ -29,6 +33,7 @@ use crate::{
             bits::{BigUInt320Target, CircuitBuilderBits},
             curve::{CircuitBuilderElliptic, PointTarget, WitnessWriteCurve, GROUP_ORDER},
         },
+        Error,
     },
     middleware::RawValue,
 };
@@ -45,6 +50,21 @@ impl Signature {
         let r = &self.s * Point::generator() + &self.e * public_key;
         let e = convert_hash_to_biguint(&hash(msg, r));
         e == self.e
+    }
+    pub fn as_base64_string(&self) -> String {
+        let sig_bytes = [self.s.to_bytes_le(), self.e.to_bytes_le()].concat();
+        BASE64_STANDARD.encode(sig_bytes)
+    }
+    pub fn try_from_base64_string(sig_str: &str) -> Result<Self, Error> {
+        let sig_bytes = BASE64_STANDARD.decode(sig_str).map_err(|e| {
+            Error::custom(format!(
+                "Failed to decode signature from base64: {}. Value: {}",
+                e, sig_str
+            ))
+        })?;
+        let s = BigUint::from_bytes_le(&sig_bytes[..40]);
+        let e = BigUint::from_bytes_le(&sig_bytes[40..]);
+        Ok(Self { s, e })
     }
 }
 

@@ -42,6 +42,10 @@ impl Signer {
             dict,
         })
     }
+
+    pub fn public_key(&self) -> Point {
+        self.0.public_key()
+    }
 }
 
 impl PodSigner for Signer {
@@ -95,6 +99,10 @@ impl SignedPod {
             .then_some(())
             .ok_or(Error::custom("Invalid signature!".into()))
     }
+
+    pub fn decode_signature(signature: &str) -> Result<Signature, Error> {
+        Signature::try_from_base64_string(signature)
+    }
 }
 
 impl Pod for SignedPod {
@@ -122,7 +130,7 @@ impl Pod for SignedPod {
     }
 
     fn serialized_proof(&self) -> String {
-        todo!()
+        self.signature.as_base64_string()
     }
 }
 

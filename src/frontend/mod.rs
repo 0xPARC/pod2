@@ -5,6 +5,7 @@ use std::{collections::HashMap, convert::From, fmt};
 
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
+use serialization::{SerializedMainPod, SerializedSignedPod};
 
 use crate::middleware::{
     self, check_st_tmpl, hash_str, hash_values, AnchoredKey, Hash, Key, MainPodInputs,
@@ -19,15 +20,6 @@ mod serialization;
 pub use custom::*;
 pub use error::*;
 pub use operation::*;
-use serialization::*;
-
-/// This type is just for presentation purposes.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub enum PodClass {
-    #[default]
-    Signed,
-    Main,
-}
 
 #[derive(Clone, Debug)]
 pub struct SignedPodBuilder {
@@ -68,7 +60,7 @@ impl SignedPodBuilder {
 /// SignedPod is a wrapper on top of backend::SignedPod, which additionally stores the
 /// string<-->hash relation of the keys.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(try_from = "SignedPodHelper", into = "SignedPodHelper")]
+#[serde(from = "SerializedSignedPod", into = "SerializedSignedPod")]
 pub struct SignedPod {
     pub pod: Box<dyn middleware::Pod>,
     // We store a copy of the key values for quick access
@@ -617,16 +609,18 @@ impl MainPodBuilder {
 
         Ok(MainPod {
             pod,
+            params: self.params.clone(),
             public_statements,
         })
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(try_from = "MainPodHelper", into = "MainPodHelper")]
+#[serde(try_from = "SerializedMainPod", into = "SerializedMainPod")]
 pub struct MainPod {
     pub pod: Box<dyn middleware::Pod>,
     pub public_statements: Vec<Statement>,
+    pub params: Params,
 }
 
 impl fmt::Display for MainPod {
@@ -793,7 +787,7 @@ pub mod build_utils {
         (max_of, $($arg:expr),+) => { $crate::frontend::Operation(
             $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::MaxOf),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
-        (custom, $op:expr, $($arg:expr),+) => { $crate::frontend::Operation(
+        (custom, $op:expr, $($arg:expr),*) => { $crate::frontend::Operation(
             $crate::middleware::OperationType::Custom($op),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (dict_contains, $dict:expr, $key:expr, $value:expr) => { $crate::frontend::Operation(
@@ -925,18 +919,19 @@ pub mod tests {
         // Alice attests that she is ETH friends with Charlie and Charlie
         // attests that he is ETH friends with Bob.
         let alice_attestation =
-            eth_friend_signed_pod_builder(&params, charlie.pubkey().into()).sign(&mut alice)?;
+            eth_friend_signed_pod_builder(&params, charlie.public_key().into()).sign(&mut alice)?;
         check_kvs(&alice_attestation)?;
         let charlie_attestation =
-            eth_friend_signed_pod_builder(&params, bob.pubkey().into()).sign(&mut charlie)?;
+            eth_friend_signed_pod_builder(&params, bob.public_key().into()).sign(&mut charlie)?;
         check_kvs(&charlie_attestation)?;
 
         let mut prover = MockProver {};
         let alice_bob_ethdos = eth_dos_pod_builder(
             &params,
+            true,
             &alice_attestation,
             &charlie_attestation,
-            &bob.pubkey().into(),
+            bob.public_key().into(),
         )?
         .prove(&mut prover, &params)?;
 

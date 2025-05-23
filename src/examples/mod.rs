@@ -69,10 +69,7 @@ pub fn zu_kyc_pod_builder(
 
 // ETHDoS
 
-pub fn eth_friend_signed_pod_builder(
-    params: &Params,
-    friend_pubkey: TypedValue,
-) -> SignedPodBuilder {
+pub fn eth_friend_signed_pod_builder(params: &Params, friend_pubkey: Value) -> SignedPodBuilder {
     let mut attestation = SignedPodBuilder::new(params);
     attestation.insert("attestation", friend_pubkey);
 
@@ -81,13 +78,14 @@ pub fn eth_friend_signed_pod_builder(
 
 pub fn eth_dos_pod_builder(
     params: &Params,
+    mock: bool,
     alice_attestation: &SignedPod,
     charlie_attestation: &SignedPod,
-    bob_pubkey: &TypedValue,
+    bob_pubkey: Value,
 ) -> Result<MainPodBuilder> {
     // Will need ETH friend and ETH DoS custom predicate batches.
-    let eth_friend = CustomPredicateRef::new(eth_friend_batch(params)?, 0);
-    let eth_dos_batch = eth_dos_batch(params)?;
+    let eth_friend = CustomPredicateRef::new(eth_friend_batch(params, mock)?, 0);
+    let eth_dos_batch = eth_dos_batch(params, mock)?;
     let eth_dos_base = CustomPredicateRef::new(eth_dos_batch.clone(), 0);
     let eth_dos_ind = CustomPredicateRef::new(eth_dos_batch.clone(), 1);
     let eth_dos = CustomPredicateRef::new(eth_dos_batch.clone(), 2);
@@ -117,7 +115,7 @@ pub fn eth_dos_pod_builder(
     let zero = alice_bob_ethdos.priv_literal(0)?;
     let alice_equals_alice = alice_bob_ethdos.priv_op(op!(
         eq,
-        (alice_attestation, KEY_SIGNER),
+        alice_pubkey_copy.clone(),
         alice_pubkey_copy.clone()
     ))?;
     let ethdos_alice_alice_is_zero_base = alice_bob_ethdos.priv_op(op!(

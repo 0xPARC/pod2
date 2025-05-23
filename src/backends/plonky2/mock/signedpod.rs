@@ -19,7 +19,7 @@ pub struct MockSigner {
 }
 
 impl MockSigner {
-    pub fn pubkey(&self) -> Hash {
+    pub fn public_key(&self) -> Hash {
         hash_str(&self.pk)
     }
 }
@@ -27,7 +27,7 @@ impl MockSigner {
 impl MockSigner {
     fn _sign(&mut self, _params: &Params, kvs: &HashMap<Key, Value>) -> Result<MockSignedPod> {
         let mut kvs = kvs.clone();
-        let pubkey = self.pubkey();
+        let pubkey = self.public_key();
         kvs.insert(Key::from(KEY_SIGNER), Value::from(pubkey));
         kvs.insert(Key::from(KEY_TYPE), Value::from(PodType::MockSigned));
 
@@ -58,6 +58,10 @@ pub struct MockSignedPod {
 impl MockSignedPod {
     pub(crate) fn new(id: PodId, signature: String, kvs: HashMap<Key, Value>) -> Self {
         Self { id, signature, kvs }
+    }
+
+    pub fn signature(&self) -> String {
+        self.signature.clone()
     }
 }
 
@@ -131,7 +135,7 @@ impl Pod for MockSignedPod {
     }
 
     fn serialized_proof(&self) -> String {
-        self.signature.to_string()
+        serde_json::to_string(&self.signature).unwrap()
     }
 }
 

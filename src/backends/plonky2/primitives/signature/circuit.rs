@@ -31,6 +31,7 @@ use crate::{
             schnorr::{CircuitBuilderSchnorr, Signature, SignatureTarget, WitnessWriteSchnorr},
         },
     },
+    measure_gates_begin, measure_gates_end,
     middleware::{Hash, RawValue, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE},
 };
 
@@ -48,6 +49,7 @@ pub struct SignatureVerifyTarget {
 impl SignatureVerifyGadget {
     /// creates the targets and defines the logic of the circuit
     pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<SignatureVerifyTarget> {
+        let measure = measure_gates_begin!(builder, "SignatureVerify");
         let enabled = builder.add_virtual_bool_target_safe();
         let pk = builder.add_virtual_point_target();
         let msg = builder.add_virtual_value();
@@ -59,6 +61,7 @@ impl SignatureVerifyGadget {
 
         builder.assert_zero(result);
 
+        measure_gates_end!(builder, measure);
         Ok(SignatureVerifyTarget {
             enabled,
             pk,

@@ -1,4 +1,4 @@
-use std::{array, sync::Arc};
+use std::{array, iter, sync::Arc};
 
 use itertools::{zip_eq, Itertools};
 use plonky2::{
@@ -14,10 +14,10 @@ use crate::{
         circuits::{
             common::{
                 CircuitBuilderPod, CustomPredicateBatchTarget, CustomPredicateEntryTarget,
-                CustomPredicateVerifyEntryTarget, CustomPredicateVerifyQueryTarget, Flattenable,
-                MerkleClaimTarget, OperationTarget, OperationTypeTarget, PredicateTarget,
-                StatementArgTarget, StatementTarget, StatementTmplArgTarget, StatementTmplTarget,
-                ValueTarget,
+                CustomPredicateTarget, CustomPredicateVerifyEntryTarget,
+                CustomPredicateVerifyQueryTarget, Flattenable, MerkleClaimTarget, OperationTarget,
+                OperationTypeTarget, PredicateTarget, StatementArgTarget, StatementTarget,
+                StatementTmplArgTarget, StatementTmplTarget, ValueTarget,
             },
             signedpod::{SignedPodVerifyGadget, SignedPodVerifyTarget},
         },
@@ -28,10 +28,11 @@ use crate::{
         },
         signedpod::SignedPod,
     },
+    measure_gates_begin, measure_gates_end,
     middleware::{
         AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, NativeOperation,
-        NativePredicate, Params, PodType, Statement, StatementArg, ToFields, Value, WildcardValue,
-        F, KEY_TYPE, SELF, VALUE_SIZE,
+        NativePredicate, Params, PodType, PredicatePrefix, Statement, StatementArg, ToFields,
+        Value, WildcardValue, F, KEY_TYPE, SELF, VALUE_SIZE,
     },
 };
 
@@ -79,12 +80,14 @@ impl OperationVerifyGadget {
         merkle_claims: &[MerkleClaimTarget],
         custom_predicate_verification_table: &[HashOutTarget],
     ) -> Result<()> {
+        let measure = measure_gates_begin!(builder, "OperationVerify");
         let _true = builder._true();
         let _false = builder._false();
 
         // Verify that the operation `op` correctly generates the statement `st`.  The operation
         // can reference any of the `prev_statements`.
         // TODO: Clean this up.
+        let measure_resolve_op_args = measure_gates_begin!(builder, "ResolveOpArgs");
         let resolved_op_args = if prev_statements.is_empty() {
             (0..self.params.max_operation_args)
                 .map(|_| {
@@ -98,6 +101,7 @@ impl OperationVerifyGadget {
                 .map(|&i| builder.vec_ref(&self.params, prev_statements, i))
                 .collect::<Vec<_>>()
         };
+        measure_gates_end!(builder, measure_resolve_op_args);
         // TODO: Can we have a single table with merkel claims and verified custom predicates
         // together (with an identifying prefix) and then we only need one random access instead of
         // two?
@@ -113,14 +117,19 @@ impl OperationVerifyGadget {
         // Certain operations (Contains/NotContains) will refer to one
         // of the provided Merkle proofs (if any). These proofs have already
         // been verified, so we need only look up the claim.
+        let measure_resolve_merkle_claim = measure_gates_begin!(builder, "ResolveMerkleClaim");
         let resolved_merkle_claim = (!merkle_claims.is_empty())
             .then(|| builder.vec_ref(&self.params, merkle_claims, op.aux[0]));
+        measure_gates_end!(builder, measure_resolve_merkle_claim);
 
         // Operations from custom statements will refer to one
         // of the provided custom predicates verifications (if any). These operations have already
         // been verified, so we need only look up the entry.
+        let measure_resolve_custom_pred_verification =
+            measure_gates_begin!(builder, "ResolveCustomPredVerification");
         let resolved_custom_pred_verification = (!custom_predicate_verification_table.is_empty())
             .then(|| builder.vec_ref(&self.params, custom_predicate_verification_table, op.aux[1]));
+        measure_gates_end!(builder, measure_resolve_custom_pred_verification);
 
         // The verification may require aux data which needs to be stored in the
         // `OperationVerifyTarget` so that we can set during witness generation.
@@ -140,7 +149,7 @@ impl OperationVerifyGadget {
                 vec![]
             } else {
                 vec![
-                    self.eval_copy(builder, st, &op.op_type, &resolved_op_args)?,
+                    self.eval_copy(builder, st, &op.op_type, &resolved_op_args),
                     self.eval_eq_neq_from_entries(builder, st, &op.op_type, &resolved_op_args),
                     self.eval_lt_lteq_from_entries(builder, st, &op.op_type, &resolved_op_args),
                     self.eval_transitive_eq(builder, st, &op.op_type, &resolved_op_args),
@@ -188,9 +197,9 @@ impl OperationVerifyGadget {
         .concat();
 
         let ok = builder.any(op_checks);
+        builder.assert_one(ok.target);
 
-        builder.connect(ok.target, _true.target);
-
+        measure_gates_end!(builder, measure);
         Ok(())
     }
 
@@ -202,6 +211,7 @@ impl OperationVerifyGadget {
         resolved_merkle_claim: MerkleClaimTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpContainsFromEntries");
         let op_code_ok = op_type.has_native(builder, NativeOperation::ContainsFromEntries);
 
         let (arg_types_ok, [merkle_root_value, key_value, value_value]) =
@@ -236,7 +246,9 @@ impl OperationVerifyGadget {
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-        builder.all([op_code_ok, arg_types_ok, merkle_proof_ok, st_ok])
+        let ok = builder.all([op_code_ok, arg_types_ok, merkle_proof_ok, st_ok]);
+        measure_gates_end!(builder, measure);
+        ok
     }
 
     fn eval_not_contains_from_entries(
@@ -247,6 +259,7 @@ impl OperationVerifyGadget {
         resolved_merkle_claim: MerkleClaimTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpNotContainsFromEntries");
         let op_code_ok = op_type.has_native(builder, NativeOperation::NotContainsFromEntries);
 
         let (arg_types_ok, [merkle_root_value, key_value]) =
@@ -279,7 +292,9 @@ impl OperationVerifyGadget {
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-        builder.all([op_code_ok, arg_types_ok, merkle_proof_ok, st_ok])
+        let ok = builder.all([op_code_ok, arg_types_ok, merkle_proof_ok, st_ok]);
+        measure_gates_end!(builder, measure);
+        ok
     }
 
     fn eval_custom(
@@ -290,16 +305,19 @@ impl OperationVerifyGadget {
         resolved_custom_pred_verification: HashOutTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpCustom");
         let query = CustomPredicateVerifyQueryTarget {
             statement: st.clone(),
             op_type: op_type.clone(),
             op_args: resolved_op_args.to_vec(),
         };
         let out_query_hash = query.hash(builder);
-        builder.is_equal_slice(
+        let ok = builder.is_equal_slice(
             &resolved_custom_pred_verification.elements,
             &out_query_hash.elements,
-        )
+        );
+        measure_gates_end!(builder, measure);
+        ok
     }
 
     /// Carries out the checks necessary for EqualFromEntries and
@@ -311,6 +329,7 @@ impl OperationVerifyGadget {
         op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpEqNeqFromEntries");
         let eq_op_st_code_ok = {
             let op_code_ok = op_type.has_native(builder, NativeOperation::EqualFromEntries);
             let st_code_ok = st.has_native_type(builder, &self.params, NativePredicate::Equal);
@@ -347,7 +366,9 @@ impl OperationVerifyGadget {
                 .collect::<Vec<_>>(),
         );
 
-        builder.all([op_st_code_ok, arg_types_ok, op_args_ok, st_args_ok])
+        let ok = builder.all([op_st_code_ok, arg_types_ok, op_args_ok, st_args_ok]);
+        measure_gates_end!(builder, measure);
+        ok
     }
 
     /// Carries out the checks necessary for LtFromEntries and
@@ -359,6 +380,7 @@ impl OperationVerifyGadget {
         op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpLtLteqFromEntries");
         let zero = ValueTarget::zero(builder);
         let one = ValueTarget::one(builder);
 
@@ -415,7 +437,9 @@ impl OperationVerifyGadget {
                 .collect::<Vec<_>>(),
         );
 
-        builder.all([op_st_code_ok, arg_types_ok, st_args_ok])
+        let ok = builder.all([op_st_code_ok, arg_types_ok, st_args_ok]);
+        measure_gates_end!(builder, measure);
+        ok
     }
 
     fn eval_hash_of(
@@ -425,6 +449,7 @@ impl OperationVerifyGadget {
         op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpHashOf");
         let op_code_ok = op_type.has_native(builder, NativeOperation::HashOf);
 
         let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) =
@@ -446,7 +471,9 @@ impl OperationVerifyGadget {
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-        builder.all([op_code_ok, arg_types_ok, hash_value_ok, st_ok])
+        let ok = builder.all([op_code_ok, arg_types_ok, hash_value_ok, st_ok]);
+        measure_gates_end!(builder, measure);
+        ok
     }
 
     fn eval_sum_of(
@@ -456,6 +483,7 @@ impl OperationVerifyGadget {
         op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpSumOf");
         let value_zero = ValueTarget::zero(builder);
 
         let op_code_ok = op_type.has_native(builder, NativeOperation::SumOf);
@@ -482,7 +510,9 @@ impl OperationVerifyGadget {
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-        builder.all([op_code_ok, arg_types_ok, sum_ok, st_ok])
+        let ok = builder.all([op_code_ok, arg_types_ok, sum_ok, st_ok]);
+        measure_gates_end!(builder, measure);
+        ok
     }
 
     fn eval_product_of(
@@ -492,6 +522,7 @@ impl OperationVerifyGadget {
         op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpProductOf");
         let value_zero = ValueTarget::zero(builder);
 
         let op_code_ok = op_type.has_native(builder, NativeOperation::ProductOf);
@@ -518,7 +549,9 @@ impl OperationVerifyGadget {
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-        builder.all([op_code_ok, arg_types_ok, product_ok, st_ok])
+        let ok = builder.all([op_code_ok, arg_types_ok, product_ok, st_ok]);
+        measure_gates_end!(builder, measure);
+        ok
     }
 
     fn eval_max_of(
@@ -528,6 +561,7 @@ impl OperationVerifyGadget {
         op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpMaxOf");
         let op_code_ok = op_type.has_native(builder, NativeOperation::MaxOf);
 
         let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) =
@@ -561,7 +595,9 @@ impl OperationVerifyGadget {
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-        builder.all([op_code_ok, arg_types_ok, arg1_check, st_ok])
+        let ok = builder.all([op_code_ok, arg_types_ok, arg1_check, st_ok]);
+        measure_gates_end!(builder, measure);
+        ok
     }
 
     fn eval_transitive_eq(
@@ -571,6 +607,7 @@ impl OperationVerifyGadget {
         op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpTransitiveEq");
         let op_code_ok =
             op_type.has_native(builder, NativeOperation::TransitiveEqualFromStatements);
 
@@ -595,7 +632,9 @@ impl OperationVerifyGadget {
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-        builder.all([op_code_ok, arg_types_ok, inner_keys_match, st_ok])
+        let ok = builder.all([op_code_ok, arg_types_ok, inner_keys_match, st_ok]);
+        measure_gates_end!(builder, measure);
+        ok
     }
     fn eval_none(
         &self,
@@ -603,13 +642,16 @@ impl OperationVerifyGadget {
         st: &StatementTarget,
         op_type: &OperationTypeTarget,
     ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpNone");
         let op_code_ok = op_type.has_native(builder, NativeOperation::None);
 
         let expected_statement =
             StatementTarget::new_native(builder, &self.params, NativePredicate::None, &[]);
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-        builder.all([op_code_ok, st_ok])
+        let ok = builder.all([op_code_ok, st_ok]);
+        measure_gates_end!(builder, measure);
+        ok
     }
 
     fn eval_new_entry(
@@ -619,6 +661,7 @@ impl OperationVerifyGadget {
         op_type: &OperationTypeTarget,
         prev_statements: &[StatementTarget],
     ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpNewEntry");
         let op_code_ok = op_type.has_native(builder, NativeOperation::NewEntry);
 
         let st_code_ok = st.has_native_type(builder, &self.params, NativePredicate::ValueOf);
@@ -644,7 +687,9 @@ impl OperationVerifyGadget {
 
         let no_dupes_ok = builder.not(dupe_check);
 
-        builder.all([op_code_ok, st_code_ok, arg_prefix_ok, no_dupes_ok])
+        let ok = builder.all([op_code_ok, st_code_ok, arg_prefix_ok, no_dupes_ok]);
+        measure_gates_end!(builder, measure);
+        ok
     }
 
     fn eval_lt_to_neq(
@@ -654,6 +699,7 @@ impl OperationVerifyGadget {
         op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
     ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpLtToNeq");
         let op_code_ok = op_type.has_native(builder, NativeOperation::LtToNotEqual);
 
         let arg_type_ok =
@@ -670,7 +716,9 @@ impl OperationVerifyGadget {
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-        builder.all([op_code_ok, arg_type_ok, st_ok])
+        let ok = builder.all([op_code_ok, arg_type_ok, st_ok]);
+        measure_gates_end!(builder, measure);
+        ok
     }
 
     fn eval_copy(
@@ -679,13 +727,16 @@ impl OperationVerifyGadget {
         st: &StatementTarget,
         op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
-    ) -> Result<BoolTarget> {
+    ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpCopy");
         let op_code_ok = op_type.has_native(builder, NativeOperation::CopyStatement);
 
         let expected_statement = &resolved_op_args[0];
         let st_ok = builder.is_equal_flattenable(st, expected_statement);
 
-        Ok(builder.all([op_code_ok, st_ok]))
+        let ok = builder.all([op_code_ok, st_ok]);
+        measure_gates_end!(builder, measure);
+        ok
     }
 }
 
@@ -716,12 +767,18 @@ impl CustomOperationVerifyGadget {
         // optimization: ak_id_wc_index and wc_index use the same signals, so we only need to do one
         // random access to resolve both of them
         assert_eq!(ak_id_wc_index, wc_index);
+        // optimization: the wildcard indices have an offset of +1.  This allows us to set a fixed
+        // SELF in args[0] to resolve SelfOrWildcard::SELF encoded as a wildcard at index 0.
+        let value_self = ValueTarget::from_slice(&builder.constants(&SELF.0 .0));
+        let args = iter::once(value_self)
+            .chain(args.iter().cloned())
+            .collect_vec();
         // If the index is not used, use a 0 instead to still pass the range constraints from
         // vec_ref
         let first_index = ak_id_wc_index;
         let is_first_index_valid = builder.or(is_ak, is_wc_literal);
         let first_index = builder.select(is_first_index_valid, first_index, zero);
-        let resolved_ak_id = builder.vec_ref(&self.params, args, first_index);
+        let resolved_ak_id = builder.vec_ref(&self.params, &args, first_index);
         let resolved_wc = resolved_ak_id;
 
         // If the index is not used, use a 0 instead to still pass the range constraints from
@@ -729,7 +786,7 @@ impl CustomOperationVerifyGadget {
         let second_index = ak_key_wc_index;
         let is_second_index_valid = builder.and(is_ak, is_ak_key_wc);
         let second_index = builder.select(is_second_index_valid, second_index, zero);
-        let resolved_ak_key = builder.vec_ref(&self.params, args, second_index);
+        let resolved_ak_key = builder.vec_ref(&self.params, &args, second_index);
 
         let ak_key = ak_key_lit; // is_ak_key_lit
         let ak_key =
@@ -752,11 +809,13 @@ impl CustomOperationVerifyGadget {
         st_tmpl: &StatementTmplTarget,
         args: &[ValueTarget],
     ) -> StatementTarget {
+        let measure = measure_gates_begin!(builder, "StatementArgFromTemplate");
         let args = st_tmpl
             .args
             .iter()
             .map(|st_tmpl_arg| self.statement_arg_from_template(builder, st_tmpl_arg, args))
             .collect();
+        measure_gates_end!(builder, measure);
         StatementTarget {
             predicate: st_tmpl.pred.clone(),
             args,
@@ -775,6 +834,7 @@ impl CustomOperationVerifyGadget {
         op_args: &[StatementTarget],
         args: &[ValueTarget], // arguments to the custom predicate, public and private
     ) -> Result<(StatementTarget, OperationTypeTarget)> {
+        let measure = measure_gates_begin!(builder, "CustomOperationVerify");
         // Some sanity checks
         assert_eq!(self.params.max_operation_args, op_args.len());
         assert_eq!(self.params.max_custom_predicate_wildcards, args.len());
@@ -813,6 +873,7 @@ impl CustomOperationVerifyGadget {
         // expected_sts.len() == self.params.max_custom_predicate_arity
         // op_args.len() == self.params.max_operation_args;
         assert!(self.params.max_custom_predicate_arity <= self.params.max_operation_args);
+
         let sts_eq: Vec<_> = expected_sts
             .iter()
             .zip(op_args.iter())
@@ -828,6 +889,7 @@ impl CustomOperationVerifyGadget {
         ));
 
         builder.assert_one(is_op_args_ok.target);
+        measure_gates_end!(builder, measure);
         Ok((statement, op_type))
     }
 }
@@ -837,7 +899,125 @@ struct MainPodVerifyGadget {
 }
 
 impl MainPodVerifyGadget {
+    // Replace predicates of batch-self with the corresponding global custom predicate batch_id and
+    // index
+    fn normalize_st_tmpl(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        st_tmpl: &StatementTmplTarget,
+        id: HashOutTarget,
+    ) -> StatementTmplTarget {
+        let params = &self.params;
+        let prefix_batch_self = builder.constant(F::from(PredicatePrefix::BatchSelf));
+        let is_batch_self = builder.is_equal(st_tmpl.pred.elements[0], prefix_batch_self);
+        let pred_index = st_tmpl.pred.elements[1];
+        let custom_pred = PredicateTarget::new_custom(builder, id, pred_index);
+        let pred = builder.select_flattenable(params, is_batch_self, &custom_pred, &st_tmpl.pred);
+        StatementTmplTarget {
+            pred,
+            args: st_tmpl.args.clone(),
+        }
+    }
+    /// Build a table of [batch_id, custom_predicate_index, custom_predicate] with queryable part as
+    /// hash([batch_id, custom_predicate_index, custom_predicate]).  While building the table we
+    /// calculate the id of each batch.
+    fn build_custom_predicate_table(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+    ) -> Result<(Vec<HashOutTarget>, Vec<CustomPredicateBatchTarget>)> {
+        let measure = measure_gates_begin!(builder, "BuildCustomPredicateTable");
+        let params = &self.params;
+        let mut custom_predicate_table =
+            Vec::with_capacity(params.max_custom_predicate_batches * params.max_custom_batch_size);
+        let mut custom_predicate_batches = Vec::with_capacity(params.max_custom_predicate_batches);
+        for _ in 0..params.max_custom_predicate_batches {
+            let cpb = builder.add_virtual_custom_predicate_batch(params);
+            let id = cpb.id(builder); // constrain the id
+            for (index, cp) in cpb.predicates.iter().enumerate() {
+                let statements = cp
+                    .statements
+                    .iter()
+                    .map(|st_tmpl| self.normalize_st_tmpl(builder, st_tmpl, id))
+                    .collect_vec();
+                let cp = CustomPredicateTarget {
+                    conjunction: cp.conjunction,
+                    statements,
+                    args_len: cp.args_len,
+                };
+                let entry = CustomPredicateEntryTarget {
+                    id,                                                      // output
+                    index: builder.constant(F::from_canonical_usize(index)), // constant
+                    predicate: cp.clone(),                                   // input
+                };
+
+                let in_query_hash = entry.hash(builder);
+                custom_predicate_table.push(in_query_hash);
+            }
+            custom_predicate_batches.push(cpb); // We keep this for witness assignment
+        }
+        measure_gates_end!(builder, measure);
+        Ok((custom_predicate_table, custom_predicate_batches))
+    }
+
+    /// Build table of [batch_id, custom_predicate_index, custom_predicate, args, st, op, op_args]
+    /// with queryable part as hash([st, op, op_args]).  While building the table we verify each
+    /// custom predicate against the operation and statement.
+    fn build_custom_predicate_verification_table(
+        &self,
+        builder: &mut CircuitBuilder<F, D>,
+        custom_predicate_table: &[HashOutTarget],
+    ) -> Result<(Vec<HashOutTarget>, Vec<CustomPredicateVerifyEntryTarget>)> {
+        let measure = measure_gates_begin!(builder, "BuildCustomPredicateVerificationTable");
+        let params = &self.params;
+        let mut custom_predicate_verifications =
+            Vec::with_capacity(params.max_custom_predicate_verifications);
+        let mut custom_predicate_verification_table =
+            Vec::with_capacity(params.max_custom_predicate_verifications);
+        for _ in 0..params.max_custom_predicate_verifications {
+            let custom_predicate_table_index = builder.add_virtual_target();
+            let custom_predicate = builder.add_virtual_custom_predicate_entry(params);
+            let args = (0..params.max_custom_predicate_wildcards)
+                .map(|_| builder.add_virtual_value())
+                .collect_vec();
+            let op_args = (0..params.max_operation_args)
+                .map(|_| builder.add_virtual_statement(params))
+                .collect_vec();
+
+            // Verify the custom predicate operation
+            let (statement, op_type) = CustomOperationVerifyGadget {
+                params: params.clone(),
+            }
+            .eval(builder, &custom_predicate, &op_args, &args)?;
+
+            // Check that the batch id is correct by querying the custom predicate batches table
+            let table_query_hash =
+                builder.vec_ref(params, custom_predicate_table, custom_predicate_table_index);
+            let out_query_hash = custom_predicate.hash(builder);
+            builder.connect_array(table_query_hash.elements, out_query_hash.elements);
+
+            let entry = CustomPredicateVerifyEntryTarget {
+                custom_predicate_table_index, // input
+                custom_predicate,             // input
+                args,                         // input
+                query: CustomPredicateVerifyQueryTarget {
+                    statement, // output
+                    op_type,   // output
+                    op_args,   // input
+                },
+            };
+            let in_query_hash = entry.query.hash(builder);
+            custom_predicate_verification_table.push(in_query_hash);
+            custom_predicate_verifications.push(entry); // We keep this for witness assignment
+        }
+        measure_gates_end!(builder, measure);
+        Ok((
+            custom_predicate_verification_table,
+            custom_predicate_verifications,
+        ))
+    }
+
     fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MainPodVerifyTarget> {
+        let measure = measure_gates_begin!(builder, "MainPodVerify");
         let params = &self.params;
         // 1. Verify all input signed pods
         let mut signed_pods = Vec::new();
@@ -851,12 +1031,17 @@ impl MainPodVerifyGadget {
 
         // Build the statement array
         let mut statements = Vec::new();
+        // Statement at index 0 is always None to be used for padding operation arguments in custom
+        // predicate statements
+        let st_none =
+            StatementTarget::new_native(builder, &self.params, NativePredicate::None, &[]);
+        statements.push(st_none);
         for signed_pod in &signed_pods {
             statements.extend_from_slice(signed_pod.pub_statements(builder, false).as_slice());
         }
         debug_assert_eq!(
             statements.len(),
-            self.params.max_input_signed_pods * self.params.max_signed_pod_values
+            1 + self.params.max_input_signed_pods * self.params.max_signed_pod_values
         );
         // TODO: Fill with input main pods
         for _main_pod in 0..self.params.max_input_main_pods {
@@ -895,77 +1080,19 @@ impl MainPodVerifyGadget {
             .map(|pf| pf.into())
             .collect();
 
-        // Table of [batch_id, custom_predicate_index, custom_predicate] with queryable part as
-        // hash([batch_id, custom_predicate_index, custom_predicate]).  While building the table we
-        // calculate the id of each batch.
-        let mut custom_predicate_table =
-            Vec::with_capacity(params.max_custom_predicate_batches * params.max_custom_batch_size);
-        let mut custom_predicate_batches = Vec::with_capacity(params.max_custom_predicate_batches);
-        for _ in 0..params.max_custom_predicate_batches {
-            let cpb = builder.add_virtual_custom_predicate_batch(&self.params);
-            let id = cpb.id(builder); // constrain the id
-            for (index, cp) in cpb.predicates.iter().enumerate() {
-                let entry = CustomPredicateEntryTarget {
-                    id,                                                      // output
-                    index: builder.constant(F::from_canonical_usize(index)), // constant
-                    predicate: cp.clone(),                                   // input
-                };
-                let in_query_hash = entry.hash(builder);
-                custom_predicate_table.push(in_query_hash);
-            }
-            custom_predicate_batches.push(cpb); // We keep this for witness assignment
-        }
+        // Table of custom predicate batches with batch_id calculation
+        let (custom_predicate_table, custom_predicate_batches) =
+            self.build_custom_predicate_table(builder)?;
 
-        // Table of [batch_id, custom_predicate_index, custom_predicate, args, st, op, op_args]
-        // with queryable part as hash([st, op, op_args]).  While building the table we verify each
-        // custom predicate against the operation and statement.
-        let mut custom_predicate_verifications =
-            Vec::with_capacity(params.max_custom_predicate_verifications);
-        let mut custom_predicate_verification_table =
-            Vec::with_capacity(params.max_custom_predicate_verifications);
-        for _ in 0..params.max_custom_predicate_verifications {
-            let custom_predicate_table_index = builder.add_virtual_target();
-            let custom_predicate = builder.add_virtual_custom_predicate_entry(&self.params);
-            let args = (0..params.max_custom_predicate_wildcards)
-                .map(|_| builder.add_virtual_value())
-                .collect_vec();
-            let op_args = (0..params.max_operation_args)
-                .map(|_| builder.add_virtual_statement(&self.params))
-                .collect_vec();
-
-            // Verify the custom predicate operation
-            let (statement, op_type) = CustomOperationVerifyGadget {
-                params: params.clone(),
-            }
-            .eval(builder, &custom_predicate, &op_args, &args)?;
-
-            // Check that the batch id is correct by querying the custom predicate batches table
-            let table_query_hash = builder.vec_ref(
-                &self.params,
-                &custom_predicate_table,
-                custom_predicate_table_index,
-            );
-            let out_query_hash = custom_predicate.hash(builder);
-            builder.connect_array(table_query_hash.elements, out_query_hash.elements);
-
-            let entry = CustomPredicateVerifyEntryTarget {
-                custom_predicate_table_index, // input
-                custom_predicate,             // input
-                args,                         // input
-                query: CustomPredicateVerifyQueryTarget {
-                    statement, // output
-                    op_type,   // output
-                    op_args,   // input
-                },
-            };
-            let in_query_hash = entry.query.hash(builder);
-            custom_predicate_verification_table.push(in_query_hash);
-            custom_predicate_verifications.push(entry); // We keep this for witness assignment
-        }
+        // Table of custom predicate statements verification against operations
+        let (custom_predicate_verification_table, custom_predicate_verifications) =
+            self.build_custom_predicate_verification_table(builder, &custom_predicate_table)?;
 
         // 2. Calculate the Pod Id from the public statements
+        let measure_calc_id = measure_gates_begin!(builder, "MainPodId");
         let pub_statements_flattened = pub_statements.iter().flat_map(|s| s.flatten()).collect();
         let id = builder.hash_n_to_hash_no_pad::<PoseidonHash>(pub_statements_flattened);
+        measure_gates_end!(builder, measure_calc_id);
 
         // 4. Verify type
         let type_statement = &pub_statements[0];
@@ -1001,6 +1128,7 @@ impl MainPodVerifyGadget {
             )?;
         }
 
+        measure_gates_end!(builder, measure);
         Ok(MainPodVerifyTarget {
             params: params.clone(),
             id,
@@ -1156,7 +1284,7 @@ mod tests {
         frontend::{self, key, literal, CustomPredicateBatchBuilder, StatementTmplBuilder},
         middleware::{
             hash_str, hash_values, Hash, Key, KeyOrWildcard, OperationType, PodId, Predicate,
-            RawValue, StatementTmpl, StatementTmplArg, Wildcard, WildcardValue,
+            RawValue, SelfOrWildcard, StatementTmpl, StatementTmplArg, Wildcard, WildcardValue,
         },
     };
 
@@ -2100,7 +2228,7 @@ mod tests {
 
         // case: AnchoredKey(id_wildcard, key_literal)
         let st_tmpl_arg = StatementTmplArg::AnchoredKey(
-            Wildcard::new("a".to_string(), 1),
+            SelfOrWildcard::Wildcard(Wildcard::new("a".to_string(), 1)),
             KeyOrWildcard::Key(Key::from("foo")),
         );
         let args = vec![Value::from(1), Value::from(pod_id.0), Value::from(3)];
@@ -2109,11 +2237,29 @@ mod tests {
 
         // case: AnchoredKey(id_wildcard, key_wildcard)
         let st_tmpl_arg = StatementTmplArg::AnchoredKey(
-            Wildcard::new("a".to_string(), 1),
+            SelfOrWildcard::Wildcard(Wildcard::new("a".to_string(), 1)),
             KeyOrWildcard::Wildcard(Wildcard::new("b".to_string(), 2)),
         );
         let args = vec![Value::from(1), Value::from(pod_id.0), Value::from("key")];
         let expected_st_arg = StatementArg::Key(AnchoredKey::new(pod_id, Key::from("key")));
+        helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
+
+        // case: AnchoredKey(SELF, key_literal)
+        let st_tmpl_arg = StatementTmplArg::AnchoredKey(
+            SelfOrWildcard::SELF,
+            KeyOrWildcard::Key(Key::from("foo")),
+        );
+        let args = vec![Value::from(1), Value::from(pod_id.0), Value::from(3)];
+        let expected_st_arg = StatementArg::Key(AnchoredKey::new(SELF, Key::from("foo")));
+        helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
+
+        // case: AnchoredKey(SELF, key_wildcard)
+        let st_tmpl_arg = StatementTmplArg::AnchoredKey(
+            SelfOrWildcard::SELF,
+            KeyOrWildcard::Wildcard(Wildcard::new("b".to_string(), 2)),
+        );
+        let args = vec![Value::from(1), Value::from(pod_id.0), Value::from("key")];
+        let expected_st_arg = StatementArg::Key(AnchoredKey::new(SELF, Key::from("key")));
         helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
 
         // case: WildcardLiteral(wildcard)
@@ -2172,7 +2318,7 @@ mod tests {
             pred: Predicate::Native(NativePredicate::ValueOf),
             args: vec![
                 StatementTmplArg::AnchoredKey(
-                    Wildcard::new("a".to_string(), 1),
+                    SelfOrWildcard::Wildcard(Wildcard::new("a".to_string(), 1)),
                     KeyOrWildcard::Key(Key::from("key")),
                 ),
                 StatementTmplArg::Literal(Value::from("value")),
@@ -2193,7 +2339,7 @@ mod tests {
         custom_predicate: CustomPredicateRef,
         op_args: Vec<Statement>,
         args: Vec<WildcardValue>,
-        expected_st: Statement,
+        expected_st: Option<Statement>,
     ) -> Result<()> {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
@@ -2226,22 +2372,22 @@ mod tests {
             arg_target.set_targets(&mut pw, &Value::from(arg.raw()))?;
         }
         // Expected Output
-        st_target.set_targets(&mut pw, params, &expected_st.into())?;
+        if let Some(expected_st) = expected_st {
+            st_target.set_targets(&mut pw, params, &expected_st.into())?;
+        }
 
         let expected_op_type = OperationType::Custom(custom_predicate);
         op_type_target.set_targets(&mut pw, params, &expected_op_type)?;
 
         // generate & verify proof
         let data = builder.build::<C>();
-        let proof = data.prove(pw).unwrap();
-        data.verify(proof.clone()).unwrap();
-
-        Ok(())
+        let proof = data.prove(pw)?;
+        Ok(data.verify(proof.clone())?)
     }
 
     // TODO: Add negative tests
     #[test]
-    fn test_custom_operation_verify_gadget() -> frontend::Result<()> {
+    fn test_custom_operation_verify_gadget_positive() -> frontend::Result<()> {
         // We set the parameters to the exact sizes we have in the test so that we don't have to
         // pad.
         let params = Params {
@@ -2298,7 +2444,7 @@ mod tests {
             custom_predicate,
             op_args,
             args,
-            expected_st,
+            Some(expected_st),
         )
         .unwrap();
 
@@ -2322,7 +2468,7 @@ mod tests {
             custom_predicate,
             op_args,
             args,
-            expected_st,
+            Some(expected_st),
         )
         .unwrap();
 
@@ -2349,9 +2495,189 @@ mod tests {
             custom_predicate,
             op_args,
             args,
-            expected_st,
+            Some(expected_st),
         )
         .unwrap();
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_custom_operation_verify_gadget_negative() -> frontend::Result<()> {
+        // We set the parameters to the exact sizes we have in the test so that we don't have to
+        // pad.
+        let params = Params {
+            max_custom_predicate_arity: 2,
+            max_custom_predicate_wildcards: 2,
+            max_operation_args: 2,
+            max_statement_args: 2,
+            ..Default::default()
+        };
+
+        use NativePredicate as NP;
+        use StatementTmplBuilder as STB;
+        let mut builder = CustomPredicateBatchBuilder::new(params.clone(), "batch".into());
+        let stb0 = STB::new(NP::ValueOf)
+            .arg(("id", key("score")))
+            .arg(literal(42));
+        let stb1 = STB::new(NP::Equal)
+            .arg(("id", "secret_key"))
+            .arg(("id", key("score")));
+        let _ = builder.predicate_and(
+            "pred_and",
+            &["id"],
+            &["secret_key"],
+            &[stb0.clone(), stb1.clone()],
+        )?;
+        let _ = builder.predicate_or("pred_or", &["id"], &["secret_key"], &[stb0, stb1])?;
+        let batch = builder.finish();
+
+        let pod_id = PodId(hash_str("pod_id"));
+
+        // AND (0) Sanity check with correct values
+        let custom_predicate = CustomPredicateRef::new(batch.clone(), 0);
+        let op_args = vec![
+            Statement::ValueOf(
+                AnchoredKey::new(pod_id, Key::from("score")),
+                Value::from(42),
+            ),
+            Statement::Equal(
+                AnchoredKey::new(pod_id, Key::from("foo")),
+                AnchoredKey::new(pod_id, Key::from("score")),
+            ),
+        ];
+        let args = vec![
+            WildcardValue::PodId(pod_id),
+            WildcardValue::Key(Key::from("foo")),
+        ];
+        let expected_st = Statement::Custom(
+            custom_predicate.clone(),
+            vec![args[0].clone(), WildcardValue::None],
+        );
+
+        helper_custom_operation_verify_gadget(
+            &params,
+            custom_predicate,
+            op_args,
+            args,
+            Some(expected_st),
+        )
+        .unwrap();
+
+        // AND (1) Different pod_id for same wildcard
+        let custom_predicate = CustomPredicateRef::new(batch.clone(), 0);
+        let op_args = vec![
+            Statement::ValueOf(
+                AnchoredKey::new(pod_id, Key::from("score")),
+                Value::from(42),
+            ),
+            Statement::Equal(
+                AnchoredKey::new(PodId(hash_str("BAD")), Key::from("foo")),
+                AnchoredKey::new(pod_id, Key::from("score")),
+            ),
+        ];
+        let args = vec![
+            WildcardValue::PodId(pod_id),
+            WildcardValue::Key(Key::from("foo")),
+        ];
+
+        assert!(helper_custom_operation_verify_gadget(
+            &params,
+            custom_predicate,
+            op_args,
+            args,
+            None,
+        )
+        .is_err());
+
+        // AND (2) key doesn't match template
+        let custom_predicate = CustomPredicateRef::new(batch.clone(), 0);
+        let op_args = vec![
+            Statement::ValueOf(AnchoredKey::new(pod_id, Key::from("BAD")), Value::from(42)),
+            Statement::Equal(
+                AnchoredKey::new(pod_id, Key::from("foo")),
+                AnchoredKey::new(pod_id, Key::from("score")),
+            ),
+        ];
+        let args = vec![
+            WildcardValue::PodId(pod_id),
+            WildcardValue::Key(Key::from("foo")),
+        ];
+
+        assert!(helper_custom_operation_verify_gadget(
+            &params,
+            custom_predicate,
+            op_args,
+            args,
+            None,
+        )
+        .is_err());
+
+        // AND (3) literal doesn't match template
+        let custom_predicate = CustomPredicateRef::new(batch.clone(), 0);
+        let op_args = vec![
+            Statement::ValueOf(
+                AnchoredKey::new(pod_id, Key::from("score")),
+                Value::from(0xbad),
+            ),
+            Statement::Equal(
+                AnchoredKey::new(pod_id, Key::from("foo")),
+                AnchoredKey::new(pod_id, Key::from("score")),
+            ),
+        ];
+        let args = vec![
+            WildcardValue::PodId(pod_id),
+            WildcardValue::Key(Key::from("foo")),
+        ];
+
+        assert!(helper_custom_operation_verify_gadget(
+            &params,
+            custom_predicate,
+            op_args,
+            args,
+            None,
+        )
+        .is_err());
+
+        // AND (4) predicate doesn't match template
+        let custom_predicate = CustomPredicateRef::new(batch.clone(), 0);
+        let op_args = vec![
+            Statement::ValueOf(
+                AnchoredKey::new(pod_id, Key::from("score")),
+                Value::from(42),
+            ),
+            Statement::NotEqual(
+                AnchoredKey::new(pod_id, Key::from("foo")),
+                AnchoredKey::new(pod_id, Key::from("score")),
+            ),
+        ];
+        let args = vec![
+            WildcardValue::PodId(pod_id),
+            WildcardValue::Key(Key::from("foo")),
+        ];
+
+        assert!(helper_custom_operation_verify_gadget(
+            &params,
+            custom_predicate,
+            op_args,
+            args,
+            None,
+        )
+        .is_err());
+
+        // OR (1) Two Nones
+        let custom_predicate = CustomPredicateRef::new(batch.clone(), 1);
+        let op_args = vec![Statement::None, Statement::None];
+        let args = vec![WildcardValue::PodId(pod_id), WildcardValue::None];
+
+        assert!(helper_custom_operation_verify_gadget(
+            &params,
+            custom_predicate,
+            op_args,
+            args,
+            None
+        )
+        .is_err());
 
         Ok(())
     }

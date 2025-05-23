@@ -2,6 +2,7 @@ pub mod operation;
 pub mod statement;
 use std::{any::Any, sync::Arc};
 
+use base64::{prelude::BASE64_STANDARD, Engine};
 use itertools::Itertools;
 pub use operation::*;
 use plonky2::{
@@ -9,10 +10,11 @@ use plonky2::{
     iop::witness::PartialWitness,
     plonk::{
         circuit_builder::CircuitBuilder,
-        circuit_data::CircuitConfig,
+        circuit_data::{CircuitConfig, CommonCircuitData},
         config::Hasher,
         proof::{Proof, ProofWithPublicInputs},
     },
+    util::serialization::{Buffer, Read},
 };
 pub use statement::*;
 
@@ -87,7 +89,7 @@ pub(crate) fn extract_custom_predicate_verifications(
                 .find_map(|(i, cpb)| (cpb.id() == cpr.batch.id()).then_some(i))
                 .expect("find the custom predicate from the extracted unique list");
             let custom_predicate_table_index =
-                batch_index * params.max_custom_predicate_batches + cpr.index;
+                batch_index * params.max_custom_batch_size + cpr.index;
             CustomPredicateVerification {
                 custom_predicate_table_index,
                 custom_predicate: cpr.clone(),
@@ -150,20 +152,18 @@ pub(crate) fn extract_merkle_proofs(
 
 /// Find the operation argument statement in the list of previous statements and return the index.
 fn find_op_arg(statements: &[Statement], op_arg: &middleware::Statement) -> Result<OperationArg> {
-    match op_arg {
-        middleware::Statement::None => Ok(OperationArg::None),
-        _ => statements
-            .iter()
-            .enumerate()
-            .find_map(|(i, s)| {
-                (&middleware::Statement::try_from(s.clone()).ok()? == op_arg).then_some(i)
-            })
-            .map(OperationArg::Index)
-            .ok_or(Error::custom(format!(
-                "Statement corresponding to op arg {} not found",
-                op_arg
-            ))),
-    }
+    // NOTE: The `None` `Statement` always exists as a constant at index 0
+    statements
+        .iter()
+        .enumerate()
+        .find_map(|(i, s)| {
+            (&middleware::Statement::try_from(s.clone()).ok()? == op_arg).then_some(i)
+        })
+        .map(OperationArg::Index)
+        .ok_or(Error::custom(format!(
+            "Statement corresponding to op arg {} not found",
+            op_arg
+        )))
 }
 
 /// Find the operation auxiliary data in the list of auxiliary data and return the index.
@@ -179,15 +179,21 @@ fn find_op_aux(
     op: &middleware::Operation,
 ) -> Result<OperationAux> {
     let op_aux = op.aux();
-    let op_type = op.op_type();
-    if let (OperationType::Custom(cpr), Some(cpvs)) = (op_type, custom_predicate_verifications) {
+    if let (middleware::Operation::Custom(cpr, op_args), Some(cpvs)) =
+        (op, custom_predicate_verifications)
+    {
         return Ok(cpvs
             .iter()
             .enumerate()
             .find_map(|(i, cpv)| {
                 (cpv.custom_predicate.batch.id() == cpr.batch.id()
-                    && cpv.custom_predicate.index == cpr.index)
-                    .then_some(i)
+                    && cpv.custom_predicate.index == cpr.index
+                    && cpv
+                        .op_args
+                        .iter()
+                        .zip_eq(op_args.iter())
+                        .all(|(a0, a1)| a0.0 == a1.predicate() && a0.1 == a1.args()))
+                .then_some(i)
             })
             .map(OperationAux::CustomPredVerifyIndex)
             .expect("custom predicate verification in the list"));
@@ -215,7 +221,7 @@ fn fill_pad<T: Clone>(v: &mut Vec<T>, pad_value: T, len: usize) {
     }
 }
 
-fn pad_statement(params: &Params, s: &mut Statement) {
+pub fn pad_statement(params: &Params, s: &mut Statement) {
     fill_pad(&mut s.1, StatementArg::None, params.max_statement_args)
 }
 
@@ -227,6 +233,10 @@ fn pad_operation_args(params: &Params, args: &mut Vec<OperationArg>) {
 /// respective max lengths defined at the given Params.
 pub(crate) fn layout_statements(params: &Params, inputs: &MainPodInputs) -> Vec<Statement> {
     let mut statements = Vec::new();
+
+    // Statement at index 0 is always None to be used for padding operation arguments in custom
+    // predicate statements
+    statements.push(middleware::Statement::None.into());
 
     // Input signed pods region
     let none_sig_pod_box: Box<dyn Pod> = Box::new(NonePod {});
@@ -446,12 +456,14 @@ impl PodProver for Prover {
     }
 }
 
+pub type MainPodProof = Proof<F, C, D>;
+
 #[derive(Clone, Debug)]
 pub struct MainPod {
     params: Params,
     id: PodId,
     public_statements: Vec<Statement>,
-    proof: Proof<F, C, D>,
+    proof: MainPodProof,
 }
 
 /// Convert a Statement into middleware::Statement and replace references to SELF by `self_id`.
@@ -471,6 +483,23 @@ pub(crate) fn normalize_statement(statement: &Statement, self_id: PodId) -> midd
     )
     .try_into()
     .unwrap()
+}
+
+// This is a helper function to get the CommonCircuitData necessary to decode
+// a serialized proof. At some point in the future, this data may be available
+// as a constant or with static initialization, but in the meantime we can
+// generate it on-demand.
+fn get_common_data(params: &Params) -> Result<CommonCircuitData<F, D>, Error> {
+    let config = CircuitConfig::standard_recursion_config();
+    let mut builder = CircuitBuilder::<F, D>::new(config);
+    let _main_pod = MainPodVerifyCircuit {
+        params: params.clone(),
+    }
+    .eval(&mut builder)
+    .map_err(|e| Error::custom(format!("Failed to evaluate MainPodVerifyCircuit: {}", e)))?;
+
+    let data = builder.build::<C>();
+    Ok(data.common)
 }
 
 impl MainPod {
@@ -497,6 +526,48 @@ impl MainPod {
         })
         .map_err(|e| Error::custom(format!("MainPod proof verification failure: {:?}", e)))
     }
+
+    pub fn proof(&self) -> MainPodProof {
+        self.proof.clone()
+    }
+
+    pub fn params(&self) -> &Params {
+        &self.params
+    }
+
+    pub(crate) fn new(
+        proof: MainPodProof,
+        public_statements: Vec<Statement>,
+        id: PodId,
+        params: Params,
+    ) -> Self {
+        Self {
+            params,
+            id,
+            public_statements,
+            proof,
+        }
+    }
+
+    pub fn decode_proof(proof: &str, params: &Params) -> Result<MainPodProof, Error> {
+        let decoded = BASE64_STANDARD.decode(proof).map_err(|e| {
+            Error::custom(format!(
+                "Failed to decode proof from base64: {}. Value: {}",
+                e, proof
+            ))
+        })?;
+        let mut buf = Buffer::new(&decoded);
+        let common = get_common_data(params)?;
+
+        let proof = buf.read_proof(&common).map_err(|e| {
+            Error::custom(format!(
+                "Failed to read proof from buffer: {}. Value: {}",
+                e, proof
+            ))
+        })?;
+
+        Ok(proof)
+    }
 }
 
 impl Pod for MainPod {
@@ -518,7 +589,10 @@ impl Pod for MainPod {
     }
 
     fn serialized_proof(&self) -> String {
-        todo!()
+        let mut buffer = Vec::new();
+        use plonky2::util::serialization::Write;
+        buffer.write_proof(&self.proof).unwrap();
+        BASE64_STANDARD.encode(buffer)
     }
 }
 
@@ -533,9 +607,16 @@ pub mod tests {
             primitives::ec::schnorr::SecretKey,
             signedpod::Signer,
         },
-        examples::{zu_kyc_pod_builder, zu_kyc_sign_pod_builders},
-        frontend::{self},
-        middleware::{self},
+        examples::{
+            eth_dos_pod_builder, eth_friend_signed_pod_builder, zu_kyc_pod_builder,
+            zu_kyc_sign_pod_builders,
+        },
+        frontend::{
+            key, literal, CustomPredicateBatchBuilder, MainPodBuilder, StatementTmplBuilder as STB,
+            {self},
+        },
+        middleware,
+        middleware::{CustomPredicateRef, NativePredicate as NP},
         op,
     };
 
@@ -544,9 +625,12 @@ pub mod tests {
         let params = middleware::Params {
             // Currently the circuit uses random access that only supports vectors of length 64.
             // With max_input_main_pods=3 we need random access to a vector of length 73.
-            max_input_main_pods: 1,
+            max_input_main_pods: 0,
+            max_custom_predicate_batches: 0,
+            max_custom_predicate_verifications: 0,
             ..Default::default()
         };
+        println!("{:#?}", params);
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params);
@@ -561,6 +645,7 @@ pub mod tests {
 
         let mut prover = Prover {};
         let kyc_pod = kyc_builder.prove(&mut prover, &params)?;
+        crate::measure_gates_print!();
         let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
 
         Ok(pod.verify()?)
@@ -644,5 +729,113 @@ pub mod tests {
         let kyc_pod = pod_builder.prove(&mut prover, &params).unwrap();
         let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
         pod.verify().unwrap()
+    }
+
+    #[test]
+    fn test_main_ethdos() -> frontend::Result<()> {
+        let params = Params {
+            max_input_signed_pods: 2,
+            max_input_main_pods: 1,
+            max_statements: 26,
+            max_public_statements: 5,
+            max_signed_pod_values: 8,
+            max_statement_args: 3,
+            max_operation_args: 4,
+            max_custom_predicate_arity: 4,
+            max_custom_batch_size: 3,
+            max_custom_predicate_wildcards: 6,
+            max_custom_predicate_verifications: 8,
+            ..Default::default()
+        };
+        println!("{:#?}", params);
+
+        let mut alice = Signer(SecretKey(1u32.into()));
+        let bob = Signer(SecretKey(2u32.into()));
+        let mut charlie = Signer(SecretKey(3u32.into()));
+
+        // Alice attests that she is ETH friends with Charlie and Charlie
+        // attests that he is ETH friends with Bob.
+        let alice_attestation =
+            eth_friend_signed_pod_builder(&params, charlie.public_key().into()).sign(&mut alice)?;
+        let charlie_attestation =
+            eth_friend_signed_pod_builder(&params, bob.public_key().into()).sign(&mut charlie)?;
+
+        let alice_bob_ethdos_builder = eth_dos_pod_builder(
+            &params,
+            false,
+            &alice_attestation,
+            &charlie_attestation,
+            bob.public_key().into(),
+        )?;
+
+        let mut prover = MockProver {};
+        let pod = alice_bob_ethdos_builder.prove(&mut prover, &params)?;
+        assert!(pod.pod.verify().is_ok());
+
+        let mut prover = Prover {};
+        let alice_bob_ethdos = alice_bob_ethdos_builder.prove(&mut prover, &params)?;
+        crate::measure_gates_print!();
+        let pod = (alice_bob_ethdos.pod as Box<dyn Any>)
+            .downcast::<MainPod>()
+            .unwrap();
+
+        Ok(pod.verify()?)
+    }
+
+    #[test]
+    fn test_main_mini_custom_1() -> frontend::Result<()> {
+        let params = Params {
+            max_input_signed_pods: 0,
+            max_input_main_pods: 0,
+            max_statements: 9,
+            max_public_statements: 4,
+            max_statement_args: 3,
+            max_operation_args: 3,
+            max_custom_predicate_arity: 3,
+            max_custom_batch_size: 3,
+            max_custom_predicate_wildcards: 4,
+            max_custom_predicate_verifications: 2,
+            ..Default::default()
+        };
+        println!("{:#?}", params);
+
+        let mut cpb_builder = CustomPredicateBatchBuilder::new(params.clone(), "cpb".into());
+        let stb0 = STB::new(NP::ValueOf)
+            .arg(("id", key("score")))
+            .arg(literal(42));
+        let stb1 = STB::new(NP::Equal)
+            .arg(("id", "secret_key"))
+            .arg(("id", key("score")));
+        let _ = cpb_builder.predicate_and(
+            "pred_and",
+            &["id"],
+            &["secret_key"],
+            &[stb0.clone(), stb1.clone()],
+        )?;
+        let _ = cpb_builder.predicate_or("pred_or", &["id"], &["secret_key"], &[stb0, stb1])?;
+        let cpb = cpb_builder.finish();
+
+        let cpb_and = CustomPredicateRef::new(cpb.clone(), 0);
+        let _cpb_or = CustomPredicateRef::new(cpb.clone(), 1);
+
+        let mut pod_builder = MainPodBuilder::new(&params);
+
+        let st0 = pod_builder.priv_op(op!(new_entry, ("score", 42)))?;
+        let st1 = pod_builder.priv_op(op!(new_entry, ("foo", 42)))?;
+        let st2 = pod_builder.priv_op(op!(eq, st1.clone(), st0.clone()))?;
+
+        let _st3 = pod_builder.priv_op(op!(custom, cpb_and.clone(), st0, st2))?;
+
+        let mut prover = MockProver {};
+        let pod = pod_builder.prove(&mut prover, &params)?;
+        assert!(pod.pod.verify().is_ok());
+
+        let mut prover = Prover {};
+        let pod = pod_builder.prove(&mut prover, &params)?;
+        crate::measure_gates_print!();
+
+        let pod = (pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
+
+        Ok(pod.verify()?)
     }
 }
