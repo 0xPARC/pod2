@@ -66,6 +66,7 @@ impl Error {
     pub(crate) fn custom(s: String) -> Self {
         new!(Custom(s))
     }
+    #[allow(dead_code)]
     pub(crate) fn plonky2_proof_fail(e: anyhow::Error) -> Self {
         Self::Plonky2ProofFail(e)
     }

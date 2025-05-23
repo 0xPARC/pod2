@@ -482,7 +482,7 @@ mod tests {
         let mut aux: F = inp.elements[0];
         let two = F::from_canonical_u64(2u64);
         for _ in 0..5_000 {
-            aux = aux + two;
+            aux += two;
         }
         HashOut::<F>::from_vec(vec![aux, F::ZERO, F::ZERO, F::ZERO])
     }
@@ -525,7 +525,7 @@ mod tests {
             let zero = builder.zero();
             let output_targ = HashOutTarget::from_vec(vec![aux, zero, zero, zero]);
 
-            builder.register_public_inputs(&output_targ.elements.to_vec());
+            builder.register_public_inputs(output_targ.elements.as_ref());
 
             Ok(Self {
                 input: input_targ,
@@ -553,13 +553,13 @@ mod tests {
         ) -> Result<Self> {
             let input_targ = builder.add_virtual_hash();
 
-            let mut output_targ: HashOutTarget = input_targ.clone();
+            let mut output_targ: HashOutTarget = input_targ;
             for _ in 0..100 {
                 output_targ = builder
                     .hash_n_to_hash_no_pad::<PoseidonHash>(output_targ.elements.clone().to_vec());
             }
 
-            builder.register_public_inputs(&output_targ.elements.to_vec());
+            builder.register_public_inputs(output_targ.elements.as_ref());
 
             Ok(Self {
                 input: input_targ,
@@ -587,13 +587,13 @@ mod tests {
         ) -> Result<Self> {
             let input_targ = builder.add_virtual_hash();
 
-            let mut output_targ: HashOutTarget = input_targ.clone();
+            let mut output_targ: HashOutTarget = input_targ;
             for _ in 0..2000 {
                 output_targ = builder
                     .hash_n_to_hash_no_pad::<PoseidonHash>(output_targ.elements.clone().to_vec());
             }
 
-            builder.register_public_inputs(&output_targ.elements.to_vec());
+            builder.register_public_inputs(output_targ.elements.as_ref());
 
             Ok(Self {
                 input: input_targ,
