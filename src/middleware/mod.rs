@@ -583,34 +583,43 @@ pub struct Params {
     // TODO: In the future, rename this to max_input_plonky2_pods to generalize this to include
     // MainPods but also introduction gadget pods.
     pub max_input_main_pods: usize,
+    pub max_input_pods_public_statements: usize,
     pub max_statements: usize,
     pub max_signed_pod_values: usize,
     pub max_public_statements: usize,
-    // Number of public statements to hash to calculate the id.  Must be equal or greater than
-    // `max_public_statements`.
-    pub num_public_statements_id: usize,
-    pub max_statement_args: usize,
     pub max_operation_args: usize,
     // max number of custom predicates batches that a MainPod can use
     pub max_custom_predicate_batches: usize,
     // max number of operations using custom predicates that can be verified in the MainPod
     pub max_custom_predicate_verifications: usize,
-    // max number of statements that can be ANDed or ORed together
-    // in a custom predicate
-    pub max_custom_predicate_arity: usize,
     pub max_custom_predicate_wildcards: usize,
-    pub max_custom_batch_size: usize,
     // maximum number of merkle proofs
     pub max_merkle_proofs: usize,
     // maximum depth for merkle tree gadget
     pub max_depth_mt_gadget: usize,
+    //
+    // The following parameters define how a pod id is calcualted.  They need to be the same among
+    // different circuits to be compatible in their verification.
+    //
+    // Number of public statements to hash to calculate the id.  Must be equal or greater than
+    // `max_public_statements`.
+    pub num_public_statements_id: usize,
+    pub max_statement_args: usize,
+    //
+    // The following parameters define how a custom predicate batch id is calculated.
+    //
+    // max number of statements that can be ANDed or ORed together
+    // in a custom predicate
+    pub max_custom_predicate_arity: usize,
+    pub max_custom_batch_size: usize,
 }
 
 impl Default for Params {
     fn default() -> Self {
         Self {
             max_input_signed_pods: 3,
-            max_input_main_pods: 3,
+            max_input_main_pods: 2,
+            max_input_pods_public_statements: 10,
             max_statements: 20,
             max_signed_pod_values: 8,
             max_public_statements: 10,

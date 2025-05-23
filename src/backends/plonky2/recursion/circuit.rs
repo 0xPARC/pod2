@@ -430,10 +430,9 @@ fn common_data_for_recursion<I: InnerCircuit>(
     let config = CircuitConfig::standard_recursion_config();
     let mut builder = CircuitBuilder::<F, D>::new(config.clone());
 
-    builder.add_gate(
+    builder.add_gate_to_gate_set(plonky2::gates::gate::GateRef::new(
         plonky2::gates::constant::ConstantGate::new(config.num_constants),
-        vec![],
-    );
+    ));
 
     let verifier_datas_targ: Vec<VerifierCircuitTarget> = (0..arity)
         .map(|_| builder.add_virtual_verifier_data(builder.config.fri_config.cap_height))
@@ -760,7 +759,7 @@ mod tests {
         println!("circuit1.prove");
         let inp = HashOut::<F>::ZERO;
         let inner_inputs = (inp, circuit1_io(inp));
-        let proof_1a = circuit1.prove(inner_inputs, vec![], vec![])?;
+        let proof_1a = circuit1.prove(&inner_inputs, vec![], vec![])?;
         verifier_data_1.clone().verify(proof_1a.clone())?;
 
         println!(
@@ -769,7 +768,7 @@ mod tests {
         let inp = HashOut::<F>::ZERO;
         let inner_inputs = (inp, circuit1_io(inp));
         let proof_1b = circuit1.prove(
-            inner_inputs,
+            &inner_inputs,
             vec![proof_1a.clone()],
             vec![verifier_data_1.clone()],
         )?;
@@ -778,20 +777,20 @@ mod tests {
         println!("circuit3.prove");
         let inp = HashOut::<F>::ZERO;
         let inner_inputs = (inp, circuit3_io(inp));
-        let proof_3 = circuit3.prove(inner_inputs, vec![], vec![])?;
+        let proof_3 = circuit3.prove(&inner_inputs, vec![], vec![])?;
         verifier_data_3.clone().verify(proof_3.clone())?;
 
         println!("circuit1.prove");
         let inp = HashOut::<F>::ZERO;
         let inner_inputs = (inp, circuit1_io(inp));
-        let proof_1c = circuit1.prove(inner_inputs, vec![], vec![])?;
+        let proof_1c = circuit1.prove(&inner_inputs, vec![], vec![])?;
         verifier_data_1.clone().verify(proof_1c.clone())?;
 
         // generate a proof of Circuit2, which internally verifies the proof_3 & proof_1c
         println!("circuit2.prove, which internally verifies the proof_3 & proof_1c");
         let inner_inputs = (inp, circuit2_io(inp));
         let proof_2 = circuit2.prove(
-            inner_inputs,
+            &inner_inputs,
             vec![proof_3.clone(), proof_1c],
             vec![verifier_data_3.clone(), verifier_data_1.clone()],
         )?;
@@ -802,7 +801,7 @@ mod tests {
         let inp = HashOut::<F>::ZERO;
         let inner_inputs = (inp, circuit1_io(inp));
         let proof_1d = circuit1.prove(
-            inner_inputs,
+            &inner_inputs,
             vec![proof_1b, proof_2],
             vec![verifier_data_1.clone(), verifier_data_2.clone()],
         )?;

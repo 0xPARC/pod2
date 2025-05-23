@@ -904,6 +904,9 @@ impl CustomOperationVerifyGadget {
 }
 
 pub struct CalculateIdGadget {
+    /// `params.num_public_statements_id` is the total number of statements that will be hashed.
+    /// The id is calculated with front-padded none-statements and then the input statements
+    /// reversed.  The part of the hash from the front-padded none-statements is precomputed.
     pub params: Params,
 }
 
@@ -958,14 +961,16 @@ impl CalculateIdGadget {
     pub fn eval(
         &self,
         builder: &mut CircuitBuilder<F, D>,
+        // These statements will be padded to reach `self.num_statements`
         statements: &[StatementTarget],
     ) -> HashOutTarget {
+        assert!(statements.len() < self.params.num_public_statements_id);
         let measure = measure_gates_begin!(builder, "CalculateId");
         let statements_rev_flattened = statements.iter().rev().flat_map(|s| s.flatten());
         let mut none_st = mainpod::Statement::from(Statement::None);
         pad_statement(&self.params, &mut none_st);
         let front_pad_elts = iter::repeat(&none_st)
-            .take(self.params.num_public_statements_id - self.params.max_public_statements)
+            .take(self.params.num_public_statements_id - statements.len())
             .flat_map(|s| s.to_fields(&self.params))
             .collect_vec();
         let (perm, front_pad_elts_rem) =
@@ -1148,7 +1153,7 @@ impl MainPodVerifyGadget {
         let mut input_pods_statements: Vec<Vec<StatementTarget>> = Vec::new();
         for verified_proof in verified_proofs {
             let mut input_pod_statements = Vec::new();
-            for _statement in 0..self.params.num_public_statements_id {
+            for _statement in 0..self.params.max_input_pods_public_statements {
                 let st = builder.add_virtual_statement(params);
                 statements.push(st.clone());
                 input_pod_statements.push(st);

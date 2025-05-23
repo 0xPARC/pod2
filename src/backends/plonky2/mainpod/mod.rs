@@ -753,6 +753,7 @@ pub mod tests {
         let params = middleware::Params {
             max_input_signed_pods: 0,
             max_input_main_pods: 0,
+            max_input_pods_public_statements: 2,
             max_statements: 5,
             max_signed_pod_values: 2,
             max_public_statements: 2,

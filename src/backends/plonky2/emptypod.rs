@@ -98,7 +98,13 @@ fn pad_circuit(builder: &mut CircuitBuilder<F, D>, common_data: &CommonCircuitDa
     );
 
     let degree = common_data.degree();
-    let num_noop_gate = degree - builder.num_gates();
+    // Need to account for public input hashing, a `PublicInputGate` and 32 `ConstantGate`.
+    // NOTE: the builder doesn't have any public method to see how many constants have been
+    // registered, so we can't know exactly how many `ConstantGates` will be required.  We hope
+    // that no more than 64 constants are used :pray:.  Maybe we should make a PR to plonky2 to
+    // expose this?
+    let num_noop_gate =
+        degree - builder.num_gates() - common_data.num_public_inputs.div_ceil(8) - 33;
     for _ in 0..num_noop_gate {
         builder.add_gate(NoopGate, vec![]);
     }
@@ -106,6 +112,8 @@ fn pad_circuit(builder: &mut CircuitBuilder<F, D>, common_data: &CommonCircuitDa
         builder.add_gate_to_gate_set(gate.clone());
     }
 }
+
+use pretty_assertions::assert_eq;
 
 // TODO: Cache this
 fn build(params: &Params) -> Result<CircuitData<F, C, D>> {
@@ -117,14 +125,20 @@ fn build(params: &Params) -> Result<CircuitData<F, C, D>> {
     .eval(&mut builder)?;
     let circuit_data = get_circuit_data(params)?;
     pad_circuit(&mut builder, &circuit_data.common);
+    // println!("DBG builder.num_gates={}", builder.num_gates());
 
     let data = builder.build::<C>();
-    assert_eq!(data.common, circuit_data.common);
+    // println!(
+    //     "DBG circuit_data.common.degree={}",
+    //     circuit_data.common.degree()
+    // );
+    // println!("DBG         data.common.degree={}", data.common.degree());
+    assert_eq!(circuit_data.common, data.common);
     Ok(data)
 }
 
 impl EmptyPod {
-    fn _prove(&mut self, params: &Params) -> Result<EmptyPod> {
+    fn _prove(params: &Params) -> Result<EmptyPod> {
         let data = build(params)?;
 
         let pw = PartialWitness::<F>::new();
@@ -137,8 +151,8 @@ impl EmptyPod {
             proof: proof.proof,
         })
     }
-    fn new(&mut self, params: &Params) -> Result<Box<dyn Pod>, Box<DynError>> {
-        Ok(self._prove(params).map(Box::new)?)
+    pub fn new(params: &Params) -> Result<Box<dyn Pod>, Box<DynError>> {
+        Ok(Self::_prove(params).map(Box::new)?)
     }
     fn _verify(&self) -> Result<()> {
         let statements = self
@@ -185,5 +199,18 @@ impl Pod for EmptyPod {
         use plonky2::util::serialization::Write;
         buffer.write_proof(&self.proof).unwrap();
         BASE64_STANDARD.encode(buffer)
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+
+    #[test]
+    fn test_empty_pod() {
+        let params = Params::default();
+
+        let empty_pod = EmptyPod::new(&params).unwrap();
+        empty_pod.verify().unwrap();
     }
 }
