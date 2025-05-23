@@ -29,8 +29,8 @@ The following table summarises the natively-supported statements, where we write
 | 2    | `ValueOf`     | `ak`, `value`       | `value_of(ak) = value`                                            |
 | 3    | `Eq`          | `ak1`, `ak2`        | `value_of(ak1) = value_of(ak2)`                                   |
 | 4    | `NEq`         | `ak1`, `ak2`        | `value_of(ak1) != value_of(ak2)`                                  |
-| 5    | `Gt`          | `ak1`, `ak2`        | `value_of(ak1) > value_of(ak2)`                                   |
-| 6    | `LEq`         | `ak1`, `ak2`        | `value_of(ak1) <= value_of(ak2)`                                  |
+| 5    | `LtEq`          | `ak1`, `ak2`        | `value_of(ak1) <= value_of(ak2)`                                   |
+| 6    | `Lt`         | `ak1`, `ak2`        | `value_of(ak1) < value_of(ak2)`                                  |
 | 7    | `Contains`    | `ak1`, `ak2`        | `(key_of(ak2), value_of(ak2)) ∈ value_of(ak1)` (Merkle inclusion) |
 | 8    | `NotContains` | `ak1`, `ak2`        | `(key_of(ak2), value_of(ak2)) ∉ value_of(ak1)` (Merkle exclusion) |
 | 9    | `SumOf`       | `ak1`, `ak2`, `ak3` | `value_of(ak1) = value_of(ak2) + value_of(ak3)`                   |
@@ -40,35 +40,22 @@ The following table summarises the natively-supported statements, where we write
 
 ### Frontend statements
 
-<span style="color:red">TODO: Current implementation frontend Statements reuse the middleware Statements, which:</span><br>
-<span style="color:red">- 1: GEq & LEq don't appear in the frontend impl</span><br>
-<span style="color:red">- 2: frontend impl has Contains & NotContains, which don't appear at the following block</span>
-```
-ValueOf(key: AnchoredKey, value: ScalarOrVec)
+The frontend also exposes the following syntactic sugar predicates.  These predicates are not supported by the backend.  The frontend compiler is responsible for translating these predicates into the predicates above.
 
-Equal(ak1: AnchoredKey, ak2: AnchoredKey)
+| Code | Identifier    | Args and desugaring                | 
+|------|---------------|---------------------|
+| 1000 | DictContains | `DictContains(root, key, val) -> Contains(root, key, val)` |
+| 1001 | DictNotContains | `DictNotContains(root, key, val) -> NotContains(root, key, val)` |
+| 1002 | SetContains | `SetContains(root, val) -> Contains(root, val, val)` |
+| 1003 | SetNotContains | `SetNotContains(root, val) -> Contains(root, val, val)` |
+| 1004 | ArrayContains | `ArrayContains(root, idx, val) -> Contains(root, idx, val)` |
+| 1005 | GtEq | `GtEq(a, b) -> LtEq(b, a)`|
+| 1006 | Gt | `Gt(a, b) -> Lt(b, a)` |
 
-NotEqual(ak1: AnchoredKey, ak2: AnchoredKey)
 
-Gt(ak1: AnchoredKey::Integer, ak2: AnchoredKey::Integer)
-
-Lt(ak1: AnchoredKey::Integer, ak2: AnchoredKey::Integer)
-
-GEq(ak1: AnchoredKey::Integer, ak2: AnchoredKey::Integer)
-
-LEq(ak1: AnchoredKey::Integer, ak2: AnchoredKey::Integer)
-
-SumOf(sum: AnchoredKey::Integer, arg1: AnchoredKey::Integer, arg2: 
-AnchoredKey::Integer)
-
-ProductOf(prod: AnchoredKey::Integer, arg1: AnchoredKey::Integer, arg2: AnchoredKey::Integer)
-
-MaxOf(max: AnchoredKey::Integer, arg1: AnchoredKey::Integer, arg2: AnchoredKey::Integer)
-
-HashOf(ak1: AnchoredKey::Raw, arg1: AnchoredKey::Raw, arg2: AnchoredKey::Raw)
-```
 
 The following statements relate to Merkle trees and compound types; they are explained in detail on a [separate page](./merklestatements.md).
+
 ```
 Branches(parent: AnchoredKey::MerkleTree, left: AnchoredKey::MerkleTree, right: AnchoredKey::MerkleTree)
 
