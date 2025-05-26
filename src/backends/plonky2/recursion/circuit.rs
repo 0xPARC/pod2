@@ -48,7 +48,10 @@ pub struct VerifiedProofTarget {
 const MAX_CONSTANT_GATES: usize = 64;
 
 impl VerifiedProofTarget {
-    fn add_virtual(builder: &mut CircuitBuilder<F, D>, num_public_inputs: usize) -> Self {
+    pub(crate) fn add_virtual(
+        builder: &mut CircuitBuilder<F, D>,
+        num_public_inputs: usize,
+    ) -> Self {
         Self {
             public_inputs: (0..num_public_inputs)
                 .map(|_| builder.add_virtual_target())
