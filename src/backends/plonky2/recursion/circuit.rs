@@ -130,9 +130,11 @@ pub struct RecursiveCircuitTarget<I: InnerCircuit> {
 
 impl<I: InnerCircuit> RecursiveCircuit<I> {
     pub fn prove(
-        &mut self,
+        &self,
         inner_inputs: &I::Input,
         proofs: Vec<ProofWithPublicInputs<F, C, D>>,
+        // TODO: We should have VerifierOnly here, because the common is already known: it's
+        // self.params.common_data
         verifier_datas: Vec<VerifierCircuitData<F, C, D>>,
     ) -> Result<ProofWithPublicInputs<F, C, D>> {
         let mut pw = PartialWitness::new();
@@ -239,7 +241,7 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
     }
 
     fn set_targets(
-        &mut self,
+        &self,
         pw: &mut PartialWitness<F>,
         innercircuit_input: &I::Input,
         recursive_proofs: Vec<ProofWithPublicInputs<F, C, D>>,

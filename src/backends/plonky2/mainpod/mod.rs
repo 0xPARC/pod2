@@ -19,21 +19,25 @@ pub use statement::*;
 
 use crate::{
     backends::plonky2::{
-        basetypes::{Proof, ProofWithPublicInputs, VerifierOnlyCircuitData, C, D},
+        basetypes::{
+            Proof, ProofWithPublicInputs, VerifierCircuitData, VerifierOnlyCircuitData, C, D,
+        },
         circuits::mainpod::{
             CustomPredicateVerification, MainPodVerifyCircuit, MainPodVerifyInput,
             MainPodVerifyTarget, NUM_PUBLIC_INPUTS,
         },
+        emptypod::EmptyPod,
         error::{Error, Result},
         primitives::merkletree::MerkleClaimAndProof,
         recursion::{self, RecursiveCircuit},
         recursive_main_pod_circuit_data,
         signedpod::SignedPod,
+        RecursivePodData,
     },
     middleware::{
         self, resolve_wildcard_values, AnchoredKey, CustomPredicateBatch, DynError, Hash,
-        MainPodInputs, NativeOperation, NonePod, OperationType, Params, Plonky2Pod, Pod, PodId,
-        PodProver, PodType, StatementArg, ToFields, EMPTY_HASH, F, KEY_TYPE, SELF,
+        MainPodInputs, NativeOperation, NonePod, OperationType, Params, Pod, PodId, PodProver,
+        PodType, RecursivePod, StatementArg, ToFields, EMPTY_HASH, F, KEY_TYPE, SELF,
     },
 };
 
@@ -249,7 +253,7 @@ fn pad_operation_args(params: &Params, args: &mut Vec<OperationArg>) {
 
 /// Returns the statements from the given MainPodInputs, padding to the
 /// respective max lengths defined at the given Params.
-pub(crate) fn layout_statements(params: &Params, inputs: &MainPodInputs) -> Vec<Statement> {
+pub(crate) fn layout_statements(params: &Params, inputs: &MainPodInputs) -> Result<Vec<Statement>> {
     let mut statements = Vec::new();
 
     // Statement at index 0 is always None to be used for padding operation arguments in custom
@@ -257,6 +261,7 @@ pub(crate) fn layout_statements(params: &Params, inputs: &MainPodInputs) -> Vec<
     statements.push(middleware::Statement::None.into());
 
     // Input signed pods region
+    // TODO: Replace this with a dumb signed pod
     let none_sig_pod_box: Box<dyn Pod> = Box::new(NonePod {});
     let none_sig_pod = none_sig_pod_box.as_ref();
     assert!(inputs.signed_pods.len() <= params.max_input_signed_pods);
@@ -276,11 +281,11 @@ pub(crate) fn layout_statements(params: &Params, inputs: &MainPodInputs) -> Vec<
     }
 
     // Input main pods region
-    let none_main_pod_box: Box<dyn Pod> = Box::new(NonePod {});
-    let none_main_pod = none_main_pod_box.as_ref();
-    assert!(inputs.zk_pods.len() <= params.max_input_zk_pods);
-    for i in 0..params.max_input_zk_pods {
-        let pod = inputs.zk_pods.get(i).copied().unwrap_or(none_main_pod);
+    let empty_pod_box: Box<dyn RecursivePod> = EmptyPod::new(params, inputs.vds_root)?;
+    let empty_pod = empty_pod_box.as_ref();
+    assert!(inputs.recursive_pods.len() <= params.max_input_recursive_pods);
+    for i in 0..params.max_input_recursive_pods {
+        let pod = inputs.recursive_pods.get(i).copied().unwrap_or(empty_pod);
         let sts = pod.pub_statements();
         assert!(sts.len() <= params.max_public_statements);
         for j in 0..params.max_public_statements {
@@ -328,7 +333,7 @@ pub(crate) fn layout_statements(params: &Params, inputs: &MainPodInputs) -> Vec<
         statements.push(st);
     }
 
-    statements
+    Ok(statements)
 }
 
 pub(crate) fn process_private_statements_operations(
@@ -398,13 +403,13 @@ pub(crate) fn process_public_statements_operations(
 pub struct Prover {}
 
 impl Prover {
-    fn _prove(&mut self, params: &Params, inputs: MainPodInputs) -> Result<MainPod> {
+    fn _prove(&self, params: &Params, inputs: MainPodInputs) -> Result<MainPod> {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
 
         // TODO: Cache this somehow
         let rec_params = recursion::new_params::<MainPodVerifyTarget>(
-            params.max_input_zk_pods,
+            params.max_input_recursive_pods,
             NUM_PUBLIC_INPUTS,
             params,
         )?;
@@ -432,14 +437,12 @@ impl Prover {
             })
             .collect_vec();
 
-        let main_pods_input: Vec<MainPod> = inputs
-            .zk_pods
+        let recursive_pods_pub_statements = inputs
+            .recursive_pods
             .iter()
-            .map(|p| {
-                let p = (*p as &dyn Any)
-                    .downcast_ref::<MainPod>()
-                    .expect("type MainPod");
-                p.clone()
+            .map(|pod| {
+                assert_eq!(params, pod.params());
+                pod.pub_statements()
             })
             .collect_vec();
 
@@ -451,7 +454,7 @@ impl Prover {
             &custom_predicate_batches,
         )?;
 
-        let statements = layout_statements(params, &inputs);
+        let statements = layout_statements(params, &inputs)?;
         let operations = process_private_statements_operations(
             params,
             &statements,
@@ -466,18 +469,36 @@ impl Prover {
         // get the id out of the public statements
         let id: PodId = PodId(calculate_id(&public_statements, params));
 
+        let proofs = inputs
+            .recursive_pods
+            .iter()
+            .map(|pod| {
+                assert_eq!(inputs.vds_root, pod.vds_root());
+                ProofWithPublicInputs {
+                    proof: pod.proof(),
+                    public_inputs: [pod.id().0 .0, inputs.vds_root.0].concat(),
+                }
+            })
+            .collect_vec();
+        let verifier_datas = inputs
+            .recursive_pods
+            .iter()
+            .map(|pod| VerifierCircuitData {
+                verifier_only: pod.verifier_data(),
+                common: todo!(),
+            })
+            .collect_vec();
+
         let input = MainPodVerifyInput {
             vds_root: inputs.vds_root,
             signed_pods: signed_pods_input,
-            main_pods: main_pods_input,
+            recursive_pods_pub_statements,
             statements: statements[statements.len() - params.max_statements..].to_vec(),
             operations,
             merkle_proofs,
             custom_predicate_batches,
             custom_predicate_verifications,
         };
-        let proofs = todo!();
-        let verifier_datas = todo!();
         let proof_with_pis = main_pod.prove(&input, proofs, verifier_datas)?;
 
         Ok(MainPod {
@@ -492,10 +513,10 @@ impl Prover {
 
 impl PodProver for Prover {
     fn prove(
-        &mut self,
+        &self,
         params: &Params,
         inputs: MainPodInputs,
-    ) -> Result<Box<dyn Pod>, Box<DynError>> {
+    ) -> Result<Box<dyn RecursivePod>, Box<DynError>> {
         Ok(self._prove(params, inputs).map(Box::new)?)
     }
 }
@@ -535,7 +556,7 @@ pub(crate) fn normalize_statement(statement: &Statement, self_id: PodId) -> midd
 fn get_common_data(params: &Params) -> Result<CommonCircuitData<F, D>, Error> {
     // TODO: Cache this somehow
     let rec_params = recursion::new_params::<MainPodVerifyTarget>(
-        params.max_input_zk_pods,
+        params.max_input_recursive_pods,
         NUM_PUBLIC_INPUTS,
         params,
     )?;
@@ -553,7 +574,7 @@ impl MainPod {
         // 1, 3, 4, 5 verification via the zkSNARK proof
         // TODO: cache these artefacts
         let rec_params = recursion::new_params::<MainPodVerifyTarget>(
-            self.params.max_input_zk_pods,
+            self.params.max_input_recursive_pods,
             NUM_PUBLIC_INPUTS,
             &self.params,
         )?;
@@ -622,6 +643,9 @@ impl MainPod {
 }
 
 impl Pod for MainPod {
+    fn params(&self) -> &Params {
+        &self.params
+    }
     fn verify(&self) -> Result<(), Box<DynError>> {
         Ok(self._verify()?)
     }
@@ -647,13 +671,16 @@ impl Pod for MainPod {
     }
 }
 
-impl Plonky2Pod for MainPod {
-    fn verifier_data(&self) -> Result<VerifierOnlyCircuitData, Box<DynError>> {
-        let data = &*recursive_main_pod_circuit_data(&self.params)?;
-        Ok(data.verifier_only.clone())
+impl RecursivePod for MainPod {
+    fn verifier_data(&self) -> VerifierOnlyCircuitData {
+        let data = &*recursive_main_pod_circuit_data(&self.params);
+        data.verifier_only.clone()
     }
     fn proof(&self) -> Proof {
         self.proof.clone()
+    }
+    fn vds_root(&self) -> Hash {
+        self.vds_root
     }
 }
 
@@ -684,7 +711,7 @@ pub mod tests {
         let params = middleware::Params {
             // Currently the circuit uses random access that only supports vectors of length 64.
             // With max_input_main_pods=3 we need random access to a vector of length 73.
-            max_input_zk_pods: 0,
+            max_input_recursive_pods: 0,
             max_custom_predicate_batches: 0,
             max_custom_predicate_verifications: 0,
             ..Default::default()
@@ -714,7 +741,7 @@ pub mod tests {
     fn test_mini_0() {
         let params = middleware::Params {
             max_input_signed_pods: 1,
-            max_input_zk_pods: 1,
+            max_input_recursive_pods: 1,
             max_signed_pod_values: 6,
             max_statements: 8,
             max_public_statements: 4,
@@ -757,7 +784,7 @@ pub mod tests {
     fn test_mainpod_small_empty() {
         let params = middleware::Params {
             max_input_signed_pods: 0,
-            max_input_zk_pods: 0,
+            max_input_recursive_pods: 0,
             max_input_pods_public_statements: 2,
             max_statements: 5,
             max_signed_pod_values: 2,
@@ -796,7 +823,7 @@ pub mod tests {
     fn test_main_ethdos() -> frontend::Result<()> {
         let params = Params {
             max_input_signed_pods: 2,
-            max_input_zk_pods: 1,
+            max_input_recursive_pods: 1,
             max_statements: 26,
             max_public_statements: 5,
             max_signed_pod_values: 8,
@@ -848,7 +875,7 @@ pub mod tests {
     fn test_main_mini_custom_1() -> frontend::Result<()> {
         let params = Params {
             max_input_signed_pods: 0,
-            max_input_zk_pods: 0,
+            max_input_recursive_pods: 0,
             max_statements: 9,
             max_public_statements: 4,
             max_statement_args: 3,

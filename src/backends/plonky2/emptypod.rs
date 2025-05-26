@@ -41,8 +41,8 @@ use crate::{
     },
     middleware::{
         self, resolve_wildcard_values, AnchoredKey, CustomPredicateBatch, DynError, Hash,
-        MainPodInputs, NativeOperation, NonePod, OperationType, Params, Plonky2Pod, Pod, PodId,
-        PodProver, PodType, Statement, StatementArg, ToFields, Value, VerifierOnlyCircuitData,
+        MainPodInputs, NativeOperation, NonePod, OperationType, Params, Pod, PodId, PodProver,
+        PodType, RecursivePod, Statement, StatementArg, ToFields, Value, VerifierOnlyCircuitData,
         EMPTY_HASH, F, HASH_SIZE, KEY_TYPE, SELF,
     },
     timed,
@@ -90,6 +90,7 @@ impl EmptyPodVerifyTarget {
 pub struct EmptyPod {
     params: Params,
     id: PodId,
+    vds_root: Hash,
     proof: Proof,
 }
 
@@ -133,7 +134,7 @@ fn _build(params: &Params) -> Result<(EmptyPodVerifyTarget, CircuitData)> {
         params: params.clone(),
     }
     .eval(&mut builder)?;
-    let circuit_data = recursive_main_pod_circuit_data(params)?;
+    let circuit_data = recursive_main_pod_circuit_data(params);
     pad_circuit(&mut builder, &circuit_data.common);
     // println!("DBG builder.num_gates={}", builder.num_gates());
 
@@ -147,13 +148,15 @@ fn _build(params: &Params) -> Result<(EmptyPodVerifyTarget, CircuitData)> {
     Ok((empty_pod_verify_target, data))
 }
 
-fn build(params: &Params) -> Result<MappedRwLockReadGuard<(EmptyPodVerifyTarget, CircuitData)>> {
-    get_or_set_map_cache(&EMPTY_POD_DATA, params, |params| _build(params))
+fn build(params: &Params) -> MappedRwLockReadGuard<(EmptyPodVerifyTarget, CircuitData)> {
+    get_or_set_map_cache(&EMPTY_POD_DATA, params, |params| {
+        _build(params).expect("successful build")
+    })
 }
 
 impl EmptyPod {
     fn _prove(params: &Params, vds_root: Hash) -> Result<EmptyPod> {
-        let (empty_pod_verify_target, data) = &*build(params)?;
+        let (empty_pod_verify_target, data) = &*build(params);
 
         let mut pw = PartialWitness::<F>::new();
         empty_pod_verify_target.set_targets(&mut pw, vds_root)?;
@@ -163,10 +166,11 @@ impl EmptyPod {
         Ok(EmptyPod {
             params: params.clone(),
             id,
+            vds_root,
             proof: proof.proof,
         })
     }
-    pub fn new(params: &Params, vds_root: Hash) -> Result<Box<dyn Pod>, Box<DynError>> {
+    pub fn new(params: &Params, vds_root: Hash) -> Result<Box<dyn RecursivePod>> {
         Ok(Self::_prove(params, vds_root).map(Box::new)?)
     }
     fn _verify(&self) -> Result<()> {
@@ -187,7 +191,7 @@ impl EmptyPod {
             .cloned()
             .collect_vec();
 
-        let (_, data) = &*build(&self.params)?;
+        let (_, data) = &*build(&self.params);
         data.verify(ProofWithPublicInputs {
             proof: self.proof.clone(),
             public_inputs,
@@ -201,6 +205,9 @@ impl EmptyPod {
 }
 
 impl Pod for EmptyPod {
+    fn params(&self) -> &Params {
+        &self.params
+    }
     fn verify(&self) -> Result<(), Box<DynError>> {
         Ok(self._verify()?)
     }
@@ -221,13 +228,16 @@ impl Pod for EmptyPod {
     }
 }
 
-impl Plonky2Pod for EmptyPod {
-    fn verifier_data(&self) -> Result<VerifierOnlyCircuitData, Box<DynError>> {
-        let (_, data) = &*build(&self.params)?;
-        Ok(data.verifier_only.clone())
+impl RecursivePod for EmptyPod {
+    fn verifier_data(&self) -> VerifierOnlyCircuitData {
+        let (_, data) = &*build(&self.params);
+        data.verifier_only.clone()
     }
     fn proof(&self) -> Proof {
         self.proof.clone()
+    }
+    fn vds_root(&self) -> Hash {
+        self.vds_root
     }
 }
 

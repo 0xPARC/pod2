@@ -111,6 +111,9 @@ impl MockSignedPod {
 }
 
 impl Pod for MockSignedPod {
+    fn params(&self) -> &Params {
+        panic!("MockSignedPod doesn't have params");
+    }
     fn verify(&self) -> Result<(), Box<DynError>> {
         Ok(self._verify()?)
     }

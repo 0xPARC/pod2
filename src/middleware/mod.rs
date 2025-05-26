@@ -580,7 +580,7 @@ impl fmt::Display for PodType {
 #[serde(rename_all = "camelCase")]
 pub struct Params {
     pub max_input_signed_pods: usize,
-    pub max_input_zk_pods: usize,
+    pub max_input_recursive_pods: usize,
     pub max_input_pods_public_statements: usize,
     pub max_statements: usize,
     pub max_signed_pod_values: usize,
@@ -616,7 +616,7 @@ impl Default for Params {
     fn default() -> Self {
         Self {
             max_input_signed_pods: 3,
-            max_input_zk_pods: 2,
+            max_input_recursive_pods: 2,
             max_input_pods_public_statements: 10,
             max_statements: 20,
             max_signed_pod_values: 8,
@@ -692,6 +692,7 @@ impl Params {
 pub type DynError = dyn std::error::Error + Send + Sync;
 
 pub trait Pod: fmt::Debug + DynClone + Any {
+    fn params(&self) -> &Params;
     fn verify(&self) -> Result<(), Box<DynError>>;
     fn id(&self) -> PodId;
     fn pub_statements(&self) -> Vec<Statement>;
@@ -719,15 +720,20 @@ pub trait Pod: fmt::Debug + DynClone + Any {
     fn serialized_proof(&self) -> String;
 }
 
+// impl Clone for Box<dyn Pod>
+dyn_clone::clone_trait_object!(Pod);
+
 /// Trait for pods that are generated with a plonky2 circuit and that can be verified by a
-/// recursive MainPod circuit.
-pub trait Plonky2Pod: Pod {
-    fn verifier_data(&self) -> Result<VerifierOnlyCircuitData, Box<DynError>>;
+/// recursive MainPod circuit.  A Pod implementing this trait is not necesarilly recursive: for
+/// example an introduction Pod in general is not recursive.
+pub trait RecursivePod: Pod {
+    fn verifier_data(&self) -> VerifierOnlyCircuitData;
     fn proof(&self) -> Proof;
+    fn vds_root(&self) -> Hash;
 }
 
-// impl Clone for Box<dyn SignedPod>
-dyn_clone::clone_trait_object!(Pod);
+// impl Clone for Box<dyn RecursivePod>
+dyn_clone::clone_trait_object!(RecursivePod);
 
 pub trait PodSigner {
     fn sign(
@@ -737,12 +743,16 @@ pub trait PodSigner {
     ) -> Result<Box<dyn Pod>, Box<DynError>>;
 }
 
+// TODO: Delte once we have a fully working EmtpyPod and a dumb SignedPod
 /// This is a filler type that fulfills the Pod trait and always verifies.  It's empty.  This
 /// can be used to simulate padding in a circuit.
 #[derive(Debug, Clone)]
 pub struct NonePod {}
 
 impl Pod for NonePod {
+    fn params(&self) -> &Params {
+        panic!("NonePod doesn't have params");
+    }
     fn verify(&self) -> Result<(), Box<DynError>> {
         Ok(())
     }
@@ -760,7 +770,7 @@ impl Pod for NonePod {
 #[derive(Debug)]
 pub struct MainPodInputs<'a> {
     pub signed_pods: &'a [&'a dyn Pod],
-    pub zk_pods: &'a [&'a dyn Pod],
+    pub recursive_pods: &'a [&'a dyn RecursivePod],
     pub statements: &'a [Statement],
     pub operations: &'a [Operation],
     /// Statements that need to be made public (they can come from input pods or input
@@ -771,10 +781,10 @@ pub struct MainPodInputs<'a> {
 
 pub trait PodProver {
     fn prove(
-        &mut self,
+        &self,
         params: &Params,
         inputs: MainPodInputs,
-    ) -> Result<Box<dyn Pod>, Box<DynError>>;
+    ) -> Result<Box<dyn RecursivePod>, Box<DynError>>;
 }
 
 pub trait ToFields {

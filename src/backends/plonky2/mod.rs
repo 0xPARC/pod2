@@ -18,11 +18,12 @@ use plonky2::plonk::{circuit_builder, circuit_data};
 
 use crate::{
     backends::plonky2::{
-        basetypes::{CircuitData, C, D},
+        basetypes::{CircuitData, Proof, C, D},
         circuits::mainpod::{MainPodVerifyTarget, NUM_PUBLIC_INPUTS},
+        mainpod::Statement,
         recursion::common_data_for_recursion,
     },
-    middleware::{Hash, Params, F},
+    middleware::{self, Hash, Params, PodId, F},
     timed,
 };
 
@@ -30,8 +31,8 @@ use crate::{
 pub fn get_or_set_map_cache<K, V>(
     cache: &'static LazyLock<RwLock<HashMap<K, V>>>,
     key: &K,
-    try_set_fn: impl Fn(&K) -> Result<V>,
-) -> Result<MappedRwLockReadGuard<'static, V>>
+    set_fn: impl Fn(&K) -> V,
+) -> MappedRwLockReadGuard<'static, V>
 where
     K: Clone + std::cmp::Eq + std::hash::Hash,
 {
@@ -40,40 +41,48 @@ where
     {
         let read_lock = cache.read().unwrap();
         if read_lock.get(key).is_some() {
-            return Ok(RwLockReadGuard::map(read_lock, |m| m.get(key).unwrap()));
+            return RwLockReadGuard::map(read_lock, |m| m.get(key).unwrap());
         }
     }
     {
         let mut write_lock = cache.write().unwrap();
         // After acquiring the write lock, we check again if the data exist so that if another
-        // thread raced us here we don't call `try_set_fn` twice.
+        // thread raced us here we don't call `set_fn` twice.
         if write_lock.get(key).is_none() {
-            let data = try_set_fn(key)?;
+            let data = set_fn(key);
             write_lock.insert(key.clone(), data);
         }
     }
-    get_or_set_map_cache(cache, key, try_set_fn)
+    get_or_set_map_cache(cache, key, set_fn)
 }
 
 static RECURSIVE_MAIN_POD_DATA: LazyLock<RwLock<HashMap<Params, CircuitData>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
-pub fn recursive_main_pod_circuit_data(
-    params: &Params,
-) -> Result<MappedRwLockReadGuard<CircuitData>> {
+pub fn recursive_main_pod_circuit_data(params: &Params) -> MappedRwLockReadGuard<CircuitData> {
     get_or_set_map_cache(&RECURSIVE_MAIN_POD_DATA, params, |params| {
         timed!(
             "common_data_for_recursion",
             common_data_for_recursion::<MainPodVerifyTarget>(
-                params.max_input_zk_pods,
+                params.max_input_recursive_pods,
                 NUM_PUBLIC_INPUTS,
                 params
             )
+            .expect("calculate common_data")
         )
     })
 }
 
-pub fn recursive_main_pod_verifier_data_hash(params: &Params) -> Result<Hash> {
-    let data = recursive_main_pod_circuit_data(params)?;
-    Ok(Hash(data.verifier_only.circuit_digest.elements))
+pub fn recursive_main_pod_verifier_data_hash(params: &Params) -> Hash {
+    let data = recursive_main_pod_circuit_data(params);
+    Hash(data.verifier_only.circuit_digest.elements)
+}
+
+#[derive(Clone, Debug)]
+struct RecursivePodData {
+    pub(crate) params: Params,
+    pub(crate) id: PodId,
+    pub(crate) vds_root: Hash,
+    pub(crate) public_statements: Vec<middleware::Statement>,
+    pub(crate) proof: Proof,
 }

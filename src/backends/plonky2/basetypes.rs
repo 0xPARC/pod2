@@ -32,6 +32,7 @@ pub type CircuitData = circuit_data::CircuitData<F, C, D>;
 pub type CommonCircuitData = circuit_data::CommonCircuitData<F, D>;
 pub type ProverOnlyCircuitData = circuit_data::ProverOnlyCircuitData<F, C, D>;
 pub type VerifierOnlyCircuitData = circuit_data::VerifierOnlyCircuitData<C, D>;
+pub type VerifierCircuitData = circuit_data::VerifierCircuitData<F, C, D>;
 pub type CircuitBuilder = circuit_builder::CircuitBuilder<F, D>;
 pub type Proof = proof::Proof<F, C, D>;
 pub type ProofWithPublicInputs = proof::ProofWithPublicInputs<F, C, D>;

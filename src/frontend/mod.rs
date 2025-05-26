@@ -553,7 +553,7 @@ impl MainPodBuilder {
                 .iter()
                 .map(|p| p.pod.as_ref())
                 .collect_vec(),
-            zk_pods: &self
+            recursive_pods: &self
                 .input_main_pods
                 .iter()
                 .map(|p| p.pod.as_ref())
@@ -619,7 +619,7 @@ impl MainPodBuilder {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(try_from = "SerializedMainPod", into = "SerializedMainPod")]
 pub struct MainPod {
-    pub pod: Box<dyn middleware::Pod>,
+    pub pod: Box<dyn middleware::RecursivePod>,
     pub public_statements: Vec<Statement>,
     pub params: Params,
 }
@@ -899,7 +899,7 @@ pub mod tests {
     fn test_ethdos() -> Result<()> {
         let params = Params {
             max_input_signed_pods: 3,
-            max_input_zk_pods: 3,
+            max_input_recursive_pods: 3,
             max_statements: 31,
             max_signed_pod_values: 8,
             max_public_statements: 10,

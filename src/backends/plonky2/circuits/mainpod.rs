@@ -33,6 +33,7 @@ use crate::{
             },
             signedpod::{SignedPodVerifyGadget, SignedPodVerifyTarget},
         },
+        emptypod::EmptyPod,
         error::Result,
         get_or_set_map_cache,
         mainpod::{self, pad_statement, MainPod},
@@ -41,6 +42,7 @@ use crate::{
         },
         recursion::{self, common_data_for_recursion, InnerCircuit, VerifiedProofTarget},
         signedpod::SignedPod,
+        RecursivePodData,
     },
     measure_gates_begin, measure_gates_end,
     middleware::{
@@ -1124,7 +1126,7 @@ impl MainPodVerifyGadget {
         builder: &mut CircuitBuilder,
         verified_proofs: &[VerifiedProofTarget],
     ) -> Result<MainPodVerifyTarget> {
-        assert_eq!(self.params.max_input_zk_pods, verified_proofs.len());
+        assert_eq!(self.params.max_input_recursive_pods, verified_proofs.len());
 
         let measure = measure_gates_begin!(builder, "MainPodVerify");
         let params = &self.params;
@@ -1299,7 +1301,7 @@ pub struct CustomPredicateVerification {
 pub struct MainPodVerifyInput {
     pub vds_root: Hash,
     pub signed_pods: Vec<SignedPod>,
-    pub main_pods: Vec<MainPod>,
+    pub recursive_pods_pub_statements: Vec<Vec<Statement>>,
     pub statements: Vec<mainpod::Statement>,
     pub operations: Vec<mainpod::Operation>,
     pub merkle_proofs: Vec<MerkleClaimAndProof>,
@@ -1307,7 +1309,7 @@ pub struct MainPodVerifyInput {
     pub custom_predicate_verifications: Vec<CustomPredicateVerification>,
 }
 
-fn set_targets_statements(
+fn set_targets_middleware_statements(
     pw: &mut PartialWitness<F>,
     params: &Params,
     statements_target: &[StatementTarget],
@@ -1351,29 +1353,25 @@ impl MainPodVerifyTarget {
             }
         }
 
-        assert!(input.main_pods.len() <= self.params.max_input_zk_pods);
-        for (i, main_pod) in input.main_pods.iter().enumerate() {
-            set_targets_statements(
+        assert!(input.recursive_pods_pub_statements.len() <= self.params.max_input_recursive_pods);
+        for (i, pod_pub_statements) in input.recursive_pods_pub_statements.iter().enumerate() {
+            set_targets_middleware_statements(
                 pw,
                 &self.params,
                 &self.input_pods_statements[i],
-                &main_pod.pub_statements(),
+                &pod_pub_statements,
             )?;
         }
         // Padding
-        if self.params.max_input_zk_pods > 0 {
-            // TODO: Instead of using an input for padding, use a canonical minimal MainPod,
-            // without it a MainPod configured to support input signed pods must have at least one
-            // input signed pod :(
-            let pad_pod = &input.main_pods[0];
-            for i in input.main_pods.len()..self.params.max_input_signed_pods {
-                set_targets_statements(
-                    pw,
-                    &self.params,
-                    &self.input_pods_statements[i],
-                    &pad_pod.pub_statements(),
-                )?;
-            }
+        let empty_pod = EmptyPod::new(&self.params, input.vds_root)?;
+        let empty_pod_statements = empty_pod.pub_statements();
+        for i in input.recursive_pods_pub_statements.len()..self.params.max_input_signed_pods {
+            set_targets_middleware_statements(
+                pw,
+                &self.params,
+                &self.input_pods_statements[i],
+                &empty_pod_statements,
+            )?;
         }
 
         assert_eq!(input.statements.len(), self.params.max_statements);

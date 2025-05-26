@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::{
+        basetypes::{Proof, VerifierOnlyCircuitData},
         error::{Error, Result},
         mainpod::{
             calculate_id, extract_merkle_proofs, layout_statements, normalize_statement,
@@ -19,7 +20,7 @@ use crate::{
     },
     middleware::{
         self, hash_str, AnchoredKey, DynError, Hash, MainPodInputs, NativePredicate, Params, Pod,
-        PodId, PodProver, Predicate, StatementArg, KEY_TYPE, SELF,
+        PodId, PodProver, Predicate, RecursivePod, StatementArg, KEY_TYPE, SELF,
     },
 };
 
@@ -27,10 +28,10 @@ pub struct MockProver {}
 
 impl PodProver for MockProver {
     fn prove(
-        &mut self,
+        &self,
         params: &Params,
         inputs: MainPodInputs,
-    ) -> Result<Box<dyn Pod>, Box<DynError>> {
+    ) -> Result<Box<dyn RecursivePod>, Box<DynError>> {
         Ok(Box::new(MockMainPod::new(params, inputs)?))
     }
 }
@@ -137,7 +138,7 @@ impl MockMainPod {
     }
     fn offset_input_statements(&self) -> usize {
         self.offset_input_main_pods()
-            + self.params.max_input_zk_pods * self.params.max_public_statements
+            + self.params.max_input_recursive_pods * self.params.max_public_statements
     }
     fn offset_public_statements(&self) -> usize {
         self.offset_input_statements() + self.params.max_priv_statements()
@@ -146,7 +147,7 @@ impl MockMainPod {
     pub fn new(params: &Params, inputs: MainPodInputs) -> Result<Self> {
         // TODO: Insert a new public statement of ValueOf with `key=KEY_TYPE,
         // value=PodType::MockMainPod`
-        let statements = layout_statements(params, &inputs);
+        let statements = layout_statements(params, &inputs)?;
         // Extract Merkle proofs and pad.
         let merkle_proofs = extract_merkle_proofs(params, inputs.operations)?;
 
@@ -278,6 +279,9 @@ impl MockMainPod {
 }
 
 impl Pod for MockMainPod {
+    fn params(&self) -> &Params {
+        &self.params
+    }
     fn verify(&self) -> Result<(), Box<DynError>> {
         Ok(self._verify()?)
     }
@@ -297,6 +301,18 @@ impl Pod for MockMainPod {
 
     fn serialized_proof(&self) -> String {
         BASE64_STANDARD.encode(serde_json::to_string(self).unwrap())
+    }
+}
+
+impl RecursivePod for MockMainPod {
+    fn verifier_data(&self) -> VerifierOnlyCircuitData {
+        panic!("MockMainPod can't be verified in a recursive MainPod circuit");
+    }
+    fn proof(&self) -> Proof {
+        panic!("MockMainPod can't be verified in a recursive MainPod circuit");
+    }
+    fn vds_root(&self) -> Hash {
+        panic!("MockMainPod can't be verified in a recursive MainPod circuit");
     }
 }
 

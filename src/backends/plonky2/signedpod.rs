@@ -120,6 +120,9 @@ impl SignedPod {
 }
 
 impl Pod for SignedPod {
+    fn params(&self) -> &Params {
+        panic!("SignedPod doesn't have params");
+    }
     fn verify(&self) -> Result<(), Box<DynError>> {
         Ok(self._verify().map_err(Box::new)?)
     }
