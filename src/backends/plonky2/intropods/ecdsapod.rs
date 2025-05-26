@@ -62,7 +62,9 @@ use crate::{
                 PublicKey, SecretKey, Signature, SignatureVerifyGadget, SignatureVerifyTarget, VP,
             },
         },
-        recursion::{self, RecursiveCircuit},
+        recursion::{
+            self, common_data_for_recursion, InnerCircuit, RecursiveCircuit, VerifiedProofTarget,
+        },
         signedpod::SignedPod,
     },
     constants::MAX_DEPTH,
@@ -88,8 +90,22 @@ struct EcdsaPodVerifyTarget {
     mt_proofs: Vec<MerkleProofExistenceTarget>,
 }
 
-impl EcdsaPodVerifyTarget {
-    fn eval(builder: &mut CircuitBuilder<F, D>, params: &Params) -> Result<Self> {
+pub struct EcdsaPodVerifyInput {
+    vds_root: Hash,
+    id: PodId,
+    pk: ECDSAPublicKey<Secp256K1>,
+    dict: Dictionary,
+    signature: ECDSASignature<Secp256K1>,
+}
+impl InnerCircuit for EcdsaPodVerifyTarget {
+    type Input = EcdsaPodVerifyInput;
+    type Params = Params;
+
+    fn build(
+        builder: &mut CircuitBuilder<F, D>,
+        params: &Params,
+        _verified_proofs: &[VerifiedProofTarget],
+    ) -> Result<Self> {
         let measure = measure_gates_begin!(builder, "SignedPodVerify");
         // 1. Verify id
         let id = builder.add_virtual_hash();
@@ -142,14 +158,15 @@ impl EcdsaPodVerifyTarget {
         })
     }
 
-    pub fn set_targets(
+    fn set_targets(
         &self,
         pw: &mut PartialWitness<F>,
-        vds_root: Hash,
-        id: PodId,
-        pk: ECDSAPublicKey<Secp256K1>,
-        dict: Dictionary,
-        signature: ECDSASignature<Secp256K1>,
+        input: &EcdsaPodVerifyInput,
+        // vds_root: Hash,
+        // id: PodId,
+        // pk: ECDSAPublicKey<Secp256K1>,
+        // dict: Dictionary,
+        // signature: ECDSASignature<Secp256K1>,
     ) -> Result<()> {
         // set the self.mt_proofs witness with the following order:
         // - KEY_TYPE leaf proof
@@ -164,11 +181,16 @@ impl EcdsaPodVerifyTarget {
             .iter()
             .enumerate()
             .map(|(i, k)| {
-                let (v, proof) = dict.prove(k)?;
+                let (v, proof) = input.dict.prove(k)?;
                 self.mt_proofs[i].set_targets(
                     pw,
                     true,
-                    &MerkleClaimAndProof::new(dict.commitment(), k.raw(), Some(v.raw()), proof),
+                    &MerkleClaimAndProof::new(
+                        input.dict.commitment(),
+                        k.raw(),
+                        Some(v.raw()),
+                        proof,
+                    ),
                 )?;
                 Ok(v)
             })
@@ -176,20 +198,20 @@ impl EcdsaPodVerifyTarget {
 
         // add the verification of the rest of leaves
         let mut curr = 2; // since we already added key_type and key_signer
-        for (k, v) in dict.kvs().iter().sorted_by_key(|kv| kv.0.hash()) {
+        for (k, v) in input.dict.kvs().iter().sorted_by_key(|kv| kv.0.hash()) {
             if *k == key_type_key || *k == key_signer_key {
                 // skip the key_type & key_signer leaves, since they have
                 // already been checked
                 continue;
             }
 
-            let (obtained_v, proof) = dict.prove(k)?;
+            let (obtained_v, proof) = input.dict.prove(k)?;
             assert_eq!(obtained_v, v); // sanity check
 
             self.mt_proofs[curr].set_targets(
                 pw,
                 true,
-                &MerkleClaimAndProof::new(dict.commitment(), k.raw(), Some(v.raw()), proof),
+                &MerkleClaimAndProof::new(input.dict.commitment(), k.raw(), Some(v.raw()), proof),
             )?;
             curr += 1;
         }
@@ -198,7 +220,7 @@ impl EcdsaPodVerifyTarget {
 
         // add the proofs of empty leaves (if needed), till the max_signed_pod_values
         let mut mp = MerkleClaimAndProof::empty();
-        mp.root = dict.commitment();
+        mp.root = input.dict.commitment();
         for i in curr..self.params.max_signed_pod_values {
             self.mt_proofs[i].set_targets(pw, false, &mp)?;
         }
@@ -206,28 +228,34 @@ impl EcdsaPodVerifyTarget {
         // get the signer pk
         // let pk = PublicKey(key_signer_value.raw()); // TODO WIP
         // the msg signed is the id
-        let msg = RawValue::from(id.0);
+        let msg = RawValue::from(input.id.0);
 
         // set signature targets values
         pw.set_biguint_target(
             &self.msg.value,
             &biguint_from_array(std::array::from_fn(|i| msg.0[i].to_canonical_u64())),
         )?;
-
-        pw.set_biguint_target(&self.pk.0.x.value, &biguint_from_array(pk.0.x.0))?;
-        pw.set_biguint_target(&self.pk.0.y.value, &biguint_from_array(pk.0.y.0))?;
-
-        pw.set_biguint_target(&self.signature.r.value, &biguint_from_array(signature.r.0))?;
-        pw.set_biguint_target(&self.signature.s.value, &biguint_from_array(signature.s.0))?;
+        pw.set_biguint_target(&self.pk.0.x.value, &biguint_from_array(input.pk.0.x.0))?;
+        pw.set_biguint_target(&self.pk.0.y.value, &biguint_from_array(input.pk.0.y.0))?;
+        pw.set_biguint_target(
+            &self.signature.r.value,
+            &biguint_from_array(input.signature.r.0),
+        )?;
+        pw.set_biguint_target(
+            &self.signature.s.value,
+            &biguint_from_array(input.signature.s.0),
+        )?;
 
         // set the id target value
-        pw.set_hash_target(self.id, HashOut::from_vec(id.0 .0.to_vec()))?;
+        pw.set_hash_target(self.id, HashOut::from_vec(input.id.0 .0.to_vec()))?;
 
-        pw.set_target_arr(&self.vds_root.elements, &vds_root.0)?;
+        pw.set_target_arr(&self.vds_root.elements, &input.vds_root.0)?;
 
         Ok(())
     }
+}
 
+impl EcdsaPodVerifyTarget {
     pub fn pub_statements(
         &self,
         builder: &mut CircuitBuilder<F, D>,
@@ -268,9 +296,9 @@ fn build(params: &Params) -> Result<CircuitData<F, C, D>> {
     // let config = CircuitConfig::standard_recursion_config();
     let config = CircuitConfig::standard_ecc_config();
     let mut builder = CircuitBuilder::<F, D>::new(config.clone());
-    let _ = EcdsaPodVerifyTarget::eval(&mut builder, params)?;
-    // let circuit_data = crate::backends::plonky2::circuits::mainpod::recursive_circuit_data(params)?;
-    let circuit_data = recursive_circuit_data_OPT(params, config)?;
+    let _ = EcdsaPodVerifyTarget::build(&mut builder, params, &[] /*TODO*/)?;
+    let circuit_data = crate::backends::plonky2::circuits::mainpod::recursive_circuit_data(params)?;
+    // let circuit_data = recursive_circuit_data_OPT(params, config)?;
     crate::backends::plonky2::emptypod::pad_circuit(&mut builder, &circuit_data.common);
 
     let data = builder.build::<C>();
@@ -294,6 +322,14 @@ impl EcdsaPod {
         kvs: &HashMap<Key, Value>,
         sk: ECDSASecretKey<Secp256K1>,
     ) -> Result<EcdsaPod> {
+        // let config = CircuitConfig::standard_recursion_config();
+        // let rec_params = recursion::new_params::<MainPodVerifyTarget>(
+        //     params.max_input_main_pods,
+        //     NUM_PUBLIC_INPUTS,
+        //     params,
+        // )?;
+        // let main_pod = RecursiveCircuit::<MainPodVerifyTarget>::build(&rec_params, params)?;
+
         // first sign the pod id
         let pubkey: ECDSAPublicKey<Secp256K1> =
             ECDSAPublicKey((CurveScalar(sk.0) * Secp256K1::GENERATOR_PROJECTIVE).to_affine());
@@ -320,12 +356,12 @@ impl EcdsaPod {
         let config = CircuitConfig::standard_ecc_config();
         let mut builder = CircuitBuilder::<F, D>::new(config.clone());
         dbg!("A 0");
-        let ecdsa_targ = EcdsaPodVerifyTarget::eval(&mut builder, params)?;
+        let ecdsa_targ = EcdsaPodVerifyTarget::build(&mut builder, params, &[] /*TODO*/)?;
         dbg!("A 1");
 
-        let circuit_data =
-            // crate::backends::plonky2::circuits::mainpod::recursive_circuit_data(params)?;
-            recursive_circuit_data_OPT(params, config)?;
+        // let circuit_data =
+        //     // crate::backends::plonky2::circuits::mainpod::recursive_circuit_data(params)?;
+        //     recursive_circuit_data_OPT(params, config)?;
         dbg!("A 2");
         // crate::backends::plonky2::emptypod::pad_circuit(&mut builder, &circuit_data.common);
         dbg!("A 3");
@@ -333,7 +369,14 @@ impl EcdsaPod {
         // set targets
         let mut pw = PartialWitness::<F>::new();
         dbg!("A 4");
-        ecdsa_targ.set_targets(&mut pw, vds_root, id, pubkey, dict.clone(), signature)?;
+        let input = EcdsaPodVerifyInput {
+            vds_root,
+            id,
+            pk: pubkey,
+            dict: dict.clone(),
+            signature,
+        };
+        ecdsa_targ.set_targets(&mut pw, &input)?; //vds_root, id, pubkey, dict.clone(), signature)?;
         dbg!("A 5");
 
         let data = builder.build::<C>();
