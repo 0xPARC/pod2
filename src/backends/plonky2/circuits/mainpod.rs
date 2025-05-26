@@ -34,6 +34,7 @@ use crate::{
             signedpod::{SignedPodVerifyGadget, SignedPodVerifyTarget},
         },
         error::Result,
+        get_or_set_map_cache,
         mainpod::{self, pad_statement, MainPod},
         primitives::merkletree::{
             MerkleClaimAndProof, MerkleClaimAndProofTarget, MerkleProofGadget,
@@ -56,29 +57,16 @@ static RECURSIVE_CIRCUIT_DATA: LazyLock<RwLock<HashMap<Params, CircuitData>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
 pub fn recursive_circuit_data(params: &Params) -> Result<MappedRwLockReadGuard<CircuitData>> {
-    // Try to read from the hashmap with a readlock.  If the entry doesn't exist, acquire the write
-    // lock, create and insert the entry and finally recurse to suceed with the read lock.
-    {
-        let read_lock = RECURSIVE_CIRCUIT_DATA.read().unwrap();
-        if read_lock.get(params).is_some() {
-            return Ok(RwLockReadGuard::map(read_lock, |m| m.get(params).unwrap()));
-        }
-    }
-    {
-        let mut write_lock = RECURSIVE_CIRCUIT_DATA.write().unwrap();
-        if write_lock.get(params).is_none() {
-            let data: CircuitData = timed!(
-                "common_data_for_recursion",
-                common_data_for_recursion::<MainPodVerifyTarget>(
-                    params.max_input_main_pods,
-                    NUM_PUBLIC_INPUTS,
-                    params
-                )?
-            );
-            write_lock.insert(params.clone(), data);
-        }
-    }
-    recursive_circuit_data(params)
+    get_or_set_map_cache(&RECURSIVE_CIRCUIT_DATA, params, |params| {
+        timed!(
+            "common_data_for_recursion",
+            common_data_for_recursion::<MainPodVerifyTarget>(
+                params.max_input_main_pods,
+                NUM_PUBLIC_INPUTS,
+                params
+            )
+        )
+    })
 }
 
 //
