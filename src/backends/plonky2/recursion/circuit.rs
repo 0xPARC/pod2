@@ -776,7 +776,7 @@ mod tests {
         let proof_1b = circuit1.prove(
             &inner_inputs,
             vec![proof_1a.clone()],
-            vec![verifier_data_1.clone()],
+            vec![verifier_data_1.verifier_only.clone()],
         )?;
         verifier_data_1.clone().verify(proof_1b.clone())?;
 
@@ -798,7 +798,10 @@ mod tests {
         let proof_2 = circuit2.prove(
             &inner_inputs,
             vec![proof_3.clone(), proof_1c],
-            vec![verifier_data_3.clone(), verifier_data_1.clone()],
+            vec![
+                verifier_data_3.verifier_only.clone(),
+                verifier_data_1.verifier_only.clone(),
+            ],
         )?;
         verifier_data_2.clone().verify(proof_2.clone())?;
 
@@ -809,7 +812,10 @@ mod tests {
         let proof_1d = circuit1.prove(
             &inner_inputs,
             vec![proof_1b, proof_2],
-            vec![verifier_data_1.clone(), verifier_data_2.clone()],
+            vec![
+                verifier_data_1.verifier_only.clone(),
+                verifier_data_2.verifier_only.clone(),
+            ],
         )?;
         verifier_data_1.clone().verify(proof_1d)?;
 
