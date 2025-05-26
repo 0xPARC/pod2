@@ -39,6 +39,7 @@ use crate::{
         error::{Error, Result},
     },
     middleware::F,
+    timed,
 };
 
 #[derive(Clone, Debug)]
@@ -313,11 +314,13 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         num_public_inputs: usize,
         inner_params: &I::Params,
     ) -> Result<CircuitData<F, C, D>> {
-        let data: CircuitData<F, C, D> =
-            common_data_for_recursion::<I>(arity, num_public_inputs, inner_params)?;
+        let data: CircuitData<F, C, D> = timed!(
+            "common_data_for_recursion",
+            common_data_for_recursion::<I>(arity, num_public_inputs, inner_params)?
+        );
         let common_data = data.common.clone();
         let verifier_data = data.verifier_data();
-        let dummy_proof_pi = Self::dummy_proof(data)?;
+        let dummy_proof_pi = timed!("dummy_proof", Self::dummy_proof(data)?);
         let params = RecursiveParams {
             arity,
             common_data,
@@ -329,8 +332,11 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::new(config);
 
-        let _ = Self::build_targets(&mut builder, &params, inner_params)?;
-        let data = builder.build::<C>();
+        let _ = timed!(
+            "RecursiveCircuit<>I::build_targets",
+            Self::build_targets(&mut builder, &params, inner_params)?
+        );
+        let data = timed!("RecursiveCircuit<I> build", builder.build::<C>());
 
         Ok(data)
     }
@@ -404,7 +410,7 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
 //     builder.hash_n_to_hash_no_pad::<PoseidonHash>(inp)
 // }
 
-fn common_data_for_recursion<I: InnerCircuit>(
+pub fn common_data_for_recursion<I: InnerCircuit>(
     arity: usize,
     num_public_inputs: usize,
     inner_params: &I::Params,
@@ -412,7 +418,7 @@ fn common_data_for_recursion<I: InnerCircuit>(
     // 1st
     let config = CircuitConfig::standard_recursion_config();
     let builder = CircuitBuilder::<F, D>::new(config);
-    let data = builder.build::<C>();
+    let data = timed!("common_data_for_recursion 1st build", builder.build::<C>());
 
     // 2nd
     let config = CircuitConfig::standard_recursion_config();
@@ -424,7 +430,7 @@ fn common_data_for_recursion<I: InnerCircuit>(
         let proof = builder.add_virtual_proof_with_pis(&data.common);
         builder.verify_proof::<C>(&proof, &verifier_data_i, &data.common);
     }
-    let data = builder.build::<C>();
+    let data = timed!("common_data_for_recursion 2nd build", builder.build::<C>());
 
     // 3rd
     let config = CircuitConfig::standard_recursion_config();
@@ -456,14 +462,17 @@ fn common_data_for_recursion<I: InnerCircuit>(
     let verified_proofs = (0..arity)
         .map(|_| VerifiedProofTarget::add_virtual(&mut builder, num_public_inputs))
         .collect_vec();
-    let _ = I::build(&mut builder, inner_params, &verified_proofs)?;
+    let _ = timed!(
+        "common_data_for_recursion I::build",
+        I::build(&mut builder, inner_params, &verified_proofs)?
+    );
 
     // pad min gates
     let n_gates = compute_num_gates(arity)?;
     while builder.num_gates() < n_gates {
         builder.add_gate(NoopGate, vec![]);
     }
-    let circuit_data = builder.build::<C>();
+    let circuit_data = timed!("common_data_for_recursion 3rd build", builder.build::<C>());
     // Make sure that the number of public inputs that the inner circuit has registered matches the
     // passed value.
     assert_eq!(num_public_inputs, circuit_data.common.num_public_inputs);

@@ -1,4 +1,9 @@
-use std::{array, iter, sync::Arc};
+use std::{
+    array,
+    collections::HashMap,
+    iter,
+    sync::{Arc, LazyLock, MappedRwLockReadGuard, Mutex, RwLock, RwLockReadGuard},
+};
 
 use itertools::{zip_eq, Itertools};
 use plonky2::{
@@ -12,12 +17,12 @@ use plonky2::{
         target::{BoolTarget, Target},
         witness::{PartialWitness, WitnessWrite},
     },
-    plonk::{circuit_builder::CircuitBuilder, config::AlgebraicHasher},
+    plonk::{circuit_builder::CircuitBuilder, circuit_data, config::AlgebraicHasher},
 };
 
 use crate::{
     backends::plonky2::{
-        basetypes::D,
+        basetypes::{C, D},
         circuits::{
             common::{
                 CircuitBuilderPod, CustomPredicateBatchTarget, CustomPredicateEntryTarget,
@@ -33,7 +38,7 @@ use crate::{
         primitives::merkletree::{
             MerkleClaimAndProof, MerkleClaimAndProofTarget, MerkleProofGadget,
         },
-        recursion::{self, InnerCircuit, VerifiedProofTarget},
+        recursion::{self, common_data_for_recursion, InnerCircuit, VerifiedProofTarget},
         signedpod::SignedPod,
     },
     measure_gates_begin, measure_gates_end,
@@ -42,7 +47,39 @@ use crate::{
         NativeOperation, NativePredicate, Params, Pod, PodType, PredicatePrefix, Statement,
         StatementArg, ToFields, Value, WildcardValue, F, HASH_SIZE, KEY_TYPE, SELF, VALUE_SIZE,
     },
+    timed,
 };
+
+type CircuitData = circuit_data::CircuitData<F, C, D>;
+
+static RECURSIVE_CIRCUIT_DATA: LazyLock<RwLock<HashMap<Params, CircuitData>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+pub fn recursive_circuit_data(params: &Params) -> Result<MappedRwLockReadGuard<CircuitData>> {
+    // Try to read from the hashmap with a readlock.  If the entry doesn't exist, acquire the write
+    // lock, create and insert the entry and finally recurse to suceed with the read lock.
+    {
+        let read_lock = RECURSIVE_CIRCUIT_DATA.read().unwrap();
+        if read_lock.get(params).is_some() {
+            return Ok(RwLockReadGuard::map(read_lock, |m| m.get(params).unwrap()));
+        }
+    }
+    {
+        let mut write_lock = RECURSIVE_CIRCUIT_DATA.write().unwrap();
+        if write_lock.get(params).is_none() {
+            let data: CircuitData = timed!(
+                "common_data_for_recursion",
+                common_data_for_recursion::<MainPodVerifyTarget>(
+                    params.max_input_main_pods,
+                    NUM_PUBLIC_INPUTS,
+                    params
+                )?
+            );
+            write_lock.insert(params.clone(), data);
+        }
+    }
+    recursive_circuit_data(params)
+}
 
 //
 // MainPod verification

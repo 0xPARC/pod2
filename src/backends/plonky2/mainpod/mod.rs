@@ -44,11 +44,8 @@ use crate::{
 /// with a precomputed constant corresponding to the front-padding part:
 /// `id = hash(serialize(reverse(statements || none-statements)))`
 pub(crate) fn calculate_id(statements: &[Statement], params: &Params) -> middleware::Hash {
-    assert_eq!(params.max_public_statements, statements.len());
+    assert!(statements.len() <= params.num_public_statements_id);
     assert!(params.max_public_statements <= params.num_public_statements_id);
-    statements
-        .iter()
-        .for_each(|st| assert_eq!(params.max_statement_args, st.1.len()));
 
     let mut none_st: Statement = middleware::Statement::None.into();
     pad_statement(params, &mut none_st);

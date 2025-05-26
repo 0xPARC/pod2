@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, iter};
 
 use serde::{Deserialize, Serialize};
 
@@ -28,9 +28,15 @@ impl Statement {
 }
 
 impl ToFields for Statement {
-    fn to_fields(&self, _params: &Params) -> Vec<middleware::F> {
-        let mut fields = self.0.to_fields(_params);
-        fields.extend(self.1.iter().flat_map(|arg| arg.to_fields(_params)));
+    fn to_fields(&self, params: &Params) -> Vec<middleware::F> {
+        let mut fields = self.0.to_fields(params);
+        fields.extend(
+            self.1
+                .iter()
+                .chain(iter::repeat(&StatementArg::None))
+                .take(params.max_statement_args)
+                .flat_map(|arg| arg.to_fields(params)),
+        );
         fields
     }
 }
