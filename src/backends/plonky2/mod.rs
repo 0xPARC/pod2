@@ -14,7 +14,7 @@ use std::{
 };
 
 pub use error::*;
-use plonky2::plonk::circuit_data;
+use plonky2::plonk::{circuit_builder, circuit_data};
 
 use crate::{
     backends::plonky2::{
@@ -65,7 +65,7 @@ pub fn recursive_main_pod_circuit_data(
         timed!(
             "common_data_for_recursion",
             common_data_for_recursion::<MainPodVerifyTarget>(
-                params.max_input_main_pods,
+                params.max_input_zk_pods,
                 NUM_PUBLIC_INPUTS,
                 params
             )

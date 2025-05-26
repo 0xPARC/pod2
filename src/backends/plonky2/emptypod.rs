@@ -15,14 +15,14 @@ use plonky2::{
         circuit_builder::CircuitBuilder,
         circuit_data::{self, CircuitConfig, CommonCircuitData, ProverCircuitData},
         config::Hasher,
-        proof::{Proof, ProofWithPublicInputs},
+        proof::ProofWithPublicInputs,
     },
     util::serialization::{Buffer, Read},
 };
 
 use crate::{
     backends::plonky2::{
-        basetypes::{C, D},
+        basetypes::{Proof, C, D},
         circuits::{
             common::{Flattenable, StatementTarget},
             mainpod::{
@@ -31,8 +31,8 @@ use crate::{
             },
         },
         error::{Error, Result},
-        get_or_set_map_cache, mainpod,
-        mainpod::{calculate_id, MainPodProof},
+        get_or_set_map_cache,
+        mainpod::{self, calculate_id},
         primitives::merkletree::MerkleClaimAndProof,
         recursion::{self, common_data_for_recursion, RecursiveCircuit},
         recursive_main_pod_circuit_data,
@@ -41,9 +41,9 @@ use crate::{
     },
     middleware::{
         self, resolve_wildcard_values, AnchoredKey, CustomPredicateBatch, DynError, Hash,
-        MainPodInputs, NativeOperation, NonePod, OperationType, Params, Pod, PodId, PodProver,
-        PodType, Statement, StatementArg, ToFields, Value, EMPTY_HASH, F, HASH_SIZE, KEY_TYPE,
-        SELF,
+        MainPodInputs, NativeOperation, NonePod, OperationType, Params, Plonky2Pod, Pod, PodId,
+        PodProver, PodType, Statement, StatementArg, ToFields, Value, VerifierOnlyCircuitData,
+        EMPTY_HASH, F, HASH_SIZE, KEY_TYPE, SELF,
     },
     timed,
 };
@@ -90,7 +90,7 @@ impl EmptyPodVerifyTarget {
 pub struct EmptyPod {
     params: Params,
     id: PodId,
-    proof: MainPodProof,
+    proof: Proof,
 }
 
 /// Pad the circuit to match a given `CommonCircuitData`.
@@ -194,10 +194,10 @@ impl EmptyPod {
         })
         .map_err(|e| Error::custom(format!("EmptyPod proof verification failure: {:?}", e)))
     }
-    pub fn verifier_data_hash(params: &Params) -> Result<Hash> {
-        let (_, data) = &*build(params)?;
-        Ok(Hash(data.verifier_only.circuit_digest.elements))
-    }
+    // pub fn verifier_data_hash(params: &Params) -> Result<Hash> {
+    //     let (_, data) = &*build(params)?;
+    //     Ok(Hash(data.verifier_only.circuit_digest.elements))
+    // }
 }
 
 impl Pod for EmptyPod {
@@ -218,6 +218,16 @@ impl Pod for EmptyPod {
         use plonky2::util::serialization::Write;
         buffer.write_proof(&self.proof).unwrap();
         BASE64_STANDARD.encode(buffer)
+    }
+}
+
+impl Plonky2Pod for EmptyPod {
+    fn verifier_data(&self) -> Result<VerifierOnlyCircuitData, Box<DynError>> {
+        let (_, data) = &*build(&self.params)?;
+        Ok(data.verifier_only.clone())
+    }
+    fn proof(&self) -> Proof {
+        self.proof.clone()
     }
 }
 

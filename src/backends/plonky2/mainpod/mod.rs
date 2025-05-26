@@ -12,7 +12,6 @@ use plonky2::{
         circuit_builder::CircuitBuilder,
         circuit_data::{CircuitConfig, CommonCircuitData, ProverCircuitData},
         config::Hasher,
-        proof::{Proof, ProofWithPublicInputs},
     },
     util::serialization::{Buffer, Read},
 };
@@ -20,7 +19,7 @@ pub use statement::*;
 
 use crate::{
     backends::plonky2::{
-        basetypes::{C, D},
+        basetypes::{Proof, ProofWithPublicInputs, VerifierOnlyCircuitData, C, D},
         circuits::mainpod::{
             CustomPredicateVerification, MainPodVerifyCircuit, MainPodVerifyInput,
             MainPodVerifyTarget, NUM_PUBLIC_INPUTS,
@@ -28,12 +27,13 @@ use crate::{
         error::{Error, Result},
         primitives::merkletree::MerkleClaimAndProof,
         recursion::{self, RecursiveCircuit},
+        recursive_main_pod_circuit_data,
         signedpod::SignedPod,
     },
     middleware::{
         self, resolve_wildcard_values, AnchoredKey, CustomPredicateBatch, DynError, Hash,
-        MainPodInputs, NativeOperation, NonePod, OperationType, Params, Pod, PodId, PodProver,
-        PodType, StatementArg, ToFields, EMPTY_HASH, F, KEY_TYPE, SELF,
+        MainPodInputs, NativeOperation, NonePod, OperationType, Params, Plonky2Pod, Pod, PodId,
+        PodProver, PodType, StatementArg, ToFields, EMPTY_HASH, F, KEY_TYPE, SELF,
     },
 };
 
@@ -278,9 +278,9 @@ pub(crate) fn layout_statements(params: &Params, inputs: &MainPodInputs) -> Vec<
     // Input main pods region
     let none_main_pod_box: Box<dyn Pod> = Box::new(NonePod {});
     let none_main_pod = none_main_pod_box.as_ref();
-    assert!(inputs.main_pods.len() <= params.max_input_main_pods);
-    for i in 0..params.max_input_main_pods {
-        let pod = inputs.main_pods.get(i).copied().unwrap_or(none_main_pod);
+    assert!(inputs.zk_pods.len() <= params.max_input_zk_pods);
+    for i in 0..params.max_input_zk_pods {
+        let pod = inputs.zk_pods.get(i).copied().unwrap_or(none_main_pod);
         let sts = pod.pub_statements();
         assert!(sts.len() <= params.max_public_statements);
         for j in 0..params.max_public_statements {
@@ -404,7 +404,7 @@ impl Prover {
 
         // TODO: Cache this somehow
         let rec_params = recursion::new_params::<MainPodVerifyTarget>(
-            params.max_input_main_pods,
+            params.max_input_zk_pods,
             NUM_PUBLIC_INPUTS,
             params,
         )?;
@@ -433,7 +433,7 @@ impl Prover {
             .collect_vec();
 
         let main_pods_input: Vec<MainPod> = inputs
-            .main_pods
+            .zk_pods
             .iter()
             .map(|p| {
                 let p = (*p as &dyn Any)
@@ -500,15 +500,13 @@ impl PodProver for Prover {
     }
 }
 
-pub type MainPodProof = Proof<F, C, D>;
-
 #[derive(Clone, Debug)]
 pub struct MainPod {
     params: Params,
     id: PodId,
     vds_root: Hash,
     public_statements: Vec<Statement>,
-    proof: MainPodProof,
+    proof: Proof,
 }
 
 /// Convert a Statement into middleware::Statement and replace references to SELF by `self_id`.
@@ -537,7 +535,7 @@ pub(crate) fn normalize_statement(statement: &Statement, self_id: PodId) -> midd
 fn get_common_data(params: &Params) -> Result<CommonCircuitData<F, D>, Error> {
     // TODO: Cache this somehow
     let rec_params = recursion::new_params::<MainPodVerifyTarget>(
-        params.max_input_main_pods,
+        params.max_input_zk_pods,
         NUM_PUBLIC_INPUTS,
         params,
     )?;
@@ -555,7 +553,7 @@ impl MainPod {
         // 1, 3, 4, 5 verification via the zkSNARK proof
         // TODO: cache these artefacts
         let rec_params = recursion::new_params::<MainPodVerifyTarget>(
-            self.params.max_input_main_pods,
+            self.params.max_input_zk_pods,
             NUM_PUBLIC_INPUTS,
             &self.params,
         )?;
@@ -574,7 +572,7 @@ impl MainPod {
             .map_err(|e| Error::custom(format!("MainPod proof verification failure: {:?}", e)))
     }
 
-    pub fn proof(&self) -> MainPodProof {
+    pub fn proof(&self) -> Proof {
         self.proof.clone()
     }
 
@@ -587,7 +585,7 @@ impl MainPod {
     }
 
     pub(crate) fn new(
-        proof: MainPodProof,
+        proof: Proof,
         public_statements: Vec<Statement>,
         id: PodId,
         vds_root: Hash,
@@ -602,7 +600,7 @@ impl MainPod {
         }
     }
 
-    pub fn decode_proof(proof: &str, params: &Params) -> Result<MainPodProof, Error> {
+    pub fn decode_proof(proof: &str, params: &Params) -> Result<Proof, Error> {
         let decoded = BASE64_STANDARD.decode(proof).map_err(|e| {
             Error::custom(format!(
                 "Failed to decode proof from base64: {}. Value: {}",
@@ -649,6 +647,16 @@ impl Pod for MainPod {
     }
 }
 
+impl Plonky2Pod for MainPod {
+    fn verifier_data(&self) -> Result<VerifierOnlyCircuitData, Box<DynError>> {
+        let data = &*recursive_main_pod_circuit_data(&self.params)?;
+        Ok(data.verifier_only.clone())
+    }
+    fn proof(&self) -> Proof {
+        self.proof.clone()
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -676,7 +684,7 @@ pub mod tests {
         let params = middleware::Params {
             // Currently the circuit uses random access that only supports vectors of length 64.
             // With max_input_main_pods=3 we need random access to a vector of length 73.
-            max_input_main_pods: 0,
+            max_input_zk_pods: 0,
             max_custom_predicate_batches: 0,
             max_custom_predicate_verifications: 0,
             ..Default::default()
@@ -706,7 +714,7 @@ pub mod tests {
     fn test_mini_0() {
         let params = middleware::Params {
             max_input_signed_pods: 1,
-            max_input_main_pods: 1,
+            max_input_zk_pods: 1,
             max_signed_pod_values: 6,
             max_statements: 8,
             max_public_statements: 4,
@@ -749,7 +757,7 @@ pub mod tests {
     fn test_mainpod_small_empty() {
         let params = middleware::Params {
             max_input_signed_pods: 0,
-            max_input_main_pods: 0,
+            max_input_zk_pods: 0,
             max_input_pods_public_statements: 2,
             max_statements: 5,
             max_signed_pod_values: 2,
@@ -788,7 +796,7 @@ pub mod tests {
     fn test_main_ethdos() -> frontend::Result<()> {
         let params = Params {
             max_input_signed_pods: 2,
-            max_input_main_pods: 1,
+            max_input_zk_pods: 1,
             max_statements: 26,
             max_public_statements: 5,
             max_signed_pod_values: 8,
@@ -840,7 +848,7 @@ pub mod tests {
     fn test_main_mini_custom_1() -> frontend::Result<()> {
         let params = Params {
             max_input_signed_pods: 0,
-            max_input_main_pods: 0,
+            max_input_zk_pods: 0,
             max_statements: 9,
             max_public_statements: 4,
             max_statement_args: 3,

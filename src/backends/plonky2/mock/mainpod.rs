@@ -18,8 +18,8 @@ use crate::{
         primitives::merkletree::MerkleClaimAndProof,
     },
     middleware::{
-        self, hash_str, AnchoredKey, DynError, MainPodInputs, NativePredicate, Params, Pod, PodId,
-        PodProver, Predicate, StatementArg, KEY_TYPE, SELF,
+        self, hash_str, AnchoredKey, DynError, Hash, MainPodInputs, NativePredicate, Params, Pod,
+        PodId, PodProver, Predicate, StatementArg, KEY_TYPE, SELF,
     },
 };
 
@@ -137,7 +137,7 @@ impl MockMainPod {
     }
     fn offset_input_statements(&self) -> usize {
         self.offset_input_main_pods()
-            + self.params.max_input_main_pods * self.params.max_public_statements
+            + self.params.max_input_zk_pods * self.params.max_public_statements
     }
     fn offset_public_statements(&self) -> usize {
         self.offset_input_statements() + self.params.max_priv_statements()

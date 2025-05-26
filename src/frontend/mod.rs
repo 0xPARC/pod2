@@ -553,7 +553,7 @@ impl MainPodBuilder {
                 .iter()
                 .map(|p| p.pod.as_ref())
                 .collect_vec(),
-            main_pods: &self
+            zk_pods: &self
                 .input_main_pods
                 .iter()
                 .map(|p| p.pod.as_ref())
@@ -899,7 +899,7 @@ pub mod tests {
     fn test_ethdos() -> Result<()> {
         let params = Params {
             max_input_signed_pods: 3,
-            max_input_main_pods: 3,
+            max_input_zk_pods: 3,
             max_statements: 31,
             max_signed_pod_values: 8,
             max_public_statements: 10,

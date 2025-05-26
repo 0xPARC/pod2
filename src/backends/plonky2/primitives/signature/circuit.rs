@@ -23,7 +23,7 @@ use plonky2::{
 
 use crate::{
     backends::plonky2::{
-        basetypes::{Proof, C, D},
+        basetypes::{C, D},
         circuits::common::{CircuitBuilderPod, ValueTarget},
         error::Result,
         primitives::signature::{
@@ -31,7 +31,7 @@ use crate::{
         },
     },
     measure_gates_begin, measure_gates_end,
-    middleware::{Hash, RawValue, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE},
+    middleware::{Hash, Proof, RawValue, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE},
 };
 
 lazy_static! {

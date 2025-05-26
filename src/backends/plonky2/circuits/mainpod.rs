@@ -17,12 +17,12 @@ use plonky2::{
         target::{BoolTarget, Target},
         witness::{PartialWitness, WitnessWrite},
     },
-    plonk::{circuit_builder::CircuitBuilder, circuit_data, config::AlgebraicHasher},
+    plonk::{circuit_data, config::AlgebraicHasher},
 };
 
 use crate::{
     backends::plonky2::{
-        basetypes::{C, D},
+        basetypes::{CircuitBuilder, C, D},
         circuits::{
             common::{
                 CircuitBuilderPod, CustomPredicateBatchTarget, CustomPredicateEntryTarget,
@@ -73,7 +73,7 @@ impl OperationVerifyGadget {
     /// argument.
     fn first_n_args_as_values<const N: usize>(
         &self,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         resolved_op_args: &[StatementTarget],
     ) -> (BoolTarget, [ValueTarget; N]) {
         let arg_is_valueof = resolved_op_args[..N]
@@ -95,7 +95,7 @@ impl OperationVerifyGadget {
 
     fn eval(
         &self,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         st: &StatementTarget,
         op: &OperationTarget,
         prev_statements: &[StatementTarget],
@@ -227,7 +227,7 @@ impl OperationVerifyGadget {
 
     fn eval_contains_from_entries(
         &self,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         st: &StatementTarget,
         op_type: &OperationTypeTarget,
         resolved_merkle_claim: MerkleClaimTarget,
@@ -275,7 +275,7 @@ impl OperationVerifyGadget {
 
     fn eval_not_contains_from_entries(
         &self,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         st: &StatementTarget,
         op_type: &OperationTypeTarget,
         resolved_merkle_claim: MerkleClaimTarget,
@@ -321,7 +321,7 @@ impl OperationVerifyGadget {
 
     fn eval_custom(
         &self,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         st: &StatementTarget,
         op_type: &OperationTypeTarget,
         resolved_custom_pred_verification: HashOutTarget,
@@ -346,7 +346,7 @@ impl OperationVerifyGadget {
     /// NotEqualFromEntries.
     fn eval_eq_neq_from_entries(
         &self,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         st: &StatementTarget,
         op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
@@ -397,7 +397,7 @@ impl OperationVerifyGadget {
     /// LtEqFromEntries.
     fn eval_lt_lteq_from_entries(
         &self,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         st: &StatementTarget,
         op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
@@ -466,7 +466,7 @@ impl OperationVerifyGadget {
 
     fn eval_hash_of(
         &self,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         st: &StatementTarget,
         op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
@@ -500,7 +500,7 @@ impl OperationVerifyGadget {
 
     fn eval_sum_of(
         &self,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         st: &StatementTarget,
         op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
@@ -539,7 +539,7 @@ impl OperationVerifyGadget {
 
     fn eval_product_of(
         &self,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         st: &StatementTarget,
         op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
@@ -578,7 +578,7 @@ impl OperationVerifyGadget {
 
     fn eval_max_of(
         &self,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         st: &StatementTarget,
         op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
@@ -624,7 +624,7 @@ impl OperationVerifyGadget {
 
     fn eval_transitive_eq(
         &self,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         st: &StatementTarget,
         op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
@@ -660,7 +660,7 @@ impl OperationVerifyGadget {
     }
     fn eval_none(
         &self,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         st: &StatementTarget,
         op_type: &OperationTypeTarget,
     ) -> BoolTarget {
@@ -678,7 +678,7 @@ impl OperationVerifyGadget {
 
     fn eval_new_entry(
         &self,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         st: &StatementTarget,
         op_type: &OperationTypeTarget,
         prev_statements: &[StatementTarget],
@@ -716,7 +716,7 @@ impl OperationVerifyGadget {
 
     fn eval_lt_to_neq(
         &self,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         st: &StatementTarget,
         op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
@@ -745,7 +745,7 @@ impl OperationVerifyGadget {
 
     fn eval_copy(
         &self,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         st: &StatementTarget,
         op_type: &OperationTypeTarget,
         resolved_op_args: &[StatementTarget],
@@ -774,7 +774,7 @@ struct CustomOperationVerifyGadget {
 impl CustomOperationVerifyGadget {
     fn statement_arg_from_template(
         &self,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         st_tmpl_arg: &StatementTmplArgTarget,
         args: &[ValueTarget],
     ) -> StatementArgTarget {
@@ -821,7 +821,7 @@ impl CustomOperationVerifyGadget {
 
     fn statement_from_template(
         &self,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         st_tmpl: &StatementTmplTarget,
         args: &[ValueTarget],
     ) -> StatementTarget {
@@ -845,7 +845,7 @@ impl CustomOperationVerifyGadget {
     /// - Build the expected operation type
     fn eval(
         &self,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         custom_predicate: &CustomPredicateEntryTarget,
         op_args: &[StatementTarget],
         args: &[ValueTarget], // arguments to the custom predicate, public and private
@@ -935,7 +935,7 @@ impl CalculateIdGadget {
 
     /// Hash `inputs` starting from a circuit-constant `perm` state.
     fn hash_from_state<H: AlgebraicHasher<F>, P: PlonkyPermutation<F>>(
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         perm: P,
         inputs: &[Target],
     ) -> HashOutTarget {
@@ -967,7 +967,7 @@ impl CalculateIdGadget {
 
     pub fn eval(
         &self,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         // These statements will be padded to reach `self.num_statements`
         statements: &[StatementTarget],
     ) -> HashOutTarget {
@@ -1006,7 +1006,7 @@ impl MainPodVerifyGadget {
     // index
     fn normalize_st_tmpl(
         &self,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         st_tmpl: &StatementTmplTarget,
         id: HashOutTarget,
     ) -> StatementTmplTarget {
@@ -1026,7 +1026,7 @@ impl MainPodVerifyGadget {
     /// calculate the id of each batch.
     fn build_custom_predicate_table(
         &self,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
     ) -> Result<(Vec<HashOutTarget>, Vec<CustomPredicateBatchTarget>)> {
         let measure = measure_gates_begin!(builder, "BuildCustomPredicateTable");
         let params = &self.params;
@@ -1067,7 +1067,7 @@ impl MainPodVerifyGadget {
     /// custom predicate against the operation and statement.
     fn build_custom_predicate_verification_table(
         &self,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         custom_predicate_table: &[HashOutTarget],
     ) -> Result<(Vec<HashOutTarget>, Vec<CustomPredicateVerifyEntryTarget>)> {
         let measure = measure_gates_begin!(builder, "BuildCustomPredicateVerificationTable");
@@ -1121,10 +1121,10 @@ impl MainPodVerifyGadget {
 
     fn eval(
         &self,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         verified_proofs: &[VerifiedProofTarget],
     ) -> Result<MainPodVerifyTarget> {
-        assert_eq!(self.params.max_input_main_pods, verified_proofs.len());
+        assert_eq!(self.params.max_input_zk_pods, verified_proofs.len());
 
         let measure = measure_gates_begin!(builder, "MainPodVerify");
         let params = &self.params;
@@ -1351,7 +1351,7 @@ impl MainPodVerifyTarget {
             }
         }
 
-        assert!(input.main_pods.len() <= self.params.max_input_main_pods);
+        assert!(input.main_pods.len() <= self.params.max_input_zk_pods);
         for (i, main_pod) in input.main_pods.iter().enumerate() {
             set_targets_statements(
                 pw,
@@ -1361,7 +1361,7 @@ impl MainPodVerifyTarget {
             )?;
         }
         // Padding
-        if self.params.max_input_main_pods > 0 {
+        if self.params.max_input_zk_pods > 0 {
             // TODO: Instead of using an input for padding, use a canonical minimal MainPod,
             // without it a MainPod configured to support input signed pods must have at least one
             // input signed pod :(
@@ -1443,7 +1443,7 @@ pub struct MainPodVerifyCircuit {
 impl MainPodVerifyCircuit {
     pub fn eval(
         &self,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         verified_proofs: &[VerifiedProofTarget],
     ) -> Result<MainPodVerifyTarget> {
         let main_pod = MainPodVerifyGadget {
@@ -1461,7 +1461,7 @@ impl InnerCircuit for MainPodVerifyTarget {
     type Params = Params;
 
     fn build(
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         params: &Self::Params,
         verified_proofs: &[VerifiedProofTarget],
     ) -> Result<Self> {

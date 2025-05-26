@@ -47,10 +47,7 @@ use std::{
 
 use hex::{FromHex, FromHexError};
 use plonky2::{
-    field::{
-        goldilocks_field::GoldilocksField,
-        types::{Field, PrimeField64},
-    },
+    field::types::{Field, PrimeField64},
     hash::poseidon::PoseidonHash,
     plonk::config::Hasher,
 };
@@ -58,10 +55,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::serialization::*;
+// Plonky2 specific types
+#[cfg(feature = "backend_plonky2")]
+pub use crate::backends::plonky2::basetypes::*;
 use crate::middleware::{Params, ToFields, Value};
-
-/// F is the native field we use everywhere.  Currently it's Goldilocks from plonky2
-pub type F = GoldilocksField;
 
 pub const HASH_SIZE: usize = 4;
 pub const VALUE_SIZE: usize = 4;

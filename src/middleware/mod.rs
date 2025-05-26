@@ -580,9 +580,7 @@ impl fmt::Display for PodType {
 #[serde(rename_all = "camelCase")]
 pub struct Params {
     pub max_input_signed_pods: usize,
-    // TODO: In the future, rename this to max_input_plonky2_pods to generalize this to include
-    // MainPods but also introduction gadget pods.
-    pub max_input_main_pods: usize,
+    pub max_input_zk_pods: usize,
     pub max_input_pods_public_statements: usize,
     pub max_statements: usize,
     pub max_signed_pod_values: usize,
@@ -618,7 +616,7 @@ impl Default for Params {
     fn default() -> Self {
         Self {
             max_input_signed_pods: 3,
-            max_input_main_pods: 2,
+            max_input_zk_pods: 2,
             max_input_pods_public_statements: 10,
             max_statements: 20,
             max_signed_pod_values: 8,
@@ -721,6 +719,13 @@ pub trait Pod: fmt::Debug + DynClone + Any {
     fn serialized_proof(&self) -> String;
 }
 
+/// Trait for pods that are generated with a plonky2 circuit and that can be verified by a
+/// recursive MainPod circuit.
+pub trait Plonky2Pod: Pod {
+    fn verifier_data(&self) -> Result<VerifierOnlyCircuitData, Box<DynError>>;
+    fn proof(&self) -> Proof;
+}
+
 // impl Clone for Box<dyn SignedPod>
 dyn_clone::clone_trait_object!(Pod);
 
@@ -755,7 +760,7 @@ impl Pod for NonePod {
 #[derive(Debug)]
 pub struct MainPodInputs<'a> {
     pub signed_pods: &'a [&'a dyn Pod],
-    pub main_pods: &'a [&'a dyn Pod],
+    pub zk_pods: &'a [&'a dyn Pod],
     pub statements: &'a [Statement],
     pub operations: &'a [Operation],
     /// Statements that need to be made public (they can come from input pods or input

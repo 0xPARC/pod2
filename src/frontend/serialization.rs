@@ -368,7 +368,7 @@ mod tests {
         let params = middleware::Params {
             // Currently the circuit uses random access that only supports vectors of length 64.
             // With max_input_main_pods=3 we need random access to a vector of length 73.
-            max_input_main_pods: 1,
+            max_input_zk_pods: 1,
             ..Default::default()
         };
 
@@ -419,7 +419,7 @@ mod tests {
     fn build_ethdos_pod() -> Result<MainPod> {
         let params = Params {
             max_input_signed_pods: 3,
-            max_input_main_pods: 3,
+            max_input_zk_pods: 3,
             max_statements: 31,
             max_signed_pod_values: 8,
             max_public_statements: 10,
