@@ -25,7 +25,7 @@ use plonky2::{
         circuit_builder::CircuitBuilder,
         circuit_data::{
             CircuitConfig, CircuitData, CommonCircuitData, ProverCircuitData, VerifierCircuitData,
-            VerifierCircuitTarget,
+            VerifierCircuitTarget, VerifierOnlyCircuitData,
         },
         config::Hasher,
         proof::{ProofWithPublicInputs, ProofWithPublicInputsTarget},
@@ -133,9 +133,7 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         &self,
         inner_inputs: &I::Input,
         proofs: Vec<ProofWithPublicInputs<F, C, D>>,
-        // TODO: We should have VerifierOnly here, because the common is already known: it's
-        // self.params.common_data
-        verifier_datas: Vec<VerifierCircuitData<F, C, D>>,
+        verifier_datas: Vec<VerifierOnlyCircuitData<C, D>>,
     ) -> Result<ProofWithPublicInputs<F, C, D>> {
         let mut pw = PartialWitness::new();
         self.set_targets(
@@ -245,7 +243,7 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         pw: &mut PartialWitness<F>,
         innercircuit_input: &I::Input,
         recursive_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
-        verifier_datas: Vec<VerifierCircuitData<F, C, D>>,
+        verifier_datas: Vec<VerifierOnlyCircuitData<C, D>>,
     ) -> Result<()> {
         let n = recursive_proofs.len();
         assert!(n <= self.params.arity);
@@ -262,10 +260,10 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         // prev_verifier_datas_hashes.resize(self.params.arity, HashOut::<F>::ZERO);
 
         // fill the missing verifier_datas with dummy_verifier_datas
-        let dummy_verifier_datas: Vec<VerifierCircuitData<F, C, D>> = (n..self.params.arity)
-            .map(|_| self.params.verifier_data.clone())
+        let dummy_verifier_datas: Vec<VerifierOnlyCircuitData<C, D>> = (n..self.params.arity)
+            .map(|_| self.params.verifier_data.verifier_only.clone())
             .collect();
-        let verifier_datas: Vec<VerifierCircuitData<F, C, D>> =
+        let verifier_datas: Vec<VerifierOnlyCircuitData<C, D>> =
             [verifier_datas, dummy_verifier_datas].concat();
 
         // set the first n selectors to true, and the rest to false
@@ -283,10 +281,7 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
 
         #[allow(clippy::needless_range_loop)]
         for i in 0..self.params.arity {
-            pw.set_verifier_data_target(
-                &self.target.verifier_datas_targ[i],
-                &verifier_datas[i].verifier_only,
-            )?;
+            pw.set_verifier_data_target(&self.target.verifier_datas_targ[i], &verifier_datas[i])?;
 
             // put together the public inputs with the verifier_data used to
             // verify the current proof

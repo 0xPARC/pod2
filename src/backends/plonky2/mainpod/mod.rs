@@ -483,10 +483,7 @@ impl Prover {
         let verifier_datas = inputs
             .recursive_pods
             .iter()
-            .map(|pod| VerifierCircuitData {
-                verifier_only: pod.verifier_data(),
-                common: todo!(),
-            })
+            .map(|pod| pod.verifier_data())
             .collect_vec();
 
         let input = MainPodVerifyInput {
