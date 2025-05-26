@@ -1,4 +1,9 @@
-use std::{any::Any, iter, sync::Arc};
+use std::{
+    any::Any,
+    collections::HashMap,
+    iter,
+    sync::{Arc, MappedRwLockReadGuard, RwLock},
+};
 
 use base64::{prelude::BASE64_STANDARD, Engine};
 use itertools::Itertools;
@@ -8,7 +13,7 @@ use plonky2::{
     iop::witness::{PartialWitness, WitnessWrite},
     plonk::{
         circuit_builder::CircuitBuilder,
-        circuit_data::{CircuitConfig, CircuitData, CommonCircuitData, ProverCircuitData},
+        circuit_data::{self, CircuitConfig, CommonCircuitData, ProverCircuitData},
         config::Hasher,
         proof::{Proof, ProofWithPublicInputs},
     },
@@ -21,17 +26,18 @@ use crate::{
         circuits::{
             common::{Flattenable, StatementTarget},
             mainpod::{
-                recursive_circuit_data, CalculateIdGadget, CustomPredicateVerification,
-                MainPodVerifyCircuit, MainPodVerifyInput, MainPodVerifyTarget, NUM_PUBLIC_INPUTS,
-                PI_OFFSET_ID,
+                CalculateIdGadget, CustomPredicateVerification, MainPodVerifyCircuit,
+                MainPodVerifyInput, MainPodVerifyTarget, NUM_PUBLIC_INPUTS, PI_OFFSET_ID,
             },
         },
         error::{Error, Result},
-        mainpod,
+        get_or_set_map_cache, mainpod,
         mainpod::{calculate_id, MainPodProof},
         primitives::merkletree::MerkleClaimAndProof,
         recursion::{self, common_data_for_recursion, RecursiveCircuit},
+        recursive_main_pod_circuit_data,
         signedpod::SignedPod,
+        LazyLock,
     },
     middleware::{
         self, resolve_wildcard_values, AnchoredKey, CustomPredicateBatch, DynError, Hash,
@@ -87,19 +93,6 @@ pub struct EmptyPod {
     proof: MainPodProof,
 }
 
-// TODO: Cache this (this comes from the recursive circuit instantiated with the MainPod circuit)
-// fn get_circuit_data(params: &Params) -> Result<CircuitData<F, C, D>> {
-//     let data: CircuitData<F, C, D> = timed!(
-//         "common_data_for_recursion",
-//         common_data_for_recursion::<MainPodVerifyTarget>(
-//             params.max_input_main_pods,
-//             NUM_PUBLIC_INPUTS,
-//             params
-//         )?
-//     );
-//     Ok(data)
-// }
-
 /// Pad the circuit to match a given `CommonCircuitData`.
 fn pad_circuit(builder: &mut CircuitBuilder<F, D>, common_data: &CommonCircuitData<F, D>) {
     assert_eq!(common_data.config, builder.config);
@@ -128,15 +121,19 @@ fn pad_circuit(builder: &mut CircuitBuilder<F, D>, common_data: &CommonCircuitDa
 
 use pretty_assertions::assert_eq;
 
-// TODO: Cache this
-fn build(params: &Params) -> Result<(EmptyPodVerifyTarget, CircuitData<F, C, D>)> {
+type CircuitData = circuit_data::CircuitData<F, C, D>;
+
+static EMPTY_POD_DATA: LazyLock<RwLock<HashMap<Params, (EmptyPodVerifyTarget, CircuitData)>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+fn _build(params: &Params) -> Result<(EmptyPodVerifyTarget, CircuitData)> {
     let config = CircuitConfig::standard_recursion_config();
     let mut builder = CircuitBuilder::<F, D>::new(config);
     let empty_pod_verify_target = EmptyPodVerifyCircuit {
         params: params.clone(),
     }
     .eval(&mut builder)?;
-    let circuit_data = recursive_circuit_data(params)?;
+    let circuit_data = recursive_main_pod_circuit_data(params)?;
     pad_circuit(&mut builder, &circuit_data.common);
     // println!("DBG builder.num_gates={}", builder.num_gates());
 
@@ -150,9 +147,13 @@ fn build(params: &Params) -> Result<(EmptyPodVerifyTarget, CircuitData<F, C, D>)
     Ok((empty_pod_verify_target, data))
 }
 
+fn build(params: &Params) -> Result<MappedRwLockReadGuard<(EmptyPodVerifyTarget, CircuitData)>> {
+    get_or_set_map_cache(&EMPTY_POD_DATA, params, |params| _build(params))
+}
+
 impl EmptyPod {
     fn _prove(params: &Params, vds_root: Hash) -> Result<EmptyPod> {
-        let (empty_pod_verify_target, data) = build(params)?;
+        let (empty_pod_verify_target, data) = &*build(params)?;
 
         let mut pw = PartialWitness::<F>::new();
         empty_pod_verify_target.set_targets(&mut pw, vds_root)?;
@@ -186,12 +187,16 @@ impl EmptyPod {
             .cloned()
             .collect_vec();
 
-        let (_, data) = build(&self.params)?;
+        let (_, data) = &*build(&self.params)?;
         data.verify(ProofWithPublicInputs {
             proof: self.proof.clone(),
             public_inputs,
         })
         .map_err(|e| Error::custom(format!("EmptyPod proof verification failure: {:?}", e)))
+    }
+    pub fn verifier_data_hash(params: &Params) -> Result<Hash> {
+        let (_, data) = &*build(params)?;
+        Ok(Hash(data.verifier_only.circuit_digest.elements))
     }
 }
 

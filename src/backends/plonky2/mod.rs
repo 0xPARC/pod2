@@ -14,6 +14,17 @@ use std::{
 };
 
 pub use error::*;
+use plonky2::plonk::circuit_data;
+
+use crate::{
+    backends::plonky2::{
+        basetypes::{CircuitData, C, D},
+        circuits::mainpod::{MainPodVerifyTarget, NUM_PUBLIC_INPUTS},
+        recursion::common_data_for_recursion,
+    },
+    middleware::{Hash, Params, F},
+    timed,
+};
 
 /// Generic function to build a HashMap cache from a static LazyLock.
 pub fn get_or_set_map_cache<K, V>(
@@ -42,4 +53,27 @@ where
         }
     }
     get_or_set_map_cache(cache, key, try_set_fn)
+}
+
+static RECURSIVE_MAIN_POD_DATA: LazyLock<RwLock<HashMap<Params, CircuitData>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+pub fn recursive_main_pod_circuit_data(
+    params: &Params,
+) -> Result<MappedRwLockReadGuard<CircuitData>> {
+    get_or_set_map_cache(&RECURSIVE_MAIN_POD_DATA, params, |params| {
+        timed!(
+            "common_data_for_recursion",
+            common_data_for_recursion::<MainPodVerifyTarget>(
+                params.max_input_main_pods,
+                NUM_PUBLIC_INPUTS,
+                params
+            )
+        )
+    })
+}
+
+pub fn recursive_main_pod_verifier_data_hash(params: &Params) -> Result<Hash> {
+    let data = recursive_main_pod_circuit_data(params)?;
+    Ok(Hash(data.verifier_only.circuit_digest.elements))
 }

@@ -51,24 +51,6 @@ use crate::{
     timed,
 };
 
-type CircuitData = circuit_data::CircuitData<F, C, D>;
-
-static RECURSIVE_CIRCUIT_DATA: LazyLock<RwLock<HashMap<Params, CircuitData>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
-
-pub fn recursive_circuit_data(params: &Params) -> Result<MappedRwLockReadGuard<CircuitData>> {
-    get_or_set_map_cache(&RECURSIVE_CIRCUIT_DATA, params, |params| {
-        timed!(
-            "common_data_for_recursion",
-            common_data_for_recursion::<MainPodVerifyTarget>(
-                params.max_input_main_pods,
-                NUM_PUBLIC_INPUTS,
-                params
-            )
-        )
-    })
-}
-
 //
 // MainPod verification
 //

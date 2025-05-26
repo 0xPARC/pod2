@@ -17,13 +17,12 @@ use plonky2::{
         target::{BoolTarget, Target},
         witness::{PartialWitness, PartitionWitness, Witness, WitnessWrite},
     },
-    plonk::{circuit_builder::CircuitBuilder, circuit_data::CommonCircuitData},
     util::serialization::{Buffer, IoResult, Read, Write},
 };
 
 use crate::{
     backends::plonky2::{
-        basetypes::D,
+        basetypes::{CircuitBuilder, CommonCircuitData, D},
         circuits::mainpod::CustomPredicateVerification,
         error::Result,
         mainpod::{Operation, OperationArg, Statement},
@@ -47,13 +46,13 @@ pub struct ValueTarget {
 }
 
 impl ValueTarget {
-    pub fn zero(builder: &mut CircuitBuilder<F, D>) -> Self {
+    pub fn zero(builder: &mut CircuitBuilder) -> Self {
         Self {
             elements: [builder.zero(); VALUE_SIZE],
         }
     }
 
-    pub fn one(builder: &mut CircuitBuilder<F, D>) -> Self {
+    pub fn one(builder: &mut CircuitBuilder) -> Self {
         Self {
             elements: array::from_fn(|i| {
                 if i == 0 {
@@ -99,25 +98,25 @@ impl StatementArgTarget {
         }
     }
 
-    pub fn none(builder: &mut CircuitBuilder<F, D>) -> Self {
+    pub fn none(builder: &mut CircuitBuilder) -> Self {
         let empty = builder.constant_value(EMPTY_VALUE);
         Self::new(empty, empty)
     }
 
-    pub fn literal(builder: &mut CircuitBuilder<F, D>, value: &ValueTarget) -> Self {
+    pub fn literal(builder: &mut CircuitBuilder, value: &ValueTarget) -> Self {
         let empty = builder.constant_value(EMPTY_VALUE);
         Self::new(*value, empty)
     }
 
     pub fn anchored_key(
-        _builder: &mut CircuitBuilder<F, D>,
+        _builder: &mut CircuitBuilder,
         pod_id: &ValueTarget,
         key: &ValueTarget,
     ) -> Self {
         Self::new(*pod_id, *key)
     }
 
-    pub fn wildcard_literal(builder: &mut CircuitBuilder<F, D>, value: &ValueTarget) -> Self {
+    pub fn wildcard_literal(builder: &mut CircuitBuilder, value: &ValueTarget) -> Self {
         let empty = builder.constant_value(EMPTY_VALUE);
         Self::new(*value, empty)
     }
@@ -137,17 +136,17 @@ pub struct StatementTarget {
 }
 
 pub trait Build<T> {
-    fn build(self, builder: &mut CircuitBuilder<F, D>, params: &Params) -> T;
+    fn build(self, builder: &mut CircuitBuilder, params: &Params) -> T;
 }
 
 impl Build<NativePredicateTarget> for NativePredicate {
-    fn build(self, builder: &mut CircuitBuilder<F, D>, params: &Params) -> NativePredicateTarget {
+    fn build(self, builder: &mut CircuitBuilder, params: &Params) -> NativePredicateTarget {
         NativePredicateTarget::constant(builder, params, self)
     }
 }
 
 impl<T> Build<T> for T {
-    fn build(self, _builder: &mut CircuitBuilder<F, D>, _params: &Params) -> T {
+    fn build(self, _builder: &mut CircuitBuilder, _params: &Params) -> T {
         self
     }
 }
@@ -155,7 +154,7 @@ impl<T> Build<T> for T {
 impl StatementTarget {
     /// Build a new native StatementTarget.  Pads the arguments.
     pub fn new_native(
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         params: &Params,
         native_predicate: impl Build<NativePredicateTarget>,
         args: &[StatementArgTarget],
@@ -194,7 +193,7 @@ impl StatementTarget {
 
     pub fn has_native_type(
         &self,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         params: &Params,
         t: NativePredicate,
     ) -> BoolTarget {
@@ -210,7 +209,7 @@ pub struct OperationTypeTarget {
 
 impl OperationTypeTarget {
     pub fn new_custom(
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         batch_id: HashOutTarget,
         index: Target,
     ) -> Self {
@@ -222,10 +221,7 @@ impl OperationTypeTarget {
         }
     }
 
-    pub fn as_custom(
-        &self,
-        builder: &mut CircuitBuilder<F, D>,
-    ) -> (BoolTarget, HashOutTarget, Target) {
+    pub fn as_custom(&self, builder: &mut CircuitBuilder) -> (BoolTarget, HashOutTarget, Target) {
         // TODO: Use an enum for these prefixes
         let three = builder.constant(F::from_canonical_usize(3));
         let op_is_custom = builder.is_equal(self.elements[0], three);
@@ -234,7 +230,7 @@ impl OperationTypeTarget {
         (op_is_custom, batch_id, index)
     }
 
-    pub fn has_native(&self, builder: &mut CircuitBuilder<F, D>, t: NativeOperation) -> BoolTarget {
+    pub fn has_native(&self, builder: &mut CircuitBuilder, t: NativeOperation) -> BoolTarget {
         // TODO: Use an enum for these prefixes
         let one = builder.one();
         let op_is_native = builder.is_equal(self.elements[0], one);
@@ -288,7 +284,7 @@ pub struct NativePredicateTarget(Target);
 
 impl NativePredicateTarget {
     pub fn constant(
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         params: &Params,
         native_predicate: NativePredicate,
     ) -> Self {
@@ -316,7 +312,7 @@ pub struct PredicateTarget {
 
 impl PredicateTarget {
     pub fn new_native(
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         params: &Params,
         native_predicate: impl Build<NativePredicateTarget>,
     ) -> Self {
@@ -328,7 +324,7 @@ impl PredicateTarget {
         }
     }
 
-    pub fn new_batch_self(builder: &mut CircuitBuilder<F, D>, index: Target) -> Self {
+    pub fn new_batch_self(builder: &mut CircuitBuilder, index: Target) -> Self {
         let prefix = builder.constant(F::from(PredicatePrefix::BatchSelf));
         let zero = builder.zero();
         Self {
@@ -337,7 +333,7 @@ impl PredicateTarget {
     }
 
     pub fn new_custom(
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
         batch_id: HashOutTarget,
         index: Target,
     ) -> Self {
@@ -373,7 +369,7 @@ impl LiteralOrWildcardTarget {
     /// cases: ((is_key, key), (is_wildcard, wildcard_index))
     pub fn cases(
         &self,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
     ) -> ((BoolTarget, ValueTarget), (BoolTarget, Target)) {
         let zero = builder.zero();
         let is_zero_tail: Vec<_> = (1..4)
@@ -397,12 +393,12 @@ pub struct StatementTmplArgTarget {
 }
 
 impl StatementTmplArgTarget {
-    pub fn as_none(&self, builder: &mut CircuitBuilder<F, D>) -> BoolTarget {
+    pub fn as_none(&self, builder: &mut CircuitBuilder) -> BoolTarget {
         let prefix = builder.constant(F::from(StatementTmplArgPrefix::None));
         builder.is_equal(self.elements[0], prefix)
     }
 
-    pub fn as_literal(&self, builder: &mut CircuitBuilder<F, D>) -> (BoolTarget, ValueTarget) {
+    pub fn as_literal(&self, builder: &mut CircuitBuilder) -> (BoolTarget, ValueTarget) {
         let prefix = builder.constant(F::from(StatementTmplArgPrefix::Literal));
         let case_ok = builder.is_equal(self.elements[0], prefix);
         let value = ValueTarget::from_slice(&self.elements[1..5]);
@@ -411,7 +407,7 @@ impl StatementTmplArgTarget {
 
     pub fn as_anchored_key(
         &self,
-        builder: &mut CircuitBuilder<F, D>,
+        builder: &mut CircuitBuilder,
     ) -> (BoolTarget, Target, LiteralOrWildcardTarget) {
         let prefix = builder.constant(F::from(StatementTmplArgPrefix::AnchoredKey));
         let case_ok = builder.is_equal(self.elements[0], prefix);
@@ -420,7 +416,7 @@ impl StatementTmplArgTarget {
         (case_ok, id_wildcard_index, value_key_or_wildcard)
     }
 
-    pub fn as_wildcard_literal(&self, builder: &mut CircuitBuilder<F, D>) -> (BoolTarget, Target) {
+    pub fn as_wildcard_literal(&self, builder: &mut CircuitBuilder) -> (BoolTarget, Target) {
         let prefix = builder.constant(F::from(StatementTmplArgPrefix::WildcardLiteral));
         let case_ok = builder.is_equal(self.elements[0], prefix);
         let wildcard_index = self.elements[1];
@@ -479,7 +475,7 @@ pub struct CustomPredicateBatchTarget {
 }
 
 impl CustomPredicateBatchTarget {
-    pub fn id(&self, builder: &mut CircuitBuilder<F, D>) -> HashOutTarget {
+    pub fn id(&self, builder: &mut CircuitBuilder) -> HashOutTarget {
         let flattened = self.predicates.iter().flat_map(|cp| cp.flatten()).collect();
         builder.hash_n_to_hash_no_pad::<PoseidonHash>(flattened)
     }
@@ -573,7 +569,7 @@ impl Flattenable for CustomPredicateEntryTarget {
 }
 
 impl CustomPredicateEntryTarget {
-    pub fn hash(&self, builder: &mut CircuitBuilder<F, D>) -> HashOutTarget {
+    pub fn hash(&self, builder: &mut CircuitBuilder) -> HashOutTarget {
         builder.hash_n_to_hash_no_pad::<PoseidonHash>(self.flatten())
     }
 }
@@ -630,7 +626,7 @@ pub struct CustomPredicateVerifyQueryTarget {
 }
 
 impl CustomPredicateVerifyQueryTarget {
-    pub fn hash(&self, builder: &mut CircuitBuilder<F, D>) -> HashOutTarget {
+    pub fn hash(&self, builder: &mut CircuitBuilder) -> HashOutTarget {
         builder.hash_n_to_hash_no_pad::<PoseidonHash>(self.flatten())
     }
 }
@@ -930,7 +926,7 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     fn lt_mask(&mut self, len: usize, n: Target) -> Vec<BoolTarget>;
 }
 
-impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
+impl CircuitBuilderPod<F, D> for CircuitBuilder {
     fn connect_slice(&mut self, xs: &[Target], ys: &[Target]) {
         assert_eq!(xs.len(), ys.len());
         for (x, y) in xs.iter().zip(ys.iter()) {
@@ -1267,11 +1263,11 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder<F, D> {
     // then do `ts: &[HashCache<T>]`.
     fn vec_ref<T: Flattenable>(&mut self, params: &Params, ts: &[T], i: Target) -> T {
         // TODO: Revisit this when we need more than 64 statements.
-        let vector_ref = |builder: &mut CircuitBuilder<F, D>, v: &[Target], i| {
+        let vector_ref = |builder: &mut CircuitBuilder, v: &[Target], i| {
             assert!(v.len() <= 64);
             builder.random_access(i, v.to_vec())
         };
-        let matrix_row_ref = |builder: &mut CircuitBuilder<F, D>, m: &[Vec<Target>], i| {
+        let matrix_row_ref = |builder: &mut CircuitBuilder, m: &[Vec<Target>], i| {
             let num_rows = m.len();
             let num_columns = m
                 .first()
@@ -1367,7 +1363,7 @@ pub struct LtMaskGenerator {
     pub(crate) mask: Vec<Target>,
 }
 
-impl<F: RichField + Extendable<D>, const D: usize> SimpleGenerator<F, D> for LtMaskGenerator {
+impl SimpleGenerator<F, D> for LtMaskGenerator {
     fn id(&self) -> String {
         "LtMaskGenerator".to_string()
     }
@@ -1390,12 +1386,12 @@ impl<F: RichField + Extendable<D>, const D: usize> SimpleGenerator<F, D> for LtM
         Ok(())
     }
 
-    fn serialize(&self, dst: &mut Vec<u8>, _common_data: &CommonCircuitData<F, D>) -> IoResult<()> {
+    fn serialize(&self, dst: &mut Vec<u8>, _common_data: &CommonCircuitData) -> IoResult<()> {
         dst.write_target(self.n)?;
         dst.write_target_vec(&self.mask)
     }
 
-    fn deserialize(src: &mut Buffer, _common_data: &CommonCircuitData<F, D>) -> IoResult<Self> {
+    fn deserialize(src: &mut Buffer, _common_data: &CommonCircuitData) -> IoResult<Self> {
         let n = src.read_target()?;
         let mask = src.read_target_vec()?;
         Ok(Self { n, mask })

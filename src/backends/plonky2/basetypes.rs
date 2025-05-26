@@ -5,7 +5,7 @@
 use plonky2::{
     field::extension::quadratic::QuadraticExtension,
     hash::poseidon::PoseidonHash,
-    plonk::{config::GenericConfig, proof::Proof as Plonky2Proof},
+    plonk::{circuit_builder, circuit_data, config::GenericConfig, proof::Proof as Plonky2Proof},
 };
 use serde::Serialize;
 
@@ -29,3 +29,9 @@ impl GenericConfig<D> for C {
 
 /// proof system proof
 pub type Proof = Plonky2Proof<F, C, D>;
+
+pub type CircuitData = circuit_data::CircuitData<F, C, D>;
+pub type CommonCircuitData = circuit_data::CommonCircuitData<F, D>;
+pub type ProverOnlyCircuitData = circuit_data::ProverOnlyCircuitData<F, C, D>;
+pub type VerifierOnlyCircuitData = circuit_data::VerifierOnlyCircuitData<C, D>;
+pub type CircuitBuilder = circuit_builder::CircuitBuilder<F, D>;
