@@ -19,7 +19,7 @@ use plonky2::{
         circuit_builder::CircuitBuilder,
         circuit_data::{CircuitConfig, CircuitData, CommonCircuitData, ProverCircuitData},
         config::Hasher,
-        proof::{Proof, ProofWithPublicInputs},
+        proof::ProofWithPublicInputs,
     },
     util::serialization::{Buffer, Read},
 };
@@ -39,7 +39,7 @@ use plonky2_ecdsa::{
 
 use crate::{
     backends::plonky2::{
-        basetypes::{C, D},
+        basetypes::{Proof, C, D},
         circuits::{
             common::{
                 CircuitBuilderPod, Flattenable, PredicateTarget, StatementArgTarget,
@@ -52,7 +52,6 @@ use crate::{
         },
         error::{Error, Result},
         mainpod,
-        mainpod::{calculate_id, MainPodProof},
         primitives::{
             merkletree::{
                 MerkleClaimAndProof, MerkleProofExistenceGadget, MerkleProofExistenceTarget,
@@ -290,20 +289,33 @@ impl EcdsaPodVerifyTarget {
     }
 }
 
+static ECDSA_POD_DATA: LazyLock<
+    RwLock<HashMap<Params, (EcdsaPodVerifyTarget, CircuitData<F, C, D>)>>,
+> = LazyLock::new(|| RwLock::new(HashMap::new()));
+
 /// build the circuit of EcdsaPodVerifyTarget, padded to the amount of gates
 /// needed to make it compatible with the RecursiveCircuit
-fn build(params: &Params) -> Result<CircuitData<F, C, D>> {
+fn _build(params: &Params) -> Result<(EcdsaPodVerifyTarget, CircuitData<F, C, D>)> {
     // let config = CircuitConfig::standard_recursion_config();
     let config = CircuitConfig::standard_ecc_config();
     let mut builder = CircuitBuilder::<F, D>::new(config.clone());
-    let _ = EcdsaPodVerifyTarget::build(&mut builder, params, &[] /*TODO*/)?;
-    let circuit_data = crate::backends::plonky2::circuits::mainpod::recursive_circuit_data(params)?;
+    let ecdsapod_target = EcdsaPodVerifyTarget::build(&mut builder, params, &[] /*TODO*/)?;
+    let circuit_data = crate::backends::plonky2::recursive_main_pod_circuit_data(params);
     // let circuit_data = recursive_circuit_data_OPT(params, config)?;
     crate::backends::plonky2::emptypod::pad_circuit(&mut builder, &circuit_data.common);
 
-    let data = builder.build::<C>();
-    assert_eq!(data.common, circuit_data.common);
-    Ok(data)
+    let data = timed!("EcdsaPod build", builder.build::<C>());
+    assert_eq!(circuit_data.common, data.common);
+    Ok((ecdsapod_target, data))
+}
+// fn build(params: &Params) -> (EcdsaPodVerifyTarget, CircuitData<F, C, D>) {
+fn build(params: &Params) -> MappedRwLockReadGuard<(EcdsaPodVerifyTarget, CircuitData<F, C, D>)> {
+    crate::backends::plonky2::get_or_set_map_cache(
+        // &crate::backends::plonky2::RECURSIVE_MAIN_POD_DATA,
+        &ECDSA_POD_DATA,
+        params,
+        |params| _build(params).expect("successful build"),
+    )
 }
 
 #[derive(Clone, Debug)]
@@ -311,7 +323,7 @@ pub struct EcdsaPod {
     params: Params,
     id: PodId,
     dict: Dictionary,
-    proof: MainPodProof,
+    proof: Proof,
     // signature: ECDSASignature<Secp256K1>,
     // msg: F,
 }
@@ -323,12 +335,25 @@ impl EcdsaPod {
         sk: ECDSASecretKey<Secp256K1>,
     ) -> Result<EcdsaPod> {
         // let config = CircuitConfig::standard_recursion_config();
-        // let rec_params = recursion::new_params::<MainPodVerifyTarget>(
-        //     params.max_input_main_pods,
-        //     NUM_PUBLIC_INPUTS,
-        //     params,
-        // )?;
-        // let main_pod = RecursiveCircuit::<MainPodVerifyTarget>::build(&rec_params, params)?;
+        let rec_params = recursion::new_params::<MainPodVerifyTarget>(
+            params.max_input_recursive_pods,
+            NUM_PUBLIC_INPUTS,
+            params,
+        )?;
+        // let ecdsa_pod = RecursiveCircuit::<EcdsaPodVerifyTarget>::build(&rec_params, params)?;
+        let config = CircuitConfig::standard_ecc_config();
+        let mut builder = CircuitBuilder::new(config.clone());
+        let targets = RecursiveCircuit::<EcdsaPodVerifyTarget>::build_targets(
+            &mut builder,
+            &rec_params,
+            params,
+        )?;
+        let prover: ProverCircuitData<F, C, D> = builder.build_prover::<C>();
+        let ecdsa_pod = RecursiveCircuit::<EcdsaPodVerifyTarget> {
+            params: rec_params.clone(),
+            prover,
+            target: targets,
+        };
 
         // first sign the pod id
         let pubkey: ECDSAPublicKey<Secp256K1> =
@@ -351,6 +376,7 @@ impl EcdsaPod {
         // TODO this will be done once at the beginning, not each time
         // let data = build(params)?;
 
+        /*
         // build circuit targets
         // let config = CircuitConfig::standard_recursion_config();
         let config = CircuitConfig::standard_ecc_config();
@@ -365,9 +391,9 @@ impl EcdsaPod {
         dbg!("A 2");
         // crate::backends::plonky2::emptypod::pad_circuit(&mut builder, &circuit_data.common);
         dbg!("A 3");
+        */
 
         // set targets
-        let mut pw = PartialWitness::<F>::new();
         dbg!("A 4");
         let input = EcdsaPodVerifyInput {
             vds_root,
@@ -376,21 +402,23 @@ impl EcdsaPod {
             dict: dict.clone(),
             signature,
         };
-        ecdsa_targ.set_targets(&mut pw, &input)?; //vds_root, id, pubkey, dict.clone(), signature)?;
-        dbg!("A 5");
-
-        let data = builder.build::<C>();
-        dbg!("A 6");
-
-        let proof = data.prove(pw)?;
-        dbg!("A 7");
-        let id = &proof.public_inputs[PI_OFFSET_ID..PI_OFFSET_ID + HASH_SIZE];
-        let id = PodId(Hash([id[0], id[1], id[2], id[3]]));
+        let proof_with_pis = ecdsa_pod.prove(&input, vec![], vec![])?;
+        // let mut pw = PartialWitness::<F>::new();
+        // ecdsa_targ.set_targets(&mut pw, &input)?; //vds_root, id, pubkey, dict.clone(), signature)?;
+        // dbg!("A 5");
+        //
+        // let data = builder.build::<C>();
+        // dbg!("A 6");
+        //
+        // let proof = data.prove(pw)?;
+        // dbg!("A 7");
+        // let id = &proof.public_inputs[PI_OFFSET_ID..PI_OFFSET_ID + HASH_SIZE];
+        // let id = PodId(Hash([id[0], id[1], id[2], id[3]]));
         Ok(EcdsaPod {
             params: params.clone(),
             id,
             dict,
-            proof: proof.proof,
+            proof: proof_with_pis.proof,
         })
     }
     fn new(
@@ -420,7 +448,8 @@ impl EcdsaPod {
 
         // TODO: cache these artefacts
         let rec_params = recursion::new_params::<MainPodVerifyTarget>(
-            self.params.max_input_main_pods,
+            // self.params.max_input_main_pods, // TODO rm
+            self.params.max_input_recursive_pods,
             NUM_PUBLIC_INPUTS,
             &self.params,
         )?;
@@ -447,6 +476,9 @@ impl EcdsaPod {
     }
 }
 impl Pod for EcdsaPod {
+    fn params(&self) -> &Params {
+        &self.params
+    }
     fn verify(&self) -> Result<(), Box<DynError>> {
         Ok(self._verify().map_err(Box::new)?)
     }
@@ -521,7 +553,7 @@ pub fn recursive_circuit_data_OPT(
                 "common_data_for_recursion",
                 common_data_for_recursion_OPT::<MainPodVerifyTarget>(
                     config.clone(),
-                    params.max_input_main_pods,
+                    params.max_input_recursive_pods,
                     NUM_PUBLIC_INPUTS,
                     params
                 )?
@@ -646,7 +678,7 @@ pub mod tests {
     fn test_ecdsa_pod_verify() -> Result<()> {
         let params = Params {
             max_signed_pod_values: 6,
-            max_input_main_pods: 2,
+            max_input_recursive_pods: 2,
             ..Default::default()
         };
         // set max_signed_pod_values to 6, and we insert 3 leaves, so that the
