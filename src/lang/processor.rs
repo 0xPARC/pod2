@@ -123,11 +123,7 @@ fn first_pass<'a>(
                     .clone()
                     .into_inner()
                     .find(|p| p.as_rule() == Rule::identifier)
-                    .ok_or_else(|| ProcessorError::MissingElement {
-                        element_type: "predicate name".to_string(),
-                        context: "custom_predicate_def".to_string(),
-                        span: Some(get_span(&pair)),
-                    })?;
+                    .unwrap();
                 let pred_name = pred_name_pair.as_str().to_string();
 
                 if defined_custom_names.contains(&pred_name) {
@@ -175,22 +171,12 @@ fn count_public_args(pred_def_pair: &Pair<Rule>) -> Result<usize, ProcessorError
         .clone()
         .into_inner()
         .find(|p| p.as_rule() == Rule::arg_section)
-        .ok_or_else(|| ProcessorError::MissingElement {
-            element_type: "arg_section".to_string(),
-            context: "custom_predicate_def (count_public_args)".to_string(),
-            span: Some(get_span(pred_def_pair)),
-        })?;
-
-    let arg_section_span = get_span(&arg_section_pair);
+        .unwrap();
 
     let public_arg_list_pair = arg_section_pair
         .into_inner()
         .find(|p| p.as_rule() == Rule::public_arg_list)
-        .ok_or_else(|| ProcessorError::MissingElement {
-            element_type: "public_arg_list".to_string(),
-            context: "arg_section in custom_predicate_def (count_public_args)".to_string(),
-            span: Some(arg_section_span),
-        })?;
+        .unwrap();
 
     Ok(public_arg_list_pair
         .into_inner()
@@ -235,14 +221,7 @@ fn pest_pair_to_builder_arg(
         }
         Rule::anchored_key => {
             let mut inner_ak_pairs = arg_content_pair.clone().into_inner();
-            let pod_id_pair =
-                inner_ak_pairs
-                    .next()
-                    .ok_or_else(|| ProcessorError::MissingElement {
-                        element_type: "pod identifier (SELF or ?Var) for BuilderArg".to_string(),
-                        context: format!("anchored key in {}", context_stmt_name),
-                        span: Some(get_span(arg_content_pair)),
-                    })?;
+            let pod_id_pair = inner_ak_pairs.next().unwrap();
 
             let pod_self_or_wc_str = match pod_id_pair.as_rule() {
                 Rule::wildcard => {
@@ -252,7 +231,7 @@ fn pest_pair_to_builder_arg(
                 Rule::self_keyword => SelfOrWildcardStr::SELF,
                 _ => {
                     return Err(ProcessorError::RuleMismatch {
-                        expected_rule: Rule::wildcard, // Or Rule::self_keyword
+                        expected_rule: Rule::wildcard,
                         found_rule: pod_id_pair.as_rule(),
                         context: format!(
                             "pod identifier part of anchored key in {} for BuilderArg",
@@ -263,19 +242,7 @@ fn pest_pair_to_builder_arg(
                 }
             };
 
-            let key_part_pair =
-                inner_ak_pairs
-                    .next()
-                    .ok_or_else(|| ProcessorError::MissingElement {
-                        element_type: "key part ([?KeyVar] or [\"key_str\"]) for BuilderArg"
-                            .to_string(),
-                        context: format!(
-                            "anchored key {} in {}",
-                            pod_id_pair.as_str(),
-                            context_stmt_name
-                        ),
-                        span: Some(get_span(arg_content_pair)),
-                    })?;
+            let key_part_pair = inner_ak_pairs.next().unwrap();
 
             let key_or_wildcard_str = match key_part_pair.as_rule() {
                 Rule::wildcard => {
@@ -441,20 +408,12 @@ fn process_and_add_custom_predicate_to_batch(
     let mut inner_pairs = pred_def_pair.clone().into_inner();
     let name_pair = inner_pairs
         .find(|p| p.as_rule() == Rule::identifier)
-        .ok_or_else(|| ProcessorError::MissingElement {
-            element_type: "predicate name".to_string(),
-            context: "custom_predicate_def".to_string(),
-            span: Some(get_span(pred_def_pair)),
-        })?;
+        .unwrap();
     let name = name_pair.as_str().to_string();
 
     let arg_section_pair = inner_pairs
         .find(|p| p.as_rule() == Rule::arg_section)
-        .ok_or_else(|| ProcessorError::MissingElement {
-            element_type: "arg_section".to_string(),
-            context: "custom_predicate_def".to_string(),
-            span: Some(get_span(pred_def_pair)),
-        })?;
+        .unwrap();
 
     let mut public_arg_strings: Vec<String> = Vec::new();
     let mut private_arg_strings: Vec<String> = Vec::new();
@@ -507,11 +466,7 @@ fn process_and_add_custom_predicate_to_batch(
 
     let conjunction_type_pair = inner_pairs
         .find(|p| p.as_rule() == Rule::conjunction_type)
-        .ok_or_else(|| ProcessorError::MissingElement {
-            element_type: "conjunction type (AND/OR)".to_string(),
-            context: format!("definition of predicate {}", name),
-            span: Some(get_span(pred_def_pair)),
-        })?;
+        .unwrap();
     let conjunction = match conjunction_type_pair.as_str() {
         "AND" => true,
         "OR" => false,
@@ -569,7 +524,7 @@ fn process_and_add_custom_predicate_to_batch(
         let stb = validate_and_build_statement_template(
             stmt_name_str,
             &middleware_predicate_type,
-            builder_args, // Consumed
+            builder_args,
             processing_ctx,
             get_span(&stmt_pair),
             get_span(&stmt_name_pair),
@@ -648,11 +603,7 @@ fn process_proof_request_statement_template(
     let mut inner_stmt_pairs = stmt_pair.clone().into_inner();
     let name_pair = inner_stmt_pairs
         .find(|p| p.as_rule() == Rule::identifier)
-        .ok_or_else(|| ProcessorError::MissingElement {
-            element_type: "statement name".to_string(),
-            context: "statement parsing".to_string(),
-            span: Some(get_span(stmt_pair)),
-        })?;
+        .unwrap();
     let stmt_name_str = name_pair.as_str();
 
     let builder_args = parse_statement_args(stmt_pair, stmt_name_str)?;
@@ -717,36 +668,15 @@ fn process_literal_value(
     lit_val_pair: &Pair<Rule>,
     context_stmt_name: &str,
 ) -> Result<Value, ProcessorError> {
-    let inner_lit =
-        lit_val_pair
-            .clone()
-            .into_inner()
-            .next()
-            .ok_or_else(|| ProcessorError::MissingElement {
-                element_type: "literal content".to_string(),
-                context: format!("literal in {}", context_stmt_name),
-                span: Some(get_span(lit_val_pair)),
-            })?;
+    let inner_lit = lit_val_pair.clone().into_inner().next().unwrap();
 
     match inner_lit.as_rule() {
         Rule::literal_int => {
-            let val = inner_lit.as_str().parse::<i64>().map_err(|_e| {
-                ProcessorError::InvalidLiteralFormat {
-                    kind: "int".to_string(),
-                    value: inner_lit.as_str().to_string(),
-                    span: Some(get_span(&inner_lit)),
-                }
-            })?;
+            let val = inner_lit.as_str().parse::<i64>().unwrap();
             Ok(Value::from(val))
         }
         Rule::literal_bool => {
-            let val = inner_lit.as_str().parse::<bool>().map_err(|_e| {
-                ProcessorError::InvalidLiteralFormat {
-                    kind: "bool".to_string(),
-                    value: inner_lit.as_str().to_string(),
-                    span: Some(get_span(&inner_lit)),
-                }
-            })?;
+            let val = inner_lit.as_str().parse::<bool>().unwrap();
             Ok(Value::from(val))
         }
         Rule::literal_raw => {
@@ -801,22 +731,8 @@ fn process_literal_value(
                 .into_inner()
                 .map(|dict_entry_pair| {
                     let mut entry_inner = dict_entry_pair.clone().into_inner();
-                    let key_pair =
-                        entry_inner
-                            .next()
-                            .ok_or_else(|| ProcessorError::MissingElement {
-                                element_type: "dict key".to_string(),
-                                context: format!("dict in {}", context_stmt_name),
-                                span: Some(get_span(&dict_entry_pair)),
-                            })?;
-                    let val_pair =
-                        entry_inner
-                            .next()
-                            .ok_or_else(|| ProcessorError::MissingElement {
-                                element_type: "dict value".to_string(),
-                                context: format!("dict in {}", context_stmt_name),
-                                span: Some(get_span(&dict_entry_pair)),
-                            })?;
+                    let key_pair = entry_inner.next().unwrap();
+                    let val_pair = entry_inner.next().unwrap();
                     let key_str = parse_pest_string_literal(&key_pair)?;
                     let val = process_literal_value(&val_pair, context_stmt_name)?;
                     Ok((Key::new(key_str), val))
@@ -837,35 +753,7 @@ fn process_literal_value(
 }
 
 fn parse_pest_string_literal(pair: &Pair<Rule>) -> Result<String, ProcessorError> {
-    if pair.as_rule() != Rule::literal_string && pair.as_rule() != Rule::inner {
-        let actual_rule = if pair.as_rule() == Rule::literal_string {
-            pair.clone().into_inner().next().map(|p| p.as_rule())
-        } else {
-            Some(pair.as_rule())
-        };
-
-        if actual_rule != Some(Rule::inner) {
-            return Err(ProcessorError::RuleMismatch {
-                expected_rule: Rule::literal_string,
-                found_rule: pair.as_rule(),
-                context: "string literal parsing".to_string(),
-                span: Some(get_span(pair)),
-            });
-        }
-    }
-
-    let inner_pair = if pair.as_rule() == Rule::literal_string {
-        pair.clone()
-            .into_inner()
-            .next()
-            .ok_or_else(|| ProcessorError::MissingElement {
-                element_type: "string content".to_string(),
-                context: "string literal".to_string(),
-                span: Some(get_span(pair)),
-            })?
-    } else {
-        pair.clone()
-    };
+    let inner_pair = pair.clone().into_inner().next().unwrap();
 
     let raw_content = inner_pair.as_str();
     let mut result = String::with_capacity(raw_content.len());
@@ -1045,23 +933,11 @@ fn parse_statement_args(
 
     if let Some(arg_list_pair) = inner_stmt_pairs.find(|p| p.as_rule() == Rule::statement_arg_list)
     {
-        let arg_list_span = get_span(&arg_list_pair);
         for arg_pair in arg_list_pair
             .into_inner()
             .filter(|p| p.as_rule() == Rule::statement_arg)
         {
-            let arg_content_pair =
-                arg_pair
-                    .into_inner()
-                    .next()
-                    .ok_or_else(|| ProcessorError::MissingElement {
-                        element_type: "argument content for BuilderArg".to_string(),
-                        context: format!(
-                            "argument in statement {} during parse_statement_args",
-                            context_stmt_name
-                        ),
-                        span: Some(arg_list_span),
-                    })?;
+            let arg_content_pair = arg_pair.into_inner().next().unwrap();
             let builder_arg = pest_pair_to_builder_arg(&arg_content_pair, context_stmt_name)?;
             builder_args.push(builder_arg);
         }
