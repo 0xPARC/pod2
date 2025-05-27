@@ -184,6 +184,14 @@ impl CustomPredicateBatchBuilder {
         priv_args: &[&str],
         sts: &[StatementTmplBuilder],
     ) -> Result<Predicate> {
+        if self.predicates.len() >= self.params.max_custom_batch_size {
+            return Err(Error::max_length(
+                "self.predicates.len".to_string(),
+                self.predicates.len(),
+                self.params.max_custom_batch_size,
+            ));
+        }
+
         if args.len() > self.params.max_statement_args {
             return Err(Error::max_length(
                 "args.len".to_string(),
