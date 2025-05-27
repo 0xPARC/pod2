@@ -364,8 +364,7 @@ pub mod tests {
 
     #[test]
     fn test_mock_main_great_boy() -> frontend::Result<()> {
-        let params = middleware::Params::default();
-        let great_boy_builder = great_boy_pod_full_flow()?;
+        let (params, great_boy_builder) = great_boy_pod_full_flow()?;
 
         let mut prover = MockProver {};
         let great_boy_pod = great_boy_builder.prove(&mut prover, &params)?;

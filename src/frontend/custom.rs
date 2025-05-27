@@ -7,7 +7,8 @@ use crate::{
     frontend::{AnchoredKey, Error, Result, Statement, StatementArg},
     middleware::{
         self, hash_str, CustomPredicate, CustomPredicateBatch, Key, KeyOrWildcard, NativePredicate,
-        Params, PodId, Predicate, StatementTmpl, StatementTmplArg, ToFields, Value, Wildcard,
+        Params, PodId, Predicate, SelfOrWildcard, StatementTmpl, StatementTmplArg, ToFields, Value,
+        Wildcard,
     },
 };
 
@@ -15,6 +16,12 @@ use crate::{
 /// Argument to a statement template
 pub enum KeyOrWildcardStr {
     Key(String), // represents a literal key
+    Wildcard(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SelfOrWildcardStr {
+    SELF,
     Wildcard(String),
 }
 
@@ -27,9 +34,19 @@ pub fn key(s: &str) -> KeyOrWildcardStr {
 #[derive(Clone)]
 pub enum BuilderArg {
     Literal(Value),
-    /// Key: (origin, key), where origin is a Wildcard and key can be both Key or Wildcard
-    Key(String, KeyOrWildcardStr),
+    /// Key: (origin, key), where origin is SELF or Wildcard and key is Key or Wildcard
+    Key(SelfOrWildcardStr, KeyOrWildcardStr),
     WildcardLiteral(String),
+}
+
+impl From<&str> for SelfOrWildcardStr {
+    fn from(origin: &str) -> Self {
+        if origin == "SELF" {
+            SelfOrWildcardStr::SELF
+        } else {
+            SelfOrWildcardStr::Wildcard(origin.into())
+        }
+    }
 }
 
 /// When defining a `BuilderArg`, it can be done from 3 different inputs:
@@ -40,11 +57,6 @@ pub enum BuilderArg {
 /// case i.
 impl From<(&str, KeyOrWildcardStr)> for BuilderArg {
     fn from((origin, lit): (&str, KeyOrWildcardStr)) -> Self {
-        // ensure that `lit` is of HashOrWildcardStr::Hash type
-        match lit {
-            KeyOrWildcardStr::Key(_) => (),
-            _ => panic!("not supported"),
-        };
         Self::Key(origin.into(), lit)
     }
 }
@@ -197,7 +209,7 @@ impl CustomPredicateBatchBuilder {
                     .map(|a| match a {
                         BuilderArg::Literal(v) => StatementTmplArg::Literal(v.clone()),
                         BuilderArg::Key(pod_id, key) => StatementTmplArg::AnchoredKey(
-                            resolve_wildcard(args, priv_args, pod_id),
+                            resolve_self_or_wildcard(args, priv_args, pod_id),
                             resolve_key_or_wildcard(args, priv_args, key),
                         ),
                         BuilderArg::WildcardLiteral(v) => {
@@ -224,6 +236,19 @@ impl CustomPredicateBatchBuilder {
 
     pub fn finish(self) -> Arc<CustomPredicateBatch> {
         CustomPredicateBatch::new(&self.params, self.name, self.predicates)
+    }
+}
+
+fn resolve_self_or_wildcard(
+    args: &[&str],
+    priv_args: &[&str],
+    v: &SelfOrWildcardStr,
+) -> SelfOrWildcard {
+    match v {
+        SelfOrWildcardStr::SELF => SelfOrWildcard::SELF,
+        SelfOrWildcardStr::Wildcard(s) => {
+            SelfOrWildcard::Wildcard(resolve_wildcard(args, priv_args, s))
+        }
     }
 }
 

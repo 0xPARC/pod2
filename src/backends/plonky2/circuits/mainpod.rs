@@ -784,12 +784,18 @@ impl CustomOperationVerifyGadget {
         // optimization: ak_id_wc_index and wc_index use the same signals, so we only need to do one
         // random access to resolve both of them
         assert_eq!(ak_id_wc_index, wc_index);
+        // optimization: the wildcard indices have an offset of +1.  This allows us to set a fixed
+        // SELF in args[0] to resolve SelfOrWildcard::SELF encoded as a wildcard at index 0.
+        let value_self = ValueTarget::from_slice(&builder.constants(&SELF.0 .0));
+        let args = iter::once(value_self)
+            .chain(args.iter().cloned())
+            .collect_vec();
         // If the index is not used, use a 0 instead to still pass the range constraints from
         // vec_ref
         let first_index = ak_id_wc_index;
         let is_first_index_valid = builder.or(is_ak, is_wc_literal);
         let first_index = builder.select(is_first_index_valid, first_index, zero);
-        let resolved_ak_id = builder.vec_ref(&self.params, args, first_index);
+        let resolved_ak_id = builder.vec_ref(&self.params, &args, first_index);
         let resolved_wc = resolved_ak_id;
 
         // If the index is not used, use a 0 instead to still pass the range constraints from
@@ -797,7 +803,7 @@ impl CustomOperationVerifyGadget {
         let second_index = ak_key_wc_index;
         let is_second_index_valid = builder.and(is_ak, is_ak_key_wc);
         let second_index = builder.select(is_second_index_valid, second_index, zero);
-        let resolved_ak_key = builder.vec_ref(&self.params, args, second_index);
+        let resolved_ak_key = builder.vec_ref(&self.params, &args, second_index);
 
         let ak_key = ak_key_lit; // is_ak_key_lit
         let ak_key =
@@ -1537,7 +1543,7 @@ mod tests {
         frontend::{self, key, literal, CustomPredicateBatchBuilder, StatementTmplBuilder},
         middleware::{
             hash_str, hash_values, Hash, Key, KeyOrWildcard, OperationType, PodId, Predicate,
-            RawValue, StatementTmpl, StatementTmplArg, Wildcard, WildcardValue,
+            RawValue, SelfOrWildcard, StatementTmpl, StatementTmplArg, Wildcard, WildcardValue,
         },
     };
 
@@ -2481,7 +2487,7 @@ mod tests {
 
         // case: AnchoredKey(id_wildcard, key_literal)
         let st_tmpl_arg = StatementTmplArg::AnchoredKey(
-            Wildcard::new("a".to_string(), 1),
+            SelfOrWildcard::Wildcard(Wildcard::new("a".to_string(), 1)),
             KeyOrWildcard::Key(Key::from("foo")),
         );
         let args = vec![Value::from(1), Value::from(pod_id.0), Value::from(3)];
@@ -2490,11 +2496,29 @@ mod tests {
 
         // case: AnchoredKey(id_wildcard, key_wildcard)
         let st_tmpl_arg = StatementTmplArg::AnchoredKey(
-            Wildcard::new("a".to_string(), 1),
+            SelfOrWildcard::Wildcard(Wildcard::new("a".to_string(), 1)),
             KeyOrWildcard::Wildcard(Wildcard::new("b".to_string(), 2)),
         );
         let args = vec![Value::from(1), Value::from(pod_id.0), Value::from("key")];
         let expected_st_arg = StatementArg::Key(AnchoredKey::new(pod_id, Key::from("key")));
+        helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
+
+        // case: AnchoredKey(SELF, key_literal)
+        let st_tmpl_arg = StatementTmplArg::AnchoredKey(
+            SelfOrWildcard::SELF,
+            KeyOrWildcard::Key(Key::from("foo")),
+        );
+        let args = vec![Value::from(1), Value::from(pod_id.0), Value::from(3)];
+        let expected_st_arg = StatementArg::Key(AnchoredKey::new(SELF, Key::from("foo")));
+        helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
+
+        // case: AnchoredKey(SELF, key_wildcard)
+        let st_tmpl_arg = StatementTmplArg::AnchoredKey(
+            SelfOrWildcard::SELF,
+            KeyOrWildcard::Wildcard(Wildcard::new("b".to_string(), 2)),
+        );
+        let args = vec![Value::from(1), Value::from(pod_id.0), Value::from("key")];
+        let expected_st_arg = StatementArg::Key(AnchoredKey::new(SELF, Key::from("key")));
         helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
 
         // case: WildcardLiteral(wildcard)
@@ -2553,7 +2577,7 @@ mod tests {
             pred: Predicate::Native(NativePredicate::ValueOf),
             args: vec![
                 StatementTmplArg::AnchoredKey(
-                    Wildcard::new("a".to_string(), 1),
+                    SelfOrWildcard::Wildcard(Wildcard::new("a".to_string(), 1)),
                     KeyOrWildcard::Key(Key::from("key")),
                 ),
                 StatementTmplArg::Literal(Value::from("value")),
