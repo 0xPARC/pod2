@@ -230,21 +230,8 @@ fn pest_pair_to_builder_arg(
             Ok(BuilderArg::Literal(value))
         }
         Rule::wildcard => {
-            let full_name = arg_content_pair.as_str();
-            let name_only =
-                full_name
-                    .strip_prefix("?")
-                    .ok_or_else(|| ProcessorError::Semantic {
-                        message: format!("Invalid wildcard format for BuilderArg: {}", full_name),
-                        span: Some(get_span(arg_content_pair)),
-                    })?;
-            if name_only.is_empty() {
-                return Err(ProcessorError::Semantic {
-                    message: "Wildcard name cannot be empty after '?' for BuilderArg".to_string(),
-                    span: Some(get_span(arg_content_pair)),
-                });
-            }
-            Ok(BuilderArg::WildcardLiteral(name_only.to_string()))
+            let name = arg_content_pair.as_str().strip_prefix("?").unwrap();
+            Ok(BuilderArg::WildcardLiteral(name.to_string()))
         }
         Rule::anchored_key => {
             let mut inner_ak_pairs = arg_content_pair.clone().into_inner();
@@ -259,14 +246,7 @@ fn pest_pair_to_builder_arg(
 
             let pod_self_or_wc_str = match pod_id_pair.as_rule() {
                 Rule::wildcard => {
-                    let name = pod_id_pair.as_str().strip_prefix("?").unwrap_or_default();
-                    if name.is_empty() {
-                        return Err(ProcessorError::Semantic {
-                            message: "Wildcard name for pod_id cannot be empty after '?'"
-                                .to_string(),
-                            span: Some(get_span(&pod_id_pair)),
-                        });
-                    }
+                    let name = pod_id_pair.as_str().strip_prefix("?").unwrap();
                     SelfOrWildcardStr::Wildcard(name.to_string())
                 }
                 Rule::self_keyword => SelfOrWildcardStr::SELF,
@@ -283,31 +263,23 @@ fn pest_pair_to_builder_arg(
                 }
             };
 
-            let key_part_pair = inner_ak_pairs.next().ok_or_else(|| {
-                println!("inner_ak_pairs: {:?}", inner_ak_pairs.clone());
-                ProcessorError::MissingElement {
-                    element_type: "key part ([?KeyVar] or [\"key_str\"]) for BuilderArg"
-                        .to_string(),
-                    context: format!(
-                        "anchored key {} in {}",
-                        pod_id_pair.as_str(),
-                        context_stmt_name
-                    ),
-                    span: Some(get_span(arg_content_pair)),
-                }
-            })?;
+            let key_part_pair =
+                inner_ak_pairs
+                    .next()
+                    .ok_or_else(|| ProcessorError::MissingElement {
+                        element_type: "key part ([?KeyVar] or [\"key_str\"]) for BuilderArg"
+                            .to_string(),
+                        context: format!(
+                            "anchored key {} in {}",
+                            pod_id_pair.as_str(),
+                            context_stmt_name
+                        ),
+                        span: Some(get_span(arg_content_pair)),
+                    })?;
 
             let key_or_wildcard_str = match key_part_pair.as_rule() {
                 Rule::wildcard => {
-                    let key_wildcard_name =
-                        key_part_pair.as_str().strip_prefix("?").unwrap_or_default();
-                    if key_wildcard_name.is_empty() {
-                        return Err(ProcessorError::Semantic {
-                            message: "Wildcard name for key_part cannot be empty after '?'"
-                                .to_string(),
-                            span: Some(get_span(&key_part_pair)),
-                        });
-                    }
+                    let key_wildcard_name = key_part_pair.as_str().strip_prefix("?").unwrap();
                     KeyOrWildcardStr::Wildcard(key_wildcard_name.to_string())
                 }
                 Rule::literal_string => {
