@@ -558,9 +558,10 @@ pub enum PodType {
     None = 0,
     MockSigned = 1,
     MockMain = 2,
-    Signed = 3,
-    Main = 4,
-    Empty = 5,
+    MockEmpty = 3,
+    Signed = 4,
+    Main = 5,
+    Empty = 6,
 }
 
 impl fmt::Display for PodType {
@@ -569,6 +570,7 @@ impl fmt::Display for PodType {
             PodType::None => write!(f, "None"),
             PodType::MockSigned => write!(f, "MockSigned"),
             PodType::MockMain => write!(f, "MockMain"),
+            PodType::MockEmpty => write!(f, "MockEmpty"),
             PodType::Signed => write!(f, "Signed"),
             PodType::Main => write!(f, "Main"),
             PodType::Empty => write!(f, "Empty"),
@@ -670,6 +672,16 @@ impl Params {
 
     pub fn custom_predicate_batch_size_field_elts(&self) -> usize {
         self.max_custom_batch_size * self.custom_predicate_size()
+    }
+
+    /// Parameters that define how the id is calculated
+    pub fn id_params(&self) -> Vec<usize> {
+        vec![
+            self.num_public_statements_id,
+            self.max_statement_args,
+            self.max_custom_predicate_arity,
+            self.max_custom_batch_size,
+        ]
     }
 
     pub fn print_serialized_sizes(&self) {

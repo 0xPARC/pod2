@@ -1008,7 +1008,7 @@ impl CalculateIdGadget {
         // These statements will be padded to reach `self.num_statements`
         statements: &[StatementTarget],
     ) -> HashOutTarget {
-        assert!(statements.len() < self.params.num_public_statements_id);
+        assert!(statements.len() <= self.params.num_public_statements_id);
         let measure = measure_gates_begin!(builder, "CalculateId");
         let statements_rev_flattened = statements.iter().rev().flat_map(|s| s.flatten());
         let mut none_st = mainpod::Statement::from(Statement::None);
@@ -1208,7 +1208,7 @@ impl MainPodVerifyGadget {
             };
 
             let mut input_pod_self_statements = Vec::new();
-            for _statement in 0..self.params.max_input_pods_public_statements {
+            for _ in 0..self.params.max_input_pods_public_statements {
                 let self_st = builder.add_virtual_statement(params);
                 let normalized_st = normalize_statement_gadget.eval(builder, &self_st, &id_value);
                 input_pod_self_statements.push(self_st);
@@ -1353,22 +1353,25 @@ pub struct MainPodVerifyInput {
     pub custom_predicate_verifications: Vec<CustomPredicateVerification>,
 }
 
-fn set_targets_middleware_statements(
+fn set_targets_input_pods_self_statements(
     pw: &mut PartialWitness<F>,
     params: &Params,
     statements_target: &[StatementTarget],
     statements: &[Statement],
 ) -> Result<()> {
-    assert_eq!(statements_target.len(), params.num_public_statements_id);
-
+    assert_eq!(
+        statements_target.len(),
+        params.max_input_pods_public_statements
+    );
     assert!(statements.len() <= params.num_public_statements_id);
+
     for (i, statement) in statements.iter().enumerate() {
         statements_target[i].set_targets(pw, params, &statement.clone().into())?;
     }
     // Padding
     let mut none_st = mainpod::Statement::from(Statement::None);
     pad_statement(params, &mut none_st);
-    for i in statements.len()..params.num_public_statements_id {
+    for i in statements.len()..statements_target.len() {
         statements_target[i].set_targets(pw, params, &none_st)?;
     }
     Ok(())
@@ -1401,7 +1404,7 @@ impl MainPodVerifyTarget {
             input.recursive_pods_pub_self_statements.len() <= self.params.max_input_recursive_pods
         );
         for (i, pod_pub_statements) in input.recursive_pods_pub_self_statements.iter().enumerate() {
-            set_targets_middleware_statements(
+            set_targets_input_pods_self_statements(
                 pw,
                 &self.params,
                 &self.input_pods_self_statements[i],
@@ -1411,8 +1414,10 @@ impl MainPodVerifyTarget {
         // Padding
         let empty_pod = EmptyPod::new(&self.params, input.vds_root)?;
         let empty_pod_statements = empty_pod.pub_statements();
-        for i in input.recursive_pods_pub_self_statements.len()..self.params.max_input_signed_pods {
-            set_targets_middleware_statements(
+        for i in
+            input.recursive_pods_pub_self_statements.len()..self.params.max_input_recursive_pods
+        {
+            set_targets_input_pods_self_statements(
                 pw,
                 &self.params,
                 &self.input_pods_self_statements[i],

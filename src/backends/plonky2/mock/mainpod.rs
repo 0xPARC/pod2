@@ -74,7 +74,8 @@ impl fmt::Display for MockMainPod {
             }
             if (i >= offset_input_main_pods)
                 && (i < offset_input_statements)
-                && ((i - offset_input_main_pods) % self.params.max_public_statements == 0)
+                && ((i - offset_input_main_pods) % self.params.max_input_pods_public_statements
+                    == 0)
             {
                 writeln!(
                     f,
@@ -138,7 +139,7 @@ impl MockMainPod {
     }
     fn offset_input_statements(&self) -> usize {
         self.offset_input_main_pods()
-            + self.params.max_input_recursive_pods * self.params.max_public_statements
+            + self.params.max_input_recursive_pods * self.params.max_input_pods_public_statements
     }
     fn offset_public_statements(&self) -> usize {
         self.offset_input_statements() + self.params.max_priv_statements()
@@ -147,7 +148,7 @@ impl MockMainPod {
     pub fn new(params: &Params, inputs: MainPodInputs) -> Result<Self> {
         // TODO: Insert a new public statement of ValueOf with `key=KEY_TYPE,
         // value=PodType::MockMainPod`
-        let statements = layout_statements(params, &inputs)?;
+        let statements = layout_statements(params, true, &inputs)?;
         // Extract Merkle proofs and pad.
         let merkle_proofs = extract_merkle_proofs(params, inputs.operations)?;
 

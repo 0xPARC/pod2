@@ -19,7 +19,7 @@ use crate::{
     backends::plonky2::{
         basetypes::CircuitData,
         circuits::mainpod::{MainPodVerifyTarget, NUM_PUBLIC_INPUTS},
-        recursion::common_data_for_recursion,
+        recursion::RecursiveCircuit,
     },
     middleware::{Hash, Params},
     timed,
@@ -60,13 +60,13 @@ static RECURSIVE_MAIN_POD_DATA: LazyLock<RwLock<HashMap<Params, CircuitData>>> =
 pub fn recursive_main_pod_circuit_data(params: &Params) -> MappedRwLockReadGuard<CircuitData> {
     get_or_set_map_cache(&RECURSIVE_MAIN_POD_DATA, params, |params| {
         timed!(
-            "common_data_for_recursion",
-            common_data_for_recursion::<MainPodVerifyTarget>(
+            "recursive MainPod circuit_data",
+            RecursiveCircuit::<MainPodVerifyTarget>::circuit_data(
                 params.max_input_recursive_pods,
                 NUM_PUBLIC_INPUTS,
                 params
             )
-            .expect("calculate common_data")
+            .expect("calculate circuit_data")
         )
     })
 }

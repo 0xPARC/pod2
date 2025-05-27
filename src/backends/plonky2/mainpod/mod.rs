@@ -24,6 +24,7 @@ use crate::{
         },
         emptypod::EmptyPod,
         error::{Error, Result},
+        mock::emptypod::MockEmptyPod,
         primitives::merkletree::MerkleClaimAndProof,
         recursion::{self, RecursiveCircuit},
         recursive_main_pod_circuit_data,
@@ -248,7 +249,11 @@ fn pad_operation_args(params: &Params, args: &mut Vec<OperationArg>) {
 
 /// Returns the statements from the given MainPodInputs, padding to the
 /// respective max lengths defined at the given Params.
-pub(crate) fn layout_statements(params: &Params, inputs: &MainPodInputs) -> Result<Vec<Statement>> {
+pub(crate) fn layout_statements(
+    params: &Params,
+    mock: bool,
+    inputs: &MainPodInputs,
+) -> Result<Vec<Statement>> {
     let mut statements = Vec::new();
 
     // Statement at index 0 is always None to be used for padding operation arguments in custom
@@ -276,14 +281,18 @@ pub(crate) fn layout_statements(params: &Params, inputs: &MainPodInputs) -> Resu
     }
 
     // Input main pods region
-    let empty_pod_box: Box<dyn RecursivePod> = EmptyPod::new(params, inputs.vds_root)?;
+    let empty_pod_box: Box<dyn RecursivePod> = if mock {
+        MockEmptyPod::new(params)
+    } else {
+        EmptyPod::new(params, inputs.vds_root)?
+    };
     let empty_pod = empty_pod_box.as_ref();
     assert!(inputs.recursive_pods.len() <= params.max_input_recursive_pods);
     for i in 0..params.max_input_recursive_pods {
         let pod = inputs.recursive_pods.get(i).copied().unwrap_or(empty_pod);
         let sts = pod.pub_statements();
         assert!(sts.len() <= params.max_public_statements);
-        for j in 0..params.max_public_statements {
+        for j in 0..params.max_input_pods_public_statements {
             let mut st = sts
                 .get(j)
                 .unwrap_or(&middleware::Statement::None)
@@ -408,11 +417,14 @@ impl Prover {
             NUM_PUBLIC_INPUTS,
             params,
         )?;
+        println!("DBG recursive MainPod build BEGIN");
         let main_pod_target = RecursiveCircuit::<MainPodVerifyTarget>::build_targets(
             &mut builder,
-            &rec_params,
+            rec_params.arity,
+            &rec_params.common_data,
             params,
         )?;
+        println!("DBG recursive MainPod build END");
         let prover: ProverCircuitData<F, C, D> = builder.build_prover::<C>();
         let main_pod = RecursiveCircuit {
             params: rec_params,
@@ -431,11 +443,24 @@ impl Prover {
             })
             .collect_vec();
 
+        // Pad input recursive pods with empty pods if necessary
+        let empty_pod = EmptyPod::new(params, inputs.vds_root)?;
+        let inputs = MainPodInputs {
+            recursive_pods: &inputs
+                .recursive_pods
+                .iter()
+                .copied()
+                .chain(iter::repeat(&*empty_pod))
+                .take(params.max_input_recursive_pods)
+                .collect_vec(),
+            ..inputs
+        };
+
         let recursive_pods_pub_self_statements = inputs
             .recursive_pods
             .iter()
             .map(|pod| {
-                assert_eq!(params, pod.params());
+                assert_eq!(params.id_params(), pod.params().id_params());
                 pod.pub_self_statements()
             })
             .collect_vec();
@@ -448,7 +473,7 @@ impl Prover {
             &custom_predicate_batches,
         )?;
 
-        let statements = layout_statements(params, &inputs)?;
+        let statements = layout_statements(params, false, &inputs)?;
         let operations = process_private_statements_operations(
             params,
             &statements,
@@ -479,7 +504,6 @@ impl Prover {
             .iter()
             .map(|pod| pod.verifier_data())
             .collect_vec();
-
         let input = MainPodVerifyInput {
             vds_root: inputs.vds_root,
             signed_pods: signed_pods_input,
@@ -490,6 +514,7 @@ impl Prover {
             custom_predicate_batches,
             custom_predicate_verifications,
         };
+        println!("DBG MainPod prove");
         let proof_with_pis = main_pod.prove(&input, proofs, verifier_datas)?;
 
         Ok(MainPod {
@@ -716,6 +741,8 @@ pub mod tests {
             max_signed_pod_values: 6,
             max_statements: 8,
             max_public_statements: 4,
+            // FIXME: Passes with values < 8, fails otherwise
+            max_input_pods_public_statements: 8,
             ..Default::default()
         };
 

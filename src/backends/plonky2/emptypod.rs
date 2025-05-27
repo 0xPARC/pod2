@@ -142,14 +142,16 @@ fn build(params: &Params) -> MappedRwLockReadGuard<(EmptyPodVerifyTarget, Circui
 }
 
 impl EmptyPod {
-    fn _prove(params: &Params, vds_root: Hash) -> Result<EmptyPod> {
+    // TODO: Cache this by (params, vds_root)
+    pub fn _prove(params: &Params, vds_root: Hash) -> Result<EmptyPod> {
         let (empty_pod_verify_target, data) = &*build(params);
 
         let mut pw = PartialWitness::<F>::new();
         empty_pod_verify_target.set_targets(&mut pw, vds_root)?;
-        let proof = data.prove(pw)?;
+        let proof = timed!("EmptyPod prove", data.prove(pw)?);
         let id = &proof.public_inputs[PI_OFFSET_ID..PI_OFFSET_ID + HASH_SIZE];
         let id = PodId(Hash([id[0], id[1], id[2], id[3]]));
+        println!("DBG Empty Pod id={}, vds_root={}", id, vds_root);
         Ok(EmptyPod {
             params: params.clone(),
             id,
@@ -162,7 +164,7 @@ impl EmptyPod {
     }
     fn _verify(&self) -> Result<()> {
         let statements = self
-            .pub_statements()
+            .pub_self_statements()
             .into_iter()
             .map(|st| mainpod::Statement::from(st))
             .collect_vec();

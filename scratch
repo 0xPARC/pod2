@@ -1,0 +1,5 @@
+failures:
+    backends::plonky2::mainpod::tests::test_main_ethdos
+    backends::plonky2::mainpod::tests::test_main_zu_kyc
+    backends::plonky2::mainpod::tests::test_mini_0
+    frontend::serialization::tests::test_plonky2_main_pod_serialization
