@@ -3,11 +3,12 @@ import { useQueryClient, useMutation } from "@tanstack/react-query";
 import { deletePodFromSpace } from "../lib/backendServiceClient";
 import { useAppStore } from "../lib/store";
 import { usePodsInSpace, podKeys } from "../hooks/useSpaceData";
-import { AlertTriangle, Loader2, FileText, FileCheck2, FilePenLine, Trash2, PlusCircle } from "lucide-react"; // Added PlusCircle
+import { AlertTriangle, Loader2, FileText, FileCheck2, FilePenLine, Trash2, PlusCircle, FilePen, Import, ClipboardPaste } from "lucide-react";
 import type { PodInfo } from "@/types/pod2";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import ImportPodDialog from "./ImportPodDialog"; // Import the new dialog
+import ImportPodDialog from "./ImportPodDialog";
+import CreateSignedPodDialog from "./CreateSignedPodDialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -20,6 +21,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
 
 
 function truncateText(text: string, maxLength: number = 16) {
@@ -110,6 +112,7 @@ const PodListItem: React.FC<PodListItemProps> = ({ pod, activeSpaceId, deleteMut
 function PodList() {
   const activeSpaceId = useAppStore((state) => state.activeSpaceId);
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false); // State for dialog
+  const [isCreateSignedPodDialogOpen, setIsCreateSignedPodDialogOpen] = useState(false); // State for new dialog
   const setActiveMainAreaTab = useAppStore((state) => state.setActiveMainAreaTab); // Get action
   const setSelectedPodForViewing = useAppStore((state) => state.setSelectedPodForViewing); // Get action
   const {
@@ -196,9 +199,21 @@ function PodList() {
           {activeSpaceId ? `PODs in ${activeSpaceId}` : "Select a Space"}
         </h3>
         {activeSpaceId && (
-          <Button variant="outline" size="sm" onClick={() => setIsImportDialogOpen(true)}>
-            <PlusCircle className="mr-2 h-4 w-4" /> Import POD
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" title="Add POD">
+                <PlusCircle className="h-4 w-4" /> Add
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setIsCreateSignedPodDialogOpen(true)}>
+                <FilePenLine className="h-4 w-4" /> Sign POD
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setIsImportDialogOpen(true)}>
+                <ClipboardPaste className="h-4 w-4" /> Import POD
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
       </div>
       <ScrollArea className="h-[calc(100%-3rem)]">
@@ -223,6 +238,11 @@ function PodList() {
       <ImportPodDialog
         isOpen={isImportDialogOpen}
         onOpenChange={setIsImportDialogOpen}
+        activeSpaceId={activeSpaceId}
+      />
+      <CreateSignedPodDialog
+        isOpen={isCreateSignedPodDialogOpen}
+        onOpenChange={setIsCreateSignedPodDialogOpen}
         activeSpaceId={activeSpaceId}
       />
     </div>

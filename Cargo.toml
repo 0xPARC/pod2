@@ -51,7 +51,6 @@ jsonschema = "0.30.0"
 rand = "0.8"
 tempfile = "3.10" # For creating temporary config files in tests
 axum-test = "14.0" # For testing Axum handlers
-chrono = { version = "0.4", features = ["serde"] } # For timestamps
 
 [features]
 default = ["backend_plonky2"]
