@@ -208,14 +208,6 @@ fn second_pass(ctx: &mut ProcessingContext) -> Result<ProcessedOutput, Processor
 
     let custom_batch = cpb_builder.finish();
 
-    if custom_batch.predicates.len() > ctx.params.max_custom_batch_size {
-        return Err(ProcessorError::Middleware(middleware::Error::max_length(
-            "custom predicates".to_string(),
-            custom_batch.predicates.len(),
-            ctx.params.max_custom_batch_size,
-        )));
-    }
-
     let request_templates = if let Some(req_pair) = &ctx.request_pair {
         process_request_def(req_pair, ctx, &custom_batch)?
     } else {
