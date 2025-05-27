@@ -25,29 +25,29 @@ fn get_span(pair: &Pair<Rule>) -> (usize, usize) {
     (span.start(), span.end())
 }
 
-pub fn native_predicate_from_string_case_insensitive(s: &str) -> Option<NativePredicate> {
-    match s.to_lowercase().as_str() {
-        "valueof" => Some(NativePredicate::ValueOf),
-        "equal" => Some(NativePredicate::Equal),
-        "notequal" => Some(NativePredicate::NotEqual),
+pub fn native_predicate_from_string(s: &str) -> Option<NativePredicate> {
+    match s {
+        "ValueOf" => Some(NativePredicate::ValueOf),
+        "Equal" => Some(NativePredicate::Equal),
+        "NotEqual" => Some(NativePredicate::NotEqual),
         // Syntactic sugar for Gt/GtEq is handled at a later stage
-        "gt" => Some(NativePredicate::Gt),
-        "gteq" => Some(NativePredicate::GtEq),
-        "lt" => Some(NativePredicate::Lt),
-        "lteq" => Some(NativePredicate::LtEq),
-        "contains" => Some(NativePredicate::Contains),
-        "notcontains" => Some(NativePredicate::NotContains),
-        "sumof" => Some(NativePredicate::SumOf),
-        "productof" => Some(NativePredicate::ProductOf),
-        "maxof" => Some(NativePredicate::MaxOf),
-        "hashof" => Some(NativePredicate::HashOf),
-        "dictcontains" => Some(NativePredicate::DictContains),
-        "dictnotcontains" => Some(NativePredicate::DictNotContains),
-        "arraycontains" => Some(NativePredicate::ArrayContains),
-        "setcontains" => Some(NativePredicate::SetContains),
-        "setnotcontains" => Some(NativePredicate::SetNotContains),
-        "none" => Some(NativePredicate::None),
-        "false" => Some(NativePredicate::False),
+        "Gt" => Some(NativePredicate::Gt),
+        "GtEq" => Some(NativePredicate::GtEq),
+        "Lt" => Some(NativePredicate::Lt),
+        "LtEq" => Some(NativePredicate::LtEq),
+        "Contains" => Some(NativePredicate::Contains),
+        "NotContains" => Some(NativePredicate::NotContains),
+        "SumOf" => Some(NativePredicate::SumOf),
+        "ProductOf" => Some(NativePredicate::ProductOf),
+        "MaxOf" => Some(NativePredicate::MaxOf),
+        "HashOf" => Some(NativePredicate::HashOf),
+        "DictContains" => Some(NativePredicate::DictContains),
+        "DictNotContains" => Some(NativePredicate::DictNotContains),
+        "ArrayContains" => Some(NativePredicate::ArrayContains),
+        "SetContains" => Some(NativePredicate::SetContains),
+        "SetNotContains" => Some(NativePredicate::SetNotContains),
+        "None" => Some(NativePredicate::None),
+        "False" => Some(NativePredicate::False),
         _ => None,
     }
 }
@@ -68,16 +68,22 @@ struct ProcessingContext<'a> {
     request_pair: Option<Pair<'a, Rule>>,
 }
 
+impl<'a> ProcessingContext<'a> {
+    fn new(params: &'a Params) -> Self {
+        ProcessingContext {
+            params,
+            custom_predicate_signatures: HashMap::new(),
+            custom_predicate_pairs: Vec::new(),
+            request_pair: None,
+        }
+    }
+}
+
 pub fn process_pest_tree(
     mut pairs_iterator_for_document_rule: Pairs<'_, Rule>,
     params: &Params,
 ) -> Result<ProcessedOutput, ProcessorError> {
-    let mut processing_ctx = ProcessingContext {
-        params,
-        custom_predicate_signatures: HashMap::new(),
-        custom_predicate_pairs: Vec::new(),
-        request_pair: None,
-    };
+    let mut processing_ctx = ProcessingContext::new(params);
 
     let document_node = pairs_iterator_for_document_rule.next().ok_or_else(|| {
         ProcessorError::Internal(format!(
@@ -581,21 +587,20 @@ fn process_and_add_custom_predicate_to_batch(
 
         let builder_args = parse_statement_args(&stmt_pair, stmt_name_str)?;
 
-        let middleware_predicate_type = if let Some(native_pred) =
-            native_predicate_from_string_case_insensitive(stmt_name_str)
-        {
-            Predicate::Native(native_pred)
-        } else if let Some((pred_index, _expected_arity)) = processing_ctx
-            .custom_predicate_signatures
-            .get(stmt_name_str)
-        {
-            Predicate::BatchSelf(*pred_index)
-        } else {
-            return Err(ProcessorError::UndefinedIdentifier {
-                name: stmt_name_str.to_string(),
-                span: Some(get_span(&stmt_name_pair)),
-            });
-        };
+        let middleware_predicate_type =
+            if let Some(native_pred) = native_predicate_from_string(stmt_name_str) {
+                Predicate::Native(native_pred)
+            } else if let Some((pred_index, _expected_arity)) = processing_ctx
+                .custom_predicate_signatures
+                .get(stmt_name_str)
+            {
+                Predicate::BatchSelf(*pred_index)
+            } else {
+                return Err(ProcessorError::UndefinedIdentifier {
+                    name: stmt_name_str.to_string(),
+                    span: Some(get_span(&stmt_name_pair)),
+                });
+            };
 
         let stb = validate_and_build_statement_template(
             stmt_name_str,
@@ -711,7 +716,7 @@ fn process_proof_request_statement_template(
     }
 
     let middleware_predicate_type =
-        if let Some(native_pred) = native_predicate_from_string_case_insensitive(stmt_name_str) {
+        if let Some(native_pred) = native_predicate_from_string(stmt_name_str) {
             Predicate::Native(native_pred)
         } else if let Some((pred_index, _expected_arity)) = processing_ctx
             .custom_predicate_signatures
@@ -1101,12 +1106,12 @@ fn parse_statement_args(
 }
 
 #[cfg(test)]
-mod first_pass_tests {
+mod processor_tests {
     use std::collections::HashMap;
 
     use pest::iterators::Pairs;
 
-    use super::{first_pass, ProcessingContext};
+    use super::{first_pass, second_pass, ProcessingContext};
     use crate::{
         lang::{
             error::ProcessorError,
@@ -1137,12 +1142,7 @@ mod first_pass_tests {
         let input = "";
         let pairs = get_document_content_pairs(input)?;
         let params = Params::default();
-        let mut ctx = ProcessingContext {
-            params: &params,
-            custom_predicate_signatures: HashMap::new(),
-            custom_predicate_pairs: Vec::new(),
-            request_pair: None,
-        };
+        let mut ctx = ProcessingContext::new(&params);
         first_pass(pairs, &mut ctx)?;
         assert!(ctx.custom_predicate_signatures.is_empty());
         assert!(ctx.custom_predicate_pairs.is_empty());
@@ -1155,12 +1155,7 @@ mod first_pass_tests {
         let input = "REQUEST( Equal(?A[\"k\"],?B[\"k\"]) )"; // Escaped quotes
         let pairs = get_document_content_pairs(input)?;
         let params = Params::default();
-        let mut ctx = ProcessingContext {
-            params: &params,
-            custom_predicate_signatures: HashMap::new(),
-            custom_predicate_pairs: Vec::new(),
-            request_pair: None,
-        };
+        let mut ctx = ProcessingContext::new(&params);
         first_pass(pairs, &mut ctx)?;
         assert!(ctx.custom_predicate_signatures.is_empty());
         assert!(ctx.custom_predicate_pairs.is_empty());
@@ -1177,12 +1172,7 @@ mod first_pass_tests {
         let input = "my_pred(A, B) = AND( Equal(?A[\"k\"],?B[\"k\"]) )"; // Escaped quotes
         let pairs = get_document_content_pairs(input)?;
         let params = Params::default();
-        let mut ctx = ProcessingContext {
-            params: &params,
-            custom_predicate_signatures: HashMap::new(),
-            custom_predicate_pairs: Vec::new(),
-            request_pair: None,
-        };
+        let mut ctx = ProcessingContext::new(&params);
         first_pass(pairs, &mut ctx)?;
         assert_eq!(ctx.custom_predicate_signatures.len(), 1);
         assert_eq!(ctx.custom_predicate_pairs.len(), 1);
@@ -1206,12 +1196,7 @@ mod first_pass_tests {
         "#;
         let pairs = get_document_content_pairs(input)?;
         let params = Params::default();
-        let mut ctx = ProcessingContext {
-            params: &params,
-            custom_predicate_signatures: HashMap::new(),
-            custom_predicate_pairs: Vec::new(),
-            request_pair: None,
-        };
+        let mut ctx = ProcessingContext::new(&params);
         first_pass(pairs, &mut ctx)?;
         assert_eq!(ctx.custom_predicate_signatures.len(), 2);
         assert_eq!(ctx.custom_predicate_pairs.len(), 2);
@@ -1263,12 +1248,7 @@ mod first_pass_tests {
         "#;
         let pairs = get_document_content_pairs(input).unwrap();
         let params = Params::default();
-        let mut ctx = ProcessingContext {
-            params: &params,
-            custom_predicate_signatures: HashMap::new(),
-            custom_predicate_pairs: Vec::new(),
-            request_pair: None,
-        };
+        let mut ctx = ProcessingContext::new(&params);
         let result = first_pass(pairs, &mut ctx);
         assert!(result.is_err());
         match result.err().unwrap() {
@@ -1288,12 +1268,7 @@ mod first_pass_tests {
         "#;
         let pairs = get_document_content_pairs(input).unwrap();
         let params = Params::default();
-        let mut ctx = ProcessingContext {
-            params: &params,
-            custom_predicate_signatures: HashMap::new(),
-            custom_predicate_pairs: Vec::new(),
-            request_pair: None,
-        };
+        let mut ctx = ProcessingContext::new(&params);
         let result = first_pass(pairs, &mut ctx);
         assert!(result.is_err());
         match result.err().unwrap() {
@@ -1312,12 +1287,7 @@ mod first_pass_tests {
         "#;
         let pairs = get_document_content_pairs(input)?;
         let params = Params::default();
-        let mut ctx = ProcessingContext {
-            params: &params,
-            custom_predicate_signatures: HashMap::new(),
-            custom_predicate_pairs: Vec::new(),
-            request_pair: None,
-        };
+        let mut ctx = ProcessingContext::new(&params);
         first_pass(pairs, &mut ctx)?;
 
         assert_eq!(ctx.custom_predicate_signatures.len(), 2);
@@ -1341,6 +1311,49 @@ mod first_pass_tests {
             .unwrap()
             .as_str()
             .contains("pred_one(?A)"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_sp_unknown_predicate() -> Result<(), ProcessorError> {
+        // Undefined predicates will be flagged as an error on the second pass
+        let input = r#"
+            REQUEST(
+              pred_one(?A)
+            )
+        "#;
+        let pairs = get_document_content_pairs(input)?;
+        let params = Params::default();
+        let mut ctx = ProcessingContext::new(&params);
+        first_pass(pairs, &mut ctx)?;
+        let result = second_pass(&mut ctx);
+        assert!(result.is_err());
+        match result.err().unwrap() {
+            ProcessorError::UndefinedIdentifier { name, span: _ } => {
+                assert_eq!(name, "pred_one")
+            }
+            e => panic!("Expected UndefinedIdentifier, got {:?}", e),
+        }
+
+        // Native predicate names are case-senstive
+        let input = r#"
+        REQUEST(
+          EQUAL(?A[?B], ?C[?D])
+        )
+    "#;
+        let pairs = get_document_content_pairs(input)?;
+        let params = Params::default();
+        let mut ctx = ProcessingContext::new(&params);
+        first_pass(pairs, &mut ctx)?;
+        let result = second_pass(&mut ctx);
+        assert!(result.is_err());
+        match result.err().unwrap() {
+            ProcessorError::UndefinedIdentifier { name, span: _ } => {
+                assert_eq!(name, "EQUAL")
+            }
+            e => panic!("Expected UndefinedIdentifier, got {:?}", e),
+        }
 
         Ok(())
     }
