@@ -819,33 +819,14 @@ fn parse_pest_string_literal(pair: &Pair<Rule>) -> Result<String, ProcessorError
 }
 
 fn parse_hex_str_to_raw_value(hex_str: &str) -> Result<middleware::RawValue, ProcessorError> {
-    const EXPECTED_HEX_CHARS_PER_FELT: usize = 16; // Each F element is a u64, requiring 16 hex characters
-    const EXPECTED_TOTAL_HEX_CHARS: usize = VALUE_SIZE * EXPECTED_HEX_CHARS_PER_FELT;
-
-    if hex_str.len() != EXPECTED_TOTAL_HEX_CHARS {
-        return Err(ProcessorError::Internal(format!(
-            "Internal error: Expected {} hex characters for RawValue ({} F elements * {} hex/F), got {}.",
-            EXPECTED_TOTAL_HEX_CHARS,
-            VALUE_SIZE,
-            EXPECTED_HEX_CHARS_PER_FELT,
-            hex_str.len()
-        )));
-    }
-
     let mut v = [F::ZERO; VALUE_SIZE];
     let value_range = 0..VALUE_SIZE;
     for i in value_range {
-        let start_idx = i * EXPECTED_HEX_CHARS_PER_FELT;
-        let end_idx = start_idx + EXPECTED_HEX_CHARS_PER_FELT;
+        let start_idx = i * 16;
+        let end_idx = start_idx + 16;
         let hex_part = &hex_str[start_idx..end_idx];
 
-        let u64_val = u64::from_str_radix(hex_part, 16).map_err(|e| {
-            ProcessorError::InvalidLiteralFormat {
-                kind: format!("raw hex (parse error for segment '{}')", hex_part),
-                value: e.to_string(),
-                span: None,
-            }
-        })?;
+        let u64_val = u64::from_str_radix(hex_part, 16).unwrap();
         v[i] = F::from_canonical_u64(u64_val);
     }
     Ok(middleware::RawValue(v))
