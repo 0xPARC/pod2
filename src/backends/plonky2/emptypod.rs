@@ -1,23 +1,18 @@
 use std::{
-    any::Any,
     collections::HashMap,
-    iter,
-    sync::{Arc, MappedRwLockReadGuard, RwLock},
+    sync::{MappedRwLockReadGuard, RwLock},
 };
 
 use base64::{prelude::BASE64_STANDARD, Engine};
 use itertools::Itertools;
 use plonky2::{
-    gates::noop::NoopGate,
-    hash::{hash_types::HashOutTarget, poseidon::PoseidonHash},
+    hash::hash_types::HashOutTarget,
     iop::witness::{PartialWitness, WitnessWrite},
     plonk::{
         circuit_builder::CircuitBuilder,
-        circuit_data::{self, CircuitConfig, CommonCircuitData, ProverCircuitData},
-        config::Hasher,
+        circuit_data::{self, CircuitConfig},
         proof::ProofWithPublicInputs,
     },
-    util::serialization::{Buffer, Read},
 };
 
 use crate::{
@@ -25,25 +20,17 @@ use crate::{
         basetypes::{Proof, C, D},
         circuits::{
             common::{Flattenable, StatementTarget},
-            mainpod::{
-                CalculateIdGadget, CustomPredicateVerification, MainPodVerifyCircuit,
-                MainPodVerifyInput, MainPodVerifyTarget, NUM_PUBLIC_INPUTS, PI_OFFSET_ID,
-            },
+            mainpod::{CalculateIdGadget, PI_OFFSET_ID},
         },
         error::{Error, Result},
         get_or_set_map_cache,
         mainpod::{self, calculate_id},
-        primitives::merkletree::MerkleClaimAndProof,
-        recursion::{self, common_data_for_recursion, RecursiveCircuit},
-        recursive_main_pod_circuit_data,
-        signedpod::SignedPod,
-        LazyLock,
+        recursion::pad_circuit,
+        recursive_main_pod_circuit_data, LazyLock,
     },
     middleware::{
-        self, resolve_wildcard_values, AnchoredKey, CustomPredicateBatch, DynError, Hash,
-        MainPodInputs, NativeOperation, NonePod, OperationType, Params, Pod, PodId, PodProver,
-        PodType, RecursivePod, Statement, StatementArg, ToFields, Value, VerifierOnlyCircuitData,
-        EMPTY_HASH, F, HASH_SIZE, KEY_TYPE, SELF,
+        self, AnchoredKey, DynError, Hash, Params, Pod, PodId, PodType, RecursivePod, Statement,
+        ToFields, Value, VerifierOnlyCircuitData, EMPTY_HASH, F, HASH_SIZE, KEY_TYPE, SELF,
     },
     timed,
 };
@@ -94,31 +81,31 @@ pub struct EmptyPod {
     proof: Proof,
 }
 
-/// Pad the circuit to match a given `CommonCircuitData`.
-fn pad_circuit(builder: &mut CircuitBuilder<F, D>, common_data: &CommonCircuitData<F, D>) {
-    assert_eq!(common_data.config, builder.config);
-    assert_eq!(common_data.num_public_inputs, builder.num_public_inputs());
-    // TODO: We need to figure this out once we enable zero-knowledge
-    assert!(
-        !common_data.config.zero_knowledge,
-        "Degree calculation can be off if zero-knowledge is on."
-    );
-
-    let degree = common_data.degree();
-    // Need to account for public input hashing, a `PublicInputGate` and 32 `ConstantGate`.
-    // NOTE: the builder doesn't have any public method to see how many constants have been
-    // registered, so we can't know exactly how many `ConstantGates` will be required.  We hope
-    // that no more than 64 constants are used :pray:.  Maybe we should make a PR to plonky2 to
-    // expose this?
-    let num_noop_gate =
-        degree - builder.num_gates() - common_data.num_public_inputs.div_ceil(8) - 33;
-    for _ in 0..num_noop_gate {
-        builder.add_gate(NoopGate, vec![]);
-    }
-    for gate in &common_data.gates {
-        builder.add_gate_to_gate_set(gate.clone());
-    }
-}
+// /// Pad the circuit to match a given `CommonCircuitData`.
+// fn pad_circuit(builder: &mut CircuitBuilder<F, D>, common_data: &CommonCircuitData<F, D>) {
+//     assert_eq!(common_data.config, builder.config);
+//     assert_eq!(common_data.num_public_inputs, builder.num_public_inputs());
+//     // TODO: We need to figure this out once we enable zero-knowledge
+//     assert!(
+//         !common_data.config.zero_knowledge,
+//         "Degree calculation can be off if zero-knowledge is on."
+//     );
+//
+//     let degree = common_data.degree();
+//     // Need to account for public input hashing, a `PublicInputGate` and 32 `ConstantGate`.
+//     // NOTE: the builder doesn't have any public method to see how many constants have been
+//     // registered, so we can't know exactly how many `ConstantGates` will be required.  We hope
+//     // that no more than 64 constants are used :pray:.  Maybe we should make a PR to plonky2 to
+//     // expose this?
+//     let num_noop_gate =
+//         degree - builder.num_gates() - common_data.num_public_inputs.div_ceil(8) - 33;
+//     for _ in 0..num_noop_gate {
+//         builder.add_gate(NoopGate, vec![]);
+//     }
+//     for gate in &common_data.gates {
+//         builder.add_gate_to_gate_set(gate.clone());
+//     }
+// }
 
 use pretty_assertions::assert_eq;
 
@@ -198,10 +185,6 @@ impl EmptyPod {
         })
         .map_err(|e| Error::custom(format!("EmptyPod proof verification failure: {:?}", e)))
     }
-    // pub fn verifier_data_hash(params: &Params) -> Result<Hash> {
-    //     let (_, data) = &*build(params)?;
-    //     Ok(Hash(data.verifier_only.circuit_digest.elements))
-    // }
 }
 
 impl Pod for EmptyPod {

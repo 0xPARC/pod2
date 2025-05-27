@@ -14,16 +14,14 @@ use std::{
 };
 
 pub use error::*;
-use plonky2::plonk::{circuit_builder, circuit_data};
 
 use crate::{
     backends::plonky2::{
-        basetypes::{CircuitData, Proof, C, D},
+        basetypes::CircuitData,
         circuits::mainpod::{MainPodVerifyTarget, NUM_PUBLIC_INPUTS},
-        mainpod::Statement,
         recursion::common_data_for_recursion,
     },
-    middleware::{self, Hash, Params, PodId, F},
+    middleware::{Hash, Params},
     timed,
 };
 
@@ -76,13 +74,4 @@ pub fn recursive_main_pod_circuit_data(params: &Params) -> MappedRwLockReadGuard
 pub fn recursive_main_pod_verifier_data_hash(params: &Params) -> Hash {
     let data = recursive_main_pod_circuit_data(params);
     Hash(data.verifier_only.circuit_digest.elements)
-}
-
-#[derive(Clone, Debug)]
-struct RecursivePodData {
-    pub(crate) params: Params,
-    pub(crate) id: PodId,
-    pub(crate) vds_root: Hash,
-    pub(crate) public_statements: Vec<middleware::Statement>,
-    pub(crate) proof: Proof,
 }

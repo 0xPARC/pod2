@@ -8,17 +8,13 @@
 /// verifies. When arity>1, using the RecursiveCircuit has the shape of a tree
 /// of the same arity.
 ///
-use hashbrown::HashMap;
 use itertools::Itertools;
 use plonky2::{
     self,
     gates::noop::NoopGate,
-    hash::{
-        hash_types::{HashOut, HashOutTarget},
-        poseidon::PoseidonHash,
-    },
+    hash::hash_types::HashOutTarget,
     iop::{
-        target::{BoolTarget, Target},
+        target::Target,
         witness::{PartialWitness, WitnessWrite},
     },
     plonk::{
@@ -27,15 +23,13 @@ use plonky2::{
             CircuitConfig, CircuitData, CommonCircuitData, ProverCircuitData, VerifierCircuitData,
             VerifierCircuitTarget, VerifierOnlyCircuitData,
         },
-        config::Hasher,
         proof::{ProofWithPublicInputs, ProofWithPublicInputsTarget},
     },
-    recursion::dummy_circuit::{dummy_circuit, dummy_proof as plonky2_dummy_proof},
 };
 
 use crate::{
     backends::plonky2::{
-        basetypes::{Proof, C, D},
+        basetypes::{C, D},
         error::{Error, Result},
     },
     middleware::F,
@@ -44,7 +38,6 @@ use crate::{
 
 #[derive(Clone, Debug)]
 pub struct VerifiedProofTarget {
-    pub selector: BoolTarget,
     pub public_inputs: Vec<Target>,
     pub verifier_data_hash: HashOutTarget,
 }
@@ -52,7 +45,6 @@ pub struct VerifiedProofTarget {
 impl VerifiedProofTarget {
     fn add_virtual(builder: &mut CircuitBuilder<F, D>, num_public_inputs: usize) -> Self {
         Self {
-            selector: builder.add_virtual_bool_target_safe(),
             public_inputs: (0..num_public_inputs)
                 .map(|_| builder.add_virtual_target())
                 .collect_vec(),
@@ -77,14 +69,12 @@ pub trait InnerCircuit: Sized {
     fn set_targets(&self, pw: &mut PartialWitness<F>, input: &Self::Input) -> Result<()>;
 }
 
-// TODO: Remove dummy
 #[derive(Clone, Debug)]
 pub struct RecursiveParams {
     /// determines the arity of the RecursiveCircuit
     arity: usize,
     common_data: CommonCircuitData<F, D>,
     verifier_data: VerifierCircuitData<F, C, D>,
-    dummy_proof_pi: ProofWithPublicInputs<F, C, D>,
 }
 
 impl RecursiveParams {
@@ -104,11 +94,9 @@ pub fn new_params<I: InnerCircuit>(
     let circuit_data = RecursiveCircuit::<I>::circuit_data(arity, num_public_inputs, inner_params)?;
     let common_data = circuit_data.common.clone();
     let verifier_data = circuit_data.verifier_data();
-    let dummy_proof_pi = RecursiveCircuit::<I>::dummy_proof(circuit_data)?;
     Ok(RecursiveParams {
         arity,
         common_data,
-        dummy_proof_pi,
         verifier_data,
     })
 }
@@ -122,7 +110,6 @@ pub struct RecursiveCircuit<I: InnerCircuit> {
 
 #[derive(Clone, Debug)]
 pub struct RecursiveCircuitTarget<I: InnerCircuit> {
-    selectors_targ: Vec<BoolTarget>,
     innercircuit_targ: I,
     proofs_targ: Vec<ProofWithPublicInputsTarget<D>>,
     // vds_hash: HashOutTarget,
@@ -170,10 +157,6 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         params: &RecursiveParams,
         inner_params: &I::Params,
     ) -> Result<RecursiveCircuitTarget<I>> {
-        let selectors_targ: Vec<BoolTarget> = (0..params.arity)
-            .map(|_| builder.add_virtual_bool_target_safe())
-            .collect();
-
         // TODO: investigate
         builder.add_gate(
             // add a ConstantGate, because without this, when later generating the `dummy_circuit`
@@ -189,41 +172,24 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         let verifier_datas_targ: Vec<VerifierCircuitTarget> = (0..params.arity)
             .map(|_| builder.add_virtual_verifier_data(builder.config.fri_config.cap_height))
             .collect();
-        let proofs_targ: Result<Vec<ProofWithPublicInputsTarget<D>>> = (0..params.arity)
+        let proofs_targ: Vec<ProofWithPublicInputsTarget<D>> = (0..params.arity)
             .map(|i| {
                 let proof_targ = builder.add_virtual_proof_with_pis(&params.common_data);
-                builder.conditionally_verify_proof_or_dummy::<C>(
-                    selectors_targ[i],
+                builder.verify_proof::<C>(
                     &proof_targ,
                     &verifier_datas_targ[i],
                     &params.common_data,
-                )?;
-                Ok(proof_targ)
+                );
+                proof_targ
             })
             .collect();
-        let proofs_targ = proofs_targ?;
 
         let verified_proofs = (0..params.arity)
             .map(|i| VerifiedProofTarget {
-                selector: selectors_targ[i],
                 public_inputs: proofs_targ[i].public_inputs.clone(),
                 verifier_data_hash: verifier_datas_targ[i].circuit_digest,
             })
             .collect_vec();
-        // hash the various verifier_data
-        // let prev_verifier_datas_hashes: Vec<HashOutTarget> = proofs_targ
-        //     .iter()
-        //     .map(|p| HashOutTarget::from_vec(p.public_inputs[..4].to_vec()))
-        //     .collect();
-        // let vds_hash = gadget_hash_verifier_datas(
-        //     builder,
-        //     params.arity,
-        //     prev_verifier_datas_hashes.clone(),
-        //     verifier_datas_targ.clone(),
-        // );
-        // set vds_hash as public input, which are registered before the
-        // InnerCircuit public inputs in case that there are
-        // builder.register_public_inputs(&vds_hash.elements);
 
         // build the InnerCircuit logic. Notice that if the InnerCircuit
         // registers any public inputs, they will be placed after the
@@ -231,7 +197,6 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         let innercircuit_targ: I = I::build(builder, inner_params, &verified_proofs)?;
 
         Ok(RecursiveCircuitTarget {
-            selectors_targ,
             innercircuit_targ,
             proofs_targ,
             // vds_hash,
@@ -247,33 +212,8 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         verifier_datas: Vec<VerifierOnlyCircuitData<C, D>>,
     ) -> Result<()> {
         let n = recursive_proofs.len();
-        assert!(n <= self.params.arity);
+        assert_eq!(n, self.params.arity);
         assert_eq!(n, verifier_datas.len());
-
-        // fill the missing proofs with dummy_proofs
-        let dummy_proofs: Vec<ProofWithPublicInputs<F, C, D>> = (n..self.params.arity)
-            .map(|_| self.params.dummy_proof_pi.clone())
-            .collect();
-        let recursive_proofs = [recursive_proofs, dummy_proofs].concat();
-
-        // fill the missing prev_verifier_data_hashes with the 'zero' hash
-        // let mut prev_verifier_datas_hashes = prev_verifier_datas_hashes.clone();
-        // prev_verifier_datas_hashes.resize(self.params.arity, HashOut::<F>::ZERO);
-
-        // fill the missing verifier_datas with dummy_verifier_datas
-        let dummy_verifier_datas: Vec<VerifierOnlyCircuitData<C, D>> = (n..self.params.arity)
-            .map(|_| self.params.verifier_data.verifier_only.clone())
-            .collect();
-        let verifier_datas: Vec<VerifierOnlyCircuitData<C, D>> =
-            [verifier_datas, dummy_verifier_datas].concat();
-
-        // set the first n selectors to true, and the rest to false
-        for i in 0..n {
-            pw.set_bool_target(self.target.selectors_targ[i], true)?;
-        }
-        for i in n..self.params.arity {
-            pw.set_bool_target(self.target.selectors_targ[i], false)?;
-        }
 
         // set the InnerCircuit related values
         self.target
@@ -283,25 +223,8 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         #[allow(clippy::needless_range_loop)]
         for i in 0..self.params.arity {
             pw.set_verifier_data_target(&self.target.verifier_datas_targ[i], &verifier_datas[i])?;
-
-            // put together the public inputs with the verifier_data used to
-            // verify the current proof
-            // let proof_i_public_inputs = Self::prepare_public_inputs(
-            //     prev_verifier_datas_hashes[i],
-            //     recursive_proofs_inp[i].clone(),
-            // );
-
             pw.set_proof_with_pis_target(&self.target.proofs_targ[i], &recursive_proofs[i])?;
         }
-
-        // vds_hash is returned since it will be used as public input to verify
-        // the proof of the current instance of the circuit
-        // let vds_hash = hash_verifier_datas(
-        //     self.params.arity,
-        //     prev_verifier_datas_hashes.clone(),
-        //     verifier_datas.clone(),
-        // );
-        // pw.set_hash_target(self.targets.vds_hash, vds_hash)?;
 
         Ok(())
     }
@@ -318,11 +241,9 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         );
         let common_data = data.common.clone();
         let verifier_data = data.verifier_data();
-        let dummy_proof_pi = timed!("dummy_proof", Self::dummy_proof(data)?);
         let params = RecursiveParams {
             arity,
             common_data,
-            dummy_proof_pi,
             verifier_data,
         };
 
@@ -338,75 +259,7 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
 
         Ok(data)
     }
-
-    fn dummy_proof(circuit_data: CircuitData<F, C, D>) -> Result<ProofWithPublicInputs<F, C, D>> {
-        let dummy_circuit_data = dummy_circuit(&circuit_data.common);
-        let dummy_proof_pis = plonky2_dummy_proof(&dummy_circuit_data, HashMap::new())?;
-        Ok(dummy_proof_pis)
-    }
-
-    // pub fn prepare_public_inputs(
-    //     prev_verifier_datas_hash: HashOut<F>,
-    //     inner_public_inputs: Vec<F>,
-    // ) -> Vec<F> {
-    //     [
-    //         prev_verifier_datas_hash.elements.to_vec(),
-    //         inner_public_inputs,
-    //     ]
-    //     .concat()
-    // }
 }
-
-// fn hash_verifier_datas(
-//     arity: usize,
-//     prev_hashes: Vec<HashOut<F>>,
-//     verifier_datas: Vec<VerifierCircuitData<F, C, D>>,
-// ) -> HashOut<F> {
-//     // sanity check
-//     assert_eq!(verifier_datas.len(), arity);
-//
-//     let zero_hash = HashOut::<F>::ZERO;
-//     let mut prev_hashes = prev_hashes.clone();
-//     prev_hashes.resize(arity, zero_hash);
-//     let prev_hashes: Vec<F> = prev_hashes
-//         .iter()
-//         .flat_map(|h| h.elements.to_vec())
-//         .collect();
-//
-//     let hashes: Vec<F> = verifier_datas
-//         .iter()
-//         .flat_map(|vd| vd.verifier_only.circuit_digest.elements)
-//         .collect();
-//
-//     let inp: Vec<F> = [prev_hashes, hashes].concat();
-//
-//     PoseidonHash::hash_no_pad(&inp)
-// }
-
-// fn gadget_hash_verifier_datas(
-//     builder: &mut CircuitBuilder<F, D>,
-//     arity: usize,
-//     prev_hashes: Vec<HashOutTarget>,
-//     verifier_datas: Vec<VerifierCircuitTarget>,
-// ) -> HashOutTarget {
-//     // sanity checks
-//     assert_eq!(prev_hashes.len(), arity);
-//     assert_eq!(verifier_datas.len(), arity);
-//
-//     let prev_hashes: Vec<Target> = prev_hashes
-//         .iter()
-//         .flat_map(|h| h.elements.to_vec())
-//         .collect();
-//
-//     let hashes: Vec<Target> = verifier_datas
-//         .iter()
-//         .flat_map(|vd| vd.circuit_digest.elements)
-//         .collect();
-//
-//     let inp: Vec<Target> = [prev_hashes, hashes].concat();
-//
-//     builder.hash_n_to_hash_no_pad::<PoseidonHash>(inp)
-// }
 
 pub fn common_data_for_recursion<I: InnerCircuit>(
     arity: usize,
@@ -446,16 +299,6 @@ pub fn common_data_for_recursion<I: InnerCircuit>(
         builder.verify_proof::<C>(&proof, vd_i, &data.common);
     }
 
-    // let prev_verifier_datas_hashes = builder.add_virtual_hashes(arity);
-    // let vds_hash = gadget_hash_verifier_datas(
-    //     &mut builder,
-    //     arity,
-    //     prev_verifier_datas_hashes.clone(),
-    //     verifier_datas_targ.clone(),
-    // );
-    // // set vds_hash as public input
-    // builder.register_public_inputs(&vds_hash.elements);
-
     // set the targets for the InnerCircuit
     let verified_proofs = (0..arity)
         .map(|_| VerifiedProofTarget::add_virtual(&mut builder, num_public_inputs))
@@ -494,6 +337,32 @@ fn compute_num_gates(arity: usize) -> Result<usize> {
         )));
     }
     Ok(n_gates)
+}
+
+/// Pad the circuit to match a given `CommonCircuitData`.
+pub fn pad_circuit(builder: &mut CircuitBuilder<F, D>, common_data: &CommonCircuitData<F, D>) {
+    assert_eq!(common_data.config, builder.config);
+    assert_eq!(common_data.num_public_inputs, builder.num_public_inputs());
+    // TODO: We need to figure this out once we enable zero-knowledge
+    assert!(
+        !common_data.config.zero_knowledge,
+        "Degree calculation can be off if zero-knowledge is on."
+    );
+
+    let degree = common_data.degree();
+    // Need to account for public input hashing, a `PublicInputGate` and 32 `ConstantGate`.
+    // NOTE: the builder doesn't have any public method to see how many constants have been
+    // registered, so we can't know exactly how many `ConstantGates` will be required.  We hope
+    // that no more than 64 constants are used :pray:.  Maybe we should make a PR to plonky2 to
+    // expose this?
+    let num_noop_gate =
+        degree - builder.num_gates() - common_data.num_public_inputs.div_ceil(8) - 33;
+    for _ in 0..num_noop_gate {
+        builder.add_gate(NoopGate, vec![]);
+    }
+    for gate in &common_data.gates {
+        builder.add_gate_to_gate_set(gate.clone());
+    }
 }
 
 #[cfg(test)]
@@ -677,52 +546,35 @@ mod tests {
         Ok(())
     }
 
-    // #[test]
-    // fn test_hash_verifier_datas() -> Result<()> {
-    //     let arity: usize = 2;
-    //     let circuit_data = RecursiveCircuit::<Circuit1>::circuit_data(1, &())?;
-    //     let verifier_data = circuit_data.verifier_data();
+    // Build an dummy empty circuit that uses common_data and make a proof from it.
+    fn dummy(
+        common_data: &CommonCircuitData<F, D>,
+        num_public_inputs: usize,
+    ) -> Result<(
+        VerifierOnlyCircuitData<C, D>,
+        ProofWithPublicInputs<F, C, D>,
+    )> {
+        let config = common_data.config.clone();
+        let mut builder = CircuitBuilder::new(config.clone());
 
-    //     let h = hash_verifier_datas(
-    //         arity,
-    //         vec![],
-    //         vec![verifier_data.clone(), verifier_data.clone()],
-    //     );
+        let public_inputs = (0..num_public_inputs)
+            .map(|_| {
+                let target = builder.add_virtual_target();
+                builder.register_public_input(target);
+                target
+            })
+            .collect_vec();
+        pad_circuit(&mut builder, common_data);
 
-    //     let config = CircuitConfig::standard_recursion_config();
-    //     let mut builder = CircuitBuilder::<F, D>::new(config);
-    //     let mut pw = PartialWitness::<F>::new();
+        let circuit_data = builder.build::<C>();
 
-    //     // circuit logic
-    //     let vd_targ1 = builder.add_virtual_verifier_data(builder.config.fri_config.cap_height);
-    //     let vd_targ2 = builder.add_virtual_verifier_data(builder.config.fri_config.cap_height);
-    //     let expected_h = builder.add_virtual_hash();
-    //     let prev_hashes_targ = builder.add_virtual_hashes(arity);
-
-    //     let h_targ = gadget_hash_verifier_datas(
-    //         &mut builder,
-    //         arity,
-    //         prev_hashes_targ.clone(),
-    //         vec![vd_targ1.clone(), vd_targ2.clone()],
-    //     );
-    //     builder.connect_hashes(expected_h, h_targ);
-
-    //     // set targets
-    //     for ph_targ in prev_hashes_targ {
-    //         pw.set_hash_target(ph_targ, HashOut::<F>::ZERO)?;
-    //     }
-    //     pw.set_hash_target(expected_h, h)?;
-    //     pw.set_verifier_data_target(&vd_targ1, &verifier_data.verifier_only)?;
-    //     pw.set_verifier_data_target(&vd_targ2, &verifier_data.verifier_only)?;
-    //     pw.set_hash_target(expected_h, h)?;
-
-    //     // generate & verify proof
-    //     let data = builder.build::<C>();
-    //     let proof = data.prove(pw)?;
-    //     data.verify(proof.clone())?;
-
-    //     Ok(())
-    // }
+        let mut pw = PartialWitness::<F>::new();
+        for target in &public_inputs {
+            pw.set_target(*target, F::ZERO)?;
+        }
+        let proof = circuit_data.prove(pw)?;
+        Ok((circuit_data.verifier_only, proof))
+    }
 
     // test that recurses with arity=2, with the following shape:
     //          proof_1d
@@ -759,14 +611,20 @@ mod tests {
             start.elapsed()
         );
 
-        let mut circuit1 = RC::<Circuit1>::build(&params, &())?;
-        let mut circuit2 = RC::<Circuit2>::build(&params, &())?;
-        let mut circuit3 = RC::<Circuit3>::build(&params, &())?;
+        let (dummy_verifier_data, dummy_proof) = dummy(&circuit_data_1.common, num_public_inputs)?;
+
+        let circuit1 = RC::<Circuit1>::build(&params, &())?;
+        let circuit2 = RC::<Circuit2>::build(&params, &())?;
+        let circuit3 = RC::<Circuit3>::build(&params, &())?;
 
         println!("circuit1.prove");
         let inp = HashOut::<F>::ZERO;
         let inner_inputs = (inp, circuit1_io(inp));
-        let proof_1a = circuit1.prove(&inner_inputs, vec![], vec![])?;
+        let proof_1a = circuit1.prove(
+            &inner_inputs,
+            vec![dummy_proof.clone(), dummy_proof.clone()],
+            vec![dummy_verifier_data.clone(), dummy_verifier_data.clone()],
+        )?;
         verifier_data_1.clone().verify(proof_1a.clone())?;
 
         println!(
@@ -776,21 +634,32 @@ mod tests {
         let inner_inputs = (inp, circuit1_io(inp));
         let proof_1b = circuit1.prove(
             &inner_inputs,
-            vec![proof_1a.clone()],
-            vec![verifier_data_1.verifier_only.clone()],
+            vec![proof_1a.clone(), dummy_proof.clone()],
+            vec![
+                verifier_data_1.verifier_only.clone(),
+                dummy_verifier_data.clone(),
+            ],
         )?;
         verifier_data_1.clone().verify(proof_1b.clone())?;
 
         println!("circuit3.prove");
         let inp = HashOut::<F>::ZERO;
         let inner_inputs = (inp, circuit3_io(inp));
-        let proof_3 = circuit3.prove(&inner_inputs, vec![], vec![])?;
+        let proof_3 = circuit3.prove(
+            &inner_inputs,
+            vec![dummy_proof.clone(), dummy_proof.clone()],
+            vec![dummy_verifier_data.clone(), dummy_verifier_data.clone()],
+        )?;
         verifier_data_3.clone().verify(proof_3.clone())?;
 
         println!("circuit1.prove");
         let inp = HashOut::<F>::ZERO;
         let inner_inputs = (inp, circuit1_io(inp));
-        let proof_1c = circuit1.prove(&inner_inputs, vec![], vec![])?;
+        let proof_1c = circuit1.prove(
+            &inner_inputs,
+            vec![dummy_proof.clone(), dummy_proof.clone()],
+            vec![dummy_verifier_data.clone(), dummy_verifier_data.clone()],
+        )?;
         verifier_data_1.clone().verify(proof_1c.clone())?;
 
         // generate a proof of Circuit2, which internally verifies the proof_3 & proof_1c

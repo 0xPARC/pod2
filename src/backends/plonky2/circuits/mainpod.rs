@@ -1,9 +1,4 @@
-use std::{
-    array,
-    collections::HashMap,
-    iter,
-    sync::{Arc, LazyLock, MappedRwLockReadGuard, Mutex, RwLock, RwLockReadGuard},
-};
+use std::{array, iter, sync::Arc};
 
 use itertools::{zip_eq, Itertools};
 use plonky2::{
@@ -17,12 +12,12 @@ use plonky2::{
         target::{BoolTarget, Target},
         witness::{PartialWitness, WitnessWrite},
     },
-    plonk::{circuit_data, config::AlgebraicHasher},
+    plonk::config::AlgebraicHasher,
 };
 
 use crate::{
     backends::plonky2::{
-        basetypes::{CircuitBuilder, C, D},
+        basetypes::CircuitBuilder,
         circuits::{
             common::{
                 CircuitBuilderPod, CustomPredicateBatchTarget, CustomPredicateEntryTarget,
@@ -35,23 +30,20 @@ use crate::{
         },
         emptypod::EmptyPod,
         error::Result,
-        get_or_set_map_cache,
-        mainpod::{self, pad_statement, MainPod},
+        mainpod::{self, pad_statement},
         primitives::merkletree::{
             MerkleClaimAndProof, MerkleClaimAndProofTarget, MerkleProofGadget,
         },
-        recursion::{self, common_data_for_recursion, InnerCircuit, VerifiedProofTarget},
+        recursion::{InnerCircuit, VerifiedProofTarget},
         signedpod::SignedPod,
-        RecursivePodData,
     },
     measure_gates_begin, measure_gates_end,
     middleware::{
         AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash,
-        NativeOperation, NativePredicate, Params, Pod, PodType, PredicatePrefix, Statement,
+        NativeOperation, NativePredicate, Params, PodType, PredicatePrefix, Statement,
         StatementArg, ToFields, Value, WildcardValue, EMPTY_VALUE, F, HASH_SIZE, KEY_TYPE, SELF,
         VALUE_SIZE,
     },
-    timed,
 };
 
 //
@@ -1197,9 +1189,6 @@ impl MainPodVerifyGadget {
             params: params.clone(),
         };
         let mut input_pods_self_statements: Vec<Vec<StatementTarget>> = Vec::new();
-        // TODO: Normalize the statements!  The id is built with statements that have SELF, but the
-        // layed out statements have pod.id instead!  Figure out which direction is simpler
-        // (probably SELF -> id)
         let normalize_statement_gadget = NormalizeStatementGadget {
             params: self.params.clone(),
         };
@@ -1226,6 +1215,7 @@ impl MainPodVerifyGadget {
 
         let vds_root = builder.add_virtual_hash();
         // TODO: verify that all input pod proofs use verifier data from the public input VD array
+        // This requires merkle proofs
 
         // Verify that VD array that input pod uses is the same we use now.
         for verified_proof in verified_proofs {
@@ -1567,7 +1557,7 @@ mod tests {
         };
 
         let config = CircuitConfig::standard_recursion_config();
-        let mut builder = CircuitBuilder::<F, D>::new(config);
+        let mut builder = CircuitBuilder::new(config);
 
         let st_target = builder.add_virtual_statement(&params);
         let op_target = builder.add_virtual_operation(&params);
@@ -2440,7 +2430,7 @@ mod tests {
         expected_st_arg: StatementArg,
     ) -> Result<()> {
         let config = CircuitConfig::standard_recursion_config();
-        let mut builder = CircuitBuilder::<F, D>::new(config);
+        let mut builder = CircuitBuilder::new(config);
         let gadget = CustomOperationVerifyGadget {
             params: params.clone(),
         };
@@ -2523,7 +2513,7 @@ mod tests {
         expected_st: Statement,
     ) -> Result<()> {
         let config = CircuitConfig::standard_recursion_config();
-        let mut builder = CircuitBuilder::<F, D>::new(config);
+        let mut builder = CircuitBuilder::new(config);
         let gadget = CustomOperationVerifyGadget {
             params: params.clone(),
         };
@@ -2587,7 +2577,7 @@ mod tests {
         expected_st: Option<Statement>,
     ) -> Result<()> {
         let config = CircuitConfig::standard_recursion_config();
-        let mut builder = CircuitBuilder::<F, D>::new(config);
+        let mut builder = CircuitBuilder::new(config);
         let gadget = CustomOperationVerifyGadget {
             params: params.clone(),
         };
@@ -2929,7 +2919,7 @@ mod tests {
 
     fn helper_calculate_id(params: &Params, statements: &[Statement]) -> Result<()> {
         let config = CircuitConfig::standard_recursion_config();
-        let mut builder = CircuitBuilder::<F, D>::new(config);
+        let mut builder = CircuitBuilder::new(config);
         let gadget = CalculateIdGadget {
             params: params.clone(),
         };

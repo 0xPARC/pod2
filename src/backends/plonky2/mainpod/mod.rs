@@ -7,7 +7,6 @@ use itertools::Itertools;
 pub use operation::*;
 use plonky2::{
     hash::poseidon::PoseidonHash,
-    iop::witness::PartialWitness,
     plonk::{
         circuit_builder::CircuitBuilder,
         circuit_data::{CircuitConfig, CommonCircuitData, ProverCircuitData},
@@ -19,12 +18,9 @@ pub use statement::*;
 
 use crate::{
     backends::plonky2::{
-        basetypes::{
-            Proof, ProofWithPublicInputs, VerifierCircuitData, VerifierOnlyCircuitData, C, D,
-        },
+        basetypes::{Proof, ProofWithPublicInputs, VerifierOnlyCircuitData, C, D},
         circuits::mainpod::{
-            CustomPredicateVerification, MainPodVerifyCircuit, MainPodVerifyInput,
-            MainPodVerifyTarget, NUM_PUBLIC_INPUTS,
+            CustomPredicateVerification, MainPodVerifyInput, MainPodVerifyTarget, NUM_PUBLIC_INPUTS,
         },
         emptypod::EmptyPod,
         error::{Error, Result},
@@ -32,12 +28,11 @@ use crate::{
         recursion::{self, RecursiveCircuit},
         recursive_main_pod_circuit_data,
         signedpod::SignedPod,
-        RecursivePodData,
     },
     middleware::{
         self, resolve_wildcard_values, AnchoredKey, CustomPredicateBatch, DynError, Hash,
         MainPodInputs, NativeOperation, NonePod, OperationType, Params, Pod, PodId, PodProver,
-        PodType, RecursivePod, StatementArg, ToFields, EMPTY_HASH, F, KEY_TYPE, SELF,
+        PodType, RecursivePod, StatementArg, ToFields, F, KEY_TYPE, SELF,
     },
 };
 
