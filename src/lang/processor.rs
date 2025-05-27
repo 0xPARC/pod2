@@ -427,19 +427,7 @@ fn process_literal(literal: ast::Literal) -> Result<Value, ProcessorError> {
         ast::Literal::Int(i) => Ok(Value::from(i)),
         ast::Literal::Bool(b) => Ok(Value::from(b)),
         ast::Literal::String(s) => Ok(Value::from(s)),
-        ast::Literal::Raw(bytes) => {
-            const MAX_RAW_BYTES: usize = VALUE_SIZE * 8;
-            if bytes.len() > MAX_RAW_BYTES {
-                return Err(ProcessorError::Semantic(format!(
-                    "Raw literal 0x{} is too long (max {} bytes)",
-                    hex::encode(&bytes),
-                    MAX_RAW_BYTES
-                )));
-            }
-            let hex_str = hex::encode(&bytes);
-            let padded_hex_str = format!("{:0>64}", hex_str);
-            parse_hex_to_raw_value(&padded_hex_str).map(Value::from)
-        }
+        ast::Literal::Raw(bytes) => parse_hex_to_raw_value(&hex::encode(&bytes)).map(Value::from),
         ast::Literal::Array(elements) => {
             let processed_elements = elements
                 .into_iter()
@@ -477,19 +465,6 @@ fn process_literal(literal: ast::Literal) -> Result<Value, ProcessorError> {
 /// Expects a 64-character hex string representing 32 bytes.
 /// Each 16 characters are converted into a field element.
 fn parse_hex_to_raw_value(hex_str: &str) -> Result<middleware::RawValue, ProcessorError> {
-    if hex_str.len() != 64 {
-        return Err(ProcessorError::Internal(format!(
-            "Internal error: Expected 64 hex chars for RawValue, got {}",
-            hex_str.len()
-        )));
-    }
-    if !hex_str.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(ProcessorError::Internal(format!(
-            "Internal error: Invalid hex char found in {}",
-            hex_str
-        )));
-    }
-
     let mut v = [F::ZERO; VALUE_SIZE];
     for (i, element) in v.iter_mut().enumerate() {
         let start = i * 16;

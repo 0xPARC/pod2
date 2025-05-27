@@ -111,20 +111,14 @@ mod tests {
         assert_parses(Rule::literal_bool, "true");
         assert_parses(Rule::literal_bool, "false");
 
-        // Raw - Allow any even number of hex digits >= 2
-        assert_parses(Rule::literal_raw, "0x00"); // 2 digits is 1 pair
-        assert_parses(Rule::literal_raw, "0xabcd");
-        assert_parses(Rule::literal_raw, "0xDEADbeef0123");
-        let long_valid_raw = format!("0x{}", "a".repeat(64)); // 64 is even
+        // Raw - must be 32 hex pairs preceded by 0x prefix
+        let long_valid_raw = format!("0x{}", "a".repeat(64));
         assert_parses(Rule::literal_raw, &long_valid_raw);
-
-        // Use anchored rule for failure cases
-        assert_fails(Rule::test_literal_raw, "0xabc"); // Fails (odd number of digits)
-        assert_fails(Rule::test_literal_raw, "0x1"); // Fails (odd number of digits)
+        assert_fails(Rule::test_literal_raw, "0xabc"); // Fails (too short)
         assert_fails(Rule::test_literal_raw, "0x"); // Fails (needs at least one pair)
         assert_fails(Rule::test_literal_raw, "0xGG"); // Fails (invalid hex chars)
-                                                      // assert_fails(Rule::test_literal_raw, &format!("0x{}", "a".repeat(62))); // This should pass now
-                                                      // assert_fails(Rule::test_literal_raw, &format!("0x{}", "a".repeat(66))); // This should pass now
+        assert_fails(Rule::test_literal_raw, &format!("0x{}", "a".repeat(62))); // Too short
+        assert_fails(Rule::test_literal_raw, &format!("0x{}", "a".repeat(66))); // Too long
 
         // String
         assert_parses(Rule::literal_string, "\"hello\"");
@@ -139,12 +133,18 @@ mod tests {
                                                              // Set
         assert_parses(Rule::literal_set, "#[]");
         assert_parses(Rule::literal_set, "#[1, 2, 3]");
-        assert_parses(Rule::literal_set, "#[ \"a\", 0x0102 ]"); // Use even digits
-                                                                // Dict
+        assert_parses(
+            Rule::literal_set,
+            "#[ \"a\", 0x0102030405060708090a0b0c0d0e0f100102030405060708090a0b0c0d0e0f10 ]",
+        );
+        // Dict
         assert_parses(Rule::literal_dict, "{}");
         assert_parses(Rule::literal_dict, "{ \"name\": \"Alice\", \"age\": 30 }");
         assert_parses(Rule::literal_dict, "{ \"nested\": { \"key\": 1 } }");
-        assert_parses(Rule::literal_dict, "{ \"raw_val\": 0xab } "); // Use even digits
+        assert_parses(
+            Rule::literal_dict,
+            "{ \"raw_val\": 0x0102030405060708090a0b0c0d0e0f100102030405060708090a0b0c0d0e0f10 } ",
+        );
         assert_fails(Rule::literal_dict, "{ name: \"Alice\" }"); // Key must be string literal
     }
 

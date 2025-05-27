@@ -106,8 +106,8 @@ literal_value = {
 // Primitive literal types
 literal_int = @{ "-"? ~ ASCII_DIGIT+ }
 literal_bool = @{ "true" | "false" }
-// literal_raw: 0x followed by one or more PAIRS of hex digits
-literal_raw = @{ "0x" ~ (ASCII_HEX_DIGIT ~ ASCII_HEX_DIGIT)+ }
+// literal_raw: 0x followed by 16 hex digits
+literal_raw = @{ "0x" ~ (ASCII_HEX_DIGIT ~ ASCII_HEX_DIGIT){32} }
 
 // -- New String Literal Parsing Strategy (based on Pest JSON example) --
 literal_string = ${ "\"" ~ inner ~ "\"" } // Compound atomic string rule
