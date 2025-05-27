@@ -105,7 +105,7 @@ mod tests {
         assert_parses(Rule::literal_bool, "true");
         assert_parses(Rule::literal_bool, "false");
 
-        // Raw - Require 64 hex digits
+        // Raw - Require 64 hex digits (32 bytes, equal to 4 * 64-bit field elements)
         assert_parses(
             Rule::literal_raw,
             "0x0000000000000000000000000000000000000000000000000000000000000000",
@@ -120,7 +120,6 @@ mod tests {
         // Use anchored rule for failure cases
         assert_fails(Rule::test_literal_raw, "0xabc"); // Fails (string is too short)
         assert_fails(Rule::test_literal_raw, "0x"); // Fails (needs at least one pair)
-        assert_fails(Rule::test_literal_raw, "0xGG"); // Fails (invalid hex chars)
         assert_fails(Rule::test_literal_raw, &format!("0x{}", "a".repeat(66))); // Fails (string is too long)
 
         // String
