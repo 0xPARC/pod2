@@ -1176,7 +1176,7 @@ mod processor_tests {
             e => panic!("Expected UndefinedIdentifier, got {:?}", e),
         }
 
-        // Native predicate names are case-senstive
+        // Native predicate names are case-sensitive
         let input = r#"
         REQUEST(
           EQUAL(?A[?B], ?C[?D])
