@@ -12,7 +12,7 @@ use crate::{
         basetypes::{Proof, VerifierOnlyCircuitData},
         error::{Error, Result},
         mainpod::{
-            calculate_id, extract_merkle_proofs, layout_statements, normalize_statement,
+            calculate_id, extract_merkle_proofs, layout_statements,
             process_private_statements_operations, process_public_statements_operations, Operation,
             Statement,
         },
@@ -288,14 +288,11 @@ impl Pod for MockMainPod {
     fn id(&self) -> PodId {
         self.id
     }
-    fn pub_statements(&self) -> Vec<middleware::Statement> {
-        // return the public statements, where when origin=SELF is replaced by origin=self.id()
-        // By convention we expect the KEY_TYPE to be the first statement
-        self.statements
+    fn pub_self_statements(&self) -> Vec<middleware::Statement> {
+        self.public_statements
             .iter()
-            .skip(self.offset_public_statements())
             .cloned()
-            .map(|statement| normalize_statement(&statement, self.id()))
+            .map(|st| st.try_into().expect("valid statement"))
             .collect()
     }
 

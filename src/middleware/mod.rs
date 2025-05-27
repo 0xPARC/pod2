@@ -689,13 +689,39 @@ impl Params {
     }
 }
 
+/// Replace references to SELF by `self_id` in anchored keys of the statement.
+pub fn normalize_statement(statement: &Statement, self_id: PodId) -> Statement {
+    let predicate = statement.predicate();
+    let args = statement
+        .args()
+        .iter()
+        .map(|sa| match &sa {
+            StatementArg::Key(AnchoredKey { pod_id, key }) if *pod_id == SELF => {
+                StatementArg::Key(AnchoredKey::new(self_id, key.clone()))
+            }
+            _ => sa.clone(),
+        })
+        .collect();
+    Statement::from_args(predicate, args).expect("statement was valid before normalization")
+}
+
 pub type DynError = dyn std::error::Error + Send + Sync;
 
 pub trait Pod: fmt::Debug + DynClone + Any {
     fn params(&self) -> &Params;
     fn verify(&self) -> Result<(), Box<DynError>>;
     fn id(&self) -> PodId;
-    fn pub_statements(&self) -> Vec<Statement>;
+    /// Statements as internally generated, where self-referencing arguments use SELF in the
+    /// anchored key.  The serialization of these statements is used to calcualte the id.
+    fn pub_self_statements(&self) -> Vec<Statement>;
+    /// Normalized statements, where self-referencing arguments use the pod id instead of SELF in
+    /// the anchored key.
+    fn pub_statements(&self) -> Vec<Statement> {
+        self.pub_self_statements()
+            .into_iter()
+            .map(|statement| normalize_statement(&statement, self.id()))
+            .collect()
+    }
     /// Extract key-values from ValueOf public statements
     fn kvs(&self) -> HashMap<AnchoredKey, Value> {
         self.pub_statements()
@@ -759,7 +785,7 @@ impl Pod for NonePod {
     fn id(&self) -> PodId {
         PodId(EMPTY_HASH)
     }
-    fn pub_statements(&self) -> Vec<Statement> {
+    fn pub_self_statements(&self) -> Vec<Statement> {
         Vec::new()
     }
     fn serialized_proof(&self) -> String {

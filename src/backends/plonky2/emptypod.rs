@@ -216,7 +216,7 @@ impl Pod for EmptyPod {
         self.id
     }
 
-    fn pub_statements(&self) -> Vec<middleware::Statement> {
+    fn pub_self_statements(&self) -> Vec<middleware::Statement> {
         vec![type_statement()]
     }
 

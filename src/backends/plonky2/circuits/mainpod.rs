@@ -48,7 +48,8 @@ use crate::{
     middleware::{
         AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash,
         NativeOperation, NativePredicate, Params, Pod, PodType, PredicatePrefix, Statement,
-        StatementArg, ToFields, Value, WildcardValue, F, HASH_SIZE, KEY_TYPE, SELF, VALUE_SIZE,
+        StatementArg, ToFields, Value, WildcardValue, EMPTY_VALUE, F, HASH_SIZE, KEY_TYPE, SELF,
+        VALUE_SIZE,
     },
     timed,
 };
@@ -912,6 +913,42 @@ impl CustomOperationVerifyGadget {
     }
 }
 
+/// Replace references to SELF by `self_id` in a statement.
+struct NormalizeStatementGadget {
+    params: Params,
+}
+
+impl NormalizeStatementGadget {
+    fn eval(
+        &self,
+        builder: &mut CircuitBuilder,
+        statement: &StatementTarget,
+        self_id: &ValueTarget,
+    ) -> StatementTarget {
+        let zero_value = builder.constant_value(EMPTY_VALUE);
+        let self_value = builder.constant_value(SELF.0.into());
+        let args = statement
+            .args
+            .iter()
+            .map(|arg| {
+                let first = ValueTarget::from_slice(&arg.elements[..VALUE_SIZE]);
+                let second = ValueTarget::from_slice(&arg.elements[VALUE_SIZE..]);
+                let is_not_ak = builder.is_equal_flattenable(&zero_value, &second);
+                let is_ak = builder.not(is_not_ak);
+                let is_self = builder.is_equal_flattenable(&self_value, &first);
+                let normalize = builder.and(is_ak, is_self);
+                let first_normalized =
+                    builder.select_flattenable(&self.params, normalize, self_id, &first);
+                StatementArgTarget::new(first_normalized, second)
+            })
+            .collect_vec();
+        StatementTarget {
+            predicate: statement.predicate.clone(),
+            args,
+        }
+    }
+}
+
 pub struct CalculateIdGadget {
     /// `params.num_public_statements_id` is the total number of statements that will be hashed.
     /// The id is calculated with front-padded none-statements and then the input statements
@@ -1159,21 +1196,32 @@ impl MainPodVerifyGadget {
         let id_gadget = CalculateIdGadget {
             params: params.clone(),
         };
-        let mut input_pods_statements: Vec<Vec<StatementTarget>> = Vec::new();
+        let mut input_pods_self_statements: Vec<Vec<StatementTarget>> = Vec::new();
+        // TODO: Normalize the statements!  The id is built with statements that have SELF, but the
+        // layed out statements have pod.id instead!  Figure out which direction is simpler
+        // (probably SELF -> id)
+        let normalize_statement_gadget = NormalizeStatementGadget {
+            params: self.params.clone(),
+        };
         for verified_proof in verified_proofs {
-            let mut input_pod_statements = Vec::new();
-            for _statement in 0..self.params.max_input_pods_public_statements {
-                let st = builder.add_virtual_statement(params);
-                statements.push(st.clone());
-                input_pod_statements.push(st);
-            }
-            let id = id_gadget.eval(builder, &input_pod_statements);
             let expected_id = HashOutTarget::try_from(
                 &verified_proof.public_inputs[PI_OFFSET_ID..PI_OFFSET_ID + HASH_SIZE],
             )
             .expect("4 elements");
+            let id_value = ValueTarget {
+                elements: expected_id.elements,
+            };
+
+            let mut input_pod_self_statements = Vec::new();
+            for _statement in 0..self.params.max_input_pods_public_statements {
+                let self_st = builder.add_virtual_statement(params);
+                let normalized_st = normalize_statement_gadget.eval(builder, &self_st, &id_value);
+                input_pod_self_statements.push(self_st);
+                statements.push(normalized_st);
+            }
+            let id = id_gadget.eval(builder, &input_pod_self_statements);
             builder.connect_hashes(expected_id, id);
-            input_pods_statements.push(input_pod_statements);
+            input_pods_self_statements.push(input_pod_self_statements);
         }
 
         let vds_root = builder.add_virtual_hash();
@@ -1267,7 +1315,7 @@ impl MainPodVerifyGadget {
             vds_root,
             id,
             signed_pods,
-            input_pods_statements,
+            input_pods_self_statements,
             statements: input_statements.to_vec(),
             operations,
             merkle_proofs,
@@ -1282,7 +1330,7 @@ pub struct MainPodVerifyTarget {
     vds_root: HashOutTarget,
     id: HashOutTarget,
     signed_pods: Vec<SignedPodVerifyTarget>,
-    input_pods_statements: Vec<Vec<StatementTarget>>,
+    input_pods_self_statements: Vec<Vec<StatementTarget>>,
     // The KEY_TYPE statement must be the first public one
     statements: Vec<StatementTarget>,
     operations: Vec<OperationTarget>,
@@ -1301,7 +1349,7 @@ pub struct CustomPredicateVerification {
 pub struct MainPodVerifyInput {
     pub vds_root: Hash,
     pub signed_pods: Vec<SignedPod>,
-    pub recursive_pods_pub_statements: Vec<Vec<Statement>>,
+    pub recursive_pods_pub_self_statements: Vec<Vec<Statement>>,
     pub statements: Vec<mainpod::Statement>,
     pub operations: Vec<mainpod::Operation>,
     pub merkle_proofs: Vec<MerkleClaimAndProof>,
@@ -1353,23 +1401,25 @@ impl MainPodVerifyTarget {
             }
         }
 
-        assert!(input.recursive_pods_pub_statements.len() <= self.params.max_input_recursive_pods);
-        for (i, pod_pub_statements) in input.recursive_pods_pub_statements.iter().enumerate() {
+        assert!(
+            input.recursive_pods_pub_self_statements.len() <= self.params.max_input_recursive_pods
+        );
+        for (i, pod_pub_statements) in input.recursive_pods_pub_self_statements.iter().enumerate() {
             set_targets_middleware_statements(
                 pw,
                 &self.params,
-                &self.input_pods_statements[i],
+                &self.input_pods_self_statements[i],
                 &pod_pub_statements,
             )?;
         }
         // Padding
         let empty_pod = EmptyPod::new(&self.params, input.vds_root)?;
         let empty_pod_statements = empty_pod.pub_statements();
-        for i in input.recursive_pods_pub_statements.len()..self.params.max_input_signed_pods {
+        for i in input.recursive_pods_pub_self_statements.len()..self.params.max_input_signed_pods {
             set_targets_middleware_statements(
                 pw,
                 &self.params,
-                &self.input_pods_statements[i],
+                &self.input_pods_self_statements[i],
                 &empty_pod_statements,
             )?;
         }

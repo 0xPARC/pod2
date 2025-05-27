@@ -77,6 +77,7 @@ pub trait InnerCircuit: Sized {
     fn set_targets(&self, pw: &mut PartialWitness<F>, input: &Self::Input) -> Result<()>;
 }
 
+// TODO: Remove dummy
 #[derive(Clone, Debug)]
 pub struct RecursiveParams {
     /// determines the arity of the RecursiveCircuit

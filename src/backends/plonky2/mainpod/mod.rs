@@ -425,7 +425,6 @@ impl Prover {
             target: main_pod_target,
         };
 
-        let mut pw = PartialWitness::<F>::new();
         let signed_pods_input: Vec<SignedPod> = inputs
             .signed_pods
             .iter()
@@ -437,12 +436,12 @@ impl Prover {
             })
             .collect_vec();
 
-        let recursive_pods_pub_statements = inputs
+        let recursive_pods_pub_self_statements = inputs
             .recursive_pods
             .iter()
             .map(|pod| {
                 assert_eq!(params, pod.params());
-                pod.pub_statements()
+                pod.pub_self_statements()
             })
             .collect_vec();
 
@@ -489,7 +488,7 @@ impl Prover {
         let input = MainPodVerifyInput {
             vds_root: inputs.vds_root,
             signed_pods: signed_pods_input,
-            recursive_pods_pub_statements,
+            recursive_pods_pub_self_statements,
             statements: statements[statements.len() - params.max_statements..].to_vec(),
             operations,
             merkle_proofs,
@@ -525,25 +524,6 @@ pub struct MainPod {
     vds_root: Hash,
     public_statements: Vec<Statement>,
     proof: Proof,
-}
-
-/// Convert a Statement into middleware::Statement and replace references to SELF by `self_id`.
-pub(crate) fn normalize_statement(statement: &Statement, self_id: PodId) -> middleware::Statement {
-    Statement(
-        statement.0.clone(),
-        statement
-            .1
-            .iter()
-            .map(|sa| match &sa {
-                StatementArg::Key(AnchoredKey { pod_id, key }) if *pod_id == SELF => {
-                    StatementArg::Key(AnchoredKey::new(self_id, key.clone()))
-                }
-                _ => sa.clone(),
-            })
-            .collect(),
-    )
-    .try_into()
-    .unwrap()
 }
 
 // This is a helper function to get the CommonCircuitData necessary to decode
@@ -651,12 +631,11 @@ impl Pod for MainPod {
         self.id
     }
 
-    fn pub_statements(&self) -> Vec<middleware::Statement> {
-        // return the public statements, where when origin=SELF is replaced by origin=self.id()
+    fn pub_self_statements(&self) -> Vec<middleware::Statement> {
         self.public_statements
             .iter()
             .cloned()
-            .map(|statement| normalize_statement(&statement, self.id()))
+            .map(|st| st.try_into().expect("valid statement"))
             .collect()
     }
 
