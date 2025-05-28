@@ -27,8 +27,8 @@ The following table summarises the natively-supported statements, where we write
 | 0    | `None`        |                     | no statement, always true (useful for padding)                    |
 | 1    | `False`       |                     | always false (useful for padding disjunctions)                    |
 | 2    | `ValueOf`     | `ak`, `value`       | `value_of(ak) = value`                                            |
-| 3    | `Eq`          | `ak1`, `ak2`        | `value_of(ak1) = value_of(ak2)`                                   |
-| 4    | `NEq`         | `ak1`, `ak2`        | `value_of(ak1) != value_of(ak2)`                                  |
+| 3    | `Equal`          | `ak1`, `ak2`        | `value_of(ak1) = value_of(ak2)`                                   |
+| 4    | `NotEqual`         | `ak1`, `ak2`        | `value_of(ak1) != value_of(ak2)`                                  |
 | 5    | `LtEq`          | `ak1`, `ak2`        | `value_of(ak1) <= value_of(ak2)`                                   |
 | 6    | `Lt`         | `ak1`, `ak2`        | `value_of(ak1) < value_of(ak2)`                                  |
 | 7    | `Contains`    | `ak1`, `ak2`        | `(key_of(ak2), value_of(ak2)) ∈ value_of(ak1)` (Merkle inclusion) |
