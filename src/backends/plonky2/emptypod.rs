@@ -242,7 +242,7 @@ pub mod tests {
     fn test_empty_pod() {
         let params = Params::default();
 
-        let empty_pod = EmptyPod::new_boxed(&params, EMPTY_HASH).unwrap();
+        let empty_pod = EmptyPod::new_boxed(&params, EMPTY_HASH);
         empty_pod.verify().unwrap();
     }
 }
