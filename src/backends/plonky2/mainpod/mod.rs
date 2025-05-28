@@ -7,18 +7,14 @@ use itertools::Itertools;
 pub use operation::*;
 use plonky2::{
     hash::poseidon::PoseidonHash,
-    plonk::{
-        circuit_builder::CircuitBuilder,
-        circuit_data::{CircuitConfig, CommonCircuitData, ProverCircuitData},
-        config::Hasher,
-    },
+    plonk::{circuit_data::CommonCircuitData, config::Hasher},
     util::serialization::{Buffer, Read},
 };
 pub use statement::*;
 
 use crate::{
     backends::plonky2::{
-        basetypes::{Proof, ProofWithPublicInputs, VerifierOnlyCircuitData, C, D},
+        basetypes::{Proof, ProofWithPublicInputs, VerifierOnlyCircuitData, D},
         circuits::mainpod::{
             CustomPredicateVerification, MainPodVerifyInput, MainPodVerifyTarget, NUM_PUBLIC_INPUTS,
         },
@@ -281,11 +277,13 @@ pub(crate) fn layout_statements(
     }
 
     // Input main pods region
-    let empty_pod_box: Box<dyn RecursivePod> = if mock {
-        MockEmptyPod::new(params)
-    } else {
-        EmptyPod::new(params, inputs.vds_root)?
-    };
+    let empty_pod_box: Box<dyn RecursivePod> =
+        if mock || inputs.recursive_pods.len() == params.max_input_recursive_pods {
+            // We mocking or we don't need padding so we skip creating an EmptyPod
+            MockEmptyPod::new_boxed(params)
+        } else {
+            EmptyPod::new_boxed(params, inputs.vds_root)
+        };
     let empty_pod = empty_pod_box.as_ref();
     assert!(inputs.recursive_pods.len() <= params.max_input_recursive_pods);
     for i in 0..params.max_input_recursive_pods {
@@ -408,32 +406,23 @@ pub struct Prover {}
 
 impl Prover {
     fn _prove(&self, params: &Params, inputs: MainPodInputs) -> Result<MainPod> {
-        let config = CircuitConfig::standard_recursion_config();
-        let mut builder = CircuitBuilder::<F, D>::new(config);
-
         let rec_circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
         // println!("DBG recursive MainPod build BEGIN");
-        let (_, circuit_data) = RecursiveCircuit::<MainPodVerifyTarget>::circuit_data_padded(
-            params.max_input_recursive_pods,
-            &rec_circuit_data.common,
-            params,
-        )?;
+        let (main_pod_target, circuit_data) =
+            RecursiveCircuit::<MainPodVerifyTarget>::circuit_data_padded(
+                params.max_input_recursive_pods,
+                &rec_circuit_data.common,
+                params,
+            )?;
         let rec_params = RecursiveParams {
             arity: params.max_input_recursive_pods,
             common_data: circuit_data.common.clone(),
             verifier_data: circuit_data.verifier_data(),
         };
-        let main_pod_target = RecursiveCircuit::<MainPodVerifyTarget>::build_targets(
-            &mut builder,
-            params.max_input_recursive_pods,
-            &rec_circuit_data.common,
-            params,
-        )?;
         // println!("DBG recursive MainPod build END");
-        let prover: ProverCircuitData<F, C, D> = builder.build_prover::<C>();
         let main_pod = RecursiveCircuit {
             params: rec_params,
-            prover,
+            prover: circuit_data.prover_data(),
             target: main_pod_target,
         };
 
@@ -449,7 +438,12 @@ impl Prover {
             .collect_vec();
 
         // Pad input recursive pods with empty pods if necessary
-        let empty_pod = EmptyPod::new(params, inputs.vds_root)?;
+        let empty_pod = if inputs.recursive_pods.len() == params.max_input_recursive_pods {
+            // We don't need padding so we skip creating an EmptyPod
+            MockEmptyPod::new_boxed(params)
+        } else {
+            EmptyPod::new_boxed(params, inputs.vds_root)
+        };
         let inputs = MainPodInputs {
             recursive_pods: &inputs
                 .recursive_pods
@@ -574,10 +568,11 @@ impl MainPod {
         }
 
         // 1, 3, 4, 5 verification via the zkSNARK proof
+        let rec_circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
         // TODO: cache these artefacts
-        let rec_params = recursion::new_params::<MainPodVerifyTarget>(
+        let (_, circuit_data) = RecursiveCircuit::<MainPodVerifyTarget>::circuit_data_padded(
             self.params.max_input_recursive_pods,
-            NUM_PUBLIC_INPUTS,
+            &rec_circuit_data.common,
             &self.params,
         )?;
         let public_inputs = id
@@ -586,8 +581,7 @@ impl MainPod {
             .chain(self.vds_root.0.iter())
             .cloned()
             .collect_vec();
-        rec_params
-            .verifier_data()
+        circuit_data
             .verify(ProofWithPublicInputs {
                 proof: self.proof.clone(),
                 public_inputs,
@@ -829,10 +823,7 @@ pub mod tests {
             max_statements: 26,
             max_public_statements: 5,
             max_signed_pod_values: 8,
-            max_statement_args: 3,
-            max_operation_args: 4,
-            max_custom_predicate_arity: 4,
-            max_custom_batch_size: 3,
+            max_operation_args: 5,
             max_custom_predicate_wildcards: 6,
             max_custom_predicate_verifications: 8,
             ..Default::default()

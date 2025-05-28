@@ -1,7 +1,4 @@
-use std::{
-    collections::HashMap,
-    sync::{MappedRwLockReadGuard, RwLock},
-};
+use std::{collections::HashMap, sync::Mutex};
 
 use base64::{prelude::BASE64_STANDARD, Engine};
 use itertools::Itertools;
@@ -141,8 +138,10 @@ fn build() -> Result<(EmptyPodVerifyTarget, CircuitData)> {
 //     })
 // }
 
+static EMPTY_POD_CACHE: LazyLock<Mutex<HashMap<Hash, EmptyPod>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
 impl EmptyPod {
-    // TODO: Cache this by (params, vds_root)
     pub fn _prove(params: &Params, vds_root: Hash) -> Result<EmptyPod> {
         let (empty_pod_verify_target, data) = &*STANDARD_EMPTY_POD_DATA;
 
@@ -159,14 +158,23 @@ impl EmptyPod {
             proof: proof.proof,
         })
     }
-    pub fn new(params: &Params, vds_root: Hash) -> Result<Box<dyn RecursivePod>> {
-        Ok(Self::_prove(params, vds_root).map(Box::new)?)
+    pub fn new_boxed(params: &Params, vds_root: Hash) -> Box<dyn RecursivePod> {
+        let default_params = &*DEFAULT_PARAMS;
+        assert_eq!(default_params.id_params(), params.id_params());
+
+        let empty_pod = EMPTY_POD_CACHE
+            .lock()
+            .unwrap()
+            .entry(vds_root)
+            .or_insert_with(|| Self::_prove(params, vds_root).expect("prove EmptyPod"))
+            .clone();
+        Box::new(empty_pod)
     }
     fn _verify(&self) -> Result<()> {
         let statements = self
             .pub_self_statements()
             .into_iter()
-            .map(|st| mainpod::Statement::from(st))
+            .map(mainpod::Statement::from)
             .collect_vec();
         let id = PodId(calculate_id(&statements, &self.params));
         if id != self.id {
@@ -234,7 +242,7 @@ pub mod tests {
     fn test_empty_pod() {
         let params = Params::default();
 
-        let empty_pod = EmptyPod::new(&params, EMPTY_HASH).unwrap();
+        let empty_pod = EmptyPod::new_boxed(&params, EMPTY_HASH).unwrap();
         empty_pod.verify().unwrap();
     }
 }

@@ -26,9 +26,9 @@ fn type_statement() -> Statement {
 }
 
 impl MockEmptyPod {
-    pub fn new(params: &Params) -> Box<dyn RecursivePod> {
+    pub fn new_boxed(params: &Params) -> Box<dyn RecursivePod> {
         let statements = [mainpod::Statement::from(type_statement())];
-        let id = PodId(calculate_id(&statements, &params));
+        let id = PodId(calculate_id(&statements, params));
         Box::new(Self {
             params: params.clone(),
             id,
@@ -38,7 +38,7 @@ impl MockEmptyPod {
         let statements = self
             .pub_self_statements()
             .into_iter()
-            .map(|st| mainpod::Statement::from(st))
+            .map(mainpod::Statement::from)
             .collect_vec();
         let id = PodId(calculate_id(&statements, &self.params));
         if id != self.id {
@@ -87,7 +87,7 @@ pub mod tests {
     fn test_mock_empty_pod() {
         let params = Params::default();
 
-        let empty_pod = MockEmptyPod::new(&params);
+        let empty_pod = MockEmptyPod::new_boxed(&params);
         empty_pod.verify().unwrap();
     }
 }

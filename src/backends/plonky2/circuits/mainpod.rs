@@ -1371,8 +1371,8 @@ fn set_targets_input_pods_self_statements(
     // Padding
     let mut none_st = mainpod::Statement::from(Statement::None);
     pad_statement(params, &mut none_st);
-    for i in statements.len()..statements_target.len() {
-        statements_target[i].set_targets(pw, params, &none_st)?;
+    for statement_target in statements_target.iter().skip(statements.len()) {
+        statement_target.set_targets(pw, params, &none_st)?;
     }
     Ok(())
 }
@@ -1390,7 +1390,7 @@ impl MainPodVerifyTarget {
             self.signed_pods[i].set_targets(pw, signed_pod)?;
         }
         // Padding
-        if self.params.max_input_signed_pods > 0 {
+        if input.signed_pods.len() != self.params.max_input_signed_pods {
             // TODO: Instead of using an input for padding, use a canonical minimal SignedPod,
             // without it a MainPod configured to support input signed pods must have at least one
             // input signed pod :(
@@ -1408,21 +1408,23 @@ impl MainPodVerifyTarget {
                 pw,
                 &self.params,
                 &self.input_pods_self_statements[i],
-                &pod_pub_statements,
+                pod_pub_statements,
             )?;
         }
         // Padding
-        let empty_pod = EmptyPod::new(&self.params, input.vds_root)?;
-        let empty_pod_statements = empty_pod.pub_statements();
-        for i in
-            input.recursive_pods_pub_self_statements.len()..self.params.max_input_recursive_pods
-        {
-            set_targets_input_pods_self_statements(
-                pw,
-                &self.params,
-                &self.input_pods_self_statements[i],
-                &empty_pod_statements,
-            )?;
+        if input.recursive_pods_pub_self_statements.len() != self.params.max_input_recursive_pods {
+            let empty_pod = EmptyPod::new_boxed(&self.params, input.vds_root);
+            let empty_pod_statements = empty_pod.pub_statements();
+            for i in
+                input.recursive_pods_pub_self_statements.len()..self.params.max_input_recursive_pods
+            {
+                set_targets_input_pods_self_statements(
+                    pw,
+                    &self.params,
+                    &self.input_pods_self_statements[i],
+                    &empty_pod_statements,
+                )?;
+            }
         }
 
         assert_eq!(input.statements.len(), self.params.max_statements);

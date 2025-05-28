@@ -103,7 +103,10 @@ impl From<MainPod> for SerializedMainPod {
         let (pod_type, vds_root) =
             if let Some(pod) = (&*pod.pod as &dyn Any).downcast_ref::<Plonky2MainPod>() {
                 (MainPodType::Main, pod.vds_root())
-            } else if let Some(_) = (&*pod.pod as &dyn Any).downcast_ref::<MockMainPod>() {
+            } else if (&*pod.pod as &dyn Any)
+                .downcast_ref::<MockMainPod>()
+                .is_some()
+            {
                 (MainPodType::MockMain, EMPTY_HASH)
             } else {
                 unreachable!()
