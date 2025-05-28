@@ -373,7 +373,8 @@ impl EcdsaPod {
         let mut builder = CircuitBuilder::new(config.clone());
         let targets = RecursiveCircuit::<EcdsaPodVerifyTarget>::build_targets(
             &mut builder,
-            &rec_params,
+            rec_params.arity,
+            &rec_params.common_data,
             params,
         )?;
         // crate::backends::plonky2::recursion::pad_circuit(&mut builder, &rec_params.common_data);
@@ -613,21 +614,21 @@ pub fn recursive_circuit_data_OPT(
 static RECURSIVE_MAIN_POD_DATA: LazyLock<RwLock<HashMap<Params, CircuitData<F, C, D>>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
-pub fn recursive_main_pod_circuit_data_OPT(
-    params: &Params,
-) -> MappedRwLockReadGuard<CircuitData<F, C, D>> {
-    crate::backends::plonky2::get_or_set_map_cache(&RECURSIVE_MAIN_POD_DATA, params, |params| {
-        timed!(
-            "common_data_for_recursion",
-            common_data_for_recursion::<EcdsaPodVerifyTarget>(
-                params.max_input_recursive_pods,
-                NUM_PUBLIC_INPUTS,
-                params
-            )
-            .expect("calculate common_data")
-        )
-    })
-}
+// pub fn recursive_main_pod_circuit_data_OPT(
+//     params: &Params,
+// ) -> MappedRwLockReadGuard<CircuitData<F, C, D>> {
+//     crate::backends::plonky2::get_or_set_map_cache(&RECURSIVE_MAIN_POD_DATA, params, |params| {
+//         timed!(
+//             "common_data_for_recursion",
+//             common_data_for_recursion::<EcdsaPodVerifyTarget>(
+//                 params.max_input_recursive_pods,
+//                 NUM_PUBLIC_INPUTS,
+//                 params
+//             )
+//             .expect("calculate common_data")
+//         )
+//     })
+// }
 
 pub fn common_data_for_recursion_OPT<
     I: crate::backends::plonky2::recursion::circuit::InnerCircuit,
