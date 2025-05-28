@@ -11,6 +11,7 @@
 use itertools::Itertools;
 use plonky2::{
     self,
+    field::types::Field,
     gates::noop::NoopGate,
     hash::hash_types::HashOutTarget,
     iop::{
@@ -297,6 +298,29 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
     }
 }
 
+fn coset_interpolation_gate(
+    subgroup_bits: usize,
+    degree: usize,
+    barycentric_weights: &[u64],
+) -> plonky2::gates::coset_interpolation::CosetInterpolationGate<F, D> {
+    #[allow(dead_code)]
+    struct Mirror {
+        subgroup_bits: usize,
+        degree: usize,
+        barycentric_weights: Vec<F>,
+    }
+    let barycentric_weights = barycentric_weights
+        .iter()
+        .map(|v| F::from_canonical_u64(*v))
+        .collect_vec();
+    let gate = Mirror {
+        subgroup_bits,
+        degree,
+        barycentric_weights,
+    };
+    unsafe { std::mem::transmute(gate) }
+}
+
 pub fn common_data_for_recursion<I: InnerCircuit>(
     arity: usize,
     num_public_inputs: usize,
@@ -332,9 +356,30 @@ pub fn common_data_for_recursion<I: InnerCircuit>(
         GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(&config, 4)),
         GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(&config, 5)),
         GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(&config, 6)),
-        GateRef::new(
-            plonky2::gates::coset_interpolation::CosetInterpolationGate::with_max_degree(4, 6),
-        ),
+        // It would be better do `CosetInterpolationGate::with_max_degree(4, 6)` but unfortunately
+        // that plonk2 method is `pub(crate)`, so we need to get around that somehow.
+        GateRef::new(coset_interpolation_gate(
+            4,
+            6,
+            &[
+                17293822565076172801,
+                256,
+                1048576,
+                4294967296,
+                17592186044416,
+                72057594037927936,
+                68719476720,
+                281474976645120,
+                1152921504338411520,
+                18446744069414584065,
+                18446744069413535745,
+                18446744065119617025,
+                18446726477228539905,
+                18374686475376656385,
+                18446744000695107601,
+                18446462594437939201,
+            ],
+        )),
     ] {
         builder.add_gate_to_gate_set(gate);
     }
