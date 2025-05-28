@@ -598,7 +598,7 @@ pub struct Params {
     // maximum depth for merkle tree gadget
     pub max_depth_mt_gadget: usize,
     //
-    // The following parameters define how a pod id is calcualted.  They need to be the same among
+    // The following parameters define how a pod id is calculated.  They need to be the same among
     // different circuits to be compatible in their verification.
     //
     // Number of public statements to hash to calculate the id.  Must be equal or greater than
@@ -724,7 +724,7 @@ pub trait Pod: fmt::Debug + DynClone + Any {
     fn verify(&self) -> Result<(), Box<DynError>>;
     fn id(&self) -> PodId;
     /// Statements as internally generated, where self-referencing arguments use SELF in the
-    /// anchored key.  The serialization of these statements is used to calcualte the id.
+    /// anchored key.  The serialization of these statements is used to calculate the id.
     fn pub_self_statements(&self) -> Vec<Statement>;
     /// Normalized statements, where self-referencing arguments use the pod id instead of SELF in
     /// the anchored key.
@@ -781,7 +781,7 @@ pub trait PodSigner {
     ) -> Result<Box<dyn Pod>, Box<DynError>>;
 }
 
-// TODO: Delte once we have a fully working EmtpyPod and a dumb SignedPod
+// TODO: Delete once we have a fully working EmptyPod and a dumb SignedPod
 /// This is a filler type that fulfills the Pod trait and always verifies.  It's empty.  This
 /// can be used to simulate padding in a circuit.
 #[derive(Debug, Clone)]
