@@ -23,8 +23,6 @@ The following table summarises the natively-supported operations:
 | 13   | `MaxOf`               | `s1`, `s2`, `s3`    | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `s3 = ValueOf(ak3, value3)`, `value1 = max(value2, value3)` | `MaxOf(ak1, ak2, ak3)`                                         |
 | 14   | `HashOf`              | `s1`, `s2`, `s3`    | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `s3 = ValueOf(ak3, value3)`, `value1 = hash(value2, value3)`| `HashOf(ak1, ak2, ak3)`                                        |
 
-<!-- NOTE: should we 'uniformize' the names? eg. currently we have `EntryGt` and `GtToNEq` -->
-
 <br><br>
 
 The following table summarizes "syntactic sugar" operations.  These operations are not supported by the backend.  The frontend compiler is responsible for translating these operations into the operations above.
