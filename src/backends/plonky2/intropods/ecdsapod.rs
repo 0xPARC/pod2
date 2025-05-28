@@ -331,9 +331,26 @@ pub struct EcdsaPod {
     id: PodId,
     dict: Dictionary,
     proof: Proof,
+    vds_hash: Hash,
+    verifier_data: VerifierOnlyCircuitData<C, D>,
     // signature: ECDSASignature<Secp256K1>,
     // msg: F,
 }
+impl middleware::RecursivePod for EcdsaPod {
+    fn verifier_data(&self) -> VerifierOnlyCircuitData<C, D> {
+        // TODO: rm 'verifier_data' field, and 'compute' it with the 'build'
+        // method, so that the method 'EcdsaPod.verifier_data()' can get it
+        // from there and not from an internal field
+        self.verifier_data.clone()
+    }
+    fn proof(&self) -> Proof {
+        self.proof.clone()
+    }
+    fn vds_root(&self) -> Hash {
+        self.vds_hash
+    }
+}
+
 impl EcdsaPod {
     fn _prove(
         params: &Params,
@@ -341,6 +358,7 @@ impl EcdsaPod {
         kvs: &HashMap<Key, Value>,
         sk: ECDSASecretKey<Secp256K1>,
     ) -> Result<EcdsaPod> {
+        // TODO use 'build'
         // let config = CircuitConfig::standard_recursion_config();
         // let rec_params = recursion::new_params::<MainPodVerifyTarget>(
         let rec_params = recursion::new_params::<EcdsaPodVerifyTarget>(
@@ -443,6 +461,11 @@ impl EcdsaPod {
             id,
             dict,
             proof: proof_with_pis.proof,
+            vds_hash: EMPTY_HASH,
+            verifier_data: rec_params.verifier_data().verifier_only.clone(),
+            // TODO: rm 'verifier_data' field, and 'compute' it with the 'build'
+            // method, so that the method 'EcdsaPod.verifier_data()' can get it
+            // from there and not from an internal field
         })
     }
     fn new(
@@ -451,6 +474,7 @@ impl EcdsaPod {
         kvs: &HashMap<Key, Value>,
         sk: ECDSASecretKey<Secp256K1>,
     ) -> Result<Box<dyn Pod>, Box<DynError>> {
+        // TODO move _prove contents directly here, no need to abstract method
         Ok(Self::_prove(params, vds_root, kvs, sk).map(Box::new)?)
     }
     fn _verify(&self) -> Result<()> {
@@ -486,7 +510,6 @@ impl EcdsaPod {
             .cloned()
             .collect_vec();
 
-        dbg!(&public_inputs);
         dbg!("B 2");
         // let data = build(&self.params)?; // TODO don't build each time
         dbg!("B 3");
@@ -747,14 +770,18 @@ pub mod tests {
             primitives::signature::SecretKey,
             signedpod::{SignedPod, Signer},
         },
+        frontend::MainPodBuilder,
         middleware::F,
+        op,
     };
 
     #[test]
     fn test_ecdsa_pod_verify() -> Result<()> {
         let params = Params {
-            max_signed_pod_values: 6,
+            max_input_signed_pods: 0,
             max_input_recursive_pods: 2,
+            max_signed_pod_values: 6,
+            num_public_statements_id: 16,
             ..Default::default()
         };
         // set max_signed_pod_values to 6, and we insert 3 leaves, so that the
@@ -768,9 +795,49 @@ pub mod tests {
 
         let sk = ECDSASecretKey::<Secp256K1>(Secp256K1Scalar::rand());
         let vds_root = EMPTY_HASH;
-        let pod = EcdsaPod::new(&params, vds_root, &kvs, sk).unwrap();
+        let ecdsa_pod = EcdsaPod::new(&params, vds_root, &kvs, sk).unwrap();
         dbg!("ecdsapod generated");
 
+        ecdsa_pod.verify().unwrap();
+
+        // wrap the ecdsa_pod in a 'MainPod' (RecursivePod)
+        let main_ecdsa_pod = crate::frontend::MainPod {
+            pod: (ecdsa_pod.clone() as Box<dyn Any>)
+                .downcast::<EcdsaPod>()
+                .unwrap(),
+            public_statements: ecdsa_pod.pub_statements(), // TODO WIP
+            params: params.clone(),
+        };
+
+        // now generate a new MainPod from the ecdsa_pod
+        let mut main_pod_builder = MainPodBuilder::new(&params);
+        main_pod_builder.add_main_pod(main_ecdsa_pod);
+
+        // let now_minus_18y: i64 = 1169909388;
+        // main_pod_builder
+        //     .pub_op(op!(lt, (&ecdsa_pod, "dateOfBirth"), now_minus_18y))
+        //     .unwrap();
+
+        // emptypod
+        let empty_pod: Box<dyn middleware::RecursivePod> =
+            crate::backends::plonky2::emptypod::EmptyPod::new(&params, EMPTY_HASH).unwrap();
+        let main_empty_pod = crate::frontend::MainPod {
+            pod: empty_pod.clone(),
+            public_statements: empty_pod.pub_statements(),
+            params: params.clone(),
+        };
+        main_pod_builder.add_main_pod(main_empty_pod);
+
+        let mut prover = crate::backends::plonky2::mock::mainpod::MockProver {};
+        let pod = main_pod_builder.prove(&mut prover, &params).unwrap();
+        assert!(pod.pod.verify().is_ok());
+
+        println!("going to prove the main_pod");
+        let mut prover = mainpod::Prover {};
+        let main_pod = main_pod_builder.prove(&mut prover, &params).unwrap();
+        let pod = (main_pod.pod as Box<dyn Any>)
+            .downcast::<mainpod::MainPod>()
+            .unwrap();
         pod.verify().unwrap();
 
         Ok(())
