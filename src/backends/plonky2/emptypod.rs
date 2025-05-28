@@ -23,10 +23,9 @@ use crate::{
             mainpod::{CalculateIdGadget, PI_OFFSET_ID},
         },
         error::{Error, Result},
-        get_or_set_map_cache,
         mainpod::{self, calculate_id},
         recursion::pad_circuit,
-        recursive_main_pod_circuit_data, LazyLock,
+        LazyLock, DEFAULT_PARAMS, STANDARD_REC_MAIN_POD_CIRCUIT_DATA,
     },
     middleware::{
         self, AnchoredKey, DynError, Hash, Params, Pod, PodId, PodType, RecursivePod, Statement,
@@ -111,17 +110,18 @@ use pretty_assertions::assert_eq;
 
 type CircuitData = circuit_data::CircuitData<F, C, D>;
 
-static EMPTY_POD_DATA: LazyLock<RwLock<HashMap<Params, (EmptyPodVerifyTarget, CircuitData)>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
+static STANDARD_EMPTY_POD_DATA: LazyLock<(EmptyPodVerifyTarget, CircuitData)> =
+    LazyLock::new(|| build().expect("successful build"));
 
-fn _build(params: &Params) -> Result<(EmptyPodVerifyTarget, CircuitData)> {
+fn build() -> Result<(EmptyPodVerifyTarget, CircuitData)> {
+    let params = &*DEFAULT_PARAMS;
     let config = CircuitConfig::standard_recursion_config();
     let mut builder = CircuitBuilder::<F, D>::new(config);
     let empty_pod_verify_target = EmptyPodVerifyCircuit {
         params: params.clone(),
     }
     .eval(&mut builder)?;
-    let circuit_data = recursive_main_pod_circuit_data(params);
+    let circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
     pad_circuit(&mut builder, &circuit_data.common);
     // println!("DBG builder.num_gates={}", builder.num_gates());
 
@@ -135,23 +135,23 @@ fn _build(params: &Params) -> Result<(EmptyPodVerifyTarget, CircuitData)> {
     Ok((empty_pod_verify_target, data))
 }
 
-fn build(params: &Params) -> MappedRwLockReadGuard<(EmptyPodVerifyTarget, CircuitData)> {
-    get_or_set_map_cache(&EMPTY_POD_DATA, params, |params| {
-        _build(params).expect("successful build")
-    })
-}
+// fn build(params: &Params) -> MappedRwLockReadGuard<(EmptyPodVerifyTarget, CircuitData)> {
+//     get_or_set_map_cache("EmptyPod build", &EMPTY_POD_DATA, params, |params| {
+//         _build(params).expect("successful build")
+//     })
+// }
 
 impl EmptyPod {
     // TODO: Cache this by (params, vds_root)
     pub fn _prove(params: &Params, vds_root: Hash) -> Result<EmptyPod> {
-        let (empty_pod_verify_target, data) = &*build(params);
+        let (empty_pod_verify_target, data) = &*STANDARD_EMPTY_POD_DATA;
 
         let mut pw = PartialWitness::<F>::new();
         empty_pod_verify_target.set_targets(&mut pw, vds_root)?;
         let proof = timed!("EmptyPod prove", data.prove(pw)?);
         let id = &proof.public_inputs[PI_OFFSET_ID..PI_OFFSET_ID + HASH_SIZE];
         let id = PodId(Hash([id[0], id[1], id[2], id[3]]));
-        println!("DBG Empty Pod id={}, vds_root={}", id, vds_root);
+        // println!("DBG Empty Pod id={}, vds_root={}", id, vds_root);
         Ok(EmptyPod {
             params: params.clone(),
             id,
@@ -180,7 +180,7 @@ impl EmptyPod {
             .cloned()
             .collect_vec();
 
-        let (_, data) = &*build(&self.params);
+        let (_, data) = &*STANDARD_EMPTY_POD_DATA;
         data.verify(ProofWithPublicInputs {
             proof: self.proof.clone(),
             public_inputs,
@@ -215,7 +215,7 @@ impl Pod for EmptyPod {
 
 impl RecursivePod for EmptyPod {
     fn verifier_data(&self) -> VerifierOnlyCircuitData {
-        let (_, data) = &*build(&self.params);
+        let (_, data) = &*STANDARD_EMPTY_POD_DATA;
         data.verifier_only.clone()
     }
     fn proof(&self) -> Proof {

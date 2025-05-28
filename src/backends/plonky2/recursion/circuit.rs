@@ -31,7 +31,7 @@ use plonky2::{
 use crate::{
     backends::plonky2::{
         basetypes::{C, D},
-        error::Result,
+        error::{Error, Result},
     },
     middleware::F,
     timed,
@@ -42,6 +42,9 @@ pub struct VerifiedProofTarget {
     pub public_inputs: Vec<Target>,
     pub verifier_data_hash: HashOutTarget,
 }
+
+/// Expected maximum number of constant gates
+const MAX_CONSTANT_GATES: usize = 64;
 
 impl VerifiedProofTarget {
     fn add_virtual(builder: &mut CircuitBuilder<F, D>, num_public_inputs: usize) -> Self {
@@ -92,7 +95,25 @@ pub fn new_params<I: InnerCircuit>(
     num_public_inputs: usize,
     inner_params: &I::Params,
 ) -> Result<RecursiveParams> {
-    let circuit_data = RecursiveCircuit::<I>::circuit_data(arity, num_public_inputs, inner_params)?;
+    // println!("DBG new_params");
+    let (_, circuit_data) =
+        RecursiveCircuit::<I>::circuit_data(arity, num_public_inputs, inner_params)?;
+    let common_data = circuit_data.common.clone();
+    let verifier_data = circuit_data.verifier_data();
+    Ok(RecursiveParams {
+        arity,
+        common_data,
+        verifier_data,
+    })
+}
+
+pub fn new_params_padded<I: InnerCircuit>(
+    arity: usize,
+    common_data: &CommonCircuitData<F, D>,
+    inner_params: &I::Params,
+) -> Result<RecursiveParams> {
+    let (_, circuit_data) =
+        RecursiveCircuit::<I>::circuit_data_padded(arity, common_data, inner_params)?;
     let common_data = circuit_data.common.clone();
     let verifier_data = circuit_data.verifier_data();
     Ok(RecursiveParams {
@@ -113,7 +134,6 @@ pub struct RecursiveCircuit<I: InnerCircuit> {
 pub struct RecursiveCircuitTarget<I: InnerCircuit> {
     innercircuit_targ: I,
     proofs_targ: Vec<ProofWithPublicInputsTarget<D>>,
-    // vds_hash: HashOutTarget,
     verifier_datas_targ: Vec<VerifierCircuitTarget>,
 }
 
@@ -136,6 +156,7 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
 
     /// builds the targets and returns also a ProverCircuitData
     pub fn build(params: &RecursiveParams, inner_params: &I::Params) -> Result<Self> {
+        // println!("DBG build");
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::new(config.clone());
 
@@ -156,13 +177,14 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         })
     }
 
-    /// builds the targets
+    /// builds the targets and pad to match the input `common_data`
     pub fn build_targets(
         builder: &mut CircuitBuilder<F, D>,
         arity: usize,
         common_data: &CommonCircuitData<F, D>,
         inner_params: &I::Params,
     ) -> Result<RecursiveCircuitTarget<I>> {
+        // println!("DBG build_targets");
         // builder.add_gate_to_gate_set(plonky2::gates::gate::GateRef::new(
         //     plonky2::gates::constant::ConstantGate::new(common_data.config.num_constants),
         // ));
@@ -230,7 +252,8 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         arity: usize,
         num_public_inputs: usize,
         inner_params: &I::Params,
-    ) -> Result<CircuitData<F, C, D>> {
+    ) -> Result<(RecursiveCircuitTarget<I>, CircuitData<F, C, D>)> {
+        // println!("DBG circuit_data");
         let rec_common_data = timed!(
             "common_data_for_recursion",
             common_data_for_recursion::<I>(arity, num_public_inputs, inner_params)?
@@ -240,7 +263,7 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::new(config);
 
-        let _ = timed!(
+        let target = timed!(
             "RecursiveCircuit<>I::build_targets",
             Self::build_targets(&mut builder, arity, &rec_common_data, inner_params)?
         );
@@ -248,7 +271,7 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         use pretty_assertions::assert_eq;
         assert_eq!(rec_common_data, data.common);
 
-        Ok(data)
+        Ok((target, data))
     }
 
     /// returns the full-recursive CircuitData padded to share the input `common_data`
@@ -256,20 +279,24 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         arity: usize,
         common_data: &CommonCircuitData<F, D>,
         inner_params: &I::Params,
-    ) -> Result<CircuitData<F, C, D>> {
+    ) -> Result<(RecursiveCircuitTarget<I>, CircuitData<F, C, D>)> {
+        // println!("DBG circuit_data_padded");
         // build the actual RecursiveCircuit circuit data
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::new(config);
 
-        let _ = timed!(
+        let target = timed!(
             "RecursiveCircuit<>I::build_targets",
             Self::build_targets(&mut builder, arity, &common_data, inner_params)?
         );
         let data = timed!("RecursiveCircuit<I> build", builder.build::<C>());
+        if data.common.degree_bits() > common_data.degree_bits() {
+            return Err(Error::custom(format!("TODO")));
+        }
         use pretty_assertions::assert_eq;
         assert_eq!(*common_data, data.common);
 
-        Ok(data)
+        Ok((target, data))
     }
 }
 
@@ -278,6 +305,7 @@ pub fn common_data_for_recursion<I: InnerCircuit>(
     num_public_inputs: usize,
     inner_params: &I::Params,
 ) -> Result<CommonCircuitData<F, D>> {
+    // println!("DBG common_data_for_recursion");
     let config = CircuitConfig::standard_recursion_config();
 
     //
@@ -350,21 +378,23 @@ pub fn common_data_for_recursion<I: InnerCircuit>(
         // Formula obtained via linear regression using `test_measure_recursion` results with
         // `standard_recursion_config`.
         let num_gates: usize = 236 * degree_bits + 698;
-        // Add 5% for error because the results are not a clean line
-        num_gates * 105 / 100
+        // Add 8% for error because the results are not a clean line
+        num_gates * 108 / 100
     };
 
     // Loop until we find a circuit size that can verify `arity` proofs of itself
     let mut degree_bits = log2_ceil(inner_num_gates);
     loop {
         let verif_num_gates = estimate_verif_num_gates(degree_bits);
-        // Leave space for public input hashing, a `PublicInputGate` and 32 `ConstantGate`s (that's
-        // 64 constants in the standard_recursion_config).
+        // Leave space for public input hashing, a `PublicInputGate` and some `ConstantGate`s (that's
+        // MAX_CONSTANT_GATES*2 constants in the standard_recursion_config).
         let total_num_gates = inner_num_gates
             + verif_num_gates * arity
             + third_stage.common.num_public_inputs.div_ceil(8)
-            + 33;
+            + 1
+            + MAX_CONSTANT_GATES;
         if total_num_gates < (1 << degree_bits) {
+            // println!("DBG estimation num_gates={}", total_num_gates);
             break;
         }
         degree_bits = log2_ceil(total_num_gates);
@@ -372,11 +402,13 @@ pub fn common_data_for_recursion<I: InnerCircuit>(
 
     let mut common_data = third_stage.common.clone();
     common_data.fri_params.degree_bits = degree_bits;
+    // println!("DBG common_data for recursion degree_bits={}", degree_bits);
     Ok(common_data)
 }
 
 /// Pad the circuit to match a given `CommonCircuitData`.
 pub fn pad_circuit(builder: &mut CircuitBuilder<F, D>, common_data: &CommonCircuitData<F, D>) {
+    // println!("DBG pad_circuit degree_bits={}", common_data.degree_bits());
     assert_eq!(common_data.config, builder.config);
     assert_eq!(common_data.num_public_inputs, builder.num_public_inputs());
     // TODO: We need to figure this out once we enable zero-knowledge
@@ -386,19 +418,31 @@ pub fn pad_circuit(builder: &mut CircuitBuilder<F, D>, common_data: &CommonCircu
     );
 
     let degree = common_data.degree();
-    // Need to account for public input hashing, a `PublicInputGate` and 32 `ConstantGate`.
-    // NOTE: the builder doesn't have any public method to see how many constants have been
-    // registered, so we can't know exactly how many `ConstantGates` will be required.  We hope
-    // that no more than 64 constants are used :pray:.  Maybe we should make a PR to plonky2 to
-    // expose this?
-    let num_noop_gate =
-        degree - builder.num_gates() - common_data.num_public_inputs.div_ceil(8) - 33;
-    for _ in 0..num_noop_gate {
+    // Need to account for public input hashing, a `PublicInputGate` and MAX_CONSTANT_GATES
+    // `ConstantGate`. NOTE: the builder doesn't have any public method to see how many constants
+    // have been registered, so we can't know exactly how many `ConstantGates` will be required.
+    // We hope that no more than MAX_CONSTANT_GATES*2 constants are used :pray:.  Maybe we should
+    // make a PR to plonky2 to expose this?
+    let num_gates = degree - common_data.num_public_inputs.div_ceil(8) - 1 - MAX_CONSTANT_GATES;
+    assert!(
+        builder.num_gates() < num_gates,
+        "builder has more gates ({}) than the padding target ({})",
+        builder.num_gates(),
+        num_gates,
+    );
+    // println!(
+    //     "DBG pad {} -> {} with noop gates",
+    //     builder.num_gates(),
+    //     num_gates
+    // );
+    while builder.num_gates() < num_gates {
         builder.add_gate(NoopGate, vec![]);
     }
+    // println!("DBG pad set gates");
     for gate in &common_data.gates {
         builder.add_gate_to_gate_set(gate.clone());
     }
+    // println!("DBG pad_circuit END");
 }
 
 #[cfg(test)]
@@ -636,7 +680,8 @@ mod tests {
 
         // build the circuit_data & verifier_data for the recursive circuit
         let start = Instant::now();
-        let circuit_data_3 = RC::<Circuit3>::circuit_data(arity, num_public_inputs, &inner_params)?;
+        let (_, circuit_data_3) =
+            RC::<Circuit3>::circuit_data(arity, num_public_inputs, &inner_params)?;
         let params_3 = RecursiveParams {
             arity,
             common_data: circuit_data_3.common.clone(),
@@ -645,7 +690,7 @@ mod tests {
         // let verifier_data_3 = circuit_data_3.verifier_data();
         let common_data = &circuit_data_3.common;
 
-        let circuit_data_1 =
+        let (_, circuit_data_1) =
             RC::<Circuit1>::circuit_data_padded(arity, &common_data, &inner_params)?;
         let params_1 = RecursiveParams {
             arity,
@@ -654,7 +699,7 @@ mod tests {
         };
         // let verifier_data_1 = circuit_data_1.verifier_data();
 
-        let circuit_data_2 =
+        let (_, circuit_data_2) =
             RC::<Circuit2>::circuit_data_padded(arity, &common_data, &inner_params)?;
         let params_2 = RecursiveParams {
             arity,
@@ -758,7 +803,7 @@ mod tests {
             builder.add_gate_to_gate_set(plonky2::gates::gate::GateRef::new(
                 plonky2::gates::constant::ConstantGate::new(config.num_constants),
             ));
-            while builder.num_gates() < (1 << i) - 32 {
+            while builder.num_gates() < (1 << i) - MAX_CONSTANT_GATES {
                 builder.add_gate(NoopGate, vec![]);
             }
             println!("build degree 2^{} ...", i);

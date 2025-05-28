@@ -26,9 +26,9 @@ use crate::{
         error::{Error, Result},
         mock::emptypod::MockEmptyPod,
         primitives::merkletree::MerkleClaimAndProof,
-        recursion::{self, RecursiveCircuit},
-        recursive_main_pod_circuit_data,
+        recursion::{self, RecursiveCircuit, RecursiveParams},
         signedpod::SignedPod,
+        STANDARD_REC_MAIN_POD_CIRCUIT_DATA,
     },
     middleware::{
         self, resolve_wildcard_values, AnchoredKey, CustomPredicateBatch, DynError, Hash,
@@ -411,20 +411,25 @@ impl Prover {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
 
-        // TODO: Cache this somehow
-        let rec_params = recursion::new_params::<MainPodVerifyTarget>(
+        let rec_circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
+        // println!("DBG recursive MainPod build BEGIN");
+        let (_, circuit_data) = RecursiveCircuit::<MainPodVerifyTarget>::circuit_data_padded(
             params.max_input_recursive_pods,
-            NUM_PUBLIC_INPUTS,
+            &rec_circuit_data.common,
             params,
         )?;
-        println!("DBG recursive MainPod build BEGIN");
+        let rec_params = RecursiveParams {
+            arity: params.max_input_recursive_pods,
+            common_data: circuit_data.common.clone(),
+            verifier_data: circuit_data.verifier_data(),
+        };
         let main_pod_target = RecursiveCircuit::<MainPodVerifyTarget>::build_targets(
             &mut builder,
-            rec_params.arity,
-            &rec_params.common_data,
+            params.max_input_recursive_pods,
+            &rec_circuit_data.common,
             params,
         )?;
-        println!("DBG recursive MainPod build END");
+        // println!("DBG recursive MainPod build END");
         let prover: ProverCircuitData<F, C, D> = builder.build_prover::<C>();
         let main_pod = RecursiveCircuit {
             params: rec_params,
@@ -514,7 +519,7 @@ impl Prover {
             custom_predicate_batches,
             custom_predicate_verifications,
         };
-        println!("DBG MainPod prove");
+        // println!("DBG MainPod prove");
         let proof_with_pis = main_pod.prove(&input, proofs, verifier_datas)?;
 
         Ok(MainPod {
@@ -669,7 +674,7 @@ impl Pod for MainPod {
 
 impl RecursivePod for MainPod {
     fn verifier_data(&self) -> VerifierOnlyCircuitData {
-        let data = &*recursive_main_pod_circuit_data(&self.params);
+        let data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
         data.verifier_only.clone()
     }
     fn proof(&self) -> Proof {
@@ -741,8 +746,7 @@ pub mod tests {
             max_signed_pod_values: 6,
             max_statements: 8,
             max_public_statements: 4,
-            // FIXME: Passes with values < 8, fails otherwise
-            max_input_pods_public_statements: 8,
+            max_input_pods_public_statements: 10,
             ..Default::default()
         };
 
