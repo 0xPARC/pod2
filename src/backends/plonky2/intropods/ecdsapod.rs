@@ -52,6 +52,7 @@ use crate::{
         },
         error::{Error, Result},
         mainpod,
+        mainpod::calculate_id,
         primitives::{
             merkletree::{
                 MerkleClaimAndProof, MerkleProofExistenceGadget, MerkleProofExistenceTarget,
@@ -78,24 +79,20 @@ use crate::{
 };
 
 struct EcdsaPodVerifyTarget {
-    params: Params,
+    params: Params, // TODO rm?
     vds_root: HashOutTarget,
     id: HashOutTarget,
-    // msg: NonNativeTarget<Secp256K1Scalar>,
-    // pk: ECDSAPublicKeyTarget<Secp256K1>,
-    // signature: ECDSASignatureTarget<Secp256K1>,
-
-    // the KEY_TYPE entry must be the first one
-    // the KEY_SIGNER entry must be the second one
-    mt_proofs: Vec<MerkleProofExistenceTarget>,
+    msg: NonNativeTarget<Secp256K1Scalar>,
+    pk: ECDSAPublicKeyTarget<Secp256K1>,
+    signature: ECDSASignatureTarget<Secp256K1>,
 }
 
 pub struct EcdsaPodVerifyInput {
     vds_root: Hash,
     id: PodId,
-    // pk: ECDSAPublicKey<Secp256K1>,
-    dict: Dictionary,
-    // signature: ECDSASignature<Secp256K1>,
+    msg: Secp256K1Scalar,
+    pk: ECDSAPublicKey<Secp256K1>,
+    signature: ECDSASignature<Secp256K1>,
 }
 impl InnerCircuit for EcdsaPodVerifyTarget {
     type Input = EcdsaPodVerifyInput;
@@ -127,11 +124,11 @@ impl InnerCircuit for EcdsaPodVerifyTarget {
         builder.connect_values(type_mt_proof.value, value_type);
 
         // 3.a. Verify signature
-        // let msg = builder.add_virtual_nonnative_target::<Secp256K1Scalar>();
-        // let pk = ECDSAPublicKeyTarget(builder.add_virtual_affine_point_target::<Secp256K1>());
-        // let r = builder.add_virtual_nonnative_target();
-        // let s = builder.add_virtual_nonnative_target();
-        // let sig = ECDSASignatureTarget::<Secp256K1> { r, s };
+        let msg = builder.add_virtual_nonnative_target::<Secp256K1Scalar>();
+        let pk = ECDSAPublicKeyTarget(builder.add_virtual_affine_point_target::<Secp256K1>());
+        let r = builder.add_virtual_nonnative_target();
+        let s = builder.add_virtual_nonnative_target();
+        let sig = ECDSASignatureTarget::<Secp256K1> { r, s };
         //
         // verify_message_circuit(builder, msg.clone(), sig.clone(), pk.clone());
 
@@ -151,10 +148,9 @@ impl InnerCircuit for EcdsaPodVerifyTarget {
             params: params.clone(),
             vds_root,
             id,
-            // msg,
-            // pk,
-            // signature: sig,
-            mt_proofs,
+            msg,
+            pk,
+            signature: sig,
         })
     }
 
@@ -174,6 +170,7 @@ impl InnerCircuit for EcdsaPodVerifyTarget {
         // - rest of leaves
         // - empty leaves (if needed)
 
+        /*
         // add proof verification of KEY_TYPE & KEY_SIGNER leaves
         let key_type_key = Key::from(KEY_TYPE);
         let key_signer_key = Key::from(KEY_SIGNER);
@@ -224,72 +221,70 @@ impl InnerCircuit for EcdsaPodVerifyTarget {
         for i in curr..self.params.max_signed_pod_values {
             self.mt_proofs[i].set_targets(pw, false, &mp)?;
         }
+        */
 
         // get the signer pk
         // let pk = PublicKey(key_signer_value.raw()); // TODO WIP
         // the msg signed is the id
         // let msg = RawValue::from(input.id.0); // TODO uncomment
 
-        // TODO uncomment
         // set signature targets values
-        // pw.set_biguint_target(
-        //     &self.msg.value,
-        //     &biguint_from_array(std::array::from_fn(|i| msg.0[i].to_canonical_u64())),
-        // )?;
-        // pw.set_biguint_target(&self.pk.0.x.value, &biguint_from_array(input.pk.0.x.0))?;
-        // pw.set_biguint_target(&self.pk.0.y.value, &biguint_from_array(input.pk.0.y.0))?;
-        // pw.set_biguint_target(
-        //     &self.signature.r.value,
-        //     &biguint_from_array(input.signature.r.0),
-        // )?;
-        // pw.set_biguint_target(
-        //     &self.signature.s.value,
-        //     &biguint_from_array(input.signature.s.0),
-        // )?;
+        pw.set_biguint_target(
+            &self.msg.value,
+            &biguint_from_array(std::array::from_fn(|i| input.msg.0[i])),
+        )?;
+        pw.set_biguint_target(&self.pk.0.x.value, &biguint_from_array(input.pk.0.x.0))?;
+        pw.set_biguint_target(&self.pk.0.y.value, &biguint_from_array(input.pk.0.y.0))?;
+        pw.set_biguint_target(
+            &self.signature.r.value,
+            &biguint_from_array(input.signature.r.0),
+        )?;
+        pw.set_biguint_target(
+            &self.signature.s.value,
+            &biguint_from_array(input.signature.s.0),
+        )?;
 
-        // set the id target value
         pw.set_hash_target(self.id, HashOut::from_vec(input.id.0 .0.to_vec()))?;
-
         pw.set_target_arr(&self.vds_root.elements, &input.vds_root.0)?;
 
         Ok(())
     }
 }
 
-impl EcdsaPodVerifyTarget {
-    pub fn pub_statements(
-        &self,
-        builder: &mut CircuitBuilder<F, D>,
-        self_id: bool,
-    ) -> Vec<StatementTarget> {
-        let mut statements = Vec::new();
-        let predicate =
-            PredicateTarget::new_native(builder, &self.params, NativePredicate::ValueOf);
-        let pod_id = if self_id {
-            builder.constant_value(SELF.0.into())
-        } else {
-            ValueTarget {
-                elements: self.id.elements,
-            }
-        };
-        for mt_proof in &self.mt_proofs {
-            let args = [
-                StatementArgTarget::anchored_key(builder, &pod_id, &mt_proof.key),
-                StatementArgTarget::literal(builder, &mt_proof.value),
-            ]
-            .into_iter()
-            .chain(iter::repeat_with(|| StatementArgTarget::none(builder)))
-            .take(self.params.max_statement_args)
-            .collect();
-            let statement = StatementTarget {
-                predicate: predicate.clone(),
-                args,
-            };
-            statements.push(statement);
-        }
-        statements
-    }
-}
+// impl EcdsaPodVerifyTarget {
+//     pub fn pub_statements(
+//         &self,
+//         builder: &mut CircuitBuilder<F, D>,
+//         self_id: bool,
+//     ) -> Vec<StatementTarget> {
+//         let mut statements = Vec::new();
+//         let predicate =
+//             PredicateTarget::new_native(builder, &self.params, NativePredicate::ValueOf);
+//         let pod_id = if self_id {
+//             builder.constant_value(SELF.0.into())
+//         } else {
+//             ValueTarget {
+//                 elements: self.id.elements,
+//             }
+//         };
+//         for mt_proof in &self.mt_proofs {
+//             let args = [
+//                 StatementArgTarget::anchored_key(builder, &pod_id, &mt_proof.key),
+//                 StatementArgTarget::literal(builder, &mt_proof.value),
+//             ]
+//             .into_iter()
+//             .chain(iter::repeat_with(|| StatementArgTarget::none(builder)))
+//             .take(self.params.max_statement_args)
+//             .collect();
+//             let statement = StatementTarget {
+//                 predicate: predicate.clone(),
+//                 args,
+//             };
+//             statements.push(statement);
+//         }
+//         statements
+//     }
+// }
 
 use std::sync::{LazyLock, MappedRwLockReadGuard, RwLock, RwLockReadGuard};
 
@@ -325,16 +320,34 @@ fn build(params: &Params) -> MappedRwLockReadGuard<(EcdsaPodVerifyTarget, Circui
 }
 */
 
+static STANDARD_ECDSA_POD_DATA: LazyLock<(EcdsaPodVerifyTarget, CircuitData<F, C, D>)> =
+    LazyLock::new(|| build().expect("successful build"));
+
+/// build the circuit of EcdsaPodVerifyCircuit, padded to the amount of gates
+/// needed to make it compatible with the RecursiveCircuit
+fn build() -> Result<(EcdsaPodVerifyTarget, CircuitData<F, C, D>)> {
+    let params = &*crate::backends::plonky2::DEFAULT_PARAMS;
+    let config = CircuitConfig::standard_recursion_config();
+    let mut builder = CircuitBuilder::<F, D>::new(config);
+    let empty_pod_verify_target = EcdsaPodVerifyTarget::build(&mut builder, params, &[])?;
+    let circuit_data = &*crate::backends::plonky2::STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
+    crate::backends::plonky2::recursion::pad_circuit(&mut builder, &circuit_data.common);
+
+    let data = timed!("EcdsaPod build", builder.build::<C>());
+    assert_eq!(circuit_data.common, data.common);
+    Ok((empty_pod_verify_target, data))
+}
+
 #[derive(Clone, Debug)]
 pub struct EcdsaPod {
     params: Params,
     id: PodId,
-    dict: Dictionary,
+    msg: Secp256K1Scalar,
+    pk: ECDSAPublicKey<Secp256K1>,
+    signature: ECDSASignature<Secp256K1>,
     proof: Proof,
     vds_hash: Hash,
     verifier_data: VerifierOnlyCircuitData<C, D>,
-    // signature: ECDSASignature<Secp256K1>,
-    // msg: F,
 }
 impl middleware::RecursivePod for EcdsaPod {
     fn verifier_data(&self) -> VerifierOnlyCircuitData<C, D> {
@@ -355,13 +368,13 @@ impl EcdsaPod {
     fn _prove(
         params: &Params,
         vds_root: Hash,
-        kvs: &HashMap<Key, Value>,
+        msg: Secp256K1Scalar,
         sk: ECDSASecretKey<Secp256K1>,
     ) -> Result<EcdsaPod> {
         // TODO use 'build'
         // let config = CircuitConfig::standard_recursion_config();
-        // let rec_params = recursion::new_params::<MainPodVerifyTarget>(
-        let rec_params = recursion::new_params::<EcdsaPodVerifyTarget>(
+        let rec_params = recursion::new_params::<MainPodVerifyTarget>(
+            // let rec_params = recursion::new_params::<EcdsaPodVerifyTarget>(
             params.max_input_recursive_pods,
             NUM_PUBLIC_INPUTS,
             params,
@@ -388,60 +401,39 @@ impl EcdsaPod {
         // first sign the pod id
         let pubkey: ECDSAPublicKey<Secp256K1> =
             ECDSAPublicKey((CurveScalar(sk.0) * Secp256K1::GENERATOR_PROJECTIVE).to_affine());
-        let mut kvs = kvs.clone();
-        let pk_repr: Value = Value::from(EMPTY_VALUE); // TODO use full pk (eg. hash it)
-        kvs.insert(Key::from(KEY_SIGNER), pk_repr);
-        kvs.insert(Key::from(KEY_TYPE), Value::from(PodType::Signed));
 
-        let dict = Dictionary::new(kvs)?;
-        let id: PodId = PodId(dict.commitment());
-        let id_raw = RawValue::from(id.0); // PodId as Value
-
-        let id_u64: [u64; 4] = std::array::from_fn(|i| id_raw.0[i].to_canonical_u64());
-        let msg: Secp256K1Scalar = Secp256K1Scalar(id_u64);
         let signature: ECDSASignature<Secp256K1> = sign_message(msg, sk);
 
         // now that sig is done, gen a plonky2 proof of the circuit that verifies it
 
-        // TODO this will be done once at the beginning, not each time
-        // let data = build(params)?;
-
-        /*
-        // build circuit targets
-        // let config = CircuitConfig::standard_recursion_config();
-        let config = CircuitConfig::standard_ecc_config();
-        let mut builder = CircuitBuilder::<F, D>::new(config.clone());
-        dbg!("A 0");
-        let ecdsa_targ = EcdsaPodVerifyTarget::build(&mut builder, params, &[] /*TODO*/)?;
-        dbg!("A 1");
-
-        // let circuit_data =
-        //     // crate::backends::plonky2::circuits::mainpod::recursive_circuit_data(params)?;
-        //     recursive_circuit_data_OPT(params, config)?;
-        dbg!("A 2");
-        // crate::backends::plonky2::emptypod::pad_circuit(&mut builder, &circuit_data.common);
-        dbg!("A 3");
-        */
+        let public_statements = pub_self_statements();
+        let statements = public_statements
+            .into_iter()
+            .map(|st| mainpod::Statement::from(st))
+            .collect_vec();
+        let id: PodId = PodId(calculate_id(&statements, params));
 
         // set targets
         dbg!("A 4");
         let input = EcdsaPodVerifyInput {
             vds_root,
             id,
-            // pk: pubkey, // TODO uncomment
-            dict: dict.clone(),
-            // signature,
+            msg: msg.clone(),
+            pk: pubkey,
+            signature,
         };
         let (dummy_verifier_data, dummy_proof) = dummy(
             &rec_params.common_data,
             NUM_PUBLIC_INPUTS, // TODO num_public_inputs,
         )?;
+        dbg!("A 5");
         let proof_with_pis = ecdsa_pod.prove(
             &input,
             // vec![], vec![]
             vec![dummy_proof.clone(), dummy_proof.clone()],
             vec![dummy_verifier_data.clone(), dummy_verifier_data.clone()],
         )?;
+        dbg!("A 6");
         // let mut pw = PartialWitness::<F>::new();
         // ecdsa_targ.set_targets(&mut pw, &input)?; //vds_root, id, pubkey, dict.clone(), signature)?;
         // dbg!("A 5");
@@ -456,44 +448,43 @@ impl EcdsaPod {
 
         #[cfg(test)] // sanity check
         rec_params.verifier_data().verify(proof_with_pis.clone())?;
+        dbg!("A 7");
 
         Ok(EcdsaPod {
             params: params.clone(),
             id,
-            dict,
+            msg,
+            pk: pubkey,
+            signature,
             proof: proof_with_pis.proof,
             vds_hash: EMPTY_HASH,
-            verifier_data: rec_params.verifier_data().verifier_only.clone(),
             // TODO: rm 'verifier_data' field, and 'compute' it with the 'build'
             // method, so that the method 'EcdsaPod.verifier_data()' can get it
             // from there and not from an internal field
+            verifier_data: rec_params.verifier_data().verifier_only.clone(),
         })
     }
     fn new(
         params: &Params,
         vds_root: Hash,
-        kvs: &HashMap<Key, Value>,
+        msg: Secp256K1Scalar,
         sk: ECDSASecretKey<Secp256K1>,
     ) -> Result<Box<dyn Pod>, Box<DynError>> {
         // TODO move _prove contents directly here, no need to abstract method
-        Ok(Self::_prove(params, vds_root, kvs, sk).map(Box::new)?)
+        Ok(Self::_prove(params, vds_root, msg, sk).map(Box::new)?)
     }
     fn _verify(&self) -> Result<()> {
         dbg!("B 0");
-        let mt = MerkleTree::new(
-            MAX_DEPTH,
-            &self
-                .dict
-                .kvs()
-                .iter()
-                .map(|(k, v)| (k.raw(), v.raw()))
-                .collect::<HashMap<RawValue, RawValue>>(),
-        )?;
-        dbg!("B 1");
-        let id = PodId(mt.root());
+        let public_statements = pub_self_statements();
+        let statements = public_statements
+            .into_iter()
+            .map(|st| mainpod::Statement::from(st))
+            .collect_vec();
+        let id: PodId = PodId(calculate_id(&statements, &self.params));
         if id != self.id {
             return Err(Error::id_not_equal(self.id, id));
         }
+        dbg!("B 1");
 
         // TODO: cache these artefacts
         // let rec_params = recursion::new_params::<MainPodVerifyTarget>(
@@ -536,19 +527,8 @@ impl Pod for EcdsaPod {
         self.id
     }
 
-    fn pub_self_statements(&self) -> Vec<Statement> {
-        let id = self.id();
-        // By convention we put the KEY_TYPE first and KEY_SIGNER second
-        let mut kvs: HashMap<Key, Value> = self.dict.kvs().clone();
-        let key_type = Key::from(KEY_TYPE);
-        let value_type = kvs.remove(&key_type).expect("KEY_TYPE");
-        let key_signer = Key::from(KEY_SIGNER);
-        let value_signer = kvs.remove(&key_signer).expect("KEY_SIGNER");
-        [(key_type, value_type), (key_signer, value_signer)]
-            .into_iter()
-            .chain(kvs.into_iter().sorted_by_key(|kv| kv.0.hash()))
-            .map(|(k, v)| Statement::ValueOf(AnchoredKey::from((id, k)), v))
-            .collect()
+    fn pub_self_statements(&self) -> Vec<middleware::Statement> {
+        pub_self_statements() // (self.pk)
     }
 
     fn serialized_proof(&self) -> String {
@@ -559,9 +539,44 @@ impl Pod for EcdsaPod {
     }
 }
 
-struct EcdsaPodVerifyCircuit {
-    params: Params,
+fn type_statement() -> Statement {
+    Statement::ValueOf(
+        AnchoredKey::from((SELF, KEY_TYPE)),
+        Value::from(PodType::Main),
+        // TODO PodType::Main? should we rename it to Recursive? or define a
+        // new type PodType::Recursive?
+    )
 }
+fn pub_self_statements() -> Vec<middleware::Statement> {
+    vec![type_statement()]
+    // TODO: statement for pk
+}
+
+// struct EcdsaPodVerifyCircuit {
+//     params: Params,
+// }
+// impl EcdsaPodVerifyCircuit {
+//     fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<EcdsaPodVerifyTarget> {
+//         let type_statement = StatementTarget::from_flattened(
+//             &self.params,
+//             &builder.constants(&type_statement().to_fields(&self.params)),
+//         );
+//         let id = CalculateIdGadget {
+//             params: self.params.clone(),
+//         }
+//         .eval(builder, &[type_statement]);
+//         let vds_root = builder.add_virtual_hash();
+//         builder.register_public_inputs(&id.elements);
+//         builder.register_public_inputs(&vds_root.elements);
+//
+//         EcdsaPodVerifyTarget::build(builder)
+//         // Ok(EcdsaPodVerifyTarget {
+//         //     params,
+//         //     vds_root,
+//         //     id,
+//         // })
+//     }
+// }
 
 fn biguint_from_array(arr: [u64; 4]) -> BigUint {
     BigUint::from_slice(&[
@@ -576,6 +591,7 @@ fn biguint_from_array(arr: [u64; 4]) -> BigUint {
     ])
 }
 
+/*
 // use std::sync::{LazyLock, MappedRwLockReadGuard, RwLock, RwLockReadGuard};
 // use crate::timed;
 type CircuitData_OPT = CircuitData<F, C, D>;
@@ -724,7 +740,6 @@ fn compute_num_gates(arity: usize) -> Result<usize> {
     }
     Ok(n_gates)
 }
-/*
 */
 
 // TODO WIP, expose it from recurison::circuit.rs
@@ -785,18 +800,11 @@ pub mod tests {
             num_public_statements_id: 16,
             ..Default::default()
         };
-        // set max_signed_pod_values to 6, and we insert 3 leaves, so that the
-        // circuit has enough space for the 3 leaves plus the KEY_TYPE and
-        // KEY_SIGNER and one empty leaf.
 
-        let mut kvs: HashMap<Key, Value> = HashMap::new();
-        kvs.insert("idNumber".into(), "4242424242".into());
-        kvs.insert("dateOfBirth".into(), 1169909384.into());
-        kvs.insert("socialSecurityNumber".into(), "G2121210".into());
-
+        let msg = Secp256K1Scalar::rand();
         let sk = ECDSASecretKey::<Secp256K1>(Secp256K1Scalar::rand());
         let vds_root = EMPTY_HASH;
-        let ecdsa_pod = EcdsaPod::new(&params, vds_root, &kvs, sk).unwrap();
+        let ecdsa_pod = EcdsaPod::new(&params, vds_root, msg, sk).unwrap();
         dbg!("ecdsapod generated");
 
         ecdsa_pod.verify().unwrap();
