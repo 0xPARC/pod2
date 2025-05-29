@@ -681,11 +681,13 @@ impl RecursivePod for MainPod {
 
 #[cfg(test)]
 pub mod tests {
+    use num::{BigUint, One};
+
     use super::*;
     use crate::{
         backends::plonky2::{
             mock::mainpod::{MockMainPod, MockProver},
-            primitives::signature::SecretKey,
+            primitives::ec::schnorr::SecretKey,
             signedpod::Signer,
         },
         examples::{
@@ -697,7 +699,7 @@ pub mod tests {
             {self},
         },
         middleware,
-        middleware::{CustomPredicateRef, NativePredicate as NP, RawValue},
+        middleware::{CustomPredicateRef, NativePredicate as NP},
         op,
     };
 
@@ -715,11 +717,11 @@ pub mod tests {
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params);
-        let mut signer = Signer(SecretKey(RawValue::from(1)));
+        let mut signer = Signer(SecretKey(BigUint::one()));
         let gov_id_pod = gov_id_builder.sign(&mut signer)?;
-        let mut signer = Signer(SecretKey(RawValue::from(2)));
+        let mut signer = Signer(SecretKey(2u64.into()));
         let pay_stub_pod = pay_stub_builder.sign(&mut signer)?;
-        let mut signer = Signer(SecretKey(RawValue::from(3)));
+        let mut signer = Signer(SecretKey(3u64.into()));
         let sanction_list_pod = sanction_list_builder.sign(&mut signer)?;
         let kyc_builder =
             zu_kyc_pod_builder(&params, &gov_id_pod, &pay_stub_pod, &sanction_list_pod)?;
@@ -748,7 +750,7 @@ pub mod tests {
         gov_id_builder.insert("idNumber", "4242424242");
         gov_id_builder.insert("dateOfBirth", 1169909384);
         gov_id_builder.insert("socialSecurityNumber", "G2121210");
-        let mut signer = Signer(SecretKey(RawValue::from(42)));
+        let mut signer = Signer(SecretKey(42u64.into()));
         let gov_id = gov_id_builder.sign(&mut signer).unwrap();
         let now_minus_18y: i64 = 1169909388;
         let mut kyc_builder = frontend::MainPodBuilder::new(&params);
@@ -830,24 +832,23 @@ pub mod tests {
         };
         println!("{:#?}", params);
 
-        let mut alice = Signer(SecretKey(RawValue::from(1)));
-        let bob = Signer(SecretKey(RawValue::from(2)));
-        let mut charlie = Signer(SecretKey(RawValue::from(3)));
+        let mut alice = Signer(SecretKey(1u32.into()));
+        let bob = Signer(SecretKey(2u32.into()));
+        let mut charlie = Signer(SecretKey(3u32.into()));
 
         // Alice attests that she is ETH friends with Charlie and Charlie
         // attests that he is ETH friends with Bob.
         let alice_attestation =
-            eth_friend_signed_pod_builder(&params, charlie.public_key().0.into())
-                .sign(&mut alice)?;
+            eth_friend_signed_pod_builder(&params, charlie.public_key().into()).sign(&mut alice)?;
         let charlie_attestation =
-            eth_friend_signed_pod_builder(&params, bob.public_key().0.into()).sign(&mut charlie)?;
+            eth_friend_signed_pod_builder(&params, bob.public_key().into()).sign(&mut charlie)?;
 
         let alice_bob_ethdos_builder = eth_dos_pod_builder(
             &params,
             false,
             &alice_attestation,
             &charlie_attestation,
-            bob.public_key().0.into(),
+            bob.public_key().into(),
         )?;
 
         let mut prover = MockProver {};
