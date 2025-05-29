@@ -210,7 +210,6 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         Ok(RecursiveCircuitTarget {
             innercircuit_targ,
             proofs_targ,
-            // vds_hash,
             verifier_datas_targ,
         })
     }
@@ -676,8 +675,6 @@ mod tests {
 
         type RC<I> = RecursiveCircuit<I>;
         let inner_params = ();
-        // let params: RecursiveParams =
-        //     new_params::<Circuit3>(arity, num_public_inputs, &inner_params)?;
 
         // build the circuit_data & verifier_data for the recursive circuit
         let start = Instant::now();
@@ -688,7 +685,6 @@ mod tests {
             common_data: circuit_data_3.common.clone(),
             verifier_data: circuit_data_3.verifier_data(),
         };
-        // let verifier_data_3 = circuit_data_3.verifier_data();
         let common_data = &circuit_data_3.common;
 
         let (_, circuit_data_1) =
@@ -698,7 +694,6 @@ mod tests {
             common_data: circuit_data_1.common.clone(),
             verifier_data: circuit_data_1.verifier_data(),
         };
-        // let verifier_data_1 = circuit_data_1.verifier_data();
 
         let (_, circuit_data_2) =
             RC::<Circuit2>::circuit_data_padded(arity, &common_data, &inner_params)?;
@@ -707,7 +702,6 @@ mod tests {
             common_data: circuit_data_2.common.clone(),
             verifier_data: circuit_data_2.verifier_data(),
         };
-        // let verifier_data_2 = circuit_data_2.verifier_data();
 
         println!(
             "new_params & (c1, c2, c3).circuit_data generated {:?}",
