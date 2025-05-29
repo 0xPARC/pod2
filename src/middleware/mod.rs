@@ -762,8 +762,8 @@ pub trait Pod: fmt::Debug + DynClone + Any {
 dyn_clone::clone_trait_object!(Pod);
 
 /// Trait for pods that are generated with a plonky2 circuit and that can be verified by a
-/// recursive MainPod circuit.  A Pod implementing this trait is not necesarilly recursive: for
-/// example an introduction Pod in general is not recursive.
+/// recursive MainPod circuit.  A Pod implementing this trait does not necesarilly come from
+/// recursion: for example an introduction Pod in general is not recursive.
 pub trait RecursivePod: Pod {
     fn verifier_data(&self) -> VerifierOnlyCircuitData;
     fn proof(&self) -> Proof;

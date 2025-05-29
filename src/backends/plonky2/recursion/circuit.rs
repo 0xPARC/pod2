@@ -98,7 +98,7 @@ pub fn new_params<I: InnerCircuit>(
 ) -> Result<RecursiveParams> {
     // println!("DBG new_params");
     let (_, circuit_data) =
-        RecursiveCircuit::<I>::circuit_data(arity, num_public_inputs, inner_params)?;
+        RecursiveCircuit::<I>::target_and_circuit_data(arity, num_public_inputs, inner_params)?;
     let common_data = circuit_data.common.clone();
     let verifier_data = circuit_data.verifier_data();
     Ok(RecursiveParams {
@@ -208,9 +208,7 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
             })
             .collect_vec();
 
-        // build the InnerCircuit logic. Notice that if the InnerCircuit
-        // registers any public inputs, they will be placed after the
-        // `vds_hash` in the public inputs array
+        // Build the InnerCircuit logic
         let innercircuit_targ: I = I::build(builder, inner_params, &verified_proofs)?;
 
         pad_circuit(builder, common_data);
@@ -248,8 +246,8 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         Ok(())
     }
 
-    /// returns the full-recursive CircuitData
-    pub fn circuit_data(
+    /// returns the target full-recursive circuit and its CircuitData
+    pub fn target_and_circuit_data(
         arity: usize,
         num_public_inputs: usize,
         inner_params: &I::Params,
@@ -269,7 +267,6 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
             Self::build_targets(&mut builder, arity, &rec_common_data, inner_params)?
         );
         let data = timed!("RecursiveCircuit<I> build", builder.build::<C>());
-        use pretty_assertions::assert_eq;
         assert_eq!(rec_common_data, data.common);
 
         Ok((target, data))
@@ -291,7 +288,6 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
             Self::build_targets(&mut builder, arity, common_data, inner_params)?
         );
         let data = timed!("RecursiveCircuit<I> build", builder.build::<C>());
-        use pretty_assertions::assert_eq;
         assert_eq!(*common_data, data.common);
 
         Ok((target, data))
@@ -672,7 +668,6 @@ mod tests {
         pad_circuit(&mut builder, common_data);
 
         let circuit_data = builder.build::<C>();
-        use pretty_assertions::assert_eq;
         assert_eq!(*common_data, circuit_data.common);
 
         let mut pw = PartialWitness::<F>::new();
@@ -705,7 +700,7 @@ mod tests {
         // build the circuit_data & verifier_data for the recursive circuit
         let start = Instant::now();
         let (_, circuit_data_3) =
-            RC::<Circuit3>::circuit_data(arity, num_public_inputs, &inner_params)?;
+            RC::<Circuit3>::target_and_circuit_data(arity, num_public_inputs, &inner_params)?;
         let params_3 = RecursiveParams {
             arity,
             common_data: circuit_data_3.common.clone(),

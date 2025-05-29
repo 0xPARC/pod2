@@ -28,7 +28,7 @@ pub static STANDARD_REC_MAIN_POD_CIRCUIT_DATA: LazyLock<CircuitData> = LazyLock:
     let params = &*DEFAULT_PARAMS;
     timed!(
         "recursive MainPod circuit_data",
-        RecursiveCircuit::<MainPodVerifyTarget>::circuit_data(
+        RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data(
             params.max_input_recursive_pods,
             NUM_PUBLIC_INPUTS,
             params

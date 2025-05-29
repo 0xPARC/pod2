@@ -77,34 +77,6 @@ pub struct EmptyPod {
     proof: Proof,
 }
 
-// /// Pad the circuit to match a given `CommonCircuitData`.
-// fn pad_circuit(builder: &mut CircuitBuilder<F, D>, common_data: &CommonCircuitData<F, D>) {
-//     assert_eq!(common_data.config, builder.config);
-//     assert_eq!(common_data.num_public_inputs, builder.num_public_inputs());
-//     // TODO: We need to figure this out once we enable zero-knowledge
-//     assert!(
-//         !common_data.config.zero_knowledge,
-//         "Degree calculation can be off if zero-knowledge is on."
-//     );
-//
-//     let degree = common_data.degree();
-//     // Need to account for public input hashing, a `PublicInputGate` and 32 `ConstantGate`.
-//     // NOTE: the builder doesn't have any public method to see how many constants have been
-//     // registered, so we can't know exactly how many `ConstantGates` will be required.  We hope
-//     // that no more than 64 constants are used :pray:.  Maybe we should make a PR to plonky2 to
-//     // expose this?
-//     let num_noop_gate =
-//         degree - builder.num_gates() - common_data.num_public_inputs.div_ceil(8) - 33;
-//     for _ in 0..num_noop_gate {
-//         builder.add_gate(NoopGate, vec![]);
-//     }
-//     for gate in &common_data.gates {
-//         builder.add_gate_to_gate_set(gate.clone());
-//     }
-// }
-
-use pretty_assertions::assert_eq;
-
 type CircuitData = circuit_data::CircuitData<F, C, D>;
 
 static STANDARD_EMPTY_POD_DATA: LazyLock<(EmptyPodVerifyTarget, CircuitData)> =
@@ -120,23 +92,11 @@ fn build() -> Result<(EmptyPodVerifyTarget, CircuitData)> {
     .eval(&mut builder)?;
     let circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
     pad_circuit(&mut builder, &circuit_data.common);
-    // println!("DBG builder.num_gates={}", builder.num_gates());
 
     let data = timed!("EmptyPod build", builder.build::<C>());
-    // println!(
-    //     "DBG circuit_data.common.degree={}",
-    //     circuit_data.common.degree()
-    // );
-    // println!("DBG         data.common.degree={}", data.common.degree());
     assert_eq!(circuit_data.common, data.common);
     Ok((empty_pod_verify_target, data))
 }
-
-// fn build(params: &Params) -> MappedRwLockReadGuard<(EmptyPodVerifyTarget, CircuitData)> {
-//     get_or_set_map_cache("EmptyPod build", &EMPTY_POD_DATA, params, |params| {
-//         _build(params).expect("successful build")
-//     })
-// }
 
 static EMPTY_POD_CACHE: LazyLock<Mutex<HashMap<Hash, EmptyPod>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -150,7 +110,6 @@ impl EmptyPod {
         let proof = timed!("EmptyPod prove", data.prove(pw)?);
         let id = &proof.public_inputs[PI_OFFSET_ID..PI_OFFSET_ID + HASH_SIZE];
         let id = PodId(Hash([id[0], id[1], id[2], id[3]]));
-        // println!("DBG Empty Pod id={}, vds_root={}", id, vds_root);
         Ok(EmptyPod {
             params: params.clone(),
             id,

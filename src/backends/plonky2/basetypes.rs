@@ -1,5 +1,5 @@
-//! This file exposes the middleware::basetypes to be used in the middleware when the
-//! `backend_plonky2` feature is enabled.
+//! This file exposes the basetypes to be used in the middleware when the `backend_plonky2` feature
+//! is enabled.
 //! See src/middleware/basetypes.rs for more details.
 
 use plonky2::{
