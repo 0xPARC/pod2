@@ -1222,6 +1222,7 @@ impl MainPodVerifyGadget {
         let vds_root = builder.add_virtual_hash();
         // TODO: verify that all input pod proofs use verifier data from the public input VD array
         // This requires merkle proofs
+        // https://github.com/0xPARC/pod2/issues/250
 
         // Verify that VD array that input pod uses is the same we use now.
         for verified_proof in verified_proofs {

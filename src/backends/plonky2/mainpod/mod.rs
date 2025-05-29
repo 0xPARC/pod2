@@ -258,6 +258,7 @@ pub(crate) fn layout_statements(
 
     // Input signed pods region
     // TODO: Replace this with a dumb signed pod
+    // https://github.com/0xPARC/pod2/issues/246
     let none_sig_pod_box: Box<dyn Pod> = Box::new(NonePod {});
     let none_sig_pod = none_sig_pod_box.as_ref();
     assert!(inputs.signed_pods.len() <= params.max_input_signed_pods);
@@ -548,6 +549,7 @@ pub struct MainPod {
 // generate it on-demand.
 fn get_common_data(params: &Params) -> Result<CommonCircuitData<F, D>, Error> {
     // TODO: Cache this somehow
+    // https://github.com/0xPARC/pod2/issues/247
     let rec_params = recursion::new_params::<MainPodVerifyTarget>(
         params.max_input_recursive_pods,
         NUM_PUBLIC_INPUTS,
@@ -567,6 +569,7 @@ impl MainPod {
         // 1, 3, 4, 5 verification via the zkSNARK proof
         let rec_circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
         // TODO: cache these artefacts
+        // https://github.com/0xPARC/pod2/issues/247
         let (_, circuit_data) = RecursiveCircuit::<MainPodVerifyTarget>::circuit_data_padded(
             self.params.max_input_recursive_pods,
             &rec_circuit_data.common,

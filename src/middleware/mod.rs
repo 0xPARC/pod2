@@ -782,6 +782,7 @@ pub trait PodSigner {
 }
 
 // TODO: Delete once we have a fully working EmptyPod and a dumb SignedPod
+// https://github.com/0xPARC/pod2/issues/246
 /// This is a filler type that fulfills the Pod trait and always verifies.  It's empty.  This
 /// can be used to simulate padding in a circuit.
 #[derive(Debug, Clone)]
@@ -814,7 +815,7 @@ pub struct MainPodInputs<'a> {
     /// Statements that need to be made public (they can come from input pods or input
     /// statements)
     pub public_statements: &'a [Statement],
-    pub vds_root: Hash, // TODO: Figure out if we use Hash or a Map here
+    pub vds_root: Hash, // TODO: Figure out if we use Hash or a Map here https://github.com/0xPARC/pod2/issues/249
 }
 
 pub trait PodProver {

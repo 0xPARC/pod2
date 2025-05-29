@@ -420,6 +420,7 @@ pub fn pad_circuit(builder: &mut CircuitBuilder<F, D>, common_data: &CommonCircu
     assert_eq!(common_data.config, builder.config);
     assert_eq!(common_data.num_public_inputs, builder.num_public_inputs());
     // TODO: We need to figure this out once we enable zero-knowledge
+    // https://github.com/0xPARC/pod2/issues/248
     assert!(
         !common_data.config.zero_knowledge,
         "Degree calculation can be off if zero-knowledge is on."

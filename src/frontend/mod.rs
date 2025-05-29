@@ -562,7 +562,7 @@ impl MainPodBuilder {
             statements: &statements,
             operations: &operations,
             public_statements: &public_statements,
-            vds_root: EMPTY_HASH, // TODO
+            vds_root: EMPTY_HASH, // TODO https://github.com/0xPARC/pod2/issues/249
         };
         let pod = prover.prove(&self.params, inputs)?;
 
