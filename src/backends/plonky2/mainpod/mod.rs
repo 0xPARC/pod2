@@ -407,7 +407,6 @@ pub struct Prover {}
 impl Prover {
     fn _prove(&self, params: &Params, inputs: MainPodInputs) -> Result<MainPod> {
         let rec_circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
-        // println!("DBG recursive MainPod build BEGIN");
         let (main_pod_target, circuit_data) =
             RecursiveCircuit::<MainPodVerifyTarget>::circuit_data_padded(
                 params.max_input_recursive_pods,
@@ -419,7 +418,6 @@ impl Prover {
             common_data: circuit_data.common.clone(),
             verifier_data: circuit_data.verifier_data(),
         };
-        // println!("DBG recursive MainPod build END");
         let main_pod = RecursiveCircuit {
             params: rec_params,
             prover: circuit_data.prover_data(),
@@ -513,7 +511,6 @@ impl Prover {
             custom_predicate_batches,
             custom_predicate_verifications,
         };
-        // println!("DBG MainPod prove");
         let proof_with_pis = main_pod.prove(&input, proofs, verifier_datas)?;
 
         Ok(MainPod {

@@ -96,7 +96,6 @@ pub fn new_params<I: InnerCircuit>(
     num_public_inputs: usize,
     inner_params: &I::Params,
 ) -> Result<RecursiveParams> {
-    // println!("DBG new_params");
     let (_, circuit_data) =
         RecursiveCircuit::<I>::target_and_circuit_data(arity, num_public_inputs, inner_params)?;
     let common_data = circuit_data.common.clone();
@@ -157,7 +156,6 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
 
     /// builds the targets and returns also a ProverCircuitData
     pub fn build(params: &RecursiveParams, inner_params: &I::Params) -> Result<Self> {
-        // println!("DBG build");
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::new(config.clone());
 
@@ -185,10 +183,6 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         common_data: &CommonCircuitData<F, D>,
         inner_params: &I::Params,
     ) -> Result<RecursiveCircuitTarget<I>> {
-        // println!("DBG build_targets");
-        // builder.add_gate_to_gate_set(plonky2::gates::gate::GateRef::new(
-        //     plonky2::gates::constant::ConstantGate::new(common_data.config.num_constants),
-        // ));
         // proof verification
         let verifier_datas_targ: Vec<VerifierCircuitTarget> = (0..arity)
             .map(|_| builder.add_virtual_verifier_data(builder.config.fri_config.cap_height))
@@ -252,7 +246,6 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         num_public_inputs: usize,
         inner_params: &I::Params,
     ) -> Result<(RecursiveCircuitTarget<I>, CircuitData<F, C, D>)> {
-        // println!("DBG circuit_data");
         let rec_common_data = timed!(
             "common_data_for_recursion",
             common_data_for_recursion::<I>(arity, num_public_inputs, inner_params)?
@@ -278,7 +271,6 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         common_data: &CommonCircuitData<F, D>,
         inner_params: &I::Params,
     ) -> Result<(RecursiveCircuitTarget<I>, CircuitData<F, C, D>)> {
-        // println!("DBG circuit_data_padded");
         // build the actual RecursiveCircuit circuit data
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::new(config);
@@ -322,7 +314,6 @@ pub fn common_data_for_recursion<I: InnerCircuit>(
     num_public_inputs: usize,
     inner_params: &I::Params,
 ) -> Result<CommonCircuitData<F, D>> {
-    // println!("DBG common_data_for_recursion");
     let config = CircuitConfig::standard_recursion_config();
 
     let mut builder = CircuitBuilder::<F, D>::new(config.clone());
@@ -413,7 +404,6 @@ pub fn common_data_for_recursion<I: InnerCircuit>(
             + 1
             + MAX_CONSTANT_GATES;
         if total_num_gates < (1 << degree_bits) {
-            // println!("DBG estimation num_gates={}", total_num_gates);
             break;
         }
         degree_bits = log2_ceil(total_num_gates);
@@ -422,13 +412,11 @@ pub fn common_data_for_recursion<I: InnerCircuit>(
     let mut common_data = circuit_data.common.clone();
     common_data.fri_params.degree_bits = degree_bits;
     common_data.fri_params.reduction_arity_bits = vec![4, 4, 4];
-    // println!("DBG common_data for recursion degree_bits={}", degree_bits);
     Ok(common_data)
 }
 
 /// Pad the circuit to match a given `CommonCircuitData`.
 pub fn pad_circuit(builder: &mut CircuitBuilder<F, D>, common_data: &CommonCircuitData<F, D>) {
-    // println!("DBG pad_circuit degree_bits={}", common_data.degree_bits());
     assert_eq!(common_data.config, builder.config);
     assert_eq!(common_data.num_public_inputs, builder.num_public_inputs());
     // TODO: We need to figure this out once we enable zero-knowledge
@@ -450,19 +438,12 @@ pub fn pad_circuit(builder: &mut CircuitBuilder<F, D>, common_data: &CommonCircu
         builder.num_gates(),
         num_gates,
     );
-    // println!(
-    //     "DBG pad {} -> {} with noop gates",
-    //     builder.num_gates(),
-    //     num_gates
-    // );
     while builder.num_gates() < num_gates {
         builder.add_gate(NoopGate, vec![]);
     }
-    // println!("DBG pad set gates");
     for gate in &common_data.gates {
         builder.add_gate_to_gate_set(gate.clone());
     }
-    // println!("DBG pad_circuit END");
 }
 
 #[cfg(test)]
