@@ -12,7 +12,7 @@ use itertools::Itertools;
 use plonky2::{
     self,
     field::types::Field,
-    gates::noop::NoopGate,
+    gates::{gate::GateRef, noop::NoopGate},
     hash::hash_types::HashOutTarget,
     iop::{
         target::Target,
@@ -45,7 +45,7 @@ pub struct VerifiedProofTarget {
 }
 
 /// Expected maximum number of constant gates
-const MAX_CONSTANT_GATES: usize = 64;
+const MAX_CONSTANT_GATES: usize = 32;
 
 impl VerifiedProofTarget {
     fn add_virtual(builder: &mut CircuitBuilder<F, D>, num_public_inputs: usize) -> Self {
@@ -308,17 +308,11 @@ fn coset_interpolation_gate(
     unsafe { std::mem::transmute(gate) }
 }
 
-pub fn common_data_for_recursion<I: InnerCircuit>(
-    arity: usize,
-    num_public_inputs: usize,
-    inner_params: &I::Params,
-) -> Result<CommonCircuitData<F, D>> {
-    let config = CircuitConfig::standard_recursion_config();
-
-    let mut builder = CircuitBuilder::<F, D>::new(config.clone());
-    use plonky2::gates::gate::GateRef;
-    // Add our standard set of gates
-    for gate in [
+/// Returns the minimum set of gates that define our recursively verifiable circuits.
+/// NOTE: The overhead between verifying any proof with just the `NoopGate` and verifying a proof
+/// with all these standard gates is about 400 num_gates (rows), no matter the circuit size.
+fn standard_gates(config: &CircuitConfig) -> Vec<GateRef<F, D>> {
+    vec![
         GateRef::new(plonky2::gates::noop::NoopGate {}),
         GateRef::new(plonky2::gates::constant::ConstantGate::new(
             config.num_constants,
@@ -326,22 +320,22 @@ pub fn common_data_for_recursion<I: InnerCircuit>(
         GateRef::new(plonky2::gates::poseidon_mds::PoseidonMdsGate::new()),
         GateRef::new(plonky2::gates::poseidon::PoseidonGate::new()),
         GateRef::new(plonky2::gates::public_input::PublicInputGate {}),
-        GateRef::new(plonky2::gates::base_sum::BaseSumGate::<2>::new_from_config::<F>(&config)),
+        GateRef::new(plonky2::gates::base_sum::BaseSumGate::<2>::new_from_config::<F>(config)),
         GateRef::new(plonky2::gates::reducing_extension::ReducingExtensionGate::new(32)),
         GateRef::new(plonky2::gates::reducing::ReducingGate::new(43)),
         GateRef::new(
-            plonky2::gates::arithmetic_extension::ArithmeticExtensionGate::new_from_config(&config),
+            plonky2::gates::arithmetic_extension::ArithmeticExtensionGate::new_from_config(config),
         ),
-        GateRef::new(plonky2::gates::arithmetic_base::ArithmeticGate::new_from_config(&config)),
+        GateRef::new(plonky2::gates::arithmetic_base::ArithmeticGate::new_from_config(config)),
         GateRef::new(
-            plonky2::gates::multiplication_extension::MulExtensionGate::new_from_config(&config),
+            plonky2::gates::multiplication_extension::MulExtensionGate::new_from_config(config),
         ),
-        GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(&config, 1)),
-        GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(&config, 2)),
-        GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(&config, 3)),
-        GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(&config, 4)),
-        GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(&config, 5)),
-        GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(&config, 6)),
+        GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(config, 1)),
+        GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(config, 2)),
+        GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(config, 3)),
+        GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(config, 4)),
+        GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(config, 5)),
+        GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(config, 6)),
         // It would be better do `CosetInterpolationGate::with_max_degree(4, 6)` but unfortunately
         // that plonk2 method is `pub(crate)`, so we need to get around that somehow.
         GateRef::new(coset_interpolation_gate(
@@ -366,7 +360,20 @@ pub fn common_data_for_recursion<I: InnerCircuit>(
                 18446462594437939201,
             ],
         )),
-    ] {
+    ]
+}
+
+pub fn common_data_for_recursion<I: InnerCircuit>(
+    arity: usize,
+    num_public_inputs: usize,
+    inner_params: &I::Params,
+) -> Result<CommonCircuitData<F, D>> {
+    let config = CircuitConfig::standard_recursion_config();
+
+    let mut builder = CircuitBuilder::<F, D>::new(config.clone());
+    // Add our standard set of gates
+    let standard_gates = standard_gates(&config);
+    for gate in standard_gates.into_iter() {
         builder.add_gate_to_gate_set(gate);
     }
 
@@ -386,9 +393,9 @@ pub fn common_data_for_recursion<I: InnerCircuit>(
     let estimate_verif_num_gates = |degree_bits: usize| {
         // Formula obtained via linear regression using `test_measure_recursion` results with
         // `standard_recursion_config`.
-        let num_gates: usize = 236 * degree_bits + 698;
-        // Add 8% for error because the results are not a clean line
-        num_gates * 108 / 100
+        let num_gates: usize = 236 * degree_bits + 1099;
+        // Add 2% for error because the results are not a clean line
+        num_gates * 102 / 100
     };
 
     // Loop until we find a circuit size that can verify `arity` proofs of itself
@@ -793,11 +800,12 @@ mod tests {
     #[test]
     fn test_measure_recursion() {
         let config = CircuitConfig::standard_recursion_config();
-        for i in 7..18 {
+        for i in 7..20 {
             let mut builder = CircuitBuilder::new(config.clone());
-            builder.add_gate_to_gate_set(plonky2::gates::gate::GateRef::new(
-                plonky2::gates::constant::ConstantGate::new(config.num_constants),
-            ));
+            let standard_gates = standard_gates(&config);
+            for gate in standard_gates.into_iter() {
+                builder.add_gate_to_gate_set(gate);
+            }
             while builder.num_gates() < (1 << i) - MAX_CONSTANT_GATES {
                 builder.add_gate(NoopGate, vec![]);
             }
