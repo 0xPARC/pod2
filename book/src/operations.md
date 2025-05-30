@@ -10,22 +10,33 @@ The following table summarises the natively-supported operations:
 | 0    | `None`                |                     |                                                                                                                       | `None`                                                         |
 | 1    | `NewEntry`[^newentry] | `(key, value)`      |                                                                                                                       | `ValueOf(ak, value)`, where `ak` has key `key` and origin ID 1 |
 | 2    | `CopyStatement`       | `s`                 |                                                                                                                       |                                                                |
-| 3    | `EntryEq`             | `s1`, `s2`          | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `value1 = value2`                                           | `Eq(ak1, ak2)`                                                 |
-| 4    | `EntryNEq`            | `s1`, `s2`          | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `value1 != value2`                                          | `NEq(ak1, ak2)`                                                |
-| 5    | `EntryGt`             | `s1`, `s2`          | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `value1 > value2`                                           | `Gt(ak1, ak2)`                                                 |
-| 6    | `EntryLEq`            | `s1`, `s2`          | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `value1 <= value2`                                          | `LEq(ak1, ak2)`                                                |
-| 7    | `TransitiveEq`        | `s1`, `s2`          | `s1 = Equal(ak1, ak2)`, `s2 = Equal(ak3, ak4)`, `ak2 = ak3`                                                           | `Eq(ak1, ak4)`                                                 |
-| 8    | `GtToNEq`             | `s`                 | `s = Gt(ak1, ak2)`                                                                                                    | `NEq(ak1, ak2)`                                                |
-| 9    | `LtToNEq`             | `s`                 | `s = Lt(ak1, ak2)`                                                                                                    | `NEq(ak1, ak2)`                                                |
-| 10   | `EntryContains`       | `s1`, `s2`, `proof` | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `merkle_includes(value1, value2, proof) = true`             | `Contains(ak1, ak2)`                                           |
-| 11   | `EntrySintains`       | `s1`, `s2`, `proof` | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `merkle_excludes(value1, value2, proof) = true`             | `Sintains(ak1, ak2)`                                           |
-| 12   | `RenameContains`      | `s1`, `s2`          | `s1 = Contains(ak1, ak2)`, `s2 = Equal(ak3, ak4)`, `ak1 = ak3`                                                        | `Contains(ak4, ak2)`                                           |
-| 13   | `SumOf`               | `s1`, `s2`, `s3`    | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `s3 = ValueOf(ak3, value3)`, `value1 = value2 + value3`     | `SumOf(ak1, ak2, ak3)`                                         |
-| 14   | `ProductOf`           | `s1`, `s2`, `s3`    | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `s3 = ValueOf(ak3, value3)`, `value1 = value2 * value3`     | `ProductOf(ak1, ak2, ak3)`                                     |
-| 15   | `MaxOf`               | `s1`, `s2`, `s3`    | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `s3 = ValueOf(ak3, value3)`, `value1 = max(value2, value3)` | `MaxOf(ak1, ak2, ak3)`                                         |
-| 16   | `HashOf`              | `s1`, `s2`, `s3`    | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `s3 = ValueOf(ak3, value3)`, `value1 = hash(value2, value3)`| `HashOf(ak1, ak2, ak3)`                                        |
+| 3    | `EqualFromEntries`             | `s1`, `s2`          | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `value1 = value2`                                           | `Equal(ak1, ak2)`                                                 |
+| 4    | `NotEqualFromEntries`            | `s1`, `s2`          | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `value1 != value2`                                          | `NotEqual(ak1, ak2)`                                                |
+| 5    | `LtEqFromEntries`             | `s1`, `s2`          | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `value1 <= value2`                                           | `LtEq(ak1, ak2)`                                                 |
+| 6    | `LtFromEntries`            | `s1`, `s2`          | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `value1 < value2`                                          | `Lt(ak1, ak2)`                                                |
+| 7    | `TransitiveEqualFromStatements`        | `s1`, `s2`          | `s1 = Equal(ak1, ak2)`, `s2 = Equal(ak3, ak4)`, `ak2 = ak3`                                                           | `Equal(ak1, ak4)`                                                 |
+| 8    | `LtToNotEqual`             | `s`                 | `s = Lt(ak1, ak2)`                                                                                                    | `NotEqual(ak1, ak2)`                                                |
+| 9   | `ContainsFromEntries`       | `s1`, `s2`, `s3`, `proof` | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `s3 = ValueOf(ak3, value3)`, `merkle_includes(value1, value2, value3, proof) = true`             | `Contains(ak1, ak2, ak3)`                                           |
+| 10   | `NotContainsFromEntries`       | `s1`, `s2`, `proof` | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `merkle_excludes(value1, value2, proof) = true`             | `NotContains(ak1, ak2)`                                           |
+| 11   | `SumOf`               | `s1`, `s2`, `s3`    | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `s3 = ValueOf(ak3, value3)`, `value1 = value2 + value3`     | `SumOf(ak1, ak2, ak3)`                                         |
+| 12   | `ProductOf`           | `s1`, `s2`, `s3`    | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `s3 = ValueOf(ak3, value3)`, `value1 = value2 * value3`     | `ProductOf(ak1, ak2, ak3)`                                     |
+| 13   | `MaxOf`               | `s1`, `s2`, `s3`    | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `s3 = ValueOf(ak3, value3)`, `value1 = max(value2, value3)` | `MaxOf(ak1, ak2, ak3)`                                         |
+| 14   | `HashOf`              | `s1`, `s2`, `s3`    | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `s3 = ValueOf(ak3, value3)`, `value1 = hash(value2, value3)`| `HashOf(ak1, ak2, ak3)`                                        |
 
-<!-- NOTE: should we 'uniformize' the names? eg. currently we have `EntryGt` and `GtToNEq` -->
+<br><br>
+
+The following table summarizes "syntactic sugar" operations.  These operations are not supported by the backend.  The frontend compiler is responsible for translating these operations into the operations above.
+
+| Code | Identifier            | Args and desugaring              | 
+|------|-----------------------|---------------------|
+| 1001 | DictContainsFromEntries | `DictContainsFromEntries(dict_st, key_st, value_st) -> ContainsFromEntries(dict_st, key_st, value_st)` |
+| 1002 | DictNotContainsFromEntries | `DictNotContainsFromEntries(dict_st, key_st, value_st) -> NotContainsFromEntries(dict_st, key_st, value_st)` |
+| 1003 | SetContainsFromEntries | `SetContainsFromEntries(set_st, value_st) -> ContainsFromEntries(set_st, value_st, value_st)` |
+| 1004 | SetNotContainsFromEntries | `SetNotContainsFromEntries(set_st, value_st) -> NotContainsFromEntries(set_st, value_st, value_st)` |
+| 1005 | ArrayContainsFromEntries | `ArrayContainsFromEntries(array_st, index_st, value_st) -> ContainsFromEntries(array_st, index_st, value_st)` |
+| 1006 | GtEqFromEntries | `GtEqFromEntries(s1, s2) -> LtEqFromEntries(s2, s1)` |
+| 1007 | GtFromEntries | `GtFromEntries(s1, s2) -> LtFromEntries(s2, s1)` |
+| 1008 | GtToNotEqual | `GtToNotEqual(s1, s2) -> LtToNotEqual(s1, s2)` |
 
 <br><br>
 
