@@ -71,8 +71,8 @@ use crate::{
             },
         },
         recursion::{
-            self, common_data_for_recursion, InnerCircuit, RecursiveCircuit, RecursiveParams,
-            VerifiedProofTarget,
+            self, circuit::RecursiveCircuitTarget, common_data_for_recursion, InnerCircuit,
+            RecursiveCircuit, RecursiveParams, VerifiedProofTarget,
         },
         signedpod::SignedPod,
     },
@@ -89,30 +89,30 @@ use crate::{
 };
 
 // TODO better naming
-static ECDSA_VERIFIER_DATA: LazyLock<(EcdsaVerifierTarget, CircuitData<F, C, D>)> =
-    LazyLock::new(|| build_ecdsa_verifier().expect("successful build"));
+static ECDSA_VERIFY_DATA: LazyLock<(EcdsaVerifyTarget, CircuitData<F, C, D>)> =
+    LazyLock::new(|| build_ecdsa_verify().expect("successful build"));
 
 // TODO better naming
-fn build_ecdsa_verifier() -> Result<(EcdsaVerifierTarget, CircuitData<F, C, D>)> {
+fn build_ecdsa_verify() -> Result<(EcdsaVerifyTarget, CircuitData<F, C, D>)> {
     let config = CircuitConfig::standard_ecc_config();
     let mut builder = CircuitBuilder::<F, D>::new(config);
-    let ecdsa_verify_target = EcdsaVerifierTarget::add_targets(&mut builder)?;
+    let ecdsa_verify_target = EcdsaVerifyTarget::add_targets(&mut builder)?;
 
-    let data = timed!("EcdsaVerifier build", builder.build::<C>());
+    let data = timed!("EcdsaVerify build", builder.build::<C>());
     Ok((ecdsa_verify_target, data))
 }
 
 // Note: this circuit requires the CircuitConfig's standard_ecc_config or
 // wide_ecc_config.
-struct EcdsaVerifierTarget {
+struct EcdsaVerifyTarget {
     msg: NonNativeTarget<Secp256K1Scalar>,
     pk: ECDSAPublicKeyTarget<Secp256K1>,
     signature: ECDSASignatureTarget<Secp256K1>,
 }
 
-impl EcdsaVerifierTarget {
+impl EcdsaVerifyTarget {
     fn add_targets(builder: &mut CircuitBuilder<F, D>) -> Result<Self> {
-        let measure = measure_gates_begin!(builder, "SignedPodVerify");
+        let measure = measure_gates_begin!(builder, "EcdsaVerifyTarget");
         let msg = builder.add_virtual_nonnative_target::<Secp256K1Scalar>();
         let pk = ECDSAPublicKeyTarget(builder.add_virtual_affine_point_target::<Secp256K1>());
         let r = builder.add_virtual_nonnative_target();
@@ -120,14 +120,15 @@ impl EcdsaVerifierTarget {
         let sig = ECDSASignatureTarget::<Secp256K1> { r, s };
 
         // TODO uncomment
-        // verify_message_circuit(builder, msg.clone(), sig.clone(), pk.clone());
+        verify_message_circuit(builder, msg.clone(), sig.clone(), pk.clone());
 
         // TODO
         // builder.register_public_inputs(&pk);
         // builder.register_public_inputs(&msg);
 
         measure_gates_end!(builder, measure);
-        Ok(EcdsaVerifierTarget {
+        // crate::measure_gates_print!();
+        Ok(EcdsaVerifyTarget {
             msg,
             pk,
             signature: sig,
@@ -153,6 +154,8 @@ impl EcdsaVerifierTarget {
         Ok(())
     }
 }
+
+#[derive(Clone, Debug)]
 struct EcdsaPodVerifyTarget {
     params: Params, // TODO rm?
     vds_root: HashOutTarget,
@@ -194,9 +197,9 @@ impl InnerCircuit for EcdsaPodVerifyTarget {
         }
         .eval(builder, &statements);
 
-        // 2. Verify  EcdsaVerifierTarget's proof (with verifier_data hardcoded
+        // 2. Verify  EcdsaVerifyTarget's proof (with verifier_data hardcoded
         //    as constant)
-        let (_, circuit_data) = &*ECDSA_VERIFIER_DATA;
+        let (_, circuit_data) = &*ECDSA_VERIFY_DATA;
         let verifier_data_targ = builder.constant_verifier_data(&circuit_data.verifier_only);
         let proof_targ = builder.add_virtual_proof_with_pis(&circuit_data.common);
         builder.verify_proof::<C>(&proof_targ, &verifier_data_targ, &circuit_data.common);
@@ -210,6 +213,7 @@ impl InnerCircuit for EcdsaPodVerifyTarget {
         builder.register_public_inputs(&vds_root.elements);
 
         measure_gates_end!(builder, measure);
+        // crate::measure_gates_print!();
         Ok(EcdsaPodVerifyTarget {
             params: params.clone(),
             vds_root,
@@ -236,24 +240,6 @@ impl InnerCircuit for EcdsaPodVerifyTarget {
 
         Ok(())
     }
-}
-
-static STANDARD_ECDSA_POD_DATA: LazyLock<(EcdsaPodVerifyTarget, CircuitData<F, C, D>)> =
-    LazyLock::new(|| build().expect("successful build"));
-
-/// build the circuit of EcdsaPodVerifyCircuit, padded to the amount of gates
-/// needed to make it compatible with the RecursiveCircuit
-fn build() -> Result<(EcdsaPodVerifyTarget, CircuitData<F, C, D>)> {
-    let params = &*crate::backends::plonky2::DEFAULT_PARAMS;
-    let config = CircuitConfig::standard_recursion_config();
-    let mut builder = CircuitBuilder::<F, D>::new(config);
-    let ecdsa_pod_verify_target = EcdsaPodVerifyTarget::build(&mut builder, params, &[])?;
-    let circuit_data = &*crate::backends::plonky2::STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
-    crate::backends::plonky2::recursion::pad_circuit(&mut builder, &circuit_data.common);
-
-    let data = timed!("EcdsaPod build", builder.build::<C>());
-    assert_eq!(circuit_data.common, data.common);
-    Ok((ecdsa_pod_verify_target, data))
 }
 
 #[derive(Clone, Debug)]
@@ -295,16 +281,19 @@ impl EcdsaPod {
         let signature: ECDSASignature<Secp256K1> = sign_message(msg, sk);
 
         // 2. prove the EcdsaVerify circuit
-        let (ecdsa_verify_target, ecdsa_circuit_data) = &*ECDSA_VERIFIER_DATA;
+        let (ecdsa_verify_target, ecdsa_circuit_data) = &*ECDSA_VERIFY_DATA;
         let mut pw = PartialWitness::<F>::new();
         ecdsa_verify_target.set_targets(&mut pw, msg, pk, signature)?;
 
-        let ecdsa_verify_proof = ecdsa_circuit_data.prove(pw)?;
+        let ecdsa_verify_proof = timed!(
+            "prove the ecdsa signature verification (EcdsaVerifyTarget)",
+            ecdsa_circuit_data.prove(pw)?
+        );
 
         // 3. verify the ecdsa_verify proof in a EcdsaPodVerifyTarget circuit
 
+        // let (ecdsa_pod_target, circuit_data) = &*ECDSA_POD_DATA;
         let rec_circuit_data = &*crate::backends::plonky2::STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
-        // println!("DBG recursive MainPod build BEGIN");
         let (ecdsa_pod_target, circuit_data) =
             RecursiveCircuit::<EcdsaPodVerifyTarget>::circuit_data_padded(
                 params.max_input_recursive_pods,
@@ -319,7 +308,7 @@ impl EcdsaPod {
         let ecdsa_pod = RecursiveCircuit::<EcdsaPodVerifyTarget> {
             params: rec_params.clone(),
             prover: circuit_data.prover_data(),
-            target: ecdsa_pod_target,
+            target: ecdsa_pod_target.clone(),
         };
 
         // now that sig is done, gen a plonky2 proof of the circuit that verifies it
@@ -331,7 +320,6 @@ impl EcdsaPod {
         let id: PodId = PodId(calculate_id(&statements, params));
 
         // set targets
-        dbg!("A 4");
         let input = EcdsaPodVerifyInput {
             vds_root,
             id,
@@ -344,13 +332,14 @@ impl EcdsaPod {
                 &rec_params.common_data,
                 NUM_PUBLIC_INPUTS, // TODO num_public_inputs,
             )?;
-        dbg!("A 5");
-        let proof_with_pis = ecdsa_pod.prove(
-            &input,
-            vec![dummy_proof.clone(), dummy_proof.clone()],
-            vec![dummy_verifier_data.clone(), dummy_verifier_data.clone()],
-        )?;
-        dbg!("A 6");
+        let proof_with_pis = timed!(
+            "prove the ecdsa-verification proof verification (EcdsaPod proof)",
+            ecdsa_pod.prove(
+                &input,
+                vec![dummy_proof.clone(), dummy_proof.clone()],
+                vec![dummy_verifier_data.clone(), dummy_verifier_data.clone()],
+            )?
+        );
 
         #[cfg(test)] // sanity check
         {
@@ -363,7 +352,6 @@ impl EcdsaPod {
                 .verifier_data()
                 .verify(proof_with_pis.clone())?;
         }
-        dbg!("A 7");
 
         Ok(EcdsaPod {
             params: params.clone(),
@@ -389,7 +377,6 @@ impl EcdsaPod {
         Ok(Self::_prove(params, vds_root, msg, sk).map(Box::new)?)
     }
     fn _verify(&self) -> Result<()> {
-        dbg!("B 0");
         let statements = pub_self_statements()
             .into_iter()
             .map(|st| mainpod::Statement::from(st))
@@ -398,7 +385,6 @@ impl EcdsaPod {
         if id != self.id {
             return Err(Error::id_not_equal(self.id, id));
         }
-        dbg!("B 1");
 
         let rec_circuit_data = &*crate::backends::plonky2::STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
         // TODO: cache these artefacts
@@ -415,7 +401,6 @@ impl EcdsaPod {
             .cloned()
             .collect_vec();
 
-        dbg!("B 2");
         circuit_data
             .verify(ProofWithPublicInputs {
                 proof: self.proof.clone(),
@@ -492,6 +477,7 @@ pub mod tests {
         op,
     };
 
+    #[ignore] // skip this test by default, since it takes >100s to run
     #[test]
     fn test_ecdsa_pod_verify() -> Result<()> {
         let params = Params {
@@ -505,8 +491,10 @@ pub mod tests {
         let msg = Secp256K1Scalar::rand();
         let sk = ECDSASecretKey::<Secp256K1>(Secp256K1Scalar::rand());
         let vds_root = EMPTY_HASH;
-        let ecdsa_pod = EcdsaPod::new(&params, vds_root, msg, sk).unwrap();
-        dbg!("ecdsapod generated");
+        let ecdsa_pod = timed!(
+            "EcdsaPod::new",
+            EcdsaPod::new(&params, vds_root, msg, sk).unwrap()
+        );
 
         ecdsa_pod.verify().unwrap();
 
@@ -522,11 +510,6 @@ pub mod tests {
         // now generate a new MainPod from the ecdsa_pod
         let mut main_pod_builder = MainPodBuilder::new(&params);
         main_pod_builder.add_main_pod(main_ecdsa_pod);
-
-        // let now_minus_18y: i64 = 1169909388;
-        // main_pod_builder
-        //     .pub_op(op!(lt, (&ecdsa_pod, "dateOfBirth"), now_minus_18y))
-        //     .unwrap();
 
         // emptypod
         let empty_pod: Box<dyn middleware::RecursivePod> =
