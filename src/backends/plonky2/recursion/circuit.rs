@@ -113,7 +113,7 @@ pub fn new_params_padded<I: InnerCircuit>(
     inner_params: &I::Params,
 ) -> Result<RecursiveParams> {
     let (_, circuit_data) =
-        RecursiveCircuit::<I>::circuit_data_padded(arity, common_data, inner_params)?;
+        RecursiveCircuit::<I>::target_and_circuit_data_padded(arity, common_data, inner_params)?;
     let common_data = circuit_data.common.clone();
     let verifier_data = circuit_data.verifier_data();
     Ok(RecursiveParams {
@@ -265,7 +265,7 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
     }
 
     /// returns the full-recursive CircuitData padded to share the input `common_data`
-    pub fn circuit_data_padded(
+    pub fn target_and_circuit_data_padded(
         arity: usize,
         common_data: &CommonCircuitData<F, D>,
         inner_params: &I::Params,
@@ -688,7 +688,7 @@ mod tests {
         let common_data = &circuit_data_3.common;
 
         let (_, circuit_data_1) =
-            RC::<Circuit1>::circuit_data_padded(arity, &common_data, &inner_params)?;
+            RC::<Circuit1>::target_and_circuit_data_padded(arity, &common_data, &inner_params)?;
         let params_1 = RecursiveParams {
             arity,
             common_data: circuit_data_1.common.clone(),
@@ -696,7 +696,7 @@ mod tests {
         };
 
         let (_, circuit_data_2) =
-            RC::<Circuit2>::circuit_data_padded(arity, &common_data, &inner_params)?;
+            RC::<Circuit2>::target_and_circuit_data_padded(arity, &common_data, &inner_params)?;
         let params_2 = RecursiveParams {
             arity,
             common_data: circuit_data_2.common.clone(),
