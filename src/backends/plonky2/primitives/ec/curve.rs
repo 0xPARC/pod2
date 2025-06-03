@@ -7,7 +7,7 @@ use std::{
     sync::LazyLock,
 };
 
-use num::{bigint::BigUint, traits::Zero, Num, One};
+use num::{bigint::BigUint, Num, One};
 use plonky2::{
     field::{
         extension::{quintic::QuinticExtension, Extendable, FieldExtension},
@@ -127,6 +127,7 @@ pub(super) fn add_homog<const D: usize, F: ECFieldExt<D>>(x1: F, u1: F, x2: F, u
 }
 
 // See CircuitBuilderEllptic::add_point for an explanation of why we need this function.
+// cf. https://github.com/pornin/ecgfp5/blob/ce059c6d1e1662db437aecbf3db6bb67fe63c716/rust/src/curve.rs#L157
 pub(super) fn add_homog_offset<const D: usize, F: ECFieldExt<D>>(
     x1: F,
     u1: F,
@@ -256,18 +257,14 @@ impl AddAssign<Self> for Point {
 impl Mul<Point> for &BigUint {
     type Output = Point;
     fn mul(self, rhs: Point) -> Self::Output {
-        if self.is_zero() {
-            Point::ZERO
-        } else {
-            let mut ans = rhs;
-            for bit_pos in (0..(self.bits() - 1)).rev() {
-                ans = ans.double();
-                if self.bit(bit_pos) {
-                    ans += rhs;
-                }
+        let mut ans = Point::ZERO;
+        for bit_pos in (0..self.bits()).rev() {
+            ans = ans.double();
+            if self.bit(bit_pos) {
+                ans += rhs;
             }
-            ans
         }
+        ans
     }
 }
 

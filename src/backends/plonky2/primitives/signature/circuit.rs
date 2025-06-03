@@ -93,7 +93,6 @@ impl SignatureVerifyTarget {
 #[cfg(test)]
 pub mod tests {
     use num_bigint::RandBigInt;
-    use rand::rngs::OsRng;
 
     use super::*;
     use crate::{
@@ -107,7 +106,7 @@ pub mod tests {
         let sk = SecretKey::new_rand();
         let pk = sk.public_key();
         let msg = RawValue::from(42);
-        let nonce = OsRng.gen_biguint_below(&GROUP_ORDER);
+        let nonce = 1337u64.into();
         let sig = sk.sign(msg, &nonce);
         assert!(sig.verify(pk, msg), "Should verify");
 
@@ -133,7 +132,7 @@ pub mod tests {
         let sk = SecretKey::new_rand();
         let pk = sk.public_key();
         let msg = RawValue::from(42);
-        let nonce = OsRng.gen_biguint_below(&GROUP_ORDER);
+        let nonce = 600613u64.into();
         let sig = sk.sign(msg, &nonce);
         // verification should pass
         let v = sig.verify(pk, msg);
