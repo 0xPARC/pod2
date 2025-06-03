@@ -208,20 +208,19 @@ impl<const DEG: usize, NNF: OEF<DEG> + FieldExtension<DEG, BaseField = F>>
         OEFTarget::new(outputs.try_into().unwrap())
     }
     fn nnf_div(&mut self, x: &OEFTarget<DEG, NNF>, y: &OEFTarget<DEG, NNF>) -> OEFTarget<DEG, NNF> {
-        // Determine quotient witness from numerator & denominator
-        // witnesses.
-        let quotient = self.add_virtual_nnf_target();
+        let one = self.nnf_one();
+        // Determine denominator inverse witness.
+        let y_inv = self.add_virtual_nnf_target();
         self.add_simple_generator(QuotientGeneratorOEF {
-            numerator: x.clone(),
+            numerator: one.clone(),
             denominator: y.clone(),
-            quotient: quotient.clone(),
+            quotient: y_inv.clone(),
         });
 
-        // Add constraints.
-        let quotient_times_denominator = self.nnf_mul(&quotient, y);
-        self.nnf_connect(x, &quotient_times_denominator);
-
-        quotient
+        // Add constraints and generate quotient.
+        let maybe_one = self.nnf_mul(&y_inv, y);
+        self.nnf_connect(&one, &maybe_one);
+        self.nnf_mul(&x, &y_inv)
     }
     fn nnf_mul_generator(&mut self, x: &OEFTarget<DEG, NNF>) -> OEFTarget<DEG, NNF> {
         OEFTarget::new(std::array::from_fn(|i| {
