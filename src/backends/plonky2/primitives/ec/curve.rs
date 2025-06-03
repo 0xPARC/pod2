@@ -420,8 +420,8 @@ impl CircuitBuilderElliptic for CircuitBuilder<GoldilocksField, 2> {
         let u = FieldTarget::new(outputs[10..15].try_into().unwrap());
         let t = FieldTarget::new(outputs[15..20].try_into().unwrap());
         let b1 = self.constant(Point::B1);
-        let z = self.nnf_add_scalar_times_generator_power(b1, 0, &z);
-        let t = self.nnf_add_scalar_times_generator_power(b1, 0, &t);
+        let z = self.nnf_add_scalar_times_generator_power(b1, 1, &z);
+        let t = self.nnf_add_scalar_times_generator_power(b1, 1, &t);
         let xq = self.nnf_div(&x, &z);
         let uq = self.nnf_div(&u, &t);
         PointTarget { x: xq, u: uq }
