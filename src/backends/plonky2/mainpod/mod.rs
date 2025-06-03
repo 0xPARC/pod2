@@ -39,7 +39,7 @@ use crate::{
 /// `max_public_statements` only pay for `max_public_statements` by starting the poseidon state
 /// with a precomputed constant corresponding to the front-padding part:
 /// `id = hash(serialize(reverse(statements || none-statements)))`
-pub(crate) fn calculate_id(statements: &[Statement], params: &Params) -> middleware::Hash {
+pub fn calculate_id(statements: &[Statement], params: &Params) -> middleware::Hash {
     assert!(statements.len() <= params.num_public_statements_id);
     assert!(params.max_public_statements <= params.num_public_statements_id);
 

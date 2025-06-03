@@ -63,31 +63,31 @@ macro_rules! new {
 }
 use InnerError::*;
 impl Error {
-    pub(crate) fn custom(s: String) -> Self {
+    pub fn custom(s: String) -> Self {
         new!(Custom(s))
     }
-    pub(crate) fn plonky2_proof_fail(e: anyhow::Error) -> Self {
+    pub fn plonky2_proof_fail(e: anyhow::Error) -> Self {
         Self::Plonky2ProofFail(e)
     }
-    pub(crate) fn key_not_found() -> Self {
+    pub fn key_not_found() -> Self {
         new!(KeyNotFound)
     }
-    pub(crate) fn statement_not_check() -> Self {
+    pub fn statement_not_check() -> Self {
         new!(StatementNotCheck)
     }
-    pub(crate) fn repeated_value_of() -> Self {
+    pub fn repeated_value_of() -> Self {
         new!(RepeatedValueOf)
     }
-    pub(crate) fn not_type_statement() -> Self {
+    pub fn not_type_statement() -> Self {
         new!(NotTypeStatement)
     }
-    pub(crate) fn pod_id_invalid() -> Self {
+    pub fn pod_id_invalid() -> Self {
         new!(PodIdInvalid)
     }
-    pub(crate) fn id_not_equal(expected: PodId, found: PodId) -> Self {
+    pub fn id_not_equal(expected: PodId, found: PodId) -> Self {
         new!(IdNotEqual(expected, found))
     }
-    pub(crate) fn type_not_equal(expected: PodType, found: Value) -> Self {
+    pub fn type_not_equal(expected: PodType, found: Value) -> Self {
         new!(TypeNotEqual(expected, found))
     }
 }
