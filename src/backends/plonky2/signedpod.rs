@@ -154,8 +154,7 @@ pub mod tests {
         pod.insert("dateOfBirth", 1169909384);
         pod.insert("socialSecurityNumber", "G2121210");
 
-        // TODO: Use a deterministic secret key to get deterministic tests
-        let sk = SecretKey(OsRng.gen_biguint_below(&GROUP_ORDER));
+        let sk = SecretKey(123u64.into());
         let mut signer = Signer(sk);
         let pod = pod.sign(&mut signer).unwrap();
         let pod = (pod.pod as Box<dyn Any>).downcast::<SignedPod>().unwrap();
@@ -165,7 +164,7 @@ pub mod tests {
         println!("kvs: {:?}", pod.kvs());
 
         let mut bad_pod = pod.clone();
-        let nonce = OsRng.gen_biguint_below(&GROUP_ORDER);
+        let nonce = 456u64.into();
         bad_pod.signature = signer.0.sign(RawValue::from(42_i64), &nonce);
         assert!(bad_pod.verify().is_err());
 
