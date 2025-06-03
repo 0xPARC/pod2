@@ -13,7 +13,6 @@
   - [Signature](./signature.md)
 - [Deductions](./deductions.md)
   - [Statements](./statements.md)
-    - [Statements involving compound types and Merkle trees](./merklestatements.md)
   - [Operations](./operations.md)
     - [Simple example](./simpleexample.md)
   - [Custom statements and custom operations](./custom.md)
