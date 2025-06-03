@@ -11,7 +11,7 @@
 use itertools::Itertools;
 use plonky2::{
     self,
-    field::types::Field,
+    field::{extension::quintic::QuinticExtension, types::Field},
     gates::noop::NoopGate,
     hash::hash_types::HashOutTarget,
     iop::{
@@ -33,6 +33,7 @@ use crate::{
     backends::plonky2::{
         basetypes::{C, D},
         error::Result,
+        primitives::ec::gates::{curve::ECAddHomog, field::NNFMulSimple, generic::GateAdapter},
     },
     middleware::F,
     timed,
@@ -342,6 +343,11 @@ pub fn common_data_for_recursion<I: InnerCircuit>(
         GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(&config, 4)),
         GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(&config, 5)),
         GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(&config, 6)),
+        GateRef::new(
+            GateAdapter::<NNFMulSimple<5, QuinticExtension<F>>>::new_from_config(&config)
+                .recursive_gate(),
+        ),
+        GateRef::new(GateAdapter::<ECAddHomog>::new_from_config(&config).recursive_gate()),
         // It would be better do `CosetInterpolationGate::with_max_degree(4, 6)` but unfortunately
         // that plonk2 method is `pub(crate)`, so we need to get around that somehow.
         GateRef::new(coset_interpolation_gate(
@@ -688,7 +694,7 @@ mod tests {
         let common_data = &circuit_data_3.common;
 
         let (_, circuit_data_1) =
-            RC::<Circuit1>::circuit_data_padded(arity, &common_data, &inner_params)?;
+            RC::<Circuit1>::circuit_data_padded(arity, common_data, &inner_params)?;
         let params_1 = RecursiveParams {
             arity,
             common_data: circuit_data_1.common.clone(),
@@ -696,7 +702,7 @@ mod tests {
         };
 
         let (_, circuit_data_2) =
-            RC::<Circuit2>::circuit_data_padded(arity, &common_data, &inner_params)?;
+            RC::<Circuit2>::circuit_data_padded(arity, common_data, &inner_params)?;
         let params_2 = RecursiveParams {
             arity,
             common_data: circuit_data_2.common.clone(),
@@ -708,7 +714,7 @@ mod tests {
             start.elapsed()
         );
 
-        let (dummy_verifier_data, dummy_proof) = dummy(&common_data, num_public_inputs)?;
+        let (dummy_verifier_data, dummy_proof) = dummy(common_data, num_public_inputs)?;
 
         let circuit1 = RC::<Circuit1>::build(&params_1, &())?;
         let circuit2 = RC::<Circuit2>::build(&params_2, &())?;

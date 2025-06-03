@@ -84,7 +84,7 @@ impl<G: SimpleGate> GateAdapter<G> {
         }
     }
 
-    pub(super) fn recursive_gate<const D: usize>(&self) -> RecursiveGateAdapter<D, G> {
+    pub fn recursive_gate<const D: usize>(&self) -> RecursiveGateAdapter<D, G> {
         RecursiveGateAdapter::<D, G> {
             max_ops: self.recursive_max_wires / (D * G::WIRES_PER_OP),
             _gate: PhantomData,

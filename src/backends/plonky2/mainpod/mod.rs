@@ -15,14 +15,12 @@ pub use statement::*;
 use crate::{
     backends::plonky2::{
         basetypes::{Proof, ProofWithPublicInputs, VerifierOnlyCircuitData, D},
-        circuits::mainpod::{
-            CustomPredicateVerification, MainPodVerifyInput, MainPodVerifyTarget, NUM_PUBLIC_INPUTS,
-        },
+        circuits::mainpod::{CustomPredicateVerification, MainPodVerifyInput, MainPodVerifyTarget},
         emptypod::EmptyPod,
         error::{Error, Result},
         mock::emptypod::MockEmptyPod,
         primitives::merkletree::MerkleClaimAndProof,
-        recursion::{self, RecursiveCircuit, RecursiveParams},
+        recursion::{RecursiveCircuit, RecursiveParams},
         signedpod::SignedPod,
         STANDARD_REC_MAIN_POD_CIRCUIT_DATA,
     },
@@ -550,12 +548,13 @@ pub struct MainPod {
 fn get_common_data(params: &Params) -> Result<CommonCircuitData<F, D>, Error> {
     // TODO: Cache this somehow
     // https://github.com/0xPARC/pod2/issues/247
-    let rec_params = recursion::new_params::<MainPodVerifyTarget>(
+    let rec_circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
+    let (_, circuit_data) = RecursiveCircuit::<MainPodVerifyTarget>::circuit_data_padded(
         params.max_input_recursive_pods,
-        NUM_PUBLIC_INPUTS,
+        &rec_circuit_data.common,
         params,
     )?;
-    Ok(rec_params.common_data().clone())
+    Ok(circuit_data.common.clone())
 }
 
 impl MainPod {
