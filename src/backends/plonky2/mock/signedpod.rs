@@ -10,7 +10,7 @@ use crate::{
     constants::MAX_DEPTH,
     middleware::{
         containers::Dictionary, hash_str, AnchoredKey, DynError, Hash, Key, Params, Pod, PodId,
-        PodSigner, PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE,
+        PodSigner, PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE, SELF,
     },
 };
 
@@ -111,6 +111,9 @@ impl MockSignedPod {
 }
 
 impl Pod for MockSignedPod {
+    fn params(&self) -> &Params {
+        panic!("MockSignedPod doesn't have params");
+    }
     fn verify(&self) -> Result<(), Box<DynError>> {
         Ok(self._verify()?)
     }
@@ -119,8 +122,7 @@ impl Pod for MockSignedPod {
         self.id
     }
 
-    fn pub_statements(&self) -> Vec<Statement> {
-        let id = self.id();
+    fn pub_self_statements(&self) -> Vec<Statement> {
         // By convention we put the KEY_TYPE first and KEY_SIGNER second
         let mut kvs = self.kvs.clone();
         let key_type = Key::from(KEY_TYPE);
@@ -130,7 +132,7 @@ impl Pod for MockSignedPod {
         [(key_type, value_type), (key_signer, value_signer)]
             .into_iter()
             .chain(kvs.into_iter().sorted_by_key(|kv| kv.0.hash()))
-            .map(|(k, v)| Statement::ValueOf(AnchoredKey::from((id, k)), v))
+            .map(|(k, v)| Statement::ValueOf(AnchoredKey::from((SELF, k)), v))
             .collect()
     }
 

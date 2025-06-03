@@ -10,7 +10,8 @@ use serialization::{SerializedMainPod, SerializedSignedPod};
 use crate::middleware::{
     self, check_st_tmpl, hash_str, hash_values, AnchoredKey, Hash, Key, MainPodInputs,
     NativeOperation, NativePredicate, OperationAux, OperationType, Params, PodId, PodProver,
-    PodSigner, Predicate, Statement, StatementArg, Value, WildcardValue, KEY_TYPE, SELF,
+    PodSigner, Predicate, Statement, StatementArg, Value, WildcardValue, EMPTY_HASH, KEY_TYPE,
+    SELF,
 };
 
 mod custom;
@@ -553,7 +554,7 @@ impl MainPodBuilder {
                 .iter()
                 .map(|p| p.pod.as_ref())
                 .collect_vec(),
-            main_pods: &self
+            recursive_pods: &self
                 .input_main_pods
                 .iter()
                 .map(|p| p.pod.as_ref())
@@ -561,6 +562,7 @@ impl MainPodBuilder {
             statements: &statements,
             operations: &operations,
             public_statements: &public_statements,
+            vds_root: EMPTY_HASH, // TODO https://github.com/0xPARC/pod2/issues/249
         };
         let pod = prover.prove(&self.params, inputs)?;
 
@@ -618,7 +620,7 @@ impl MainPodBuilder {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(try_from = "SerializedMainPod", into = "SerializedMainPod")]
 pub struct MainPod {
-    pub pod: Box<dyn middleware::Pod>,
+    pub pod: Box<dyn middleware::RecursivePod>,
     pub public_statements: Vec<Statement>,
     pub params: Params,
 }
@@ -898,7 +900,7 @@ pub mod tests {
     fn test_ethdos() -> Result<()> {
         let params = Params {
             max_input_signed_pods: 3,
-            max_input_main_pods: 3,
+            max_input_recursive_pods: 3,
             max_statements: 31,
             max_signed_pod_values: 8,
             max_public_statements: 10,
@@ -940,7 +942,7 @@ pub mod tests {
 
     #[test]
     fn test_front_great_boy() -> Result<()> {
-        let great_boy = great_boy_pod_full_flow()?;
+        let (_, great_boy) = great_boy_pod_full_flow()?;
         println!("{}", great_boy);
 
         // TODO: prove great_boy with MockProver and print it

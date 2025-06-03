@@ -22,4 +22,6 @@ jobs:
       run: cargo build
     - name: Build metrics
       run: cargo build --features metrics
+    - name: Build time
+      run: cargo build --features time
 

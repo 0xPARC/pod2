@@ -581,8 +581,10 @@ pub enum PodType {
     None = 0,
     MockSigned = 1,
     MockMain = 2,
-    Signed = 3,
-    Main = 4,
+    MockEmpty = 3,
+    Signed = 4,
+    Main = 5,
+    Empty = 6,
 }
 
 impl fmt::Display for PodType {
@@ -591,45 +593,60 @@ impl fmt::Display for PodType {
             PodType::None => write!(f, "None"),
             PodType::MockSigned => write!(f, "MockSigned"),
             PodType::MockMain => write!(f, "MockMain"),
+            PodType::MockEmpty => write!(f, "MockEmpty"),
             PodType::Signed => write!(f, "Signed"),
             PodType::Main => write!(f, "Main"),
+            PodType::Empty => write!(f, "Empty"),
         }
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Hash)]
 #[serde(rename_all = "camelCase")]
 pub struct Params {
     pub max_input_signed_pods: usize,
-    pub max_input_main_pods: usize,
+    pub max_input_recursive_pods: usize,
+    pub max_input_pods_public_statements: usize,
     pub max_statements: usize,
     pub max_signed_pod_values: usize,
     pub max_public_statements: usize,
-    pub max_statement_args: usize,
     pub max_operation_args: usize,
     // max number of custom predicates batches that a MainPod can use
     pub max_custom_predicate_batches: usize,
     // max number of operations using custom predicates that can be verified in the MainPod
     pub max_custom_predicate_verifications: usize,
-    // max number of statements that can be ANDed or ORed together
-    // in a custom predicate
-    pub max_custom_predicate_arity: usize,
     pub max_custom_predicate_wildcards: usize,
-    pub max_custom_batch_size: usize,
     // maximum number of merkle proofs
     pub max_merkle_proofs: usize,
     // maximum depth for merkle tree gadget
     pub max_depth_mt_gadget: usize,
+    //
+    // The following parameters define how a pod id is calculated.  They need to be the same among
+    // different circuits to be compatible in their verification.
+    //
+    // Number of public statements to hash to calculate the id.  Must be equal or greater than
+    // `max_public_statements`.
+    pub num_public_statements_id: usize,
+    pub max_statement_args: usize,
+    //
+    // The following parameters define how a custom predicate batch id is calculated.
+    //
+    // max number of statements that can be ANDed or ORed together
+    // in a custom predicate
+    pub max_custom_predicate_arity: usize,
+    pub max_custom_batch_size: usize,
 }
 
 impl Default for Params {
     fn default() -> Self {
         Self {
             max_input_signed_pods: 3,
-            max_input_main_pods: 3,
+            max_input_recursive_pods: 2,
+            max_input_pods_public_statements: 10,
             max_statements: 20,
             max_signed_pod_values: 8,
             max_public_statements: 10,
+            num_public_statements_id: 16,
             max_statement_args: 5,
             max_operation_args: 5,
             max_custom_predicate_batches: 2,
@@ -680,6 +697,16 @@ impl Params {
         self.max_custom_batch_size * self.custom_predicate_size()
     }
 
+    /// Parameters that define how the id is calculated
+    pub fn id_params(&self) -> Vec<usize> {
+        vec![
+            self.num_public_statements_id,
+            self.max_statement_args,
+            self.max_custom_predicate_arity,
+            self.max_custom_batch_size,
+        ]
+    }
+
     pub fn print_serialized_sizes(&self) {
         println!("Parameter sizes:");
         println!(
@@ -697,12 +724,39 @@ impl Params {
     }
 }
 
+/// Replace references to SELF by `self_id` in anchored keys of the statement.
+pub fn normalize_statement(statement: &Statement, self_id: PodId) -> Statement {
+    let predicate = statement.predicate();
+    let args = statement
+        .args()
+        .iter()
+        .map(|sa| match &sa {
+            StatementArg::Key(AnchoredKey { pod_id, key }) if *pod_id == SELF => {
+                StatementArg::Key(AnchoredKey::new(self_id, key.clone()))
+            }
+            _ => sa.clone(),
+        })
+        .collect();
+    Statement::from_args(predicate, args).expect("statement was valid before normalization")
+}
+
 pub type DynError = dyn std::error::Error + Send + Sync;
 
 pub trait Pod: fmt::Debug + DynClone + Any {
+    fn params(&self) -> &Params;
     fn verify(&self) -> Result<(), Box<DynError>>;
     fn id(&self) -> PodId;
-    fn pub_statements(&self) -> Vec<Statement>;
+    /// Statements as internally generated, where self-referencing arguments use SELF in the
+    /// anchored key.  The serialization of these statements is used to calculate the id.
+    fn pub_self_statements(&self) -> Vec<Statement>;
+    /// Normalized statements, where self-referencing arguments use the pod id instead of SELF in
+    /// the anchored key.
+    fn pub_statements(&self) -> Vec<Statement> {
+        self.pub_self_statements()
+            .into_iter()
+            .map(|statement| normalize_statement(&statement, self.id()))
+            .collect()
+    }
     /// Extract key-values from ValueOf public statements
     fn kvs(&self) -> HashMap<AnchoredKey, Value> {
         self.pub_statements()
@@ -727,8 +781,20 @@ pub trait Pod: fmt::Debug + DynClone + Any {
     fn serialized_proof(&self) -> String;
 }
 
-// impl Clone for Box<dyn SignedPod>
+// impl Clone for Box<dyn Pod>
 dyn_clone::clone_trait_object!(Pod);
+
+/// Trait for pods that are generated with a plonky2 circuit and that can be verified by a
+/// recursive MainPod circuit.  A Pod implementing this trait does not necesarilly come from
+/// recursion: for example an introduction Pod in general is not recursive.
+pub trait RecursivePod: Pod {
+    fn verifier_data(&self) -> VerifierOnlyCircuitData;
+    fn proof(&self) -> Proof;
+    fn vds_root(&self) -> Hash;
+}
+
+// impl Clone for Box<dyn RecursivePod>
+dyn_clone::clone_trait_object!(RecursivePod);
 
 pub trait PodSigner {
     fn sign(
@@ -738,19 +804,24 @@ pub trait PodSigner {
     ) -> Result<Box<dyn Pod>, Box<DynError>>;
 }
 
+// TODO: Delete once we have a fully working EmptyPod and a dumb SignedPod
+// https://github.com/0xPARC/pod2/issues/246
 /// This is a filler type that fulfills the Pod trait and always verifies.  It's empty.  This
 /// can be used to simulate padding in a circuit.
 #[derive(Debug, Clone)]
 pub struct NonePod {}
 
 impl Pod for NonePod {
+    fn params(&self) -> &Params {
+        panic!("NonePod doesn't have params");
+    }
     fn verify(&self) -> Result<(), Box<DynError>> {
         Ok(())
     }
     fn id(&self) -> PodId {
         PodId(EMPTY_HASH)
     }
-    fn pub_statements(&self) -> Vec<Statement> {
+    fn pub_self_statements(&self) -> Vec<Statement> {
         Vec::new()
     }
     fn serialized_proof(&self) -> String {
@@ -761,20 +832,21 @@ impl Pod for NonePod {
 #[derive(Debug)]
 pub struct MainPodInputs<'a> {
     pub signed_pods: &'a [&'a dyn Pod],
-    pub main_pods: &'a [&'a dyn Pod],
+    pub recursive_pods: &'a [&'a dyn RecursivePod],
     pub statements: &'a [Statement],
     pub operations: &'a [Operation],
     /// Statements that need to be made public (they can come from input pods or input
     /// statements)
     pub public_statements: &'a [Statement],
+    pub vds_root: Hash, // TODO: Figure out if we use Hash or a Map here https://github.com/0xPARC/pod2/issues/249
 }
 
 pub trait PodProver {
     fn prove(
-        &mut self,
+        &self,
         params: &Params,
         inputs: MainPodInputs,
-    ) -> Result<Box<dyn Pod>, Box<DynError>>;
+    ) -> Result<Box<dyn RecursivePod>, Box<DynError>>;
 }
 
 pub trait ToFields {

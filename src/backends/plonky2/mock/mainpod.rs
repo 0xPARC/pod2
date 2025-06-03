@@ -9,17 +9,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::{
+        basetypes::{Proof, VerifierOnlyCircuitData},
         error::{Error, Result},
         mainpod::{
-            extract_merkle_proofs, hash_statements, layout_statements, normalize_statement,
+            calculate_id, extract_merkle_proofs, layout_statements,
             process_private_statements_operations, process_public_statements_operations, Operation,
             Statement,
         },
         primitives::merkletree::MerkleClaimAndProof,
     },
     middleware::{
-        self, hash_str, AnchoredKey, DynError, MainPodInputs, NativePredicate, Params, Pod, PodId,
-        PodProver, Predicate, StatementArg, KEY_TYPE, SELF,
+        self, hash_str, AnchoredKey, DynError, Hash, MainPodInputs, NativePredicate, Params, Pod,
+        PodId, PodProver, Predicate, RecursivePod, StatementArg, KEY_TYPE, SELF,
     },
 };
 
@@ -27,10 +28,10 @@ pub struct MockProver {}
 
 impl PodProver for MockProver {
     fn prove(
-        &mut self,
+        &self,
         params: &Params,
         inputs: MainPodInputs,
-    ) -> Result<Box<dyn Pod>, Box<DynError>> {
+    ) -> Result<Box<dyn RecursivePod>, Box<DynError>> {
         Ok(Box::new(MockMainPod::new(params, inputs)?))
     }
 }
@@ -73,7 +74,8 @@ impl fmt::Display for MockMainPod {
             }
             if (i >= offset_input_main_pods)
                 && (i < offset_input_statements)
-                && ((i - offset_input_main_pods) % self.params.max_public_statements == 0)
+                && ((i - offset_input_main_pods) % self.params.max_input_pods_public_statements
+                    == 0)
             {
                 writeln!(
                     f,
@@ -137,7 +139,7 @@ impl MockMainPod {
     }
     fn offset_input_statements(&self) -> usize {
         self.offset_input_main_pods()
-            + self.params.max_input_main_pods * self.params.max_public_statements
+            + self.params.max_input_recursive_pods * self.params.max_input_pods_public_statements
     }
     fn offset_public_statements(&self) -> usize {
         self.offset_input_statements() + self.params.max_priv_statements()
@@ -146,7 +148,7 @@ impl MockMainPod {
     pub fn new(params: &Params, inputs: MainPodInputs) -> Result<Self> {
         // TODO: Insert a new public statement of ValueOf with `key=KEY_TYPE,
         // value=PodType::MockMainPod`
-        let statements = layout_statements(params, &inputs);
+        let statements = layout_statements(params, true, &inputs)?;
         // Extract Merkle proofs and pad.
         let merkle_proofs = extract_merkle_proofs(params, inputs.operations)?;
 
@@ -163,7 +165,7 @@ impl MockMainPod {
             statements[statements.len() - params.max_public_statements..].to_vec();
 
         // get the id out of the public statements
-        let id: PodId = PodId(hash_statements(&public_statements, params));
+        let id: PodId = PodId(calculate_id(&public_statements, params));
 
         Ok(Self {
             params: params.clone(),
@@ -197,7 +199,7 @@ impl MockMainPod {
         // get the input_statements from the self.statements
         let input_statements = &self.statements[input_statement_offset..];
         // 2. get the id out of the public statements, and ensure it is equal to self.id
-        let ids_match = self.id == PodId(hash_statements(&self.public_statements, &self.params));
+        let ids_match = self.id == PodId(calculate_id(&self.public_statements, &self.params));
         // find a ValueOf statement from the public statements with key=KEY_TYPE and check that the
         // value is PodType::MockMainPod
         let has_type_statement = self.public_statements.iter().any(|s| {
@@ -278,25 +280,37 @@ impl MockMainPod {
 }
 
 impl Pod for MockMainPod {
+    fn params(&self) -> &Params {
+        &self.params
+    }
     fn verify(&self) -> Result<(), Box<DynError>> {
         Ok(self._verify()?)
     }
     fn id(&self) -> PodId {
         self.id
     }
-    fn pub_statements(&self) -> Vec<middleware::Statement> {
-        // return the public statements, where when origin=SELF is replaced by origin=self.id()
-        // By convention we expect the KEY_TYPE to be the first statement
-        self.statements
+    fn pub_self_statements(&self) -> Vec<middleware::Statement> {
+        self.public_statements
             .iter()
-            .skip(self.offset_public_statements())
             .cloned()
-            .map(|statement| normalize_statement(&statement, self.id()))
+            .map(|st| st.try_into().expect("valid statement"))
             .collect()
     }
 
     fn serialized_proof(&self) -> String {
         BASE64_STANDARD.encode(serde_json::to_string(self).unwrap())
+    }
+}
+
+impl RecursivePod for MockMainPod {
+    fn verifier_data(&self) -> VerifierOnlyCircuitData {
+        panic!("MockMainPod can't be verified in a recursive MainPod circuit");
+    }
+    fn proof(&self) -> Proof {
+        panic!("MockMainPod can't be verified in a recursive MainPod circuit");
+    }
+    fn vds_root(&self) -> Hash {
+        panic!("MockMainPod can't be verified in a recursive MainPod circuit");
     }
 }
 
@@ -351,8 +365,7 @@ pub mod tests {
 
     #[test]
     fn test_mock_main_great_boy() -> frontend::Result<()> {
-        let params = middleware::Params::default();
-        let great_boy_builder = great_boy_pod_full_flow()?;
+        let (params, great_boy_builder) = great_boy_pod_full_flow()?;
 
         let mut prover = MockProver {};
         let great_boy_pod = great_boy_builder.prove(&mut prover, &params)?;

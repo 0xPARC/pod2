@@ -12,8 +12,8 @@ use crate::{
     },
     frontend::{MainPod, SignedPod},
     middleware::{
-        self, containers::Dictionary, serialization::ordered_map, AnchoredKey, Key, Params, PodId,
-        Statement, StatementArg, Value, SELF,
+        self, containers::Dictionary, serialization::ordered_map, AnchoredKey, Hash, Key, Params,
+        PodId, Statement, StatementArg, Value, EMPTY_HASH, SELF,
     },
 };
 
@@ -45,6 +45,7 @@ pub enum MainPodType {
 #[schemars(rename = "MainPod")]
 pub struct SerializedMainPod {
     id: PodId,
+    vds_root: Hash,
     public_statements: Vec<Statement>,
     proof: String,
     params: Params,
@@ -99,23 +100,23 @@ impl From<SerializedSignedPod> for SignedPod {
 
 impl From<MainPod> for SerializedMainPod {
     fn from(pod: MainPod) -> Self {
-        SerializedMainPod {
-            id: pod.id(),
-            proof: pod.pod.serialized_proof(),
-            params: pod.params.clone(),
-            pod_type: if (&*pod.pod as &dyn Any)
-                .downcast_ref::<Plonky2MainPod>()
-                .is_some()
-            {
-                MainPodType::Main
+        let (pod_type, vds_root) =
+            if let Some(pod) = (&*pod.pod as &dyn Any).downcast_ref::<Plonky2MainPod>() {
+                (MainPodType::Main, pod.vds_root())
             } else if (&*pod.pod as &dyn Any)
                 .downcast_ref::<MockMainPod>()
                 .is_some()
             {
-                MainPodType::MockMain
+                (MainPodType::MockMain, EMPTY_HASH)
             } else {
                 unreachable!()
-            },
+            };
+        SerializedMainPod {
+            id: pod.id(),
+            vds_root,
+            proof: pod.pod.serialized_proof(),
+            params: pod.params.clone(),
+            pod_type,
             public_statements: pod.public_statements.clone(),
         }
     }
@@ -142,6 +143,7 @@ impl TryFrom<SerializedMainPod> for MainPod {
                         serialized.id,
                     ),
                     serialized.id,
+                    serialized.vds_root,
                     serialized.params.clone(),
                 )),
                 public_statements: serialized.public_statements,
@@ -369,7 +371,7 @@ mod tests {
         let params = middleware::Params {
             // Currently the circuit uses random access that only supports vectors of length 64.
             // With max_input_main_pods=3 we need random access to a vector of length 73.
-            max_input_main_pods: 1,
+            max_input_recursive_pods: 1,
             ..Default::default()
         };
 
@@ -420,7 +422,7 @@ mod tests {
     fn build_ethdos_pod() -> Result<MainPod> {
         let params = Params {
             max_input_signed_pods: 3,
-            max_input_main_pods: 3,
+            max_input_recursive_pods: 3,
             max_statements: 31,
             max_signed_pod_values: 8,
             max_public_statements: 10,

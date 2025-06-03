@@ -43,3 +43,4 @@ jsonschema = "0.30.0"
 default = ["backend_plonky2"]
 backend_plonky2 = ["plonky2"]
 metrics = []
+time = []
