@@ -287,7 +287,7 @@ impl PointTarget {
                 .cloned()
                 .collect(),
         );
-        ValueTarget::from_slice(&hash)
+        ValueTarget::from_slice(&hash.elements)
     }
 }
 
@@ -412,7 +412,7 @@ impl CircuitBuilderElliptic for CircuitBuilder<GoldilocksField, 2> {
         inputs.extend_from_slice(&p1.u.components);
         inputs.extend_from_slice(&p2.x.components);
         inputs.extend_from_slice(&p2.u.components);
-        let mut outputs = ECAddHomog::apply(self, &inputs);
+        let outputs = ECAddHomog::apply(self, &inputs);
         // plonky2 expects all gate constraints to be satisfied by the zero vector.
         // So our elliptic curve addition gate computes [x,z-b,u,t-b], and we have to add the b here.
         let x = FieldTarget::new(outputs[0..5].try_into().unwrap());
@@ -420,8 +420,8 @@ impl CircuitBuilderElliptic for CircuitBuilder<GoldilocksField, 2> {
         let u = FieldTarget::new(outputs[10..15].try_into().unwrap());
         let t = FieldTarget::new(outputs[15..20].try_into().unwrap());
         let b1 = self.constant(Point::B1);
-        let z = self.nnf_add_scalar_times_generator_power(b1, 0, z);
-        let t = self.nnf_add_scalar_times_generator_power(b1, 0, t);
+        let z = self.nnf_add_scalar_times_generator_power(b1, 0, &z);
+        let t = self.nnf_add_scalar_times_generator_power(b1, 0, &t);
         let xq = self.nnf_div(&x, &z);
         let uq = self.nnf_div(&u, &t);
         PointTarget { x: xq, u: uq }

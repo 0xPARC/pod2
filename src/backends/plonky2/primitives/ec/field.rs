@@ -220,7 +220,7 @@ impl<const DEG: usize, NNF: OEF<DEG> + FieldExtension<DEG, BaseField = F>>
         // Add constraints and generate quotient.
         let maybe_one = self.nnf_mul(&y_inv, y);
         self.nnf_connect(&one, &maybe_one);
-        self.nnf_mul(&x, &y_inv)
+        self.nnf_mul(x, &y_inv)
     }
     fn nnf_mul_generator(&mut self, x: &OEFTarget<DEG, NNF>) -> OEFTarget<DEG, NNF> {
         OEFTarget::new(std::array::from_fn(|i| {
