@@ -257,9 +257,10 @@ impl AddAssign<Self> for Point {
 impl Mul<Point> for &BigUint {
     type Output = Point;
     fn mul(self, rhs: Point) -> Self::Output {
-        (0..self.bits()).rev().fold(Point::ZERO, |prod, bit_pos| {
+        let bits = self.to_radix_be(2);
+        bits.into_iter().fold(Point::ZERO, |prod, bit| {
             let double = prod.double();
-            if self.bit(bit_pos) {
+            if bit == 1 {
                 double + rhs
             } else {
                 double
