@@ -49,10 +49,7 @@ pub trait CircuitBuilderNNF<
     fn nnf_add(&mut self, x: &NNFTarget, y: &NNFTarget) -> NNFTarget;
     fn nnf_sub(&mut self, x: &NNFTarget, y: &NNFTarget) -> NNFTarget;
     fn nnf_mul(&mut self, x: &NNFTarget, y: &NNFTarget) -> NNFTarget;
-    fn nnf_div(&mut self, x: &NNFTarget, y: &NNFTarget) -> NNFTarget {
-        let y_inv = self.nnf_inverse(y);
-        self.nnf_mul(x, &y_inv)
-    }
+    fn nnf_div(&mut self, x: &NNFTarget, y: &NNFTarget) -> NNFTarget;
     fn nnf_inverse(&mut self, x: &NNFTarget) -> NNFTarget {
         let one = self.nnf_one();
         self.nnf_div(&one, x)
