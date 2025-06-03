@@ -27,7 +27,9 @@ pub use operation::*;
 use serialization::*;
 pub use statement::*;
 
-use crate::backends::plonky2::primitives::{ec::curve::Point, merkletree::MerkleProof};
+use crate::backends::plonky2::primitives::{
+    ec::curve::Point as PublicKey, merkletree::MerkleProof,
+};
 
 pub const SELF: PodId = PodId(SELF_ID_HASH);
 
@@ -56,8 +58,8 @@ pub enum TypedValue {
     ),
     // Uses the serialization for middleware::Value:
     Raw(RawValue),
-    // ecGFp5 point variant
-    Point(Point),
+    // Public key variant
+    PublicKey(PublicKey),
     // UNTAGGED TYPES:
     #[serde(untagged)]
     Array(Array),
@@ -97,9 +99,9 @@ impl From<Hash> for TypedValue {
     }
 }
 
-impl From<Point> for TypedValue {
-    fn from(p: Point) -> Self {
-        TypedValue::Point(p)
+impl From<PublicKey> for TypedValue {
+    fn from(p: PublicKey) -> Self {
+        TypedValue::PublicKey(p)
     }
 }
 
@@ -157,11 +159,11 @@ impl TryFrom<TypedValue> for Key {
     }
 }
 
-impl TryFrom<TypedValue> for Point {
+impl TryFrom<TypedValue> for PublicKey {
     type Error = Error;
     fn try_from(tv: TypedValue) -> Result<Self> {
         match tv {
-            TypedValue::Point(p) => Ok(p),
+            TypedValue::PublicKey(p) => Ok(p),
             _ => Err(Error::custom(format!(
                 "Value {} cannot be converted to a point.",
                 tv
@@ -180,7 +182,7 @@ impl fmt::Display for TypedValue {
             TypedValue::Set(s) => write!(f, "set:{}", s.commitment()),
             TypedValue::Array(a) => write!(f, "arr:{}", a.commitment()),
             TypedValue::Raw(v) => write!(f, "{}", v),
-            TypedValue::Point(p) => write!(f, "ecGFp5_pt:({},{})", p.x, p.u),
+            TypedValue::PublicKey(p) => write!(f, "ecGFp5_pt:({},{})", p.x, p.u),
         }
     }
 }
@@ -195,7 +197,7 @@ impl From<&TypedValue> for RawValue {
             TypedValue::Set(s) => RawValue::from(s.commitment()),
             TypedValue::Array(a) => RawValue::from(a.commitment()),
             TypedValue::Raw(v) => *v,
-            TypedValue::Point(p) => RawValue::from(hash_fields(&p.as_fields())),
+            TypedValue::PublicKey(p) => RawValue::from(hash_fields(&p.as_fields())),
         }
     }
 }
