@@ -39,7 +39,7 @@ use crate::{
 /// `max_public_statements` only pay for `max_public_statements` by starting the poseidon state
 /// with a precomputed constant corresponding to the front-padding part:
 /// `id = hash(serialize(reverse(statements || none-statements)))`
-pub(crate) fn calculate_id(statements: &[Statement], params: &Params) -> middleware::Hash {
+pub fn calculate_id(statements: &[Statement], params: &Params) -> middleware::Hash {
     assert!(statements.len() <= params.num_public_statements_id);
     assert!(params.max_public_statements <= params.num_public_statements_id);
 
@@ -409,7 +409,7 @@ impl Prover {
     fn _prove(&self, params: &Params, inputs: MainPodInputs) -> Result<MainPod> {
         let rec_circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
         let (main_pod_target, circuit_data) =
-            RecursiveCircuit::<MainPodVerifyTarget>::circuit_data_padded(
+            RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data_padded(
                 params.max_input_recursive_pods,
                 &rec_circuit_data.common,
                 params,
@@ -570,11 +570,12 @@ impl MainPod {
         let rec_circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
         // TODO: cache these artefacts
         // https://github.com/0xPARC/pod2/issues/247
-        let (_, circuit_data) = RecursiveCircuit::<MainPodVerifyTarget>::circuit_data_padded(
-            self.params.max_input_recursive_pods,
-            &rec_circuit_data.common,
-            &self.params,
-        )?;
+        let (_, circuit_data) =
+            RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data_padded(
+                self.params.max_input_recursive_pods,
+                &rec_circuit_data.common,
+                &self.params,
+            )?;
         let public_inputs = id
             .to_fields(&self.params)
             .iter()
