@@ -279,14 +279,13 @@ pub struct PointTarget {
 
 impl PointTarget {
     pub fn to_value(&self, builder: &mut CircuitBuilder<GoldilocksField, 2>) -> ValueTarget {
-        let hash = builder.hash_n_to_m_no_pad::<PoseidonHash>(
+        let hash = builder.hash_n_to_hash_no_pad::<PoseidonHash>(
             self.x
                 .components
                 .iter()
                 .chain(self.u.components.iter())
                 .cloned()
                 .collect(),
-            4,
         );
         ValueTarget::from_slice(&hash)
     }
