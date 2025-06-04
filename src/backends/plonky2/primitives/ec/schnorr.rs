@@ -1,6 +1,5 @@
 use std::array;
 
-use base64::{prelude::BASE64_STANDARD, Engine};
 use num::BigUint;
 use num_bigint::RandBigInt;
 use plonky2::{
@@ -48,19 +47,31 @@ impl Signature {
         let e = convert_hash_to_biguint(&hash(msg, r));
         e == self.e
     }
-    pub fn as_base64_string(&self) -> String {
-        let sig_bytes = [self.s.to_bytes_le(), self.e.to_bytes_le()].concat();
-        BASE64_STANDARD.encode(sig_bytes)
+    pub fn as_bytes(&self) -> Vec<u8> {
+        let s_bytes = self
+            .s
+            .to_bytes_le()
+            .into_iter()
+            .chain(std::iter::repeat(0u8))
+            .take(40);
+        let e_bytes = self
+            .e
+            .to_bytes_le()
+            .into_iter()
+            .chain(std::iter::repeat(0u8))
+            .take(40);
+        s_bytes.chain(e_bytes).collect()
     }
-    pub fn try_from_base64_string(sig_str: &str) -> Result<Self, Error> {
-        let sig_bytes = BASE64_STANDARD.decode(sig_str).map_err(|e| {
-            Error::custom(format!(
-                "Failed to decode signature from base64: {}. Value: {}",
-                e, sig_str
-            ))
-        })?;
+    pub fn from_bytes(sig_bytes: &[u8]) -> Result<Self, Error> {
+        if sig_bytes.len() != 80 {
+            return Err(Error::custom(
+                "Invalid byte encoding of Schnorr signature.".to_string(),
+            ));
+        }
+
         let s = BigUint::from_bytes_le(&sig_bytes[..40]);
         let e = BigUint::from_bytes_le(&sig_bytes[40..]);
+
         Ok(Self { s, e })
     }
 }

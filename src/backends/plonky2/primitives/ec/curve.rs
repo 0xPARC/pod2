@@ -3,6 +3,7 @@
 //! We roughly follow pornin/ecgfp5.
 use core::ops::{Add, Mul};
 use std::{
+    array,
     ops::{AddAssign, Neg, Sub},
     sync::LazyLock,
 };
@@ -13,7 +14,7 @@ use plonky2::{
         extension::{quintic::QuinticExtension, Extendable, FieldExtension},
         goldilocks_field::GoldilocksField,
         ops::Square,
-        types::Field,
+        types::{Field, PrimeField},
     },
     hash::poseidon::PoseidonHash,
     iop::{generator::SimpleGenerator, target::BoolTarget, witness::WitnessWrite},
@@ -29,9 +30,43 @@ use crate::backends::plonky2::{
         field::{get_nnf_target, CircuitBuilderNNF, OEFTarget},
         gates::{curve::ECAddHomog, generic::SimpleGate},
     },
+    Error,
 };
 
 type ECField = QuinticExtension<GoldilocksField>;
+
+fn ec_field_to_bytes(x: &ECField) -> Vec<u8> {
+    x.0.iter()
+        .flat_map(|f| {
+            f.to_canonical_biguint()
+                .to_bytes_le()
+                .into_iter()
+                .chain(std::iter::repeat(0u8))
+                .take(8)
+        })
+        .collect()
+}
+
+fn ec_field_from_bytes(b: &[u8]) -> Result<ECField, Error> {
+    let fields: Vec<_> = b
+        .chunks(8)
+        .map(|chunk| {
+            GoldilocksField::from_canonical_u64(
+                BigUint::from_bytes_le(chunk)
+                    .try_into()
+                    .expect("Slice should not contain more than 8 bytes."),
+            )
+        })
+        .collect();
+
+    if fields.len() != 5 {
+        return Err(Error::custom(
+            "Invalid byte encoding of quintic extension field element.".to_string(),
+        ));
+    }
+
+    Ok(QuinticExtension(array::from_fn(|i| fields[i])))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Point {
@@ -42,6 +77,15 @@ pub struct Point {
 impl Point {
     pub fn as_fields(&self) -> Vec<crate::middleware::F> {
         self.x.0.iter().chain(self.u.0.iter()).cloned().collect()
+    }
+    pub fn as_bytes(&self) -> Vec<u8> {
+        [ec_field_to_bytes(&self.x), ec_field_to_bytes(&self.u)].concat()
+    }
+    pub fn from_bytes(b: &[u8]) -> Result<Self, Error> {
+        let x_bytes = &b[..40];
+        let u_bytes = &b[40..];
+        ec_field_from_bytes(x_bytes)
+            .and_then(|x| ec_field_from_bytes(u_bytes).map(|u| Self { x, u }))
     }
 }
 

@@ -78,14 +78,19 @@ impl From<SignedPod> for SerializedSignedPod {
 impl From<SerializedSignedPod> for SignedPod {
     fn from(serialized: SerializedSignedPod) -> Self {
         match serialized.pod_type {
-            SignedPodType::Signed => SignedPod {
-                pod: Box::new(Plonky2SignedPod {
-                    id: serialized.id,
-                    signature: Plonky2SignedPod::decode_signature(&serialized.proof).unwrap(),
-                    dict: Dictionary::new(serialized.entries.clone()).unwrap(),
-                }),
-                kvs: serialized.entries,
-            },
+            SignedPodType::Signed => {
+                let (signer, signature) =
+                    Plonky2SignedPod::decode_proof(&serialized.proof).unwrap();
+                SignedPod {
+                    pod: Box::new(Plonky2SignedPod {
+                        id: serialized.id,
+                        signer,
+                        signature,
+                        dict: Dictionary::new(serialized.entries.clone()).unwrap(),
+                    }),
+                    kvs: serialized.entries,
+                }
+            }
             SignedPodType::MockSigned => SignedPod {
                 pod: Box::new(MockSignedPod::new(
                     serialized.id,

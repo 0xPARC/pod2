@@ -131,19 +131,17 @@ impl SignedPodVerifyTarget {
         // add proof verification of KEY_TYPE & KEY_SIGNER leaves
         let key_type_key = Key::from(KEY_TYPE);
         let key_signer_key = Key::from(KEY_SIGNER);
-        let key_signer_value = [&key_type_key, &key_signer_key]
+        [&key_type_key, &key_signer_key]
             .iter()
             .enumerate()
-            .map(|(i, k)| {
+            .try_for_each(|(i, k)| {
                 let (v, proof) = pod.dict.prove(k)?;
                 self.mt_proofs[i].set_targets(
                     pw,
                     true,
                     &MerkleClaimAndProof::new(pod.dict.commitment(), k.raw(), Some(v.raw()), proof),
-                )?;
-                Ok(v)
-            })
-            .collect::<Result<Vec<&Value>>>()?[1];
+                )
+            })?;
 
         // add the verification of the rest of leaves
         let mut curr = 2; // since we already added key_type and key_signer
@@ -175,7 +173,7 @@ impl SignedPodVerifyTarget {
         }
 
         // get the signer pk
-        let pk = key_signer_value.typed().clone().try_into()?;
+        let pk = pod.signer;
         // the msg signed is the pod.id
         let msg = RawValue::from(pod.id.0);
 

@@ -159,19 +159,6 @@ impl TryFrom<TypedValue> for Key {
     }
 }
 
-impl TryFrom<TypedValue> for PublicKey {
-    type Error = Error;
-    fn try_from(tv: TypedValue) -> Result<Self> {
-        match tv {
-            TypedValue::PublicKey(p) => Ok(p),
-            _ => Err(Error::custom(format!(
-                "Value {} cannot be converted to a point.",
-                tv
-            ))),
-        }
-    }
-}
-
 impl fmt::Display for TypedValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

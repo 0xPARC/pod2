@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use base64::{prelude::BASE64_STANDARD, Engine};
 use itertools::Itertools;
 use num_bigint::RandBigInt;
 use rand::rngs::OsRng;
@@ -39,6 +40,7 @@ impl Signer {
         Ok(SignedPod {
             id: PodId(Hash::from(id)),
             signature,
+            signer: pubkey,
             dict,
         })
     }
@@ -62,6 +64,7 @@ impl PodSigner for Signer {
 pub struct SignedPod {
     pub id: PodId,
     pub signature: Signature,
+    pub signer: Point,
     pub dict: Dictionary,
 }
 
@@ -92,16 +95,35 @@ impl SignedPod {
         }
 
         // 3. Verify signature
-        let pk_value = self.dict.get(&Key::from(KEY_SIGNER))?;
-        let pk = Point::try_from(pk_value.typed().clone())?;
+        let embedded_pk_value = self.dict.get(&Key::from(KEY_SIGNER))?;
+        let pk = self.signer;
+        let pk_value = Value::from(pk);
+        if &pk_value != embedded_pk_value {
+            return Err(Error::signer_not_equal(embedded_pk_value.clone(), pk_value));
+        }
         self.signature
             .verify(pk, RawValue::from(id.0))
             .then_some(())
             .ok_or(Error::custom("Invalid signature!".into()))
     }
 
-    pub fn decode_signature(signature: &str) -> Result<Signature, Error> {
-        Signature::try_from_base64_string(signature)
+    pub fn decode_proof(signature: &str) -> Result<(Point, Signature), Error> {
+        let proof_bytes = BASE64_STANDARD.decode(signature).map_err(|e| {
+            Error::custom(format!(
+                "Failed to decode proof from base64: {}. Value: {}",
+                e, signature
+            ))
+        })?;
+
+        if proof_bytes.len() != 160 {
+            return Err(Error::custom(
+                "Invalid byte encoding of signed POD proof.".to_string(),
+            ));
+        }
+
+        let signer = Point::from_bytes(&proof_bytes[..80])?;
+        let signature = Signature::from_bytes(&proof_bytes[80..])?;
+        Ok((signer, signature))
     }
 }
 
@@ -132,7 +154,9 @@ impl Pod for SignedPod {
     }
 
     fn serialized_proof(&self) -> String {
-        self.signature.as_base64_string()
+        // Serialise signer + signature.
+        let proof_bytes = [self.signer.as_bytes(), self.signature.as_bytes()].concat();
+        BASE64_STANDARD.encode(&proof_bytes)
     }
 }
 
