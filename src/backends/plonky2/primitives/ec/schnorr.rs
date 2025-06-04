@@ -84,11 +84,11 @@ pub struct SignatureTarget {
 }
 
 pub trait CircuitBuilderSchnorr {
-    fn add_schnorr_signature_target(&mut self) -> SignatureTarget;
+    fn add_virtual_schnorr_signature_target(&mut self) -> SignatureTarget;
 }
 
 impl CircuitBuilderSchnorr for CircuitBuilder<GoldilocksField, 2> {
-    fn add_schnorr_signature_target(&mut self) -> SignatureTarget {
+    fn add_virtual_schnorr_signature_target(&mut self) -> SignatureTarget {
         SignatureTarget {
             s: self.add_virtual_biguint320_target(),
             e: self.add_virtual_biguint320_target(),

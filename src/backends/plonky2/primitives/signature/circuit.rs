@@ -53,7 +53,7 @@ impl SignatureVerifyGadget {
         let enabled = builder.add_virtual_bool_target_safe();
         let pk = builder.add_virtual_point_target();
         let msg = builder.add_virtual_value();
-        let sig = builder.add_schnorr_signature_target();
+        let sig = builder.add_virtual_schnorr_signature_target();
 
         let verified = sig.verify(builder, HashOutTarget::from(msg.elements), &pk);
 
