@@ -342,7 +342,7 @@ pub fn common_data_for_recursion<I: InnerCircuit>(
         GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(&config, 4)),
         GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(&config, 5)),
         GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(&config, 6)),
-        GateRef::new(plonky2::gates::exponentiation::ExponentiationGate::new(66)),
+        GateRef::new(plonky2::gates::exponentiation::ExponentiationGate::new_from_config(&config)),
         // It would be better do `CosetInterpolationGate::with_max_degree(4, 6)` but unfortunately
         // that plonk2 method is `pub(crate)`, so we need to get around that somehow.
         GateRef::new(coset_interpolation_gate(
