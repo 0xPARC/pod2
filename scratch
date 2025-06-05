@@ -1,0 +1,178 @@
+eth_friend(src_key, dst_key, private: attestation_pod) = AND(
+    ValueOf(?attestation_pod[KEY_TYPE], SIGNED)
+    Equal(?attestation_pod[KEY_SIGNER], SELF[?src_key])
+    Equal(?attestation_pod["attestation"], SELF[?dst_key])
+)
+
+eth_dos_distance_base(src_key, dst_key, distance_key) = AND(
+    Equal(SELF[?src_key], SELF[?dst_key])
+    ValueOf(SELF[?distance_key], 0)
+)
+
+eth_dos_distance_ind(src_key, dst_key, distance_key,
+            private: one_key, shorter_distance_key, intermed_key) = AND(
+    eth_dos_distance(?src_key, ?intermed_key, ?shorter_distance_key)
+    ValueOf(SELF[?one_key], 1)
+    SumOf(SELF[?distance_key], SELF[?shorter_distance_key], SELF[?one_key])
+    eth_friend(?intermed_key, ?dst_key)
+)
+
+eth_dos_distance(src_key, dst_key, distance_key) = OR(
+    eth_dos_distance_base(?src_key, ?dst_key, ?distance_key)
+    eth_dos_distance_ind(?src_key, ?dst_key, ?distance_key)
+)
+
+---
+
+pod a (alice->bob, distance=1)
+
+# Input SignedPod
+
+1 ValueOf(alice_att[KEY_TYPE], SIGNED)
+2 ValueOf(alice_att[KEY_SIGNER], alice)
+3 ValueOf(alice_att["attestation"], bob)
+
+# Statements
+
+4 pub ValueOf(SELF["src"], alice)
+5 pub ValueOf(SELF["dst"], bob)
+6 pub ValueOf(SELF["distance"], 1)
+
+7 Equal(SELF["src"], SELF["src"]) <- 4 4
+8 ValueOf(SELF["zero"], 0)
+9 eth_dos_distance_base("src", "src", "zero") <- 7 8
+
+10 eth_dos_distance("src", "src", "zero") <- 9 0
+
+11 Equal(alice_att[KEY_SIGNER], SELF["src"]) <- 2 4
+12 Equal(alice_att["attestation"], SELF["dst"]) <- 3 5
+13 eth_friend("src", "dst") <- 1 11 12
+
+14 ValueOf(SELF["one"], 1)
+15 SumOf(SELF["distance"], SELF["zero"], SELF["one"]) <- 6 8 14
+16 eth_dos_distance_ind("src", "dst", "distance") <- 10 14 15 13
+17 pub eth_dos_distance("src", "dst", "distance") <- 0 16
+
+# Public Statements
+
+ValueOf(a["src"], alice)
+ValueOf(a["dst"], bob)
+ValueOf(a["distance"], 1)
+eth_dos_distance("src", "dst", "distance")
+
+---
+
+pod b (alice->bob->charlie, distance=2)
+
+# Input SignedPod
+
+1 ValueOf(bob_att[KEY_TYPE], SIGNED)
+2 ValueOf(bob_att[KEY_SIGNER], bob)
+3 ValueOf(bob_att["attestation"], charlie)
+
+# Input MainPod
+
+4 ValueOf(a["src"], alice)
+5 ValueOf(a["dst"], bob)
+6 ValueOf(a["distance"], 1)
+7 eth_dos_distance("src", "dst", "distance")
+
+# Statements
+
+8 pub ValueOf(SELF["src"], alice) // Unused!
+9 ValueOf(SELF["int"], bob)
+10 pub ValueOf(SELF["dst"], charlie)
+11 pub ValueOf(SELF["distance"], 2)
+
+
+12 Equal(bob_att[KEY_SIGNER], SELF["int"]) <- 2 9
+13 Equal(bob_att["attestation"], SELF["dst"]) <- 3 10
+14 eth_friend("int", "dst") <- 1 12 13
+
+15 ValueOf(SELF["int_distance"], 1)
+15 ValueOf(SELF["one"], 1)
+16 SumOf(SELF["distance"], SELF["int_distance"], SELF["one"]) <- 6 15 16
+17 eth_dos_distance_ind("src", "dst", "distance") <- 7 15 16 14
+18 pub eth_dos_distance("src", "dst", "distance") <- 0 17 // The "src" is not being used as SELF["src"] but as a["src"], which is no longer exposed, and can't be easily exposed because we've not propagating references from a!
+
+---
+
+# With literals anywhere
+
+eth_friend(src, dst, private: attestation_pod) = AND(
+    ValueOf(?attestation_pod[KEY_TYPE], 1)
+    Equal(?attestation_pod[KEY_SIGNER], src)
+    Equal(?attestation_pod["attestation"], dst)
+)
+
+eth_dos_distance_base(src, dst, distance) = AND(
+    Equal(?src, ?dst)
+    Equal(?distance, 0)
+)
+
+eth_dos_distance_ind(src, dst, distance, private: shorter_distance, intermed) = AND(
+    eth_dos_distance(?src, ?intermed, ?shorter)
+    SumOf(?distance, ?shorter_distance, 1)
+    eth_friend(?intermed, ?dst)
+)
+
+eth_dos_distance(src, dst, distance) = OR(
+    eth_dos_distance_base(?src, ?dst, ?distance)
+    eth_dos_distance_ind(?src, ?dst, ?distance)
+)
+
+---
+
+pod a (alice->bob, distance=1)
+
+# Input SignedPod
+
+1 ValueOf(alice_att[KEY_TYPE], SIGNED)
+2 ValueOf(alice_att[KEY_SIGNER], alice)
+3 ValueOf(alice_att["attestation"], bob)
+
+# Statements
+
+4 Equal(alice, alice) <- _ _
+5 Equal(0, 0) <- _ _
+6 eth_dos_distance_base(alice, alice, 0) <- 4 5
+
+7 eth_dos_distance(alice, alice, 0) <- 6 0
+
+8 Equal(alice_att[KEY_SIGNER], alice) <- 2 _
+9 Equal(alice_att["attestation"], bob) <- 3 _
+10 eth_friend(alice, bob) <- 1 8 9
+
+11 SumOf(1, 0, 1)
+12 eth_dos_distance_ind(alice, bob, 1) <- 7 11 10
+13 pub eth_dos_distance(alice, bob, 1) <- 0 12
+
+# Public Statements
+pub eth_dos_distance(alice, bob, 1)
+
+---
+
+pod b (alice->bob->charlie, distance=2)
+
+# Input SignedPod
+
+1 ValueOf(bob_att[KEY_TYPE], SIGNED)
+2 ValueOf(bob_att[KEY_SIGNER], bob)
+3 ValueOf(bob_att["attestation"], charlie)
+
+# Input MainPod
+
+4 eth_dos_distance(alice, bob, 1)
+
+# Statements
+
+5 Equal(bob_att[KEY_SIGNER], bob) <- 2 _
+6 Equal(bob_att["attestation"], charlie) <- 3 _
+7 eth_friend(bob, charlie) <- 1 5 6
+
+8 SumOf(2, 1, 1)
+9 eth_dos_distance_ind(alice, charlie, 2) <- 4 8 7
+10 pub eth_dos_distance(alice, charlie, 2) <- 0 9
+
+# Public Statements
+pub eth_dos_distance(alice, charlie, 2)

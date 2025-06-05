@@ -303,7 +303,12 @@ pub(crate) fn layout_statements(
     }
 
     // Input statements
-    assert!(inputs.statements.len() <= params.max_priv_statements());
+    assert!(
+        inputs.statements.len() <= params.max_priv_statements(),
+        "inputs.statements.len={} > params.max_priv_statements={}",
+        inputs.statements.len(),
+        params.max_priv_statements()
+    );
     for i in 0..params.max_priv_statements() {
         let mut st = inputs
             .statements
@@ -902,8 +907,8 @@ pub mod tests {
 
         let mut pod_builder = MainPodBuilder::new(&params);
 
-        let st0 = pod_builder.priv_op(op!(new_entry, ("score", 42)))?;
-        let st1 = pod_builder.priv_op(op!(new_entry, ("foo", 42)))?;
+        let st0 = pod_builder.priv_op(op!(new_entry, "score", 42))?;
+        let st1 = pod_builder.priv_op(op!(new_entry, "foo", 42))?;
         let st2 = pod_builder.priv_op(op!(eq, st1.clone(), st0.clone()))?;
 
         let _st3 = pod_builder.priv_op(op!(custom, cpb_and.clone(), st0, st2))?;

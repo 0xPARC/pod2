@@ -21,7 +21,7 @@ pub fn eth_friend_batch(params: &Params, mock: bool) -> Result<Arc<CustomPredica
     let _eth_friend = builder.predicate_and(
         "eth_friend",
         // arguments:
-        &["src_key", "dst_key"],
+        &["id", "src_key", "dst_key"],
         // private arguments:
         &["attestation_pod"],
         // statement templates:
@@ -33,11 +33,11 @@ pub fn eth_friend_batch(params: &Params, mock: bool) -> Result<Arc<CustomPredica
             // the attestation pod is signed by (src_or, src_key)
             STB::new(NP::Equal)
                 .arg(("attestation_pod", key(KEY_SIGNER)))
-                .arg(("SELF", "src_key")),
+                .arg(("id", "src_key")),
             // that same attestation pod has an "attestation"
             STB::new(NP::Equal)
                 .arg(("attestation_pod", key("attestation")))
-                .arg(("SELF", "dst_key")),
+                .arg(("id", "dst_key")),
         ],
     )?;
 
@@ -59,6 +59,7 @@ pub fn eth_dos_batch(params: &Params, mock: bool) -> Result<Arc<CustomPredicateB
         "eth_dos_distance_base",
         &[
             // arguments:
+            "id",
             "src_key",
             "dst_key",
             "distance_key",
@@ -68,10 +69,10 @@ pub fn eth_dos_batch(params: &Params, mock: bool) -> Result<Arc<CustomPredicateB
         &[
             // statement templates:
             STB::new(NP::Equal)
-                .arg(("SELF", "src_key"))
-                .arg(("SELF", "dst_key")),
+                .arg(("id", "src_key"))
+                .arg(("id", "dst_key")),
             STB::new(NP::ValueOf)
-                .arg(("SELF", "distance_key"))
+                .arg(("id", "distance_key"))
                 .arg(literal(0)),
         ],
     )?;
@@ -86,6 +87,8 @@ pub fn eth_dos_batch(params: &Params, mock: bool) -> Result<Arc<CustomPredicateB
         "eth_dos_distance_ind",
         &[
             // arguments:
+            "id1",
+            "id2",
             "src_key",
             "dst_key",
             "distance_key",
@@ -98,20 +101,36 @@ pub fn eth_dos_batch(params: &Params, mock: bool) -> Result<Arc<CustomPredicateB
         ],
         &[
             // statement templates:
+            // FIXME: This is actually broken, if this statement was proved in another pod, then
+            // the keys can have different values in SELF...  Can be fixed with
+            // https://github.com/0xPARC/pod2/issues/229
             STB::new(eth_dos_distance)
+                .arg("id1")
                 .arg("src_key")
                 .arg("intermed_key")
                 .arg("shorter_distance_key"),
             // distance == shorter_distance + 1
             STB::new(NP::ValueOf)
-                .arg(("SELF", "one_key"))
+                .arg(("id2", "one_key"))
                 .arg(literal(1)),
             STB::new(NP::SumOf)
-                .arg(("SELF", "distance_key"))
-                .arg(("SELF", "shorter_distance_key"))
-                .arg(("SELF", "one_key")),
+                .arg(("id2", "distance_key"))
+                .arg(("id2", "shorter_distance_key"))
+                .arg(("id2", "one_key")),
             // intermed is a friend of dst
-            STB::new(eth_friend).arg("intermed_key").arg("dst_key"),
+            STB::new(eth_friend)
+                .arg("id2")
+                .arg("intermed_key")
+                .arg("dst_key"),
+            STB::new(NP::Equal)
+                .arg(("id1", "src_key"))
+                .arg(("id2", "src_key")),
+            STB::new(NP::Equal)
+                .arg(("id1", "intermed_key"))
+                .arg(("id2", "intermed_key")),
+            STB::new(NP::Equal)
+                .arg(("id1", "shorter_distance_key"))
+                .arg(("id2", "shorter_distance_key")),
         ],
     )?;
 
