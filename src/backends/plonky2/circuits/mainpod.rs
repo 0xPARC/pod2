@@ -2965,7 +2965,7 @@ mod tests {
 
         // Input
         let statements = statements
-            .into_iter()
+            .iter()
             .map(|st| {
                 let mut st = mainpod::Statement::from(st.clone());
                 pad_statement(params, &mut st);
