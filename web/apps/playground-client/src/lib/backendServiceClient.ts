@@ -1,5 +1,11 @@
 import { useAppStore } from "./store";
-import type { SpaceInfo, PodInfo, MainPod, SignedPod } from "@/types/pod2";
+import type {
+  SpaceInfo,
+  PodInfo,
+  MainPod,
+  SignedPod,
+  Value,
+} from "@/types/pod2";
 
 // --- Type definitions (mirroring Rust structs from src/server/api_types.rs) ---
 
@@ -448,5 +454,54 @@ export async function deleteSpace(spaceId: string): Promise<void> {
     console.error(`Error calling deleteSpace API for space ${spaceId}:`, error);
     useAppStore.getState().setIsBackendConnected(false);
     throw error;
+  }
+}
+
+// --- Types for Sign POD operation ---
+export interface SignPodRequest {
+  private_key: string;
+  entries: { [key: string]: Value }; // Value is from @/types/pod2
+}
+
+// Response is a SignedPod object
+export type SignPodResponse = SignedPod; // From @/types/pod2
+
+/**
+ * Signs a new POD with the given entries and private key.
+ * @param payload The private key and entries for the POD.
+ * @returns A promise that resolves to the signed POD data.
+ */
+export async function signPod(
+  payload: SignPodRequest
+): Promise<SignPodResponse> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/pods/sign`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      let errorDetails = `HTTP error! status: ${response.status}`;
+      try {
+        const errorData = await response.json();
+        errorDetails =
+          errorData.error || errorData.message || JSON.stringify(errorData);
+      } catch (e) {
+        // Ignore if error body is not JSON or empty
+      }
+      throw new Error(errorDetails);
+    }
+
+    const signedPodData: SignPodResponse = await response.json();
+    useAppStore.getState().setIsBackendConnected(true);
+    return signedPodData;
+  } catch (error) {
+    console.error("Error calling signPod API:", error);
+    useAppStore.getState().setIsBackendConnected(false);
+    throw error; // Re-throw for the caller to handle
   }
 }
