@@ -154,12 +154,7 @@ fn first_pass<'a>(
             Rule::EOI => break,
             Rule::COMMENT | Rule::WHITESPACE => {}
             _ => {
-                return Err(ProcessorError::RuleMismatch {
-                    expected_rule: Rule::custom_predicate_def,
-                    found_rule: pair.as_rule(),
-                    context: "top-level document content (expected custom_predicate_def, request_def, or EOI)".to_string(),
-                    span: Some(get_span(&pair)),
-                });
+                unreachable!("Unexpected rule: {:?}", pair.as_rule());
             }
         }
     }
@@ -206,13 +201,10 @@ fn second_pass(ctx: &mut ProcessingContext) -> Result<ProcessedOutput, Processor
     })
 }
 
-fn pest_pair_to_builder_arg(
-    arg_content_pair: &Pair<Rule>,
-    context_stmt_name: &str,
-) -> Result<BuilderArg, ProcessorError> {
+fn pest_pair_to_builder_arg(arg_content_pair: &Pair<Rule>) -> Result<BuilderArg, ProcessorError> {
     match arg_content_pair.as_rule() {
         Rule::literal_value => {
-            let value = process_literal_value(arg_content_pair, context_stmt_name)?;
+            let value = process_literal_value(arg_content_pair)?;
             Ok(BuilderArg::Literal(value))
         }
         Rule::wildcard => {
@@ -230,15 +222,7 @@ fn pest_pair_to_builder_arg(
                 }
                 Rule::self_keyword => SelfOrWildcardStr::SELF,
                 _ => {
-                    return Err(ProcessorError::RuleMismatch {
-                        expected_rule: Rule::wildcard,
-                        found_rule: pod_id_pair.as_rule(),
-                        context: format!(
-                            "pod identifier part of anchored key in {} for BuilderArg",
-                            context_stmt_name
-                        ),
-                        span: Some(get_span(&pod_id_pair)),
-                    });
+                    unreachable!("Unexpected rule: {:?}", pod_id_pair.as_rule());
                 }
             };
 
@@ -254,26 +238,12 @@ fn pest_pair_to_builder_arg(
                     KeyOrWildcardStr::Key(key_str_literal)
                 }
                 _ => {
-                    return Err(ProcessorError::RuleMismatch {
-                        expected_rule: Rule::wildcard,
-                        found_rule: key_part_pair.as_rule(),
-                        context: format!(
-                            "key part of anchored key {} in {} for BuilderArg",
-                            pod_id_pair.as_str(),
-                            context_stmt_name
-                        ),
-                        span: Some(get_span(&key_part_pair)),
-                    });
+                    unreachable!("Unexpected rule: {:?}", key_part_pair.as_rule());
                 }
             };
             Ok(BuilderArg::Key(pod_self_or_wc_str, key_or_wildcard_str))
         }
-        _ => Err(ProcessorError::RuleMismatch {
-            expected_rule: Rule::statement_arg,
-            found_rule: arg_content_pair.as_rule(),
-            context: format!("argument parsing for BuilderArg in {}", context_stmt_name),
-            span: Some(get_span(arg_content_pair)),
-        }),
+        _ => unreachable!("Unexpected rule: {:?}", arg_content_pair.as_rule()),
     }
 }
 
@@ -454,12 +424,7 @@ fn process_and_add_custom_predicate_to_batch(
             Rule::private_kw | Rule::COMMENT | Rule::WHITESPACE => {}
             _ if arg_part_pair.as_str() == "," => {}
             _ => {
-                return Err(ProcessorError::RuleMismatch {
-                    expected_rule: Rule::public_arg_list,
-                    found_rule: arg_part_pair.as_rule(),
-                    context: format!("arguments for predicate {}", name),
-                    span: Some(get_span(&arg_part_pair)),
-                });
+                unreachable!("Unexpected rule: {:?}", arg_part_pair.as_rule());
             }
         }
     }
@@ -471,23 +436,18 @@ fn process_and_add_custom_predicate_to_batch(
         "AND" => true,
         "OR" => false,
         _ => {
-            return Err(ProcessorError::Semantic {
-                message: format!(
-                    "Invalid conjunction type: {}",
-                    conjunction_type_pair.as_str()
-                ),
-                span: Some(get_span(&conjunction_type_pair)),
-            })
+            unreachable!(
+                "Invalid conjunction type: {}",
+                conjunction_type_pair.as_str()
+            );
         }
     };
 
     let statement_list_pair = inner_pairs
         .find(|p| p.as_rule() == Rule::statement_list)
-        .ok_or_else(|| ProcessorError::MissingElement {
-            element_type: "statement list".to_string(),
-            context: format!("definition of predicate {}", name),
-            span: Some(get_span(pred_def_pair)),
-        })?;
+        .unwrap_or_else(|| {
+            unreachable!("statement_list rule must be present in predicate definition")
+        });
 
     let mut statement_builders = Vec::new();
     for stmt_pair in statement_list_pair
@@ -497,14 +457,10 @@ fn process_and_add_custom_predicate_to_batch(
         let mut inner_stmt_pairs = stmt_pair.clone().into_inner();
         let stmt_name_pair = inner_stmt_pairs
             .find(|p| p.as_rule() == Rule::identifier)
-            .ok_or_else(|| ProcessorError::MissingElement {
-                element_type: "statement name".to_string(),
-                context: "statement parsing".to_string(),
-                span: Some(get_span(&stmt_pair)),
-            })?;
+            .unwrap_or_else(|| unreachable!("statement name must be present in statement"));
         let stmt_name_str = stmt_name_pair.as_str();
 
-        let builder_args = parse_statement_args(&stmt_pair, stmt_name_str)?;
+        let builder_args = parse_statement_args(&stmt_pair)?;
 
         let middleware_predicate_type =
             if let Some(native_pred) = native_predicate_from_string(stmt_name_str) {
@@ -583,13 +539,6 @@ fn process_request_def(
         request_templates.push(tmpl);
     }
 
-    if request_templates.len() > processing_ctx.params.max_statements {
-        return Err(ProcessorError::Middleware(middleware::Error::max_length(
-            "request statements".to_string(),
-            request_templates.len(),
-            processing_ctx.params.max_statements,
-        )));
-    }
     Ok(request_templates)
 }
 
@@ -606,7 +555,7 @@ fn process_proof_request_statement_template(
         .unwrap();
     let stmt_name_str = name_pair.as_str();
 
-    let builder_args = parse_statement_args(stmt_pair, stmt_name_str)?;
+    let builder_args = parse_statement_args(stmt_pair)?;
     let mut temp_stmt_wildcard_names: Vec<String> = Vec::new();
 
     for arg in &builder_args {
@@ -664,10 +613,7 @@ fn process_proof_request_statement_template(
     Ok(stb.desugar())
 }
 
-fn process_literal_value(
-    lit_val_pair: &Pair<Rule>,
-    context_stmt_name: &str,
-) -> Result<Value, ProcessorError> {
+fn process_literal_value(lit_val_pair: &Pair<Rule>) -> Result<Value, ProcessorError> {
     let inner_lit = lit_val_pair.clone().into_inner().next().unwrap();
 
     match inner_lit.as_rule() {
@@ -711,7 +657,7 @@ fn process_literal_value(
         Rule::literal_array => {
             let elements: Result<Vec<Value>, ProcessorError> = inner_lit
                 .into_inner()
-                .map(|elem_pair| process_literal_value(&elem_pair, context_stmt_name))
+                .map(|elem_pair| process_literal_value(&elem_pair))
                 .collect();
             let middleware_array = middleware::containers::Array::new(elements?)
                 .map_err(|e| ProcessorError::Internal(format!("Failed to create Array: {}", e)))?;
@@ -720,7 +666,7 @@ fn process_literal_value(
         Rule::literal_set => {
             let elements: Result<HashSet<Value>, ProcessorError> = inner_lit
                 .into_inner()
-                .map(|elem_pair| process_literal_value(&elem_pair, context_stmt_name))
+                .map(|elem_pair| process_literal_value(&elem_pair))
                 .collect();
             let middleware_set = middleware::containers::Set::new(elements?)
                 .map_err(|e| ProcessorError::Internal(format!("Failed to create Set: {}", e)))?;
@@ -734,7 +680,7 @@ fn process_literal_value(
                     let key_pair = entry_inner.next().unwrap();
                     let val_pair = entry_inner.next().unwrap();
                     let key_str = parse_pest_string_literal(&key_pair)?;
-                    let val = process_literal_value(&val_pair, context_stmt_name)?;
+                    let val = process_literal_value(&val_pair)?;
                     Ok((Key::new(key_str), val))
                 })
                 .collect();
@@ -743,12 +689,7 @@ fn process_literal_value(
             })?;
             Ok(Value::from(middleware_dict))
         }
-        _ => Err(ProcessorError::RuleMismatch {
-            expected_rule: Rule::literal_value,
-            found_rule: inner_lit.as_rule(),
-            context: format!("literal parsing for {}", context_stmt_name),
-            span: Some(get_span(&inner_lit)),
-        }),
+        _ => unreachable!("Unexpected rule: {:?}", inner_lit.as_rule()),
     }
 }
 
@@ -905,10 +846,7 @@ fn resolve_request_statement_builder(
     })
 }
 
-fn parse_statement_args(
-    stmt_pair: &Pair<Rule>,
-    context_stmt_name: &str,
-) -> Result<Vec<BuilderArg>, ProcessorError> {
+fn parse_statement_args(stmt_pair: &Pair<Rule>) -> Result<Vec<BuilderArg>, ProcessorError> {
     let mut builder_args = Vec::new();
     let mut inner_stmt_pairs = stmt_pair.clone().into_inner();
 
@@ -919,7 +857,7 @@ fn parse_statement_args(
             .filter(|p| p.as_rule() == Rule::statement_arg)
         {
             let arg_content_pair = arg_pair.into_inner().next().unwrap();
-            let builder_arg = pest_pair_to_builder_arg(&arg_content_pair, context_stmt_name)?;
+            let builder_arg = pest_pair_to_builder_arg(&arg_content_pair)?;
             builder_args.push(builder_arg);
         }
     }

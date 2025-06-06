@@ -485,7 +485,7 @@ mod tests {
     fn test_e2e_ethdos_predicates() -> Result<(), LangError> {
         let params = Params {
             max_input_signed_pods: 3,
-            max_input_main_pods: 3,
+            max_input_recursive_pods: 3,
             max_statements: 31,
             max_signed_pod_values: 8,
             max_public_statements: 10,
