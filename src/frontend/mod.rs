@@ -645,6 +645,22 @@ impl MainPod {
     pub fn id(&self) -> PodId {
         self.pod.id()
     }
+
+    /// Returns the value of a ValueOf statement with self id that defines key if it exists.
+    pub fn get(&self, key: impl Into<Key>) -> Option<Value> {
+        let key: Key = key.into();
+        self.public_statements
+            .iter()
+            .find_map(|st| match st {
+                Statement::ValueOf(ak, value)
+                    if ak.pod_id == self.id() && ak.key.hash() == key.hash() =>
+                {
+                    Some(value)
+                }
+                _ => None,
+            })
+            .cloned()
+    }
 }
 
 struct MainPodCompilerInputs<'a> {
@@ -759,6 +775,9 @@ pub mod build_utils {
         (new_entry, ($key:expr, $value:expr)) => { $crate::frontend::Operation(
             $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::NewEntry),
             $crate::op_args!(($key, $value)), $crate::middleware::OperationAux::None) };
+        (copy, $($arg:expr),+) => { $crate::frontend::Operation(
+            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::CopyStatement),
+            $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (eq, $($arg:expr),+) => { $crate::frontend::Operation(
             $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::EqualFromEntries),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
