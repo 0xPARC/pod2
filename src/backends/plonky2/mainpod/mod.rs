@@ -27,9 +27,9 @@ use crate::{
         STANDARD_REC_MAIN_POD_CIRCUIT_DATA,
     },
     middleware::{
-        self, resolve_wildcard_values, AnchoredKey, CustomPredicateBatch, DynError, Hash,
-        MainPodInputs, NativeOperation, NonePod, OperationType, Params, Pod, PodId, PodProver,
-        PodType, RecursivePod, StatementArg, ToFields, F, KEY_TYPE, SELF,
+        self, resolve_wildcard_values, value_from_op, AnchoredKey, CustomPredicateBatch, DynError,
+        Hash, MainPodInputs, NativeOperation, NonePod, OperationType, Params, Pod, PodId,
+        PodProver, PodType, RecursivePod, StatementArg, ToFields, F, KEY_TYPE, SELF,
     },
 };
 
@@ -126,31 +126,40 @@ pub(crate) fn extract_custom_predicate_verifications(
 pub(crate) fn extract_merkle_proofs(
     params: &Params,
     operations: &[middleware::Operation],
+    statements: &[middleware::Statement],
 ) -> Result<Vec<MerkleClaimAndProof>> {
+    assert_eq!(operations.len(), statements.len());
     let merkle_proofs: Vec<_> = operations
         .iter()
-        .flat_map(|op| match op {
-            middleware::Operation::ContainsFromEntries(
-                middleware::Statement::ValueOf(_, root),
-                middleware::Statement::ValueOf(_, key),
-                middleware::Statement::ValueOf(_, value),
-                pf,
-            ) => Some(MerkleClaimAndProof::new(
-                Hash::from(root.raw()),
-                key.raw(),
-                Some(value.raw()),
-                pf.clone(),
-            )),
-            middleware::Operation::NotContainsFromEntries(
-                middleware::Statement::ValueOf(_, root),
-                middleware::Statement::ValueOf(_, key),
-                pf,
-            ) => Some(MerkleClaimAndProof::new(
-                Hash::from(root.raw()),
-                key.raw(),
-                None,
-                pf.clone(),
-            )),
+        .zip(statements.iter())
+        .flat_map(|(op, st)| match (op, st) {
+            (
+                middleware::Operation::ContainsFromEntries(root_s, key_s, value_s, pf),
+                middleware::Statement::Contains(root_ref, key_ref, value_ref),
+            ) => {
+                let root = value_from_op(root_s, root_ref)?;
+                let key = value_from_op(key_s, key_ref)?;
+                let value = value_from_op(value_s, value_ref)?;
+                Some(MerkleClaimAndProof::new(
+                    Hash::from(root.raw()),
+                    key.raw(),
+                    Some(value.raw()),
+                    pf.clone(),
+                ))
+            }
+            (
+                middleware::Operation::NotContainsFromEntries(root_s, key_s, pf),
+                middleware::Statement::NotContains(root_ref, key_ref),
+            ) => {
+                let root = value_from_op(root_s, root_ref)?;
+                let key = value_from_op(key_s, key_ref)?;
+                Some(MerkleClaimAndProof::new(
+                    Hash::from(root.raw()),
+                    key.raw(),
+                    None,
+                    pf.clone(),
+                ))
+            }
             _ => None,
         })
         .collect();
@@ -317,9 +326,9 @@ pub(crate) fn layout_statements(
 
     // Public statements
     assert!(inputs.public_statements.len() < params.max_public_statements);
-    let mut type_st = middleware::Statement::ValueOf(
-        AnchoredKey::from((SELF, KEY_TYPE)),
-        middleware::Value::from(PodType::MockMain),
+    let mut type_st = middleware::Statement::Equal(
+        AnchoredKey::from((SELF, KEY_TYPE)).into(),
+        middleware::Value::from(PodType::MockMain).into(),
     )
     .into();
     pad_statement(params, &mut type_st);
@@ -463,7 +472,7 @@ impl Prover {
             })
             .collect_vec();
 
-        let merkle_proofs = extract_merkle_proofs(params, inputs.operations)?;
+        let merkle_proofs = extract_merkle_proofs(params, inputs.operations, inputs.statements)?;
         let custom_predicate_batches = extract_custom_predicate_batches(params, inputs.operations)?;
         let custom_predicate_verifications = extract_custom_predicate_verifications(
             params,
@@ -882,7 +891,7 @@ pub mod tests {
         println!("{:#?}", params);
 
         let mut cpb_builder = CustomPredicateBatchBuilder::new(params.clone(), "cpb".into());
-        let stb0 = STB::new(NP::ValueOf)
+        let stb0 = STB::new(NP::Equal)
             .arg(("id", key("score")))
             .arg(literal(42));
         let stb1 = STB::new(NP::Equal)

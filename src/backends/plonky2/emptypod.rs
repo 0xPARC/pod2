@@ -36,7 +36,7 @@ struct EmptyPodVerifyCircuit {
 }
 
 fn type_statement() -> Statement {
-    Statement::ValueOf(
+    Statement::equal(
         AnchoredKey::from((SELF, KEY_TYPE)),
         Value::from(PodType::Empty),
     )

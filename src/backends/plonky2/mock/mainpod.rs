@@ -5,6 +5,7 @@
 use std::fmt;
 
 use base64::{prelude::BASE64_STANDARD, Engine};
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -19,8 +20,9 @@ use crate::{
         primitives::merkletree::MerkleClaimAndProof,
     },
     middleware::{
-        self, hash_str, AnchoredKey, DynError, Hash, MainPodInputs, NativePredicate, Params, Pod,
-        PodId, PodProver, Predicate, RecursivePod, StatementArg, KEY_TYPE, SELF,
+        self, hash_str, AnchoredKey, DynError, Hash, MainPodInputs, NativeOperation,
+        NativePredicate, OperationType, Params, Pod, PodId, PodProver, Predicate, RecursivePod,
+        StatementArg, KEY_TYPE, SELF,
     },
 };
 
@@ -150,7 +152,7 @@ impl MockMainPod {
         // value=PodType::MockMainPod`
         let statements = layout_statements(params, true, &inputs)?;
         // Extract Merkle proofs and pad.
-        let merkle_proofs = extract_merkle_proofs(params, inputs.operations)?;
+        let merkle_proofs = extract_merkle_proofs(params, inputs.operations, inputs.statements)?;
 
         let operations = process_private_statements_operations(
             params,
@@ -203,44 +205,30 @@ impl MockMainPod {
         // find a ValueOf statement from the public statements with key=KEY_TYPE and check that the
         // value is PodType::MockMainPod
         let has_type_statement = self.public_statements.iter().any(|s| {
-            s.0 == Predicate::Native(NativePredicate::ValueOf)
-                && !s.1.is_empty()
-                && if let StatementArg::Key(AnchoredKey { pod_id, ref key }) = s.1[0] {
-                    pod_id == SELF && key.hash() == hash_str(KEY_TYPE)
+            s.0 == Predicate::Native(NativePredicate::Equal) && {
+                if let [StatementArg::Key(AnchoredKey { pod_id, ref key }), StatementArg::Literal(_)] = &s.1[..2] {
+                    pod_id == &SELF && key.hash() == hash_str(KEY_TYPE)
                 } else {
                     false
                 }
-        });
-        // 3. check that all `input_statements` of type `ValueOf` with origin=SELF have unique keys
+        }});
+        // 3. check that all `NewEntry` operations have unique keys
         // (no duplicates)
-        // TODO: Instead of doing this, do a uniqueness check when verifying the output of a
-        // `NewValue` operation.
-        let value_ofs_unique = {
-            let key_id_pairs = input_statements
-                .iter()
-                .enumerate()
-                .map(|(i, s)| {
-                    (
-                        // Separate private from public statements.
-                        if i < self.params.max_priv_statements() {
-                            0
-                        } else {
-                            1
-                        },
-                        s,
-                    )
-                })
-                .filter(|(_, s)| s.0 == Predicate::Native(NativePredicate::ValueOf))
-                .flat_map(|(i, s)| {
-                    if let StatementArg::Key(ak) = &s.1[0] {
-                        vec![(i, ak.pod_id, ak.key.hash())]
-                    } else {
-                        vec![]
+        let value_ofs_unique = input_statements
+            .iter()
+            .zip(self.operations.iter())
+            .filter_map(|(s, o)| {
+                if matches!(o.0, OperationType::Native(NativeOperation::NewEntry)) {
+                    match s.1.get(0) {
+                        Some(StatementArg::Key(k)) => Some(k),
+                        // malformed NewEntry operations are caught in step 5
+                        _ => None,
                     }
-                })
-                .collect::<Vec<_>>();
-            !(0..key_id_pairs.len() - 1).any(|i| key_id_pairs[i + 1..].contains(&key_id_pairs[i]))
-        };
+                } else {
+                    None
+                }
+            })
+            .all_unique();
         // 4. TODO: Verify type
 
         // 5. verify that all `input_statements` are correctly generated

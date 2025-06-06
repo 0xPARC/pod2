@@ -739,7 +739,7 @@ pub trait Pod: fmt::Debug + DynClone + Any {
         self.pub_statements()
             .into_iter()
             .filter_map(|st| match st {
-                Statement::ValueOf(ak, v) => Some((ak, v)),
+                Statement::Equal(ValueRef::Key(ak), ValueRef::Literal(v)) => Some((ak, v)),
                 _ => None,
             })
             .collect()

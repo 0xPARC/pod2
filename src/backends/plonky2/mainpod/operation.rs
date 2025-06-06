@@ -75,7 +75,11 @@ impl Operation {
             .iter()
             .flat_map(|arg| match arg {
                 OperationArg::None => None,
-                OperationArg::Index(i) => Some(statements[*i].clone().try_into()),
+                OperationArg::Index(i) => {
+                    let st: Result<crate::middleware::Statement> =
+                        statements[*i].clone().try_into();
+                    Some(st)
+                }
             })
             .collect::<Result<Vec<_>>>()?;
         let deref_aux = match self.2 {

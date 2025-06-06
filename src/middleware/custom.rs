@@ -499,7 +499,7 @@ mod tests {
                 "_".into(),
                 vec![
                     st(
-                        P::Native(NP::ValueOf),
+                        P::Native(NP::Equal),
                         vec![
                             STA::AnchoredKey(sow_wc(4), kow_wc(5)),
                             STA::Literal(2.into()),
@@ -529,8 +529,8 @@ mod tests {
         let custom_deduction = Operation::Custom(
             CustomPredicateRef::new(cust_pred_batch, 0),
             vec![
-                Statement::ValueOf(AnchoredKey::from((SELF, "Some constant")), 2.into()),
-                Statement::ProductOf(
+                Statement::equal(AnchoredKey::from((SELF, "Some constant")), 2),
+                Statement::product_of(
                     AnchoredKey::from((SELF, "Some value")),
                     AnchoredKey::from((SELF, "Some constant")),
                     AnchoredKey::from((SELF, "Some other value")),
@@ -556,7 +556,7 @@ mod tests {
             "eth_friend_cp".into(),
             vec![
                 st(
-                    P::Native(NP::ValueOf),
+                    P::Native(NP::Equal),
                     vec![
                         STA::AnchoredKey(sow_wc(4), KeyOrWildcard::Key("type".into())),
                         STA::Literal(PodType::Signed.into()),
@@ -596,7 +596,7 @@ mod tests {
                     ],
                 ),
                 st(
-                    P::Native(NP::ValueOf),
+                    P::Native(NP::Equal),
                     vec![
                         STA::AnchoredKey(sow_wc(4), kow_wc(5)),
                         STA::Literal(0.into()),
@@ -623,7 +623,7 @@ mod tests {
                     ],
                 ),
                 st(
-                    P::Native(NP::ValueOf),
+                    P::Native(NP::Equal),
                     vec![
                         STA::AnchoredKey(sow_wc(6), kow_wc(7)),
                         STA::Literal(1.into()),
@@ -743,8 +743,8 @@ mod tests {
                     WildcardValue::Key(Key::from("Six")),
                 ],
             ),
-            Statement::ValueOf(AnchoredKey::from((SELF, "One")), 1.into()),
-            Statement::SumOf(
+            Statement::equal(AnchoredKey::from((SELF, "One")), 1),
+            Statement::sum_of(
                 AnchoredKey::from((SELF, "Seven")),
                 AnchoredKey::from((pod_id4, "Six")),
                 AnchoredKey::from((SELF, "One")),

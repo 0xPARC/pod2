@@ -48,41 +48,25 @@ impl TryFrom<Statement> for middleware::Statement {
         type NP = NativePredicate;
         type SA = StatementArg;
         let proper_args = s.args();
-        let args = (
-            proper_args.first().cloned(),
-            proper_args.get(1).cloned(),
-            proper_args.get(2).cloned(),
-        );
         Ok(match s.0 {
-            Predicate::Native(np) => match (np, args, proper_args.len()) {
-                (NP::None, _, 0) => S::None,
-                (NP::ValueOf, (Some(SA::Key(ak)), Some(SA::Literal(v)), None), 2) => {
-                    S::ValueOf(ak, v)
+            Predicate::Native(np) => match (np, &proper_args.as_slice()) {
+                (NP::None, &[]) => S::None,
+                (NP::Equal, &[a1, a2]) => S::Equal(a1.try_into()?, a2.try_into()?),
+                (NP::NotEqual, &[a1, a2]) => S::NotEqual(a1.try_into()?, a2.try_into()?),
+                (NP::LtEq, &[a1, a2]) => S::LtEq(a1.try_into()?, a2.try_into()?),
+                (NP::Lt, &[a1, a2]) => S::Lt(a1.try_into()?, a2.try_into()?),
+                (NP::Contains, &[a1, a2, a3]) => {
+                    S::Contains(a1.try_into()?, a2.try_into()?, a3.try_into()?)
                 }
-                (NP::Equal, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None), 2) => {
-                    S::Equal(ak1, ak2)
+                (NP::NotContains, &[a1, a2]) => S::NotContains(a1.try_into()?, a2.try_into()?),
+                (NP::SumOf, &[a1, a2, a3]) => {
+                    S::SumOf(a1.try_into()?, a2.try_into()?, a3.try_into()?)
                 }
-                (NP::NotEqual, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None), 2) => {
-                    S::NotEqual(ak1, ak2)
+                (NP::ProductOf, &[a1, a2, a3]) => {
+                    S::ProductOf(a1.try_into()?, a2.try_into()?, a3.try_into()?)
                 }
-                (NP::LtEq, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None), 2) => S::LtEq(ak1, ak2),
-                (NP::Lt, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None), 2) => S::Lt(ak1, ak2),
-                (NP::Contains, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), Some(SA::Key(ak3))), 3) => {
-                    S::Contains(ak1, ak2, ak3)
-                }
-                (NP::NotContains, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), None), 2) => {
-                    S::NotContains(ak1, ak2)
-                }
-                (NP::SumOf, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), Some(SA::Key(ak3))), 3) => {
-                    S::SumOf(ak1, ak2, ak3)
-                }
-                (
-                    NP::ProductOf,
-                    (Some(SA::Key(ak1)), Some(SA::Key(ak2)), Some(SA::Key(ak3))),
-                    3,
-                ) => S::ProductOf(ak1, ak2, ak3),
-                (NP::MaxOf, (Some(SA::Key(ak1)), Some(SA::Key(ak2)), Some(SA::Key(ak3))), 3) => {
-                    S::MaxOf(ak1, ak2, ak3)
+                (NP::MaxOf, &[a1, a2, a3]) => {
+                    S::MaxOf(a1.try_into()?, a2.try_into()?, a3.try_into()?)
                 }
                 _ => Err(Error::custom(format!(
                     "Ill-formed statement expression {:?}",

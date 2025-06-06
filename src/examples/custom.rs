@@ -27,7 +27,7 @@ pub fn eth_friend_batch(params: &Params, mock: bool) -> Result<Arc<CustomPredica
         // statement templates:
         &[
             // there is an attestation pod that's a SignedPod
-            STB::new(NP::ValueOf)
+            STB::new(NP::Equal)
                 .arg(("attestation_pod", key(KEY_TYPE)))
                 .arg(literal(pod_type)),
             // the attestation pod is signed by (src_or, src_key)
@@ -70,7 +70,7 @@ pub fn eth_dos_batch(params: &Params, mock: bool) -> Result<Arc<CustomPredicateB
             STB::new(NP::Equal)
                 .arg(("SELF", "src_key"))
                 .arg(("SELF", "dst_key")),
-            STB::new(NP::ValueOf)
+            STB::new(NP::Equal)
                 .arg(("SELF", "distance_key"))
                 .arg(literal(0)),
         ],
@@ -103,9 +103,7 @@ pub fn eth_dos_batch(params: &Params, mock: bool) -> Result<Arc<CustomPredicateB
                 .arg("intermed_key")
                 .arg("shorter_distance_key"),
             // distance == shorter_distance + 1
-            STB::new(NP::ValueOf)
-                .arg(("SELF", "one_key"))
-                .arg(literal(1)),
+            STB::new(NP::Equal).arg(("SELF", "one_key")).arg(literal(1)),
             STB::new(NP::SumOf)
                 .arg(("SELF", "distance_key"))
                 .arg(("SELF", "shorter_distance_key"))
