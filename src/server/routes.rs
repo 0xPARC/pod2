@@ -34,10 +34,10 @@ pub fn create_router(pool: ConnectionPool) -> Router {
             "/api/execute",
             post(handlers::playground::execute_code_handler),
         )
-        .route(
-            "/api/executeMvp",
-            post(handlers::playground::execute_mvp_handler),
-        ) // Corrected from execute-mvp to executeMvp if the handler is named execute_mvp_handler
+        // .route(
+        //     "/api/executeMvp",
+        //     post(handlers::playground::execute_mvp_handler),
+        // ) // Corrected from execute-mvp to executeMvp if the handler is named execute_mvp_handler
         // Spaces API routes
         .route(
             "/api/spaces",

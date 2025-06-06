@@ -1,6 +1,12 @@
-import { useQuery } from "@tanstack/react-query";
-import { listSpaces, listPodsInSpace } from "../lib/backendServiceClient";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  listSpaces,
+  listPodsInSpace,
+  createSpace,
+  deleteSpace,
+} from "../lib/backendServiceClient";
 import type { SpaceInfo, PodInfo } from "../types/pod2";
+import { useAppStore } from "../lib/store";
 
 // Query key factory for spaces
 const spaceKeys = {
@@ -47,5 +53,33 @@ export function usePodsInSpace(spaceId: string | null) {
     enabled: !!spaceId, // Only run the query if spaceId is truthy
     // Optional: configure staleTime, cacheTime, etc.
     // staleTime: 1 * 60 * 1000, // 1 minute, as POD list might change more often
+  });
+}
+
+export function useCreateSpace() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (spaceId: string) => createSpace(spaceId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["spaces"] });
+    },
+    // Optional: Add onError to handle errors, e.g., show a toast notification
+  });
+}
+
+export function useDeleteSpace() {
+  const queryClient = useQueryClient();
+  const setActiveSpaceId = useAppStore((state) => state.setActiveSpaceId);
+  const activeSpaceId = useAppStore((state) => state.activeSpaceId);
+
+  return useMutation({
+    mutationFn: (spaceId: string) => deleteSpace(spaceId),
+    onSuccess: (data, spaceId) => {
+      if (activeSpaceId === spaceId) {
+        setActiveSpaceId(null);
+      }
+      queryClient.invalidateQueries({ queryKey: ["spaces"] });
+    },
+    // Optional: Add onError to handle errors
   });
 }

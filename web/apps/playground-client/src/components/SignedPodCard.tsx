@@ -1,8 +1,10 @@
 import React from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { FileSignature } from "lucide-react";
+import { FileSignature, ClipboardCopy } from "lucide-react";
 import type { SignedPod } from "@/types/pod2";
 import ValueRenderer from "./ValueRenderer";
+import { Button } from "./ui/button";
+import { toast } from "sonner";
 
 interface SignedPodCardProps {
   signedPod: SignedPod;
@@ -11,12 +13,29 @@ interface SignedPodCardProps {
 }
 
 const SignedPodCard: React.FC<SignedPodCardProps> = ({ signedPod, podId, label }) => {
+  const handleExport = async () => {
+    try {
+      const jsonString = JSON.stringify(signedPod, null, 2);
+      await navigator.clipboard.writeText(jsonString);
+      toast.success("POD payload copied to clipboard.");
+    } catch (err) {
+      console.error("Failed to copy to clipboard:", err);
+      toast.error("Failed to copy POD payload to clipboard.");
+    }
+  };
+
   return (
     <Card className="w-full mx-auto">
       <CardHeader>
-        <CardTitle className="flex items-center">
-          <span className="mr-2"><FileSignature className="w-4 h-4 text-teal-500 dark:text-teal-400" /></span> Signed POD Details
-        </CardTitle>
+        <div className="flex justify-between items-center">
+          <CardTitle className="flex items-center">
+            <span className="mr-2"><FileSignature className="w-4 h-4 text-teal-500 dark:text-teal-400" /></span> Signed POD Details
+          </CardTitle>
+          <Button variant="outline" size="sm" onClick={handleExport}>
+            <ClipboardCopy className="w-4 h-4 mr-2" />
+            Export
+          </Button>
+        </div>
         <CardDescription className="mt-2">
           {podId && <div>
             <span className="font-semibold">ID:</span> {podId}

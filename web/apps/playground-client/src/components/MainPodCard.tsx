@@ -1,8 +1,10 @@
 import React from "react";
 import type { AnchoredKey, MainPod, Value } from "@/types/pod2"; // Adjusted path
 import ValueRenderer from "./ValueRenderer";
-import { FileCheck2 } from "lucide-react";
+import { FileCheck2, ClipboardCopy } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "./ui/card";
+import { Button } from "./ui/button";
+import { toast } from "sonner";
 
 interface MainPodCardProps {
   mainPod: MainPod;
@@ -25,14 +27,31 @@ function ViewStatementArg({ arg }: { arg: AnchoredKey | Value }) {
 const MainPodCard: React.FC<MainPodCardProps> = ({ mainPod, podId, label }) => {
   const statementCount = mainPod.publicStatements?.length || 0;
 
+  const handleExport = async () => {
+    try {
+      const jsonString = JSON.stringify(mainPod, null, 2);
+      await navigator.clipboard.writeText(jsonString);
+      toast.success("POD payload copied to clipboard.");
+    } catch (err) {
+      console.error("Failed to copy to clipboard:", err);
+      toast.error("Failed to copy POD payload to clipboard.");
+    }
+  };
+
   // Placeholder icon, can be replaced with an SVG or icon library component
 
   return (
     <Card className="w-full mx-auto">
       <CardHeader>
-        <CardTitle className="flex items-center">
-          <span className="mr-2"><FileCheck2 className="w-4 h-4 text-sky-500 dark:text-sky-400" /></span> Main POD Details
-        </CardTitle>
+        <div className="flex justify-between items-center">
+          <CardTitle className="flex items-center">
+            <span className="mr-2"><FileCheck2 className="w-4 h-4 text-sky-500 dark:text-sky-400" /></span> Main POD Details
+          </CardTitle>
+          <Button variant="outline" size="sm" onClick={handleExport}>
+            <ClipboardCopy className="w-4 h-4 mr-2" />
+            Export
+          </Button>
+        </div>
         <CardDescription className="mt-2">
           {podId && <div>
             <span className="font-semibold">ID:</span> {podId}

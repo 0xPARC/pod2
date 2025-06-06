@@ -11,18 +11,18 @@ use serde_json::Value;
 
 use super::pod_management::{PodData, PodInfo};
 use crate::{
-    backends::plonky2::{primitives::signature::SecretKey, signedpod::Signer},
+    backends::plonky2::mock::signedpod::MockSigner,
     frontend::{serialization::SerializedSignedPod, MainPod, SignedPod, SignedPodBuilder},
     lang::{self, ast, parser, LangError},
-    middleware::{containers::Set, Params, Pod, PodId, RawValue, Value as PodValue},
+    middleware::{containers::Set, Params, Pod, PodId, Value as PodValue},
     prover::{
         self, custom_definitions_from_batches, facts_from_pods, pod_building, solver,
         ProverError as ActualProverError,
     },
     server::{
         api_types::{
-            Diagnostic, DiagnosticSeverity, ExecuteCodeRequest, ExecuteMvpRequest,
-            ValidateCodeRequest, ValidateCodeResponse,
+            Diagnostic, DiagnosticSeverity, ExecuteCodeRequest, ValidateCodeRequest,
+            ValidateCodeResponse,
         },
         db::ConnectionPool,
     },
@@ -161,88 +161,88 @@ fn byte_span_to_line_col_span(
     )
 }
 
-pub async fn execute_mvp_handler(
-    Json(payload): Json<ExecuteMvpRequest>,
-) -> Result<Json<MainPod>, PlaygroundApiError> {
-    log::debug!(
-        "Received execute_mvp_handler request for code starting with: {:?}",
-        payload.code.chars().take(50).collect::<String>()
-    );
+// pub async fn execute_mvp_handler(
+//     Json(payload): Json<ExecuteMvpRequest>,
+// ) -> Result<Json<MainPod>, PlaygroundApiError> {
+//     log::debug!(
+//         "Received execute_mvp_handler request for code starting with: {:?}",
+//         payload.code.chars().take(50).collect::<String>()
+//     );
 
-    pest::set_error_detail(true);
-    let params = Params {
-        // Currently the circuit uses random access that only supports vectors of length 64.
-        // With max_input_main_pods=3 we need random access to a vector of length 73.
-        max_input_main_pods: 1,
-        ..Default::default()
-    };
+//     pest::set_error_detail(true);
+//     let params = Params {
+//         // Currently the circuit uses random access that only supports vectors of length 64.
+//         // With max_input_main_pods=3 we need random access to a vector of length 73.
+//         max_input_main_pods: 1,
+//         ..Default::default()
+//     };
 
-    let processed_output = lang::parse(&payload.code, &params)?;
+//     let processed_output = lang::parse(&payload.code, &params)?;
 
-    let mut gov_signer = Signer(SecretKey(RawValue::from(1)));
-    let mut pay_signer = Signer(SecretKey(RawValue::from(2)));
-    let mut sanction_signer = Signer(SecretKey(RawValue::from(3)));
+//     let mut gov_signer = Signer(SecretKey(RawValue::from(1)));
+//     let mut pay_signer = Signer(SecretKey(RawValue::from(2)));
+//     let mut sanction_signer = Signer(SecretKey(RawValue::from(3)));
 
-    let sanctions_values: HashSet<PodValue> =
-        ["A343434340"].iter().map(|s| PodValue::from(*s)).collect();
-    let sanction_set = PodValue::from(Set::new(sanctions_values).unwrap());
+//     let sanctions_values: HashSet<PodValue> =
+//         ["A343434340"].iter().map(|s| PodValue::from(*s)).collect();
+//     let sanction_set = PodValue::from(Set::new(sanctions_values).unwrap());
 
-    let mut gov_id = SignedPodBuilder::new(&params);
-    gov_id.insert("idNumber", "4242424242");
-    gov_id.insert("dateOfBirth", 1169909384);
-    gov_id.insert("socialSecurityNumber", "G2121210");
+//     let mut gov_id = SignedPodBuilder::new(&params);
+//     gov_id.insert("idNumber", "4242424242");
+//     gov_id.insert("dateOfBirth", 1169909384);
+//     gov_id.insert("socialSecurityNumber", "G2121210");
 
-    let mut pay_stub = SignedPodBuilder::new(&params);
-    pay_stub.insert("socialSecurityNumber", "G2121210");
-    pay_stub.insert("startDate", 1706367566);
+//     let mut pay_stub = SignedPodBuilder::new(&params);
+//     pay_stub.insert("socialSecurityNumber", "G2121210");
+//     pay_stub.insert("startDate", 1706367566);
 
-    let mut sanction_list = SignedPodBuilder::new(&params);
-    sanction_list.insert("sanctionList", sanction_set);
+//     let mut sanction_list = SignedPodBuilder::new(&params);
+//     sanction_list.insert("sanctionList", sanction_set);
 
-    let gov_id_pod = gov_id.sign(&mut gov_signer).map_err(|e| {
-        PlaygroundApiError::Internal(anyhow::Error::from(e).context("Failed to sign gov_id_pod"))
-    })?;
-    let pay_stub_pod = pay_stub.sign(&mut pay_signer).map_err(|e| {
-        PlaygroundApiError::Internal(anyhow::Error::from(e).context("Failed to sign pay_stub_pod"))
-    })?;
-    let sanction_list_pod = sanction_list.sign(&mut sanction_signer).map_err(|e| {
-        PlaygroundApiError::Internal(
-            anyhow::Error::from(e).context("Failed to sign sanction_list_pod"),
-        )
-    })?;
+//     let gov_id_pod = gov_id.sign(&mut gov_signer).map_err(|e| {
+//         PlaygroundApiError::Internal(anyhow::Error::from(e).context("Failed to sign gov_id_pod"))
+//     })?;
+//     let pay_stub_pod = pay_stub.sign(&mut pay_signer).map_err(|e| {
+//         PlaygroundApiError::Internal(anyhow::Error::from(e).context("Failed to sign pay_stub_pod"))
+//     })?;
+//     let sanction_list_pod = sanction_list.sign(&mut sanction_signer).map_err(|e| {
+//         PlaygroundApiError::Internal(
+//             anyhow::Error::from(e).context("Failed to sign sanction_list_pod"),
+//         )
+//     })?;
 
-    let all_pods_for_facts: Vec<&Box<dyn Pod>> =
-        vec![&gov_id_pod.pod, &pay_stub_pod.pod, &sanction_list_pod.pod];
-    let initial_facts = facts_from_pods(&all_pods_for_facts);
+//     let all_pods_for_facts: Vec<&Box<dyn Pod>> =
+//         vec![&gov_id_pod.pod, &pay_stub_pod.pod, &sanction_list_pod.pod];
+//     let initial_facts = facts_from_pods(&all_pods_for_facts);
 
-    let custom_definitions =
-        custom_definitions_from_batches(&[processed_output.custom_batch], &params);
-    let request_templates = processed_output.request_templates;
+//     let custom_definitions =
+//         custom_definitions_from_batches(&[processed_output.custom_batch], &params);
+//     let request_templates = processed_output.request_templates;
 
-    let solution = solver::solve(
-        &request_templates,
-        &initial_facts,
-        &params,
-        &custom_definitions,
-    )?;
+//     let solution = solver::solve(
+//         &request_templates,
+//         &initial_facts,
+//         &params,
+//         &custom_definitions,
+//     )?;
 
-    let mut original_signed_pods = HashMap::new();
-    original_signed_pods.insert(gov_id_pod.id(), &gov_id_pod);
-    original_signed_pods.insert(pay_stub_pod.id(), &pay_stub_pod);
-    original_signed_pods.insert(sanction_list_pod.id(), &sanction_list_pod);
+//     let mut original_signed_pods = HashMap::new();
+//     original_signed_pods.insert(gov_id_pod.id(), &gov_id_pod);
+//     original_signed_pods.insert(pay_stub_pod.id(), &pay_stub_pod);
+//     original_signed_pods.insert(sanction_list_pod.id(), &sanction_list_pod);
 
-    let original_main_pods = HashMap::new();
+//     let original_main_pods = HashMap::new();
 
-    let main_pod = pod_building::build_main_pod_from_solution(
-        &solution,
-        &original_signed_pods,
-        &original_main_pods,
-        &params,
-        &request_templates,
-    )?;
+//     let main_pod = pod_building::build_main_pod_from_solution(
+//         &solution,
+//         &original_signed_pods,
+//         &original_main_pods,
+//         &params,
+//         &request_templates,
+//     )?;
 
-    Ok(Json(main_pod))
-}
+//     Ok(Json(main_pod))
+// }
 
 pub async fn execute_code_handler(
     State(pool): State<ConnectionPool>,
@@ -641,9 +641,11 @@ pub async fn setup_zukyc_space(pool: &ConnectionPool) -> anyhow::Result<()> {
     }
 
     let params_for_test = Params::default();
-    let mut gov_signer = Signer(SecretKey(RawValue::from(1)));
-    let mut pay_signer = Signer(SecretKey(RawValue::from(2)));
-    let mut sanction_signer = Signer(SecretKey(RawValue::from(3)));
+    let mut gov_signer = MockSigner { pk: "gov".into() };
+    let mut pay_signer = MockSigner { pk: "pay".into() };
+    let mut sanction_signer = MockSigner {
+        pk: "sanction".into(),
+    };
 
     let mut gov_id_builder = SignedPodBuilder::new(&params_for_test);
     gov_id_builder.insert("idNumber", "4242424242");

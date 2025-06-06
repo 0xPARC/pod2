@@ -385,3 +385,68 @@ export async function deletePodFromSpace(
     throw error; // Re-throw for the caller to handle
   }
 }
+
+/**
+ * Creates a new space.
+ * @param spaceId The ID of the space to create.
+ * @returns A promise that resolves when the space is created.
+ */
+export async function createSpace(spaceId: string): Promise<Response> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/spaces`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ id: spaceId }),
+    });
+
+    if (!response.ok) {
+      let errorDetails = `HTTP error! status: ${response.status}`;
+      try {
+        const errorData = await response.json();
+        errorDetails =
+          errorData.error || errorData.message || JSON.stringify(errorData);
+      } catch (e) {
+        // Ignore
+      }
+      throw new Error(errorDetails);
+    }
+    useAppStore.getState().setIsBackendConnected(true);
+    return response;
+  } catch (error) {
+    console.error(`Error calling createSpace API for space ${spaceId}:`, error);
+    useAppStore.getState().setIsBackendConnected(false);
+    throw error;
+  }
+}
+
+/**
+ * Deletes a space.
+ * @param spaceId The ID of the space to delete.
+ * @returns A promise that resolves when the space is deleted.
+ */
+export async function deleteSpace(spaceId: string): Promise<void> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/spaces/${spaceId}`, {
+      method: "DELETE",
+    });
+
+    if (!response.ok) {
+      let errorDetails = `HTTP error! status: ${response.status}`;
+      try {
+        const errorData = await response.json();
+        errorDetails =
+          errorData.error || errorData.message || JSON.stringify(errorData);
+      } catch (e) {
+        // Ignore
+      }
+      throw new Error(errorDetails);
+    }
+    useAppStore.getState().setIsBackendConnected(true);
+  } catch (error) {
+    console.error(`Error calling deleteSpace API for space ${spaceId}:`, error);
+    useAppStore.getState().setIsBackendConnected(false);
+    throw error;
+  }
+}

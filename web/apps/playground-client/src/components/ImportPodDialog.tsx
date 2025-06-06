@@ -179,7 +179,7 @@ const ImportPodDialog: React.FC<ImportPodDialogProps> = ({ isOpen, onOpenChange,
               value={jsonInput}
               onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setJsonInput(e.target.value)}
               rows={8}
-              className="min-h-[150px] font-mono text-xs"
+              className="min-h-[150px] max-h-[300px] font-mono text-xs overflow-scroll"
             />
             {isJsonValid === true && (
               <div className="flex items-center text-xs text-green-600 dark:text-green-500 mt-1">
