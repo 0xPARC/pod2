@@ -110,6 +110,8 @@ pub(super) trait ECFieldExt<const D: usize>:
     fn to_base(self) -> [Self::Base; 5];
     fn from_base(components: [Self::Base; 5]) -> Self;
 
+    /// Multiplies a point (viewed as an extension field element) by a
+    /// small factor times the field extension generator.
     fn mul_field_gen(self, factor: u32) -> Self {
         let in_arr = self.to_base();
         let field_factor = GoldilocksField::from_canonical_u32(factor);
@@ -124,6 +126,8 @@ pub(super) trait ECFieldExt<const D: usize>:
         Self::from_base(out_arr)
     }
 
+    /// Adds a factor times the extension field generator to a point
+    /// (viewed as an extension field element).
     fn add_field_gen(self, factor: GoldilocksField) -> Self {
         let mut b1 = self.to_base();
         let mut b2 = b1[1].to_basefield_array();
@@ -132,6 +136,8 @@ pub(super) trait ECFieldExt<const D: usize>:
         Self::from_base(b1)
     }
 
+    /// Adds a scalar (base field element) to a point (viewed as an
+    /// extension field element).
     fn add_scalar(self, scalar: GoldilocksField) -> Self {
         let mut b1 = self.to_base();
         let mut b2 = b1[0].to_basefield_array();
