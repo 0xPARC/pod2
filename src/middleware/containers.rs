@@ -18,22 +18,28 @@ use crate::{
 ///    leaf.key=hash(original_key)
 ///    leaf.value=hash(original_value)
 #[derive(Clone, Debug, Serialize)]
-#[serde(transparent)]
 pub struct Dictionary {
     #[serde(skip)]
     mt: MerkleTree,
+    max_depth: usize,
     #[serde(serialize_with = "ordered_map")]
     kvs: HashMap<Key, Value>,
 }
 
 impl Dictionary {
     pub fn new(kvs: HashMap<Key, Value>) -> Result<Self> {
+        Self::new_with_depth(MAX_DEPTH, kvs)
+    }
+    /// max_depth determines the depth of the underlying MerkleTree, allowing to
+    /// store 2^max_depth elements in the Dictionary
+    pub fn new_with_depth(max_depth: usize, kvs: HashMap<Key, Value>) -> Result<Self> {
         let kvs_raw: HashMap<RawValue, RawValue> = kvs
             .iter()
             .map(|(k, v)| (RawValue(k.hash().0), v.raw()))
             .collect();
         Ok(Self {
-            mt: MerkleTree::new(MAX_DEPTH, &kvs_raw)?,
+            mt: MerkleTree::new(max_depth, &kvs_raw)?,
+            max_depth,
             kvs,
         })
     }
@@ -95,8 +101,13 @@ impl<'de> Deserialize<'de> for Dictionary {
     where
         D: Deserializer<'de>,
     {
-        let kvs: HashMap<Key, Value> = HashMap::deserialize(deserializer)?;
-        Dictionary::new(kvs).map_err(serde::de::Error::custom)
+        #[derive(Deserialize)]
+        struct Aux {
+            kvs: HashMap<Key, Value>,
+            max_depth: usize,
+        }
+        let aux = Aux::deserialize(deserializer)?;
+        Dictionary::new_with_depth(aux.max_depth, aux.kvs).map_err(serde::de::Error::custom)
     }
 }
 
@@ -115,16 +126,21 @@ impl JsonSchema for Dictionary {
 ///    leaf.key=hash(original_value)
 ///    leaf.value=0
 #[derive(Clone, Debug, Serialize)]
-#[serde(transparent)]
 pub struct Set {
     #[serde(skip)]
     mt: MerkleTree,
+    max_depth: usize,
     #[serde(serialize_with = "ordered_set")]
     set: HashSet<Value>,
 }
 
 impl Set {
     pub fn new(set: HashSet<Value>) -> Result<Self> {
+        Self::new_with_depth(MAX_DEPTH, set)
+    }
+    /// max_depth determines the depth of the underlying MerkleTree, allowing to
+    /// store 2^max_depth elements in the Array
+    pub fn new_with_depth(max_depth: usize, set: HashSet<Value>) -> Result<Self> {
         let kvs_raw: HashMap<RawValue, RawValue> = set
             .iter()
             .map(|e| {
@@ -134,6 +150,7 @@ impl Set {
             .collect();
         Ok(Self {
             mt: MerkleTree::new(MAX_DEPTH, &kvs_raw)?,
+            max_depth,
             set,
         })
     }
@@ -189,10 +206,16 @@ impl<'de> Deserialize<'de> for Set {
         D: Deserializer<'de>,
     {
         // Deserialize the set directly
-        let set: HashSet<Value> = HashSet::deserialize(deserializer)?;
+        #[derive(Deserialize)]
+        struct Aux {
+            #[serde(serialize_with = "ordered_set")]
+            set: HashSet<Value>,
+            max_depth: usize,
+        }
+        let aux = Aux::deserialize(deserializer)?;
 
         // Create a new Set using the set field
-        Set::new(set).map_err(serde::de::Error::custom)
+        Set::new_with_depth(aux.max_depth, aux.set).map_err(serde::de::Error::custom)
     }
 }
 
@@ -212,15 +235,20 @@ impl JsonSchema for Set {
 ///    leaf.key=i
 ///    leaf.value=original_value
 #[derive(Clone, Debug, Serialize)]
-#[serde(transparent)]
 pub struct Array {
     #[serde(skip)]
     mt: MerkleTree,
+    max_depth: usize,
     array: Vec<Value>,
 }
 
 impl Array {
     pub fn new(array: Vec<Value>) -> Result<Self> {
+        Self::new_with_depth(MAX_DEPTH, array)
+    }
+    /// max_depth determines the depth of the underlying MerkleTree, allowing to
+    /// store 2^max_depth elements in the Array
+    pub fn new_with_depth(max_depth: usize, array: Vec<Value>) -> Result<Self> {
         let kvs_raw: HashMap<RawValue, RawValue> = array
             .iter()
             .enumerate()
@@ -228,7 +256,8 @@ impl Array {
             .collect();
 
         Ok(Self {
-            mt: MerkleTree::new(MAX_DEPTH, &kvs_raw)?,
+            mt: MerkleTree::new(max_depth, &kvs_raw)?,
+            max_depth,
             array,
         })
     }
@@ -271,8 +300,13 @@ impl<'de> Deserialize<'de> for Array {
     where
         D: Deserializer<'de>,
     {
-        let array: Vec<Value> = Vec::deserialize(deserializer)?;
-        Array::new(array).map_err(serde::de::Error::custom)
+        #[derive(Deserialize)]
+        struct Aux {
+            array: Vec<Value>,
+            max_depth: usize,
+        }
+        let aux = Aux::deserialize(deserializer)?;
+        Array::new_with_depth(aux.max_depth, aux.array).map_err(serde::de::Error::custom)
     }
 }
 
