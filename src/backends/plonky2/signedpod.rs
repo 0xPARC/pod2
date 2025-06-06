@@ -3,14 +3,17 @@ use std::collections::HashMap;
 use base64::{prelude::BASE64_STANDARD, Engine};
 use itertools::Itertools;
 use plonky2::util::serialization::Buffer;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::{
+        deserialize_proof,
         error::{Error, Result},
         primitives::{
             merkletree::MerkleTree,
             signature::{PublicKey, SecretKey, Signature, VP},
         },
+        serialize_proof,
     },
     constants::MAX_DEPTH,
     middleware::{
@@ -59,6 +62,12 @@ pub struct SignedPod {
     pub id: PodId,
     pub signature: Signature,
     pub dict: Dictionary,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Data {
+    signature: String,
+    dict: Dictionary,
 }
 
 impl SignedPod {
@@ -117,6 +126,16 @@ impl SignedPod {
 
         Ok(sig)
     }
+
+    pub(crate) fn deserialize(id: PodId, data: serde_json::Value) -> Result<Box<dyn Pod>> {
+        let data: Data = serde_json::from_value(data)?;
+        let signature = deserialize_proof(&VP.0.common, &data.signature)?;
+        Ok(Box::new(Self {
+            id,
+            signature: Signature(signature),
+            dict: data.dict,
+        }))
+    }
 }
 
 impl Pod for SignedPod {
@@ -129,6 +148,9 @@ impl Pod for SignedPod {
 
     fn id(&self) -> PodId {
         self.id
+    }
+    fn pod_type(&self) -> (usize, &'static str) {
+        (PodType::Signed as usize, "Signed")
     }
 
     fn pub_self_statements(&self) -> Vec<Statement> {
@@ -145,11 +167,18 @@ impl Pod for SignedPod {
             .collect()
     }
 
-    fn serialized_proof(&self) -> String {
-        let mut buffer = Vec::new();
-        use plonky2::util::serialization::Write;
-        buffer.write_proof(&self.signature.0).unwrap();
-        BASE64_STANDARD.encode(buffer)
+    // fn serialized_proof(&self) -> String {
+    //     let mut buffer = Vec::new();
+    //     use plonky2::util::serialization::Write;
+    //     buffer.write_proof(&self.signature.0).unwrap();
+    //     BASE64_STANDARD.encode(buffer)
+    // }
+    fn serialize_data(&self) -> serde_json::Value {
+        serde_json::to_value(Data {
+            signature: serialize_proof(&self.signature.0),
+            dict: self.dict.clone(),
+        })
+        .expect("serialization to json")
     }
 }
 

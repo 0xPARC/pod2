@@ -2,6 +2,8 @@
 //! the backend.
 
 use std::sync::Arc;
+
+use strum_macros::FromRepr;
 mod basetypes;
 use std::{
     cmp::{Ordering, PartialEq, PartialOrd},
@@ -15,6 +17,7 @@ pub mod containers;
 mod custom;
 mod error;
 mod operation;
+mod pod_deserialization;
 pub mod serialization;
 mod statement;
 use std::{any::Any, collections::HashMap, fmt};
@@ -24,6 +27,7 @@ pub use custom::*;
 use dyn_clone::DynClone;
 pub use error::*;
 pub use operation::*;
+pub use pod_deserialization::*;
 use serialization::*;
 pub use statement::*;
 
@@ -553,7 +557,7 @@ impl ToFields for PodId {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, FromRepr, Serialize, Deserialize, JsonSchema)]
 pub enum PodType {
     None = 0,
     MockSigned = 1,
@@ -723,6 +727,8 @@ pub trait Pod: fmt::Debug + DynClone + Any {
     fn params(&self) -> &Params;
     fn verify(&self) -> Result<(), Box<DynError>>;
     fn id(&self) -> PodId;
+    /// Return a uuid of the pod type and its name.  The name is only used as metadata.
+    fn pod_type(&self) -> (usize, &'static str);
     /// Statements as internally generated, where self-referencing arguments use SELF in the
     /// anchored key.  The serialization of these statements is used to calculate the id.
     fn pub_self_statements(&self) -> Vec<Statement>;
@@ -734,6 +740,9 @@ pub trait Pod: fmt::Debug + DynClone + Any {
             .map(|statement| normalize_statement(&statement, self.id()))
             .collect()
     }
+    /// Return this Pods data serialized into a json value.  This serialization can skip `params,
+    /// id, vds_root`
+    fn serialize_data(&self) -> serde_json::Value;
     /// Extract key-values from ValueOf public statements
     fn kvs(&self) -> HashMap<AnchoredKey, Value> {
         self.pub_statements()
@@ -755,7 +764,7 @@ pub trait Pod: fmt::Debug + DynClone + Any {
     // reconstruct the proof.
     // It is an important principle that this data is opaque to the front-end
     // and any third-party code.
-    fn serialized_proof(&self) -> String;
+    // fn serialized_proof(&self) -> String;
 }
 
 // impl Clone for Box<dyn Pod>
@@ -798,11 +807,17 @@ impl Pod for NonePod {
     fn id(&self) -> PodId {
         PodId(EMPTY_HASH)
     }
+    fn pod_type(&self) -> (usize, &'static str) {
+        (PodType::None as usize, "None")
+    }
     fn pub_self_statements(&self) -> Vec<Statement> {
         Vec::new()
     }
-    fn serialized_proof(&self) -> String {
-        "".to_string()
+    // fn serialized_proof(&self) -> String {
+    //     "".to_string()
+    // }
+    fn serialize_data(&self) -> serde_json::Value {
+        serde_json::Value::Null
     }
 }
 
