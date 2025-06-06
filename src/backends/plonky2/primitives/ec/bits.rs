@@ -17,6 +17,8 @@ use plonky2::{
     util::serialization::{IoResult, Read, Write},
 };
 
+use crate::backends::plonky2::basetypes::{D, F};
+
 #[derive(Debug)]
 struct ConditionalZeroGenerator<F: RichField + Extendable<D>, const D: usize> {
     if_zero: Target,
@@ -103,10 +105,10 @@ pub trait CircuitBuilderBits {
 
     fn normalize_bigint(
         &mut self,
-        x: &mut BigUInt320Target,
+        x: &BigUInt320Target,
         max_digit_bits: usize,
-        max_num_digits: usize,
-    );
+        max_num_carries: usize,
+    ) -> BigUInt320Target;
 
     fn constant_biguint320(&mut self, n: &BigUint) -> BigUInt320Target;
     fn add_virtual_biguint320_target(&mut self) -> BigUInt320Target;
@@ -133,37 +135,87 @@ impl CircuitBuilderBits for CircuitBuilder<GoldilocksField, 2> {
 
     fn field_elements_to_biguint(&mut self, arr: &[Target]) -> BigUInt320Target {
         assert!(arr.len() <= 5);
-        let mut ans = BigUInt320Target(array::from_fn(|_| self.zero()));
+        let zero = self.zero();
         let neg_one = self.neg_one();
         let two_32 = self.constant(GoldilocksField::from_canonical_u64(1 << 32));
-        for (n, &x) in arr.iter().rev().enumerate() {
-            // multiply by the order of the Goldilocks field
-            for i in (0..(2 * n)).rev() {
-                let tmp = self.add(ans.0[i + 1], two_32);
-                ans.0[i + 1] = self.sub(tmp, ans.0[i]);
-                let tmp = self.add(ans.0[i + 2], ans.0[i]);
-                ans.0[i + 2] = self.add(tmp, neg_one);
+        // Apply Horner's method to Σarr[i]*p^i.
+        // First map each target to its limbs.
+        let arr_limbs: Vec<_> = arr.iter().map(|x| self.split_32_bit(*x).to_vec()).collect();
+        let res_limbs = arr_limbs
+            .into_iter()
+            .rev()
+            .enumerate()
+            .reduce(|(_, res), (i, a)| {
+                // Compute p*res in unnormalised form, where each
+                // coefficient is offset so as to ensure none (except
+                // possibly the last) underflow.
+                let prod = (0..=(2 * i + 1))
+                    .map(|j| {
+                        if j == 0 {
+                            // x_0
+                            res[0]
+                        } else if j == 1 {
+                            // x_1 - x_0 + 2^32
+                            let diff = self.sub(res[1], res[0]);
+                            self.add(diff, two_32)
+                        } else if j < 2 * i {
+                            // x_j + x_{j-2} - x_{j-1} + 2^32 - 1
+                            let diff = self.sub(res[j], res[j - 1]);
+                            let sum = self.add(diff, res[j - 2]);
+                            let sum = self.add(sum, two_32);
+                            self.add(sum, neg_one)
+                        } else if j == 2 * i {
+                            // x_{2*j - 2} - x_{2*j - 1} + 2^32
+                            let diff = self.sub(res[2 * i - 2], res[2 * i - 1]);
+                            let sum = self.add(diff, two_32);
+                            self.add(sum, neg_one)
+                        } else {
+                            // x_{2*i - 1} - 1
+                            self.add(res[2 * i - 1], neg_one)
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                // Add arr[i].
+                let prod_plus_lot = prod
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, x)| match i {
+                        0 => self.add(a[0], x),
+                        1 => self.add(a[1], x),
+                        _ => x,
+                    })
+                    .collect::<Vec<_>>();
+                // Normalise.
+                (
+                    i,
+                    normalize_biguint_limbs(self, &prod_plus_lot, 34, 2 * i + 1),
+                )
+            })
+            .map(|(_, v)| v)
+            .unwrap_or(vec![]);
+        // Collect limbs, padding with 0s if necessary.
+        BigUInt320Target(array::from_fn(|i| {
+            if i < res_limbs.len() {
+                res_limbs[i]
+            } else {
+                zero
             }
-            // add x
-            let [low, high] = self.split_32_bit(x);
-            ans.0[0] = self.add(ans.0[0], low);
-            ans.0[1] = self.add(ans.0[1], high);
-            self.normalize_bigint(&mut ans, 34, 2 * n + 1);
-        }
-        ans
+        }))
     }
 
     fn normalize_bigint(
         &mut self,
-        x: &mut BigUInt320Target,
+        x: &BigUInt320Target,
         max_digit_bits: usize,
         max_num_carries: usize,
-    ) {
+    ) -> BigUInt320Target {
+        let mut x = x.clone();
         for i in 0..max_num_carries {
             let (low, high) = self.split_low_high(x.0[i], 32, max_digit_bits);
             x.0[i] = low;
             x.0[i + 1] = self.add(x.0[i + 1], high);
         }
+        x
     }
 
     fn split_32_bit(&mut self, x: Target) -> [Target; 2] {
@@ -197,4 +249,21 @@ impl CircuitBuilderBits for CircuitBuilder<GoldilocksField, 2> {
             self.connect(x.0[i], y.0[i]);
         }
     }
+}
+
+/// Normalises the limbs of a biguint assuming no overflow in the
+/// field.
+fn normalize_biguint_limbs(
+    builder: &mut CircuitBuilder<F, D>,
+    x: &[Target],
+    max_digit_bits: usize,
+    max_num_carries: usize,
+) -> Vec<Target> {
+    let mut x = x.to_vec();
+    for i in 0..max_num_carries {
+        let (low, high) = builder.split_low_high(x[i], 32, max_digit_bits);
+        x[i] = low;
+        x[i + 1] = builder.add(x[i + 1], high);
+    }
+    x
 }
