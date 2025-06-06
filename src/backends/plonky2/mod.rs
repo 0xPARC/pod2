@@ -48,7 +48,7 @@ pub fn deserialize_proof(common: &CommonCircuitData, proof: &str) -> Result<Proo
         ))
     })?;
     let mut buf = Buffer::new(&decoded);
-    let proof = buf.read_proof(&common).map_err(|e| {
+    let proof = buf.read_proof(common).map_err(|e| {
         Error::custom(format!(
             "Failed to read proof from buffer: {}. Value: {}",
             e, proof

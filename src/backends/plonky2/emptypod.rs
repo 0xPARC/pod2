@@ -198,12 +198,6 @@ impl Pod for EmptyPod {
         vec![type_statement()]
     }
 
-    // fn serialized_proof(&self) -> String {
-    //     let mut buffer = Vec::new();
-    //     use plonky2::util::serialization::Write;
-    //     buffer.write_proof(&self.proof).unwrap();
-    //     BASE64_STANDARD.encode(buffer)
-    // }
     fn serialize_data(&self) -> serde_json::Value {
         serde_json::to_value(Data {
             proof: serialize_proof(&self.proof),

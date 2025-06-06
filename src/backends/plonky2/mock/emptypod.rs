@@ -54,14 +54,6 @@ impl MockEmptyPod {
     ) -> Result<Box<dyn RecursivePod>> {
         Ok(Box::new(Self { params, id }))
     }
-    // pub(crate) fn new_from_serialized(
-    //     params: Params,
-    //     id: PodId,
-    //     _vds_root: Hash,
-    //     _data: serde_json::Value,
-    // ) -> Result<Box<dyn RecursivePod>> {
-    //     Ok(Box::new(Self { params, id }))
-    // }
 }
 
 impl Pod for MockEmptyPod {
@@ -81,9 +73,6 @@ impl Pod for MockEmptyPod {
         vec![type_statement()]
     }
 
-    // fn serialized_proof(&self) -> String {
-    //     todo!()
-    // }
     fn serialize_data(&self) -> serde_json::Value {
         serde_json::Value::Null
     }

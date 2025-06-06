@@ -813,9 +813,6 @@ impl Pod for NonePod {
     fn pub_self_statements(&self) -> Vec<Statement> {
         Vec::new()
     }
-    // fn serialized_proof(&self) -> String {
-    //     "".to_string()
-    // }
     fn serialize_data(&self) -> serde_json::Value {
         serde_json::Value::Null
     }

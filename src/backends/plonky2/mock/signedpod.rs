@@ -149,9 +149,6 @@ impl Pod for MockSignedPod {
             .collect()
     }
 
-    // fn serialized_proof(&self) -> String {
-    //     serde_json::to_string(&self.signature).unwrap()
-    // }
     fn serialize_data(&self) -> serde_json::Value {
         serde_json::to_value(Data {
             signature: self.signature.clone(),

@@ -20,17 +20,7 @@ pub struct SerializedSignedPod {
     pod_type: (usize, String),
     id: PodId,
     data: serde_json::Value,
-    // #[serde(serialize_with = "ordered_map")]
-    // entries: HashMap<Key, Value>,
-    // proof: String,
-    // pod_type: SignedPodType,
 }
-
-// #[derive(Serialize, Deserialize, JsonSchema)]
-// pub enum MainPodType {
-//     Main,
-//     MockMain,
-// }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -40,9 +30,7 @@ pub struct SerializedMainPod {
     pod_type: (usize, String),
     id: PodId,
     vds_root: Hash,
-    // public_statements: Vec<Statement>,
     data: serde_json::Value,
-    // proof: String,
 }
 
 impl From<SignedPod> for SerializedSignedPod {
@@ -53,22 +41,6 @@ impl From<SignedPod> for SerializedSignedPod {
             pod_type: (pod_type, pod_type_name_str.to_string()),
             id: pod.id(),
             data,
-            // entries: pod.kvs,
-            // proof: pod.pod.serialized_proof(),
-            // proof: todo!(),
-            // pod_type: if (&*pod.pod as &dyn Any)
-            //     .downcast_ref::<Plonky2SignedPod>()
-            //     .is_some()
-            // {
-            //     SignedPodType::Signed
-            // } else if (&*pod.pod as &dyn Any)
-            //     .downcast_ref::<MockSignedPod>()
-            //     .is_some()
-            // {
-            //     SignedPodType::MockSigned
-            // } else {
-            //     unreachable!()
-            // },
         }
     }
 }
@@ -80,24 +52,6 @@ impl TryFrom<SerializedSignedPod> for SignedPod {
         let pod = deserialize_signed_pod(serialized.pod_type.0, serialized.id, serialized.data)?;
         let kvs = pod.kvs().into_iter().map(|(ak, v)| (ak.key, v)).collect();
         Ok(Self { pod, kvs })
-        // match serialized.pod_type {
-        //     SignedPodType::Signed => SignedPod {
-        //         pod: Box::new(Plonky2SignedPod {
-        //             id: serialized.id,
-        //             signature: Plonky2SignedPod::decode_signature(&serialized.proof).unwrap(),
-        //             dict: Dictionary::new(serialized.entries.clone()).unwrap(),
-        //         }),
-        //         kvs: serialized.entries,
-        //     },
-        //     SignedPodType::MockSigned => SignedPod {
-        //         pod: Box::new(MockSignedPod::new(
-        //             serialized.id,
-        //             serde_json::from_str(&serialized.proof).unwrap(),
-        //             serialized.entries.clone(),
-        //         )),
-        //         kvs: serialized.entries,
-        //     },
-        // }
     }
 }
 
@@ -109,9 +63,7 @@ impl From<MainPod> for SerializedMainPod {
             pod_type: (pod_type, pod_type_name_str.to_string()),
             id: pod.id(),
             vds_root: pod.pod.vds_root(),
-            // proof: pod.pod.serialized_proof(),
             params: pod.params.clone(),
-            // public_statements: pod.public_statements.clone(),
             data,
         }
     }
@@ -134,80 +86,8 @@ impl TryFrom<SerializedMainPod> for MainPod {
             public_statements,
             params: serialized.params,
         })
-        // if serialized.pod_type.0 == PodType::Main as usize {
-        //     Ok(MainPod {
-        //         pod: Box::new(Plonky2MainPod::new(
-        //             Plonky2MainPod::decode_proof(&serialized.proof, &serialized.params).map_err(
-        //                 |e| {
-        //                     Error::custom(format!(
-        //                         "Failed to deserialize MainPod proof: {}. Value: {}",
-        //                         e, serialized.proof
-        //                     ))
-        //                 },
-        //             )?,
-        //             middleware_statements_to_backend(
-        //                 serialized.public_statements.clone(),
-        //                 &serialized.params,
-        //                 serialized.id,
-        //             ),
-        //             serialized.id,
-        //             serialized.vds_root,
-        //             serialized.params.clone(),
-        //         )),
-        //         public_statements: serialized.public_statements,
-        //         params: serialized.params,
-        //     })
-        // } else if serialized.pod_type.0 == PodType::MockMain as usize {
-        //     Ok(MainPod {
-        //         pod: Box::new(
-        //             MockMainPod::deserialize(serialized.proof.clone()).map_err(|e| {
-        //                 Error::custom(format!(
-        //                     "Failed to deserialize MockMainPod: {}. Value: {}",
-        //                     e, serialized.proof
-        //                 ))
-        //             })?,
-        //         ),
-        //         public_statements: serialized.public_statements,
-        //         params: serialized.params,
-        //     })
-        // } else {
-        //     panic!("todo")
-        // }
     }
 }
-
-// // To deserialize a backend MainPod, we need to convert the middleware
-// // statements to backend statements, and padding the list with None statements.
-// fn middleware_statements_to_backend(
-//     mid_statements: Vec<Statement>,
-//     params: &Params,
-//     id: PodId,
-// ) -> Vec<BackendStatement> {
-//     let mut statements = Vec::new();
-//     for i in 0..(params.max_public_statements) {
-//         let mut st: BackendStatement = mid_statements
-//             .get(i)
-//             .unwrap_or(&middleware::Statement::None)
-//             .clone()
-//             .into();
-//
-//         st = BackendStatement(
-//             st.0.clone(),
-//             st.1.iter()
-//                 .map(|sa| match &sa {
-//                     StatementArg::Key(AnchoredKey { pod_id, key }) if *pod_id == id => {
-//                         StatementArg::Key(AnchoredKey::new(SELF, key.clone()))
-//                     }
-//                     _ => sa.clone(),
-//                 })
-//                 .collect(),
-//         );
-//         pad_statement(params, &mut st);
-//         statements.push(st);
-//     }
-//
-//     statements
-// }
 
 #[cfg(test)]
 mod tests {
@@ -231,7 +111,7 @@ mod tests {
         frontend::{Result, SignedPodBuilder},
         middleware::{
             self,
-            containers::{Array, Set},
+            containers::{Array, Dictionary, Set},
             Params, RawValue, TypedValue,
         },
     };

@@ -39,6 +39,7 @@ impl PodProver for MockProver {
 pub struct MockMainPod {
     params: Params,
     id: PodId,
+    vds_root: Hash,
     //   input_signed_pods: Vec<Box<dyn Pod>>,
     //   input_main_pods: Vec<Box<dyn Pod>>,
     // New statements introduced by this pod
@@ -156,7 +157,7 @@ impl MockMainPod {
     pub fn new(params: &Params, inputs: MainPodInputs) -> Result<Self> {
         // TODO: Insert a new public statement of ValueOf with `key=KEY_TYPE,
         // value=PodType::MockMainPod`
-        let statements = layout_statements(params, true, &inputs)?;
+        let (statements, public_statements) = layout_statements(params, false, &inputs)?;
         // Extract Merkle proofs and pad.
         let merkle_proofs = extract_merkle_proofs(params, inputs.operations)?;
 
@@ -169,15 +170,13 @@ impl MockMainPod {
         )?;
         let operations = process_public_statements_operations(params, &statements, operations)?;
 
-        let public_statements =
-            statements[statements.len() - params.max_public_statements..].to_vec();
-
         // get the id out of the public statements
         let id: PodId = PodId(calculate_id(&public_statements, params));
 
         Ok(Self {
             params: params.clone(),
             id,
+            vds_root: inputs.vds_root,
             //  input_signed_pods,
             //  input_main_pods,
             //  input_statements,
@@ -191,19 +190,10 @@ impl MockMainPod {
     // MockMainPods include some internal private state which is necessary
     // for verification. In non-mock Pods, this state will not be necessary,
     // as the public statements can be verified using a ZK proof.
-    // pub(crate) fn deserialize(serialized: String) -> Result<Self> {
-    //     let proof = String::from_utf8(BASE64_STANDARD.decode(&serialized)?)
-    //         .map_err(|e| anyhow::anyhow!("Invalid base64 encoding: {}", e))?;
-    //     let pod: MockMainPod = serde_json::from_str(&proof)
-    //         .map_err(|e| anyhow::anyhow!("Failed to parse proof: {}", e))?;
-
-    //     Ok(pod)
-    // }
-
     pub(crate) fn deserialize(
         params: Params,
         id: PodId,
-        _vds_root: Hash,
+        vds_root: Hash,
         data: serde_json::Value,
     ) -> Result<Box<dyn RecursivePod>> {
         let Data {
@@ -215,6 +205,7 @@ impl MockMainPod {
         Ok(Box::new(Self {
             params,
             id,
+            vds_root,
             public_statements,
             operations,
             statements,
@@ -330,9 +321,6 @@ impl Pod for MockMainPod {
             .collect()
     }
 
-    // fn serialized_proof(&self) -> String {
-    //     BASE64_STANDARD.encode(serde_json::to_string(self).unwrap())
-    // }
     fn serialize_data(&self) -> serde_json::Value {
         serde_json::to_value(Data {
             public_statements: self.public_statements.clone(),
@@ -352,7 +340,7 @@ impl RecursivePod for MockMainPod {
         panic!("MockMainPod can't be verified in a recursive MainPod circuit");
     }
     fn vds_root(&self) -> Hash {
-        panic!("MockMainPod can't be verified in a recursive MainPod circuit");
+        self.vds_root
     }
 }
 

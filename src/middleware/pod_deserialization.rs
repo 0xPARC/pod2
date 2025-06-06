@@ -15,7 +15,7 @@ type DeserializeFn = fn(
 ) -> BackendResult<Box<dyn RecursivePod>>;
 
 static DESERIALIZERS: LazyLock<Mutex<HashMap<usize, DeserializeFn>>> =
-    LazyLock::new(|| backend::deserializers_default());
+    LazyLock::new(backend::deserializers_default);
 
 pub fn register_pod_deserializer(pod_type: usize, deserialize_fn: DeserializeFn) {
     DESERIALIZERS
@@ -31,15 +31,15 @@ pub fn deserialize_pod(
     vds_root: Hash,
     data: serde_json::Value,
 ) -> Result<Box<dyn RecursivePod>> {
-    let deserialize_fn: DeserializeFn = DESERIALIZERS
-        .lock()
-        .unwrap()
-        .get(&pod_type)
-        .ok_or(Error::custom(format!(
-            "pod deserializer for pod_type={} not registered",
-            pod_type
-        )))?
-        .clone(); // Clone to release the lock
+    let deserialize_fn: DeserializeFn =
+        *DESERIALIZERS
+            .lock()
+            .unwrap()
+            .get(&pod_type)
+            .ok_or(Error::custom(format!(
+                "pod deserializer for pod_type={} not registered",
+                pod_type
+            )))?;
 
     deserialize_fn(params, id, vds_root, data)
         .map_err(|e| Error::custom(format!("deserialize error: {:?}", e)))

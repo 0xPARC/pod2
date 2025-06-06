@@ -167,12 +167,6 @@ impl Pod for SignedPod {
             .collect()
     }
 
-    // fn serialized_proof(&self) -> String {
-    //     let mut buffer = Vec::new();
-    //     use plonky2::util::serialization::Write;
-    //     buffer.write_proof(&self.signature.0).unwrap();
-    //     BASE64_STANDARD.encode(buffer)
-    // }
     fn serialize_data(&self) -> serde_json::Value {
         serde_json::to_value(Data {
             signature: serialize_proof(&self.signature.0),
