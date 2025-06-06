@@ -343,10 +343,12 @@ pub fn common_data_for_recursion<I: InnerCircuit>(
         GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(&config, 4)),
         GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(&config, 5)),
         GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(&config, 6)),
+        GateRef::new(GateAdapter::<NNFMulSimple<5, QuinticExtension<F>>>::new_from_config(&config)),
         GateRef::new(
             GateAdapter::<NNFMulSimple<5, QuinticExtension<F>>>::new_from_config(&config)
                 .recursive_gate(),
         ),
+        GateRef::new(GateAdapter::<ECAddHomog>::new_from_config(&config)),
         GateRef::new(GateAdapter::<ECAddHomog>::new_from_config(&config).recursive_gate()),
         // It would be better do `CosetInterpolationGate::with_max_degree(4, 6)` but unfortunately
         // that plonk2 method is `pub(crate)`, so we need to get around that somehow.
