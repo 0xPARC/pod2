@@ -27,9 +27,10 @@ use crate::{
         STANDARD_REC_MAIN_POD_CIRCUIT_DATA,
     },
     middleware::{
-        self, resolve_wildcard_values, AnchoredKey, CustomPredicateBatch, DynError, Hash,
-        MainPodInputs, NativeOperation, NonePod, OperationType, Params, Pod, PodId, PodProver,
-        PodType, RecursivePod, StatementArg, ToFields, F, KEY_TYPE, SELF,
+        self, containers::Array, resolve_wildcard_values, AnchoredKey, CustomPredicateBatch,
+        DynError, Hash, MainPodInputs, NativeOperation, NonePod, OperationType, Params, Pod, PodId,
+        PodProver, PodType, RawValue, RecursivePod, StatementArg, ToFields, Value, F, KEY_TYPE,
+        SELF,
     },
 };
 
@@ -154,11 +155,11 @@ pub(crate) fn extract_merkle_proofs(
             _ => None,
         })
         .collect();
-    if merkle_proofs.len() > params.max_merkle_proofs {
+    if merkle_proofs.len() > params.max_merkle_proofs_containers {
         return Err(Error::custom(format!(
             "The number of required Merkle proofs ({}) exceeds the maximum number ({}).",
             merkle_proofs.len(),
-            params.max_merkle_proofs
+            params.max_merkle_proofs_containers
         )));
     }
     Ok(merkle_proofs)
@@ -502,8 +503,13 @@ impl Prover {
             .iter()
             .map(|pod| pod.verifier_data())
             .collect_vec();
+
+        let (root, vd_mt_proofs) = vds_tree(params.max_depth_mt_vds, &verifier_datas)?;
+        assert_eq!(inputs.vds_root, root);
+
         let input = MainPodVerifyInput {
             vds_root: inputs.vds_root,
+            vd_mt_proofs,
             signed_pods: signed_pods_input,
             recursive_pods_pub_self_statements,
             statements: statements[statements.len() - params.max_statements..].to_vec(),
@@ -680,6 +686,33 @@ impl RecursivePod for MainPod {
     }
 }
 
+/// builds the verifier_datas tree, and returns the root and the proofs
+fn vds_tree(
+    tree_depth: usize,
+    vds: &[VerifierOnlyCircuitData],
+) -> Result<(Hash, Vec<MerkleClaimAndProof>)> {
+    let array = Array::new_with_depth(
+        tree_depth,
+        vds.iter()
+            .map(|vd| Value::from(RawValue(vd.circuit_digest.elements)))
+            .collect(),
+    )?;
+
+    let root = array.commitment();
+    let mut proofs = vec![];
+    for i in 0..vds.len() {
+        let (value, proof) = array.prove(i)?;
+        let p = MerkleClaimAndProof {
+            root,
+            key: RawValue::from(i as i64),
+            value: value.raw(),
+            proof,
+        };
+        proofs.push(p);
+    }
+    Ok((root, proofs))
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -794,8 +827,9 @@ pub mod tests {
             max_custom_predicate_arity: 2,
             max_custom_predicate_wildcards: 2,
             max_custom_batch_size: 2,
-            max_merkle_proofs: 2,
-            max_depth_mt_gadget: 4,
+            max_merkle_proofs_containers: 2,
+            max_depth_mt_containers: 4,
+            max_depth_mt_vds: 6,
         };
 
         let pod_builder = frontend::MainPodBuilder::new(&params);

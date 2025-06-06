@@ -42,7 +42,7 @@ pub struct MerkleProofGadget {
     pub max_depth: usize,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MerkleClaimAndProofTarget {
     pub(crate) max_depth: usize,
     // `enabled` determines if the merkleproof verification is enabled
@@ -59,7 +59,7 @@ pub struct MerkleClaimAndProofTarget {
 
 impl MerkleProofGadget {
     /// creates the targets and defines the logic of the circuit
-    pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MerkleClaimAndProofTarget> {
+    pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> MerkleClaimAndProofTarget {
         let measure = measure_gates_begin!(builder, format!("MerkleProof_{}", self.max_depth));
         let enabled = builder.add_virtual_bool_target_safe();
         let root = builder.add_virtual_hash();
@@ -128,7 +128,7 @@ impl MerkleProofGadget {
         // (this is for the three cases (existence, non-existence case i, and
         // non-existence case ii).
         let obtained_root =
-            compute_root_from_leaf(self.max_depth, builder, &path, &leaf_hash, &siblings)?;
+            compute_root_from_leaf(self.max_depth, builder, &path, &leaf_hash, &siblings);
 
         // check that obtained_root==root (from inputs), when enabled==true
         let zero = builder.zero();
@@ -143,7 +143,7 @@ impl MerkleProofGadget {
         }
         measure_gates_end!(builder, measure);
 
-        Ok(MerkleClaimAndProofTarget {
+        MerkleClaimAndProofTarget {
             max_depth: self.max_depth,
             enabled,
             existence,
@@ -154,7 +154,7 @@ impl MerkleProofGadget {
             case_ii_selector,
             other_key,
             other_value,
-        })
+        }
     }
 }
 
@@ -241,7 +241,7 @@ impl MerkleProofExistenceGadget {
 
         // compute the root for the given siblings and the computed leaf_hash.
         let obtained_root =
-            compute_root_from_leaf(self.max_depth, builder, &path, &leaf_hash, &siblings)?;
+            compute_root_from_leaf(self.max_depth, builder, &path, &leaf_hash, &siblings);
 
         // check that obtained_root==root (from inputs), when enabled==true
         let zero = builder.zero();
@@ -305,7 +305,7 @@ fn compute_root_from_leaf(
     path: &[BoolTarget],
     leaf_hash: &HashOutTarget,
     siblings: &[HashOutTarget],
-) -> Result<HashOutTarget> {
+) -> HashOutTarget {
     assert_eq!(siblings.len(), max_depth);
     // Convenience constants
     let zero = builder.zero();
@@ -356,7 +356,7 @@ fn compute_root_from_leaf(
             .collect();
         h = HashOutTarget::from_vec(h_targ);
     }
-    Ok(h)
+    h
 }
 
 // Note: this logic is in its own method for easy of reusability but
@@ -546,7 +546,7 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = MerkleProofGadget { max_depth }.eval(&mut builder)?;
+        let targets = MerkleProofGadget { max_depth }.eval(&mut builder);
         targets.set_targets(
             &mut pw,
             true,
@@ -667,7 +667,7 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = MerkleProofGadget { max_depth }.eval(&mut builder)?;
+        let targets = MerkleProofGadget { max_depth }.eval(&mut builder);
         targets.set_targets(
             &mut pw,
             true,
@@ -714,7 +714,7 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = MerkleProofGadget { max_depth }.eval(&mut builder)?;
+        let targets = MerkleProofGadget { max_depth }.eval(&mut builder);
         // verification enabled & proof of existence
         let mp = MerkleClaimAndProof::new(tree2.root(), key, Some(value), proof);
         targets.set_targets(&mut pw, true, &mp)?;
@@ -730,7 +730,7 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = MerkleProofGadget { max_depth }.eval(&mut builder)?;
+        let targets = MerkleProofGadget { max_depth }.eval(&mut builder);
         // verification disabled & proof of existence
         targets.set_targets(&mut pw, false, &mp)?;
 
