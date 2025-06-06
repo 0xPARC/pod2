@@ -10,6 +10,8 @@ pub enum InnerError {
     IdNotEqual(PodId, PodId),
     #[error("type does not match, expected {0}, found {1}")]
     TypeNotEqual(PodType, Value),
+    #[error("signer public key does not match, expected {0}, found {1}")]
+    SignerNotEqual(Value, Value),
 
     // POD related
     #[error("invalid POD ID")]
@@ -89,5 +91,8 @@ impl Error {
     }
     pub fn type_not_equal(expected: PodType, found: Value) -> Self {
         new!(TypeNotEqual(expected, found))
+    }
+    pub(crate) fn signer_not_equal(expected: Value, found: Value) -> Self {
+        new!(SignerNotEqual(expected, found))
     }
 }

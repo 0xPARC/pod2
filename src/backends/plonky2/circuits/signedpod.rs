@@ -18,7 +18,7 @@ use crate::{
             merkletree::{
                 MerkleClaimAndProof, MerkleProofExistenceGadget, MerkleProofExistenceTarget,
             },
-            signature::{PublicKey, SignatureVerifyGadget, SignatureVerifyTarget},
+            signature::{SignatureVerifyGadget, SignatureVerifyTarget},
         },
         signedpod::SignedPod,
     },
@@ -58,11 +58,12 @@ impl SignedPodVerifyGadget {
         // 3.a. Verify signature
         let signature = SignatureVerifyGadget {}.eval(builder)?;
 
-        // 3.b. Verify signer (ie. signature.pk == merkletree.signer_leaf)
+        // 3.b. Verify signer (ie. hash(signature.pk) == merkletree.signer_leaf)
         let signer_mt_proof = &mt_proofs[1];
         let key_signer = builder.constant_value(Key::from(KEY_SIGNER).raw());
+        let pk_hash = signature.pk.to_value(builder);
         builder.connect_values(signer_mt_proof.key, key_signer);
-        builder.connect_values(signer_mt_proof.value, signature.pk);
+        builder.connect_values(signer_mt_proof.value, pk_hash);
 
         // 3.c. connect signed message to pod.id
         builder.connect_values(ValueTarget::from_slice(&id.elements), signature.msg);
@@ -130,19 +131,17 @@ impl SignedPodVerifyTarget {
         // add proof verification of KEY_TYPE & KEY_SIGNER leaves
         let key_type_key = Key::from(KEY_TYPE);
         let key_signer_key = Key::from(KEY_SIGNER);
-        let key_signer_value = [&key_type_key, &key_signer_key]
+        [&key_type_key, &key_signer_key]
             .iter()
             .enumerate()
-            .map(|(i, k)| {
+            .try_for_each(|(i, k)| {
                 let (v, proof) = pod.dict.prove(k)?;
                 self.mt_proofs[i].set_targets(
                     pw,
                     true,
                     &MerkleClaimAndProof::new(pod.dict.commitment(), k.raw(), Some(v.raw()), proof),
-                )?;
-                Ok(v)
-            })
-            .collect::<Result<Vec<&Value>>>()?[1];
+                )
+            })?;
 
         // add the verification of the rest of leaves
         let mut curr = 2; // since we already added key_type and key_signer
@@ -174,7 +173,7 @@ impl SignedPodVerifyTarget {
         }
 
         // get the signer pk
-        let pk = PublicKey(key_signer_value.raw());
+        let pk = pod.signer;
         // the msg signed is the pod.id
         let msg = RawValue::from(pod.id.0);
 
@@ -199,7 +198,7 @@ pub mod tests {
     use crate::{
         backends::plonky2::{
             basetypes::C,
-            primitives::signature::SecretKey,
+            primitives::ec::schnorr::SecretKey,
             signedpod::{SignedPod, Signer},
         },
         middleware::F,
