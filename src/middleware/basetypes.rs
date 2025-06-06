@@ -46,6 +46,8 @@ use super::serialization::*;
 // types would come from the plonky3 backend.
 #[cfg(feature = "backend_plonky2")]
 pub use crate::backends::plonky2::basetypes::*;
+#[cfg(feature = "backend_plonky2")]
+pub use crate::backends::plonky2::{Error as BackendError, Result as BackendResult};
 use crate::middleware::{Params, ToFields, Value};
 
 pub const HASH_SIZE: usize = 4;

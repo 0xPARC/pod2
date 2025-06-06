@@ -1,6 +1,5 @@
 use std::{collections::HashMap, sync::Mutex};
 
-use base64::{prelude::BASE64_STANDARD, Engine};
 use itertools::Itertools;
 use plonky2::{
     hash::hash_types::HashOutTarget,
@@ -11,6 +10,7 @@ use plonky2::{
         proof::ProofWithPublicInputs,
     },
 };
+use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::{
@@ -19,10 +19,11 @@ use crate::{
             common::{Flattenable, StatementTarget},
             mainpod::{CalculateIdGadget, PI_OFFSET_ID},
         },
+        deserialize_proof,
         error::{Error, Result},
         mainpod::{self, calculate_id},
         recursion::pad_circuit,
-        LazyLock, DEFAULT_PARAMS, STANDARD_REC_MAIN_POD_CIRCUIT_DATA,
+        serialize_proof, LazyLock, DEFAULT_PARAMS, STANDARD_REC_MAIN_POD_CIRCUIT_DATA,
     },
     middleware::{
         self, AnchoredKey, DynError, Hash, Params, Pod, PodId, PodType, RecursivePod, Statement,
@@ -154,6 +155,28 @@ impl EmptyPod {
         })
         .map_err(|e| Error::custom(format!("EmptyPod proof verification failure: {:?}", e)))
     }
+
+    pub(crate) fn deserialize(
+        params: Params,
+        id: PodId,
+        vds_root: Hash,
+        data: serde_json::Value,
+    ) -> Result<Box<dyn RecursivePod>> {
+        let data: Data = serde_json::from_value(data)?;
+        let circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
+        let proof = deserialize_proof(&circuit_data.common, &data.proof)?;
+        Ok(Box::new(Self {
+            params,
+            id,
+            vds_root,
+            proof,
+        }))
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct Data {
+    proof: String,
 }
 
 impl Pod for EmptyPod {
@@ -167,16 +190,19 @@ impl Pod for EmptyPod {
     fn id(&self) -> PodId {
         self.id
     }
+    fn pod_type(&self) -> (usize, &'static str) {
+        (PodType::Empty as usize, "Empty")
+    }
 
     fn pub_self_statements(&self) -> Vec<middleware::Statement> {
         vec![type_statement()]
     }
 
-    fn serialized_proof(&self) -> String {
-        let mut buffer = Vec::new();
-        use plonky2::util::serialization::Write;
-        buffer.write_proof(&self.proof).unwrap();
-        BASE64_STANDARD.encode(buffer)
+    fn serialize_data(&self) -> serde_json::Value {
+        serde_json::to_value(Data {
+            proof: serialize_proof(&self.proof),
+        })
+        .expect("serialization to json")
     }
 }
 
