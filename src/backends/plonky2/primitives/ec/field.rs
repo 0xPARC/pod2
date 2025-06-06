@@ -72,7 +72,7 @@ pub trait CircuitBuilderNNF<
         y: &NNFTarget,
     ) -> NNFTarget;
     fn nnf_if(&mut self, b: BoolTarget, x_true: &NNFTarget, x_false: &NNFTarget) -> NNFTarget;
-    
+
     /// Computes an extension field element to a given (biguint)
     /// power.
     fn nnf_exp_biguint(&mut self, base: &NNFTarget, exponent: &BigUint) -> NNFTarget;
