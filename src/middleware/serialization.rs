@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Write,
+};
 
 use plonky2::field::types::Field;
 use serde::{ser::SerializeSeq, Deserialize, Serialize, Serializer};
@@ -13,10 +16,16 @@ fn serialize_field_tuple<S, const N: usize>(
 where
     S: serde::Serializer,
 {
-    serializer.serialize_str(&format!(
-        "{:016x}{:016x}{:016x}{:016x}",
-        value[0].0, value[1].0, value[2].0, value[3].0
-    ))
+    // `value` is little-endian in memory. We serialize it as a big-endian hex string
+    // for human readability.
+    let s = value
+        .iter()
+        .rev()
+        .fold(String::with_capacity(N * 16), |mut s, limb| {
+            write!(s, "{:016x}", limb.0).unwrap();
+            s
+        });
+    serializer.serialize_str(&s)
 }
 
 fn deserialize_field_tuple<'de, D, const N: usize>(deserializer: D) -> Result<[F; N], D::Error>
@@ -25,20 +34,29 @@ where
 {
     let hex_str = String::deserialize(deserializer)?;
 
-    if !hex_str.chars().count() == 64 || !hex_str.chars().all(|c| c.is_ascii_hexdigit()) {
+    let expected_len = N * 16;
+    if hex_str.len() != expected_len {
+        return Err(serde::de::Error::custom(format!(
+            "Invalid hex string length: expected {} characters, found {}",
+            expected_len,
+            hex_str.len()
+        )));
+    }
+    if !hex_str.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(serde::de::Error::custom(
-            "Invalid hex string format - expected 64 hexadecimal characters",
+            "Invalid hex string format: contains non-hexadecimal characters",
         ));
     }
 
     let mut v = [F::ZERO; N];
-    for (i, v_i) in v.iter_mut().enumerate() {
+    for i in 0..N {
         let start = i * 16;
         let end = start + 16;
         let hex_part = &hex_str[start..end];
-        *v_i = F::from_canonical_u64(
-            u64::from_str_radix(hex_part, 16).map_err(serde::de::Error::custom)?,
-        );
+        let u64_val = u64::from_str_radix(hex_part, 16).map_err(serde::de::Error::custom)?;
+        // The hex string is big-endian, so the first chunk (i=0) is the most significant.
+        // We store it in the last position of our little-endian array `v`.
+        v[N - 1 - i] = F::from_canonical_u64(u64_val);
     }
     Ok(v)
 }

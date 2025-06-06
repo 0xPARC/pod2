@@ -190,15 +190,22 @@ impl fmt::Display for Hash {
 impl FromHex for Hash {
     type Error = FromHexError;
 
-    // TODO make it dependant on backend::Value len
     fn from_hex<T: AsRef<[u8]>>(hex: T) -> Result<Self, Self::Error> {
-        // In little endian
+        // The input `hex` is a big-endian hex string.
         let bytes = <[u8; 32]>::from_hex(hex)?;
-        let mut buf: [u8; 8] = [0; 8];
         let mut inner = [F::ZERO; HASH_SIZE];
+
         for i in 0..HASH_SIZE {
-            buf.copy_from_slice(&bytes[8 * i..8 * (i + 1)]);
-            inner[i] = F::from_canonical_u64(u64::from_le_bytes(buf));
+            let start = i * 8;
+            let end = start + 8;
+            let chunk: [u8; 8] = bytes[start..end]
+                .try_into()
+                .expect("slice with incorrect length");
+
+            // We read big-endian chunks from a big-endian string,
+            // and place them into a little-endian limb array.
+            let u64_val = u64::from_be_bytes(chunk);
+            inner[HASH_SIZE - 1 - i] = F::from_canonical_u64(u64_val);
         }
         Ok(Self(inner))
     }
