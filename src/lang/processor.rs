@@ -759,6 +759,7 @@ fn parse_pest_string_literal(pair: &Pair<Rule>) -> Result<String, ProcessorError
     Ok(result)
 }
 
+// Translates a big-endian hex string to a little-endian RawValue
 fn parse_hex_str_to_raw_value(hex_str: &str) -> Result<middleware::RawValue, ProcessorError> {
     let mut v = [F::ZERO; VALUE_SIZE];
     let value_range = 0..VALUE_SIZE;
@@ -768,7 +769,7 @@ fn parse_hex_str_to_raw_value(hex_str: &str) -> Result<middleware::RawValue, Pro
         let hex_part = &hex_str[start_idx..end_idx];
 
         let u64_val = u64::from_str_radix(hex_part, 16).unwrap();
-        v[i] = F::from_canonical_u64(u64_val);
+        v[VALUE_SIZE - i - 1] = F::from_canonical_u64(u64_val);
     }
     Ok(middleware::RawValue(v))
 }

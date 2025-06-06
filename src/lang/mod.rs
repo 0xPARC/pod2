@@ -99,7 +99,7 @@ mod tests {
     fn test_e2e_simple_request() -> Result<(), LangError> {
         let input = r#"
             REQUEST(
-                ValueOf(?ConstPod["my_val"], 0x0000000000000001000000000000000000000000000000000000000000000000)
+                ValueOf(?ConstPod["my_val"], 0x0000000000000000000000000000000000000000000000000000000000000001)
                 Lt(?GovPod["dob"], ?ConstPod["my_val"])
             )
         "#;
