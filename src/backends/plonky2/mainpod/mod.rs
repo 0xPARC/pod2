@@ -549,11 +549,12 @@ fn get_common_data(params: &Params) -> Result<CommonCircuitData<F, D>, Error> {
     // TODO: Cache this somehow
     // https://github.com/0xPARC/pod2/issues/247
     let rec_circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
-    let (_, circuit_data) = RecursiveCircuit::<MainPodVerifyTarget>::circuit_data_padded(
-        params.max_input_recursive_pods,
-        &rec_circuit_data.common,
-        params,
-    )?;
+    let (_, circuit_data) =
+        RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data_padded(
+            params.max_input_recursive_pods,
+            &rec_circuit_data.common,
+            params,
+        )?;
     Ok(circuit_data.common.clone())
 }
 
