@@ -40,7 +40,7 @@ use crate::{
 pub const CODE_SIZE: usize = HASH_SIZE + 2;
 const NUM_BITS: usize = 32;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct ValueTarget {
     pub elements: [Target; VALUE_SIZE],
 }

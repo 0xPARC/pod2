@@ -609,10 +609,14 @@ pub struct Params {
     // max number of operations using custom predicates that can be verified in the MainPod
     pub max_custom_predicate_verifications: usize,
     pub max_custom_predicate_wildcards: usize,
-    // maximum number of merkle proofs
-    pub max_merkle_proofs: usize,
-    // maximum depth for merkle tree gadget
-    pub max_depth_mt_gadget: usize,
+    // maximum number of merkle proofs used for container operations
+    pub max_merkle_proofs_containers: usize,
+    // maximum depth for merkle tree gadget used for container operations
+    pub max_depth_mt_containers: usize,
+    // maximum depth of the merkle tree gadget used for verifier_data membership
+    // check.  This allows creating verifying sets of pod circuits of size
+    // 2^max_depth_mt_vds.
+    pub max_depth_mt_vds: usize,
     //
     // The following parameters define how a pod id is calculated.  They need to be the same among
     // different circuits to be compatible in their verification.
@@ -648,8 +652,9 @@ impl Default for Params {
             max_custom_predicate_arity: 5,
             max_custom_predicate_wildcards: 10,
             max_custom_batch_size: 5,
-            max_merkle_proofs: 5,
-            max_depth_mt_gadget: 32,
+            max_merkle_proofs_containers: 5,
+            max_depth_mt_containers: 32,
+            max_depth_mt_vds: 6, // up to 64 (2^6) different pod circuits
         }
     }
 }
