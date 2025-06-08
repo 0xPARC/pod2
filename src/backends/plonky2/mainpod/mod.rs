@@ -13,7 +13,7 @@ pub use statement::*;
 
 use crate::{
     backends::plonky2::{
-        basetypes::{Proof, ProofWithPublicInputs, VerifierOnlyCircuitData, D},
+        basetypes::{Proof, ProofWithPublicInputs, VerifierOnlyCircuitData, D, DEFAULT_VD_TREE},
         circuits::mainpod::{CustomPredicateVerification, MainPodVerifyInput, MainPodVerifyTarget},
         deserialize_proof,
         emptypod::EmptyPod,
@@ -26,10 +26,9 @@ use crate::{
         STANDARD_REC_MAIN_POD_CIRCUIT_DATA,
     },
     middleware::{
-        self, containers::Array, resolve_wildcard_values, AnchoredKey, CustomPredicateBatch,
-        DynError, Hash, MainPodInputs, NativeOperation, NonePod, OperationType, Params, Pod, PodId,
-        PodProver, PodType, RawValue, RecursivePod, StatementArg, ToFields, Value, F, KEY_TYPE,
-        SELF,
+        self, resolve_wildcard_values, AnchoredKey, CustomPredicateBatch, DynError, Hash,
+        MainPodInputs, NativeOperation, NonePod, OperationType, Params, Pod, PodId, PodProver,
+        PodType, RecursivePod, StatementArg, ToFields, F, KEY_TYPE, SELF,
     },
 };
 
@@ -506,8 +505,9 @@ impl Prover {
             .map(|pod| pod.verifier_data())
             .collect_vec();
 
-        let (root, vd_mt_proofs) = vds_tree(params.max_depth_mt_vds, &verifier_datas)?;
-        assert_eq!(inputs.vds_root, root);
+        // TODO decide how the dev (pod2 library user) can define to use a
+        // different VDTree
+        let vd_mt_proofs = DEFAULT_VD_TREE.get_vds_proofs(&verifier_datas)?;
 
         let input = MainPodVerifyInput {
             vds_root: inputs.vds_root,
@@ -680,33 +680,6 @@ impl RecursivePod for MainPod {
     fn vds_root(&self) -> Hash {
         self.vds_root
     }
-}
-
-/// builds the verifier_datas tree, and returns the root and the proofs
-fn vds_tree(
-    tree_depth: usize,
-    vds: &[VerifierOnlyCircuitData],
-) -> Result<(Hash, Vec<MerkleClaimAndProof>)> {
-    let array = Array::new_with_depth(
-        tree_depth,
-        vds.iter()
-            .map(|vd| Value::from(RawValue(vd.circuit_digest.elements)))
-            .collect(),
-    )?;
-
-    let root = array.commitment();
-    let mut proofs = vec![];
-    for i in 0..vds.len() {
-        let (value, proof) = array.prove(i)?;
-        let p = MerkleClaimAndProof {
-            root,
-            key: RawValue::from(i as i64),
-            value: value.raw(),
-            proof,
-        };
-        proofs.push(p);
-    }
-    Ok((root, proofs))
 }
 
 #[cfg(test)]
