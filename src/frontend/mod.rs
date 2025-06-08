@@ -10,7 +10,7 @@ use serialization::{SerializedMainPod, SerializedSignedPod};
 use crate::middleware::{
     self, check_st_tmpl, hash_str, hash_values, AnchoredKey, Hash, Key, MainPodInputs,
     NativeOperation, NativePredicate, OperationAux, OperationType, Params, PodId, PodProver,
-    PodSigner, Predicate, Statement, StatementArg, Value, WildcardValue, EMPTY_HASH, KEY_TYPE,
+    PodSigner, Predicate, Statement, StatementArg, Value, WildcardValue, DEFAULT_VD_TREE, KEY_TYPE,
     SELF,
 };
 
@@ -548,6 +548,7 @@ impl MainPodBuilder {
         };
 
         let (statements, operations, public_statements) = compiler.compile(inputs, params)?;
+
         let inputs = MainPodInputs {
             signed_pods: &self
                 .input_signed_pods
@@ -562,7 +563,7 @@ impl MainPodBuilder {
             statements: &statements,
             operations: &operations,
             public_statements: &public_statements,
-            vds_root: EMPTY_HASH, // TODO https://github.com/0xPARC/pod2/issues/249
+            vds_root: DEFAULT_VD_TREE.root(),
         };
         let pod = prover.prove(&self.params, inputs)?;
 

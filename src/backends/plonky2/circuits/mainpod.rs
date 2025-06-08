@@ -1406,7 +1406,7 @@ impl MainPodVerifyTarget {
         pw.set_target_arr(&self.vds_root.elements, &input.vds_root.0)?;
 
         for (i, vd_mt_proof) in input.vd_mt_proofs.iter().enumerate() {
-            self.vd_mt_proofs[i].set_targets(pw, true, &vd_mt_proof)?;
+            self.vd_mt_proofs[i].set_targets(pw, true, vd_mt_proof)?;
         }
         // TODO review if disable, or if to put emtpy_pod related vd
         for i in input.vd_mt_proofs.len()..self.vd_mt_proofs.len() {
