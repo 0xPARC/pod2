@@ -453,9 +453,10 @@ where
     }
 
     fn eval_unfiltered(&self, vars: EvaluationVars<F, D>) -> Vec<F::Extension> {
-        // We think of vars as a list of G::WIRES_PER_OP elements of ExtensionAlgebra<F,D>.
+        // We think of `vars.local_wires` as a list of G::WIRES_PER_OP
+        // elements of ExtensionAlgebra<F,D>.
         // We use the fact that ExtensionAlgebra<F,D> is isomorphic to D copies of
-        // F::Extension, with the isomorphism given by (a \otimes b) ->
+        // F::Extension, with the isomorphism given by (a ⊗ b) ->
         // [a.repeated_frobenius(j) * b for j in 0..D].
         let mut constraints = Vec::with_capacity(D * G::OUTPUTS_PER_OP);
         let mut evals: [Vec<F::Extension>; D] = core::array::from_fn(|_| Vec::new());
@@ -466,9 +467,13 @@ where
         for i in 0..self.max_ops {
             let input_start = D * G::WIRES_PER_OP * i;
             let output_start = input_start + D * G::INPUTS_PER_OP;
+            // Phase factor for Frobenius automorphism
+            // application, cf. definition of `repeated_frobenius`
+            // in plonky2/field/src/extension/mod.rs.
             let mut phase = F::ONE;
             for ev in evals.iter_mut() {
                 inputs.clear();
+                // Collect input wires.
                 for j in 0..G::INPUTS_PER_OP {
                     let var_start = input_start + D * j;
                     let var: [[F; D]; D] = core::array::from_fn(|k| {
@@ -489,6 +494,7 @@ where
                     }
                     inputs.push(F::Extension::from_basefield_array(input));
                 }
+                // Evaluate SimpleGate.
                 *ev = G::eval(&inputs);
                 phase *= F::DTH_ROOT;
             }
@@ -520,6 +526,7 @@ where
         constraints
     }
 
+    // Recursive constraint analogue to `eval_unfiltered`.
     fn eval_unfiltered_circuit(
         &self,
         builder: &mut plonky2::plonk::circuit_builder::CircuitBuilder<F, D>,
