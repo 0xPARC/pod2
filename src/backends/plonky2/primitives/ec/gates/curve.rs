@@ -9,6 +9,20 @@ use crate::backends::plonky2::primitives::ec::{
 /// homogeneous coordinates *minus* an offset in the `z` and `t`
 /// coordinates, viz. the extension field generator times `Point::B1`,
 /// cf. CircuitBuilderElliptic::add_point.
+///
+/// In plonky2 one Gate can do multiple operations and the gate will register one
+/// generator per operation.  When a gate operation is used, the `CircuitBuilder` tracks the
+/// allocation of operations to gates via the `current_slots` field.  Once the circuit is fully
+/// defined, during the build the circuit the generators
+/// associated to unused operations (free slots) are removed:
+/// https://github.com/0xPolygonZero/plonky2/blob/82791c4809d6275682c34b926390ecdbdc2a5297/plonky2/src/plonk/circuit_builder.rs#L1210
+/// Since the generator for the unused operations are removed, no witness value will be calculated
+/// for them, and the free slots gate witness wires will be filled with the default value which is zero:
+/// https://github.com/0xPolygonZero/plonky2/blob/82791c4809d6275682c34b926390ecdbdc2a5297/plonky2/src/iop/witness.rs#L377
+/// This means that a gate with multiple operations need to pass the constraints for a single
+/// operation when all its witness wire values are zero (so that when the gate is partially used,
+/// the unused slots still pass the constraints). This is the reason why this gate doesn't add the
+/// final offset: if it did, the constraints wouldn't pass on the zero witness values.
 #[derive(Debug, Clone)]
 pub struct ECAddHomogOffset;
 
