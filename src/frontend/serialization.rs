@@ -234,7 +234,7 @@ mod tests {
             (TypedValue::Bool(true), "true"),
             (
                 TypedValue::Array(Array::new(vec!["foo".into(), false.into()]).unwrap()),
-                "[\"foo\",false]",
+                "{\"max_depth\":32,\"array\":[\"foo\",false]}",
             ),
             (
                 TypedValue::Dictionary(
@@ -254,11 +254,11 @@ mod tests {
                     ]))
                     .unwrap(),
                 ),
-                "{\"Dictionary\":{\"\":\"baz\",\"\\u0000\":\"\",\"    hi\":false,\"!@£$%^&&*()\":\"\",\"foo\":{\"Int\":\"123\"},\"🥳\":\"party time!\"}}",
+                "{\"Dictionary\":{\"max_depth\":32,\"kvs\":{\"\":\"baz\",\"\\u0000\":\"\",\"    hi\":false,\"!@£$%^&&*()\":\"\",\"foo\":{\"Int\":\"123\"},\"🥳\":\"party time!\"}}}",
             ),
             (
                 TypedValue::Set(Set::new(HashSet::from(["foo".into(), "bar".into()])).unwrap()),
-                "{\"Set\":[\"bar\",\"foo\"]}",
+                "{\"Set\":{\"max_depth\":32,\"set\":[\"bar\",\"foo\"]}}",
             ),
         ];
 
