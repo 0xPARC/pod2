@@ -37,7 +37,7 @@ pub fn deserialize_pod(
             .unwrap()
             .get(&pod_type)
             .ok_or(Error::custom(format!(
-                "pod deserializer for pod_type={} not registered",
+                "pod deserializer for pod_type={} not registered.  See https://github.com/0xPARC/pod2/wiki/PodType for pod type assignments.",
                 pod_type
             )))?;
 
