@@ -131,7 +131,7 @@ impl fmt::Display for Statement {
                 if i != 0 {
                     write!(f, " ")?;
                 }
-                write!(f, "{}", arg)?;
+                arg.fmt(f)?;
             }
         }
         Ok(())

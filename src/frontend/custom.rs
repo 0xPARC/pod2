@@ -237,6 +237,10 @@ impl CustomPredicateBatchBuilder {
             conjunction,
             statements,
             args.len(),
+            args.iter()
+                .chain(priv_args.iter())
+                .map(|s| s.to_string())
+                .collect(),
         )?;
         self.predicates.push(custom_predicate);
         Ok(Predicate::BatchSelf(self.predicates.len() - 1))

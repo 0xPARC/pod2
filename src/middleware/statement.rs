@@ -73,8 +73,8 @@ impl fmt::Display for WildcardValue {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             WildcardValue::None => write!(f, "none"),
-            WildcardValue::PodId(pod_id) => write!(f, "{}", pod_id),
-            WildcardValue::Key(key) => write!(f, "{}", key),
+            WildcardValue::PodId(pod_id) => pod_id.fmt(f),
+            WildcardValue::Key(key) => key.fmt(f),
         }
     }
 }
@@ -147,13 +147,17 @@ impl fmt::Display for Predicate {
             Self::Native(p) => write!(f, "{:?}", p),
             Self::BatchSelf(i) => write!(f, "self.{}", i),
             Self::Custom(CustomPredicateRef { batch, index }) => {
-                write!(
-                    f,
-                    "{}.{}[{}]",
-                    batch.name,
-                    index,
-                    batch.predicates()[*index].name
-                )
+                if f.alternate() {
+                    write!(
+                        f,
+                        "{}.{}:{}",
+                        batch.name,
+                        index,
+                        batch.predicates()[*index].name
+                    )
+                } else {
+                    write!(f, "{}", batch.predicates()[*index].name)
+                }
             }
         }
     }
@@ -368,9 +372,9 @@ impl fmt::Display for StatementArg {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             StatementArg::None => write!(f, "none"),
-            StatementArg::Literal(v) => write!(f, "{}", v),
-            StatementArg::Key(r) => write!(f, "{}.{}", r.pod_id, r.key),
-            StatementArg::WildcardLiteral(v) => write!(f, "{}", v),
+            StatementArg::Literal(v) => v.fmt(f),
+            StatementArg::Key(r) => r.fmt(f),
+            StatementArg::WildcardLiteral(v) => v.fmt(f),
         }
     }
 }
