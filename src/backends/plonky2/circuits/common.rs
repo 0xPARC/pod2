@@ -863,6 +863,12 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     fn add_virtual_custom_predicate_entry(&mut self, params: &Params)
         -> CustomPredicateEntryTarget;
     fn select_value(&mut self, b: BoolTarget, x: ValueTarget, y: ValueTarget) -> ValueTarget;
+    fn select_statement_arg(
+        &mut self,
+        b: BoolTarget,
+        x: &StatementArgTarget,
+        y: &StatementArgTarget,
+    ) -> StatementArgTarget;
     fn select_bool(&mut self, b: BoolTarget, x: BoolTarget, y: BoolTarget) -> BoolTarget;
     fn constant_value(&mut self, v: RawValue) -> ValueTarget;
     fn is_equal_slice(&mut self, xs: &[Target], ys: &[Target]) -> BoolTarget;
@@ -1033,6 +1039,17 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
 
     fn select_value(&mut self, b: BoolTarget, x: ValueTarget, y: ValueTarget) -> ValueTarget {
         ValueTarget {
+            elements: std::array::from_fn(|i| self.select(b, x.elements[i], y.elements[i])),
+        }
+    }
+
+    fn select_statement_arg(
+        &mut self,
+        b: BoolTarget,
+        x: &StatementArgTarget,
+        y: &StatementArgTarget,
+    ) -> StatementArgTarget {
+        StatementArgTarget {
             elements: std::array::from_fn(|i| self.select(b, x.elements[i], y.elements[i])),
         }
     }
