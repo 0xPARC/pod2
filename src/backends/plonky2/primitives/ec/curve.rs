@@ -630,7 +630,7 @@ pub trait WitnessWriteCurve: WitnessWrite<GoldilocksField> {
         let digits = value.to_u32_digits();
         for i in 0..10 {
             let d = digits.get(i).copied().unwrap_or(0);
-            self.set_target(target.0[i], GoldilocksField::from_canonical_u32(d))?;
+            self.set_target(target.limbs[i], GoldilocksField::from_canonical_u32(d))?;
         }
         Ok(())
     }
@@ -775,8 +775,8 @@ mod test {
         let p_tgt = builder.constant_point(p);
         let g_scalar_bigint = builder.constant_biguint320(&n2);
         let p_scalar_bigint = builder.constant_biguint320(&n3);
-        let g_scalar_bits = builder.biguint_bits(&g_scalar_bigint);
-        let p_scalar_bits = builder.biguint_bits(&p_scalar_bigint);
+        let g_scalar_bits = g_scalar_bigint.bits;
+        let p_scalar_bits = p_scalar_bigint.bits;
         let e = builder.constant_point((&n2) * g + (&n3) * p);
         let f = builder.linear_combination_points(&g_scalar_bits, &p_scalar_bits, &g_tgt, &p_tgt);
         builder.connect_point(&e, &f);

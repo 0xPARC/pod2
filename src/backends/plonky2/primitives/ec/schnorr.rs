@@ -117,14 +117,14 @@ impl SignatureTarget {
         public_key: &PointTarget,
     ) -> BoolTarget {
         let g = builder.constant_point(Point::generator());
-        let sig1_bits = builder.biguint_bits(&self.s);
-        let sig2_bits = builder.biguint_bits(&self.e);
+        let sig1_bits = self.s.bits;
+        let sig2_bits = self.e.bits;
         let r = builder.linear_combination_points(&sig1_bits, &sig2_bits, &g, public_key);
         let u_arr = r.u.components;
         let inputs = u_arr.into_iter().chain(msg.elements).collect::<Vec<_>>();
         let e_hash = hash_array_circuit(builder, &inputs);
         let e = builder.field_elements_to_biguint(&e_hash);
-        builder.is_equal_slice(&self.e.0, &e.0)
+        builder.is_equal_slice(&self.e.limbs, &e.limbs)
     }
 }
 
@@ -316,6 +316,7 @@ mod test {
         let int_const = builder.constant_biguint320(&hash_int);
         let int_circuit = builder.field_elements_to_biguint(&hash_const);
         builder.connect_biguint320(&int_const, &int_circuit);
+        println!("{}", builder.num_gates());
         let pw = PartialWitness::new();
         let data = builder.build::<PoseidonGoldilocksConfig>();
         let proof = data.prove(pw)?;
