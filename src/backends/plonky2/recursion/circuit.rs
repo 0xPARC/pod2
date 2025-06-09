@@ -12,7 +12,7 @@ use itertools::Itertools;
 use plonky2::{
     self,
     field::{extension::quintic::QuinticExtension, types::Field},
-    gates::noop::NoopGate,
+    gates::{gate::GateRef, noop::NoopGate},
     hash::hash_types::HashOutTarget,
     iop::{
         target::Target,
@@ -311,17 +311,14 @@ fn coset_interpolation_gate(
     unsafe { std::mem::transmute(gate) }
 }
 
-pub fn common_data_for_recursion<I: InnerCircuit>(
-    arity: usize,
-    num_public_inputs: usize,
-    inner_params: &I::Params,
-) -> Result<CommonCircuitData<F, D>> {
-    let config = CircuitConfig::standard_recursion_config();
-
-    let mut builder = CircuitBuilder::<F, D>::new(config.clone());
-    use plonky2::gates::gate::GateRef;
-    // Add our standard set of gates
-    for gate in [
+/// Returns the minimum set of gates that define our recursively verifiable circuits.
+/// NOTE: The overhead between verifying any proof with just the `NoopGate` and verifying a proof
+/// with all these standard gates is about 400 num_gates (rows), no matter the circuit size.
+fn standard_gates(config: &CircuitConfig) -> Vec<GateRef<F, D>> {
+    let nnf_mul_simple =
+        GateAdapter::<NNFMulSimple<5, QuinticExtension<F>>>::new_from_config(config);
+    let ec_add_homog_offset = GateAdapter::<ECAddHomogOffset>::new_from_config(config);
+    vec![
         GateRef::new(plonky2::gates::noop::NoopGate {}),
         GateRef::new(plonky2::gates::constant::ConstantGate::new(
             config.num_constants,
@@ -329,30 +326,27 @@ pub fn common_data_for_recursion<I: InnerCircuit>(
         GateRef::new(plonky2::gates::poseidon_mds::PoseidonMdsGate::new()),
         GateRef::new(plonky2::gates::poseidon::PoseidonGate::new()),
         GateRef::new(plonky2::gates::public_input::PublicInputGate {}),
-        GateRef::new(plonky2::gates::base_sum::BaseSumGate::<2>::new_from_config::<F>(&config)),
+        GateRef::new(plonky2::gates::base_sum::BaseSumGate::<2>::new_from_config::<F>(config)),
         GateRef::new(plonky2::gates::reducing_extension::ReducingExtensionGate::new(32)),
         GateRef::new(plonky2::gates::reducing::ReducingGate::new(43)),
         GateRef::new(
-            plonky2::gates::arithmetic_extension::ArithmeticExtensionGate::new_from_config(&config),
+            plonky2::gates::arithmetic_extension::ArithmeticExtensionGate::new_from_config(config),
         ),
-        GateRef::new(plonky2::gates::arithmetic_base::ArithmeticGate::new_from_config(&config)),
+        GateRef::new(plonky2::gates::arithmetic_base::ArithmeticGate::new_from_config(config)),
         GateRef::new(
-            plonky2::gates::multiplication_extension::MulExtensionGate::new_from_config(&config),
+            plonky2::gates::multiplication_extension::MulExtensionGate::new_from_config(config),
         ),
-        GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(&config, 1)),
-        GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(&config, 2)),
-        GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(&config, 3)),
-        GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(&config, 4)),
-        GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(&config, 5)),
-        GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(&config, 6)),
-        GateRef::new(GateAdapter::<NNFMulSimple<5, QuinticExtension<F>>>::new_from_config(&config)),
-        GateRef::new(
-            GateAdapter::<NNFMulSimple<5, QuinticExtension<F>>>::new_from_config(&config)
-                .recursive_gate(),
-        ),
-        GateRef::new(GateAdapter::<ECAddHomogOffset>::new_from_config(&config)),
-        GateRef::new(GateAdapter::<ECAddHomogOffset>::new_from_config(&config).recursive_gate()),
-        GateRef::new(plonky2::gates::exponentiation::ExponentiationGate::new_from_config(&config)),
+        GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(config, 1)),
+        GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(config, 2)),
+        GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(config, 3)),
+        GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(config, 4)),
+        GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(config, 5)),
+        GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(config, 6)),
+        GateRef::new(nnf_mul_simple.recursive_gate()),
+        GateRef::new(nnf_mul_simple),
+        GateRef::new(ec_add_homog_offset.recursive_gate()),
+        GateRef::new(ec_add_homog_offset),
+        GateRef::new(plonky2::gates::exponentiation::ExponentiationGate::new_from_config(config)),
         // It would be better do `CosetInterpolationGate::with_max_degree(4, 6)` but unfortunately
         // that plonk2 method is `pub(crate)`, so we need to get around that somehow.
         GateRef::new(coset_interpolation_gate(
@@ -377,7 +371,42 @@ pub fn common_data_for_recursion<I: InnerCircuit>(
                 18446462594437939201,
             ],
         )),
-    ] {
+    ]
+}
+
+/// Estimate the number of gates to verify a proof of `degree_bits` that uses the
+/// `standard_gates(&standard_recursion_config)`
+fn estimate_verif_num_gates(degree_bits: usize) -> usize {
+    // Formula obtained via linear regression using `test_measure_recursion` results with
+    // `standard_recursion_config`.
+    let num_gates: usize = 236 * degree_bits + 1171;
+    // Add 2% for error because the results are not a clean line
+    num_gates * 102 / 100
+}
+
+/// Estimate the number of gates after blinding (to add zk) and padding of a circuit with
+/// `2^degree_bits` gates using `standard_recursion_zk_config`.
+#[allow(dead_code)]
+fn estimate_gates_after_zk(degree_bits: usize) -> usize {
+    // Table data obtained using `test_measure_zk` results with `standard_recursion_zk_config`.
+    match degree_bits {
+        0..=12 => 1 << 14,
+        13 => 1 << 15,
+        n => 1 << (n + 1),
+    }
+}
+
+pub fn common_data_for_recursion<I: InnerCircuit>(
+    arity: usize,
+    num_public_inputs: usize,
+    inner_params: &I::Params,
+) -> Result<CommonCircuitData<F, D>> {
+    let config = CircuitConfig::standard_recursion_config();
+
+    let mut builder = CircuitBuilder::<F, D>::new(config.clone());
+    // Add our standard set of gates
+    let standard_gates = standard_gates(&config);
+    for gate in standard_gates.into_iter() {
         builder.add_gate_to_gate_set(gate);
     }
 
@@ -393,14 +422,6 @@ pub fn common_data_for_recursion<I: InnerCircuit>(
         "common_data_for_recursion builder.build",
         builder.build::<C>()
     );
-
-    let estimate_verif_num_gates = |degree_bits: usize| {
-        // Formula obtained via linear regression using `test_measure_recursion` results with
-        // `standard_recursion_config`.
-        let num_gates: usize = 236 * degree_bits + 698;
-        // Add 8% for error because the results are not a clean line
-        num_gates * 108 / 100
-    };
 
     // Loop until we find a circuit size that can verify `arity` proofs of itself
     let mut degree_bits = log2_ceil(inner_num_gates);
@@ -804,6 +825,34 @@ mod tests {
     #[test]
     fn test_measure_recursion() {
         let config = CircuitConfig::standard_recursion_config();
+        for i in 7..20 {
+            let mut builder = CircuitBuilder::new(config.clone());
+            let standard_gates = standard_gates(&config);
+            for gate in standard_gates.into_iter() {
+                builder.add_gate_to_gate_set(gate);
+            }
+            while builder.num_gates() < (1 << i) - MAX_CONSTANT_GATES {
+                builder.add_gate(NoopGate, vec![]);
+            }
+            println!("build degree 2^{} ...", i);
+            let circuit_data = builder.build::<C>();
+            assert_eq!(i, circuit_data.common.degree_bits());
+
+            let mut builder = CircuitBuilder::new(config.clone());
+            let measure = measure_gates_begin!(&builder, format!("verifier for 2^{}", i));
+            let verifier_data_i =
+                builder.add_virtual_verifier_data(builder.config.fri_config.cap_height);
+            let proof = builder.add_virtual_proof_with_pis(&circuit_data.common);
+            builder.verify_proof::<C>(&proof, &verifier_data_i, &circuit_data.common);
+            measure_gates_end!(&builder, measure);
+        }
+        measure_gates_print!();
+    }
+
+    #[ignore]
+    #[test]
+    fn test_measure_zk() {
+        let config = CircuitConfig::standard_recursion_zk_config();
         for i in 7..18 {
             let mut builder = CircuitBuilder::new(config.clone());
             builder.add_gate_to_gate_set(plonky2::gates::gate::GateRef::new(
@@ -812,12 +861,38 @@ mod tests {
             while builder.num_gates() < (1 << i) - MAX_CONSTANT_GATES {
                 builder.add_gate(NoopGate, vec![]);
             }
+            let circuit_data = builder.build::<C>();
+            println!(
+                "2^{} gates require 2^{} rows",
+                i,
+                circuit_data.common.degree_bits()
+            );
+        }
+    }
+
+    #[ignore]
+    #[test]
+    fn test_measure_zk_recursion() {
+        let config = CircuitConfig::standard_recursion_zk_config();
+        for i in 12..18 {
+            let mut builder = CircuitBuilder::new(config.clone());
+            let standard_gates = standard_gates(&config);
+            for gate in standard_gates.into_iter() {
+                builder.add_gate_to_gate_set(gate);
+            }
+            while builder.num_gates() < (1 << i) - MAX_CONSTANT_GATES {
+                builder.add_gate(NoopGate, vec![]);
+            }
+            let expected_degree_bits = log2_ceil(estimate_gates_after_zk(i));
             println!("build degree 2^{} ...", i);
             let circuit_data = builder.build::<C>();
-            assert_eq!(circuit_data.common.degree_bits(), i);
+            assert_eq!(expected_degree_bits, circuit_data.common.degree_bits());
 
             let mut builder = CircuitBuilder::new(config.clone());
-            let measure = measure_gates_begin!(&builder, format!("verifier for 2^{}", i));
+            let measure = measure_gates_begin!(
+                &builder,
+                format!("verifier for zk 2^{}", expected_degree_bits)
+            );
             let verifier_data_i =
                 builder.add_virtual_verifier_data(builder.config.fri_config.cap_height);
             let proof = builder.add_virtual_proof_with_pis(&circuit_data.common);
