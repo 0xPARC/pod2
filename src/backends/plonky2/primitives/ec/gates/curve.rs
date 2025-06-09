@@ -5,10 +5,14 @@ use crate::backends::plonky2::primitives::ec::{
     gates::{field::QuinticTensor, generic::SimpleGate},
 };
 
+/// Gate computing the addition of two elliptic curve points in
+/// homogeneous coordinates *minus* an offset in the `z` and `t`
+/// coordinates, viz. the extension field generator times `Point::B1`,
+/// cf. CircuitBuilderElliptic::add_point.
 #[derive(Debug, Clone)]
-pub struct ECAddHomog;
+pub struct ECAddHomogOffset;
 
-impl SimpleGate for ECAddHomog {
+impl SimpleGate for ECAddHomogOffset {
     type F = GoldilocksField;
     const INPUTS_PER_OP: usize = 20;
     const OUTPUTS_PER_OP: usize = 20;
@@ -41,13 +45,13 @@ mod test {
     };
 
     use crate::backends::plonky2::primitives::ec::gates::{
-        curve::ECAddHomog, generic::GateAdapter,
+        curve::ECAddHomogOffset, generic::GateAdapter,
     };
 
     #[test]
     fn test_recursion() -> Result<(), anyhow::Error> {
         let config = CircuitConfig::standard_recursion_config();
-        let gate = GateAdapter::<ECAddHomog>::new_from_config(&config);
+        let gate = GateAdapter::<ECAddHomogOffset>::new_from_config(&config);
 
         test_eval_fns::<_, PoseidonGoldilocksConfig, _, 2>(gate)
     }
@@ -55,7 +59,7 @@ mod test {
     #[test]
     fn test_low_degree_orig() -> Result<(), anyhow::Error> {
         let config = CircuitConfig::standard_recursion_config();
-        let gate = GateAdapter::<ECAddHomog>::new_from_config(&config);
+        let gate = GateAdapter::<ECAddHomogOffset>::new_from_config(&config);
 
         test_low_degree::<_, _, 2>(gate);
         Ok(())
@@ -64,7 +68,7 @@ mod test {
     #[test]
     fn test_low_degree_recursive() -> Result<(), anyhow::Error> {
         let config = CircuitConfig::standard_recursion_config();
-        let orig_gate = GateAdapter::<ECAddHomog>::new_from_config(&config);
+        let orig_gate = GateAdapter::<ECAddHomogOffset>::new_from_config(&config);
 
         test_low_degree::<_, _, 2>(orig_gate.recursive_gate());
         Ok(())
@@ -73,7 +77,7 @@ mod test {
     #[test]
     fn test_double_recursion() -> Result<(), anyhow::Error> {
         let config = CircuitConfig::standard_recursion_config();
-        let orig_gate = GateAdapter::<ECAddHomog>::new_from_config(&config);
+        let orig_gate = GateAdapter::<ECAddHomogOffset>::new_from_config(&config);
         test_eval_fns::<_, PoseidonGoldilocksConfig, _, 2>(orig_gate.recursive_gate())
     }
 }

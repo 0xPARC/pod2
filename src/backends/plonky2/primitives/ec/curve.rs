@@ -28,7 +28,7 @@ use crate::backends::plonky2::{
     primitives::ec::{
         bits::BigUInt320Target,
         field::{get_nnf_target, CircuitBuilderNNF, OEFTarget},
-        gates::{curve::ECAddHomog, generic::SimpleGate},
+        gates::{curve::ECAddHomogOffset, generic::SimpleGate},
     },
     Error,
 };
@@ -462,7 +462,7 @@ impl CircuitBuilderElliptic for CircuitBuilder<GoldilocksField, 2> {
         inputs.extend_from_slice(&p1.u.components);
         inputs.extend_from_slice(&p2.x.components);
         inputs.extend_from_slice(&p2.u.components);
-        let outputs = ECAddHomog::apply(self, &inputs);
+        let outputs = ECAddHomogOffset::apply(self, &inputs);
         // plonky2 expects all gate constraints to be satisfied by the zero vector.
         // So our elliptic curve addition gate computes [x,z-b,u,t-b], and we have to add the b here.
         let x = FieldTarget::new(outputs[0..5].try_into().unwrap());

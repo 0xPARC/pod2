@@ -33,7 +33,9 @@ use crate::{
     backends::plonky2::{
         basetypes::{C, D},
         error::Result,
-        primitives::ec::gates::{curve::ECAddHomog, field::NNFMulSimple, generic::GateAdapter},
+        primitives::ec::gates::{
+            curve::ECAddHomogOffset, field::NNFMulSimple, generic::GateAdapter,
+        },
     },
     middleware::F,
     timed,
@@ -348,8 +350,8 @@ pub fn common_data_for_recursion<I: InnerCircuit>(
             GateAdapter::<NNFMulSimple<5, QuinticExtension<F>>>::new_from_config(&config)
                 .recursive_gate(),
         ),
-        GateRef::new(GateAdapter::<ECAddHomog>::new_from_config(&config)),
-        GateRef::new(GateAdapter::<ECAddHomog>::new_from_config(&config).recursive_gate()),
+        GateRef::new(GateAdapter::<ECAddHomogOffset>::new_from_config(&config)),
+        GateRef::new(GateAdapter::<ECAddHomogOffset>::new_from_config(&config).recursive_gate()),
         GateRef::new(plonky2::gates::exponentiation::ExponentiationGate::new_from_config(&config)),
         // It would be better do `CosetInterpolationGate::with_max_degree(4, 6)` but unfortunately
         // that plonk2 method is `pub(crate)`, so we need to get around that somehow.
