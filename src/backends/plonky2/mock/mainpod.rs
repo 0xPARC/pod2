@@ -157,7 +157,7 @@ impl MockMainPod {
     pub fn new(params: &Params, inputs: MainPodInputs) -> Result<Self> {
         // TODO: Insert a new public statement of ValueOf with `key=KEY_TYPE,
         // value=PodType::MockMainPod`
-        let (statements, public_statements) = layout_statements(params, false, &inputs)?;
+        let (statements, public_statements) = layout_statements(params, true, &inputs)?;
         // Extract Merkle proofs and pad.
         let merkle_proofs = extract_merkle_proofs(params, inputs.operations)?;
 
