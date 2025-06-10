@@ -19,8 +19,7 @@ use crate::{
     },
     middleware::{
         self, hash_str, AnchoredKey, DynError, Hash, MainPodInputs, NativePredicate, Params, Pod,
-        PodId, PodProver, PodType, Predicate, RecursivePod, StatementArg, VDSet, VDTree, KEY_TYPE,
-        SELF,
+        PodId, PodProver, PodType, Predicate, RecursivePod, StatementArg, VDSet, KEY_TYPE, SELF,
     },
 };
 

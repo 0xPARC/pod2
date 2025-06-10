@@ -13,10 +13,8 @@ pub use statement::*;
 
 use crate::{
     backends::plonky2::{
-        basetypes::{Proof, ProofWithPublicInputs, VerifierOnlyCircuitData, D, DEFAULT_VD_TREE},
-        circuits::mainpod::{
-            CustomPredicateVerification, MainPodVerifyInput, MainPodVerifyTarget, NUM_PUBLIC_INPUTS,
-        },
+        basetypes::{Proof, ProofWithPublicInputs, VerifierOnlyCircuitData, D},
+        circuits::mainpod::{CustomPredicateVerification, MainPodVerifyInput, MainPodVerifyTarget},
         deserialize_proof,
         emptypod::EmptyPod,
         error::{Error, Result},
