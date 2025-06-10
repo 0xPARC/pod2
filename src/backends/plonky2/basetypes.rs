@@ -37,7 +37,6 @@ pub type CircuitBuilder = circuit_builder::CircuitBuilder<F, D>;
 pub type Proof = proof::Proof<F, C, D>;
 pub type ProofWithPublicInputs = proof::ProofWithPublicInputs<F, C, D>;
 
-// TODO decide where to place struct VDSTree and the DEFAULT_VD_TREE
 use std::{collections::HashMap, sync::LazyLock};
 
 use plonky2::hash::hash_types::HashOut;
@@ -60,19 +59,17 @@ pub static DEFAULT_VD_TREE: LazyLock<VDTree> = LazyLock::new(|| {
     VDTree::new(params.max_depth_mt_vds, &vds).unwrap()
 });
 
-// TODO: Note: I've used `containers::Array`, but I think that using the `Set`
-// would make. With `Array` we save 1 hash per each verifier_data entry, but
-// with `Set` we don't need to keep track of which verifier_data is stored at
-// which position, and can just get the merkleproof for the given
-// `verifier_data` (without first getting its `i`).
 /// Struct that allows to get the specific merkle proofs for the given verifier_data
+#[derive(Clone, Debug)]
 pub struct VDTree {
     root: Hash,
+    // (verifier_data, merkleproof)
     proofs_map: HashMap<HashOut<F>, MerkleClaimAndProof>,
 }
 impl VDTree {
     /// builds the verifier_datas tree, and returns the root and the proofs
     pub fn new(tree_depth: usize, vds: &[VerifierOnlyCircuitData]) -> Result<Self> {
+        // TODO sort vds
         let array = Array::new_with_depth(
             tree_depth,
             vds.iter()

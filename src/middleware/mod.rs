@@ -578,6 +578,7 @@ impl fmt::Display for PodType {
     }
 }
 
+/// Params: non dynamic parameters that define the circuit.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Hash)]
 #[serde(rename_all = "camelCase")]
 pub struct Params {
@@ -827,6 +828,7 @@ pub trait PodProver {
     fn prove(
         &self,
         params: &Params,
+        vd_tree: &VDTree,
         inputs: MainPodInputs,
     ) -> Result<Box<dyn RecursivePod>, Box<DynError>>;
 }

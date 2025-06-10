@@ -1221,9 +1221,8 @@ impl MainPodVerifyGadget {
 
         let vds_root = builder.add_virtual_hash();
 
-        // TODO: verify that all input pod proofs use verifier data from the public input VD array
-        // This requires merkle proofs
-        // https://github.com/0xPARC/pod2/issues/250
+        // verify that all input pod proofs use verifier data from the public input VD array This
+        // requires merkle proofs
         let mut vd_mt_proofs: Vec<MerkleClaimAndProofTarget> = vec![];
         for verified_proof in verified_proofs {
             // add target for the vd_mt_proof
@@ -1235,7 +1234,11 @@ impl MainPodVerifyGadget {
             // connect the vd_mt_proof's root to the actual vds_root, to ensure that the mt proof
             // verifies against the vds_root
             builder.connect_hashes(vds_root, vd_mt_proof.root);
-            // TODO connect vd_mt_proof.key == verified_proof.verifier_data_hash
+            // connect vd_mt_proof's value with the verified_proof.verifier_data_hash
+            builder.connect_hashes(
+                verified_proof.verifier_data_hash,
+                HashOutTarget::from_vec(vd_mt_proof.value.elements.to_vec()),
+            );
 
             vd_mt_proofs.push(vd_mt_proof);
         }

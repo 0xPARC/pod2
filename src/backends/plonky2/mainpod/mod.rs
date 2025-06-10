@@ -14,7 +14,7 @@ pub use statement::*;
 
 use crate::{
     backends::plonky2::{
-        basetypes::{Proof, ProofWithPublicInputs, VerifierOnlyCircuitData, D, DEFAULT_VD_TREE},
+        basetypes::{Proof, ProofWithPublicInputs, VerifierOnlyCircuitData, D},
         circuits::mainpod::{
             CustomPredicateVerification, MainPodVerifyInput, MainPodVerifyTarget, NUM_PUBLIC_INPUTS,
         },
@@ -29,7 +29,7 @@ use crate::{
     middleware::{
         self, resolve_wildcard_values, AnchoredKey, CustomPredicateBatch, DynError, Hash,
         MainPodInputs, NativeOperation, NonePod, OperationType, Params, Pod, PodId, PodProver,
-        PodType, RecursivePod, StatementArg, ToFields, F, KEY_TYPE, SELF,
+        PodType, RecursivePod, StatementArg, ToFields, VDTree, F, KEY_TYPE, SELF,
     },
 };
 
@@ -406,7 +406,7 @@ pub(crate) fn process_public_statements_operations(
 pub struct Prover {}
 
 impl Prover {
-    fn _prove(&self, params: &Params, inputs: MainPodInputs) -> Result<MainPod> {
+    fn _prove(&self, params: &Params, vd_tree: &VDTree, inputs: MainPodInputs) -> Result<MainPod> {
         let rec_circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
         let (main_pod_target, circuit_data) =
             RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data_padded(
@@ -503,9 +503,7 @@ impl Prover {
             .map(|pod| pod.verifier_data())
             .collect_vec();
 
-        // TODO decide how the dev (pod2 library user) can define to use a
-        // different VDTree
-        let vd_mt_proofs = DEFAULT_VD_TREE.get_vds_proofs(&verifier_datas)?;
+        let vd_mt_proofs = vd_tree.get_vds_proofs(&verifier_datas)?;
 
         let input = MainPodVerifyInput {
             vds_root: inputs.vds_root,
@@ -534,9 +532,10 @@ impl PodProver for Prover {
     fn prove(
         &self,
         params: &Params,
+        vd_tree: &VDTree,
         inputs: MainPodInputs,
     ) -> Result<Box<dyn RecursivePod>, Box<DynError>> {
-        Ok(self._prove(params, inputs).map(Box::new)?)
+        Ok(self._prove(params, vd_tree, inputs).map(Box::new)?)
     }
 }
 
@@ -704,7 +703,7 @@ pub mod tests {
             {self},
         },
         middleware,
-        middleware::{CustomPredicateRef, NativePredicate as NP, RawValue},
+        middleware::{CustomPredicateRef, NativePredicate as NP, RawValue, DEFAULT_VD_TREE},
         op,
     };
 
@@ -719,6 +718,7 @@ pub mod tests {
             ..Default::default()
         };
         println!("{:#?}", params);
+        let vd_tree = &*DEFAULT_VD_TREE;
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params);
@@ -728,8 +728,13 @@ pub mod tests {
         let pay_stub_pod = pay_stub_builder.sign(&mut signer)?;
         let mut signer = Signer(SecretKey(RawValue::from(3)));
         let sanction_list_pod = sanction_list_builder.sign(&mut signer)?;
-        let kyc_builder =
-            zu_kyc_pod_builder(&params, &gov_id_pod, &pay_stub_pod, &sanction_list_pod)?;
+        let kyc_builder = zu_kyc_pod_builder(
+            &params,
+            &vd_tree,
+            &gov_id_pod,
+            &pay_stub_pod,
+            &sanction_list_pod,
+        )?;
 
         let mut prover = Prover {};
         let kyc_pod = kyc_builder.prove(&mut prover, &params)?;
@@ -750,6 +755,7 @@ pub mod tests {
             max_input_pods_public_statements: 10,
             ..Default::default()
         };
+        let vd_tree = &*DEFAULT_VD_TREE;
 
         let mut gov_id_builder = frontend::SignedPodBuilder::new(&params);
         gov_id_builder.insert("idNumber", "4242424242");
@@ -758,7 +764,7 @@ pub mod tests {
         let mut signer = Signer(SecretKey(RawValue::from(42)));
         let gov_id = gov_id_builder.sign(&mut signer).unwrap();
         let now_minus_18y: i64 = 1169909388;
-        let mut kyc_builder = frontend::MainPodBuilder::new(&params);
+        let mut kyc_builder = frontend::MainPodBuilder::new(&params, &vd_tree);
         kyc_builder.add_signed_pod(&gov_id);
         kyc_builder
             .pub_op(op!(lt, (&gov_id, "dateOfBirth"), now_minus_18y))
@@ -804,8 +810,9 @@ pub mod tests {
             max_depth_mt_containers: 4,
             max_depth_mt_vds: 6,
         };
+        let vd_tree = &*DEFAULT_VD_TREE;
 
-        let pod_builder = frontend::MainPodBuilder::new(&params);
+        let pod_builder = frontend::MainPodBuilder::new(&params, &vd_tree);
 
         // Mock
         let mut prover = MockProver {};
@@ -837,6 +844,7 @@ pub mod tests {
             ..Default::default()
         };
         println!("{:#?}", params);
+        let vd_tree = &*DEFAULT_VD_TREE;
 
         let mut alice = Signer(SecretKey(RawValue::from(1)));
         let bob = Signer(SecretKey(RawValue::from(2)));
@@ -852,6 +860,7 @@ pub mod tests {
 
         let alice_bob_ethdos_builder = eth_dos_pod_builder(
             &params,
+            &vd_tree,
             false,
             &alice_attestation,
             &charlie_attestation,
@@ -888,6 +897,7 @@ pub mod tests {
             ..Default::default()
         };
         println!("{:#?}", params);
+        let vd_tree = &*DEFAULT_VD_TREE;
 
         let mut cpb_builder = CustomPredicateBatchBuilder::new(params.clone(), "cpb".into());
         let stb0 = STB::new(NP::ValueOf)
@@ -908,7 +918,7 @@ pub mod tests {
         let cpb_and = CustomPredicateRef::new(cpb.clone(), 0);
         let _cpb_or = CustomPredicateRef::new(cpb.clone(), 1);
 
-        let mut pod_builder = MainPodBuilder::new(&params);
+        let mut pod_builder = MainPodBuilder::new(&params, &vd_tree);
 
         let st0 = pod_builder.priv_op(op!(new_entry, ("score", 42)))?;
         let st1 = pod_builder.priv_op(op!(new_entry, ("foo", 42)))?;

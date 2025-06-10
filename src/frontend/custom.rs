@@ -282,7 +282,7 @@ mod tests {
         backends::plonky2::mock::mainpod::MockProver,
         examples::custom::{eth_dos_batch, eth_friend_batch},
         frontend::MainPodBuilder,
-        middleware::{self, containers::Set, CustomPredicateRef, Params, PodType},
+        middleware::{self, containers::Set, CustomPredicateRef, Params, PodType, DEFAULT_VD_TREE},
         op,
     };
 
@@ -316,6 +316,7 @@ mod tests {
     #[test]
     fn test_desugared_gt_custom_pred() -> Result<()> {
         let params = Params::default();
+        let vd_tree = &*DEFAULT_VD_TREE;
         let mut builder = CustomPredicateBatchBuilder::new(params.clone(), "gt_custom_pred".into());
 
         let gt_stb = StatementTmplBuilder::new(NativePredicate::Gt)
@@ -332,7 +333,7 @@ mod tests {
         let batch_clone = batch.clone();
         let gt_custom_pred = CustomPredicateRef::new(batch, 0);
 
-        let mut mp_builder = MainPodBuilder::new(&params);
+        let mut mp_builder = MainPodBuilder::new(&params, &vd_tree);
 
         // 2 > 1
         let s1 = mp_builder.literal(true, Value::from(2))?;
@@ -364,6 +365,7 @@ mod tests {
     #[test]
     fn test_desugared_set_contains_custom_pred() -> Result<()> {
         let params = Params::default();
+        let vd_tree = &*DEFAULT_VD_TREE;
         let mut builder =
             CustomPredicateBatchBuilder::new(params.clone(), "set_contains_custom_pred".into());
 
@@ -380,7 +382,7 @@ mod tests {
         let batch = builder.finish();
         let batch_clone = batch.clone();
 
-        let mut mp_builder = MainPodBuilder::new(&params);
+        let mut mp_builder = MainPodBuilder::new(&params, &vd_tree);
 
         let set_values: HashSet<Value> = [1, 2, 3].iter().map(|i| Value::from(*i)).collect();
         let s1 = mp_builder.literal(true, Value::from(Set::new(set_values)?))?;

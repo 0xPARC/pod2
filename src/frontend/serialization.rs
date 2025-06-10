@@ -221,7 +221,7 @@ mod tests {
         middleware::{
             self,
             containers::{Array, Set},
-            Params, RawValue, TypedValue,
+            Params, RawValue, TypedValue, DEFAULT_VD_TREE,
         },
     };
 
@@ -344,6 +344,7 @@ mod tests {
 
     fn build_mock_zukyc_pod() -> Result<MainPod> {
         let params = middleware::Params::default();
+        let vd_tree = &*DEFAULT_VD_TREE;
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params);
@@ -359,8 +360,14 @@ mod tests {
             pk: "ZooOFAC".into(),
         };
         let sanction_list_pod = sanction_list_builder.sign(&mut signer).unwrap();
-        let kyc_builder =
-            zu_kyc_pod_builder(&params, &gov_id_pod, &pay_stub_pod, &sanction_list_pod).unwrap();
+        let kyc_builder = zu_kyc_pod_builder(
+            &params,
+            &vd_tree,
+            &gov_id_pod,
+            &pay_stub_pod,
+            &sanction_list_pod,
+        )
+        .unwrap();
 
         let mut prover = MockProver {};
         let kyc_pod = kyc_builder.prove(&mut prover, &params).unwrap();
@@ -374,6 +381,7 @@ mod tests {
             max_input_recursive_pods: 1,
             ..Default::default()
         };
+        let vd_tree = &*DEFAULT_VD_TREE;
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params);
@@ -383,8 +391,13 @@ mod tests {
         let pay_stub_pod = pay_stub_builder.sign(&mut signer)?;
         let mut signer = Signer(SecretKey(RawValue::from(3)));
         let sanction_list_pod = sanction_list_builder.sign(&mut signer)?;
-        let kyc_builder =
-            zu_kyc_pod_builder(&params, &gov_id_pod, &pay_stub_pod, &sanction_list_pod)?;
+        let kyc_builder = zu_kyc_pod_builder(
+            &params,
+            &vd_tree,
+            &gov_id_pod,
+            &pay_stub_pod,
+            &sanction_list_pod,
+        )?;
 
         let mut prover = Prover {};
         let kyc_pod = kyc_builder.prove(&mut prover, &params)?;
@@ -433,6 +446,7 @@ mod tests {
             max_custom_predicate_wildcards: 12,
             ..Default::default()
         };
+        let vd_tree = &*DEFAULT_VD_TREE;
 
         let mut alice = MockSigner { pk: "Alice".into() };
         let bob = MockSigner { pk: "Bob".into() };
@@ -450,6 +464,7 @@ mod tests {
         let mut prover = MockProver {};
         let alice_bob_ethdos = eth_dos_pod_builder(
             &params,
+            &vd_tree,
             true,
             &alice_attestation,
             &charlie_attestation,

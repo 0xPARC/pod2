@@ -20,7 +20,7 @@ use crate::{
     },
     middleware::{
         self, hash_str, AnchoredKey, DynError, Hash, MainPodInputs, NativePredicate, Params, Pod,
-        PodId, PodProver, Predicate, RecursivePod, StatementArg, KEY_TYPE, SELF,
+        PodId, PodProver, Predicate, RecursivePod, StatementArg, VDTree, KEY_TYPE, SELF,
     },
 };
 
@@ -30,6 +30,7 @@ impl PodProver for MockProver {
     fn prove(
         &self,
         params: &Params,
+        _vd_tree: &VDTree,
         inputs: MainPodInputs,
     ) -> Result<Box<dyn RecursivePod>, Box<DynError>> {
         Ok(Box::new(MockMainPod::new(params, inputs)?))
@@ -326,12 +327,13 @@ pub mod tests {
             zu_kyc_sign_pod_builders,
         },
         frontend,
-        middleware::{self},
+        middleware::{self, DEFAULT_VD_TREE},
     };
 
     #[test]
     fn test_mock_main_zu_kyc() -> frontend::Result<()> {
         let params = middleware::Params::default();
+        let vd_tree = &*DEFAULT_VD_TREE;
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params);
         let mut signer = MockSigner {
@@ -346,8 +348,13 @@ pub mod tests {
             pk: "ZooOFAC".into(),
         };
         let sanction_list_pod = sanction_list_builder.sign(&mut signer)?;
-        let kyc_builder =
-            zu_kyc_pod_builder(&params, &gov_id_pod, &pay_stub_pod, &sanction_list_pod)?;
+        let kyc_builder = zu_kyc_pod_builder(
+            &params,
+            &vd_tree,
+            &gov_id_pod,
+            &pay_stub_pod,
+            &sanction_list_pod,
+        )?;
 
         let mut prover = MockProver {};
         let kyc_pod = kyc_builder.prove(&mut prover, &params)?;
