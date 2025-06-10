@@ -61,7 +61,7 @@ impl SignedPodBuilder {
 /// SignedPod is a wrapper on top of backend::SignedPod, which additionally stores the
 /// string<-->hash relation of the keys.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(from = "SerializedSignedPod", into = "SerializedSignedPod")]
+#[serde(try_from = "SerializedSignedPod", into = "SerializedSignedPod")]
 pub struct SignedPod {
     pub pod: Box<dyn middleware::Pod>,
     // We store a copy of the key values for quick access

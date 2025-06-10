@@ -1,20 +1,10 @@
-use std::{any::Any, collections::HashMap};
-
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::Error;
 use crate::{
-    backends::plonky2::{
-        mainpod::{pad_statement, MainPod as Plonky2MainPod, Statement as BackendStatement},
-        mock::{mainpod::MockMainPod, signedpod::MockSignedPod},
-        signedpod::SignedPod as Plonky2SignedPod,
-    },
     frontend::{MainPod, SignedPod},
-    middleware::{
-        self, containers::Dictionary, serialization::ordered_map, AnchoredKey, Hash, Key, Params,
-        PodId, Statement, StatementArg, Value, EMPTY_HASH, SELF,
-    },
+    middleware::{deserialize_pod, deserialize_signed_pod, Hash, Params, PodId},
 };
 
 #[derive(Serialize, Deserialize, JsonSchema)]
@@ -27,102 +17,54 @@ pub enum SignedPodType {
 #[serde(rename_all = "camelCase")]
 #[schemars(rename = "SignedPod")]
 pub struct SerializedSignedPod {
+    pod_type: (usize, String),
     id: PodId,
-    #[serde(serialize_with = "ordered_map")]
-    entries: HashMap<Key, Value>,
-    proof: String,
-    pod_type: SignedPodType,
-}
-
-#[derive(Serialize, Deserialize, JsonSchema)]
-pub enum MainPodType {
-    Main,
-    MockMain,
+    data: serde_json::Value,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[schemars(rename = "MainPod")]
 pub struct SerializedMainPod {
+    params: Params,
+    pod_type: (usize, String),
     id: PodId,
     vds_root: Hash,
-    public_statements: Vec<Statement>,
-    proof: String,
-    params: Params,
-    pod_type: MainPodType,
+    data: serde_json::Value,
 }
 
 impl From<SignedPod> for SerializedSignedPod {
     fn from(pod: SignedPod) -> Self {
+        let (pod_type, pod_type_name_str) = pod.pod.pod_type();
+        let data = pod.pod.serialize_data();
         SerializedSignedPod {
+            pod_type: (pod_type, pod_type_name_str.to_string()),
             id: pod.id(),
-            entries: pod.kvs,
-            proof: pod.pod.serialized_proof(),
-            pod_type: if (&*pod.pod as &dyn Any)
-                .downcast_ref::<Plonky2SignedPod>()
-                .is_some()
-            {
-                SignedPodType::Signed
-            } else if (&*pod.pod as &dyn Any)
-                .downcast_ref::<MockSignedPod>()
-                .is_some()
-            {
-                SignedPodType::MockSigned
-            } else {
-                unreachable!()
-            },
+            data,
         }
     }
 }
 
-impl From<SerializedSignedPod> for SignedPod {
-    fn from(serialized: SerializedSignedPod) -> Self {
-        match serialized.pod_type {
-            SignedPodType::Signed => {
-                let (signer, signature) =
-                    Plonky2SignedPod::decode_proof(&serialized.proof).unwrap();
-                SignedPod {
-                    pod: Box::new(Plonky2SignedPod {
-                        id: serialized.id,
-                        signer,
-                        signature,
-                        dict: Dictionary::new(serialized.entries.clone()).unwrap(),
-                    }),
-                    kvs: serialized.entries,
-                }
-            }
-            SignedPodType::MockSigned => SignedPod {
-                pod: Box::new(MockSignedPod::new(
-                    serialized.id,
-                    serde_json::from_str(&serialized.proof).unwrap(),
-                    serialized.entries.clone(),
-                )),
-                kvs: serialized.entries,
-            },
-        }
+impl TryFrom<SerializedSignedPod> for SignedPod {
+    type Error = Error;
+
+    fn try_from(serialized: SerializedSignedPod) -> Result<Self, Self::Error> {
+        let pod = deserialize_signed_pod(serialized.pod_type.0, serialized.id, serialized.data)?;
+        let kvs = pod.kvs().into_iter().map(|(ak, v)| (ak.key, v)).collect();
+        Ok(Self { pod, kvs })
     }
 }
 
 impl From<MainPod> for SerializedMainPod {
     fn from(pod: MainPod) -> Self {
-        let (pod_type, vds_root) =
-            if let Some(pod) = (&*pod.pod as &dyn Any).downcast_ref::<Plonky2MainPod>() {
-                (MainPodType::Main, pod.vds_root())
-            } else if (&*pod.pod as &dyn Any)
-                .downcast_ref::<MockMainPod>()
-                .is_some()
-            {
-                (MainPodType::MockMain, EMPTY_HASH)
-            } else {
-                unreachable!()
-            };
+        let (pod_type, pod_type_name_str) = pod.pod.pod_type();
+        let data = pod.pod.serialize_data();
         SerializedMainPod {
+            pod_type: (pod_type, pod_type_name_str.to_string()),
             id: pod.id(),
-            vds_root,
-            proof: pod.pod.serialized_proof(),
+            vds_root: pod.pod.vds_root(),
             params: pod.params.clone(),
-            pod_type,
-            public_statements: pod.public_statements.clone(),
+            data,
         }
     }
 }
@@ -131,76 +73,20 @@ impl TryFrom<SerializedMainPod> for MainPod {
     type Error = Error;
 
     fn try_from(serialized: SerializedMainPod) -> Result<Self, Self::Error> {
-        match serialized.pod_type {
-            MainPodType::Main => Ok(MainPod {
-                pod: Box::new(Plonky2MainPod::new(
-                    Plonky2MainPod::decode_proof(&serialized.proof, &serialized.params).map_err(
-                        |e| {
-                            Error::custom(format!(
-                                "Failed to deserialize MainPod proof: {}. Value: {}",
-                                e, serialized.proof
-                            ))
-                        },
-                    )?,
-                    middleware_statements_to_backend(
-                        serialized.public_statements.clone(),
-                        &serialized.params,
-                        serialized.id,
-                    ),
-                    serialized.id,
-                    serialized.vds_root,
-                    serialized.params.clone(),
-                )),
-                public_statements: serialized.public_statements,
-                params: serialized.params,
-            }),
-            MainPodType::MockMain => Ok(MainPod {
-                pod: Box::new(
-                    MockMainPod::deserialize(serialized.proof.clone()).map_err(|e| {
-                        Error::custom(format!(
-                            "Failed to deserialize MockMainPod: {}. Value: {}",
-                            e, serialized.proof
-                        ))
-                    })?,
-                ),
-                public_statements: serialized.public_statements,
-                params: serialized.params,
-            }),
-        }
+        let pod = deserialize_pod(
+            serialized.pod_type.0,
+            serialized.params.clone(),
+            serialized.id,
+            serialized.vds_root,
+            serialized.data,
+        )?;
+        let public_statements = pod.pub_statements();
+        Ok(Self {
+            pod,
+            public_statements,
+            params: serialized.params,
+        })
     }
-}
-
-// To deserialize a backend MainPod, we need to convert the middleware
-// statements to backend statements, and padding the list with None statements.
-fn middleware_statements_to_backend(
-    mid_statements: Vec<Statement>,
-    params: &Params,
-    id: PodId,
-) -> Vec<BackendStatement> {
-    let mut statements = Vec::new();
-    for i in 0..(params.max_public_statements) {
-        let mut st: BackendStatement = mid_statements
-            .get(i)
-            .unwrap_or(&middleware::Statement::None)
-            .clone()
-            .into();
-
-        st = BackendStatement(
-            st.0.clone(),
-            st.1.iter()
-                .map(|sa| match &sa {
-                    StatementArg::Key(AnchoredKey { pod_id, key }) if *pod_id == id => {
-                        StatementArg::Key(AnchoredKey::new(SELF, key.clone()))
-                    }
-                    _ => sa.clone(),
-                })
-                .collect(),
-        );
-        pad_statement(params, &mut st);
-        statements.push(st);
-    }
-
-    statements
 }
 
 #[cfg(test)]
@@ -225,7 +111,7 @@ mod tests {
         frontend::{Result, SignedPodBuilder},
         middleware::{
             self,
-            containers::{Array, Set},
+            containers::{Array, Dictionary, Set},
             Params, TypedValue,
         },
     };

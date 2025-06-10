@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 
-use base64::{prelude::BASE64_STANDARD, Engine};
 use itertools::Itertools;
 use num_bigint::RandBigInt;
 use rand::rngs::OsRng;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::{
+        deserialize_bytes,
         error::{Error, Result},
         primitives::{
             ec::{
@@ -15,6 +16,7 @@ use crate::{
             },
             merkletree::MerkleTree,
         },
+        serialize_bytes,
     },
     constants::MAX_DEPTH,
     middleware::{
@@ -68,6 +70,13 @@ pub struct SignedPod {
     pub dict: Dictionary,
 }
 
+#[derive(Serialize, Deserialize)]
+struct Data {
+    signer: String,
+    signature: String,
+    kvs: Dictionary,
+}
+
 impl SignedPod {
     fn _verify(&self) -> Result<()> {
         // 1. Verify type
@@ -107,23 +116,31 @@ impl SignedPod {
             .ok_or(Error::custom("Invalid signature!".into()))
     }
 
-    pub fn decode_proof(signature: &str) -> Result<(Point, Signature), Error> {
-        let proof_bytes = BASE64_STANDARD.decode(signature).map_err(|e| {
-            Error::custom(format!(
-                "Failed to decode proof from base64: {}. Value: {}",
-                e, signature
-            ))
-        })?;
+    pub(crate) fn deserialize(id: PodId, data: serde_json::Value) -> Result<Box<dyn Pod>> {
+        let data: Data = serde_json::from_value(data)?;
+        let signer_bytes = deserialize_bytes(&data.signer)?;
+        let signature_bytes = deserialize_bytes(&data.signature)?;
 
-        if proof_bytes.len() != 160 {
+        if signer_bytes.len() != 80 {
             return Err(Error::custom(
-                "Invalid byte encoding of signed POD proof.".to_string(),
+                "Invalid byte encoding of signed POD signer.".to_string(),
+            ));
+        }
+        if signature_bytes.len() != 80 {
+            return Err(Error::custom(
+                "Invalid byte encoding of signed POD signature.".to_string(),
             ));
         }
 
-        let signer = Point::from_bytes(&proof_bytes[..80])?;
-        let signature = Signature::from_bytes(&proof_bytes[80..])?;
-        Ok((signer, signature))
+        let signer = Point::from_bytes(&signer_bytes)?;
+        let signature = Signature::from_bytes(&signature_bytes)?;
+
+        Ok(Box::new(Self {
+            id,
+            signature,
+            signer,
+            dict: data.kvs,
+        }))
     }
 }
 
@@ -137,6 +154,9 @@ impl Pod for SignedPod {
 
     fn id(&self) -> PodId {
         self.id
+    }
+    fn pod_type(&self) -> (usize, &'static str) {
+        (PodType::Signed as usize, "Signed")
     }
 
     fn pub_self_statements(&self) -> Vec<Statement> {
@@ -153,10 +173,15 @@ impl Pod for SignedPod {
             .collect()
     }
 
-    fn serialized_proof(&self) -> String {
-        // Serialise signer + signature.
-        let proof_bytes = [self.signer.as_bytes(), self.signature.as_bytes()].concat();
-        BASE64_STANDARD.encode(&proof_bytes)
+    fn serialize_data(&self) -> serde_json::Value {
+        let signer = serialize_bytes(&self.signer.as_bytes());
+        let signature = serialize_bytes(&self.signature.as_bytes());
+        serde_json::to_value(Data {
+            signer,
+            signature,
+            kvs: self.dict.clone(),
+        })
+        .expect("serialization to json")
     }
 }
 

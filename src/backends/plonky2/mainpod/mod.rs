@@ -2,25 +2,26 @@ pub mod operation;
 pub mod statement;
 use std::{any::Any, iter, sync::Arc};
 
-use base64::{prelude::BASE64_STANDARD, Engine};
 use itertools::Itertools;
 pub use operation::*;
 use plonky2::{
     hash::poseidon::PoseidonHash,
     plonk::{circuit_data::CommonCircuitData, config::Hasher},
-    util::serialization::{Buffer, Read},
 };
+use serde::{Deserialize, Serialize};
 pub use statement::*;
 
 use crate::{
     backends::plonky2::{
         basetypes::{Proof, ProofWithPublicInputs, VerifierOnlyCircuitData, D},
         circuits::mainpod::{CustomPredicateVerification, MainPodVerifyInput, MainPodVerifyTarget},
+        deserialize_proof,
         emptypod::EmptyPod,
         error::{Error, Result},
         mock::emptypod::MockEmptyPod,
         primitives::merkletree::MerkleClaimAndProof,
         recursion::{RecursiveCircuit, RecursiveParams},
+        serialize_proof,
         signedpod::SignedPod,
         STANDARD_REC_MAIN_POD_CIRCUIT_DATA,
     },
@@ -241,13 +242,14 @@ fn pad_operation_args(params: &Params, args: &mut Vec<OperationArg>) {
     fill_pad(args, OperationArg::None, params.max_operation_args)
 }
 
-/// Returns the statements from the given MainPodInputs, padding to the
-/// respective max lengths defined at the given Params.
+/// Returns the statements from the given MainPodInputs, padding to the respective max lengths
+/// defined at the given Params.  Also returns a copy of the dynamic-length public statements from
+/// the list of statements.
 pub(crate) fn layout_statements(
     params: &Params,
     mock: bool,
     inputs: &MainPodInputs,
-) -> Result<Vec<Statement>> {
+) -> Result<(Vec<Statement>, Vec<Statement>)> {
     let mut statements = Vec::new();
 
     // Statement at index 0 is always None to be used for padding operation arguments in custom
@@ -334,7 +336,11 @@ pub(crate) fn layout_statements(
         statements.push(st);
     }
 
-    Ok(statements)
+    let offset_public_statements = statements.len() - params.max_public_statements;
+    let public_statements = statements
+        [offset_public_statements..offset_public_statements + 1 + inputs.public_statements.len()]
+        .to_vec();
+    Ok((statements, public_statements))
 }
 
 pub(crate) fn process_private_statements_operations(
@@ -469,7 +475,7 @@ impl Prover {
             &custom_predicate_batches,
         )?;
 
-        let statements = layout_statements(params, false, &inputs)?;
+        let (statements, public_statements) = layout_statements(params, false, &inputs)?;
         let operations = process_private_statements_operations(
             params,
             &statements,
@@ -479,8 +485,6 @@ impl Prover {
         )?;
         let operations = process_public_statements_operations(params, &statements, operations)?;
 
-        let public_statements =
-            statements[statements.len() - params.max_public_statements..].to_vec();
         // get the id out of the public statements
         let id: PodId = PodId(calculate_id(&public_statements, params));
 
@@ -558,6 +562,12 @@ fn get_common_data(params: &Params) -> Result<CommonCircuitData<F, D>, Error> {
     Ok(circuit_data.common.clone())
 }
 
+#[derive(Serialize, Deserialize)]
+struct Data {
+    public_statements: Vec<Statement>,
+    proof: String,
+}
+
 impl MainPod {
     fn _verify(&self) -> Result<()> {
         // 2. get the id out of the public statements
@@ -602,40 +612,22 @@ impl MainPod {
         &self.params
     }
 
-    pub(crate) fn new(
-        proof: Proof,
-        public_statements: Vec<Statement>,
+    pub(crate) fn deserialize(
+        params: Params,
         id: PodId,
         vds_root: Hash,
-        params: Params,
-    ) -> Self {
-        Self {
+        data: serde_json::Value,
+    ) -> Result<Box<dyn RecursivePod>> {
+        let data: Data = serde_json::from_value(data)?;
+        let common = get_common_data(&params)?;
+        let proof = deserialize_proof(&common, &data.proof)?;
+        Ok(Box::new(Self {
             params,
             id,
             vds_root,
-            public_statements,
             proof,
-        }
-    }
-
-    pub fn decode_proof(proof: &str, params: &Params) -> Result<Proof, Error> {
-        let decoded = BASE64_STANDARD.decode(proof).map_err(|e| {
-            Error::custom(format!(
-                "Failed to decode proof from base64: {}. Value: {}",
-                e, proof
-            ))
-        })?;
-        let mut buf = Buffer::new(&decoded);
-        let common = get_common_data(params)?;
-
-        let proof = buf.read_proof(&common).map_err(|e| {
-            Error::custom(format!(
-                "Failed to read proof from buffer: {}. Value: {}",
-                e, proof
-            ))
-        })?;
-
-        Ok(proof)
+            public_statements: data.public_statements,
+        }))
     }
 }
 
@@ -650,6 +642,9 @@ impl Pod for MainPod {
     fn id(&self) -> PodId {
         self.id
     }
+    fn pod_type(&self) -> (usize, &'static str) {
+        (PodType::Main as usize, "Main")
+    }
 
     fn pub_self_statements(&self) -> Vec<middleware::Statement> {
         self.public_statements
@@ -659,11 +654,12 @@ impl Pod for MainPod {
             .collect()
     }
 
-    fn serialized_proof(&self) -> String {
-        let mut buffer = Vec::new();
-        use plonky2::util::serialization::Write;
-        buffer.write_proof(&self.proof).unwrap();
-        BASE64_STANDARD.encode(buffer)
+    fn serialize_data(&self) -> serde_json::Value {
+        serde_json::to_value(Data {
+            proof: serialize_proof(&self.proof),
+            public_statements: self.public_statements.clone(),
+        })
+        .expect("serialization to json")
     }
 }
 
