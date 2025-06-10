@@ -17,7 +17,7 @@ use plonky2::{
 
 use crate::{
     backends::plonky2::{
-        basetypes::CircuitBuilder,
+        basetypes::{CircuitBuilder, VDSet},
         circuits::{
             common::{
                 CircuitBuilderPod, CustomPredicateBatchTarget, CustomPredicateEntryTarget,
@@ -28,7 +28,7 @@ use crate::{
             },
             signedpod::{SignedPodVerifyGadget, SignedPodVerifyTarget},
         },
-        emptypod::EmptyPod,
+        emptypod::{EmptyPod, STANDARD_EMPTY_POD_DATA},
         error::Result,
         mainpod::{self, pad_statement},
         primitives::merkletree::{
@@ -39,10 +39,9 @@ use crate::{
     },
     measure_gates_begin, measure_gates_end,
     middleware::{
-        AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash,
-        NativeOperation, NativePredicate, Params, PodType, PredicatePrefix, Statement,
-        StatementArg, ToFields, Value, WildcardValue, EMPTY_VALUE, F, HASH_SIZE, KEY_TYPE, SELF,
-        VALUE_SIZE,
+        AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, NativeOperation,
+        NativePredicate, Params, PodType, PredicatePrefix, Statement, StatementArg, ToFields,
+        Value, WildcardValue, EMPTY_VALUE, F, HASH_SIZE, KEY_TYPE, SELF, VALUE_SIZE,
     },
 };
 
@@ -1368,7 +1367,10 @@ pub struct CustomPredicateVerification {
 }
 
 pub struct MainPodVerifyInput {
-    pub vds_root: Hash,
+    pub vds_set: VDSet,
+    // field containing the `vd_mt_proofs` aside from the `vds_set`, because
+    // inide the MainPodVerifyTarget circuit, since it is the InnerCircuit for
+    // the RecursiveCircuit, we don't have access to the used verifier_datas.
     pub vd_mt_proofs: Vec<MerkleClaimAndProof>,
     pub signed_pods: Vec<SignedPod>,
     pub recursive_pods_pub_self_statements: Vec<Vec<Statement>>,
@@ -1403,19 +1405,57 @@ fn set_targets_input_pods_self_statements(
     Ok(())
 }
 
-impl MainPodVerifyTarget {
-    pub fn set_targets(
+pub struct MainPodVerifyCircuit {
+    pub params: Params,
+}
+
+// TODO: Remove this type and implement it's logic directly in `impl InnerCircuit for MainPodVerifyTarget`
+impl MainPodVerifyCircuit {
+    pub fn eval(
         &self,
-        pw: &mut PartialWitness<F>,
-        input: &MainPodVerifyInput,
-    ) -> Result<()> {
-        pw.set_target_arr(&self.vds_root.elements, &input.vds_root.0)?;
+        builder: &mut CircuitBuilder,
+        verified_proofs: &[VerifiedProofTarget],
+    ) -> Result<MainPodVerifyTarget> {
+        let main_pod = MainPodVerifyGadget {
+            params: self.params.clone(),
+        }
+        .eval(builder, verified_proofs)?;
+        builder.register_public_inputs(&main_pod.id.elements);
+        builder.register_public_inputs(&main_pod.vds_root.elements);
+        Ok(main_pod)
+    }
+}
+
+impl InnerCircuit for MainPodVerifyTarget {
+    type Input = MainPodVerifyInput;
+    type Params = Params;
+
+    fn build(
+        builder: &mut CircuitBuilder,
+        params: &Self::Params,
+        verified_proofs: &[VerifiedProofTarget],
+    ) -> Result<Self> {
+        MainPodVerifyCircuit {
+            params: params.clone(),
+        }
+        .eval(builder, verified_proofs)
+    }
+
+    /// assigns the values to the targets
+    fn set_targets(&self, pw: &mut PartialWitness<F>, input: &Self::Input) -> Result<()> {
+        let vds_root = input.vds_set.root();
+        pw.set_target_arr(&self.vds_root.elements, &vds_root.0)?;
 
         for (i, vd_mt_proof) in input.vd_mt_proofs.iter().enumerate() {
             self.vd_mt_proofs[i].set_targets(pw, true, vd_mt_proof)?;
         }
+        // the rest of vd_mt_proofs set them to the empty_pod vd_mt_proof
+        let vd_emptypod_mt_proof = input
+            .vds_set
+            .get_vds_proofs(&[STANDARD_EMPTY_POD_DATA.1.verifier_only.clone()])?;
+        let vd_emptypod_mt_proof = vd_emptypod_mt_proof[0].clone();
         for i in input.vd_mt_proofs.len()..self.vd_mt_proofs.len() {
-            self.vd_mt_proofs[i].set_targets(pw, false, &input.vd_mt_proofs[i])?;
+            self.vd_mt_proofs[i].set_targets(pw, true, &vd_emptypod_mt_proof)?;
         }
 
         assert!(input.signed_pods.len() <= self.params.max_input_signed_pods);
@@ -1446,7 +1486,7 @@ impl MainPodVerifyTarget {
         }
         // Padding
         if input.recursive_pods_pub_self_statements.len() != self.params.max_input_recursive_pods {
-            let empty_pod = EmptyPod::new_boxed(&self.params, input.vds_root);
+            let empty_pod = EmptyPod::new_boxed(&self.params, input.vds_set.root());
             let empty_pod_statements = empty_pod.pub_statements();
             for i in
                 input.recursive_pods_pub_self_statements.len()..self.params.max_input_recursive_pods
@@ -1516,48 +1556,6 @@ impl MainPodVerifyTarget {
         }
 
         Ok(())
-    }
-}
-
-pub struct MainPodVerifyCircuit {
-    pub params: Params,
-}
-
-// TODO: Remove this type and implement it's logic directly in `impl InnerCircuit for MainPodVerifyTarget`
-impl MainPodVerifyCircuit {
-    pub fn eval(
-        &self,
-        builder: &mut CircuitBuilder,
-        verified_proofs: &[VerifiedProofTarget],
-    ) -> Result<MainPodVerifyTarget> {
-        let main_pod = MainPodVerifyGadget {
-            params: self.params.clone(),
-        }
-        .eval(builder, verified_proofs)?;
-        builder.register_public_inputs(&main_pod.id.elements);
-        builder.register_public_inputs(&main_pod.vds_root.elements);
-        Ok(main_pod)
-    }
-}
-
-impl InnerCircuit for MainPodVerifyTarget {
-    type Input = MainPodVerifyInput;
-    type Params = Params;
-
-    fn build(
-        builder: &mut CircuitBuilder,
-        params: &Self::Params,
-        verified_proofs: &[VerifiedProofTarget],
-    ) -> Result<Self> {
-        MainPodVerifyCircuit {
-            params: params.clone(),
-        }
-        .eval(builder, verified_proofs)
-    }
-
-    /// assigns the values to the targets
-    fn set_targets(&self, pw: &mut PartialWitness<F>, input: &Self::Input) -> Result<()> {
-        self.set_targets(pw, input)
     }
 }
 

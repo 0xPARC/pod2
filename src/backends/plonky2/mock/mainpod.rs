@@ -177,7 +177,7 @@ impl MockMainPod {
         Ok(Self {
             params: params.clone(),
             id,
-            vds_root: inputs.vds_root,
+            vds_root: inputs.vds_set.root(),
             //  input_signed_pods,
             //  input_main_pods,
             //  input_statements,

@@ -283,7 +283,7 @@ pub(crate) fn layout_statements(
             // We mocking or we don't need padding so we skip creating an EmptyPod
             MockEmptyPod::new_boxed(params)
         } else {
-            EmptyPod::new_boxed(params, inputs.vds_root)
+            EmptyPod::new_boxed(params, inputs.vds_set.root())
         };
     let empty_pod = empty_pod_box.as_ref();
     assert!(inputs.recursive_pods.len() <= params.max_input_recursive_pods);
@@ -445,7 +445,7 @@ impl Prover {
             // We don't need padding so we skip creating an EmptyPod
             MockEmptyPod::new_boxed(params)
         } else {
-            EmptyPod::new_boxed(params, inputs.vds_root)
+            EmptyPod::new_boxed(params, inputs.vds_set.root())
         };
         let inputs = MainPodInputs {
             recursive_pods: &inputs
@@ -492,10 +492,10 @@ impl Prover {
             .recursive_pods
             .iter()
             .map(|pod| {
-                assert_eq!(inputs.vds_root, pod.vds_root());
+                assert_eq!(inputs.vds_set.root(), pod.vds_root());
                 ProofWithPublicInputs {
                     proof: pod.proof(),
-                    public_inputs: [pod.id().0 .0, inputs.vds_root.0].concat(),
+                    public_inputs: [pod.id().0 .0, inputs.vds_set.root().0].concat(),
                 }
             })
             .collect_vec();
@@ -508,7 +508,7 @@ impl Prover {
         let vd_mt_proofs = vd_set.get_vds_proofs(&verifier_datas)?;
 
         let input = MainPodVerifyInput {
-            vds_root: inputs.vds_root,
+            vds_set: inputs.vds_set.clone(),
             vd_mt_proofs,
             signed_pods: signed_pods_input,
             recursive_pods_pub_self_statements,
@@ -523,7 +523,7 @@ impl Prover {
         Ok(MainPod {
             params: params.clone(),
             id,
-            vds_root: inputs.vds_root,
+            vds_root: inputs.vds_set.root(),
             public_statements,
             proof: proof_with_pis.proof,
         })

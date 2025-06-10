@@ -564,7 +564,7 @@ impl MainPodBuilder {
             statements: &statements,
             operations: &operations,
             public_statements: &public_statements,
-            vds_root: self.vd_set.root(),
+            vds_set: self.vd_set.clone(),
         };
         let pod = prover.prove(&self.params, &self.vd_set, inputs)?;
 
