@@ -1231,6 +1231,9 @@ impl MainPodVerifyGadget {
             }
             .eval(builder);
 
+            // ensure that mt_proof is enabled
+            let true_targ = builder._true();
+            builder.connect(vd_mt_proof.enabled.target, true_targ.target);
             // connect the vd_mt_proof's root to the actual vds_root, to ensure that the mt proof
             // verifies against the vds_root
             builder.connect_hashes(vds_root, vd_mt_proof.root);

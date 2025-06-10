@@ -701,7 +701,7 @@ pub mod tests {
             {self},
         },
         middleware,
-        middleware::{CustomPredicateRef, NativePredicate as NP, RawValue, DEFAULT_VD_SET},
+        middleware::{CustomPredicateRef, NativePredicate as NP, DEFAULT_VD_SET},
         op,
     };
 

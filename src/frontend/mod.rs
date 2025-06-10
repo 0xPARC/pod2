@@ -10,8 +10,7 @@ use serialization::{SerializedMainPod, SerializedSignedPod};
 use crate::middleware::{
     self, check_st_tmpl, hash_str, hash_values, AnchoredKey, Hash, Key, MainPodInputs,
     NativeOperation, NativePredicate, OperationAux, OperationType, Params, PodId, PodProver,
-    PodSigner, Predicate, Statement, StatementArg, VDSet, Value, WildcardValue, DEFAULT_VD_SET,
-    KEY_TYPE, SELF,
+    PodSigner, Predicate, Statement, StatementArg, VDSet, Value, WildcardValue, KEY_TYPE, SELF,
 };
 
 mod custom;
@@ -565,7 +564,7 @@ impl MainPodBuilder {
             statements: &statements,
             operations: &operations,
             public_statements: &public_statements,
-            vds_root: DEFAULT_VD_SET.root(),
+            vds_root: self.vd_set.root(),
         };
         let pod = prover.prove(&self.params, &self.vd_set, inputs)?;
 
@@ -841,7 +840,7 @@ pub mod tests {
             eth_dos_pod_builder, eth_friend_signed_pod_builder, great_boy_pod_full_flow,
             tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_sign_pod_builders,
         },
-        middleware::{containers::Dictionary, Value},
+        middleware::{containers::Dictionary, Value, DEFAULT_VD_SET},
     };
 
     // Check that frontend public statements agree with those

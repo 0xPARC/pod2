@@ -112,7 +112,7 @@ mod tests {
         middleware::{
             self,
             containers::{Array, Dictionary, Set},
-            Params, RawValue, TypedValue, DEFAULT_VD_SET,
+            Params, TypedValue, DEFAULT_VD_SET,
         },
     };
 
