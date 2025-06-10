@@ -455,9 +455,7 @@ pub trait CircuitBuilderElliptic {
 
 impl CircuitBuilderElliptic for CircuitBuilder<GoldilocksField, 2> {
     fn add_virtual_point_target_unsafe(&mut self) -> PointTarget {
-        let x = self.add_virtual_nnf_target();
-        let u = self.add_virtual_nnf_target();
-        PointTarget::new_unsafe(x, u)
+        PointTarget::new_unsafe(self.add_virtual_nnf_target(), self.add_virtual_nnf_target())
     }
     fn add_virtual_point_target(&mut self) -> PointTarget {
         let mut p = self.add_virtual_point_target_unsafe();
@@ -471,12 +469,8 @@ impl CircuitBuilderElliptic for CircuitBuilder<GoldilocksField, 2> {
 
     fn constant_point(&mut self, p: Point) -> PointTarget {
         assert!(p.is_in_subgroup(), "Given point should be in EC subgroup.");
-        let mut p_target = PointTarget {
-            x: self.nnf_constant(&p.x),
-            u: self.nnf_constant(&p.u),
-            checked_on_curve: false,
-            checked_in_subgroup: false,
-        };
+        let mut p_target =
+            PointTarget::new_unsafe(self.nnf_constant(&p.x), self.nnf_constant(&p.u));
         self.check_point_in_subgroup(&mut p_target);
         p_target
     }
