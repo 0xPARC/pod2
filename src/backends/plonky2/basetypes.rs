@@ -49,24 +49,24 @@ use crate::{
     middleware::{containers::Array, Hash, RawValue, Result, Value},
 };
 
-pub static DEFAULT_VD_TREE: LazyLock<VDTree> = LazyLock::new(|| {
+pub static DEFAULT_VD_SET: LazyLock<VDSet> = LazyLock::new(|| {
     let params = &*DEFAULT_PARAMS;
 
     let vds = vec![
         STANDARD_REC_MAIN_POD_CIRCUIT_DATA.verifier_only.clone(),
         STANDARD_EMPTY_POD_DATA.1.verifier_only.clone(),
     ];
-    VDTree::new(params.max_depth_mt_vds, &vds).unwrap()
+    VDSet::new(params.max_depth_mt_vds, &vds).unwrap()
 });
 
 /// Struct that allows to get the specific merkle proofs for the given verifier_data
 #[derive(Clone, Debug)]
-pub struct VDTree {
+pub struct VDSet {
     root: Hash,
     // (verifier_data, merkleproof)
     proofs_map: HashMap<HashOut<F>, MerkleClaimAndProof>,
 }
-impl VDTree {
+impl VDSet {
     /// builds the verifier_datas tree, and returns the root and the proofs
     pub fn new(tree_depth: usize, vds: &[VerifierOnlyCircuitData]) -> Result<Self> {
         // TODO sort vds
@@ -106,7 +106,7 @@ impl VDTree {
                 self.proofs_map
                     .get(&vd.circuit_digest)
                     .ok_or(crate::middleware::Error::custom(
-                        "verifier_data not found in VDTree".to_string(),
+                        "verifier_data not found in VDSet".to_string(),
                     ))?;
             proofs.push(p.clone());
         }

@@ -853,7 +853,7 @@ pub trait PodProver {
     fn prove(
         &self,
         params: &Params,
-        vd_tree: &VDTree,
+        vd_set: &VDSet,
         inputs: MainPodInputs,
     ) -> Result<Box<dyn RecursivePod>, Box<DynError>>;
 }
