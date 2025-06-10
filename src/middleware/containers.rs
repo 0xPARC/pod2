@@ -17,9 +17,10 @@ use crate::{
 /// Dictionary: the user original keys and values are hashed to be used in the leaf.
 ///    leaf.key=hash(original_key)
 ///    leaf.value=hash(original_value)
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct Dictionary {
     #[serde(skip)]
+    #[schemars(skip)]
     mt: MerkleTree,
     max_depth: usize,
     #[serde(serialize_with = "ordered_map")]
@@ -80,14 +81,6 @@ impl Dictionary {
         &self.kvs
     }
 }
-// impl<'a> IntoIterator for &'a Dictionary {
-//     type Item = (&'a RawValue, &'a RawValue);
-//     type IntoIter = TreeIter<'a>;
-//
-//     fn into_iter(self) -> Self::IntoIter {
-//         self.mt.iter()
-//     }
-// }
 
 impl PartialEq for Dictionary {
     fn eq(&self, other: &Self) -> bool {
@@ -103,6 +96,7 @@ impl<'de> Deserialize<'de> for Dictionary {
     {
         #[derive(Deserialize)]
         struct Aux {
+            #[serde(serialize_with = "ordered_map")]
             kvs: HashMap<Key, Value>,
             max_depth: usize,
         }
@@ -111,23 +105,13 @@ impl<'de> Deserialize<'de> for Dictionary {
     }
 }
 
-impl JsonSchema for Dictionary {
-    fn schema_name() -> String {
-        "Dictionary".to_string()
-    }
-
-    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
-        // Just use the schema of HashMap<Key, Value> since that's what we're actually serializing
-        <HashMap<Key, Value>>::json_schema(gen)
-    }
-}
-
 /// Set: the value field of the leaf is unused, and the key contains the hash of the element.
 ///    leaf.key=hash(original_value)
 ///    leaf.value=0
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct Set {
     #[serde(skip)]
+    #[schemars(skip)]
     mt: MerkleTree,
     max_depth: usize,
     #[serde(serialize_with = "ordered_set")]
@@ -205,28 +189,14 @@ impl<'de> Deserialize<'de> for Set {
     where
         D: Deserializer<'de>,
     {
-        // Deserialize the set directly
-        #[derive(Deserialize)]
+        #[derive(Deserialize, JsonSchema)]
         struct Aux {
             #[serde(serialize_with = "ordered_set")]
             set: HashSet<Value>,
             max_depth: usize,
         }
         let aux = Aux::deserialize(deserializer)?;
-
-        // Create a new Set using the set field
         Set::new_with_depth(aux.max_depth, aux.set).map_err(serde::de::Error::custom)
-    }
-}
-
-impl JsonSchema for Set {
-    fn schema_name() -> String {
-        "Set".to_string()
-    }
-
-    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
-        // Just use the schema of HashSet<Value> since that's what we're actually serializing
-        <HashSet<Value>>::json_schema(gen)
     }
 }
 
@@ -234,9 +204,10 @@ impl JsonSchema for Set {
 /// array index (integer).
 ///    leaf.key=i
 ///    leaf.value=original_value
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct Array {
     #[serde(skip)]
+    #[schemars(skip)]
     mt: MerkleTree,
     max_depth: usize,
     array: Vec<Value>,
@@ -300,23 +271,12 @@ impl<'de> Deserialize<'de> for Array {
     where
         D: Deserializer<'de>,
     {
-        #[derive(Deserialize)]
+        #[derive(Deserialize, JsonSchema)]
         struct Aux {
             array: Vec<Value>,
             max_depth: usize,
         }
         let aux = Aux::deserialize(deserializer)?;
         Array::new_with_depth(aux.max_depth, aux.array).map_err(serde::de::Error::custom)
-    }
-}
-
-impl JsonSchema for Array {
-    fn schema_name() -> String {
-        "Array".to_string()
-    }
-
-    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
-        // Just use the schema of Vec<Value> since that's what we're actually serializing
-        <Vec<Value>>::json_schema(gen)
     }
 }

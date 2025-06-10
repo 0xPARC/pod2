@@ -10,8 +10,8 @@ use serialization::{SerializedMainPod, SerializedSignedPod};
 use crate::middleware::{
     self, check_st_tmpl, hash_str, hash_values, AnchoredKey, Hash, Key, MainPodInputs,
     NativeOperation, NativePredicate, OperationAux, OperationType, Params, PodId, PodProver,
-    PodSigner, Predicate, Statement, StatementArg, Value, WildcardValue, DEFAULT_VD_TREE, KEY_TYPE,
-    SELF,
+    PodSigner, Predicate, Statement, StatementArg, VDTree, Value, WildcardValue, DEFAULT_VD_TREE,
+    KEY_TYPE, SELF,
 };
 
 mod custom;
@@ -117,6 +117,7 @@ impl SignedPod {
 #[derive(Debug)]
 pub struct MainPodBuilder {
     pub params: Params,
+    pub vd_tree: VDTree,
     pub input_signed_pods: Vec<SignedPod>,
     pub input_main_pods: Vec<MainPod>,
     pub statements: Vec<Statement>,
@@ -151,9 +152,10 @@ impl fmt::Display for MainPodBuilder {
 }
 
 impl MainPodBuilder {
-    pub fn new(params: &Params) -> Self {
+    pub fn new(params: &Params, vd_tree: &VDTree) -> Self {
         Self {
             params: params.clone(),
+            vd_tree: vd_tree.clone(),
             input_signed_pods: Vec::new(),
             input_main_pods: Vec::new(),
             statements: Vec::new(),
@@ -565,7 +567,7 @@ impl MainPodBuilder {
             public_statements: &public_statements,
             vds_root: DEFAULT_VD_TREE.root(),
         };
-        let pod = prover.prove(&self.params, inputs)?;
+        let pod = prover.prove(&self.params, &self.vd_tree, inputs)?;
 
         // Gather public statements, making sure to inject the type
         // information specified by the backend.
@@ -874,6 +876,7 @@ pub mod tests {
     #[test]
     fn test_front_zu_kyc() -> Result<()> {
         let params = Params::default();
+        let vd_tree = &*DEFAULT_VD_TREE;
         let (gov_id, pay_stub, sanction_list) = zu_kyc_sign_pod_builders(&params);
 
         println!("{}", gov_id);
@@ -900,7 +903,8 @@ pub mod tests {
         check_kvs(&sanction_list)?;
         println!("{}", sanction_list);
 
-        let kyc_builder = zu_kyc_pod_builder(&params, &gov_id, &pay_stub, &sanction_list)?;
+        let kyc_builder =
+            zu_kyc_pod_builder(&params, &vd_tree, &gov_id, &pay_stub, &sanction_list)?;
         println!("{}", kyc_builder);
 
         // prove kyc with MockProver and print it
@@ -927,6 +931,7 @@ pub mod tests {
             max_custom_predicate_wildcards: 12,
             ..Default::default()
         };
+        let vd_tree = &*DEFAULT_VD_TREE;
 
         let mut alice = MockSigner { pk: "Alice".into() };
         let bob = MockSigner { pk: "Bob".into() };
@@ -946,6 +951,7 @@ pub mod tests {
         let mut prover = MockProver {};
         let alice_bob_ethdos = eth_dos_pod_builder(
             &params,
+            &vd_tree,
             true,
             &alice_attestation,
             &charlie_attestation,
@@ -979,13 +985,15 @@ pub mod tests {
     #[should_panic]
     fn test_equal() {
         let params = Params::default();
+        let vd_tree = &*DEFAULT_VD_TREE;
+
         let mut signed_builder = SignedPodBuilder::new(&params);
         signed_builder.insert("a", 1);
         signed_builder.insert("b", 1);
         let mut signer = MockSigner { pk: "key".into() };
         let signed_pod = signed_builder.sign(&mut signer).unwrap();
 
-        let mut builder = MainPodBuilder::new(&params);
+        let mut builder = MainPodBuilder::new(&params, &vd_tree);
         builder.add_signed_pod(&signed_pod);
 
         //let op_val1 = Operation{
@@ -1029,6 +1037,7 @@ pub mod tests {
     #[should_panic]
     fn test_false_st() {
         let params = Params::default();
+        let vd_tree = &*DEFAULT_VD_TREE;
         let mut builder = SignedPodBuilder::new(&params);
 
         builder.insert("num", 2);
@@ -1040,7 +1049,7 @@ pub mod tests {
 
         println!("{}", pod);
 
-        let mut builder = MainPodBuilder::new(&params);
+        let mut builder = MainPodBuilder::new(&params, &vd_tree);
         builder.add_signed_pod(&pod);
         builder.pub_op(op!(gt, (&pod, "num"), 5)).unwrap();
 
@@ -1054,6 +1063,7 @@ pub mod tests {
     #[test]
     fn test_dictionaries() -> Result<()> {
         let params = Params::default();
+        let vd_tree = &*DEFAULT_VD_TREE;
         let mut builder = SignedPodBuilder::new(&params);
 
         let mut my_dict_kvs: HashMap<Key, Value> = HashMap::new();
@@ -1071,7 +1081,7 @@ pub mod tests {
         };
         let pod = builder.sign(&mut signer).unwrap();
 
-        let mut builder = MainPodBuilder::new(&params);
+        let mut builder = MainPodBuilder::new(&params, &vd_tree);
         builder.add_signed_pod(&pod);
         let st0 = pod.get_statement("dict").unwrap();
         let st1 = builder.op(true, op!(new_entry, ("key", "a"))).unwrap();
@@ -1107,7 +1117,8 @@ pub mod tests {
         env_logger::init();
 
         let params = Params::default();
-        let mut builder = MainPodBuilder::new(&params);
+        let vd_tree = &*DEFAULT_VD_TREE;
+        let mut builder = MainPodBuilder::new(&params, &vd_tree);
         let st = Statement::ValueOf(AnchoredKey::from((SELF, "a")), Value::from(3));
         let op_new_entry = Operation(
             OperationType::Native(NativeOperation::NewEntry),
@@ -1125,8 +1136,7 @@ pub mod tests {
 
         // try to insert a statement that doesn't follow from the operation
         // right now the mock prover catches this when it calls compile()
-        let params = Params::default();
-        let mut builder = MainPodBuilder::new(&params);
+        let mut builder = MainPodBuilder::new(&params, &vd_tree);
         let self_a = AnchoredKey::from((SELF, "a"));
         let self_b = AnchoredKey::from((SELF, "b"));
         let value_of_a = Statement::ValueOf(self_a.clone(), Value::from(3));
