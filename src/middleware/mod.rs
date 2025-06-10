@@ -803,34 +803,6 @@ pub trait PodSigner {
     ) -> Result<Box<dyn Pod>, Box<DynError>>;
 }
 
-// TODO: Delete once we have a fully working EmptyPod and a dumb SignedPod
-// https://github.com/0xPARC/pod2/issues/246
-/// This is a filler type that fulfills the Pod trait and always verifies.  It's empty.  This
-/// can be used to simulate padding in a circuit.
-#[derive(Debug, Clone)]
-pub struct NonePod {}
-
-impl Pod for NonePod {
-    fn params(&self) -> &Params {
-        panic!("NonePod doesn't have params");
-    }
-    fn verify(&self) -> Result<(), Box<DynError>> {
-        Ok(())
-    }
-    fn id(&self) -> PodId {
-        PodId(EMPTY_HASH)
-    }
-    fn pod_type(&self) -> (usize, &'static str) {
-        (PodType::None as usize, "None")
-    }
-    fn pub_self_statements(&self) -> Vec<Statement> {
-        Vec::new()
-    }
-    fn serialize_data(&self) -> serde_json::Value {
-        serde_json::Value::Null
-    }
-}
-
 #[derive(Debug)]
 pub struct MainPodInputs<'a> {
     pub signed_pods: &'a [&'a dyn Pod],

@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Mutex};
+use std::{
+    collections::HashMap,
+    sync::{LazyLock, Mutex},
+};
 
 use itertools::Itertools;
 use plonky2::{
@@ -23,7 +26,7 @@ use crate::{
         error::{Error, Result},
         mainpod::{self, calculate_id},
         recursion::pad_circuit,
-        serialize_proof, LazyLock, DEFAULT_PARAMS, STANDARD_REC_MAIN_POD_CIRCUIT_DATA,
+        serialize_proof, DEFAULT_PARAMS, STANDARD_REC_MAIN_POD_CIRCUIT_DATA,
     },
     middleware::{
         self, AnchoredKey, DynError, Hash, Params, Pod, PodId, PodType, RecursivePod, Statement,

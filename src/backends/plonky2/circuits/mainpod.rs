@@ -1392,12 +1392,9 @@ impl MainPodVerifyTarget {
         }
         // Padding
         if input.signed_pods.len() != self.params.max_input_signed_pods {
-            // TODO: Instead of using an input for padding, use a canonical minimal SignedPod,
-            // without it a MainPod configured to support input signed pods must have at least one
-            // input signed pod :(
-            let pad_pod = &input.signed_pods[0];
+            let dummy = SignedPod::dummy();
             for i in input.signed_pods.len()..self.params.max_input_signed_pods {
-                self.signed_pods[i].set_targets(pw, pad_pod)?;
+                self.signed_pods[i].set_targets(pw, &dummy)?;
             }
         }
 
