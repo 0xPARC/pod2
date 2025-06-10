@@ -23,6 +23,7 @@ use plonky2::{
 };
 use serde::{Deserialize, Serialize};
 
+use super::gates::curve::ECDblHomogOffset;
 use crate::backends::plonky2::{
     circuits::common::ValueTarget,
     primitives::ec::{
@@ -196,6 +197,19 @@ pub(super) fn add_homog_offset<const D: usize, F: ECFieldExt<D>>(
     let u = t6 * (-t1).add_field_gen(Point::B1);
     let t = t1 + t9;
     [x, z, u, t]
+}
+
+pub(super) fn double_homog_offset<const D: usize, F: ECFieldExt<D>>(x: F, u: F) -> [F; 4] {
+    let t3 = u * u;
+    let w1 = (-x.add_scalar(GoldilocksField::ONE).double() * t3).add_scalar(GoldilocksField::ONE);
+    let x_out = t3.mul_field_gen(4 * Point::B1_U32);
+    // Actual `z` coordinate.
+    let z0 = w1.square();
+    let u_out = (w1 + u).square() - t3 - z0;
+    // Offset z and t for similar reasons to `add_homog_offset` (see above).
+    let z = z0.add_scalar(-GoldilocksField::ONE); // 1 should be added here.
+    let t = -t3.double().double() - z; // 1 should be added here.
+    [x_out, z, u_out, t]
 }
 
 const GROUP_ORDER_STR: &str = "1067993516717146951041484916571792702745057740581727230159139685185762082554198619328292418486241";
@@ -508,33 +522,19 @@ impl CircuitBuilderElliptic for CircuitBuilder<GoldilocksField, 2> {
     }
 
     fn double_point(&mut self, p: &PointTarget) -> PointTarget {
-        self.add_point(p, p)
-        /*
-        let t3 = self.nnf_mul(&p.u, &p.u);
-        let one = self.one();
-        let neg_one = self.neg_one();
-        let two = self.two();
-        let neg_four = self.constant(GoldilocksField::from_noncanonical_i64(-4));
-        let four_b = self.constant(GoldilocksField::from_canonical_u32(4 * Point::B1_U32));
-        let w1_1 = self.nnf_add_scalar_times_generator_power(one, 0, &p.x);
-        let w1_2 = self.nnf_add(&w1_1, &w1_1);
-        let w1_3 = self.nnf_mul(&w1_2, &t3);
-        let w1_4 = self.nnf_mul_scalar(neg_one, &w1_3);
-        let w1 = self.nnf_add_scalar_times_generator_power(one, 0, &w1_4);
-        let x_1 = self.nnf_mul_scalar(four_b, &t3);
-        let x = self.nnf_mul_generator(&x_1);
-        let z = self.nnf_mul(&w1, &w1);
-        let u_1 = self.nnf_add(&w1, &p.u);
-        let u_2 = self.nnf_mul(&u_1, &u_1);
-        let u_3 = self.nnf_sub(&u_2, &t3);
-        let u = self.nnf_sub(&u_3, &z);
-        let t_1 = self.nnf_mul_scalar(neg_four, &t3);
-        let t_2 = self.nnf_add_scalar_times_generator_power(two, 0, &t_1);
-        let t = self.nnf_sub(&t_2, &z);
+        let inputs: Vec<_> = p.x.components.into_iter().chain(p.u.components).collect();
+        let outputs = ECDblHomogOffset::apply(self, &inputs);
+        let x = FieldTarget::new(outputs[0..5].try_into().unwrap());
+        let z = FieldTarget::new(outputs[5..10].try_into().unwrap());
+        let u = FieldTarget::new(outputs[10..15].try_into().unwrap());
+        let t = FieldTarget::new(outputs[15..20].try_into().unwrap());
+        // Take care of offsets.
+        let one = self.nnf_constant(&ECField::ONE);
+        let z = self.nnf_add(&z, &one);
+        let t = self.nnf_add(&t, &one);
         let xq = self.nnf_div(&x, &z);
         let uq = self.nnf_div(&u, &t);
         PointTarget { x: xq, u: uq }
-        */
     }
 
     fn linear_combination_points(
