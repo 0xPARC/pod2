@@ -9,10 +9,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use super::serialization::{ordered_map, ordered_set};
 #[cfg(feature = "backend_plonky2")]
 use crate::backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree};
-use crate::{
-    constants::MAX_DEPTH,
-    middleware::{hash_value, Error, Hash, Key, RawValue, Result, Value},
-};
+use crate::middleware::{hash_value, Error, Hash, Key, RawValue, Result, Value};
 
 /// Dictionary: the user original keys and values are hashed to be used in the leaf.
 ///    leaf.key=hash(original_key)
@@ -28,12 +25,9 @@ pub struct Dictionary {
 }
 
 impl Dictionary {
-    pub fn new(kvs: HashMap<Key, Value>) -> Result<Self> {
-        Self::new_with_depth(MAX_DEPTH, kvs)
-    }
     /// max_depth determines the depth of the underlying MerkleTree, allowing to
     /// store 2^max_depth elements in the Dictionary
-    pub fn new_with_depth(max_depth: usize, kvs: HashMap<Key, Value>) -> Result<Self> {
+    pub fn new(max_depth: usize, kvs: HashMap<Key, Value>) -> Result<Self> {
         let kvs_raw: HashMap<RawValue, RawValue> = kvs
             .iter()
             .map(|(k, v)| (RawValue(k.hash().0), v.raw()))
@@ -60,20 +54,31 @@ impl Dictionary {
     pub fn prove_nonexistence(&self, key: &Key) -> Result<MerkleProof> {
         Ok(self.mt.prove_nonexistence(&RawValue(key.hash().0))?)
     }
-    pub fn verify(root: Hash, proof: &MerkleProof, key: &Key, value: &Value) -> Result<()> {
+    pub fn verify(
+        max_depth: usize,
+        root: Hash,
+        proof: &MerkleProof,
+        key: &Key,
+        value: &Value,
+    ) -> Result<()> {
         let key = RawValue(key.hash().0);
         Ok(MerkleTree::verify(
-            MAX_DEPTH,
+            max_depth,
             root,
             proof,
             &key,
             &value.raw(),
         )?)
     }
-    pub fn verify_nonexistence(root: Hash, proof: &MerkleProof, key: &Key) -> Result<()> {
+    pub fn verify_nonexistence(
+        max_depth: usize,
+        root: Hash,
+        proof: &MerkleProof,
+        key: &Key,
+    ) -> Result<()> {
         let key = RawValue(key.hash().0);
         Ok(MerkleTree::verify_nonexistence(
-            MAX_DEPTH, root, proof, &key,
+            max_depth, root, proof, &key,
         )?)
     }
     // TODO: Rename to dict to be consistent maybe?
@@ -101,7 +106,7 @@ impl<'de> Deserialize<'de> for Dictionary {
             max_depth: usize,
         }
         let aux = Aux::deserialize(deserializer)?;
-        Dictionary::new_with_depth(aux.max_depth, aux.kvs).map_err(serde::de::Error::custom)
+        Dictionary::new(aux.max_depth, aux.kvs).map_err(serde::de::Error::custom)
     }
 }
 
@@ -119,12 +124,9 @@ pub struct Set {
 }
 
 impl Set {
-    pub fn new(set: HashSet<Value>) -> Result<Self> {
-        Self::new_with_depth(MAX_DEPTH, set)
-    }
     /// max_depth determines the depth of the underlying MerkleTree, allowing to
     /// store 2^max_depth elements in the Array
-    pub fn new_with_depth(max_depth: usize, set: HashSet<Value>) -> Result<Self> {
+    pub fn new(max_depth: usize, set: HashSet<Value>) -> Result<Self> {
         let kvs_raw: HashMap<RawValue, RawValue> = set
             .iter()
             .map(|e| {
@@ -133,7 +135,7 @@ impl Set {
             })
             .collect();
         Ok(Self {
-            mt: MerkleTree::new(MAX_DEPTH, &kvs_raw)?,
+            mt: MerkleTree::new(max_depth, &kvs_raw)?,
             max_depth,
             set,
         })
@@ -153,20 +155,25 @@ impl Set {
         let h = hash_value(&value.raw());
         Ok(self.mt.prove_nonexistence(&RawValue::from(h))?)
     }
-    pub fn verify(root: Hash, proof: &MerkleProof, value: &Value) -> Result<()> {
+    pub fn verify(max_depth: usize, root: Hash, proof: &MerkleProof, value: &Value) -> Result<()> {
         let h = hash_value(&value.raw());
         Ok(MerkleTree::verify(
-            MAX_DEPTH,
+            max_depth,
             root,
             proof,
             &RawValue::from(h),
             &RawValue::from(h),
         )?)
     }
-    pub fn verify_nonexistence(root: Hash, proof: &MerkleProof, value: &Value) -> Result<()> {
+    pub fn verify_nonexistence(
+        max_depth: usize,
+        root: Hash,
+        proof: &MerkleProof,
+        value: &Value,
+    ) -> Result<()> {
         let h = hash_value(&value.raw());
         Ok(MerkleTree::verify_nonexistence(
-            MAX_DEPTH,
+            max_depth,
             root,
             proof,
             &RawValue::from(h),
@@ -196,7 +203,7 @@ impl<'de> Deserialize<'de> for Set {
             max_depth: usize,
         }
         let aux = Aux::deserialize(deserializer)?;
-        Set::new_with_depth(aux.max_depth, aux.set).map_err(serde::de::Error::custom)
+        Set::new(aux.max_depth, aux.set).map_err(serde::de::Error::custom)
     }
 }
 
@@ -214,12 +221,9 @@ pub struct Array {
 }
 
 impl Array {
-    pub fn new(array: Vec<Value>) -> Result<Self> {
-        Self::new_with_depth(MAX_DEPTH, array)
-    }
     /// max_depth determines the depth of the underlying MerkleTree, allowing to
     /// store 2^max_depth elements in the Array
-    pub fn new_with_depth(max_depth: usize, array: Vec<Value>) -> Result<Self> {
+    pub fn new(max_depth: usize, array: Vec<Value>) -> Result<Self> {
         let kvs_raw: HashMap<RawValue, RawValue> = array
             .iter()
             .enumerate()
@@ -245,9 +249,15 @@ impl Array {
         let value = self.array.get(i).expect("valid index");
         Ok((value, mtp))
     }
-    pub fn verify(root: Hash, proof: &MerkleProof, i: usize, value: &Value) -> Result<()> {
+    pub fn verify(
+        max_depth: usize,
+        root: Hash,
+        proof: &MerkleProof,
+        i: usize,
+        value: &Value,
+    ) -> Result<()> {
         Ok(MerkleTree::verify(
-            MAX_DEPTH,
+            max_depth,
             root,
             proof,
             &RawValue::from(i as i64),
@@ -277,6 +287,6 @@ impl<'de> Deserialize<'de> for Array {
             max_depth: usize,
         }
         let aux = Aux::deserialize(deserializer)?;
-        Array::new_with_depth(aux.max_depth, aux.array).map_err(serde::de::Error::custom)
+        Array::new(aux.max_depth, aux.array).map_err(serde::de::Error::custom)
     }
 }

@@ -28,13 +28,13 @@ use crate::{
 pub struct Signer(pub SecretKey);
 
 impl Signer {
-    fn _sign(&mut self, _params: &Params, kvs: &HashMap<Key, Value>) -> Result<SignedPod> {
+    fn _sign(&mut self, params: &Params, kvs: &HashMap<Key, Value>) -> Result<SignedPod> {
         let mut kvs = kvs.clone();
         let pubkey = self.0.public_key();
         kvs.insert(Key::from(KEY_SIGNER), Value::from(pubkey));
         kvs.insert(Key::from(KEY_TYPE), Value::from(PodType::Signed));
 
-        let dict = Dictionary::new(kvs)?;
+        let dict = Dictionary::new(params.max_depth_mt_containers, kvs)?;
         let id = RawValue::from(dict.commitment()); // PodId as Value
 
         let nonce = OsRng.gen_biguint_below(&GROUP_ORDER);
@@ -232,7 +232,7 @@ pub mod tests {
             .into_iter()
             .chain(iter::once(bad_kv))
             .collect::<HashMap<Key, Value>>();
-        bad_pod.dict = Dictionary::new(bad_kvs).unwrap();
+        bad_pod.dict = Dictionary::new(params.max_depth_mt_containers, bad_kvs).unwrap();
         assert!(bad_pod.verify().is_err());
 
         let mut bad_pod = pod.clone();
@@ -244,7 +244,7 @@ pub mod tests {
             .into_iter()
             .chain(iter::once(bad_kv))
             .collect::<HashMap<Key, Value>>();
-        bad_pod.dict = Dictionary::new(bad_kvs).unwrap();
+        bad_pod.dict = Dictionary::new(params.max_depth_mt_containers, bad_kvs).unwrap();
         assert!(bad_pod.verify().is_err());
 
         Ok(())

@@ -393,7 +393,10 @@ mod tests {
         let mut mp_builder = MainPodBuilder::new(&params, &vd_set);
 
         let set_values: HashSet<Value> = [1, 2, 3].iter().map(|i| Value::from(*i)).collect();
-        let s1 = mp_builder.literal(true, Value::from(Set::new(set_values)?))?;
+        let s1 = mp_builder.literal(
+            true,
+            Value::from(Set::new(params.max_depth_mt_containers, set_values)?),
+        )?;
         let s2 = mp_builder.literal(true, Value::from(1))?;
 
         let set_contains = mp_builder.pub_op(op!(set_contains, s1, s2))?;

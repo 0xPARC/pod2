@@ -39,6 +39,7 @@ pub type ProofWithPublicInputs = proof::ProofWithPublicInputs<F, C, D>;
 
 use std::{collections::HashMap, sync::LazyLock};
 
+use itertools::Itertools;
 use plonky2::hash::hash_types::HashOut;
 
 use crate::{
@@ -69,8 +70,14 @@ pub struct VDSet {
 impl VDSet {
     /// builds the verifier_datas tree, and returns the root and the proofs
     pub fn new(tree_depth: usize, vds: &[VerifierOnlyCircuitData]) -> Result<Self> {
-        // TODO sort vds
-        let array = Array::new_with_depth(
+        // first of all, sort the vds, so that each set of verifier_datas gets
+        // the same root
+        let vds: Vec<&VerifierOnlyCircuitData> = vds
+            .iter()
+            .sorted_by_key(|vd| RawValue(vd.circuit_digest.elements))
+            .collect::<Vec<_>>();
+
+        let array = Array::new(
             tree_depth,
             vds.iter()
                 .map(|vd| Value::from(RawValue(vd.circuit_digest.elements)))

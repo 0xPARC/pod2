@@ -1071,7 +1071,7 @@ pub mod tests {
         my_dict_kvs.insert(Key::from("c"), Value::from(3));
         //        let my_dict_as_mt = MerkleTree::new(5, &my_dict_kvs).unwrap();
         //        let dict = Dictionary { mt: my_dict_as_mt };
-        let dict = Dictionary::new(my_dict_kvs)?;
+        let dict = Dictionary::new(params.max_depth_mt_containers, my_dict_kvs)?;
         let dict_root = Value::from(dict.clone());
         builder.insert("dict", dict_root);
 
