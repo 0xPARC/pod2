@@ -31,7 +31,7 @@ pub fn key(s: &str) -> KeyOrWildcardStr {
 }
 
 /// Builder Argument for the StatementTmplBuilder
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum BuilderArg {
     Literal(Value),
     /// Key: (origin, key), where origin is SELF or Wildcard and key is Key or Wildcard
@@ -79,8 +79,8 @@ pub fn literal(v: impl Into<Value>) -> BuilderArg {
 
 #[derive(Clone)]
 pub struct StatementTmplBuilder {
-    predicate: Predicate,
-    args: Vec<BuilderArg>,
+    pub(crate) predicate: Predicate,
+    pub(crate) args: Vec<BuilderArg>,
 }
 
 impl StatementTmplBuilder {
@@ -98,7 +98,7 @@ impl StatementTmplBuilder {
 
     /// Desugar the predicate to a simpler form
     /// Should mirror the logic in `MainPodBuilder::lower_op`
-    fn desugar(self) -> StatementTmplBuilder {
+    pub(crate) fn desugar(self) -> StatementTmplBuilder {
         match self.predicate {
             Predicate::Native(NativePredicate::Gt) => {
                 let mut stb = StatementTmplBuilder {
@@ -184,6 +184,14 @@ impl CustomPredicateBatchBuilder {
         priv_args: &[&str],
         sts: &[StatementTmplBuilder],
     ) -> Result<Predicate> {
+        if self.predicates.len() >= self.params.max_custom_batch_size {
+            return Err(Error::max_length(
+                "self.predicates.len".to_string(),
+                self.predicates.len(),
+                self.params.max_custom_batch_size,
+            ));
+        }
+
         if args.len() > self.params.max_statement_args {
             return Err(Error::max_length(
                 "args.len".to_string(),

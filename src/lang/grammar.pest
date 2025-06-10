@@ -1,0 +1,96 @@
+// Grammar for the "Podlog" language. Used for describing POD2 Custom
+// Predicates and Proof Requests.
+
+// Silent rules (`_`) are automatically handled by Pest between other rules.
+// WHITESPACE matches one or more spaces, tabs, or newlines.
+WHITESPACE = _{ (" " | "\t" | NEWLINE)+ }
+
+// COMMENT matches '//' followed by any characters until the end of the line.
+// Also silent.
+COMMENT = _{ "//" ~ (!NEWLINE ~ ANY)* }
+
+// Define rules for identifiers (predicate names, variable names without '?')
+// Must start with alpha or _, followed by alpha, numeric, or _
+identifier = @{ !("private") ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+
+private_kw = { "private:" }
+
+self_keyword = @{ "SELF" }
+
+// Define wildcard names (start with '?')
+wildcard = @{ "?" ~ identifier }
+
+arg_section = {
+    public_arg_list ~ ("," ~ private_kw ~ private_arg_list)?
+}
+
+public_arg_list = { identifier ~ ("," ~ identifier)* } 
+private_arg_list = { identifier ~ ("," ~ identifier)* }
+
+document = { SOI ~ (custom_predicate_def | request_def)* ~ EOI }
+
+request_def = { "REQUEST" ~ "(" ~ statement_list? ~ ")" } 
+
+// Define conjunction type explicitly
+conjunction_type = { "AND" | "OR" }
+
+custom_predicate_def = {
+    identifier
+  ~ "(" ~ arg_section ~ ")"
+  ~ "="
+  ~ conjunction_type
+  ~ "(" ~ statement_list ~ ")" 
+}
+
+statement_list = { statement+ }
+
+statement_arg = { anchored_key | wildcard | literal_value }
+statement_arg_list = { statement_arg ~ ("," ~ statement_arg)* }
+
+statement = { identifier ~ "(" ~ statement_arg_list? ~ ")" }
+
+// Anchored Key: (SELF | ?Var)["key_literal" | ?KeyVar]
+anchored_key = { ( self_keyword | wildcard ) ~ "[" ~ (wildcard | literal_string) ~ "]" }
+
+// Literal Values (ordered to avoid ambiguity, e.g., string before int)
+literal_value = {
+    literal_dict |
+    literal_set |
+    literal_array |
+    literal_bool |
+    literal_raw |
+    literal_string |
+    literal_int
+}
+
+// Primitive literal types
+literal_int = @{ "-"? ~ ASCII_DIGIT+ }
+literal_bool = @{ "true" | "false" }
+
+// literal_raw: 0x followed by exactly 32 PAIRS of hex digits (64 hex characters)
+// representing a 32-byte value in big-endian order
+literal_raw = @{ "0x" ~ (ASCII_HEX_DIGIT ~ ASCII_HEX_DIGIT){32} }
+
+// String literal parsing based on https://pest.rs/book/examples/json.html
+literal_string = ${ "\"" ~ inner ~ "\"" } // Compound atomic string rule
+inner = @{ char* } // Atomic rule for the raw inner content
+char = { // Rule for a single logical character (unescaped or escaped)
+    !("\"" | "\\") ~ ANY // Any char except quote or backslash
+    | "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t") // Simple escape sequences
+    | "\\" ~ ("u" ~ ASCII_HEX_DIGIT{4}) // Unicode escape sequence
+}
+
+// Container Literals (recursive definition using literal_value)
+literal_array = { "[" ~ (literal_value ~ ("," ~ literal_value)*)? ~ "]" }
+literal_set = { "#[" ~ (literal_value ~ ("," ~ literal_value)*)? ~ "]" }
+literal_dict = { "{" ~ (dict_pair ~ ("," ~ dict_pair)*)? ~ "}" }
+dict_pair = { literal_string ~ ":" ~ literal_value }
+
+// --- Rules for testing full input matching ---
+test_identifier = { SOI ~ identifier ~ EOI }
+test_wildcard = { SOI ~ wildcard ~ EOI }
+test_literal_int = { SOI ~ literal_int ~ EOI }
+test_literal_raw = { SOI ~ literal_raw ~ EOI } 
+test_literal_value = { SOI ~ literal_value ~ EOI }
+test_statement = { SOI ~ statement ~ EOI }
+test_custom_predicate_def = { SOI ~ custom_predicate_def ~ EOI } 

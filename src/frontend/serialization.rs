@@ -101,7 +101,7 @@ mod tests {
         backends::plonky2::{
             mainpod::Prover,
             mock::{mainpod::MockProver, signedpod::MockSigner},
-            primitives::signature::SecretKey,
+            primitives::ec::schnorr::SecretKey,
             signedpod::Signer,
         },
         examples::{
@@ -112,7 +112,7 @@ mod tests {
         middleware::{
             self,
             containers::{Array, Dictionary, Set},
-            Params, RawValue, TypedValue,
+            Params, TypedValue,
         },
     };
 
@@ -200,7 +200,7 @@ mod tests {
     #[test]
     fn test_signed_pod_serialization() {
         let builder = signed_pod_builder();
-        let mut signer = Signer(SecretKey(RawValue::from(1)));
+        let mut signer = Signer(SecretKey(1u32.into()));
         let pod = builder.sign(&mut signer).unwrap();
 
         let serialized = serde_json::to_string_pretty(&pod).unwrap();
@@ -268,11 +268,11 @@ mod tests {
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params);
-        let mut signer = Signer(SecretKey(RawValue::from(1)));
+        let mut signer = Signer(SecretKey(1u32.into()));
         let gov_id_pod = gov_id_builder.sign(&mut signer)?;
-        let mut signer = Signer(SecretKey(RawValue::from(2)));
+        let mut signer = Signer(SecretKey(2u32.into()));
         let pay_stub_pod = pay_stub_builder.sign(&mut signer)?;
-        let mut signer = Signer(SecretKey(RawValue::from(3)));
+        let mut signer = Signer(SecretKey(3u32.into()));
         let sanction_list_pod = sanction_list_builder.sign(&mut signer)?;
         let kyc_builder =
             zu_kyc_pod_builder(&params, &gov_id_pod, &pay_stub_pod, &sanction_list_pod)?;

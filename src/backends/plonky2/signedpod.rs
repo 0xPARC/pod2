@@ -2,18 +2,20 @@ use std::collections::HashMap;
 
 use base64::{prelude::BASE64_STANDARD, Engine};
 use itertools::Itertools;
-use plonky2::util::serialization::Buffer;
+use num_bigint::RandBigInt;
+use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::{
-        deserialize_proof,
         error::{Error, Result},
         primitives::{
+            ec::{
+                curve::{Point, GROUP_ORDER},
+                schnorr::{SecretKey, Signature},
+            },
             merkletree::MerkleTree,
-            signature::{PublicKey, SecretKey, Signature, VP},
         },
-        serialize_proof,
     },
     constants::MAX_DEPTH,
     middleware::{
@@ -28,21 +30,23 @@ impl Signer {
     fn _sign(&mut self, _params: &Params, kvs: &HashMap<Key, Value>) -> Result<SignedPod> {
         let mut kvs = kvs.clone();
         let pubkey = self.0.public_key();
-        kvs.insert(Key::from(KEY_SIGNER), Value::from(pubkey.0));
+        kvs.insert(Key::from(KEY_SIGNER), Value::from(pubkey));
         kvs.insert(Key::from(KEY_TYPE), Value::from(PodType::Signed));
 
         let dict = Dictionary::new(kvs)?;
         let id = RawValue::from(dict.commitment()); // PodId as Value
 
-        let signature: Signature = self.0.sign(id)?;
+        let nonce = OsRng.gen_biguint_below(&GROUP_ORDER);
+        let signature: Signature = self.0.sign(id, &nonce);
         Ok(SignedPod {
             id: PodId(Hash::from(id)),
             signature,
+            signer: pubkey,
             dict,
         })
     }
 
-    pub fn public_key(&self) -> PublicKey {
+    pub fn public_key(&self) -> Point {
         self.0.public_key()
     }
 }
@@ -61,12 +65,13 @@ impl PodSigner for Signer {
 pub struct SignedPod {
     pub id: PodId,
     pub signature: Signature,
+    pub signer: Point,
     pub dict: Dictionary,
 }
 
 #[derive(Serialize, Deserialize)]
 struct Data {
-    signature: String,
+    signer_signature: String,
     dict: Dictionary,
 }
 
@@ -97,42 +102,43 @@ impl SignedPod {
         }
 
         // 3. Verify signature
-        let pk_value = self.dict.get(&Key::from(KEY_SIGNER))?;
-        let pk = PublicKey(pk_value.raw());
-        self.signature.verify(&pk, RawValue::from(id.0))?;
-
-        Ok(())
-    }
-
-    pub fn decode_signature(signature: &str) -> Result<Signature, Error> {
-        use plonky2::util::serialization::Read;
-
-        let decoded = BASE64_STANDARD.decode(signature).map_err(|e| {
-            Error::custom(format!(
-                "Failed to decode signature from base64: {}. Value: {}",
-                e, signature
-            ))
-        })?;
-        let mut buf = Buffer::new(&decoded);
-
-        let proof = buf.read_proof(&VP.0.common).map_err(|e| {
-            Error::custom(format!(
-                "Failed to read signature from buffer: {}. Value: {}",
-                e, signature
-            ))
-        })?;
-
-        let sig = Signature(proof);
-
-        Ok(sig)
+        let embedded_pk_value = self.dict.get(&Key::from(KEY_SIGNER))?;
+        let pk = self.signer;
+        let pk_value = Value::from(pk);
+        if &pk_value != embedded_pk_value {
+            return Err(Error::signer_not_equal(embedded_pk_value.clone(), pk_value));
+        }
+        self.signature
+            .verify(pk, RawValue::from(id.0))
+            .then_some(())
+            .ok_or(Error::custom("Invalid signature!".into()))
     }
 
     pub(crate) fn deserialize(id: PodId, data: serde_json::Value) -> Result<Box<dyn Pod>> {
         let data: Data = serde_json::from_value(data)?;
-        let signature = deserialize_proof(&VP.0.common, &data.signature)?;
+        let signer_signature_bytes =
+            BASE64_STANDARD
+                .decode(&data.signer_signature)
+                .map_err(|e| {
+                    Error::custom(format!(
+                        "Failed to decode signer_signature from base64: {}. Value: {}",
+                        e, data.signer_signature
+                    ))
+                })?;
+
+        if signer_signature_bytes.len() != 160 {
+            return Err(Error::custom(
+                "Invalid byte encoding of signed POD signer_signature.".to_string(),
+            ));
+        }
+
+        let signer = Point::from_bytes(&signer_signature_bytes[..80])?;
+        let signature = Signature::from_bytes(&signer_signature_bytes[80..])?;
+
         Ok(Box::new(Self {
             id,
-            signature: Signature(signature),
+            signature,
+            signer,
             dict: data.dict,
         }))
     }
@@ -168,8 +174,10 @@ impl Pod for SignedPod {
     }
 
     fn serialize_data(&self) -> serde_json::Value {
+        let signer_signature_bytes = [self.signer.as_bytes(), self.signature.as_bytes()].concat();
+        let signer_signature = BASE64_STANDARD.encode(&signer_signature_bytes);
         serde_json::to_value(Data {
-            signature: serialize_proof(&self.signature.0),
+            signer_signature,
             dict: self.dict.clone(),
         })
         .expect("serialization to json")
@@ -196,8 +204,7 @@ pub mod tests {
         pod.insert("dateOfBirth", 1169909384);
         pod.insert("socialSecurityNumber", "G2121210");
 
-        // TODO: Use a deterministic secret key to get deterministic tests
-        let sk = SecretKey::new_rand();
+        let sk = SecretKey(123u64.into());
         let mut signer = Signer(sk);
         let pod = pod.sign(&mut signer).unwrap();
         let pod = (pod.pod as Box<dyn Any>).downcast::<SignedPod>().unwrap();
@@ -207,7 +214,8 @@ pub mod tests {
         println!("kvs: {:?}", pod.kvs());
 
         let mut bad_pod = pod.clone();
-        bad_pod.signature = signer.0.sign(RawValue::from(42_i64))?;
+        let nonce = 456u64.into();
+        bad_pod.signature = signer.0.sign(RawValue::from(42_i64), &nonce);
         assert!(bad_pod.verify().is_err());
 
         let mut bad_pod = pod.clone();

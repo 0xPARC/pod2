@@ -373,20 +373,12 @@ impl fmt::Display for CustomPredicate {
 pub struct CustomPredicateBatch {
     id: Hash,
     pub name: String,
-    predicates: Vec<CustomPredicate>,
+    pub(crate) predicates: Vec<CustomPredicate>,
 }
 
 impl ToFields for CustomPredicateBatch {
     fn to_fields(&self, params: &Params) -> Vec<F> {
         // all the custom predicates in order
-
-        // TODO think if this check should go into the StatementTmpl creation,
-        // instead of at the `to_fields` method, where we should assume that the
-        // values are already valid
-        if self.predicates.len() > params.max_custom_batch_size {
-            panic!("Predicate batch exceeds maximum size");
-        }
-
         let pad_pred = CustomPredicate::empty();
         let fields: Vec<F> = self
             .predicates

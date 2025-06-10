@@ -844,13 +844,9 @@ pub mod tests {
     // Check that frontend public statements agree with those
     // embedded in a MainPod.
     fn check_public_statements(pod: &MainPod) -> Result<()> {
-        Ok(
-            std::iter::zip(pod.public_statements.clone(), pod.pod.pub_statements()).try_for_each(
-                |(fes, s)| {
-                    crate::middleware::Statement::try_from(fes).map(|fes| assert_eq!(fes, s))
-                },
-            )?,
-        )
+        std::iter::zip(pod.public_statements.clone(), pod.pod.pub_statements())
+            .for_each(|(fes, s)| assert_eq!(fes, s));
+        Ok(())
     }
 
     // Check that frontend key-values agree with those embedded in a

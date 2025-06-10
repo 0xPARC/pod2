@@ -31,7 +31,9 @@ pub use pod_deserialization::*;
 use serialization::*;
 pub use statement::*;
 
-use crate::backends::plonky2::primitives::merkletree::MerkleProof;
+use crate::backends::plonky2::primitives::{
+    ec::curve::Point as PublicKey, merkletree::MerkleProof,
+};
 
 pub const SELF: PodId = PodId(SELF_ID_HASH);
 
@@ -60,6 +62,8 @@ pub enum TypedValue {
     ),
     // Uses the serialization for middleware::Value:
     Raw(RawValue),
+    // Public key variant
+    PublicKey(PublicKey),
     // UNTAGGED TYPES:
     #[serde(untagged)]
     Array(Array),
@@ -96,6 +100,12 @@ impl From<bool> for TypedValue {
 impl From<Hash> for TypedValue {
     fn from(h: Hash) -> Self {
         TypedValue::Raw(RawValue(h.0))
+    }
+}
+
+impl From<PublicKey> for TypedValue {
+    fn from(p: PublicKey) -> Self {
+        TypedValue::PublicKey(p)
     }
 }
 
@@ -163,6 +173,7 @@ impl fmt::Display for TypedValue {
             TypedValue::Set(s) => write!(f, "set:{}", s.commitment()),
             TypedValue::Array(a) => write!(f, "arr:{}", a.commitment()),
             TypedValue::Raw(v) => write!(f, "{}", v),
+            TypedValue::PublicKey(p) => write!(f, "ecGFp5_pt:({},{})", p.x, p.u),
         }
     }
 }
@@ -177,6 +188,7 @@ impl From<&TypedValue> for RawValue {
             TypedValue::Set(s) => RawValue::from(s.commitment()),
             TypedValue::Array(a) => RawValue::from(a.commitment()),
             TypedValue::Raw(v) => *v,
+            TypedValue::PublicKey(p) => RawValue::from(hash_fields(&p.as_fields())),
         }
     }
 }

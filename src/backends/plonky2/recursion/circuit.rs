@@ -11,7 +11,7 @@
 use itertools::Itertools;
 use plonky2::{
     self,
-    field::types::Field,
+    field::{extension::quintic::QuinticExtension, types::Field},
     gates::noop::NoopGate,
     hash::hash_types::HashOutTarget,
     iop::{
@@ -33,6 +33,9 @@ use crate::{
     backends::plonky2::{
         basetypes::{C, D},
         error::Result,
+        primitives::ec::gates::{
+            curve::ECAddHomogOffset, field::NNFMulSimple, generic::GateAdapter,
+        },
     },
     middleware::F,
     timed,
@@ -342,6 +345,13 @@ pub fn common_data_for_recursion<I: InnerCircuit>(
         GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(&config, 4)),
         GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(&config, 5)),
         GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(&config, 6)),
+        GateRef::new(GateAdapter::<NNFMulSimple<5, QuinticExtension<F>>>::new_from_config(&config)),
+        GateRef::new(
+            GateAdapter::<NNFMulSimple<5, QuinticExtension<F>>>::new_from_config(&config)
+                .recursive_gate(),
+        ),
+        GateRef::new(GateAdapter::<ECAddHomogOffset>::new_from_config(&config)),
+        GateRef::new(GateAdapter::<ECAddHomogOffset>::new_from_config(&config).recursive_gate()),
         GateRef::new(plonky2::gates::exponentiation::ExponentiationGate::new_from_config(&config)),
         // It would be better do `CosetInterpolationGate::with_max_degree(4, 6)` but unfortunately
         // that plonk2 method is `pub(crate)`, so we need to get around that somehow.
@@ -468,7 +478,7 @@ mod tests {
         let mut aux: F = inp.elements[0];
         let two = F::from_canonical_u64(2u64);
         for _ in 0..5_000 {
-            aux = aux + two;
+            aux += two;
         }
         HashOut::<F>::from_vec(vec![aux, F::ZERO, F::ZERO, F::ZERO])
     }
@@ -511,7 +521,7 @@ mod tests {
             let zero = builder.zero();
             let output_targ = HashOutTarget::from_vec(vec![aux, zero, zero, zero]);
 
-            builder.register_public_inputs(&output_targ.elements.to_vec());
+            builder.register_public_inputs(output_targ.elements.as_ref());
 
             Ok(Self {
                 input: input_targ,
@@ -539,13 +549,13 @@ mod tests {
         ) -> Result<Self> {
             let input_targ = builder.add_virtual_hash();
 
-            let mut output_targ: HashOutTarget = input_targ.clone();
+            let mut output_targ: HashOutTarget = input_targ;
             for _ in 0..100 {
                 output_targ = builder
                     .hash_n_to_hash_no_pad::<PoseidonHash>(output_targ.elements.clone().to_vec());
             }
 
-            builder.register_public_inputs(&output_targ.elements.to_vec());
+            builder.register_public_inputs(output_targ.elements.as_ref());
 
             Ok(Self {
                 input: input_targ,
@@ -573,13 +583,13 @@ mod tests {
         ) -> Result<Self> {
             let input_targ = builder.add_virtual_hash();
 
-            let mut output_targ: HashOutTarget = input_targ.clone();
+            let mut output_targ: HashOutTarget = input_targ;
             for _ in 0..2000 {
                 output_targ = builder
                     .hash_n_to_hash_no_pad::<PoseidonHash>(output_targ.elements.clone().to_vec());
             }
 
-            builder.register_public_inputs(&output_targ.elements.to_vec());
+            builder.register_public_inputs(output_targ.elements.as_ref());
 
             Ok(Self {
                 input: input_targ,
@@ -709,7 +719,7 @@ mod tests {
             start.elapsed()
         );
 
-        let (dummy_verifier_data, dummy_proof) = dummy(&common_data, num_public_inputs)?;
+        let (dummy_verifier_data, dummy_proof) = dummy(common_data, num_public_inputs)?;
 
         let circuit1 = RC::<Circuit1>::build(&params_1, &())?;
         let circuit2 = RC::<Circuit2>::build(&params_2, &())?;
