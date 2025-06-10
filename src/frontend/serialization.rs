@@ -221,7 +221,7 @@ mod tests {
         middleware::{
             self,
             containers::{Array, Set},
-            Params, RawValue, TypedValue, DEFAULT_VD_TREE,
+            Params, RawValue, TypedValue, DEFAULT_VD_SET,
         },
     };
 
@@ -344,7 +344,7 @@ mod tests {
 
     fn build_mock_zukyc_pod() -> Result<MainPod> {
         let params = middleware::Params::default();
-        let vd_tree = &*DEFAULT_VD_TREE;
+        let vd_set = &*DEFAULT_VD_SET;
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params);
@@ -362,7 +362,7 @@ mod tests {
         let sanction_list_pod = sanction_list_builder.sign(&mut signer).unwrap();
         let kyc_builder = zu_kyc_pod_builder(
             &params,
-            &vd_tree,
+            &vd_set,
             &gov_id_pod,
             &pay_stub_pod,
             &sanction_list_pod,
@@ -381,7 +381,7 @@ mod tests {
             max_input_recursive_pods: 1,
             ..Default::default()
         };
-        let vd_tree = &*DEFAULT_VD_TREE;
+        let vd_set = &*DEFAULT_VD_SET;
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params);
@@ -393,7 +393,7 @@ mod tests {
         let sanction_list_pod = sanction_list_builder.sign(&mut signer)?;
         let kyc_builder = zu_kyc_pod_builder(
             &params,
-            &vd_tree,
+            &vd_set,
             &gov_id_pod,
             &pay_stub_pod,
             &sanction_list_pod,
@@ -446,7 +446,7 @@ mod tests {
             max_custom_predicate_wildcards: 12,
             ..Default::default()
         };
-        let vd_tree = &*DEFAULT_VD_TREE;
+        let vd_set = &*DEFAULT_VD_SET;
 
         let mut alice = MockSigner { pk: "Alice".into() };
         let bob = MockSigner { pk: "Bob".into() };
@@ -464,7 +464,7 @@ mod tests {
         let mut prover = MockProver {};
         let alice_bob_ethdos = eth_dos_pod_builder(
             &params,
-            &vd_tree,
+            &vd_set,
             true,
             &alice_attestation,
             &charlie_attestation,
