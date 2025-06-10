@@ -27,10 +27,10 @@ The following table summarises the natively-supported statements, where we write
 | 0    | `None`        |                     | no statement, always true (useful for padding)                    |
 | 1    | `False`       |                     | always false (useful for padding disjunctions)                    |
 | 2    | `ValueOf`     | `ak`, `value`       | `value_of(ak) = value`                                            |
-| 3    | `Eq`          | `ak1`, `ak2`        | `value_of(ak1) = value_of(ak2)`                                   |
-| 4    | `NEq`         | `ak1`, `ak2`        | `value_of(ak1) != value_of(ak2)`                                  |
-| 5    | `Gt`          | `ak1`, `ak2`        | `value_of(ak1) > value_of(ak2)`                                   |
-| 6    | `LEq`         | `ak1`, `ak2`        | `value_of(ak1) <= value_of(ak2)`                                  |
+| 3    | `Equal`          | `ak1`, `ak2`        | `value_of(ak1) = value_of(ak2)`                                   |
+| 4    | `NotEqual`         | `ak1`, `ak2`        | `value_of(ak1) != value_of(ak2)`                                  |
+| 5    | `LtEq`          | `ak1`, `ak2`        | `value_of(ak1) <= value_of(ak2)`                                   |
+| 6    | `Lt`         | `ak1`, `ak2`        | `value_of(ak1) < value_of(ak2)`                                  |
 | 7    | `Contains`    | `ak1`, `ak2`        | `(key_of(ak2), value_of(ak2)) ∈ value_of(ak1)` (Merkle inclusion) |
 | 8    | `NotContains` | `ak1`, `ak2`        | `(key_of(ak2), value_of(ak2)) ∉ value_of(ak1)` (Merkle exclusion) |
 | 9    | `SumOf`       | `ak1`, `ak2`, `ak3` | `value_of(ak1) = value_of(ak2) + value_of(ak3)`                   |
@@ -40,79 +40,36 @@ The following table summarises the natively-supported statements, where we write
 
 ### Frontend statements
 
-<span style="color:red">TODO: Current implementation frontend Statements reuse the middleware Statements, which:</span><br>
-<span style="color:red">- 1: GEq & LEq don't appear in the frontend impl</span><br>
-<span style="color:red">- 2: frontend impl has Contains & NotContains, which don't appear at the following block</span>
-```
-ValueOf(key: AnchoredKey, value: ScalarOrVec)
+The frontend also exposes the following syntactic sugar predicates.  These predicates are not supported by the backend.  The frontend compiler is responsible for translating these predicates into the predicates above.
 
-Equal(ak1: AnchoredKey, ak2: AnchoredKey)
-
-NotEqual(ak1: AnchoredKey, ak2: AnchoredKey)
-
-Gt(ak1: AnchoredKey::Integer, ak2: AnchoredKey::Integer)
-
-Lt(ak1: AnchoredKey::Integer, ak2: AnchoredKey::Integer)
-
-GEq(ak1: AnchoredKey::Integer, ak2: AnchoredKey::Integer)
-
-LEq(ak1: AnchoredKey::Integer, ak2: AnchoredKey::Integer)
-
-SumOf(sum: AnchoredKey::Integer, arg1: AnchoredKey::Integer, arg2: 
-AnchoredKey::Integer)
-
-ProductOf(prod: AnchoredKey::Integer, arg1: AnchoredKey::Integer, arg2: AnchoredKey::Integer)
-
-MaxOf(max: AnchoredKey::Integer, arg1: AnchoredKey::Integer, arg2: AnchoredKey::Integer)
-
-HashOf(ak1: AnchoredKey::Raw, arg1: AnchoredKey::Raw, arg2: AnchoredKey::Raw)
-```
-
-The following statements relate to Merkle trees and compound types; they are explained in detail on a [separate page](./merklestatements.md).
-```
-Branches(parent: AnchoredKey::MerkleTree, left: AnchoredKey::MerkleTree, right: AnchoredKey::MerkleTree)
-
-Leaf(node: AnchoredKey::MerkleTree, key: AnchoredKey, value: AnchoredKey)
-
-IsNullTree(node: AnchoredKey::MerkleTree)
-
-GoesLeft(key: AnchoredKey, depth: Value::Integer)
-
-GoesRight(key: AnchoredKey, depth: Value::Integer)
-
-Contains(root: AnchoredKey::MerkleTree, key: AnchoredKey, value: AnchoredKey)
-
-MerkleSubtree(root: AnchoredKey::MerkleTree, node: AnchoredKey::MerkleTree)
-
-MerkleCorrectPath(root: AnchoredKey::MerkleTree, node: AnchoredKey::MerkleTree, key: AnchoredKey, depth: Value::Integer)
-
-Contains(root: AnchoredKey::MerkleTree, key: AnchoredKey, value: AnchoredKey)
-
-NotContains(root: AnchoredKey::MerkleTree, key: AnchoredKey)
-
-ContainsHashedKey(root: AnchoredKey::DictOrSet, key: AnchoredKey)
-
-NotContainsHashedKey(root: AnchoredKey::DictOrSet, key: AnchoredKey)
-
-ContainsValue(root: AnchoredKey::Array, value: AnchoredKey)
-```
+| Code | Identifier    | Args and desugaring                | 
+|------|---------------|---------------------|
+| 1000 | DictContains | `DictContains(root, key, val) -> Contains(root, key, val)` |
+| 1001 | DictNotContains | `DictNotContains(root, key, val) -> NotContains(root, key, val)` |
+| 1002 | SetContains | `SetContains(root, val) -> Contains(root, val, val)` |
+| 1003 | SetNotContains | `SetNotContains(root, val) -> Contains(root, val, val)` |
+| 1004 | ArrayContains | `ArrayContains(root, idx, val) -> Contains(root, idx, val)` |
+| 1005 | GtEq | `GtEq(a, b) -> LtEq(b, a)`|
+| 1006 | Gt | `Gt(a, b) -> Lt(b, a)` |
 
 
 In the future, we may also reserve statement IDs for "precompiles" such as:
 ```
-EcdsaPrivToPubOf(A.pubkey, B.privkey)
+EcdsaPrivToPubOf(A["pubkey"], B["privkey"]),
 ```
+as well as for low-level operations on Merkle trees and compound types.
+<font color="red">NOTE</font> Merkle trees and compound types explained in a separate markdown file `./merklestatements.md` which is no longer part of these docs, but saved in the github repo in case we need to restore it in the future.
 
 ### Built-in statements for entries of any type
 
 A ```ValueOf``` statement asserts that an entry has a certain value.
 ```
-ValueOf(A.name, "Arthur") 
+ValueOf(A["name"], "Arthur") 
 ```
 
 An ```Equal``` statement asserts that two entries have the same value.  (Technical note: The circuit only proves equality of field elements; no type checking is performed.  For strings or Merkle roots, collision-resistance of the hash gives a cryptographic guarantee of equality.  However, note both Arrays and Sets are implemented as dictionaries in the backend; the backend cannot type-check, so it is possible to prove an equality between an Array or Set and a Dictionary.)
 ```
-Equal(A.name, B.name)
+Equal(A["name"], B["name"])
 ```
 
 An ```NotEqual``` statement asserts that two entries have different values.
@@ -124,8 +81,8 @@ NotEqual   (for arbitrary types)
 An ```Gt(x, y)``` statement asserts that ```x``` is an entry of type ```Integer```, ```y``` is an entry or constant of type ```Integer```, and ```x > y```.
 ```
 Gt    (for numerical types only)
-Gt(A.price, 100)
-Gt(A.price, B.balance)
+Gt(A["price"], 100)
+Gt(A["price"], B["balance"])
 ```
 
 The statements ```Lt```, ```GEq```, ```Leq``` are defined analogously.
@@ -136,16 +93,12 @@ The statements ```Lt```, ```GEq```, ```Leq``` are defined analogously.
 
 The two items below may be added in the future:
 ```
-poseidon_hash_of(A.hash, B.preimage) // perhaps a hash_of predicate can be parametrized by an enum representing the hash scheme; rather than having a bunch of specific things like SHA256_hash_of and poseidon_hash_of etc.
+poseidon_hash_of(A["hash"], B["preimage"]) // perhaps a hash_of predicate can be parametrized by an enum representing the hash scheme; rather than having a bunch of specific things like SHA256_hash_of and poseidon_hash_of etc.
 ```
 
 ```
-ecdsa_priv_to_pub_of(A.pubkey, B.privkey)
+ecdsa_priv_to_pub_of(A["pubkey"], B["privkey"])
 ```
-
-##### Primitive Built-in Statements for Merkle Roots
-
-[See separate page](./merklestatements.md).
 
 
 

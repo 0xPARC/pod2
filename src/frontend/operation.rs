@@ -1,7 +1,7 @@
 use std::fmt;
 
 use crate::{
-    frontend::SignedPod,
+    frontend::{MainPod, SignedPod},
     middleware::{
         AnchoredKey, CustomPredicateRef, NativeOperation, OperationAux, OperationType, Statement,
         Value, ValueRef,
@@ -87,6 +87,15 @@ impl From<(&SignedPod, &str)> for OperationArg {
             AnchoredKey::from((pod.id(), key)).into(),
             value.into(),
         ))
+    }
+}
+impl From<(&MainPod, &str)> for OperationArg {
+    fn from((pod, key): (&MainPod, &str)) -> Self {
+        // TODO: TryFrom.
+        let value = pod
+            .get(key)
+            .unwrap_or_else(|| panic!("Key {} is not present in POD: {}", key, pod));
+        Self::Statement(Statement::equal(AnchoredKey::from((pod.id(), key)), value))
     }
 }
 

@@ -1,3 +1,33 @@
+# Copied from statements.md
+
+```
+Branches(parent: AnchoredKey::MerkleTree, left: AnchoredKey::MerkleTree, right: AnchoredKey::MerkleTree)
+
+Leaf(node: AnchoredKey::MerkleTree, key: AnchoredKey, value: AnchoredKey)
+
+IsNullTree(node: AnchoredKey::MerkleTree)
+
+GoesLeft(key: AnchoredKey, depth: Value::Integer)
+
+GoesRight(key: AnchoredKey, depth: Value::Integer)
+
+Contains(root: AnchoredKey::MerkleTree, key: AnchoredKey, value: AnchoredKey)
+
+MerkleSubtree(root: AnchoredKey::MerkleTree, node: AnchoredKey::MerkleTree)
+
+MerkleCorrectPath(root: AnchoredKey::MerkleTree, node: AnchoredKey::MerkleTree, key: AnchoredKey, depth: Value::Integer)
+
+Contains(root: AnchoredKey::MerkleTree, key: AnchoredKey, value: AnchoredKey)
+
+NotContains(root: AnchoredKey::MerkleTree, key: AnchoredKey)
+
+ContainsHashedKey(root: AnchoredKey::DictOrSet, key: AnchoredKey)
+
+NotContainsHashedKey(root: AnchoredKey::DictOrSet, key: AnchoredKey)
+
+ContainsValue(root: AnchoredKey::Array, value: AnchoredKey)
+```
+
 # Statements involving compound types and Merkle trees
 
 The front end has three compound types
@@ -9,7 +39,7 @@ all of which are represented as `MerkleTree` on the back end.
 
 The frontend compound types and their implementation as Merkle trees is explained under [POD value types](./values.md#dictionary-array-set).  The backend structure of a MerkleTree is explained on [the Merkle tree page](./merkletree.md).
 
-The POD2 interface provides statements for working with Merkle trees and compond types at all layers of the stack:
+The POD2 interface provides statements for working with Merkle trees and compound types at all layers of the stack:
 - Primitive statements for Merkle trees
 - General derived statements for Merkle trees
 - Specialized `ContainsKey`, `NotContainsKey`, and `ContainsValue` statements for the three front-end types.

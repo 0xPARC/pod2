@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use itertools::Itertools;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::{
@@ -9,8 +10,9 @@ use crate::{
     },
     constants::MAX_DEPTH,
     middleware::{
-        containers::Dictionary, hash_str, AnchoredKey, DynError, Hash, Key, Params, Pod, PodId,
-        PodSigner, PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE, SELF,
+        containers::Dictionary, hash_str, serialization::ordered_map, AnchoredKey, DynError, Hash,
+        Key, Params, Pod, PodId, PodSigner, PodType, RawValue, Statement, Value, KEY_SIGNER,
+        KEY_TYPE, SELF,
     },
 };
 
@@ -55,17 +57,18 @@ pub struct MockSignedPod {
     kvs: HashMap<Key, Value>,
 }
 
-impl MockSignedPod {
-    pub(crate) fn new(id: PodId, signature: String, kvs: HashMap<Key, Value>) -> Self {
-        Self { id, signature, kvs }
-    }
-
-    pub fn signature(&self) -> String {
-        self.signature.clone()
-    }
+#[derive(Serialize, Deserialize)]
+struct Data {
+    signature: String,
+    #[serde(serialize_with = "ordered_map")]
+    kvs: HashMap<Key, Value>,
 }
 
 impl MockSignedPod {
+    pub fn signature(&self) -> String {
+        self.signature.clone()
+    }
+
     fn _verify(&self) -> Result<()> {
         // 1. Verify id
         let mt = MerkleTree::new(
@@ -108,6 +111,15 @@ impl MockSignedPod {
 
         Ok(())
     }
+
+    pub(crate) fn deserialize(id: PodId, data: serde_json::Value) -> Result<Box<dyn Pod>> {
+        let data: Data = serde_json::from_value(data)?;
+        Ok(Box::new(Self {
+            id,
+            signature: data.signature,
+            kvs: data.kvs,
+        }))
+    }
 }
 
 impl Pod for MockSignedPod {
@@ -120,6 +132,9 @@ impl Pod for MockSignedPod {
 
     fn id(&self) -> PodId {
         self.id
+    }
+    fn pod_type(&self) -> (usize, &'static str) {
+        (PodType::MockSigned as usize, "MockSigned")
     }
 
     fn pub_self_statements(&self) -> Vec<Statement> {
@@ -136,8 +151,12 @@ impl Pod for MockSignedPod {
             .collect()
     }
 
-    fn serialized_proof(&self) -> String {
-        serde_json::to_string(&self.signature).unwrap()
+    fn serialize_data(&self) -> serde_json::Value {
+        serde_json::to_value(Data {
+            signature: self.signature.clone(),
+            kvs: self.kvs.clone(),
+        })
+        .expect("serialization to json")
     }
 }
 

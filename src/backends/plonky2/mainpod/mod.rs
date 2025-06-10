@@ -2,27 +2,26 @@ pub mod operation;
 pub mod statement;
 use std::{any::Any, iter, sync::Arc};
 
-use base64::{prelude::BASE64_STANDARD, Engine};
 use itertools::Itertools;
 pub use operation::*;
 use plonky2::{
     hash::poseidon::PoseidonHash,
     plonk::{circuit_data::CommonCircuitData, config::Hasher},
-    util::serialization::{Buffer, Read},
 };
+use serde::{Deserialize, Serialize};
 pub use statement::*;
 
 use crate::{
     backends::plonky2::{
         basetypes::{Proof, ProofWithPublicInputs, VerifierOnlyCircuitData, D},
-        circuits::mainpod::{
-            CustomPredicateVerification, MainPodVerifyInput, MainPodVerifyTarget, NUM_PUBLIC_INPUTS,
-        },
+        circuits::mainpod::{CustomPredicateVerification, MainPodVerifyInput, MainPodVerifyTarget},
+        deserialize_proof,
         emptypod::EmptyPod,
         error::{Error, Result},
         mock::emptypod::MockEmptyPod,
         primitives::merkletree::MerkleClaimAndProof,
-        recursion::{self, RecursiveCircuit, RecursiveParams},
+        recursion::{RecursiveCircuit, RecursiveParams},
+        serialize_proof,
         signedpod::SignedPod,
         STANDARD_REC_MAIN_POD_CIRCUIT_DATA,
     },
@@ -39,7 +38,7 @@ use crate::{
 /// `max_public_statements` only pay for `max_public_statements` by starting the poseidon state
 /// with a precomputed constant corresponding to the front-padding part:
 /// `id = hash(serialize(reverse(statements || none-statements)))`
-pub(crate) fn calculate_id(statements: &[Statement], params: &Params) -> middleware::Hash {
+pub fn calculate_id(statements: &[Statement], params: &Params) -> middleware::Hash {
     assert!(statements.len() <= params.num_public_statements_id);
     assert!(params.max_public_statements <= params.num_public_statements_id);
 
@@ -252,13 +251,14 @@ fn pad_operation_args(params: &Params, args: &mut Vec<OperationArg>) {
     fill_pad(args, OperationArg::None, params.max_operation_args)
 }
 
-/// Returns the statements from the given MainPodInputs, padding to the
-/// respective max lengths defined at the given Params.
+/// Returns the statements from the given MainPodInputs, padding to the respective max lengths
+/// defined at the given Params.  Also returns a copy of the dynamic-length public statements from
+/// the list of statements.
 pub(crate) fn layout_statements(
     params: &Params,
     mock: bool,
     inputs: &MainPodInputs,
-) -> Result<Vec<Statement>> {
+) -> Result<(Vec<Statement>, Vec<Statement>)> {
     let mut statements = Vec::new();
 
     // Statement at index 0 is always None to be used for padding operation arguments in custom
@@ -345,7 +345,11 @@ pub(crate) fn layout_statements(
         statements.push(st);
     }
 
-    Ok(statements)
+    let offset_public_statements = statements.len() - params.max_public_statements;
+    let public_statements = statements
+        [offset_public_statements..offset_public_statements + 1 + inputs.public_statements.len()]
+        .to_vec();
+    Ok((statements, public_statements))
 }
 
 pub(crate) fn process_private_statements_operations(
@@ -418,7 +422,7 @@ impl Prover {
     fn _prove(&self, params: &Params, inputs: MainPodInputs) -> Result<MainPod> {
         let rec_circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
         let (main_pod_target, circuit_data) =
-            RecursiveCircuit::<MainPodVerifyTarget>::circuit_data_padded(
+            RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data_padded(
                 params.max_input_recursive_pods,
                 &rec_circuit_data.common,
                 params,
@@ -480,7 +484,7 @@ impl Prover {
             &custom_predicate_batches,
         )?;
 
-        let statements = layout_statements(params, false, &inputs)?;
+        let (statements, public_statements) = layout_statements(params, false, &inputs)?;
         let operations = process_private_statements_operations(
             params,
             &statements,
@@ -490,8 +494,6 @@ impl Prover {
         )?;
         let operations = process_public_statements_operations(params, &statements, operations)?;
 
-        let public_statements =
-            statements[statements.len() - params.max_public_statements..].to_vec();
         // get the id out of the public statements
         let id: PodId = PodId(calculate_id(&public_statements, params));
 
@@ -559,12 +561,20 @@ pub struct MainPod {
 fn get_common_data(params: &Params) -> Result<CommonCircuitData<F, D>, Error> {
     // TODO: Cache this somehow
     // https://github.com/0xPARC/pod2/issues/247
-    let rec_params = recursion::new_params::<MainPodVerifyTarget>(
-        params.max_input_recursive_pods,
-        NUM_PUBLIC_INPUTS,
-        params,
-    )?;
-    Ok(rec_params.common_data().clone())
+    let rec_circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
+    let (_, circuit_data) =
+        RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data_padded(
+            params.max_input_recursive_pods,
+            &rec_circuit_data.common,
+            params,
+        )?;
+    Ok(circuit_data.common.clone())
+}
+
+#[derive(Serialize, Deserialize)]
+struct Data {
+    public_statements: Vec<Statement>,
+    proof: String,
 }
 
 impl MainPod {
@@ -579,11 +589,12 @@ impl MainPod {
         let rec_circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
         // TODO: cache these artefacts
         // https://github.com/0xPARC/pod2/issues/247
-        let (_, circuit_data) = RecursiveCircuit::<MainPodVerifyTarget>::circuit_data_padded(
-            self.params.max_input_recursive_pods,
-            &rec_circuit_data.common,
-            &self.params,
-        )?;
+        let (_, circuit_data) =
+            RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data_padded(
+                self.params.max_input_recursive_pods,
+                &rec_circuit_data.common,
+                &self.params,
+            )?;
         let public_inputs = id
             .to_fields(&self.params)
             .iter()
@@ -610,40 +621,22 @@ impl MainPod {
         &self.params
     }
 
-    pub(crate) fn new(
-        proof: Proof,
-        public_statements: Vec<Statement>,
+    pub(crate) fn deserialize(
+        params: Params,
         id: PodId,
         vds_root: Hash,
-        params: Params,
-    ) -> Self {
-        Self {
+        data: serde_json::Value,
+    ) -> Result<Box<dyn RecursivePod>> {
+        let data: Data = serde_json::from_value(data)?;
+        let common = get_common_data(&params)?;
+        let proof = deserialize_proof(&common, &data.proof)?;
+        Ok(Box::new(Self {
             params,
             id,
             vds_root,
-            public_statements,
             proof,
-        }
-    }
-
-    pub fn decode_proof(proof: &str, params: &Params) -> Result<Proof, Error> {
-        let decoded = BASE64_STANDARD.decode(proof).map_err(|e| {
-            Error::custom(format!(
-                "Failed to decode proof from base64: {}. Value: {}",
-                e, proof
-            ))
-        })?;
-        let mut buf = Buffer::new(&decoded);
-        let common = get_common_data(params)?;
-
-        let proof = buf.read_proof(&common).map_err(|e| {
-            Error::custom(format!(
-                "Failed to read proof from buffer: {}. Value: {}",
-                e, proof
-            ))
-        })?;
-
-        Ok(proof)
+            public_statements: data.public_statements,
+        }))
     }
 }
 
@@ -658,6 +651,9 @@ impl Pod for MainPod {
     fn id(&self) -> PodId {
         self.id
     }
+    fn pod_type(&self) -> (usize, &'static str) {
+        (PodType::Main as usize, "Main")
+    }
 
     fn pub_self_statements(&self) -> Vec<middleware::Statement> {
         self.public_statements
@@ -667,11 +663,12 @@ impl Pod for MainPod {
             .collect()
     }
 
-    fn serialized_proof(&self) -> String {
-        let mut buffer = Vec::new();
-        use plonky2::util::serialization::Write;
-        buffer.write_proof(&self.proof).unwrap();
-        BASE64_STANDARD.encode(buffer)
+    fn serialize_data(&self) -> serde_json::Value {
+        serde_json::to_value(Data {
+            proof: serialize_proof(&self.proof),
+            public_statements: self.public_statements.clone(),
+        })
+        .expect("serialization to json")
     }
 }
 
@@ -690,11 +687,13 @@ impl RecursivePod for MainPod {
 
 #[cfg(test)]
 pub mod tests {
+    use num::{BigUint, One};
+
     use super::*;
     use crate::{
         backends::plonky2::{
             mock::mainpod::{MockMainPod, MockProver},
-            primitives::signature::SecretKey,
+            primitives::ec::schnorr::SecretKey,
             signedpod::Signer,
         },
         examples::{
@@ -706,7 +705,7 @@ pub mod tests {
             {self},
         },
         middleware,
-        middleware::{CustomPredicateRef, NativePredicate as NP, RawValue},
+        middleware::{CustomPredicateRef, NativePredicate as NP},
         op,
     };
 
@@ -724,11 +723,11 @@ pub mod tests {
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params);
-        let mut signer = Signer(SecretKey(RawValue::from(1)));
+        let mut signer = Signer(SecretKey(BigUint::one()));
         let gov_id_pod = gov_id_builder.sign(&mut signer)?;
-        let mut signer = Signer(SecretKey(RawValue::from(2)));
+        let mut signer = Signer(SecretKey(2u64.into()));
         let pay_stub_pod = pay_stub_builder.sign(&mut signer)?;
-        let mut signer = Signer(SecretKey(RawValue::from(3)));
+        let mut signer = Signer(SecretKey(3u64.into()));
         let sanction_list_pod = sanction_list_builder.sign(&mut signer)?;
         let kyc_builder =
             zu_kyc_pod_builder(&params, &gov_id_pod, &pay_stub_pod, &sanction_list_pod)?;
@@ -757,7 +756,7 @@ pub mod tests {
         gov_id_builder.insert("idNumber", "4242424242");
         gov_id_builder.insert("dateOfBirth", 1169909384);
         gov_id_builder.insert("socialSecurityNumber", "G2121210");
-        let mut signer = Signer(SecretKey(RawValue::from(42)));
+        let mut signer = Signer(SecretKey(42u64.into()));
         let gov_id = gov_id_builder.sign(&mut signer).unwrap();
         let now_minus_18y: i64 = 1169909388;
         let mut kyc_builder = frontend::MainPodBuilder::new(&params);
@@ -839,24 +838,23 @@ pub mod tests {
         };
         println!("{:#?}", params);
 
-        let mut alice = Signer(SecretKey(RawValue::from(1)));
-        let bob = Signer(SecretKey(RawValue::from(2)));
-        let mut charlie = Signer(SecretKey(RawValue::from(3)));
+        let mut alice = Signer(SecretKey(1u32.into()));
+        let bob = Signer(SecretKey(2u32.into()));
+        let mut charlie = Signer(SecretKey(3u32.into()));
 
         // Alice attests that she is ETH friends with Charlie and Charlie
         // attests that he is ETH friends with Bob.
         let alice_attestation =
-            eth_friend_signed_pod_builder(&params, charlie.public_key().0.into())
-                .sign(&mut alice)?;
+            eth_friend_signed_pod_builder(&params, charlie.public_key().into()).sign(&mut alice)?;
         let charlie_attestation =
-            eth_friend_signed_pod_builder(&params, bob.public_key().0.into()).sign(&mut charlie)?;
+            eth_friend_signed_pod_builder(&params, bob.public_key().into()).sign(&mut charlie)?;
 
         let alice_bob_ethdos_builder = eth_dos_pod_builder(
             &params,
             false,
             &alice_attestation,
             &charlie_attestation,
-            bob.public_key().0.into(),
+            bob.public_key().into(),
         )?;
 
         let mut prover = MockProver {};

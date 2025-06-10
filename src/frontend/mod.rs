@@ -10,7 +10,7 @@ use serialization::{SerializedMainPod, SerializedSignedPod};
 use crate::middleware::{
     self, check_st_tmpl, hash_op, hash_str, max_op, prod_op, sum_op, AnchoredKey, Key,
     MainPodInputs, NativeOperation, OperationAux, OperationType, Params, PodId, PodProver,
-    PodSigner, Statement, StatementArg, Value, WildcardValue, EMPTY_HASH, KEY_TYPE, SELF,
+    PodSigner, Statement, StatementArg, Value, ValueRef, WildcardValue, EMPTY_HASH, KEY_TYPE, SELF,
 };
 
 mod custom;
@@ -60,7 +60,7 @@ impl SignedPodBuilder {
 /// SignedPod is a wrapper on top of backend::SignedPod, which additionally stores the
 /// string<-->hash relation of the keys.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(from = "SerializedSignedPod", into = "SerializedSignedPod")]
+#[serde(try_from = "SerializedSignedPod", into = "SerializedSignedPod")]
 pub struct SignedPod {
     pub pod: Box<dyn middleware::Pod>,
     // We store a copy of the key values for quick access
@@ -102,7 +102,7 @@ impl SignedPod {
     pub fn get(&self, key: impl Into<Key>) -> Option<&Value> {
         self.kvs.get(&key.into())
     }
-    // Returns the ValueOf statement that defines key if it exists.
+    // Returns the Equal statement that defines key if it exists.
     pub fn get_statement(&self, key: impl Into<Key>) -> Option<Statement> {
         let key: Key = key.into();
         self.kvs()
@@ -124,7 +124,7 @@ pub struct MainPodBuilder {
     // Internal state
     /// Counter for constants created from literals
     const_cnt: usize,
-    /// Map from (public, Value) to Key of already created literals via ValueOf statements.
+    /// Map from (public, Value) to Key of already created literals via Equal statements.
     literals: HashMap<(bool, Value), Key>,
 }
 
@@ -636,6 +636,22 @@ impl MainPod {
     pub fn id(&self) -> PodId {
         self.pod.id()
     }
+
+    /// Returns the value of a Equal statement with self id that defines key if it exists.
+    pub fn get(&self, key: impl Into<Key>) -> Option<Value> {
+        let key: Key = key.into();
+        self.public_statements
+            .iter()
+            .find_map(|st| match st {
+                Statement::Equal(ValueRef::Key(ak), ValueRef::Literal(value))
+                    if ak.pod_id == self.id() && ak.key.hash() == key.hash() =>
+                {
+                    Some(value)
+                }
+                _ => None,
+            })
+            .cloned()
+    }
 }
 
 struct MainPodCompilerInputs<'a> {
@@ -746,6 +762,9 @@ pub mod build_utils {
         (new_entry, ($key:expr, $value:expr)) => { $crate::frontend::Operation(
             $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::NewEntry),
             $crate::op_args!(($key, $value)), $crate::middleware::OperationAux::None) };
+        (copy, $($arg:expr),+) => { $crate::frontend::Operation(
+            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::CopyStatement),
+            $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (eq, $($arg:expr),+) => { $crate::frontend::Operation(
             $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::EqualFromEntries),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
@@ -812,13 +831,9 @@ pub mod tests {
     // Check that frontend public statements agree with those
     // embedded in a MainPod.
     fn check_public_statements(pod: &MainPod) -> Result<()> {
-        Ok(
-            std::iter::zip(pod.public_statements.clone(), pod.pod.pub_statements()).try_for_each(
-                |(fes, s)| {
-                    crate::middleware::Statement::try_from(fes).map(|fes| assert_eq!(fes, s))
-                },
-            )?,
-        )
+        std::iter::zip(pod.public_statements.clone(), pod.pod.pub_statements())
+            .for_each(|(fes, s)| assert_eq!(fes, s));
+        Ok(())
     }
 
     // Check that frontend key-values agree with those embedded in a

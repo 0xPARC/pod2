@@ -543,6 +543,7 @@ impl CustomPredicateEntryTarget {
             conjunction: predicate.conjunction,
             statements,
             args_len: predicate.args_len,
+            wildcard_names: predicate.wildcard_names.clone(),
         };
         self.predicate.set_targets(pw, params, &predicate)?;
         Ok(())

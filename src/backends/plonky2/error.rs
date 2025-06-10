@@ -10,6 +10,8 @@ pub enum InnerError {
     IdNotEqual(PodId, PodId),
     #[error("type does not match, expected {0}, found {1}")]
     TypeNotEqual(PodType, Value),
+    #[error("signer public key does not match, expected {0}, found {1}")]
+    SignerNotEqual(Value, Value),
 
     // POD related
     #[error("invalid POD ID")]
@@ -41,6 +43,8 @@ pub enum Error {
     Plonky2ProofFail(anyhow::Error),
     #[error("base64::DecodeError: {0}")]
     Base64Decode(#[from] base64::DecodeError),
+    #[error("serde_json::Error: {0}")]
+    SerdeJson(#[from] serde_json::Error),
     #[error(transparent)]
     Tree(#[from] crate::backends::plonky2::primitives::merkletree::error::TreeError),
     #[error(transparent)]
@@ -63,31 +67,34 @@ macro_rules! new {
 }
 use InnerError::*;
 impl Error {
-    pub(crate) fn custom(s: String) -> Self {
+    pub fn custom(s: String) -> Self {
         new!(Custom(s))
     }
-    pub(crate) fn plonky2_proof_fail(e: anyhow::Error) -> Self {
+    pub fn plonky2_proof_fail(e: anyhow::Error) -> Self {
         Self::Plonky2ProofFail(e)
     }
-    pub(crate) fn key_not_found() -> Self {
+    pub fn key_not_found() -> Self {
         new!(KeyNotFound)
     }
-    pub(crate) fn statement_not_check() -> Self {
+    pub fn statement_not_check() -> Self {
         new!(StatementNotCheck)
     }
-    pub(crate) fn repeated_value_of() -> Self {
+    pub fn repeated_value_of() -> Self {
         new!(RepeatedValueOf)
     }
-    pub(crate) fn not_type_statement() -> Self {
+    pub fn not_type_statement() -> Self {
         new!(NotTypeStatement)
     }
-    pub(crate) fn pod_id_invalid() -> Self {
+    pub fn pod_id_invalid() -> Self {
         new!(PodIdInvalid)
     }
-    pub(crate) fn id_not_equal(expected: PodId, found: PodId) -> Self {
+    pub fn id_not_equal(expected: PodId, found: PodId) -> Self {
         new!(IdNotEqual(expected, found))
     }
-    pub(crate) fn type_not_equal(expected: PodType, found: Value) -> Self {
+    pub fn type_not_equal(expected: PodType, found: Value) -> Self {
         new!(TypeNotEqual(expected, found))
+    }
+    pub(crate) fn signer_not_equal(expected: Value, found: Value) -> Self {
+        new!(SignerNotEqual(expected, found))
     }
 }

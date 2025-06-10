@@ -2,6 +2,8 @@
 //! the backend.
 
 use std::sync::Arc;
+
+use strum_macros::FromRepr;
 mod basetypes;
 use std::{
     cmp::{Ordering, PartialEq, PartialOrd},
@@ -15,6 +17,7 @@ pub mod containers;
 mod custom;
 mod error;
 mod operation;
+mod pod_deserialization;
 pub mod serialization;
 mod statement;
 use std::{any::Any, collections::HashMap, fmt};
@@ -24,10 +27,13 @@ pub use custom::*;
 use dyn_clone::DynClone;
 pub use error::*;
 pub use operation::*;
+pub use pod_deserialization::*;
 use serialization::*;
 pub use statement::*;
 
-use crate::backends::plonky2::primitives::merkletree::MerkleProof;
+use crate::backends::plonky2::primitives::{
+    ec::curve::Point as PublicKey, merkletree::MerkleProof,
+};
 
 pub const SELF: PodId = PodId(SELF_ID_HASH);
 
@@ -56,6 +62,8 @@ pub enum TypedValue {
     ),
     // Uses the serialization for middleware::Value:
     Raw(RawValue),
+    // Public key variant
+    PublicKey(PublicKey),
     // UNTAGGED TYPES:
     #[serde(untagged)]
     Array(Array),
@@ -92,6 +100,12 @@ impl From<bool> for TypedValue {
 impl From<Hash> for TypedValue {
     fn from(h: Hash) -> Self {
         TypedValue::Raw(RawValue(h.0))
+    }
+}
+
+impl From<PublicKey> for TypedValue {
+    fn from(p: PublicKey) -> Self {
+        TypedValue::PublicKey(p)
     }
 }
 
@@ -159,6 +173,7 @@ impl fmt::Display for TypedValue {
             TypedValue::Set(s) => write!(f, "set:{}", s.commitment()),
             TypedValue::Array(a) => write!(f, "arr:{}", a.commitment()),
             TypedValue::Raw(v) => write!(f, "{}", v),
+            TypedValue::PublicKey(p) => write!(f, "ecGFp5_pt:({},{})", p.x, p.u),
         }
     }
 }
@@ -173,6 +188,7 @@ impl From<&TypedValue> for RawValue {
             TypedValue::Set(s) => RawValue::from(s.commitment()),
             TypedValue::Array(a) => RawValue::from(a.commitment()),
             TypedValue::Raw(v) => *v,
+            TypedValue::PublicKey(p) => RawValue::from(hash_fields(&p.as_fields())),
         }
     }
 }
@@ -468,7 +484,7 @@ impl ToFields for Key {
 
 impl fmt::Display for Key {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.name)?;
+        write!(f, "\"{}\"", self.name)?;
         Ok(())
     }
 }
@@ -530,7 +546,10 @@ impl AnchoredKey {
 
 impl fmt::Display for AnchoredKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}.{}", self.pod_id, self.key)?;
+        self.pod_id.fmt(f)?;
+        write!(f, "[")?;
+        self.key.fmt(f)?;
+        write!(f, "]")?;
         Ok(())
     }
 }
@@ -553,7 +572,7 @@ impl ToFields for PodId {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, FromRepr, Serialize, Deserialize, JsonSchema)]
 pub enum PodType {
     None = 0,
     MockSigned = 1,
@@ -624,7 +643,8 @@ impl Default for Params {
             max_signed_pod_values: 8,
             max_public_statements: 10,
             num_public_statements_id: 16,
-            max_statement_args: 5,
+            // TODO: Reduce to 5 or less after https://github.com/0xPARC/pod2/issues/229
+            max_statement_args: 6,
             max_operation_args: 5,
             max_custom_predicate_batches: 2,
             max_custom_predicate_verifications: 5,
@@ -723,6 +743,8 @@ pub trait Pod: fmt::Debug + DynClone + Any {
     fn params(&self) -> &Params;
     fn verify(&self) -> Result<(), Box<DynError>>;
     fn id(&self) -> PodId;
+    /// Return a uuid of the pod type and its name.  The name is only used as metadata.
+    fn pod_type(&self) -> (usize, &'static str);
     /// Statements as internally generated, where self-referencing arguments use SELF in the
     /// anchored key.  The serialization of these statements is used to calculate the id.
     fn pub_self_statements(&self) -> Vec<Statement>;
@@ -734,6 +756,9 @@ pub trait Pod: fmt::Debug + DynClone + Any {
             .map(|statement| normalize_statement(&statement, self.id()))
             .collect()
     }
+    /// Return this Pods data serialized into a json value.  This serialization can skip `params,
+    /// id, vds_root`
+    fn serialize_data(&self) -> serde_json::Value;
     /// Extract key-values from ValueOf public statements
     fn kvs(&self) -> HashMap<AnchoredKey, Value> {
         self.pub_statements()
@@ -755,7 +780,7 @@ pub trait Pod: fmt::Debug + DynClone + Any {
     // reconstruct the proof.
     // It is an important principle that this data is opaque to the front-end
     // and any third-party code.
-    fn serialized_proof(&self) -> String;
+    // fn serialized_proof(&self) -> String;
 }
 
 // impl Clone for Box<dyn Pod>
@@ -798,11 +823,14 @@ impl Pod for NonePod {
     fn id(&self) -> PodId {
         PodId(EMPTY_HASH)
     }
+    fn pod_type(&self) -> (usize, &'static str) {
+        (PodType::None as usize, "None")
+    }
     fn pub_self_statements(&self) -> Vec<Statement> {
         Vec::new()
     }
-    fn serialized_proof(&self) -> String {
-        "".to_string()
+    fn serialize_data(&self) -> serde_json::Value {
+        serde_json::Value::Null
     }
 }
 
