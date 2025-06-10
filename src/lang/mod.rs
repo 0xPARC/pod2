@@ -185,7 +185,7 @@ mod tests {
             "uses_private".to_string(),
             expected_statements,
             1, // args_len (A)
-            names(&["A"]),
+            names(&["A", "Temp"]),
         )?;
         let expected_batch =
             CustomPredicateBatch::new(&params, "PodlogBatch".to_string(), vec![expected_predicate]);
@@ -523,7 +523,7 @@ mod tests {
                 eth_friend(?intermed_key, ?dst_key)
             )
 
-            eth_dos_distance(src_key, dst_key, distance_key, private: intermed_key, shorter_distance_key) = OR(
+            eth_dos_distance(src_key, dst_key, distance_key) = OR(
                 eth_dos_distance_base(?src_key, ?dst_key, ?distance_key)
                 eth_dos_distance_ind(?src_key, ?dst_key, ?distance_key)
             )
@@ -573,7 +573,7 @@ mod tests {
             true, // AND
             expected_friend_stmts,
             2, // public_args_len: src_key, dst_key
-            names(&["src_key", "dst_key"]),
+            names(&["src_key", "dst_key", "attestation_pod"]),
         )?;
 
         // eth_dos_distance_base (Index 1)
@@ -639,7 +639,14 @@ mod tests {
             true, // AND
             expected_ind_stmts,
             3, // public_args_len
-            names(&["src_key", "dst_key", "distance_key"]),
+            names(&[
+                "src_key",
+                "dst_key",
+                "distance_key",
+                "one_key",
+                "shorter_distance_key",
+                "intermed_key",
+            ]),
         )?;
 
         // eth_dos_distance (Index 3)
