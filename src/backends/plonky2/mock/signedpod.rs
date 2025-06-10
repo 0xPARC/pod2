@@ -10,8 +10,9 @@ use crate::{
     },
     constants::MAX_DEPTH,
     middleware::{
-        containers::Dictionary, hash_str, AnchoredKey, DynError, Hash, Key, Params, Pod, PodId,
-        PodSigner, PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE, SELF,
+        containers::Dictionary, hash_str, serialization::ordered_map, AnchoredKey, DynError, Hash,
+        Key, Params, Pod, PodId, PodSigner, PodType, RawValue, Statement, Value, KEY_SIGNER,
+        KEY_TYPE, SELF,
     },
 };
 
@@ -59,6 +60,7 @@ pub struct MockSignedPod {
 #[derive(Serialize, Deserialize)]
 struct Data {
     signature: String,
+    #[serde(serialize_with = "ordered_map")]
     kvs: HashMap<Key, Value>,
 }
 

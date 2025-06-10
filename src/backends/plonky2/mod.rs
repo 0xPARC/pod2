@@ -40,13 +40,21 @@ pub static STANDARD_REC_MAIN_POD_CIRCUIT_DATA: LazyLock<CircuitData> = LazyLock:
     )
 });
 
-pub fn deserialize_proof(common: &CommonCircuitData, proof: &str) -> Result<Proof, Error> {
-    let decoded = BASE64_STANDARD.decode(proof).map_err(|e| {
+pub fn serialize_bytes(bytes: &[u8]) -> String {
+    BASE64_STANDARD.encode(bytes)
+}
+
+pub fn deserialize_bytes(data: &str) -> Result<Vec<u8>> {
+    BASE64_STANDARD.decode(data).map_err(|e| {
         Error::custom(format!(
-            "Failed to decode proof from base64: {}. Value: {}",
-            e, proof
+            "Failed to decode data from base64: {}. Value: {}",
+            e, data
         ))
-    })?;
+    })
+}
+
+pub fn deserialize_proof(common: &CommonCircuitData, proof: &str) -> Result<Proof> {
+    let decoded = deserialize_bytes(proof)?;
     let mut buf = Buffer::new(&decoded);
     let proof = buf.read_proof(common).map_err(|e| {
         Error::custom(format!(
@@ -62,5 +70,5 @@ pub fn serialize_proof(proof: &Proof) -> String {
     let mut buffer = Vec::new();
     use plonky2::util::serialization::Write;
     buffer.write_proof(proof).unwrap();
-    BASE64_STANDARD.encode(buffer)
+    serialize_bytes(&buffer)
 }
