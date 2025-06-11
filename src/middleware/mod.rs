@@ -443,7 +443,7 @@ impl From<&Value> for Hash {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq)]
 pub struct Key {
     name: String,
     hash: Hash,
@@ -463,6 +463,18 @@ impl Key {
     }
     pub fn raw(&self) -> RawValue {
         RawValue(self.hash.0)
+    }
+}
+
+impl hash::Hash for Key {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        self.hash.hash(state);
+    }
+}
+
+impl PartialEq for Key {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash
     }
 }
 
@@ -531,7 +543,7 @@ impl JsonSchema for Key {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AnchoredKey {
     pub pod_id: PodId,
@@ -541,6 +553,19 @@ pub struct AnchoredKey {
 impl AnchoredKey {
     pub fn new(pod_id: PodId, key: Key) -> Self {
         Self { pod_id, key }
+    }
+}
+
+impl hash::Hash for AnchoredKey {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        self.pod_id.hash(state);
+        self.key.hash.hash(state);
+    }
+}
+
+impl PartialEq for AnchoredKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.pod_id == other.pod_id && self.key.hash == other.key.hash
     }
 }
 
