@@ -545,6 +545,11 @@ impl PodProver for Prover {
 pub struct MainPod {
     params: Params,
     id: PodId,
+    /// vds_root is the merkle-root of the `VDSet`, which contains the
+    /// verifier_data hashes of the allowed set of VerifierOnlyCircuitData, for
+    /// the succession of recursive MainPods, which when proving the POD, it is
+    /// proven that all the recursive proofs that are being verified in-circuit
+    /// use one of the verifier_data's contained in the VDSet.
     vds_root: Hash,
     public_statements: Vec<Statement>,
     proof: Proof,

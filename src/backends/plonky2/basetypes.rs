@@ -60,7 +60,11 @@ pub static DEFAULT_VD_SET: LazyLock<VDSet> = LazyLock::new(|| {
     VDSet::new(params.max_depth_mt_vds, &vds).unwrap()
 });
 
-/// Struct that allows to get the specific merkle proofs for the given verifier_data
+/// VDSet is the set of the allowed verifier_data hashes. When proving a
+/// MainPod, the circuit will enforce that all the used verifier_datas for
+/// verifying the recursive proofs of previous PODs appears in the VDSet.
+/// The VDSet struct that allows to get the specific merkle proofs for the given
+/// verifier_data.
 #[derive(Clone, Debug)]
 pub struct VDSet {
     root: Hash,
