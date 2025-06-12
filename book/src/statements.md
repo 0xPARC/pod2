@@ -55,7 +55,7 @@ The frontend also exposes the following syntactic sugar predicates.  These predi
 
 In the future, we may also reserve statement IDs for "precompiles" such as:
 ```
-EcdsaPrivToPubOf(A.pubkey, B.privkey),
+EcdsaPrivToPubOf(A["pubkey"], B["privkey"]),
 ```
 as well as for low-level operations on Merkle trees and compound types.
 <font color="red">NOTE</font> Merkle trees and compound types explained in a separate markdown file `./merklestatements.md` which is no longer part of these docs, but saved in the github repo in case we need to restore it in the future.
@@ -64,12 +64,12 @@ as well as for low-level operations on Merkle trees and compound types.
 
 A ```ValueOf``` statement asserts that an entry has a certain value.
 ```
-ValueOf(A.name, "Arthur") 
+ValueOf(A["name"], "Arthur") 
 ```
 
 An ```Equal``` statement asserts that two entries have the same value.  (Technical note: The circuit only proves equality of field elements; no type checking is performed.  For strings or Merkle roots, collision-resistance of the hash gives a cryptographic guarantee of equality.  However, note both Arrays and Sets are implemented as dictionaries in the backend; the backend cannot type-check, so it is possible to prove an equality between an Array or Set and a Dictionary.)
 ```
-Equal(A.name, B.name)
+Equal(A["name"], B["name"])
 ```
 
 An ```NotEqual``` statement asserts that two entries have different values.
@@ -81,8 +81,8 @@ NotEqual   (for arbitrary types)
 An ```Gt(x, y)``` statement asserts that ```x``` is an entry of type ```Integer```, ```y``` is an entry or constant of type ```Integer```, and ```x > y```.
 ```
 Gt    (for numerical types only)
-Gt(A.price, 100)
-Gt(A.price, B.balance)
+Gt(A["price"], 100)
+Gt(A["price"], B["balance"])
 ```
 
 The statements ```Lt```, ```GEq```, ```Leq``` are defined analogously.
@@ -93,11 +93,11 @@ The statements ```Lt```, ```GEq```, ```Leq``` are defined analogously.
 
 The two items below may be added in the future:
 ```
-poseidon_hash_of(A.hash, B.preimage) // perhaps a hash_of predicate can be parametrized by an enum representing the hash scheme; rather than having a bunch of specific things like SHA256_hash_of and poseidon_hash_of etc.
+poseidon_hash_of(A["hash"], B["preimage"]) // perhaps a hash_of predicate can be parametrized by an enum representing the hash scheme; rather than having a bunch of specific things like SHA256_hash_of and poseidon_hash_of etc.
 ```
 
 ```
-ecdsa_priv_to_pub_of(A.pubkey, B.privkey)
+ecdsa_priv_to_pub_of(A["pubkey"], B["privkey"])
 ```
 
 

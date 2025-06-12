@@ -27,13 +27,13 @@ impl MockSigner {
 }
 
 impl MockSigner {
-    fn _sign(&mut self, _params: &Params, kvs: &HashMap<Key, Value>) -> Result<MockSignedPod> {
+    fn _sign(&mut self, params: &Params, kvs: &HashMap<Key, Value>) -> Result<MockSignedPod> {
         let mut kvs = kvs.clone();
         let pubkey = self.public_key();
         kvs.insert(Key::from(KEY_SIGNER), Value::from(pubkey));
         kvs.insert(Key::from(KEY_TYPE), Value::from(PodType::MockSigned));
 
-        let dict = Dictionary::new(kvs.clone())?;
+        let dict = Dictionary::new(params.max_depth_mt_containers, kvs.clone())?;
         let id = PodId(dict.commitment());
         let signature = format!("{}_signed_by_{}", id, pubkey);
         Ok(MockSignedPod { id, signature, kvs })

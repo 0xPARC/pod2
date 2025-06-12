@@ -54,6 +54,10 @@ mod tests {
         StatementTmplArg::Literal(value.into())
     }
 
+    fn names(names: &[&str]) -> Vec<String> {
+        names.iter().map(|s| s.to_string()).collect()
+    }
+
     #[test]
     fn test_e2e_simple_predicate() -> Result<(), LangError> {
         let input = r#"
@@ -86,6 +90,7 @@ mod tests {
             "is_equal".to_string(),
             expected_statements,
             2, // args_len (PodA, PodB)
+            names(&["PodA", "PodB"]),
         )?;
         let expected_batch =
             CustomPredicateBatch::new(&params, "PodlogBatch".to_string(), vec![expected_predicate]);
@@ -180,6 +185,7 @@ mod tests {
             "uses_private".to_string(),
             expected_statements,
             1, // args_len (A)
+            names(&["A", "Temp"]),
         )?;
         let expected_batch =
             CustomPredicateBatch::new(&params, "PodlogBatch".to_string(), vec![expected_predicate]);
@@ -226,6 +232,7 @@ mod tests {
             "my_pred".to_string(),
             expected_pred_statements,
             2, // args_len (X, Y)
+            names(&["X", "Y"]),
         )?;
         let expected_batch =
             CustomPredicateBatch::new(&params, "PodlogBatch".to_string(), vec![expected_predicate]);
@@ -516,7 +523,7 @@ mod tests {
                 eth_friend(?intermed_key, ?dst_key)
             )
 
-            eth_dos_distance(src_key, dst_key, distance_key, private: intermed_key, shorter_distance_key) = OR(
+            eth_dos_distance(src_key, dst_key, distance_key) = OR(
                 eth_dos_distance_base(?src_key, ?dst_key, ?distance_key)
                 eth_dos_distance_ind(?src_key, ?dst_key, ?distance_key)
             )
@@ -566,6 +573,7 @@ mod tests {
             true, // AND
             expected_friend_stmts,
             2, // public_args_len: src_key, dst_key
+            names(&["src_key", "dst_key", "attestation_pod"]),
         )?;
 
         // eth_dos_distance_base (Index 1)
@@ -588,6 +596,7 @@ mod tests {
             true, // AND
             expected_base_stmts,
             3, // public_args_len
+            names(&["src_key", "dst_key", "distance_key"]),
         )?;
 
         // eth_dos_distance_ind (Index 2)
@@ -630,6 +639,14 @@ mod tests {
             true, // AND
             expected_ind_stmts,
             3, // public_args_len
+            names(&[
+                "src_key",
+                "dst_key",
+                "distance_key",
+                "one_key",
+                "shorter_distance_key",
+                "intermed_key",
+            ]),
         )?;
 
         // eth_dos_distance (Index 3)
@@ -659,6 +676,7 @@ mod tests {
             false, // OR
             expected_dist_stmts,
             3, // public_args_len
+            names(&["src_key", "dst_key", "distance_key"]),
         )?;
 
         let expected_batch = CustomPredicateBatch::new(

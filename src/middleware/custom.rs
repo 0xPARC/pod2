@@ -23,7 +23,11 @@ impl Wildcard {
 
 impl fmt::Display for Wildcard {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "*{}[{}]", self.index, self.name)
+        if f.alternate() {
+            write!(f, "?{}:{}", self.index, self.name)
+        } else {
+            write!(f, "?{}", self.name)
+        }
     }
 }
 
@@ -43,8 +47,8 @@ pub enum KeyOrWildcard {
 impl fmt::Display for KeyOrWildcard {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::Key(k) => write!(f, "{}", k),
-            Self::Wildcard(wc) => write!(f, "{}", wc),
+            Self::Key(k) => k.fmt(f),
+            Self::Wildcard(wc) => wc.fmt(f),
         }
     }
 }
@@ -75,7 +79,7 @@ impl fmt::Display for SelfOrWildcard {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::SELF => write!(f, "SELF"),
-            Self::Wildcard(wc) => write!(f, "{}", wc),
+            Self::Wildcard(wc) => wc.fmt(f),
         }
     }
 }
@@ -166,9 +170,14 @@ impl fmt::Display for StatementTmplArg {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::None => write!(f, "none"),
-            Self::Literal(v) => write!(f, "{}", v),
-            Self::AnchoredKey(pod_id, key) => write!(f, "({}, {})", pod_id, key),
-            Self::WildcardLiteral(v) => write!(f, "{}", v),
+            Self::Literal(v) => v.fmt(f),
+            Self::AnchoredKey(pod_id, key) => {
+                pod_id.fmt(f)?;
+                write!(f, "[")?;
+                key.fmt(f)?;
+                write!(f, "]")
+            }
+            Self::WildcardLiteral(v) => v.fmt(f),
         }
     }
 }
@@ -191,12 +200,13 @@ impl StatementTmpl {
 
 impl fmt::Display for StatementTmpl {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}(", self.pred)?;
+        self.pred.fmt(f)?;
+        write!(f, "(")?;
         for (i, arg) in self.args.iter().enumerate() {
             if i != 0 {
                 write!(f, ", ")?;
             }
-            write!(f, "{}", arg)?;
+            arg.fmt(f)?;
         }
         writeln!(f)
     }
@@ -240,6 +250,9 @@ pub struct CustomPredicate {
     pub(crate) conjunction: bool,
     pub(crate) statements: Vec<StatementTmpl>,
     pub(crate) args_len: usize,
+    /// Names of the wildcards, the first `args_len` entries correspond to the `args_len` arguments
+    /// of the custom predicate.
+    pub(crate) wildcard_names: Vec<String>,
     // TODO: Add private args length?
     // TODO: Add args type information?
 }
@@ -254,6 +267,7 @@ impl CustomPredicate {
                 args: vec![],
             }],
             args_len: 0,
+            wildcard_names: vec![],
         }
     }
     pub fn and(
@@ -261,16 +275,18 @@ impl CustomPredicate {
         name: String,
         statements: Vec<StatementTmpl>,
         args_len: usize,
+        wildcard_names: Vec<String>,
     ) -> Result<Self> {
-        Self::new(params, name, true, statements, args_len)
+        Self::new(params, name, true, statements, args_len, wildcard_names)
     }
     pub fn or(
         params: &Params,
         name: String,
         statements: Vec<StatementTmpl>,
         args_len: usize,
+        wildcard_names: Vec<String>,
     ) -> Result<Self> {
-        Self::new(params, name, false, statements, args_len)
+        Self::new(params, name, false, statements, args_len, wildcard_names)
     }
     pub fn new(
         params: &Params,
@@ -278,6 +294,7 @@ impl CustomPredicate {
         conjunction: bool,
         statements: Vec<StatementTmpl>,
         args_len: usize,
+        wildcard_names: Vec<String>,
     ) -> Result<Self> {
         if statements.len() > params.max_custom_predicate_arity {
             return Err(Error::max_length(
@@ -293,12 +310,20 @@ impl CustomPredicate {
                 params.max_statement_args,
             ));
         }
+        if wildcard_names.len() > params.max_custom_predicate_wildcards {
+            return Err(Error::max_length(
+                "custom_predicate_wildcards.len".to_string(),
+                wildcard_names.len(),
+                params.max_custom_predicate_wildcards,
+            ));
+        }
 
         Ok(Self {
             name,
             conjunction,
             statements,
             args_len,
+            wildcard_names,
         })
     }
     pub fn pad_statement_tmpl(&self) -> StatementTmpl {
@@ -346,25 +371,33 @@ impl ToFields for CustomPredicate {
 
 impl fmt::Display for CustomPredicate {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "{}<", if self.conjunction { "and" } else { "or" })?;
+        write!(f, "{}(", self.name)?;
+        for (i, name) in self.wildcard_names.iter().enumerate() {
+            if i != 0 {
+                write!(f, ", ")?;
+            }
+            if i == self.args_len {
+                write!(f, "private: ")?;
+            }
+            if f.alternate() {
+                write!(f, "{}:", i)?;
+            }
+            write!(f, "{}", name)?;
+        }
+        writeln!(f, ") = {}(", if self.conjunction { "AND" } else { "OR" })?;
         for st in &self.statements {
-            write!(f, "  {}(", st.pred)?;
+            write!(f, "  ")?;
+            st.pred.fmt(f)?;
+            write!(f, "(")?;
             for (i, arg) in st.args.iter().enumerate() {
                 if i != 0 {
                     write!(f, ", ")?;
                 }
-                write!(f, "{}", arg)?;
+                arg.fmt(f)?;
             }
-            writeln!(f, "),")?;
+            writeln!(f, ")")?;
         }
-        write!(f, ">(")?;
-        for i in 0..self.args_len {
-            if i != 0 {
-                write!(f, ", ")?;
-            }
-            write!(f, "*{}", i)?;
-        }
-        writeln!(f, ")")?;
+        write!(f, ")")?;
         Ok(())
     }
 }
@@ -467,6 +500,9 @@ mod tests {
             index: i,
         }
     }
+    fn names(names: &[&str]) -> Vec<String> {
+        names.iter().map(|s| s.to_string()).collect()
+    }
 
     type STA = StatementTmplArg;
     type KOW = KeyOrWildcard;
@@ -507,6 +543,7 @@ mod tests {
                     ),
                 ],
                 2,
+                names(&["1", "2", "3", "4", "5"]),
             )?],
         );
 
@@ -570,6 +607,7 @@ mod tests {
                 ),
             ],
             4,
+            names(&["1", "2", "3", "4"]),
         )?;
 
         let eth_friend_batch =
@@ -596,6 +634,7 @@ mod tests {
                 ),
             ],
             6,
+            names(&["0", "1", "2", "3", "4", "5"]),
         )?;
 
         // 1
@@ -640,6 +679,7 @@ mod tests {
                 ),
             ],
             6,
+            names(&["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"]),
         )?;
 
         // 2
@@ -671,6 +711,7 @@ mod tests {
                 ),
             ],
             6,
+            names(&["0", "1", "2", "3", "4", "5"]),
         )?;
 
         let eth_dos_distance_batch = CustomPredicateBatch::new(

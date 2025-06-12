@@ -659,8 +659,11 @@ fn process_literal_value(lit_val_pair: &Pair<Rule>) -> Result<Value, ProcessorEr
                 .into_inner()
                 .map(|elem_pair| process_literal_value(&elem_pair))
                 .collect();
-            let middleware_array = middleware::containers::Array::new(elements?)
-                .map_err(|e| ProcessorError::Internal(format!("Failed to create Array: {}", e)))?;
+            let middleware_array =
+                middleware::containers::Array::new(crate::constants::MAX_DEPTH, elements?)
+                    .map_err(|e| {
+                        ProcessorError::Internal(format!("Failed to create Array: {}", e))
+                    })?;
             Ok(Value::from(middleware_array))
         }
         Rule::literal_set => {
@@ -668,8 +671,10 @@ fn process_literal_value(lit_val_pair: &Pair<Rule>) -> Result<Value, ProcessorEr
                 .into_inner()
                 .map(|elem_pair| process_literal_value(&elem_pair))
                 .collect();
-            let middleware_set = middleware::containers::Set::new(elements?)
-                .map_err(|e| ProcessorError::Internal(format!("Failed to create Set: {}", e)))?;
+            let middleware_set =
+                middleware::containers::Set::new(crate::constants::MAX_DEPTH, elements?).map_err(
+                    |e| ProcessorError::Internal(format!("Failed to create Set: {}", e)),
+                )?;
             Ok(Value::from(middleware_set))
         }
         Rule::literal_dict => {
@@ -684,9 +689,11 @@ fn process_literal_value(lit_val_pair: &Pair<Rule>) -> Result<Value, ProcessorEr
                     Ok((Key::new(key_str), val))
                 })
                 .collect();
-            let middleware_dict = middleware::containers::Dictionary::new(pairs?).map_err(|e| {
-                ProcessorError::Internal(format!("Failed to create Dictionary: {}", e))
-            })?;
+            let middleware_dict =
+                middleware::containers::Dictionary::new(crate::constants::MAX_DEPTH, pairs?)
+                    .map_err(|e| {
+                        ProcessorError::Internal(format!("Failed to create Dictionary: {}", e))
+                    })?;
             Ok(Value::from(middleware_dict))
         }
         _ => unreachable!("Unexpected rule: {:?}", inner_lit.as_rule()),

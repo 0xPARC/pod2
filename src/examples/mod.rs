@@ -8,8 +8,8 @@ use crate::{
     backends::plonky2::mock::signedpod::MockSigner,
     frontend::{MainPodBuilder, Result, SignedPod, SignedPodBuilder},
     middleware::{
-        containers::Set, CustomPredicateRef, Params, PodType, Statement, TypedValue, Value,
-        KEY_SIGNER, KEY_TYPE,
+        containers::Set, CustomPredicateRef, Params, PodType, Statement, TypedValue, VDSet, Value,
+        DEFAULT_VD_SET, KEY_SIGNER, KEY_TYPE,
     },
     op,
 };
@@ -20,7 +20,8 @@ pub fn zu_kyc_sign_pod_builders(
     params: &Params,
 ) -> (SignedPodBuilder, SignedPodBuilder, SignedPodBuilder) {
     let sanctions_values: HashSet<Value> = ["A343434340"].iter().map(|s| Value::from(*s)).collect();
-    let sanction_set = Value::from(Set::new(sanctions_values).unwrap());
+    let sanction_set =
+        Value::from(Set::new(params.max_depth_mt_containers, sanctions_values).unwrap());
 
     let mut gov_id = SignedPodBuilder::new(params);
     gov_id.insert("idNumber", "4242424242");
@@ -40,6 +41,7 @@ pub fn zu_kyc_sign_pod_builders(
 
 pub fn zu_kyc_pod_builder(
     params: &Params,
+    vd_set: &VDSet,
     gov_id: &SignedPod,
     pay_stub: &SignedPod,
     sanction_list: &SignedPod,
@@ -47,7 +49,7 @@ pub fn zu_kyc_pod_builder(
     let now_minus_18y: i64 = 1169909388;
     let now_minus_1y: i64 = 1706367566;
 
-    let mut kyc = MainPodBuilder::new(params);
+    let mut kyc = MainPodBuilder::new(params, vd_set);
     kyc.add_signed_pod(gov_id);
     kyc.add_signed_pod(pay_stub);
     kyc.add_signed_pod(sanction_list);
@@ -78,6 +80,7 @@ pub fn eth_friend_signed_pod_builder(params: &Params, friend_pubkey: Value) -> S
 
 pub fn eth_dos_pod_builder(
     params: &Params,
+    vd_set: &VDSet,
     mock: bool,
     alice_attestation: &SignedPod,
     charlie_attestation: &SignedPod,
@@ -91,7 +94,7 @@ pub fn eth_dos_pod_builder(
     let eth_dos = CustomPredicateRef::new(eth_dos_batch.clone(), 2);
 
     // ETHDoS POD builder
-    let mut alice_bob_ethdos = MainPodBuilder::new(params);
+    let mut alice_bob_ethdos = MainPodBuilder::new(params, vd_set);
     alice_bob_ethdos.add_signed_pod(alice_attestation);
     alice_bob_ethdos.add_signed_pod(charlie_attestation);
 
@@ -229,6 +232,7 @@ pub fn friend_sign_pod_builder(params: &Params, friend: &str) -> SignedPodBuilde
 
 pub fn great_boy_pod_builder(
     params: &Params,
+    vd_set: &VDSet,
     good_boy_pods: [&SignedPod; 4],
     friend_pods: [&SignedPod; 2],
     good_boy_issuers: &Value,
@@ -242,7 +246,7 @@ pub fn great_boy_pod_builder(
     // good boy 0 -> friend_pods[0] => receiver
     // good boy 1 -> friend_pods[1] => receiver
 
-    let mut great_boy = MainPodBuilder::new(params);
+    let mut great_boy = MainPodBuilder::new(params, vd_set);
     for i in 0..4 {
         great_boy.add_signed_pod(good_boy_pods[i]);
     }
@@ -305,6 +309,7 @@ pub fn great_boy_pod_full_flow() -> Result<(Params, MainPodBuilder)> {
         num_public_statements_id: 50,
         ..Default::default()
     };
+    let vd_set = &*DEFAULT_VD_SET;
 
     let good_boy_issuers = ["Giggles", "Macrosoft", "FaeBook"];
     let mut giggles_signer = MockSigner {
@@ -348,11 +353,13 @@ pub fn great_boy_pod_full_flow() -> Result<(Params, MainPodBuilder)> {
     alice_friend_pods.push(friend.sign(&mut charlie_signer).unwrap());
 
     let good_boy_issuers = Value::from(Set::new(
+        params.max_depth_mt_containers,
         good_boy_issuers.into_iter().map(Value::from).collect(),
     )?);
 
     let builder = great_boy_pod_builder(
         &params,
+        &vd_set,
         [
             &bob_good_boys[0],
             &bob_good_boys[1],
@@ -383,6 +390,7 @@ pub fn tickets_sign_pod_builder(params: &Params) -> SignedPodBuilder {
 
 pub fn tickets_pod_builder(
     params: &Params,
+    vd_set: &VDSet,
     signed_pod: &SignedPod,
     expected_event_id: i64,
     expect_consumed: bool,
@@ -390,7 +398,7 @@ pub fn tickets_pod_builder(
 ) -> Result<MainPodBuilder> {
     let blacklisted_email_set_value = Value::from(TypedValue::Set(blacklisted_emails.clone()));
     // Create a main pod referencing this signed pod with some statements
-    let mut builder = MainPodBuilder::new(params);
+    let mut builder = MainPodBuilder::new(params, vd_set);
     builder.add_signed_pod(signed_pod);
     builder.pub_op(op!(eq, (signed_pod, "eventId"), expected_event_id))?;
     builder.pub_op(op!(eq, (signed_pod, "isConsumed"), expect_consumed))?;
@@ -405,7 +413,15 @@ pub fn tickets_pod_builder(
 
 pub fn tickets_pod_full_flow() -> Result<MainPodBuilder> {
     let params = Params::default();
+    let vd_set = &*DEFAULT_VD_SET;
     let builder = tickets_sign_pod_builder(&params);
     let signed_pod = builder.sign(&mut MockSigner { pk: "test".into() }).unwrap();
-    tickets_pod_builder(&params, &signed_pod, 123, true, &Set::new(HashSet::new())?)
+    tickets_pod_builder(
+        &params,
+        vd_set,
+        &signed_pod,
+        123,
+        true,
+        &Set::new(params.max_depth_mt_containers, HashSet::new())?,
+    )
 }

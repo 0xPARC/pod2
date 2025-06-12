@@ -41,7 +41,7 @@ pub fn eth_friend_batch(params: &Params, mock: bool) -> Result<Arc<CustomPredica
         ],
     )?;
 
-    println!("a.0. eth_friend = {}", builder.predicates.last().unwrap());
+    println!("a.0. {}", builder.predicates.last().unwrap());
     Ok(builder.finish())
 }
 
@@ -75,10 +75,7 @@ pub fn eth_dos_batch(params: &Params, mock: bool) -> Result<Arc<CustomPredicateB
                 .arg(literal(0)),
         ],
     )?;
-    println!(
-        "b.0. eth_dos_distance_base = {}",
-        builder.predicates.last().unwrap()
-    );
+    println!("b.0. {}", builder.predicates.last().unwrap());
 
     let eth_dos_distance = Predicate::BatchSelf(2);
 
@@ -115,10 +112,7 @@ pub fn eth_dos_batch(params: &Params, mock: bool) -> Result<Arc<CustomPredicateB
         ],
     )?;
 
-    println!(
-        "b.1. eth_dos_distance_ind = {}",
-        builder.predicates.last().unwrap()
-    );
+    println!("b.1. {}", builder.predicates.last().unwrap());
 
     let _eth_dos_distance = builder.predicate_or(
         "eth_dos_distance",
@@ -136,10 +130,7 @@ pub fn eth_dos_batch(params: &Params, mock: bool) -> Result<Arc<CustomPredicateB
         ],
     )?;
 
-    println!(
-        "b.2. eth_dos_distance = {}",
-        builder.predicates.last().unwrap()
-    );
+    println!("b.2. {}", builder.predicates.last().unwrap());
 
     Ok(builder.finish())
 }
