@@ -112,24 +112,25 @@ mod tests {
         middleware::{
             self,
             containers::{Array, Dictionary, Set},
-            Params, TypedValue,
+            Params, TypedValue, DEFAULT_VD_SET,
         },
     };
 
     #[test]
     fn test_value_serialization() {
+        let params = &Params::default();
         // Pairs of values and their expected serialized representations
         let values = vec![
             (TypedValue::String("hello".to_string()), "\"hello\""),
             (TypedValue::Int(42), "{\"Int\":\"42\"}"),
             (TypedValue::Bool(true), "true"),
             (
-                TypedValue::Array(Array::new(vec!["foo".into(), false.into()]).unwrap()),
-                "[\"foo\",false]",
+                TypedValue::Array(Array::new(params.max_depth_mt_containers, vec!["foo".into(), false.into()]).unwrap()),
+                "{\"max_depth\":32,\"array\":[\"foo\",false]}",
             ),
             (
                 TypedValue::Dictionary(
-                    Dictionary::new(HashMap::from([
+                    Dictionary::new(params.max_depth_mt_containers, HashMap::from([
                         // The set of valid keys is equal to the set of valid JSON keys
                         ("foo".into(), 123.into()),
                         // Empty strings are valid JSON keys
@@ -145,11 +146,11 @@ mod tests {
                     ]))
                     .unwrap(),
                 ),
-                "{\"Dictionary\":{\"\":\"baz\",\"\\u0000\":\"\",\"    hi\":false,\"!@£$%^&&*()\":\"\",\"foo\":{\"Int\":\"123\"},\"🥳\":\"party time!\"}}",
+                "{\"Dictionary\":{\"max_depth\":32,\"kvs\":{\"\":\"baz\",\"\\u0000\":\"\",\"    hi\":false,\"!@£$%^&&*()\":\"\",\"foo\":{\"Int\":\"123\"},\"🥳\":\"party time!\"}}}",
             ),
             (
-                TypedValue::Set(Set::new(HashSet::from(["foo".into(), "bar".into()])).unwrap()),
-                "{\"Set\":[\"bar\",\"foo\"]}",
+                TypedValue::Set(Set::new(params.max_depth_mt_containers, HashSet::from(["foo".into(), "bar".into()])).unwrap()),
+                "{\"Set\":{\"max_depth\":32,\"set\":[\"bar\",\"foo\"]}}",
             ),
         ];
 
@@ -168,30 +169,45 @@ mod tests {
     }
 
     fn signed_pod_builder() -> SignedPodBuilder {
-        let mut builder = SignedPodBuilder::new(&Params::default());
+        let params = &Params::default();
+        let mut builder = SignedPodBuilder::new(params);
         builder.insert("name", "test");
         builder.insert("age", 30);
         builder.insert("very_large_int", 1152921504606846976);
         builder.insert(
             "a_dict_containing_one_key",
-            Dictionary::new(HashMap::from([
-                ("foo".into(), 123.into()),
-                (
-                    "an_array_containing_three_ints".into(),
-                    Array::new(vec![1.into(), 2.into(), 3.into()])
+            Dictionary::new(
+                params.max_depth_mt_containers,
+                HashMap::from([
+                    ("foo".into(), 123.into()),
+                    (
+                        "an_array_containing_three_ints".into(),
+                        Array::new(
+                            params.max_depth_mt_containers,
+                            vec![1.into(), 2.into(), 3.into()],
+                        )
                         .unwrap()
                         .into(),
-                ),
-                (
-                    "a_set_containing_two_strings".into(),
-                    Set::new(HashSet::from([
-                        Array::new(vec!["foo".into(), "bar".into()]).unwrap().into(),
-                        "baz".into(),
-                    ]))
-                    .unwrap()
-                    .into(),
-                ),
-            ]))
+                    ),
+                    (
+                        "a_set_containing_two_strings".into(),
+                        Set::new(
+                            params.max_depth_mt_containers,
+                            HashSet::from([
+                                Array::new(
+                                    params.max_depth_mt_containers,
+                                    vec!["foo".into(), "bar".into()],
+                                )
+                                .unwrap()
+                                .into(),
+                                "baz".into(),
+                            ]),
+                        )
+                        .unwrap()
+                        .into(),
+                    ),
+                ]),
+            )
             .unwrap(),
         );
         builder
@@ -235,6 +251,7 @@ mod tests {
 
     fn build_mock_zukyc_pod() -> Result<MainPod> {
         let params = middleware::Params::default();
+        let vd_set = &*DEFAULT_VD_SET;
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params);
@@ -250,8 +267,14 @@ mod tests {
             pk: "ZooOFAC".into(),
         };
         let sanction_list_pod = sanction_list_builder.sign(&mut signer).unwrap();
-        let kyc_builder =
-            zu_kyc_pod_builder(&params, &gov_id_pod, &pay_stub_pod, &sanction_list_pod).unwrap();
+        let kyc_builder = zu_kyc_pod_builder(
+            &params,
+            &vd_set,
+            &gov_id_pod,
+            &pay_stub_pod,
+            &sanction_list_pod,
+        )
+        .unwrap();
 
         let mut prover = MockProver {};
         let kyc_pod = kyc_builder.prove(&mut prover, &params).unwrap();
@@ -265,6 +288,7 @@ mod tests {
             max_input_recursive_pods: 1,
             ..Default::default()
         };
+        let vd_set = &*DEFAULT_VD_SET;
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params);
@@ -274,8 +298,13 @@ mod tests {
         let pay_stub_pod = pay_stub_builder.sign(&mut signer)?;
         let mut signer = Signer(SecretKey(3u32.into()));
         let sanction_list_pod = sanction_list_builder.sign(&mut signer)?;
-        let kyc_builder =
-            zu_kyc_pod_builder(&params, &gov_id_pod, &pay_stub_pod, &sanction_list_pod)?;
+        let kyc_builder = zu_kyc_pod_builder(
+            &params,
+            &vd_set,
+            &gov_id_pod,
+            &pay_stub_pod,
+            &sanction_list_pod,
+        )?;
 
         let mut prover = Prover {};
         let kyc_pod = kyc_builder.prove(&mut prover, &params)?;
@@ -324,6 +353,7 @@ mod tests {
             max_custom_predicate_wildcards: 12,
             ..Default::default()
         };
+        let vd_set = &*DEFAULT_VD_SET;
 
         let mut alice = MockSigner { pk: "Alice".into() };
         let bob = MockSigner { pk: "Bob".into() };
@@ -341,6 +371,7 @@ mod tests {
         let mut prover = MockProver {};
         let alice_bob_ethdos = eth_dos_pod_builder(
             &params,
+            &vd_set,
             true,
             &alice_attestation,
             &charlie_attestation,

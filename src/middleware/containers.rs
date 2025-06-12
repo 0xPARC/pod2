@@ -9,31 +9,32 @@ use serde::{Deserialize, Deserializer, Serialize};
 use super::serialization::{ordered_map, ordered_set};
 #[cfg(feature = "backend_plonky2")]
 use crate::backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree};
-use crate::{
-    constants::MAX_DEPTH,
-    middleware::{hash_value, Error, Hash, Key, RawValue, Result, Value},
-};
+use crate::middleware::{hash_value, Error, Hash, Key, RawValue, Result, Value};
 
 /// Dictionary: the user original keys and values are hashed to be used in the leaf.
 ///    leaf.key=hash(original_key)
 ///    leaf.value=hash(original_value)
-#[derive(Clone, Debug, Serialize)]
-#[serde(transparent)]
+#[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct Dictionary {
     #[serde(skip)]
+    #[schemars(skip)]
     mt: MerkleTree,
+    max_depth: usize,
     #[serde(serialize_with = "ordered_map")]
     kvs: HashMap<Key, Value>,
 }
 
 impl Dictionary {
-    pub fn new(kvs: HashMap<Key, Value>) -> Result<Self> {
+    /// max_depth determines the depth of the underlying MerkleTree, allowing to
+    /// store 2^max_depth elements in the Dictionary
+    pub fn new(max_depth: usize, kvs: HashMap<Key, Value>) -> Result<Self> {
         let kvs_raw: HashMap<RawValue, RawValue> = kvs
             .iter()
             .map(|(k, v)| (RawValue(k.hash().0), v.raw()))
             .collect();
         Ok(Self {
-            mt: MerkleTree::new(MAX_DEPTH, &kvs_raw)?,
+            mt: MerkleTree::new(max_depth, &kvs_raw)?,
+            max_depth,
             kvs,
         })
     }
@@ -53,20 +54,31 @@ impl Dictionary {
     pub fn prove_nonexistence(&self, key: &Key) -> Result<MerkleProof> {
         Ok(self.mt.prove_nonexistence(&RawValue(key.hash().0))?)
     }
-    pub fn verify(root: Hash, proof: &MerkleProof, key: &Key, value: &Value) -> Result<()> {
+    pub fn verify(
+        max_depth: usize,
+        root: Hash,
+        proof: &MerkleProof,
+        key: &Key,
+        value: &Value,
+    ) -> Result<()> {
         let key = RawValue(key.hash().0);
         Ok(MerkleTree::verify(
-            MAX_DEPTH,
+            max_depth,
             root,
             proof,
             &key,
             &value.raw(),
         )?)
     }
-    pub fn verify_nonexistence(root: Hash, proof: &MerkleProof, key: &Key) -> Result<()> {
+    pub fn verify_nonexistence(
+        max_depth: usize,
+        root: Hash,
+        proof: &MerkleProof,
+        key: &Key,
+    ) -> Result<()> {
         let key = RawValue(key.hash().0);
         Ok(MerkleTree::verify_nonexistence(
-            MAX_DEPTH, root, proof, &key,
+            max_depth, root, proof, &key,
         )?)
     }
     // TODO: Rename to dict to be consistent maybe?
@@ -74,14 +86,6 @@ impl Dictionary {
         &self.kvs
     }
 }
-// impl<'a> IntoIterator for &'a Dictionary {
-//     type Item = (&'a RawValue, &'a RawValue);
-//     type IntoIter = TreeIter<'a>;
-//
-//     fn into_iter(self) -> Self::IntoIter {
-//         self.mt.iter()
-//     }
-// }
 
 impl PartialEq for Dictionary {
     fn eq(&self, other: &Self) -> bool {
@@ -95,36 +99,34 @@ impl<'de> Deserialize<'de> for Dictionary {
     where
         D: Deserializer<'de>,
     {
-        let kvs: HashMap<Key, Value> = HashMap::deserialize(deserializer)?;
-        Dictionary::new(kvs).map_err(serde::de::Error::custom)
-    }
-}
-
-impl JsonSchema for Dictionary {
-    fn schema_name() -> String {
-        "Dictionary".to_string()
-    }
-
-    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
-        // Just use the schema of HashMap<Key, Value> since that's what we're actually serializing
-        <HashMap<Key, Value>>::json_schema(gen)
+        #[derive(Deserialize)]
+        struct Aux {
+            #[serde(serialize_with = "ordered_map")]
+            kvs: HashMap<Key, Value>,
+            max_depth: usize,
+        }
+        let aux = Aux::deserialize(deserializer)?;
+        Dictionary::new(aux.max_depth, aux.kvs).map_err(serde::de::Error::custom)
     }
 }
 
 /// Set: the value field of the leaf is unused, and the key contains the hash of the element.
 ///    leaf.key=hash(original_value)
 ///    leaf.value=0
-#[derive(Clone, Debug, Serialize)]
-#[serde(transparent)]
+#[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct Set {
     #[serde(skip)]
+    #[schemars(skip)]
     mt: MerkleTree,
+    max_depth: usize,
     #[serde(serialize_with = "ordered_set")]
     set: HashSet<Value>,
 }
 
 impl Set {
-    pub fn new(set: HashSet<Value>) -> Result<Self> {
+    /// max_depth determines the depth of the underlying MerkleTree, allowing to
+    /// store 2^max_depth elements in the Array
+    pub fn new(max_depth: usize, set: HashSet<Value>) -> Result<Self> {
         let kvs_raw: HashMap<RawValue, RawValue> = set
             .iter()
             .map(|e| {
@@ -133,7 +135,8 @@ impl Set {
             })
             .collect();
         Ok(Self {
-            mt: MerkleTree::new(MAX_DEPTH, &kvs_raw)?,
+            mt: MerkleTree::new(max_depth, &kvs_raw)?,
+            max_depth,
             set,
         })
     }
@@ -152,20 +155,25 @@ impl Set {
         let h = hash_value(&value.raw());
         Ok(self.mt.prove_nonexistence(&RawValue::from(h))?)
     }
-    pub fn verify(root: Hash, proof: &MerkleProof, value: &Value) -> Result<()> {
+    pub fn verify(max_depth: usize, root: Hash, proof: &MerkleProof, value: &Value) -> Result<()> {
         let h = hash_value(&value.raw());
         Ok(MerkleTree::verify(
-            MAX_DEPTH,
+            max_depth,
             root,
             proof,
             &RawValue::from(h),
             &RawValue::from(h),
         )?)
     }
-    pub fn verify_nonexistence(root: Hash, proof: &MerkleProof, value: &Value) -> Result<()> {
+    pub fn verify_nonexistence(
+        max_depth: usize,
+        root: Hash,
+        proof: &MerkleProof,
+        value: &Value,
+    ) -> Result<()> {
         let h = hash_value(&value.raw());
         Ok(MerkleTree::verify_nonexistence(
-            MAX_DEPTH,
+            max_depth,
             root,
             proof,
             &RawValue::from(h),
@@ -188,22 +196,14 @@ impl<'de> Deserialize<'de> for Set {
     where
         D: Deserializer<'de>,
     {
-        // Deserialize the set directly
-        let set: HashSet<Value> = HashSet::deserialize(deserializer)?;
-
-        // Create a new Set using the set field
-        Set::new(set).map_err(serde::de::Error::custom)
-    }
-}
-
-impl JsonSchema for Set {
-    fn schema_name() -> String {
-        "Set".to_string()
-    }
-
-    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
-        // Just use the schema of HashSet<Value> since that's what we're actually serializing
-        <HashSet<Value>>::json_schema(gen)
+        #[derive(Deserialize, JsonSchema)]
+        struct Aux {
+            #[serde(serialize_with = "ordered_set")]
+            set: HashSet<Value>,
+            max_depth: usize,
+        }
+        let aux = Aux::deserialize(deserializer)?;
+        Set::new(aux.max_depth, aux.set).map_err(serde::de::Error::custom)
     }
 }
 
@@ -211,16 +211,19 @@ impl JsonSchema for Set {
 /// array index (integer).
 ///    leaf.key=i
 ///    leaf.value=original_value
-#[derive(Clone, Debug, Serialize)]
-#[serde(transparent)]
+#[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct Array {
     #[serde(skip)]
+    #[schemars(skip)]
     mt: MerkleTree,
+    max_depth: usize,
     array: Vec<Value>,
 }
 
 impl Array {
-    pub fn new(array: Vec<Value>) -> Result<Self> {
+    /// max_depth determines the depth of the underlying MerkleTree, allowing to
+    /// store 2^max_depth elements in the Array
+    pub fn new(max_depth: usize, array: Vec<Value>) -> Result<Self> {
         let kvs_raw: HashMap<RawValue, RawValue> = array
             .iter()
             .enumerate()
@@ -228,7 +231,8 @@ impl Array {
             .collect();
 
         Ok(Self {
-            mt: MerkleTree::new(MAX_DEPTH, &kvs_raw)?,
+            mt: MerkleTree::new(max_depth, &kvs_raw)?,
+            max_depth,
             array,
         })
     }
@@ -245,9 +249,15 @@ impl Array {
         let value = self.array.get(i).expect("valid index");
         Ok((value, mtp))
     }
-    pub fn verify(root: Hash, proof: &MerkleProof, i: usize, value: &Value) -> Result<()> {
+    pub fn verify(
+        max_depth: usize,
+        root: Hash,
+        proof: &MerkleProof,
+        i: usize,
+        value: &Value,
+    ) -> Result<()> {
         Ok(MerkleTree::verify(
-            MAX_DEPTH,
+            max_depth,
             root,
             proof,
             &RawValue::from(i as i64),
@@ -271,18 +281,12 @@ impl<'de> Deserialize<'de> for Array {
     where
         D: Deserializer<'de>,
     {
-        let array: Vec<Value> = Vec::deserialize(deserializer)?;
-        Array::new(array).map_err(serde::de::Error::custom)
-    }
-}
-
-impl JsonSchema for Array {
-    fn schema_name() -> String {
-        "Array".to_string()
-    }
-
-    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
-        // Just use the schema of Vec<Value> since that's what we're actually serializing
-        <Vec<Value>>::json_schema(gen)
+        #[derive(Deserialize, JsonSchema)]
+        struct Aux {
+            array: Vec<Value>,
+            max_depth: usize,
+        }
+        let aux = Aux::deserialize(deserializer)?;
+        Array::new(aux.max_depth, aux.array).map_err(serde::de::Error::custom)
     }
 }

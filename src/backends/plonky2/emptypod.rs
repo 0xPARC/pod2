@@ -27,7 +27,7 @@ use crate::{
     },
     middleware::{
         self, AnchoredKey, DynError, Hash, Params, Pod, PodId, PodType, RecursivePod, Statement,
-        ToFields, Value, VerifierOnlyCircuitData, EMPTY_HASH, F, HASH_SIZE, KEY_TYPE, SELF,
+        ToFields, Value, VerifierOnlyCircuitData, F, HASH_SIZE, KEY_TYPE, SELF,
     },
     timed,
 };
@@ -80,7 +80,7 @@ pub struct EmptyPod {
 
 type CircuitData = circuit_data::CircuitData<F, C, D>;
 
-static STANDARD_EMPTY_POD_DATA: LazyLock<(EmptyPodVerifyTarget, CircuitData)> =
+pub static STANDARD_EMPTY_POD_DATA: LazyLock<(EmptyPodVerifyTarget, CircuitData)> =
     LazyLock::new(|| build().expect("successful build"));
 
 fn build() -> Result<(EmptyPodVerifyTarget, CircuitData)> {
@@ -144,7 +144,7 @@ impl EmptyPod {
         let public_inputs = id
             .to_fields(&self.params)
             .iter()
-            .chain(EMPTY_HASH.0.iter()) // slot for the unused vds root
+            .chain(self.vds_root.0.iter())
             .cloned()
             .collect_vec();
 
@@ -222,6 +222,7 @@ impl RecursivePod for EmptyPod {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::middleware::EMPTY_HASH;
 
     #[test]
     fn test_empty_pod() {
