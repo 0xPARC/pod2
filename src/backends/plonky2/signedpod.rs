@@ -28,7 +28,7 @@ use crate::{
 pub struct Signer(pub SecretKey);
 
 impl Signer {
-    fn sign_nonce(
+    fn sign_with_nonce(
         &mut self,
         params: &Params,
         nonce: BigUint,
@@ -52,7 +52,7 @@ impl Signer {
     }
     fn _sign(&mut self, params: &Params, kvs: &HashMap<Key, Value>) -> Result<SignedPod> {
         let nonce = OsRng.gen_biguint_below(&GROUP_ORDER);
-        self.sign_nonce(params, nonce, kvs)
+        self.sign_with_nonce(params, nonce, kvs)
     }
 
     pub fn public_key(&self) -> Point {
@@ -90,7 +90,7 @@ static DUMMY_POD: LazyLock<SignedPod> = LazyLock::new(dummy);
 fn dummy() -> SignedPod {
     let nonce = BigUint::from(2u32);
     Signer(SecretKey(BigUint::from(1u32)))
-        .sign_nonce(&Params::default(), nonce, &HashMap::new())
+        .sign_with_nonce(&Params::default(), nonce, &HashMap::new())
         .expect("valid")
 }
 
