@@ -96,38 +96,21 @@ impl StatementCache {
                 .map(|&i| builder.vec_ref(params, prev_statements, i))
                 .collect::<Vec<_>>()
         };
+        assert!(params.max_operation_args >= 3);
+        assert!(params.max_statement_args >= 3);
         let equations = array::from_fn(|i| {
-            if i < params.max_operation_args && i < params.max_statement_args {
-                let pred_is_none =
-                    op_args[i].has_native_type(builder, params, NativePredicate::None);
-                let arg_is_value = builder.statement_arg_is_value(&st.args[i]);
-                let is_literal = builder.and(pred_is_none, arg_is_value);
-                let pred_is_eq =
-                    op_args[i].has_native_type(builder, params, NativePredicate::Equal);
-                let ref_is_value = builder.statement_arg_is_value(&op_args[i].args[1]);
-                let is_reference = builder.and(pred_is_eq, ref_is_value);
-                let literal_or_reference = builder.or(is_literal, is_reference);
-                let rhs_literal = st.args[i].as_value();
-                let rhs_reference = op_args[i].args[1].as_value();
-                let rhs = builder.select_value(pred_is_none, rhs_literal, rhs_reference);
-                let lhs =
-                    builder.select_statement_arg(pred_is_none, &st.args[i], &op_args[i].args[0]);
-                StatementArgCache {
-                    rhs,
-                    lhs,
-                    valid: literal_or_reference,
-                }
-            } else {
-                let rhs = builder.constant_value(Default::default());
-                let lhs = StatementArgTarget {
-                    elements: array::from_fn(|_| builder.zero()),
-                };
-                StatementArgCache {
-                    rhs,
-                    lhs,
-                    valid: builder._false(),
-                }
-            }
+            let pred_is_none = op_args[i].has_native_type(builder, params, NativePredicate::None);
+            let arg_is_value = builder.statement_arg_is_value(&st.args[i]);
+            let is_literal = builder.and(pred_is_none, arg_is_value);
+            let pred_is_eq = op_args[i].has_native_type(builder, params, NativePredicate::Equal);
+            let ref_is_value = builder.statement_arg_is_value(&op_args[i].args[1]);
+            let is_reference = builder.and(pred_is_eq, ref_is_value);
+            let valid = builder.or(is_literal, is_reference);
+            let rhs_literal = st.args[i].as_value();
+            let rhs_reference = op_args[i].args[1].as_value();
+            let rhs = builder.select_value(pred_is_none, rhs_literal, rhs_reference);
+            let lhs = builder.select_statement_arg(pred_is_none, &st.args[i], &op_args[i].args[0]);
+            StatementArgCache { rhs, lhs, valid }
         });
         let mut first_n_equations_valid = [equations[0].valid; MAX_VALUE_ARGS];
         for i in 1..MAX_VALUE_ARGS {
@@ -166,7 +149,7 @@ impl OperationVerifyGadget {
         st: &StatementTarget,
         op: &OperationTarget,
         prev_statements: &[StatementTarget],
-        prev_ops: &[OperationTarget],
+        input_statements_offset: usize,
         merkle_claims: &[MerkleClaimTarget],
         custom_predicate_verification_table: &[HashOutTarget],
     ) -> Result<()> {
@@ -220,7 +203,13 @@ impl OperationVerifyGadget {
         let op_checks = [
             vec![
                 self.eval_none(builder, st, &op.op_type),
-                self.eval_new_entry(builder, st, &op.op_type, prev_statements, prev_ops),
+                self.eval_new_entry(
+                    builder,
+                    st,
+                    &op.op_type,
+                    prev_statements,
+                    input_statements_offset,
+                ),
             ],
             // Skip these if there are no resolved op args
             if cache.op_args.is_empty() {
@@ -313,14 +302,14 @@ impl OperationVerifyGadget {
         let merkle_proof_ok = builder.all(merkle_proof_checks);
 
         // Check output statement
-        let arg1_key = cache.equations[0].lhs.clone();
-        let arg2_key = cache.equations[1].lhs.clone();
-        let arg3_key = cache.equations[2].lhs.clone();
+        let arg1_expected = cache.equations[0].lhs.clone();
+        let arg2_expected = cache.equations[1].lhs.clone();
+        let arg3_expected = cache.equations[2].lhs.clone();
         let expected_statement = StatementTarget::new_native(
             builder,
             &self.params,
             NativePredicate::Contains,
-            &[arg1_key, arg2_key, arg3_key],
+            &[arg1_expected, arg2_expected, arg3_expected],
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
@@ -359,13 +348,13 @@ impl OperationVerifyGadget {
         let merkle_proof_ok = builder.all(merkle_proof_checks);
 
         // Check output statement
-        let arg1_key = cache.equations[0].lhs.clone();
-        let arg2_key = cache.equations[1].lhs.clone();
+        let arg1_expected = cache.equations[0].lhs.clone();
+        let arg2_expected = cache.equations[1].lhs.clone();
         let expected_statement = StatementTarget::new_native(
             builder,
             &self.params,
             NativePredicate::NotContains,
-            &[arg1_key, arg2_key],
+            &[arg1_expected, arg2_expected],
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
@@ -424,10 +413,10 @@ impl OperationVerifyGadget {
         let op_args_eq = builder.is_equal_slice(&arg1_value.elements, &arg2_value.elements);
         let op_args_ok = builder.is_equal(op_args_eq.target, eq_op_st_code_ok.target);
 
-        let arg1_key = cache.equations[0].lhs.clone();
-        let arg2_key = cache.equations[1].lhs.clone();
+        let arg1_expected = cache.equations[0].lhs.clone();
+        let arg2_expected = cache.equations[1].lhs.clone();
 
-        let expected_st_args: Vec<_> = [arg1_key, arg2_key]
+        let expected_st_args: Vec<_> = [arg1_expected, arg2_expected]
             .into_iter()
             .chain(std::iter::repeat_with(|| StatementArgTarget::none(builder)))
             .take(self.params.max_statement_args)
@@ -494,10 +483,10 @@ impl OperationVerifyGadget {
         };
         builder.assert_i64_less_if(lt_check_flag, value1, value2);
 
-        let arg1_key = cache.equations[0].lhs.clone();
-        let arg2_key = cache.equations[1].lhs.clone();
+        let arg1_expected = cache.equations[0].lhs.clone();
+        let arg2_expected = cache.equations[1].lhs.clone();
 
-        let expected_st_args: Vec<_> = [arg1_key, arg2_key]
+        let expected_st_args: Vec<_> = [arg1_expected, arg2_expected]
             .into_iter()
             .chain(std::iter::repeat_with(|| StatementArgTarget::none(builder)))
             .take(self.params.max_statement_args)
@@ -534,14 +523,14 @@ impl OperationVerifyGadget {
         let hash_value_ok =
             builder.is_equal_slice(&arg1_value.elements, &expected_hash_value.elements);
 
-        let arg1_key = cache.equations[0].lhs.clone();
-        let arg2_key = cache.equations[1].lhs.clone();
-        let arg3_key = cache.equations[2].lhs.clone();
+        let arg1_expected = cache.equations[0].lhs.clone();
+        let arg2_expected = cache.equations[1].lhs.clone();
+        let arg3_expected = cache.equations[2].lhs.clone();
         let expected_statement = StatementTarget::new_native(
             builder,
             &self.params,
             NativePredicate::HashOf,
-            &[arg1_key, arg2_key, arg3_key],
+            &[arg1_expected, arg2_expected, arg3_expected],
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
@@ -572,14 +561,14 @@ impl OperationVerifyGadget {
 
         let sum_ok = builder.is_equal_slice(&arg1_value.elements, &expected_sum.elements);
 
-        let arg1_key = cache.equations[0].lhs.clone();
-        let arg2_key = cache.equations[1].lhs.clone();
-        let arg3_key = cache.equations[2].lhs.clone();
+        let arg1_expected = cache.equations[0].lhs.clone();
+        let arg2_expected = cache.equations[1].lhs.clone();
+        let arg3_expected = cache.equations[2].lhs.clone();
         let expected_statement = StatementTarget::new_native(
             builder,
             &self.params,
             NativePredicate::SumOf,
-            &[arg1_key, arg2_key, arg3_key],
+            &[arg1_expected, arg2_expected, arg3_expected],
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
@@ -610,14 +599,14 @@ impl OperationVerifyGadget {
 
         let product_ok = builder.is_equal_slice(&arg1_value.elements, &expected_product.elements);
 
-        let arg1_key = cache.equations[0].lhs.clone();
-        let arg2_key = cache.equations[1].lhs.clone();
-        let arg3_key = cache.equations[2].lhs.clone();
+        let arg1_expected = cache.equations[0].lhs.clone();
+        let arg2_expected = cache.equations[1].lhs.clone();
+        let arg3_expected = cache.equations[2].lhs.clone();
         let expected_statement = StatementTarget::new_native(
             builder,
             &self.params,
             NativePredicate::ProductOf,
-            &[arg1_key, arg2_key, arg3_key],
+            &[arg1_expected, arg2_expected, arg3_expected],
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
@@ -655,14 +644,14 @@ impl OperationVerifyGadget {
         let lt_check_enabled = builder.and(not_all_eq, op_code_ok);
         builder.assert_i64_less_if(lt_check_enabled, lower_bound, arg1_value);
 
-        let arg1_key = cache.equations[0].lhs.clone();
-        let arg2_key = cache.equations[1].lhs.clone();
-        let arg3_key = cache.equations[2].lhs.clone();
+        let arg1_expected = cache.equations[0].lhs.clone();
+        let arg2_expected = cache.equations[1].lhs.clone();
+        let arg3_expected = cache.equations[2].lhs.clone();
         let expected_statement = StatementTarget::new_native(
             builder,
             &self.params,
             NativePredicate::MaxOf,
-            &[arg1_key, arg2_key, arg3_key],
+            &[arg1_expected, arg2_expected, arg3_expected],
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
@@ -688,22 +677,22 @@ impl OperationVerifyGadget {
             resolved_op_args[1].has_native_type(builder, &self.params, NativePredicate::Equal);
         let arg_types_ok = builder.all([arg1_type_ok, arg2_type_ok]);
 
-        let arg1_key1 = &resolved_op_args[0].args[0];
-        let arg1_key2 = &resolved_op_args[0].args[1];
-        let arg2_key1 = &resolved_op_args[1].args[0];
-        let arg2_key2 = &resolved_op_args[1].args[1];
+        let arg1_lhs = &resolved_op_args[0].args[0];
+        let arg1_rhs = &resolved_op_args[0].args[1];
+        let arg2_lhs = &resolved_op_args[1].args[0];
+        let arg2_rhs = &resolved_op_args[1].args[1];
 
-        let inner_keys_match = builder.is_equal_slice(&arg1_key2.elements, &arg2_key1.elements);
+        let inner_args_match = builder.is_equal_slice(&arg1_rhs.elements, &arg2_lhs.elements);
 
         let expected_statement = StatementTarget::new_native(
             builder,
             &self.params,
             NativePredicate::Equal,
-            &[arg1_key1.clone(), arg2_key2.clone()],
+            &[arg1_lhs.clone(), arg2_rhs.clone()],
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-        let ok = builder.all([op_code_ok, arg_types_ok, inner_keys_match, st_ok]);
+        let ok = builder.all([op_code_ok, arg_types_ok, inner_args_match, st_ok]);
         measure_gates_end!(builder, measure);
         ok
     }
@@ -731,7 +720,7 @@ impl OperationVerifyGadget {
         st: &StatementTarget,
         op_type: &OperationTypeTarget,
         prev_statements: &[StatementTarget],
-        prev_ops: &[OperationTarget],
+        input_statements_offset: usize,
     ) -> BoolTarget {
         let measure = measure_gates_begin!(builder, "OpNewEntry");
         let op_code_ok = op_type.has_native(builder, NativeOperation::NewEntry);
@@ -743,21 +732,12 @@ impl OperationVerifyGadget {
         let arg_prefix_ok =
             builder.is_equal_slice(&st.args[0].elements[..VALUE_SIZE], &expected_arg_prefix);
 
-        let input_statements = &prev_statements[prev_statements.len() - prev_ops.len()..];
-        let dupe_check = {
-            let individual_checks = input_statements
-                .iter()
-                .zip(prev_ops)
-                .map(|(ps, po)| {
-                    let same_op_type = po.op_type.has_native(builder, NativeOperation::NewEntry);
-                    let same_anchored_key =
-                        builder.is_equal_slice(&st.args[0].elements, &ps.args[0].elements);
-                    builder.and(same_op_type, same_anchored_key)
-                })
-                .collect::<Vec<_>>();
-            builder.any(individual_checks)
-        };
-
+        let input_statements = &prev_statements[input_statements_offset..];
+        let individual_dupe_checks = input_statements
+            .iter()
+            .map(|ps| builder.is_equal_slice(&st.args[0].elements, &ps.args[0].elements))
+            .collect::<Vec<_>>();
+        let dupe_check = builder.any(individual_dupe_checks);
         let no_dupes_ok = builder.not(dupe_check);
 
         let ok = builder.all([op_code_ok, st_code_ok, arg_prefix_ok, no_dupes_ok]);
@@ -778,14 +758,14 @@ impl OperationVerifyGadget {
         let arg_type_ok =
             resolved_op_args[0].has_native_type(builder, &self.params, NativePredicate::Lt);
 
-        let arg1_key = resolved_op_args[0].args[0].clone();
-        let arg2_key = resolved_op_args[0].args[1].clone();
+        let arg1_expected = resolved_op_args[0].args[0].clone();
+        let arg2_expected = resolved_op_args[0].args[1].clone();
 
         let expected_statement = StatementTarget::new_native(
             builder,
             &self.params,
             NativePredicate::NotEqual,
-            &[arg1_key, arg2_key],
+            &[arg1_expected, arg2_expected],
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
@@ -1349,7 +1329,6 @@ impl MainPodVerifyGadget {
         // 5. Verify input statements
         for (i, (st, op)) in input_statements.iter().zip(operations.iter()).enumerate() {
             let prev_statements = &statements[..input_statements_offset + i];
-            let prev_ops = &operations[..i];
             OperationVerifyGadget {
                 params: params.clone(),
             }
@@ -1358,7 +1337,7 @@ impl MainPodVerifyGadget {
                 st,
                 op,
                 prev_statements,
-                prev_ops,
+                input_statements_offset,
                 &merkle_claims,
                 &custom_predicate_verification_table,
             )?;
@@ -1613,30 +1592,9 @@ mod tests {
         },
     };
 
-    // prev_ops only matter if the operation is NewEntry.  So for other tests,
-    // we can fill it with arbitrary operations.  In our NewEntry test, the previous
-    // operations are also NewEntry.
-    fn operation_verify_fill_pvs_ops(
-        st: mainpod::Statement,
-        op: mainpod::Operation,
-        prev_statements: Vec<mainpod::Statement>,
-        merkle_proofs: Vec<MerkleClaimAndProof>,
-    ) -> Result<()> {
-        let prev_ops = vec![
-            mainpod::Operation(
-                OperationType::Native(NativeOperation::NewEntry),
-                vec![],
-                OperationAux::None
-            );
-            prev_statements.len()
-        ];
-        operation_verify(st, op, prev_ops, prev_statements, merkle_proofs)
-    }
-
     fn operation_verify(
         st: mainpod::Statement,
         op: mainpod::Operation,
-        prev_ops: Vec<mainpod::Operation>,
         prev_statements: Vec<mainpod::Statement>,
         merkle_proofs: Vec<MerkleClaimAndProof>,
     ) -> Result<()> {
@@ -1657,9 +1615,6 @@ mod tests {
         let prev_statements_target: Vec<_> = (0..prev_statements.len())
             .map(|_| builder.add_virtual_statement(&params))
             .collect();
-        let prev_ops_target: Vec<_> = (0..prev_statements.len())
-            .map(|_| builder.add_virtual_operation(&params))
-            .collect();
         let merkle_proofs_target: Vec<_> = merkle_proofs
             .iter()
             .map(|_| mp_gadget.eval(&mut builder))
@@ -1679,7 +1634,7 @@ mod tests {
             &st_target,
             &op_target,
             &prev_statements_target,
-            &prev_ops_target,
+            0,
             &merkle_claims_target,
             &custom_predicate_verification_table,
         )?;
@@ -1687,9 +1642,6 @@ mod tests {
         let mut pw = PartialWitness::<F>::new();
         st_target.set_targets(&mut pw, &params, &st)?;
         op_target.set_targets(&mut pw, &params, &op)?;
-        for (prev_op_target, prev_op) in prev_ops_target.iter().zip(prev_ops.iter()) {
-            prev_op_target.set_targets(&mut pw, &params, prev_op)?;
-        }
         for (prev_st_target, prev_st) in prev_statements_target.iter().zip(prev_statements.iter()) {
             prev_st_target.set_targets(&mut pw, &params, prev_st)?;
         }
@@ -1844,7 +1796,7 @@ mod tests {
         .into_iter()
         .for_each(|(op, st)| {
             let check = std::panic::catch_unwind(|| {
-                operation_verify_fill_pvs_ops(st, op, prev_statements.to_vec(), vec![])
+                operation_verify(st, op, prev_statements.to_vec(), vec![])
             });
             match check {
                 Err(e) => {
@@ -1909,9 +1861,7 @@ mod tests {
         ]
         .into_iter()
         .for_each(|(op, st)| {
-            assert!(
-                operation_verify_fill_pvs_ops(st, op, prev_statements.to_vec(), vec![]).is_err()
-            )
+            assert!(operation_verify(st, op, prev_statements.to_vec(), vec![]).is_err())
         });
     }
 
@@ -1924,7 +1874,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![Statement::None.into()];
-        operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])
+        operation_verify(st, op, prev_statements, vec![])
     }
 
     #[test]
@@ -1942,7 +1892,7 @@ mod tests {
             vec![],
             OperationAux::None,
         );
-        operation_verify_fill_pvs_ops(st1, op, prev_statements, vec![])
+        operation_verify(st1, op, prev_statements, vec![])
     }
 
     #[test]
@@ -1954,7 +1904,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![Statement::None.into()];
-        operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])
+        operation_verify(st, op, prev_statements, vec![])
     }
 
     #[test]
@@ -1977,7 +1927,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2];
-        operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])
+        operation_verify(st, op, prev_statements, vec![])
     }
 
     #[test]
@@ -2000,7 +1950,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2];
-        operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])
+        operation_verify(st, op, prev_statements, vec![])
     }
 
     #[test]
@@ -2023,7 +1973,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2.clone()];
-        operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])?;
+        operation_verify(st, op, prev_statements, vec![])?;
 
         // Also check negative < negative
         let st3: mainpod::Statement = Statement::equal(
@@ -2047,7 +1997,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st3.clone(), st4];
-        operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])?;
+        operation_verify(st, op, prev_statements, vec![])?;
 
         // Also check negative < positive
         let st: mainpod::Statement = Statement::lt(
@@ -2061,7 +2011,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st3, st2];
-        operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])
+        operation_verify(st, op, prev_statements, vec![])
     }
 
     #[test]
@@ -2084,7 +2034,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2.clone()];
-        operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])?;
+        operation_verify(st, op, prev_statements, vec![])?;
 
         // Also check negative <= negative
         let st3: mainpod::Statement = Statement::equal(
@@ -2108,7 +2058,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st3.clone(), st4];
-        operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])?;
+        operation_verify(st, op, prev_statements, vec![])?;
 
         // Also check negative <= positive
         let st: mainpod::Statement = Statement::lt_eq(
@@ -2122,7 +2072,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st3, st2];
-        operation_verify_fill_pvs_ops(st, op, prev_statements.clone(), vec![])?;
+        operation_verify(st, op, prev_statements.clone(), vec![])?;
 
         // Also check equality, both positive and negative.
         let st: mainpod::Statement = Statement::lt_eq(
@@ -2135,7 +2085,7 @@ mod tests {
             vec![OperationArg::Index(0), OperationArg::Index(0)],
             OperationAux::None,
         );
-        operation_verify_fill_pvs_ops(st, op, prev_statements.clone(), vec![])?;
+        operation_verify(st, op, prev_statements.clone(), vec![])?;
         let st: mainpod::Statement = Statement::lt_eq(
             AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
             AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
@@ -2146,7 +2096,7 @@ mod tests {
             vec![OperationArg::Index(1), OperationArg::Index(1)],
             OperationAux::None,
         );
-        operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])
+        operation_verify(st, op, prev_statements, vec![])
     }
 
     #[test]
@@ -2195,7 +2145,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2, st3];
-        operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])
+        operation_verify(st, op, prev_statements, vec![])
     }
 
     #[test]
@@ -2241,7 +2191,7 @@ mod tests {
                     OperationAux::None,
                 );
                 let prev_statements = vec![st1, st2, st3];
-                operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])
+                operation_verify(st, op, prev_statements, vec![])
             })
     }
 
@@ -2288,7 +2238,7 @@ mod tests {
                     OperationAux::None,
                 );
                 let prev_statements = vec![st1, st2, st3];
-                operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])
+                operation_verify(st, op, prev_statements, vec![])
             })
     }
 
@@ -2330,7 +2280,7 @@ mod tests {
                 OperationAux::None,
             );
             let prev_statements = vec![st1, st2, st3];
-            operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])
+            operation_verify(st, op, prev_statements, vec![])
         })
     }
 
@@ -2375,7 +2325,7 @@ mod tests {
                 let prev_statements = [st1, st2, st3];
 
                 let check = std::panic::catch_unwind(|| {
-                    operation_verify_fill_pvs_ops(st, op, prev_statements.to_vec(), vec![])
+                    operation_verify(st, op, prev_statements.to_vec(), vec![])
                 });
                 match check {
                     Err(e) => {
@@ -2408,7 +2358,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1];
-        operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])
+        operation_verify(st, op, prev_statements, vec![])
     }
 
     #[test]
@@ -2434,7 +2384,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2];
-        operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])
+        operation_verify(st, op, prev_statements, vec![])
     }
 
     #[test]
@@ -2474,7 +2424,7 @@ mod tests {
             no_key_pf,
         )];
         let prev_statements = vec![root_st, key_st];
-        operation_verify_fill_pvs_ops(st, op, prev_statements, merkle_proofs)
+        operation_verify(st, op, prev_statements, merkle_proofs)
     }
 
     #[test]
@@ -2521,7 +2471,7 @@ mod tests {
             key_pf,
         )];
         let prev_statements = vec![root_st, key_st, value_st];
-        operation_verify_fill_pvs_ops(st, op, prev_statements, merkle_proofs)
+        operation_verify(st, op, prev_statements, merkle_proofs)
     }
 
     fn helper_statement_arg_from_template(

@@ -27,7 +27,7 @@ fn get_span(pair: &Pair<Rule>) -> (usize, usize) {
 
 pub fn native_predicate_from_string(s: &str) -> Option<NativePredicate> {
     match s {
-        // ValueOf has been replaced by Equal; this is for backward compatibility.
+        // TODO: update any code that still uses ValueOf to use Equal instead
         "ValueOf" => Some(NativePredicate::Equal),
         "Equal" => Some(NativePredicate::Equal),
         "NotEqual" => Some(NativePredicate::NotEqual),
