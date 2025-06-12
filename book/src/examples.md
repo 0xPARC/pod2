@@ -59,10 +59,10 @@ loan_check(receiver, private: gov_id, paystub, nullifier, sk, sk_pok) = AND(
     Equal(?gov_id[KEY_SIGNER], ZOO_GOV)
     Equal(?gov_id[KEY_TYPE], SIGNATURE)
     // At least 18 years old
-    Lt(?gov_id.date_of_birth, NOW_MINUS_18Y) # date_of_birdth is more than 18y old
+    Lt(?gov_id["date_of_birth"], NOW_MINUS_18Y) # date_of_birdth is more than 18y old
     Equal(?paystub[KEY_SIGNER], ZOO_DEEL)
     Equal(?paystub[KEY_TYPE], SIGNATURE)
-    Equal(?paystub[ssn], ?gov_id.ssn)
+    Equal(?paystub[ssn], ?gov_id["ssn"])
     // At least one year of consistent employment with your current employer
     Lt(?paystub["start_date"], NOW_MINUS_1Y) # start_date is more than 1y old
     Gt(?paystub["issue_date"], NOW_MINUS_7D) # issue_date is less than 7d old
