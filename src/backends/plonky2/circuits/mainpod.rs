@@ -17,7 +17,7 @@ use plonky2::{
 
 use crate::{
     backends::plonky2::{
-        basetypes::CircuitBuilder,
+        basetypes::{CircuitBuilder, VDSet},
         circuits::{
             common::{
                 CircuitBuilderPod, CustomPredicateBatchTarget, CustomPredicateEntryTarget,
@@ -28,7 +28,7 @@ use crate::{
             },
             signedpod::{SignedPodVerifyGadget, SignedPodVerifyTarget},
         },
-        emptypod::EmptyPod,
+        emptypod::{EmptyPod, STANDARD_EMPTY_POD_DATA},
         error::Result,
         mainpod::{self, pad_statement},
         primitives::merkletree::{
@@ -39,10 +39,9 @@ use crate::{
     },
     measure_gates_begin, measure_gates_end,
     middleware::{
-        AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash,
-        NativeOperation, NativePredicate, Params, PodType, PredicatePrefix, Statement,
-        StatementArg, ToFields, Value, ValueRef, WildcardValue, EMPTY_VALUE, F, HASH_SIZE,
-        KEY_TYPE, SELF, VALUE_SIZE,
+        AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, NativeOperation,
+        NativePredicate, Params, PodType, PredicatePrefix, Statement, StatementArg, ToFields,
+        Value, ValueRef, WildcardValue, EMPTY_VALUE, F, HASH_SIZE, KEY_TYPE, SELF, VALUE_SIZE,
     },
 };
 
@@ -1276,9 +1275,31 @@ impl MainPodVerifyGadget {
         }
 
         let vds_root = builder.add_virtual_hash();
-        // TODO: verify that all input pod proofs use verifier data from the public input VD array
-        // This requires merkle proofs
-        // https://github.com/0xPARC/pod2/issues/250
+
+        // verify that all input pod proofs use verifier data from the public input VD array This
+        // requires merkle proofs
+        let mut vd_mt_proofs: Vec<MerkleClaimAndProofTarget> = vec![];
+        for verified_proof in verified_proofs {
+            // add target for the vd_mt_proof
+            let vd_mt_proof = MerkleProofGadget {
+                max_depth: params.max_depth_mt_vds,
+            }
+            .eval(builder);
+
+            // ensure that mt_proof is enabled
+            let true_targ = builder._true();
+            builder.connect(vd_mt_proof.enabled.target, true_targ.target);
+            // connect the vd_mt_proof's root to the actual vds_root, to ensure that the mt proof
+            // verifies against the vds_root
+            builder.connect_hashes(vds_root, vd_mt_proof.root);
+            // connect vd_mt_proof's value with the verified_proof.verifier_data_hash
+            builder.connect_hashes(
+                verified_proof.verifier_data_hash,
+                HashOutTarget::from_vec(vd_mt_proof.value.elements.to_vec()),
+            );
+
+            vd_mt_proofs.push(vd_mt_proof);
+        }
 
         // Verify that VD array that input pod uses is the same we use now.
         for verified_proof in verified_proofs {
@@ -1303,11 +1324,11 @@ impl MainPodVerifyGadget {
 
         // Add Merkle claim/proof targets
         let mp_gadget = MerkleProofGadget {
-            max_depth: params.max_depth_mt_gadget,
+            max_depth: params.max_depth_mt_containers,
         };
-        let merkle_proofs: Vec<_> = (0..params.max_merkle_proofs)
+        let merkle_proofs: Vec<_> = (0..params.max_merkle_proofs_containers)
             .map(|_| mp_gadget.eval(builder))
-            .collect::<Result<_>>()?;
+            .collect();
         let merkle_claims: Vec<_> = merkle_proofs
             .clone()
             .into_iter()
@@ -1368,6 +1389,7 @@ impl MainPodVerifyGadget {
         Ok(MainPodVerifyTarget {
             params: params.clone(),
             vds_root,
+            vd_mt_proofs,
             id,
             signed_pods,
             input_pods_self_statements,
@@ -1383,6 +1405,7 @@ impl MainPodVerifyGadget {
 pub struct MainPodVerifyTarget {
     params: Params,
     vds_root: HashOutTarget,
+    vd_mt_proofs: Vec<MerkleClaimAndProofTarget>,
     id: HashOutTarget,
     signed_pods: Vec<SignedPodVerifyTarget>,
     input_pods_self_statements: Vec<Vec<StatementTarget>>,
@@ -1402,7 +1425,11 @@ pub struct CustomPredicateVerification {
 }
 
 pub struct MainPodVerifyInput {
-    pub vds_root: Hash,
+    pub vds_set: VDSet,
+    // field containing the `vd_mt_proofs` aside from the `vds_set`, because
+    // inide the MainPodVerifyTarget circuit, since it is the InnerCircuit for
+    // the RecursiveCircuit, we don't have access to the used verifier_datas.
+    pub vd_mt_proofs: Vec<MerkleClaimAndProof>,
     pub signed_pods: Vec<SignedPod>,
     pub recursive_pods_pub_self_statements: Vec<Vec<Statement>>,
     pub statements: Vec<mainpod::Statement>,
@@ -1436,13 +1463,58 @@ fn set_targets_input_pods_self_statements(
     Ok(())
 }
 
-impl MainPodVerifyTarget {
-    pub fn set_targets(
+pub struct MainPodVerifyCircuit {
+    pub params: Params,
+}
+
+// TODO: Remove this type and implement it's logic directly in `impl InnerCircuit for MainPodVerifyTarget`
+impl MainPodVerifyCircuit {
+    pub fn eval(
         &self,
-        pw: &mut PartialWitness<F>,
-        input: &MainPodVerifyInput,
-    ) -> Result<()> {
-        pw.set_target_arr(&self.vds_root.elements, &input.vds_root.0)?;
+        builder: &mut CircuitBuilder,
+        verified_proofs: &[VerifiedProofTarget],
+    ) -> Result<MainPodVerifyTarget> {
+        let main_pod = MainPodVerifyGadget {
+            params: self.params.clone(),
+        }
+        .eval(builder, verified_proofs)?;
+        builder.register_public_inputs(&main_pod.id.elements);
+        builder.register_public_inputs(&main_pod.vds_root.elements);
+        Ok(main_pod)
+    }
+}
+
+impl InnerCircuit for MainPodVerifyTarget {
+    type Input = MainPodVerifyInput;
+    type Params = Params;
+
+    fn build(
+        builder: &mut CircuitBuilder,
+        params: &Self::Params,
+        verified_proofs: &[VerifiedProofTarget],
+    ) -> Result<Self> {
+        MainPodVerifyCircuit {
+            params: params.clone(),
+        }
+        .eval(builder, verified_proofs)
+    }
+
+    /// assigns the values to the targets
+    fn set_targets(&self, pw: &mut PartialWitness<F>, input: &Self::Input) -> Result<()> {
+        let vds_root = input.vds_set.root();
+        pw.set_target_arr(&self.vds_root.elements, &vds_root.0)?;
+
+        for (i, vd_mt_proof) in input.vd_mt_proofs.iter().enumerate() {
+            self.vd_mt_proofs[i].set_targets(pw, true, vd_mt_proof)?;
+        }
+        // the rest of vd_mt_proofs set them to the empty_pod vd_mt_proof
+        let vd_emptypod_mt_proof = input
+            .vds_set
+            .get_vds_proofs(&[STANDARD_EMPTY_POD_DATA.1.verifier_only.clone()])?;
+        let vd_emptypod_mt_proof = vd_emptypod_mt_proof[0].clone();
+        for i in input.vd_mt_proofs.len()..self.vd_mt_proofs.len() {
+            self.vd_mt_proofs[i].set_targets(pw, true, &vd_emptypod_mt_proof)?;
+        }
 
         assert!(input.signed_pods.len() <= self.params.max_input_signed_pods);
         for (i, signed_pod) in input.signed_pods.iter().enumerate() {
@@ -1472,7 +1544,7 @@ impl MainPodVerifyTarget {
         }
         // Padding
         if input.recursive_pods_pub_self_statements.len() != self.params.max_input_recursive_pods {
-            let empty_pod = EmptyPod::new_boxed(&self.params, input.vds_root);
+            let empty_pod = EmptyPod::new_boxed(&self.params, input.vds_set.root());
             let empty_pod_statements = empty_pod.pub_statements();
             for i in
                 input.recursive_pods_pub_self_statements.len()..self.params.max_input_recursive_pods
@@ -1492,13 +1564,13 @@ impl MainPodVerifyTarget {
             self.operations[i].set_targets(pw, &self.params, op)?;
         }
 
-        assert!(input.merkle_proofs.len() <= self.params.max_merkle_proofs);
+        assert!(input.merkle_proofs.len() <= self.params.max_merkle_proofs_containers);
         for (i, mp) in input.merkle_proofs.iter().enumerate() {
             self.merkle_proofs[i].set_targets(pw, true, mp)?;
         }
         // Padding
         let pad_mp = MerkleClaimAndProof::empty();
-        for i in input.merkle_proofs.len()..self.params.max_merkle_proofs {
+        for i in input.merkle_proofs.len()..self.params.max_merkle_proofs_containers {
             self.merkle_proofs[i].set_targets(pw, false, &pad_mp)?;
         }
 
@@ -1542,48 +1614,6 @@ impl MainPodVerifyTarget {
         }
 
         Ok(())
-    }
-}
-
-pub struct MainPodVerifyCircuit {
-    pub params: Params,
-}
-
-// TODO: Remove this type and implement it's logic directly in `impl InnerCircuit for MainPodVerifyTarget`
-impl MainPodVerifyCircuit {
-    pub fn eval(
-        &self,
-        builder: &mut CircuitBuilder,
-        verified_proofs: &[VerifiedProofTarget],
-    ) -> Result<MainPodVerifyTarget> {
-        let main_pod = MainPodVerifyGadget {
-            params: self.params.clone(),
-        }
-        .eval(builder, verified_proofs)?;
-        builder.register_public_inputs(&main_pod.id.elements);
-        builder.register_public_inputs(&main_pod.vds_root.elements);
-        Ok(main_pod)
-    }
-}
-
-impl InnerCircuit for MainPodVerifyTarget {
-    type Input = MainPodVerifyInput;
-    type Params = Params;
-
-    fn build(
-        builder: &mut CircuitBuilder,
-        params: &Self::Params,
-        verified_proofs: &[VerifiedProofTarget],
-    ) -> Result<Self> {
-        MainPodVerifyCircuit {
-            params: params.clone(),
-        }
-        .eval(builder, verified_proofs)
-    }
-
-    /// assigns the values to the targets
-    fn set_targets(&self, pw: &mut PartialWitness<F>, input: &Self::Input) -> Result<()> {
-        self.set_targets(pw, input)
     }
 }
 
@@ -1646,7 +1676,7 @@ mod tests {
             ..Default::default()
         };
         let mp_gadget = MerkleProofGadget {
-            max_depth: params.max_depth_mt_gadget,
+            max_depth: params.max_depth_mt_containers,
         };
 
         let config = CircuitConfig::standard_recursion_config();
@@ -1663,7 +1693,7 @@ mod tests {
         let merkle_proofs_target: Vec<_> = merkle_proofs
             .iter()
             .map(|_| mp_gadget.eval(&mut builder))
-            .collect::<Result<_>>()?;
+            .collect();
         let merkle_claims_target: Vec<_> = merkle_proofs_target
             .clone()
             .into_iter()
@@ -2448,7 +2478,7 @@ mod tests {
         ]
         .into_iter()
         .collect();
-        let mt = MerkleTree::new(params.max_depth_mt_gadget, &kvs)?;
+        let mt = MerkleTree::new(params.max_depth_mt_containers, &kvs)?;
 
         let root = Value::from(mt.root());
         let root_ak = AnchoredKey::from((PodId(RawValue::from(88).into()), "merkle root"));
@@ -2488,7 +2518,7 @@ mod tests {
         ]
         .into_iter()
         .collect();
-        let mt = MerkleTree::new(params.max_depth_mt_gadget, &kvs)?;
+        let mt = MerkleTree::new(params.max_depth_mt_containers, &kvs)?;
 
         let root = Value::from(mt.root());
         let root_ak = AnchoredKey::from((PodId(RawValue::from(88).into()), "merkle root"));

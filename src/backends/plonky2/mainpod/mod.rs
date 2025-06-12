@@ -28,7 +28,7 @@ use crate::{
     middleware::{
         self, resolve_wildcard_values, value_from_op, AnchoredKey, CustomPredicateBatch, DynError,
         Hash, MainPodInputs, NativeOperation, NonePod, OperationType, Params, Pod, PodId,
-        PodProver, PodType, RecursivePod, StatementArg, ToFields, F, KEY_TYPE, SELF,
+        PodProver, PodType, RecursivePod, StatementArg, ToFields, VDSet, F, KEY_TYPE, SELF,
     },
 };
 
@@ -162,11 +162,11 @@ pub(crate) fn extract_merkle_proofs(
             _ => None,
         })
         .collect();
-    if merkle_proofs.len() > params.max_merkle_proofs {
+    if merkle_proofs.len() > params.max_merkle_proofs_containers {
         return Err(Error::custom(format!(
             "The number of required Merkle proofs ({}) exceeds the maximum number ({}).",
             merkle_proofs.len(),
-            params.max_merkle_proofs
+            params.max_merkle_proofs_containers
         )));
     }
     Ok(merkle_proofs)
@@ -292,7 +292,7 @@ pub(crate) fn layout_statements(
             // We mocking or we don't need padding so we skip creating an EmptyPod
             MockEmptyPod::new_boxed(params)
         } else {
-            EmptyPod::new_boxed(params, inputs.vds_root)
+            EmptyPod::new_boxed(params, inputs.vds_set.root())
         };
     let empty_pod = empty_pod_box.as_ref();
     assert!(inputs.recursive_pods.len() <= params.max_input_recursive_pods);
@@ -419,7 +419,7 @@ pub(crate) fn process_public_statements_operations(
 pub struct Prover {}
 
 impl Prover {
-    fn _prove(&self, params: &Params, inputs: MainPodInputs) -> Result<MainPod> {
+    fn _prove(&self, params: &Params, vd_set: &VDSet, inputs: MainPodInputs) -> Result<MainPod> {
         let rec_circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
         let (main_pod_target, circuit_data) =
             RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data_padded(
@@ -454,7 +454,7 @@ impl Prover {
             // We don't need padding so we skip creating an EmptyPod
             MockEmptyPod::new_boxed(params)
         } else {
-            EmptyPod::new_boxed(params, inputs.vds_root)
+            EmptyPod::new_boxed(params, inputs.vds_set.root())
         };
         let inputs = MainPodInputs {
             recursive_pods: &inputs
@@ -501,10 +501,10 @@ impl Prover {
             .recursive_pods
             .iter()
             .map(|pod| {
-                assert_eq!(inputs.vds_root, pod.vds_root());
+                assert_eq!(inputs.vds_set.root(), pod.vds_root());
                 ProofWithPublicInputs {
                     proof: pod.proof(),
-                    public_inputs: [pod.id().0 .0, inputs.vds_root.0].concat(),
+                    public_inputs: [pod.id().0 .0, inputs.vds_set.root().0].concat(),
                 }
             })
             .collect_vec();
@@ -513,8 +513,12 @@ impl Prover {
             .iter()
             .map(|pod| pod.verifier_data())
             .collect_vec();
+
+        let vd_mt_proofs = vd_set.get_vds_proofs(&verifier_datas)?;
+
         let input = MainPodVerifyInput {
-            vds_root: inputs.vds_root,
+            vds_set: inputs.vds_set.clone(),
+            vd_mt_proofs,
             signed_pods: signed_pods_input,
             recursive_pods_pub_self_statements,
             statements: statements[statements.len() - params.max_statements..].to_vec(),
@@ -528,7 +532,7 @@ impl Prover {
         Ok(MainPod {
             params: params.clone(),
             id,
-            vds_root: inputs.vds_root,
+            vds_root: inputs.vds_set.root(),
             public_statements,
             proof: proof_with_pis.proof,
         })
@@ -539,9 +543,10 @@ impl PodProver for Prover {
     fn prove(
         &self,
         params: &Params,
+        vd_set: &VDSet,
         inputs: MainPodInputs,
     ) -> Result<Box<dyn RecursivePod>, Box<DynError>> {
-        Ok(self._prove(params, inputs).map(Box::new)?)
+        Ok(self._prove(params, vd_set, inputs).map(Box::new)?)
     }
 }
 
@@ -549,6 +554,11 @@ impl PodProver for Prover {
 pub struct MainPod {
     params: Params,
     id: PodId,
+    /// vds_root is the merkle-root of the `VDSet`, which contains the
+    /// verifier_data hashes of the allowed set of VerifierOnlyCircuitData, for
+    /// the succession of recursive MainPods, which when proving the POD, it is
+    /// proven that all the recursive proofs that are being verified in-circuit
+    /// use one of the verifier_data's contained in the VDSet.
     vds_root: Hash,
     public_statements: Vec<Statement>,
     proof: Proof,
@@ -705,7 +715,7 @@ pub mod tests {
             {self},
         },
         middleware,
-        middleware::{CustomPredicateRef, NativePredicate as NP},
+        middleware::{CustomPredicateRef, NativePredicate as NP, DEFAULT_VD_SET},
         op,
     };
 
@@ -720,6 +730,7 @@ pub mod tests {
             ..Default::default()
         };
         println!("{:#?}", params);
+        let vd_set = &*DEFAULT_VD_SET;
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params);
@@ -729,8 +740,13 @@ pub mod tests {
         let pay_stub_pod = pay_stub_builder.sign(&mut signer)?;
         let mut signer = Signer(SecretKey(3u64.into()));
         let sanction_list_pod = sanction_list_builder.sign(&mut signer)?;
-        let kyc_builder =
-            zu_kyc_pod_builder(&params, &gov_id_pod, &pay_stub_pod, &sanction_list_pod)?;
+        let kyc_builder = zu_kyc_pod_builder(
+            &params,
+            &vd_set,
+            &gov_id_pod,
+            &pay_stub_pod,
+            &sanction_list_pod,
+        )?;
 
         let mut prover = Prover {};
         let kyc_pod = kyc_builder.prove(&mut prover, &params)?;
@@ -751,6 +767,7 @@ pub mod tests {
             max_input_pods_public_statements: 10,
             ..Default::default()
         };
+        let vd_set = &*DEFAULT_VD_SET;
 
         let mut gov_id_builder = frontend::SignedPodBuilder::new(&params);
         gov_id_builder.insert("idNumber", "4242424242");
@@ -759,7 +776,7 @@ pub mod tests {
         let mut signer = Signer(SecretKey(42u64.into()));
         let gov_id = gov_id_builder.sign(&mut signer).unwrap();
         let now_minus_18y: i64 = 1169909388;
-        let mut kyc_builder = frontend::MainPodBuilder::new(&params);
+        let mut kyc_builder = frontend::MainPodBuilder::new(&params, &vd_set);
         kyc_builder.add_signed_pod(&gov_id);
         kyc_builder
             .pub_op(op!(lt, (&gov_id, "dateOfBirth"), now_minus_18y))
@@ -801,11 +818,13 @@ pub mod tests {
             max_custom_predicate_arity: 2,
             max_custom_predicate_wildcards: 2,
             max_custom_batch_size: 2,
-            max_merkle_proofs: 2,
-            max_depth_mt_gadget: 4,
+            max_merkle_proofs_containers: 2,
+            max_depth_mt_containers: 4,
+            max_depth_mt_vds: 6,
         };
+        let vd_set = &*DEFAULT_VD_SET;
 
-        let pod_builder = frontend::MainPodBuilder::new(&params);
+        let pod_builder = frontend::MainPodBuilder::new(&params, &vd_set);
 
         // Mock
         let mut prover = MockProver {};
@@ -837,6 +856,7 @@ pub mod tests {
             ..Default::default()
         };
         println!("{:#?}", params);
+        let vd_set = &*DEFAULT_VD_SET;
 
         let mut alice = Signer(SecretKey(1u32.into()));
         let bob = Signer(SecretKey(2u32.into()));
@@ -851,6 +871,7 @@ pub mod tests {
 
         let alice_bob_ethdos_builder = eth_dos_pod_builder(
             &params,
+            &vd_set,
             false,
             &alice_attestation,
             &charlie_attestation,
@@ -887,6 +908,7 @@ pub mod tests {
             ..Default::default()
         };
         println!("{:#?}", params);
+        let vd_set = &*DEFAULT_VD_SET;
 
         let mut cpb_builder = CustomPredicateBatchBuilder::new(params.clone(), "cpb".into());
         let stb0 = STB::new(NP::Equal)
@@ -907,7 +929,7 @@ pub mod tests {
         let cpb_and = CustomPredicateRef::new(cpb.clone(), 0);
         let _cpb_or = CustomPredicateRef::new(cpb.clone(), 1);
 
-        let mut pod_builder = MainPodBuilder::new(&params);
+        let mut pod_builder = MainPodBuilder::new(&params, &vd_set);
 
         let st0 = pod_builder.priv_op(op!(new_entry, ("score", 42)))?;
         let st1 = pod_builder.priv_op(op!(new_entry, ("foo", 42)))?;
