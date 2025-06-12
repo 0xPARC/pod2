@@ -2,7 +2,7 @@ pub mod custom;
 
 use std::collections::HashSet;
 
-use custom::{eth_dos_batch, eth_friend_batch};
+use custom::eth_dos_batch;
 
 use crate::{
     backends::plonky2::mock::signedpod::MockSigner,
@@ -87,11 +87,11 @@ pub fn eth_dos_pod_builder(
     bob_pubkey: Value,
 ) -> Result<MainPodBuilder> {
     // Will need ETH friend and ETH DoS custom predicate batches.
-    let eth_friend = CustomPredicateRef::new(eth_friend_batch(params, mock)?, 0);
     let eth_dos_batch = eth_dos_batch(params, mock)?;
-    let eth_dos_base = CustomPredicateRef::new(eth_dos_batch.clone(), 0);
-    let eth_dos_ind = CustomPredicateRef::new(eth_dos_batch.clone(), 1);
-    let eth_dos = CustomPredicateRef::new(eth_dos_batch.clone(), 2);
+    let eth_friend = eth_dos_batch.predicate_ref_by_name("eth_friend").unwrap();
+    let eth_dos_base = eth_dos_batch.predicate_ref_by_name("eth_dos_base").unwrap();
+    let eth_dos_ind = eth_dos_batch.predicate_ref_by_name("eth_dos_ind").unwrap();
+    let eth_dos = eth_dos_batch.predicate_ref_by_name("eth_dos").unwrap();
 
     // ETHDoS POD builder
     let mut alice_bob_ethdos = MainPodBuilder::new(params, vd_set);
@@ -211,6 +211,190 @@ pub fn eth_dos_pod_builder(
     ))?;
 
     Ok(alice_bob_ethdos)
+}
+
+pub struct EthDosHelper {
+    params: Params,
+    vd_set: VDSet,
+    eth_friend: CustomPredicateRef,
+    eth_dos_base: CustomPredicateRef,
+    eth_dos_ind: CustomPredicateRef,
+    eth_dos: CustomPredicateRef,
+    src: Value,
+}
+
+impl EthDosHelper {
+    pub fn new(params: &Params, vd_set: &VDSet, mock: bool, src: Value) -> Result<Self> {
+        let eth_dos_batch = eth_dos_batch(params, mock)?;
+        let eth_friend = eth_dos_batch.predicate_ref_by_name("eth_friend").unwrap();
+        let eth_dos_base = eth_dos_batch.predicate_ref_by_name("eth_dos_base").unwrap();
+        let eth_dos_ind = eth_dos_batch.predicate_ref_by_name("eth_dos_ind").unwrap();
+        let eth_dos = eth_dos_batch.predicate_ref_by_name("eth_dos").unwrap();
+        Ok(Self {
+            params: params.clone(),
+            vd_set: vd_set.clone(),
+            eth_friend,
+            eth_dos_base,
+            eth_dos_ind,
+            eth_dos,
+            src,
+        })
+    }
+
+    pub fn dist_1(&self, dst: Value, src_attestation: &SignedPod) -> Result<MainPodBuilder> {
+        let mut pod = MainPodBuilder::new(&self.params, &self.vd_set);
+        pod.add_signed_pod(src_attestation);
+
+        let src_st = pod.pub_literal(self.src.clone())?; // ValueOf src
+        let dst_st = pod.pub_literal(dst)?; // ValueOf dst
+        let one_st = pod.pub_literal(1)?;
+        let distance_st = one_st.clone(); // ValueOf distance
+
+        // eth_dos srd->src dist=0
+        let zero = pod.priv_literal(0)?;
+        let src_eq_src = pod.priv_op(op!(eq, src_st.clone(), src_st.clone()))?;
+        let eth_dos_src_to_src_base = pod.priv_op(op!(
+            custom,
+            self.eth_dos_base.clone(),
+            src_eq_src,
+            zero.clone()
+        ))?;
+        let eth_dos_src_to_src = pod.priv_op(op!(
+            custom,
+            self.eth_dos.clone(),
+            eth_dos_src_to_src_base,
+            Statement::None
+        ))?;
+
+        // eth_dos src->dst dist=1
+        //
+        // eth_friend statement
+        let attestation_is_signed_pod = src_attestation.get_statement(KEY_TYPE).unwrap();
+        let attestation_signed_by_src =
+            pod.priv_op(op!(eq, (src_attestation, KEY_SIGNER), src_st.clone()))?;
+        let src_attests_to_dst = pod.priv_op(op!(eq, (src_attestation, "attestation"), dst_st))?;
+        let ethfriends_src_dst = pod.priv_op(op!(
+            custom,
+            self.eth_friend.clone(),
+            attestation_is_signed_pod,
+            attestation_signed_by_src,
+            src_attests_to_dst
+        ))?;
+
+        // 1 = 0 + 1
+        let ethdos_sum = pod.priv_op(op!(
+            sum_of,
+            distance_st.clone(),
+            zero.clone(),
+            one_st.clone()
+        ))?;
+        let eth_dos_src_to_dst_ind = pod.priv_op(op!(
+            custom,
+            self.eth_dos_ind.clone(),
+            eth_dos_src_to_src,
+            one_st.clone(),
+            ethdos_sum,
+            ethfriends_src_dst
+        ))?;
+        let _eth_dos_src_to_dst = pod.pub_op(op!(
+            custom,
+            self.eth_dos.clone(),
+            Statement::None,
+            eth_dos_src_to_dst_ind
+        ))?;
+
+        Ok(pod)
+    }
+
+    pub fn dist_n_plus_1(
+        &self,
+        eth_dos_src_to_int_pod: &MainPod,
+        int_attestation: &SignedPod, // int signs dst
+    ) -> Result<MainPodBuilder> {
+        let mut pod = MainPodBuilder::new(&self.params);
+        pod.add_signed_pod(int_attestation);
+        pod.add_main_pod(eth_dos_src_to_int_pod.clone());
+
+        let eth_dos_int_to_dst = eth_dos_src_to_int_pod
+            .pod
+            .pub_statements()
+            .into_iter()
+            .rev() // Find the last predicate because dist_1 has two: dist=0, dist=1
+            .find(|st| st.predicate() == Predicate::Custom(self.eth_dos.clone()))
+            .expect("eth_dos custom predicate");
+        let [src, int, n] = {
+            let args: [_; 3] = eth_dos_int_to_dst.args().try_into().expect("Vec::len=3");
+            let [src_key, int_key, distance_key] = args.map(|arg| match arg {
+                StatementArg::WildcardLiteral(WildcardValue::Key(key)) => key,
+                _ => panic!("expected WildcardLiteral(Key)"),
+            });
+            let src = eth_dos_src_to_int_pod.get(src_key);
+            let int = eth_dos_src_to_int_pod.get(int_key);
+            let distance = eth_dos_src_to_int_pod.get(distance_key);
+            [src, int, distance].map(|opt_st| opt_st.expect("find pub value_of"))
+        };
+        println!("n_plus_1 src={}, int={}, n={}", src, int, n);
+        let dst = {
+            assert_eq!(
+                &int,
+                int_attestation.get(KEY_SIGNER).expect("get KEY_SIGNER")
+            );
+            let dst = int_attestation
+                .get("attestation")
+                .expect("get \"attestation\"");
+            dst.clone()
+        };
+        let n_i64 = if let TypedValue::Int(x) = n.typed() {
+            x
+        } else {
+            panic!("distance value is not Int")
+        };
+
+        let n1_i64 = n_i64 + 1;
+        let _src_st = pod.pub_literal(src)?; // ValueOf src
+        let dst_st = pod.pub_literal(dst)?; // ValueOf dst
+        let distance_st = pod.pub_literal(n1_i64)?; // ValueOf distance
+
+        // eth_friend statement
+        let attestation_is_signed_pod = int_attestation.get_statement(KEY_TYPE).unwrap();
+        let attestation_signed_by_int =
+            pod.priv_op(op!(eq, (int_attestation, KEY_SIGNER), int.clone()))?;
+        let int_attests_to_dst = pod.priv_op(op!(eq, (int_attestation, "attestation"), dst_st))?;
+        let ethfriends_int_dst = pod.priv_op(op!(
+            custom,
+            self.eth_friend.clone(),
+            attestation_is_signed_pod,
+            attestation_signed_by_int,
+            int_attests_to_dst
+        ))?;
+
+        // NOTE: Need to use a specific key to match with the previous pod...
+        let n_st = pod.priv_op(op!(new_entry, "n", n))?;
+        let one_st = pod.priv_literal(1)?;
+        // distance = n + 1
+        let ethdos_sum = pod.priv_op(op!(
+            sum_of,
+            distance_st.clone(),
+            n_st.clone(),
+            one_st.clone()
+        ))?;
+        let eth_dos_src_to_dst_ind = pod.priv_op(op!(
+            custom,
+            self.eth_dos_ind.clone(),
+            eth_dos_int_to_dst,
+            one_st,
+            ethdos_sum,
+            ethfriends_int_dst
+        ))?;
+        let _eth_dos_src_dst = pod.pub_op(op!(
+            custom,
+            self.eth_dos.clone(),
+            Statement::None,
+            eth_dos_src_to_dst_ind
+        ))?;
+
+        Ok(pod)
+    }
 }
 
 // GreatBoy

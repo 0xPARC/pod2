@@ -292,7 +292,7 @@ mod tests {
     use super::*;
     use crate::{
         backends::plonky2::mock::mainpod::MockProver,
-        examples::custom::{eth_dos_batch, eth_friend_batch},
+        examples::custom::eth_dos_batch,
         frontend::MainPodBuilder,
         middleware::{self, containers::Set, CustomPredicateRef, Params, PodType, DEFAULT_VD_SET},
         op,
@@ -311,12 +311,11 @@ mod tests {
         params.print_serialized_sizes();
 
         // ETH friend custom predicate batch
-        let eth_friend = eth_friend_batch(&params, true)?;
+        let eth_dos_batch = eth_dos_batch(&params, true)?;
 
         // This batch only has 1 predicate, so we pick it already for convenience
-        let eth_friend = Predicate::Custom(CustomPredicateRef::new(eth_friend, 0));
+        let eth_friend = eth_dos_batch.predicate_ref_by_name("eth_friend").unwrap();
 
-        let eth_dos_batch = eth_dos_batch(&params, true)?;
         let eth_dos_batch_mw: middleware::CustomPredicateBatch =
             Arc::unwrap_or_clone(eth_dos_batch);
         let fields = eth_dos_batch_mw.to_fields(&params);

@@ -1427,11 +1427,8 @@ pub(crate) mod tests {
 
     use super::*;
     use crate::{
-        backends::plonky2::basetypes::C,
-        examples::custom::{eth_dos_batch, eth_friend_batch},
-        frontend,
-        frontend::CustomPredicateBatchBuilder,
-        middleware::CustomPredicateBatch,
+        backends::plonky2::basetypes::C, examples::custom::eth_dos_batch, frontend,
+        frontend::CustomPredicateBatchBuilder, middleware::CustomPredicateBatch,
     };
 
     pub(crate) const I64_TEST_PAIRS: [(i64, i64); 36] = [
@@ -1481,7 +1478,7 @@ pub(crate) mod tests {
         let params = Params::default();
         let config = CircuitConfig::standard_recursion_config();
 
-        let custom_predicate_batch = eth_friend_batch(&params, false)?;
+        let custom_predicate_batch = eth_dos_batch(&params, false)?;
 
         for (i, cp) in custom_predicate_batch.predicates().iter().enumerate() {
             let mut builder = CircuitBuilder::<F, D>::new(config.clone());
@@ -1544,9 +1541,6 @@ pub(crate) mod tests {
         helper_custom_predicate_batch_target_id(&params, &custom_predicate_batch).unwrap();
 
         // Some cases from the examples
-        let custom_predicate_batch = eth_friend_batch(&params, false)?;
-        helper_custom_predicate_batch_target_id(&params, &custom_predicate_batch).unwrap();
-
         let custom_predicate_batch = eth_dos_batch(&params, false)?;
         helper_custom_predicate_batch_target_id(&params, &custom_predicate_batch).unwrap();
 

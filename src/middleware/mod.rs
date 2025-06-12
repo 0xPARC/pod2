@@ -680,7 +680,7 @@ impl Default for Params {
             max_custom_predicate_verifications: 5,
             max_custom_predicate_arity: 5,
             max_custom_predicate_wildcards: 10,
-            max_custom_batch_size: 5,
+            max_custom_batch_size: 5, // TODO: Move down to 4?
             max_merkle_proofs_containers: 5,
             max_depth_mt_containers: 32,
             max_depth_mt_vds: 6, // up to 64 (2^6) different pod circuits

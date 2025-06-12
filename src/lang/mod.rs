@@ -35,10 +35,6 @@ mod tests {
         KeyOrWildcard::Key(Key::new(name.to_string()))
     }
 
-    fn ko_wc(name: &str, index: usize) -> KeyOrWildcard {
-        KeyOrWildcard::Wildcard(Wildcard::new(name.to_string(), index))
-    }
-
     fn sta_ak(pod_var: (&str, usize), key_or_wc: KeyOrWildcard) -> StatementTmplArg {
         StatementTmplArg::AnchoredKey(
             SelfOrWildcard::Wildcard(wc(pod_var.0, pod_var.1)),
@@ -46,8 +42,8 @@ mod tests {
         )
     }
 
-    fn sta_ak_self(key_or_wc: KeyOrWildcard) -> StatementTmplArg {
-        StatementTmplArg::AnchoredKey(SelfOrWildcard::SELF, key_or_wc)
+    fn sta_wc_lit(name: &str, index: usize) -> StatementTmplArg {
+        StatementTmplArg::WildcardLiteral(wc(name, index))
     }
 
     fn sta_lit(value: impl Into<Value>) -> StatementTmplArg {
@@ -506,27 +502,26 @@ mod tests {
         };
 
         let input = r#"
-            eth_friend(src_key, dst_key, private: attestation_pod) = AND(
+            eth_friend(src, dst, private: attestation_pod) = AND(
                 Equal(?attestation_pod["_type"], 1)
-                Equal(?attestation_pod["_signer"], SELF[?src_key])
-                Equal(?attestation_pod["attestation"], SELF[?dst_key])
+                Equal(?attestation_pod["_signer"], ?src)
+                Equal(?attestation_pod["attestation"], ?dst)
             )
 
-            eth_dos_distance_base(src_key, dst_key, distance_key) = AND(
-                Equal(SELF[?src_key], SELF[?dst_key])
-                Equal(SELF[?distance_key], 0)
+            eth_dos_distance_base(src, dst, distance) = AND(
+                Equal(?src, ?dst)
+                Equal(?distance, 0)
             )
 
-            eth_dos_distance_ind(src_key, dst_key, distance_key, private: one_key, shorter_distance_key, intermed_key) = AND(
-                eth_dos_distance(?src_key, ?dst_key, ?distance_key)
-                Equal(SELF[?one_key], 1)
-                SumOf(SELF[?distance_key], SELF[?shorter_distance_key], SELF[?one_key])
-                eth_friend(?intermed_key, ?dst_key)
+            eth_dos_distance_ind(src, dst, distance, private: shorter_distance, intermed) = AND(
+                eth_dos_distance(?src, ?dst, ?distance)
+                SumOf(?distance, ?shorter_distance, 1)
+                eth_friend(?intermed, ?dst)
             )
 
-            eth_dos_distance(src_key, dst_key, distance_key) = OR(
-                eth_dos_distance_base(?src_key, ?dst_key, ?distance_key)
-                eth_dos_distance_ind(?src_key, ?dst_key, ?distance_key)
+            eth_dos_distance(src, dst, distance) = OR(
+                eth_dos_distance_base(?src, ?dst, ?distance)
+                eth_dos_distance_ind(?src, ?dst, ?distance)
             )
         "#;
 
@@ -557,14 +552,14 @@ mod tests {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
                     sta_ak(("attestation_pod", 2), k("_signer")),
-                    sta_ak_self(ko_wc("src_key", 0)), // Pub arg 0
+                    sta_wc_lit("src", 0), // Pub arg 0
                 ],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
                     sta_ak(("attestation_pod", 2), k("attestation")),
-                    sta_ak_self(ko_wc("dst_key", 1)), // Pub arg 1
+                    sta_wc_lit("dst", 1), // Pub arg 1
                 ],
             },
         ];
@@ -573,22 +568,19 @@ mod tests {
             "eth_friend".to_string(),
             true, // AND
             expected_friend_stmts,
-            2, // public_args_len: src_key, dst_key
-            names(&["src_key", "dst_key", "attestation_pod"]),
+            2, // public_args_len: src, dst
+            names(&["src", "dst", "attestation_pod"]),
         )?;
 
         // eth_dos_distance_base (Index 1)
         let expected_base_stmts = vec![
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
-                args: vec![
-                    sta_ak_self(ko_wc("src_key", 0)),
-                    sta_ak_self(ko_wc("dst_key", 1)),
-                ],
+                args: vec![sta_wc_lit("src", 0), sta_wc_lit("dst", 1)],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
-                args: vec![sta_ak_self(ko_wc("distance_key", 2)), sta_lit(0i64)],
+                args: vec![sta_wc_lit("distance", 2), sta_lit(0i64)],
             },
         ];
         let expected_base_pred = CustomPredicate::new(
@@ -597,40 +589,36 @@ mod tests {
             true, // AND
             expected_base_stmts,
             3, // public_args_len
-            names(&["src_key", "dst_key", "distance_key"]),
+            names(&["src", "dst", "distance"]),
         )?;
 
         // eth_dos_distance_ind (Index 2)
         // Public args indices: 0-2
-        // Private args indices: 3-5 (one_key, shorter_distance_key, intermed_key)
+        // Private args indices: 3-4 (shorter_distance, intermed)
         let expected_ind_stmts = vec![
             StatementTmpl {
                 pred: Predicate::BatchSelf(3), // Calls eth_dos_distance (index 3)
                 args: vec![
                     // WildcardLiteral args
-                    StatementTmplArg::WildcardLiteral(wc("src_key", 0)),
-                    StatementTmplArg::WildcardLiteral(wc("dst_key", 1)), // private arg
-                    StatementTmplArg::WildcardLiteral(wc("distance_key", 2)), // private arg
+                    sta_wc_lit("src", 0),
+                    sta_wc_lit("dst", 1),      // private arg
+                    sta_wc_lit("distance", 2), // private arg
                 ],
-            },
-            StatementTmpl {
-                pred: Predicate::Native(NativePredicate::Equal),
-                args: vec![sta_ak_self(ko_wc("one_key", 3)), sta_lit(1i64)], // private arg
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::SumOf),
                 args: vec![
-                    sta_ak_self(ko_wc("distance_key", 2)),         // public arg
-                    sta_ak_self(ko_wc("shorter_distance_key", 4)), // private arg
-                    sta_ak_self(ko_wc("one_key", 3)),              // private arg
+                    sta_wc_lit("distance", 2),         // public arg
+                    sta_wc_lit("shorter_distance", 3), // private arg
+                    sta_lit(1),
                 ],
             },
             StatementTmpl {
                 pred: Predicate::BatchSelf(0), // Calls eth_friend (index 0)
                 args: vec![
                     // WildcardLiteral args
-                    StatementTmplArg::WildcardLiteral(wc("intermed_key", 5)), // private arg
-                    StatementTmplArg::WildcardLiteral(wc("dst_key", 1)),      // public arg
+                    sta_wc_lit("intermed", 4), // private arg
+                    sta_wc_lit("dst", 1),      // public arg
                 ],
             },
         ];
@@ -640,14 +628,7 @@ mod tests {
             true, // AND
             expected_ind_stmts,
             3, // public_args_len
-            names(&[
-                "src_key",
-                "dst_key",
-                "distance_key",
-                "one_key",
-                "shorter_distance_key",
-                "intermed_key",
-            ]),
+            names(&["src", "dst", "distance", "shorter_distance", "intermed"]),
         )?;
 
         // eth_dos_distance (Index 3)
@@ -656,18 +637,18 @@ mod tests {
                 pred: Predicate::BatchSelf(1), // Calls eth_dos_distance_base (index 1)
                 args: vec![
                     // WildcardLiteral args
-                    StatementTmplArg::WildcardLiteral(wc("src_key", 0)),
-                    StatementTmplArg::WildcardLiteral(wc("dst_key", 1)),
-                    StatementTmplArg::WildcardLiteral(wc("distance_key", 2)),
+                    sta_wc_lit("src", 0),
+                    sta_wc_lit("dst", 1),
+                    sta_wc_lit("distance", 2),
                 ],
             },
             StatementTmpl {
                 pred: Predicate::BatchSelf(2), // Calls eth_dos_distance_ind (index 2)
                 args: vec![
                     // WildcardLiteral args
-                    StatementTmplArg::WildcardLiteral(wc("src_key", 0)),
-                    StatementTmplArg::WildcardLiteral(wc("dst_key", 1)),
-                    StatementTmplArg::WildcardLiteral(wc("distance_key", 2)),
+                    sta_wc_lit("src", 0),
+                    sta_wc_lit("dst", 1),
+                    sta_wc_lit("distance", 2),
                 ],
             },
         ];
@@ -677,7 +658,7 @@ mod tests {
             false, // OR
             expected_dist_stmts,
             3, // public_args_len
-            names(&["src_key", "dst_key", "distance_key"]),
+            names(&["src", "dst", "distance"]),
         )?;
 
         let expected_batch = CustomPredicateBatch::new(

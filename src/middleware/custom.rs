@@ -451,6 +451,15 @@ impl CustomPredicateBatch {
     pub fn predicates(&self) -> &[CustomPredicate] {
         &self.predicates
     }
+    pub fn predicate_ref_by_name(
+        self: &Arc<CustomPredicateBatch>,
+        name: &str,
+    ) -> Option<CustomPredicateRef> {
+        self.predicates
+            .iter()
+            .enumerate()
+            .find_map(|(i, cp)| (cp.name == name).then(|| CustomPredicateRef::new(self.clone(), i)))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]

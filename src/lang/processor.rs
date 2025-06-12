@@ -287,23 +287,6 @@ fn validate_and_build_statement_template(
                     span: Some(stmt_name_span),
                 });
             }
-
-            if expected_arity > 0 {
-                for (i, arg) in args.iter().enumerate() {
-                    if !matches!(arg, BuilderArg::Key(..) | BuilderArg::Literal(..)) {
-                        return Err(ProcessorError::TypeError {
-                            expected: "Anchored Key".to_string(),
-                            found: format!("{:?}", arg),
-                            item: format!(
-                                "argument {} of native predicate '{}'",
-                                i + 1,
-                                stmt_name_str
-                            ),
-                            span: Some(stmt_span),
-                        });
-                    }
-                }
-            }
         }
         Predicate::Custom(_) | Predicate::BatchSelf(_) => {
             let (_original_pred_idx, expected_arity_val) = processing_ctx
