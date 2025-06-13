@@ -488,7 +488,7 @@ mod tests {
 
     use super::*;
     use crate::middleware::{
-        AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash,
+        AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash, Key,
         KeyOrWildcard, NativePredicate, Operation, Params, PodId, PodType, Predicate, Statement,
         StatementTmpl, StatementTmplArg, SELF,
     };
@@ -502,6 +502,9 @@ mod tests {
     }
     fn sow_wc(i: usize) -> SOW {
         SOW::Wildcard(wc(i))
+    }
+    fn key(name: &str) -> Key {
+        Key::from(name)
     }
     fn wc(i: usize) -> Wildcard {
         Wildcard {
@@ -519,301 +522,225 @@ mod tests {
     type P = Predicate;
     type NP = NativePredicate;
 
-    // TODO: Update
-    /*
-        #[test]
-        fn is_double_test() -> Result<()> {
-            let params = Params::default();
+    #[test]
+    fn is_double_test() -> Result<()> {
+        let params = Params::default();
 
-            /*
-            is_double(S1, S2) :-
-            p:value_of(Constant, 2),
-            p:product_of(S1, Constant, S2)
-             */
-            let cust_pred_batch = CustomPredicateBatch::new(
+        /*
+        is_double(S1, S2) :-
+        p:value_of(Constant, 2),
+        p:product_of(S1, Constant, S2)
+         */
+        let cust_pred_batch = CustomPredicateBatch::new(
+            &params,
+            "is_double".to_string(),
+            vec![CustomPredicate::and(
                 &params,
-                "is_double".to_string(),
-                vec![CustomPredicate::and(
-                    &params,
-                    "_".into(),
+                "_".into(),
+                vec![
+                    st(
+                        P::Native(NP::Equal),
+                        vec![STA::AnchoredKey(wc(1), key("c")), STA::Literal(2.into())],
+                    ),
+                    st(
+                        P::Native(NP::ProductOf),
+                        vec![
+                            STA::AnchoredKey(wc(0), key("a")),
+                            STA::AnchoredKey(wc(1), key("b")),
+                            STA::Literal(Value::from(3)),
+                        ],
+                    ),
+                ],
+                1,
+                names(&["0", "1", "2"]),
+            )?],
+        );
+
+        let custom_statement = Statement::Custom(
+            CustomPredicateRef::new(cust_pred_batch.clone(), 0),
+            vec![Value::from(SELF)],
+        );
+
+        let custom_deduction = Operation::Custom(
+            CustomPredicateRef::new(cust_pred_batch, 0),
+            vec![
+                Statement::equal(AnchoredKey::from((SELF, "c")), 2),
+                Statement::product_of(
+                    AnchoredKey::from((SELF, "a")),
+                    AnchoredKey::from((SELF, "b")),
+                    Value::from(3),
+                ),
+            ],
+        );
+
+        assert!(custom_deduction.check(&params, &custom_statement)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn ethdos_test() -> Result<()> {
+        let params = Params {
+            max_custom_predicate_wildcards: 12,
+            max_statement_args: 6,
+            ..Default::default()
+        };
+
+        let eth_friend = CustomPredicate::and(
+            &params,
+            "eth_friend".into(),
+            vec![
+                st(
+                    P::Native(NP::Equal),
                     vec![
-                        st(
-                            P::Native(NP::Equal),
-                            vec![
-                                STA::AnchoredKey(sow_wc(4), kow_wc(5)),
-                                STA::Literal(2.into()),
-                            ],
-                        ),
-                        st(
-                            P::Native(NP::ProductOf),
-                            vec![
-                                STA::AnchoredKey(sow_wc(0), kow_wc(1)),
-                                STA::AnchoredKey(sow_wc(4), kow_wc(5)),
-                                STA::AnchoredKey(sow_wc(2), kow_wc(3)),
-                            ],
-                        ),
+                        STA::AnchoredKey(wc(2), Key::from("_type")),
+                        STA::Literal(PodType::Signed.into()),
                     ],
-                    2,
-                    names(&["1", "2", "3", "4", "5"]),
-                )?],
-            );
+                ),
+                st(
+                    P::Native(NP::Equal),
+                    vec![
+                        STA::AnchoredKey(wc(2), Key::from("_signer")),
+                        STA::WildcardLiteral(wc(0)),
+                    ],
+                ),
+                st(
+                    P::Native(NP::Equal),
+                    vec![
+                        STA::AnchoredKey(wc(2), Key::from("attestation")),
+                        STA::WildcardLiteral(wc(1)),
+                    ],
+                ),
+            ],
+            2,
+            names(&["0", "1", "2"]),
+        )?;
 
-            let custom_statement = Statement::Custom(
-                CustomPredicateRef::new(cust_pred_batch.clone(), 0),
-                vec![
-                    WildcardValue::PodId(SELF),
-                    WildcardValue::Key(Key::from("Some value")),
-                ],
-            );
+        let eth_friend_batch =
+            CustomPredicateBatch::new(&params, "eth_friend".to_string(), vec![eth_friend]);
 
-            let custom_deduction = Operation::Custom(
-                CustomPredicateRef::new(cust_pred_batch, 0),
-                vec![
-                    Statement::equal(AnchoredKey::from((SELF, "Some constant")), 2),
-                    Statement::product_of(
-                        AnchoredKey::from((SELF, "Some value")),
-                        AnchoredKey::from((SELF, "Some constant")),
-                        AnchoredKey::from((SELF, "Some other value")),
-                    ),
-                ],
-            );
+        // 0
+        let eth_dos_base = CustomPredicate::and(
+            &params,
+            "eth_dos_base".into(),
+            vec![
+                st(
+                    P::Native(NP::Equal),
+                    vec![STA::WildcardLiteral(wc(0)), STA::WildcardLiteral(wc(1))],
+                ),
+                st(
+                    P::Native(NP::Equal),
+                    vec![STA::WildcardLiteral(wc(2)), STA::Literal(0.into())],
+                ),
+            ],
+            3,
+            names(&["0", "1", "2"]),
+        )?;
 
-            assert!(custom_deduction.check(&params, &custom_statement)?);
+        // 1
+        let eth_dos_ind = CustomPredicate::and(
+            &params,
+            "eth_dos_ind".into(),
+            vec![
+                st(
+                    P::BatchSelf(2),
+                    vec![
+                        STA::WildcardLiteral(wc(0)),
+                        STA::WildcardLiteral(wc(4)),
+                        STA::WildcardLiteral(wc(3)),
+                    ],
+                ),
+                st(
+                    P::Native(NP::SumOf),
+                    vec![
+                        STA::WildcardLiteral(wc(2)),
+                        STA::WildcardLiteral(wc(3)),
+                        STA::Literal(Value::from(1)),
+                    ],
+                ),
+                st(
+                    P::Custom(CustomPredicateRef::new(eth_friend_batch.clone(), 0)),
+                    vec![STA::WildcardLiteral(wc(4)), STA::WildcardLiteral(wc(1))],
+                ),
+            ],
+            3,
+            names(&["0", "1", "2", "3", "4"]),
+        )?;
 
-            Ok(())
-        }
-    */
+        // 2
+        let eth_dos = CustomPredicate::or(
+            &params,
+            "eth_dos".into(),
+            vec![
+                st(
+                    P::BatchSelf(0),
+                    vec![
+                        STA::WildcardLiteral(wc(0)),
+                        STA::WildcardLiteral(wc(1)),
+                        STA::WildcardLiteral(wc(2)),
+                    ],
+                ),
+                st(
+                    P::BatchSelf(1),
+                    vec![
+                        STA::WildcardLiteral(wc(0)),
+                        STA::WildcardLiteral(wc(1)),
+                        STA::WildcardLiteral(wc(2)),
+                    ],
+                ),
+            ],
+            3,
+            names(&["0", "1", "2"]),
+        )?;
 
-    // TODO: Update
-    /*
-        #[test]
-        fn ethdos_test() -> Result<()> {
-            let params = Params {
-                max_custom_predicate_wildcards: 12,
-                max_statement_args: 6,
-                ..Default::default()
-            };
+        let eth_dos_distance_batch = CustomPredicateBatch::new(
+            &params,
+            "ETHDoS_distance".to_string(),
+            vec![eth_dos_base, eth_dos_ind, eth_dos],
+        );
 
-            let eth_friend_cp = CustomPredicate::and(
-                &params,
-                "eth_friend_cp".into(),
-                vec![
-                    st(
-                        P::Native(NP::Equal),
-                        vec![
-                            STA::AnchoredKey(sow_wc(4), KeyOrWildcard::Key("type".into())),
-                            STA::Literal(PodType::Signed.into()),
-                        ],
-                    ),
-                    st(
-                        P::Native(NP::Equal),
-                        vec![
-                            STA::AnchoredKey(sow_wc(4), KeyOrWildcard::Key("signer".into())),
-                            STA::AnchoredKey(sow_wc(0), kow_wc(1)),
-                        ],
-                    ),
-                    st(
-                        P::Native(NP::Equal),
-                        vec![
-                            STA::AnchoredKey(sow_wc(4), KeyOrWildcard::Key("attestation".into())),
-                            STA::AnchoredKey(sow_wc(2), kow_wc(3)),
-                        ],
-                    ),
-                ],
-                4,
-                names(&["1", "2", "3", "4"]),
-            )?;
+        // Example statement
+        let ethdos_example = Statement::Custom(
+            CustomPredicateRef::new(eth_dos_distance_batch.clone(), 2),
+            vec![Value::from("Alice"), Value::from("Bob"), Value::from(7)],
+        );
 
-            let eth_friend_batch =
-                CustomPredicateBatch::new(&params, "eth_friend".to_string(), vec![eth_friend_cp]);
+        // Copies should work.
+        assert!(Operation::CopyStatement(ethdos_example.clone()).check(&params, &ethdos_example)?);
 
-            // 0
-            let eth_dos_base = CustomPredicate::and(
-                &params,
-                "eth_dos_base".into(),
-                vec![
-                    st(
-                        P::Native(NP::Equal),
-                        vec![
-                            STA::AnchoredKey(sow_wc(0), kow_wc(1)),
-                            STA::AnchoredKey(sow_wc(2), kow_wc(3)),
-                        ],
-                    ),
-                    st(
-                        P::Native(NP::Equal),
-                        vec![
-                            STA::AnchoredKey(sow_wc(4), kow_wc(5)),
-                            STA::Literal(0.into()),
-                        ],
-                    ),
-                ],
-                6,
-                names(&["0", "1", "2", "3", "4", "5"]),
-            )?;
+        // This could arise as the inductive step.
+        let ethdos_ind_example = Statement::Custom(
+            CustomPredicateRef::new(eth_dos_distance_batch.clone(), 1),
+            vec![Value::from("Alice"), Value::from("Bob"), Value::from(7)],
+        );
 
-            // 1
-            let eth_dos_ind = CustomPredicate::and(
-                &params,
-                "eth_dos_ind".into(),
-                vec![
-                    st(
-                        P::BatchSelf(2),
-                        vec![
-                            STA::WildcardLiteral(wc(0)),
-                            STA::WildcardLiteral(wc(1)),
-                            STA::WildcardLiteral(wc(10)),
-                            STA::WildcardLiteral(wc(11)),
-                            STA::WildcardLiteral(wc(8)),
-                            STA::WildcardLiteral(wc(9)),
-                        ],
-                    ),
-                    st(
-                        P::Native(NP::Equal),
-                        vec![
-                            STA::AnchoredKey(sow_wc(6), kow_wc(7)),
-                            STA::Literal(1.into()),
-                        ],
-                    ),
-                    st(
-                        P::Native(NP::SumOf),
-                        vec![
-                            STA::AnchoredKey(sow_wc(4), kow_wc(5)),
-                            STA::AnchoredKey(sow_wc(8), kow_wc(9)),
-                            STA::AnchoredKey(sow_wc(6), kow_wc(7)),
-                        ],
-                    ),
-                    st(
-                        P::Custom(CustomPredicateRef::new(eth_friend_batch.clone(), 0)),
-                        vec![
-                            STA::WildcardLiteral(wc(10)),
-                            STA::WildcardLiteral(wc(11)),
-                            STA::WildcardLiteral(wc(2)),
-                            STA::WildcardLiteral(wc(3)),
-                        ],
-                    ),
-                ],
-                6,
-                names(&["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"]),
-            )?;
+        assert!(Operation::Custom(
+            CustomPredicateRef::new(eth_dos_distance_batch.clone(), 2),
+            vec![Statement::None, ethdos_ind_example.clone()]
+        )
+        .check(&params, &ethdos_example)?);
 
-            // 2
-            let eth_dos_distance_either = CustomPredicate::or(
-                &params,
-                "eth_dos_distance_either".into(),
-                vec![
-                    st(
-                        P::BatchSelf(0),
-                        vec![
-                            STA::WildcardLiteral(wc(0)),
-                            STA::WildcardLiteral(wc(1)),
-                            STA::WildcardLiteral(wc(2)),
-                            STA::WildcardLiteral(wc(3)),
-                            STA::WildcardLiteral(wc(4)),
-                            STA::WildcardLiteral(wc(5)),
-                        ],
-                    ),
-                    st(
-                        P::BatchSelf(1),
-                        vec![
-                            STA::WildcardLiteral(wc(0)),
-                            STA::WildcardLiteral(wc(1)),
-                            STA::WildcardLiteral(wc(2)),
-                            STA::WildcardLiteral(wc(3)),
-                            STA::WildcardLiteral(wc(4)),
-                            STA::WildcardLiteral(wc(5)),
-                        ],
-                    ),
-                ],
-                6,
-                names(&["0", "1", "2", "3", "4", "5"]),
-            )?;
-
-            let eth_dos_distance_batch = CustomPredicateBatch::new(
-                &params,
-                "ETHDoS_distance".to_string(),
-                vec![eth_dos_base, eth_dos_ind, eth_dos_distance_either],
-            );
-
-            // Some POD IDs
-            let pod_id1 = PodId(Hash(array::from_fn(|i| GoldilocksField(i as u64))));
-            let pod_id2 = PodId(Hash(array::from_fn(|i| GoldilocksField((i * i) as u64))));
-            let pod_id3 = PodId(Hash(array::from_fn(|i| GoldilocksField((2 * i) as u64))));
-            let pod_id4 = PodId(Hash(array::from_fn(|i| GoldilocksField((2 * i) as u64))));
-
-            // Example statement
-            let ethdos_example = Statement::Custom(
+        // And the inductive step would arise as follows: Say the
+        // ETHDoS distance from Alice to Charlie is 6, which is one
+        // less than 7, and Charlie is ETH-friends with Bob.
+        let ethdos_facts = vec![
+            Statement::Custom(
                 CustomPredicateRef::new(eth_dos_distance_batch.clone(), 2),
-                vec![
-                    WildcardValue::PodId(pod_id1),
-                    WildcardValue::Key(Key::from("Alice")),
-                    WildcardValue::PodId(pod_id2),
-                    WildcardValue::Key(Key::from("Bob")),
-                    WildcardValue::PodId(SELF),
-                    WildcardValue::Key(Key::from("Seven")),
-                ],
-            );
+                vec![Value::from("Alice"), Value::from("Charlie"), Value::from(6)],
+            ),
+            Statement::sum_of(Value::from(7), Value::from(6), Value::from(1)),
+            Statement::Custom(
+                CustomPredicateRef::new(eth_friend_batch.clone(), 0),
+                vec![Value::from("Charlie"), Value::from("Bob")],
+            ),
+        ];
 
-            // Copies should work.
-            assert!(Operation::CopyStatement(ethdos_example.clone()).check(&params, &ethdos_example)?);
+        assert!(Operation::Custom(
+            CustomPredicateRef::new(eth_dos_distance_batch.clone(), 1),
+            ethdos_facts
+        )
+        .check(&params, &ethdos_ind_example)?);
 
-            // This could arise as the inductive step.
-            let ethdos_ind_example = Statement::Custom(
-                CustomPredicateRef::new(eth_dos_distance_batch.clone(), 1),
-                vec![
-                    WildcardValue::PodId(pod_id1),
-                    WildcardValue::Key(Key::from("Alice")),
-                    WildcardValue::PodId(pod_id2),
-                    WildcardValue::Key(Key::from("Bob")),
-                    WildcardValue::PodId(SELF),
-                    WildcardValue::Key(Key::from("Seven")),
-                ],
-            );
-
-            assert!(Operation::Custom(
-                CustomPredicateRef::new(eth_dos_distance_batch.clone(), 2),
-                vec![Statement::None, ethdos_ind_example.clone()]
-            )
-            .check(&params, &ethdos_example)?);
-
-            // And the inductive step would arise as follows: Say the
-            // ETHDoS distance from Alice to Charlie is 6, which is one
-            // less than 7, and Charlie is ETH-friends with Bob.
-            let ethdos_facts = vec![
-                Statement::Custom(
-                    CustomPredicateRef::new(eth_dos_distance_batch.clone(), 2),
-                    vec![
-                        WildcardValue::PodId(pod_id1),
-                        WildcardValue::Key(Key::from("Alice")),
-                        WildcardValue::PodId(pod_id3),
-                        WildcardValue::Key(Key::from("Charlie")),
-                        WildcardValue::PodId(pod_id4),
-                        WildcardValue::Key(Key::from("Six")),
-                    ],
-                ),
-                Statement::equal(AnchoredKey::from((SELF, "One")), 1),
-                Statement::sum_of(
-                    AnchoredKey::from((SELF, "Seven")),
-                    AnchoredKey::from((pod_id4, "Six")),
-                    AnchoredKey::from((SELF, "One")),
-                ),
-                Statement::Custom(
-                    CustomPredicateRef::new(eth_friend_batch.clone(), 0),
-                    vec![
-                        WildcardValue::PodId(pod_id3),
-                        WildcardValue::Key(Key::from("Charlie")),
-                        WildcardValue::PodId(pod_id2),
-                        WildcardValue::Key(Key::from("Bob")),
-                    ],
-                ),
-            ];
-
-            assert!(Operation::Custom(
-                CustomPredicateRef::new(eth_dos_distance_batch.clone(), 1),
-                ethdos_facts
-            )
-            .check(&params, &ethdos_ind_example)?);
-
-            Ok(())
-        }
-    */
+        Ok(())
+    }
 }

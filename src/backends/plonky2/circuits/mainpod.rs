@@ -2616,7 +2616,7 @@ mod tests {
     //         SelfOrWildcard::Wildcard(Wildcard::new("a".to_string(), 1)),
     //         KeyOrWildcard::Key(Key::from("foo")),
     //     );
-    //     let args = vec![Value::from(1), Value::from(pod_id.0), Value::from(3)];
+    //     let args = vec![Value::from(1), Value::from(pod_id), Value::from(3)];
     //     let expected_st_arg = StatementArg::Key(AnchoredKey::new(pod_id, Key::from("foo")));
     //     helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
 
@@ -2625,7 +2625,7 @@ mod tests {
     //         SelfOrWildcard::Wildcard(Wildcard::new("a".to_string(), 1)),
     //         KeyOrWildcard::Wildcard(Wildcard::new("b".to_string(), 2)),
     //     );
-    //     let args = vec![Value::from(1), Value::from(pod_id.0), Value::from("key")];
+    //     let args = vec![Value::from(1), Value::from(pod_id), Value::from("key")];
     //     let expected_st_arg = StatementArg::Key(AnchoredKey::new(pod_id, Key::from("key")));
     //     helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
 
@@ -2634,7 +2634,7 @@ mod tests {
     //         SelfOrWildcard::SELF,
     //         KeyOrWildcard::Key(Key::from("foo")),
     //     );
-    //     let args = vec![Value::from(1), Value::from(pod_id.0), Value::from(3)];
+    //     let args = vec![Value::from(1), Value::from(pod_id), Value::from(3)];
     //     let expected_st_arg = StatementArg::Key(AnchoredKey::new(SELF, Key::from("foo")));
     //     helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
 
@@ -2643,7 +2643,7 @@ mod tests {
     //         SelfOrWildcard::SELF,
     //         KeyOrWildcard::Wildcard(Wildcard::new("b".to_string(), 2)),
     //     );
-    //     let args = vec![Value::from(1), Value::from(pod_id.0), Value::from("key")];
+    //     let args = vec![Value::from(1), Value::from(pod_id), Value::from("key")];
     //     let expected_st_arg = StatementArg::Key(AnchoredKey::new(SELF, Key::from("key")));
     //     helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
 
@@ -2711,7 +2711,7 @@ mod tests {
                 StatementTmplArg::Literal(Value::from("value")),
             ],
         };
-        let args = vec![Value::from(1), Value::from(pod_id.0), Value::from(3)];
+        let args = vec![Value::from(1), Value::from(pod_id), Value::from(3)];
         let expected_st = Statement::equal(
             AnchoredKey::new(pod_id, Key::from("key")),
             Value::from("value"),
@@ -2819,7 +2819,7 @@ mod tests {
     //             Value::from(1234),
     //         ),
     //     ];
-    //     let args = vec![Value::from(pod_id.0), Value::from("foo")];
+    //     let args = vec![Value::from(pod_id), Value::from("foo")];
     //     let expected_st = Statement::Custom(
     //         custom_predicate.clone(),
     //         vec![args[0].clone(), WildcardValue::None],
@@ -2867,7 +2867,7 @@ mod tests {
     //             Value::from(1234),
     //         ),
     //     ];
-    //     let args = vec![Value::from(pod_id.0), Value::from("foo")];
+    //     let args = vec![Value::from(pod_id), Value::from("foo")];
     //     let expected_st = Statement::Custom(
     //         custom_predicate.clone(),
     //         vec![args[0].clone(), Value::from(0)],
@@ -2930,7 +2930,7 @@ mod tests {
     //             AnchoredKey::new(pod_id, Key::from("score")),
     //         ),
     //     ];
-    //     let args = vec![Value::from(pod_id.0), Value::from("foo")];
+    //     let args = vec![Value::from(pod_id), Value::from("foo")];
     //     let expected_st = Statement::Custom(
     //         custom_predicate.clone(),
     //         vec![args[0].clone(), WildcardValue::None],
@@ -2957,7 +2957,7 @@ mod tests {
     //             AnchoredKey::new(pod_id, Key::from("score")),
     //         ),
     //     ];
-    //     let args = vec![Value::from(pod_id.0), Value::from("foo")];
+    //     let args = vec![Value::from(pod_id), Value::from("foo")];
 
     //     assert!(helper_custom_operation_verify_gadget(
     //         &params,
@@ -2977,7 +2977,7 @@ mod tests {
     //             AnchoredKey::new(pod_id, Key::from("score")),
     //         ),
     //     ];
-    //     let args = vec![Value::from(pod_id.0), Value::from("foo")];
+    //     let args = vec![Value::from(pod_id), Value::from("foo")];
 
     //     assert!(helper_custom_operation_verify_gadget(
     //         &params,
@@ -3000,7 +3000,7 @@ mod tests {
     //             AnchoredKey::new(pod_id, Key::from("score")),
     //         ),
     //     ];
-    //     let args = vec![Value::from(pod_id.0), Value::from("foo")];
+    //     let args = vec![Value::from(pod_id), Value::from("foo")];
 
     //     assert!(helper_custom_operation_verify_gadget(
     //         &params,
@@ -3023,7 +3023,7 @@ mod tests {
     //             AnchoredKey::new(pod_id, Key::from("score")),
     //         ),
     //     ];
-    //     let args = vec![Value::from(pod_id.0), Value::from("foo")];
+    //     let args = vec![Value::from(pod_id), Value::from("foo")];
 
     //     assert!(helper_custom_operation_verify_gadget(
     //         &params,

@@ -826,19 +826,16 @@ pub mod build_utils {
 
 #[cfg(test)]
 pub mod tests {
-    use std::sync::LazyLock;
 
     use super::*;
     use crate::{
         backends::plonky2::mock::{mainpod::MockProver, signedpod::MockSigner},
         examples::{
             attest_eth_friend, great_boy_pod_full_flow, tickets_pod_full_flow, zu_kyc_pod_builder,
-            zu_kyc_sign_pod_builders, EthDosHelper,
+            zu_kyc_sign_pod_builders, EthDosHelper, MOCK_VD_SET,
         },
         middleware::{containers::Dictionary, Value},
     };
-
-    const MOCK_VD_SET: LazyLock<VDSet> = LazyLock::new(|| VDSet::new(6, &[]).unwrap());
 
     // Check that frontend public statements agree with those
     // embedded in a MainPod.

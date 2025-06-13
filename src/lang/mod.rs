@@ -14,8 +14,6 @@ pub fn parse(input: &str, params: &Params) -> Result<ProcessedOutput, LangError>
     processor::process_pest_tree(pairs, params).map_err(LangError::from)
 }
 
-// TODO: Update
-/*
 #[cfg(test)]
 mod tests {
 
@@ -33,15 +31,8 @@ mod tests {
         Wildcard::new(name.to_string(), index)
     }
 
-    fn k(name: &str) -> KeyOrWildcard {
-        KeyOrWildcard::Key(Key::new(name.to_string()))
-    }
-
-    fn sta_ak(pod_var: (&str, usize), key_or_wc: KeyOrWildcard) -> StatementTmplArg {
-        StatementTmplArg::AnchoredKey(
-            SelfOrWildcard::Wildcard(wc(pod_var.0, pod_var.1)),
-            key_or_wc,
-        )
+    fn sta_ak(pod_var: (&str, usize), key: &str) -> StatementTmplArg {
+        StatementTmplArg::AnchoredKey(wc(pod_var.0, pod_var.1), Key::from(key))
     }
 
     fn sta_wc_lit(name: &str, index: usize) -> StatementTmplArg {
@@ -79,8 +70,8 @@ mod tests {
         let expected_statements = vec![StatementTmpl {
             pred: Predicate::Native(NativePredicate::Equal),
             args: vec![
-                sta_ak(("PodA", 0), k("the_key")), // ?PodA["the_key"] -> Wildcard(0), Key("the_key")
-                sta_ak(("PodB", 1), k("the_key")), // ?PodB["the_key"] -> Wildcard(1), Key("the_key")
+                sta_ak(("PodA", 0), "the_key"), // ?PodA["the_key"] -> Wildcard(0), Key("the_key")
+                sta_ak(("PodB", 1), "the_key"), // ?PodB["the_key"] -> Wildcard(1), Key("the_key")
             ],
         }];
         let expected_predicate = CustomPredicate::and(
@@ -124,15 +115,15 @@ mod tests {
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
-                    sta_ak(("ConstPod", 0), k("my_val")), // ?ConstPod["my_val"] -> Wildcard(0), Key("my_val")
+                    sta_ak(("ConstPod", 0), "my_val"), // ?ConstPod["my_val"] -> Wildcard(0), Key("my_val")
                     sta_lit(SELF_ID_HASH),
                 ],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Lt),
                 args: vec![
-                    sta_ak(("GovPod", 1), k("dob")), // ?GovPod["dob"] -> Wildcard(1), Key("dob")
-                    sta_ak(("ConstPod", 0), k("my_val")), // ?ConstPod["my_val"] -> Wildcard(0), Key("my_val")
+                    sta_ak(("GovPod", 1), "dob"), // ?GovPod["dob"] -> Wildcard(1), Key("dob")
+                    sta_ak(("ConstPod", 0), "my_val"), // ?ConstPod["my_val"] -> Wildcard(0), Key("my_val")
                 ],
             },
         ];
@@ -167,15 +158,15 @@ mod tests {
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
-                    sta_ak(("A", 0), k("input_key")), // ?A["input_key"] -> Wildcard(0), Key("input_key")
-                    sta_ak(("Temp", 1), k("const_key")), // ?Temp["const_key"] -> Wildcard(1), Key("const_key")
+                    sta_ak(("A", 0), "input_key"), // ?A["input_key"] -> Wildcard(0), Key("input_key")
+                    sta_ak(("Temp", 1), "const_key"), // ?Temp["const_key"] -> Wildcard(1), Key("const_key")
                 ],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
-                    sta_ak(("Temp", 1), k("const_key")), // ?Temp["const_key"] -> Wildcard(1), Key("const_key")
-                    sta_lit("some_value"),               // Literal("some_value")
+                    sta_ak(("Temp", 1), "const_key"), // ?Temp["const_key"] -> Wildcard(1), Key("const_key")
+                    sta_lit("some_value"),            // Literal("some_value")
                 ],
             },
         ];
@@ -222,8 +213,8 @@ mod tests {
         let expected_pred_statements = vec![StatementTmpl {
             pred: Predicate::Native(NativePredicate::Equal),
             args: vec![
-                sta_ak(("X", 0), k("val")), // ?X["val"] -> Wildcard(0), Key("val")
-                sta_ak(("Y", 1), k("val")), // ?Y["val"] -> Wildcard(1), Key("val")
+                sta_ak(("X", 0), "val"), // ?X["val"] -> Wildcard(0), Key("val")
+                sta_ak(("Y", 1), "val"), // ?Y["val"] -> Wildcard(1), Key("val")
             ],
         }];
         let expected_predicate = CustomPredicate::and(
@@ -297,9 +288,9 @@ mod tests {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
                     // ?AnotherPod["another_key"] -> Wildcard(1), Key("another_key")
-                    sta_ak(("AnotherPod", 1), k("another_key")),
+                    sta_ak(("AnotherPod", 1), "another_key"),
                     // ?Var1["some_field"] -> Wildcard(0), Key("some_field")
-                    sta_ak(("Var1", 0), k("some_field")),
+                    sta_ak(("Var1", 0), "some_field"),
                 ],
             },
         ];
@@ -335,30 +326,30 @@ mod tests {
         let expected_templates = vec![
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::LtEq),
-                args: vec![sta_ak(("B", 1), k("bar")), sta_ak(("A", 0), k("foo"))],
+                args: vec![sta_ak(("B", 1), "bar"), sta_ak(("A", 0), "foo")],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Lt),
-                args: vec![sta_ak(("D", 3), k("qux")), sta_ak(("C", 2), k("baz"))],
+                args: vec![sta_ak(("D", 3), "qux"), sta_ak(("C", 2), "baz")],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Contains),
                 args: vec![
-                    sta_ak(("A", 0), k("foo")),
-                    sta_ak(("B", 1), k("bar")),
-                    sta_ak(("C", 2), k("baz")),
+                    sta_ak(("A", 0), "foo"),
+                    sta_ak(("B", 1), "bar"),
+                    sta_ak(("C", 2), "baz"),
                 ],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::NotContains),
-                args: vec![sta_ak(("A", 0), k("foo")), sta_ak(("B", 1), k("bar"))],
+                args: vec![sta_ak(("A", 0), "foo"), sta_ak(("B", 1), "bar")],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Contains),
                 args: vec![
-                    sta_ak(("A", 0), k("foo")),
-                    sta_ak(("B", 1), k("bar")),
-                    sta_ak(("C", 2), k("baz")),
+                    sta_ak(("A", 0), "foo"),
+                    sta_ak(("B", 1), "bar"),
+                    sta_ak(("C", 2), "baz"),
                 ],
             },
         ];
@@ -399,13 +390,13 @@ mod tests {
         let wc_pay = wc("pay", 3);
         let wc_self_1y = wc("SELF_HOLDER_1Y", 4);
 
-        let id_num_key = k("idNumber");
-        let dob_key = k("dateOfBirth");
-        let const_18y_key = k("const_18y");
-        let start_date_key = k("startDate");
-        let const_1y_key = k("const_1y");
-        let ssn_key = k("socialSecurityNumber");
-        let sanction_list_key = k("sanctionList");
+        let id_num_key = "idNumber";
+        let dob_key = "dateOfBirth";
+        let const_18y_key = "const_18y";
+        let start_date_key = "startDate";
+        let const_1y_key = "const_1y";
+        let ssn_key = "socialSecurityNumber";
+        let sanction_list_key = "sanctionList";
 
         // Define the request templates using wildcards for constants
         let expected_templates = vec![
@@ -415,19 +406,19 @@ mod tests {
                 args: vec![
                     sta_ak(
                         (wc_sanctions.name.as_str(), wc_sanctions.index),
-                        sanction_list_key.clone(),
+                        sanction_list_key,
                     ),
-                    sta_ak((wc_gov.name.as_str(), wc_gov.index), id_num_key.clone()),
+                    sta_ak((wc_gov.name.as_str(), wc_gov.index), id_num_key),
                 ],
             },
             // 2. Lt(?gov["dateOfBirth"], ?SELF_HOLDER_18Y["const_18y"])
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Lt),
                 args: vec![
-                    sta_ak((wc_gov.name.as_str(), wc_gov.index), dob_key.clone()),
+                    sta_ak((wc_gov.name.as_str(), wc_gov.index), dob_key),
                     sta_ak(
                         (wc_self_18y.name.as_str(), wc_self_18y.index),
-                        const_18y_key.clone(),
+                        const_18y_key,
                     ),
                 ],
             },
@@ -435,19 +426,16 @@ mod tests {
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
-                    sta_ak((wc_pay.name.as_str(), wc_pay.index), start_date_key.clone()),
-                    sta_ak(
-                        (wc_self_1y.name.as_str(), wc_self_1y.index),
-                        const_1y_key.clone(),
-                    ),
+                    sta_ak((wc_pay.name.as_str(), wc_pay.index), start_date_key),
+                    sta_ak((wc_self_1y.name.as_str(), wc_self_1y.index), const_1y_key),
                 ],
             },
             // 4. Equal(?gov["socialSecurityNumber"], ?pay["socialSecurityNumber"])
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
-                    sta_ak((wc_gov.name.as_str(), wc_gov.index), ssn_key.clone()),
-                    sta_ak((wc_pay.name.as_str(), wc_pay.index), ssn_key.clone()),
+                    sta_ak((wc_gov.name.as_str(), wc_gov.index), ssn_key),
+                    sta_ak((wc_pay.name.as_str(), wc_pay.index), ssn_key),
                 ],
             },
             // 5. Equal(?SELF_HOLDER_18Y["const_18y"], 1169909388)
@@ -456,7 +444,7 @@ mod tests {
                 args: vec![
                     sta_ak(
                         (wc_self_18y.name.as_str(), wc_self_18y.index),
-                        const_18y_key.clone(),
+                        const_18y_key,
                     ),
                     sta_lit(now_minus_18y_val.clone()),
                 ],
@@ -465,10 +453,7 @@ mod tests {
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
-                    sta_ak(
-                        (wc_self_1y.name.as_str(), wc_self_1y.index),
-                        const_1y_key.clone(),
-                    ),
+                    sta_ak((wc_self_1y.name.as_str(), wc_self_1y.index), const_1y_key),
                     sta_lit(now_minus_1y_val.clone()),
                 ],
             },
@@ -546,21 +531,21 @@ mod tests {
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
-                    sta_ak(("attestation_pod", 2), k("_type")), // Pub(0-1), Priv(2)
+                    sta_ak(("attestation_pod", 2), "_type"), // Pub(0-1), Priv(2)
                     sta_lit(PodType::MockSigned),
                 ],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
-                    sta_ak(("attestation_pod", 2), k("_signer")),
+                    sta_ak(("attestation_pod", 2), "_signer"),
                     sta_wc_lit("src", 0), // Pub arg 0
                 ],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
-                    sta_ak(("attestation_pod", 2), k("attestation")),
+                    sta_ak(("attestation_pod", 2), "attestation"),
                     sta_wc_lit("dst", 1), // Pub arg 1
                 ],
             },
@@ -682,4 +667,3 @@ mod tests {
         Ok(())
     }
 }
-*/

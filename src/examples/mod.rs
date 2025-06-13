@@ -1,8 +1,10 @@
 pub mod custom;
 
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::LazyLock};
 
 use custom::eth_dos_batch;
+
+pub const MOCK_VD_SET: LazyLock<VDSet> = LazyLock::new(|| VDSet::new(6, &[]).unwrap());
 
 use crate::{
     backends::plonky2::mock::signedpod::MockSigner,
@@ -474,7 +476,7 @@ pub fn great_boy_pod_full_flow() -> Result<(Params, MainPodBuilder)> {
         num_public_statements_id: 50,
         ..Default::default()
     };
-    let vd_set = &*DEFAULT_VD_SET;
+    let vd_set = &*MOCK_VD_SET;
 
     let good_boy_issuers = ["Giggles", "Macrosoft", "FaeBook"];
     let mut giggles_signer = MockSigner {
@@ -578,7 +580,7 @@ pub fn tickets_pod_builder(
 
 pub fn tickets_pod_full_flow() -> Result<MainPodBuilder> {
     let params = Params::default();
-    let vd_set = &*DEFAULT_VD_SET;
+    let vd_set = &*MOCK_VD_SET;
     let builder = tickets_sign_pod_builder(&params);
     let signed_pod = builder.sign(&mut MockSigner { pk: "test".into() }).unwrap();
     tickets_pod_builder(

@@ -104,7 +104,10 @@ mod tests {
             primitives::ec::schnorr::SecretKey,
             signedpod::Signer,
         },
-        examples::{zu_kyc_pod_builder, zu_kyc_sign_pod_builders},
+        examples::{
+            attest_eth_friend, zu_kyc_pod_builder, zu_kyc_sign_pod_builders, EthDosHelper,
+            MOCK_VD_SET,
+        },
         frontend::{Result, SignedPodBuilder},
         middleware::{
             self,
@@ -248,7 +251,7 @@ mod tests {
 
     fn build_mock_zukyc_pod() -> Result<MainPod> {
         let params = middleware::Params::default();
-        let vd_set = &*DEFAULT_VD_SET;
+        let vd_set = &*MOCK_VD_SET;
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params);
@@ -336,49 +339,36 @@ mod tests {
         Ok(())
     }
 
-    // TODO: Update
-    /*
     fn build_ethdos_pod() -> Result<MainPod> {
         let params = Params {
-            max_input_signed_pods: 3,
-            max_input_recursive_pods: 3,
-            max_statements: 31,
-            max_signed_pod_values: 8,
-            max_public_statements: 10,
-            max_statement_args: 6,
-            max_operation_args: 5,
-            max_custom_predicate_arity: 5,
-            max_custom_batch_size: 5,
-            max_custom_predicate_wildcards: 12,
+            max_input_pods_public_statements: 8,
+            max_statements: 24,
+            max_public_statements: 8,
             ..Default::default()
         };
-        let vd_set = &*DEFAULT_VD_SET;
+        let vd_set = &*MOCK_VD_SET;
 
         let mut alice = MockSigner { pk: "Alice".into() };
-        let bob = MockSigner { pk: "Bob".into() };
-        let mut charlie = MockSigner {
+        let mut bob = MockSigner { pk: "Bob".into() };
+        let charlie = MockSigner {
             pk: "Charlie".into(),
         };
 
-        // Alice attests that she is ETH friends with Charlie and Charlie
-        // attests that he is ETH friends with Bob.
-        let alice_attestation =
-            eth_friend_signed_pod_builder(&params, charlie.public_key().into()).sign(&mut alice)?;
-        let charlie_attestation =
-            eth_friend_signed_pod_builder(&params, bob.public_key().into()).sign(&mut charlie)?;
+        // Alice attests that she is ETH friends with Bob and Bob
+        // attests that he is ETH friends with Charlie.
+        let alice_attestation = attest_eth_friend(&params, &mut alice, bob.public_key());
+        let bob_attestation = attest_eth_friend(&params, &mut bob, charlie.public_key());
 
+        let helper = EthDosHelper::new(&params, vd_set, true, alice.public_key())?;
         let mut prover = MockProver {};
-        let alice_bob_ethdos = eth_dos_pod_builder(
-            &params,
-            &vd_set,
-            true,
-            &alice_attestation,
-            &charlie_attestation,
-            bob.public_key().into(),
-        )?
-        .prove(&mut prover, &params)?;
+        let dist_1 = helper
+            .dist_1(&alice_attestation)?
+            .prove(&mut prover, &params)?;
+        let dist_2 = helper
+            .dist_n_plus_1(&dist_1, &bob_attestation)?
+            .prove(&mut prover, &params)?;
 
-        Ok(alice_bob_ethdos)
+        Ok(dist_2)
     }
 
     #[test]
@@ -410,5 +400,4 @@ mod tests {
         let ethdos_pod_valid = jsonschema::validate(&mainpod_schema_value, &ethdos_pod_value);
         assert!(ethdos_pod_valid.is_ok(), "{:#?}", ethdos_pod_valid);
     }
-    */
 }

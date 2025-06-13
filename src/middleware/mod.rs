@@ -64,6 +64,7 @@ pub enum TypedValue {
     Raw(RawValue),
     // Public key variant
     PublicKey(PublicKey),
+    PodId(PodId),
     // UNTAGGED TYPES:
     #[serde(untagged)]
     Array(Array),
@@ -106,6 +107,12 @@ impl From<Hash> for TypedValue {
 impl From<PublicKey> for TypedValue {
     fn from(p: PublicKey) -> Self {
         TypedValue::PublicKey(p)
+    }
+}
+
+impl From<PodId> for TypedValue {
+    fn from(id: PodId) -> Self {
+        TypedValue::PodId(id)
     }
 }
 
@@ -174,6 +181,7 @@ impl fmt::Display for TypedValue {
             TypedValue::Array(a) => write!(f, "arr:{}", a.commitment()),
             TypedValue::Raw(v) => write!(f, "{}", v),
             TypedValue::PublicKey(p) => write!(f, "ecGFp5_pt:({},{})", p.x, p.u),
+            TypedValue::PodId(id) => write!(f, "pod_id:{}", id),
         }
     }
 }
@@ -189,6 +197,7 @@ impl From<&TypedValue> for RawValue {
             TypedValue::Array(a) => RawValue::from(a.commitment()),
             TypedValue::Raw(v) => *v,
             TypedValue::PublicKey(p) => RawValue::from(hash_fields(&p.as_fields())),
+            TypedValue::PodId(id) => RawValue::from(id.0),
         }
     }
 }
