@@ -260,6 +260,15 @@ fn process_use_statement(
     Ok(())
 }
 
+enum StatementContext<'a> {
+    CustomPredicate,
+    Request {
+        custom_batch: &'a Arc<CustomPredicateBatch>,
+        wildcard_names: &'a mut Vec<String>,
+        defined_wildcards: &'a mut HashSet<String>,
+    },
+}
+
 fn second_pass(ctx: &mut ProcessingContext) -> Result<PodlangOutput, ProcessorError> {
     let mut cpb_builder =
         CustomPredicateBatchBuilder::new(ctx.params.clone(), "PodlangBatch".to_string());
@@ -271,7 +280,7 @@ fn second_pass(ctx: &mut ProcessingContext) -> Result<PodlangOutput, ProcessorEr
     let custom_batch = cpb_builder.finish();
 
     let request_templates = if let Some(req_pair) = &ctx.request_pair {
-        process_request_def(req_pair, ctx)?
+        process_request_def(req_pair, ctx, &custom_batch)?
     } else {
         Vec::new()
     };
@@ -560,38 +569,10 @@ fn process_and_add_custom_predicate_to_batch(
         .into_inner()
         .filter(|p| p.as_rule() == Rule::statement)
     {
-        let mut inner_stmt_pairs = stmt_pair.clone().into_inner();
-        let stmt_name_pair = inner_stmt_pairs
-            .find(|p| p.as_rule() == Rule::identifier)
-            .unwrap_or_else(|| unreachable!("statement name must be present in statement"));
-        let stmt_name_str = stmt_name_pair.as_str();
-
-        let builder_args = parse_statement_args(&stmt_pair)?;
-
-        let middleware_predicate_type =
-            if let Some(native_pred) = native_predicate_from_string(stmt_name_str) {
-                Predicate::Native(native_pred)
-            } else if let Some(custom_ref) = processing_ctx.imported_predicates.get(stmt_name_str) {
-                Predicate::Custom(custom_ref.clone())
-            } else if let Some((pred_index, _expected_arity)) = processing_ctx
-                .custom_predicate_signatures
-                .get(stmt_name_str)
-            {
-                Predicate::BatchSelf(*pred_index)
-            } else {
-                return Err(ProcessorError::UndefinedIdentifier {
-                    name: stmt_name_str.to_string(),
-                    span: Some(get_span(&stmt_name_pair)),
-                });
-            };
-
-        let stb = validate_and_build_statement_template(
-            stmt_name_str,
-            &middleware_predicate_type,
-            builder_args,
+        let stb = process_statement_template(
+            &stmt_pair,
             processing_ctx,
-            get_span(&stmt_pair),
-            get_span(&stmt_name_pair),
+            StatementContext::CustomPredicate,
         )?;
         statement_builders.push(stb);
     }
@@ -612,6 +593,7 @@ fn process_and_add_custom_predicate_to_batch(
 fn process_request_def(
     req_def_pair: &Pair<Rule>,
     processing_ctx: &ProcessingContext,
+    custom_batch: &Arc<CustomPredicateBatch>,
 ) -> Result<Vec<StatementTmpl>, ProcessorError> {
     let mut request_wildcard_names: Vec<String> = Vec::new();
     let mut defined_request_wildcards: HashSet<String> = HashSet::new();
@@ -627,11 +609,14 @@ fn process_request_def(
             .into_inner()
             .filter(|p| p.as_rule() == Rule::statement)
         {
-            let built_stb = process_proof_request_statement_template(
+            let built_stb = process_statement_template(
                 &stmt_pair,
                 processing_ctx,
-                &mut request_wildcard_names,
-                &mut defined_request_wildcards,
+                StatementContext::Request {
+                    custom_batch,
+                    wildcard_names: &mut request_wildcard_names,
+                    defined_wildcards: &mut defined_request_wildcards,
+                },
             )?;
             request_statement_builders.push(built_stb);
         }
@@ -648,11 +633,10 @@ fn process_request_def(
     Ok(request_templates)
 }
 
-fn process_proof_request_statement_template(
+fn process_statement_template(
     stmt_pair: &Pair<Rule>,
     processing_ctx: &ProcessingContext,
-    request_wildcard_names: &mut Vec<String>,
-    defined_request_wildcards: &mut HashSet<String>,
+    mut context: StatementContext,
 ) -> Result<StatementTmplBuilder, ProcessorError> {
     let mut inner_stmt_pairs = stmt_pair.clone().into_inner();
     let name_pair = inner_stmt_pairs
@@ -661,45 +645,58 @@ fn process_proof_request_statement_template(
     let stmt_name_str = name_pair.as_str();
 
     let builder_args = parse_statement_args(stmt_pair)?;
-    let mut temp_stmt_wildcard_names: Vec<String> = Vec::new();
 
-    for arg in &builder_args {
-        match arg {
-            BuilderArg::WildcardLiteral(name) => temp_stmt_wildcard_names.push(name.clone()),
-            BuilderArg::Key(pod_id_str, key_wc_str) => {
-                if let SelfOrWildcardStr::Wildcard(name) = pod_id_str {
-                    temp_stmt_wildcard_names.push(name.clone());
+    if let StatementContext::Request {
+        wildcard_names,
+        defined_wildcards,
+        ..
+    } = &mut context
+    {
+        let mut temp_stmt_wildcard_names: Vec<String> = Vec::new();
+        for arg in &builder_args {
+            match arg {
+                BuilderArg::WildcardLiteral(name) => temp_stmt_wildcard_names.push(name.clone()),
+                BuilderArg::Key(pod_id_str, key_wc_str) => {
+                    if let SelfOrWildcardStr::Wildcard(name) = pod_id_str {
+                        temp_stmt_wildcard_names.push(name.clone());
+                    }
+                    if let KeyOrWildcardStr::Wildcard(key_wc_name) = key_wc_str {
+                        temp_stmt_wildcard_names.push(key_wc_name.clone());
+                    }
                 }
-                if let KeyOrWildcardStr::Wildcard(key_wc_name) = key_wc_str {
-                    temp_stmt_wildcard_names.push(key_wc_name.clone());
-                }
+                _ => {}
             }
-            _ => {}
+        }
+        for name in temp_stmt_wildcard_names {
+            if defined_wildcards.insert(name.clone()) {
+                wildcard_names.push(name);
+            }
         }
     }
 
-    for name in temp_stmt_wildcard_names {
-        if defined_request_wildcards.insert(name.clone()) {
-            request_wildcard_names.push(name);
+    let middleware_predicate_type = if let Some(native_pred) =
+        native_predicate_from_string(stmt_name_str)
+    {
+        Predicate::Native(native_pred)
+    } else if let Some(custom_ref) = processing_ctx.imported_predicates.get(stmt_name_str) {
+        Predicate::Custom(custom_ref.clone())
+    } else if let Some((pred_index, _expected_arity)) = processing_ctx
+        .custom_predicate_signatures
+        .get(stmt_name_str)
+    {
+        match context {
+            StatementContext::CustomPredicate => Predicate::BatchSelf(*pred_index),
+            StatementContext::Request { custom_batch, .. } => {
+                let custom_pred_ref = CustomPredicateRef::new(custom_batch.clone(), *pred_index);
+                Predicate::Custom(custom_pred_ref)
+            }
         }
-    }
-
-    let middleware_predicate_type =
-        if let Some(native_pred) = native_predicate_from_string(stmt_name_str) {
-            Predicate::Native(native_pred)
-        } else if let Some(custom_ref) = processing_ctx.imported_predicates.get(stmt_name_str) {
-            Predicate::Custom(custom_ref.clone())
-        } else if let Some((pred_index, _expected_arity)) = processing_ctx
-            .custom_predicate_signatures
-            .get(stmt_name_str)
-        {
-            Predicate::BatchSelf(*pred_index)
-        } else {
-            return Err(ProcessorError::UndefinedIdentifier {
-                name: stmt_name_str.to_string(),
-                span: Some(get_span(&name_pair)),
-            });
-        };
+    } else {
+        return Err(ProcessorError::UndefinedIdentifier {
+            name: stmt_name_str.to_string(),
+            span: Some(get_span(&name_pair)),
+        });
+    };
 
     let stb = validate_and_build_statement_template(
         stmt_name_str,

@@ -9,7 +9,10 @@ pub use parser::{parse_podlang, Pairs, ParseError, Rule};
 pub use processor::process_pest_tree;
 use processor::PodlangOutput;
 
-use crate::middleware::{CustomPredicateBatch, Params};
+use crate::{
+    lang::error::ProcessorError,
+    middleware::{CustomPredicateBatch, Params},
+};
 
 pub fn parse(
     input: &str,
@@ -881,5 +884,34 @@ mod tests {
         assert_eq!(defined_pred.statements[0], expected_statement);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_e2e_use_unknown_batch() {
+        let params = Params::default();
+        let available_batches = &[];
+
+        let unknown_batch_id = format!("0x{}", "a".repeat(64));
+
+        let input = format!(
+            r#"
+            use some_pred from {}
+            "#,
+            unknown_batch_id
+        );
+
+        let result = parse(&input, &params, available_batches);
+
+        assert!(result.is_err());
+
+        match result.err().unwrap() {
+            LangError::Processor(e) => match *e {
+                ProcessorError::BatchNotFound { id, .. } => {
+                    assert_eq!(id, unknown_batch_id);
+                }
+                _ => panic!("Expected BatchNotFound error, but got {:?}", e),
+            },
+            e => panic!("Expected LangError::Processor, but got {:?}", e),
+        }
     }
 }
