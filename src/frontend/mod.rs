@@ -832,8 +832,8 @@ pub mod tests {
     use crate::{
         backends::plonky2::mock::{mainpod::MockProver, signedpod::MockSigner},
         examples::{
-            eth_dos_pod_builder, eth_friend_signed_pod_builder, great_boy_pod_full_flow,
-            tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_sign_pod_builders, EthDosHelper,
+            attest_eth_friend, great_boy_pod_full_flow, tickets_pod_full_flow, zu_kyc_pod_builder,
+            zu_kyc_sign_pod_builders, EthDosHelper,
         },
         middleware::{containers::Dictionary, Value},
     };
@@ -911,52 +911,6 @@ pub mod tests {
         check_public_statements(&kyc)
     }
 
-    // #[test]
-    // fn test_ethdos() -> Result<()> {
-    //     let params = Params {
-    //         max_input_signed_pods: 3,
-    //         max_input_recursive_pods: 3,
-    //         max_statements: 31,
-    //         max_signed_pod_values: 8,
-    //         max_public_statements: 10,
-    //         max_statement_args: 6,
-    //         max_operation_args: 5,
-    //         max_custom_predicate_arity: 5,
-    //         max_custom_batch_size: 5,
-    //         max_custom_predicate_wildcards: 12,
-    //         ..Default::default()
-    //     };
-    //     let vd_set = &*MOCK_VD_SET;
-
-    //     let mut alice = MockSigner { pk: "Alice".into() };
-    //     let bob = MockSigner { pk: "Bob".into() };
-    //     let mut charlie = MockSigner {
-    //         pk: "Charlie".into(),
-    //     };
-
-    //     // Alice attests that she is ETH friends with Charlie and Charlie
-    //     // attests that he is ETH friends with Bob.
-    //     let alice_attestation =
-    //         eth_friend_signed_pod_builder(&params, charlie.public_key().into()).sign(&mut alice)?;
-    //     check_kvs(&alice_attestation)?;
-    //     let charlie_attestation =
-    //         eth_friend_signed_pod_builder(&params, bob.public_key().into()).sign(&mut charlie)?;
-    //     check_kvs(&charlie_attestation)?;
-
-    //     let mut prover = MockProver {};
-    //     let alice_bob_ethdos = eth_dos_pod_builder(
-    //         &params,
-    //         &vd_set,
-    //         true,
-    //         &alice_attestation,
-    //         &charlie_attestation,
-    //         bob.public_key().into(),
-    //     )?
-    //     .prove(&mut prover, &params)?;
-
-    //     check_public_statements(&alice_bob_ethdos)
-    // }
-
     #[test]
     fn test_ethdos_recursive() -> Result<()> {
         let params = Params {
@@ -974,30 +928,23 @@ pub mod tests {
         };
         let david = MockSigner { pk: "David".into() };
 
-        fn attest(params: &Params, src: &mut MockSigner, dst: Value) -> SignedPod {
-            let pod = eth_friend_signed_pod_builder(params, dst);
-            pod.sign(src).unwrap()
-        }
         let helper = EthDosHelper::new(&params, vd_set, true, alice.public_key())?;
 
         let mut prover = MockProver {};
 
-        let alice_attestation = attest(&params, &mut alice, bob.public_key());
-        println!("DBG dist_1...");
+        let alice_attestation = attest_eth_friend(&params, &mut alice, bob.public_key());
         let dist_1 = helper
             .dist_1(&alice_attestation)?
             .prove(&mut prover, &params)?;
         dist_1.pod.verify()?;
 
-        let bob_attestation = attest(&params, &mut bob, charlie.public_key());
-        println!("DBG dist_2...");
+        let bob_attestation = attest_eth_friend(&params, &mut bob, charlie.public_key());
         let dist_2 = helper
             .dist_n_plus_1(&dist_1, &bob_attestation)?
             .prove(&mut prover, &params)?;
         dist_2.pod.verify()?;
 
-        let charlie_attestation = attest(&params, &mut charlie, david.public_key());
-        println!("DBG dist_3...");
+        let charlie_attestation = attest_eth_friend(&params, &mut charlie, david.public_key());
         let dist_3 = helper
             .dist_n_plus_1(&dist_2, &charlie_attestation)?
             .prove(&mut prover, &params)?;

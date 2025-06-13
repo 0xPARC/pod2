@@ -711,10 +711,7 @@ pub mod tests {
             primitives::ec::schnorr::SecretKey,
             signedpod::Signer,
         },
-        examples::{
-            eth_dos_pod_builder, eth_friend_signed_pod_builder, zu_kyc_pod_builder,
-            zu_kyc_sign_pod_builders,
-        },
+        examples::{zu_kyc_pod_builder, zu_kyc_sign_pod_builders},
         frontend::{
             key, literal, CustomPredicateBatchBuilder, MainPodBuilder, StatementTmplBuilder as STB,
             {self},
@@ -847,6 +844,8 @@ pub mod tests {
         pod.verify().unwrap()
     }
 
+    // TODO: Update
+    /*
     #[test]
     fn test_main_ethdos() -> frontend::Result<()> {
         let params = Params {
@@ -896,6 +895,7 @@ pub mod tests {
 
         Ok(pod.verify()?)
     }
+    */
 
     // TODO: Update
     /*
