@@ -9,10 +9,7 @@ pub use parser::{parse_podlang, Pairs, ParseError, Rule};
 pub use processor::process_pest_tree;
 use processor::PodlangOutput;
 
-use crate::{
-    lang::error::ProcessorError,
-    middleware::{CustomPredicateBatch, Params},
-};
+use crate::middleware::{CustomPredicateBatch, Params};
 
 pub fn parse(
     input: &str,
@@ -29,10 +26,13 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::middleware::{
-        CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key, KeyOrWildcard,
-        NativePredicate, Params, PodType, Predicate, SelfOrWildcard, StatementTmpl,
-        StatementTmplArg, Value, Wildcard, SELF_ID_HASH,
+    use crate::{
+        lang::error::ProcessorError,
+        middleware::{
+            CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key, KeyOrWildcard,
+            NativePredicate, Params, PodType, Predicate, SelfOrWildcard, StatementTmpl,
+            StatementTmplArg, Value, Wildcard, SELF_ID_HASH,
+        },
     };
 
     // Helper functions
