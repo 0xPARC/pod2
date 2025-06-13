@@ -231,7 +231,7 @@ fn process_use_statement(
         .filter(|p| p.as_rule() == Rule::import_name)
         .collect();
 
-    if import_names.len() > target_batch.predicates().len() {
+    if import_names.len() != target_batch.predicates().len() {
         return Err(ProcessorError::ImportArityMismatch {
             expected: target_batch.predicates().len(),
             found: import_names.len(),
