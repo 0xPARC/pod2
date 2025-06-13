@@ -1,6 +1,6 @@
 use std::{backtrace::Backtrace, fmt::Debug};
 
-use crate::middleware::{DynError, Statement, StatementTmpl};
+use crate::middleware::{DynError, Statement, StatementTmpl, WildcardValue};
 
 pub type Result<T, E = Error> = core::result::Result<T, E>;
 
@@ -8,8 +8,8 @@ pub type Result<T, E = Error> = core::result::Result<T, E>;
 pub enum InnerError {
     #[error("{0} {1} is over the limit {2}")]
     MaxLength(String, usize, usize),
-    #[error("{0} doesn't match {1}")]
-    StatementsDontMatch(Statement, StatementTmpl),
+    #[error("{0} doesn't match {1:#}.  Wildcard map: {2:?}")]
+    StatementsDontMatch(Statement, StatementTmpl, Vec<Option<WildcardValue>>),
     #[error("invalid arguments to {0} operation")]
     OpInvalidArgs(String),
     // Other
@@ -54,8 +54,12 @@ impl Error {
     pub(crate) fn op_invalid_args(s: String) -> Self {
         new!(OpInvalidArgs(s))
     }
-    pub(crate) fn statements_dont_match(s0: Statement, s1: StatementTmpl) -> Self {
-        new!(StatementsDontMatch(s0, s1))
+    pub(crate) fn statements_dont_match(
+        s0: Statement,
+        s1: StatementTmpl,
+        wc_map: Vec<Option<WildcardValue>>,
+    ) -> Self {
+        new!(StatementsDontMatch(s0, s1, wc_map))
     }
     pub(crate) fn max_length(obj: String, found: usize, expect: usize) -> Self {
         new!(MaxLength(obj, found, expect))

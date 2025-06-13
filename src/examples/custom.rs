@@ -46,20 +46,20 @@ pub fn eth_dos_batch(params: &Params, mock: bool) -> Result<Arc<CustomPredicateB
             Equal(?attestation_pod["attestation"], ?dst)
         )
 
-        eth_dos_distance_base(src, dst, distance) = AND(
+        eth_dos_base(src, dst, distance) = AND(
             Equal(?src, ?dst)
             Equal(?distance, 0)
         )
 
-        eth_dos_distance_ind(src, dst, distance, private: shorter_distance, intermed) = AND(
-            eth_dos_distance(?src, ?dst, ?distance)
+        eth_dos_ind(src, dst, distance, private: shorter_distance, intermed) = AND(
+            eth_dos(?src, ?dst, ?distance)
             SumOf(?distance, ?shorter_distance, 1)
             eth_friend(?intermed, ?dst)
         )
 
-        eth_dos_distance(src, dst, distance) = OR(
-            eth_dos_distance_base(?src, ?dst, ?distance)
-            eth_dos_distance_ind(?src, ?dst, ?distance)
+        eth_dos(src, dst, distance) = OR(
+            eth_dos_base(?src, ?dst, ?distance)
+            eth_dos_ind(?src, ?dst, ?distance)
         )
         "#,
         consts,

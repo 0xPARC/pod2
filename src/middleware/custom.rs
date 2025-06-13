@@ -208,7 +208,7 @@ impl fmt::Display for StatementTmpl {
             }
             arg.fmt(f)?;
         }
-        writeln!(f)
+        write!(f, ")")
     }
 }
 

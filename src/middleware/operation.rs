@@ -404,7 +404,10 @@ pub fn check_st_tmpl(
         (StatementTmplArg::WildcardLiteral(wc), StatementArg::WildcardLiteral(v)) => {
             check_or_set(v.clone(), wc, wildcard_map)
         }
-        _ => false,
+        _ => {
+            println!("DBG {:?} {:?}", st_tmpl_arg, st_arg);
+            false
+        }
     }
 }
 
