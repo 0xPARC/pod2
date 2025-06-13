@@ -1,4 +1,4 @@
-// Grammar for the "Podlog" language. Used for describing POD2 Custom
+// Grammar for the "Podlang" language. Used for describing POD2 Custom
 // Predicates and Proof Requests.
 
 // Silent rules (`_`) are automatically handled by Pest between other rules.
@@ -27,7 +27,12 @@ arg_section = {
 public_arg_list = { identifier ~ ("," ~ identifier)* } 
 private_arg_list = { identifier ~ ("," ~ identifier)* }
 
-document = { SOI ~ (custom_predicate_def | request_def)* ~ EOI }
+document = { SOI ~ (use_statement | custom_predicate_def | request_def)* ~ EOI }
+
+use_statement = { "use" ~ use_predicate_list ~ "from" ~ batch_ref }
+use_predicate_list = { import_name ~ ("," ~ import_name)* }
+import_name = { identifier | "_" }
+batch_ref = { literal_raw }
 
 request_def = { "REQUEST" ~ "(" ~ statement_list? ~ ")" } 
 
