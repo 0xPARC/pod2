@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use crate::{
     backends::plonky2::primitives::merkletree::MerkleProof,
     middleware::{
-        custom::KeyOrWildcard, hash_values, AnchoredKey, CustomPredicate, CustomPredicateRef,
-        Error, NativePredicate, Params, Predicate, Result, SelfOrWildcard, Statement, StatementArg,
-        StatementTmplArg, ToFields, Value, ValueRef, Wildcard, WildcardValue, F, SELF,
+        hash_values, AnchoredKey, CustomPredicate, CustomPredicateRef, Error, NativePredicate,
+        Params, Predicate, Result, Statement, StatementArg, StatementTmplArg, ToFields, Value,
+        ValueRef, Wildcard, F, SELF,
     },
 };
 
@@ -361,14 +361,10 @@ pub fn check_st_tmpl(
     st_tmpl_arg: &StatementTmplArg,
     st_arg: &StatementArg,
     // Map from wildcards to values that we have seen so far.
-    wildcard_map: &mut [Option<WildcardValue>],
+    wildcard_map: &mut [Option<Value>],
 ) -> bool {
     // Check that the value `v` at wildcard `wc` exists in the map or set it.
-    fn check_or_set(
-        v: WildcardValue,
-        wc: &Wildcard,
-        wildcard_map: &mut [Option<WildcardValue>],
-    ) -> bool {
+    fn check_or_set(v: Value, wc: &Wildcard, wildcard_map: &mut [Option<Value>]) -> bool {
         if let Some(prev) = &wildcard_map[wc.index] {
             if *prev != v {
                 // TODO: Return nice error
@@ -384,24 +380,13 @@ pub fn check_st_tmpl(
         (StatementTmplArg::None, StatementArg::None) => true,
         (StatementTmplArg::Literal(lhs), StatementArg::Literal(rhs)) if lhs == rhs => true,
         (
-            StatementTmplArg::AnchoredKey(self_or_wc, key_or_wc),
+            StatementTmplArg::AnchoredKey(pod_id_wc, key_tmpl),
             StatementArg::Key(AnchoredKey { pod_id, key }),
         ) => {
-            let pod_id_ok = match self_or_wc {
-                SelfOrWildcard::SELF => SELF == *pod_id,
-                SelfOrWildcard::Wildcard(pod_id_wc) => {
-                    check_or_set(WildcardValue::PodId(*pod_id), pod_id_wc, wildcard_map)
-                }
-            };
-            let key_ok = match key_or_wc {
-                KeyOrWildcard::Key(tmpl_key) => tmpl_key == key,
-                KeyOrWildcard::Wildcard(key_wc) => {
-                    check_or_set(WildcardValue::Key(key.clone()), key_wc, wildcard_map)
-                }
-            };
-            pod_id_ok && key_ok
+            let pod_id_ok = check_or_set(Value::from(pod_id.0), pod_id_wc, wildcard_map);
+            pod_id_ok && (key_tmpl == key)
         }
-        (StatementTmplArg::WildcardLiteral(wc), StatementArg::WildcardLiteral(v)) => {
+        (StatementTmplArg::WildcardLiteral(wc), StatementArg::Literal(v)) => {
             check_or_set(v.clone(), wc, wildcard_map)
         }
         _ => {
@@ -415,7 +400,7 @@ pub fn resolve_wildcard_values(
     params: &Params,
     pred: &CustomPredicate,
     args: &[Statement],
-) -> Option<Vec<WildcardValue>> {
+) -> Option<Vec<Value>> {
     // Check that all wildcard have consistent values as assigned in the statements while storing a
     // map of their values.
     // NOTE: We assume the statements have the same order as defined in the custom predicate.  For
@@ -439,7 +424,7 @@ pub fn resolve_wildcard_values(
     Some(
         wildcard_map
             .into_iter()
-            .map(|opt| opt.unwrap_or(WildcardValue::None))
+            .map(|opt| opt.unwrap_or(Value::from(0)))
             .collect(),
     )
 }
@@ -448,7 +433,7 @@ fn check_custom_pred(
     params: &Params,
     custom_pred_ref: &CustomPredicateRef,
     args: &[Statement],
-    s_args: &[WildcardValue],
+    s_args: &[Value],
 ) -> Result<bool> {
     let pred = custom_pred_ref.predicate();
     if pred.statements.len() != args.len() {

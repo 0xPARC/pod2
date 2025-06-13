@@ -6,8 +6,7 @@ use serde::{Deserialize, Serialize};
 use strum_macros::FromRepr;
 
 use crate::middleware::{
-    AnchoredKey, CustomPredicateRef, Error, Key, Params, PodId, RawValue, Result, ToFields, Value,
-    EMPTY_VALUE, F, VALUE_SIZE,
+    AnchoredKey, CustomPredicateRef, Error, Params, Result, ToFields, Value, F, VALUE_SIZE,
 };
 
 // TODO: Maybe store KEY_SIGNER and KEY_TYPE as Key with lazy_static
@@ -48,39 +47,6 @@ pub enum NativePredicate {
 impl ToFields for NativePredicate {
     fn to_fields(&self, _params: &Params) -> Vec<F> {
         vec![F::from_canonical_u64(*self as u64)]
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub enum WildcardValue {
-    None,
-    PodId(PodId),
-    Key(Key),
-}
-
-impl WildcardValue {
-    pub fn raw(&self) -> RawValue {
-        match self {
-            WildcardValue::None => EMPTY_VALUE,
-            WildcardValue::PodId(pod_id) => RawValue::from(pod_id.0),
-            WildcardValue::Key(key) => key.raw(),
-        }
-    }
-}
-
-impl fmt::Display for WildcardValue {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            WildcardValue::None => write!(f, "none"),
-            WildcardValue::PodId(pod_id) => pod_id.fmt(f),
-            WildcardValue::Key(key) => key.fmt(f),
-        }
-    }
-}
-
-impl ToFields for WildcardValue {
-    fn to_fields(&self, params: &Params) -> Vec<F> {
-        self.raw().to_fields(params)
     }
 }
 
@@ -181,7 +147,7 @@ pub enum Statement {
     ProductOf(ValueRef, ValueRef, ValueRef),
     MaxOf(ValueRef, ValueRef, ValueRef),
     HashOf(ValueRef, ValueRef, ValueRef),
-    Custom(CustomPredicateRef, Vec<WildcardValue>),
+    Custom(CustomPredicateRef, Vec<Value>),
 }
 
 macro_rules! statement_constructor {
@@ -246,7 +212,7 @@ impl Statement {
             Self::ProductOf(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
             Self::MaxOf(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
             Self::HashOf(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
-            Self::Custom(_, args) => Vec::from_iter(args.into_iter().map(WildcardLiteral)),
+            Self::Custom(_, args) => Vec::from_iter(args.into_iter().map(Literal)),
         }
     }
 
@@ -296,10 +262,10 @@ impl Statement {
             }
             (BatchSelf(_), _) => unreachable!(),
             (Custom(cpr), _) => {
-                let v_args: Result<Vec<WildcardValue>> = args
+                let v_args: Result<Vec<Value>> = args
                     .iter()
                     .map(|x| match x {
-                        StatementArg::WildcardLiteral(v) => Ok(v.clone()),
+                        StatementArg::Literal(v) => Ok(v.clone()),
                         _ => Err(Error::incorrect_statements_args()),
                     })
                     .collect();
@@ -338,7 +304,7 @@ pub enum StatementArg {
     None,
     Literal(Value),
     Key(AnchoredKey),
-    WildcardLiteral(WildcardValue), // TODO: Remove this in favor of Literal
+    // WildcardLiteral(WildcardValue), // TODO: Remove this in favor of Literal
 }
 
 impl fmt::Display for StatementArg {
@@ -347,7 +313,6 @@ impl fmt::Display for StatementArg {
             StatementArg::None => write!(f, "none"),
             StatementArg::Literal(v) => v.fmt(f),
             StatementArg::Key(r) => r.fmt(f),
-            StatementArg::WildcardLiteral(v) => v.fmt(f),
         }
     }
 }
@@ -398,12 +363,6 @@ impl ToFields for StatementArg {
                 fields.extend(ak.key.to_fields(params));
                 fields
             }
-            StatementArg::WildcardLiteral(v) => v
-                .raw()
-                .0
-                .into_iter()
-                .chain(iter::repeat(F::ZERO).take(STATEMENT_ARG_F_LEN - VALUE_SIZE))
-                .collect(),
         };
         assert_eq!(f.len(), STATEMENT_ARG_F_LEN); // sanity check
         f

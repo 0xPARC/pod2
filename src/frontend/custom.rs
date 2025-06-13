@@ -34,8 +34,8 @@ pub fn key(s: &str) -> KeyOrWildcardStr {
 #[derive(Clone, Debug)]
 pub enum BuilderArg {
     Literal(Value),
-    /// Key: (origin, key), where origin is SELF or Wildcard and key is Key or Wildcard
-    Key(SelfOrWildcardStr, KeyOrWildcardStr),
+    /// Key: (origin, key), where origin is Wildcard and key is Key
+    Key(String, String),
     WildcardLiteral(String),
 }
 
@@ -55,15 +55,15 @@ impl From<&str> for SelfOrWildcardStr {
 /// iii. &str: this is to define a WildcardValue wildcard, ie. "src_or"
 ///
 /// case i.
-impl From<(&str, KeyOrWildcardStr)> for BuilderArg {
-    fn from((origin, lit): (&str, KeyOrWildcardStr)) -> Self {
-        Self::Key(origin.into(), lit)
-    }
-}
+// impl From<(&str, KeyOrWildcardStr)> for BuilderArg {
+//     fn from((origin, lit): (&str, KeyOrWildcardStr)) -> Self {
+//         Self::Key(origin.into(), lit)
+//     }
+// }
 /// case ii.
 impl From<(&str, &str)> for BuilderArg {
     fn from((origin, field): (&str, &str)) -> Self {
-        Self::Key(origin.into(), KeyOrWildcardStr::Wildcard(field.to_string()))
+        Self::Key(origin.to_string(), field.to_string())
     }
 }
 /// case iii.
@@ -216,9 +216,9 @@ impl CustomPredicateBatchBuilder {
                     .iter()
                     .map(|a| match a {
                         BuilderArg::Literal(v) => StatementTmplArg::Literal(v.clone()),
-                        BuilderArg::Key(pod_id, key) => StatementTmplArg::AnchoredKey(
-                            resolve_self_or_wildcard(args, priv_args, pod_id),
-                            resolve_key_or_wildcard(args, priv_args, key),
+                        BuilderArg::Key(pod_id_wc, key_str) => StatementTmplArg::AnchoredKey(
+                            resolve_wildcard(args, priv_args, pod_id_wc),
+                            Key::from(key_str),
                         ),
                         BuilderArg::WildcardLiteral(v) => {
                             StatementTmplArg::WildcardLiteral(resolve_wildcard(args, priv_args, v))

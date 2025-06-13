@@ -31,9 +31,8 @@ use crate::{
     middleware::{
         CustomPredicate, CustomPredicateBatch, CustomPredicateRef, NativeOperation,
         NativePredicate, OperationType, Params, Predicate, PredicatePrefix, RawValue, StatementArg,
-        StatementTmpl, StatementTmplArg, StatementTmplArgPrefix, ToFields, Value, WildcardValue,
-        EMPTY_VALUE, F, HASH_SIZE, OPERATION_ARG_F_LEN, OPERATION_AUX_F_LEN, STATEMENT_ARG_F_LEN,
-        VALUE_SIZE,
+        StatementTmpl, StatementTmplArg, StatementTmplArgPrefix, ToFields, Value, EMPTY_VALUE, F,
+        HASH_SIZE, OPERATION_ARG_F_LEN, OPERATION_AUX_F_LEN, STATEMENT_ARG_F_LEN, VALUE_SIZE,
     },
 };
 
@@ -597,7 +596,7 @@ impl CustomPredicateVerifyEntryTarget {
         // Replace statement templates of batch-self with (id,index)
         self.custom_predicate
             .set_targets(pw, params, &cpv.custom_predicate)?;
-        let pad_arg = WildcardValue::None;
+        let pad_arg = Value::from(0);
         for (arg_target, arg) in self.args.iter().zip_eq(
             cpv.args
                 .iter()

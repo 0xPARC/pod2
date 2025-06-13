@@ -49,8 +49,8 @@ statement_arg_list = { statement_arg ~ ("," ~ statement_arg)* }
 
 statement = { identifier ~ "(" ~ statement_arg_list? ~ ")" }
 
-// Anchored Key: (SELF | ?Var)["key_literal" | ?KeyVar]
-anchored_key = { ( self_keyword | wildcard ) ~ "[" ~ (wildcard | literal_string) ~ "]" }
+// Anchored Key: ?Var["key_literal"]
+anchored_key = { wildcard ~ "[" ~ literal_string ~ "]" }
 
 // Literal Values (ordered to avoid ambiguity, e.g., string before int)
 literal_value = {

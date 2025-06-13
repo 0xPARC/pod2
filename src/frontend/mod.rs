@@ -10,7 +10,7 @@ use serialization::{SerializedMainPod, SerializedSignedPod};
 use crate::middleware::{
     self, check_st_tmpl, hash_op, hash_str, max_op, prod_op, sum_op, AnchoredKey, Key,
     MainPodInputs, NativeOperation, OperationAux, OperationType, Params, PodId, PodProver,
-    PodSigner, Statement, StatementArg, VDSet, Value, ValueRef, WildcardValue, KEY_TYPE, SELF,
+    PodSigner, Statement, StatementArg, VDSet, Value, ValueRef, KEY_TYPE, SELF,
 };
 
 mod custom;
@@ -481,7 +481,7 @@ impl MainPodBuilder {
                         }
                     }
                 }
-                let v_default = WildcardValue::PodId(SELF);
+                let v_default = Value::from(0);
                 let st_args: Vec<_> = wildcard_map
                     .into_iter()
                     .take(pred.args_len)

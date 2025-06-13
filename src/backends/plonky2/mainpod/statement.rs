@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::error::{Error, Result},
-    middleware::{self, NativePredicate, Params, Predicate, StatementArg, ToFields, WildcardValue},
+    middleware::{self, NativePredicate, Params, Predicate, StatementArg, ToFields, Value},
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -74,11 +74,11 @@ impl TryFrom<Statement> for middleware::Statement {
                 )))?,
             },
             Predicate::Custom(cpr) => {
-                let vs: Vec<WildcardValue> = proper_args
+                let vs: Vec<Value> = proper_args
                     .into_iter()
                     .filter_map(|arg| match arg {
                         SA::None => None,
-                        SA::WildcardLiteral(v) => Some(v),
+                        SA::Literal(v) => Some(v),
                         _ => unreachable!(),
                     })
                     .collect();

@@ -52,7 +52,7 @@ pub fn eth_dos_batch(params: &Params, mock: bool) -> Result<Arc<CustomPredicateB
         )
 
         eth_dos_ind(src, dst, distance, private: shorter_distance, intermed) = AND(
-            eth_dos(?src, ?dst, ?distance)
+            eth_dos(?src, ?intermed, ?shorter_distance)
             SumOf(?distance, ?shorter_distance, 1)
             eth_friend(?intermed, ?dst)
         )

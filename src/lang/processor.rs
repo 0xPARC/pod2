@@ -8,15 +8,11 @@ use plonky2::field::types::Field;
 
 use super::error::ProcessorError;
 use crate::{
-    frontend::{
-        BuilderArg, CustomPredicateBatchBuilder, KeyOrWildcardStr, SelfOrWildcardStr,
-        StatementTmplBuilder,
-    },
+    frontend::{BuilderArg, CustomPredicateBatchBuilder, StatementTmplBuilder},
     lang::parser::Rule,
     middleware::{
-        self, CustomPredicateBatch, CustomPredicateRef, Key, KeyOrWildcard, NativePredicate,
-        Params, Predicate, SelfOrWildcard as MiddlewareSelfOrWildcard, StatementTmpl,
-        StatementTmplArg, Value, Wildcard, F, VALUE_SIZE,
+        self, CustomPredicateBatch, CustomPredicateRef, Key, NativePredicate, Params, Predicate,
+        StatementTmpl, StatementTmplArg, Value, Wildcard, F, VALUE_SIZE,
     },
 };
 
@@ -215,34 +211,11 @@ fn pest_pair_to_builder_arg(arg_content_pair: &Pair<Rule>) -> Result<BuilderArg,
         Rule::anchored_key => {
             let mut inner_ak_pairs = arg_content_pair.clone().into_inner();
             let pod_id_pair = inner_ak_pairs.next().unwrap();
-
-            let pod_self_or_wc_str = match pod_id_pair.as_rule() {
-                Rule::wildcard => {
-                    let name = pod_id_pair.as_str().strip_prefix("?").unwrap();
-                    SelfOrWildcardStr::Wildcard(name.to_string())
-                }
-                Rule::self_keyword => SelfOrWildcardStr::SELF,
-                _ => {
-                    unreachable!("Unexpected rule: {:?}", pod_id_pair.as_rule());
-                }
-            };
+            let pod_id_wc_str = pod_id_pair.as_str().strip_prefix("?").unwrap();
 
             let key_part_pair = inner_ak_pairs.next().unwrap();
-
-            let key_or_wildcard_str = match key_part_pair.as_rule() {
-                Rule::wildcard => {
-                    let key_wildcard_name = key_part_pair.as_str().strip_prefix("?").unwrap();
-                    KeyOrWildcardStr::Wildcard(key_wildcard_name.to_string())
-                }
-                Rule::literal_string => {
-                    let key_str_literal = parse_pest_string_literal(&key_part_pair)?;
-                    KeyOrWildcardStr::Key(key_str_literal)
-                }
-                _ => {
-                    unreachable!("Unexpected rule: {:?}", key_part_pair.as_rule());
-                }
-            };
-            Ok(BuilderArg::Key(pod_self_or_wc_str, key_or_wildcard_str))
+            let key_str = parse_pest_string_literal(&key_part_pair)?;
+            Ok(BuilderArg::Key(pod_id_wc_str.to_string(), key_str))
         }
         _ => unreachable!("Unexpected rule: {:?}", arg_content_pair.as_rule()),
     }
@@ -523,13 +496,8 @@ fn process_proof_request_statement_template(
     for arg in &builder_args {
         match arg {
             BuilderArg::WildcardLiteral(name) => temp_stmt_wildcard_names.push(name.clone()),
-            BuilderArg::Key(pod_id_str, key_wc_str) => {
-                if let SelfOrWildcardStr::Wildcard(name) = pod_id_str {
-                    temp_stmt_wildcard_names.push(name.clone());
-                }
-                if let KeyOrWildcardStr::Wildcard(key_wc_name) = key_wc_str {
-                    temp_stmt_wildcard_names.push(key_wc_name.clone());
-                }
+            BuilderArg::Key(pod_id_wc_str, _key_str) => {
+                temp_stmt_wildcard_names.push(pod_id_wc_str.clone());
             }
             _ => {}
         }
@@ -759,19 +727,6 @@ fn resolve_wildcard(
         })
 }
 
-fn resolve_key_or_wildcard_str(
-    ordered_scope_wildcard_names: &[String],
-    kows: &KeyOrWildcardStr,
-) -> Result<KeyOrWildcard, ProcessorError> {
-    match kows {
-        KeyOrWildcardStr::Key(k_str) => Ok(KeyOrWildcard::Key(Key::new(k_str.clone()))),
-        KeyOrWildcardStr::Wildcard(wc_name_str) => {
-            let resolved_wc = resolve_wildcard(ordered_scope_wildcard_names, wc_name_str)?;
-            Ok(KeyOrWildcard::Wildcard(resolved_wc))
-        }
-    }
-}
-
 fn resolve_request_statement_builder(
     stb: StatementTmplBuilder,
     ordered_request_wildcard_names: &[String],
@@ -783,20 +738,14 @@ fn resolve_request_statement_builder(
     for builder_arg in stb.args {
         let mw_arg = match builder_arg {
             BuilderArg::Literal(v) => StatementTmplArg::Literal(v),
-            BuilderArg::Key(pod_id_str, key_wc_str) => {
-                let pod_sowc = match pod_id_str {
-                    SelfOrWildcardStr::SELF => MiddlewareSelfOrWildcard::SELF,
-                    SelfOrWildcardStr::Wildcard(name) => MiddlewareSelfOrWildcard::Wildcard(
-                        resolve_wildcard(ordered_request_wildcard_names, &name)?,
-                    ),
-                };
-                let key_or_wc =
-                    resolve_key_or_wildcard_str(ordered_request_wildcard_names, &key_wc_str)?;
-                StatementTmplArg::AnchoredKey(pod_sowc, key_or_wc)
+            BuilderArg::Key(pod_id_wc_str, key_str) => {
+                let pod_id_wc = resolve_wildcard(ordered_request_wildcard_names, &pod_id_wc_str)?;
+                let key = Key::from(key_str);
+                StatementTmplArg::AnchoredKey(pod_id_wc, key)
             }
             BuilderArg::WildcardLiteral(wc_name) => {
-                let pod_wc = resolve_wildcard(ordered_request_wildcard_names, &wc_name)?;
-                StatementTmplArg::WildcardLiteral(pod_wc)
+                let wc = resolve_wildcard(ordered_request_wildcard_names, &wc_name)?;
+                StatementTmplArg::WildcardLiteral(wc)
             }
         };
         middleware_args.push(mw_arg);
