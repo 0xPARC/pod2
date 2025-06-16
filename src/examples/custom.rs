@@ -64,7 +64,7 @@ pub fn eth_dos_batch(params: &Params, mock: bool) -> Result<Arc<CustomPredicateB
         "#,
         consts,
     );
-    let batch = parse(&input, params).expect("lang parse").custom_batch;
+    let batch = parse(&input, params, &[]).expect("lang parse").custom_batch;
     println!("a.0. {}", batch.predicates[0]);
     println!("a.1. {}", batch.predicates[1]);
     println!("a.2. {}", batch.predicates[2]);

@@ -18,7 +18,7 @@ use crate::{
         deserialize_proof,
         emptypod::EmptyPod,
         error::{Error, Result},
-        mock::emptypod::MockEmptyPod,
+        mock::{emptypod::MockEmptyPod, signedpod::MockSignedPod},
         primitives::merkletree::MerkleClaimAndProof,
         recursion::{RecursiveCircuit, RecursiveParams},
         serialize_proof,
@@ -266,13 +266,16 @@ pub(crate) fn layout_statements(
     statements.push(middleware::Statement::None.into());
 
     // Input signed pods region
-    // TODO: Replace this with a dumb signed pod
-    // https://github.com/0xPARC/pod2/issues/246
-    let none_sig_pod_box: Box<dyn Pod> = Box::new(NonePod {});
-    let none_sig_pod = none_sig_pod_box.as_ref();
+    let dummy_signed_pod_box: Box<dyn Pod> =
+        if mock || inputs.signed_pods.len() == params.max_input_signed_pods {
+            Box::new(MockSignedPod::dummy())
+        } else {
+            Box::new(SignedPod::dummy())
+        };
+    let dummy_signed_pod = dummy_signed_pod_box.as_ref();
     assert!(inputs.signed_pods.len() <= params.max_input_signed_pods);
     for i in 0..params.max_input_signed_pods {
-        let pod = inputs.signed_pods.get(i).unwrap_or(&none_sig_pod);
+        let pod = inputs.signed_pods.get(i).unwrap_or(&dummy_signed_pod);
         let sts = pod.pub_statements();
         assert!(sts.len() <= params.max_signed_pod_values);
         for j in 0..params.max_signed_pod_values {
@@ -813,12 +816,12 @@ pub mod tests {
             max_signed_pod_values: 2,
             max_public_statements: 2,
             num_public_statements_id: 4,
-            max_statement_args: 2,
+            max_statement_args: 3,
             max_operation_args: 3,
             max_custom_predicate_batches: 2,
             max_custom_predicate_verifications: 2,
             max_custom_predicate_arity: 2,
-            max_custom_predicate_wildcards: 2,
+            max_custom_predicate_wildcards: 3,
             max_custom_batch_size: 2,
             max_merkle_proofs_containers: 2,
             max_depth_mt_containers: 4,

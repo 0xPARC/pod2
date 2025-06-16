@@ -120,6 +120,15 @@ impl MockSignedPod {
             kvs: data.kvs,
         }))
     }
+    /// Generate a valid MockSignedPod with a public deterministic public key and no other
+    /// key-values than the default ones.  This is used for padding.
+    pub fn dummy() -> MockSignedPod {
+        MockSigner {
+            pk: "dummy".to_string(),
+        }
+        ._sign(&Params::default(), &HashMap::new())
+        .expect("valid")
+    }
 }
 
 impl Pod for MockSignedPod {

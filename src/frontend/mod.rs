@@ -10,7 +10,7 @@ use serialization::{SerializedMainPod, SerializedSignedPod};
 use crate::middleware::{
     self, check_st_tmpl, hash_op, hash_str, max_op, prod_op, sum_op, AnchoredKey, Key,
     MainPodInputs, NativeOperation, OperationAux, OperationType, Params, PodId, PodProver,
-    PodSigner, Statement, StatementArg, VDSet, Value, ValueRef, KEY_TYPE, SELF,
+    PodSigner, Statement, StatementArg, VDSet, Value, ValueRef, WildcardValue, KEY_TYPE, SELF,
 };
 
 mod custom;
@@ -1098,7 +1098,7 @@ pub mod tests {
 
     #[should_panic]
     #[test]
-    fn test_incorrect_pod() {
+    fn test_reject_duplicate_new_entry() {
         // try to insert the same key multiple times
         // right now this is not caught when you build the pod,
         // but it is caught on verify
@@ -1121,15 +1121,26 @@ pub mod tests {
         let mut prover = MockProver {};
         let pod = builder.prove(&mut prover, &params).unwrap();
         pod.pod.verify().unwrap();
+    }
 
+    #[should_panic]
+    #[test]
+    fn test_reject_unsound_statement() {
         // try to insert a statement that doesn't follow from the operation
         // right now the mock prover catches this when it calls compile()
+        let params = Params::default();
+        let vd_set = &*DEFAULT_VD_SET;
         let mut builder = MainPodBuilder::new(&params, &vd_set);
         let self_a = AnchoredKey::from((SELF, "a"));
         let self_b = AnchoredKey::from((SELF, "b"));
         let value_of_a = Statement::equal(self_a.clone(), Value::from(3));
         let value_of_b = Statement::equal(self_b.clone(), Value::from(27));
 
+        let op_new_entry = Operation(
+            OperationType::Native(NativeOperation::NewEntry),
+            vec![],
+            OperationAux::None,
+        );
         builder.insert(false, (value_of_a.clone(), op_new_entry.clone()));
         builder.insert(false, (value_of_b.clone(), op_new_entry));
         let st = Statement::equal(self_a, self_b);

@@ -28,9 +28,10 @@
 use std::{
     cmp::{Ord, Ordering},
     fmt,
+    fmt::Write,
 };
 
-use hex::{FromHex, FromHexError};
+use hex::{FromHex, FromHexError, ToHex};
 use plonky2::{
     field::types::{Field, PrimeField64},
     hash::poseidon::PoseidonHash,
@@ -142,6 +143,32 @@ pub struct Hash(
     #[schemars(with = "String", regex(pattern = r"^[0-9a-fA-F]{64}$"))]
     pub [F; HASH_SIZE],
 );
+
+impl ToHex for Hash {
+    fn encode_hex<T: std::iter::FromIterator<char>>(&self) -> T {
+        self.0
+            .iter()
+            .rev()
+            .fold(String::with_capacity(64), |mut s, limb| {
+                write!(s, "{:016x}", limb.0).unwrap();
+                s
+            })
+            .chars()
+            .collect()
+    }
+
+    fn encode_hex_upper<T: std::iter::FromIterator<char>>(&self) -> T {
+        self.0
+            .iter()
+            .rev()
+            .fold(String::with_capacity(64), |mut s, limb| {
+                write!(s, "{:016X}", limb.0).unwrap();
+                s
+            })
+            .chars()
+            .collect()
+    }
+}
 
 pub fn hash_value(input: &RawValue) -> Hash {
     hash_fields(&input.0)

@@ -22,16 +22,16 @@ pub const OPERATION_AUX_F_LEN: usize = 2;
 pub enum NativePredicate {
     None = 0,  // Always true
     False = 1, // Always false
-    Equal = 3,
-    NotEqual = 4,
-    LtEq = 5,
-    Lt = 6,
-    Contains = 7,
-    NotContains = 8,
-    SumOf = 9,
-    ProductOf = 10,
-    MaxOf = 11,
-    HashOf = 12,
+    Equal = 2,
+    NotEqual = 3,
+    LtEq = 4,
+    Lt = 5,
+    Contains = 6,
+    NotContains = 7,
+    SumOf = 8,
+    ProductOf = 9,
+    MaxOf = 10,
+    HashOf = 11,
 
     // Syntactic sugar predicates.  These predicates are not supported by the backend.  The
     // frontend compiler is responsible of translating these predicates into the predicates above.
@@ -380,18 +380,6 @@ impl From<ValueRef> for StatementArg {
         match value {
             ValueRef::Literal(v) => StatementArg::Literal(v),
             ValueRef::Key(v) => StatementArg::Key(v),
-        }
-    }
-}
-
-impl ValueRef {
-    pub(super) fn value_from_statement<'a>(&'a self, st: &'a Statement) -> Option<&'a Value> {
-        match self {
-            ValueRef::Literal(v) => Some(v),
-            _ => match st {
-                Statement::Equal(k, ValueRef::Literal(v)) if k == self => Some(v),
-                _ => None,
-            },
         }
     }
 }

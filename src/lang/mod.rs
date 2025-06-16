@@ -2,28 +2,37 @@ pub mod error;
 pub mod parser;
 pub mod processor;
 
+use std::sync::Arc;
+
 pub use error::LangError;
-pub use parser::{parse_podlog, Pairs, ParseError, Rule};
+pub use parser::{parse_podlang, Pairs, ParseError, Rule};
 pub use processor::process_pest_tree;
-use processor::ProcessedOutput;
+use processor::PodlangOutput;
 
-use crate::middleware::Params;
+use crate::middleware::{CustomPredicateBatch, Params};
 
-pub fn parse(input: &str, params: &Params) -> Result<ProcessedOutput, LangError> {
-    let pairs = parse_podlog(input)?;
-    processor::process_pest_tree(pairs, params).map_err(LangError::from)
+pub fn parse(
+    input: &str,
+    params: &Params,
+    available_batches: &[Arc<CustomPredicateBatch>],
+) -> Result<PodlangOutput, LangError> {
+    let pairs = parse_podlang(input)?;
+    processor::process_pest_tree(pairs, params, available_batches).map_err(LangError::from)
 }
 
 #[cfg(test)]
 mod tests {
-
+    use hex::ToHex;
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::middleware::{
-        CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key, KeyOrWildcard,
-        NativePredicate, Params, PodType, Predicate, SelfOrWildcard, StatementTmpl,
-        StatementTmplArg, Value, Wildcard, SELF_ID_HASH,
+    use crate::{
+        lang::error::ProcessorError,
+        middleware::{
+            CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key, KeyOrWildcard,
+            NativePredicate, Params, PodType, Predicate, SelfOrWildcard, StatementTmpl,
+            StatementTmplArg, Value, Wildcard, SELF_ID_HASH,
+        },
     };
 
     // Helper functions
@@ -56,8 +65,7 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let pairs = parse_podlog(input)?;
-        let processed = process_pest_tree(pairs, &params)?;
+        let processed = parse(input, &params, &[])?;
         let batch_result = processed.custom_batch;
         let request_result = processed.request_templates;
 
@@ -81,8 +89,11 @@ mod tests {
             2, // args_len (PodA, PodB)
             names(&["PodA", "PodB"]),
         )?;
-        let expected_batch =
-            CustomPredicateBatch::new(&params, "PodlogBatch".to_string(), vec![expected_predicate]);
+        let expected_batch = CustomPredicateBatch::new(
+            &params,
+            "PodlangBatch".to_string(),
+            vec![expected_predicate],
+        );
 
         assert_eq!(batch, expected_batch);
 
@@ -99,9 +110,7 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let pairs = parse_podlog(input)?;
-
-        let processed = process_pest_tree(pairs, &params)?;
+        let processed = parse(input, &params, &[])?;
         let batch_result = processed.custom_batch;
         let request_templates = processed.request_templates;
 
@@ -143,8 +152,7 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let pairs = parse_podlog(input)?;
-        let processed = process_pest_tree(pairs, &params)?;
+        let processed = parse(input, &params, &[])?;
         let batch_result = processed.custom_batch;
         let request_result = processed.request_templates;
 
@@ -177,8 +185,11 @@ mod tests {
             1, // args_len (A)
             names(&["A", "Temp"]),
         )?;
-        let expected_batch =
-            CustomPredicateBatch::new(&params, "PodlogBatch".to_string(), vec![expected_predicate]);
+        let expected_batch = CustomPredicateBatch::new(
+            &params,
+            "PodlangBatch".to_string(),
+            vec![expected_predicate],
+        );
 
         assert_eq!(batch, expected_batch);
 
@@ -198,8 +209,7 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let pairs = parse_podlog(input)?;
-        let processed = process_pest_tree(pairs, &params)?;
+        let processed = parse(input, &params, &[])?;
         let batch_result = processed.custom_batch;
         let request_templates = processed.request_templates;
 
@@ -224,8 +234,11 @@ mod tests {
             2, // args_len (X, Y)
             names(&["X", "Y"]),
         )?;
-        let expected_batch =
-            CustomPredicateBatch::new(&params, "PodlogBatch".to_string(), vec![expected_predicate]);
+        let expected_batch = CustomPredicateBatch::new(
+            &params,
+            "PodlangBatch".to_string(),
+            vec![expected_predicate],
+        );
 
         assert_eq!(batch, expected_batch);
 
@@ -260,8 +273,7 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let pairs = parse_podlog(input)?;
-        let processed = process_pest_tree(pairs, &params)?;
+        let processed = parse(input, &params, &[])?;
         let batch_result = processed.custom_batch;
         let request_templates = processed.request_templates;
 
@@ -313,8 +325,7 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let pairs = parse_podlog(input)?;
-        let processed = process_pest_tree(pairs, &params)?;
+        let processed = parse(input, &params, &[])?;
         let batch_result = processed.custom_batch;
         let request_templates = processed.request_templates;
 
@@ -374,7 +385,7 @@ mod tests {
         "#;
 
         // Parse the input string
-        let processed = super::parse(input, &Params::default())?;
+        let processed = super::parse(input, &Params::default(), &[])?;
         let parsed_templates = processed.request_templates;
 
         //  Define Expected Templates (Copied from prover/mod.rs)
@@ -512,7 +523,7 @@ mod tests {
             )
         "#;
 
-        let processed = super::parse(input, &params)?;
+        let processed = super::parse(input, &params, &[])?;
 
         assert!(
             processed.request_templates.is_empty(),
@@ -650,7 +661,7 @@ mod tests {
 
         let expected_batch = CustomPredicateBatch::new(
             &params,
-            "PodlogBatch".to_string(),
+            "PodlangBatch".to_string(),
             vec![
                 expected_friend_pred,
                 expected_base_pred,
@@ -665,5 +676,210 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn test_e2e_use_statement() -> Result<(), LangError> {
+        let params = Params::default();
+
+        // 1. Create a batch to be imported
+        let imported_pred_stmts = vec![StatementTmpl {
+            pred: Predicate::Native(NativePredicate::Equal),
+            args: vec![
+                sta_ak(("A", 0), k("foo")), // ?A["foo"]
+                sta_ak(("B", 1), k("bar")), // ?B["bar"]
+            ],
+        }];
+        let imported_predicate = CustomPredicate::and(
+            &params,
+            "imported_equal".to_string(),
+            imported_pred_stmts,
+            2,
+            names(&["A", "B"]),
+        )?;
+        let available_batch =
+            CustomPredicateBatch::new(&params, "MyBatch".to_string(), vec![imported_predicate]);
+        let available_batches = vec![available_batch.clone()];
+
+        // 2. Create the input string that uses the batch
+        let batch_id_str = available_batch.id().encode_hex::<String>();
+        let input = format!(
+            r#"
+            use imported_pred from 0x{}
+
+            REQUEST(
+                imported_pred(?Pod1, ?Pod2)
+            )
+        "#,
+            batch_id_str
+        );
+
+        // 3. Parse the input
+        let processed = parse(&input, &params, &available_batches)?;
+        let request_templates = processed.request_templates;
+
+        assert!(
+            processed.custom_batch.predicates.is_empty(),
+            "No custom predicates should be defined in the main input"
+        );
+        assert_eq!(request_templates.len(), 1, "Expected one request template");
+
+        // 4. Check the resulting request template
+        let expected_request_templates = vec![StatementTmpl {
+            pred: Predicate::Custom(CustomPredicateRef::new(available_batch, 0)),
+            args: vec![
+                StatementTmplArg::WildcardLiteral(wc("Pod1", 0)),
+                StatementTmplArg::WildcardLiteral(wc("Pod2", 1)),
+            ],
+        }];
+
+        assert_eq!(request_templates, expected_request_templates);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_e2e_use_statement_complex() -> Result<(), LangError> {
+        let params = Params::default();
+
+        // 1. Create a batch with multiple predicates
+        let pred1 = CustomPredicate::and(&params, "p1".into(), vec![], 1, names(&["A"]))?;
+        let pred2 = CustomPredicate::and(&params, "p2".into(), vec![], 2, names(&["B", "C"]))?;
+        let pred3 = CustomPredicate::and(&params, "p3".into(), vec![], 1, names(&["D"]))?;
+
+        let available_batch =
+            CustomPredicateBatch::new(&params, "MyBatch".to_string(), vec![pred1, pred2, pred3]);
+        let available_batches = vec![available_batch.clone()];
+
+        // 2. Create the input string that uses the batch with skips
+        let batch_id_str = available_batch.id().encode_hex::<String>();
+
+        let input = format!(
+            r#"
+            use pred_one, _, pred_three from 0x{}
+
+            REQUEST(
+                pred_one(?Pod1)
+                pred_three(?Pod2)
+            )
+        "#,
+            batch_id_str
+        );
+
+        // 3. Parse the input
+        let processed = parse(&input, &params, &available_batches)?;
+        let request_templates = processed.request_templates;
+
+        assert_eq!(request_templates.len(), 2, "Expected two request templates");
+
+        // 4. Check the resulting request templates
+        let expected_templates = vec![
+            StatementTmpl {
+                pred: Predicate::Custom(CustomPredicateRef::new(available_batch.clone(), 0)),
+                args: vec![StatementTmplArg::WildcardLiteral(wc("Pod1", 0))],
+            },
+            StatementTmpl {
+                pred: Predicate::Custom(CustomPredicateRef::new(available_batch, 2)),
+                args: vec![StatementTmplArg::WildcardLiteral(wc("Pod2", 1))],
+            },
+        ];
+
+        assert_eq!(request_templates, expected_templates);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_e2e_custom_predicate_uses_import() -> Result<(), LangError> {
+        let params = Params::default();
+
+        // 1. Create a batch with a predicate to be imported
+        let imported_pred_stmts = vec![StatementTmpl {
+            pred: Predicate::Native(NativePredicate::Equal),
+            args: vec![sta_ak(("A", 0), k("foo")), sta_ak(("B", 1), k("bar"))],
+        }];
+        let imported_predicate = CustomPredicate::and(
+            &params,
+            "imported_equal".to_string(),
+            imported_pred_stmts,
+            2,
+            names(&["A", "B"]),
+        )?;
+        let available_batch =
+            CustomPredicateBatch::new(&params, "MyBatch".to_string(), vec![imported_predicate]);
+        let available_batches = vec![available_batch.clone()];
+
+        // 2. Create the input string that defines a new predicate using the imported one
+        let batch_id_str = available_batch.id().encode_hex::<String>();
+
+        let input = format!(
+            r#"
+            use imported_eq from 0x{}
+
+            wrapper_pred(X, Y) = AND(
+                imported_eq(?X, ?Y)
+            )
+        "#,
+            batch_id_str
+        );
+
+        // 3. Parse the input
+        let processed = parse(&input, &params, &available_batches)?;
+
+        assert!(
+            processed.request_templates.is_empty(),
+            "No request should be defined"
+        );
+        assert_eq!(
+            processed.custom_batch.predicates.len(),
+            1,
+            "Expected one custom predicate to be defined"
+        );
+
+        // 4. Check the resulting predicate definition
+        let defined_pred = &processed.custom_batch.predicates[0];
+        assert_eq!(defined_pred.name, "wrapper_pred");
+        assert_eq!(defined_pred.statements.len(), 1);
+
+        let expected_statement = StatementTmpl {
+            pred: Predicate::Custom(CustomPredicateRef::new(available_batch.clone(), 0)),
+            args: vec![
+                StatementTmplArg::WildcardLiteral(wc("X", 0)),
+                StatementTmplArg::WildcardLiteral(wc("Y", 1)),
+            ],
+        };
+
+        assert_eq!(defined_pred.statements[0], expected_statement);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_e2e_use_unknown_batch() {
+        let params = Params::default();
+        let available_batches = &[];
+
+        let unknown_batch_id = format!("0x{}", "a".repeat(64));
+
+        let input = format!(
+            r#"
+            use some_pred from {}
+            "#,
+            unknown_batch_id
+        );
+
+        let result = parse(&input, &params, available_batches);
+
+        assert!(result.is_err());
+
+        match result.err().unwrap() {
+            LangError::Processor(e) => match *e {
+                ProcessorError::BatchNotFound { id, .. } => {
+                    assert_eq!(id, unknown_batch_id);
+                }
+                _ => panic!("Expected BatchNotFound error, but got {:?}", e),
+            },
+            e => panic!("Expected LangError::Processor, but got {:?}", e),
+        }
     }
 }

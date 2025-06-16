@@ -608,7 +608,6 @@ impl ToFields for PodId {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, FromRepr, Serialize, Deserialize, JsonSchema)]
 pub enum PodType {
-    None = 0,
     MockSigned = 1,
     MockMain = 2,
     MockEmpty = 3,
@@ -620,7 +619,6 @@ pub enum PodType {
 impl fmt::Display for PodType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PodType::None => write!(f, "None"),
             PodType::MockSigned => write!(f, "MockSigned"),
             PodType::MockMain => write!(f, "MockMain"),
             PodType::MockEmpty => write!(f, "MockEmpty"),
@@ -682,8 +680,7 @@ impl Default for Params {
             max_signed_pod_values: 8,
             max_public_statements: 10,
             num_public_statements_id: 16,
-            // TODO: Reduce to 5 or less after https://github.com/0xPARC/pod2/issues/229
-            max_statement_args: 6,
+            max_statement_args: 5,
             max_operation_args: 5,
             max_custom_predicate_batches: 2,
             max_custom_predicate_verifications: 5,
@@ -844,34 +841,6 @@ pub trait PodSigner {
         params: &Params,
         kvs: &HashMap<Key, Value>,
     ) -> Result<Box<dyn Pod>, Box<DynError>>;
-}
-
-// TODO: Delete once we have a fully working EmptyPod and a dumb SignedPod
-// https://github.com/0xPARC/pod2/issues/246
-/// This is a filler type that fulfills the Pod trait and always verifies.  It's empty.  This
-/// can be used to simulate padding in a circuit.
-#[derive(Debug, Clone)]
-pub struct NonePod {}
-
-impl Pod for NonePod {
-    fn params(&self) -> &Params {
-        panic!("NonePod doesn't have params");
-    }
-    fn verify(&self) -> Result<(), Box<DynError>> {
-        Ok(())
-    }
-    fn id(&self) -> PodId {
-        PodId(EMPTY_HASH)
-    }
-    fn pod_type(&self) -> (usize, &'static str) {
-        (PodType::None as usize, "None")
-    }
-    fn pub_self_statements(&self) -> Vec<Statement> {
-        Vec::new()
-    }
-    fn serialize_data(&self) -> serde_json::Value {
-        serde_json::Value::Null
-    }
 }
 
 #[derive(Debug)]
