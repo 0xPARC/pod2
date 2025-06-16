@@ -1619,30 +1619,9 @@ mod tests {
         },
     };
 
-    // prev_ops only matter if the operation is NewEntry.  So for other tests,
-    // we can fill it with arbitrary operations.  In our NewEntry test, the previous
-    // operations are also NewEntry.
-    fn operation_verify_fill_pvs_ops(
-        st: mainpod::Statement,
-        op: mainpod::Operation,
-        prev_statements: Vec<mainpod::Statement>,
-        merkle_proofs: Vec<MerkleClaimAndProof>,
-    ) -> Result<()> {
-        let prev_ops = vec![
-            mainpod::Operation(
-                OperationType::Native(NativeOperation::NewEntry),
-                vec![],
-                OperationAux::None
-            );
-            prev_statements.len()
-        ];
-        operation_verify(st, op, prev_ops, prev_statements, merkle_proofs)
-    }
-
     fn operation_verify(
         st: mainpod::Statement,
         op: mainpod::Operation,
-        prev_ops: Vec<mainpod::Operation>,
         prev_statements: Vec<mainpod::Statement>,
         merkle_proofs: Vec<MerkleClaimAndProof>,
     ) -> Result<()> {
@@ -1662,9 +1641,6 @@ mod tests {
         let op_target = builder.add_virtual_operation(&params);
         let prev_statements_target: Vec<_> = (0..prev_statements.len())
             .map(|_| builder.add_virtual_statement(&params))
-            .collect();
-        let prev_ops_target: Vec<_> = (0..prev_statements.len())
-            .map(|_| builder.add_virtual_operation(&params))
             .collect();
         let merkle_proofs_target: Vec<_> = merkle_proofs
             .iter()
@@ -1693,9 +1669,6 @@ mod tests {
         let mut pw = PartialWitness::<F>::new();
         st_target.set_targets(&mut pw, &params, &st)?;
         op_target.set_targets(&mut pw, &params, &op)?;
-        for (prev_op_target, prev_op) in prev_ops_target.iter().zip(prev_ops.iter()) {
-            prev_op_target.set_targets(&mut pw, &params, prev_op)?;
-        }
         for (prev_st_target, prev_st) in prev_statements_target.iter().zip(prev_statements.iter()) {
             prev_st_target.set_targets(&mut pw, &params, prev_st)?;
         }
@@ -1850,7 +1823,7 @@ mod tests {
         .into_iter()
         .for_each(|(op, st)| {
             let check = std::panic::catch_unwind(|| {
-                operation_verify_fill_pvs_ops(st, op, prev_statements.to_vec(), vec![])
+                operation_verify(st, op, prev_statements.to_vec(), vec![])
             });
             match check {
                 Err(e) => {
@@ -1915,9 +1888,7 @@ mod tests {
         ]
         .into_iter()
         .for_each(|(op, st)| {
-            assert!(
-                operation_verify_fill_pvs_ops(st, op, prev_statements.to_vec(), vec![]).is_err()
-            )
+            assert!(operation_verify(st, op, prev_statements.to_vec(), vec![]).is_err())
         });
     }
 
@@ -1930,7 +1901,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![Statement::None.into()];
-        operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])
+        operation_verify(st, op, prev_statements, vec![])
     }
 
     #[test]
@@ -1948,7 +1919,7 @@ mod tests {
             vec![],
             OperationAux::None,
         );
-        operation_verify_fill_pvs_ops(st1, op, prev_statements, vec![])
+        operation_verify(st1, op, prev_statements, vec![])
     }
 
     #[test]
@@ -1960,7 +1931,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![Statement::None.into()];
-        operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])
+        operation_verify(st, op, prev_statements, vec![])
     }
 
     #[test]
@@ -1983,7 +1954,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2];
-        operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])
+        operation_verify(st, op, prev_statements, vec![])
     }
 
     #[test]
@@ -2006,7 +1977,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2];
-        operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])
+        operation_verify(st, op, prev_statements, vec![])
     }
 
     #[test]
@@ -2029,7 +2000,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2.clone()];
-        operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])?;
+        operation_verify(st, op, prev_statements, vec![])?;
 
         // Also check negative < negative
         let st3: mainpod::Statement = Statement::equal(
@@ -2053,7 +2024,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st3.clone(), st4];
-        operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])?;
+        operation_verify(st, op, prev_statements, vec![])?;
 
         // Also check negative < positive
         let st: mainpod::Statement = Statement::lt(
@@ -2067,7 +2038,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st3, st2];
-        operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])
+        operation_verify(st, op, prev_statements, vec![])
     }
 
     #[test]
@@ -2090,7 +2061,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2.clone()];
-        operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])?;
+        operation_verify(st, op, prev_statements, vec![])?;
 
         // Also check negative <= negative
         let st3: mainpod::Statement = Statement::equal(
@@ -2114,7 +2085,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st3.clone(), st4];
-        operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])?;
+        operation_verify(st, op, prev_statements, vec![])?;
 
         // Also check negative <= positive
         let st: mainpod::Statement = Statement::lt_eq(
@@ -2128,7 +2099,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st3, st2];
-        operation_verify_fill_pvs_ops(st, op, prev_statements.clone(), vec![])?;
+        operation_verify(st, op, prev_statements.clone(), vec![])?;
 
         // Also check equality, both positive and negative.
         let st: mainpod::Statement = Statement::lt_eq(
@@ -2141,7 +2112,7 @@ mod tests {
             vec![OperationArg::Index(0), OperationArg::Index(0)],
             OperationAux::None,
         );
-        operation_verify_fill_pvs_ops(st, op, prev_statements.clone(), vec![])?;
+        operation_verify(st, op, prev_statements.clone(), vec![])?;
         let st: mainpod::Statement = Statement::lt_eq(
             AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
             AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
@@ -2152,7 +2123,7 @@ mod tests {
             vec![OperationArg::Index(1), OperationArg::Index(1)],
             OperationAux::None,
         );
-        operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])
+        operation_verify(st, op, prev_statements, vec![])
     }
 
     #[test]
@@ -2201,7 +2172,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2, st3];
-        operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])
+        operation_verify(st, op, prev_statements, vec![])
     }
 
     #[test]
@@ -2247,7 +2218,7 @@ mod tests {
                     OperationAux::None,
                 );
                 let prev_statements = vec![st1, st2, st3];
-                operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])
+                operation_verify(st, op, prev_statements, vec![])
             })
     }
 
@@ -2294,7 +2265,7 @@ mod tests {
                     OperationAux::None,
                 );
                 let prev_statements = vec![st1, st2, st3];
-                operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])
+                operation_verify(st, op, prev_statements, vec![])
             })
     }
 
@@ -2336,7 +2307,7 @@ mod tests {
                 OperationAux::None,
             );
             let prev_statements = vec![st1, st2, st3];
-            operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])
+            operation_verify(st, op, prev_statements, vec![])
         })
     }
 
@@ -2381,7 +2352,7 @@ mod tests {
                 let prev_statements = [st1, st2, st3];
 
                 let check = std::panic::catch_unwind(|| {
-                    operation_verify_fill_pvs_ops(st, op, prev_statements.to_vec(), vec![])
+                    operation_verify(st, op, prev_statements.to_vec(), vec![])
                 });
                 match check {
                     Err(e) => {
@@ -2414,7 +2385,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1];
-        operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])
+        operation_verify(st, op, prev_statements, vec![])
     }
 
     #[test]
@@ -2440,7 +2411,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2];
-        operation_verify_fill_pvs_ops(st, op, prev_statements, vec![])
+        operation_verify(st, op, prev_statements, vec![])
     }
 
     #[test]
@@ -2480,7 +2451,7 @@ mod tests {
             no_key_pf,
         )];
         let prev_statements = vec![root_st, key_st];
-        operation_verify_fill_pvs_ops(st, op, prev_statements, merkle_proofs)
+        operation_verify(st, op, prev_statements, merkle_proofs)
     }
 
     #[test]
@@ -2527,7 +2498,7 @@ mod tests {
             key_pf,
         )];
         let prev_statements = vec![root_st, key_st, value_st];
-        operation_verify_fill_pvs_ops(st, op, prev_statements, merkle_proofs)
+        operation_verify(st, op, prev_statements, merkle_proofs)
     }
 
     fn helper_statement_arg_from_template(
