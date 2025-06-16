@@ -41,7 +41,7 @@ pub fn literal(v: impl Into<Value>) -> BuilderArg {
     BuilderArg::Literal(v.into())
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct StatementTmplBuilder {
     pub(crate) predicate: Predicate,
     pub(crate) args: Vec<BuilderArg>,

@@ -58,7 +58,7 @@ pub const EMPTY_VALUE: RawValue = RawValue([F::ZERO, F::ZERO, F::ZERO, F::ZERO])
 pub const SELF_ID_HASH: Hash = Hash([F::ONE, F::ZERO, F::ZERO, F::ZERO]);
 pub const EMPTY_HASH: Hash = Hash([F::ZERO, F::ZERO, F::ZERO, F::ZERO]);
 
-#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Default, Hash, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RawValue(
     #[serde(
         serialize_with = "serialize_value_tuple",
@@ -125,17 +125,13 @@ impl fmt::Display for RawValue {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct Hash(
-    #[serde(
-        serialize_with = "serialize_hash_tuple",
-        deserialize_with = "deserialize_hash_tuple"
-    )]
-    #[schemars(with = "String", regex(pattern = r"^[0-9a-fA-F]{64}$"))]
-    pub [F; HASH_SIZE],
-);
+impl fmt::Debug for RawValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "RawValue({})", self.encode_hex::<String>())
+    }
+}
 
-impl ToHex for Hash {
+impl ToHex for RawValue {
     fn encode_hex<T: std::iter::FromIterator<char>>(&self) -> T {
         self.0
             .iter()
@@ -160,6 +156,16 @@ impl ToHex for Hash {
             .collect()
     }
 }
+
+#[derive(Clone, Copy, Default, Hash, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Hash(
+    #[serde(
+        serialize_with = "serialize_hash_tuple",
+        deserialize_with = "deserialize_hash_tuple"
+    )]
+    #[schemars(with = "String", regex(pattern = r"^[0-9a-fA-F]{64}$"))]
+    pub [F; HASH_SIZE],
+);
 
 pub fn hash_value(input: &RawValue) -> Hash {
     hash_fields(&input.0)
@@ -213,6 +219,12 @@ impl fmt::Display for Hash {
     }
 }
 
+impl fmt::Debug for Hash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Hash({})", self.encode_hex::<String>())
+    }
+}
+
 impl FromHex for Hash {
     type Error = FromHexError;
 
@@ -234,6 +246,32 @@ impl FromHex for Hash {
             inner[HASH_SIZE - 1 - i] = F::from_canonical_u64(u64_val);
         }
         Ok(Self(inner))
+    }
+}
+
+impl ToHex for Hash {
+    fn encode_hex<T: std::iter::FromIterator<char>>(&self) -> T {
+        self.0
+            .iter()
+            .rev()
+            .fold(String::with_capacity(64), |mut s, limb| {
+                write!(s, "{:016x}", limb.0).unwrap();
+                s
+            })
+            .chars()
+            .collect()
+    }
+
+    fn encode_hex_upper<T: std::iter::FromIterator<char>>(&self) -> T {
+        self.0
+            .iter()
+            .rev()
+            .fold(String::with_capacity(64), |mut s, limb| {
+                write!(s, "{:016X}", limb.0).unwrap();
+                s
+            })
+            .chars()
+            .collect()
     }
 }
 

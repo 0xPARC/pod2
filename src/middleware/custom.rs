@@ -9,7 +9,7 @@ use crate::middleware::{
     EMPTY_HASH, F, VALUE_SIZE,
 };
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Hash, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Wildcard {
     pub name: String,
     pub index: usize,
@@ -37,7 +37,7 @@ impl ToFields for Wildcard {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", content = "value")]
 pub enum StatementTmplArg {
     None,
@@ -122,7 +122,7 @@ impl fmt::Display for StatementTmplArg {
 }
 
 /// Statement Template for a Custom Predicate
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct StatementTmpl {
     pub pred: Predicate,
     pub args: Vec<StatementTmplArg>,
@@ -179,7 +179,7 @@ impl ToFields for StatementTmpl {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 /// NOTE: fields are not public (outside of crate) to enforce the struct instantiation through
 /// the `::and/or` methods, which performs checks on the values.
@@ -341,7 +341,7 @@ impl fmt::Display for CustomPredicate {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CustomPredicateBatch {
     id: Hash,
     pub name: String,
@@ -401,10 +401,23 @@ impl CustomPredicateBatch {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CustomPredicateRef {
     pub batch: Arc<CustomPredicateBatch>,
     pub index: usize,
+}
+
+impl PartialEq for CustomPredicateRef {
+    fn eq(&self, other: &Self) -> bool {
+        self.index == other.index && self.batch.id() == other.batch.id()
+    }
+}
+
+impl std::hash::Hash for CustomPredicateRef {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.batch.id().hash(state);
+        self.index.hash(state);
+    }
 }
 
 impl CustomPredicateRef {

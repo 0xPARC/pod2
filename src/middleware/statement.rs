@@ -50,7 +50,7 @@ impl ToFields for NativePredicate {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", content = "value")]
 pub enum Predicate {
     Native(NativePredicate),
@@ -129,7 +129,7 @@ impl fmt::Display for Predicate {
 }
 
 /// Type encapsulating statements with their associated arguments.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "predicate", content = "args")]
 pub enum Statement {
     None,
@@ -368,7 +368,7 @@ impl ToFields for StatementArg {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum ValueRef {
     Literal(Value),
     Key(AnchoredKey),
