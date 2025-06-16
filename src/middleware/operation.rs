@@ -225,7 +225,7 @@ impl Operation {
             Self::ProductOf(s1, s2, s3) => vec![s1, s2, s3],
             Self::MaxOf(s1, s2, s3) => vec![s1, s2, s3],
             Self::HashOf(s1, s2, s3) => vec![s1, s2, s3],
-            Self::Custom(_, args) => args.into_iter().map_into().collect_vec(),
+            Self::Custom(_, args) => args,
         }
     }
 
