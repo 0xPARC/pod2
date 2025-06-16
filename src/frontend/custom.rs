@@ -185,7 +185,7 @@ impl CustomPredicateBatchBuilder {
                             Key::from(key_str),
                         ),
                         BuilderArg::WildcardLiteral(v) => {
-                            StatementTmplArg::WildcardLiteral(resolve_wildcard(args, priv_args, v))
+                            StatementTmplArg::Wildcard(resolve_wildcard(args, priv_args, v))
                         }
                     })
                     .collect();

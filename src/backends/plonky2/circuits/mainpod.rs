@@ -2565,7 +2565,7 @@ mod tests {
         helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
 
         // case: WildcardLiteral(wildcard)
-        let st_tmpl_arg = StatementTmplArg::WildcardLiteral(Wildcard::new("a".to_string(), 1));
+        let st_tmpl_arg = StatementTmplArg::Wildcard(Wildcard::new("a".to_string(), 1));
         let args = vec![Value::from(1), Value::from("key"), Value::from(3)];
         let expected_st_arg = StatementArg::Literal(Value::from("key"));
         helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;

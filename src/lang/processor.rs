@@ -842,7 +842,7 @@ fn resolve_request_statement_builder(
             }
             BuilderArg::WildcardLiteral(wc_name) => {
                 let wc = resolve_wildcard(ordered_request_wildcard_names, &wc_name)?;
-                StatementTmplArg::WildcardLiteral(wc)
+                StatementTmplArg::Wildcard(wc)
             }
         };
         middleware_args.push(mw_arg);

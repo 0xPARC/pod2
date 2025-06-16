@@ -394,7 +394,7 @@ pub fn check_st_tmpl(
             let pod_id_ok = check_or_set(Value::from(*pod_id), pod_id_wc, wildcard_map);
             pod_id_ok && (key_tmpl == key)
         }
-        (StatementTmplArg::WildcardLiteral(wc), StatementArg::Literal(v)) => {
+        (StatementTmplArg::Wildcard(wc), StatementArg::Literal(v)) => {
             check_or_set(v.clone(), wc, wildcard_map)
         }
         _ => {

@@ -45,7 +45,7 @@ mod tests {
     }
 
     fn sta_wc_lit(name: &str, index: usize) -> StatementTmplArg {
-        StatementTmplArg::WildcardLiteral(wc(name, index))
+        StatementTmplArg::Wildcard(wc(name, index))
     }
 
     fn sta_lit(value: impl Into<Value>) -> StatementTmplArg {
@@ -247,8 +247,8 @@ mod tests {
         let expected_request_templates = vec![StatementTmpl {
             pred: Predicate::Custom(CustomPredicateRef::new(expected_batch, 0)),
             args: vec![
-                StatementTmplArg::WildcardLiteral(wc("Pod1", 0)),
-                StatementTmplArg::WildcardLiteral(wc("Pod2", 1)),
+                StatementTmplArg::Wildcard(wc("Pod1", 0)),
+                StatementTmplArg::Wildcard(wc("Pod2", 1)),
             ],
         }];
 
@@ -291,7 +291,7 @@ mod tests {
             StatementTmpl {
                 pred: Predicate::Custom(CustomPredicateRef::new(batch_result, 0)), // Refers to some_pred
                 args: vec![
-                    StatementTmplArg::WildcardLiteral(wc("Var1", 0)), // ?Var1
+                    StatementTmplArg::Wildcard(wc("Var1", 0)),        // ?Var1
                     StatementTmplArg::Literal(Value::from(12345i64)), // 12345
                     StatementTmplArg::Literal(Value::from("hello_string")), // "hello_string"
                 ],
@@ -728,8 +728,8 @@ mod tests {
         let expected_request_templates = vec![StatementTmpl {
             pred: Predicate::Custom(CustomPredicateRef::new(available_batch, 0)),
             args: vec![
-                StatementTmplArg::WildcardLiteral(wc("Pod1", 0)),
-                StatementTmplArg::WildcardLiteral(wc("Pod2", 1)),
+                StatementTmplArg::Wildcard(wc("Pod1", 0)),
+                StatementTmplArg::Wildcard(wc("Pod2", 1)),
             ],
         }];
 
@@ -776,11 +776,11 @@ mod tests {
         let expected_templates = vec![
             StatementTmpl {
                 pred: Predicate::Custom(CustomPredicateRef::new(available_batch.clone(), 0)),
-                args: vec![StatementTmplArg::WildcardLiteral(wc("Pod1", 0))],
+                args: vec![StatementTmplArg::Wildcard(wc("Pod1", 0))],
             },
             StatementTmpl {
                 pred: Predicate::Custom(CustomPredicateRef::new(available_batch, 2)),
-                args: vec![StatementTmplArg::WildcardLiteral(wc("Pod2", 1))],
+                args: vec![StatementTmplArg::Wildcard(wc("Pod2", 1))],
             },
         ];
 
@@ -844,8 +844,8 @@ mod tests {
         let expected_statement = StatementTmpl {
             pred: Predicate::Custom(CustomPredicateRef::new(available_batch.clone(), 0)),
             args: vec![
-                StatementTmplArg::WildcardLiteral(wc("X", 0)),
-                StatementTmplArg::WildcardLiteral(wc("Y", 1)),
+                StatementTmplArg::Wildcard(wc("X", 0)),
+                StatementTmplArg::Wildcard(wc("Y", 1)),
             ],
         };
 

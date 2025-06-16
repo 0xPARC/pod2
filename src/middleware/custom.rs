@@ -42,11 +42,9 @@ impl ToFields for Wildcard {
 pub enum StatementTmplArg {
     None,
     Literal(Value),
-    // AnchoredKey
+    // AnchoredKey where the origin is a wildcard
     AnchoredKey(Wildcard, Key),
-    // TODO: This naming is a bit confusing: a WildcardLiteral that contains a Wildcard...
-    // Could we merge WildcardValue and Value and allow wildcard value apart from pod_id and key?
-    WildcardLiteral(Wildcard),
+    Wildcard(Wildcard),
 }
 
 #[derive(Clone, Copy)]
@@ -95,7 +93,7 @@ impl ToFields for StatementTmplArg {
                     .collect();
                 fields
             }
-            StatementTmplArg::WildcardLiteral(wc) => {
+            StatementTmplArg::Wildcard(wc) => {
                 let fields: Vec<F> = iter::once(F::from(StatementTmplArgPrefix::WildcardLiteral))
                     .chain(wc.to_fields(params))
                     .chain(iter::repeat(F::ZERO))
@@ -118,7 +116,7 @@ impl fmt::Display for StatementTmplArg {
                 key.fmt(f)?;
                 write!(f, "]")
             }
-            Self::WildcardLiteral(v) => v.fmt(f),
+            Self::Wildcard(v) => v.fmt(f),
         }
     }
 }
@@ -530,14 +528,14 @@ mod tests {
                     P::Native(NP::Equal),
                     vec![
                         STA::AnchoredKey(wc(2), Key::from("_signer")),
-                        STA::WildcardLiteral(wc(0)),
+                        STA::Wildcard(wc(0)),
                     ],
                 ),
                 st(
                     P::Native(NP::Equal),
                     vec![
                         STA::AnchoredKey(wc(2), Key::from("attestation")),
-                        STA::WildcardLiteral(wc(1)),
+                        STA::Wildcard(wc(1)),
                     ],
                 ),
             ],
@@ -555,11 +553,11 @@ mod tests {
             vec![
                 st(
                     P::Native(NP::Equal),
-                    vec![STA::WildcardLiteral(wc(0)), STA::WildcardLiteral(wc(1))],
+                    vec![STA::Wildcard(wc(0)), STA::Wildcard(wc(1))],
                 ),
                 st(
                     P::Native(NP::Equal),
-                    vec![STA::WildcardLiteral(wc(2)), STA::Literal(0.into())],
+                    vec![STA::Wildcard(wc(2)), STA::Literal(0.into())],
                 ),
             ],
             3,
@@ -574,22 +572,22 @@ mod tests {
                 st(
                     P::BatchSelf(2),
                     vec![
-                        STA::WildcardLiteral(wc(0)),
-                        STA::WildcardLiteral(wc(4)),
-                        STA::WildcardLiteral(wc(3)),
+                        STA::Wildcard(wc(0)),
+                        STA::Wildcard(wc(4)),
+                        STA::Wildcard(wc(3)),
                     ],
                 ),
                 st(
                     P::Native(NP::SumOf),
                     vec![
-                        STA::WildcardLiteral(wc(2)),
-                        STA::WildcardLiteral(wc(3)),
+                        STA::Wildcard(wc(2)),
+                        STA::Wildcard(wc(3)),
                         STA::Literal(Value::from(1)),
                     ],
                 ),
                 st(
                     P::Custom(CustomPredicateRef::new(eth_friend_batch.clone(), 0)),
-                    vec![STA::WildcardLiteral(wc(4)), STA::WildcardLiteral(wc(1))],
+                    vec![STA::Wildcard(wc(4)), STA::Wildcard(wc(1))],
                 ),
             ],
             3,
@@ -604,17 +602,17 @@ mod tests {
                 st(
                     P::BatchSelf(0),
                     vec![
-                        STA::WildcardLiteral(wc(0)),
-                        STA::WildcardLiteral(wc(1)),
-                        STA::WildcardLiteral(wc(2)),
+                        STA::Wildcard(wc(0)),
+                        STA::Wildcard(wc(1)),
+                        STA::Wildcard(wc(2)),
                     ],
                 ),
                 st(
                     P::BatchSelf(1),
                     vec![
-                        STA::WildcardLiteral(wc(0)),
-                        STA::WildcardLiteral(wc(1)),
-                        STA::WildcardLiteral(wc(2)),
+                        STA::Wildcard(wc(0)),
+                        STA::Wildcard(wc(1)),
+                        STA::Wildcard(wc(2)),
                     ],
                 ),
             ],
