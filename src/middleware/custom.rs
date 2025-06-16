@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::middleware::{
     hash_fields, Error, Hash, Key, NativePredicate, Params, Predicate, Result, ToFields, Value,
-    EMPTY_HASH, F, HASH_SIZE, VALUE_SIZE,
+    EMPTY_HASH, F, VALUE_SIZE,
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -34,65 +34,6 @@ impl fmt::Display for Wildcard {
 impl ToFields for Wildcard {
     fn to_fields(&self, _params: &Params) -> Vec<F> {
         vec![F::from_canonical_u64(self.index as u64 + 1)]
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type", content = "value")]
-pub enum KeyOrWildcard {
-    Key(Key),
-    Wildcard(Wildcard),
-}
-
-impl fmt::Display for KeyOrWildcard {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Self::Key(k) => k.fmt(f),
-            Self::Wildcard(wc) => wc.fmt(f),
-        }
-    }
-}
-
-impl ToFields for KeyOrWildcard {
-    // Encoding:
-    // - Key(k) => [[k]]
-    // - Wildcard(index) => [[index + 1], 0, 0, 0]
-    fn to_fields(&self, params: &Params) -> Vec<F> {
-        match self {
-            KeyOrWildcard::Key(k) => k.hash().to_fields(params),
-            KeyOrWildcard::Wildcard(wc) => iter::once(F::from_canonical_u64(wc.index as u64 + 1))
-                .chain(iter::repeat(F::ZERO))
-                .take(HASH_SIZE)
-                .collect(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type", content = "value")]
-pub enum SelfOrWildcard {
-    SELF,
-    Wildcard(Wildcard),
-}
-
-impl fmt::Display for SelfOrWildcard {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Self::SELF => write!(f, "SELF"),
-            Self::Wildcard(wc) => wc.fmt(f),
-        }
-    }
-}
-
-impl ToFields for SelfOrWildcard {
-    // Encoding:
-    // - Self => [0]
-    // - Wildcard(index) => [index+1]
-    fn to_fields(&self, _params: &Params) -> Vec<F> {
-        match self {
-            SelfOrWildcard::SELF => vec![F::ZERO],
-            SelfOrWildcard::Wildcard(wc) => vec![F::from_canonical_u64(wc.index as u64 + 1)],
-        }
     }
 }
 
@@ -482,27 +423,17 @@ impl CustomPredicateRef {
 
 #[cfg(test)]
 mod tests {
-    use std::array;
-
-    use plonky2::field::goldilocks_field::GoldilocksField;
-
     use super::*;
     use crate::middleware::{
-        AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash, Key,
-        KeyOrWildcard, NativePredicate, Operation, Params, PodId, PodType, Predicate, Statement,
-        StatementTmpl, StatementTmplArg, SELF,
+        AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key,
+        NativePredicate, Operation, Params, PodType, Predicate, Statement, StatementTmpl,
+        StatementTmplArg, SELF,
     };
 
     fn st(p: Predicate, args: Vec<StatementTmplArg>) -> StatementTmpl {
         StatementTmpl { pred: p, args }
     }
 
-    fn kow_wc(i: usize) -> KOW {
-        KOW::Wildcard(wc(i))
-    }
-    fn sow_wc(i: usize) -> SOW {
-        SOW::Wildcard(wc(i))
-    }
     fn key(name: &str) -> Key {
         Key::from(name)
     }
@@ -517,8 +448,6 @@ mod tests {
     }
 
     type STA = StatementTmplArg;
-    type KOW = KeyOrWildcard;
-    type SOW = SelfOrWildcard;
     type P = Predicate;
     type NP = NativePredicate;
 

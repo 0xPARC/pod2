@@ -29,9 +29,9 @@ mod tests {
     use crate::{
         lang::error::ProcessorError,
         middleware::{
-            CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key, KeyOrWildcard,
-            NativePredicate, Params, PodType, Predicate, SelfOrWildcard, StatementTmpl,
-            StatementTmplArg, Value, Wildcard, SELF_ID_HASH,
+            CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key, NativePredicate,
+            Params, PodType, Predicate, StatementTmpl, StatementTmplArg, Value, Wildcard,
+            SELF_ID_HASH,
         },
     };
 

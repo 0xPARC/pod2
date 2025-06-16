@@ -1338,7 +1338,7 @@ impl MainPodVerifyGadget {
             &builder.constants(
                 &Statement::equal(
                     ValueRef::Key(AnchoredKey::from((SELF, KEY_TYPE))),
-                    ValueRef::Literal(Value::from(PodType::MockMain)),
+                    ValueRef::Literal(Value::from(PodType::Main)),
                 )
                 .to_fields(params),
             ),
@@ -1612,10 +1612,10 @@ mod tests {
             mainpod::{calculate_id, OperationArg, OperationAux},
             primitives::merkletree::{MerkleClaimAndProof, MerkleTree},
         },
-        frontend::{self, key, literal, CustomPredicateBatchBuilder, StatementTmplBuilder},
+        frontend::{self, literal, CustomPredicateBatchBuilder, StatementTmplBuilder},
         middleware::{
-            hash_str, hash_values, Hash, Key, KeyOrWildcard, OperationType, PodId, Predicate,
-            RawValue, SelfOrWildcard, StatementTmpl, StatementTmplArg, Wildcard,
+            hash_str, hash_values, Hash, Key, OperationType, PodId, Predicate, RawValue,
+            StatementTmpl, StatementTmplArg, Wildcard,
         },
     };
 
@@ -2539,69 +2539,39 @@ mod tests {
         Ok(())
     }
 
-    // TODO: Update
-    // #[test]
-    // fn test_statement_arg_from_template() -> Result<()> {
-    //     let params = Params::default();
+    #[test]
+    fn test_statement_arg_from_template() -> Result<()> {
+        let params = Params::default();
 
-    //     let pod_id = PodId(hash_str("pod_id"));
+        let pod_id = PodId(hash_str("pod_id"));
 
-    //     // case: None
-    //     let st_tmpl_arg = StatementTmplArg::None;
-    //     let args = vec![Value::from(1), Value::from(2), Value::from(3)];
-    //     let expected_st_arg = StatementArg::None;
-    //     helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
+        // case: None
+        let st_tmpl_arg = StatementTmplArg::None;
+        let args = vec![Value::from(1), Value::from(2), Value::from(3)];
+        let expected_st_arg = StatementArg::None;
+        helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
 
-    //     // case: Literal
-    //     let st_tmpl_arg = StatementTmplArg::Literal(Value::from("foo"));
-    //     let args = vec![Value::from(1), Value::from(2), Value::from(3)];
-    //     let expected_st_arg = StatementArg::Literal(Value::from("foo"));
-    //     helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
+        // case: Literal
+        let st_tmpl_arg = StatementTmplArg::Literal(Value::from("foo"));
+        let args = vec![Value::from(1), Value::from(2), Value::from(3)];
+        let expected_st_arg = StatementArg::Literal(Value::from("foo"));
+        helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
 
-    //     // case: AnchoredKey(id_wildcard, key_literal)
-    //     let st_tmpl_arg = StatementTmplArg::AnchoredKey(
-    //         SelfOrWildcard::Wildcard(Wildcard::new("a".to_string(), 1)),
-    //         KeyOrWildcard::Key(Key::from("foo")),
-    //     );
-    //     let args = vec![Value::from(1), Value::from(pod_id), Value::from(3)];
-    //     let expected_st_arg = StatementArg::Key(AnchoredKey::new(pod_id, Key::from("foo")));
-    //     helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
+        // case: AnchoredKey(id_wildcard, key_literal)
+        let st_tmpl_arg =
+            StatementTmplArg::AnchoredKey(Wildcard::new("a".to_string(), 1), Key::from("foo"));
+        let args = vec![Value::from(1), Value::from(pod_id), Value::from(3)];
+        let expected_st_arg = StatementArg::Key(AnchoredKey::new(pod_id, Key::from("foo")));
+        helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
 
-    //     // case: AnchoredKey(id_wildcard, key_wildcard)
-    //     let st_tmpl_arg = StatementTmplArg::AnchoredKey(
-    //         SelfOrWildcard::Wildcard(Wildcard::new("a".to_string(), 1)),
-    //         KeyOrWildcard::Wildcard(Wildcard::new("b".to_string(), 2)),
-    //     );
-    //     let args = vec![Value::from(1), Value::from(pod_id), Value::from("key")];
-    //     let expected_st_arg = StatementArg::Key(AnchoredKey::new(pod_id, Key::from("key")));
-    //     helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
+        // case: WildcardLiteral(wildcard)
+        let st_tmpl_arg = StatementTmplArg::WildcardLiteral(Wildcard::new("a".to_string(), 1));
+        let args = vec![Value::from(1), Value::from("key"), Value::from(3)];
+        let expected_st_arg = StatementArg::Literal(Value::from("key"));
+        helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
 
-    //     // case: AnchoredKey(SELF, key_literal)
-    //     let st_tmpl_arg = StatementTmplArg::AnchoredKey(
-    //         SelfOrWildcard::SELF,
-    //         KeyOrWildcard::Key(Key::from("foo")),
-    //     );
-    //     let args = vec![Value::from(1), Value::from(pod_id), Value::from(3)];
-    //     let expected_st_arg = StatementArg::Key(AnchoredKey::new(SELF, Key::from("foo")));
-    //     helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
-
-    //     // case: AnchoredKey(SELF, key_wildcard)
-    //     let st_tmpl_arg = StatementTmplArg::AnchoredKey(
-    //         SelfOrWildcard::SELF,
-    //         KeyOrWildcard::Wildcard(Wildcard::new("b".to_string(), 2)),
-    //     );
-    //     let args = vec![Value::from(1), Value::from(pod_id), Value::from("key")];
-    //     let expected_st_arg = StatementArg::Key(AnchoredKey::new(SELF, Key::from("key")));
-    //     helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
-
-    //     // case: WildcardLiteral(wildcard)
-    //     let st_tmpl_arg = StatementTmplArg::WildcardLiteral(Wildcard::new("a".to_string(), 1));
-    //     let args = vec![Value::from(1), Value::from("key"), Value::from(3)];
-    //     let expected_st_arg = StatementArg::Literal(Value::from("key"));
-    //     helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
-
-    //     Ok(())
-    // }
+        Ok(())
+    }
 
     fn helper_statement_from_template(
         params: &Params,
@@ -2640,8 +2610,6 @@ mod tests {
         Ok(())
     }
 
-    // TODO: Update
-    /*
     #[test]
     fn test_statement_from_template() -> Result<()> {
         let params = Params::default();
@@ -2651,10 +2619,7 @@ mod tests {
         let st_tmpl = StatementTmpl {
             pred: Predicate::Native(NativePredicate::Equal),
             args: vec![
-                StatementTmplArg::AnchoredKey(
-                    SelfOrWildcard::Wildcard(Wildcard::new("a".to_string(), 1)),
-                    KeyOrWildcard::Key(Key::from("key")),
-                ),
+                StatementTmplArg::AnchoredKey(Wildcard::new("a".to_string(), 1), Key::from("key")),
                 StatementTmplArg::Literal(Value::from("value")),
             ],
         };
@@ -2667,7 +2632,6 @@ mod tests {
 
         Ok(())
     }
-    */
 
     fn helper_custom_operation_verify_gadget(
         params: &Params,
@@ -2720,9 +2684,8 @@ mod tests {
         Ok(data.verify(proof.clone())?)
     }
 
-    // TODO: Update
     // TODO: Add negative tests
-    /*
+    #[test]
     fn test_custom_operation_verify_gadget_positive() -> frontend::Result<()> {
         // We set the parameters to the exact sizes we have in the test so that we don't have to
         // pad.
@@ -2737,19 +2700,15 @@ mod tests {
         use NativePredicate as NP;
         use StatementTmplBuilder as STB;
         let mut builder = CustomPredicateBatchBuilder::new(params.clone(), "batch".into());
-        let stb0 = STB::new(NP::Equal)
-            .arg(("id", key("score")))
-            .arg(literal(42));
-        let stb1 = STB::new(NP::Equal)
-            .arg(("id", "secret_key"))
-            .arg(literal(1234));
+        let stb0 = STB::new(NP::Equal).arg(("id", "score")).arg(literal(42));
+        let stb1 = STB::new(NP::Equal).arg(("id", "key")).arg("secret");
         let _ = builder.predicate_and(
             "pred_and",
             &["id"],
-            &["secret_key"],
+            &["secret"],
             &[stb0.clone(), stb1.clone()],
         )?;
-        let _ = builder.predicate_or("pred_or", &["id"], &["secret_key"], &[stb0, stb1])?;
+        let _ = builder.predicate_or("pred_or", &["id"], &["secret"], &[stb0, stb1])?;
         let batch = builder.finish();
 
         let pod_id = PodId(hash_str("pod_id"));
@@ -2762,17 +2721,14 @@ mod tests {
                 Value::from(42),
             ),
             Statement::equal(
-                AnchoredKey::new(pod_id, Key::from("foo")),
+                AnchoredKey::new(pod_id, Key::from("key")),
                 Value::from(1234),
             ),
         ];
-        let args = vec![
-            WildcardValue::PodId(pod_id),
-            WildcardValue::Key(Key::from("foo")),
-        ];
+        let args = vec![Value::from(pod_id), Value::from(1234)];
         let expected_st = Statement::Custom(
             custom_predicate.clone(),
-            vec![args[0].clone(), WildcardValue::None],
+            vec![args[0].clone(), Value::from(0)],
         );
 
         helper_custom_operation_verify_gadget(
@@ -2793,10 +2749,10 @@ mod tests {
             ),
             Statement::None,
         ];
-        let args = vec![WildcardValue::PodId(pod_id), WildcardValue::None];
+        let args = vec![Value::from(pod_id), Value::from(0)];
         let expected_st = Statement::Custom(
             custom_predicate.clone(),
-            vec![args[0].clone(), WildcardValue::None],
+            vec![args[0].clone(), Value::from(0)],
         );
 
         helper_custom_operation_verify_gadget(
@@ -2813,17 +2769,14 @@ mod tests {
         let op_args = vec![
             Statement::None,
             Statement::equal(
-                AnchoredKey::new(pod_id, Key::from("foo")),
+                AnchoredKey::new(pod_id, Key::from("key")),
                 Value::from(1234),
             ),
         ];
-        let args = vec![
-            WildcardValue::PodId(pod_id),
-            WildcardValue::Key(Key::from("foo")),
-        ];
+        let args = vec![Value::from(pod_id), Value::from(1234)];
         let expected_st = Statement::Custom(
             custom_predicate.clone(),
-            vec![args[0].clone(), WildcardValue::None],
+            vec![args[0].clone(), Value::from(0)],
         );
 
         helper_custom_operation_verify_gadget(
@@ -2853,22 +2806,21 @@ mod tests {
         use NativePredicate as NP;
         use StatementTmplBuilder as STB;
         let mut builder = CustomPredicateBatchBuilder::new(params.clone(), "batch".into());
-        let stb0 = STB::new(NP::Equal)
-            .arg(("id", key("score")))
-            .arg(literal(42));
+        let stb0 = STB::new(NP::Equal).arg(("id", "score")).arg(literal(42));
         let stb1 = STB::new(NP::Equal)
-            .arg(("id", "secret_key"))
-            .arg(("id", key("score")));
+            .arg(("secret_id", "key"))
+            .arg(("id", "score"));
         let _ = builder.predicate_and(
             "pred_and",
             &["id"],
-            &["secret_key"],
+            &["secret_id"],
             &[stb0.clone(), stb1.clone()],
         )?;
-        let _ = builder.predicate_or("pred_or", &["id"], &["secret_key"], &[stb0, stb1])?;
+        let _ = builder.predicate_or("pred_or", &["id"], &["secret_id"], &[stb0, stb1])?;
         let batch = builder.finish();
 
         let pod_id = PodId(hash_str("pod_id"));
+        let secret_pod_id = PodId(hash_str("secret_pod_id"));
 
         // AND (0) Sanity check with correct values
         let custom_predicate = CustomPredicateRef::new(batch.clone(), 0);
@@ -2878,17 +2830,14 @@ mod tests {
                 Value::from(42),
             ),
             Statement::equal(
-                AnchoredKey::new(pod_id, Key::from("foo")),
+                AnchoredKey::new(secret_pod_id, Key::from("key")),
                 AnchoredKey::new(pod_id, Key::from("score")),
             ),
         ];
-        let args = vec![
-            WildcardValue::PodId(pod_id),
-            WildcardValue::Key(Key::from("foo")),
-        ];
+        let args = vec![Value::from(pod_id), Value::from(secret_pod_id)];
         let expected_st = Statement::Custom(
             custom_predicate.clone(),
-            vec![args[0].clone(), WildcardValue::None],
+            vec![args[0].clone(), Value::from(0)],
         );
 
         helper_custom_operation_verify_gadget(
@@ -2908,14 +2857,11 @@ mod tests {
                 Value::from(42),
             ),
             Statement::equal(
-                AnchoredKey::new(PodId(hash_str("BAD")), Key::from("foo")),
-                AnchoredKey::new(pod_id, Key::from("score")),
+                AnchoredKey::new(secret_pod_id, Key::from("key")),
+                AnchoredKey::new(PodId(hash_str("BAD")), Key::from("score")),
             ),
         ];
-        let args = vec![
-            WildcardValue::PodId(pod_id),
-            WildcardValue::Key(Key::from("foo")),
-        ];
+        let args = vec![Value::from(pod_id), Value::from(secret_pod_id)];
 
         assert!(helper_custom_operation_verify_gadget(
             &params,
@@ -2931,14 +2877,11 @@ mod tests {
         let op_args = vec![
             Statement::equal(AnchoredKey::new(pod_id, Key::from("BAD")), Value::from(42)),
             Statement::equal(
-                AnchoredKey::new(pod_id, Key::from("foo")),
+                AnchoredKey::new(secret_pod_id, Key::from("key")),
                 AnchoredKey::new(pod_id, Key::from("score")),
             ),
         ];
-        let args = vec![
-            WildcardValue::PodId(pod_id),
-            WildcardValue::Key(Key::from("foo")),
-        ];
+        let args = vec![Value::from(pod_id), Value::from(secret_pod_id)];
 
         assert!(helper_custom_operation_verify_gadget(
             &params,
@@ -2957,14 +2900,11 @@ mod tests {
                 Value::from(0xbad),
             ),
             Statement::equal(
-                AnchoredKey::new(pod_id, Key::from("foo")),
+                AnchoredKey::new(secret_pod_id, Key::from("key")),
                 AnchoredKey::new(pod_id, Key::from("score")),
             ),
         ];
-        let args = vec![
-            WildcardValue::PodId(pod_id),
-            WildcardValue::Key(Key::from("foo")),
-        ];
+        let args = vec![Value::from(pod_id), Value::from(secret_pod_id)];
 
         assert!(helper_custom_operation_verify_gadget(
             &params,
@@ -2983,14 +2923,11 @@ mod tests {
                 Value::from(42),
             ),
             Statement::not_equal(
-                AnchoredKey::new(pod_id, Key::from("foo")),
+                AnchoredKey::new(secret_pod_id, Key::from("key")),
                 AnchoredKey::new(pod_id, Key::from("score")),
             ),
         ];
-        let args = vec![
-            WildcardValue::PodId(pod_id),
-            WildcardValue::Key(Key::from("foo")),
-        ];
+        let args = vec![Value::from(pod_id), Value::from(secret_pod_id)];
 
         assert!(helper_custom_operation_verify_gadget(
             &params,
@@ -3004,7 +2941,7 @@ mod tests {
         // OR (1) Two Nones
         let custom_predicate = CustomPredicateRef::new(batch.clone(), 1);
         let op_args = vec![Statement::None, Statement::None];
-        let args = vec![WildcardValue::PodId(pod_id), WildcardValue::None];
+        let args = vec![Value::from(pod_id), Value::from(0)];
 
         assert!(helper_custom_operation_verify_gadget(
             &params,
@@ -3017,7 +2954,6 @@ mod tests {
 
         Ok(())
     }
-     */
 
     fn helper_calculate_id(params: &Params, statements: &[Statement]) -> Result<()> {
         let config = CircuitConfig::standard_recursion_config();

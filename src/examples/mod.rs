@@ -11,7 +11,7 @@ use crate::{
     frontend::{MainPod, MainPodBuilder, Result, SignedPod, SignedPodBuilder},
     middleware::{
         containers::Set, CustomPredicateRef, Params, PodSigner, PodType, Predicate, Statement,
-        StatementArg, TypedValue, VDSet, Value, DEFAULT_VD_SET, KEY_SIGNER, KEY_TYPE,
+        StatementArg, TypedValue, VDSet, Value, KEY_SIGNER, KEY_TYPE,
     },
     op,
 };
@@ -85,143 +85,6 @@ pub fn attest_eth_friend(params: &Params, src: &mut impl PodSigner, dst: Value) 
     attestation.insert("attestation", dst);
     attestation.sign(src).unwrap()
 }
-
-/*
-pub fn eth_dos_pod_builder(
-    params: &Params,
-    vd_set: &VDSet,
-    mock: bool,
-    alice_attestation: &SignedPod,
-    charlie_attestation: &SignedPod,
-    bob_pubkey: Value,
-) -> Result<MainPodBuilder> {
-    // Will need ETH friend and ETH DoS custom predicate batches.
-    let eth_dos_batch = eth_dos_batch(params, mock)?;
-    let eth_friend = eth_dos_batch.predicate_ref_by_name("eth_friend").unwrap();
-    let eth_dos_base = eth_dos_batch.predicate_ref_by_name("eth_dos_base").unwrap();
-    let eth_dos_ind = eth_dos_batch.predicate_ref_by_name("eth_dos_ind").unwrap();
-    let eth_dos = eth_dos_batch.predicate_ref_by_name("eth_dos").unwrap();
-
-    // ETHDoS POD builder
-    let mut alice_bob_ethdos = MainPodBuilder::new(params, vd_set);
-    alice_bob_ethdos.add_signed_pod(alice_attestation);
-    alice_bob_ethdos.add_signed_pod(charlie_attestation);
-
-    // Attestation POD entries
-    let alice_pubkey = alice_attestation
-        .get(KEY_SIGNER)
-        .expect("Could not find Alice's public key!")
-        .clone();
-    let charlie_pubkey = charlie_attestation
-        .get(KEY_SIGNER)
-        .expect("Could not find Charlie's public key!")
-        .clone();
-
-    // Include Alice and Bob's keys as public statements. We don't
-    // want to reveal the middleman.
-    let alice_pubkey_copy = alice_bob_ethdos.pub_op(op!(new_entry, "Alice", alice_pubkey))?;
-    let bob_pubkey_copy = alice_bob_ethdos.pub_op(op!(new_entry, "Bob", bob_pubkey.clone()))?;
-    let charlie_pubkey = alice_bob_ethdos.priv_op(op!(new_entry, "Charlie", charlie_pubkey))?;
-
-    // The ETHDoS distance from Alice to Alice is 0.
-    let zero = alice_bob_ethdos.priv_literal(0)?;
-    let alice_equals_alice = alice_bob_ethdos.priv_op(op!(
-        eq,
-        alice_pubkey_copy.clone(),
-        alice_pubkey_copy.clone()
-    ))?;
-    let ethdos_alice_alice_is_zero_base = alice_bob_ethdos.priv_op(op!(
-        custom,
-        eth_dos_base.clone(),
-        alice_equals_alice,
-        zero.clone()
-    ))?;
-    let ethdos_alice_alice_is_zero = alice_bob_ethdos.priv_op(op!(
-        custom,
-        eth_dos.clone(),
-        ethdos_alice_alice_is_zero_base,
-        Statement::None
-    ))?;
-
-    // Alice and Charlie are ETH friends.
-    let attestation_is_signed_pod = alice_attestation.get_statement(KEY_TYPE).unwrap();
-    let attestation_signed_by_alice =
-        alice_bob_ethdos.priv_op(op!(eq, (alice_attestation, KEY_SIGNER), alice_pubkey_copy))?;
-    let alice_attests_to_charlie = alice_bob_ethdos.priv_op(op!(
-        eq,
-        (alice_attestation, "attestation"),
-        charlie_pubkey.clone()
-    ))?;
-    let ethfriends_alice_charlie = alice_bob_ethdos.priv_op(op!(
-        custom,
-        eth_friend.clone(),
-        attestation_is_signed_pod,
-        attestation_signed_by_alice,
-        alice_attests_to_charlie
-    ))?;
-
-    // ...and so are Chuck and Bob.
-    let attestation_is_signed_pod = charlie_attestation.get_statement(KEY_TYPE).unwrap();
-    let attestation_signed_by_charlie =
-        alice_bob_ethdos.priv_op(op!(eq, (charlie_attestation, KEY_SIGNER), charlie_pubkey))?;
-    let charlie_attests_to_bob = alice_bob_ethdos.priv_op(op!(
-        eq,
-        (charlie_attestation, "attestation"),
-        bob_pubkey_copy
-    ))?;
-    let ethfriends_charlie_bob = alice_bob_ethdos.priv_op(op!(
-        custom,
-        eth_friend.clone(),
-        attestation_is_signed_pod,
-        attestation_signed_by_charlie,
-        charlie_attests_to_bob
-    ))?;
-
-    // The ETHDoS distance from Alice to Charlie is 1.
-    let one = alice_bob_ethdos.priv_literal(1)?;
-    // 1 = 0 + 1
-    let ethdos_sum =
-        alice_bob_ethdos.priv_op(op!(sum_of, one.clone(), zero.clone(), one.clone()))?;
-    let ethdos_alice_charlie_is_one_ind = alice_bob_ethdos.priv_op(op!(
-        custom,
-        eth_dos_ind.clone(),
-        ethdos_alice_alice_is_zero,
-        one.clone(),
-        ethdos_sum,
-        ethfriends_alice_charlie
-    ))?;
-    let ethdos_alice_charlie_is_one = alice_bob_ethdos.priv_op(op!(
-        custom,
-        eth_dos.clone(),
-        Statement::None,
-        ethdos_alice_charlie_is_one_ind
-    ))?;
-
-    // The ETHDoS distance from Alice to Bob is 2.
-    // The constant "TWO" and the final statement are both to be
-    // public.
-    let two = alice_bob_ethdos.pub_literal(2)?;
-    // 2 = 1 + 1
-    let ethdos_sum =
-        alice_bob_ethdos.priv_op(op!(sum_of, two.clone(), one.clone(), one.clone()))?;
-    let ethdos_alice_bob_is_two_ind = alice_bob_ethdos.priv_op(op!(
-        custom,
-        eth_dos_ind.clone(),
-        ethdos_alice_charlie_is_one,
-        one.clone(),
-        ethdos_sum,
-        ethfriends_charlie_bob
-    ))?;
-    let _ethdos_alice_bob_is_two = alice_bob_ethdos.pub_op(op!(
-        custom,
-        eth_dos.clone(),
-        Statement::None,
-        ethdos_alice_bob_is_two_ind
-    ))?;
-
-    Ok(alice_bob_ethdos)
-}
-*/
 
 pub struct EthDosHelper {
     params: Params,
@@ -308,7 +171,7 @@ impl EthDosHelper {
             .rev() // Find the last predicate because dist_1 has two: dist=0, dist=1
             .find(|st| st.predicate() == Predicate::Custom(self.eth_dos.clone()))
             .expect("eth_dos custom predicate");
-        let [src, int, n] = {
+        let [_src, int, n] = {
             let args: [_; 3] = eth_dos_int_to_dst.args().try_into().expect("Vec::len=3");
             args.map(|arg| match arg {
                 StatementArg::Literal(v) => v,

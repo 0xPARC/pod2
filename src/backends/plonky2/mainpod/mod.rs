@@ -334,9 +334,14 @@ pub(crate) fn layout_statements(
 
     // Public statements
     assert!(inputs.public_statements.len() < params.max_public_statements);
+    let pod_type = if mock {
+        PodType::MockMain
+    } else {
+        PodType::Main
+    };
     let mut type_st = middleware::Statement::Equal(
         AnchoredKey::from((SELF, KEY_TYPE)).into(),
-        middleware::Value::from(PodType::MockMain).into(),
+        middleware::Value::from(pod_type).into(),
     )
     .into();
     pad_statement(params, &mut type_st);
@@ -714,13 +719,13 @@ pub mod tests {
             primitives::ec::schnorr::SecretKey,
             signedpod::Signer,
         },
-        examples::{zu_kyc_pod_builder, zu_kyc_sign_pod_builders},
+        examples::{attest_eth_friend, zu_kyc_pod_builder, zu_kyc_sign_pod_builders, EthDosHelper},
         frontend::{
-            key, literal, CustomPredicateBatchBuilder, MainPodBuilder, StatementTmplBuilder as STB,
+            literal, CustomPredicateBatchBuilder, MainPodBuilder, StatementTmplBuilder as STB,
             {self},
         },
         middleware,
-        middleware::{CustomPredicateRef, NativePredicate as NP, DEFAULT_VD_SET},
+        middleware::{CustomPredicateRef, NativePredicate as NP, Value, DEFAULT_VD_SET},
         op,
     };
 
@@ -847,61 +852,35 @@ pub mod tests {
         pod.verify().unwrap()
     }
 
-    // TODO: Update
-    /*
     #[test]
     fn test_main_ethdos() -> frontend::Result<()> {
-        let params = Params {
-            max_input_signed_pods: 2,
-            max_input_recursive_pods: 1,
-            max_statements: 26,
-            max_public_statements: 5,
-            max_signed_pod_values: 8,
-            max_operation_args: 5,
-            max_custom_predicate_wildcards: 6,
-            max_custom_predicate_verifications: 8,
-            ..Default::default()
-        };
+        let params = Params::default();
         println!("{:#?}", params);
         let vd_set = &*DEFAULT_VD_SET;
 
         let mut alice = Signer(SecretKey(1u32.into()));
-        let bob = Signer(SecretKey(2u32.into()));
-        let mut charlie = Signer(SecretKey(3u32.into()));
+        let mut bob = Signer(SecretKey(2u32.into()));
+        let charlie = Signer(SecretKey(3u32.into()));
 
-        // Alice attests that she is ETH friends with Charlie and Charlie
-        // attests that he is ETH friends with Bob.
+        // Alice attests that she is ETH friends with Bob and Bob
+        // attests that he is ETH friends with Charlie.
         let alice_attestation =
-            eth_friend_signed_pod_builder(&params, charlie.public_key().into()).sign(&mut alice)?;
-        let charlie_attestation =
-            eth_friend_signed_pod_builder(&params, bob.public_key().into()).sign(&mut charlie)?;
+            attest_eth_friend(&params, &mut alice, Value::from(bob.public_key()));
+        let bob_attestation =
+            attest_eth_friend(&params, &mut bob, Value::from(charlie.public_key()));
 
-        let alice_bob_ethdos_builder = eth_dos_pod_builder(
-            &params,
-            &vd_set,
-            false,
-            &alice_attestation,
-            &charlie_attestation,
-            bob.public_key().into(),
-        )?;
-
-        let mut prover = MockProver {};
-        let pod = alice_bob_ethdos_builder.prove(&mut prover, &params)?;
-        assert!(pod.pod.verify().is_ok());
-
+        let helper = EthDosHelper::new(&params, vd_set, false, Value::from(alice.public_key()))?;
         let mut prover = Prover {};
-        let alice_bob_ethdos = alice_bob_ethdos_builder.prove(&mut prover, &params)?;
-        crate::measure_gates_print!();
-        let pod = (alice_bob_ethdos.pod as Box<dyn Any>)
-            .downcast::<MainPod>()
-            .unwrap();
-
-        Ok(pod.verify()?)
+        let dist_1 = helper
+            .dist_1(&alice_attestation)?
+            .prove(&mut prover, &params)?;
+        dist_1.pod.verify()?;
+        let dist_2 = helper
+            .dist_n_plus_1(&dist_1, &bob_attestation)?
+            .prove(&mut prover, &params)?;
+        Ok(dist_2.pod.verify()?)
     }
-    */
 
-    // TODO: Update
-    /*
     #[test]
     fn test_main_mini_custom_1() -> frontend::Result<()> {
         let params = Params {
@@ -921,19 +900,17 @@ pub mod tests {
         let vd_set = &*DEFAULT_VD_SET;
 
         let mut cpb_builder = CustomPredicateBatchBuilder::new(params.clone(), "cpb".into());
-        let stb0 = STB::new(NP::Equal)
-            .arg(("id", key("score")))
-            .arg(literal(42));
+        let stb0 = STB::new(NP::Equal).arg(("id", "score")).arg(literal(42));
         let stb1 = STB::new(NP::Equal)
-            .arg(("id", "secret_key"))
-            .arg(("id", key("score")));
+            .arg(("secret_id", "key"))
+            .arg(("id", "score"));
         let _ = cpb_builder.predicate_and(
             "pred_and",
             &["id"],
-            &["secret_key"],
+            &["secret_id"],
             &[stb0.clone(), stb1.clone()],
         )?;
-        let _ = cpb_builder.predicate_or("pred_or", &["id"], &["secret_key"], &[stb0, stb1])?;
+        let _ = cpb_builder.predicate_or("pred_or", &["id"], &["secret_id"], &[stb0, stb1])?;
         let cpb = cpb_builder.finish();
 
         let cpb_and = CustomPredicateRef::new(cpb.clone(), 0);
@@ -942,7 +919,7 @@ pub mod tests {
         let mut pod_builder = MainPodBuilder::new(&params, &vd_set);
 
         let st0 = pod_builder.priv_op(op!(new_entry, "score", 42))?;
-        let st1 = pod_builder.priv_op(op!(new_entry, "foo", 42))?;
+        let st1 = pod_builder.priv_op(op!(new_entry, "key", 42))?;
         let st2 = pod_builder.priv_op(op!(eq, st1.clone(), st0.clone()))?;
 
         let _st3 = pod_builder.priv_op(op!(custom, cpb_and.clone(), st0, st2))?;
@@ -959,5 +936,4 @@ pub mod tests {
 
         Ok(pod.verify()?)
     }
-    */
 }

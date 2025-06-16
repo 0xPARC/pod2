@@ -6,29 +6,10 @@ use schemars::JsonSchema;
 use crate::{
     frontend::{AnchoredKey, Error, Result, Statement, StatementArg},
     middleware::{
-        self, hash_str, CustomPredicate, CustomPredicateBatch, Key, KeyOrWildcard, NativePredicate,
-        Params, PodId, Predicate, SelfOrWildcard, StatementTmpl, StatementTmplArg, ToFields, Value,
-        Wildcard,
+        self, hash_str, CustomPredicate, CustomPredicateBatch, Key, NativePredicate, Params, PodId,
+        Predicate, StatementTmpl, StatementTmplArg, ToFields, Value, Wildcard,
     },
 };
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-/// Argument to a statement template
-pub enum KeyOrWildcardStr {
-    Key(String), // represents a literal key
-    Wildcard(String),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SelfOrWildcardStr {
-    SELF,
-    Wildcard(String),
-}
-
-/// helper to build a literal KeyOrWildcardStr::Key from the given str
-pub fn key(s: &str) -> KeyOrWildcardStr {
-    KeyOrWildcardStr::Key(s.to_string())
-}
 
 /// Builder Argument for the StatementTmplBuilder
 #[derive(Clone, Debug)]
@@ -39,34 +20,17 @@ pub enum BuilderArg {
     WildcardLiteral(String),
 }
 
-impl From<&str> for SelfOrWildcardStr {
-    fn from(origin: &str) -> Self {
-        if origin == "SELF" {
-            SelfOrWildcardStr::SELF
-        } else {
-            SelfOrWildcardStr::Wildcard(origin.into())
-        }
-    }
-}
-
 /// When defining a `BuilderArg`, it can be done from 3 different inputs:
-///   i. (&str, literal): this is to set a POD and a field, ie. (POD, literal("field"))
-///  ii. (&str, &str): this is to define a origin-key wildcard pair, ie. (src_origin, src_dest)
-/// iii. &str: this is to define a WildcardValue wildcard, ie. "src_or"
+///  i. (&str, &str): this is to define a origin-key pair, ie. ?attestation_pod["attestation"])
+/// ii. &str: this is to define a WildcardValue wildcard, ie. ?distance
 ///
 /// case i.
-// impl From<(&str, KeyOrWildcardStr)> for BuilderArg {
-//     fn from((origin, lit): (&str, KeyOrWildcardStr)) -> Self {
-//         Self::Key(origin.into(), lit)
-//     }
-// }
-/// case ii.
 impl From<(&str, &str)> for BuilderArg {
     fn from((origin, field): (&str, &str)) -> Self {
         Self::Key(origin.to_string(), field.to_string())
     }
 }
-/// case iii.
+/// case ii.
 impl From<&str> for BuilderArg {
     fn from(wc: &str) -> Self {
         Self::WildcardLiteral(wc.to_string())
@@ -248,32 +212,6 @@ impl CustomPredicateBatchBuilder {
 
     pub fn finish(self) -> Arc<CustomPredicateBatch> {
         CustomPredicateBatch::new(&self.params, self.name, self.predicates)
-    }
-}
-
-fn resolve_self_or_wildcard(
-    args: &[&str],
-    priv_args: &[&str],
-    v: &SelfOrWildcardStr,
-) -> SelfOrWildcard {
-    match v {
-        SelfOrWildcardStr::SELF => SelfOrWildcard::SELF,
-        SelfOrWildcardStr::Wildcard(s) => {
-            SelfOrWildcard::Wildcard(resolve_wildcard(args, priv_args, s))
-        }
-    }
-}
-
-fn resolve_key_or_wildcard(
-    args: &[&str],
-    priv_args: &[&str],
-    v: &KeyOrWildcardStr,
-) -> KeyOrWildcard {
-    match v {
-        KeyOrWildcardStr::Key(k) => KeyOrWildcard::Key(Key::from(k)),
-        KeyOrWildcardStr::Wildcard(s) => {
-            KeyOrWildcard::Wildcard(resolve_wildcard(args, priv_args, s))
-        }
     }
 }
 

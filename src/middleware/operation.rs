@@ -1,6 +1,5 @@
 use std::{fmt, iter};
 
-use itertools::Itertools;
 use log::error;
 use plonky2::field::types::Field;
 use serde::{Deserialize, Serialize};
