@@ -686,8 +686,8 @@ mod tests {
         let imported_pred_stmts = vec![StatementTmpl {
             pred: Predicate::Native(NativePredicate::Equal),
             args: vec![
-                sta_ak(("A", 0), k("foo")), // ?A["foo"]
-                sta_ak(("B", 1), k("bar")), // ?B["bar"]
+                sta_ak(("A", 0), "foo"), // ?A["foo"]
+                sta_ak(("B", 1), "bar"), // ?B["bar"]
             ],
         }];
         let imported_predicate = CustomPredicate::and(
@@ -796,7 +796,7 @@ mod tests {
         // 1. Create a batch with a predicate to be imported
         let imported_pred_stmts = vec![StatementTmpl {
             pred: Predicate::Native(NativePredicate::Equal),
-            args: vec![sta_ak(("A", 0), k("foo")), sta_ak(("B", 1), k("bar"))],
+            args: vec![sta_ak(("A", 0), "foo"), sta_ak(("B", 1), "bar")],
         }];
         let imported_predicate = CustomPredicate::and(
             &params,

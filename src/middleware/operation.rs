@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use crate::{
     backends::plonky2::primitives::merkletree::MerkleProof,
     middleware::{
-        custom::KeyOrWildcard, hash_values, AnchoredKey, CustomPredicate, CustomPredicateRef,
-        Error, NativePredicate, Params, Predicate, Result, SelfOrWildcard, Statement, StatementArg,
-        StatementTmplArg, ToFields, Value, ValueRef, Wildcard, WildcardValue, F, SELF,
+        hash_values, AnchoredKey, CustomPredicate, CustomPredicateRef, Error, NativePredicate,
+        Params, Predicate, Result, Statement, StatementArg, StatementTmplArg, ToFields, Value,
+        ValueRef, Wildcard, F, SELF,
     },
 };
 

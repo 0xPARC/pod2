@@ -10,7 +10,7 @@ use serialization::{SerializedMainPod, SerializedSignedPod};
 use crate::middleware::{
     self, check_st_tmpl, hash_op, hash_str, max_op, prod_op, sum_op, AnchoredKey, Key,
     MainPodInputs, NativeOperation, OperationAux, OperationType, Params, PodId, PodProver,
-    PodSigner, Statement, StatementArg, VDSet, Value, ValueRef, WildcardValue, KEY_TYPE, SELF,
+    PodSigner, Statement, StatementArg, VDSet, Value, ValueRef, KEY_TYPE, SELF,
 };
 
 mod custom;
@@ -1129,7 +1129,7 @@ pub mod tests {
         // try to insert a statement that doesn't follow from the operation
         // right now the mock prover catches this when it calls compile()
         let params = Params::default();
-        let vd_set = &*DEFAULT_VD_SET;
+        let vd_set = &*MOCK_VD_SET;
         let mut builder = MainPodBuilder::new(&params, &vd_set);
         let self_a = AnchoredKey::from((SELF, "a"));
         let self_b = AnchoredKey::from((SELF, "b"));

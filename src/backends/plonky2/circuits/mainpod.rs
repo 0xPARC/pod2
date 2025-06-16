@@ -41,7 +41,7 @@ use crate::{
     middleware::{
         AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, NativeOperation,
         NativePredicate, Params, PodType, PredicatePrefix, Statement, StatementArg, ToFields,
-        Value, ValueRef, WildcardValue, EMPTY_VALUE, F, HASH_SIZE, KEY_TYPE, SELF, VALUE_SIZE,
+        Value, ValueRef, EMPTY_VALUE, F, HASH_SIZE, KEY_TYPE, SELF, VALUE_SIZE,
     },
 };
 
@@ -1350,7 +1350,6 @@ impl MainPodVerifyGadget {
         // 5. Verify input statements
         for (i, (st, op)) in input_statements.iter().zip(operations.iter()).enumerate() {
             let prev_statements = &statements[..input_statements_offset + i];
-            let prev_ops = &operations[..i];
             OperationVerifyGadget {
                 params: params.clone(),
             }
@@ -2142,7 +2141,7 @@ mod tests {
             vec![OperationArg::Index(0), OperationArg::Index(0)],
             OperationAux::None,
         );
-        operation_verify(st, op, prev_statements.clone(), vec![])?;
+        operation_verify_fill_pvs_ops(st, op, prev_statements.clone(), vec![])?;
         let st: mainpod::Statement = Statement::lt_eq(
             AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
             AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),

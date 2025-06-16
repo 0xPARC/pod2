@@ -27,8 +27,8 @@ use crate::{
     },
     middleware::{
         self, resolve_wildcard_values, value_from_op, AnchoredKey, CustomPredicateBatch, DynError,
-        Hash, MainPodInputs, NativeOperation, NonePod, OperationType, Params, Pod, PodId,
-        PodProver, PodType, RecursivePod, StatementArg, ToFields, VDSet, F, KEY_TYPE, SELF,
+        Hash, MainPodInputs, NativeOperation, OperationType, Params, Pod, PodId, PodProver,
+        PodType, RecursivePod, StatementArg, ToFields, VDSet, F, KEY_TYPE, SELF,
     },
 };
 
