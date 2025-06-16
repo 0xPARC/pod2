@@ -68,30 +68,37 @@ pub static DEFAULT_VD_SET: LazyLock<VDSet> = LazyLock::new(|| {
 #[derive(Clone, Debug)]
 pub struct VDSet {
     root: Hash,
-    // (verifier_data, merkleproof)
+    // (verifier_data's hash, merkleproof)
     proofs_map: HashMap<HashOut<F>, MerkleClaimAndProof>,
 }
 impl VDSet {
     /// builds the verifier_datas tree, and returns the root and the proofs
     pub fn new(tree_depth: usize, vds: &[VerifierOnlyCircuitData]) -> Result<Self> {
-        // first of all, sort the vds, so that each set of verifier_datas gets
-        // the same root
-        let vds: Vec<&VerifierOnlyCircuitData> = vds
+        // compute the verifier_data's hashes
+        let vds_hashes: Vec<HashOut<F>> = vds
             .iter()
-            .sorted_by_key(|vd| RawValue(vd.circuit_digest.elements))
+            .map(crate::backends::plonky2::recursion::circuit::hash_verifier_data)
+            .collect::<Vec<_>>();
+
+        // before using the hash values, sort them, so that each set of
+        // verifier_datas gets the same VDSet root
+        let vds_hashes: Vec<&HashOut<F>> = vds_hashes
+            .iter()
+            .sorted_by_key(|vd| RawValue(vd.elements))
             .collect::<Vec<_>>();
 
         let array = Array::new(
             tree_depth,
-            vds.iter()
-                .map(|vd| Value::from(RawValue(vd.circuit_digest.elements)))
+            vds_hashes
+                .iter()
+                .map(|vd| Value::from(RawValue(vd.elements)))
                 .collect(),
         )?;
 
         let root = array.commitment();
         let mut proofs_map = HashMap::<HashOut<F>, MerkleClaimAndProof>::new();
 
-        for (i, vd) in vds.iter().enumerate() {
+        for (i, vd) in vds_hashes.iter().enumerate() {
             let (value, proof) = array.prove(i)?;
             let p = MerkleClaimAndProof {
                 root,
@@ -99,7 +106,7 @@ impl VDSet {
                 value: value.raw(),
                 proof,
             };
-            proofs_map.insert(vd.circuit_digest, p);
+            proofs_map.insert(**vd, p);
         }
         Ok(Self { root, proofs_map })
     }
@@ -113,12 +120,12 @@ impl VDSet {
     ) -> Result<Vec<MerkleClaimAndProof>> {
         let mut proofs: Vec<MerkleClaimAndProof> = vec![];
         for vd in vds {
-            let p =
-                self.proofs_map
-                    .get(&vd.circuit_digest)
-                    .ok_or(crate::middleware::Error::custom(
-                        "verifier_data not found in VDSet".to_string(),
-                    ))?;
+            let p = self
+                .proofs_map
+                .get(&crate::backends::plonky2::recursion::circuit::hash_verifier_data(vd))
+                .ok_or(crate::middleware::Error::custom(
+                    "verifier_data not found in VDSet".to_string(),
+                ))?;
             proofs.push(p.clone());
         }
         Ok(proofs)

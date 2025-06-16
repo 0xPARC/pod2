@@ -13,7 +13,10 @@ use plonky2::{
     self,
     field::{extension::quintic::QuinticExtension, types::Field},
     gates::{gate::GateRef, noop::NoopGate},
-    hash::hash_types::HashOutTarget,
+    hash::{
+        hash_types::{HashOut, HashOutTarget},
+        poseidon::PoseidonHash,
+    },
     iop::{
         target::Target,
         witness::{PartialWitness, WitnessWrite},
@@ -24,6 +27,7 @@ use plonky2::{
             CircuitConfig, CircuitData, CommonCircuitData, ProverCircuitData, VerifierCircuitData,
             VerifierCircuitTarget, VerifierOnlyCircuitData,
         },
+        config::Hasher,
         proof::{ProofWithPublicInputs, ProofWithPublicInputsTarget},
     },
     util::log2_ceil,
@@ -201,7 +205,18 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         let verified_proofs = (0..arity)
             .map(|i| VerifiedProofTarget {
                 public_inputs: proofs_targ[i].public_inputs.clone(),
-                verifier_data_hash: verifier_datas_targ[i].circuit_digest,
+                // note: here we're hashing the verifier_data as Hash(vd.circuit_digest,
+                // vd.constant_sigmas_cap), despite the circuit_digest is already a hash containing
+                // the constant_sigmas_cap. Conceptually we would use the circuit_digest as the hash
+                // of the verifier_data, but unfortunately, the recursion verification circuit does
+                // not ensure this link.  Alternatively we could calculate an modified
+                // circuit_digest, hashing as in the original plonky2's circuit_digest but
+                // additionally checking it in-circuit. But since in terms of circuit costs would
+                // require a hash (with similar amount of elements), the approach that we do is take
+                // the already computed circuit_digest and hash it together with the
+                // constant_sigmas_cap, doing the same computation in-circuit, obtaining a new hash
+                // that we use to represent the verifier_data.
+                verifier_data_hash: hash_verifier_data_gadget(builder, &verifier_datas_targ[i]),
             })
             .collect_vec();
 
@@ -476,6 +491,38 @@ pub fn pad_circuit(builder: &mut CircuitBuilder<F, D>, common_data: &CommonCircu
     for gate in &common_data.gates {
         builder.add_gate_to_gate_set(gate.clone());
     }
+}
+
+fn hash_verifier_data_gadget(
+    builder: &mut CircuitBuilder<F, D>,
+    verifier_data: &VerifierCircuitTarget,
+) -> HashOutTarget {
+    let f: Vec<Target> = [
+        verifier_data.circuit_digest.elements.to_vec(),
+        verifier_data
+            .constants_sigmas_cap
+            .0
+            .iter()
+            .flat_map(|e| e.elements)
+            .collect(),
+    ]
+    .concat();
+    builder.hash_n_to_hash_no_pad::<PoseidonHash>(f)
+}
+
+// compatible with hash_verifier_data_gadget.
+pub(crate) fn hash_verifier_data(verifier_only_data: &VerifierOnlyCircuitData<C, D>) -> HashOut<F> {
+    let f: Vec<F> = [
+        verifier_only_data.circuit_digest.elements.to_vec(),
+        verifier_only_data
+            .constants_sigmas_cap
+            .0
+            .iter()
+            .flat_map(|e| e.elements)
+            .collect(),
+    ]
+    .concat();
+    PoseidonHash::hash_no_pad(&f)
 }
 
 #[cfg(test)]
