@@ -1,6 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
-
-use tinytemplate::TinyTemplate;
+use std::sync::Arc;
 
 use crate::{
     frontend::Result,
@@ -8,26 +6,15 @@ use crate::{
     middleware::{CustomPredicateBatch, Params, PodType, Value, KEY_SIGNER, KEY_TYPE},
 };
 
-fn render(tmpl: &str, consts: HashMap<&str, Value>) -> String {
-    let mut tt = TinyTemplate::new();
-    tt.set_default_formatter(&tinytemplate::format_unescaped);
-    tt.add_template("tmpl", tmpl).expect("template parse");
-
-    let mut context: HashMap<_, Value> = [
-        ("KEY_TYPE", Value::from(KEY_TYPE)),
-        ("KEY_SIGNER", Value::from(KEY_SIGNER)),
-    ]
-    .into_iter()
-    .collect();
-
-    for (name, value) in consts.into_iter() {
-        context.insert(name, value);
-    }
-    let context: HashMap<_, String> = context
-        .into_iter()
-        .map(|(k, v)| (k, format!("{}", v)))
-        .collect();
-    tt.render("tmpl", &context).expect("template render")
+macro_rules! render {
+    ($tmpl: expr, $($arg:tt)*) => {{
+        format!(
+            $tmpl,
+            KEY_TYPE = Value::from(KEY_TYPE),
+            KEY_SIGNER = Value::from(KEY_SIGNER),
+            $($arg)*
+        )
+    }};
 }
 
 /// Instantiates an ETHDos batch
@@ -37,8 +24,7 @@ pub fn eth_dos_batch(params: &Params, mock: bool) -> Result<Arc<CustomPredicateB
     } else {
         PodType::Signed
     });
-    let consts = [("pod_type", pod_type)].into_iter().collect();
-    let input = render(
+    let input = render!(
         r#"
         eth_friend(src, dst, private: attestation_pod) = AND(
             Equal(?attestation_pod[{KEY_TYPE}], {pod_type})
@@ -62,7 +48,7 @@ pub fn eth_dos_batch(params: &Params, mock: bool) -> Result<Arc<CustomPredicateB
             eth_dos_ind(?src, ?dst, ?distance)
         )
         "#,
-        consts,
+        pod_type = pod_type,
     );
     let batch = parse(&input, params, &[]).expect("lang parse").custom_batch;
     println!("a.0. {}", batch.predicates[0]);
