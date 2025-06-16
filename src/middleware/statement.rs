@@ -304,7 +304,6 @@ pub enum StatementArg {
     None,
     Literal(Value),
     Key(AnchoredKey),
-    // WildcardLiteral(WildcardValue), // TODO: Remove this in favor of Literal
 }
 
 impl fmt::Display for StatementArg {

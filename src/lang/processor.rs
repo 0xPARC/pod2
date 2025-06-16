@@ -1115,7 +1115,7 @@ mod processor_tests {
         // Native predicate names are case-sensitive
         let input = r#"
         REQUEST(
-          EQUAL(?A[?B], ?C[?D])
+          EQUAL(?A["b"], ?C["d"])
         )
     "#;
         let pairs = get_document_content_pairs(input)?;

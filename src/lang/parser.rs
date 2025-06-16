@@ -86,12 +86,10 @@ mod tests {
     #[test]
     fn test_parse_anchored_key() {
         assert_parses(Rule::anchored_key, "?PodVar[\"literal_key\"]");
-        assert_parses(Rule::anchored_key, "?PodVar[?KeyVar]");
-        assert_parses(Rule::anchored_key, "SELF[?KeyVar]");
-        assert_parses(Rule::anchored_key, "SELF[\"literal_key\"]");
         assert_fails(Rule::anchored_key, "PodVar[\"key\"]"); // Needs wildcard for pod
         assert_fails(Rule::anchored_key, "?PodVar[invalid_key]"); // Key must be literal string or wildcard
         assert_fails(Rule::anchored_key, "?PodVar[]"); // Key cannot be empty
+        assert_fails(Rule::anchored_key, "?PodVar[?key]"); // Key cannot be wildcard
     }
 
     #[test]
@@ -179,7 +177,7 @@ mod tests {
             Rule::test_custom_predicate_def,
             // Trimmed leading/trailing whitespace
             r#"pred_with_private(X, private: TempKey) = OR(
-                Equal(?X[?TempKey], ?X["other"])
+                Equal(?X["key"], 1234)
             )"#,
         );
         assert_fails(
