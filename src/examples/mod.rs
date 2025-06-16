@@ -73,13 +73,6 @@ pub fn zu_kyc_pod_builder(
 
 // ETHDoS
 
-// pub fn eth_friend_signed_pod_builder(params: &Params, friend_pubkey: Value) -> SignedPodBuilder {
-//     let mut attestation = SignedPodBuilder::new(params);
-//     attestation.insert("attestation", friend_pubkey);
-//
-//     attestation
-// }
-
 pub fn attest_eth_friend(params: &Params, src: &mut impl PodSigner, dst: Value) -> SignedPod {
     let mut attestation = SignedPodBuilder::new(params);
     attestation.insert("attestation", dst);
