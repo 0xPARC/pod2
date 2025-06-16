@@ -346,10 +346,10 @@ impl Operation {
             (Self::ProductOf(s1, s2, s3), ProductOf(v4, v5, v6)) => {
                 Self::check_int_fn(&val(v4, s1)?, &val(v5, s2)?, &val(v6, s3)?, prod_op)?
             }
-            (Self::MaxOf(s1, s2, s3), ProductOf(v4, v5, v6)) => {
+            (Self::MaxOf(s1, s2, s3), MaxOf(v4, v5, v6)) => {
                 Self::check_int_fn(&val(v4, s1)?, &val(v5, s2)?, &val(v6, s3)?, max_op)?
             }
-            (Self::HashOf(s1, s2, s3), ProductOf(v4, v5, v6)) => {
+            (Self::HashOf(s1, s2, s3), HashOf(v4, v5, v6)) => {
                 val(v4, s1)? == hash_op(val(v5, s2)?, val(v6, s3)?)
             }
             (Self::Custom(CustomPredicateRef { batch, index }, args), Custom(cpr, s_args))
