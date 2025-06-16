@@ -515,7 +515,6 @@ fn process_and_add_custom_predicate_to_batch(
     let public_args_strs: Vec<&str> = public_arg_strings.iter().map(AsRef::as_ref).collect();
     let private_args_strs: Vec<&str> = private_arg_strings.iter().map(AsRef::as_ref).collect();
     let sts_slice: &[StatementTmplBuilder] = &statement_builders;
-
     if conjunction {
         cpb_builder.predicate_and(&name, &public_args_strs, &private_args_strs, sts_slice)?;
     } else {
