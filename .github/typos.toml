@@ -1,0 +1,19 @@
+[files]
+extend-exclude = [
+    ".git/",
+]
+ignore-hidden = false
+
+[default]
+extend-ignore-re = [
+    "\\bBig Sur\\b",
+    "[0-9A-Za-z/+]{64}",
+]
+
+[default.extend-words]
+
+[type.rust.extend-identifiers]
+ANDed = "ANDed"
+OT = "OT"
+verifier_datas = "verifier_datas"
+verifier_datas_targ = "verifier_datas_targ"
