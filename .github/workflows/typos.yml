@@ -1,7 +1,7 @@
 name: typos
 on:
   pull_request:
-    branches: [ main ]
+    branches: [main]
     types: [ready_for_review, opened, synchronize, reopened]
   push:
     branches:
@@ -16,6 +16,5 @@ jobs:
     - uses: actions/checkout@v4
     - name: Use typos with config file
       uses: crate-ci/typos@master
-      with: 
-        config: .github/workflows/typos.toml
-
+      with:
+        config: .github/typos.toml
