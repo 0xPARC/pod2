@@ -4,14 +4,6 @@ extend-exclude = [
 ]
 ignore-hidden = false
 
-[default]
-extend-ignore-re = [
-    "\\bBig Sur\\b",
-    "[0-9A-Za-z/+]{64}",
-]
-
-[default.extend-words]
-
 [type.rust.extend-identifiers]
 ANDed = "ANDed"
 OT = "OT"
