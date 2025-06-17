@@ -224,8 +224,7 @@ pub struct MerkleProofExistenceTarget {
 impl MerkleProofExistenceGadget {
     /// creates the targets and defines the logic of the circuit
     pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MerkleProofExistenceTarget> {
-        let measure =
-            measure_gates_begin!(builder, format!("MerkleProofExistence_{}", self.max_depth));
+        let measure = measure_gates_begin!(builder, format!("MerkleProofExist_{}", self.max_depth));
         let enabled = builder.add_virtual_bool_target_safe();
         let root = builder.add_virtual_hash();
         let key = builder.add_virtual_value();

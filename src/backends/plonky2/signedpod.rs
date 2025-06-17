@@ -23,6 +23,7 @@ use crate::{
         containers::Dictionary, AnchoredKey, DynError, Hash, Key, Params, Pod, PodId, PodSigner,
         PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE, SELF,
     },
+    timed,
 };
 
 pub struct Signer(pub SecretKey);
@@ -42,7 +43,7 @@ impl Signer {
         let dict = Dictionary::new(params.max_depth_mt_containers, kvs)?;
         let id = RawValue::from(dict.commitment()); // PodId as Value
 
-        let signature: Signature = self.0.sign(id, &nonce);
+        let signature: Signature = timed!("SignedPod::sign", self.0.sign(id, &nonce));
         Ok(SignedPod {
             id: PodId(Hash::from(id)),
             signature,

@@ -152,7 +152,7 @@ impl OperationVerifyGadget {
         merkle_claims: &[MerkleClaimTarget],
         custom_predicate_verification_table: &[HashOutTarget],
     ) -> Result<()> {
-        let measure = measure_gates_begin!(builder, "OperationVerify");
+        let measure = measure_gates_begin!(builder, "OpVerify");
         let _true = builder._true();
         let _false = builder._false();
 
@@ -861,7 +861,7 @@ impl CustomOperationVerifyGadget {
         st_tmpl: &StatementTmplTarget,
         args: &[ValueTarget],
     ) -> StatementTarget {
-        let measure = measure_gates_begin!(builder, "StatementArgFromTemplate");
+        let measure = measure_gates_begin!(builder, "StArgFromTmpl");
         let args = st_tmpl
             .args
             .iter()
@@ -886,7 +886,7 @@ impl CustomOperationVerifyGadget {
         op_args: &[StatementTarget],
         args: &[ValueTarget], // arguments to the custom predicate, public and private
     ) -> Result<(StatementTarget, OperationTypeTarget)> {
-        let measure = measure_gates_begin!(builder, "CustomOperationVerify");
+        let measure = measure_gates_begin!(builder, "CustomOpVerify");
         // Some sanity checks
         assert_eq!(self.params.max_operation_args, op_args.len());
         assert_eq!(self.params.max_custom_predicate_wildcards, args.len());
@@ -1100,7 +1100,7 @@ impl MainPodVerifyGadget {
         &self,
         builder: &mut CircuitBuilder,
     ) -> Result<(Vec<HashOutTarget>, Vec<CustomPredicateBatchTarget>)> {
-        let measure = measure_gates_begin!(builder, "BuildCustomPredicateTable");
+        let measure = measure_gates_begin!(builder, "BuildCustomPredTbl");
         let params = &self.params;
         let mut custom_predicate_table =
             Vec::with_capacity(params.max_custom_predicate_batches * params.max_custom_batch_size);
@@ -1142,7 +1142,7 @@ impl MainPodVerifyGadget {
         builder: &mut CircuitBuilder,
         custom_predicate_table: &[HashOutTarget],
     ) -> Result<(Vec<HashOutTarget>, Vec<CustomPredicateVerifyEntryTarget>)> {
-        let measure = measure_gates_begin!(builder, "BuildCustomPredicateVerificationTable");
+        let measure = measure_gates_begin!(builder, "BuildCustomPredVerifyTbl");
         let params = &self.params;
         let mut custom_predicate_verifications =
             Vec::with_capacity(params.max_custom_predicate_verifications);
@@ -1200,7 +1200,7 @@ impl MainPodVerifyGadget {
 
         let measure = measure_gates_begin!(builder, "MainPodVerify");
         let params = &self.params;
-        // 1. Verify all input signed pods
+        // 1a. Verify all input signed pods
         let mut signed_pods = Vec::new();
         for _ in 0..params.max_input_signed_pods {
             let signed_pod = SignedPodVerifyGadget {
@@ -1226,14 +1226,23 @@ impl MainPodVerifyGadget {
             1 + self.params.max_input_signed_pods * self.params.max_signed_pod_values
         );
 
+        // 1b. Verify all input recursive pods
         let id_gadget = CalculateIdGadget {
             params: params.clone(),
         };
-        let mut input_pods_self_statements: Vec<Vec<StatementTarget>> = Vec::new();
         let normalize_statement_gadget = NormalizeStatementGadget {
             params: self.params.clone(),
         };
+        let vds_root = builder.add_virtual_hash();
+        let mut input_pods_self_statements: Vec<Vec<StatementTarget>> = Vec::new();
+        let mut vd_mt_proofs: Vec<MerkleClaimAndProofTarget> = Vec::new();
+
         for verified_proof in verified_proofs {
+            let measure_in_pod = measure_gates_begin!(builder, "VerifyInPod");
+
+            //
+            // Verify id from the statements
+            //
             let expected_id = HashOutTarget::try_from(
                 &verified_proof.public_inputs[PI_OFFSET_ID..PI_OFFSET_ID + HASH_SIZE],
             )
@@ -1252,14 +1261,12 @@ impl MainPodVerifyGadget {
             let id = id_gadget.eval(builder, &input_pod_self_statements);
             builder.connect_hashes(expected_id, id);
             input_pods_self_statements.push(input_pod_self_statements);
-        }
 
-        let vds_root = builder.add_virtual_hash();
+            //
+            // Verify that all input pod proofs use verifier data from the public input VD
+            // array. This requires merkle proofs
+            //
 
-        // verify that all input pod proofs use verifier data from the public input VD array This
-        // requires merkle proofs
-        let mut vd_mt_proofs: Vec<MerkleClaimAndProofTarget> = vec![];
-        for verified_proof in verified_proofs {
             // add target for the vd_mt_proof
             let vd_mt_proof = MerkleProofGadget {
                 max_depth: params.max_depth_mt_vds,
@@ -1277,17 +1284,18 @@ impl MainPodVerifyGadget {
                 verified_proof.verifier_data_hash,
                 HashOutTarget::from_vec(vd_mt_proof.value.elements.to_vec()),
             );
-
             vd_mt_proofs.push(vd_mt_proof);
-        }
 
-        // Verify that VD array that input pod uses is the same we use now.
-        for verified_proof in verified_proofs {
+            //
+            // Verify that VD array that input pod uses is the same we use now.
+            //
             let verified_proof_vds_root = HashOutTarget::try_from(
                 &verified_proof.public_inputs[PI_OFFSET_VDSROOT..PI_OFFSET_VDSROOT + HASH_SIZE],
             )
             .expect("4 elements");
             builder.connect_hashes(vds_root, verified_proof_vds_root);
+
+            measure_gates_end!(builder, measure_in_pod);
         }
 
         // Add the input (private and public) statements and corresponding operations

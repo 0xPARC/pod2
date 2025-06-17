@@ -30,6 +30,7 @@ use crate::{
         Hash, MainPodInputs, NativeOperation, OperationType, Params, Pod, PodId, PodProver,
         PodType, RecursivePod, StatementArg, ToFields, VDSet, F, KEY_TYPE, SELF,
     },
+    timed,
 };
 
 /// Hash a list of public statements to derive the PodId.  To make circuits with different number
@@ -540,7 +541,10 @@ impl Prover {
             custom_predicate_batches,
             custom_predicate_verifications,
         };
-        let proof_with_pis = main_pod.prove(&input, proofs, verifier_datas)?;
+        let proof_with_pis = timed!(
+            "MainPod::prove",
+            main_pod.prove(&input, proofs, verifier_datas)?
+        );
 
         Ok(MainPod {
             params: params.clone(),
@@ -874,6 +878,7 @@ pub mod tests {
         let dist_1 = helper
             .dist_1(&alice_attestation)?
             .prove(&mut prover, &params)?;
+        crate::measure_gates_print!();
         dist_1.pod.verify()?;
         let dist_2 = helper
             .dist_n_plus_1(&dist_1, &bob_attestation)?
