@@ -8,10 +8,9 @@ use serde::{Deserialize, Serialize};
 use serialization::{SerializedMainPod, SerializedSignedPod};
 
 use crate::middleware::{
-    self, check_st_tmpl, hash_str, hash_values, AnchoredKey, Hash, Key, MainPodInputs,
-    NativeOperation, NativePredicate, OperationAux, OperationType, Params, PodId, PodProver,
-    PodSigner, Predicate, Statement, StatementArg, Value, WildcardValue, EMPTY_HASH, KEY_TYPE,
-    SELF,
+    self, check_st_tmpl, hash_op, hash_str, max_op, prod_op, sum_op, AnchoredKey, Key,
+    MainPodInputs, NativeOperation, OperationAux, OperationType, Params, PodId, PodProver,
+    PodSigner, Statement, StatementArg, VDSet, Value, ValueRef, KEY_TYPE, SELF,
 };
 
 mod custom;
@@ -50,6 +49,8 @@ impl SignedPodBuilder {
         self.kvs.insert(key.into(), value.into());
     }
 
+    // TODO: Remove mut because Schnorr signature doesn't need any mutability of the signer, the
+    // nonces are sourced from OS randomness.
     pub fn sign<S: PodSigner>(&self, signer: &mut S) -> Result<SignedPod> {
         // Sign POD with committed KV store.
         let pod = signer.sign(&self.params, &self.kvs)?;
@@ -61,7 +62,7 @@ impl SignedPodBuilder {
 /// SignedPod is a wrapper on top of backend::SignedPod, which additionally stores the
 /// string<-->hash relation of the keys.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(from = "SerializedSignedPod", into = "SerializedSignedPod")]
+#[serde(try_from = "SerializedSignedPod", into = "SerializedSignedPod")]
 pub struct SignedPod {
     pub pod: Box<dyn middleware::Pod>,
     // We store a copy of the key values for quick access
@@ -103,12 +104,12 @@ impl SignedPod {
     pub fn get(&self, key: impl Into<Key>) -> Option<&Value> {
         self.kvs.get(&key.into())
     }
-    // Returns the ValueOf statement that defines key if it exists.
+    // Returns the Equal statement that defines key if it exists.
     pub fn get_statement(&self, key: impl Into<Key>) -> Option<Statement> {
         let key: Key = key.into();
         self.kvs()
             .get(&key)
-            .map(|value| Statement::ValueOf(AnchoredKey::from((self.id(), key)), value.clone()))
+            .map(|value| Statement::equal(AnchoredKey::from((self.id(), key)), value.clone()))
     }
 }
 
@@ -117,6 +118,7 @@ impl SignedPod {
 #[derive(Debug)]
 pub struct MainPodBuilder {
     pub params: Params,
+    pub vd_set: VDSet,
     pub input_signed_pods: Vec<SignedPod>,
     pub input_main_pods: Vec<MainPod>,
     pub statements: Vec<Statement>,
@@ -125,7 +127,7 @@ pub struct MainPodBuilder {
     // Internal state
     /// Counter for constants created from literals
     const_cnt: usize,
-    /// Map from (public, Value) to Key of already created literals via ValueOf statements.
+    /// Map from (public, Value) to Key of already created literals via Equal statements.
     literals: HashMap<(bool, Value), Key>,
 }
 
@@ -151,9 +153,10 @@ impl fmt::Display for MainPodBuilder {
 }
 
 impl MainPodBuilder {
-    pub fn new(params: &Params) -> Self {
+    pub fn new(params: &Params, vd_set: &VDSet) -> Self {
         Self {
             params: params.clone(),
+            vd_set: vd_set.clone(),
             input_signed_pods: Vec::new(),
             input_main_pods: Vec::new(),
             statements: Vec::new(),
@@ -183,38 +186,6 @@ impl MainPodBuilder {
         if self.statements.len() > self.params.max_statements {
             panic!("too many statements");
         }
-    }
-
-    /// Convert [OperationArg]s to [StatementArg]s for the operations that work with entries
-    fn op_args_entries(
-        &mut self,
-        public: bool,
-        args: &mut [OperationArg],
-    ) -> Result<Vec<StatementArg>> {
-        let mut st_args = Vec::new();
-        // TODO: Rewrite without calling args() and instead using matches?
-        for arg in args.iter_mut() {
-            match arg {
-                OperationArg::Statement(s) => {
-                    if s.predicate() == Predicate::Native(NativePredicate::ValueOf) {
-                        st_args.push(s.args()[0].clone())
-                    } else {
-                        panic!("Invalid statement argument.");
-                    }
-                }
-                // todo: better error handling
-                OperationArg::Literal(v) => {
-                    let value_of_st = self.literal(public, v.clone())?;
-                    *arg = OperationArg::Statement(value_of_st.clone());
-                    st_args.push(value_of_st.args()[0].clone())
-                }
-                OperationArg::Entry(k, v) => {
-                    st_args.push(StatementArg::Key(AnchoredKey::from((SELF, k.as_str()))));
-                    st_args.push(StatementArg::Literal(v.clone()))
-                }
-            };
-        }
-        Ok(st_args)
     }
 
     pub fn pub_op(&mut self, op: Operation) -> Result<Statement> {
@@ -306,169 +277,190 @@ impl MainPodBuilder {
         }
     }
 
-    fn op(&mut self, public: bool, op: Operation) -> Result<Statement> {
+    fn op_statement(&mut self, op: Operation) -> Result<Statement> {
         use NativeOperation::*;
-        let mut op = Self::fill_in_aux(Self::lower_op(op))?;
-        let Operation(op_type, ref mut args, _) = &mut op;
-        // TODO: argument type checking
-        let pred = op_type.output_predicate().map(Ok).unwrap_or_else(|| {
-            // We are dealing with a copy here.
-            match (args).first() {
-                Some(OperationArg::Statement(s)) if args.len() == 1 => Ok(s.predicate().clone()),
-                _ => Err(Error::op_invalid_args("copy".to_string())),
-            }
-        })?;
-
-        let st_args: Vec<StatementArg> = match op_type {
-            OperationType::Native(o) => match o {
-                None => vec![],
-                NewEntry | EqualFromEntries | NotEqualFromEntries | LtFromEntries
-                | LtEqFromEntries => self.op_args_entries(public, args)?,
-                CopyStatement => match &args[0] {
-                    OperationArg::Statement(s) => s.args().clone(),
-                    _ => {
-                        return Err(Error::op_invalid_args("copy".to_string()));
-                    }
-                },
-                TransitiveEqualFromStatements => {
-                    match (args[0].clone(), args[1].clone()) {
-                        (
-                            OperationArg::Statement(Statement::Equal(ak0, ak1)),
-                            OperationArg::Statement(Statement::Equal(ak2, ak3)),
-                        ) => {
-                            // st_args0 == vec![ak0, ak1]
-                            // st_args1 == vec![ak1, ak2]
-                            // output statement Equals(ak0, ak2)
-                            if ak1 == ak2 {
-                                vec![StatementArg::Key(ak0), StatementArg::Key(ak3)]
-                            } else {
-                                return Err(Error::op_invalid_args(
-                                    "transitivity equality".to_string(),
-                                ));
-                            }
-                        }
-                        _ => {
-                            return Err(Error::op_invalid_args(
-                                "transitivity equality".to_string(),
-                            ));
-                        }
+        let arg_error = |s: &str| Error::op_invalid_args(s.to_string());
+        let st = match op.0 {
+            OperationType::Native(o) => match (o, &op.1.as_slice()) {
+                (None, &[]) => Statement::None,
+                (NewEntry, &[OperationArg::Entry(k, v)]) => {
+                    Statement::equal(AnchoredKey::from((SELF, k.as_str())), v.clone())
+                }
+                (EqualFromEntries, &[a1, a2]) => {
+                    let (r1, v1) = a1
+                        .value_and_ref()
+                        .ok_or_else(|| arg_error("equal-from-entries"))?;
+                    let (r2, v2) = a2
+                        .value_and_ref()
+                        .ok_or_else(|| arg_error("equal-from-entries"))?;
+                    if v1 == v2 {
+                        Statement::equal(r1, r2)
+                    } else {
+                        return Err(arg_error("equal-from-entries"));
                     }
                 }
-                LtToNotEqual => match args[0].clone() {
-                    OperationArg::Statement(Statement::Lt(ak0, ak1)) => {
-                        vec![StatementArg::Key(ak0), StatementArg::Key(ak1)]
+                (NotEqualFromEntries, &[a1, a2]) => {
+                    let (r1, v1) = a1
+                        .value_and_ref()
+                        .ok_or_else(|| arg_error("not-equal-from-entries"))?;
+                    let (r2, v2) = a2
+                        .value_and_ref()
+                        .ok_or_else(|| arg_error("not-equal-from-entries"))?;
+                    if v1 != v2 {
+                        Statement::not_equal(r1, r2)
+                    } else {
+                        return Err(arg_error("not-equal-from-entries"));
                     }
-                    _ => {
-                        return Err(Error::op_invalid_args("lt-to-neq".to_string()));
+                }
+                (LtFromEntries, &[a1, a2]) => {
+                    let (r1, v1) = a1
+                        .value_and_ref()
+                        .ok_or_else(|| arg_error("lt-from-entries"))?;
+                    let (r2, v2) = a2
+                        .value_and_ref()
+                        .ok_or_else(|| arg_error("lt-from-entries"))?;
+                    if v1 < v2 {
+                        Statement::lt(r1, r2)
+                    } else {
+                        return Err(arg_error("lt-from-entries"));
                     }
-                },
-                SumOf => match (args[0].clone(), args[1].clone(), args[2].clone()) {
-                    (
-                        OperationArg::Statement(Statement::ValueOf(ak0, v0)),
-                        OperationArg::Statement(Statement::ValueOf(ak1, v1)),
-                        OperationArg::Statement(Statement::ValueOf(ak2, v2)),
-                    ) => {
-                        let v0: i64 = v0.typed().try_into()?;
-                        let v1: i64 = v1.typed().try_into()?;
-                        let v2: i64 = v2.typed().try_into()?;
-                        if v0 == v1 + v2 {
-                            vec![
-                                StatementArg::Key(ak0),
-                                StatementArg::Key(ak1),
-                                StatementArg::Key(ak2),
-                            ]
-                        } else {
-                            return Err(Error::op_invalid_args("sum-of".to_string()));
-                        }
+                }
+                (LtEqFromEntries, &[a1, a2]) => {
+                    let (r1, v1) = a1
+                        .value_and_ref()
+                        .ok_or_else(|| arg_error("lt-eq-from-entries"))?;
+                    let (r2, v2) = a2
+                        .value_and_ref()
+                        .ok_or_else(|| arg_error("lt-eq-from-entries"))?;
+                    if v1 <= v2 {
+                        Statement::not_equal(r1, r2)
+                    } else {
+                        return Err(arg_error("lt-eq-from-entries"));
                     }
-                    _ => {
-                        return Err(Error::op_invalid_args("sum-of".to_string()));
+                }
+                (CopyStatement, &[OperationArg::Statement(s)]) => s.clone(),
+                (
+                    TransitiveEqualFromStatements,
+                    &[OperationArg::Statement(Statement::Equal(r1, r2)), OperationArg::Statement(Statement::Equal(r3, r4))],
+                ) => {
+                    if r2 == r3 {
+                        Statement::Equal(r1.clone(), r4.clone())
+                    } else {
+                        return Err(arg_error("transitive-eq"));
                     }
-                },
-                ProductOf => match (args[0].clone(), args[1].clone(), args[2].clone()) {
-                    (
-                        OperationArg::Statement(Statement::ValueOf(ak0, v0)),
-                        OperationArg::Statement(Statement::ValueOf(ak1, v1)),
-                        OperationArg::Statement(Statement::ValueOf(ak2, v2)),
-                    ) => {
-                        let v0: i64 = v0.typed().try_into()?;
-                        let v1: i64 = v1.typed().try_into()?;
-                        let v2: i64 = v2.typed().try_into()?;
-                        if v0 == v1 * v2 {
-                            vec![
-                                StatementArg::Key(ak0),
-                                StatementArg::Key(ak1),
-                                StatementArg::Key(ak2),
-                            ]
-                        } else {
-                            return Err(Error::op_invalid_args("product-of".to_string()));
-                        }
+                }
+                (LtToNotEqual, &[OperationArg::Statement(Statement::Lt(r1, r2))]) => {
+                    Statement::NotEqual(r1.clone(), r2.clone())
+                }
+                (SumOf, &[a1, a2, a3]) => {
+                    let (r1, v1) = a1
+                        .value_and_ref()
+                        .ok_or_else(|| arg_error("sum-from-entries"))?;
+                    let (r2, v2) = a2
+                        .value_and_ref()
+                        .ok_or_else(|| arg_error("sum-from-entries"))?;
+                    let (r3, v3) = a3
+                        .value_and_ref()
+                        .ok_or_else(|| arg_error("sum-from-entries"))?;
+                    if middleware::Operation::check_int_fn(v1, v2, v3, sum_op)? {
+                        Statement::SumOf(r1, r2, r3)
+                    } else {
+                        return Err(arg_error("sum-from-entries"));
                     }
-                    _ => {
-                        return Err(Error::op_invalid_args("product-of".to_string()));
+                }
+                (ProductOf, &[a1, a2, a3]) => {
+                    let (r1, v1) = a1
+                        .value_and_ref()
+                        .ok_or_else(|| arg_error("prod-from-entries"))?;
+                    let (r2, v2) = a2
+                        .value_and_ref()
+                        .ok_or_else(|| arg_error("prod-from-entries"))?;
+                    let (r3, v3) = a3
+                        .value_and_ref()
+                        .ok_or_else(|| arg_error("prod-from-entries"))?;
+                    if middleware::Operation::check_int_fn(v1, v2, v3, prod_op)? {
+                        Statement::ProductOf(r1, r2, r3)
+                    } else {
+                        return Err(arg_error("prod-from-entries"));
                     }
-                },
-                MaxOf => match (args[0].clone(), args[1].clone(), args[2].clone()) {
-                    (
-                        OperationArg::Statement(Statement::ValueOf(ak0, v0)),
-                        OperationArg::Statement(Statement::ValueOf(ak1, v1)),
-                        OperationArg::Statement(Statement::ValueOf(ak2, v2)),
-                    ) => {
-                        let v0: i64 = v0.typed().try_into()?;
-                        let v1: i64 = v1.typed().try_into()?;
-                        let v2: i64 = v2.typed().try_into()?;
-                        if v0 == std::cmp::max(v1, v2) {
-                            vec![
-                                StatementArg::Key(ak0),
-                                StatementArg::Key(ak1),
-                                StatementArg::Key(ak2),
-                            ]
-                        } else {
-                            return Err(Error::op_invalid_args("max-of".to_string()));
-                        }
+                }
+                (MaxOf, &[a1, a2, a3]) => {
+                    let (r1, v1) = a1
+                        .value_and_ref()
+                        .ok_or_else(|| arg_error("max-from-entries"))?;
+                    let (r2, v2) = a2
+                        .value_and_ref()
+                        .ok_or_else(|| arg_error("max-from-entries"))?;
+                    let (r3, v3) = a3
+                        .value_and_ref()
+                        .ok_or_else(|| arg_error("max-from-entries"))?;
+                    if middleware::Operation::check_int_fn(v1, v2, v3, max_op)? {
+                        Statement::MaxOf(r1, r2, r3)
+                    } else {
+                        return Err(arg_error("max-from-entries"));
                     }
-                    _ => {
-                        return Err(Error::op_invalid_args("max-of".to_string()));
+                }
+                (HashOf, &[a1, a2, a3]) => {
+                    let (r1, v1) = a1
+                        .value_and_ref()
+                        .ok_or_else(|| arg_error("hash-from-entries"))?;
+                    let (r2, v2) = a2
+                        .value_and_ref()
+                        .ok_or_else(|| arg_error("hash-from-entries"))?;
+                    let (r3, v3) = a3
+                        .value_and_ref()
+                        .ok_or_else(|| arg_error("hash-from-entries"))?;
+                    if v1 == &hash_op(v2.clone(), v3.clone()) {
+                        Statement::HashOf(r1, r2, r3)
+                    } else {
+                        return Err(arg_error("hash-from-entries"));
                     }
-                },
-                HashOf => match (args[0].clone(), args[1].clone(), args[2].clone()) {
-                    (
-                        OperationArg::Statement(Statement::ValueOf(ak0, v0)),
-                        OperationArg::Statement(Statement::ValueOf(ak1, v1)),
-                        OperationArg::Statement(Statement::ValueOf(ak2, v2)),
-                    ) => {
-                        if Hash::from(v0.raw()) == hash_values(&[v1, v2]) {
-                            vec![
-                                StatementArg::Key(ak0),
-                                StatementArg::Key(ak1),
-                                StatementArg::Key(ak2),
-                            ]
-                        } else {
-                            return Err(Error::op_invalid_args("hash-of".to_string()));
-                        }
+                }
+                (ContainsFromEntries, &[a1, a2, a3]) => {
+                    let (r1, _v1) = a1
+                        .value_and_ref()
+                        .ok_or_else(|| arg_error("contains-from-entries"))?;
+                    let (r2, _v2) = a2
+                        .value_and_ref()
+                        .ok_or_else(|| arg_error("contains-from-entries"))?;
+                    let (r3, _v3) = a3
+                        .value_and_ref()
+                        .ok_or_else(|| arg_error("contains-from-entries"))?;
+                    // TODO: validate proof
+                    Statement::Contains(r1, r2, r3)
+                }
+                (NotContainsFromEntries, &[a1, a2]) => {
+                    let (r1, _v1) = a1
+                        .value_and_ref()
+                        .ok_or_else(|| arg_error("contains-from-entries"))?;
+                    let (r2, _v2) = a2
+                        .value_and_ref()
+                        .ok_or_else(|| arg_error("contains-from-entries"))?;
+                    // TODO: validate proof
+                    Statement::NotContains(r1, r2)
+                }
+                (t, _) => {
+                    if t.is_syntactic_sugar() {
+                        return Err(Error::custom(format!(
+                            "Unexpected syntactic sugar: {:?}",
+                            t
+                        )));
+                    } else {
+                        return Err(arg_error("malformed operation"));
                     }
-                    _ => {
-                        return Err(Error::op_invalid_args("hash-of".to_string()));
-                    }
-                },
-                ContainsFromEntries => self.op_args_entries(public, args)?,
-                NotContainsFromEntries => self.op_args_entries(public, args)?,
-                _ => Err(Error::custom(format!(
-                    "Unexpected syntactic sugar: {:?}",
-                    op_type
-                )))?,
+                }
             },
             OperationType::Custom(cpr) => {
                 let pred = &cpr.batch.predicates()[cpr.index];
-                if pred.statements.len() != args.len() {
+                if pred.statements.len() != op.1.len() {
                     return Err(Error::custom(format!(
                         "Custom predicate operation needs {} statements but has {}.",
                         pred.statements.len(),
-                        args.len()
+                        op.1.len()
                     )));
                 }
                 // All args should be statements to be pattern matched against statement templates.
-                let args = args.iter().map(
+                let args = op.1.iter().map(
                     |a| match a {
                         OperationArg::Statement(s) => Ok(s.clone()),
                         _ => Err(Error::custom(format!("Invalid argument {} to operation corresponding to custom predicate {:?}.", a, cpr)))
@@ -481,20 +473,29 @@ impl MainPodBuilder {
                     let st_args = st.args();
                     for (st_tmpl_arg, st_arg) in st_tmpl.args.iter().zip(&st_args) {
                         if !check_st_tmpl(st_tmpl_arg, st_arg, &mut wildcard_map) {
-                            // TODO: Add wildcard_map in the error for better context
-                            return Err(Error::statements_dont_match(st.clone(), st_tmpl.clone()));
+                            return Err(Error::statements_dont_match(
+                                st.clone(),
+                                st_tmpl.clone(),
+                                wildcard_map,
+                            ));
                         }
                     }
                 }
-                let v_default = WildcardValue::PodId(SELF);
-                wildcard_map
+                let v_default = Value::from(0);
+                let st_args: Vec<_> = wildcard_map
                     .into_iter()
                     .take(pred.args_len)
-                    .map(|v| StatementArg::WildcardLiteral(v.unwrap_or_else(|| v_default.clone())))
-                    .collect()
+                    .map(|v| v.unwrap_or_else(|| v_default.clone()))
+                    .collect();
+                Statement::Custom(cpr, st_args)
             }
         };
-        let st = Statement::from_args(pred, st_args).expect("valid arguments");
+        Ok(st)
+    }
+
+    fn op(&mut self, public: bool, op: Operation) -> Result<Statement> {
+        let op = Self::fill_in_aux(Self::lower_op(op))?;
+        let st = self.op_statement(op.clone())?;
         self.insert(public, (st, op));
 
         Ok(self.statements[self.statements.len() - 1].clone())
@@ -513,7 +514,7 @@ impl MainPodBuilder {
     fn literal(&mut self, public: bool, value: Value) -> Result<Statement> {
         let public_value = (public, value);
         if let Some(key) = self.literals.get(&public_value) {
-            Ok(Statement::ValueOf(
+            Ok(Statement::equal(
                 AnchoredKey::new(SELF, key.clone()),
                 public_value.1,
             ))
@@ -548,6 +549,7 @@ impl MainPodBuilder {
         };
 
         let (statements, operations, public_statements) = compiler.compile(inputs, params)?;
+
         let inputs = MainPodInputs {
             signed_pods: &self
                 .input_signed_pods
@@ -562,9 +564,9 @@ impl MainPodBuilder {
             statements: &statements,
             operations: &operations,
             public_statements: &public_statements,
-            vds_root: EMPTY_HASH, // TODO https://github.com/0xPARC/pod2/issues/249
+            vds_set: self.vd_set.clone(),
         };
-        let pod = prover.prove(&self.params, inputs)?;
+        let pod = prover.prove(&self.params, &self.vd_set, inputs)?;
 
         // Gather public statements, making sure to inject the type
         // information specified by the backend.
@@ -573,14 +575,11 @@ impl MainPodBuilder {
         let type_statement = pod
             .pub_statements()
             .into_iter()
-            .find_map(|s| match s {
-                Statement::ValueOf(AnchoredKey { pod_id: id, key }, value)
-                    if id == pod_id && key.hash() == type_key_hash =>
+            .find_map(|s| match s.as_entry() {
+                Some((AnchoredKey { pod_id: id, key }, _))
+                    if id == &pod_id && key.hash() == type_key_hash =>
                 {
-                    Some(Statement::ValueOf(
-                        AnchoredKey::from((pod_id, KEY_TYPE)),
-                        value,
-                    ))
+                    Some(s)
                 }
                 _ => None,
             })
@@ -646,13 +645,13 @@ impl MainPod {
         self.pod.id()
     }
 
-    /// Returns the value of a ValueOf statement with self id that defines key if it exists.
+    /// Returns the value of a Equal statement with self id that defines key if it exists.
     pub fn get(&self, key: impl Into<Key>) -> Option<Value> {
         let key: Key = key.into();
         self.public_statements
             .iter()
             .find_map(|st| match st {
-                Statement::ValueOf(ak, value)
+                Statement::Equal(ValueRef::Key(ak), ValueRef::Literal(value))
                     if ak.pod_id == self.id() && ak.key.hash() == key.hash() =>
                 {
                     Some(value)
@@ -699,11 +698,7 @@ impl MainPodCompiler {
     fn compile_op_arg(&self, op_arg: &OperationArg) -> Option<Statement> {
         match op_arg {
             OperationArg::Statement(s) => Some(s.clone()),
-            OperationArg::Literal(_v) => {
-                // OperationArg::Literal is a syntax sugar for the frontend.  This is translated to
-                // a new ValueOf statement and it's key used instead.
-                unreachable!()
-            }
+            OperationArg::Literal(_v) => Some(Statement::None),
             OperationArg::Entry(_k, _v) => {
                 // OperationArg::Entry is only used in the frontend.  The (key, value) will only
                 // appear in the ValueOf statement in the backend.  This is because a new ValueOf
@@ -772,7 +767,7 @@ pub mod build_utils {
 
     #[macro_export]
     macro_rules! op {
-        (new_entry, ($key:expr, $value:expr)) => { $crate::frontend::Operation(
+        (new_entry, $key:expr, $value:expr) => { $crate::frontend::Operation(
             $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::NewEntry),
             $crate::op_args!(($key, $value)), $crate::middleware::OperationAux::None) };
         (copy, $($arg:expr),+) => { $crate::frontend::Operation(
@@ -831,12 +826,13 @@ pub mod build_utils {
 
 #[cfg(test)]
 pub mod tests {
+
     use super::*;
     use crate::{
         backends::plonky2::mock::{mainpod::MockProver, signedpod::MockSigner},
         examples::{
-            eth_dos_pod_builder, eth_friend_signed_pod_builder, great_boy_pod_full_flow,
-            tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_sign_pod_builders,
+            attest_eth_friend, great_boy_pod_full_flow, tickets_pod_full_flow, zu_kyc_pod_builder,
+            zu_kyc_sign_pod_builders, EthDosHelper, MOCK_VD_SET,
         },
         middleware::{containers::Dictionary, Value},
     };
@@ -873,6 +869,7 @@ pub mod tests {
     #[test]
     fn test_front_zu_kyc() -> Result<()> {
         let params = Params::default();
+        let vd_set = &*MOCK_VD_SET;
         let (gov_id, pay_stub, sanction_list) = zu_kyc_sign_pod_builders(&params);
 
         println!("{}", gov_id);
@@ -899,7 +896,7 @@ pub mod tests {
         check_kvs(&sanction_list)?;
         println!("{}", sanction_list);
 
-        let kyc_builder = zu_kyc_pod_builder(&params, &gov_id, &pay_stub, &sanction_list)?;
+        let kyc_builder = zu_kyc_pod_builder(&params, vd_set, &gov_id, &pay_stub, &sanction_list)?;
         println!("{}", kyc_builder);
 
         // prove kyc with MockProver and print it
@@ -912,47 +909,45 @@ pub mod tests {
     }
 
     #[test]
-    fn test_ethdos() -> Result<()> {
+    fn test_ethdos_recursive() -> Result<()> {
         let params = Params {
-            max_input_signed_pods: 3,
-            max_input_recursive_pods: 3,
-            max_statements: 31,
-            max_signed_pod_values: 8,
-            max_public_statements: 10,
-            max_statement_args: 6,
-            max_operation_args: 5,
-            max_custom_predicate_arity: 5,
-            max_custom_batch_size: 5,
-            max_custom_predicate_wildcards: 12,
+            max_input_pods_public_statements: 8,
+            max_statements: 24,
+            max_public_statements: 8,
             ..Default::default()
         };
+        let vd_set = &*MOCK_VD_SET;
 
         let mut alice = MockSigner { pk: "Alice".into() };
-        let bob = MockSigner { pk: "Bob".into() };
+        let mut bob = MockSigner { pk: "Bob".into() };
         let mut charlie = MockSigner {
             pk: "Charlie".into(),
         };
+        let david = MockSigner { pk: "David".into() };
 
-        // Alice attests that she is ETH friends with Charlie and Charlie
-        // attests that he is ETH friends with Bob.
-        let alice_attestation =
-            eth_friend_signed_pod_builder(&params, charlie.public_key().into()).sign(&mut alice)?;
-        check_kvs(&alice_attestation)?;
-        let charlie_attestation =
-            eth_friend_signed_pod_builder(&params, bob.public_key().into()).sign(&mut charlie)?;
-        check_kvs(&charlie_attestation)?;
+        let helper = EthDosHelper::new(&params, vd_set, true, alice.public_key())?;
 
         let mut prover = MockProver {};
-        let alice_bob_ethdos = eth_dos_pod_builder(
-            &params,
-            true,
-            &alice_attestation,
-            &charlie_attestation,
-            bob.public_key().into(),
-        )?
-        .prove(&mut prover, &params)?;
 
-        check_public_statements(&alice_bob_ethdos)
+        let alice_attestation = attest_eth_friend(&params, &mut alice, bob.public_key());
+        let dist_1 = helper
+            .dist_1(&alice_attestation)?
+            .prove(&mut prover, &params)?;
+        dist_1.pod.verify()?;
+
+        let bob_attestation = attest_eth_friend(&params, &mut bob, charlie.public_key());
+        let dist_2 = helper
+            .dist_n_plus_1(&dist_1, &bob_attestation)?
+            .prove(&mut prover, &params)?;
+        dist_2.pod.verify()?;
+
+        let charlie_attestation = attest_eth_friend(&params, &mut charlie, david.public_key());
+        let dist_3 = helper
+            .dist_n_plus_1(&dist_2, &charlie_attestation)?
+            .prove(&mut prover, &params)?;
+        dist_3.pod.verify()?;
+
+        Ok(())
     }
 
     #[test]
@@ -978,13 +973,15 @@ pub mod tests {
     #[should_panic]
     fn test_equal() {
         let params = Params::default();
+        let vd_set = &*MOCK_VD_SET;
+
         let mut signed_builder = SignedPodBuilder::new(&params);
         signed_builder.insert("a", 1);
         signed_builder.insert("b", 1);
         let mut signer = MockSigner { pk: "key".into() };
         let signed_pod = signed_builder.sign(&mut signer).unwrap();
 
-        let mut builder = MainPodBuilder::new(&params);
+        let mut builder = MainPodBuilder::new(&params, vd_set);
         builder.add_signed_pod(&signed_pod);
 
         //let op_val1 = Operation{
@@ -1028,6 +1025,7 @@ pub mod tests {
     #[should_panic]
     fn test_false_st() {
         let params = Params::default();
+        let vd_set = &*MOCK_VD_SET;
         let mut builder = SignedPodBuilder::new(&params);
 
         builder.insert("num", 2);
@@ -1039,7 +1037,7 @@ pub mod tests {
 
         println!("{}", pod);
 
-        let mut builder = MainPodBuilder::new(&params);
+        let mut builder = MainPodBuilder::new(&params, vd_set);
         builder.add_signed_pod(&pod);
         builder.pub_op(op!(gt, (&pod, "num"), 5)).unwrap();
 
@@ -1053,6 +1051,7 @@ pub mod tests {
     #[test]
     fn test_dictionaries() -> Result<()> {
         let params = Params::default();
+        let vd_set = &*MOCK_VD_SET;
         let mut builder = SignedPodBuilder::new(&params);
 
         let mut my_dict_kvs: HashMap<Key, Value> = HashMap::new();
@@ -1061,7 +1060,7 @@ pub mod tests {
         my_dict_kvs.insert(Key::from("c"), Value::from(3));
         //        let my_dict_as_mt = MerkleTree::new(5, &my_dict_kvs).unwrap();
         //        let dict = Dictionary { mt: my_dict_as_mt };
-        let dict = Dictionary::new(my_dict_kvs)?;
+        let dict = Dictionary::new(params.max_depth_mt_containers, my_dict_kvs)?;
         let dict_root = Value::from(dict.clone());
         builder.insert("dict", dict_root);
 
@@ -1070,10 +1069,10 @@ pub mod tests {
         };
         let pod = builder.sign(&mut signer).unwrap();
 
-        let mut builder = MainPodBuilder::new(&params);
+        let mut builder = MainPodBuilder::new(&params, vd_set);
         builder.add_signed_pod(&pod);
         let st0 = pod.get_statement("dict").unwrap();
-        let st1 = builder.op(true, op!(new_entry, ("key", "a"))).unwrap();
+        let st1 = builder.op(true, op!(new_entry, "key", "a")).unwrap();
         let st2 = builder.literal(false, Value::from(1)).unwrap();
 
         builder
@@ -1099,15 +1098,16 @@ pub mod tests {
 
     #[should_panic]
     #[test]
-    fn test_incorrect_pod() {
+    fn test_reject_duplicate_new_entry() {
         // try to insert the same key multiple times
         // right now this is not caught when you build the pod,
         // but it is caught on verify
         env_logger::init();
 
         let params = Params::default();
-        let mut builder = MainPodBuilder::new(&params);
-        let st = Statement::ValueOf(AnchoredKey::from((SELF, "a")), Value::from(3));
+        let vd_set = &*MOCK_VD_SET;
+        let mut builder = MainPodBuilder::new(&params, vd_set);
+        let st = Statement::equal(AnchoredKey::from((SELF, "a")), Value::from(3));
         let op_new_entry = Operation(
             OperationType::Native(NativeOperation::NewEntry),
             vec![],
@@ -1115,25 +1115,35 @@ pub mod tests {
         );
         builder.insert(false, (st, op_new_entry.clone()));
 
-        let st = Statement::ValueOf(AnchoredKey::from((SELF, "a")), Value::from(28));
+        let st = Statement::equal(AnchoredKey::from((SELF, "a")), Value::from(28));
         builder.insert(false, (st, op_new_entry.clone()));
 
         let mut prover = MockProver {};
         let pod = builder.prove(&mut prover, &params).unwrap();
         pod.pod.verify().unwrap();
+    }
 
+    #[should_panic]
+    #[test]
+    fn test_reject_unsound_statement() {
         // try to insert a statement that doesn't follow from the operation
         // right now the mock prover catches this when it calls compile()
         let params = Params::default();
-        let mut builder = MainPodBuilder::new(&params);
+        let vd_set = &*MOCK_VD_SET;
+        let mut builder = MainPodBuilder::new(&params, vd_set);
         let self_a = AnchoredKey::from((SELF, "a"));
         let self_b = AnchoredKey::from((SELF, "b"));
-        let value_of_a = Statement::ValueOf(self_a.clone(), Value::from(3));
-        let value_of_b = Statement::ValueOf(self_b.clone(), Value::from(27));
+        let value_of_a = Statement::equal(self_a.clone(), Value::from(3));
+        let value_of_b = Statement::equal(self_b.clone(), Value::from(27));
 
+        let op_new_entry = Operation(
+            OperationType::Native(NativeOperation::NewEntry),
+            vec![],
+            OperationAux::None,
+        );
         builder.insert(false, (value_of_a.clone(), op_new_entry.clone()));
         builder.insert(false, (value_of_b.clone(), op_new_entry));
-        let st = Statement::Equal(self_a, self_b);
+        let st = Statement::equal(self_a, self_b);
         let op = Operation(
             OperationType::Native(NativeOperation::EqualFromEntries),
             vec![

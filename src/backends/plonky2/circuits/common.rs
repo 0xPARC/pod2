@@ -31,16 +31,15 @@ use crate::{
     middleware::{
         CustomPredicate, CustomPredicateBatch, CustomPredicateRef, NativeOperation,
         NativePredicate, OperationType, Params, Predicate, PredicatePrefix, RawValue, StatementArg,
-        StatementTmpl, StatementTmplArg, StatementTmplArgPrefix, ToFields, Value, WildcardValue,
-        EMPTY_VALUE, F, HASH_SIZE, OPERATION_ARG_F_LEN, OPERATION_AUX_F_LEN, STATEMENT_ARG_F_LEN,
-        VALUE_SIZE,
+        StatementTmpl, StatementTmplArg, StatementTmplArgPrefix, ToFields, Value, EMPTY_VALUE, F,
+        HASH_SIZE, OPERATION_ARG_F_LEN, OPERATION_AUX_F_LEN, STATEMENT_ARG_F_LEN, VALUE_SIZE,
     },
 };
 
 pub const CODE_SIZE: usize = HASH_SIZE + 2;
 const NUM_BITS: usize = 32;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct ValueTarget {
     pub elements: [Target; VALUE_SIZE],
 }
@@ -543,6 +542,7 @@ impl CustomPredicateEntryTarget {
             conjunction: predicate.conjunction,
             statements,
             args_len: predicate.args_len,
+            wildcard_names: predicate.wildcard_names.clone(),
         };
         self.predicate.set_targets(pw, params, &predicate)?;
         Ok(())
@@ -596,7 +596,7 @@ impl CustomPredicateVerifyEntryTarget {
         // Replace statement templates of batch-self with (id,index)
         self.custom_predicate
             .set_targets(pw, params, &cpv.custom_predicate)?;
-        let pad_arg = WildcardValue::None;
+        let pad_arg = Value::from(0);
         for (arg_target, arg) in self.args.iter().zip_eq(
             cpv.args
                 .iter()
@@ -863,6 +863,12 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     fn add_virtual_custom_predicate_entry(&mut self, params: &Params)
         -> CustomPredicateEntryTarget;
     fn select_value(&mut self, b: BoolTarget, x: ValueTarget, y: ValueTarget) -> ValueTarget;
+    fn select_statement_arg(
+        &mut self,
+        b: BoolTarget,
+        x: &StatementArgTarget,
+        y: &StatementArgTarget,
+    ) -> StatementArgTarget;
     fn select_bool(&mut self, b: BoolTarget, x: BoolTarget, y: BoolTarget) -> BoolTarget;
     fn constant_value(&mut self, v: RawValue) -> ValueTarget;
     fn is_equal_slice(&mut self, xs: &[Target], ys: &[Target]) -> BoolTarget;
@@ -1033,6 +1039,17 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
 
     fn select_value(&mut self, b: BoolTarget, x: ValueTarget, y: ValueTarget) -> ValueTarget {
         ValueTarget {
+            elements: std::array::from_fn(|i| self.select(b, x.elements[i], y.elements[i])),
+        }
+    }
+
+    fn select_statement_arg(
+        &mut self,
+        b: BoolTarget,
+        x: &StatementArgTarget,
+        y: &StatementArgTarget,
+    ) -> StatementArgTarget {
+        StatementArgTarget {
             elements: std::array::from_fn(|i| self.select(b, x.elements[i], y.elements[i])),
         }
     }
@@ -1407,7 +1424,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::{
         backends::plonky2::{basetypes::C, recursion::circuit::std_config},
-        examples::custom::{eth_dos_batch, eth_friend_batch},
+        examples::custom::eth_dos_batch,
         frontend::{self, CustomPredicateBatchBuilder},
         middleware::CustomPredicateBatch,
     };
@@ -1459,7 +1476,7 @@ pub(crate) mod tests {
         let params = Params::default();
         let config = std_config();
 
-        let custom_predicate_batch = eth_friend_batch(&params, false)?;
+        let custom_predicate_batch = eth_dos_batch(&params, false)?;
 
         for (i, cp) in custom_predicate_batch.predicates().iter().enumerate() {
             let mut builder = CircuitBuilder::<F, D>::new(config.clone());
@@ -1522,9 +1539,6 @@ pub(crate) mod tests {
         helper_custom_predicate_batch_target_id(&params, &custom_predicate_batch).unwrap();
 
         // Some cases from the examples
-        let custom_predicate_batch = eth_friend_batch(&params, false)?;
-        helper_custom_predicate_batch_target_id(&params, &custom_predicate_batch).unwrap();
-
         let custom_predicate_batch = eth_dos_batch(&params, false)?;
         helper_custom_predicate_batch_target_id(&params, &custom_predicate_batch).unwrap();
 

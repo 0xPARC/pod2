@@ -41,7 +41,7 @@ impl SignedPodVerifyGadget {
         let mut mt_proofs = Vec::new();
         for _ in 0..self.params.max_signed_pod_values {
             let mt_proof = MerkleProofExistenceGadget {
-                max_depth: self.params.max_depth_mt_gadget,
+                max_depth: self.params.max_depth_mt_containers,
             }
             .eval(builder)?;
             builder.connect_hashes(id, mt_proof.root);
@@ -94,8 +94,7 @@ impl SignedPodVerifyTarget {
         self_id: bool,
     ) -> Vec<StatementTarget> {
         let mut statements = Vec::new();
-        let predicate =
-            PredicateTarget::new_native(builder, &self.params, NativePredicate::ValueOf);
+        let predicate = PredicateTarget::new_native(builder, &self.params, NativePredicate::Equal);
         let pod_id = if self_id {
             builder.constant_value(SELF.0.into())
         } else {

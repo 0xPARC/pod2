@@ -6,7 +6,7 @@ use pest_derive::Parser;
 // and changes to the grammar file will not automatically trigger a recompile.
 #[derive(Parser)]
 #[grammar = "lang/grammar.pest"]
-pub struct PodlogParser;
+pub struct PodlangParser;
 
 pub type Pairs<'a, R> = PestPairs<'a, R>;
 
@@ -22,9 +22,9 @@ impl From<pest::error::Error<Rule>> for ParseError {
     }
 }
 
-/// Parses a Podlog input string according to the grammar rules.
-pub fn parse_podlog(input: &str) -> Result<Pairs<'_, Rule>, ParseError> {
-    let pairs = PodlogParser::parse(Rule::document, input)?;
+/// Parses a Podlang input string according to the grammar rules.
+pub fn parse_podlang(input: &str) -> Result<Pairs<'_, Rule>, ParseError> {
+    let pairs = PodlangParser::parse(Rule::document, input)?;
     Ok(pairs)
 }
 
@@ -33,14 +33,14 @@ mod tests {
     use super::*;
 
     fn assert_parses(rule: Rule, input: &str) {
-        match PodlogParser::parse(rule, input) {
+        match PodlangParser::parse(rule, input) {
             Ok(_) => (), // Successfully parsed
             Err(e) => panic!("Failed to parse input:\n{}\nError: {}", input, e),
         }
     }
 
     fn assert_fails(rule: Rule, input: &str) {
-        match PodlogParser::parse(rule, input) {
+        match PodlangParser::parse(rule, input) {
             Ok(pairs) => panic!(
                 "Expected parse to fail, but it succeeded. Parsed:\n{:#?}",
                 pairs
@@ -86,12 +86,10 @@ mod tests {
     #[test]
     fn test_parse_anchored_key() {
         assert_parses(Rule::anchored_key, "?PodVar[\"literal_key\"]");
-        assert_parses(Rule::anchored_key, "?PodVar[?KeyVar]");
-        assert_parses(Rule::anchored_key, "SELF[?KeyVar]");
-        assert_parses(Rule::anchored_key, "SELF[\"literal_key\"]");
         assert_fails(Rule::anchored_key, "PodVar[\"key\"]"); // Needs wildcard for pod
         assert_fails(Rule::anchored_key, "?PodVar[invalid_key]"); // Key must be literal string or wildcard
         assert_fails(Rule::anchored_key, "?PodVar[]"); // Key cannot be empty
+        assert_fails(Rule::anchored_key, "?PodVar[?key]"); // Key cannot be wildcard
     }
 
     #[test]
@@ -179,7 +177,7 @@ mod tests {
             Rule::test_custom_predicate_def,
             // Trimmed leading/trailing whitespace
             r#"pred_with_private(X, private: TempKey) = OR(
-                Equal(?X[?TempKey], ?X["other"])
+                Equal(?X["key"], 1234)
             )"#,
         );
         assert_fails(

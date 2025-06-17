@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use itertools::Itertools;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::{
@@ -9,8 +10,9 @@ use crate::{
     },
     constants::MAX_DEPTH,
     middleware::{
-        containers::Dictionary, hash_str, AnchoredKey, DynError, Hash, Key, Params, Pod, PodId,
-        PodSigner, PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE, SELF,
+        containers::Dictionary, hash_str, serialization::ordered_map, AnchoredKey, DynError, Key,
+        Params, Pod, PodId, PodSigner, PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE,
+        SELF,
     },
 };
 
@@ -19,19 +21,19 @@ pub struct MockSigner {
 }
 
 impl MockSigner {
-    pub fn public_key(&self) -> Hash {
-        hash_str(&self.pk)
+    pub fn public_key(&self) -> Value {
+        Value::from(hash_str(&self.pk))
     }
 }
 
 impl MockSigner {
-    fn _sign(&mut self, _params: &Params, kvs: &HashMap<Key, Value>) -> Result<MockSignedPod> {
+    fn _sign(&mut self, params: &Params, kvs: &HashMap<Key, Value>) -> Result<MockSignedPod> {
         let mut kvs = kvs.clone();
         let pubkey = self.public_key();
-        kvs.insert(Key::from(KEY_SIGNER), Value::from(pubkey));
+        kvs.insert(Key::from(KEY_SIGNER), pubkey.clone());
         kvs.insert(Key::from(KEY_TYPE), Value::from(PodType::MockSigned));
 
-        let dict = Dictionary::new(kvs.clone())?;
+        let dict = Dictionary::new(params.max_depth_mt_containers, kvs.clone())?;
         let id = PodId(dict.commitment());
         let signature = format!("{}_signed_by_{}", id, pubkey);
         Ok(MockSignedPod { id, signature, kvs })
@@ -55,17 +57,18 @@ pub struct MockSignedPod {
     kvs: HashMap<Key, Value>,
 }
 
-impl MockSignedPod {
-    pub(crate) fn new(id: PodId, signature: String, kvs: HashMap<Key, Value>) -> Self {
-        Self { id, signature, kvs }
-    }
-
-    pub fn signature(&self) -> String {
-        self.signature.clone()
-    }
+#[derive(Serialize, Deserialize)]
+struct Data {
+    signature: String,
+    #[serde(serialize_with = "ordered_map")]
+    kvs: HashMap<Key, Value>,
 }
 
 impl MockSignedPod {
+    pub fn signature(&self) -> String {
+        self.signature.clone()
+    }
+
     fn _verify(&self) -> Result<()> {
         // 1. Verify id
         let mt = MerkleTree::new(
@@ -108,6 +111,24 @@ impl MockSignedPod {
 
         Ok(())
     }
+
+    pub(crate) fn deserialize(id: PodId, data: serde_json::Value) -> Result<Box<dyn Pod>> {
+        let data: Data = serde_json::from_value(data)?;
+        Ok(Box::new(Self {
+            id,
+            signature: data.signature,
+            kvs: data.kvs,
+        }))
+    }
+    /// Generate a valid MockSignedPod with a public deterministic public key and no other
+    /// key-values than the default ones.  This is used for padding.
+    pub fn dummy() -> MockSignedPod {
+        MockSigner {
+            pk: "dummy".to_string(),
+        }
+        ._sign(&Params::default(), &HashMap::new())
+        .expect("valid")
+    }
 }
 
 impl Pod for MockSignedPod {
@@ -121,6 +142,9 @@ impl Pod for MockSignedPod {
     fn id(&self) -> PodId {
         self.id
     }
+    fn pod_type(&self) -> (usize, &'static str) {
+        (PodType::MockSigned as usize, "MockSigned")
+    }
 
     fn pub_self_statements(&self) -> Vec<Statement> {
         // By convention we put the KEY_TYPE first and KEY_SIGNER second
@@ -132,12 +156,16 @@ impl Pod for MockSignedPod {
         [(key_type, value_type), (key_signer, value_signer)]
             .into_iter()
             .chain(kvs.into_iter().sorted_by_key(|kv| kv.0.hash()))
-            .map(|(k, v)| Statement::ValueOf(AnchoredKey::from((SELF, k)), v))
+            .map(|(k, v)| Statement::equal(AnchoredKey::from((SELF, k)), v))
             .collect()
     }
 
-    fn serialized_proof(&self) -> String {
-        serde_json::to_string(&self.signature).unwrap()
+    fn serialize_data(&self) -> serde_json::Value {
+        serde_json::to_value(Data {
+            signature: self.signature.clone(),
+            kvs: self.kvs.clone(),
+        })
+        .expect("serialization to json")
     }
 }
 

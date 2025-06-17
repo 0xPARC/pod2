@@ -1,12 +1,13 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::LazyLock};
 
-use base64::{prelude::BASE64_STANDARD, Engine};
 use itertools::Itertools;
-use num_bigint::RandBigInt;
+use num_bigint::{BigUint, RandBigInt};
 use rand::rngs::OsRng;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::{
+        deserialize_bytes,
         error::{Error, Result},
         primitives::{
             ec::{
@@ -15,6 +16,7 @@ use crate::{
             },
             merkletree::MerkleTree,
         },
+        serialize_bytes,
     },
     constants::MAX_DEPTH,
     middleware::{
@@ -26,16 +28,20 @@ use crate::{
 pub struct Signer(pub SecretKey);
 
 impl Signer {
-    fn _sign(&mut self, _params: &Params, kvs: &HashMap<Key, Value>) -> Result<SignedPod> {
+    fn sign_with_nonce(
+        &mut self,
+        params: &Params,
+        nonce: BigUint,
+        kvs: &HashMap<Key, Value>,
+    ) -> Result<SignedPod> {
         let mut kvs = kvs.clone();
         let pubkey = self.0.public_key();
         kvs.insert(Key::from(KEY_SIGNER), Value::from(pubkey));
         kvs.insert(Key::from(KEY_TYPE), Value::from(PodType::Signed));
 
-        let dict = Dictionary::new(kvs)?;
+        let dict = Dictionary::new(params.max_depth_mt_containers, kvs)?;
         let id = RawValue::from(dict.commitment()); // PodId as Value
 
-        let nonce = OsRng.gen_biguint_below(&GROUP_ORDER);
         let signature: Signature = self.0.sign(id, &nonce);
         Ok(SignedPod {
             id: PodId(Hash::from(id)),
@@ -43,6 +49,10 @@ impl Signer {
             signer: pubkey,
             dict,
         })
+    }
+    fn _sign(&mut self, params: &Params, kvs: &HashMap<Key, Value>) -> Result<SignedPod> {
+        let nonce = OsRng.gen_biguint_below(&GROUP_ORDER);
+        self.sign_with_nonce(params, nonce, kvs)
     }
 
     pub fn public_key(&self) -> Point {
@@ -66,6 +76,22 @@ pub struct SignedPod {
     pub signature: Signature,
     pub signer: Point,
     pub dict: Dictionary,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Data {
+    signer: String,
+    signature: String,
+    kvs: Dictionary,
+}
+
+static DUMMY_POD: LazyLock<SignedPod> = LazyLock::new(dummy);
+
+fn dummy() -> SignedPod {
+    let nonce = BigUint::from(2u32);
+    Signer(SecretKey(BigUint::from(1u32)))
+        .sign_with_nonce(&Params::default(), nonce, &HashMap::new())
+        .expect("valid")
 }
 
 impl SignedPod {
@@ -107,23 +133,37 @@ impl SignedPod {
             .ok_or(Error::custom("Invalid signature!".into()))
     }
 
-    pub fn decode_proof(signature: &str) -> Result<(Point, Signature), Error> {
-        let proof_bytes = BASE64_STANDARD.decode(signature).map_err(|e| {
-            Error::custom(format!(
-                "Failed to decode proof from base64: {}. Value: {}",
-                e, signature
-            ))
-        })?;
+    pub(crate) fn deserialize(id: PodId, data: serde_json::Value) -> Result<Box<dyn Pod>> {
+        let data: Data = serde_json::from_value(data)?;
+        let signer_bytes = deserialize_bytes(&data.signer)?;
+        let signature_bytes = deserialize_bytes(&data.signature)?;
 
-        if proof_bytes.len() != 160 {
+        if signer_bytes.len() != 80 {
             return Err(Error::custom(
-                "Invalid byte encoding of signed POD proof.".to_string(),
+                "Invalid byte encoding of signed POD signer.".to_string(),
+            ));
+        }
+        if signature_bytes.len() != 80 {
+            return Err(Error::custom(
+                "Invalid byte encoding of signed POD signature.".to_string(),
             ));
         }
 
-        let signer = Point::from_bytes(&proof_bytes[..80])?;
-        let signature = Signature::from_bytes(&proof_bytes[80..])?;
-        Ok((signer, signature))
+        let signer = Point::from_bytes(&signer_bytes)?;
+        let signature = Signature::from_bytes(&signature_bytes)?;
+
+        Ok(Box::new(Self {
+            id,
+            signature,
+            signer,
+            dict: data.kvs,
+        }))
+    }
+
+    /// Generate a valid SignedPod with a public deterministic secret key and nonce and no other
+    /// key-values than the default ones.  This is used for padding.
+    pub fn dummy() -> SignedPod {
+        DUMMY_POD.clone()
     }
 }
 
@@ -138,6 +178,9 @@ impl Pod for SignedPod {
     fn id(&self) -> PodId {
         self.id
     }
+    fn pod_type(&self) -> (usize, &'static str) {
+        (PodType::Signed as usize, "Signed")
+    }
 
     fn pub_self_statements(&self) -> Vec<Statement> {
         // By convention we put the KEY_TYPE first and KEY_SIGNER second
@@ -149,14 +192,19 @@ impl Pod for SignedPod {
         [(key_type, value_type), (key_signer, value_signer)]
             .into_iter()
             .chain(kvs.into_iter().sorted_by_key(|kv| kv.0.hash()))
-            .map(|(k, v)| Statement::ValueOf(AnchoredKey::from((SELF, k)), v))
+            .map(|(k, v)| Statement::equal(AnchoredKey::from((SELF, k)), v))
             .collect()
     }
 
-    fn serialized_proof(&self) -> String {
-        // Serialise signer + signature.
-        let proof_bytes = [self.signer.as_bytes(), self.signature.as_bytes()].concat();
-        BASE64_STANDARD.encode(&proof_bytes)
+    fn serialize_data(&self) -> serde_json::Value {
+        let signer = serialize_bytes(&self.signer.as_bytes());
+        let signature = serialize_bytes(&self.signature.as_bytes());
+        serde_json::to_value(Data {
+            signer,
+            signature,
+            kvs: self.dict.clone(),
+        })
+        .expect("serialization to json")
     }
 }
 
@@ -207,7 +255,7 @@ pub mod tests {
             .into_iter()
             .chain(iter::once(bad_kv))
             .collect::<HashMap<Key, Value>>();
-        bad_pod.dict = Dictionary::new(bad_kvs).unwrap();
+        bad_pod.dict = Dictionary::new(params.max_depth_mt_containers, bad_kvs).unwrap();
         assert!(bad_pod.verify().is_err());
 
         let mut bad_pod = pod.clone();
@@ -219,7 +267,7 @@ pub mod tests {
             .into_iter()
             .chain(iter::once(bad_kv))
             .collect::<HashMap<Key, Value>>();
-        bad_pod.dict = Dictionary::new(bad_kvs).unwrap();
+        bad_pod.dict = Dictionary::new(params.max_depth_mt_containers, bad_kvs).unwrap();
         assert!(bad_pod.verify().is_err());
 
         Ok(())

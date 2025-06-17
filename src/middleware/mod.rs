@@ -2,6 +2,8 @@
 //! the backend.
 
 use std::sync::Arc;
+
+use strum_macros::FromRepr;
 mod basetypes;
 use std::{
     cmp::{Ordering, PartialEq, PartialOrd},
@@ -15,6 +17,7 @@ pub mod containers;
 mod custom;
 mod error;
 mod operation;
+mod pod_deserialization;
 pub mod serialization;
 mod statement;
 use std::{any::Any, collections::HashMap, fmt};
@@ -24,6 +27,7 @@ pub use custom::*;
 use dyn_clone::DynClone;
 pub use error::*;
 pub use operation::*;
+pub use pod_deserialization::*;
 use serialization::*;
 pub use statement::*;
 
@@ -60,6 +64,7 @@ pub enum TypedValue {
     Raw(RawValue),
     // Public key variant
     PublicKey(PublicKey),
+    PodId(PodId),
     // UNTAGGED TYPES:
     #[serde(untagged)]
     Array(Array),
@@ -102,6 +107,12 @@ impl From<Hash> for TypedValue {
 impl From<PublicKey> for TypedValue {
     fn from(p: PublicKey) -> Self {
         TypedValue::PublicKey(p)
+    }
+}
+
+impl From<PodId> for TypedValue {
+    fn from(id: PodId) -> Self {
+        TypedValue::PodId(id)
     }
 }
 
@@ -170,6 +181,7 @@ impl fmt::Display for TypedValue {
             TypedValue::Array(a) => write!(f, "arr:{}", a.commitment()),
             TypedValue::Raw(v) => write!(f, "{}", v),
             TypedValue::PublicKey(p) => write!(f, "ecGFp5_pt:({},{})", p.x, p.u),
+            TypedValue::PodId(id) => write!(f, "pod_id:{}", id),
         }
     }
 }
@@ -185,6 +197,7 @@ impl From<&TypedValue> for RawValue {
             TypedValue::Array(a) => RawValue::from(a.commitment()),
             TypedValue::Raw(v) => *v,
             TypedValue::PublicKey(p) => RawValue::from(hash_fields(&p.as_fields())),
+            TypedValue::PodId(id) => RawValue::from(id.0),
         }
     }
 }
@@ -439,7 +452,7 @@ impl From<&Value> for Hash {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq)]
 pub struct Key {
     name: String,
     hash: Hash,
@@ -462,6 +475,18 @@ impl Key {
     }
 }
 
+impl hash::Hash for Key {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        self.hash.hash(state);
+    }
+}
+
+impl PartialEq for Key {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash
+    }
+}
+
 // A Key can easily be created from a string-like type
 impl<T> From<T> for Key
 where
@@ -480,7 +505,7 @@ impl ToFields for Key {
 
 impl fmt::Display for Key {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.name)?;
+        write!(f, "\"{}\"", self.name)?;
         Ok(())
     }
 }
@@ -527,7 +552,7 @@ impl JsonSchema for Key {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AnchoredKey {
     pub pod_id: PodId,
@@ -540,9 +565,25 @@ impl AnchoredKey {
     }
 }
 
+impl hash::Hash for AnchoredKey {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        self.pod_id.hash(state);
+        self.key.hash.hash(state);
+    }
+}
+
+impl PartialEq for AnchoredKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.pod_id == other.pod_id && self.key.hash == other.key.hash
+    }
+}
+
 impl fmt::Display for AnchoredKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}.{}", self.pod_id, self.key)?;
+        self.pod_id.fmt(f)?;
+        write!(f, "[")?;
+        self.key.fmt(f)?;
+        write!(f, "]")?;
         Ok(())
     }
 }
@@ -565,9 +606,8 @@ impl ToFields for PodId {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, FromRepr, Serialize, Deserialize, JsonSchema)]
 pub enum PodType {
-    None = 0,
     MockSigned = 1,
     MockMain = 2,
     MockEmpty = 3,
@@ -579,7 +619,6 @@ pub enum PodType {
 impl fmt::Display for PodType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PodType::None => write!(f, "None"),
             PodType::MockSigned => write!(f, "MockSigned"),
             PodType::MockMain => write!(f, "MockMain"),
             PodType::MockEmpty => write!(f, "MockEmpty"),
@@ -590,6 +629,7 @@ impl fmt::Display for PodType {
     }
 }
 
+/// Params: non dynamic parameters that define the circuit.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Hash)]
 #[serde(rename_all = "camelCase")]
 pub struct Params {
@@ -605,10 +645,14 @@ pub struct Params {
     // max number of operations using custom predicates that can be verified in the MainPod
     pub max_custom_predicate_verifications: usize,
     pub max_custom_predicate_wildcards: usize,
-    // maximum number of merkle proofs
-    pub max_merkle_proofs: usize,
-    // maximum depth for merkle tree gadget
-    pub max_depth_mt_gadget: usize,
+    // maximum number of merkle proofs used for container operations
+    pub max_merkle_proofs_containers: usize,
+    // maximum depth for merkle tree gadget used for container operations
+    pub max_depth_mt_containers: usize,
+    // maximum depth of the merkle tree gadget used for verifier_data membership
+    // check.  This allows creating verifying sets of pod circuits of size
+    // 2^max_depth_mt_vds.
+    pub max_depth_mt_vds: usize,
     //
     // The following parameters define how a pod id is calculated.  They need to be the same among
     // different circuits to be compatible in their verification.
@@ -642,9 +686,10 @@ impl Default for Params {
             max_custom_predicate_verifications: 5,
             max_custom_predicate_arity: 5,
             max_custom_predicate_wildcards: 10,
-            max_custom_batch_size: 5,
-            max_merkle_proofs: 5,
-            max_depth_mt_gadget: 32,
+            max_custom_batch_size: 5, // TODO: Move down to 4?
+            max_merkle_proofs_containers: 5,
+            max_depth_mt_containers: 32,
+            max_depth_mt_vds: 6, // up to 64 (2^6) different pod circuits
         }
     }
 }
@@ -735,6 +780,8 @@ pub trait Pod: fmt::Debug + DynClone + Any {
     fn params(&self) -> &Params;
     fn verify(&self) -> Result<(), Box<DynError>>;
     fn id(&self) -> PodId;
+    /// Return a uuid of the pod type and its name.  The name is only used as metadata.
+    fn pod_type(&self) -> (usize, &'static str);
     /// Statements as internally generated, where self-referencing arguments use SELF in the
     /// anchored key.  The serialization of these statements is used to calculate the id.
     fn pub_self_statements(&self) -> Vec<Statement>;
@@ -746,12 +793,15 @@ pub trait Pod: fmt::Debug + DynClone + Any {
             .map(|statement| normalize_statement(&statement, self.id()))
             .collect()
     }
+    /// Return this Pods data serialized into a json value.  This serialization can skip `params,
+    /// id, vds_root`
+    fn serialize_data(&self) -> serde_json::Value;
     /// Extract key-values from ValueOf public statements
     fn kvs(&self) -> HashMap<AnchoredKey, Value> {
         self.pub_statements()
             .into_iter()
             .filter_map(|st| match st {
-                Statement::ValueOf(ak, v) => Some((ak, v)),
+                Statement::Equal(ValueRef::Key(ak), ValueRef::Literal(v)) => Some((ak, v)),
                 _ => None,
             })
             .collect()
@@ -767,7 +817,7 @@ pub trait Pod: fmt::Debug + DynClone + Any {
     // reconstruct the proof.
     // It is an important principle that this data is opaque to the front-end
     // and any third-party code.
-    fn serialized_proof(&self) -> String;
+    // fn serialized_proof(&self) -> String;
 }
 
 // impl Clone for Box<dyn Pod>
@@ -793,31 +843,6 @@ pub trait PodSigner {
     ) -> Result<Box<dyn Pod>, Box<DynError>>;
 }
 
-// TODO: Delete once we have a fully working EmptyPod and a dumb SignedPod
-// https://github.com/0xPARC/pod2/issues/246
-/// This is a filler type that fulfills the Pod trait and always verifies.  It's empty.  This
-/// can be used to simulate padding in a circuit.
-#[derive(Debug, Clone)]
-pub struct NonePod {}
-
-impl Pod for NonePod {
-    fn params(&self) -> &Params {
-        panic!("NonePod doesn't have params");
-    }
-    fn verify(&self) -> Result<(), Box<DynError>> {
-        Ok(())
-    }
-    fn id(&self) -> PodId {
-        PodId(EMPTY_HASH)
-    }
-    fn pub_self_statements(&self) -> Vec<Statement> {
-        Vec::new()
-    }
-    fn serialized_proof(&self) -> String {
-        "".to_string()
-    }
-}
-
 #[derive(Debug)]
 pub struct MainPodInputs<'a> {
     pub signed_pods: &'a [&'a dyn Pod],
@@ -827,13 +852,14 @@ pub struct MainPodInputs<'a> {
     /// Statements that need to be made public (they can come from input pods or input
     /// statements)
     pub public_statements: &'a [Statement],
-    pub vds_root: Hash, // TODO: Figure out if we use Hash or a Map here https://github.com/0xPARC/pod2/issues/249
+    pub vds_set: VDSet,
 }
 
 pub trait PodProver {
     fn prove(
         &self,
         params: &Params,
+        vd_set: &VDSet,
         inputs: MainPodInputs,
     ) -> Result<Box<dyn RecursivePod>, Box<DynError>>;
 }

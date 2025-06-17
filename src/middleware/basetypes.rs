@@ -28,9 +28,10 @@
 use std::{
     cmp::{Ord, Ordering},
     fmt,
+    fmt::Write,
 };
 
-use hex::{FromHex, FromHexError};
+use hex::{FromHex, FromHexError, ToHex};
 use plonky2::{
     field::types::{Field, PrimeField64},
     hash::poseidon::PoseidonHash,
@@ -46,6 +47,8 @@ use super::serialization::*;
 // types would come from the plonky3 backend.
 #[cfg(feature = "backend_plonky2")]
 pub use crate::backends::plonky2::basetypes::*;
+#[cfg(feature = "backend_plonky2")]
+pub use crate::backends::plonky2::{Error as BackendError, Result as BackendResult};
 use crate::middleware::{Params, ToFields, Value};
 
 pub const HASH_SIZE: usize = 4;
@@ -141,6 +144,32 @@ pub struct Hash(
     pub [F; HASH_SIZE],
 );
 
+impl ToHex for Hash {
+    fn encode_hex<T: std::iter::FromIterator<char>>(&self) -> T {
+        self.0
+            .iter()
+            .rev()
+            .fold(String::with_capacity(64), |mut s, limb| {
+                write!(s, "{:016x}", limb.0).unwrap();
+                s
+            })
+            .chars()
+            .collect()
+    }
+
+    fn encode_hex_upper<T: std::iter::FromIterator<char>>(&self) -> T {
+        self.0
+            .iter()
+            .rev()
+            .fold(String::with_capacity(64), |mut s, limb| {
+                write!(s, "{:016X}", limb.0).unwrap();
+                s
+            })
+            .chars()
+            .collect()
+    }
+}
+
 pub fn hash_value(input: &RawValue) -> Hash {
     hash_fields(&input.0)
 }
@@ -177,6 +206,7 @@ impl Ord for Hash {
     }
 }
 
+// TODO: In alternate mode, don't shorten the hash
 impl fmt::Display for Hash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let v0 = self.0[0].to_canonical_u64();

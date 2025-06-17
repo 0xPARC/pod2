@@ -17,7 +17,7 @@ pub enum LangError {
     Frontend(Box<frontend::Error>),
 }
 
-/// Errors that can occur during the processing of Podlog Pest tree into middleware structures.
+/// Errors that can occur during the processing of Podlang Pest tree into middleware structures.
 #[derive(thiserror::Error, Debug)]
 pub enum ProcessorError {
     #[error("Undefined identifier: '{name}' at {span:?}")]
@@ -69,6 +69,22 @@ pub enum ProcessorError {
     InvalidLiteralFormat {
         kind: String,
         value: String,
+        span: Option<(usize, usize)>,
+    },
+    #[error("Batch with ID '{id}' not found at {span:?}")]
+    BatchNotFound {
+        id: String,
+        span: Option<(usize, usize)>,
+    },
+    #[error("Number of predicates in 'use' statement ({found}) exceeds the number of predicates in the batch ({expected}) at {span:?}")]
+    ImportArityMismatch {
+        expected: usize,
+        found: usize,
+        span: Option<(usize, usize)>,
+    },
+    #[error("Duplicate import name '{name}' at {span:?}")]
+    DuplicateImportName {
+        name: String,
         span: Option<(usize, usize)>,
     },
     #[error("Frontend error: {0}")]

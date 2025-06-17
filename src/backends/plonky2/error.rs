@@ -43,6 +43,8 @@ pub enum Error {
     Plonky2ProofFail(anyhow::Error),
     #[error("base64::DecodeError: {0}")]
     Base64Decode(#[from] base64::DecodeError),
+    #[error("serde_json::Error: {0}")]
+    SerdeJson(#[from] serde_json::Error),
     #[error(transparent)]
     Tree(#[from] crate::backends::plonky2::primitives::merkletree::error::TreeError),
     #[error(transparent)]

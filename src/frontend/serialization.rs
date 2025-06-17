@@ -1,20 +1,10 @@
-use std::{any::Any, collections::HashMap};
-
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::Error;
 use crate::{
-    backends::plonky2::{
-        mainpod::{pad_statement, MainPod as Plonky2MainPod, Statement as BackendStatement},
-        mock::{mainpod::MockMainPod, signedpod::MockSignedPod},
-        signedpod::SignedPod as Plonky2SignedPod,
-    },
     frontend::{MainPod, SignedPod},
-    middleware::{
-        self, containers::Dictionary, serialization::ordered_map, AnchoredKey, Hash, Key, Params,
-        PodId, Statement, StatementArg, Value, EMPTY_HASH, SELF,
-    },
+    middleware::{deserialize_pod, deserialize_signed_pod, Hash, Params, PodId},
 };
 
 #[derive(Serialize, Deserialize, JsonSchema)]
@@ -27,102 +17,54 @@ pub enum SignedPodType {
 #[serde(rename_all = "camelCase")]
 #[schemars(rename = "SignedPod")]
 pub struct SerializedSignedPod {
+    pod_type: (usize, String),
     id: PodId,
-    #[serde(serialize_with = "ordered_map")]
-    entries: HashMap<Key, Value>,
-    proof: String,
-    pod_type: SignedPodType,
-}
-
-#[derive(Serialize, Deserialize, JsonSchema)]
-pub enum MainPodType {
-    Main,
-    MockMain,
+    data: serde_json::Value,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[schemars(rename = "MainPod")]
 pub struct SerializedMainPod {
+    params: Params,
+    pod_type: (usize, String),
     id: PodId,
     vds_root: Hash,
-    public_statements: Vec<Statement>,
-    proof: String,
-    params: Params,
-    pod_type: MainPodType,
+    data: serde_json::Value,
 }
 
 impl From<SignedPod> for SerializedSignedPod {
     fn from(pod: SignedPod) -> Self {
+        let (pod_type, pod_type_name_str) = pod.pod.pod_type();
+        let data = pod.pod.serialize_data();
         SerializedSignedPod {
+            pod_type: (pod_type, pod_type_name_str.to_string()),
             id: pod.id(),
-            entries: pod.kvs,
-            proof: pod.pod.serialized_proof(),
-            pod_type: if (&*pod.pod as &dyn Any)
-                .downcast_ref::<Plonky2SignedPod>()
-                .is_some()
-            {
-                SignedPodType::Signed
-            } else if (&*pod.pod as &dyn Any)
-                .downcast_ref::<MockSignedPod>()
-                .is_some()
-            {
-                SignedPodType::MockSigned
-            } else {
-                unreachable!()
-            },
+            data,
         }
     }
 }
 
-impl From<SerializedSignedPod> for SignedPod {
-    fn from(serialized: SerializedSignedPod) -> Self {
-        match serialized.pod_type {
-            SignedPodType::Signed => {
-                let (signer, signature) =
-                    Plonky2SignedPod::decode_proof(&serialized.proof).unwrap();
-                SignedPod {
-                    pod: Box::new(Plonky2SignedPod {
-                        id: serialized.id,
-                        signer,
-                        signature,
-                        dict: Dictionary::new(serialized.entries.clone()).unwrap(),
-                    }),
-                    kvs: serialized.entries,
-                }
-            }
-            SignedPodType::MockSigned => SignedPod {
-                pod: Box::new(MockSignedPod::new(
-                    serialized.id,
-                    serde_json::from_str(&serialized.proof).unwrap(),
-                    serialized.entries.clone(),
-                )),
-                kvs: serialized.entries,
-            },
-        }
+impl TryFrom<SerializedSignedPod> for SignedPod {
+    type Error = Error;
+
+    fn try_from(serialized: SerializedSignedPod) -> Result<Self, Self::Error> {
+        let pod = deserialize_signed_pod(serialized.pod_type.0, serialized.id, serialized.data)?;
+        let kvs = pod.kvs().into_iter().map(|(ak, v)| (ak.key, v)).collect();
+        Ok(Self { pod, kvs })
     }
 }
 
 impl From<MainPod> for SerializedMainPod {
     fn from(pod: MainPod) -> Self {
-        let (pod_type, vds_root) =
-            if let Some(pod) = (&*pod.pod as &dyn Any).downcast_ref::<Plonky2MainPod>() {
-                (MainPodType::Main, pod.vds_root())
-            } else if (&*pod.pod as &dyn Any)
-                .downcast_ref::<MockMainPod>()
-                .is_some()
-            {
-                (MainPodType::MockMain, EMPTY_HASH)
-            } else {
-                unreachable!()
-            };
+        let (pod_type, pod_type_name_str) = pod.pod.pod_type();
+        let data = pod.pod.serialize_data();
         SerializedMainPod {
+            pod_type: (pod_type, pod_type_name_str.to_string()),
             id: pod.id(),
-            vds_root,
-            proof: pod.pod.serialized_proof(),
+            vds_root: pod.pod.vds_root(),
             params: pod.params.clone(),
-            pod_type,
-            public_statements: pod.public_statements.clone(),
+            data,
         }
     }
 }
@@ -131,76 +73,20 @@ impl TryFrom<SerializedMainPod> for MainPod {
     type Error = Error;
 
     fn try_from(serialized: SerializedMainPod) -> Result<Self, Self::Error> {
-        match serialized.pod_type {
-            MainPodType::Main => Ok(MainPod {
-                pod: Box::new(Plonky2MainPod::new(
-                    Plonky2MainPod::decode_proof(&serialized.proof, &serialized.params).map_err(
-                        |e| {
-                            Error::custom(format!(
-                                "Failed to deserialize MainPod proof: {}. Value: {}",
-                                e, serialized.proof
-                            ))
-                        },
-                    )?,
-                    middleware_statements_to_backend(
-                        serialized.public_statements.clone(),
-                        &serialized.params,
-                        serialized.id,
-                    ),
-                    serialized.id,
-                    serialized.vds_root,
-                    serialized.params.clone(),
-                )),
-                public_statements: serialized.public_statements,
-                params: serialized.params,
-            }),
-            MainPodType::MockMain => Ok(MainPod {
-                pod: Box::new(
-                    MockMainPod::deserialize(serialized.proof.clone()).map_err(|e| {
-                        Error::custom(format!(
-                            "Failed to deserialize MockMainPod: {}. Value: {}",
-                            e, serialized.proof
-                        ))
-                    })?,
-                ),
-                public_statements: serialized.public_statements,
-                params: serialized.params,
-            }),
-        }
+        let pod = deserialize_pod(
+            serialized.pod_type.0,
+            serialized.params.clone(),
+            serialized.id,
+            serialized.vds_root,
+            serialized.data,
+        )?;
+        let public_statements = pod.pub_statements();
+        Ok(Self {
+            pod,
+            public_statements,
+            params: serialized.params,
+        })
     }
-}
-
-// To deserialize a backend MainPod, we need to convert the middleware
-// statements to backend statements, and padding the list with None statements.
-fn middleware_statements_to_backend(
-    mid_statements: Vec<Statement>,
-    params: &Params,
-    id: PodId,
-) -> Vec<BackendStatement> {
-    let mut statements = Vec::new();
-    for i in 0..(params.max_public_statements) {
-        let mut st: BackendStatement = mid_statements
-            .get(i)
-            .unwrap_or(&middleware::Statement::None)
-            .clone()
-            .into();
-
-        st = BackendStatement(
-            st.0.clone(),
-            st.1.iter()
-                .map(|sa| match &sa {
-                    StatementArg::Key(AnchoredKey { pod_id, key }) if *pod_id == id => {
-                        StatementArg::Key(AnchoredKey::new(SELF, key.clone()))
-                    }
-                    _ => sa.clone(),
-                })
-                .collect(),
-        );
-        pad_statement(params, &mut st);
-        statements.push(st);
-    }
-
-    statements
 }
 
 #[cfg(test)]
@@ -219,31 +105,32 @@ mod tests {
             signedpod::Signer,
         },
         examples::{
-            eth_dos_pod_builder, eth_friend_signed_pod_builder, zu_kyc_pod_builder,
-            zu_kyc_sign_pod_builders,
+            attest_eth_friend, zu_kyc_pod_builder, zu_kyc_sign_pod_builders, EthDosHelper,
+            MOCK_VD_SET,
         },
         frontend::{Result, SignedPodBuilder},
         middleware::{
             self,
-            containers::{Array, Set},
-            Params, TypedValue,
+            containers::{Array, Dictionary, Set},
+            Params, TypedValue, DEFAULT_VD_SET,
         },
     };
 
     #[test]
     fn test_value_serialization() {
+        let params = &Params::default();
         // Pairs of values and their expected serialized representations
         let values = vec![
             (TypedValue::String("hello".to_string()), "\"hello\""),
             (TypedValue::Int(42), "{\"Int\":\"42\"}"),
             (TypedValue::Bool(true), "true"),
             (
-                TypedValue::Array(Array::new(vec!["foo".into(), false.into()]).unwrap()),
-                "[\"foo\",false]",
+                TypedValue::Array(Array::new(params.max_depth_mt_containers, vec!["foo".into(), false.into()]).unwrap()),
+                "{\"max_depth\":32,\"array\":[\"foo\",false]}",
             ),
             (
                 TypedValue::Dictionary(
-                    Dictionary::new(HashMap::from([
+                    Dictionary::new(params.max_depth_mt_containers, HashMap::from([
                         // The set of valid keys is equal to the set of valid JSON keys
                         ("foo".into(), 123.into()),
                         // Empty strings are valid JSON keys
@@ -259,11 +146,11 @@ mod tests {
                     ]))
                     .unwrap(),
                 ),
-                "{\"Dictionary\":{\"\":\"baz\",\"\\u0000\":\"\",\"    hi\":false,\"!@£$%^&&*()\":\"\",\"foo\":{\"Int\":\"123\"},\"🥳\":\"party time!\"}}",
+                "{\"Dictionary\":{\"max_depth\":32,\"kvs\":{\"\":\"baz\",\"\\u0000\":\"\",\"    hi\":false,\"!@£$%^&&*()\":\"\",\"foo\":{\"Int\":\"123\"},\"🥳\":\"party time!\"}}}",
             ),
             (
-                TypedValue::Set(Set::new(HashSet::from(["foo".into(), "bar".into()])).unwrap()),
-                "{\"Set\":[\"bar\",\"foo\"]}",
+                TypedValue::Set(Set::new(params.max_depth_mt_containers, HashSet::from(["foo".into(), "bar".into()])).unwrap()),
+                "{\"Set\":{\"max_depth\":32,\"set\":[\"bar\",\"foo\"]}}",
             ),
         ];
 
@@ -282,30 +169,45 @@ mod tests {
     }
 
     fn signed_pod_builder() -> SignedPodBuilder {
-        let mut builder = SignedPodBuilder::new(&Params::default());
+        let params = &Params::default();
+        let mut builder = SignedPodBuilder::new(params);
         builder.insert("name", "test");
         builder.insert("age", 30);
         builder.insert("very_large_int", 1152921504606846976);
         builder.insert(
             "a_dict_containing_one_key",
-            Dictionary::new(HashMap::from([
-                ("foo".into(), 123.into()),
-                (
-                    "an_array_containing_three_ints".into(),
-                    Array::new(vec![1.into(), 2.into(), 3.into()])
+            Dictionary::new(
+                params.max_depth_mt_containers,
+                HashMap::from([
+                    ("foo".into(), 123.into()),
+                    (
+                        "an_array_containing_three_ints".into(),
+                        Array::new(
+                            params.max_depth_mt_containers,
+                            vec![1.into(), 2.into(), 3.into()],
+                        )
                         .unwrap()
                         .into(),
-                ),
-                (
-                    "a_set_containing_two_strings".into(),
-                    Set::new(HashSet::from([
-                        Array::new(vec!["foo".into(), "bar".into()]).unwrap().into(),
-                        "baz".into(),
-                    ]))
-                    .unwrap()
-                    .into(),
-                ),
-            ]))
+                    ),
+                    (
+                        "a_set_containing_two_strings".into(),
+                        Set::new(
+                            params.max_depth_mt_containers,
+                            HashSet::from([
+                                Array::new(
+                                    params.max_depth_mt_containers,
+                                    vec!["foo".into(), "bar".into()],
+                                )
+                                .unwrap()
+                                .into(),
+                                "baz".into(),
+                            ]),
+                        )
+                        .unwrap()
+                        .into(),
+                    ),
+                ]),
+            )
             .unwrap(),
         );
         builder
@@ -349,6 +251,7 @@ mod tests {
 
     fn build_mock_zukyc_pod() -> Result<MainPod> {
         let params = middleware::Params::default();
+        let vd_set = &*MOCK_VD_SET;
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params);
@@ -364,8 +267,14 @@ mod tests {
             pk: "ZooOFAC".into(),
         };
         let sanction_list_pod = sanction_list_builder.sign(&mut signer).unwrap();
-        let kyc_builder =
-            zu_kyc_pod_builder(&params, &gov_id_pod, &pay_stub_pod, &sanction_list_pod).unwrap();
+        let kyc_builder = zu_kyc_pod_builder(
+            &params,
+            vd_set,
+            &gov_id_pod,
+            &pay_stub_pod,
+            &sanction_list_pod,
+        )
+        .unwrap();
 
         let mut prover = MockProver {};
         let kyc_pod = kyc_builder.prove(&mut prover, &params).unwrap();
@@ -379,6 +288,7 @@ mod tests {
             max_input_recursive_pods: 1,
             ..Default::default()
         };
+        let vd_set = &*DEFAULT_VD_SET;
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params);
@@ -388,8 +298,13 @@ mod tests {
         let pay_stub_pod = pay_stub_builder.sign(&mut signer)?;
         let mut signer = Signer(SecretKey(3u32.into()));
         let sanction_list_pod = sanction_list_builder.sign(&mut signer)?;
-        let kyc_builder =
-            zu_kyc_pod_builder(&params, &gov_id_pod, &pay_stub_pod, &sanction_list_pod)?;
+        let kyc_builder = zu_kyc_pod_builder(
+            &params,
+            vd_set,
+            &gov_id_pod,
+            &pay_stub_pod,
+            &sanction_list_pod,
+        )?;
 
         let mut prover = Prover {};
         let kyc_pod = kyc_builder.prove(&mut prover, &params)?;
@@ -426,43 +341,34 @@ mod tests {
 
     fn build_ethdos_pod() -> Result<MainPod> {
         let params = Params {
-            max_input_signed_pods: 3,
-            max_input_recursive_pods: 3,
-            max_statements: 31,
-            max_signed_pod_values: 8,
-            max_public_statements: 10,
-            max_statement_args: 6,
-            max_operation_args: 5,
-            max_custom_predicate_arity: 5,
-            max_custom_batch_size: 5,
-            max_custom_predicate_wildcards: 12,
+            max_input_pods_public_statements: 8,
+            max_statements: 24,
+            max_public_statements: 8,
             ..Default::default()
         };
+        let vd_set = &*MOCK_VD_SET;
 
         let mut alice = MockSigner { pk: "Alice".into() };
-        let bob = MockSigner { pk: "Bob".into() };
-        let mut charlie = MockSigner {
+        let mut bob = MockSigner { pk: "Bob".into() };
+        let charlie = MockSigner {
             pk: "Charlie".into(),
         };
 
-        // Alice attests that she is ETH friends with Charlie and Charlie
-        // attests that he is ETH friends with Bob.
-        let alice_attestation =
-            eth_friend_signed_pod_builder(&params, charlie.public_key().into()).sign(&mut alice)?;
-        let charlie_attestation =
-            eth_friend_signed_pod_builder(&params, bob.public_key().into()).sign(&mut charlie)?;
+        // Alice attests that she is ETH friends with Bob and Bob
+        // attests that he is ETH friends with Charlie.
+        let alice_attestation = attest_eth_friend(&params, &mut alice, bob.public_key());
+        let bob_attestation = attest_eth_friend(&params, &mut bob, charlie.public_key());
 
+        let helper = EthDosHelper::new(&params, vd_set, true, alice.public_key())?;
         let mut prover = MockProver {};
-        let alice_bob_ethdos = eth_dos_pod_builder(
-            &params,
-            true,
-            &alice_attestation,
-            &charlie_attestation,
-            bob.public_key().into(),
-        )?
-        .prove(&mut prover, &params)?;
+        let dist_1 = helper
+            .dist_1(&alice_attestation)?
+            .prove(&mut prover, &params)?;
+        let dist_2 = helper
+            .dist_n_plus_1(&dist_1, &bob_attestation)?
+            .prove(&mut prover, &params)?;
 
-        Ok(alice_bob_ethdos)
+        Ok(dist_2)
     }
 
     #[test]

@@ -2,7 +2,10 @@ use std::fmt;
 
 use crate::{
     frontend::{MainPod, SignedPod},
-    middleware::{AnchoredKey, OperationAux, OperationType, Statement, Value},
+    middleware::{
+        AnchoredKey, CustomPredicateRef, NativeOperation, OperationAux, OperationType, Statement,
+        Value, ValueRef,
+    },
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -18,7 +21,15 @@ impl OperationArg {
     pub(crate) fn value(&self) -> Option<&Value> {
         match self {
             Self::Literal(v) => Some(v),
-            Self::Statement(Statement::ValueOf(_, v)) => Some(v),
+            Self::Statement(Statement::Equal(_, ValueRef::Literal(v))) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn value_and_ref(&self) -> Option<(ValueRef, &Value)> {
+        match self {
+            Self::Literal(v) => Some((ValueRef::Literal(v.clone()), v)),
+            Self::Statement(Statement::Equal(k, ValueRef::Literal(v))) => Some((k.clone(), v)),
             _ => None,
         }
     }
@@ -72,9 +83,9 @@ impl From<(&SignedPod, &str)> for OperationArg {
             .get(&key.into())
             .cloned()
             .unwrap_or_else(|| panic!("Key {} is not present in POD: {}", key, pod));
-        Self::Statement(Statement::ValueOf(
-            AnchoredKey::from((pod.id(), key)),
-            value,
+        Self::Statement(Statement::Equal(
+            AnchoredKey::from((pod.id(), key)).into(),
+            value.into(),
         ))
     }
 }
@@ -84,16 +95,19 @@ impl From<(&MainPod, &str)> for OperationArg {
         let value = pod
             .get(key)
             .unwrap_or_else(|| panic!("Key {} is not present in POD: {}", key, pod));
-        Self::Statement(Statement::ValueOf(
-            AnchoredKey::from((pod.id(), key)),
-            value,
-        ))
+        Self::Statement(Statement::equal(AnchoredKey::from((pod.id(), key)), value))
     }
 }
 
 impl From<Statement> for OperationArg {
     fn from(s: Statement) -> Self {
         Self::Statement(s)
+    }
+}
+
+impl From<&Statement> for OperationArg {
+    fn from(value: &Statement) -> Self {
+        value.clone().into()
     }
 }
 
@@ -117,4 +131,79 @@ impl fmt::Display for Operation {
         }
         Ok(())
     }
+}
+
+macro_rules! op_impl_oa {
+    ($fn_name: ident, $op_name: ident, 2) => {
+        pub fn $fn_name(a1: impl Into<OperationArg>, a2: impl Into<OperationArg>) -> Self {
+            Self(
+                OperationType::Native(NativeOperation::$op_name),
+                vec![a1.into(), a2.into()],
+                OperationAux::None,
+            )
+        }
+    };
+
+    ($fn_name: ident, $op_name: ident, 3) => {
+        pub fn $fn_name(
+            a1: impl Into<OperationArg>,
+            a2: impl Into<OperationArg>,
+            a3: impl Into<OperationArg>,
+        ) -> Self {
+            Self(
+                OperationType::Native(NativeOperation::$op_name),
+                vec![a1.into(), a2.into(), a3.into()],
+                OperationAux::None,
+            )
+        }
+    };
+}
+
+macro_rules! op_impl_st {
+    ($fn_name: ident, $op_name: ident, 1) => {
+        pub fn $fn_name(a1: &Statement) -> Self {
+            Self(
+                OperationType::Native(NativeOperation::$op_name),
+                vec![a1.into()],
+                OperationAux::None,
+            )
+        }
+    };
+
+    ($fn_name: ident, $op_name: ident, 2) => {
+        pub fn $fn_name(a1: &Statement, a2: &Statement) -> Self {
+            Self(
+                OperationType::Native(NativeOperation::$op_name),
+                vec![a1.into(), a2.into()],
+                OperationAux::None,
+            )
+        }
+    };
+}
+
+impl Operation {
+    pub fn new_entry(a1: impl Into<OperationArg>, a2: impl Into<Value>) -> Self {
+        Self(
+            OperationType::Native(NativeOperation::NewEntry),
+            vec![a1.into(), a2.into().into()],
+            OperationAux::None,
+        )
+    }
+    op_impl_oa!(eq, EqualFromEntries, 2);
+    op_impl_oa!(ne, NotEqualFromEntries, 2);
+    op_impl_oa!(gt, GtFromEntries, 2);
+    op_impl_oa!(lt, LtFromEntries, 2);
+    op_impl_st!(transitive_eq, TransitiveEqualFromStatements, 2);
+    op_impl_st!(gt_to_ne, GtToNotEqual, 1);
+    op_impl_oa!(sum_of, SumOf, 3);
+    op_impl_oa!(product_of, ProductOf, 3);
+    op_impl_oa!(max_of, MaxOf, 3);
+    pub fn custom(cpr: CustomPredicateRef, args: Vec<OperationArg>) -> Self {
+        Self(OperationType::Custom(cpr), args, OperationAux::None)
+    }
+    op_impl_oa!(dict_contains, DictContainsFromEntries, 3);
+    op_impl_oa!(dict_not_contains, DictNotContainsFromEntries, 2);
+    op_impl_oa!(set_contains, SetContainsFromEntries, 3);
+    op_impl_oa!(set_not_contains, SetNotContainsFromEntries, 2);
+    op_impl_oa!(array_contains, ArrayContainsFromEntries, 3);
 }
