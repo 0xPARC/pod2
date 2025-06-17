@@ -59,14 +59,22 @@ impl Planner {
             .terms
             .iter()
             .map(|term| match term {
-                ir::Term::Constant(_) => Binding::Bound,
-                ir::Term::Variable(w) => {
+                StatementTmplArg::Literal(_) => Binding::Bound,
+                StatementTmplArg::Wildcard(w) => {
                     if bound_vars.contains(w) {
                         Binding::Bound
                     } else {
                         Binding::Free
                     }
                 }
+                StatementTmplArg::AnchoredKey(w, _) => {
+                    if bound_vars.contains(w) {
+                        Binding::Bound
+                    } else {
+                        Binding::Free
+                    }
+                }
+                StatementTmplArg::None => Binding::Free, // Should be caught later
             })
             .collect()
     }
@@ -96,13 +104,9 @@ impl Planner {
             if let Some(index) = best_literal_index {
                 let best_literal = remaining_literals.remove(index);
 
-                let adornment = self.get_adornment(&best_literal, &currently_bound);
-                for (i, term) in best_literal.terms.iter().enumerate() {
-                    if let ir::Term::Variable(w) = term {
-                        if adornment[i] == Binding::Free {
-                            currently_bound.insert(w.clone());
-                        }
-                    }
+                // Add all wildcards from the chosen literal to the set of bound variables for the next round.
+                if let Ok(newly_bound) = translator::collect_wildcards(&best_literal.terms) {
+                    currently_bound.extend(newly_bound);
                 }
 
                 reordered_body.push(best_literal);
@@ -130,16 +134,9 @@ impl Planner {
         // 1. Seed the worklist and create seed rules from the initial request.
         for tmpl in request {
             if let Predicate::Custom(cpr) = &tmpl.pred {
-                let mut ctx = translator::TranslationContext::new();
-                let request_terms = tmpl
-                    .args
-                    .iter()
-                    .map(|arg| ctx.translate_arg_to_term(arg))
-                    .collect::<Result<Vec<_>, _>>()?;
-
                 let request_literal = ir::Literal {
                     predicate: ir::PredicateIdentifier::Normal(Predicate::Custom(cpr.clone())),
-                    terms: request_terms,
+                    terms: tmpl.args.clone(),
                 };
 
                 let adornment = self.get_adornment(&request_literal, &HashSet::new());
@@ -158,14 +155,13 @@ impl Planner {
                     .filter(|(_, &b)| b == Binding::Bound)
                     .map(|(t, _)| t.clone())
                     .collect();
-                let magic_seed_body = ctx.flattened_literals;
 
                 magic_rules.push(ir::Rule {
                     head: ir::Literal {
                         predicate: magic_pred_id,
                         terms: magic_head_terms,
                     },
-                    body: magic_seed_body,
+                    body: vec![], // No flattened literals
                 });
             }
         }
@@ -195,8 +191,10 @@ impl Planner {
                 let mut bound_in_body = HashSet::new();
                 for (term, binding) in rule.head.terms.iter().zip(adornment.iter()) {
                     if *binding == Binding::Bound {
-                        if let ir::Term::Variable(w) = term {
-                            bound_in_body.insert(w.clone());
+                        if let Ok(wildcards) =
+                            translator::collect_wildcards(std::slice::from_ref(term))
+                        {
+                            bound_in_body.extend(wildcards);
                         }
                     }
                 }
@@ -284,10 +282,8 @@ impl Planner {
                     accumulated_guards.push(guard_to_add);
 
                     // Update bindings for the next literal in the chain.
-                    for term in &literal.terms {
-                        if let ir::Term::Variable(w) = term {
-                            accumulated_bindings.insert(w.clone());
-                        }
+                    if let Ok(newly_bound) = translator::collect_wildcards(&literal.terms) {
+                        accumulated_bindings.extend(newly_bound);
                     }
                 }
             }
@@ -333,7 +329,7 @@ impl Planner {
         let magic_pred_id = self.create_magic_predicate_id(pred_name, head_adornment);
 
         // The terms of the magic literal are the *bound* terms from the head.
-        let magic_terms: Vec<ir::Term> = rule
+        let magic_terms: Vec<StatementTmplArg> = rule
             .head
             .terms
             .iter()
@@ -355,10 +351,10 @@ impl Planner {
         &self,
         pred_name: &str,
         adornment: &Adornment,
-        head_terms: &[ir::Term],
+        head_terms: &[StatementTmplArg],
     ) -> Result<ir::Literal, SolverError> {
         let magic_pred_id = self.create_magic_predicate_id(pred_name, adornment);
-        let magic_terms: Vec<ir::Term> = head_terms
+        let magic_terms: Vec<StatementTmplArg> = head_terms
             .iter()
             .zip(adornment.iter())
             .filter(|(_, &b)| b == Binding::Bound)
@@ -382,24 +378,24 @@ impl Planner {
             // e.g., REQUEST(A, B) becomes `_request_goal(wildcards) :- A, B.`
             let synthetic_pred_name = "_request_goal".to_string();
 
-            let mut ctx = translator::TranslationContext::new();
             let mut synthetic_rule_body = Vec::new();
             for tmpl in request {
-                let terms = tmpl
-                    .args
-                    .iter()
-                    .map(|arg| ctx.translate_arg_to_term(arg))
-                    .collect::<Result<Vec<_>, _>>()?;
                 synthetic_rule_body.push(ir::Literal {
                     predicate: ir::PredicateIdentifier::Normal(tmpl.pred.clone()),
-                    terms,
+                    terms: tmpl.args.clone(),
                 });
             }
-            let mut full_synthetic_body = ctx.flattened_literals;
-            full_synthetic_body.extend(synthetic_rule_body);
 
             // The head of the synthetic rule contains all wildcards from the request.
-            let mut head_wildcards: Vec<_> = ctx.bound_variables.into_iter().collect();
+            let bound_variables = request
+                .iter()
+                .map(|tmpl| translator::collect_wildcards(&tmpl.args))
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .flatten()
+                .collect::<HashSet<_>>();
+
+            let mut head_wildcards: Vec<_> = bound_variables.into_iter().collect();
             head_wildcards.sort_by_key(|w| w.index); // Canonical order
             let wildcard_names: Vec<_> = head_wildcards.iter().map(|w| w.name.clone()).collect();
 
@@ -423,12 +419,15 @@ impl Planner {
                 predicate: ir::PredicateIdentifier::Normal(Predicate::Custom(
                     synthetic_cpr.clone(),
                 )),
-                terms: head_wildcards.into_iter().map(ir::Term::Variable).collect(),
+                terms: head_wildcards
+                    .into_iter()
+                    .map(StatementTmplArg::Wildcard)
+                    .collect(),
             };
 
             all_rules.push(ir::Rule {
                 head: synthetic_rule_head,
-                body: full_synthetic_body,
+                body: synthetic_rule_body,
             });
 
             // Replace the original request with a new request for our synthetic goal.
@@ -513,29 +512,18 @@ impl Planner {
         worklist: &mut VecDeque<CustomPredicateRef>,
         visited: &mut HashSet<usize>,
     ) -> Result<ir::Rule, SolverError> {
-        let mut ctx = translator::TranslationContext::new();
-
         // Translate the head of the rule.
-        let head_terms = head_args
-            .iter()
-            .map(|arg| ctx.translate_arg_to_term(arg))
-            .collect::<Result<Vec<_>, _>>()?;
         let head_literal = ir::Literal {
             predicate: ir::PredicateIdentifier::Normal(Predicate::Custom(cpr.clone())),
-            terms: head_terms,
+            terms: head_args.to_vec(),
         };
 
         // Translate the body of the rule.
         let mut body_literals = Vec::new();
         for tmpl in body_tmpls {
-            let terms = tmpl
-                .args
-                .iter()
-                .map(|arg| ctx.translate_arg_to_term(arg))
-                .collect::<Result<Vec<_>, _>>()?;
             body_literals.push(ir::Literal {
                 predicate: ir::PredicateIdentifier::Normal(tmpl.pred.clone()),
-                terms,
+                terms: tmpl.args.clone(),
             });
 
             // If this body literal is a custom predicate, add it to the worklist for traversal.
@@ -546,13 +534,9 @@ impl Planner {
             }
         }
 
-        // Prepend any flattened literals (from GetValue) to the body.
-        let mut final_body = ctx.flattened_literals;
-        final_body.extend(body_literals);
-
         Ok(ir::Rule {
             head: head_literal,
-            body: final_body,
+            body: body_literals,
         })
     }
 }
@@ -622,11 +606,7 @@ mod tests {
 
         // Check guarded rule
         let guarded_rule = &plan.guarded_rules[1];
-        assert_eq!(
-            guarded_rule.body.len(),
-            4,
-            "Expected magic_guard + 2*GetValue + Equal"
-        );
+        assert_eq!(guarded_rule.body.len(), 2, "Expected magic_guard + Equal");
 
         // Check head of guarded rule
         match &guarded_rule.head.predicate {
@@ -648,18 +628,9 @@ mod tests {
             _ => panic!("Expected magic guard as first literal in body"),
         }
 
-        assert_eq!(
-            guarded_rule.body[1].predicate,
-            ir::PredicateIdentifier::GetValue
-        );
-        assert_eq!(
-            guarded_rule.body[2].predicate,
-            ir::PredicateIdentifier::GetValue
-        );
-
-        match &guarded_rule.body[3].predicate {
+        match &guarded_rule.body[1].predicate {
             ir::PredicateIdentifier::Normal(Predicate::Native(NativePredicate::Equal)) => (),
-            _ => panic!("Expected Equal predicate as the final literal in the body"),
+            _ => panic!("Expected Equal predicate as the second literal in the body"),
         }
 
         Ok(())
@@ -719,8 +690,8 @@ mod tests {
             })
             .expect("Could not find guarded rule for is_friend");
 
-        // Body: magic_guard, GetValue(A), GetValue(B), Equal
-        assert_eq!(guarded_rule.body.len(), 4);
+        // Body: magic_guard, Equal
+        assert_eq!(guarded_rule.body.len(), 2);
 
         // check the magic guard
         let magic_guard = &guarded_rule.body[0];
@@ -737,8 +708,8 @@ mod tests {
         assert_eq!(magic_guard.terms.len(), 1);
         match &magic_guard.terms[0] {
             // The term in the guard refers to the variable in the rule's head.
-            ir::Term::Variable(w) => assert_eq!(w.name, "A"),
-            _ => panic!("Expected variable term in magic guard"),
+            StatementTmplArg::Wildcard(w) => assert_eq!(w.name, "A"),
+            _ => panic!("Expected wildcard term in magic guard"),
         }
 
         Ok(())

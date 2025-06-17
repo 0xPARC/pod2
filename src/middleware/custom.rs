@@ -37,7 +37,7 @@ impl ToFields for Wildcard {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", content = "value")]
 pub enum StatementTmplArg {
     None,

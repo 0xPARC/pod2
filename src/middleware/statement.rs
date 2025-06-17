@@ -299,7 +299,7 @@ impl fmt::Display for Statement {
 }
 
 /// Statement argument type. Useful for statement decompositions.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Serialize, Deserialize)]
 pub enum StatementArg {
     None,
     Literal(Value),

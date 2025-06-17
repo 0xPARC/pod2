@@ -441,6 +441,13 @@ impl FactDB {
         self.raw_value_to_anchored_keys.get(&value.raw())
     }
 
+    pub fn value_ref_to_value(&self, vr: &ValueRef) -> Option<Value> {
+        match vr {
+            ValueRef::Literal(v) => Some(v.clone()),
+            ValueRef::Key(ak) => self.get_value_by_anchored_key(ak).cloned(),
+        }
+    }
+
     // --- Equality Graph Methods ---
 
     pub fn find_equality_path(&self, start: &AnchoredKey, end: &AnchoredKey) -> bool {

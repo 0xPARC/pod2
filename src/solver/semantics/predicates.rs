@@ -2,11 +2,13 @@
 //! This modular approach allows for easy extension and testing of predicate logic.
 
 use crate::{
-    middleware::{hash_values, Key, NativePredicate, Statement, TypedValue, Value, ValueRef},
+    middleware::{
+        hash_values, Key, NativePredicate, StatementTmplArg, TypedValue, Value, ValueRef,
+    },
     solver::{
         engine::semi_naive::{self, Fact, FactSource},
         error::SolverError,
-        ir::{self, Term},
+        ir::{self},
         semantics::{
             enumerator::{StreamItem, TypeFilter},
             provider::PodSemantics,
@@ -47,25 +49,38 @@ impl PredicateHandler {
         H: BinaryPredicateHandler,
     {
         let native_pred = H::NATIVE_PREDICATE;
-        let term_to_vr = |term: &Term| -> Option<ValueRef> {
-            match term {
-                Term::Constant(v) => Some(ValueRef::Literal(v.clone())),
-                Term::Variable(w) => bindings.get(w).map(|v| ValueRef::Literal(v.clone())),
+        let arg_to_vr = |arg: &StatementTmplArg| -> Option<ValueRef> {
+            match arg {
+                StatementTmplArg::Literal(v) => Some(ValueRef::Literal(v.clone())),
+                StatementTmplArg::Wildcard(w) => {
+                    let binding = bindings.get(w);
+                    if let Some(vr) = binding {
+                        if let Some(val) = semantics.db.value_ref_to_value(vr) {
+                            Some(ValueRef::Literal(val))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
+                // TODO: AnchoredKey?
+                _ => None,
             }
         };
 
-        let filters = [term_to_vr(&literal.terms[0]), term_to_vr(&literal.terms[1])];
+        let filters = [arg_to_vr(&literal.terms[0]), arg_to_vr(&literal.terms[1])];
         if let Some(db_facts) = semantics.db.get_binary_statement_index(&native_pred) {
             let fact_iter =
                 semantics.iter_binary_facts(filters, handler, db_facts, handler.type_filters())?;
             let mapped_iter = fact_iter.filter_map(move |(fact_vrs, justification)| {
                 if let (Some(v1), Some(v2)) = (
-                    semantics.value_ref_to_value(&fact_vrs[0]),
-                    semantics.value_ref_to_value(&fact_vrs[1]),
+                    semantics.db.value_ref_to_value(&fact_vrs[0]),
+                    semantics.db.value_ref_to_value(&fact_vrs[1]),
                 ) {
                     Some(Fact {
                         source: FactSource::External(justification),
-                        tuple: vec![v1, v2],
+                        tuple: vec![ValueRef::Literal(v1), ValueRef::Literal(v2)],
                     })
                 } else {
                     None
@@ -88,30 +103,47 @@ impl PredicateHandler {
         H: TernaryPredicateHandler,
     {
         let native_pred = H::NATIVE_PREDICATE;
-        let term_to_vr = |term: &Term| -> Option<ValueRef> {
-            match term {
-                Term::Constant(v) => Some(ValueRef::Literal(v.clone())),
-                Term::Variable(w) => bindings.get(w).map(|v| ValueRef::Literal(v.clone())),
+        let arg_to_vr = |arg: &StatementTmplArg| -> Option<ValueRef> {
+            match arg {
+                StatementTmplArg::Literal(v) => Some(ValueRef::Literal(v.clone())),
+                StatementTmplArg::Wildcard(w) => {
+                    let binding = bindings.get(w);
+                    if let Some(vr) = binding {
+                        if let Some(val) = semantics.db.value_ref_to_value(vr) {
+                            Some(ValueRef::Literal(val))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
+                // TODO: AnchoredKey?
+                _ => None,
             }
         };
 
         let filters = [
-            term_to_vr(&literal.terms[0]),
-            term_to_vr(&literal.terms[1]),
-            term_to_vr(&literal.terms[2]),
+            arg_to_vr(&literal.terms[0]),
+            arg_to_vr(&literal.terms[1]),
+            arg_to_vr(&literal.terms[2]),
         ];
         if let Some(db_facts) = semantics.db.get_ternary_statement_index(&native_pred) {
             let fact_iter =
                 semantics.iter_ternary_facts(filters, handler, db_facts, handler.type_filters())?;
             let mapped_iter = fact_iter.filter_map(move |(fact_vrs, justification)| {
                 if let (Some(v1), Some(v2), Some(v3)) = (
-                    semantics.value_ref_to_value(&fact_vrs[0]),
-                    semantics.value_ref_to_value(&fact_vrs[1]),
-                    semantics.value_ref_to_value(&fact_vrs[2]),
+                    semantics.db.value_ref_to_value(&fact_vrs[0]),
+                    semantics.db.value_ref_to_value(&fact_vrs[1]),
+                    semantics.db.value_ref_to_value(&fact_vrs[2]),
                 ) {
                     Some(Fact {
                         source: FactSource::External(justification),
-                        tuple: vec![v1, v2, v3],
+                        tuple: vec![
+                            ValueRef::Literal(v1),
+                            ValueRef::Literal(v2),
+                            ValueRef::Literal(v3),
+                        ],
                     })
                 } else {
                     None
@@ -174,9 +206,6 @@ pub trait BinaryPredicateHandler: Copy + Send + Sync + 'static {
     /// Returns the required types for the arguments (e.g., Numeric).
     fn type_filters(&self) -> [TypeFilter; 2];
 
-    /// Reconstructs the final `Statement` for a proof node.
-    fn to_statement(&self, args: [ValueRef; 2]) -> Statement;
-
     /// The core value-checking logic for the predicate.
     fn check_values(&self, val1: &Value, val2: &Value) -> bool;
 
@@ -225,9 +254,6 @@ pub trait TernaryPredicateHandler: Copy + Send + Sync + 'static {
 
     /// Returns the required types for the arguments.
     fn type_filters(&self) -> [TypeFilter; 3];
-
-    /// Reconstructs the final `Statement` for a proof node.
-    fn to_statement(&self, args: [ValueRef; 3]) -> Statement;
 
     /// The core value-checking logic for the predicate.
     fn check_values(&self, v1: &Value, v2: &Value, v3: &Value) -> bool;
@@ -289,10 +315,6 @@ impl BinaryPredicateHandler for LtHandler {
         [TypeFilter::Int, TypeFilter::Int]
     }
 
-    fn to_statement(&self, args: [ValueRef; 2]) -> Statement {
-        Statement::Lt(args[0].clone(), args[1].clone())
-    }
-
     fn check_values(&self, val1: &Value, val2: &Value) -> bool {
         if let (TypedValue::Int(i1), TypedValue::Int(i2)) = (val1.typed(), val2.typed()) {
             i1 < i2
@@ -312,10 +334,6 @@ impl BinaryPredicateHandler for LtEqHandler {
         [TypeFilter::Int, TypeFilter::Int]
     }
 
-    fn to_statement(&self, args: [ValueRef; 2]) -> Statement {
-        Statement::LtEq(args[0].clone(), args[1].clone())
-    }
-
     fn check_values(&self, val1: &Value, val2: &Value) -> bool {
         // This leverages the derived PartialOrd on `Value`
         val1 <= val2
@@ -330,10 +348,6 @@ impl BinaryPredicateHandler for EqualHandler {
 
     fn type_filters(&self) -> [TypeFilter; 2] {
         [TypeFilter::Any, TypeFilter::Any]
-    }
-
-    fn to_statement(&self, args: [ValueRef; 2]) -> Statement {
-        Statement::Equal(args[0].clone(), args[1].clone())
     }
 
     fn check_values(&self, val1: &Value, val2: &Value) -> bool {
@@ -371,9 +385,7 @@ impl TernaryPredicateHandler for ContainsHandler {
             TypeFilter::Any,
         ]
     }
-    fn to_statement(&self, args: [ValueRef; 3]) -> Statement {
-        Statement::Contains(args[0].clone(), args[1].clone(), args[2].clone())
-    }
+
     fn check_values(&self, container: &Value, key: &Value, value: &Value) -> bool {
         match container.typed() {
             TypedValue::Array(arr) => {
@@ -412,9 +424,7 @@ impl BinaryPredicateHandler for NotContainsHandler {
     fn type_filters(&self) -> [TypeFilter; 2] {
         [TypeFilter::Container, TypeFilter::Any]
     }
-    fn to_statement(&self, args: [ValueRef; 2]) -> Statement {
-        Statement::NotContains(args[0].clone(), args[1].clone())
-    }
+
     fn check_values(&self, container: &Value, key: &Value) -> bool {
         match container.typed() {
             TypedValue::Array(arr) => {
@@ -449,10 +459,6 @@ impl TernaryPredicateHandler for SumOfHandler {
 
     fn type_filters(&self) -> [TypeFilter; 3] {
         [TypeFilter::Int, TypeFilter::Int, TypeFilter::Int]
-    }
-
-    fn to_statement(&self, args: [ValueRef; 3]) -> Statement {
-        Statement::SumOf(args[0].clone(), args[1].clone(), args[2].clone())
     }
 
     fn check_values(&self, v1: &Value, v2: &Value, v3: &Value) -> bool {
@@ -517,10 +523,6 @@ impl TernaryPredicateHandler for ProductOfHandler {
 
     fn type_filters(&self) -> [TypeFilter; 3] {
         [TypeFilter::Int, TypeFilter::Int, TypeFilter::Int]
-    }
-
-    fn to_statement(&self, args: [ValueRef; 3]) -> Statement {
-        Statement::ProductOf(args[0].clone(), args[1].clone(), args[2].clone())
     }
 
     fn check_values(&self, v1: &Value, v2: &Value, v3: &Value) -> bool {
@@ -597,10 +599,6 @@ impl BinaryPredicateHandler for NotEqualHandler {
         [TypeFilter::Any, TypeFilter::Any]
     }
 
-    fn to_statement(&self, args: [ValueRef; 2]) -> Statement {
-        Statement::NotEqual(args[0].clone(), args[1].clone())
-    }
-
     fn check_values(&self, val1: &Value, val2: &Value) -> bool {
         val1 != val2
     }
@@ -614,10 +612,6 @@ impl TernaryPredicateHandler for MaxOfHandler {
 
     fn type_filters(&self) -> [TypeFilter; 3] {
         [TypeFilter::Int, TypeFilter::Int, TypeFilter::Int]
-    }
-
-    fn to_statement(&self, args: [ValueRef; 3]) -> Statement {
-        Statement::MaxOf(args[0].clone(), args[1].clone(), args[2].clone())
     }
 
     fn check_values(&self, v1: &Value, v2: &Value, v3: &Value) -> bool {
@@ -682,10 +676,6 @@ impl TernaryPredicateHandler for HashOfHandler {
 
     fn type_filters(&self) -> [TypeFilter; 3] {
         [TypeFilter::Int, TypeFilter::Int, TypeFilter::Int]
-    }
-
-    fn to_statement(&self, args: [ValueRef; 3]) -> Statement {
-        Statement::HashOf(args[0].clone(), args[1].clone(), args[2].clone())
     }
 
     fn check_values(&self, v1: &Value, v2: &Value, v3: &Value) -> bool {

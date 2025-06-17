@@ -10,7 +10,7 @@ use super::{
 use crate::{
     middleware::{
         AnchoredKey, CustomPredicateRef, Hash, Key, NativePredicate, PodId, Predicate, RawValue,
-        TypedValue, Value, ValueRef,
+        StatementTmplArg, TypedValue, Value, ValueRef,
     },
     solver::{
         db::FactDB,
@@ -58,13 +58,6 @@ impl PodSemantics {
         }
     }
 
-    pub fn value_ref_to_value(&self, vr: &ValueRef) -> Option<Value> {
-        match vr {
-            ValueRef::Literal(v) => Some(v.clone()),
-            ValueRef::Key(ak) => self.db.get_value_by_anchored_key(ak).cloned(),
-        }
-    }
-
     /// Provides a generic way to iterate over all known facts for a binary
     /// predicate, with optional filters for each argument. This is intended
     /// for use by a bottom-up evaluation engine.
@@ -74,7 +67,7 @@ impl PodSemantics {
         checker: C,
         db_facts: &'a HashMap<[ValueRef; 2], Vec<PodId>>,
         type_filters: [TypeFilter; 2],
-    ) -> Result<CandidateTupleStream<'a, 2>, SolverError>
+    ) -> Result<impl Iterator<Item = ([ValueRef; 2], JustificationKind)> + 'a, SolverError>
     where
         C: BinaryPredicateHandler + 'a,
     {
@@ -91,7 +84,7 @@ impl PodSemantics {
         checker: C,
         db_facts: &'a HashMap<[ValueRef; 3], Vec<PodId>>,
         type_filters: [TypeFilter; 3],
-    ) -> Result<CandidateTupleStream<'a, 3>, SolverError>
+    ) -> Result<impl Iterator<Item = ([ValueRef; 3], JustificationKind)> + 'a, SolverError>
     where
         C: TernaryPredicateHandler + 'a,
     {
@@ -102,12 +95,12 @@ impl PodSemantics {
     /// Iterates over potential facts for a `GetValue(pod, key, value)` literal.
     pub fn iter_get_value_facts<'a>(
         &'a self,
-        pod: Option<&Value>,
-        key: Option<&Value>,
-    ) -> impl Iterator<Item = Vec<Value>> + 'a {
+        pod: Option<&ValueRef>,
+        key: Option<&ValueRef>,
+    ) -> impl Iterator<Item = Vec<ValueRef>> + 'a {
         let mut results = Vec::new();
 
-        if let (Some(pod_val), Some(key_val)) = (pod, key) {
+        if let (Some(ValueRef::Literal(pod_val)), Some(ValueRef::Literal(key_val))) = (pod, key) {
             // Case 1: Pod and Key are both bound.
             if let (TypedValue::Raw(raw_pod_id), TypedValue::String(key_s)) =
                 (pod_val.typed(), key_val.typed())
@@ -116,10 +109,14 @@ impl PodSemantics {
                 let key = Key::new(key_s.clone());
                 let ak = AnchoredKey::new(pod_id, key);
                 if let Some(found_val) = self.db.get_value_by_anchored_key(&ak) {
-                    results.push(vec![pod_val.clone(), key_val.clone(), found_val.clone()]);
+                    results.push(vec![
+                        ValueRef::Literal(pod_val.clone()),
+                        ValueRef::Literal(key_val.clone()),
+                        ValueRef::Literal(found_val.clone()),
+                    ]);
                 }
             }
-        } else if let Some(key_val) = key {
+        } else if let Some(ValueRef::Literal(key_val)) = key {
             // Case 2: Only Key is bound. Iterate all pods.
             if let TypedValue::String(key_s) = key_val.typed() {
                 let key = Key::new(key_s.clone());
@@ -127,7 +124,11 @@ impl PodSemantics {
                     let ak = AnchoredKey::new(pod_id, key.clone());
                     if let Some(found_val) = self.db.get_value_by_anchored_key(&ak) {
                         let pod_id_val = Value::from(RawValue(pod_id.0 .0));
-                        results.push(vec![pod_id_val, key_val.clone(), found_val.clone()]);
+                        results.push(vec![
+                            ValueRef::Literal(pod_id_val),
+                            ValueRef::Literal(key_val.clone()),
+                            ValueRef::Literal(found_val.clone()),
+                        ]);
                     }
                 }
             }
@@ -141,10 +142,17 @@ impl PodSemantics {
     pub fn iter_custom_facts<'a>(
         &'a self,
         cpr: &'a CustomPredicateRef,
-        filters: &'a [Option<Value>],
-    ) -> impl Iterator<Item = Vec<Value>> + 'a {
+        filters: &'a [Option<ValueRef>],
+    ) -> impl Iterator<Item = (Vec<ValueRef>, JustificationKind)> + 'a {
         self.enumerator
             .enumerate_custom_candidates_core(cpr, filters)
+            // The enumerator for custom facts returns Vec<Value>, so we must
+            // map them to Vec<ValueRef::Literal> to match the required signature.
+            // This is a temporary consequence of Statement::Custom storing Values.
+            .map(|vals| {
+                let vrs = vals.into_iter().map(ValueRef::Literal).collect::<Vec<_>>();
+                (vrs, JustificationKind::Fact)
+            })
     }
 
     /// Checks if a fully-instantiated (ground) literal is true according to the
@@ -163,8 +171,8 @@ impl PodSemantics {
 
         // Helper to get a value from a term, ensuring it's a constant. This function
         // should only operate on fully ground (instantiated) literals.
-        let get_val = |term: &ir::Term| -> Result<Value, SolverError> {
-            if let ir::Term::Constant(v) = term {
+        let get_val = |term: &StatementTmplArg| -> Result<Value, SolverError> {
+            if let StatementTmplArg::Literal(v) = term {
                 Ok(v.clone())
             } else {
                 Err(SolverError::Internal(

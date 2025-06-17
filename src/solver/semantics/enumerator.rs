@@ -95,7 +95,7 @@ impl FactEnumerator {
     fn get_stream_for_filter<'a>(&'a self, filter: Option<ValueRef>) -> ValueStream<'a> {
         let iter: Box<dyn Iterator<Item = (ValueRef, StreamItem)> + 'a> = if let Some(vr) = filter {
             // If filter is bound, produce a single concrete value if it can be resolved.
-            if let Some(val) = self.value_ref_to_value(&vr) {
+            if let Some(val) = self.db.value_ref_to_value(&vr) {
                 Box::new(std::iter::once((vr, StreamItem::Concrete(val))))
             } else {
                 Box::new(std::iter::empty())
@@ -126,8 +126,8 @@ impl FactEnumerator {
     {
         // --- Path 0: Fast path for fully-bound computation ---
         if let (Some(vr1), Some(vr2)) = (&filters[0], &filters[1]) {
-            let val1 = self.value_ref_to_value(vr1);
-            let val2 = self.value_ref_to_value(vr2);
+            let val1 = self.db.value_ref_to_value(vr1);
+            let val2 = self.db.value_ref_to_value(vr2);
 
             if let (Some(v1), Some(v2)) = (val1, val2) {
                 if check_type(&v1, &type_filters[0])
@@ -152,8 +152,8 @@ impl FactEnumerator {
             .filter({
                 let filters = filters.clone();
                 move |[vr1, vr2]| {
-                    let p1 = filters[0].as_ref().is_none_or(|f| f == vr1);
-                    let p2 = filters[1].as_ref().is_none_or(|f| f == vr2);
+                    let p1 = filters[0].as_ref().map_or(true, |f| f == vr1);
+                    let p2 = filters[1].as_ref().map_or(true, |f| f == vr2);
                     p1 && p2
                 }
             })
@@ -216,9 +216,9 @@ impl FactEnumerator {
     {
         // --- Path 0: Fast path for fully-bound computation ---
         if let (Some(vr1), Some(vr2), Some(vr3)) = (&filters[0], &filters[1], &filters[2]) {
-            let val1 = self.value_ref_to_value(vr1);
-            let val2 = self.value_ref_to_value(vr2);
-            let val3 = self.value_ref_to_value(vr3);
+            let val1 = self.db.value_ref_to_value(vr1);
+            let val2 = self.db.value_ref_to_value(vr2);
+            let val3 = self.db.value_ref_to_value(vr3);
 
             if let (Some(v1), Some(v2), Some(v3)) = (val1, val2, val3) {
                 if check_type(&v1, &type_filters[0])
@@ -247,9 +247,9 @@ impl FactEnumerator {
             .filter({
                 let filters = filters.clone();
                 move |[vr1, vr2, vr3]| {
-                    let p1 = filters[0].as_ref().is_none_or(|f| f == vr1);
-                    let p2 = filters[1].as_ref().is_none_or(|f| f == vr2);
-                    let p3 = filters[2].as_ref().is_none_or(|f| f == vr3);
+                    let p1 = filters[0].as_ref().map_or(true, |f| f == vr1);
+                    let p2 = filters[1].as_ref().map_or(true, |f| f == vr2);
+                    let p3 = filters[2].as_ref().map_or(true, |f| f == vr3);
                     p1 && p2 && p3
                 }
             })
@@ -321,32 +321,46 @@ impl FactEnumerator {
         Ok(Box::new(unification_solutions.chain(computation_solutions)))
     }
 
-    /// Core logic for finding custom predicate candidates from the EDB.
+    /// Core logic for finding custom predicate candidates.
     pub(super) fn enumerate_custom_candidates_core<'a>(
         &'a self,
         cpr: &'a CustomPredicateRef,
-        filters: &'a [Option<Value>],
+        filters: &'a [Option<ValueRef>],
     ) -> impl Iterator<Item = Vec<Value>> + 'a {
-        let batch_id = cpr.batch.id();
-        let pred_idx = cpr.index;
+        // This is a temporary implementation that bridges the ValueRef-based solver
+        // with the Value-based custom fact storage.
+        let resolved_filters: Vec<Option<Value>> = filters
+            .iter()
+            .map(|opt_vr| {
+                opt_vr
+                    .as_ref()
+                    .and_then(|vr| self.db.value_ref_to_value(vr))
+            })
+            .collect();
+
+        let facts_for_pred =
+            self.db
+                .statement_index
+                .custom
+                .get(&(cpr.batch.id(), cpr.index, vec![]));
+
+        if let Some(facts) = facts_for_pred {
+            println!("Facts for pred: {:?}", facts);
+        }
 
         self.db
             .statement_index
             .custom
             .iter()
-            .filter_map(move |((b_id, idx, fact_args), _pods)| {
-                if *b_id != batch_id || *idx != pred_idx {
-                    return None;
-                }
-
-                for (filter_opt, fact_val) in filters.iter().zip(fact_args.iter()) {
-                    if let Some(filter_val) = filter_opt {
-                        if filter_val != fact_val {
-                            return None; // Does not match filter
-                        }
-                    }
-                }
-                Some(fact_args.clone())
+            .filter(move |((batch_id, pred_idx, _), _)| {
+                *batch_id == cpr.batch.id() && *pred_idx == cpr.index
+            })
+            .map(|((_, _, values), _)| values.clone())
+            .filter(move |values| {
+                resolved_filters
+                    .iter()
+                    .zip(values.iter())
+                    .all(|(filter, value)| filter.as_ref().map_or(true, |f| f == value))
             })
     }
 
