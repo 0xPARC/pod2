@@ -34,7 +34,7 @@ use crate::{
         basetypes::{C, D},
         error::Result,
         primitives::ec::gates::{
-            curve::{ECAddHomogOffset, ECDblHomogOffset},
+            curve::{ECAddMixed, ECDblHomog},
             field::NNFMulSimple,
             generic::GateAdapter,
         },
@@ -42,6 +42,22 @@ use crate::{
     middleware::F,
     timed,
 };
+
+pub fn std_config() -> CircuitConfig {
+    CircuitConfig {
+        num_wires: 135,
+        num_routed_wires: 100,
+        ..CircuitConfig::standard_recursion_config()
+    }
+}
+
+pub fn std_zk_config() -> CircuitConfig {
+    CircuitConfig {
+        num_wires: 135,
+        num_routed_wires: 100,
+        ..CircuitConfig::standard_recursion_zk_config()
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct VerifiedProofTarget {
@@ -161,7 +177,7 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
 
     /// builds the targets and returns also a ProverCircuitData
     pub fn build(params: &RecursiveParams, inner_params: &I::Params) -> Result<Self> {
-        let config = CircuitConfig::standard_recursion_config();
+        let config = std_config();
         let mut builder = CircuitBuilder::new(config.clone());
 
         let targets: RecursiveCircuitTarget<I> = Self::build_targets(
@@ -256,7 +272,7 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         );
 
         // build the actual RecursiveCircuit circuit data
-        let config = CircuitConfig::standard_recursion_config();
+        let config = std_config();
         let mut builder = CircuitBuilder::new(config);
 
         let target = timed!(
@@ -276,7 +292,7 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         inner_params: &I::Params,
     ) -> Result<(RecursiveCircuitTarget<I>, CircuitData<F, C, D>)> {
         // build the actual RecursiveCircuit circuit data
-        let config = CircuitConfig::standard_recursion_config();
+        let config = std_config();
         let mut builder = CircuitBuilder::new(config);
 
         let target = timed!(
@@ -318,7 +334,7 @@ pub fn common_data_for_recursion<I: InnerCircuit>(
     num_public_inputs: usize,
     inner_params: &I::Params,
 ) -> Result<CommonCircuitData<F, D>> {
-    let config = CircuitConfig::standard_recursion_config();
+    let config = std_config();
 
     let mut builder = CircuitBuilder::<F, D>::new(config.clone());
     use plonky2::gates::gate::GateRef;
@@ -352,10 +368,10 @@ pub fn common_data_for_recursion<I: InnerCircuit>(
             GateAdapter::<NNFMulSimple<5, QuinticExtension<F>>>::new_from_config(&config)
                 .recursive_gate(),
         ),
-        GateRef::new(GateAdapter::<ECAddHomogOffset>::new_from_config(&config)),
-        GateRef::new(GateAdapter::<ECAddHomogOffset>::new_from_config(&config).recursive_gate()),
-        GateRef::new(GateAdapter::<ECDblHomogOffset>::new_from_config(&config)),
-        GateRef::new(GateAdapter::<ECDblHomogOffset>::new_from_config(&config).recursive_gate()),
+        GateRef::new(GateAdapter::<ECAddMixed>::new_from_config(&config)),
+        GateRef::new(GateAdapter::<ECAddMixed>::new_from_config(&config).recursive_gate()),
+        GateRef::new(GateAdapter::<ECDblHomog>::new_from_config(&config)),
+        GateRef::new(GateAdapter::<ECDblHomog>::new_from_config(&config).recursive_gate()),
         GateRef::new(plonky2::gates::exponentiation::ExponentiationGate::new_from_config(&config)),
         // It would be better do `CosetInterpolationGate::with_max_degree(4, 6)` but unfortunately
         // that plonk2 method is `pub(crate)`, so we need to get around that somehow.
@@ -628,7 +644,7 @@ mod tests {
         inner_inputs: IC::Input,
     ) -> Result<()> {
         // circuit
-        let config = CircuitConfig::standard_recursion_config();
+        let config = std_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
@@ -703,7 +719,7 @@ mod tests {
         let common_data = &circuit_data_3.common;
 
         let (_, circuit_data_1) =
-            RC::<Circuit1>::target_and_circuit_data_padded(arity, &common_data, &inner_params)?;
+            RC::<Circuit1>::target_and_circuit_data_padded(arity, common_data, &inner_params)?;
         let params_1 = RecursiveParams {
             arity,
             common_data: circuit_data_1.common.clone(),
@@ -711,7 +727,7 @@ mod tests {
         };
 
         let (_, circuit_data_2) =
-            RC::<Circuit2>::target_and_circuit_data_padded(arity, &common_data, &inner_params)?;
+            RC::<Circuit2>::target_and_circuit_data_padded(arity, common_data, &inner_params)?;
         let params_2 = RecursiveParams {
             arity,
             common_data: circuit_data_2.common.clone(),
@@ -807,7 +823,7 @@ mod tests {
     #[ignore]
     #[test]
     fn test_measure_recursion() {
-        let config = CircuitConfig::standard_recursion_config();
+        let config = std_config();
         for i in 7..18 {
             let mut builder = CircuitBuilder::new(config.clone());
             builder.add_gate_to_gate_set(plonky2::gates::gate::GateRef::new(

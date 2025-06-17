@@ -23,13 +23,15 @@ use plonky2::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::gates::curve::ECDblHomogOffset;
 use crate::backends::plonky2::{
     circuits::common::ValueTarget,
     primitives::ec::{
         bits::BigUInt320Target,
         field::{get_nnf_target, CircuitBuilderNNF, OEFTarget},
-        gates::{curve::ECAddHomogOffset, generic::SimpleGate},
+        gates::{
+            curve::{ECAddMixed, ECDblHomog},
+            generic::SimpleGate,
+        },
     },
     Error,
 };
@@ -177,39 +179,45 @@ pub(super) fn add_homog<const D: usize, F: ECFieldExt<D>>(x1: F, u1: F, x2: F, u
     [x, z, u, t]
 }
 
-// See CircuitBuilderEllptic::add_point for an explanation of why we need this function.
-// cf. https://github.com/pornin/ecgfp5/blob/ce059c6d1e1662db437aecbf3db6bb67fe63c716/rust/src/curve.rs#L157
-pub(super) fn add_homog_offset<const D: usize, F: ECFieldExt<D>>(
+// Mixed addition, cf. https://github.com/pornin/ecgfp5/blob/ce059c6d1e1662db437aecbf3db6bb67fe63c716/rust/src/curve.rs#L157
+pub(super) fn mixed_add<const D: usize, F: ECFieldExt<D>>(
     x1: F,
+    z1: F,
     u1: F,
+    t1: F,
     x2: F,
     u2: F,
 ) -> [F; 4] {
-    let t1 = x1 * x2;
-    let t3 = u1 * u2;
-    let t5 = x1 + x2;
-    let t6 = u1 + u2;
-    let t7 = t1.add_field_gen(Point::B1);
-    let t9 = t3 * (t5.mul_field_gen(2 * Point::B1_U32) + t7.double());
-    let t10 = t3.double().add_scalar(GoldilocksField::ONE) * (t5 + t7);
-    let x = (t10 - t7).mul_field_gen(Point::B1_U32);
-    let z = t1 - t9;
-    let u = t6 * (-t1).add_field_gen(Point::B1);
-    let t = t1 + t9;
+    let tau1 = x1 * x2;
+    let tau2 = z1;
+    let tau3 = u1 * u2;
+    let tau4 = t1;
+    let tau5 = x1 + x2 * z1;
+    let tau6 = u1 + u2 * t1;
+    let tau7 = tau1 + tau2.mul_field_gen(Point::B1_U32);
+    let tau8 = tau4 * tau7;
+    let tau9 = tau3 * (tau5.mul_field_gen(2 * Point::B1_U32) + tau7.double());
+    let tau10 = (tau4 + tau3.double()) * (tau5 + tau7);
+    let x = (tau10 - tau8).mul_field_gen(Point::B1_U32);
+    let u = tau6 * (tau2.mul_field_gen(Point::B1_U32) - tau1);
+    let z = tau8 - tau9;
+    let t = tau8 + tau9;
     [x, z, u, t]
 }
 
-pub(super) fn double_homog_offset<const D: usize, F: ECFieldExt<D>>(x: F, u: F) -> [F; 4] {
-    let t3 = u * u;
-    let w1 = (-x.add_scalar(GoldilocksField::ONE).double() * t3).add_scalar(GoldilocksField::ONE);
-    let x_out = t3.mul_field_gen(4 * Point::B1_U32);
-    // Actual `z` coordinate.
-    let z0 = w1.square();
-    let u_out = (w1 + u).square() - t3 - z0;
-    // Offset z and t for similar reasons to `add_homog_offset` (see above).
-    let z = z0.add_scalar(-GoldilocksField::ONE); // 1 should be added here.
-    let t = -t3.double().double() - z; // 1 should be added here.
-    [x_out, z, u_out, t]
+pub(super) fn double_homog<const D: usize, F: ECFieldExt<D>>(x: F, z: F, u: F, t: F) -> [F; 4] {
+    let tau1 = z * t;
+    let tau2 = tau1 * t;
+    let x1 = tau2.square();
+    let z1 = tau1 * u;
+    let tau3 = u.square();
+    let w1 = tau2 - (x + z).double() * tau3;
+    let tau4 = z1.square();
+    let x_out = tau4.mul_field_gen(4 * Point::B1_U32);
+    let z_out = w1.square();
+    let u_out = (w1 + z1).square() - tau4 - z_out;
+    let t_out = x1.double() - tau4.double().double() - z_out;
+    [x_out, z_out, u_out, t_out]
 }
 
 const GROUP_ORDER_STR: &str = "1067993516717146951041484916571792702745057740581727230159139685185762082554198619328292418486241";
@@ -426,7 +434,9 @@ pub trait CircuitBuilderElliptic {
     fn constant_point(&mut self, p: Point) -> PointTarget;
 
     fn add_point(&mut self, p1: &PointTarget, p2: &PointTarget) -> PointTarget;
+    fn add_point_mixed(&mut self, p1: &[FieldTarget; 4], p2: &PointTarget) -> [FieldTarget; 4];
     fn double_point(&mut self, p: &PointTarget) -> PointTarget;
+    fn double_point_homog(&mut self, p: &[FieldTarget; 4]) -> [FieldTarget; 4];
     fn linear_combination_points(
         &mut self,
         p1_scalar: &[BoolTarget; 320],
@@ -471,70 +481,57 @@ impl CircuitBuilderElliptic for CircuitBuilder<GoldilocksField, 2> {
     }
 
     fn add_point(&mut self, p1: &PointTarget, p2: &PointTarget) -> PointTarget {
-        let mut inputs = Vec::with_capacity(20);
-        inputs.extend_from_slice(&p1.x.components);
-        inputs.extend_from_slice(&p1.u.components);
-        inputs.extend_from_slice(&p2.x.components);
-        inputs.extend_from_slice(&p2.u.components);
-        let outputs = ECAddHomogOffset::apply(self, &inputs);
-        // plonky2 expects all gate constraints to be satisfied by the zero vector.
-        // So our elliptic curve addition gate computes [x,z-b,u,t-b], and we have to add the b here.
+        let one = FieldTarget::new([
+            self.one(),
+            self.zero(),
+            self.zero(),
+            self.zero(),
+            self.zero(),
+        ]);
+        let [x, z, u, t] =
+            self.add_point_mixed(&[p1.x.clone(), one.clone(), p1.u.clone(), one], p2);
+        let xq = self.nnf_div(&x, &z);
+        let uq = self.nnf_div(&u, &t);
+        PointTarget { x: xq, u: uq }
+    }
+
+    fn add_point_mixed(&mut self, p1: &[FieldTarget; 4], p2: &PointTarget) -> [FieldTarget; 4] {
+        let inputs: Vec<_> = p1
+            .iter()
+            .flat_map(|ft| ft.components)
+            .chain(p2.x.components)
+            .chain(p2.u.components)
+            .collect();
+        let outputs = ECAddMixed::apply(self, &inputs);
         let x = FieldTarget::new(outputs[0..5].try_into().unwrap());
         let z = FieldTarget::new(outputs[5..10].try_into().unwrap());
         let u = FieldTarget::new(outputs[10..15].try_into().unwrap());
         let t = FieldTarget::new(outputs[15..20].try_into().unwrap());
-        let b1 = self.constant(Point::B1);
-        let z = self.nnf_add_scalar_times_generator_power(b1, 1, &z);
-        let t = self.nnf_add_scalar_times_generator_power(b1, 1, &t);
-        let xq = self.nnf_div(&x, &z);
-        let uq = self.nnf_div(&u, &t);
-        PointTarget { x: xq, u: uq }
-        /*
-        let t1 = self.nnf_mul(&p1.x, &p2.x);
-        let t3 = self.nnf_mul(&p1.u, &p2.u);
-        let t5 = self.nnf_add(&p1.x, &p2.x);
-        let t6 = self.nnf_add(&p1.u, &p2.u);
-        let b1 = self.constant(GoldilocksField::from_canonical_u32(Point::B1_U32));
-        let t7 = self.nnf_add_scalar_times_generator_power(b1, 1, &t1);
-        let t9_1 = self.nnf_mul_generator(&t5);
-        let t9_2 = self.nnf_mul_scalar(b1, &t9_1);
-        let t9_3 = self.nnf_add(&t9_2, &t7);
-        let t9_4 = self.nnf_add(&t9_3, &t9_3);
-        let t9 = self.nnf_mul(&t3, &t9_4);
-        let one = self.one();
-        let t10_1 = self.nnf_add(&t3, &t3);
-        let t10_2 = self.nnf_add_scalar_times_generator_power(one, 0, &t10_1);
-        let t10_3 = self.nnf_add(&t5, &t7);
-        let t10 = self.nnf_mul(&t10_2, &t10_3);
-        let x_1 = self.nnf_sub(&t10, &t7);
-        let x_2 = self.nnf_mul_generator(&x_1);
-        let x = self.nnf_mul_scalar(b1, &x_2);
-        let z = self.nnf_sub(&t7, &t9);
-        let neg_one = self.neg_one();
-        let u_1 = self.nnf_mul_scalar(neg_one, &t1);
-        let u_2 = self.nnf_add_scalar_times_generator_power(b1, 1, &u_1);
-        let u = self.nnf_mul(&t6, &u_2);
-        let t = self.nnf_add(&t7, &t9);
-        let xq = self.nnf_div(&x, &z);
-        let uq = self.nnf_div(&u, &t);
-        PointTarget { x: xq, u: uq }
-        */
+        [x, z, u, t]
     }
 
     fn double_point(&mut self, p: &PointTarget) -> PointTarget {
-        let inputs: Vec<_> = p.x.components.into_iter().chain(p.u.components).collect();
-        let outputs = ECDblHomogOffset::apply(self, &inputs);
+        let one = FieldTarget::new([
+            self.one(),
+            self.zero(),
+            self.zero(),
+            self.zero(),
+            self.zero(),
+        ]);
+        let [x, z, u, t] = self.double_point_homog(&[p.x.clone(), one.clone(), p.u.clone(), one]);
+        let xq = self.nnf_div(&x, &z);
+        let uq = self.nnf_div(&u, &t);
+        PointTarget { x: xq, u: uq }
+    }
+
+    fn double_point_homog(&mut self, p: &[FieldTarget; 4]) -> [FieldTarget; 4] {
+        let inputs: Vec<_> = p.iter().flat_map(|ft| ft.components).collect();
+        let outputs = ECDblHomog::apply(self, &inputs);
         let x = FieldTarget::new(outputs[0..5].try_into().unwrap());
         let z = FieldTarget::new(outputs[5..10].try_into().unwrap());
         let u = FieldTarget::new(outputs[10..15].try_into().unwrap());
         let t = FieldTarget::new(outputs[15..20].try_into().unwrap());
-        // Take care of offsets.
-        let one = self.nnf_constant(&ECField::ONE);
-        let z = self.nnf_add(&z, &one);
-        let t = self.nnf_add(&t, &one);
-        let xq = self.nnf_div(&x, &z);
-        let uq = self.nnf_div(&u, &t);
-        PointTarget { x: xq, u: uq }
+        [x, z, u, t]
     }
 
     fn linear_combination_points(
@@ -545,16 +542,26 @@ impl CircuitBuilderElliptic for CircuitBuilder<GoldilocksField, 2> {
         p2: &PointTarget,
     ) -> PointTarget {
         let zero = self.identity_point();
+        let one = FieldTarget::new([
+            self.one(),
+            self.zero(),
+            self.zero(),
+            self.zero(),
+            self.zero(),
+        ]);
         let sum = self.add_point(p1, p2);
-        let mut ans = zero.clone();
+        let mut ans = [zero.x.clone(), one.clone(), zero.u.clone(), one.clone()];
         for i in (0..320).rev() {
-            ans = self.double_point(&ans);
+            ans = self.double_point_homog(&ans);
             let maybe_p1 = self.if_point(p1_scalar[i], p1, &zero);
             let p2_maybe_p1 = self.if_point(p1_scalar[i], &sum, p2);
             let p = self.if_point(p2_scalar[i], &p2_maybe_p1, &maybe_p1);
-            ans = self.add_point(&ans, &p);
+            ans = self.add_point_mixed(&ans, &p);
         }
-        ans
+        let [x, z, u, t] = ans;
+        let xq = self.nnf_div(&x, &z);
+        let uq = self.nnf_div(&u, &t);
+        PointTarget { x: xq, u: uq }
     }
 
     fn if_point(

@@ -7,7 +7,7 @@ use plonky2::{
     iop::witness::{PartialWitness, WitnessWrite},
     plonk::{
         circuit_builder::CircuitBuilder,
-        circuit_data::{self, CircuitConfig},
+        circuit_data::{self},
         proof::ProofWithPublicInputs,
     },
 };
@@ -21,7 +21,7 @@ use crate::{
         },
         error::{Error, Result},
         mainpod::{self, calculate_id},
-        recursion::pad_circuit,
+        recursion::{circuit::std_config, pad_circuit},
         LazyLock, DEFAULT_PARAMS, STANDARD_REC_MAIN_POD_CIRCUIT_DATA,
     },
     middleware::{
@@ -84,7 +84,7 @@ static STANDARD_EMPTY_POD_DATA: LazyLock<(EmptyPodVerifyTarget, CircuitData)> =
 
 fn build() -> Result<(EmptyPodVerifyTarget, CircuitData)> {
     let params = &*DEFAULT_PARAMS;
-    let config = CircuitConfig::standard_recursion_config();
+    let config = std_config();
     let mut builder = CircuitBuilder::<F, D>::new(config);
     let empty_pod_verify_target = EmptyPodVerifyCircuit {
         params: params.clone(),
