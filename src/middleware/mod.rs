@@ -774,11 +774,9 @@ pub fn normalize_statement(statement: &Statement, self_id: PodId) -> Statement {
     Statement::from_args(predicate, args).expect("statement was valid before normalization")
 }
 
-pub type DynError = dyn std::error::Error + Send + Sync;
-
 pub trait Pod: fmt::Debug + DynClone + Any {
     fn params(&self) -> &Params;
-    fn verify(&self) -> Result<(), Box<DynError>>;
+    fn verify(&self) -> Result<(), BackendError>;
     fn id(&self) -> PodId;
     /// Return a uuid of the pod type and its name.  The name is only used as metadata.
     fn pod_type(&self) -> (usize, &'static str);
@@ -807,18 +805,6 @@ pub trait Pod: fmt::Debug + DynClone + Any {
             })
             .collect()
     }
-
-    // Front-end Pods keep references to middleware Pods. Most of the
-    // middleware data can be derived directly from front-end data, but the
-    // "proof" data is only created at the point of proving/signing, and
-    // cannot be reconstructed. As such, we need to serialize it whenever
-    // we serialize a front-end Pod. Since the front-end does not understand
-    // the implementation details of the middleware, this method allows the
-    // middleware to provide some serialized data that can be used to
-    // reconstruct the proof.
-    // It is an important principle that this data is opaque to the front-end
-    // and any third-party code.
-    // fn serialized_proof(&self) -> String;
 }
 
 // impl Clone for Box<dyn Pod>
@@ -830,15 +816,15 @@ dyn_clone::clone_trait_object!(Pod);
 pub trait RecursivePod: Pod {
     fn verifier_data(&self) -> VerifierOnlyCircuitData;
     fn proof(&self) -> Proof;
-    fn vds_root(&self) -> Hash;
+    fn vd_set(&self) -> &VDSet;
 
     /// Returns the deserialized RecursivePod.
     fn deserialize_data(
         params: Params,
         data: serde_json::Value,
-        vds_root: Hash,
+        vd_set: VDSet,
         id: PodId,
-    ) -> Result<Box<dyn RecursivePod>, Box<DynError>>
+    ) -> Result<Box<dyn RecursivePod>, BackendError>
     where
         Self: Sized;
 }
@@ -851,7 +837,7 @@ pub trait PodSigner {
         &mut self,
         params: &Params,
         kvs: &HashMap<Key, Value>,
-    ) -> Result<Box<dyn Pod>, Box<DynError>>;
+    ) -> Result<Box<dyn Pod>, BackendError>;
 }
 
 #[derive(Debug)]
@@ -872,7 +858,7 @@ pub trait PodProver {
         params: &Params,
         vd_set: &VDSet,
         inputs: MainPodInputs,
-    ) -> Result<Box<dyn RecursivePod>, Box<DynError>>;
+    ) -> Result<Box<dyn RecursivePod>, BackendError>;
 }
 
 pub trait ToFields {

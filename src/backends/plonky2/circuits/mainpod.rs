@@ -1520,7 +1520,7 @@ impl InnerCircuit for MainPodVerifyTarget {
         }
         // Padding
         if input.recursive_pods_pub_self_statements.len() != self.params.max_input_recursive_pods {
-            let empty_pod = EmptyPod::new_boxed(&self.params, input.vds_set.root());
+            let empty_pod = EmptyPod::new_boxed(&self.params, input.vds_set.clone());
             let empty_pod_statements = empty_pod.pub_statements();
             for i in
                 input.recursive_pods_pub_self_statements.len()..self.params.max_input_recursive_pods

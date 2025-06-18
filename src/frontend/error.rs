@@ -1,6 +1,6 @@
 use std::{backtrace::Backtrace, fmt::Debug};
 
-use crate::middleware::{DynError, Statement, StatementTmpl, Value};
+use crate::middleware::{BackendError, Statement, StatementTmpl, Value};
 
 pub type Result<T, E = Error> = core::result::Result<T, E>;
 
@@ -41,7 +41,7 @@ pub enum Error {
     #[error(transparent)]
     Infallible(#[from] std::convert::Infallible),
     #[error(transparent)]
-    Backend(#[from] Box<DynError>),
+    Backend(#[from] BackendError),
     #[error(transparent)]
     Middleware(#[from] crate::middleware::Error),
 }

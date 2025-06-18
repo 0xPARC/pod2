@@ -7,7 +7,7 @@ use crate::{
         mainpod::{self, calculate_id},
     },
     middleware::{
-        AnchoredKey, DynError, Hash, Params, Pod, PodId, PodType, RecursivePod, Statement, Value,
+        AnchoredKey, Hash, Params, Pod, PodId, PodType, RecursivePod, Statement, VDSet, Value,
         KEY_TYPE, SELF,
     },
 };
@@ -52,7 +52,7 @@ impl Pod for MockEmptyPod {
     fn params(&self) -> &Params {
         &self.params
     }
-    fn verify(&self) -> Result<(), Box<DynError>> {
+    fn verify(&self) -> Result<()> {
         Ok(self._verify()?)
     }
     fn id(&self) -> PodId {
@@ -77,15 +77,15 @@ impl RecursivePod for MockEmptyPod {
     fn proof(&self) -> Proof {
         panic!("MockEmptyPod can't be verified in a recursive MainPod circuit");
     }
-    fn vds_root(&self) -> Hash {
+    fn vd_set(&self) -> &VDSet {
         panic!("MockEmptyPod can't be verified in a recursive MainPod circuit");
     }
     fn deserialize_data(
         params: Params,
         _data: serde_json::Value,
-        _vds_root: Hash,
+        _vd_set: VDSet,
         id: PodId,
-    ) -> Result<Box<dyn RecursivePod>, Box<DynError>> {
+    ) -> Result<Box<dyn RecursivePod>> {
         Ok(Box::new(Self { params, id }))
     }
 }

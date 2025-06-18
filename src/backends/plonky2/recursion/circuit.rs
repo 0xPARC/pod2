@@ -511,7 +511,7 @@ fn hash_verifier_data_gadget(
 }
 
 // compatible with hash_verifier_data_gadget.
-pub(crate) fn hash_verifier_data(verifier_only_data: &VerifierOnlyCircuitData<C, D>) -> HashOut<F> {
+pub fn hash_verifier_data(verifier_only_data: &VerifierOnlyCircuitData<C, D>) -> HashOut<F> {
     let f: Vec<F> = [
         verifier_only_data.circuit_digest.elements.to_vec(),
         verifier_only_data

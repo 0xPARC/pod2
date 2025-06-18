@@ -29,8 +29,8 @@ use crate::{
         serialize_proof, DEFAULT_PARAMS, STANDARD_REC_MAIN_POD_CIRCUIT_DATA,
     },
     middleware::{
-        self, AnchoredKey, DynError, Hash, Params, Pod, PodId, PodType, RecursivePod, Statement,
-        ToFields, Value, VerifierOnlyCircuitData, F, HASH_SIZE, KEY_TYPE, SELF,
+        self, AnchoredKey, Hash, Params, Pod, PodId, PodType, RecursivePod, Statement, ToFields,
+        VDSet, Value, VerifierOnlyCircuitData, F, HASH_SIZE, KEY_TYPE, SELF,
     },
     timed,
 };
@@ -77,7 +77,7 @@ impl EmptyPodVerifyTarget {
 pub struct EmptyPod {
     params: Params,
     id: PodId,
-    vds_root: Hash,
+    vd_set: VDSet,
     proof: Proof,
 }
 
@@ -106,30 +106,30 @@ static EMPTY_POD_CACHE: LazyLock<Mutex<HashMap<Hash, EmptyPod>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 impl EmptyPod {
-    pub fn _prove(params: &Params, vds_root: Hash) -> Result<EmptyPod> {
+    pub fn _prove(params: &Params, vd_set: VDSet) -> Result<EmptyPod> {
         let (empty_pod_verify_target, data) = &*STANDARD_EMPTY_POD_DATA;
 
         let mut pw = PartialWitness::<F>::new();
-        empty_pod_verify_target.set_targets(&mut pw, vds_root)?;
+        empty_pod_verify_target.set_targets(&mut pw, vd_set.root())?;
         let proof = timed!("EmptyPod prove", data.prove(pw)?);
         let id = &proof.public_inputs[PI_OFFSET_ID..PI_OFFSET_ID + HASH_SIZE];
         let id = PodId(Hash([id[0], id[1], id[2], id[3]]));
         Ok(EmptyPod {
             params: params.clone(),
             id,
-            vds_root,
+            vd_set,
             proof: proof.proof,
         })
     }
-    pub fn new_boxed(params: &Params, vds_root: Hash) -> Box<dyn RecursivePod> {
+    pub fn new_boxed(params: &Params, vd_set: VDSet) -> Box<dyn RecursivePod> {
         let default_params = &*DEFAULT_PARAMS;
         assert_eq!(default_params.id_params(), params.id_params());
 
         let empty_pod = EMPTY_POD_CACHE
             .lock()
             .unwrap()
-            .entry(vds_root)
-            .or_insert_with(|| Self::_prove(params, vds_root).expect("prove EmptyPod"))
+            .entry(vd_set.root())
+            .or_insert_with(|| Self::_prove(params, vd_set).expect("prove EmptyPod"))
             .clone();
         Box::new(empty_pod)
     }
@@ -147,7 +147,7 @@ impl EmptyPod {
         let public_inputs = id
             .to_fields(&self.params)
             .iter()
-            .chain(self.vds_root.0.iter())
+            .chain(self.vd_set.root().0.iter())
             .cloned()
             .collect_vec();
 
@@ -156,7 +156,7 @@ impl EmptyPod {
             proof: self.proof.clone(),
             public_inputs,
         })
-        .map_err(|e| Error::custom(format!("EmptyPod proof verification failure: {:?}", e)))
+        .map_err(|e| Error::plonky2_proof_fail("EmptyPod", e))
     }
 }
 
@@ -169,7 +169,7 @@ impl Pod for EmptyPod {
     fn params(&self) -> &Params {
         &self.params
     }
-    fn verify(&self) -> Result<(), Box<DynError>> {
+    fn verify(&self) -> Result<()> {
         Ok(self._verify()?)
     }
 
@@ -200,22 +200,22 @@ impl RecursivePod for EmptyPod {
     fn proof(&self) -> Proof {
         self.proof.clone()
     }
-    fn vds_root(&self) -> Hash {
-        self.vds_root
+    fn vd_set(&self) -> &VDSet {
+        &self.vd_set
     }
     fn deserialize_data(
         params: Params,
         data: serde_json::Value,
-        vds_root: Hash,
+        vd_set: VDSet,
         id: PodId,
-    ) -> Result<Box<dyn RecursivePod>, Box<DynError>> {
+    ) -> Result<Box<dyn RecursivePod>> {
         let data: Data = serde_json::from_value(data)?;
         let circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
         let proof = deserialize_proof(&circuit_data.common, &data.proof)?;
         Ok(Box::new(Self {
             params,
             id,
-            vds_root,
+            vd_set,
             proof,
         }))
     }
@@ -224,13 +224,12 @@ impl RecursivePod for EmptyPod {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::middleware::EMPTY_HASH;
 
     #[test]
     fn test_empty_pod() {
         let params = Params::default();
 
-        let empty_pod = EmptyPod::new_boxed(&params, EMPTY_HASH);
+        let empty_pod = EmptyPod::new_boxed(&params, VDSet::new(8, &[]).unwrap());
         empty_pod.verify().unwrap();
     }
 }

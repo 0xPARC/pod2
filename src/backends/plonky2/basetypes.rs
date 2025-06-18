@@ -4,10 +4,11 @@
 
 use plonky2::{
     field::{extension::quadratic::QuadraticExtension, goldilocks_field::GoldilocksField},
-    hash::poseidon::PoseidonHash,
+    hash::{hash_types, poseidon::PoseidonHash},
     plonk::{circuit_builder, circuit_data, config::GenericConfig, proof},
 };
-use serde::Serialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// F is the native field we use everywhere.  Currently it's Goldilocks from plonky2
 pub type F = GoldilocksField;
@@ -36,11 +37,11 @@ pub type VerifierCircuitData = circuit_data::VerifierCircuitData<F, C, D>;
 pub type CircuitBuilder = circuit_builder::CircuitBuilder<F, D>;
 pub type Proof = proof::Proof<F, C, D>;
 pub type ProofWithPublicInputs = proof::ProofWithPublicInputs<F, C, D>;
+pub type HashOut = hash_types::HashOut<F>;
 
 use std::{collections::HashMap, sync::LazyLock};
 
 use itertools::Itertools;
-use plonky2::hash::hash_types::HashOut;
 
 use crate::{
     backends::plonky2::{
@@ -65,38 +66,27 @@ pub static DEFAULT_VD_SET: LazyLock<VDSet> = LazyLock::new(|| {
 /// verifying the recursive proofs of previous PODs appears in the VDSet.
 /// The VDSet struct that allows to get the specific merkle proofs for the given
 /// verifier_data.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct VDSet {
+    #[serde(skip)]
+    #[schemars(skip)]
     root: Hash,
     // (verifier_data's hash, merkleproof)
-    proofs_map: HashMap<HashOut<F>, MerkleClaimAndProof>,
+    #[serde(skip)]
+    #[schemars(skip)]
+    proofs_map: HashMap<Hash, MerkleClaimAndProof>,
+    vds_hashes: Vec<Hash>,
 }
+
 impl VDSet {
-    /// builds the verifier_datas tree, and returns the root and the proofs
-    pub fn new(tree_depth: usize, vds: &[VerifierOnlyCircuitData]) -> Result<Self> {
-        // compute the verifier_data's hashes
-        let vds_hashes: Vec<HashOut<F>> = vds
-            .iter()
-            .map(crate::backends::plonky2::recursion::circuit::hash_verifier_data)
-            .collect::<Vec<_>>();
-
-        // before using the hash values, sort them, so that each set of
-        // verifier_datas gets the same VDSet root
-        let vds_hashes: Vec<&HashOut<F>> = vds_hashes
-            .iter()
-            .sorted_by_key(|vd| RawValue(vd.elements))
-            .collect::<Vec<_>>();
-
+    fn new_from_vds_hashes(tree_depth: usize, vds_hashes: Vec<Hash>) -> Result<Self> {
         let array = Array::new(
             tree_depth,
-            vds_hashes
-                .iter()
-                .map(|vd| Value::from(RawValue(vd.elements)))
-                .collect(),
+            vds_hashes.iter().map(|vd| Value::from(*vd)).collect(),
         )?;
 
         let root = array.commitment();
-        let mut proofs_map = HashMap::<HashOut<F>, MerkleClaimAndProof>::new();
+        let mut proofs_map = HashMap::<Hash, MerkleClaimAndProof>::new();
 
         for (i, vd) in vds_hashes.iter().enumerate() {
             let (value, proof) = array.prove(i)?;
@@ -106,9 +96,31 @@ impl VDSet {
                 value: value.raw(),
                 proof,
             };
-            proofs_map.insert(**vd, p);
+            proofs_map.insert(*vd, p);
         }
-        Ok(Self { root, proofs_map })
+        Ok(Self {
+            root,
+            proofs_map,
+            vds_hashes,
+        })
+    }
+    /// builds the verifier_datas tree, and returns the root and the proofs
+    pub fn new(tree_depth: usize, vds: &[VerifierOnlyCircuitData]) -> Result<Self> {
+        // compute the verifier_data's hashes
+        let vds_hashes: Vec<HashOut> = vds
+            .iter()
+            .map(crate::backends::plonky2::recursion::circuit::hash_verifier_data)
+            .collect::<Vec<_>>();
+
+        // before using the hash values, sort them, so that each set of
+        // verifier_datas gets the same VDSet root
+        let vds_hashes: Vec<Hash> = vds_hashes
+            .iter()
+            .sorted_by_key(|vd| RawValue(vd.elements))
+            .map(|h| Hash(h.elements))
+            .collect::<Vec<_>>();
+
+        Self::new_from_vds_hashes(tree_depth, vds_hashes)
     }
     pub fn root(&self) -> Hash {
         self.root
@@ -120,14 +132,37 @@ impl VDSet {
     ) -> Result<Vec<MerkleClaimAndProof>> {
         let mut proofs: Vec<MerkleClaimAndProof> = vec![];
         for vd in vds {
+            let verifier_data_hash =
+                crate::backends::plonky2::recursion::circuit::hash_verifier_data(vd);
             let p = self
                 .proofs_map
-                .get(&crate::backends::plonky2::recursion::circuit::hash_verifier_data(vd))
+                .get(&Hash(verifier_data_hash.elements))
                 .ok_or(crate::middleware::Error::custom(
                     "verifier_data not found in VDSet".to_string(),
                 ))?;
             proofs.push(p.clone());
         }
         Ok(proofs)
+    }
+    /// Returns true if the `verifier_data_hash` is in the set
+    pub fn contains(&self, verifier_data_hash: HashOut) -> bool {
+        self.vds_hashes
+            .iter()
+            .any(|vd_hash| *vd_hash == Hash(verifier_data_hash.elements))
+    }
+}
+
+impl<'de> Deserialize<'de> for VDSet {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Aux {
+            max_depth: usize,
+            vds_hashes: Vec<Hash>,
+        }
+        let aux = Aux::deserialize(deserializer)?;
+        VDSet::new_from_vds_hashes(aux.max_depth, aux.vds_hashes).map_err(serde::de::Error::custom)
     }
 }

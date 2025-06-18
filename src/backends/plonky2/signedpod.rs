@@ -20,8 +20,8 @@ use crate::{
     },
     constants::MAX_DEPTH,
     middleware::{
-        containers::Dictionary, AnchoredKey, DynError, Hash, Key, Params, Pod, PodId, PodSigner,
-        PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE, SELF,
+        containers::Dictionary, AnchoredKey, Hash, Key, Params, Pod, PodId, PodSigner, PodType,
+        RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE, SELF,
     },
 };
 
@@ -61,11 +61,7 @@ impl Signer {
 }
 
 impl PodSigner for Signer {
-    fn sign(
-        &mut self,
-        params: &Params,
-        kvs: &HashMap<Key, Value>,
-    ) -> Result<Box<dyn Pod>, Box<DynError>> {
+    fn sign(&mut self, params: &Params, kvs: &HashMap<Key, Value>) -> Result<Box<dyn Pod>> {
         Ok(self._sign(params, kvs).map(Box::new)?)
     }
 }
@@ -171,8 +167,8 @@ impl Pod for SignedPod {
     fn params(&self) -> &Params {
         panic!("SignedPod doesn't have params");
     }
-    fn verify(&self) -> Result<(), Box<DynError>> {
-        Ok(self._verify().map_err(Box::new)?)
+    fn verify(&self) -> Result<()> {
+        Ok(self._verify()?)
     }
 
     fn id(&self) -> PodId {

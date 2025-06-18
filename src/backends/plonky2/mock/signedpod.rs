@@ -10,9 +10,8 @@ use crate::{
     },
     constants::MAX_DEPTH,
     middleware::{
-        containers::Dictionary, hash_str, serialization::ordered_map, AnchoredKey, DynError, Key,
-        Params, Pod, PodId, PodSigner, PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE,
-        SELF,
+        containers::Dictionary, hash_str, serialization::ordered_map, AnchoredKey, Key, Params,
+        Pod, PodId, PodSigner, PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE, SELF,
     },
 };
 
@@ -41,11 +40,7 @@ impl MockSigner {
 }
 
 impl PodSigner for MockSigner {
-    fn sign(
-        &mut self,
-        params: &Params,
-        kvs: &HashMap<Key, Value>,
-    ) -> Result<Box<dyn Pod>, Box<DynError>> {
+    fn sign(&mut self, params: &Params, kvs: &HashMap<Key, Value>) -> Result<Box<dyn Pod>> {
         Ok(self._sign(params, kvs).map(Box::new)?)
     }
 }
@@ -135,7 +130,7 @@ impl Pod for MockSignedPod {
     fn params(&self) -> &Params {
         panic!("MockSignedPod doesn't have params");
     }
-    fn verify(&self) -> Result<(), Box<DynError>> {
+    fn verify(&self) -> Result<()> {
         Ok(self._verify()?)
     }
 
