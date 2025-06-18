@@ -601,7 +601,20 @@ struct Data {
 }
 
 impl MainPod {
-    fn _verify(&self) -> Result<()> {
+    pub fn proof(&self) -> Proof {
+        self.proof.clone()
+    }
+
+    pub fn params(&self) -> &Params {
+        &self.params
+    }
+}
+
+impl Pod for MainPod {
+    fn params(&self) -> &Params {
+        &self.params
+    }
+    fn verify(&self) -> Result<()> {
         // 2. get the id out of the public statements
         let id = PodId(calculate_id(&self.public_statements, &self.params));
         if id != self.id {
@@ -641,23 +654,6 @@ impl MainPod {
                 public_inputs,
             })
             .map_err(|e| Error::plonky2_proof_fail("MainPod", e))
-    }
-
-    pub fn proof(&self) -> Proof {
-        self.proof.clone()
-    }
-
-    pub fn params(&self) -> &Params {
-        &self.params
-    }
-}
-
-impl Pod for MainPod {
-    fn params(&self) -> &Params {
-        &self.params
-    }
-    fn verify(&self) -> Result<()> {
-        Ok(self._verify()?)
     }
 
     fn id(&self) -> PodId {

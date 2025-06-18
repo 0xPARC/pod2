@@ -182,12 +182,12 @@ impl MockMainPod {
 
         let input_signed_pods: Vec<Box<dyn Pod>> = inputs
             .signed_pods
-            .into_iter()
+            .iter()
             .map(|p| dyn_clone::clone_box(*p))
             .collect();
         let input_recursive_pods: Vec<Box<dyn RecursivePod>> = inputs
             .recursive_pods
-            .into_iter()
+            .iter()
             .map(|p| dyn_clone::clone_box(*p))
             .collect();
         Ok(Self {
@@ -203,7 +203,17 @@ impl MockMainPod {
         })
     }
 
-    fn _verify(&self) -> Result<()> {
+    pub fn params(&self) -> &Params {
+        &self.params
+    }
+}
+
+impl Pod for MockMainPod {
+    fn params(&self) -> &Params {
+        &self.params
+    }
+
+    fn verify(&self) -> Result<()> {
         // 1. Verify input pods
         for pod in &self.input_signed_pods {
             pod.verify()?;
@@ -301,18 +311,6 @@ impl MockMainPod {
         Ok(())
     }
 
-    pub fn params(&self) -> &Params {
-        &self.params
-    }
-}
-
-impl Pod for MockMainPod {
-    fn params(&self) -> &Params {
-        &self.params
-    }
-    fn verify(&self) -> Result<()> {
-        Ok(self._verify()?)
-    }
     fn id(&self) -> PodId {
         self.id
     }

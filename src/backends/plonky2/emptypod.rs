@@ -133,7 +133,18 @@ impl EmptyPod {
             .clone();
         Box::new(empty_pod)
     }
-    fn _verify(&self) -> Result<()> {
+}
+
+#[derive(Serialize, Deserialize)]
+struct Data {
+    proof: String,
+}
+
+impl Pod for EmptyPod {
+    fn params(&self) -> &Params {
+        &self.params
+    }
+    fn verify(&self) -> Result<()> {
         let statements = self
             .pub_self_statements()
             .into_iter()
@@ -157,20 +168,6 @@ impl EmptyPod {
             public_inputs,
         })
         .map_err(|e| Error::plonky2_proof_fail("EmptyPod", e))
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-struct Data {
-    proof: String,
-}
-
-impl Pod for EmptyPod {
-    fn params(&self) -> &Params {
-        &self.params
-    }
-    fn verify(&self) -> Result<()> {
-        Ok(self._verify()?)
     }
 
     fn id(&self) -> PodId {

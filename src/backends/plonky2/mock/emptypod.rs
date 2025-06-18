@@ -34,7 +34,13 @@ impl MockEmptyPod {
             id,
         })
     }
-    fn _verify(&self) -> Result<()> {
+}
+
+impl Pod for MockEmptyPod {
+    fn params(&self) -> &Params {
+        &self.params
+    }
+    fn verify(&self) -> Result<()> {
         let statements = self
             .pub_self_statements()
             .into_iter()
@@ -45,15 +51,6 @@ impl MockEmptyPod {
             return Err(Error::id_not_equal(self.id, id));
         }
         Ok(())
-    }
-}
-
-impl Pod for MockEmptyPod {
-    fn params(&self) -> &Params {
-        &self.params
-    }
-    fn verify(&self) -> Result<()> {
-        Ok(self._verify()?)
     }
     fn id(&self) -> PodId {
         self.id
