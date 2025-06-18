@@ -75,6 +75,7 @@ pub struct VDSet {
     #[serde(skip)]
     #[schemars(skip)]
     proofs_map: HashMap<Hash, MerkleClaimAndProof>,
+    tree_depth: usize,
     vds_hashes: Vec<Hash>,
 }
 
@@ -101,6 +102,7 @@ impl VDSet {
         Ok(Self {
             root,
             proofs_map,
+            tree_depth,
             vds_hashes,
         })
     }
@@ -159,10 +161,10 @@ impl<'de> Deserialize<'de> for VDSet {
     {
         #[derive(Deserialize)]
         struct Aux {
-            max_depth: usize,
+            tree_depth: usize,
             vds_hashes: Vec<Hash>,
         }
         let aux = Aux::deserialize(deserializer)?;
-        VDSet::new_from_vds_hashes(aux.max_depth, aux.vds_hashes).map_err(serde::de::Error::custom)
+        VDSet::new_from_vds_hashes(aux.tree_depth, aux.vds_hashes).map_err(serde::de::Error::custom)
     }
 }
