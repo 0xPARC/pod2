@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use super::Error;
 use crate::{
     frontend::{MainPod, SignedPod},
-    middleware::{deserialize_pod, deserialize_signed_pod, Hash, Params, PodId, VDSet},
+    middleware::{deserialize_pod, deserialize_signed_pod, Params, PodId, VDSet},
 };
 
 #[derive(Serialize, Deserialize, JsonSchema)]

@@ -7,8 +7,8 @@ use crate::{
         mainpod::{self, calculate_id},
     },
     middleware::{
-        AnchoredKey, Hash, Params, Pod, PodId, PodType, RecursivePod, Statement, VDSet, Value,
-        KEY_TYPE, SELF,
+        AnchoredKey, Params, Pod, PodId, PodType, RecursivePod, Statement, VDSet, Value, KEY_TYPE,
+        SELF,
     },
 };
 

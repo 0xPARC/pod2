@@ -385,18 +385,16 @@ impl RecursivePod for MockMainPod {
             input_signed_pods,
             input_recursive_pods,
         } = serde_json::from_value(data)?;
-        // TODO: Use BackendError in deserialize methods
         let input_signed_pods = input_signed_pods
             .into_iter()
-            .map(|(pod_type, id, data)| deserialize_signed_pod(pod_type, id, data).unwrap())
-            .collect();
-        // .collect::<Result<Vec<_>>>()?;
+            .map(|(pod_type, id, data)| deserialize_signed_pod(pod_type, id, data))
+            .collect::<Result<Vec<_>>>()?;
         let input_recursive_pods = input_recursive_pods
             .into_iter()
             .map(|(pod_type, params, id, vd_set, data)| {
-                deserialize_pod(pod_type, params, id, vd_set, data).unwrap()
+                deserialize_pod(pod_type, params, id, vd_set, data)
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
         Ok(Box::new(Self {
             params,
             id,
