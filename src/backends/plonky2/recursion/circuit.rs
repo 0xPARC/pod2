@@ -41,6 +41,7 @@ use crate::{
             curve::ECAddHomogOffset, field::NNFMulSimple, generic::GateAdapter,
         },
     },
+    measure_gates_begin, measure_gates_end,
     middleware::F,
     timed,
 };
@@ -190,14 +191,17 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         common_data: &CommonCircuitData<F, D>,
         inner_params: &I::Params,
     ) -> Result<RecursiveCircuitTarget<I>> {
+        let measure = measure_gates_begin!(builder, "RecCircuit");
         // proof verification
         let verifier_datas_targ: Vec<VerifierCircuitTarget> = (0..arity)
             .map(|_| builder.add_virtual_verifier_data(builder.config.fri_config.cap_height))
             .collect();
         let proofs_targ: Vec<ProofWithPublicInputsTarget<D>> = (0..arity)
             .map(|i| {
+                let measure_verify = measure_gates_begin!(builder, "VerifyProof");
                 let proof_targ = builder.add_virtual_proof_with_pis(common_data);
                 builder.verify_proof::<C>(&proof_targ, &verifier_datas_targ[i], common_data);
+                measure_gates_end!(builder, measure_verify);
                 proof_targ
             })
             .collect();
@@ -222,6 +226,8 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
 
         // Build the InnerCircuit logic
         let innercircuit_targ: I = I::build(builder, inner_params, &verified_proofs)?;
+
+        measure_gates_end!(builder, measure);
 
         pad_circuit(builder, common_data);
 
