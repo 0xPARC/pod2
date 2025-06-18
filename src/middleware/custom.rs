@@ -432,6 +432,22 @@ impl CustomPredicateRef {
     }
 }
 
+impl fmt::Display for CustomPredicateRef {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if f.alternate() {
+            write!(
+                f,
+                "{}.{}:{}",
+                self.batch.name,
+                self.index,
+                self.predicate().name
+            )
+        } else {
+            write!(f, "{}", self.predicate().name)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

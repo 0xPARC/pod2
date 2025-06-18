@@ -43,11 +43,11 @@ fn check_type(value: &Value, filter: &TypeFilter) -> bool {
     }
 }
 
-pub struct ValueStream<'a> {
+pub struct ValueRefStream<'a> {
     inner: Box<dyn Iterator<Item = (ValueRef, StreamItem)> + 'a>,
 }
 
-impl<'a> ValueStream<'a> {
+impl<'a> ValueRefStream<'a> {
     pub fn new(iter: Box<dyn Iterator<Item = (ValueRef, StreamItem)> + 'a>) -> Self {
         Self { inner: iter }
     }
@@ -68,7 +68,7 @@ impl<'a> ValueStream<'a> {
     }
 }
 
-impl Iterator for ValueStream<'_> {
+impl Iterator for ValueRefStream<'_> {
     type Item = (ValueRef, StreamItem);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -92,7 +92,7 @@ impl FactEnumerator {
     }
 
     /// This is used by the generic core enumerator.
-    fn get_stream_for_filter<'a>(&'a self, filter: Option<ValueRef>) -> ValueStream<'a> {
+    fn get_stream_for_filter<'a>(&'a self, filter: Option<ValueRef>) -> ValueRefStream<'a> {
         let iter: Box<dyn Iterator<Item = (ValueRef, StreamItem)> + 'a> = if let Some(vr) = filter {
             // If filter is bound, produce a single concrete value if it can be resolved.
             if let Some(val) = self.db.value_ref_to_value(&vr) {
@@ -109,7 +109,7 @@ impl FactEnumerator {
                 StreamItem::UnboundWildcard,
             )))
         };
-        ValueStream::new(iter)
+        ValueRefStream::new(iter)
     }
 
     /// Core logic for finding binary predicate candidates. It is generic over
@@ -152,8 +152,8 @@ impl FactEnumerator {
             .filter({
                 let filters = filters.clone();
                 move |[vr1, vr2]| {
-                    let p1 = filters[0].as_ref().map_or(true, |f| f == vr1);
-                    let p2 = filters[1].as_ref().map_or(true, |f| f == vr2);
+                    let p1 = filters[0].as_ref().is_none_or(|f| f == vr1);
+                    let p2 = filters[1].as_ref().is_none_or(|f| f == vr2);
                     p1 && p2
                 }
             })
@@ -247,9 +247,9 @@ impl FactEnumerator {
             .filter({
                 let filters = filters.clone();
                 move |[vr1, vr2, vr3]| {
-                    let p1 = filters[0].as_ref().map_or(true, |f| f == vr1);
-                    let p2 = filters[1].as_ref().map_or(true, |f| f == vr2);
-                    let p3 = filters[2].as_ref().map_or(true, |f| f == vr3);
+                    let p1 = filters[0].as_ref().is_none_or(|f| f == vr1);
+                    let p2 = filters[1].as_ref().is_none_or(|f| f == vr2);
+                    let p3 = filters[2].as_ref().is_none_or(|f| f == vr3);
                     p1 && p2 && p3
                 }
             })
@@ -360,14 +360,7 @@ impl FactEnumerator {
                 resolved_filters
                     .iter()
                     .zip(values.iter())
-                    .all(|(filter, value)| filter.as_ref().map_or(true, |f| f == value))
+                    .all(|(filter, value)| filter.as_ref().is_none_or(|f| f == value))
             })
-    }
-
-    fn value_ref_to_value(&self, vr: &ValueRef) -> Option<Value> {
-        match vr {
-            ValueRef::Literal(v) => Some(v.clone()),
-            ValueRef::Key(ak) => self.db.get_value_by_anchored_key(ak).cloned(),
-        }
     }
 }

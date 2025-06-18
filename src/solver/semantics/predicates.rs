@@ -3,7 +3,8 @@
 
 use crate::{
     middleware::{
-        hash_values, Key, NativePredicate, StatementTmplArg, TypedValue, Value, ValueRef,
+        hash_values, Key, NativeOperation, NativePredicate, OperationType, StatementTmplArg,
+        TypedValue, Value, ValueRef,
     },
     solver::{
         engine::semi_naive::{self, Fact, FactSource},
@@ -55,16 +56,19 @@ impl PredicateHandler {
                 StatementTmplArg::Wildcard(w) => {
                     let binding = bindings.get(w);
                     if let Some(vr) = binding {
-                        if let Some(val) = semantics.db.value_ref_to_value(vr) {
-                            Some(ValueRef::Literal(val))
-                        } else {
-                            None
-                        }
+                        semantics.db.value_ref_to_value(vr).map(ValueRef::Literal)
                     } else {
                         None
                     }
                 }
-                // TODO: AnchoredKey?
+                StatementTmplArg::AnchoredKey(pod_wc, key) => {
+                    let binding = bindings.get(pod_wc);
+                    if let Some(vr) = binding {
+                        semantics.db.value_ref_to_value(vr).map(ValueRef::Literal)
+                    } else {
+                        None
+                    }
+                }
                 _ => None,
             }
         };
@@ -200,8 +204,9 @@ impl PredicateHandler {
 // --- Handler Traits ---
 
 /// A contract for native predicates that take two arguments.
-pub trait BinaryPredicateHandler: Copy + Send + Sync + 'static {
+pub trait BinaryPredicateHandler: Copy + 'static {
     const NATIVE_PREDICATE: NativePredicate;
+    const VALUE_COMPARISON_OPERATION: OperationType;
 
     /// Returns the required types for the arguments (e.g., Numeric).
     fn type_filters(&self) -> [TypeFilter; 2];
@@ -249,8 +254,9 @@ pub trait BinaryPredicateHandler: Copy + Send + Sync + 'static {
 }
 
 /// A contract for native predicates that take three arguments.
-pub trait TernaryPredicateHandler: Copy + Send + Sync + 'static {
+pub trait TernaryPredicateHandler: Copy + 'static {
     const NATIVE_PREDICATE: NativePredicate;
+    const VALUE_COMPARISON_OPERATION: OperationType;
 
     /// Returns the required types for the arguments.
     fn type_filters(&self) -> [TypeFilter; 3];
@@ -310,6 +316,8 @@ pub struct LtHandler;
 
 impl BinaryPredicateHandler for LtHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::Lt;
+    const VALUE_COMPARISON_OPERATION: OperationType =
+        OperationType::Native(NativeOperation::LtFromEntries);
 
     fn type_filters(&self) -> [TypeFilter; 2] {
         [TypeFilter::Int, TypeFilter::Int]
@@ -329,6 +337,8 @@ pub struct LtEqHandler;
 
 impl BinaryPredicateHandler for LtEqHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::LtEq;
+    const VALUE_COMPARISON_OPERATION: OperationType =
+        OperationType::Native(NativeOperation::LtEqFromEntries);
 
     fn type_filters(&self) -> [TypeFilter; 2] {
         [TypeFilter::Int, TypeFilter::Int]
@@ -345,6 +355,8 @@ pub struct EqualHandler;
 
 impl BinaryPredicateHandler for EqualHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::Equal;
+    const VALUE_COMPARISON_OPERATION: OperationType =
+        OperationType::Native(NativeOperation::EqualFromEntries);
 
     fn type_filters(&self) -> [TypeFilter; 2] {
         [TypeFilter::Any, TypeFilter::Any]
@@ -377,6 +389,8 @@ pub struct ContainsHandler;
 
 impl TernaryPredicateHandler for ContainsHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::Contains;
+    const VALUE_COMPARISON_OPERATION: OperationType =
+        OperationType::Native(NativeOperation::ContainsFromEntries);
 
     fn type_filters(&self) -> [TypeFilter; 3] {
         [
@@ -420,6 +434,8 @@ pub struct NotContainsHandler;
 
 impl BinaryPredicateHandler for NotContainsHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::NotContains;
+    const VALUE_COMPARISON_OPERATION: OperationType =
+        OperationType::Native(NativeOperation::NotContainsFromEntries);
 
     fn type_filters(&self) -> [TypeFilter; 2] {
         [TypeFilter::Container, TypeFilter::Any]
@@ -456,6 +472,7 @@ pub struct SumOfHandler;
 
 impl TernaryPredicateHandler for SumOfHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::SumOf;
+    const VALUE_COMPARISON_OPERATION: OperationType = OperationType::Native(NativeOperation::SumOf);
 
     fn type_filters(&self) -> [TypeFilter; 3] {
         [TypeFilter::Int, TypeFilter::Int, TypeFilter::Int]
@@ -520,6 +537,8 @@ pub struct ProductOfHandler;
 
 impl TernaryPredicateHandler for ProductOfHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::ProductOf;
+    const VALUE_COMPARISON_OPERATION: OperationType =
+        OperationType::Native(NativeOperation::ProductOf);
 
     fn type_filters(&self) -> [TypeFilter; 3] {
         [TypeFilter::Int, TypeFilter::Int, TypeFilter::Int]
@@ -594,6 +613,8 @@ pub struct NotEqualHandler;
 
 impl BinaryPredicateHandler for NotEqualHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::NotEqual;
+    const VALUE_COMPARISON_OPERATION: OperationType =
+        OperationType::Native(NativeOperation::NotEqualFromEntries);
 
     fn type_filters(&self) -> [TypeFilter; 2] {
         [TypeFilter::Any, TypeFilter::Any]
@@ -609,6 +630,7 @@ pub struct MaxOfHandler;
 
 impl TernaryPredicateHandler for MaxOfHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::MaxOf;
+    const VALUE_COMPARISON_OPERATION: OperationType = OperationType::Native(NativeOperation::MaxOf);
 
     fn type_filters(&self) -> [TypeFilter; 3] {
         [TypeFilter::Int, TypeFilter::Int, TypeFilter::Int]
@@ -673,6 +695,8 @@ pub struct HashOfHandler;
 
 impl TernaryPredicateHandler for HashOfHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::HashOf;
+    const VALUE_COMPARISON_OPERATION: OperationType =
+        OperationType::Native(NativeOperation::HashOf);
 
     fn type_filters(&self) -> [TypeFilter; 3] {
         [TypeFilter::Int, TypeFilter::Int, TypeFilter::Int]

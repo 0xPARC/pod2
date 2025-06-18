@@ -1300,7 +1300,7 @@ mod tests {
         let engine = SemiNaiveEngine::new();
         let result = engine.execute(&plan, &semantics);
 
-        println!("Result: {:#?}", result);
+        println!("Proof tree: {}", result.unwrap().unwrap());
     }
 
     #[test]
@@ -1401,7 +1401,6 @@ mod tests {
 
         let planner = Planner::new();
         let plan = planner.create_plan(&request).unwrap();
-        debug!("Generated Query Plan: {:#?}", plan);
 
         // --- Execute plan ---
         let engine = SemiNaiveEngine::new();
