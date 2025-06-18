@@ -190,32 +190,6 @@ impl MockMainPod {
         })
     }
 
-    // MockMainPods include some internal private state which is necessary
-    // for verification. In non-mock Pods, this state will not be necessary,
-    // as the public statements can be verified using a ZK proof.
-    pub(crate) fn deserialize(
-        params: Params,
-        id: PodId,
-        vds_root: Hash,
-        data: serde_json::Value,
-    ) -> Result<Box<dyn RecursivePod>> {
-        let Data {
-            public_statements,
-            operations,
-            statements,
-            merkle_proofs,
-        } = serde_json::from_value(data)?;
-        Ok(Box::new(Self {
-            params,
-            id,
-            vds_root,
-            public_statements,
-            operations,
-            statements,
-            merkle_proofs,
-        }))
-    }
-
     fn _verify(&self) -> Result<()> {
         // 1. TODO: Verify input pods
 
@@ -330,6 +304,31 @@ impl RecursivePod for MockMainPod {
     }
     fn vds_root(&self) -> Hash {
         self.vds_root
+    }
+    // MockMainPods include some internal private state which is necessary
+    // for verification. In non-mock Pods, this state will not be necessary,
+    // as the public statements can be verified using a ZK proof.
+    fn deserialize_data(
+        params: Params,
+        data: serde_json::Value,
+        vds_root: Hash,
+        id: PodId,
+    ) -> Result<Box<dyn RecursivePod>, Box<DynError>> {
+        let Data {
+            public_statements,
+            operations,
+            statements,
+            merkle_proofs,
+        } = serde_json::from_value(data)?;
+        Ok(Box::new(Self {
+            params,
+            id,
+            vds_root,
+            public_statements,
+            operations,
+            statements,
+            merkle_proofs,
+        }))
     }
 }
 

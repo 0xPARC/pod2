@@ -158,23 +158,6 @@ impl EmptyPod {
         })
         .map_err(|e| Error::custom(format!("EmptyPod proof verification failure: {:?}", e)))
     }
-
-    pub(crate) fn deserialize(
-        params: Params,
-        id: PodId,
-        vds_root: Hash,
-        data: serde_json::Value,
-    ) -> Result<Box<dyn RecursivePod>> {
-        let data: Data = serde_json::from_value(data)?;
-        let circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
-        let proof = deserialize_proof(&circuit_data.common, &data.proof)?;
-        Ok(Box::new(Self {
-            params,
-            id,
-            vds_root,
-            proof,
-        }))
-    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -219,6 +202,22 @@ impl RecursivePod for EmptyPod {
     }
     fn vds_root(&self) -> Hash {
         self.vds_root
+    }
+    fn deserialize_data(
+        params: Params,
+        data: serde_json::Value,
+        vds_root: Hash,
+        id: PodId,
+    ) -> Result<Box<dyn RecursivePod>, Box<DynError>> {
+        let data: Data = serde_json::from_value(data)?;
+        let circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
+        let proof = deserialize_proof(&circuit_data.common, &data.proof)?;
+        Ok(Box::new(Self {
+            params,
+            id,
+            vds_root,
+            proof,
+        }))
     }
 }
 

@@ -581,7 +581,7 @@ pub struct MainPod {
 // a serialized proof. At some point in the future, this data may be available
 // as a constant or with static initialization, but in the meantime we can
 // generate it on-demand.
-fn get_common_data(params: &Params) -> Result<CommonCircuitData<F, D>, Error> {
+pub fn get_common_data(params: &Params) -> Result<CommonCircuitData<F, D>, Error> {
     // TODO: Cache this somehow
     // https://github.com/0xPARC/pod2/issues/247
     let rec_circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
@@ -643,24 +643,6 @@ impl MainPod {
     pub fn params(&self) -> &Params {
         &self.params
     }
-
-    pub(crate) fn deserialize(
-        params: Params,
-        id: PodId,
-        vds_root: Hash,
-        data: serde_json::Value,
-    ) -> Result<Box<dyn RecursivePod>> {
-        let data: Data = serde_json::from_value(data)?;
-        let common = get_common_data(&params)?;
-        let proof = deserialize_proof(&common, &data.proof)?;
-        Ok(Box::new(Self {
-            params,
-            id,
-            vds_root,
-            proof,
-            public_statements: data.public_statements,
-        }))
-    }
 }
 
 impl Pod for MainPod {
@@ -705,6 +687,23 @@ impl RecursivePod for MainPod {
     }
     fn vds_root(&self) -> Hash {
         self.vds_root
+    }
+    fn deserialize_data(
+        params: Params,
+        data: serde_json::Value,
+        vds_root: Hash,
+        id: PodId,
+    ) -> Result<Box<dyn RecursivePod>, Box<DynError>> {
+        let data: Data = serde_json::from_value(data)?;
+        let common = get_common_data(&params)?;
+        let proof = deserialize_proof(&common, &data.proof)?;
+        Ok(Box::new(Self {
+            params,
+            id,
+            vds_root,
+            proof,
+            public_statements: data.public_statements,
+        }))
     }
 }
 

@@ -796,6 +796,7 @@ pub trait Pod: fmt::Debug + DynClone + Any {
     /// Return this Pods data serialized into a json value.  This serialization can skip `params,
     /// id, vds_root`
     fn serialize_data(&self) -> serde_json::Value;
+
     /// Extract key-values from ValueOf public statements
     fn kvs(&self) -> HashMap<AnchoredKey, Value> {
         self.pub_statements()
@@ -830,6 +831,16 @@ pub trait RecursivePod: Pod {
     fn verifier_data(&self) -> VerifierOnlyCircuitData;
     fn proof(&self) -> Proof;
     fn vds_root(&self) -> Hash;
+
+    /// Returns the deserialized RecursivePod.
+    fn deserialize_data(
+        params: Params,
+        data: serde_json::Value,
+        vds_root: Hash,
+        id: PodId,
+    ) -> Result<Box<dyn RecursivePod>, Box<DynError>>
+    where
+        Self: Sized;
 }
 
 // impl Clone for Box<dyn RecursivePod>

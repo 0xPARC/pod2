@@ -46,14 +46,6 @@ impl MockEmptyPod {
         }
         Ok(())
     }
-    pub(crate) fn deserialize(
-        params: Params,
-        id: PodId,
-        _vds_root: Hash,
-        _data: serde_json::Value,
-    ) -> Result<Box<dyn RecursivePod>> {
-        Ok(Box::new(Self { params, id }))
-    }
 }
 
 impl Pod for MockEmptyPod {
@@ -87,6 +79,14 @@ impl RecursivePod for MockEmptyPod {
     }
     fn vds_root(&self) -> Hash {
         panic!("MockEmptyPod can't be verified in a recursive MainPod circuit");
+    }
+    fn deserialize_data(
+        params: Params,
+        _data: serde_json::Value,
+        _vds_root: Hash,
+        id: PodId,
+    ) -> Result<Box<dyn RecursivePod>, Box<DynError>> {
+        Ok(Box::new(Self { params, id }))
     }
 }
 

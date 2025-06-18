@@ -3,16 +3,14 @@ use std::{
     sync::{LazyLock, Mutex},
 };
 
-use crate::middleware::{
-    BackendResult, Error, Hash, Params, Pod, PodId, PodType, RecursivePod, Result,
-};
+use crate::middleware::{DynError, Error, Hash, Params, Pod, PodId, PodType, RecursivePod, Result};
 
 type DeserializeFn = fn(
     params: Params,
-    id: PodId,
-    vds_root: Hash,
     data: serde_json::Value,
-) -> BackendResult<Box<dyn RecursivePod>>;
+    vds_root: Hash,
+    id: PodId,
+) -> Result<Box<dyn RecursivePod>, Box<DynError>>;
 
 static DESERIALIZERS: LazyLock<Mutex<HashMap<usize, DeserializeFn>>> =
     LazyLock::new(backend::deserializers_default);
@@ -41,7 +39,7 @@ pub fn deserialize_pod(
                 pod_type
             )))?;
 
-    deserialize_fn(params, id, vds_root, data)
+    deserialize_fn(params, data, vds_root, id)
         .map_err(|e| Error::custom(format!("deserialize error: {:?}", e)))
 }
 
@@ -65,10 +63,10 @@ mod backend {
 
     pub(super) fn deserializers_default() -> Mutex<HashMap<usize, DeserializeFn>> {
         let mut map: HashMap<usize, DeserializeFn> = HashMap::new();
-        map.insert(PodType::Empty as usize, EmptyPod::deserialize);
-        map.insert(PodType::Main as usize, MainPod::deserialize);
-        map.insert(PodType::MockEmpty as usize, MockEmptyPod::deserialize);
-        map.insert(PodType::MockMain as usize, MockMainPod::deserialize);
+        map.insert(PodType::Empty as usize, EmptyPod::deserialize_data);
+        map.insert(PodType::Main as usize, MainPod::deserialize_data);
+        map.insert(PodType::MockEmpty as usize, MockEmptyPod::deserialize_data);
+        map.insert(PodType::MockMain as usize, MockMainPod::deserialize_data);
         Mutex::new(map)
     }
 
