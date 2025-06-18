@@ -1,0 +1,11 @@
+[files]
+extend-exclude = [
+    ".git/",
+]
+ignore-hidden = false
+
+[type.rust.extend-identifiers]
+ANDed = "ANDed"
+OT = "OT"
+verifier_datas = "verifier_datas"
+verifier_datas_targ = "verifier_datas_targ"
