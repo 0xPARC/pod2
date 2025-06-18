@@ -431,8 +431,13 @@ pub(crate) fn process_public_statements_operations(
 
 pub struct Prover {}
 
-impl Prover {
-    fn _prove(&self, params: &Params, vd_set: &VDSet, inputs: MainPodInputs) -> Result<MainPod> {
+impl PodProver for Prover {
+    fn prove(
+        &self,
+        params: &Params,
+        vd_set: &VDSet,
+        inputs: MainPodInputs,
+    ) -> Result<Box<dyn RecursivePod>> {
         let rec_circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
         let (main_pod_target, circuit_data) =
             RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data_padded(
@@ -542,24 +547,13 @@ impl Prover {
         };
         let proof_with_pis = main_pod.prove(&input, proofs, verifier_datas)?;
 
-        Ok(MainPod {
+        Ok(Box::new(MainPod {
             params: params.clone(),
             id,
             vd_set: inputs.vds_set,
             public_statements,
             proof: proof_with_pis.proof,
-        })
-    }
-}
-
-impl PodProver for Prover {
-    fn prove(
-        &self,
-        params: &Params,
-        vd_set: &VDSet,
-        inputs: MainPodInputs,
-    ) -> Result<Box<dyn RecursivePod>> {
-        Ok(self._prove(params, vd_set, inputs).map(Box::new)?)
+        }))
     }
 }
 

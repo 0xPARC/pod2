@@ -186,7 +186,7 @@ pub mod tests {
             .downcast::<MockSignedPod>()
             .unwrap();
 
-        pod._verify()?;
+        pod.verify()?;
         println!("id: {}", pod.id());
         println!("kvs: {:?}", pod.kvs());
 

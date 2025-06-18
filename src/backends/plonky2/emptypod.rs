@@ -106,7 +106,7 @@ static EMPTY_POD_CACHE: LazyLock<Mutex<HashMap<Hash, EmptyPod>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 impl EmptyPod {
-    pub fn _prove(params: &Params, vd_set: VDSet) -> Result<EmptyPod> {
+    pub fn new(params: &Params, vd_set: VDSet) -> Result<EmptyPod> {
         let (empty_pod_verify_target, data) = &*STANDARD_EMPTY_POD_DATA;
 
         let mut pw = PartialWitness::<F>::new();
@@ -129,7 +129,7 @@ impl EmptyPod {
             .lock()
             .unwrap()
             .entry(vd_set.root())
-            .or_insert_with(|| Self::_prove(params, vd_set).expect("prove EmptyPod"))
+            .or_insert_with(|| Self::new(params, vd_set).expect("prove EmptyPod"))
             .clone();
         Box::new(empty_pod)
     }
