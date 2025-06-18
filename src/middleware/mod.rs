@@ -849,7 +849,7 @@ pub struct MainPodInputs<'a> {
     /// Statements that need to be made public (they can come from input pods or input
     /// statements)
     pub public_statements: &'a [Statement],
-    pub vds_set: VDSet,
+    pub vd_set: VDSet,
 }
 
 pub trait PodProver {

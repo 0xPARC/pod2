@@ -2,7 +2,7 @@
 // MainPod
 //
 
-use std::fmt;
+use std::{fmt, iter};
 
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -16,6 +16,7 @@ use crate::{
             process_private_statements_operations, process_public_statements_operations, Operation,
             Statement,
         },
+        mock::{emptypod::MockEmptyPod, signedpod::MockSignedPod},
         primitives::merkletree::MerkleClaimAndProof,
         recursion::hash_verifier_data,
     },
@@ -59,15 +60,16 @@ impl fmt::Display for MockMainPod {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "MockMainPod ({}):", self.id)?;
         let offset_input_signed_pods = Self::offset_input_signed_pods();
-        let offset_input_main_pods = self.offset_input_main_pods();
+        let offset_input_recursive_pods = self.offset_input_recursive_pods();
         let offset_input_statements = self.offset_input_statements();
         let offset_public_statements = self.offset_public_statements();
         for (i, st) in self.statements.iter().enumerate() {
-            if (i >= offset_input_signed_pods && i < offset_input_main_pods)
+            if self.params.max_input_signed_pods > 0
+                && (i >= offset_input_signed_pods && i < offset_input_recursive_pods)
                 && ((i - offset_input_signed_pods) % self.params.max_signed_pod_values == 0)
             {
-                let index = i / self.params.max_signed_pod_values;
-                let pod = &self.input_signed_pods[i];
+                let index = (i - offset_input_signed_pods) / self.params.max_signed_pod_values;
+                let pod = &self.input_signed_pods[index];
                 let id = pod.id();
                 let pod_type = pod.pod_type();
                 writeln!(
@@ -76,13 +78,16 @@ impl fmt::Display for MockMainPod {
                     index, id, pod_type
                 )?;
             }
-            if (i >= offset_input_main_pods)
+            if self.params.max_input_recursive_pods > 0
+                && (i >= offset_input_recursive_pods)
                 && (i < offset_input_statements)
-                && ((i - offset_input_main_pods) % self.params.max_input_pods_public_statements
+                && ((i - offset_input_recursive_pods)
+                    % self.params.max_input_pods_public_statements
                     == 0)
             {
-                let index = (i - offset_input_main_pods) / self.params.max_signed_pod_values;
-                let pod = &self.input_recursive_pods[i];
+                let index = (i - offset_input_recursive_pods)
+                    / self.params.max_input_pods_public_statements;
+                let pod = &self.input_recursive_pods[index];
                 let id = pod.id();
                 let pod_type = pod.pod_type();
                 writeln!(
@@ -151,12 +156,12 @@ impl MockMainPod {
     fn offset_input_signed_pods() -> usize {
         1
     }
-    fn offset_input_main_pods(&self) -> usize {
+    fn offset_input_recursive_pods(&self) -> usize {
         Self::offset_input_signed_pods()
             + self.params.max_input_signed_pods * self.params.max_signed_pod_values
     }
     fn offset_input_statements(&self) -> usize {
-        self.offset_input_main_pods()
+        self.offset_input_recursive_pods()
             + self.params.max_input_recursive_pods * self.params.max_input_pods_public_statements
     }
     fn offset_public_statements(&self) -> usize {
@@ -180,20 +185,26 @@ impl MockMainPod {
         // get the id out of the public statements
         let id: PodId = PodId(calculate_id(&public_statements, params));
 
+        let pad_signed_pod: Box<dyn Pod> = Box::new(MockSignedPod::dummy());
         let input_signed_pods: Vec<Box<dyn Pod>> = inputs
             .signed_pods
             .iter()
             .map(|p| dyn_clone::clone_box(*p))
+            .chain(iter::repeat_with(|| pad_signed_pod.clone()))
+            .take(params.max_input_signed_pods)
             .collect();
+        let pad_pod = MockEmptyPod::new_boxed(params, inputs.vd_set.clone());
         let input_recursive_pods: Vec<Box<dyn RecursivePod>> = inputs
             .recursive_pods
             .iter()
             .map(|p| dyn_clone::clone_box(*p))
+            .chain(iter::repeat_with(|| pad_pod.clone()))
+            .take(params.max_input_recursive_pods)
             .collect();
         Ok(Self {
             params: params.clone(),
             id,
-            vd_set: inputs.vds_set,
+            vd_set: inputs.vd_set,
             input_signed_pods,
             input_recursive_pods,
             public_statements,
@@ -416,16 +427,16 @@ pub mod tests {
         backends::plonky2::mock::signedpod::MockSigner,
         examples::{
             great_boy_pod_full_flow, tickets_pod_full_flow, zu_kyc_pod_builder,
-            zu_kyc_sign_pod_builders,
+            zu_kyc_sign_pod_builders, MOCK_VD_SET,
         },
         frontend,
-        middleware::{self, DEFAULT_VD_SET},
+        middleware::{self},
     };
 
     #[test]
     fn test_mock_main_zu_kyc() -> frontend::Result<()> {
         let params = middleware::Params::default();
-        let vd_set = &*DEFAULT_VD_SET;
+        let vd_set = &*MOCK_VD_SET;
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params);
         let mut signer = MockSigner {

@@ -16,6 +16,7 @@ use crate::{
 pub struct MockEmptyPod {
     params: Params,
     id: PodId,
+    vd_set: VDSet,
 }
 
 fn type_statement() -> Statement {
@@ -26,12 +27,13 @@ fn type_statement() -> Statement {
 }
 
 impl MockEmptyPod {
-    pub fn new_boxed(params: &Params) -> Box<dyn RecursivePod> {
+    pub fn new_boxed(params: &Params, vd_set: VDSet) -> Box<dyn RecursivePod> {
         let statements = [mainpod::Statement::from(type_statement())];
         let id = PodId(calculate_id(&statements, params));
         Box::new(Self {
             params: params.clone(),
             id,
+            vd_set,
         })
     }
 }
@@ -75,15 +77,15 @@ impl RecursivePod for MockEmptyPod {
         panic!("MockEmptyPod can't be verified in a recursive MainPod circuit");
     }
     fn vd_set(&self) -> &VDSet {
-        panic!("MockEmptyPod can't be verified in a recursive MainPod circuit");
+        &self.vd_set
     }
     fn deserialize_data(
         params: Params,
         _data: serde_json::Value,
-        _vd_set: VDSet,
+        vd_set: VDSet,
         id: PodId,
     ) -> Result<Box<dyn RecursivePod>> {
-        Ok(Box::new(Self { params, id }))
+        Ok(Box::new(Self { params, id, vd_set }))
     }
 }
 
@@ -95,7 +97,7 @@ pub mod tests {
     fn test_mock_empty_pod() {
         let params = Params::default();
 
-        let empty_pod = MockEmptyPod::new_boxed(&params);
+        let empty_pod = MockEmptyPod::new_boxed(&params, VDSet::new(8, &[]).unwrap());
         empty_pod.verify().unwrap();
     }
 }

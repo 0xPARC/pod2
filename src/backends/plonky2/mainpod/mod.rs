@@ -294,9 +294,9 @@ pub(crate) fn layout_statements(
     let empty_pod_box: Box<dyn RecursivePod> =
         if mock || inputs.recursive_pods.len() == params.max_input_recursive_pods {
             // We mocking or we don't need padding so we skip creating an EmptyPod
-            MockEmptyPod::new_boxed(params)
+            MockEmptyPod::new_boxed(params, inputs.vd_set.clone())
         } else {
-            EmptyPod::new_boxed(params, inputs.vds_set.clone())
+            EmptyPod::new_boxed(params, inputs.vd_set.clone())
         };
     let empty_pod = empty_pod_box.as_ref();
     assert!(inputs.recursive_pods.len() <= params.max_input_recursive_pods);
@@ -471,9 +471,9 @@ impl PodProver for Prover {
         // Pad input recursive pods with empty pods if necessary
         let empty_pod = if inputs.recursive_pods.len() == params.max_input_recursive_pods {
             // We don't need padding so we skip creating an EmptyPod
-            MockEmptyPod::new_boxed(params)
+            MockEmptyPod::new_boxed(params, inputs.vd_set.clone())
         } else {
-            EmptyPod::new_boxed(params, inputs.vds_set.clone())
+            EmptyPod::new_boxed(params, inputs.vd_set.clone())
         };
         let inputs = MainPodInputs {
             recursive_pods: &inputs
@@ -520,10 +520,10 @@ impl PodProver for Prover {
             .recursive_pods
             .iter()
             .map(|pod| {
-                assert_eq!(inputs.vds_set.root(), pod.vd_set().root());
+                assert_eq!(inputs.vd_set.root(), pod.vd_set().root());
                 ProofWithPublicInputs {
                     proof: pod.proof(),
-                    public_inputs: [pod.id().0 .0, inputs.vds_set.root().0].concat(),
+                    public_inputs: [pod.id().0 .0, inputs.vd_set.root().0].concat(),
                 }
             })
             .collect_vec();
@@ -536,7 +536,7 @@ impl PodProver for Prover {
         let vd_mt_proofs = vd_set.get_vds_proofs(&verifier_datas)?;
 
         let input = MainPodVerifyInput {
-            vds_set: inputs.vds_set.clone(),
+            vds_set: inputs.vd_set.clone(),
             vd_mt_proofs,
             signed_pods: signed_pods_input,
             recursive_pods_pub_self_statements,
@@ -554,7 +554,7 @@ impl PodProver for Prover {
         Ok(Box::new(MainPod {
             params: params.clone(),
             id,
-            vd_set: inputs.vds_set,
+            vd_set: inputs.vd_set,
             public_statements,
             proof: proof_with_pis.proof,
         }))
