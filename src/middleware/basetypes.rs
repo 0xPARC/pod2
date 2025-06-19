@@ -197,7 +197,6 @@ impl Ord for Hash {
     }
 }
 
-// TODO: In alternate mode, don't shorten the hash
 impl fmt::Display for Hash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if f.alternate() {
