@@ -170,6 +170,20 @@ impl TryFrom<TypedValue> for Key {
     }
 }
 
+impl TryFrom<&TypedValue> for PodId {
+    type Error = Error;
+    fn try_from(v: &TypedValue) -> Result<Self> {
+        match v {
+            TypedValue::PodId(id) => Ok(*id),
+            TypedValue::Raw(v) => Ok(PodId(Hash(v.0))),
+            _ => Err(Error::custom(format!(
+                "Value {} cannot be converted to a PodId.",
+                v
+            ))),
+        }
+    }
+}
+
 impl fmt::Display for TypedValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -302,7 +316,7 @@ impl JsonSchema for TypedValue {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Value {
     // The `TypedValue` is under `Arc` so that cloning a `Value` is cheap.
     typed: Arc<TypedValue>,
@@ -326,6 +340,12 @@ impl<'de> Deserialize<'de> for Value {
     {
         let typed = TypedValue::deserialize(deserializer)?;
         Ok(Value::new(typed))
+    }
+}
+
+impl fmt::Debug for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.typed)
     }
 }
 

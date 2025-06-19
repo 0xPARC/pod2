@@ -22,9 +22,12 @@ pub enum PredicateIdentifier {
     },
 }
 
-/// A single literal (or atom) in a Datalog rule, like `P(x, y)`.
+/// A single atom in a Datalog rule, equivalent to a StatementTmpl, like `P(x, y)`.
+/// A Datalog purist might call this a "literal", but we're using the term
+/// "atom" to avoid confusion with the `Literal` type in the `StatementTmpl`
+/// format.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Literal {
+pub struct Atom {
     pub predicate: PredicateIdentifier,
     pub terms: Vec<StatementTmplArg>,
 }
@@ -32,6 +35,6 @@ pub struct Literal {
 /// A Datalog rule, consisting of a head and a body. `head :- body`.
 #[derive(Debug, Clone)]
 pub struct Rule {
-    pub head: Literal,
-    pub body: Vec<Literal>,
+    pub head: Atom,
+    pub body: Vec<Atom>,
 }

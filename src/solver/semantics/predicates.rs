@@ -1,19 +1,15 @@
 //! Defines the traits and implementations for handling native Datalog predicates.
 //! This modular approach allows for easy extension and testing of predicate logic.
 
+use std::collections::HashSet;
+
+use log::trace;
+
 use crate::{
-    middleware::{
-        hash_values, Key, NativeOperation, NativePredicate, OperationType, StatementTmplArg,
-        TypedValue, Value, ValueRef,
-    },
+    middleware::{hash_values, Key, NativePredicate, TypedValue, Value, ValueRef},
     solver::{
-        engine::semi_naive::{self, Fact, FactSource},
-        error::SolverError,
-        ir::{self},
-        semantics::{
-            enumerator::{StreamItem, TypeFilter},
-            provider::PodSemantics,
-        },
+        db::FactDB,
+        engine::semi_naive::{Fact, FactSource, JustificationKind},
     },
 };
 
@@ -37,276 +33,143 @@ pub enum PredicateHandler {
 }
 
 impl PredicateHandler {
-    // The fact that we have to know the types of the semi-naive engine is a bit of a code smell
-    // TODO think about how to fix this
-    fn iter_binary_facts_helper<'a, H>(
-        &self,
-        handler: H,
-        semantics: &'a PodSemantics,
-        literal: &'a ir::Literal,
-        bindings: &'a semi_naive::Bindings,
-    ) -> Result<Box<dyn Iterator<Item = Fact> + 'a>, SolverError>
-    where
-        H: BinaryPredicateHandler,
-    {
-        let native_pred = H::NATIVE_PREDICATE;
-        let arg_to_vr = |arg: &StatementTmplArg| -> Option<ValueRef> {
-            match arg {
-                StatementTmplArg::Literal(v) => Some(ValueRef::Literal(v.clone())),
-                StatementTmplArg::Wildcard(w) => {
-                    let binding = bindings.get(w);
-                    if let Some(vr) = binding {
-                        semantics.db.value_ref_to_value(vr).map(ValueRef::Literal)
-                    } else {
-                        None
-                    }
-                }
-                StatementTmplArg::AnchoredKey(pod_wc, key) => {
-                    let binding = bindings.get(pod_wc);
-                    if let Some(vr) = binding {
-                        semantics.db.value_ref_to_value(vr).map(ValueRef::Literal)
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            }
-        };
-
-        let filters = [arg_to_vr(&literal.terms[0]), arg_to_vr(&literal.terms[1])];
-        if let Some(db_facts) = semantics.db.get_binary_statement_index(&native_pred) {
-            let fact_iter =
-                semantics.iter_binary_facts(filters, handler, db_facts, handler.type_filters())?;
-            let mapped_iter = fact_iter.filter_map(move |(fact_vrs, justification)| {
-                if let (Some(v1), Some(v2)) = (
-                    semantics.db.value_ref_to_value(&fact_vrs[0]),
-                    semantics.db.value_ref_to_value(&fact_vrs[1]),
-                ) {
-                    Some(Fact {
-                        source: FactSource::External(justification),
-                        tuple: vec![ValueRef::Literal(v1), ValueRef::Literal(v2)],
-                    })
-                } else {
-                    None
-                }
-            });
-            Ok(Box::new(mapped_iter))
-        } else {
-            Ok(Box::new(std::iter::empty()))
+    pub fn for_native_predicate(native_pred: NativePredicate) -> Self {
+        match native_pred {
+            NativePredicate::Lt => Self::Lt(LtHandler),
+            NativePredicate::LtEq => Self::LtEq(LtEqHandler),
+            NativePredicate::Equal => Self::Equal(EqualHandler),
+            NativePredicate::Contains => Self::Contains(ContainsHandler),
+            NativePredicate::SumOf => Self::SumOf(SumOfHandler),
+            NativePredicate::ProductOf => Self::ProductOf(ProductOfHandler),
+            NativePredicate::NotEqual => Self::NotEqual(NotEqualHandler),
+            NativePredicate::NotContains => Self::NotContains(NotContainsHandler),
+            NativePredicate::MaxOf => Self::MaxOf(MaxOfHandler),
+            NativePredicate::HashOf => Self::HashOf(HashOfHandler),
+            // Syntactic sugar predicates:
+            NativePredicate::None => unimplemented!(),
+            NativePredicate::False => unimplemented!(),
+            NativePredicate::DictContains => unimplemented!(),
+            NativePredicate::DictNotContains => unimplemented!(),
+            NativePredicate::SetContains => unimplemented!(),
+            NativePredicate::SetNotContains => unimplemented!(),
+            NativePredicate::ArrayContains => unimplemented!(),
+            NativePredicate::Gt => unimplemented!(),
+            NativePredicate::GtEq => unimplemented!(),
         }
     }
 
-    fn iter_ternary_facts_helper<'a, H>(
-        &self,
-        handler: H,
-        semantics: &'a PodSemantics,
-        literal: &'a ir::Literal,
-        bindings: &'a semi_naive::Bindings,
-    ) -> Result<Box<dyn Iterator<Item = Fact> + 'a>, SolverError>
-    where
-        H: TernaryPredicateHandler,
-    {
-        let native_pred = H::NATIVE_PREDICATE;
-        let arg_to_vr = |arg: &StatementTmplArg| -> Option<ValueRef> {
-            match arg {
-                StatementTmplArg::Literal(v) => Some(ValueRef::Literal(v.clone())),
-                StatementTmplArg::Wildcard(w) => {
-                    let binding = bindings.get(w);
-                    if let Some(vr) = binding {
-                        if let Some(val) = semantics.db.value_ref_to_value(vr) {
-                            Some(ValueRef::Literal(val))
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                }
-                // TODO: AnchoredKey?
-                _ => None,
-            }
-        };
-
-        let filters = [
-            arg_to_vr(&literal.terms[0]),
-            arg_to_vr(&literal.terms[1]),
-            arg_to_vr(&literal.terms[2]),
-        ];
-        if let Some(db_facts) = semantics.db.get_ternary_statement_index(&native_pred) {
-            let fact_iter =
-                semantics.iter_ternary_facts(filters, handler, db_facts, handler.type_filters())?;
-            let mapped_iter = fact_iter.filter_map(move |(fact_vrs, justification)| {
-                if let (Some(v1), Some(v2), Some(v3)) = (
-                    semantics.db.value_ref_to_value(&fact_vrs[0]),
-                    semantics.db.value_ref_to_value(&fact_vrs[1]),
-                    semantics.db.value_ref_to_value(&fact_vrs[2]),
-                ) {
-                    Some(Fact {
-                        source: FactSource::External(justification),
-                        tuple: vec![
-                            ValueRef::Literal(v1),
-                            ValueRef::Literal(v2),
-                            ValueRef::Literal(v3),
-                        ],
-                    })
-                } else {
-                    None
-                }
-            });
-            Ok(Box::new(mapped_iter))
-        } else {
-            Ok(Box::new(std::iter::empty()))
+    pub fn materialize(&self, args: &[Option<ValueRef>], db: &FactDB) -> HashSet<Fact> {
+        match self {
+            PredicateHandler::Lt(h) => h.materialize(args, db),
+            PredicateHandler::LtEq(h) => h.materialize(args, db),
+            PredicateHandler::Equal(h) => h.materialize(args, db),
+            PredicateHandler::Contains(h) => h.materialize(args, db),
+            PredicateHandler::SumOf(h) => h.materialize(args, db),
+            PredicateHandler::ProductOf(h) => h.materialize(args, db),
+            PredicateHandler::NotEqual(h) => h.materialize(args, db),
+            PredicateHandler::NotContains(h) => h.materialize(args, db),
+            PredicateHandler::MaxOf(h) => h.materialize(args, db),
+            PredicateHandler::HashOf(h) => h.materialize(args, db),
         }
-    }
-
-    pub fn iter_facts<'a>(
-        &self,
-        semantics: &'a PodSemantics,
-        literal: &'a ir::Literal,
-        bindings: &'a semi_naive::Bindings,
-    ) -> Result<impl Iterator<Item = Fact> + 'a, SolverError> {
-        let iter: Box<dyn Iterator<Item = Fact> + 'a> = match self {
-            PredicateHandler::Lt(h) => {
-                self.iter_binary_facts_helper(*h, semantics, literal, bindings)?
-            }
-            PredicateHandler::LtEq(h) => {
-                self.iter_binary_facts_helper(*h, semantics, literal, bindings)?
-            }
-            PredicateHandler::Equal(h) => {
-                self.iter_binary_facts_helper(*h, semantics, literal, bindings)?
-            }
-            PredicateHandler::Contains(h) => {
-                self.iter_ternary_facts_helper(*h, semantics, literal, bindings)?
-            }
-            PredicateHandler::SumOf(h) => {
-                self.iter_ternary_facts_helper(*h, semantics, literal, bindings)?
-            }
-            PredicateHandler::ProductOf(h) => {
-                self.iter_ternary_facts_helper(*h, semantics, literal, bindings)?
-            }
-            PredicateHandler::NotEqual(h) => {
-                self.iter_binary_facts_helper(*h, semantics, literal, bindings)?
-            }
-            PredicateHandler::NotContains(h) => {
-                self.iter_binary_facts_helper(*h, semantics, literal, bindings)?
-            }
-            PredicateHandler::MaxOf(h) => {
-                self.iter_ternary_facts_helper(*h, semantics, literal, bindings)?
-            }
-            PredicateHandler::HashOf(h) => {
-                self.iter_ternary_facts_helper(*h, semantics, literal, bindings)?
-            }
-        };
-        Ok(iter)
     }
 }
-
-// --- Handler Traits ---
-
-/// A contract for native predicates that take two arguments.
-pub trait BinaryPredicateHandler: Copy + 'static {
+pub trait SimplePredicateHandler {
     const NATIVE_PREDICATE: NativePredicate;
-    const VALUE_COMPARISON_OPERATION: OperationType;
+    const ARITY: usize;
 
-    /// Returns the required types for the arguments (e.g., Numeric).
-    fn type_filters(&self) -> [TypeFilter; 2];
+    fn materialize(&self, args: &[Option<ValueRef>], db: &FactDB) -> HashSet<Fact> {
+        let mut facts = HashSet::new();
 
-    /// The core value-checking logic for the predicate.
-    fn check_values(&self, val1: &Value, val2: &Value) -> bool;
+        // Are all args bound?
+        let maybe_value_refs: Option<Vec<ValueRef>> = args.iter().cloned().collect();
 
-    /// Attempts to deduce any unbound arguments from the bound ones.
-    /// Mutates the slice in place and returns `true` if a value was deduced.
-    fn deduce_args(&self, _args: &mut [StreamItem; 2]) -> bool {
-        // Default implementation does nothing.
-        false
-    }
+        if let Some(value_refs) = maybe_value_refs {
+            // Can all args be resolved to values?
+            let values: Option<Vec<Value>> = value_refs
+                .iter()
+                .map(|vr| db.value_ref_to_value(vr))
+                .collect();
+            if let Some(values) = values {
+                // Do all values satisfy the predicate?
+                if Self::NATIVE_PREDICATE == NativePredicate::Equal {
+                    trace!(
+                        "EqualHandler candidate: {:?} == {:?}",
+                        db.value_ref_to_value(&value_refs[0]),
+                        db.value_ref_to_value(&value_refs[1])
+                    );
+                }
 
-    /// PROVIDED: Default implementation for checking StreamItems.
-    /// This contains the boilerplate and calls check_values.
-    fn check_streams(&self, v1: &StreamItem, v2: &StreamItem) -> Option<(StreamItem, StreamItem)> {
-        let mut items = [v1.clone(), v2.clone()];
-
-        // Attempt to deduce any free variables first.
-        self.deduce_args(&mut items);
-
-        // After deduction, check if all arguments are now concrete.
-        if let (StreamItem::Concrete(val1), StreamItem::Concrete(val2)) = (&items[0], &items[1]) {
-            if self.check_values(val1, val2) {
-                Some((items[0].clone(), items[1].clone()))
+                if self.check_values(&values) {
+                    facts.insert(Fact {
+                        source: FactSource::External(JustificationKind::Computation),
+                        args: value_refs,
+                    });
+                }
             } else {
-                None
+                // We don't know the values, so let's see if we can find a statement to copy.
+                if self.lookup_statement(&value_refs, db) {
+                    facts.insert(Fact {
+                        source: FactSource::External(JustificationKind::Fact),
+                        args: value_refs,
+                    });
+                }
             }
         } else {
-            // If deduction was not possible and args are still not concrete.
-            None
+            // We have some unbound args.
+            let deduced_args = self.deduce_with_free_args(args, db);
+            if let Some(deduced_args) = deduced_args {
+                facts.insert(Fact {
+                    source: FactSource::External(JustificationKind::Computation),
+                    args: deduced_args,
+                });
+            }
         }
+
+        facts.extend(self.special_derivation(args, db));
+        trace!("materialize result: {:?}", facts);
+        facts
     }
 
-    /// PROVIDED: A default implementation for checking if a ground literal is
-    /// a valid EDB fact. Used during proof reconstruction.
-    fn is_edb_fact(&self, _semantics: &PodSemantics, args: &[Value]) -> bool {
-        if args.len() == 2 {
-            self.check_values(&args[0], &args[1])
+    #[allow(unused_variables)]
+    fn deduce_with_free_args(
+        &self,
+        args: &[Option<ValueRef>],
+        db: &FactDB,
+    ) -> Option<Vec<ValueRef>> {
+        None
+    }
+
+    fn check_values(&self, args: &[Value]) -> bool;
+
+    fn lookup_statement(&self, args: &[ValueRef], db: &FactDB) -> bool {
+        if Self::ARITY == 2 {
+            if let Some(index) = db.get_binary_statement_index(&Self::NATIVE_PREDICATE) {
+                index.contains_key(&[args[0].clone(), args[1].clone()])
+            } else {
+                false
+            }
+        } else if Self::ARITY == 3 {
+            if let Some(index) = db.get_ternary_statement_index(&Self::NATIVE_PREDICATE) {
+                index.contains_key(&[args[0].clone(), args[1].clone(), args[2].clone()])
+            } else {
+                false
+            }
         } else {
             false
         }
     }
-}
 
-/// A contract for native predicates that take three arguments.
-pub trait TernaryPredicateHandler: Copy + 'static {
-    const NATIVE_PREDICATE: NativePredicate;
-    const VALUE_COMPARISON_OPERATION: OperationType;
-
-    /// Returns the required types for the arguments.
-    fn type_filters(&self) -> [TypeFilter; 3];
-
-    /// The core value-checking logic for the predicate.
-    fn check_values(&self, v1: &Value, v2: &Value, v3: &Value) -> bool;
-
-    /// Attempts to deduce any unbound arguments from the bound ones.
-    /// Mutates the slice in place and returns `true` if a value was deduced.
-    fn deduce_args(&self, _args: &mut [StreamItem; 3]) -> bool {
-        // Default implementation does nothing.
-        false
+    #[allow(unused_variables)]
+    fn special_derivation(&self, args: &[Option<ValueRef>], db: &FactDB) -> HashSet<Fact> {
+        HashSet::new()
     }
 
-    /// PROVIDED: Default implementation for checking StreamItems.
-    fn check_streams(
-        &self,
-        v1: &StreamItem,
-        v2: &StreamItem,
-        v3: &StreamItem,
-    ) -> Option<(StreamItem, StreamItem, StreamItem)> {
-        let mut items = [v1.clone(), v2.clone(), v3.clone()];
-
-        // Attempt to deduce any free variables first.
-        self.deduce_args(&mut items);
-
-        if let (
-            StreamItem::Concrete(val1),
-            StreamItem::Concrete(val2),
-            StreamItem::Concrete(val3),
-        ) = (&items[0], &items[1], &items[2])
-        {
-            if self.check_values(val1, val2, val3) {
-                Some((items[0].clone(), items[1].clone(), items[2].clone()))
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }
-
-    /// PROVIDED: A default implementation for checking if a ground literal is a valid EDB fact.
-    fn is_edb_fact(&self, _semantics: &PodSemantics, args: &[Value]) -> bool {
-        if args.len() == 3 {
-            self.check_values(&args[0], &args[1], &args[2])
-        } else {
-            false
-        }
-    }
+    // We want predicate handlers to be able to materialize statements.
+    // This can occur in four different scenarios:
+    // - All args resolve to values
+    // - Some args are unbound
+    // - At least some args are anchored keys which do not resolve to values
+    // - "Special" derivations, e.g. transitive equality
 }
 
 // --- Concrete Handler Implementations ---
@@ -314,17 +177,12 @@ pub trait TernaryPredicateHandler: Copy + 'static {
 #[derive(Clone, Copy)]
 pub struct LtHandler;
 
-impl BinaryPredicateHandler for LtHandler {
+impl SimplePredicateHandler for LtHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::Lt;
-    const VALUE_COMPARISON_OPERATION: OperationType =
-        OperationType::Native(NativeOperation::LtFromEntries);
+    const ARITY: usize = 2;
 
-    fn type_filters(&self) -> [TypeFilter; 2] {
-        [TypeFilter::Int, TypeFilter::Int]
-    }
-
-    fn check_values(&self, val1: &Value, val2: &Value) -> bool {
-        if let (TypedValue::Int(i1), TypedValue::Int(i2)) = (val1.typed(), val2.typed()) {
+    fn check_values(&self, args: &[Value]) -> bool {
+        if let (TypedValue::Int(i1), TypedValue::Int(i2)) = (args[0].typed(), args[1].typed()) {
             i1 < i2
         } else {
             false
@@ -335,51 +193,51 @@ impl BinaryPredicateHandler for LtHandler {
 #[derive(Clone, Copy)]
 pub struct LtEqHandler;
 
-impl BinaryPredicateHandler for LtEqHandler {
+impl SimplePredicateHandler for LtEqHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::LtEq;
-    const VALUE_COMPARISON_OPERATION: OperationType =
-        OperationType::Native(NativeOperation::LtEqFromEntries);
+    const ARITY: usize = 2;
 
-    fn type_filters(&self) -> [TypeFilter; 2] {
-        [TypeFilter::Int, TypeFilter::Int]
-    }
-
-    fn check_values(&self, val1: &Value, val2: &Value) -> bool {
-        // This leverages the derived PartialOrd on `Value`
-        val1 <= val2
+    fn check_values(&self, args: &[Value]) -> bool {
+        if let (TypedValue::Int(i1), TypedValue::Int(i2)) = (args[0].typed(), args[1].typed()) {
+            i1 <= i2
+        } else {
+            false
+        }
     }
 }
 
 #[derive(Clone, Copy)]
 pub struct EqualHandler;
 
-impl BinaryPredicateHandler for EqualHandler {
+impl SimplePredicateHandler for EqualHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::Equal;
-    const VALUE_COMPARISON_OPERATION: OperationType =
-        OperationType::Native(NativeOperation::EqualFromEntries);
+    const ARITY: usize = 2;
 
-    fn type_filters(&self) -> [TypeFilter; 2] {
-        [TypeFilter::Any, TypeFilter::Any]
+    fn check_values(&self, args: &[Value]) -> bool {
+        let is_equal = args[0] == args[1];
+        if is_equal {
+            trace!("EqualHandler: {}", is_equal);
+        }
+        is_equal
     }
 
-    fn check_values(&self, val1: &Value, val2: &Value) -> bool {
-        val1 == val2
-    }
-
-    fn deduce_args(&self, args: &mut [StreamItem; 2]) -> bool {
-        match (&args[0], &args[1]) {
-            // Case 1: ?x = 5. Bind ?x to 5.
-            (StreamItem::UnboundWildcard, StreamItem::Concrete(val)) => {
-                args[0] = StreamItem::Concrete(val.clone());
-                true
+    fn deduce_with_free_args(
+        &self,
+        args: &[Option<ValueRef>],
+        _db: &FactDB,
+    ) -> Option<Vec<ValueRef>> {
+        if args.len() == 2 {
+            // If the first arg is bound, second must not be.
+            if let Some(val0) = &args[0] {
+                Some(vec![val0.clone(), val0.clone()])
+                // Other way around
+            } else if let Some(val1) = &args[1] {
+                Some(vec![val1.clone(), val1.clone()])
+            } else {
+                panic!("At least one arg must be bound");
             }
-            // Case 2: 5 = ?x. Bind ?x to 5.
-            (StreamItem::Concrete(val), StreamItem::UnboundWildcard) => {
-                args[1] = StreamItem::Concrete(val.clone());
-                true
-            }
-            // No other cases can be deduced.
-            _ => false,
+        } else {
+            panic!("EqualHandler should have 2 args");
         }
     }
 }
@@ -387,25 +245,16 @@ impl BinaryPredicateHandler for EqualHandler {
 #[derive(Clone, Copy)]
 pub struct ContainsHandler;
 
-impl TernaryPredicateHandler for ContainsHandler {
+impl SimplePredicateHandler for ContainsHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::Contains;
-    const VALUE_COMPARISON_OPERATION: OperationType =
-        OperationType::Native(NativeOperation::ContainsFromEntries);
+    const ARITY: usize = 3;
 
-    fn type_filters(&self) -> [TypeFilter; 3] {
-        [
-            TypeFilter::Container,
-            TypeFilter::Any, // Key can be int or string
-            TypeFilter::Any,
-        ]
-    }
-
-    fn check_values(&self, container: &Value, key: &Value, value: &Value) -> bool {
-        match container.typed() {
+    fn check_values(&self, args: &[Value]) -> bool {
+        match args[0].typed() {
             TypedValue::Array(arr) => {
-                if let TypedValue::Int(idx) = key.typed() {
+                if let TypedValue::Int(idx) = args[1].typed() {
                     if let Ok(i) = usize::try_from(*idx) {
-                        arr.get(i).is_ok_and(|v| v == value)
+                        arr.get(i).is_ok_and(|v| v == &args[2])
                     } else {
                         false
                     }
@@ -414,15 +263,15 @@ impl TernaryPredicateHandler for ContainsHandler {
                 }
             }
             TypedValue::Dictionary(dict) => {
-                if let TypedValue::String(s) = key.typed() {
-                    dict.get(&Key::new(s.clone())).is_ok_and(|v| v == value)
+                if let TypedValue::String(s) = args[1].typed() {
+                    dict.get(&Key::new(s.clone())).is_ok_and(|v| v == &args[2])
                 } else {
                     false
                 }
             }
             TypedValue::Set(set) => {
                 // For a set, key and value must be the same.
-                key == value && set.contains(key)
+                args[1] == args[2] && set.contains(&args[1])
             }
             _ => false,
         }
@@ -432,19 +281,14 @@ impl TernaryPredicateHandler for ContainsHandler {
 #[derive(Clone, Copy)]
 pub struct NotContainsHandler;
 
-impl BinaryPredicateHandler for NotContainsHandler {
+impl SimplePredicateHandler for NotContainsHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::NotContains;
-    const VALUE_COMPARISON_OPERATION: OperationType =
-        OperationType::Native(NativeOperation::NotContainsFromEntries);
+    const ARITY: usize = 3;
 
-    fn type_filters(&self) -> [TypeFilter; 2] {
-        [TypeFilter::Container, TypeFilter::Any]
-    }
-
-    fn check_values(&self, container: &Value, key: &Value) -> bool {
-        match container.typed() {
+    fn check_values(&self, args: &[Value]) -> bool {
+        match args[0].typed() {
             TypedValue::Array(arr) => {
-                if let TypedValue::Int(idx) = key.typed() {
+                if let TypedValue::Int(idx) = args[1].typed() {
                     if let Ok(i) = usize::try_from(*idx) {
                         arr.get(i).is_err()
                     } else {
@@ -455,13 +299,13 @@ impl BinaryPredicateHandler for NotContainsHandler {
                 }
             }
             TypedValue::Dictionary(dict) => {
-                if let TypedValue::String(s) = key.typed() {
+                if let TypedValue::String(s) = args[1].typed() {
                     dict.get(&Key::new(s.clone())).is_err()
                 } else {
                     false
                 }
             }
-            TypedValue::Set(set) => !set.contains(key),
+            TypedValue::Set(set) => !set.contains(&args[1]),
             _ => false,
         }
     }
@@ -470,257 +314,239 @@ impl BinaryPredicateHandler for NotContainsHandler {
 #[derive(Copy, Clone)]
 pub struct SumOfHandler;
 
-impl TernaryPredicateHandler for SumOfHandler {
+impl SimplePredicateHandler for SumOfHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::SumOf;
-    const VALUE_COMPARISON_OPERATION: OperationType = OperationType::Native(NativeOperation::SumOf);
+    const ARITY: usize = 3;
 
-    fn type_filters(&self) -> [TypeFilter; 3] {
-        [TypeFilter::Int, TypeFilter::Int, TypeFilter::Int]
-    }
-
-    fn check_values(&self, v1: &Value, v2: &Value, v3: &Value) -> bool {
-        if let (&TypedValue::Int(i1), &TypedValue::Int(i2), &TypedValue::Int(i3)) =
-            (v1.typed(), v2.typed(), v3.typed())
+    fn check_values(&self, args: &[Value]) -> bool {
+        if let (TypedValue::Int(i1), TypedValue::Int(i2), TypedValue::Int(i3)) =
+            (args[0].typed(), args[1].typed(), args[2].typed())
         {
-            i1 == i2 + i3
+            *i1 == *i2 + *i3
         } else {
             false
         }
     }
 
-    fn deduce_args(&self, args: &mut [StreamItem; 3]) -> bool {
+    fn deduce_with_free_args(
+        &self,
+        args: &[Option<ValueRef>],
+        db: &FactDB,
+    ) -> Option<Vec<ValueRef>> {
+        let int = |vr: &ValueRef| {
+            db.value_ref_to_value(vr).and_then(|v| match v.typed() {
+                TypedValue::Int(i) => Some(*i),
+                _ => None,
+            })
+        };
+
         match (&args[0], &args[1], &args[2]) {
             // SumOf(?x, 5, 10) -> x = 15
-            (
-                StreamItem::UnboundWildcard,
-                StreamItem::Concrete(val2),
-                StreamItem::Concrete(val3),
-            ) => {
-                if let (&TypedValue::Int(i2), &TypedValue::Int(i3)) = (val2.typed(), val3.typed()) {
-                    let new_val = Value::from(i2 + i3);
-                    args[0] = StreamItem::Concrete(new_val);
-                    return true;
+            (None, Some(vr1), Some(vr2)) => {
+                if let (Some(i1), Some(i2)) = (int(vr1), int(vr2)) {
+                    Some(vec![ValueRef::from(i1 + i2), vr1.clone(), vr2.clone()])
+                } else {
+                    None
                 }
             }
             // SumOf(15, ?y, 10) -> y = 5
-            (
-                StreamItem::Concrete(val1),
-                StreamItem::UnboundWildcard,
-                StreamItem::Concrete(val3),
-            ) => {
-                if let (&TypedValue::Int(i1), &TypedValue::Int(i3)) = (val1.typed(), val3.typed()) {
-                    let new_val = Value::from(i1 - i3);
-                    args[1] = StreamItem::Concrete(new_val);
-                    return true;
+            (Some(vr0), None, Some(vr2)) => {
+                if let (Some(i0), Some(i2)) = (int(vr0), int(vr2)) {
+                    Some(vec![vr0.clone(), ValueRef::from(i0 - i2), vr2.clone()])
+                } else {
+                    None
                 }
             }
             // SumOf(15, 5, ?z) -> z = 10
-            (
-                StreamItem::Concrete(val1),
-                StreamItem::Concrete(val2),
-                StreamItem::UnboundWildcard,
-            ) => {
-                if let (&TypedValue::Int(i1), &TypedValue::Int(i2)) = (val1.typed(), val2.typed()) {
-                    let new_val = Value::from(i1 - i2);
-                    args[2] = StreamItem::Concrete(new_val);
-                    return true;
+            (Some(vr0), Some(vr1), None) => {
+                if let (Some(i0), Some(i1)) = (int(vr0), int(vr1)) {
+                    Some(vec![vr0.clone(), vr1.clone(), ValueRef::from(i0 - i1)])
+                } else {
+                    None
                 }
             }
-            _ => {}
+            _ => None,
         }
-        false
     }
 }
 
 #[derive(Copy, Clone)]
 pub struct ProductOfHandler;
 
-impl TernaryPredicateHandler for ProductOfHandler {
+impl SimplePredicateHandler for ProductOfHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::ProductOf;
-    const VALUE_COMPARISON_OPERATION: OperationType =
-        OperationType::Native(NativeOperation::ProductOf);
+    const ARITY: usize = 3;
 
-    fn type_filters(&self) -> [TypeFilter; 3] {
-        [TypeFilter::Int, TypeFilter::Int, TypeFilter::Int]
-    }
-
-    fn check_values(&self, v1: &Value, v2: &Value, v3: &Value) -> bool {
-        if let (&TypedValue::Int(i1), &TypedValue::Int(i2), &TypedValue::Int(i3)) =
-            (v1.typed(), v2.typed(), v3.typed())
+    fn check_values(&self, args: &[Value]) -> bool {
+        if let (TypedValue::Int(i1), TypedValue::Int(i2), TypedValue::Int(i3)) =
+            (args[0].typed(), args[1].typed(), args[2].typed())
         {
-            i1 == i2 * i3
+            *i1 == *i2 * *i3
         } else {
             false
         }
     }
 
-    fn deduce_args(&self, args: &mut [StreamItem; 3]) -> bool {
+    fn deduce_with_free_args(
+        &self,
+        args: &[Option<ValueRef>],
+        db: &FactDB,
+    ) -> Option<Vec<ValueRef>> {
+        let int = |vr: &ValueRef| {
+            db.value_ref_to_value(vr).and_then(|v| match v.typed() {
+                TypedValue::Int(i) => Some(*i),
+                _ => None,
+            })
+        };
+
         match (&args[0], &args[1], &args[2]) {
             // ProductOf(?x, 5, 10) -> x = 50
-            (
-                StreamItem::UnboundWildcard,
-                StreamItem::Concrete(val2),
-                StreamItem::Concrete(val3),
-            ) => {
-                if let (&TypedValue::Int(i2), &TypedValue::Int(i3)) = (val2.typed(), val3.typed()) {
-                    let new_val = Value::from(i2 * i3);
-                    args[0] = StreamItem::Concrete(new_val);
-                    return true;
+            (None, Some(vr1), Some(vr2)) => {
+                if let (Some(i1), Some(i2)) = (int(vr1), int(vr2)) {
+                    Some(vec![ValueRef::from(i1 * i2), vr1.clone(), vr2.clone()])
+                } else {
+                    None
                 }
             }
             // ProductOf(50, ?y, 10) -> y = 5
-            (
-                StreamItem::Concrete(val1),
-                StreamItem::UnboundWildcard,
-                StreamItem::Concrete(val3),
-            ) => {
-                if let (&TypedValue::Int(i1), &TypedValue::Int(i3)) = (val1.typed(), val3.typed()) {
-                    let i2 = i1 / i3;
-                    // Check if the division is exact
-                    if i2 * i3 != i1 {
-                        return false;
-                    }
-                    let new_val = Value::from(i2);
-                    args[1] = StreamItem::Concrete(new_val);
-                    return true;
+            (Some(vr0), None, Some(vr2)) => {
+                if let (Some(i0), Some(i2)) = (int(vr0), int(vr2)) {
+                    Some(vec![vr0.clone(), ValueRef::from(i0 / i2), vr2.clone()])
+                } else {
+                    None
                 }
             }
             // ProductOf(50, 5, ?z) -> z = 10
-            (
-                StreamItem::Concrete(val1),
-                StreamItem::Concrete(val2),
-                StreamItem::UnboundWildcard,
-            ) => {
-                if let (&TypedValue::Int(i1), &TypedValue::Int(i2)) = (val1.typed(), val2.typed()) {
-                    let i3 = i1 / i2;
-                    // Check if the division is exact
-                    if i3 * i2 != i1 {
-                        return false;
-                    }
-                    let new_val = Value::from(i3);
-                    args[2] = StreamItem::Concrete(new_val);
-                    return true;
+            (Some(vr0), Some(vr1), None) => {
+                if let (Some(i0), Some(i1)) = (int(vr0), int(vr1)) {
+                    Some(vec![vr0.clone(), vr1.clone(), ValueRef::from(i0 / i1)])
+                } else {
+                    None
                 }
             }
-            _ => {}
+            _ => None,
         }
-        false
     }
 }
 
 #[derive(Clone, Copy)]
 pub struct NotEqualHandler;
 
-impl BinaryPredicateHandler for NotEqualHandler {
+impl SimplePredicateHandler for NotEqualHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::NotEqual;
-    const VALUE_COMPARISON_OPERATION: OperationType =
-        OperationType::Native(NativeOperation::NotEqualFromEntries);
+    const ARITY: usize = 2;
 
-    fn type_filters(&self) -> [TypeFilter; 2] {
-        [TypeFilter::Any, TypeFilter::Any]
-    }
-
-    fn check_values(&self, val1: &Value, val2: &Value) -> bool {
-        val1 != val2
+    fn check_values(&self, args: &[Value]) -> bool {
+        args[0] != args[1]
     }
 }
 
 #[derive(Copy, Clone)]
 pub struct MaxOfHandler;
 
-impl TernaryPredicateHandler for MaxOfHandler {
+impl SimplePredicateHandler for MaxOfHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::MaxOf;
-    const VALUE_COMPARISON_OPERATION: OperationType = OperationType::Native(NativeOperation::MaxOf);
+    const ARITY: usize = 3;
 
-    fn type_filters(&self) -> [TypeFilter; 3] {
-        [TypeFilter::Int, TypeFilter::Int, TypeFilter::Int]
-    }
-
-    fn check_values(&self, v1: &Value, v2: &Value, v3: &Value) -> bool {
-        if let (&TypedValue::Int(i1), &TypedValue::Int(i2), &TypedValue::Int(i3)) =
-            (v1.typed(), v2.typed(), v3.typed())
+    fn check_values(&self, args: &[Value]) -> bool {
+        if let (TypedValue::Int(i1), TypedValue::Int(i2), TypedValue::Int(i3)) =
+            (args[0].typed(), args[1].typed(), args[2].typed())
         {
-            i1 == i2.max(i3)
+            *i1 == *i2.max(i3)
         } else {
             false
         }
     }
 
-    fn deduce_args(&self, args: &mut [StreamItem; 3]) -> bool {
+    fn deduce_with_free_args(
+        &self,
+        args: &[Option<ValueRef>],
+        db: &FactDB,
+    ) -> Option<Vec<ValueRef>> {
+        let int = |vr: &ValueRef| {
+            db.value_ref_to_value(vr).and_then(|v| match v.typed() {
+                TypedValue::Int(i) => Some(*i),
+                _ => None,
+            })
+        };
+
         match (&args[0], &args[1], &args[2]) {
             // MaxOf(?x, 5, 10) -> x = 10
-            (
-                StreamItem::UnboundWildcard,
-                StreamItem::Concrete(val2),
-                StreamItem::Concrete(val3),
-            ) => {
-                if let (&TypedValue::Int(i2), &TypedValue::Int(i3)) = (val2.typed(), val3.typed()) {
-                    let new_val = Value::from(i2.max(i3));
-                    args[0] = StreamItem::Concrete(new_val);
-                    return true;
+            (None, Some(vr1), Some(vr2)) => {
+                if let (Some(i1), Some(i2)) = (int(vr1), int(vr2)) {
+                    Some(vec![ValueRef::from(i1.max(i2)), vr1.clone(), vr2.clone()])
+                } else {
+                    None
                 }
             }
             // MaxOf(10, ?y, 10) -> y = 10
-            (
-                StreamItem::Concrete(val1),
-                StreamItem::UnboundWildcard,
-                StreamItem::Concrete(val3),
-            ) => {
-                if let (&TypedValue::Int(i1), &TypedValue::Int(i3)) = (val1.typed(), val3.typed()) {
-                    let new_val = Value::from(i1.max(i3));
-                    args[1] = StreamItem::Concrete(new_val);
-                    return true;
+            (Some(vr0), None, Some(vr2)) => {
+                if let (Some(i0), Some(i2)) = (int(vr0), int(vr2)) {
+                    Some(vec![vr0.clone(), ValueRef::from(i0.max(i2)), vr2.clone()])
+                } else {
+                    None
                 }
             }
             // MaxOf(10, 10, ?z) -> z = 10
-            (
-                StreamItem::Concrete(val1),
-                StreamItem::Concrete(val2),
-                StreamItem::UnboundWildcard,
-            ) => {
-                if let (&TypedValue::Int(i1), &TypedValue::Int(i2)) = (val1.typed(), val2.typed()) {
-                    let new_val = Value::from(i1.max(i2));
-                    args[2] = StreamItem::Concrete(new_val);
-                    return true;
+            (Some(vr0), Some(vr1), None) => {
+                if let (Some(i0), Some(i1)) = (int(vr0), int(vr1)) {
+                    Some(vec![vr0.clone(), vr1.clone(), ValueRef::from(i0.max(i1))])
+                } else {
+                    None
                 }
             }
-            _ => {}
+            _ => None,
         }
-        false
     }
 }
 
 #[derive(Copy, Clone)]
 pub struct HashOfHandler;
 
-impl TernaryPredicateHandler for HashOfHandler {
+impl SimplePredicateHandler for HashOfHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::HashOf;
-    const VALUE_COMPARISON_OPERATION: OperationType =
-        OperationType::Native(NativeOperation::HashOf);
+    const ARITY: usize = 3;
 
-    fn type_filters(&self) -> [TypeFilter; 3] {
-        [TypeFilter::Int, TypeFilter::Int, TypeFilter::Int]
+    fn check_values(&self, args: &[Value]) -> bool {
+        let hash_val = Value::from(hash_values(&[args[1].clone(), args[2].clone()]));
+        args[0] == hash_val
     }
 
-    fn check_values(&self, v1: &Value, v2: &Value, v3: &Value) -> bool {
-        let hash_val = Value::from(hash_values(&[v2.clone(), v3.clone()]));
-        *v1 == hash_val
-    }
-
-    fn deduce_args(&self, args: &mut [StreamItem; 3]) -> bool {
+    fn deduce_with_free_args(
+        &self,
+        args: &[Option<ValueRef>],
+        db: &FactDB,
+    ) -> Option<Vec<ValueRef>> {
         match (&args[0], &args[1], &args[2]) {
             // HashOf(?x, 5, 10) -> x = hash(5, 10)
-            (
-                StreamItem::UnboundWildcard,
-                StreamItem::Concrete(val2),
-                StreamItem::Concrete(val3),
-            ) => {
-                let new_val = Value::from(hash_values(&[val2.clone(), val3.clone()]));
-                args[0] = StreamItem::Concrete(new_val);
-                return true;
+            (None, Some(vr1), Some(vr2)) => {
+                if let (Some(val1), Some(val2)) =
+                    (db.value_ref_to_value(vr1), db.value_ref_to_value(vr2))
+                {
+                    Some(vec![
+                        ValueRef::from(hash_values(&[val1, val2])),
+                        vr1.clone(),
+                        vr2.clone(),
+                    ])
+                } else {
+                    None
+                }
             }
-            _ => {}
+            // HashOf(hash(5, 10), 5, 10) -> x = hash(5, 10)
+            (Some(vr0), None, Some(vr2)) => {
+                if let (Some(val0), Some(val2)) =
+                    (db.value_ref_to_value(vr0), db.value_ref_to_value(vr2))
+                {
+                    Some(vec![
+                        vr0.clone(),
+                        ValueRef::from(hash_values(&[val0, val2])),
+                        vr2.clone(),
+                    ])
+                } else {
+                    None
+                }
+            }
+            _ => None,
         }
-        false
     }
 }

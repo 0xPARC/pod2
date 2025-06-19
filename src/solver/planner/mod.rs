@@ -54,7 +54,7 @@ impl Planner {
     }
 
     /// Computes the adornment for a literal given a set of bound variables.
-    fn get_adornment(&self, literal: &ir::Literal, bound_vars: &HashSet<Wildcard>) -> Adornment {
+    fn get_adornment(&self, literal: &ir::Atom, bound_vars: &HashSet<Wildcard>) -> Adornment {
         literal
             .terms
             .iter()
@@ -82,11 +82,11 @@ impl Planner {
     /// Reorders the literals in a rule body based on a "most-bound-first" SIPS.
     fn reorder_body_for_sips(
         &self,
-        body: &[ir::Literal],
+        body: &[ir::Atom],
         initial_bound: &HashSet<Wildcard>,
-    ) -> Vec<ir::Literal> {
+    ) -> Vec<ir::Atom> {
         let mut reordered_body = Vec::new();
-        let mut remaining_literals: Vec<ir::Literal> = body.to_vec();
+        let mut remaining_literals: Vec<ir::Atom> = body.to_vec();
         let mut currently_bound = initial_bound.clone();
 
         while !remaining_literals.is_empty() {
@@ -134,7 +134,7 @@ impl Planner {
         // 1. Seed the worklist and create seed rules from the initial request.
         for tmpl in request {
             if let Predicate::Custom(cpr) = &tmpl.pred {
-                let request_literal = ir::Literal {
+                let request_literal = ir::Atom {
                     predicate: ir::PredicateIdentifier::Normal(Predicate::Custom(cpr.clone())),
                     terms: tmpl.args.clone(),
                 };
@@ -157,7 +157,7 @@ impl Planner {
                     .collect();
 
                 magic_rules.push(ir::Rule {
-                    head: ir::Literal {
+                    head: ir::Atom {
                         predicate: magic_pred_id,
                         terms: magic_head_terms,
                     },
@@ -212,13 +212,6 @@ impl Planner {
                         ir::PredicateIdentifier::Normal(Predicate::Custom(cpr)) => {
                             Some(cpr.clone())
                         }
-                        ir::PredicateIdentifier::Normal(Predicate::BatchSelf(idx)) => {
-                            let head_cpr = match &rule.head.predicate {
-                                ir::PredicateIdentifier::Normal(Predicate::Custom(cpr)) => cpr,
-                                _ => continue,
-                            };
-                            Some(CustomPredicateRef::new(head_cpr.batch.clone(), *idx))
-                        }
                         _ => None,
                     };
 
@@ -248,7 +241,7 @@ impl Planner {
                             .collect();
 
                         magic_rules.push(ir::Rule {
-                            head: ir::Literal {
+                            head: ir::Atom {
                                 predicate: magic_head_id,
                                 terms: magic_head_terms,
                             },
@@ -257,27 +250,9 @@ impl Planner {
                     }
 
                     // Add the current literal to the set of guards for the next magic rule.
-                    // If it's a BatchSelf, resolve it now into a full Custom predicate.
                     let guard_to_add = match &literal.predicate {
-                        ir::PredicateIdentifier::Normal(Predicate::BatchSelf(idx)) => {
-                            let head_cpr = match &rule.head.predicate {
-                                ir::PredicateIdentifier::Normal(Predicate::Custom(cpr)) => cpr,
-                                _ => {
-                                    // This should be unreachable if the program is well-formed.
-                                    return Err(SolverError::Internal(
-                                        "Cannot resolve BatchSelf in rule with non-custom head"
-                                            .to_string(),
-                                    ));
-                                }
-                            };
-                            let resolved_cpr =
-                                CustomPredicateRef::new(head_cpr.batch.clone(), *idx);
-                            let mut resolved_literal = literal.clone();
-                            resolved_literal.predicate =
-                                ir::PredicateIdentifier::Normal(Predicate::Custom(resolved_cpr));
-                            resolved_literal
-                        }
-                        _ => literal.clone(),
+                        ir::PredicateIdentifier::Normal(Predicate::Custom(_)) => literal.clone(),
+                        _ => literal.clone(), // native / magic unchanged
                     };
                     accumulated_guards.push(guard_to_add);
 
@@ -338,7 +313,7 @@ impl Planner {
             .map(|(t, _)| t.clone())
             .collect();
 
-        let magic_literal = ir::Literal {
+        let magic_literal = ir::Atom {
             predicate: magic_pred_id,
             terms: magic_terms,
         };
@@ -352,7 +327,7 @@ impl Planner {
         pred_name: &str,
         adornment: &Adornment,
         head_terms: &[StatementTmplArg],
-    ) -> Result<ir::Literal, SolverError> {
+    ) -> Result<ir::Atom, SolverError> {
         let magic_pred_id = self.create_magic_predicate_id(pred_name, adornment);
         let magic_terms: Vec<StatementTmplArg> = head_terms
             .iter()
@@ -360,7 +335,7 @@ impl Planner {
             .filter(|(_, &b)| b == Binding::Bound)
             .map(|(t, _)| t.clone())
             .collect();
-        Ok(ir::Literal {
+        Ok(ir::Atom {
             predicate: magic_pred_id,
             terms: magic_terms,
         })
@@ -380,7 +355,7 @@ impl Planner {
 
             let mut synthetic_rule_body = Vec::new();
             for tmpl in request {
-                synthetic_rule_body.push(ir::Literal {
+                synthetic_rule_body.push(ir::Atom {
                     predicate: ir::PredicateIdentifier::Normal(tmpl.pred.clone()),
                     terms: tmpl.args.clone(),
                 });
@@ -415,7 +390,7 @@ impl Planner {
             );
             let synthetic_cpr = CustomPredicateRef::new(synth_batch, 0);
 
-            let synthetic_rule_head = ir::Literal {
+            let synthetic_rule_head = ir::Atom {
                 predicate: ir::PredicateIdentifier::Normal(Predicate::Custom(
                     synthetic_cpr.clone(),
                 )),
@@ -513,7 +488,7 @@ impl Planner {
         visited: &mut HashSet<usize>,
     ) -> Result<ir::Rule, SolverError> {
         // Translate the head of the rule.
-        let head_literal = ir::Literal {
+        let head_literal = ir::Atom {
             predicate: ir::PredicateIdentifier::Normal(Predicate::Custom(cpr.clone())),
             terms: head_args.to_vec(),
         };
@@ -521,15 +496,29 @@ impl Planner {
         // Translate the body of the rule.
         let mut body_literals = Vec::new();
         for tmpl in body_tmpls {
-            body_literals.push(ir::Literal {
-                predicate: ir::PredicateIdentifier::Normal(tmpl.pred.clone()),
-                terms: tmpl.args.clone(),
-            });
+            match &tmpl.pred {
+                // Resolve self-references inside the same batch immediately.
+                Predicate::BatchSelf(idx) => {
+                    let resolved_cpr = CustomPredicateRef::new(cpr.batch.clone(), *idx);
 
-            // If this body literal is a custom predicate, add it to the worklist for traversal.
-            if let Predicate::BatchSelf(idx) = &tmpl.pred {
-                if visited.insert(*idx) {
-                    worklist.push_back(CustomPredicateRef::new(cpr.batch.clone(), *idx));
+                    body_literals.push(ir::Atom {
+                        predicate: ir::PredicateIdentifier::Normal(Predicate::Custom(
+                            resolved_cpr.clone(),
+                        )),
+                        terms: tmpl.args.clone(),
+                    });
+
+                    // Schedule the referenced predicate for traversal if not yet seen.
+                    if visited.insert(*idx) {
+                        worklist.push_back(resolved_cpr);
+                    }
+                }
+                _ => {
+                    // Leave other predicates unchanged.
+                    body_literals.push(ir::Atom {
+                        predicate: ir::PredicateIdentifier::Normal(tmpl.pred.clone()),
+                        terms: tmpl.args.clone(),
+                    });
                 }
             }
         }
@@ -746,7 +735,7 @@ mod tests {
         // - 1 seed rule for _request_goal(?End) -> magic__request_goal_f().
         // - Propagation from _request_goal to path -> magic_path_bf("start_node") :- magic__request_goal_f().
         // - Propagation from path to edge: magic_edge_bf(X) :- magic_path_bf(X).
-        // - Propagation from path to path_rec: magic_path_rec_bf(X) :- magic_path_bf(X).
+        // - Propagation from path to path_rec: magic_path_bf(X) :- magic_path_rec_bf(X).
         // - Propagation from path_rec to path (recursive): magic_path_bf(X) :- magic_path_rec_bf(X).
         // - Propagation from path_rec to edge: magic_edge_bf(Z) :- magic_path_rec_bf(X), path(X,Z).
         // Total: 6 magic rules.

@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
 use crate::{
-    middleware::Pod,
+    middleware::{Params, Pod},
     solver::{
         db::FactDB,
         engine::{semi_naive::SemiNaiveEngine, ProofRequest},
         error::SolverError,
         planner::Planner,
         proof::Proof,
-        semantics::PodSemantics,
+        semantics::materializer::Materializer,
     },
 };
 
@@ -20,16 +20,20 @@ pub mod planner;
 pub mod proof;
 pub mod semantics;
 
-pub fn solve(request: &ProofRequest, pods: &[Box<dyn Pod>]) -> Result<Option<Proof>, SolverError> {
+pub fn solve(
+    request: &ProofRequest,
+    pods: &[Box<dyn Pod>],
+    params: &Params,
+) -> Result<Option<Proof>, SolverError> {
     let db = Arc::new(FactDB::build(pods.to_vec()).unwrap());
-    let semantics = PodSemantics::new(db);
+    let materializer = Materializer::new(db, params);
 
     let planner = Planner::new();
     let plan = planner.create_plan(request).unwrap();
 
     let engine = SemiNaiveEngine::new();
 
-    engine.execute(&plan, &semantics)
+    engine.execute(&plan, &materializer)
 }
 
 #[cfg(test)]
@@ -82,7 +86,12 @@ mod tests {
             .unwrap()
             .request_templates;
 
-        let result = solve(&request, &[alice_attestation.pod, bob_attestation.pod]).unwrap();
+        let result = solve(
+            &request,
+            &[alice_attestation.pod, bob_attestation.pod],
+            &params,
+        )
+        .unwrap();
 
         println!("Proof tree: {}", result.unwrap());
     }

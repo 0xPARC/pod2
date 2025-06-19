@@ -1,10 +1,7 @@
-pub mod enumerator;
+pub mod materializer;
 pub mod predicates;
-pub mod provider;
 
-pub use provider::PodSemantics;
-
-use super::{engine::Solution, error::SolverError};
+use super::engine::Solution;
 use crate::middleware::{AnchoredKey, CustomPredicateRef, StatementTmpl};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

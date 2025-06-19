@@ -65,8 +65,6 @@ impl StatementIndex {
 /// allowing for fast joins and lookups within the solver.
 #[derive(Debug, Default)]
 pub struct FactDB {
-    // The choice of indices is critical for performance and depends on the
-    // patterns of queries the interpreter will make.
     /// Maps a Key to all AnchoredKeys seen using that Key.
     key_to_anchored_keys: HashMap<Key, HashSet<AnchoredKey>>,
 
@@ -82,8 +80,6 @@ pub struct FactDB {
     raw_value_to_anchored_keys: HashMap<RawValue, HashSet<AnchoredKey>>,
 
     anchored_key_to_value: HashMap<AnchoredKey, Value>,
-
-    anchored_key_value_type: HashMap<AnchoredKey, ValueEquivalenceClass>,
 
     pub statement_index: StatementIndex,
 }
@@ -223,7 +219,6 @@ impl FactDB {
             pod_id_to_pod: HashMap::new(),
             equality_graph: EqualityGraph::new(),
             raw_value_to_anchored_keys: HashMap::new(),
-            anchored_key_value_type: HashMap::new(),
             statement_index: StatementIndex::new(),
             anchored_key_to_value: HashMap::new(),
         }
@@ -282,12 +277,6 @@ impl FactDB {
                 .unwrap()
                 .insert(ak.clone());
         }
-    }
-
-    pub fn add_value_type(&mut self, ak: &AnchoredKey, value_type: ValueEquivalenceClass) {
-        self.anchored_key_value_type
-            .entry(ak.clone())
-            .or_insert(value_type);
     }
 
     pub fn build(pods: Vec<Box<dyn Pod>>) -> Result<Self, String> {

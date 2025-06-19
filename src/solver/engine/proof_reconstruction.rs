@@ -16,7 +16,6 @@ use crate::{
         error::SolverError,
         ir::{self},
         proof::{Justification, ProofNode},
-        semantics::{provider::JustificationKind, PodSemantics},
     },
 };
 

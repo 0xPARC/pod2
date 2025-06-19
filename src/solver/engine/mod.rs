@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     middleware::{StatementTmpl, Value},
-    solver::{error::SolverError, proof::Proof, semantics::PodSemantics},
+    solver::{error::SolverError, proof::Proof, semantics::materializer::Materializer},
 };
 
 //pub mod proof_reconstruction;
@@ -29,6 +29,6 @@ pub trait QueryEngine {
     fn solve(
         &self,
         request: &ProofRequest,
-        semantics: &PodSemantics,
+        materializer: &Materializer,
     ) -> Result<Option<Proof>, SolverError>;
 }
