@@ -120,7 +120,7 @@ pub struct MainPodBuilder {
     pub params: Params,
     pub vd_set: VDSet,
     pub input_signed_pods: Vec<SignedPod>,
-    pub input_main_pods: Vec<MainPod>,
+    pub input_recursive_pods: Vec<MainPod>,
     pub statements: Vec<Statement>,
     pub operations: Vec<Operation>,
     pub public_statements: Vec<Statement>,
@@ -139,7 +139,7 @@ impl fmt::Display for MainPodBuilder {
             writeln!(f, "    - {}", in_pod.id())?;
         }
         writeln!(f, "  input_main_pods:")?;
-        for in_pod in &self.input_main_pods {
+        for in_pod in &self.input_recursive_pods {
             writeln!(f, "    - {}", in_pod.id())?;
         }
         writeln!(f, "  statements:")?;
@@ -158,7 +158,7 @@ impl MainPodBuilder {
             params: params.clone(),
             vd_set: vd_set.clone(),
             input_signed_pods: Vec::new(),
-            input_main_pods: Vec::new(),
+            input_recursive_pods: Vec::new(),
             statements: Vec::new(),
             operations: Vec::new(),
             public_statements: Vec::new(),
@@ -169,8 +169,8 @@ impl MainPodBuilder {
     pub fn add_signed_pod(&mut self, pod: &SignedPod) {
         self.input_signed_pods.push(pod.clone());
     }
-    pub fn add_main_pod(&mut self, pod: MainPod) {
-        self.input_main_pods.push(pod);
+    pub fn add_recursive_pod(&mut self, pod: MainPod) {
+        self.input_recursive_pods.push(pod);
     }
     pub fn insert(&mut self, public: bool, st_op: (Statement, Operation)) {
         // TODO: Do error handling instead of panic
@@ -538,7 +538,7 @@ impl MainPodBuilder {
         self.public_statements.push(st.clone());
     }
 
-    pub fn prove<P: PodProver>(&self, prover: &mut P, params: &Params) -> Result<MainPod> {
+    pub fn prove(&self, prover: &dyn PodProver, params: &Params) -> Result<MainPod> {
         let compiler = MainPodCompiler::new(&self.params);
         let inputs = MainPodCompilerInputs {
             // signed_pods: &self.input_signed_pods,
@@ -557,7 +557,7 @@ impl MainPodBuilder {
                 .map(|p| p.pod.as_ref())
                 .collect_vec(),
             recursive_pods: &self
-                .input_main_pods
+                .input_recursive_pods
                 .iter()
                 .map(|p| p.pod.as_ref())
                 .collect_vec(),

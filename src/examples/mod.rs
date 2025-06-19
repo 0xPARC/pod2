@@ -155,7 +155,7 @@ impl EthDosHelper {
 
         let mut pod = MainPodBuilder::new(&self.params, &self.vd_set);
         pod.add_signed_pod(int_attestation);
-        pod.add_main_pod(eth_dos_src_to_int_pod.clone());
+        pod.add_recursive_pod(eth_dos_src_to_int_pod.clone());
 
         let eth_dos_int_to_dst = eth_dos_src_to_int_pod
             .pod
