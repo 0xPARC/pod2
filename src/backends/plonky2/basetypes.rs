@@ -41,8 +41,6 @@ pub type HashOut = hash_types::HashOut<F>;
 
 use std::{collections::HashMap, sync::LazyLock};
 
-use itertools::Itertools;
-
 use crate::{
     backends::plonky2::{
         emptypod::STANDARD_EMPTY_POD_DATA, primitives::merkletree::MerkleClaimAndProof,
@@ -80,7 +78,11 @@ pub struct VDSet {
 }
 
 impl VDSet {
-    fn new_from_vds_hashes(tree_depth: usize, vds_hashes: Vec<Hash>) -> Result<Self> {
+    fn new_from_vds_hashes(tree_depth: usize, mut vds_hashes: Vec<Hash>) -> Result<Self> {
+        // before using the hash values, sort them, so that each set of
+        // verifier_datas gets the same VDSet root
+        vds_hashes.sort();
+
         let array = Array::new(
             tree_depth,
             vds_hashes.iter().map(|vd| Value::from(*vd)).collect(),
@@ -114,11 +116,8 @@ impl VDSet {
             .map(crate::backends::plonky2::recursion::circuit::hash_verifier_data)
             .collect::<Vec<_>>();
 
-        // before using the hash values, sort them, so that each set of
-        // verifier_datas gets the same VDSet root
         let vds_hashes: Vec<Hash> = vds_hashes
-            .iter()
-            .sorted_by_key(|vd| RawValue(vd.elements))
+            .into_iter()
             .map(|h| Hash(h.elements))
             .collect::<Vec<_>>();
 
@@ -148,9 +147,8 @@ impl VDSet {
     }
     /// Returns true if the `verifier_data_hash` is in the set
     pub fn contains(&self, verifier_data_hash: HashOut) -> bool {
-        self.vds_hashes
-            .iter()
-            .any(|vd_hash| *vd_hash == Hash(verifier_data_hash.elements))
+        self.proofs_map
+            .contains_key(&Hash(verifier_data_hash.elements))
     }
 }
 
