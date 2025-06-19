@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut game_signer = Signer(game_sk);
 
-    // Build 2 signed pods where the game assings points to a player that has completed a level.
+    // Build 2 signed pods where the game assigns points to a player that has completed a level.
     let mut builder = SignedPodBuilder::new(&params);
     builder.insert("player", "Alice");
     builder.insert("level", 1);
