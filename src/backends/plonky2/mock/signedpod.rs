@@ -10,9 +10,8 @@ use crate::{
     },
     constants::MAX_DEPTH,
     middleware::{
-        containers::Dictionary, hash_str, serialization::ordered_map, AnchoredKey, DynError, Key,
-        Params, Pod, PodId, PodSigner, PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE,
-        SELF,
+        containers::Dictionary, hash_str, serialization::ordered_map, AnchoredKey, Key, Params,
+        Pod, PodId, PodSigner, PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE, SELF,
     },
 };
 
@@ -41,11 +40,7 @@ impl MockSigner {
 }
 
 impl PodSigner for MockSigner {
-    fn sign(
-        &mut self,
-        params: &Params,
-        kvs: &HashMap<Key, Value>,
-    ) -> Result<Box<dyn Pod>, Box<DynError>> {
+    fn sign(&mut self, params: &Params, kvs: &HashMap<Key, Value>) -> Result<Box<dyn Pod>> {
         Ok(self._sign(params, kvs).map(Box::new)?)
     }
 }
@@ -69,7 +64,30 @@ impl MockSignedPod {
         self.signature.clone()
     }
 
-    fn _verify(&self) -> Result<()> {
+    pub(crate) fn deserialize(id: PodId, data: serde_json::Value) -> Result<Box<dyn Pod>> {
+        let data: Data = serde_json::from_value(data)?;
+        Ok(Box::new(Self {
+            id,
+            signature: data.signature,
+            kvs: data.kvs,
+        }))
+    }
+    /// Generate a valid MockSignedPod with a public deterministic public key and no other
+    /// key-values than the default ones.  This is used for padding.
+    pub fn dummy() -> MockSignedPod {
+        MockSigner {
+            pk: "dummy".to_string(),
+        }
+        ._sign(&Params::default(), &HashMap::new())
+        .expect("valid")
+    }
+}
+
+impl Pod for MockSignedPod {
+    fn params(&self) -> &Params {
+        panic!("MockSignedPod doesn't have params");
+    }
+    fn verify(&self) -> Result<()> {
         // 1. Verify id
         let mt = MerkleTree::new(
             MAX_DEPTH,
@@ -110,33 +128,6 @@ impl MockSignedPod {
         }
 
         Ok(())
-    }
-
-    pub(crate) fn deserialize(id: PodId, data: serde_json::Value) -> Result<Box<dyn Pod>> {
-        let data: Data = serde_json::from_value(data)?;
-        Ok(Box::new(Self {
-            id,
-            signature: data.signature,
-            kvs: data.kvs,
-        }))
-    }
-    /// Generate a valid MockSignedPod with a public deterministic public key and no other
-    /// key-values than the default ones.  This is used for padding.
-    pub fn dummy() -> MockSignedPod {
-        MockSigner {
-            pk: "dummy".to_string(),
-        }
-        ._sign(&Params::default(), &HashMap::new())
-        .expect("valid")
-    }
-}
-
-impl Pod for MockSignedPod {
-    fn params(&self) -> &Params {
-        panic!("MockSignedPod doesn't have params");
-    }
-    fn verify(&self) -> Result<(), Box<DynError>> {
-        Ok(self._verify()?)
     }
 
     fn id(&self) -> PodId {
@@ -195,7 +186,7 @@ pub mod tests {
             .downcast::<MockSignedPod>()
             .unwrap();
 
-        pod._verify()?;
+        pod.verify()?;
         println!("id: {}", pod.id());
         println!("kvs: {:?}", pod.kvs());
 

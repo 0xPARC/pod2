@@ -121,16 +121,7 @@ impl From<Hash> for RawValue {
 
 impl fmt::Display for RawValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.0[2].is_zero() && self.0[3].is_zero() {
-            // Assume this is an integer
-            let (l0, l1) = (self.0[0].to_canonical_u64(), self.0[1].to_canonical_u64());
-            assert!(l0 < (1 << 32));
-            assert!(l1 < (1 << 32));
-            write!(f, "{}", l0 + l1 * (1 << 32))
-        } else {
-            // Assume this is a hash
-            Hash(self.0).fmt(f)
-        }
+        Hash(self.0).fmt(f)
     }
 }
 
@@ -206,14 +197,19 @@ impl Ord for Hash {
     }
 }
 
-// TODO: In alternate mode, don't shorten the hash
 impl fmt::Display for Hash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let v0 = self.0[0].to_canonical_u64();
-        for i in 0..HASH_SIZE {
-            write!(f, "{:02x}", (v0 >> (i * 8)) & 0xff)?;
+        if f.alternate() {
+            write!(f, "0x{}", self.encode_hex::<String>())
+        } else {
+            // display first hex digit in big endian
+            write!(f, "0x")?;
+            let v3 = self.0[3].to_canonical_u64();
+            for i in 0..4 {
+                write!(f, "{:02x}", (v3 >> ((7 - i) * 8)) & 0xff)?;
+            }
+            write!(f, "…")
         }
-        write!(f, "…")
     }
 }
 

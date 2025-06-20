@@ -20,9 +20,10 @@ use crate::{
     },
     constants::MAX_DEPTH,
     middleware::{
-        containers::Dictionary, AnchoredKey, DynError, Hash, Key, Params, Pod, PodId, PodSigner,
-        PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE, SELF,
+        containers::Dictionary, AnchoredKey, Hash, Key, Params, Pod, PodId, PodSigner, PodType,
+        RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE, SELF,
     },
+    timed,
 };
 
 pub struct Signer(pub SecretKey);
@@ -42,7 +43,7 @@ impl Signer {
         let dict = Dictionary::new(params.max_depth_mt_containers, kvs)?;
         let id = RawValue::from(dict.commitment()); // PodId as Value
 
-        let signature: Signature = self.0.sign(id, &nonce);
+        let signature: Signature = timed!("SignedPod::sign", self.0.sign(id, &nonce));
         Ok(SignedPod {
             id: PodId(Hash::from(id)),
             signature,
@@ -61,11 +62,7 @@ impl Signer {
 }
 
 impl PodSigner for Signer {
-    fn sign(
-        &mut self,
-        params: &Params,
-        kvs: &HashMap<Key, Value>,
-    ) -> Result<Box<dyn Pod>, Box<DynError>> {
+    fn sign(&mut self, params: &Params, kvs: &HashMap<Key, Value>) -> Result<Box<dyn Pod>> {
         Ok(self._sign(params, kvs).map(Box::new)?)
     }
 }
@@ -95,44 +92,6 @@ fn dummy() -> SignedPod {
 }
 
 impl SignedPod {
-    fn _verify(&self) -> Result<()> {
-        // 1. Verify type
-        let value_at_type = self.dict.get(&Key::from(KEY_TYPE))?;
-        if Value::from(PodType::Signed) != *value_at_type {
-            return Err(Error::type_not_equal(
-                PodType::Signed,
-                value_at_type.clone(),
-            ));
-        }
-
-        // 2. Verify id
-        let mt = MerkleTree::new(
-            MAX_DEPTH,
-            &self
-                .dict
-                .kvs()
-                .iter()
-                .map(|(k, v)| (k.raw(), v.raw()))
-                .collect::<HashMap<RawValue, RawValue>>(),
-        )?;
-        let id = PodId(mt.root());
-        if id != self.id {
-            return Err(Error::id_not_equal(self.id, id));
-        }
-
-        // 3. Verify signature
-        let embedded_pk_value = self.dict.get(&Key::from(KEY_SIGNER))?;
-        let pk = self.signer;
-        let pk_value = Value::from(pk);
-        if &pk_value != embedded_pk_value {
-            return Err(Error::signer_not_equal(embedded_pk_value.clone(), pk_value));
-        }
-        self.signature
-            .verify(pk, RawValue::from(id.0))
-            .then_some(())
-            .ok_or(Error::custom("Invalid signature!".into()))
-    }
-
     pub(crate) fn deserialize(id: PodId, data: serde_json::Value) -> Result<Box<dyn Pod>> {
         let data: Data = serde_json::from_value(data)?;
         let signer_bytes = deserialize_bytes(&data.signer)?;
@@ -171,8 +130,42 @@ impl Pod for SignedPod {
     fn params(&self) -> &Params {
         panic!("SignedPod doesn't have params");
     }
-    fn verify(&self) -> Result<(), Box<DynError>> {
-        Ok(self._verify().map_err(Box::new)?)
+    fn verify(&self) -> Result<()> {
+        // 1. Verify type
+        let value_at_type = self.dict.get(&Key::from(KEY_TYPE))?;
+        if Value::from(PodType::Signed) != *value_at_type {
+            return Err(Error::type_not_equal(
+                PodType::Signed,
+                value_at_type.clone(),
+            ));
+        }
+
+        // 2. Verify id
+        let mt = MerkleTree::new(
+            MAX_DEPTH,
+            &self
+                .dict
+                .kvs()
+                .iter()
+                .map(|(k, v)| (k.raw(), v.raw()))
+                .collect::<HashMap<RawValue, RawValue>>(),
+        )?;
+        let id = PodId(mt.root());
+        if id != self.id {
+            return Err(Error::id_not_equal(self.id, id));
+        }
+
+        // 3. Verify signature
+        let embedded_pk_value = self.dict.get(&Key::from(KEY_SIGNER))?;
+        let pk = self.signer;
+        let pk_value = Value::from(pk);
+        if &pk_value != embedded_pk_value {
+            return Err(Error::signer_not_equal(embedded_pk_value.clone(), pk_value));
+        }
+        self.signature
+            .verify(pk, RawValue::from(id.0))
+            .then_some(())
+            .ok_or(Error::custom("Invalid signature!".into()))
     }
 
     fn id(&self) -> PodId {
@@ -238,7 +231,7 @@ pub mod tests {
         let pod = pod.sign(&mut signer).unwrap();
         let pod = (pod.pod as Box<dyn Any>).downcast::<SignedPod>().unwrap();
 
-        pod._verify()?;
+        pod.verify()?;
         println!("id: {}", pod.id());
         println!("kvs: {:?}", pod.kvs());
 

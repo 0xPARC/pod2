@@ -20,16 +20,17 @@ use crate::{
         error::{Error, Result},
         mock::{emptypod::MockEmptyPod, signedpod::MockSignedPod},
         primitives::merkletree::MerkleClaimAndProof,
-        recursion::{RecursiveCircuit, RecursiveParams},
+        recursion::{hash_verifier_data, RecursiveCircuit, RecursiveParams},
         serialize_proof,
         signedpod::SignedPod,
         STANDARD_REC_MAIN_POD_CIRCUIT_DATA,
     },
     middleware::{
-        self, resolve_wildcard_values, value_from_op, AnchoredKey, CustomPredicateBatch, DynError,
-        Hash, MainPodInputs, NativeOperation, OperationType, Params, Pod, PodId, PodProver,
-        PodType, RecursivePod, StatementArg, ToFields, VDSet, F, KEY_TYPE, SELF,
+        self, resolve_wildcard_values, value_from_op, AnchoredKey, CustomPredicateBatch, Hash,
+        MainPodInputs, NativeOperation, OperationType, Params, Pod, PodId, PodProver, PodType,
+        RecursivePod, StatementArg, ToFields, VDSet, F, KEY_TYPE, SELF,
     },
+    timed,
 };
 
 /// Hash a list of public statements to derive the PodId.  To make circuits with different number
@@ -293,9 +294,9 @@ pub(crate) fn layout_statements(
     let empty_pod_box: Box<dyn RecursivePod> =
         if mock || inputs.recursive_pods.len() == params.max_input_recursive_pods {
             // We mocking or we don't need padding so we skip creating an EmptyPod
-            MockEmptyPod::new_boxed(params)
+            MockEmptyPod::new_boxed(params, inputs.vd_set.clone())
         } else {
-            EmptyPod::new_boxed(params, inputs.vds_set.root())
+            EmptyPod::new_boxed(params, inputs.vd_set.clone())
         };
     let empty_pod = empty_pod_box.as_ref();
     assert!(inputs.recursive_pods.len() <= params.max_input_recursive_pods);
@@ -431,8 +432,13 @@ pub(crate) fn process_public_statements_operations(
 
 pub struct Prover {}
 
-impl Prover {
-    fn _prove(&self, params: &Params, vd_set: &VDSet, inputs: MainPodInputs) -> Result<MainPod> {
+impl PodProver for Prover {
+    fn prove(
+        &self,
+        params: &Params,
+        vd_set: &VDSet,
+        inputs: MainPodInputs,
+    ) -> Result<Box<dyn RecursivePod>> {
         let rec_circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
         let (main_pod_target, circuit_data) =
             RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data_padded(
@@ -465,9 +471,9 @@ impl Prover {
         // Pad input recursive pods with empty pods if necessary
         let empty_pod = if inputs.recursive_pods.len() == params.max_input_recursive_pods {
             // We don't need padding so we skip creating an EmptyPod
-            MockEmptyPod::new_boxed(params)
+            MockEmptyPod::new_boxed(params, inputs.vd_set.clone())
         } else {
-            EmptyPod::new_boxed(params, inputs.vds_set.root())
+            EmptyPod::new_boxed(params, inputs.vd_set.clone())
         };
         let inputs = MainPodInputs {
             recursive_pods: &inputs
@@ -514,10 +520,10 @@ impl Prover {
             .recursive_pods
             .iter()
             .map(|pod| {
-                assert_eq!(inputs.vds_set.root(), pod.vds_root());
+                assert_eq!(inputs.vd_set.root(), pod.vd_set().root());
                 ProofWithPublicInputs {
                     proof: pod.proof(),
-                    public_inputs: [pod.id().0 .0, inputs.vds_set.root().0].concat(),
+                    public_inputs: [pod.id().0 .0, inputs.vd_set.root().0].concat(),
                 }
             })
             .collect_vec();
@@ -530,7 +536,7 @@ impl Prover {
         let vd_mt_proofs = vd_set.get_vds_proofs(&verifier_datas)?;
 
         let input = MainPodVerifyInput {
-            vds_set: inputs.vds_set.clone(),
+            vds_set: inputs.vd_set.clone(),
             vd_mt_proofs,
             signed_pods: signed_pods_input,
             recursive_pods_pub_self_statements,
@@ -540,26 +546,18 @@ impl Prover {
             custom_predicate_batches,
             custom_predicate_verifications,
         };
-        let proof_with_pis = main_pod.prove(&input, proofs, verifier_datas)?;
+        let proof_with_pis = timed!(
+            "MainPod::prove",
+            main_pod.prove(&input, proofs, verifier_datas)?
+        );
 
-        Ok(MainPod {
+        Ok(Box::new(MainPod {
             params: params.clone(),
             id,
-            vds_root: inputs.vds_set.root(),
+            vd_set: inputs.vd_set,
             public_statements,
             proof: proof_with_pis.proof,
-        })
-    }
-}
-
-impl PodProver for Prover {
-    fn prove(
-        &self,
-        params: &Params,
-        vd_set: &VDSet,
-        inputs: MainPodInputs,
-    ) -> Result<Box<dyn RecursivePod>, Box<DynError>> {
-        Ok(self._prove(params, vd_set, inputs).map(Box::new)?)
+        }))
     }
 }
 
@@ -572,7 +570,7 @@ pub struct MainPod {
     /// the succession of recursive MainPods, which when proving the POD, it is
     /// proven that all the recursive proofs that are being verified in-circuit
     /// use one of the verifier_data's contained in the VDSet.
-    vds_root: Hash,
+    vd_set: VDSet,
     public_statements: Vec<Statement>,
     proof: Proof,
 }
@@ -581,7 +579,7 @@ pub struct MainPod {
 // a serialized proof. At some point in the future, this data may be available
 // as a constant or with static initialization, but in the meantime we can
 // generate it on-demand.
-fn get_common_data(params: &Params) -> Result<CommonCircuitData<F, D>, Error> {
+pub fn get_common_data(params: &Params) -> Result<CommonCircuitData<F, D>, Error> {
     // TODO: Cache this somehow
     // https://github.com/0xPARC/pod2/issues/247
     let rec_circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
@@ -601,11 +599,35 @@ struct Data {
 }
 
 impl MainPod {
-    fn _verify(&self) -> Result<()> {
+    pub fn proof(&self) -> Proof {
+        self.proof.clone()
+    }
+
+    pub fn params(&self) -> &Params {
+        &self.params
+    }
+}
+
+impl Pod for MainPod {
+    fn params(&self) -> &Params {
+        &self.params
+    }
+    fn verify(&self) -> Result<()> {
         // 2. get the id out of the public statements
         let id = PodId(calculate_id(&self.public_statements, &self.params));
         if id != self.id {
             return Err(Error::id_not_equal(self.id, id));
+        }
+
+        // 7. verifier_data_hash is in the VDSet
+        let verifier_data = self.verifier_data();
+        let verifier_data_hash = hash_verifier_data(&verifier_data);
+        if !self.vd_set.contains(verifier_data_hash) {
+            return Err(Error::custom(format!(
+                "vds_root in input recursive pod not in the set: {} not in {}",
+                Hash(verifier_data_hash.elements),
+                self.vd_set.root(),
+            )));
         }
 
         // 1, 3, 4, 5 verification via the zkSNARK proof
@@ -621,7 +643,7 @@ impl MainPod {
         let public_inputs = id
             .to_fields(&self.params)
             .iter()
-            .chain(self.vds_root.0.iter())
+            .chain(self.vd_set.root().0.iter())
             .cloned()
             .collect_vec();
         circuit_data
@@ -629,46 +651,7 @@ impl MainPod {
                 proof: self.proof.clone(),
                 public_inputs,
             })
-            .map_err(|e| Error::custom(format!("MainPod proof verification failure: {:?}", e)))
-    }
-
-    pub fn proof(&self) -> Proof {
-        self.proof.clone()
-    }
-
-    pub fn vds_root(&self) -> Hash {
-        self.vds_root
-    }
-
-    pub fn params(&self) -> &Params {
-        &self.params
-    }
-
-    pub(crate) fn deserialize(
-        params: Params,
-        id: PodId,
-        vds_root: Hash,
-        data: serde_json::Value,
-    ) -> Result<Box<dyn RecursivePod>> {
-        let data: Data = serde_json::from_value(data)?;
-        let common = get_common_data(&params)?;
-        let proof = deserialize_proof(&common, &data.proof)?;
-        Ok(Box::new(Self {
-            params,
-            id,
-            vds_root,
-            proof,
-            public_statements: data.public_statements,
-        }))
-    }
-}
-
-impl Pod for MainPod {
-    fn params(&self) -> &Params {
-        &self.params
-    }
-    fn verify(&self) -> Result<(), Box<DynError>> {
-        Ok(self._verify()?)
+            .map_err(|e| Error::plonky2_proof_fail("MainPod", e))
     }
 
     fn id(&self) -> PodId {
@@ -703,8 +686,25 @@ impl RecursivePod for MainPod {
     fn proof(&self) -> Proof {
         self.proof.clone()
     }
-    fn vds_root(&self) -> Hash {
-        self.vds_root
+    fn vd_set(&self) -> &VDSet {
+        &self.vd_set
+    }
+    fn deserialize_data(
+        params: Params,
+        data: serde_json::Value,
+        vd_set: VDSet,
+        id: PodId,
+    ) -> Result<Box<dyn RecursivePod>> {
+        let data: Data = serde_json::from_value(data)?;
+        let common = get_common_data(&params)?;
+        let proof = deserialize_proof(&common, &data.proof)?;
+        Ok(Box::new(Self {
+            params,
+            id,
+            vd_set,
+            proof,
+            public_statements: data.public_statements,
+        }))
     }
 }
 
@@ -874,6 +874,7 @@ pub mod tests {
         let dist_1 = helper
             .dist_1(&alice_attestation)?
             .prove(&mut prover, &params)?;
+        crate::measure_gates_print!();
         dist_1.pod.verify()?;
         let dist_2 = helper
             .dist_n_plus_1(&dist_1, &bob_attestation)?

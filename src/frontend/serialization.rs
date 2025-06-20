@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use super::Error;
 use crate::{
     frontend::{MainPod, SignedPod},
-    middleware::{deserialize_pod, deserialize_signed_pod, Hash, Params, PodId},
+    middleware::{deserialize_pod, deserialize_signed_pod, Params, PodId, VDSet},
 };
 
 #[derive(Serialize, Deserialize, JsonSchema)]
@@ -29,7 +29,7 @@ pub struct SerializedMainPod {
     params: Params,
     pod_type: (usize, String),
     id: PodId,
-    vds_root: Hash,
+    vd_set: VDSet,
     data: serde_json::Value,
 }
 
@@ -62,7 +62,7 @@ impl From<MainPod> for SerializedMainPod {
         SerializedMainPod {
             pod_type: (pod_type, pod_type_name_str.to_string()),
             id: pod.id(),
-            vds_root: pod.pod.vds_root(),
+            vd_set: pod.pod.vd_set().clone(),
             params: pod.params.clone(),
             data,
         }
@@ -77,7 +77,7 @@ impl TryFrom<SerializedMainPod> for MainPod {
             serialized.pod_type.0,
             serialized.params.clone(),
             serialized.id,
-            serialized.vds_root,
+            serialized.vd_set,
             serialized.data,
         )?;
         let public_statements = pod.pub_statements();

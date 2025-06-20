@@ -3,16 +3,14 @@ use std::{
     sync::{LazyLock, Mutex},
 };
 
-use crate::middleware::{
-    BackendResult, Error, Hash, Params, Pod, PodId, PodType, RecursivePod, Result,
-};
+use crate::middleware::{BackendError, Params, Pod, PodId, PodType, RecursivePod, Result, VDSet};
 
 type DeserializeFn = fn(
     params: Params,
-    id: PodId,
-    vds_root: Hash,
     data: serde_json::Value,
-) -> BackendResult<Box<dyn RecursivePod>>;
+    vd_set: VDSet,
+    id: PodId,
+) -> Result<Box<dyn RecursivePod>, BackendError>;
 
 static DESERIALIZERS: LazyLock<Mutex<HashMap<usize, DeserializeFn>>> =
     LazyLock::new(backend::deserializers_default);
@@ -28,28 +26,27 @@ pub fn deserialize_pod(
     pod_type: usize,
     params: Params,
     id: PodId,
-    vds_root: Hash,
+    vd_set: VDSet,
     data: serde_json::Value,
-) -> Result<Box<dyn RecursivePod>> {
+) -> Result<Box<dyn RecursivePod>, BackendError> {
     let deserialize_fn: DeserializeFn =
         *DESERIALIZERS
             .lock()
             .unwrap()
             .get(&pod_type)
-            .ok_or(Error::custom(format!(
+            .ok_or(BackendError::custom(format!(
                 "pod deserializer for pod_type={} not registered.  See https://github.com/0xPARC/pod2/wiki/PodType for pod type assignments.",
                 pod_type
             )))?;
 
-    deserialize_fn(params, id, vds_root, data)
-        .map_err(|e| Error::custom(format!("deserialize error: {:?}", e)))
+    deserialize_fn(params, data, vd_set, id)
 }
 
 pub fn deserialize_signed_pod(
     pod_type: usize,
     id: PodId,
     data: serde_json::Value,
-) -> Result<Box<dyn Pod>> {
+) -> Result<Box<dyn Pod>, BackendError> {
     backend::deserialize_signed_pod(pod_type, id, data)
 }
 
@@ -65,10 +62,10 @@ mod backend {
 
     pub(super) fn deserializers_default() -> Mutex<HashMap<usize, DeserializeFn>> {
         let mut map: HashMap<usize, DeserializeFn> = HashMap::new();
-        map.insert(PodType::Empty as usize, EmptyPod::deserialize);
-        map.insert(PodType::Main as usize, MainPod::deserialize);
-        map.insert(PodType::MockEmpty as usize, MockEmptyPod::deserialize);
-        map.insert(PodType::MockMain as usize, MockMainPod::deserialize);
+        map.insert(PodType::Empty as usize, EmptyPod::deserialize_data);
+        map.insert(PodType::Main as usize, MainPod::deserialize_data);
+        map.insert(PodType::MockEmpty as usize, MockEmptyPod::deserialize_data);
+        map.insert(PodType::MockMain as usize, MockMainPod::deserialize_data);
         Mutex::new(map)
     }
 
@@ -76,15 +73,13 @@ mod backend {
         pod_type: usize,
         id: PodId,
         data: serde_json::Value,
-    ) -> Result<Box<dyn Pod>> {
+    ) -> Result<Box<dyn Pod>, BackendError> {
         if pod_type == PodType::MockSigned as usize {
             MockSignedPod::deserialize(id, data)
-                .map_err(|e| Error::custom(format!("deserialize error: {:?}", e)))
         } else if pod_type == PodType::Signed as usize {
             SignedPod::deserialize(id, data)
-                .map_err(|e| Error::custom(format!("deserialize error: {:?}", e)))
         } else {
-            Err(Error::custom(format!(
+            Err(BackendError::custom(format!(
                 "unexpected pod_type={} for deserialize_signed_pod",
                 pod_type
             )))

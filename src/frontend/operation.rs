@@ -45,33 +45,15 @@ impl fmt::Display for OperationArg {
     }
 }
 
-impl From<Value> for OperationArg {
-    fn from(v: Value) -> Self {
-        Self::Literal(v)
+impl<V: Into<Value>> From<V> for OperationArg {
+    fn from(value: V) -> Self {
+        Self::Literal(value.into())
     }
 }
 
 impl From<&Value> for OperationArg {
     fn from(v: &Value) -> Self {
         Self::Literal(v.clone())
-    }
-}
-
-impl From<&str> for OperationArg {
-    fn from(s: &str) -> Self {
-        Self::Literal(Value::from(s))
-    }
-}
-
-impl From<i64> for OperationArg {
-    fn from(v: i64) -> Self {
-        Self::Literal(Value::from(v))
-    }
-}
-
-impl From<bool> for OperationArg {
-    fn from(b: bool) -> Self {
-        Self::Literal(Value::from(b))
     }
 }
 
