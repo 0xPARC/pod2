@@ -11,10 +11,10 @@ use std::{
 use num::{bigint::BigUint, Num, One};
 use plonky2::{
     field::{
-        extension::{quintic::QuinticExtension, Extendable, FieldExtension},
+        extension::{quintic::QuinticExtension, Extendable, FieldExtension, Frobenius},
         goldilocks_field::GoldilocksField,
         ops::Square,
-        types::{Field, PrimeField},
+        types::{Field, Field64, PrimeField},
     },
     hash::poseidon::PoseidonHash,
     iop::{generator::SimpleGenerator, target::BoolTarget, witness::WitnessWrite},
@@ -34,6 +34,30 @@ use crate::backends::plonky2::{
 };
 
 type ECField = QuinticExtension<GoldilocksField>;
+
+/// Computes sqrt in ECField as sqrt(x) = sqrt(x^r)/x^((r-1)/2) with r
+/// = 1 + p + ... + p^4, where the numerator involves a sqrt in
+/// GoldilocksField, cf.
+/// https://github.com/pornin/ecgfp5/blob/ce059c6d1e1662db437aecbf3db6bb67fe63c716/rust/src/field.rs#L1041
+pub fn ec_field_sqrt(x: &ECField) -> Option<ECField> {
+    // Compute x^r.
+    let x_to_the_r = (0..5)
+        .map(|i| x.repeated_frobenius(i))
+        .reduce(|a, b| a * b)
+        .expect("Iterator should be nonempty.");
+    let num = QuinticExtension([
+        x_to_the_r.0[0].sqrt()?,
+        GoldilocksField::ZERO,
+        GoldilocksField::ZERO,
+        GoldilocksField::ZERO,
+        GoldilocksField::ZERO,
+    ]);
+    // Compute x^((r-1)/2) = x^(p*((1+p)/2)*(1+p^2))
+    let x1 = x.frobenius();
+    let x2 = x1.exp_u64((1 + GoldilocksField::ORDER) / 2);
+    let den = x2 * x2.repeated_frobenius(2);
+    Some(num / den)
+}
 
 fn ec_field_to_bytes(x: &ECField) -> Vec<u8> {
     x.0.iter()
@@ -78,14 +102,39 @@ impl Point {
     pub fn as_fields(&self) -> Vec<crate::middleware::F> {
         self.x.0.iter().chain(self.u.0.iter()).cloned().collect()
     }
-    pub fn as_bytes(&self) -> Vec<u8> {
-        [ec_field_to_bytes(&self.x), ec_field_to_bytes(&self.u)].concat()
+    pub fn compress_from_subgroup(&self) -> Result<ECField, Error> {
+        match self.is_in_subgroup() {
+            true => Ok(self.u),
+            false => Err(Error::custom(format!(
+                "Point must lie in EC subgroup: ({}, {})",
+                self.x, self.u
+            ))),
+        }
     }
-    pub fn from_bytes(b: &[u8]) -> Result<Self, Error> {
-        let x_bytes = &b[..40];
-        let u_bytes = &b[40..];
-        ec_field_from_bytes(x_bytes)
-            .and_then(|x| ec_field_from_bytes(u_bytes).map(|u| Self { x, u }))
+    pub fn decompress_into_subgroup(u: &ECField) -> Result<Self, Error> {
+        if u == &ECField::ZERO {
+            return Ok(Self::ZERO);
+        }
+        // Figure out x.
+        let b = ECField::TWO - ECField::ONE / (u.square());
+        let d = b.square() - ECField::TWO.square() * Self::b();
+        let alpha = ECField::NEG_ONE * b / ECField::TWO;
+        let beta = ec_field_sqrt(&d)
+            .ok_or(Error::custom(format!("Not a quadratic residue: {}", d)))?
+            / ECField::TWO;
+        let mut points = [ECField::ONE, ECField::NEG_ONE].into_iter().map(|s| Point {
+            x: alpha + s * beta,
+            u: *u,
+        });
+        points.find(|p| p.is_in_subgroup()).ok_or(Error::custom(
+            "One of the points must lie in the EC subgroup.".into(),
+        ))
+    }
+    pub fn as_bytes_from_subgroup(&self) -> Result<Vec<u8>, Error> {
+        self.compress_from_subgroup().map(|u| ec_field_to_bytes(&u))
+    }
+    pub fn from_bytes_into_subgroup(b: &[u8]) -> Result<Self, Error> {
+        ec_field_from_bytes(b).and_then(|u| Self::decompress_into_subgroup(&u))
     }
 }
 
@@ -648,7 +697,12 @@ mod test {
     use num::{BigUint, FromPrimitive};
     use num_bigint::RandBigInt;
     use plonky2::{
-        field::{goldilocks_field::GoldilocksField, types::Field},
+        field::{
+            extension::quintic::QuinticExtension,
+            goldilocks_field::GoldilocksField,
+            ops::Square,
+            types::{Field, Sample},
+        },
         iop::witness::PartialWitness,
         plonk::{
             circuit_builder::CircuitBuilder, circuit_data::CircuitConfig,
@@ -659,7 +713,9 @@ mod test {
 
     use crate::backends::plonky2::primitives::ec::{
         bits::CircuitBuilderBits,
-        curve::{CircuitBuilderElliptic, ECField, Point, WitnessWriteCurve, GROUP_ORDER},
+        curve::{
+            ec_field_sqrt, CircuitBuilderElliptic, ECField, Point, WitnessWriteCurve, GROUP_ORDER,
+        },
     };
 
     #[test]
@@ -686,6 +742,13 @@ mod test {
         let p3 = (&three) * g;
         assert_eq!(p1, p2);
         assert_eq!(p2, p3);
+    }
+
+    #[test]
+    fn test_sqrt() {
+        let x = QuinticExtension::rand().square();
+        let y = ec_field_sqrt(&x);
+        assert_eq!(y.map(|a| a.square()), Some(x));
     }
 
     #[test]
