@@ -896,7 +896,7 @@ pub mod tests {
         check_kvs(&sanction_list)?;
         println!("{}", sanction_list);
 
-        let kyc_builder = zu_kyc_pod_builder(&params, &vd_set, &gov_id, &pay_stub, &sanction_list)?;
+        let kyc_builder = zu_kyc_pod_builder(&params, vd_set, &gov_id, &pay_stub, &sanction_list)?;
         println!("{}", kyc_builder);
 
         // prove kyc with MockProver and print it
@@ -981,7 +981,7 @@ pub mod tests {
         let mut signer = MockSigner { pk: "key".into() };
         let signed_pod = signed_builder.sign(&mut signer).unwrap();
 
-        let mut builder = MainPodBuilder::new(&params, &vd_set);
+        let mut builder = MainPodBuilder::new(&params, vd_set);
         builder.add_signed_pod(&signed_pod);
 
         //let op_val1 = Operation{
@@ -1037,7 +1037,7 @@ pub mod tests {
 
         println!("{}", pod);
 
-        let mut builder = MainPodBuilder::new(&params, &vd_set);
+        let mut builder = MainPodBuilder::new(&params, vd_set);
         builder.add_signed_pod(&pod);
         builder.pub_op(op!(gt, (&pod, "num"), 5)).unwrap();
 
@@ -1069,7 +1069,7 @@ pub mod tests {
         };
         let pod = builder.sign(&mut signer).unwrap();
 
-        let mut builder = MainPodBuilder::new(&params, &vd_set);
+        let mut builder = MainPodBuilder::new(&params, vd_set);
         builder.add_signed_pod(&pod);
         let st0 = pod.get_statement("dict").unwrap();
         let st1 = builder.op(true, op!(new_entry, "key", "a")).unwrap();
@@ -1106,7 +1106,7 @@ pub mod tests {
 
         let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
-        let mut builder = MainPodBuilder::new(&params, &vd_set);
+        let mut builder = MainPodBuilder::new(&params, vd_set);
         let st = Statement::equal(AnchoredKey::from((SELF, "a")), Value::from(3));
         let op_new_entry = Operation(
             OperationType::Native(NativeOperation::NewEntry),
@@ -1130,7 +1130,7 @@ pub mod tests {
         // right now the mock prover catches this when it calls compile()
         let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
-        let mut builder = MainPodBuilder::new(&params, &vd_set);
+        let mut builder = MainPodBuilder::new(&params, vd_set);
         let self_a = AnchoredKey::from((SELF, "a"));
         let self_b = AnchoredKey::from((SELF, "b"));
         let value_of_a = Statement::equal(self_a.clone(), Value::from(3));

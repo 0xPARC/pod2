@@ -96,7 +96,10 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        backends::plonky2::primitives::ec::{curve::GROUP_ORDER, schnorr::SecretKey},
+        backends::plonky2::{
+            primitives::ec::{curve::GROUP_ORDER, schnorr::SecretKey},
+            recursion::circuit::std_zk_config,
+        },
         middleware::Hash,
     };
 
@@ -111,7 +114,7 @@ pub mod tests {
         assert!(sig.verify(pk, msg), "Should verify");
 
         // circuit
-        let config = CircuitConfig::standard_recursion_zk_config();
+        let config = std_zk_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
@@ -145,7 +148,7 @@ pub mod tests {
         assert!(!v, "should fail to verify");
 
         // circuit
-        let config = CircuitConfig::standard_recursion_zk_config();
+        let config = std_zk_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
         let targets = SignatureVerifyGadget {}.eval(&mut builder)?;
@@ -158,7 +161,7 @@ pub mod tests {
         // build the circuit again, but now disable the selector ('enabled')
         // that disables the in-circuit signature verification (ie.
         // `enabled=false`)
-        let config = CircuitConfig::standard_recursion_zk_config();
+        let config = std_zk_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 

@@ -1419,15 +1419,14 @@ impl SimpleGenerator<F, D> for LtMaskGenerator {
 pub(crate) mod tests {
     use anyhow::anyhow;
     use itertools::Itertools;
-    use plonky2::plonk::{
-        circuit_builder::CircuitBuilder, circuit_data::CircuitConfig,
-        config::PoseidonGoldilocksConfig,
-    };
+    use plonky2::plonk::{circuit_builder::CircuitBuilder, config::PoseidonGoldilocksConfig};
 
     use super::*;
     use crate::{
-        backends::plonky2::basetypes::C, examples::custom::eth_dos_batch, frontend,
-        frontend::CustomPredicateBatchBuilder, middleware::CustomPredicateBatch,
+        backends::plonky2::{basetypes::C, recursion::circuit::std_config},
+        examples::custom::eth_dos_batch,
+        frontend::{self, CustomPredicateBatchBuilder},
+        middleware::CustomPredicateBatch,
     };
 
     pub(crate) const I64_TEST_PAIRS: [(i64, i64); 36] = [
@@ -1475,7 +1474,7 @@ pub(crate) mod tests {
     #[test]
     fn custom_predicate_target() -> frontend::Result<()> {
         let params = Params::default();
-        let config = CircuitConfig::standard_recursion_config();
+        let config = std_config();
 
         let custom_predicate_batch = eth_dos_batch(&params, false)?;
 
@@ -1504,7 +1503,7 @@ pub(crate) mod tests {
         params: &Params,
         custom_predicate_batch: &CustomPredicateBatch,
     ) -> Result<()> {
-        let config = CircuitConfig::standard_recursion_config();
+        let config = std_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
 
         let custom_predicate_batch_target = builder.add_virtual_custom_predicate_batch(params);
@@ -1553,7 +1552,7 @@ pub(crate) mod tests {
     #[test]
     fn test_i64_addition() -> Result<(), anyhow::Error> {
         // Circuit declaration
-        let config = CircuitConfig::standard_recursion_config();
+        let config = std_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let x_target = ValueTarget::from_slice(&builder.add_virtual_target_arr::<VALUE_SIZE>());
         let y_target = ValueTarget::from_slice(&builder.add_virtual_target_arr::<VALUE_SIZE>());
@@ -1587,7 +1586,7 @@ pub(crate) mod tests {
     #[test]
     fn test_i64_multiplication() -> Result<(), anyhow::Error> {
         // Circuit declaration
-        let config = CircuitConfig::standard_recursion_config();
+        let config = std_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let x_target = ValueTarget::from_slice(&builder.add_virtual_target_arr::<VALUE_SIZE>());
         let y_target = ValueTarget::from_slice(&builder.add_virtual_target_arr::<VALUE_SIZE>());

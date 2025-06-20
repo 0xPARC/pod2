@@ -1609,7 +1609,7 @@ mod tests {
         field::{goldilocks_field::GoldilocksField, types::Field},
         hash::hash_types::HashOut,
         iop::witness::WitnessWrite,
-        plonk::{circuit_builder::CircuitBuilder, circuit_data::CircuitConfig},
+        plonk::circuit_builder::CircuitBuilder,
     };
 
     use super::*;
@@ -1619,6 +1619,7 @@ mod tests {
             circuits::common::tests::I64_TEST_PAIRS,
             mainpod::{calculate_id, OperationArg, OperationAux},
             primitives::merkletree::{MerkleClaimAndProof, MerkleTree},
+            recursion::circuit::std_config,
         },
         frontend::{self, literal, CustomPredicateBatchBuilder, StatementTmplBuilder},
         middleware::{
@@ -1642,7 +1643,7 @@ mod tests {
             max_depth: params.max_depth_mt_containers,
         };
 
-        let config = CircuitConfig::standard_recursion_config();
+        let config = std_config();
         let mut builder = CircuitBuilder::new(config);
 
         let st_target = builder.add_virtual_statement(&params);
@@ -2515,7 +2516,7 @@ mod tests {
         args: Vec<Value>,
         expected_st_arg: StatementArg,
     ) -> Result<()> {
-        let config = CircuitConfig::standard_recursion_config();
+        let config = std_config();
         let mut builder = CircuitBuilder::new(config);
         let gadget = CustomOperationVerifyGadget {
             params: params.clone(),
@@ -2587,7 +2588,7 @@ mod tests {
         args: Vec<Value>,
         expected_st: Statement,
     ) -> Result<()> {
-        let config = CircuitConfig::standard_recursion_config();
+        let config = std_config();
         let mut builder = CircuitBuilder::new(config);
         let gadget = CustomOperationVerifyGadget {
             params: params.clone(),
@@ -2648,7 +2649,7 @@ mod tests {
         args: Vec<Value>,
         expected_st: Option<Statement>,
     ) -> Result<()> {
-        let config = CircuitConfig::standard_recursion_config();
+        let config = std_config();
         let mut builder = CircuitBuilder::new(config);
         let gadget = CustomOperationVerifyGadget {
             params: params.clone(),
@@ -2964,7 +2965,7 @@ mod tests {
     }
 
     fn helper_calculate_id(params: &Params, statements: &[Statement]) -> Result<()> {
-        let config = CircuitConfig::standard_recursion_config();
+        let config = std_config();
         let mut builder = CircuitBuilder::new(config);
         let gadget = CalculateIdGadget {
             params: params.clone(),

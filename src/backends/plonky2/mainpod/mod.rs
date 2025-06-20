@@ -752,7 +752,7 @@ pub mod tests {
         let sanction_list_pod = sanction_list_builder.sign(&mut signer)?;
         let kyc_builder = zu_kyc_pod_builder(
             &params,
-            &vd_set,
+            vd_set,
             &gov_id_pod,
             &pay_stub_pod,
             &sanction_list_pod,
@@ -786,7 +786,7 @@ pub mod tests {
         let mut signer = Signer(SecretKey(42u64.into()));
         let gov_id = gov_id_builder.sign(&mut signer).unwrap();
         let now_minus_18y: i64 = 1169909388;
-        let mut kyc_builder = frontend::MainPodBuilder::new(&params, &vd_set);
+        let mut kyc_builder = frontend::MainPodBuilder::new(&params, vd_set);
         kyc_builder.add_signed_pod(&gov_id);
         kyc_builder
             .pub_op(op!(lt, (&gov_id, "dateOfBirth"), now_minus_18y))
@@ -834,7 +834,7 @@ pub mod tests {
         };
         let vd_set = &*DEFAULT_VD_SET;
 
-        let pod_builder = frontend::MainPodBuilder::new(&params, &vd_set);
+        let pod_builder = frontend::MainPodBuilder::new(&params, vd_set);
 
         // Mock
         let mut prover = MockProver {};
@@ -917,7 +917,7 @@ pub mod tests {
         let cpb_and = CustomPredicateRef::new(cpb.clone(), 0);
         let _cpb_or = CustomPredicateRef::new(cpb.clone(), 1);
 
-        let mut pod_builder = MainPodBuilder::new(&params, &vd_set);
+        let mut pod_builder = MainPodBuilder::new(&params, vd_set);
 
         let st0 = pod_builder.priv_op(op!(new_entry, "score", 42))?;
         let st1 = pod_builder.priv_op(op!(new_entry, "key", 42))?;

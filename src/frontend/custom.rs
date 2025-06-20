@@ -282,7 +282,7 @@ mod tests {
         let batch_clone = batch.clone();
         let gt_custom_pred = CustomPredicateRef::new(batch, 0);
 
-        let mut mp_builder = MainPodBuilder::new(&params, &vd_set);
+        let mut mp_builder = MainPodBuilder::new(&params, vd_set);
 
         // 2 > 1
         let s1 = mp_builder.priv_op(op!(new_entry, "s1_key", Value::from(2)))?;
@@ -331,7 +331,7 @@ mod tests {
         let batch = builder.finish();
         let batch_clone = batch.clone();
 
-        let mut mp_builder = MainPodBuilder::new(&params, &vd_set);
+        let mut mp_builder = MainPodBuilder::new(&params, vd_set);
 
         let set_values: HashSet<Value> = [1, 2, 3].iter().map(|i| Value::from(*i)).collect();
         let s1 = mp_builder.priv_op(op!(

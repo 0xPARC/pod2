@@ -382,7 +382,7 @@ pub fn great_boy_pod_full_flow() -> Result<(Params, MainPodBuilder)> {
 
     let builder = great_boy_pod_builder(
         &params,
-        &vd_set,
+        vd_set,
         [
             &bob_good_boys[0],
             &bob_good_boys[1],
