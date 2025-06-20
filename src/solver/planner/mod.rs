@@ -89,10 +89,24 @@ impl Planner {
         let mut remaining_literals: Vec<ir::Atom> = body.to_vec();
         let mut currently_bound = initial_bound.clone();
 
+        // Two-phase selection: first exhaust all non-native literals, then the native ones.
+        let mut picking_native_phase = false;
+
         while !remaining_literals.is_empty() {
+            // Helper: skip natives in the first phase
             let best_literal_index = remaining_literals
                 .iter()
                 .enumerate()
+                .filter(|(_, lit)| {
+                    if picking_native_phase {
+                        true // take everything in second phase
+                    } else {
+                        !matches!(
+                            lit.predicate,
+                            ir::PredicateIdentifier::Normal(Predicate::Native(_))
+                        )
+                    }
+                })
                 .max_by_key(|(_, literal)| {
                     self.get_adornment(literal, &currently_bound)
                         .iter()
@@ -101,19 +115,34 @@ impl Planner {
                 })
                 .map(|(i, _)| i);
 
-            if let Some(index) = best_literal_index {
-                let best_literal = remaining_literals.remove(index);
-
-                // Add all wildcards from the chosen literal to the set of bound variables for the next round.
-                if let Ok(newly_bound) = translator::collect_wildcards(&best_literal.terms) {
-                    currently_bound.extend(newly_bound);
+            if best_literal_index.is_none() {
+                // No candidate found in this phase → switch to native phase.
+                if !picking_native_phase {
+                    picking_native_phase = true;
+                    continue;
                 }
-
-                reordered_body.push(best_literal);
-            } else {
-                reordered_body.extend(remaining_literals.into_iter());
-                break;
             }
+
+            let Some(index) = best_literal_index else {
+                // Should not happen, but break to avoid infinite loop.
+                break;
+            };
+
+            let best_literal = remaining_literals.remove(index);
+
+            // Only wildcards that are *already bound* in this literal become available
+            // to later literals.  Otherwise we would mistakenly count variables in
+            // still-free positions as bound and distort the heuristic.
+            let adornment = self.get_adornment(&best_literal, &currently_bound);
+            for (term, bind) in best_literal.terms.iter().zip(adornment.iter()) {
+                if *bind == Binding::Bound {
+                    if let Ok(wcs) = translator::collect_wildcards(std::slice::from_ref(term)) {
+                        currently_bound.extend(wcs);
+                    }
+                }
+            }
+
+            reordered_body.push(best_literal);
         }
         reordered_body
     }
@@ -208,6 +237,21 @@ impl Planner {
                 let mut accumulated_bindings = bound_in_body.clone();
 
                 for literal in &reordered_body {
+                    // If this literal is a fully-bound native predicate, its constraint
+                    // should already apply to **this** propagation step.  Push it into
+                    // the guards *before* emitting any magic rule so its bindings are
+                    // taken into account.
+                    let adornment_now = self.get_adornment(literal, &accumulated_bindings);
+                    let is_fully_bound_native =
+                        matches!(
+                            &literal.predicate,
+                            ir::PredicateIdentifier::Normal(Predicate::Native(_))
+                        ) && adornment_now.iter().all(|b| *b == Binding::Bound);
+
+                    if is_fully_bound_native {
+                        accumulated_guards.push(literal.clone());
+                    }
+
                     let literal_cpr = match &literal.predicate {
                         ir::PredicateIdentifier::Normal(Predicate::Custom(cpr)) => {
                             Some(cpr.clone())
@@ -249,12 +293,11 @@ impl Planner {
                         });
                     }
 
-                    // Add the current literal to the set of guards for the next magic rule.
-                    let guard_to_add = match &literal.predicate {
-                        ir::PredicateIdentifier::Normal(Predicate::Custom(_)) => literal.clone(),
-                        _ => literal.clone(), // native / magic unchanged
-                    };
-                    accumulated_guards.push(guard_to_add);
+                    // Add the current literal to the set of guards for the *next* magic rule
+                    // unless we already added it above.
+                    if !is_fully_bound_native {
+                        accumulated_guards.push(literal.clone());
+                    }
 
                     // Update bindings for the next literal in the chain.
                     if let Ok(newly_bound) = translator::collect_wildcards(&literal.terms) {
@@ -318,7 +361,24 @@ impl Planner {
             terms: magic_terms,
         };
 
-        guarded_rule.body.insert(0, magic_literal);
+        // Compute which wildcards are already bound at the start of the body
+        let mut initially_bound: HashSet<Wildcard> = HashSet::new();
+        for (term, binding) in rule.head.terms.iter().zip(head_adornment.iter()) {
+            if *binding == Binding::Bound {
+                if let Ok(wcs) = translator::collect_wildcards(std::slice::from_ref(term)) {
+                    initially_bound.extend(wcs);
+                }
+            }
+        }
+
+        let reordered = self.reorder_body_for_sips(&rule.body, &initially_bound);
+
+        // Final guarded body: magic guard first, then the reordered literals.
+        let mut new_body = Vec::with_capacity(1 + reordered.len());
+        new_body.push(magic_literal);
+        new_body.extend(reordered);
+
+        guarded_rule.body = new_body;
         Ok(guarded_rule)
     }
 

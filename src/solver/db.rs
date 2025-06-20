@@ -443,6 +443,14 @@ impl FactDB {
         self.equality_graph.find_path(start, end)
     }
 
+    pub fn find_path_and_nodes(
+        &self,
+        start: &AnchoredKey,
+        end: &AnchoredKey,
+    ) -> Option<Vec<AnchoredKey>> {
+        self.equality_graph.find_path_and_nodes(start, end)
+    }
+
     pub fn find_reachable_forward(&self, start: &AnchoredKey) -> HashSet<AnchoredKey> {
         self.equality_graph.find_reachable_forward(start)
     }

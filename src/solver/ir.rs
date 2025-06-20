@@ -32,6 +32,22 @@ pub struct Atom {
     pub terms: Vec<StatementTmplArg>,
 }
 
+// impl fmt::Debug for Atom {
+//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//         match &self.predicate {
+//             PredicateIdentifier::Normal(Predicate::Native(p)) => write!(f, "{:?}", p),
+//             PredicateIdentifier::Normal(Predicate::Custom(p)) => {
+//                 write!(f, "{}", p.predicate().name)
+//             }
+//             PredicateIdentifier::Normal(Predicate::BatchSelf(p)) => write!(f, "BatchSelf({})", p),
+//             PredicateIdentifier::Magic {
+//                 name,
+//                 bound_indices,
+//             } => write!(f, "{}", name),
+//         }
+//     }
+// }
+
 /// A Datalog rule, consisting of a head and a body. `head :- body`.
 #[derive(Debug, Clone)]
 pub struct Rule {

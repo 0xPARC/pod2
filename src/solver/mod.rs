@@ -69,6 +69,11 @@ mod tests {
         let bob_attestation = attest_eth_friend(&params, &mut bob, charlie.public_key());
         let batch = eth_dos_batch(&params, true).unwrap();
 
+        let alice_pk_hashed = hash_str(&alice.pk).encode_hex::<String>();
+        let charlie_pk_hashed = hash_str(&charlie.pk).encode_hex::<String>();
+        println!("alice_pk_hashed: {}", alice_pk_hashed);
+        println!("charlie_pk_hashed: {}", charlie_pk_hashed);
+
         let req1 = format!(
             r#"
       use _, _, _, eth_dos from 0x{}
@@ -93,6 +98,7 @@ mod tests {
         )
         .unwrap();
 
+        println!("Result: {:?}", result);
         println!("Proof tree: {}", result.unwrap());
     }
 }

@@ -13,15 +13,15 @@ use log::{debug, trace};
 
 use crate::{
     middleware::{
-        self, CustomPredicateRef, Predicate, RawValue, StatementTmplArg, TypedValue, ValueRef,
-        Wildcard,
+        self, CustomPredicateRef, NativeOperation, Predicate, RawValue, StatementTmplArg,
+        TypedValue, ValueRef, Wildcard,
     },
     solver::{
-        engine::{ProofRequest, QueryEngine},
+        engine::{proof_reconstruction::ProofReconstructor, ProofRequest, QueryEngine},
         error::SolverError,
         ir::{self, Atom, Rule},
         planner::{Planner, QueryPlan},
-        proof::{Justification, Proof, ProofNode},
+        proof::Proof,
         semantics::materializer::Materializer,
     },
 };
@@ -44,8 +44,9 @@ pub enum FactSource {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum JustificationKind {
-    Fact,
-    Computation,
+    Existing,
+    ByValue(NativeOperation),
+    Special,
 }
 
 /// A single, concrete fact, represented as a tuple of values, with its source.
@@ -97,68 +98,35 @@ impl SemiNaiveEngine {
         plan: &QueryPlan,
         materializer: &Materializer,
     ) -> Result<Option<Proof>, SolverError> {
-        use crate::middleware::Statement;
-
         // 1.  Evaluate all rules (magic + guarded) together so that recursive
         //     dependencies are handled correctly.
         let mut combined_rules = plan.magic_rules.clone();
         combined_rules.extend(plan.guarded_rules.clone());
 
-        let (all_facts, _prov) =
+        let (all_facts, prov) =
             self.evaluate_rules(&combined_rules, materializer, FactStore::new())?;
 
-        // 2.  Find the first *non-synthetic* custom fact derived.  We treat
-        //     it as the answer to the query and wrap it in a minimal proof.
-        // Build an ordered list of target predicate identifiers based on the
-        // order of guarded rule heads (excluding the synthetic goal).  This
-        // ensures we pick the predicate the user actually asked for (e.g.
-        // `path`) rather than some auxiliary predicate like `edge` that just
-        // happens to appear first in the facts map.
-        let mut preferred_pids = Vec::new();
-        for gr in &plan.guarded_rules {
-            if let ir::PredicateIdentifier::Normal(Predicate::Custom(cpr)) = &gr.head.predicate {
-                if cpr.predicate().name != "_request_goal" {
-                    preferred_pids.push(gr.head.predicate.clone());
-                }
-            }
-        }
+        // The planner always emits a synthetic predicate `_request_goal`.  The
+        // query is proven if (and only if) at least one fact for that
+        // predicate is derived.
 
-        for pid in preferred_pids {
+        let request_pid = all_facts.keys().find(|pid| {
+            matches!(pid,
+                ir::PredicateIdentifier::Normal(Predicate::Custom(cpr)) if cpr.predicate().name == "_request_goal")
+        }).cloned();
+        if let Some(pid) = request_pid {
             if let Some(rel) = all_facts.get(&pid) {
                 if let Some(fact) = rel.iter().next() {
-                    let cpr = match &pid {
-                        ir::PredicateIdentifier::Normal(Predicate::Custom(c)) => c.clone(),
-                        _ => unreachable!(),
-                    };
-                    // Convert ValueRefs → Values (literals only; keys are ignored).
-                    let mut vals = Vec::new();
-                    for vr in &fact.args {
-                        match vr {
-                            ValueRef::Literal(v) => vals.push(v.clone()),
-                            ValueRef::Key(_) => {
-                                if let Some(v) = materializer.value_ref_to_value(vr) {
-                                    vals.push(v);
-                                } else {
-                                    // Cannot dereference – skip this fact.
-                                    continue;
-                                }
-                            }
-                        }
-                    }
-
-                    let stmt = Statement::Custom(cpr, vals);
-                    let node = ProofNode {
-                        conclusion: stmt,
-                        justification: Justification::Fact,
-                    };
-
+                    let recon = ProofReconstructor::new(&all_facts, &prov, materializer);
+                    let root = recon.build(&pid, fact)?;
                     return Ok(Some(Proof {
-                        root_nodes: vec![std::sync::Arc::new(node)],
+                        root_nodes: vec![root],
                     }));
                 }
             }
         }
 
+        // No fact for the request goal ⇒ the overall request is unproven.
         Ok(None)
     }
 
@@ -285,7 +253,7 @@ impl SemiNaiveEngine {
             );
 
             let fact_struct = Fact {
-                source: FactSource::External(JustificationKind::Fact),
+                source: FactSource::External(JustificationKind::Existing),
                 args: fact_tuple,
             };
 
@@ -331,6 +299,7 @@ impl SemiNaiveEngine {
         provenance_store: &mut ProvenanceStore,
     ) -> Result<FactStore, SolverError> {
         let mut new_delta = FactStore::new();
+        materializer.begin_iteration();
 
         for rule in rules {
             if rule.body.is_empty() {
@@ -481,14 +450,41 @@ impl SemiNaiveEngine {
             delta_positions
         );
 
-        // Fallback: if no literal's predicate changed, the rule cannot produce
-        // new facts based on the previous iteration's delta, so we can skip it.
+        // Fallback: if no literal's predicate appears in Δ *but* the rule's body
+        // depends **only on EDB (native) predicates**, we still have to evaluate
+        // it once to seed the IDB with facts that stem purely from the extensional
+        // database.  (Think `base(X,Y) :- Equal(X,Y), Equal(D,0).`)
         if delta_positions.is_empty() {
-            trace!(
-                "  No delta-eligible predicates for rule {:?}, skipping delta joins for this rule.",
-                rule.head.predicate
-            );
-            return Ok(Vec::new());
+            let all_edb = rule.body.iter().all(|lit| {
+                matches!(
+                    &lit.predicate,
+                    ir::PredicateIdentifier::Normal(Predicate::Native(_))
+                )
+            });
+
+            if !all_edb {
+                trace!(
+                    "  No delta-eligible predicates for rule {:?}, skipping delta joins for this rule.",
+                    rule.head.predicate
+                );
+                return Ok(Vec::new());
+            } else {
+                trace!(
+                    "  Rule {:?} contains only EDB predicates - performing one full join despite empty Δ.",
+                    rule.head.predicate
+                );
+                let fake_delta_idx = rule.body.len(); // ensures `is_delta` is false for every atom
+                let new_bindings = self.perform_join(
+                    rule,
+                    &rule.body,
+                    fake_delta_idx,
+                    all_facts,
+                    delta_facts,
+                    materializer,
+                )?;
+                all_new_bindings.extend(new_bindings);
+                return Ok(all_new_bindings);
+            }
         }
 
         for &i in &delta_positions {
@@ -552,6 +548,12 @@ impl SemiNaiveEngine {
 
             // If this literal produced no compatible bindings, the rule fails early.
             if next_bindings.is_empty() {
+                trace!(
+                    "Rule {:?} – join failed at literal index {} ({:?}). No compatible bindings left after this literal.",
+                    rule.head.predicate,
+                    idx,
+                    atom.predicate
+                );
                 return Ok(Vec::new());
             }
 
@@ -1165,6 +1167,58 @@ mod tests {
     }
 
     #[test]
+    fn test_transitive_equality() {
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        let pod_a_id = pod_id_from_name("podA");
+        let pod_b_id = pod_id_from_name("podB");
+        let pod_c_id = pod_id_from_name("podC");
+        let pod_d_id = pod_id_from_name("podD");
+
+        let pod_a = TestPod {
+            id: pod_a_id,
+            statements: vec![
+                Statement::equal(
+                    AnchoredKey::from((pod_a_id, "k1")),
+                    AnchoredKey::from((pod_b_id, "k2")),
+                ),
+                Statement::equal(
+                    AnchoredKey::from((pod_b_id, "k2")),
+                    AnchoredKey::from((pod_c_id, "k3")),
+                ),
+                Statement::equal(
+                    AnchoredKey::from((pod_c_id, "k3")),
+                    AnchoredKey::from((pod_d_id, "k4")),
+                ),
+            ],
+        };
+
+        let pods: Vec<Box<dyn Pod>> = vec![Box::new(pod_a)];
+        let db = Arc::new(FactDB::build(pods).unwrap());
+        let params = Params::default();
+        let materializer = Materializer::new(db, &params);
+
+        let program = r#"
+        REQUEST(
+            Equal(?A["k1"], ?P["k4"])
+        )
+        "#;
+
+        let processed = parse(program, &params, &[]).unwrap();
+        let request = processed.request_templates;
+
+        let planner = Planner::new();
+        let plan = planner.create_plan(&request).unwrap();
+
+        let engine = SemiNaiveEngine::new();
+        let result = engine.execute(&plan, &materializer);
+
+        let proof = result.unwrap();
+        assert!(proof.is_some(), "Execution should succeed");
+        println!("Proof: {:?}", proof);
+    }
+
+    #[test]
     fn test_execute_with_proof_reconstruction() {
         let _ = env_logger::builder().is_test(true).try_init();
         // 1. Setup Pods and Facts
@@ -1211,8 +1265,8 @@ mod tests {
 
         // 5. Assert results
         assert!(result.is_ok(), "Execution should succeed");
-        let _proof_opt = result.unwrap();
-        //assert!(proof_opt.is_some(), "Should find a proof");
+        let proof_opt = result.unwrap();
+        assert!(proof_opt.is_some(), "Should find a proof");
 
         //let proof = proof_opt.unwrap();
         //assert_eq!(

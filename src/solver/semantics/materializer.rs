@@ -130,7 +130,7 @@ impl<'a> Materializer {
                     // then any value is acceptable.
                     .all(|(filter, value)| filter.as_ref().is_none_or(|f| f == value))
             })
-            .map(|vals| (vals, JustificationKind::Fact))
+            .map(|vals| (vals, JustificationKind::Existing))
     }
 
     fn column_choices(

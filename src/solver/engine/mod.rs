@@ -5,7 +5,7 @@ use crate::{
     solver::{error::SolverError, proof::Proof, semantics::materializer::Materializer},
 };
 
-//pub mod proof_reconstruction;
+pub mod proof_reconstruction;
 pub mod semi_naive;
 
 /// A map from wildcard names to their bound `Value`.
