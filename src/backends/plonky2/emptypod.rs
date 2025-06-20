@@ -88,7 +88,12 @@ pub static STANDARD_EMPTY_POD_DATA: LazyLock<(EmptyPodVerifyTarget, CircuitData)
 
 fn build() -> Result<(EmptyPodVerifyTarget, CircuitData)> {
     let params = &*DEFAULT_PARAMS;
+
+    #[cfg(not(feature = "zk"))]
     let config = CircuitConfig::standard_recursion_config();
+    #[cfg(feature = "zk")]
+    let config = CircuitConfig::standard_recursion_zk_config();
+
     let mut builder = CircuitBuilder::<F, D>::new(config);
     let empty_pod_verify_target = EmptyPodVerifyCircuit {
         params: params.clone(),
