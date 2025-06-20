@@ -97,7 +97,7 @@ impl SignedPod {
         let signer_bytes = deserialize_bytes(&data.signer)?;
         let signature_bytes = deserialize_bytes(&data.signature)?;
 
-        if signer_bytes.len() != 80 {
+        if signer_bytes.len() != 40 {
             return Err(Error::custom(
                 "Invalid byte encoding of signed POD signer.".to_string(),
             ));
@@ -108,7 +108,7 @@ impl SignedPod {
             ));
         }
 
-        let signer = Point::from_bytes(&signer_bytes)?;
+        let signer = Point::from_bytes_into_subgroup(&signer_bytes)?;
         let signature = Signature::from_bytes(&signature_bytes)?;
 
         Ok(Box::new(Self {
@@ -190,7 +190,12 @@ impl Pod for SignedPod {
     }
 
     fn serialize_data(&self) -> serde_json::Value {
-        let signer = serialize_bytes(&self.signer.as_bytes());
+        let signer = serialize_bytes(
+            &self
+                .signer
+                .as_bytes_from_subgroup()
+                .expect("Signer public key must lie in EC subgroup."),
+        );
         let signature = serialize_bytes(&self.signature.as_bytes());
         serde_json::to_value(Data {
             signer,

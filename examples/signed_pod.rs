@@ -15,7 +15,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create a schnorr key pair to sign the pod
     let sk = SecretKey::new_rand();
     let pk = sk.public_key();
-    println!("Public key: {:?}\n", pk);
+    println!("Public key: {}\n", pk);
 
     let mut signer = Signer(sk);
 

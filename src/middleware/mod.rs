@@ -180,7 +180,7 @@ impl fmt::Display for TypedValue {
             TypedValue::Set(s) => write!(f, "set:{}", s.commitment()),
             TypedValue::Array(a) => write!(f, "arr:{}", a.commitment()),
             TypedValue::Raw(v) => write!(f, "{}", v),
-            TypedValue::PublicKey(p) => write!(f, "ecGFp5_pt:({},{})", p.x, p.u),
+            TypedValue::PublicKey(p) => write!(f, "pk:{}", p),
             TypedValue::PodId(id) => write!(f, "pod_id:{}", id),
         }
     }
@@ -849,6 +849,7 @@ pub struct MainPodInputs<'a> {
     /// Statements that need to be made public (they can come from input pods or input
     /// statements)
     pub public_statements: &'a [Statement],
+    // TODO: REMOVE THIS
     pub vd_set: VDSet,
 }
 
