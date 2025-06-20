@@ -430,6 +430,9 @@ impl CustomPredicateRef {
     pub fn predicate(&self) -> &CustomPredicate {
         &self.batch.predicates[self.index]
     }
+    pub fn id(&self) -> (Hash, usize) {
+        (self.batch.id(), self.index)
+    }
 }
 
 impl fmt::Display for CustomPredicateRef {

@@ -5,8 +5,8 @@ use std::{
 
 use crate::{
     middleware::{
-        AnchoredKey as MWAnchoredKey, CustomPredicateRef, PodId, Predicate, Statement,
-        StatementTmplArg, Value, ValueRef, Wildcard,
+        AnchoredKey as MWAnchoredKey, CustomPredicateRef, NativeOperation, PodId, Predicate,
+        Statement, StatementTmplArg, Value, ValueRef, Wildcard,
     },
     solver::{
         engine::semi_naive::{Fact, FactSource, FactStore, JustificationKind, ProvenanceStore},
@@ -70,8 +70,10 @@ impl<'a> ProofReconstructor<'a> {
             FactSource::External(kind) => {
                 let just = match kind {
                     JustificationKind::Existing => Justification::Fact,
-                    JustificationKind::ByValue(_) => Justification::ValueComparison,
-                    JustificationKind::Special => Justification::ValueComparison,
+                    JustificationKind::ByValue(op) => Justification::ValueComparison(*op),
+                    JustificationKind::Special => {
+                        Justification::ValueComparison(NativeOperation::CopyStatement)
+                    }
                 };
                 Arc::new(ProofNode {
                     conclusion,
@@ -114,7 +116,7 @@ impl<'a> ProofReconstructor<'a> {
                     ir::PredicateIdentifier::Normal(Predicate::Custom(cpr)) => {
                         Justification::Custom(cpr.clone(), premises)
                     }
-                    _ => Justification::ValueComparison, // fallback for native or others
+                    _ => Justification::ValueComparison(NativeOperation::CopyStatement), // fallback for native or others
                 };
 
                 Arc::new(ProofNode {

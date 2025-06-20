@@ -9,8 +9,6 @@
 //! The output of the planner is a set of "magic" and "guarded" rules ready for
 //! bottom-up evaluation.
 
-mod translator;
-
 use std::{
     collections::{HashSet, VecDeque},
     hash::Hash,
@@ -136,7 +134,7 @@ impl Planner {
             let adornment = self.get_adornment(&best_literal, &currently_bound);
             for (term, bind) in best_literal.terms.iter().zip(adornment.iter()) {
                 if *bind == Binding::Bound {
-                    if let Ok(wcs) = translator::collect_wildcards(std::slice::from_ref(term)) {
+                    if let Ok(wcs) = collect_wildcards(std::slice::from_ref(term)) {
                         currently_bound.extend(wcs);
                     }
                 }
@@ -220,9 +218,7 @@ impl Planner {
                 let mut bound_in_body = HashSet::new();
                 for (term, binding) in rule.head.terms.iter().zip(adornment.iter()) {
                     if *binding == Binding::Bound {
-                        if let Ok(wildcards) =
-                            translator::collect_wildcards(std::slice::from_ref(term))
-                        {
+                        if let Ok(wildcards) = collect_wildcards(std::slice::from_ref(term)) {
                             bound_in_body.extend(wildcards);
                         }
                     }
@@ -300,7 +296,7 @@ impl Planner {
                     }
 
                     // Update bindings for the next literal in the chain.
-                    if let Ok(newly_bound) = translator::collect_wildcards(&literal.terms) {
+                    if let Ok(newly_bound) = collect_wildcards(&literal.terms) {
                         accumulated_bindings.extend(newly_bound);
                     }
                 }
@@ -365,7 +361,7 @@ impl Planner {
         let mut initially_bound: HashSet<Wildcard> = HashSet::new();
         for (term, binding) in rule.head.terms.iter().zip(head_adornment.iter()) {
             if *binding == Binding::Bound {
-                if let Ok(wcs) = translator::collect_wildcards(std::slice::from_ref(term)) {
+                if let Ok(wcs) = collect_wildcards(std::slice::from_ref(term)) {
                     initially_bound.extend(wcs);
                 }
             }
@@ -424,7 +420,7 @@ impl Planner {
             // The head of the synthetic rule contains all wildcards from the request.
             let bound_variables = request
                 .iter()
-                .map(|tmpl| translator::collect_wildcards(&tmpl.args))
+                .map(|tmpl| collect_wildcards(&tmpl.args))
                 .collect::<Result<Vec<_>, _>>()?
                 .into_iter()
                 .flatten()
@@ -479,6 +475,83 @@ impl Planner {
         }
 
         self.magic_set_transform(&all_rules, &final_request)
+    }
+
+    /// Same as `create_plan` but skips the Magic-Set transformation.
+    /// Useful in tests to isolate bugs in the optimiser from bugs in the
+    /// semi-naive engine, materialiser, proof reconstructor, etc.
+    pub fn create_plan_naive(&self, request: &[StatementTmpl]) -> Result<QueryPlan, SolverError> {
+        // 1. Collect & flatten all custom-predicate rules
+        let mut all_rules = self.collect_and_flatten_rules(request)?;
+
+        // 2. Synthesise the `_request_goal` rule exactly like `create_plan` does, but we don't
+        // need to preserve an adjusted `request` value afterwards.
+        if !request.is_empty() {
+            // --- identical to the block in `create_plan` ------------------
+            let synthetic_pred_name = "_request_goal".to_string();
+
+            let synthetic_rule_body: Vec<_> = request
+                .iter()
+                .map(|tmpl| ir::Atom {
+                    predicate: ir::PredicateIdentifier::Normal(tmpl.pred.clone()),
+                    terms: tmpl.args.clone(),
+                })
+                .collect();
+
+            // gather distinct wildcards from the user request
+            let bound_wcs: HashSet<_> = request
+                .iter()
+                .map(|tmpl| collect_wildcards(&tmpl.args))
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .flatten()
+                .collect();
+
+            // canonical ordering for the synthetic head
+            let mut head_wildcards: Vec<_> = bound_wcs.into_iter().collect();
+            head_wildcards.sort_by_key(|w| w.index);
+
+            let wildcard_names: Vec<_> = head_wildcards.iter().map(|w| w.name.clone()).collect();
+
+            // build a one-off CustomPredicateRef for the goal
+            let synth_pred_def = CustomPredicate {
+                name: synthetic_pred_name.clone(),
+                conjunction: true,
+                statements: request.to_vec(),
+                args_len: head_wildcards.len(),
+                wildcard_names: wildcard_names.clone(),
+            };
+            let params = Params::default();
+            let synth_batch = CustomPredicateBatch::new(
+                &params,
+                "SyntheticRequestBatch".to_string(),
+                vec![synth_pred_def],
+            );
+            let synthetic_cpr = CustomPredicateRef::new(synth_batch, 0);
+
+            let synthetic_rule_head = ir::Atom {
+                predicate: ir::PredicateIdentifier::Normal(Predicate::Custom(
+                    synthetic_cpr.clone(),
+                )),
+                terms: head_wildcards
+                    .iter()
+                    .cloned()
+                    .map(StatementTmplArg::Wildcard)
+                    .collect(),
+            };
+
+            all_rules.push(ir::Rule {
+                head: synthetic_rule_head,
+                body: synthetic_rule_body,
+            });
+            // --- end identical block --------------------------------------
+        }
+
+        // 3. Return a plan with *no* magic rules
+        Ok(QueryPlan {
+            magic_rules: vec![],
+            guarded_rules: all_rules,
+        })
     }
 
     /// Takes a proof request and transitively collects all custom predicate
@@ -594,6 +667,27 @@ impl Default for Planner {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn collect_wildcards(args: &[StatementTmplArg]) -> Result<HashSet<Wildcard>, SolverError> {
+    let mut wildcards = HashSet::new();
+    for arg in args {
+        match arg {
+            StatementTmplArg::Wildcard(w) => {
+                wildcards.insert(w.clone());
+            }
+            StatementTmplArg::AnchoredKey(pod_wc, _) => {
+                wildcards.insert(pod_wc.clone());
+            }
+            StatementTmplArg::Literal(_) => {}
+            StatementTmplArg::None => {
+                return Err(SolverError::Internal(
+                    "None argument not supported in custom predicates".to_string(),
+                ));
+            }
+        }
+    }
+    Ok(wildcards)
 }
 
 #[cfg(test)]

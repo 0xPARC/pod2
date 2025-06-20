@@ -46,8 +46,8 @@ impl ProofNode {
             Justification::Fact => {
                 writeln!(f, "{}- by Fact", because_prefix)?;
             }
-            Justification::ValueComparison => {
-                writeln!(f, "{}- by ValueComparison", because_prefix)?;
+            Justification::ValueComparison(op) => {
+                writeln!(f, "{}- by {:?}", because_prefix, *op)?;
             }
             Justification::Transitive(path) => {
                 writeln!(f, "{}- by Transitivity via:", because_prefix)?;
@@ -79,7 +79,7 @@ pub enum Justification {
     Fact,
     /// The conclusion was derived by applying a native operation like `EqualFromEntries`.
     /// The premises are the child nodes in the proof tree.
-    ValueComparison,
+    ValueComparison(NativeOperation),
     /// The conclusion was derived from a path in the equality graph.
     Transitive(Vec<AnchoredKey>),
     /// The conclusion was derived by applying a custom predicate.
@@ -118,12 +118,12 @@ impl Proof {
                             OperationAux::None,
                         )
                     }
-                    Justification::ValueComparison => {
+                    Justification::ValueComparison(op) => {
                         // A native comparison was performed.
                         // This is also like an axiom in the proof system.
                         Operation(
                             // TODO: Get the actual operation from the statement type??
-                            OperationType::Native(NativeOperation::CopyStatement),
+                            OperationType::Native(*op),
                             vec![node.conclusion.clone().into()],
                             OperationAux::None,
                         )

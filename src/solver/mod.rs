@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use crate::{
-    middleware::{Params, Pod},
+    middleware::{Params, Pod, StatementTmpl},
     solver::{
         db::FactDB,
-        engine::{semi_naive::SemiNaiveEngine, ProofRequest},
+        engine::semi_naive::{MetricsCollector, SemiNaiveEngine},
         error::SolverError,
         planner::Planner,
         proof::Proof,
@@ -13,15 +13,17 @@ use crate::{
 };
 
 pub mod db;
+pub mod debug;
 pub mod engine;
 pub mod error;
 pub mod ir;
+pub mod metrics;
 pub mod planner;
 pub mod proof;
 pub mod semantics;
 
 pub fn solve(
-    request: &ProofRequest,
+    request: &[StatementTmpl],
     pods: &[Box<dyn Pod>],
     params: &Params,
 ) -> Result<Option<Proof>, SolverError> {
@@ -32,8 +34,9 @@ pub fn solve(
     let plan = planner.create_plan(request).unwrap();
 
     let engine = SemiNaiveEngine::new();
+    let mut metrics = MetricsCollector::default();
 
-    engine.execute(&plan, &materializer)
+    engine.execute(&plan, &materializer, &mut metrics)
 }
 
 #[cfg(test)]
@@ -45,7 +48,7 @@ mod tests {
         backends::plonky2::mock::signedpod::MockSigner,
         examples::{attest_eth_friend, custom::eth_dos_batch},
         lang::parse,
-        middleware::{hash_str, Params},
+        middleware::Params,
     };
 
     #[test]
@@ -69,11 +72,6 @@ mod tests {
         let bob_attestation = attest_eth_friend(&params, &mut bob, charlie.public_key());
         let batch = eth_dos_batch(&params, true).unwrap();
 
-        let alice_pk_hashed = hash_str(&alice.pk).encode_hex::<String>();
-        let charlie_pk_hashed = hash_str(&charlie.pk).encode_hex::<String>();
-        println!("alice_pk_hashed: {}", alice_pk_hashed);
-        println!("charlie_pk_hashed: {}", charlie_pk_hashed);
-
         let req1 = format!(
             r#"
       use _, _, _, eth_dos from 0x{}
@@ -83,8 +81,8 @@ mod tests {
       )
       "#,
             batch.id().encode_hex::<String>(),
-            hash_str(&alice.pk).encode_hex::<String>(),
-            hash_str(&charlie.pk).encode_hex::<String>()
+            alice.public_key(),
+            bob.public_key()
         );
 
         let request = parse(&req1, &params, &[batch.clone()])

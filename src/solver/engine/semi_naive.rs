@@ -4,7 +4,6 @@
 //! until no new facts can be derived, signifying that a fixed point has been
 //! reached.
 
-#![allow(dead_code)]
 #![allow(clippy::arc_with_non_send_sync)]
 
 use std::collections::{HashMap, HashSet};
@@ -17,14 +16,23 @@ use crate::{
         TypedValue, ValueRef, Wildcard,
     },
     solver::{
-        engine::{proof_reconstruction::ProofReconstructor, ProofRequest, QueryEngine},
+        debug::print_all_facts,
+        engine::proof_reconstruction::ProofReconstructor,
         error::SolverError,
-        ir::{self, Atom, Rule},
-        planner::{Planner, QueryPlan},
+        ir::{self, Atom, PredicateIdentifier, Rule},
+        planner::QueryPlan,
         proof::Proof,
         semantics::materializer::Materializer,
     },
 };
+
+#[derive(Default)]
+pub struct MetricsCollector {
+    pub fixpoint_iterations: u32,
+    pub facts_derived_per_predicate: HashMap<PredicateIdentifier, usize>,
+    pub materializer_calls: u64,
+    pub deltas: Vec<FactStore>,
+}
 
 /// A map from variables in a rule to their concrete values for a given solution.
 pub type Bindings = HashMap<Wildcard, Value>;
@@ -59,7 +67,7 @@ pub struct Fact {
 /// A relation is a set of facts.
 pub type Relation = HashSet<Fact>;
 /// A store for all derived facts, keyed by the predicate they belong to.
-pub(super) type FactStore = HashMap<ir::PredicateIdentifier, Relation>;
+pub type FactStore = HashMap<ir::PredicateIdentifier, Relation>;
 /// A store for the provenance of derived facts, mapping a fact to the
 /// rule and bindings that produced it.
 pub(super) type ProvenanceStore =
@@ -97,6 +105,7 @@ impl SemiNaiveEngine {
         &self,
         plan: &QueryPlan,
         materializer: &Materializer,
+        metrics: &mut MetricsCollector,
     ) -> Result<Option<Proof>, SolverError> {
         // 1.  Evaluate all rules (magic + guarded) together so that recursive
         //     dependencies are handled correctly.
@@ -105,6 +114,8 @@ impl SemiNaiveEngine {
 
         let (all_facts, prov) =
             self.evaluate_rules(&combined_rules, materializer, FactStore::new())?;
+
+        print_all_facts(&all_facts);
 
         // The planner always emits a synthetic predicate `_request_goal`.  The
         // query is proven if (and only if) at least one fact for that
@@ -716,8 +727,11 @@ impl SemiNaiveEngine {
     ) -> Result<Relation, SolverError> {
         let relation = match &atom.predicate {
             ir::PredicateIdentifier::Normal(pred) => {
-                let relation =
-                    materializer.facts_for_predicate(pred.clone(), atom.terms.clone(), bindings)?;
+                let relation = materializer.materialize_statements(
+                    pred.clone(),
+                    atom.terms.clone(),
+                    bindings,
+                )?;
 
                 // Cache into IDB so future queries see it without re-materialising.
                 let pred_id = ir::PredicateIdentifier::Normal(pred.clone());
@@ -788,18 +802,6 @@ impl SemiNaiveEngine {
                 Ok(std::borrow::Cow::Owned(merged_rel))
             }
         }
-    }
-}
-
-impl QueryEngine for SemiNaiveEngine {
-    fn solve(
-        &self,
-        request: &ProofRequest,
-        materializer: &Materializer,
-    ) -> Result<Option<Proof>, SolverError> {
-        let planner = Planner::new();
-        let plan = planner.create_plan(request)?;
-        self.execute(&plan, materializer)
     }
 }
 
@@ -1211,7 +1213,7 @@ mod tests {
         let plan = planner.create_plan(&request).unwrap();
 
         let engine = SemiNaiveEngine::new();
-        let result = engine.execute(&plan, &materializer);
+        let result = engine.execute(&plan, &materializer, &mut MetricsCollector::default());
 
         let proof = result.unwrap();
         assert!(proof.is_some(), "Execution should succeed");
@@ -1261,7 +1263,7 @@ mod tests {
 
         // 4. Execute plan
         let engine = SemiNaiveEngine::new();
-        let result = engine.execute(&plan, &materializer);
+        let result = engine.execute(&plan, &materializer, &mut MetricsCollector::default());
 
         // 5. Assert results
         assert!(result.is_ok(), "Execution should succeed");
@@ -1340,7 +1342,7 @@ mod tests {
 
         // 4. Execute plan
         let engine = SemiNaiveEngine::new();
-        let result = engine.execute(&plan, &materializer);
+        let result = engine.execute(&plan, &materializer, &mut MetricsCollector::default());
 
         println!("Proof tree: {}", result.unwrap().unwrap());
     }
@@ -1447,7 +1449,9 @@ mod tests {
 
         // --- Execute plan ---
         let engine = SemiNaiveEngine::new();
-        let result = engine.execute(&plan, &materializer).unwrap();
+        let result = engine
+            .execute(&plan, &materializer, &mut MetricsCollector::default())
+            .unwrap();
         println!("result: {:?}", result);
         // --- Assertions ---
         // The main goal is to check the logs, but we can also assert that

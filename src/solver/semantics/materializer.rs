@@ -21,13 +21,13 @@ use crate::{
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct MaterialiseKey {
+pub struct MaterializeKey {
     pub predicate: Predicate,
     pub adornment: Vec<bool>,
     pub bound_args_hash: u64,
 }
 
-impl MaterialiseKey {
+impl MaterializeKey {
     fn from(pred: &Predicate, tmpl_args: &[StatementTmplArg], bindings: &Bindings) -> Self {
         let (mut adorn, mut hasher) = (Vec::new(), DefaultHasher::new());
         for arg in tmpl_args {
@@ -64,10 +64,26 @@ impl MaterialiseKey {
     }
 }
 
+/// The materializer is responsible for materializing statements from the database.
+///
+/// Given a statement template and a set of bindings, the materializer will attempt
+/// to find any valid statements compatible with those bindings, with the caveat that
+/// the bindings must typically provide enough information to find relevant statements.
+///
+/// For example, Equal(?a, ?b) where ?a and ?b are free variables is compatible with
+/// *any* Equal statement. As such, we will not materialize any statements in response
+/// to this query.
+///
+/// However, Equal(?a["foo"], ?b["bar"]), where ?a and ?b are free variables, is
+/// constrained by the key part, and so in this case we would materialize and Equal
+/// statement where ?a["foo"] = ?b["bar"].
+///
+/// Predicate-specific handlers are responsible for determining whether a statement
+/// is valid, and for deducing the values of free variables.
 pub struct Materializer {
     db: Arc<FactDB>,
     params: Params,
-    materialised_keys: RefCell<HashSet<MaterialiseKey>>,
+    materialised_keys: RefCell<HashSet<MaterializeKey>>,
 }
 
 impl<'a> Materializer {
@@ -107,9 +123,9 @@ impl<'a> Materializer {
         }
     }
 
-    /// Provides a generic way to iterate over all known EDB facts for a custom
+    /// Provides a generic way to iterate over all known facts for a custom
     /// predicate, with optional bindings for each argument.
-    pub fn iter_custom_statements(
+    fn iter_custom_statements(
         &'a self,
         cpr: &'a CustomPredicateRef,
         binding_vector: &'a [Option<Value>],
@@ -133,22 +149,28 @@ impl<'a> Materializer {
             .map(|vals| (vals, JustificationKind::Existing))
     }
 
+    /// For a given template argument and binding, returns a list of possible values.
     fn column_choices(
         &self,
         arg_tmpl: &StatementTmplArg,
         binding: &Option<Value>,
     ) -> Vec<Option<ValueRef>> {
         match arg_tmpl {
-            // 1. Literal --------------------------------------------------------
+            // Literal arguments always have exactly one possible value: itself.
             StatementTmplArg::Literal(v) => vec![Some(ValueRef::Literal(v.clone()))],
 
-            // 2. Wildcard -------------------------------------------------------
+            // We do not attempt to infer a set of possible values free wildcards;
+            // however, predicate handlers may attempt to deduce the value of a wildcard
+            // at a later stage.
             StatementTmplArg::Wildcard(_) => match binding {
                 Some(v) => vec![Some(ValueRef::Literal(v.clone()))], // bound
                 None => vec![None],                                  // still free
             },
 
-            // 3. AnchoredKey ----------------------------------------------------
+            // Anchored keys are more complex.
+            // If the wildcard for the PodId is bound, then we can construct an anchored key.
+            // If the wildcard for the PodId is free, then we can enumerate all anchored keys
+            // for pods that have that key.
             StatementTmplArg::AnchoredKey(_, key) => match binding {
                 // pod already bound
                 Some(v) => match PodId::try_from(v.typed()) {
@@ -169,42 +191,29 @@ impl<'a> Materializer {
         }
     }
 
-    pub fn candidate_statement_args_from_bindings(
+    fn candidate_statement_args_from_bindings(
         &self,
         args: &[StatementTmplArg],
         binds: &[Option<Value>], // binding_vector
     ) -> impl Iterator<Item = Vec<Option<ValueRef>>> + 'a {
-        // build per-slot choice lists
         args.iter()
+            // Pairs arguments with their binding
             .zip(binds)
+            // Return a list of possible values for each argument
             .map(|(arg, bind)| self.column_choices(arg, bind))
             .collect::<Vec<_>>()
             .into_iter()
+            // We now have a list of lists, so we can enumerate all possible combinations.
             .multi_cartesian_product()
     }
 
-    pub fn facts_for_predicate(
+    pub fn materialize_statements(
         &self,
         predicate: Predicate,
         args: Vec<StatementTmplArg>,
         bindings: &Bindings,
     ) -> Result<Relation, SolverError> {
-        // Ok, so.
-        // We have a statement template, and some bindings.
-        // Maybe not complete bindings.
-        // For a custom statement template, this gives us a Vec of Values.
-        // For a native statement template, we could have a Vec of ValueRefs?
-
-        // For the native statements, we want to materialize a Vec<ValueRef>
-        // It must be made of ValueRefs because some of what comes back might be
-        // anchored keys, not plain values (though we do know the values in many cases).
-
-        // Because the bindings are incomplete, we might end up finding many facts,
-        // indeed we find any that are compatible with the bindings.
-
-        // Build filters (binding vector)
-
-        let key = MaterialiseKey::from(&predicate, &args, bindings);
+        let key = MaterializeKey::from(&predicate, &args, bindings);
         if self.already_done(&key) {
             return Ok(Relation::new());
         }
@@ -266,7 +275,8 @@ impl<'a> Materializer {
     pub fn begin_iteration(&self) {
         self.materialised_keys.borrow_mut().clear();
     }
-    pub fn already_done(&self, k: &MaterialiseKey) -> bool {
+
+    fn already_done(&self, k: &MaterializeKey) -> bool {
         !self.materialised_keys.borrow_mut().insert(k.clone())
     }
 }

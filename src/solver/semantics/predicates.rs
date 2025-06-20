@@ -17,10 +17,7 @@ use crate::{
     },
 };
 
-// --- Handler Enum ---
-
 /// An enum that dispatches to the correct handler for a given native predicate.
-/// This uses static dispatch, avoiding vtable lookups for performance.
 #[derive(Clone, Copy)]
 pub enum PredicateHandler {
     Lt(LtHandler),
@@ -80,14 +77,22 @@ impl PredicateHandler {
     }
 }
 
-pub trait SimplePredicateHandler {
+/// A base trait for predicate handlers.
+pub trait BasePredicateHandler {
     const NATIVE_PREDICATE: NativePredicate;
     const VALUE_COMPARISON_OPERATION: NativeOperation;
     const ARITY: usize;
 
+    /// Given a set of arguments, materialize the statements that satisfy the predicate.
+    ///
+    /// Arguments are Options, with None representing a free variable.
+    /// Otherwise arguments are ValueRefs, and as such may be anchored keys or Values.
+    /// This method is not intended to be overridden by concrete handlers; instead, it
+    /// provides a default implementation which delegates to the methods `check_values`,
+    /// `lookup_statement`, `deduce_with_free_args`, and `special_derivation`, which can
+    /// be overridden by concrete handlers to provide predicate-specific behavior.
     fn materialize(&self, args: &[Option<ValueRef>], db: &FactDB) -> HashSet<Fact> {
         let mut facts = HashSet::new();
-        trace!("{:?} materialize: {:?}", Self::NATIVE_PREDICATE, args);
 
         // Are all args bound?
         let maybe_value_refs: Option<Vec<ValueRef>> = args.iter().cloned().collect();
@@ -98,18 +103,22 @@ pub trait SimplePredicateHandler {
                 .iter()
                 .map(|vr| db.value_ref_to_value(vr))
                 .collect();
+            // If so, we can attempt to construct a statement based on the concrete
+            // values.
             if let Some(values) = values {
                 // Do all values satisfy the predicate?
                 if self.check_values(&values) {
                     facts.insert(Fact {
                         source: FactSource::External(JustificationKind::ByValue(
+                            // This varies by predicate, e.g. Equal uses EqualFromEntries.
                             Self::VALUE_COMPARISON_OPERATION,
                         )),
                         args: value_refs,
                     });
                 }
             } else {
-                // We don't know the values, so let's see if we can find a statement to copy.
+                // Some arguments are ValueRef anchored keys, for which we do not know the
+                // values. We can check if a statement already exists for these arguments.
                 if self.lookup_statement(&value_refs, db) {
                     facts.insert(Fact {
                         source: FactSource::External(JustificationKind::Existing),
@@ -118,15 +127,10 @@ pub trait SimplePredicateHandler {
                 }
             }
         } else {
-            // We have some unbound args.
+            // We have some unbound args. We can attempt to deduce the values of the unbound
+            // args.
             let deduced_args = self.deduce_with_free_args(args, db);
             if let Some(deduced_args) = deduced_args {
-                trace!(
-                    "{:?} deduce_with_free_args: {:?} → {:?}",
-                    Self::NATIVE_PREDICATE,
-                    args,
-                    deduced_args,
-                );
                 facts.insert(Fact {
                     source: FactSource::External(JustificationKind::ByValue(
                         Self::VALUE_COMPARISON_OPERATION,
@@ -136,33 +140,33 @@ pub trait SimplePredicateHandler {
             }
         }
 
+        // We can also attempt to derive the statement using special rules, e.g. transitive
+        // equality.
         facts.extend(self.special_derivation(args, db));
-        trace!("materialize result: {:?}", facts);
+
         facts
     }
 
+    /// Takes a set of arguments, of which at least one is None, representing a free variable.
+    /// Returns a complete set of arguments, with the free variables replaced by the deduced
+    /// values, or None if the arguments cannot be deduced.
+    ///
+    /// Where a new argument is deduced, it MUST be a Value, and cannot be an anchored key.
     #[allow(unused_variables)]
     fn deduce_with_free_args(
         &self,
         args: &[Option<ValueRef>],
         db: &FactDB,
     ) -> Option<Vec<ValueRef>> {
-        if args.len() != 2 {
-            return None; // arity mismatch – let caller handle
-        }
-
-        match (&args[0], &args[1]) {
-            // ?X == bound → bind ?X
-            (None, Some(vr1)) => Some(vec![vr1.clone(), vr1.clone()]),
-            // bound == ?Y → bind ?Y
-            (Some(vr0), None) => Some(vec![vr0.clone(), vr0.clone()]),
-            // Both sides already bound – nothing to deduce here.
-            _ => None,
-        }
+        None
     }
 
+    /// Performs the predicate-specific "value-based" check. For example, Lt checks if the
+    /// first argument is less than the second, and Contains checks if the the second and
+    /// third arguments are contents of the first (e.g. key-value pairs in a dictionary).
     fn check_values(&self, args: &[Value]) -> bool;
 
+    /// Checks if a statement already exists for the given arguments.
     fn lookup_statement(&self, args: &[ValueRef], db: &FactDB) -> bool {
         if Self::ARITY == 2 {
             if let Some(index) = db.get_binary_statement_index(&Self::NATIVE_PREDICATE) {
@@ -181,11 +185,16 @@ pub trait SimplePredicateHandler {
         }
     }
 
+    /// Performs the predicate-specific "special" derivation. For example, Equal can be
+    /// derived from transitive equality.
     #[allow(unused_variables)]
     fn special_derivation(&self, args: &[Option<ValueRef>], db: &FactDB) -> Option<Fact> {
         None
     }
 
+    /// For other derivations, we know that we are either using CopyStatement or the
+    /// predicate's VALUE_COMPARISON_OPERATION. For special derivations, we need to
+    /// construct the specific operations needed.
     #[allow(unused_variables)]
     fn explain_special_derivation(
         &self,
@@ -194,13 +203,6 @@ pub trait SimplePredicateHandler {
     ) -> Result<Vec<Operation>, SolverError> {
         Ok(vec![])
     }
-
-    // We want predicate handlers to be able to materialize statements.
-    // This can occur in four different scenarios:
-    // - All args resolve to values
-    // - Some args are unbound
-    // - At least some args are anchored keys which do not resolve to values
-    // - "Special" derivations, e.g. transitive equality
 }
 
 // --- Concrete Handler Implementations ---
@@ -208,7 +210,7 @@ pub trait SimplePredicateHandler {
 #[derive(Clone, Copy)]
 pub struct LtHandler;
 
-impl SimplePredicateHandler for LtHandler {
+impl BasePredicateHandler for LtHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::Lt;
     const VALUE_COMPARISON_OPERATION: NativeOperation = NativeOperation::LtFromEntries;
     const ARITY: usize = 2;
@@ -225,7 +227,7 @@ impl SimplePredicateHandler for LtHandler {
 #[derive(Clone, Copy)]
 pub struct LtEqHandler;
 
-impl SimplePredicateHandler for LtEqHandler {
+impl BasePredicateHandler for LtEqHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::LtEq;
     const VALUE_COMPARISON_OPERATION: NativeOperation = NativeOperation::LtEqFromEntries;
     const ARITY: usize = 2;
@@ -242,7 +244,7 @@ impl SimplePredicateHandler for LtEqHandler {
 #[derive(Clone, Copy)]
 pub struct EqualHandler;
 
-impl SimplePredicateHandler for EqualHandler {
+impl BasePredicateHandler for EqualHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::Equal;
     const VALUE_COMPARISON_OPERATION: NativeOperation = NativeOperation::EqualFromEntries;
     const ARITY: usize = 2;
@@ -258,7 +260,7 @@ impl SimplePredicateHandler for EqualHandler {
     fn deduce_with_free_args(
         &self,
         args: &[Option<ValueRef>],
-        _db: &FactDB,
+        db: &FactDB,
     ) -> Option<Vec<ValueRef>> {
         if args.len() != 2 {
             return None;
@@ -266,9 +268,27 @@ impl SimplePredicateHandler for EqualHandler {
 
         match (&args[0], &args[1]) {
             // ?X == bound -> bind ?X
-            (None, Some(vr1)) => Some(vec![vr1.clone(), vr1.clone()]),
+            (None, Some(vr1)) => {
+                if let ValueRef::Key(_) = vr1 {
+                    // If the bound argument is an anchored key, we can set the
+                    // wildcard to its *value*, but only if we know it.
+                    db.value_ref_to_value(vr1)
+                        .map(|value| vec![ValueRef::from(value.clone()), vr1.clone()])
+                } else {
+                    Some(vec![vr1.clone(), vr1.clone()])
+                }
+            }
             // bound == ?Y -> bind ?Y
-            (Some(vr0), None) => Some(vec![vr0.clone(), vr0.clone()]),
+            (Some(vr0), None) => {
+                if let ValueRef::Key(_) = vr0 {
+                    db.value_ref_to_value(vr0)
+                        .map(|value| vec![vr0.clone(), ValueRef::from(value.clone())])
+                } else {
+                    // The bound argument is a value, so we can set the wildcard to it
+                    // directly.
+                    Some(vec![vr0.clone(), vr0.clone()])
+                }
+            }
             // Both sides already bound – nothing to deduce here.
             _ => None,
         }
@@ -340,7 +360,7 @@ impl SimplePredicateHandler for EqualHandler {
 #[derive(Clone, Copy)]
 pub struct ContainsHandler;
 
-impl SimplePredicateHandler for ContainsHandler {
+impl BasePredicateHandler for ContainsHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::Contains;
     const VALUE_COMPARISON_OPERATION: NativeOperation = NativeOperation::ContainsFromEntries;
     const ARITY: usize = 3;
@@ -377,7 +397,7 @@ impl SimplePredicateHandler for ContainsHandler {
 #[derive(Clone, Copy)]
 pub struct NotContainsHandler;
 
-impl SimplePredicateHandler for NotContainsHandler {
+impl BasePredicateHandler for NotContainsHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::NotContains;
     const VALUE_COMPARISON_OPERATION: NativeOperation = NativeOperation::NotContainsFromEntries;
     const ARITY: usize = 3;
@@ -411,7 +431,7 @@ impl SimplePredicateHandler for NotContainsHandler {
 #[derive(Copy, Clone)]
 pub struct SumOfHandler;
 
-impl SimplePredicateHandler for SumOfHandler {
+impl BasePredicateHandler for SumOfHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::SumOf;
     const VALUE_COMPARISON_OPERATION: NativeOperation = NativeOperation::SumOf;
     const ARITY: usize = 3;
@@ -471,7 +491,7 @@ impl SimplePredicateHandler for SumOfHandler {
 #[derive(Copy, Clone)]
 pub struct ProductOfHandler;
 
-impl SimplePredicateHandler for ProductOfHandler {
+impl BasePredicateHandler for ProductOfHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::ProductOf;
     const VALUE_COMPARISON_OPERATION: NativeOperation = NativeOperation::ProductOf;
     const ARITY: usize = 3;
@@ -531,7 +551,7 @@ impl SimplePredicateHandler for ProductOfHandler {
 #[derive(Clone, Copy)]
 pub struct NotEqualHandler;
 
-impl SimplePredicateHandler for NotEqualHandler {
+impl BasePredicateHandler for NotEqualHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::NotEqual;
     const VALUE_COMPARISON_OPERATION: NativeOperation = NativeOperation::NotEqualFromEntries;
     const ARITY: usize = 2;
@@ -544,7 +564,7 @@ impl SimplePredicateHandler for NotEqualHandler {
 #[derive(Copy, Clone)]
 pub struct MaxOfHandler;
 
-impl SimplePredicateHandler for MaxOfHandler {
+impl BasePredicateHandler for MaxOfHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::MaxOf;
     const VALUE_COMPARISON_OPERATION: NativeOperation = NativeOperation::MaxOf;
     const ARITY: usize = 3;
@@ -604,7 +624,7 @@ impl SimplePredicateHandler for MaxOfHandler {
 #[derive(Copy, Clone)]
 pub struct HashOfHandler;
 
-impl SimplePredicateHandler for HashOfHandler {
+impl BasePredicateHandler for HashOfHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::HashOf;
     const VALUE_COMPARISON_OPERATION: NativeOperation = NativeOperation::HashOf;
     const ARITY: usize = 3;
