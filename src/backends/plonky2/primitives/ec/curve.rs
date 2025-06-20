@@ -9,6 +9,7 @@ use std::{
 };
 
 use num::{bigint::BigUint, Num, One};
+use num_bigint::RandBigInt;
 use plonky2::{
     field::{
         extension::{quintic::QuinticExtension, Extendable, FieldExtension, Frobenius},
@@ -21,6 +22,7 @@ use plonky2::{
     plonk::circuit_builder::CircuitBuilder,
     util::serialization::{Read, Write},
 };
+use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 
 use crate::backends::plonky2::{
@@ -99,6 +101,9 @@ pub struct Point {
 }
 
 impl Point {
+    pub fn new_rand_from_subgroup() -> Self {
+        &OsRng.gen_biguint_below(&GROUP_ORDER) * Self::generator()
+    }
     pub fn as_fields(&self) -> Vec<crate::middleware::F> {
         self.x.0.iter().chain(self.u.0.iter()).cloned().collect()
     }
@@ -711,11 +716,15 @@ mod test {
     };
     use rand::rngs::OsRng;
 
-    use crate::backends::plonky2::primitives::ec::{
-        bits::CircuitBuilderBits,
-        curve::{
-            ec_field_sqrt, CircuitBuilderElliptic, ECField, Point, WitnessWriteCurve, GROUP_ORDER,
+    use crate::backends::plonky2::{
+        primitives::ec::{
+            bits::CircuitBuilderBits,
+            curve::{
+                ec_field_sqrt, CircuitBuilderElliptic, ECField, Point, WitnessWriteCurve,
+                GROUP_ORDER,
+            },
         },
+        Error,
     };
 
     #[test]
@@ -789,6 +798,23 @@ mod test {
         };
         assert!(not_sub.is_on_curve());
         assert!(!not_sub.is_in_subgroup());
+    }
+
+    #[test]
+    fn test_roundtrip_compression() -> Result<(), Error> {
+        (0..10).try_for_each(|_| {
+            let p = Point::new_rand_from_subgroup();
+            let p_compressed = p.compress_from_subgroup()?;
+            let q = Point::decompress_into_subgroup(&p_compressed)?;
+
+            match p == q {
+                true => Ok(()),
+                false => Err(Error::custom(format!(
+                    "Roundtrip compression failed: {:?} ≠ {:?}",
+                    p, q
+                ))),
+            }
+        })
     }
 
     #[test]
