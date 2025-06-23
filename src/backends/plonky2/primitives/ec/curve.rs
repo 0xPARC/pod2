@@ -164,8 +164,8 @@ impl Point {
         match self.is_in_subgroup() {
             true => Ok(self.u),
             false => Err(Error::custom(format!(
-                "Point must lie in EC subgroup: ({}, {})",
-                self.x, self.u
+                "Point must lie in EC subgroup: {}",
+                self
             ))),
         }
     }
@@ -863,7 +863,7 @@ mod test {
             match p == q {
                 true => Ok(()),
                 false => Err(Error::custom(format!(
-                    "Roundtrip compression failed: {:?} ≠ {:?}",
+                    "Roundtrip compression failed: {} ≠ {}",
                     p, q
                 ))),
             }
