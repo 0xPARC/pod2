@@ -77,6 +77,15 @@ pub struct VDSet {
     vds_hashes: Vec<Hash>,
 }
 
+impl PartialEq for VDSet {
+    fn eq(&self, other: &Self) -> bool {
+        self.root == other.root
+            && self.tree_depth == other.tree_depth
+            && self.vds_hashes == other.vds_hashes
+    }
+}
+impl Eq for VDSet {}
+
 impl VDSet {
     fn new_from_vds_hashes(tree_depth: usize, mut vds_hashes: Vec<Hash>) -> Result<Self> {
         // before using the hash values, sort them, so that each set of
