@@ -415,7 +415,7 @@ fn estimate_verif_num_gates(degree_bits: usize) -> usize {
     #[cfg(feature = "zk")]
     {
         // Formula obtained via linear regression using
-        // `test_measure_zk_recursion` results with `standard_recursion_config`.
+        // `test_measure_zk_recursion` results with `standard_recursion_zk_config`.
         num_gates = 244 * degree_bits + 1127;
     }
     #[cfg(not(feature = "zk"))]
