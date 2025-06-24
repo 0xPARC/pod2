@@ -12,7 +12,7 @@ use crate::{
     },
     solver::{
         db::FactDB,
-        engine::semi_naive::{Fact, FactSource, JustificationKind},
+        engine::semi_naive::{Fact, FactSource},
         error::SolverError,
     },
 };
@@ -58,6 +58,25 @@ impl PredicateHandler {
             NativePredicate::GtEq => unimplemented!(),
             // If you see an error here, you've added a new native predicate.
             // Please add a handler for it.
+        }
+    }
+
+    pub fn explain_special_derivation(
+        &self,
+        args: &[ValueRef],
+        db: &FactDB,
+    ) -> Result<Vec<Operation>, SolverError> {
+        match self {
+            PredicateHandler::Lt(h) => h.explain_special_derivation(args, db),
+            PredicateHandler::LtEq(h) => h.explain_special_derivation(args, db),
+            PredicateHandler::Equal(h) => h.explain_special_derivation(args, db),
+            PredicateHandler::Contains(h) => h.explain_special_derivation(args, db),
+            PredicateHandler::SumOf(h) => h.explain_special_derivation(args, db),
+            PredicateHandler::ProductOf(h) => h.explain_special_derivation(args, db),
+            PredicateHandler::NotEqual(h) => h.explain_special_derivation(args, db),
+            PredicateHandler::NotContains(h) => h.explain_special_derivation(args, db),
+            PredicateHandler::MaxOf(h) => h.explain_special_derivation(args, db),
+            PredicateHandler::HashOf(h) => h.explain_special_derivation(args, db),
         }
     }
 
@@ -109,10 +128,7 @@ pub trait BasePredicateHandler {
                 // Do all values satisfy the predicate?
                 if self.check_values(&values) {
                     facts.insert(Fact {
-                        source: FactSource::External(JustificationKind::ByValue(
-                            // This varies by predicate, e.g. Equal uses EqualFromEntries.
-                            Self::VALUE_COMPARISON_OPERATION,
-                        )),
+                        source: FactSource::Native(Self::VALUE_COMPARISON_OPERATION),
                         args: value_refs,
                     });
                 }
@@ -121,7 +137,7 @@ pub trait BasePredicateHandler {
                 // values. We can check if a statement already exists for these arguments.
                 if self.lookup_statement(&value_refs, db) {
                     facts.insert(Fact {
-                        source: FactSource::External(JustificationKind::Existing),
+                        source: FactSource::Copy,
                         args: value_refs,
                     });
                 }
@@ -132,9 +148,7 @@ pub trait BasePredicateHandler {
             let deduced_args = self.deduce_with_free_args(args, db);
             if let Some(deduced_args) = deduced_args {
                 facts.insert(Fact {
-                    source: FactSource::External(JustificationKind::ByValue(
-                        Self::VALUE_COMPARISON_OPERATION,
-                    )),
+                    source: FactSource::Native(Self::VALUE_COMPARISON_OPERATION),
                     args: deduced_args,
                 });
             }
@@ -302,7 +316,7 @@ impl BasePredicateHandler for EqualHandler {
             if let (Some(ValueRef::Key(key0)), Some(ValueRef::Key(key1))) = (&args[0], &args[1]) {
                 if db.find_equality_path(key0, key1) {
                     return Some(Fact {
-                        source: FactSource::External(JustificationKind::Special),
+                        source: FactSource::Special,
                         args: vec![args[0].clone().unwrap(), args[1].clone().unwrap()],
                     });
                 }
@@ -392,6 +406,49 @@ impl BasePredicateHandler for ContainsHandler {
             _ => false,
         }
     }
+
+    fn deduce_with_free_args(
+        &self,
+        args: &[Option<ValueRef>],
+        db: &FactDB,
+    ) -> Option<Vec<ValueRef>> {
+        match (&args[0], &args[1], &args[2]) {
+            (Some(vr1), Some(vr2), None) => {
+                if let (Some(val1), Some(val2)) =
+                    (db.value_ref_to_value(vr1), db.value_ref_to_value(vr2))
+                {
+                    if let TypedValue::Array(arr) = val1.typed() {
+                        if let TypedValue::Int(idx) = val2.typed() {
+                            if let Ok(i) = usize::try_from(*idx) {
+                                if let Ok(val) = arr.get(i) {
+                                    return Some(vec![
+                                        vr1.clone(),
+                                        vr2.clone(),
+                                        ValueRef::from(val.clone()),
+                                    ]);
+                                }
+                            }
+                        }
+                    }
+                    if let TypedValue::Dictionary(dict) = val1.typed() {
+                        if let TypedValue::String(s) = val2.typed() {
+                            if let Ok(val) = dict.get(&Key::new(s.clone())) {
+                                return Some(vec![
+                                    vr1.clone(),
+                                    vr2.clone(),
+                                    ValueRef::from(val.clone()),
+                                ]);
+                            }
+                        }
+                    }
+                    None
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -400,7 +457,7 @@ pub struct NotContainsHandler;
 impl BasePredicateHandler for NotContainsHandler {
     const NATIVE_PREDICATE: NativePredicate = NativePredicate::NotContains;
     const VALUE_COMPARISON_OPERATION: NativeOperation = NativeOperation::NotContainsFromEntries;
-    const ARITY: usize = 3;
+    const ARITY: usize = 2;
 
     fn check_values(&self, args: &[Value]) -> bool {
         match args[0].typed() {

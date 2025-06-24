@@ -21,17 +21,6 @@ use crate::middleware::{
 pub enum EqualityKind {
     Transitive, // From an explicit Equal(A,B) statement
     ByValue,    // Derived from Value(A) == Value(B)
-    Unknown,    // No known constraint on value type
-                // We *could* add "String" here, and infer that Dictionary keys are Strings
-}
-
-#[derive(Debug)]
-pub enum ValueEquivalenceClass {
-    Numeric,   // Int or Bool
-    Container, // Array, Set, or Dict
-    Raw,       // E.g. for HashOf,
-    Unknown,   // No known constraint on value type
-               // We *could* add "String" here, and infer that Dictionary keys are Strings
 }
 
 /// A map from a statement's arguments to a list of PodIds that assert it.
@@ -417,13 +406,26 @@ impl FactDB {
             }
         }
 
-        // TODO: use equalities to propagate value type information
-
         Ok(db)
     }
 
     pub fn get_value_by_anchored_key(&self, ak: &AnchoredKey) -> Option<&Value> {
         self.anchored_key_to_value.get(ak)
+    }
+
+    // If we know an anchored key, we can look up the statement that asserts its value?
+    pub fn anchored_key_to_equal_statement(&self, ak: &AnchoredKey) -> Option<Statement> {
+        let value = self.get_value_by_anchored_key(ak)?;
+        let stmt = Statement::Equal(ValueRef::Key(ak.clone()), ValueRef::Literal(value.clone()));
+        if self
+            .statement_index
+            .equal
+            .contains_key(&[ValueRef::Key(ak.clone()), ValueRef::Literal(value.clone())])
+        {
+            Some(stmt)
+        } else {
+            None
+        }
     }
 
     pub fn get_aks_by_value(&self, value: &Value) -> Option<&HashSet<AnchoredKey>> {

@@ -28,6 +28,12 @@ pub enum PredicateIdentifier {
 /// format.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Atom {
+    /// Index of this atom in the original list of statement templates when the
+    /// custom predicate was defined.  This is used solely for proof
+    /// reconstruction: the planner may reorder `body` for evaluation, but we
+    /// still need to emit operations in author-written order.  Synthetic or
+    /// planner-generated atoms (magic guards, etc.) use `usize::MAX`.
+    pub order: usize,
     pub predicate: PredicateIdentifier,
     pub terms: Vec<StatementTmplArg>,
 }

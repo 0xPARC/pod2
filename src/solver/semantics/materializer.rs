@@ -14,7 +14,7 @@ use crate::{
     },
     solver::{
         db::FactDB,
-        engine::semi_naive::{Bindings, Fact, FactSource, JustificationKind, Relation},
+        engine::semi_naive::{Bindings, Fact, FactSource, Relation},
         error::SolverError,
         semantics::predicates::PredicateHandler,
     },
@@ -129,7 +129,7 @@ impl<'a> Materializer {
         &'a self,
         cpr: &'a CustomPredicateRef,
         binding_vector: &'a [Option<Value>],
-    ) -> impl Iterator<Item = (Vec<Value>, JustificationKind)> + 'a {
+    ) -> impl Iterator<Item = (Vec<Value>, FactSource)> + 'a {
         self.db
             .statement_index
             .custom
@@ -146,7 +146,7 @@ impl<'a> Materializer {
                     // then any value is acceptable.
                     .all(|(filter, value)| filter.as_ref().is_none_or(|f| f == value))
             })
-            .map(|vals| (vals, JustificationKind::Existing))
+            .map(|vals| (vals, FactSource::Copy))
     }
 
     /// For a given template argument and binding, returns a list of possible values.
@@ -226,8 +226,8 @@ impl<'a> Materializer {
         let rel: Relation = match predicate {
             Predicate::Custom(cpr) => self
                 .iter_custom_statements(&cpr, &binding_vector)
-                .map(|(fact_values, just_kind)| Fact {
-                    source: FactSource::External(just_kind),
+                .map(|(fact_values, source)| Fact {
+                    source,
                     args: fact_values.into_iter().map(ValueRef::Literal).collect(),
                 })
                 .collect(),
@@ -258,6 +258,7 @@ impl<'a> Materializer {
                 let handler = PredicateHandler::for_native_predicate(native_pred);
 
                 for candidate_args in candidate_args_iter {
+                    println!("Materializing {:?} for {:?}", candidate_args, native_pred);
                     let new_rel = handler.materialize(&candidate_args, &self.db);
                     rel.extend(new_rel);
                 }

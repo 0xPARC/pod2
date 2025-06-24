@@ -1,6 +1,9 @@
 use crate::{
     middleware::{Predicate, TypedValue, Value, ValueRef},
-    solver::{engine::semi_naive::FactStore, ir::PredicateIdentifier},
+    solver::{
+        engine::semi_naive::{FactStore, ProvenanceStore},
+        ir::PredicateIdentifier,
+    },
 };
 
 pub fn print_all_facts(facts: &FactStore) {
@@ -13,7 +16,7 @@ pub fn print_all_facts(facts: &FactStore) {
             PredicateIdentifier::Magic {
                 name,
                 bound_indices: _,
-            } => name.clone(),
+            } => format!("magic[{}]", name),
             PredicateIdentifier::Normal(Predicate::BatchSelf(batch_self)) => {
                 format!("batch_self[{}]", batch_self)
             }
@@ -31,6 +34,31 @@ pub fn print_all_facts(facts: &FactStore) {
                 fact.source
             );
         }
+    }
+}
+
+pub fn print_provenance(provenance: &ProvenanceStore) {
+    for ((predicate, args), (rule, bindings)) in provenance {
+        println!(
+            "{:?}",
+            match predicate {
+                PredicateIdentifier::Normal(Predicate::Custom(cpr)) => cpr.predicate().name.clone(),
+                PredicateIdentifier::Normal(Predicate::Native(native)) => {
+                    format!("{:?}", native)
+                }
+                PredicateIdentifier::Magic {
+                    name,
+                    bound_indices: _,
+                } => format!("magic[{}]", name),
+                PredicateIdentifier::Normal(Predicate::BatchSelf(batch_self)) => {
+                    format!("batch_self[{}]", batch_self)
+                }
+            }
+        );
+        println!("  args: {:?}", args);
+        //  println!("  rule: {:?}", rule);
+        println!("  bindings: {:?}", bindings);
+        println!();
     }
 }
 

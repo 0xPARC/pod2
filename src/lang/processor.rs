@@ -329,10 +329,10 @@ fn validate_and_build_statement_template(
                 | NativePredicate::Lt
                 | NativePredicate::LtEq
                 | NativePredicate::SetContains
+                | NativePredicate::NotContains
                 | NativePredicate::DictNotContains
                 | NativePredicate::SetNotContains => 2,
-                NativePredicate::NotContains
-                | NativePredicate::Contains
+                NativePredicate::Contains
                 | NativePredicate::ArrayContains
                 | NativePredicate::DictContains
                 | NativePredicate::SumOf

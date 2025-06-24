@@ -4,9 +4,12 @@ use crate::{
     middleware::{Params, Pod, StatementTmpl},
     solver::{
         db::FactDB,
-        engine::semi_naive::{MetricsCollector, SemiNaiveEngine},
+        engine::semi_naive::SemiNaiveEngine,
         error::SolverError,
-        planner::Planner,
+        metrics::{
+            CounterMetrics, DebugMetrics, MetricsLevel, MetricsReport, MetricsSink, NoOpMetrics,
+        },
+        planner::{Planner, QueryPlan},
         proof::Proof,
         semantics::materializer::Materializer,
     },
@@ -22,21 +25,58 @@ pub mod planner;
 pub mod proof;
 pub mod semantics;
 
+/// The main entry point for the solver.
+///
+/// Takes a proof request, a set of pods containing asserted facts, and runtime
+/// parameters, and attempts to find a valid proof. It can be configured to
+/// different levels of metrics during execution.
 pub fn solve(
     request: &[StatementTmpl],
     pods: &[Box<dyn Pod>],
     params: &Params,
-) -> Result<Option<Proof>, SolverError> {
+    metrics_level: MetricsLevel,
+) -> Result<(Proof, MetricsReport), SolverError> {
+    // Common setup logic that is independent of the metrics level.
     let db = Arc::new(FactDB::build(pods.to_vec()).unwrap());
     let materializer = Materializer::new(db, params);
-
     let planner = Planner::new();
     let plan = planner.create_plan(request).unwrap();
 
-    let engine = SemiNaiveEngine::new();
-    let mut metrics = MetricsCollector::default();
+    // Dispatch to the appropriate generic implementation based on the desired
+    // metrics level. This allows the compiler to monomorphize the engine's
+    // execution path and eliminate the overhead of metrics collection when it
+    // is not needed.
+    match metrics_level {
+        MetricsLevel::None => {
+            let (proof, _) = run_solve(plan, materializer, NoOpMetrics)?;
+            Ok((proof, MetricsReport::None))
+        }
+        MetricsLevel::Counters => {
+            let (proof, metrics) = run_solve(plan, materializer, CounterMetrics::default())?;
+            Ok((proof, MetricsReport::Counters(metrics)))
+        }
+        MetricsLevel::Debug => {
+            let (proof, metrics) = run_solve(plan, materializer, DebugMetrics::default())?;
+            Ok((proof, MetricsReport::Debug(metrics)))
+        }
+    }
+}
 
-    engine.execute(&plan, &materializer, &mut metrics)
+/// The private, generic worker function for the solver.
+///
+/// This function is monomorphized by the compiler for each concrete `MetricsSink`
+/// type, allowing for zero-cost static dispatch of metrics collection.
+fn run_solve<M: MetricsSink>(
+    plan: QueryPlan,
+    materializer: Materializer,
+    metrics: M,
+) -> Result<(Proof, M), SolverError> {
+    let mut engine = SemiNaiveEngine::new(metrics);
+
+    let (all_facts, provenance) = engine.execute(&plan, &materializer)?;
+    let proof = engine.reconstruct_proof(&all_facts, &provenance, &materializer)?;
+
+    Ok((proof, engine.into_metrics()))
 }
 
 #[cfg(test)]
@@ -89,14 +129,16 @@ mod tests {
             .unwrap()
             .request_templates;
 
-        let result = solve(
+        let (result, metrics) = solve(
             &request,
             &[alice_attestation.pod, bob_attestation.pod],
             &params,
+            MetricsLevel::Counters,
         )
         .unwrap();
 
         println!("Result: {:?}", result);
-        println!("Proof tree: {}", result.unwrap());
+        println!("Metrics: {:?}", metrics);
+        println!("Proof tree: {}", result);
     }
 }

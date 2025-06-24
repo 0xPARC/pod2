@@ -164,6 +164,7 @@ impl Planner {
                 let request_literal = ir::Atom {
                     predicate: ir::PredicateIdentifier::Normal(Predicate::Custom(cpr.clone())),
                     terms: tmpl.args.clone(),
+                    order: usize::MAX,
                 };
 
                 let adornment = self.get_adornment(&request_literal, &HashSet::new());
@@ -187,6 +188,7 @@ impl Planner {
                     head: ir::Atom {
                         predicate: magic_pred_id,
                         terms: magic_head_terms,
+                        order: usize::MAX,
                     },
                     body: vec![], // No flattened literals
                 });
@@ -284,6 +286,7 @@ impl Planner {
                             head: ir::Atom {
                                 predicate: magic_head_id,
                                 terms: magic_head_terms,
+                                order: usize::MAX,
                             },
                             body: accumulated_guards.clone(),
                         });
@@ -355,6 +358,7 @@ impl Planner {
         let magic_literal = ir::Atom {
             predicate: magic_pred_id,
             terms: magic_terms,
+            order: usize::MAX,
         };
 
         // Compute which wildcards are already bound at the start of the body
@@ -394,6 +398,7 @@ impl Planner {
         Ok(ir::Atom {
             predicate: magic_pred_id,
             terms: magic_terms,
+            order: usize::MAX,
         })
     }
 
@@ -414,6 +419,7 @@ impl Planner {
                 synthetic_rule_body.push(ir::Atom {
                     predicate: ir::PredicateIdentifier::Normal(tmpl.pred.clone()),
                     terms: tmpl.args.clone(),
+                    order: usize::MAX,
                 });
             }
 
@@ -454,6 +460,7 @@ impl Planner {
                     .into_iter()
                     .map(StatementTmplArg::Wildcard)
                     .collect(),
+                order: usize::MAX,
             };
 
             all_rules.push(ir::Rule {
@@ -495,6 +502,7 @@ impl Planner {
                 .map(|tmpl| ir::Atom {
                     predicate: ir::PredicateIdentifier::Normal(tmpl.pred.clone()),
                     terms: tmpl.args.clone(),
+                    order: usize::MAX,
                 })
                 .collect();
 
@@ -538,6 +546,7 @@ impl Planner {
                     .cloned()
                     .map(StatementTmplArg::Wildcard)
                     .collect(),
+                order: usize::MAX,
             };
 
             all_rules.push(ir::Rule {
@@ -595,14 +604,17 @@ impl Planner {
                 all_rules.push(rule);
             } else {
                 // OR case: one rule for each statement in the body.
-                for tmpl in &pred_def.statements {
-                    let rule = self.translate_to_ir_rule(
+                for (i, tmpl) in pred_def.statements.iter().enumerate() {
+                    let mut rule = self.translate_to_ir_rule(
                         &cpr,
                         &head_args,
                         std::slice::from_ref(tmpl),
                         &mut worklist,
                         &mut visited,
                     )?;
+                    // Record which OR-branch this rule originates from so that proof
+                    // reconstruction can restore the author-written order.
+                    rule.head.order = i;
                     all_rules.push(rule);
                 }
             }
@@ -624,11 +636,12 @@ impl Planner {
         let head_literal = ir::Atom {
             predicate: ir::PredicateIdentifier::Normal(Predicate::Custom(cpr.clone())),
             terms: head_args.to_vec(),
+            order: usize::MAX,
         };
 
         // Translate the body of the rule.
         let mut body_literals = Vec::new();
-        for tmpl in body_tmpls {
+        for (i, tmpl) in body_tmpls.iter().enumerate() {
             match &tmpl.pred {
                 // Resolve self-references inside the same batch immediately.
                 Predicate::BatchSelf(idx) => {
@@ -639,6 +652,7 @@ impl Planner {
                             resolved_cpr.clone(),
                         )),
                         terms: tmpl.args.clone(),
+                        order: i,
                     });
 
                     // Schedule the referenced predicate for traversal if not yet seen.
@@ -651,6 +665,7 @@ impl Planner {
                     body_literals.push(ir::Atom {
                         predicate: ir::PredicateIdentifier::Normal(tmpl.pred.clone()),
                         terms: tmpl.args.clone(),
+                        order: i,
                     });
                 }
             }

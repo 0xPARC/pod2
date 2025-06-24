@@ -12,27 +12,18 @@ use log::{debug, trace};
 
 use crate::{
     middleware::{
-        self, CustomPredicateRef, NativeOperation, Predicate, RawValue, StatementTmplArg,
-        TypedValue, ValueRef, Wildcard,
+        self, CustomPredicateRef, NativeOperation, Predicate, StatementTmplArg, ValueRef, Wildcard,
     },
     solver::{
-        debug::print_all_facts,
         engine::proof_reconstruction::ProofReconstructor,
         error::SolverError,
-        ir::{self, Atom, PredicateIdentifier, Rule},
+        ir::{self, Atom, Rule},
+        metrics::MetricsSink,
         planner::QueryPlan,
         proof::Proof,
         semantics::materializer::Materializer,
     },
 };
-
-#[derive(Default)]
-pub struct MetricsCollector {
-    pub fixpoint_iterations: u32,
-    pub facts_derived_per_predicate: HashMap<PredicateIdentifier, usize>,
-    pub materializer_calls: u64,
-    pub deltas: Vec<FactStore>,
-}
 
 /// A map from variables in a rule to their concrete values for a given solution.
 pub type Bindings = HashMap<Wildcard, Value>;
@@ -43,17 +34,12 @@ pub type Bindings = HashMap<Wildcard, Value>;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FactSource {
     /// A fact that was derived by a rule during the evaluation.
-    Derived,
+    Custom,
     /// A fact that originated from the EDB (i.e., asserted in a POD).
-    /// The `JustificationKind` hints at how it was justified (e.g., direct
+    /// The `OperationKind` hints at how it was justified (e.g., direct
     /// fact vs. a computation like `Equal(5,5)`).
-    External(JustificationKind),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum JustificationKind {
-    Existing,
-    ByValue(NativeOperation),
+    Native(NativeOperation),
+    Copy,
     Special,
 }
 
@@ -70,8 +56,7 @@ pub type Relation = HashSet<Fact>;
 pub type FactStore = HashMap<ir::PredicateIdentifier, Relation>;
 /// A store for the provenance of derived facts, mapping a fact to the
 /// rule and bindings that produced it.
-pub(super) type ProvenanceStore =
-    HashMap<(ir::PredicateIdentifier, Vec<ValueRef>), (Rule, Bindings)>;
+pub type ProvenanceStore = HashMap<(ir::PredicateIdentifier, Vec<ValueRef>), (Rule, Bindings)>;
 
 /// Implements a semi-naive Datalog evaluation engine.
 ///
@@ -79,11 +64,19 @@ pub(super) type ProvenanceStore =
 /// to find new facts in the next, which is more efficient than naive evaluation.
 /// It processes a `QueryPlan` which contains rules that have been optimized
 /// with the Magic Set transformation, ensuring goal-directed evaluation.
-pub struct SemiNaiveEngine;
+pub struct SemiNaiveEngine<M: MetricsSink> {
+    metrics: M,
+}
 
-impl SemiNaiveEngine {
-    pub fn new() -> Self {
-        Self {}
+impl<M: MetricsSink> SemiNaiveEngine<M> {
+    /// Creates a new engine with a given metrics sink.
+    pub fn new(metrics: M) -> Self {
+        Self { metrics }
+    }
+
+    /// Consumes the engine to retrieve the collected metrics.
+    pub fn into_metrics(self) -> M {
+        self.metrics
     }
 
     /// Executes a query plan to find a proof for a request.
@@ -102,11 +95,10 @@ impl SemiNaiveEngine {
     /// requested predicates and constructs its proof. It does not yet handle
     /// requests that require proving multiple top-level statements simultaneously.
     pub fn execute(
-        &self,
+        &mut self,
         plan: &QueryPlan,
         materializer: &Materializer,
-        metrics: &mut MetricsCollector,
-    ) -> Result<Option<Proof>, SolverError> {
+    ) -> Result<(FactStore, ProvenanceStore), SolverError> {
         // 1.  Evaluate all rules (magic + guarded) together so that recursive
         //     dependencies are handled correctly.
         let mut combined_rules = plan.magic_rules.clone();
@@ -115,8 +107,15 @@ impl SemiNaiveEngine {
         let (all_facts, prov) =
             self.evaluate_rules(&combined_rules, materializer, FactStore::new())?;
 
-        print_all_facts(&all_facts);
+        Ok((all_facts, prov))
+    }
 
+    pub fn reconstruct_proof(
+        &self,
+        all_facts: &FactStore,
+        provenance: &ProvenanceStore,
+        materializer: &Materializer,
+    ) -> Result<Proof, SolverError> {
         // The planner always emits a synthetic predicate `_request_goal`.  The
         // query is proven if (and only if) at least one fact for that
         // predicate is derived.
@@ -128,17 +127,18 @@ impl SemiNaiveEngine {
         if let Some(pid) = request_pid {
             if let Some(rel) = all_facts.get(&pid) {
                 if let Some(fact) = rel.iter().next() {
-                    let recon = ProofReconstructor::new(&all_facts, &prov, materializer);
+                    let recon = ProofReconstructor::new(all_facts, provenance, materializer);
                     let root = recon.build(&pid, fact)?;
-                    return Ok(Some(Proof {
+                    return Ok(Proof {
                         root_nodes: vec![root],
-                    }));
+                    });
                 }
             }
         }
 
-        // No fact for the request goal ⇒ the overall request is unproven.
-        Ok(None)
+        Err(SolverError::Internal(
+            "No proof found for request goal".to_string(),
+        ))
     }
 
     /// The core semi-naive evaluation loop.
@@ -160,7 +160,7 @@ impl SemiNaiveEngine {
     /// 4. Replace `delta_facts` with `new_delta`.
     /// 5. Repeat until `new_delta` is empty.
     fn evaluate_rules(
-        &self,
+        &mut self,
         rules: &[Rule],
         materializer: &Materializer,
         initial_facts: FactStore,
@@ -184,9 +184,8 @@ impl SemiNaiveEngine {
             delta_facts = initial_delta;
         }
 
-        let mut iteration = 0;
         loop {
-            debug!("Starting semi-naive iteration {}", iteration);
+            self.metrics.increment_iterations();
 
             let new_delta = self.perform_iteration(
                 rules,
@@ -196,20 +195,22 @@ impl SemiNaiveEngine {
                 &mut provenance_store,
             )?;
 
-            if log::log_enabled!(log::Level::Trace) {
-                for (p, rel) in &new_delta {
-                    trace!("Iteration {} – Δ {:?} size = {}", iteration, p, rel.len());
-                }
-            }
+            self.metrics.record_delta(new_delta.clone());
+
+            let num_new_facts = new_delta.values().map(|rel| rel.len()).sum();
+            self.metrics.record_delta_size(num_new_facts);
+            trace!(
+                "Iteration complete. New facts this iteration: {}",
+                num_new_facts
+            );
 
             if new_delta.values().all(|rel| rel.is_empty()) {
-                debug!("Fixpoint reached after {} iterations.", iteration);
+                debug!("Fixpoint reached.");
                 break; // Fixpoint reached.
             }
 
             trace!("Delta for next iteration: {:?}", new_delta);
             delta_facts = new_delta;
-            iteration += 1;
         }
 
         Ok((all_facts, provenance_store))
@@ -264,7 +265,7 @@ impl SemiNaiveEngine {
             );
 
             let fact_struct = Fact {
-                source: FactSource::External(JustificationKind::Existing),
+                source: FactSource::Copy,
                 args: fact_tuple,
             };
 
@@ -323,7 +324,7 @@ impl SemiNaiveEngine {
                 let head_fact_tuple = self.project_head_fact(&rule.head, &new_bindings)?;
                 let pred_id = rule.head.predicate.clone();
 
-                trace!("Δ {:?} {:?}", pred_id, head_fact_tuple);
+                trace!("Delta {:?} {:?}", pred_id, head_fact_tuple);
 
                 // A fact is "new" if its tuple has not been seen before for this predicate.
                 if !all_facts
@@ -332,7 +333,7 @@ impl SemiNaiveEngine {
                 {
                     trace!("New fact derived for {:?}: {:?}", pred_id, head_fact_tuple);
                     let new_fact = Fact {
-                        source: FactSource::Derived,
+                        source: FactSource::Custom,
                         args: head_fact_tuple.clone(),
                     };
 
@@ -440,7 +441,7 @@ impl SemiNaiveEngine {
             }
         };
 
-        // Identify body positions whose (resolved) predicate appears in the current Δ.
+        // Identify body positions whose (resolved) predicate appears in the current delta.
         let delta_positions: Vec<usize> = rule
             .body
             .iter()
@@ -461,7 +462,7 @@ impl SemiNaiveEngine {
             delta_positions
         );
 
-        // Fallback: if no literal's predicate appears in Δ *but* the rule's body
+        // Fallback: if no literal's predicate appears in delta *but* the rule's body
         // depends **only on EDB (native) predicates**, we still have to evaluate
         // it once to seed the IDB with facts that stem purely from the extensional
         // database.  (Think `base(X,Y) :- Equal(X,Y), Equal(D,0).`)
@@ -583,21 +584,23 @@ impl SemiNaiveEngine {
         fact: &[ValueRef],
     ) -> Result<Option<Bindings>, SolverError> {
         let mut new_bindings = bindings.clone();
-        // Fact is our new fact. Atom is equivalent to StatementTmpl, with a predicate
-        // and a list of arguments.
-        // We follow the structure of the Atom, and use it to understand how the values
-        // in the fact relate to bindings.
-        // These values must either match the existing bindings, or be a new value for
-        // a binding which does not currently exist.
+        // An "Atom" here is a single statement, and its "terms" are in fact the
+        // statement template arguments. The "fact" is the concrete set of statement
+        // arguments we are trying to unify with the bindings.
+        // In other words, given a statement template and a concrete set of statement
+        // arguments, we work out what this means for the wildcards in the statement
+        // template.
         for (term_idx, term) in atom.terms.iter().enumerate() {
+            // Given the index of the statement template argument, we can get the
+            // corresponding ValueRef from the concrete statement.
             let value_ref = &fact[term_idx];
             match term {
                 StatementTmplArg::Literal(c) => {
                     if let ValueRef::Literal(value) = value_ref {
-                        // Treat values as equal if their raw hashes are identical, even if the
-                        // typed wrappers differ (e.g. Raw vs PodId).
-                        if c.raw() != value.raw() {
-                            return Ok(None); // Conflict with a constant
+                        // If the value in the fact does not match the value in the
+                        // statement template, then the unification fails.
+                        if c != value {
+                            return Ok(None);
                         }
                     } else {
                         return Err(SolverError::Internal(format!(
@@ -610,49 +613,54 @@ impl SemiNaiveEngine {
                     match value_ref {
                         // Wildcard bound to a concrete literal value.
                         ValueRef::Literal(value) => {
+                            // If the wildcard is already bound to a value, and it does not
+                            // match the value in the fact, then the unification fails.
                             if let Some(existing_val) = new_bindings.get(w) {
-                                if existing_val.raw() != value.raw() {
-                                    return Ok(None); // Conflict with existing binding
+                                if existing_val != value {
+                                    return Ok(None);
                                 }
                             } else {
+                                // No existing binding for this wildcard, so we can bind it to
+                                // the literal value.
                                 new_bindings.insert(w.clone(), value.clone());
                             }
                         }
-                        // Wildcard bound through an AnchoredKey – bind to the pod id's raw hash.
-                        ValueRef::Key(ak) => {
-                            let pod_value =
-                                Value::new(TypedValue::Raw(RawValue::from((ak.pod_id).0)));
-
-                            if let Some(existing_val) = new_bindings.get(w) {
-                                if existing_val.raw() != pod_value.raw() {
-                                    return Ok(None); // Conflict with existing binding
-                                }
-                            } else {
-                                new_bindings.insert(w.clone(), pod_value);
-                            }
+                        // The statement template argument is a wildcard, but the equivalent
+                        // ValueRef is not a Literal. This is a mismatch (can't bind an anchored
+                        // key to a plain wildcard).
+                        _ => {
+                            return Err(SolverError::Internal(format!(
+                                "Wildcard value_ref should be a ValueRef::Literal: {:?}",
+                                value_ref
+                            )));
                         }
                     }
                 }
                 StatementTmplArg::AnchoredKey(pod_wc, key) => {
                     if let ValueRef::Key(ak) = value_ref {
-                        // 1. The literal key name in the rule must match the key found in the fact.
+                        // The statement template argument is an AnchoredKey, and the fact is
+                        // also an AnchoredKey. We need to check that the key names match.
                         if &ak.key != key {
-                            return Ok(None); // Different key – this fact doesn't match the literal.
+                            return Ok(None);
                         }
 
-                        // 2. The wildcard should be bound to the raw hash of the pod id so that
-                        //    downstream facts use the canonical Raw representation expected by
-                        //    tests and by other parts of the engine.
-                        let pod_value = Value::new(TypedValue::Raw(RawValue::from((ak.pod_id).0)));
+                        let pod_id_value = Value::from(ak.pod_id.0);
 
                         match new_bindings.get(pod_wc) {
-                            // Wildcard already bound – ensure consistency.
-                            Some(existing_val) if existing_val.raw() != pod_value.raw() => {
-                                return Ok(None); // Mismatch with existing binding.
+                            // If the wildcard is already bound to a value, and it does not
+                            // match the value in the fact, then the unification fails.
+                            Some(existing_val) if *existing_val != pod_id_value => {
+                                println!(
+                                    "Unification failed: {:?} != {:?}",
+                                    existing_val, pod_id_value
+                                );
+                                return Ok(None);
                             }
                             Some(_) => { /* already bound consistently, nothing to do */ }
                             None => {
-                                new_bindings.insert(pod_wc.clone(), pod_value);
+                                // No existing binding for this wildcard, so we can bind it to
+                                // the pod id value.
+                                new_bindings.insert(pod_wc.clone(), pod_id_value);
                             }
                         }
                     } else {
@@ -700,7 +708,6 @@ impl SemiNaiveEngine {
                 ir::PredicateIdentifier::Normal(Predicate::Custom(cpr.clone())),
             ),
             id @ ir::PredicateIdentifier::Magic { .. } => Some(id.clone()),
-            // Native and GetValue predicates are not in the IDB.
             _ => None,
         };
 
@@ -805,9 +812,9 @@ impl SemiNaiveEngine {
     }
 }
 
-impl Default for SemiNaiveEngine {
+impl<M: MetricsSink> Default for SemiNaiveEngine<M> {
     fn default() -> Self {
-        Self::new()
+        Self::new(M::default())
     }
 }
 
@@ -821,14 +828,20 @@ mod tests {
 
     use super::*;
     use crate::{
-        backends::plonky2::mock::signedpod::MockSigner,
-        examples::{attest_eth_friend, custom::eth_dos_batch},
+        backends::plonky2::mock::{mainpod::MockProver, signedpod::MockSigner},
+        examples::{attest_eth_friend, custom::eth_dos_batch, MOCK_VD_SET},
+        frontend::MainPodBuilder,
         lang::parse,
         middleware::{
-            hash_str, AnchoredKey, Params, Pod, PodId, Predicate, RawValue, Statement, TypedValue,
-            Value, ValueRef,
+            hash_str, AnchoredKey, OperationType, Params, Pod, PodId, Predicate, RawValue,
+            Statement, TypedValue, Value, ValueRef,
         },
-        solver::{db::FactDB, planner::Planner},
+        solver::{
+            db::FactDB,
+            metrics::{DebugMetrics, NoOpMetrics},
+            planner::Planner,
+            proof::Justification,
+        },
     };
 
     // A mock Pod for testing purposes.
@@ -911,12 +924,11 @@ mod tests {
 
         let planner = Planner::new();
         let plan = planner.create_plan(&request).unwrap();
-
-        // 4. Execute plan
-        let engine = SemiNaiveEngine::new();
         let mut combined_rules = plan.magic_rules.clone();
         combined_rules.extend(plan.guarded_rules.clone());
 
+        // 4. Execute plan
+        let mut engine = SemiNaiveEngine::new(NoOpMetrics);
         let (all_facts, _provenance_store) = engine
             .evaluate_rules(&combined_rules, &materializer, FactStore::new())
             .unwrap();
@@ -992,12 +1004,11 @@ mod tests {
 
         let planner = Planner::new();
         let plan = planner.create_plan(&request).unwrap();
-
-        // 3. Execute plan
-        let engine = SemiNaiveEngine::new();
         let mut combined_rules = plan.magic_rules.clone();
         combined_rules.extend(plan.guarded_rules.clone());
 
+        // 3. Execute plan
+        let mut engine = SemiNaiveEngine::new(NoOpMetrics);
         let (all_facts, _provenance_store) = engine
             .evaluate_rules(&combined_rules, &materializer, FactStore::new())
             .unwrap();
@@ -1108,7 +1119,7 @@ mod tests {
         // 3. Execute plan – run magic and guarded rules together so that
         // recursive dependencies between data and magic predicates are
         // handled correctly in a single semi-naive fix-point.
-        let engine = SemiNaiveEngine::new();
+        let mut engine = SemiNaiveEngine::new(DebugMetrics::default());
         let mut combined_rules = plan.magic_rules.clone();
         combined_rules.extend(plan.guarded_rules.clone());
 
@@ -1212,11 +1223,14 @@ mod tests {
         let planner = Planner::new();
         let plan = planner.create_plan(&request).unwrap();
 
-        let engine = SemiNaiveEngine::new();
-        let result = engine.execute(&plan, &materializer, &mut MetricsCollector::default());
+        let mut engine = SemiNaiveEngine::new(NoOpMetrics);
+        let result = engine.execute(&plan, &materializer);
 
-        let proof = result.unwrap();
-        assert!(proof.is_some(), "Execution should succeed");
+        let (all_facts, provenance) = result.unwrap();
+        let proof = engine.reconstruct_proof(&all_facts, &provenance, &materializer);
+
+        assert!(proof.is_ok(), "Execution should succeed");
+        let proof = proof.unwrap();
         println!("Proof: {:?}", proof);
     }
 
@@ -1246,7 +1260,7 @@ mod tests {
         let pods: Vec<Box<dyn Pod>> = vec![Box::new(pod1), Box::new(pod2)];
         let db = Arc::new(FactDB::build(pods).unwrap());
         let params = Params::default();
-        let materializer = Materializer::new(db, &params);
+        let materializer = Materializer::new(db.clone(), &params);
 
         // 3. Define podlog and create plan for a NATIVE predicate request
         let podlog = r#"
@@ -1262,13 +1276,19 @@ mod tests {
         let plan = planner.create_plan(&request).unwrap();
 
         // 4. Execute plan
-        let engine = SemiNaiveEngine::new();
-        let result = engine.execute(&plan, &materializer, &mut MetricsCollector::default());
+        let mut engine = SemiNaiveEngine::new(NoOpMetrics);
+        let result = engine.execute(&plan, &materializer);
 
         // 5. Assert results
         assert!(result.is_ok(), "Execution should succeed");
-        let proof_opt = result.unwrap();
-        assert!(proof_opt.is_some(), "Should find a proof");
+        let (all_facts, provenance) = result.unwrap();
+        let proof = engine.reconstruct_proof(&all_facts, &provenance, &materializer);
+        assert!(proof.is_ok(), "Should find a proof");
+        let proof = proof.unwrap();
+        println!("Proof: {:?}", proof);
+
+        println!("Operations: {:#?}", proof.to_operations(&Arc::clone(&db)));
+        println!("Inputs: {:#?}", proof.to_inputs(&Arc::clone(&db)).0);
 
         //let proof = proof_opt.unwrap();
         //assert_eq!(
@@ -1302,7 +1322,7 @@ mod tests {
         let _ = env_logger::builder().is_test(true).try_init();
         let params = Params {
             max_input_pods_public_statements: 8,
-            max_statements: 24,
+            max_statements: 32,
             max_public_statements: 8,
             ..Default::default()
         };
@@ -1331,8 +1351,7 @@ mod tests {
         );
 
         let db = Arc::new(FactDB::build(vec![alice_attestation.pod, bob_attestation.pod]).unwrap());
-        let params = Params::default();
-        let materializer = Materializer::new(db, &params);
+        let materializer = Materializer::new(db.clone(), &params);
 
         let processed = parse(&req1, &params, &[batch.clone()]).unwrap();
         let request = processed.request_templates;
@@ -1341,10 +1360,45 @@ mod tests {
         let plan = planner.create_plan(&request).unwrap();
 
         // 4. Execute plan
-        let engine = SemiNaiveEngine::new();
-        let result = engine.execute(&plan, &materializer, &mut MetricsCollector::default());
+        let mut engine = SemiNaiveEngine::new(NoOpMetrics);
+        let result = engine.execute(&plan, &materializer);
 
-        println!("Proof tree: {}", result.unwrap().unwrap());
+        let (all_facts, provenance) = result.unwrap();
+        let proof = engine.reconstruct_proof(&all_facts, &provenance, &materializer);
+        assert!(proof.is_ok(), "Should find a proof");
+        let proof = proof.unwrap();
+        println!("Proof: {}", proof);
+        //println!("Operations: {:#?}", proof.to_operations(&db.clone()));
+        for (operation, public) in proof.to_operations(&db.clone()) {
+            println!(
+                "{:?}  public:{}",
+                match operation.0 {
+                    OperationType::Native(op) => format!("{:?}", op),
+                    OperationType::Custom(cpr) => cpr.predicate().name.clone(),
+                },
+                public
+            );
+            for arg in &operation.1 {
+                println!("  {}", arg);
+            }
+            println!();
+        }
+        let vd_set = &*MOCK_VD_SET;
+        let mut builder = MainPodBuilder::new(&params, vd_set);
+        let mut prover = MockProver {};
+
+        let ops = proof.to_operations(&db.clone());
+        println!("Ops: {:#?}", ops.len());
+        for (operation, public) in ops {
+            if public {
+                builder.pub_op(operation).unwrap();
+            } else {
+                builder.priv_op(operation).unwrap();
+            }
+        }
+        let main_pod = builder.prove(&mut prover, &params);
+        assert!(main_pod.is_ok(), "Should prove");
+        println!("Main pod: {}", main_pod.unwrap());
     }
 
     #[test]
@@ -1448,37 +1502,119 @@ mod tests {
         let plan = planner.create_plan(&request).unwrap();
 
         // --- Execute plan ---
-        let engine = SemiNaiveEngine::new();
-        let result = engine
-            .execute(&plan, &materializer, &mut MetricsCollector::default())
-            .unwrap();
-        println!("result: {:?}", result);
+        let mut engine = SemiNaiveEngine::new(DebugMetrics::default());
+        let result = engine.execute(&plan, &materializer);
         // --- Assertions ---
         // The main goal is to check the logs, but we can also assert that
         // the final proof only contains the expected result from Island 1.
-        assert!(result.is_some(), "A proof should have been found");
-        let proof = result.unwrap();
+        let (all_facts, provenance) = result.unwrap();
+        let proof = engine.reconstruct_proof(&all_facts, &provenance, &materializer);
+        assert!(proof.is_ok(), "A proof should have been found");
+        let proof = proof.unwrap();
 
-        // The proof returned by `execute` should now directly contain the proof for `path`.
+        // The proof is for the synthetic `_request_goal` predicate, which has the
+        // actual user-request predicate proof as its premise.
         assert_eq!(
             proof.root_nodes.len(),
             1,
-            "Expected one proven statement in the root"
+            "Expected one root node for the synthetic goal"
         );
-        let path_node = &proof.root_nodes[0];
+        let root_node = &proof.root_nodes[0];
+
+        // Check that the root is indeed for `_request_goal`.
+        if let Statement::Custom(root_cpr, _) = &root_node.statement {
+            assert_eq!(root_cpr.predicate().name, "_request_goal");
+        } else {
+            panic!(
+                "Expected root conclusion to be a Custom statement for _request_goal, but got {:?}",
+                root_node.statement
+            );
+        }
+
+        // Extract the `path` proof node from the premises of the root node.
+        let path_node = match &root_node.justification {
+            Justification::Custom(_, premises) => {
+                assert_eq!(
+                    premises.len(),
+                    1,
+                    "Expected one premise for the synthetic goal"
+                );
+                premises[0].clone()
+            }
+            _ => panic!(
+                "Expected root justification to be Custom, but got {:?}",
+                root_node.justification
+            ),
+        };
 
         let pod_a_id_val = Value::new(TypedValue::Raw(RawValue(pod_a_id.0 .0)));
         let pod_b_id_val = Value::new(TypedValue::Raw(RawValue(pod_b_id.0 .0)));
 
         // Check the conclusion of the path proof node
-        if let Statement::Custom(cpr, values) = &path_node.conclusion {
+        if let Statement::Custom(cpr, values) = &path_node.statement {
             assert_eq!(cpr.predicate().name, "path");
             assert_eq!(values, &vec![pod_a_id_val, pod_b_id_val]);
         } else {
             panic!(
                 "Expected a Custom statement, but found {:?}",
-                path_node.conclusion
+                path_node.statement
             );
         }
     }
+
+    //     #[test]
+    //     fn test_array_sum() {
+    //         let _ = env_logger::builder().is_test(true).try_init();
+
+    //         let pods: Vec<Box<dyn Pod>> = vec![];
+    //         let db = Arc::new(FactDB::build(pods).unwrap());
+    //         let params = Params::default();
+    //         let materializer = Materializer::new(db, &params);
+
+    //         let program = r#"
+    //  sum_from_base(A, I, S) = AND(
+    //     NotContains(?A, ?I)        // I is past the end
+    //     SumOf(?S, 0, 0)            // therefore S = 0
+    // )
+
+    // sum_from_step(A, I, S, private: J, Rest, V) = AND(
+    //     Contains(?A, ?I, ?V)       // element V exists at index I
+    //     SumOf(?J, ?I, 1)           // J = I + 1
+    //     sum_from(?A, ?J, ?Rest)    // recursive call
+    //     SumOf(?S, ?V, ?Rest)       // S = V + Rest
+    // )
+
+    // // ------------ single public definition --------------------------
+    // sum_from(A, I, S) = OR(
+    //     sum_from_base(?A, ?I, ?S)
+    //     sum_from_step(?A, ?I, ?S)
+    // )
+
+    // array_sum(A, S) = AND(
+    //     sum_from(?A, 0, ?S)
+    // )
+    // // --- What a client would request ---------------------------------
+    // REQUEST(
+    //     array_sum([1, 2, 3], ?Total)
+    // )
+    //         "#;
+
+    //         let processed = parse(program, &params, &[]).unwrap();
+    //         let request = processed.request_templates;
+
+    //         let planner = Planner::new();
+    //         let plan = planner.create_plan(&request).unwrap();
+
+    //         let mut engine = SemiNaiveEngine::new(NoOpMetrics);
+    //         let result = engine.execute(&plan, &materializer);
+
+    //         let (all_facts, provenance) = result.unwrap();
+    //         let proof = engine.reconstruct_proof(&all_facts, &provenance, &materializer);
+    //         println!("Metrics: {:#?}", engine.into_metrics());
+    //         print_all_facts(&all_facts);
+    //         println!("Proof: {:#?}", proof);
+    //         assert!(proof.is_ok(), "Execution should succeed");
+    //         let proof = proof.unwrap();
+    //         println!("Proof: {:?}", proof);
+    //     }
 }

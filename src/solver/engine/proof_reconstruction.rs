@@ -3,13 +3,15 @@ use std::{
     sync::Arc,
 };
 
+use itertools::Itertools;
+
 use crate::{
     middleware::{
         AnchoredKey as MWAnchoredKey, CustomPredicateRef, NativeOperation, PodId, Predicate,
         Statement, StatementTmplArg, Value, ValueRef, Wildcard,
     },
     solver::{
-        engine::semi_naive::{Fact, FactSource, FactStore, JustificationKind, ProvenanceStore},
+        engine::semi_naive::{Fact, FactSource, FactStore, ProvenanceStore},
         error::SolverError,
         ir,
         proof::{Justification, ProofNode},
@@ -59,7 +61,7 @@ impl<'a> ProofReconstructor<'a> {
         if !self.visited.insert((pid.clone(), fact.args.clone())) {
             // Already constructing this node – break cycle.
             return Ok(Arc::new(ProofNode {
-                conclusion: Statement::None,
+                statement: Statement::None,
                 justification: Justification::Fact,
             }));
         }
@@ -67,20 +69,19 @@ impl<'a> ProofReconstructor<'a> {
         let conclusion = self.statement_from_fact(pid, fact)?;
 
         let node = match &fact.source {
-            FactSource::External(kind) => {
-                let just = match kind {
-                    JustificationKind::Existing => Justification::Fact,
-                    JustificationKind::ByValue(op) => Justification::ValueComparison(*op),
-                    JustificationKind::Special => {
-                        Justification::ValueComparison(NativeOperation::CopyStatement)
-                    }
-                };
-                Arc::new(ProofNode {
-                    conclusion,
-                    justification: just,
-                })
-            }
-            FactSource::Derived => {
+            FactSource::Native(op) => Arc::new(ProofNode {
+                statement: conclusion,
+                justification: Justification::ValueComparison(*op),
+            }),
+            FactSource::Special => Arc::new(ProofNode {
+                statement: conclusion,
+                justification: Justification::ValueComparison(NativeOperation::CopyStatement),
+            }),
+            FactSource::Copy => Arc::new(ProofNode {
+                statement: conclusion,
+                justification: Justification::Fact,
+            }),
+            FactSource::Custom => {
                 let key = (pid.clone(), fact.args.clone());
                 let (rule, bindings) = self.provenance.get(&key).ok_or_else(|| {
                     SolverError::Internal("Missing provenance for derived fact".into())
@@ -88,7 +89,8 @@ impl<'a> ProofReconstructor<'a> {
 
                 // Build premises recursively (skip magic predicates).
                 let mut premises = Vec::new();
-                for body_atom in &rule.body {
+
+                for body_atom in rule.body.iter().sorted_by_key(|a| a.order) {
                     if matches!(body_atom.predicate, ir::PredicateIdentifier::Magic { .. }) {
                         continue;
                     }
@@ -112,15 +114,67 @@ impl<'a> ProofReconstructor<'a> {
                     premises.push(child);
                 }
 
+                // For predicates defined with OR semantics we need to emit an
+                // operation whose argument list has **one slot per branch**. The
+                // branch that was *not* used in this particular derivation must
+                // be represented by `Statement::None` so that downstream
+                // consumers can rely on a fixed arity.  The `order` field we
+                // attached to every Atom tells us which original branch a body
+                // literal came from.
+
                 let justification = match pid {
                     ir::PredicateIdentifier::Normal(Predicate::Custom(cpr)) => {
-                        Justification::Custom(cpr.clone(), premises)
+                        let pred_def = cpr.predicate();
+
+                        if !pred_def.conjunction {
+                            // --- OR predicate -------------------------------------------------
+                            // Build a vector with a placeholder for every branch.
+                            let mut padded: Vec<Arc<ProofNode>> = (0..pred_def.statements.len())
+                                .map(|_| {
+                                    Arc::new(ProofNode {
+                                        statement: Statement::None,
+                                        justification: Justification::Fact,
+                                    })
+                                })
+                                .collect();
+
+                            if premises.len() == 1 {
+                                let idx = rule.head.order;
+                                if idx < padded.len() {
+                                    padded[idx] = premises[0].clone();
+                                }
+                            } else {
+                                // Fallback: use body atom orders as before (shouldn't happen).
+                                let body_atoms: Vec<_> = rule
+                                    .body
+                                    .iter()
+                                    .filter(|a| {
+                                        !matches!(
+                                            a.predicate,
+                                            ir::PredicateIdentifier::Magic { .. }
+                                        )
+                                    })
+                                    .sorted_by_key(|a| a.order)
+                                    .collect();
+
+                                for (body_atom, child) in body_atoms.iter().zip(premises.iter()) {
+                                    if body_atom.order < padded.len() {
+                                        padded[body_atom.order] = child.clone();
+                                    }
+                                }
+                            }
+
+                            Justification::Custom(cpr.clone(), padded)
+                        } else {
+                            // --- AND predicate (existing behaviour) ---------------------------
+                            Justification::Custom(cpr.clone(), premises)
+                        }
                     }
                     _ => Justification::ValueComparison(NativeOperation::CopyStatement), // fallback for native or others
                 };
 
                 Arc::new(ProofNode {
-                    conclusion,
+                    statement: conclusion,
                     justification,
                 })
             }
