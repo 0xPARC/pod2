@@ -561,7 +561,7 @@ impl PodProver for Prover {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MainPod {
     params: Params,
     id: PodId,
@@ -675,6 +675,17 @@ impl Pod for MainPod {
             public_statements: self.public_statements.clone(),
         })
         .expect("serialization to json")
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn equals(&self, other: &dyn Pod) -> bool {
+        if let Some(other) = other.as_any().downcast_ref::<MainPod>() {
+            self == other
+        } else {
+            false
+        }
     }
 }
 

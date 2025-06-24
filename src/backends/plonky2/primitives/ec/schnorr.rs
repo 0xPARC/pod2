@@ -35,7 +35,7 @@ use crate::{
 };
 
 /// Schnorr signature over ecGFp5.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Signature {
     pub s: BigUint,
     pub e: BigUint,

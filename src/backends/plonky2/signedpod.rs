@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::LazyLock};
+use std::{any::Any, collections::HashMap, sync::LazyLock};
 
 use itertools::Itertools;
 use num_bigint::{BigUint, RandBigInt};
@@ -67,7 +67,7 @@ impl PodSigner for Signer {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SignedPod {
     pub id: PodId,
     pub signature: Signature,
@@ -203,6 +203,17 @@ impl Pod for SignedPod {
             kvs: self.dict.clone(),
         })
         .expect("serialization to json")
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn equals(&self, other: &dyn Pod) -> bool {
+        if let Some(other) = other.as_any().downcast_ref::<SignedPod>() {
+            self == other
+        } else {
+            false
+        }
     }
 }
 

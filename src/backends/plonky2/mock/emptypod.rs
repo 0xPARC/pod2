@@ -1,3 +1,5 @@
+use std::any::Any;
+
 use itertools::Itertools;
 
 use crate::{
@@ -12,7 +14,7 @@ use crate::{
     },
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MockEmptyPod {
     params: Params,
     id: PodId,
@@ -66,6 +68,17 @@ impl Pod for MockEmptyPod {
 
     fn serialize_data(&self) -> serde_json::Value {
         serde_json::Value::Null
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn equals(&self, other: &dyn Pod) -> bool {
+        if let Some(other) = other.as_any().downcast_ref::<MockEmptyPod>() {
+            self == other
+        } else {
+            false
+        }
     }
 }
 

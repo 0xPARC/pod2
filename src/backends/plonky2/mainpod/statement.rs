@@ -10,6 +10,8 @@ use crate::{
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Statement(pub Predicate, pub Vec<StatementArg>);
 
+impl Eq for Statement {}
+
 impl Statement {
     pub fn is_none(&self) -> bool {
         self.0 == Predicate::Native(NativePredicate::None)

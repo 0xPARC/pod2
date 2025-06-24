@@ -2,7 +2,7 @@
 // MainPod
 //
 
-use std::{fmt, iter};
+use std::{any::Any, fmt, iter};
 
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -55,6 +55,21 @@ pub struct MockMainPod {
     // All Merkle proofs
     merkle_proofs_containers: Vec<MerkleClaimAndProof>,
 }
+
+impl PartialEq for MockMainPod {
+    fn eq(&self, other: &Self) -> bool {
+        self.params == other.params
+            && self.id == other.id
+            && self.vd_set == other.vd_set
+            && self.input_signed_pods == other.input_signed_pods
+            && self.input_recursive_pods == other.input_recursive_pods
+            && self.statements == other.statements
+            && self.operations == other.operations
+            && self.public_statements == other.public_statements
+            && self.merkle_proofs_containers == other.merkle_proofs_containers
+    }
+}
+impl Eq for MockMainPod {}
 
 impl fmt::Display for MockMainPod {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -364,6 +379,17 @@ impl Pod for MockMainPod {
             input_recursive_pods,
         })
         .expect("serialization to json")
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn equals(&self, other: &dyn Pod) -> bool {
+        if let Some(other) = other.as_any().downcast_ref::<MockMainPod>() {
+            self == other
+        } else {
+            false
+        }
     }
 }
 

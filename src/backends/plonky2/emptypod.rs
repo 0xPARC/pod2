@@ -1,4 +1,5 @@
 use std::{
+    any::Any,
     collections::HashMap,
     sync::{LazyLock, Mutex},
 };
@@ -73,7 +74,7 @@ impl EmptyPodVerifyTarget {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EmptyPod {
     params: Params,
     id: PodId,
@@ -186,6 +187,17 @@ impl Pod for EmptyPod {
             proof: serialize_proof(&self.proof),
         })
         .expect("serialization to json")
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn equals(&self, other: &dyn Pod) -> bool {
+        if let Some(other) = other.as_any().downcast_ref::<EmptyPod>() {
+            self == other
+        } else {
+            false
+        }
     }
 }
 

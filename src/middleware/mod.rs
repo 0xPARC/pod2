@@ -805,7 +805,17 @@ pub trait Pod: fmt::Debug + DynClone + Any {
             })
             .collect()
     }
+
+    fn as_any(&self) -> &dyn Any;
+    fn equals(&self, other: &dyn Pod) -> bool;
 }
+impl PartialEq for Box<dyn Pod> {
+    fn eq(&self, other: &Self) -> bool {
+        self.equals(&**other)
+    }
+}
+
+impl Eq for Box<dyn Pod> {}
 
 // impl Clone for Box<dyn Pod>
 dyn_clone::clone_trait_object!(Pod);
@@ -828,6 +838,13 @@ pub trait RecursivePod: Pod {
     where
         Self: Sized;
 }
+impl PartialEq for Box<dyn RecursivePod> {
+    fn eq(&self, other: &Self) -> bool {
+        self.equals(&**other)
+    }
+}
+
+impl Eq for Box<dyn RecursivePod> {}
 
 // impl Clone for Box<dyn RecursivePod>
 dyn_clone::clone_trait_object!(RecursivePod);
