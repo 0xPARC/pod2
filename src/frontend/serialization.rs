@@ -1,10 +1,12 @@
+use std::collections::HashMap;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::Error;
 use crate::{
-    frontend::{MainPod, SignedPod},
-    middleware::{deserialize_pod, deserialize_signed_pod, Params, PodId, VDSet},
+    frontend::{MainPod, SignedPod, Statement},
+    middleware::{deserialize_pod, deserialize_signed_pod, Key, Params, PodId, VDSet, Value},
 };
 
 #[derive(Serialize, Deserialize, JsonSchema)]
@@ -19,6 +21,7 @@ pub enum SignedPodType {
 pub struct SerializedSignedPod {
     pod_type: (usize, String),
     id: PodId,
+    entries: HashMap<Key, Value>,
     data: serde_json::Value,
 }
 
@@ -30,6 +33,7 @@ pub struct SerializedMainPod {
     pod_type: (usize, String),
     id: PodId,
     vd_set: VDSet,
+    public_statements: Vec<Statement>,
     data: serde_json::Value,
 }
 
@@ -41,6 +45,7 @@ impl From<SignedPod> for SerializedSignedPod {
             pod_type: (pod_type, pod_type_name_str.to_string()),
             id: pod.id(),
             data,
+            entries: pod.kvs().clone(),
         }
     }
 }
@@ -65,6 +70,7 @@ impl From<MainPod> for SerializedMainPod {
             vd_set: pod.pod.vd_set().clone(),
             params: pod.params.clone(),
             data,
+            public_statements: pod.public_statements,
         }
     }
 }
@@ -315,8 +321,7 @@ mod tests {
     #[test]
     fn test_mock_main_pod_serialization() -> Result<()> {
         let kyc_pod = build_mock_zukyc_pod()?;
-        let serialized = serde_json::to_string_pretty(&kyc_pod).unwrap();
-        println!("serialized: {}", serialized);
+        let serialized = serde_json::to_string(&kyc_pod).unwrap();
         let deserialized: MainPod = serde_json::from_str(&serialized).unwrap();
 
         assert_eq!(kyc_pod.public_statements, deserialized.public_statements);
@@ -387,7 +392,6 @@ mod tests {
         let ethdos_pod = build_ethdos_pod().unwrap();
         let mainpod_schema_value = serde_json::to_value(&mainpod_schema).unwrap();
         let signedpod_schema_value = serde_json::to_value(&signedpod_schema).unwrap();
-
         let kyc_pod_value = serde_json::to_value(&kyc_pod).unwrap();
         let mainpod_valid = jsonschema::validate(&mainpod_schema_value, &kyc_pod_value);
         assert!(mainpod_valid.is_ok(), "{:#?}", mainpod_valid);

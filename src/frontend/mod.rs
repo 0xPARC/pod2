@@ -16,7 +16,7 @@ use crate::middleware::{
 mod custom;
 mod error;
 mod operation;
-mod serialization;
+pub mod serialization;
 pub use custom::*;
 pub use error::*;
 pub use operation::*;
