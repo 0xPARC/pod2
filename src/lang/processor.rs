@@ -109,7 +109,7 @@ pub fn process_pest_tree(
         available_batches,
     )?;
 
-    second_pass(&mut processing_ctx)
+    second_pass(&mut processing_ctx, params)
 }
 
 /// Pass 1: Iterates through top-level definitions, records custom predicate
@@ -266,18 +266,21 @@ enum StatementContext<'a> {
     },
 }
 
-fn second_pass(ctx: &mut ProcessingContext) -> Result<PodlangOutput, ProcessorError> {
+fn second_pass(
+    ctx: &mut ProcessingContext,
+    params: &Params,
+) -> Result<PodlangOutput, ProcessorError> {
     let mut cpb_builder =
         CustomPredicateBatchBuilder::new(ctx.params.clone(), "PodlangBatch".to_string());
 
     for pred_pair in &ctx.custom_predicate_pairs {
-        process_and_add_custom_predicate_to_batch(pred_pair, ctx, &mut cpb_builder)?;
+        process_and_add_custom_predicate_to_batch(params, pred_pair, ctx, &mut cpb_builder)?;
     }
 
     let custom_batch = cpb_builder.finish();
 
     let request_templates = if let Some(req_pair) = &ctx.request_pair {
-        process_request_def(req_pair, ctx, &custom_batch)?
+        process_request_def(params, req_pair, ctx, &custom_batch)?
     } else {
         Vec::new()
     };
@@ -288,10 +291,13 @@ fn second_pass(ctx: &mut ProcessingContext) -> Result<PodlangOutput, ProcessorEr
     })
 }
 
-fn pest_pair_to_builder_arg(arg_content_pair: &Pair<Rule>) -> Result<BuilderArg, ProcessorError> {
+fn pest_pair_to_builder_arg(
+    params: &Params,
+    arg_content_pair: &Pair<Rule>,
+) -> Result<BuilderArg, ProcessorError> {
     match arg_content_pair.as_rule() {
         Rule::literal_value => {
-            let value = process_literal_value(arg_content_pair)?;
+            let value = process_literal_value(params, arg_content_pair)?;
             Ok(BuilderArg::Literal(value))
         }
         Rule::wildcard => {
@@ -421,6 +427,7 @@ fn validate_and_build_statement_template(
 }
 
 fn process_and_add_custom_predicate_to_batch(
+    params: &Params,
     pred_def_pair: &Pair<Rule>,
     processing_ctx: &ProcessingContext,
     cpb_builder: &mut CustomPredicateBatchBuilder,
@@ -505,6 +512,7 @@ fn process_and_add_custom_predicate_to_batch(
         .filter(|p| p.as_rule() == Rule::statement)
     {
         let stb = process_statement_template(
+            params,
             &stmt_pair,
             processing_ctx,
             StatementContext::CustomPredicate,
@@ -526,6 +534,7 @@ fn process_and_add_custom_predicate_to_batch(
 }
 
 fn process_request_def(
+    params: &Params,
     req_def_pair: &Pair<Rule>,
     processing_ctx: &ProcessingContext,
     custom_batch: &Arc<CustomPredicateBatch>,
@@ -545,6 +554,7 @@ fn process_request_def(
             .filter(|p| p.as_rule() == Rule::statement)
         {
             let built_stb = process_statement_template(
+                params,
                 &stmt_pair,
                 processing_ctx,
                 StatementContext::Request {
@@ -569,6 +579,7 @@ fn process_request_def(
 }
 
 fn process_statement_template(
+    params: &Params,
     stmt_pair: &Pair<Rule>,
     processing_ctx: &ProcessingContext,
     mut context: StatementContext,
@@ -579,7 +590,7 @@ fn process_statement_template(
         .unwrap();
     let stmt_name_str = name_pair.as_str();
 
-    let builder_args = parse_statement_args(stmt_pair)?;
+    let builder_args = parse_statement_args(params, stmt_pair)?;
 
     if let StatementContext::Request {
         wildcard_names,
@@ -640,7 +651,10 @@ fn process_statement_template(
     Ok(stb.desugar())
 }
 
-fn process_literal_value(lit_val_pair: &Pair<Rule>) -> Result<Value, ProcessorError> {
+fn process_literal_value(
+    params: &Params,
+    lit_val_pair: &Pair<Rule>,
+) -> Result<Value, ProcessorError> {
     let inner_lit = lit_val_pair.clone().into_inner().next().unwrap();
 
     match inner_lit.as_rule() {
@@ -684,10 +698,10 @@ fn process_literal_value(lit_val_pair: &Pair<Rule>) -> Result<Value, ProcessorEr
         Rule::literal_array => {
             let elements: Result<Vec<Value>, ProcessorError> = inner_lit
                 .into_inner()
-                .map(|elem_pair| process_literal_value(&elem_pair))
+                .map(|elem_pair| process_literal_value(params, &elem_pair))
                 .collect();
             let middleware_array =
-                middleware::containers::Array::new(crate::constants::MAX_DEPTH, elements?)
+                middleware::containers::Array::new(params.max_depth_mt_containers, elements?)
                     .map_err(|e| {
                         ProcessorError::Internal(format!("Failed to create Array: {}", e))
                     })?;
@@ -696,12 +710,13 @@ fn process_literal_value(lit_val_pair: &Pair<Rule>) -> Result<Value, ProcessorEr
         Rule::literal_set => {
             let elements: Result<HashSet<Value>, ProcessorError> = inner_lit
                 .into_inner()
-                .map(|elem_pair| process_literal_value(&elem_pair))
+                .map(|elem_pair| process_literal_value(params, &elem_pair))
                 .collect();
             let middleware_set =
-                middleware::containers::Set::new(crate::constants::MAX_DEPTH, elements?).map_err(
-                    |e| ProcessorError::Internal(format!("Failed to create Set: {}", e)),
-                )?;
+                middleware::containers::Set::new(params.max_depth_mt_containers, elements?)
+                    .map_err(|e| {
+                        ProcessorError::Internal(format!("Failed to create Set: {}", e))
+                    })?;
             Ok(Value::from(middleware_set))
         }
         Rule::literal_dict => {
@@ -712,12 +727,12 @@ fn process_literal_value(lit_val_pair: &Pair<Rule>) -> Result<Value, ProcessorEr
                     let key_pair = entry_inner.next().unwrap();
                     let val_pair = entry_inner.next().unwrap();
                     let key_str = parse_pest_string_literal(&key_pair)?;
-                    let val = process_literal_value(&val_pair)?;
+                    let val = process_literal_value(params, &val_pair)?;
                     Ok((Key::new(key_str), val))
                 })
                 .collect();
             let middleware_dict =
-                middleware::containers::Dictionary::new(crate::constants::MAX_DEPTH, pairs?)
+                middleware::containers::Dictionary::new(params.max_depth_mt_containers, pairs?)
                     .map_err(|e| {
                         ProcessorError::Internal(format!("Failed to create Dictionary: {}", e))
                     })?;
@@ -862,7 +877,10 @@ fn resolve_request_statement_builder(
     })
 }
 
-fn parse_statement_args(stmt_pair: &Pair<Rule>) -> Result<Vec<BuilderArg>, ProcessorError> {
+fn parse_statement_args(
+    params: &Params,
+    stmt_pair: &Pair<Rule>,
+) -> Result<Vec<BuilderArg>, ProcessorError> {
     let mut builder_args = Vec::new();
     let mut inner_stmt_pairs = stmt_pair.clone().into_inner();
 
@@ -873,7 +891,7 @@ fn parse_statement_args(stmt_pair: &Pair<Rule>) -> Result<Vec<BuilderArg>, Proce
             .filter(|p| p.as_rule() == Rule::statement_arg)
         {
             let arg_content_pair = arg_pair.into_inner().next().unwrap();
-            let builder_arg = pest_pair_to_builder_arg(&arg_content_pair)?;
+            let builder_arg = pest_pair_to_builder_arg(params, &arg_content_pair)?;
             builder_args.push(builder_arg);
         }
     }
@@ -1103,7 +1121,7 @@ mod processor_tests {
         let params = Params::default();
         let mut ctx = ProcessingContext::new(&params);
         first_pass(pairs, &mut ctx, &[])?;
-        let result = second_pass(&mut ctx);
+        let result = second_pass(&mut ctx, &params);
         assert!(result.is_err());
         match result.err().unwrap() {
             ProcessorError::UndefinedIdentifier { name, span: _ } => {
@@ -1122,7 +1140,7 @@ mod processor_tests {
         let params = Params::default();
         let mut ctx = ProcessingContext::new(&params);
         first_pass(pairs, &mut ctx, &[])?;
-        let result = second_pass(&mut ctx);
+        let result = second_pass(&mut ctx, &params);
         assert!(result.is_err());
         match result.err().unwrap() {
             ProcessorError::UndefinedIdentifier { name, span: _ } => {

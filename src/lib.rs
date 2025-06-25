@@ -3,7 +3,6 @@
 #![feature(mapped_lock_guards)]
 
 pub mod backends;
-pub mod constants;
 pub mod frontend;
 pub mod lang;
 pub mod middleware;

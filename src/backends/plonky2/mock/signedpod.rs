@@ -8,7 +8,6 @@ use crate::{
         error::{Error, Result},
         primitives::merkletree::MerkleTree,
     },
-    constants::MAX_DEPTH,
     middleware::{
         containers::Dictionary, hash_str, serialization::ordered_map, AnchoredKey, Key, Params,
         Pod, PodId, PodSigner, PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE, SELF,
@@ -35,7 +34,12 @@ impl MockSigner {
         let dict = Dictionary::new(params.max_depth_mt_containers, kvs.clone())?;
         let id = PodId(dict.commitment());
         let signature = format!("{}_signed_by_{}", id, pubkey);
-        Ok(MockSignedPod { id, signature, kvs })
+        Ok(MockSignedPod {
+            mt_max_depth: params.max_depth_mt_containers,
+            id,
+            signature,
+            kvs,
+        })
     }
 }
 
@@ -47,6 +51,7 @@ impl PodSigner for MockSigner {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MockSignedPod {
+    mt_max_depth: usize,
     id: PodId,
     signature: String,
     kvs: HashMap<Key, Value>,
@@ -54,6 +59,7 @@ pub struct MockSignedPod {
 
 #[derive(Serialize, Deserialize)]
 struct Data {
+    mt_max_depth: usize,
     signature: String,
     #[serde(serialize_with = "ordered_map")]
     kvs: HashMap<Key, Value>,
@@ -67,6 +73,7 @@ impl MockSignedPod {
     pub(crate) fn deserialize(id: PodId, data: serde_json::Value) -> Result<Box<dyn Pod>> {
         let data: Data = serde_json::from_value(data)?;
         Ok(Box::new(Self {
+            mt_max_depth: data.mt_max_depth,
             id,
             signature: data.signature,
             kvs: data.kvs,
@@ -90,7 +97,7 @@ impl Pod for MockSignedPod {
     fn verify(&self) -> Result<()> {
         // 1. Verify id
         let mt = MerkleTree::new(
-            MAX_DEPTH,
+            self.mt_max_depth,
             &self
                 .kvs
                 .iter()
@@ -153,6 +160,7 @@ impl Pod for MockSignedPod {
 
     fn serialize_data(&self) -> serde_json::Value {
         serde_json::to_value(Data {
+            mt_max_depth: self.mt_max_depth,
             signature: self.signature.clone(),
             kvs: self.kvs.clone(),
         })

@@ -18,7 +18,6 @@ use crate::{
         },
         serialize_bytes,
     },
-    constants::MAX_DEPTH,
     middleware::{
         containers::Dictionary, AnchoredKey, Hash, Key, Params, Pod, PodId, PodSigner, PodType,
         RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE, SELF,
@@ -142,7 +141,7 @@ impl Pod for SignedPod {
 
         // 2. Verify id
         let mt = MerkleTree::new(
-            MAX_DEPTH,
+            self.dict.max_depth(),
             &self
                 .dict
                 .kvs()
