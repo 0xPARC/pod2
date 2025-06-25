@@ -732,11 +732,11 @@ pub mod tests {
         },
         examples::{attest_eth_friend, zu_kyc_pod_builder, zu_kyc_sign_pod_builders, EthDosHelper},
         frontend::{
-            literal, CustomPredicateBatchBuilder, MainPodBuilder, StatementTmplBuilder as STB,
-            {self},
+            self, literal, CustomPredicateBatchBuilder, MainPodBuilder, StatementTmplBuilder as STB,
         },
-        middleware,
-        middleware::{CustomPredicateRef, NativePredicate as NP, Value, DEFAULT_VD_SET},
+        middleware::{
+            self, containers::Set, CustomPredicateRef, NativePredicate as NP, Value, DEFAULT_VD_SET,
+        },
         op,
     };
 
@@ -946,6 +946,27 @@ pub mod tests {
 
         let pod = (pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
 
+        Ok(pod.verify()?)
+    }
+
+    #[test]
+    fn test_set_contains() -> frontend::Result<()> {
+        let params = Params::default();
+        let mut builder = MainPodBuilder::new(&params, &*DEFAULT_VD_SET);
+        let set = [1, 2, 3].into_iter().map(|n| n.into()).collect();
+        let st = builder
+            .pub_op(op!(
+                new_entry,
+                "entry",
+                Set::new(params.max_merkle_proofs_containers, set).unwrap()
+            ))
+            .unwrap();
+
+        builder.pub_op(op!(set_contains, st, 1))?;
+
+        let mut prover = Prover {};
+        let proof = builder.prove(&mut prover, &params).unwrap();
+        let pod = (proof.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
         Ok(pod.verify()?)
     }
 }

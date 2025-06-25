@@ -9,7 +9,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use super::serialization::{ordered_map, ordered_set};
 #[cfg(feature = "backend_plonky2")]
 use crate::backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree};
-use crate::middleware::{hash_value, Error, Hash, Key, RawValue, Result, Value};
+use crate::middleware::{Error, Hash, Key, RawValue, Result, Value};
 
 /// Dictionary: the user original keys and values are hashed to be used in the leaf.
 ///    leaf.key=hash(original_key)
@@ -28,10 +28,8 @@ impl Dictionary {
     /// max_depth determines the depth of the underlying MerkleTree, allowing to
     /// store 2^max_depth elements in the Dictionary
     pub fn new(max_depth: usize, kvs: HashMap<Key, Value>) -> Result<Self> {
-        let kvs_raw: HashMap<RawValue, RawValue> = kvs
-            .iter()
-            .map(|(k, v)| (k.raw(), v.raw()))
-            .collect();
+        let kvs_raw: HashMap<RawValue, RawValue> =
+            kvs.iter().map(|(k, v)| (k.raw(), v.raw())).collect();
         Ok(Self {
             mt: MerkleTree::new(max_depth, &kvs_raw)?,
             max_depth,
@@ -157,13 +155,7 @@ impl Set {
     }
     pub fn verify(max_depth: usize, root: Hash, proof: &MerkleProof, value: &Value) -> Result<()> {
         let rv = value.raw();
-        Ok(MerkleTree::verify(
-            max_depth,
-            root,
-            proof,
-            &rv,
-            &rv,
-        )?)
+        Ok(MerkleTree::verify(max_depth, root, proof, &rv, &rv)?)
     }
     pub fn verify_nonexistence(
         max_depth: usize,
@@ -173,10 +165,7 @@ impl Set {
     ) -> Result<()> {
         let rv = value.raw();
         Ok(MerkleTree::verify_nonexistence(
-            max_depth,
-            root,
-            proof,
-            &rv,
+            max_depth, root, proof, &rv,
         )?)
     }
     pub fn set(&self) -> &HashSet<Value> {
