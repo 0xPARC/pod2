@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use crate::{
-    middleware::{Params, Pod, StatementTmpl},
+    frontend::Operation,
+    middleware::{Params, PodId, StatementTmpl},
     solver::{
-        db::FactDB,
+        db::{FactDB, IndexablePod},
         engine::semi_naive::SemiNaiveEngine,
         error::SolverError,
         metrics::{
@@ -19,6 +20,7 @@ pub mod db;
 pub mod debug;
 pub mod engine;
 pub mod error;
+pub mod explainer;
 pub mod ir;
 pub mod metrics;
 pub mod planner;
@@ -32,13 +34,13 @@ pub mod semantics;
 /// different levels of metrics during execution.
 pub fn solve(
     request: &[StatementTmpl],
-    pods: &[Box<dyn Pod>],
+    pods: &[IndexablePod],
     params: &Params,
     metrics_level: MetricsLevel,
-) -> Result<(Proof, MetricsReport), SolverError> {
+) -> Result<((Vec<PodId>, Vec<(Operation, bool)>), MetricsReport), SolverError> {
     // Common setup logic that is independent of the metrics level.
-    let db = Arc::new(FactDB::build(pods.to_vec()).unwrap());
-    let materializer = Materializer::new(db, params);
+    let db = Arc::new(FactDB::build(pods).unwrap());
+    let materializer = Materializer::new(db.clone(), params);
     let planner = Planner::new();
     let plan = planner.create_plan(request).unwrap();
 
@@ -49,15 +51,18 @@ pub fn solve(
     match metrics_level {
         MetricsLevel::None => {
             let (proof, _) = run_solve(plan, materializer, NoOpMetrics)?;
-            Ok((proof, MetricsReport::None))
+            Ok((proof.to_inputs(&db.clone()), MetricsReport::None))
         }
         MetricsLevel::Counters => {
             let (proof, metrics) = run_solve(plan, materializer, CounterMetrics::default())?;
-            Ok((proof, MetricsReport::Counters(metrics)))
+            Ok((
+                proof.to_inputs(&db.clone()),
+                MetricsReport::Counters(metrics),
+            ))
         }
         MetricsLevel::Debug => {
             let (proof, metrics) = run_solve(plan, materializer, DebugMetrics::default())?;
-            Ok((proof, MetricsReport::Debug(metrics)))
+            Ok((proof.to_inputs(&db.clone()), MetricsReport::Debug(metrics)))
         }
     }
 }
@@ -85,8 +90,11 @@ mod tests {
 
     use super::*;
     use crate::{
-        backends::plonky2::mock::signedpod::MockSigner,
-        examples::{attest_eth_friend, custom::eth_dos_batch},
+        backends::plonky2::mock::{mainpod::MockProver, signedpod::MockSigner},
+        examples::{
+            attest_eth_friend, custom::eth_dos_batch, zu_kyc_sign_pod_builders, MOCK_VD_SET,
+        },
+        frontend::MainPodBuilder,
         lang::parse,
         middleware::Params,
     };
@@ -117,7 +125,7 @@ mod tests {
       use _, _, _, eth_dos from 0x{}
       
       REQUEST(
-          eth_dos(0x{}, 0x{}, ?Distance)
+          eth_dos({}, {}, ?Distance)
       )
       "#,
             batch.id().encode_hex::<String>(),
@@ -131,7 +139,10 @@ mod tests {
 
         let (result, metrics) = solve(
             &request,
-            &[alice_attestation.pod, bob_attestation.pod],
+            &[
+                IndexablePod::signed_pod(&alice_attestation),
+                IndexablePod::signed_pod(&bob_attestation),
+            ],
             &params,
             MetricsLevel::Counters,
         )
@@ -139,6 +150,79 @@ mod tests {
 
         println!("Result: {:?}", result);
         println!("Metrics: {:?}", metrics);
-        println!("Proof tree: {}", result);
+        //println!("Proof tree: {}", result);
+    }
+
+    #[test]
+    fn test_zukyc() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        let params = Params::default();
+
+        let const_18y = 1169909388;
+        let const_1y = 1706367566;
+
+        let (gov_id, pay_stub, sanction_list) = zu_kyc_sign_pod_builders(&params);
+        let mut signer = MockSigner {
+            pk: "ZooGov".into(),
+        };
+        let gov_id = gov_id.sign(&mut signer).unwrap();
+
+        let mut signer = MockSigner {
+            pk: "ZooDeel".into(),
+        };
+        let pay_stub = pay_stub.sign(&mut signer).unwrap();
+
+        let mut signer = MockSigner {
+            pk: "ZooOFAC".into(),
+        };
+        let sanction_list = sanction_list.sign(&mut signer).unwrap();
+
+        let zukyc_request = format!(
+            r#"
+        REQUEST(
+            NotContains(?sanctions["sanctionList"], ?gov["idNumber"])
+            Lt(?gov["dateOfBirth"], {})
+            Equal(?pay["startDate"], {})
+            Equal(?gov["socialSecurityNumber"], ?pay["socialSecurityNumber"])
+        )
+        "#,
+            const_18y, const_1y
+        );
+
+        let request = parse(&zukyc_request, &params, &[])
+            .unwrap()
+            .request_templates;
+
+        let pods = [
+            IndexablePod::signed_pod(&gov_id),
+            IndexablePod::signed_pod(&pay_stub),
+            IndexablePod::signed_pod(&sanction_list),
+        ];
+
+        let (result, _) = solve(&request, &pods, &params, MetricsLevel::Counters).unwrap();
+
+        let prover = MockProver {};
+        let mut builder = MainPodBuilder::new(&params, &MOCK_VD_SET);
+
+        for (op, public) in result.1 {
+            if public {
+                builder.pub_op(op).unwrap();
+            } else {
+                builder.priv_op(op).unwrap();
+            }
+        }
+
+        for pod_id in result.0 {
+            let pod = pods.iter().find(|p| p.id() == pod_id).unwrap();
+            if let IndexablePod::SignedPod(pod) = pod {
+                builder.add_signed_pod(pod);
+            } else {
+                panic!("Expected signed pod, got {:?}", pod);
+            }
+        }
+
+        let kyc = builder.prove(&prover, &params).unwrap();
+
+        println!("{}", kyc);
     }
 }

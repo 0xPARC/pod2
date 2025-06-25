@@ -64,7 +64,7 @@ pub static DEFAULT_VD_SET: LazyLock<VDSet> = LazyLock::new(|| {
 /// verifying the recursive proofs of previous PODs appears in the VDSet.
 /// The VDSet struct that allows to get the specific merkle proofs for the given
 /// verifier_data.
-#[derive(Clone, Debug, Serialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, JsonSchema, PartialEq)]
 pub struct VDSet {
     #[serde(skip)]
     #[schemars(skip)]

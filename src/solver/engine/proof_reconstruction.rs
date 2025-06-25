@@ -73,10 +73,7 @@ impl<'a> ProofReconstructor<'a> {
                 statement: conclusion,
                 justification: Justification::ValueComparison(*op),
             }),
-            FactSource::Special => Arc::new(ProofNode {
-                statement: conclusion,
-                justification: Justification::ValueComparison(NativeOperation::CopyStatement),
-            }),
+            FactSource::Special => todo!("Special fact source: {:?}, {:?}", pid, fact),
             FactSource::Copy => Arc::new(ProofNode {
                 statement: conclusion,
                 justification: Justification::Fact,
@@ -170,7 +167,7 @@ impl<'a> ProofReconstructor<'a> {
                             Justification::Custom(cpr.clone(), premises)
                         }
                     }
-                    _ => Justification::ValueComparison(NativeOperation::CopyStatement), // fallback for native or others
+                    _ => panic!("Unsupported predicate: {:?}", pid),
                 };
 
                 Arc::new(ProofNode {

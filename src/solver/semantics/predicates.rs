@@ -314,11 +314,17 @@ impl BasePredicateHandler for EqualHandler {
     fn special_derivation(&self, args: &[Option<ValueRef>], db: &FactDB) -> Option<Fact> {
         if args.len() == 2 {
             if let (Some(ValueRef::Key(key0)), Some(ValueRef::Key(key1))) = (&args[0], &args[1]) {
-                if db.find_equality_path(key0, key1) {
-                    return Some(Fact {
-                        source: FactSource::Special,
-                        args: vec![args[0].clone().unwrap(), args[1].clone().unwrap()],
-                    });
+                if let Some(path) = db.find_path_and_nodes(key0, key1) {
+                    if path.len() > 2 {
+                        println!("Equality path: {:?}", path);
+                        // If the path length is 2 (A and B), we don't need transitive equality.
+                        return Some(Fact {
+                            source: FactSource::Special,
+                            args: vec![args[0].clone().unwrap(), args[1].clone().unwrap()],
+                        });
+                    } else {
+                        return None;
+                    }
                 }
             }
         }

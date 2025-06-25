@@ -577,7 +577,7 @@ impl<M: MetricsSink> SemiNaiveEngine<M> {
 
     /// Unifies a set of existing bindings with a new fact for a given atom,
     /// producing a new, extended set of bindings if they are compatible.
-    fn unify(
+    pub fn unify(
         &self,
         bindings: &Bindings,
         atom: &Atom,
@@ -833,49 +833,16 @@ mod tests {
         frontend::MainPodBuilder,
         lang::parse,
         middleware::{
-            hash_str, AnchoredKey, OperationType, Params, Pod, PodId, Predicate, RawValue,
-            Statement, TypedValue, Value, ValueRef,
+            hash_str, AnchoredKey, OperationType, Params, PodId, Predicate, RawValue, Statement,
+            TypedValue, Value, ValueRef,
         },
         solver::{
-            db::FactDB,
+            db::{FactDB, IndexablePod, TestPod},
             metrics::{DebugMetrics, NoOpMetrics},
             planner::Planner,
             proof::Justification,
         },
     };
-
-    // A mock Pod for testing purposes.
-    #[derive(Debug, Clone)]
-    struct TestPod {
-        id: PodId,
-        statements: Vec<Statement>,
-    }
-
-    impl Pod for TestPod {
-        fn params(&self) -> &Params {
-            unimplemented!()
-        }
-
-        fn verify(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-            Ok(())
-        }
-
-        fn id(&self) -> PodId {
-            self.id
-        }
-
-        fn pod_type(&self) -> (usize, &'static str) {
-            (99, "MockPod")
-        }
-
-        fn pub_self_statements(&self) -> Vec<Statement> {
-            self.statements.clone()
-        }
-
-        fn serialize_data(&self) -> serde_json::Value {
-            serde_json::Value::Null
-        }
-    }
 
     fn pod_id_from_name(name: &str) -> PodId {
         PodId(hash_str(name))
@@ -904,8 +871,11 @@ mod tests {
         };
 
         // 2. Build DB and Semantics
-        let pods: Vec<Box<dyn Pod>> = vec![Box::new(pod1), Box::new(pod2)];
-        let db = Arc::new(FactDB::build(pods).unwrap());
+        let pods: Vec<IndexablePod> = vec![
+            IndexablePod::TestPod(Arc::new(pod1)),
+            IndexablePod::TestPod(Arc::new(pod2)),
+        ];
+        let db = Arc::new(FactDB::build(&pods).unwrap());
         let params = Params::default();
         let materializer = Materializer::new(db, &params);
 
@@ -984,8 +954,11 @@ mod tests {
             )],
         };
 
-        let pods: Vec<Box<dyn Pod>> = vec![Box::new(pod1), Box::new(pod2)];
-        let db = Arc::new(FactDB::build(pods).unwrap());
+        let pods: Vec<IndexablePod> = vec![
+            IndexablePod::TestPod(Arc::new(pod1)),
+            IndexablePod::TestPod(Arc::new(pod2)),
+        ];
+        let db = Arc::new(FactDB::build(&pods).unwrap());
         let params = Params::default();
         let materializer = Materializer::new(db, &params);
 
@@ -1079,8 +1052,12 @@ mod tests {
             )],
         };
 
-        let pods: Vec<Box<dyn Pod>> = vec![Box::new(pod_a), Box::new(pod_b), Box::new(pod_c)];
-        let db = Arc::new(FactDB::build(pods).unwrap());
+        let pods: Vec<IndexablePod> = vec![
+            IndexablePod::TestPod(Arc::new(pod_a)),
+            IndexablePod::TestPod(Arc::new(pod_b)),
+            IndexablePod::TestPod(Arc::new(pod_c)),
+        ];
+        let db = Arc::new(FactDB::build(&pods).unwrap());
         let params = Params::default();
         let materializer = Materializer::new(db, &params);
 
@@ -1206,8 +1183,8 @@ mod tests {
             ],
         };
 
-        let pods: Vec<Box<dyn Pod>> = vec![Box::new(pod_a)];
-        let db = Arc::new(FactDB::build(pods).unwrap());
+        let pods: Vec<IndexablePod> = vec![IndexablePod::TestPod(Arc::new(pod_a))];
+        let db = Arc::new(FactDB::build(&pods).unwrap());
         let params = Params::default();
         let materializer = Materializer::new(db, &params);
 
@@ -1257,8 +1234,11 @@ mod tests {
         };
 
         // 2. Build DB and Semantics
-        let pods: Vec<Box<dyn Pod>> = vec![Box::new(pod1), Box::new(pod2)];
-        let db = Arc::new(FactDB::build(pods).unwrap());
+        let pods: Vec<IndexablePod> = vec![
+            IndexablePod::TestPod(Arc::new(pod1)),
+            IndexablePod::TestPod(Arc::new(pod2)),
+        ];
+        let db = Arc::new(FactDB::build(&pods).unwrap());
         let params = Params::default();
         let materializer = Materializer::new(db.clone(), &params);
 
@@ -1350,7 +1330,13 @@ mod tests {
             hash_str(&charlie.pk).encode_hex::<String>()
         );
 
-        let db = Arc::new(FactDB::build(vec![alice_attestation.pod, bob_attestation.pod]).unwrap());
+        let db = Arc::new(
+            FactDB::build(&[
+                IndexablePod::signed_pod(&alice_attestation),
+                //    IndexablePod::signed_pod(&bob_attestation),
+            ])
+            .unwrap(),
+        );
         let materializer = Materializer::new(db.clone(), &params);
 
         let processed = parse(&req1, &params, &[batch.clone()]).unwrap();
@@ -1385,10 +1371,11 @@ mod tests {
         }
         let vd_set = &*MOCK_VD_SET;
         let mut builder = MainPodBuilder::new(&params, vd_set);
-        let mut prover = MockProver {};
+        let prover = MockProver {};
 
-        let ops = proof.to_operations(&db.clone());
-        println!("Ops: {:#?}", ops.len());
+        let inputs = proof.to_inputs(&db.clone());
+        println!("Ops: {:#?}", inputs.1.len());
+        let (_, ops) = inputs;
         for (operation, public) in ops {
             if public {
                 builder.pub_op(operation).unwrap();
@@ -1396,9 +1383,13 @@ mod tests {
                 builder.priv_op(operation).unwrap();
             }
         }
-        let main_pod = builder.prove(&mut prover, &params);
-        assert!(main_pod.is_ok(), "Should prove");
-        println!("Main pod: {}", main_pod.unwrap());
+
+        builder.add_signed_pod(&alice_attestation);
+        builder.add_signed_pod(&bob_attestation);
+
+        let result = builder.prove(&prover, &params);
+        assert!(result.is_ok(), "Should prove");
+        println!("Main pod: {}", result.unwrap());
     }
 
     #[test]
@@ -1459,13 +1450,13 @@ mod tests {
             )],
         };
 
-        let pods: Vec<Box<dyn Pod>> = vec![
-            Box::new(pod_a.clone()),
-            Box::new(pod_b.clone()),
-            Box::new(pod_x.clone()),
-            Box::new(pod_y.clone()),
+        let pods: Vec<IndexablePod> = vec![
+            IndexablePod::TestPod(Arc::new(pod_a)),
+            IndexablePod::TestPod(Arc::new(pod_b)),
+            IndexablePod::TestPod(Arc::new(pod_x)),
+            IndexablePod::TestPod(Arc::new(pod_y)),
         ];
-        let db = Arc::new(FactDB::build(pods).unwrap());
+        let db = Arc::new(FactDB::build(&pods).unwrap());
         let params = Params::default();
         let materializer = Materializer::new(db, &params);
 

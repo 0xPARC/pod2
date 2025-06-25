@@ -415,11 +415,11 @@ impl Planner {
             let synthetic_pred_name = "_request_goal".to_string();
 
             let mut synthetic_rule_body = Vec::new();
-            for tmpl in request {
+            for (i, tmpl) in request.iter().enumerate() {
                 synthetic_rule_body.push(ir::Atom {
                     predicate: ir::PredicateIdentifier::Normal(tmpl.pred.clone()),
                     terms: tmpl.args.clone(),
-                    order: usize::MAX,
+                    order: i,
                 });
             }
 
@@ -444,7 +444,10 @@ impl Planner {
                 args_len: head_wildcards.len(),
                 wildcard_names: wildcard_names.clone(),
             };
-            let params = Params::default();
+            let params = Params {
+                max_custom_predicate_arity: 12,
+                ..Params::default()
+            };
             let synth_batch = CustomPredicateBatch::new(
                 &params,
                 "SyntheticRequestBatch".to_string(),
@@ -499,10 +502,11 @@ impl Planner {
 
             let synthetic_rule_body: Vec<_> = request
                 .iter()
-                .map(|tmpl| ir::Atom {
+                .enumerate()
+                .map(|(i, tmpl)| ir::Atom {
                     predicate: ir::PredicateIdentifier::Normal(tmpl.pred.clone()),
                     terms: tmpl.args.clone(),
-                    order: usize::MAX,
+                    order: i,
                 })
                 .collect();
 

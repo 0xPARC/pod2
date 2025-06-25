@@ -15,7 +15,7 @@ pub enum SignedPodType {
     MockSigned,
 }
 
-#[derive(Serialize, Deserialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[schemars(rename = "SignedPod")]
 pub struct SerializedSignedPod {
@@ -25,7 +25,7 @@ pub struct SerializedSignedPod {
     data: serde_json::Value,
 }
 
-#[derive(Serialize, Deserialize, JsonSchema)]
+#[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[schemars(rename = "MainPod")]
 pub struct SerializedMainPod {

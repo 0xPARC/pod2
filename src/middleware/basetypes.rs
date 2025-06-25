@@ -206,8 +206,6 @@ impl Ord for Hash {
 impl fmt::Display for Hash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if f.alternate() {
-            write!(f, "0x{}", self.encode_hex::<String>())
-        } else {
             // display first hex digit in big endian
             write!(f, "0x")?;
             let v3 = self.0[3].to_canonical_u64();
@@ -215,6 +213,8 @@ impl fmt::Display for Hash {
                 write!(f, "{:02x}", (v3 >> ((7 - i) * 8)) & 0xff)?;
             }
             write!(f, "…")
+        } else {
+            write!(f, "0x{}", self.encode_hex::<String>())
         }
     }
 }

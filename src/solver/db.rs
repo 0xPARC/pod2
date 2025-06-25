@@ -5,7 +5,10 @@
 //! The Interpreter queries this database to find initial facts to kick-start
 //! or continue the reasoning process.
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use petgraph::{
     algo::{astar, has_path_connecting},
@@ -13,8 +16,11 @@ use petgraph::{
     visit::{Bfs, Reversed},
 };
 
-use crate::middleware::{
-    self, AnchoredKey, Hash, Key, Pod, PodId, RawValue, Statement, StatementArg, Value, ValueRef,
+use crate::{
+    frontend::{MainPod, SignedPod},
+    middleware::{
+        self, AnchoredKey, Hash, Key, PodId, RawValue, Statement, StatementArg, Value, ValueRef,
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +48,46 @@ pub struct StatementIndex {
     pub custom: ProvenanceIndex<(Hash, usize, Vec<Value>)>,
 }
 
+// A simple test Pod for testing purposes.
+#[derive(Debug, Clone)]
+pub struct TestPod {
+    pub id: PodId,
+    pub statements: Vec<Statement>,
+}
+
+#[derive(Debug, Clone)]
+pub enum IndexablePod {
+    SignedPod(Arc<SignedPod>),
+    MainPod(Arc<MainPod>),
+    TestPod(Arc<TestPod>),
+}
+
+impl IndexablePod {
+    pub fn id(&self) -> PodId {
+        match self {
+            IndexablePod::SignedPod(pod) => pod.id(),
+            IndexablePod::MainPod(pod) => pod.id(),
+            IndexablePod::TestPod(pod) => pod.id,
+        }
+    }
+
+    pub fn pub_statements(&self) -> Vec<Statement> {
+        match self {
+            IndexablePod::SignedPod(pod) => pod.pod.pub_statements(),
+            IndexablePod::MainPod(pod) => pod.pod.pub_statements(),
+            IndexablePod::TestPod(pod) => pod.statements.clone(),
+        }
+    }
+
+    pub fn signed_pod(signed_pod: &SignedPod) -> Self {
+        Self::SignedPod(Arc::new(signed_pod.clone()))
+    }
+
+    pub fn main_pod(main_pod: &MainPod) -> Self {
+        Self::MainPod(Arc::new(main_pod.clone()))
+    }
+}
+
 impl StatementIndex {
     pub fn new() -> Self {
         Self::default()
@@ -61,7 +107,7 @@ pub struct FactDB {
     pod_id_to_anchored_keys: HashMap<PodId, HashSet<AnchoredKey>>,
 
     /// Maps a PodId to the Pod itself.
-    pod_id_to_pod: HashMap<PodId, Box<dyn Pod>>,
+    pod_id_to_pod: HashMap<PodId, IndexablePod>,
 
     pub equality_graph: EqualityGraph,
 
@@ -213,6 +259,10 @@ impl FactDB {
         }
     }
 
+    pub fn get_pod(&self, pod_id: PodId) -> Option<&IndexablePod> {
+        self.pod_id_to_pod.get(&pod_id)
+    }
+
     pub fn get_pod_ids_with_key(&self, key: &Key) -> HashSet<PodId> {
         self.key_to_anchored_keys
             .get(key)
@@ -268,11 +318,11 @@ impl FactDB {
         }
     }
 
-    pub fn build(pods: Vec<Box<dyn Pod>>) -> Result<Self, String> {
+    pub fn build(pods: &[IndexablePod]) -> Result<Self, String> {
         let mut db = Self::new();
         for pod in pods {
             let pod_id = pod.id();
-            db.pod_id_to_pod.insert(pod_id, pod);
+            db.pod_id_to_pod.insert(pod_id, pod.clone());
         }
 
         // Collect all statements with their pod_id first to avoid borrow checker issues.

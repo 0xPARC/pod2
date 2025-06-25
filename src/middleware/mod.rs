@@ -39,7 +39,6 @@ pub const SELF: PodId = PodId(SELF_ID_HASH);
 
 // TODO: Move all value-related types to to `value.rs`
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
-// TODO #[schemars(transform = serialization::transform_value_schema)]
 pub enum TypedValue {
     // Serde cares about the order of the enum variants, with untagged variants
     // appearing at the end.
@@ -53,19 +52,16 @@ pub enum TypedValue {
     // 53-bit precision for integers, integers are represented as tagged
     // strings, with a custom serializer and deserializer.
     // TAGGED TYPES:
-    Set(Set),
     Dictionary(Dictionary),
-    Int(
-        #[serde(serialize_with = "serialize_i64", deserialize_with = "deserialize_i64")]
-        // #[schemars(with = "String", regex(pattern = r"^\d+$"))]
-        i64,
-    ),
+    Int(#[serde(serialize_with = "serialize_i64", deserialize_with = "deserialize_i64")] i64),
     // Uses the serialization for middleware::Value:
     Raw(RawValue),
     // Public key variant
     PublicKey(PublicKey),
     PodId(PodId),
     // UNTAGGED TYPES:
+    #[serde(untagged)]
+    Set(Set),
     #[serde(untagged)]
     Array(Array),
     #[serde(untagged)]
@@ -289,19 +285,34 @@ impl JsonSchema for TypedValue {
             ..Default::default()
         };
 
+        let public_key_schema = schemars::schema::SchemaObject {
+            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
+            object: Some(Box::new(schemars::schema::ObjectValidation {
+                // PublicKey is serialized as a string
+                properties: [("PublicKey".to_string(), gen.subschema_for::<String>())]
+                    .into_iter()
+                    .collect(),
+                required: ["PublicKey".to_string()].into_iter().collect(),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+
         // This is the part that Schemars can't generate automatically:
         let untagged_array_schema = gen.subschema_for::<Array>();
+        let untagged_set_schema = gen.subschema_for::<Set>();
         let untagged_string_schema = gen.subschema_for::<String>();
         let untagged_bool_schema = gen.subschema_for::<bool>();
 
         Schema::Object(SchemaObject {
             subschemas: Some(Box::new(schemars::schema::SubschemaValidation {
                 any_of: Some(vec![
-                    Schema::Object(set_schema),
                     Schema::Object(dictionary_schema),
                     Schema::Object(int_schema),
                     Schema::Object(raw_schema),
+                    Schema::Object(public_key_schema),
                     untagged_array_schema,
+                    untagged_set_schema,
                     untagged_string_schema,
                     untagged_bool_schema,
                 ]),
@@ -315,6 +326,16 @@ impl JsonSchema for TypedValue {
         })
     }
 }
+
+// impl JsonSchema for PublicKey {
+//     fn schema_name() -> String {
+//         "PublicKey".to_string()
+//     }
+
+//     fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+//         gen.subschema_for::<String>()
+//     }
+// }
 
 #[derive(Clone)]
 pub struct Value {

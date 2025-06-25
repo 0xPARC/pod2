@@ -290,7 +290,11 @@ impl ToFields for CustomPredicate {
         // expected bound, as Self should be instantiated with the constructor
         // method `new` which performs the check.
         if self.statements.len() > params.max_custom_predicate_arity {
-            panic!("Custom predicate depends on too many statements");
+            panic!(
+                "Custom predicate depends on too many statements: {} > {}",
+                self.statements.len(),
+                params.max_custom_predicate_arity
+            );
         }
 
         let pad_st = self.pad_statement_tmpl();
