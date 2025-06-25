@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{any::Any, collections::HashMap};
 
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -45,7 +45,7 @@ impl PodSigner for MockSigner {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MockSignedPod {
     id: PodId,
     signature: String,
@@ -157,6 +157,17 @@ impl Pod for MockSignedPod {
             kvs: self.kvs.clone(),
         })
         .expect("serialization to json")
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn equals(&self, other: &dyn Pod) -> bool {
+        if let Some(other) = other.as_any().downcast_ref::<MockSignedPod>() {
+            self == other
+        } else {
+            false
+        }
     }
 }
 

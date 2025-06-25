@@ -64,7 +64,7 @@ pub static DEFAULT_VD_SET: LazyLock<VDSet> = LazyLock::new(|| {
 /// verifying the recursive proofs of previous PODs appears in the VDSet.
 /// The VDSet struct that allows to get the specific merkle proofs for the given
 /// verifier_data.
-#[derive(Clone, Debug, Serialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct VDSet {
     #[serde(skip)]
     #[schemars(skip)]
@@ -76,6 +76,15 @@ pub struct VDSet {
     tree_depth: usize,
     vds_hashes: Vec<Hash>,
 }
+
+impl PartialEq for VDSet {
+    fn eq(&self, other: &Self) -> bool {
+        self.root == other.root
+            && self.tree_depth == other.tree_depth
+            && self.vds_hashes == other.vds_hashes
+    }
+}
+impl Eq for VDSet {}
 
 impl VDSet {
     fn new_from_vds_hashes(tree_depth: usize, mut vds_hashes: Vec<Hash>) -> Result<Self> {

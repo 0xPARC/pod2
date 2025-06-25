@@ -9,7 +9,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use super::serialization::{ordered_map, ordered_set};
 #[cfg(feature = "backend_plonky2")]
 use crate::backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree};
-use crate::middleware::{hash_value, Error, Hash, Key, RawValue, Result, Value};
+use crate::middleware::{Error, Hash, Key, RawValue, Result, Value};
 
 /// Dictionary: the user original keys and values are hashed to be used in the leaf.
 ///    leaf.key=hash(original_key)
@@ -28,10 +28,8 @@ impl Dictionary {
     /// max_depth determines the depth of the underlying MerkleTree, allowing to
     /// store 2^max_depth elements in the Dictionary
     pub fn new(max_depth: usize, kvs: HashMap<Key, Value>) -> Result<Self> {
-        let kvs_raw: HashMap<RawValue, RawValue> = kvs
-            .iter()
-            .map(|(k, v)| (RawValue(k.hash().0), v.raw()))
-            .collect();
+        let kvs_raw: HashMap<RawValue, RawValue> =
+            kvs.iter().map(|(k, v)| (k.raw(), v.raw())).collect();
         Ok(Self {
             mt: MerkleTree::new(max_depth, &kvs_raw)?,
             max_depth,
@@ -47,12 +45,12 @@ impl Dictionary {
             .ok_or_else(|| Error::custom(format!("key \"{}\" not found", key.name())))
     }
     pub fn prove(&self, key: &Key) -> Result<(&Value, MerkleProof)> {
-        let (_, mtp) = self.mt.prove(&RawValue(key.hash().0))?;
+        let (_, mtp) = self.mt.prove(&key.raw())?;
         let value = self.kvs.get(key).expect("key exists");
         Ok((value, mtp))
     }
     pub fn prove_nonexistence(&self, key: &Key) -> Result<MerkleProof> {
-        Ok(self.mt.prove_nonexistence(&RawValue(key.hash().0))?)
+        Ok(self.mt.prove_nonexistence(&key.raw())?)
     }
     pub fn verify(
         max_depth: usize,
@@ -61,7 +59,7 @@ impl Dictionary {
         key: &Key,
         value: &Value,
     ) -> Result<()> {
-        let key = RawValue(key.hash().0);
+        let key = key.raw();
         Ok(MerkleTree::verify(
             max_depth,
             root,
@@ -76,7 +74,7 @@ impl Dictionary {
         proof: &MerkleProof,
         key: &Key,
     ) -> Result<()> {
-        let key = RawValue(key.hash().0);
+        let key = key.raw();
         Ok(MerkleTree::verify_nonexistence(
             max_depth, root, proof, &key,
         )?)
@@ -130,8 +128,8 @@ impl Set {
         let kvs_raw: HashMap<RawValue, RawValue> = set
             .iter()
             .map(|e| {
-                let h = hash_value(&e.raw());
-                (RawValue::from(h), RawValue::from(h))
+                let rv = e.raw();
+                (rv, rv)
             })
             .collect();
         Ok(Self {
@@ -147,23 +145,17 @@ impl Set {
         self.set.contains(value)
     }
     pub fn prove(&self, value: &Value) -> Result<MerkleProof> {
-        let h = hash_value(&value.raw());
-        let (_, proof) = self.mt.prove(&RawValue::from(h))?;
+        let rv = value.raw();
+        let (_, proof) = self.mt.prove(&rv)?;
         Ok(proof)
     }
     pub fn prove_nonexistence(&self, value: &Value) -> Result<MerkleProof> {
-        let h = hash_value(&value.raw());
-        Ok(self.mt.prove_nonexistence(&RawValue::from(h))?)
+        let rv = value.raw();
+        Ok(self.mt.prove_nonexistence(&rv)?)
     }
     pub fn verify(max_depth: usize, root: Hash, proof: &MerkleProof, value: &Value) -> Result<()> {
-        let h = hash_value(&value.raw());
-        Ok(MerkleTree::verify(
-            max_depth,
-            root,
-            proof,
-            &RawValue::from(h),
-            &RawValue::from(h),
-        )?)
+        let rv = value.raw();
+        Ok(MerkleTree::verify(max_depth, root, proof, &rv, &rv)?)
     }
     pub fn verify_nonexistence(
         max_depth: usize,
@@ -171,12 +163,9 @@ impl Set {
         proof: &MerkleProof,
         value: &Value,
     ) -> Result<()> {
-        let h = hash_value(&value.raw());
+        let rv = value.raw();
         Ok(MerkleTree::verify_nonexistence(
-            max_depth,
-            root,
-            proof,
-            &RawValue::from(h),
+            max_depth, root, proof, &rv,
         )?)
     }
     pub fn set(&self) -> &HashSet<Value> {

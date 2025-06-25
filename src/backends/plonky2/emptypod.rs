@@ -1,4 +1,5 @@
 use std::{
+    any::Any,
     collections::HashMap,
     sync::{LazyLock, Mutex},
 };
@@ -73,7 +74,7 @@ impl EmptyPodVerifyTarget {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EmptyPod {
     params: Params,
     id: PodId,
@@ -88,7 +89,12 @@ pub static STANDARD_EMPTY_POD_DATA: LazyLock<(EmptyPodVerifyTarget, CircuitData)
 
 fn build() -> Result<(EmptyPodVerifyTarget, CircuitData)> {
     let params = &*DEFAULT_PARAMS;
+
+    #[cfg(not(feature = "zk"))]
     let config = CircuitConfig::standard_recursion_config();
+    #[cfg(feature = "zk")]
+    let config = CircuitConfig::standard_recursion_zk_config();
+
     let mut builder = CircuitBuilder::<F, D>::new(config);
     let empty_pod_verify_target = EmptyPodVerifyCircuit {
         params: params.clone(),
@@ -186,6 +192,17 @@ impl Pod for EmptyPod {
             proof: serialize_proof(&self.proof),
         })
         .expect("serialization to json")
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn equals(&self, other: &dyn Pod) -> bool {
+        if let Some(other) = other.as_any().downcast_ref::<EmptyPod>() {
+            self == other
+        } else {
+            false
+        }
     }
 }
 

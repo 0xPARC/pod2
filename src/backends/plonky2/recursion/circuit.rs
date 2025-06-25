@@ -164,8 +164,12 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
 
     /// builds the targets and returns also a ProverCircuitData
     pub fn build(params: &RecursiveParams, inner_params: &I::Params) -> Result<Self> {
+        #[cfg(not(feature = "zk"))]
         let config = CircuitConfig::standard_recursion_config();
-        let mut builder = CircuitBuilder::new(config.clone());
+        #[cfg(feature = "zk")]
+        let config = CircuitConfig::standard_recursion_zk_config();
+
+        let mut builder = CircuitBuilder::new(config);
 
         let targets: RecursiveCircuitTarget<I> = Self::build_targets(
             &mut builder,
@@ -275,7 +279,11 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         );
 
         // build the actual RecursiveCircuit circuit data
+        #[cfg(not(feature = "zk"))]
         let config = CircuitConfig::standard_recursion_config();
+        #[cfg(feature = "zk")]
+        let config = CircuitConfig::standard_recursion_zk_config();
+
         let mut builder = CircuitBuilder::new(config);
 
         let target = timed!(
@@ -295,7 +303,11 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         inner_params: &I::Params,
     ) -> Result<(RecursiveCircuitTarget<I>, CircuitData<F, C, D>)> {
         // build the actual RecursiveCircuit circuit data
+        #[cfg(not(feature = "zk"))]
         let config = CircuitConfig::standard_recursion_config();
+        #[cfg(feature = "zk")]
+        let config = CircuitConfig::standard_recursion_zk_config();
+
         let mut builder = CircuitBuilder::new(config);
 
         let target = timed!(
@@ -398,9 +410,20 @@ fn standard_gates(config: &CircuitConfig) -> Vec<GateRef<F, D>> {
 /// Estimate the number of gates to verify a proof of `degree_bits` that uses the
 /// `standard_gates(&standard_recursion_config)`
 fn estimate_verif_num_gates(degree_bits: usize) -> usize {
-    // Formula obtained via linear regression using `test_measure_recursion` results with
-    // `standard_recursion_config`.
-    let num_gates: usize = 236 * degree_bits + 1171;
+    let num_gates: usize;
+
+    #[cfg(feature = "zk")]
+    {
+        // Formula obtained via linear regression using
+        // `test_measure_zk_recursion` results with `standard_recursion_zk_config`.
+        num_gates = 244 * degree_bits + 1127;
+    }
+    #[cfg(not(feature = "zk"))]
+    {
+        // Formula obtained via linear regression using `test_measure_recursion`
+        // results with `standard_recursion_config`.
+        let num_gates: usize = 236 * degree_bits + 1171;
+    }
     // Add 2% for error because the results are not a clean line
     num_gates * 102 / 100
 }
@@ -414,6 +437,21 @@ fn estimate_gates_after_zk(degree_bits: usize) -> usize {
         0..=12 => 1 << 14,
         13 => 1 << 15,
         n => 1 << (n + 1),
+    }
+}
+
+// how many blinding gates are in this zk circuit
+fn blinding_gates(degree_bits: usize) -> usize {
+    // Table data obtained using `test_measure_zk_recursion`, and printing
+    // `regular_poly_openings + 2 * z_openings` at method `blind` of the file
+    // `plonky2/plonky2/src/plonk/circuit_builder.rs`.
+    match degree_bits {
+        0..=12 => 8326,
+        13..=14 => 8998,
+        15 => 10342,
+        16 => 13030,
+        17 => 10846,
+        _ => panic!("not supported"),
     }
 }
 
@@ -448,13 +486,22 @@ pub fn common_data_for_recursion<I: InnerCircuit>(
     let mut degree_bits = log2_ceil(inner_num_gates);
     loop {
         let verif_num_gates = estimate_verif_num_gates(degree_bits);
-        // Leave space for public input hashing, a `PublicInputGate` and some `ConstantGate`s (that's
-        // MAX_CONSTANT_GATES*2 constants in the standard_recursion_config).
-        let total_num_gates = inner_num_gates
+
+        // Leave space for public input hashing, a `PublicInputGate` and some
+        // `ConstantGate`s (that's MAX_CONSTANT_GATES*2 constants in the
+        // standard_recursion_config).  And if the zk feature is enabled, add
+        // space for the blinding gates.
+        let mut total_num_gates = inner_num_gates
             + verif_num_gates * arity
             + circuit_data.common.num_public_inputs.div_ceil(8)
             + 1
             + MAX_CONSTANT_GATES;
+
+        #[cfg(feature = "zk")]
+        {
+            total_num_gates += blinding_gates(degree_bits);
+        }
+
         if total_num_gates < (1 << degree_bits) {
             break;
         }
@@ -464,6 +511,11 @@ pub fn common_data_for_recursion<I: InnerCircuit>(
     let mut common_data = circuit_data.common.clone();
     common_data.fri_params.degree_bits = degree_bits;
     common_data.fri_params.reduction_arity_bits = vec![4, 4, 4];
+    #[cfg(feature = "zk")]
+    {
+        common_data.fri_params.hiding = true;
+        common_data.config.zero_knowledge = true;
+    }
     Ok(common_data)
 }
 
@@ -471,12 +523,6 @@ pub fn common_data_for_recursion<I: InnerCircuit>(
 pub fn pad_circuit(builder: &mut CircuitBuilder<F, D>, common_data: &CommonCircuitData<F, D>) {
     assert_eq!(common_data.config, builder.config);
     assert_eq!(common_data.num_public_inputs, builder.num_public_inputs());
-    // TODO: We need to figure this out once we enable zero-knowledge
-    // https://github.com/0xPARC/pod2/issues/248
-    assert!(
-        !common_data.config.zero_knowledge,
-        "Degree calculation can be off if zero-knowledge is on."
-    );
 
     let degree = common_data.degree();
     // Need to account for public input hashing, a `PublicInputGate` and MAX_CONSTANT_GATES
@@ -484,7 +530,17 @@ pub fn pad_circuit(builder: &mut CircuitBuilder<F, D>, common_data: &CommonCircu
     // have been registered, so we can't know exactly how many `ConstantGates` will be required.
     // We hope that no more than MAX_CONSTANT_GATES*2 constants are used :pray:.  Maybe we should
     // make a PR to plonky2 to expose this?
-    let num_gates = degree - common_data.num_public_inputs.div_ceil(8) - 1 - MAX_CONSTANT_GATES;
+    let mut num_gates = degree - common_data.num_public_inputs.div_ceil(8) - 1 - MAX_CONSTANT_GATES;
+    #[cfg(feature = "zk")]
+    {
+        // in the zk config case, account for the blinding gates, to avoid
+        // padding to them too, because then plonky2's in the builder.build()
+        // phase would add new blinding gates on top of the ones that we already
+        // accounted for in the `common_data_for_recursion`, increasing (w.h.p.)
+        // the degree of the circuit.
+        num_gates -= blinding_gates(log2_ceil(degree));
+    }
+
     assert!(
         builder.num_gates() < num_gates,
         "builder has more gates ({}) than the padding target ({})",
@@ -678,22 +734,22 @@ mod tests {
     }
 
     #[test]
-    fn test_circuit_i() -> Result<()> {
+    fn test_inner_circuit_i() -> Result<()> {
         let inner_params = ();
         let inp = HashOut::<F>::ZERO;
 
         let inner_inputs = (inp, circuit1_io(inp));
-        test_circuit_i_opt::<Circuit1>(&inner_params, inner_inputs)?;
+        test_inner_circuit_i_opt::<Circuit1>(&inner_params, inner_inputs)?;
 
         let inner_inputs = (inp, circuit2_io(inp));
-        test_circuit_i_opt::<Circuit2>(&inner_params, inner_inputs)?;
+        test_inner_circuit_i_opt::<Circuit2>(&inner_params, inner_inputs)?;
 
         let inner_inputs = (inp, circuit3_io(inp));
-        test_circuit_i_opt::<Circuit3>(&inner_params, inner_inputs)?;
+        test_inner_circuit_i_opt::<Circuit3>(&inner_params, inner_inputs)?;
 
         Ok(())
     }
-    fn test_circuit_i_opt<IC: InnerCircuit>(
+    fn test_inner_circuit_i_opt<IC: InnerCircuit>(
         inner_params: &IC::Params,
         inner_inputs: IC::Input,
     ) -> Result<()> {

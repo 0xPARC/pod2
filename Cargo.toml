@@ -60,7 +60,8 @@ axum-test = "14.0" # For testing Axum handlers
 chrono = { version = "0.4", features = ["serde"] } # For timestamps
 
 [features]
-default = ["backend_plonky2"]
+default = ["backend_plonky2", "zk"]
 backend_plonky2 = ["plonky2"]
+zk = []
 metrics = []
 time = []
