@@ -1,0 +1,12 @@
+procs:
+  server:
+    cwd: ..
+    shell: RUST_LOG=info cargo run  --release --bin pod2-server
+  ui:
+    cwd: ./apps/playground-client
+    shell: pnpm dev
+
+  zukyc:
+    autostart: false
+    cwd: ./apps/pod2-issuer-client
+    shell: pnpm dev

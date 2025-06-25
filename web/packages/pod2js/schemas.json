@@ -1,0 +1,1145 @@
+{
+  "$schema": "https://json-schema.org/draft/2019-09/schema",
+  "title": "SchemaContainer",
+  "type": "object",
+  "required": [
+    "mainpod",
+    "pod_info",
+    "signedpod",
+    "space_info"
+  ],
+  "properties": {
+    "mainpod": {
+      "$ref": "#/definitions/MainPod"
+    },
+    "pod_info": {
+      "$ref": "#/definitions/PodInfo"
+    },
+    "signedpod": {
+      "$ref": "#/definitions/SignedPod"
+    },
+    "space_info": {
+      "$ref": "#/definitions/SpaceInfo"
+    }
+  },
+  "definitions": {
+    "AnchoredKey": {
+      "type": "object",
+      "required": [
+        "key",
+        "podId"
+      ],
+      "properties": {
+        "key": {
+          "$ref": "#/definitions/Key"
+        },
+        "podId": {
+          "$ref": "#/definitions/PodId"
+        }
+      }
+    },
+    "Array": {
+      "description": "Array: the elements are placed at the value field of each leaf, and the key field is just the array index (integer). leaf.key=i leaf.value=original_value",
+      "type": "object",
+      "required": [
+        "array",
+        "max_depth"
+      ],
+      "properties": {
+        "array": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Value"
+          }
+        },
+        "max_depth": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      }
+    },
+    "CustomPredicate": {
+      "description": "NOTE: fields are not public (outside of crate) to enforce the struct instantiation through the `::and/or` methods, which performs checks on the values.",
+      "type": "object",
+      "required": [
+        "argsLen",
+        "conjunction",
+        "name",
+        "statements",
+        "wildcardNames"
+      ],
+      "properties": {
+        "argsLen": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "conjunction": {
+          "description": "true for \"and\", false for \"or\"",
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "statements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/StatementTmpl"
+          }
+        },
+        "wildcardNames": {
+          "description": "Names of the wildcards, the first `args_len` entries correspond to the `args_len` arguments of the custom predicate.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "CustomPredicateBatch": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "predicates"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/Hash"
+        },
+        "name": {
+          "type": "string"
+        },
+        "predicates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/CustomPredicate"
+          }
+        }
+      }
+    },
+    "CustomPredicateRef": {
+      "type": "object",
+      "required": [
+        "batch",
+        "index"
+      ],
+      "properties": {
+        "batch": {
+          "$ref": "#/definitions/CustomPredicateBatch"
+        },
+        "index": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      }
+    },
+    "Dictionary": {
+      "description": "Dictionary: the user original keys and values are hashed to be used in the leaf. leaf.key=hash(original_key) leaf.value=hash(original_value)",
+      "type": "object",
+      "required": [
+        "kvs",
+        "max_depth"
+      ],
+      "properties": {
+        "kvs": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/Value"
+          }
+        },
+        "max_depth": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      }
+    },
+    "Hash": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "Key": {
+      "type": "string"
+    },
+    "MainPod": {
+      "type": "object",
+      "required": [
+        "data",
+        "id",
+        "params",
+        "podType",
+        "publicStatements",
+        "vdSet"
+      ],
+      "properties": {
+        "data": true,
+        "id": {
+          "$ref": "#/definitions/PodId"
+        },
+        "params": {
+          "$ref": "#/definitions/Params"
+        },
+        "podType": {
+          "type": "array",
+          "items": [
+            {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "publicStatements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Statement"
+          }
+        },
+        "vdSet": {
+          "$ref": "#/definitions/VDSet"
+        }
+      }
+    },
+    "NativePredicate": {
+      "type": "string",
+      "enum": [
+        "None",
+        "False",
+        "Equal",
+        "NotEqual",
+        "LtEq",
+        "Lt",
+        "Contains",
+        "NotContains",
+        "SumOf",
+        "ProductOf",
+        "MaxOf",
+        "HashOf",
+        "DictContains",
+        "DictNotContains",
+        "SetContains",
+        "SetNotContains",
+        "ArrayContains",
+        "GtEq",
+        "Gt"
+      ]
+    },
+    "Params": {
+      "description": "Params: non dynamic parameters that define the circuit.",
+      "type": "object",
+      "required": [
+        "maxCustomBatchSize",
+        "maxCustomPredicateArity",
+        "maxCustomPredicateBatches",
+        "maxCustomPredicateVerifications",
+        "maxCustomPredicateWildcards",
+        "maxDepthMtContainers",
+        "maxDepthMtVds",
+        "maxInputPodsPublicStatements",
+        "maxInputRecursivePods",
+        "maxInputSignedPods",
+        "maxMerkleProofsContainers",
+        "maxOperationArgs",
+        "maxPublicStatements",
+        "maxSignedPodValues",
+        "maxStatementArgs",
+        "maxStatements",
+        "numPublicStatementsId"
+      ],
+      "properties": {
+        "maxCustomBatchSize": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "maxCustomPredicateArity": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "maxCustomPredicateBatches": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "maxCustomPredicateVerifications": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "maxCustomPredicateWildcards": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "maxDepthMtContainers": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "maxDepthMtVds": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "maxInputPodsPublicStatements": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "maxInputRecursivePods": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "maxInputSignedPods": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "maxMerkleProofsContainers": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "maxOperationArgs": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "maxPublicStatements": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "maxSignedPodValues": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "maxStatementArgs": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "maxStatements": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "numPublicStatementsId": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      }
+    },
+    "PodData": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "pod_data_payload",
+            "pod_data_variant"
+          ],
+          "properties": {
+            "pod_data_payload": {
+              "$ref": "#/definitions/SignedPod"
+            },
+            "pod_data_variant": {
+              "type": "string",
+              "enum": [
+                "Signed"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "pod_data_payload",
+            "pod_data_variant"
+          ],
+          "properties": {
+            "pod_data_payload": {
+              "$ref": "#/definitions/MainPod"
+            },
+            "pod_data_variant": {
+              "type": "string",
+              "enum": [
+                "Main"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "PodId": {
+      "$ref": "#/definitions/Hash"
+    },
+    "PodInfo": {
+      "type": "object",
+      "required": [
+        "created_at",
+        "data",
+        "id",
+        "pod_type",
+        "space"
+      ],
+      "properties": {
+        "created_at": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/definitions/PodData"
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pod_type": {
+          "type": "string"
+        },
+        "space": {
+          "type": "string"
+        }
+      }
+    },
+    "Predicate": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "Native"
+              ]
+            },
+            "value": {
+              "$ref": "#/definitions/NativePredicate"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "BatchSelf"
+              ]
+            },
+            "value": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "Custom"
+              ]
+            },
+            "value": {
+              "$ref": "#/definitions/CustomPredicateRef"
+            }
+          }
+        }
+      ]
+    },
+    "RawValue": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "Set": {
+      "description": "Set: the value field of the leaf is unused, and the key contains the hash of the element. leaf.key=hash(original_value) leaf.value=0",
+      "type": "object",
+      "required": [
+        "max_depth",
+        "set"
+      ],
+      "properties": {
+        "max_depth": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "set": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Value"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "SignedPod": {
+      "type": "object",
+      "required": [
+        "data",
+        "entries",
+        "id",
+        "podType"
+      ],
+      "properties": {
+        "data": true,
+        "entries": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/Value"
+          }
+        },
+        "id": {
+          "$ref": "#/definitions/PodId"
+        },
+        "podType": {
+          "type": "array",
+          "items": [
+            {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "maxItems": 2,
+          "minItems": 2
+        }
+      }
+    },
+    "SpaceInfo": {
+      "type": "object",
+      "required": [
+        "created_at",
+        "id"
+      ],
+      "properties": {
+        "created_at": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        }
+      }
+    },
+    "Statement": {
+      "description": "Type encapsulating statements with their associated arguments.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "predicate"
+          ],
+          "properties": {
+            "predicate": {
+              "type": "string",
+              "enum": [
+                "None"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "args",
+            "predicate"
+          ],
+          "properties": {
+            "args": {
+              "type": "array",
+              "items": [
+                {
+                  "$ref": "#/definitions/ValueRef"
+                },
+                {
+                  "$ref": "#/definitions/ValueRef"
+                }
+              ],
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "predicate": {
+              "type": "string",
+              "enum": [
+                "Equal"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "args",
+            "predicate"
+          ],
+          "properties": {
+            "args": {
+              "type": "array",
+              "items": [
+                {
+                  "$ref": "#/definitions/ValueRef"
+                },
+                {
+                  "$ref": "#/definitions/ValueRef"
+                }
+              ],
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "predicate": {
+              "type": "string",
+              "enum": [
+                "NotEqual"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "args",
+            "predicate"
+          ],
+          "properties": {
+            "args": {
+              "type": "array",
+              "items": [
+                {
+                  "$ref": "#/definitions/ValueRef"
+                },
+                {
+                  "$ref": "#/definitions/ValueRef"
+                }
+              ],
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "predicate": {
+              "type": "string",
+              "enum": [
+                "LtEq"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "args",
+            "predicate"
+          ],
+          "properties": {
+            "args": {
+              "type": "array",
+              "items": [
+                {
+                  "$ref": "#/definitions/ValueRef"
+                },
+                {
+                  "$ref": "#/definitions/ValueRef"
+                }
+              ],
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "predicate": {
+              "type": "string",
+              "enum": [
+                "Lt"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "args",
+            "predicate"
+          ],
+          "properties": {
+            "args": {
+              "type": "array",
+              "items": [
+                {
+                  "$ref": "#/definitions/ValueRef"
+                },
+                {
+                  "$ref": "#/definitions/ValueRef"
+                },
+                {
+                  "$ref": "#/definitions/ValueRef"
+                }
+              ],
+              "maxItems": 3,
+              "minItems": 3
+            },
+            "predicate": {
+              "type": "string",
+              "enum": [
+                "Contains"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "args",
+            "predicate"
+          ],
+          "properties": {
+            "args": {
+              "type": "array",
+              "items": [
+                {
+                  "$ref": "#/definitions/ValueRef"
+                },
+                {
+                  "$ref": "#/definitions/ValueRef"
+                }
+              ],
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "predicate": {
+              "type": "string",
+              "enum": [
+                "NotContains"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "args",
+            "predicate"
+          ],
+          "properties": {
+            "args": {
+              "type": "array",
+              "items": [
+                {
+                  "$ref": "#/definitions/ValueRef"
+                },
+                {
+                  "$ref": "#/definitions/ValueRef"
+                },
+                {
+                  "$ref": "#/definitions/ValueRef"
+                }
+              ],
+              "maxItems": 3,
+              "minItems": 3
+            },
+            "predicate": {
+              "type": "string",
+              "enum": [
+                "SumOf"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "args",
+            "predicate"
+          ],
+          "properties": {
+            "args": {
+              "type": "array",
+              "items": [
+                {
+                  "$ref": "#/definitions/ValueRef"
+                },
+                {
+                  "$ref": "#/definitions/ValueRef"
+                },
+                {
+                  "$ref": "#/definitions/ValueRef"
+                }
+              ],
+              "maxItems": 3,
+              "minItems": 3
+            },
+            "predicate": {
+              "type": "string",
+              "enum": [
+                "ProductOf"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "args",
+            "predicate"
+          ],
+          "properties": {
+            "args": {
+              "type": "array",
+              "items": [
+                {
+                  "$ref": "#/definitions/ValueRef"
+                },
+                {
+                  "$ref": "#/definitions/ValueRef"
+                },
+                {
+                  "$ref": "#/definitions/ValueRef"
+                }
+              ],
+              "maxItems": 3,
+              "minItems": 3
+            },
+            "predicate": {
+              "type": "string",
+              "enum": [
+                "MaxOf"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "args",
+            "predicate"
+          ],
+          "properties": {
+            "args": {
+              "type": "array",
+              "items": [
+                {
+                  "$ref": "#/definitions/ValueRef"
+                },
+                {
+                  "$ref": "#/definitions/ValueRef"
+                },
+                {
+                  "$ref": "#/definitions/ValueRef"
+                }
+              ],
+              "maxItems": 3,
+              "minItems": 3
+            },
+            "predicate": {
+              "type": "string",
+              "enum": [
+                "HashOf"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "args",
+            "predicate"
+          ],
+          "properties": {
+            "args": {
+              "type": "array",
+              "items": [
+                {
+                  "$ref": "#/definitions/CustomPredicateRef"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/definitions/Value"
+                  }
+                }
+              ],
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "predicate": {
+              "type": "string",
+              "enum": [
+                "Custom"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "StatementTmpl": {
+      "description": "Statement Template for a Custom Predicate",
+      "type": "object",
+      "required": [
+        "args",
+        "pred"
+      ],
+      "properties": {
+        "args": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/StatementTmplArg"
+          }
+        },
+        "pred": {
+          "$ref": "#/definitions/Predicate"
+        }
+      }
+    },
+    "StatementTmplArg": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "None"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "Literal"
+              ]
+            },
+            "value": {
+              "$ref": "#/definitions/Value"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "AnchoredKey"
+              ]
+            },
+            "value": {
+              "type": "array",
+              "items": [
+                {
+                  "$ref": "#/definitions/Wildcard"
+                },
+                {
+                  "$ref": "#/definitions/Key"
+                }
+              ],
+              "maxItems": 2,
+              "minItems": 2
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "Wildcard"
+              ]
+            },
+            "value": {
+              "$ref": "#/definitions/Wildcard"
+            }
+          }
+        }
+      ]
+    },
+    "VDSet": {
+      "description": "VDSet is the set of the allowed verifier_data hashes. When proving a MainPod, the circuit will enforce that all the used verifier_datas for verifying the recursive proofs of previous PODs appears in the VDSet. The VDSet struct that allows to get the specific merkle proofs for the given verifier_data.",
+      "type": "object",
+      "required": [
+        "tree_depth",
+        "vds_hashes"
+      ],
+      "properties": {
+        "tree_depth": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "vds_hashes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Hash"
+          }
+        }
+      }
+    },
+    "Value": {
+      "description": "Represents various POD value types. Array, String, and Bool variants are represented untagged in JSON.",
+      "anyOf": [
+        {
+          "type": "object",
+          "required": [
+            "Dictionary"
+          ],
+          "properties": {
+            "Dictionary": {
+              "$ref": "#/definitions/Dictionary"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "Int"
+          ],
+          "properties": {
+            "Int": {
+              "description": "An i64 represented as a string.",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "Raw"
+          ],
+          "properties": {
+            "Raw": {
+              "$ref": "#/definitions/RawValue"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "PublicKey"
+          ],
+          "properties": {
+            "PublicKey": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "$ref": "#/definitions/Array"
+        },
+        {
+          "$ref": "#/definitions/Set"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "boolean"
+        }
+      ]
+    },
+    "ValueRef": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "Literal"
+              ]
+            },
+            "value": {
+              "$ref": "#/definitions/Value"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "Key"
+              ]
+            },
+            "value": {
+              "$ref": "#/definitions/AnchoredKey"
+            }
+          }
+        }
+      ]
+    },
+    "Wildcard": {
+      "type": "object",
+      "required": [
+        "index",
+        "name"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "name": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

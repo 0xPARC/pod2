@@ -34,6 +34,18 @@ pest = "2.8.0"
 pest_derive = "2.8.0"
 petgraph = "0.8.2"
 
+# Server dependencies
+rusqlite = { version = "0.33.0", features = ["bundled"] }
+deadpool-sqlite = { version = "0.10.0", features = ["rt_tokio_1"] }
+axum = "0.7"
+tower-http = { version = "0.5", features = ["trace", "cors"] }
+config = { version = "0.14", features = ["toml"] }
+clap = { version = "4", features = ["derive"] }
+toml = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+tokio = { version = "1.21.0", features = ["full"] }
+uuid = { version = "1.16.0", features = ["v4"] }
+
 # Uncomment for debugging with https://github.com/ed255/plonky2/ at branch `feat/debug`.  The repo directory needs to be checked out next to the pod2 repo directory.
 # [patch."https://github.com/0xPolygonZero/plonky2"]
 # plonky2 = { path = "../plonky2/plonky2" }
@@ -42,6 +54,10 @@ petgraph = "0.8.2"
 pretty_assertions = "1.4.1"
 # Used only for testing JSON Schema generation and validation.
 jsonschema = "0.30.0"
+rand = "0.8"
+tempfile = "3.10" # For creating temporary config files in tests
+axum-test = "14.0" # For testing Axum handlers
+chrono = { version = "0.4", features = ["serde"] } # For timestamps
 
 [features]
 default = ["backend_plonky2"]

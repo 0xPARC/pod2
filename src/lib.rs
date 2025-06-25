@@ -7,6 +7,7 @@ pub mod constants;
 pub mod frontend;
 pub mod lang;
 pub mod middleware;
+pub mod server;
 pub mod solver;
 
 #[cfg(test)]
