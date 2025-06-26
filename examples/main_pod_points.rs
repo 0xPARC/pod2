@@ -98,12 +98,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build a pod to prove the statement `points("Alice", 1, 3512)`
     let mut builder = MainPodBuilder::new(&params, vd_set);
     builder.add_signed_pod(&pod_points_lvl_1);
-    let st_type = builder.priv_op(op!(eq, (&pod_points_lvl_1, KEY_TYPE), PodType::Signed))?;
-    let st_signer = builder.priv_op(op!(eq, (&pod_points_lvl_1, KEY_SIGNER), game_pk))?;
-    let st_player = builder.priv_op(op!(eq, (&pod_points_lvl_1, "player"), "Alice"))?;
-    let st_level = builder.priv_op(op!(eq, (&pod_points_lvl_1, "level"), 1))?;
-    let st_points = builder.priv_op(op!(eq, (&pod_points_lvl_1, "points"), 3512))?;
-    let st_points_lvl_1 = builder.pub_op(op!(
+    let st_type = pod_points_lvl_1.get_statement(KEY_TYPE).unwrap();
+    let st_signer = pod_points_lvl_1.get_statement(KEY_SIGNER).unwrap();
+    let st_player = pod_points_lvl_1.get_statement("player").unwrap();
+    let st_level = pod_points_lvl_1.get_statement("level").unwrap();
+    let st_points = pod_points_lvl_1.get_statement("points").unwrap();
+    let st_points_lvl_1 = builder.priv_op(op!(
         custom,
         points_pred.clone(),
         st_type,
@@ -112,19 +112,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         st_level,
         st_points
     ))?;
-    let pod_alice_lvl_1_points = builder.prove(prover, &params).unwrap();
-    println!("# pod_alice_lvl_1_points\n:{}", pod_alice_lvl_1_points);
-    pod_alice_lvl_1_points.pod.verify().unwrap();
+    // let pod_alice_lvl_1_points = builder.prove(prover, &params).unwrap();
+    // println!("# pod_alice_lvl_1_points\n:{}", pod_alice_lvl_1_points);
+    // pod_alice_lvl_1_points.pod.verify().unwrap();
 
     // Build a pod to prove the statement `points("Alice", 2, 5771)`
-    let mut builder = MainPodBuilder::new(&params, vd_set);
+    // let mut builder = MainPodBuilder::new(&params, vd_set);
     builder.add_signed_pod(&pod_points_lvl_2);
-    let st_type = builder.priv_op(op!(eq, (&pod_points_lvl_2, KEY_TYPE), PodType::Signed))?;
-    let st_signer = builder.priv_op(op!(eq, (&pod_points_lvl_2, KEY_SIGNER), game_pk))?;
-    let st_player = builder.priv_op(op!(eq, (&pod_points_lvl_2, "player"), "Alice"))?;
-    let st_level = builder.priv_op(op!(eq, (&pod_points_lvl_2, "level"), 2))?;
-    let st_points = builder.priv_op(op!(eq, (&pod_points_lvl_2, "points"), 5771))?;
-    let st_points_lvl_2 = builder.pub_op(op!(
+    let st_type = pod_points_lvl_2.get_statement(KEY_TYPE).unwrap();
+    let st_signer = pod_points_lvl_2.get_statement(KEY_SIGNER).unwrap();
+    let st_player = pod_points_lvl_2.get_statement("player").unwrap();
+    let st_level = pod_points_lvl_2.get_statement("level").unwrap();
+    let st_points = pod_points_lvl_2.get_statement("points").unwrap();
+    let st_points_lvl_2 = builder.priv_op(op!(
         custom,
         points_pred,
         st_type,
@@ -133,14 +133,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         st_level,
         st_points
     ))?;
-    let pod_alice_lvl_2_points = builder.prove(prover, &params).unwrap();
-    println!("# pod_alice_lvl_2_points\n:{}", pod_alice_lvl_2_points);
-    pod_alice_lvl_2_points.pod.verify().unwrap();
+    // let pod_alice_lvl_2_points = builder.prove(prover, &params).unwrap();
+    // println!("# pod_alice_lvl_2_points\n:{}", pod_alice_lvl_2_points);
+    // pod_alice_lvl_2_points.pod.verify().unwrap();
 
     // Build a pod to prove the statement `over_9000("Alice")`
-    let mut builder = MainPodBuilder::new(&params, vd_set);
-    builder.add_recursive_pod(pod_alice_lvl_1_points);
-    builder.add_recursive_pod(pod_alice_lvl_2_points);
+    // let mut builder = MainPodBuilder::new(&params, vd_set);
+    // builder.add_recursive_pod(pod_alice_lvl_1_points);
+    // builder.add_recursive_pod(pod_alice_lvl_2_points);
     let st_points_total = builder.priv_op(op!(sum_of, 3512 + 5771, 3512, 5771))?;
     let st_gt_9000 = builder.priv_op(op!(gt, 3512 + 5771, 9000))?;
     let _st_over_9000 = builder.pub_op(op!(
