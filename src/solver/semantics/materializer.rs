@@ -81,7 +81,7 @@ impl MaterializeKey {
 /// Predicate-specific handlers are responsible for determining whether a statement
 /// is valid, and for deducing the values of free variables.
 pub struct Materializer {
-    db: Arc<FactDB>,
+    pub db: Arc<FactDB>,
     params: Params,
     materialised_keys: RefCell<HashSet<MaterializeKey>>,
 }

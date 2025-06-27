@@ -10,7 +10,7 @@ pub mod middleware;
 pub mod server;
 pub mod solver;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "examples"))]
 pub mod examples;
 
 #[cfg(feature = "time")]

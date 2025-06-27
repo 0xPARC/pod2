@@ -26,6 +26,7 @@ pub mod metrics;
 pub mod planner;
 pub mod proof;
 pub mod semantics;
+pub mod vis;
 
 /// The main entry point for the solver.
 ///
@@ -37,7 +38,7 @@ pub fn solve(
     pods: &[IndexablePod],
     params: &Params,
     metrics_level: MetricsLevel,
-) -> Result<((Vec<PodId>, Vec<(Operation, bool)>), MetricsReport), SolverError> {
+) -> Result<(Proof, MetricsReport), SolverError> {
     // Common setup logic that is independent of the metrics level.
     let db = Arc::new(FactDB::build(pods).unwrap());
     let materializer = Materializer::new(db.clone(), params);
@@ -51,18 +52,15 @@ pub fn solve(
     match metrics_level {
         MetricsLevel::None => {
             let (proof, _) = run_solve(plan, materializer, NoOpMetrics)?;
-            Ok((proof.to_inputs(&db.clone()), MetricsReport::None))
+            Ok((proof, MetricsReport::None))
         }
         MetricsLevel::Counters => {
             let (proof, metrics) = run_solve(plan, materializer, CounterMetrics::default())?;
-            Ok((
-                proof.to_inputs(&db.clone()),
-                MetricsReport::Counters(metrics),
-            ))
+            Ok((proof, MetricsReport::Counters(metrics)))
         }
         MetricsLevel::Debug => {
             let (proof, metrics) = run_solve(plan, materializer, DebugMetrics::default())?;
-            Ok((proof.to_inputs(&db.clone()), MetricsReport::Debug(metrics)))
+            Ok((proof, MetricsReport::Debug(metrics)))
         }
     }
 }
@@ -204,7 +202,9 @@ mod tests {
         let prover = MockProver {};
         let mut builder = MainPodBuilder::new(&params, &MOCK_VD_SET);
 
-        for (op, public) in result.1 {
+        let (pod_ids, ops) = result.to_inputs();
+
+        for (op, public) in ops {
             if public {
                 builder.pub_op(op).unwrap();
             } else {
@@ -212,7 +212,7 @@ mod tests {
             }
         }
 
-        for pod_id in result.0 {
+        for pod_id in pod_ids {
             let pod = pods.iter().find(|p| p.id() == pod_id).unwrap();
             if let IndexablePod::SignedPod(pod) = pod {
                 builder.add_signed_pod(pod);

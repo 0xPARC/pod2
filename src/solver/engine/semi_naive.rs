@@ -6,7 +6,10 @@
 
 #![allow(clippy::arc_with_non_send_sync)]
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use log::{debug, trace};
 
@@ -131,6 +134,7 @@ impl<M: MetricsSink> SemiNaiveEngine<M> {
                     let root = recon.build(&pid, fact)?;
                     return Ok(Proof {
                         root_nodes: vec![root],
+                        db: Arc::clone(&materializer.db),
                     });
                 }
             }
@@ -838,9 +842,11 @@ mod tests {
         },
         solver::{
             db::{FactDB, IndexablePod, TestPod},
+            explainer::MissingFactFinder,
             metrics::{DebugMetrics, NoOpMetrics},
             planner::Planner,
             proof::Justification,
+            vis,
         },
     };
 
@@ -1267,34 +1273,11 @@ mod tests {
         let proof = proof.unwrap();
         println!("Proof: {:?}", proof);
 
-        println!("Operations: {:#?}", proof.to_operations(&Arc::clone(&db)));
-        println!("Inputs: {:#?}", proof.to_inputs(&Arc::clone(&db)).0);
-
-        //let proof = proof_opt.unwrap();
-        //assert_eq!(
-        //    proof.root_nodes.len(),
-        //    1,
-        //    "Should have one root node in the proof"
-        //);
-
-        //println!("Proof: {:#?}", proof);
-
-        //let root_node = &proof.root_nodes[0];
-
-        // Check the conclusion of the proof
-        // We expect the proof to be for the original native predicate, not the synthetic one.
-        // ?P["foo"] should be bound to the value from pod2 (20).
-        //let pod2_ak = AnchoredKey::new(pod_id2, Key::new("foo".to_string()));
-        //let expected_conclusion =
-        //    Statement::Lt(ValueRef::Literal(10.into()), ValueRef::Key(pod2_ak));
-        //assert_eq!(root_node.conclusion, expected_conclusion);
-
-        // The justification for the Lt premise should be ValueComparison, as it's a native check.
-        //assert!(
-        //    matches!(root_node.justification, Justification::ValueComparison),
-        //    "Lt premise should be justified by ValueComparison, but was {:?}",
-        //    root_node.justification
-        //);
+        assert_eq!(
+            proof.root_nodes.len(),
+            1,
+            "Should have one root node in the proof"
+        );
     }
 
     #[test]
@@ -1318,6 +1301,8 @@ mod tests {
         let bob_attestation = attest_eth_friend(&params, &mut bob, charlie.public_key());
         let batch = eth_dos_batch(&params, true).unwrap();
 
+        println!("batch: {}", batch.id().encode_hex::<String>());
+
         let req1 = format!(
             r#"
         use _, _, _, eth_dos from 0x{}
@@ -1332,8 +1317,8 @@ mod tests {
 
         let db = Arc::new(
             FactDB::build(&[
-                IndexablePod::signed_pod(&alice_attestation),
-                //    IndexablePod::signed_pod(&bob_attestation),
+               // IndexablePod::signed_pod(&alice_attestation),
+               // IndexablePod::signed_pod(&bob_attestation),
             ])
             .unwrap(),
         );
@@ -1351,11 +1336,37 @@ mod tests {
 
         let (all_facts, provenance) = result.unwrap();
         let proof = engine.reconstruct_proof(&all_facts, &provenance, &materializer);
+
+        let finder = MissingFactFinder::new(&all_facts, &materializer);
+        let missing = finder.collect(&plan.guarded_rules);
+        for tmpl in missing {
+            println!(
+                "{}({})",
+                match tmpl.pred {
+                    Predicate::Custom(cpr) => cpr.predicate().name.clone().replace("\"", ""),
+                    Predicate::Native(op) => format!("{:?}", op).replace("\"", ""),
+                    _ => unreachable!(),
+                },
+                tmpl.args
+                    .iter()
+                    .map(|a| match a {
+                        StatementTmplArg::Literal(l) => l.to_string(),
+                        StatementTmplArg::Wildcard(w) => format!("{}", w),
+                        StatementTmplArg::AnchoredKey(w, k) => {
+                            format!("{}[\"{}\"]", w, k.name())
+                        }
+                        StatementTmplArg::None => "".to_string(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+
         assert!(proof.is_ok(), "Should find a proof");
         let proof = proof.unwrap();
         println!("Proof: {}", proof);
         //println!("Operations: {:#?}", proof.to_operations(&db.clone()));
-        for (operation, public) in proof.to_operations(&db.clone()) {
+        for (operation, public) in proof.to_operations() {
             println!(
                 "{:?}  public:{}",
                 match operation.0 {
@@ -1373,8 +1384,7 @@ mod tests {
         let mut builder = MainPodBuilder::new(&params, vd_set);
         let prover = MockProver {};
 
-        let inputs = proof.to_inputs(&db.clone());
-        println!("Ops: {:#?}", inputs.1.len());
+        let inputs = proof.to_inputs();
         let (_, ops) = inputs;
         for (operation, public) in ops {
             if public {
@@ -1389,7 +1399,48 @@ mod tests {
 
         let result = builder.prove(&prover, &params);
         assert!(result.is_ok(), "Should prove");
-        println!("Main pod: {}", result.unwrap());
+        let main_pod = result.unwrap();
+        println!("Main pod: {}", main_pod);
+        println!("{}", vis::mermaid_markdown(&proof));
+
+        let req2 = format!(
+            r#"
+        use _, _, _, eth_dos from 0x{}
+        REQUEST(
+            eth_dos(0x{}, 0x{}, ?Distance)
+        )
+        "#,
+            batch.id().encode_hex::<String>(),
+            hash_str(&alice.pk).encode_hex::<String>(),
+            hash_str(&bob.pk).encode_hex::<String>()
+        );
+
+        let processed = parse(&req2, &params, &[batch.clone()]).unwrap();
+        let request = processed.request_templates;
+
+        let planner = Planner::new();
+        let plan = planner.create_plan(&request).unwrap();
+
+        let db = Arc::new(
+            FactDB::build(&[
+                IndexablePod::main_pod(&main_pod),
+                IndexablePod::signed_pod(&alice_attestation),
+                // IndexablePod::signed_pod(&bob_attestation),
+            ])
+            .unwrap(),
+        );
+        let materializer = Materializer::new(db.clone(), &params);
+
+        let mut engine = SemiNaiveEngine::new(NoOpMetrics);
+        let result = engine.execute(&plan, &materializer);
+
+        let (all_facts, provenance) = result.unwrap();
+        let proof = engine.reconstruct_proof(&all_facts, &provenance, &materializer);
+
+        assert!(proof.is_ok(), "Should find a proof");
+        let proof = proof.unwrap();
+        println!("Proof: {}", proof);
+        println!("{}", vis::mermaid_markdown(&proof));
     }
 
     #[test]

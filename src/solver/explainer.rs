@@ -1,23 +1,19 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    middleware::{Predicate, StatementTmplArg, Value, ValueRef, Wildcard},
+    middleware::{
+        AnchoredKey, PodId, Predicate, StatementTmpl, StatementTmplArg, Value, ValueRef, Wildcard,
+    },
     solver::{
         engine::semi_naive::{Bindings, Fact, FactStore, SemiNaiveEngine},
         error::SolverError,
         ir::{Atom, PredicateIdentifier, Rule},
-        metrics::{self, NoOpMetrics},
+        metrics::NoOpMetrics,
         semantics::materializer::Materializer,
     },
 };
 
-/// One blocking literal together with the bindings that were known
-/// when we tried to join it.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct MissingLiteral {
-    pub predicate: Predicate,
-    pub args: Vec<StatementTmplArg>, // may still contain wildcards
-}
+type MissingAtom = StatementTmpl;
 
 pub struct MissingFactFinder<'a> {
     all_facts: &'a FactStore,
@@ -32,15 +28,15 @@ impl<'a> MissingFactFinder<'a> {
         }
     }
 
-    /// Returns every literal that caused a join failure in every
+    /// Returns every atom that caused a join failure in every
     /// guarded rule reachable from the request.
-    pub fn collect(&self, rules: &[Rule]) -> Vec<MissingLiteral> {
-        let mut seen: HashSet<MissingLiteral> = HashSet::new();
+    pub fn collect(&self, rules: &[Rule]) -> Vec<MissingAtom> {
+        let mut seen: HashSet<MissingAtom> = HashSet::new();
         let mut ordered = Vec::new();
 
         let mut interim = Vec::new();
         for rule in rules {
-            self.replay_rule(rule, &mut HashMap::new(), &mut interim);
+            self.replay_rule(rule, &HashMap::new(), &mut interim);
         }
 
         for lit in interim.into_iter() {
@@ -55,7 +51,7 @@ impl<'a> MissingFactFinder<'a> {
     // ----------------------------------------------------------------
     // replay_rule ≈ stripped-down version of `perform_join`
     // ----------------------------------------------------------------
-    fn replay_rule(&self, rule: &Rule, seed: &Bindings, out: &mut Vec<MissingLiteral>) {
+    fn replay_rule(&self, rule: &Rule, seed: &Bindings, out: &mut Vec<MissingAtom>) {
         // Determine external (public) wildcards from rule head
         let externals: HashSet<Wildcard> = rule
             .head
@@ -76,7 +72,7 @@ impl<'a> MissingFactFinder<'a> {
         rule: &Rule,
         seed: &Bindings,
         externals: &HashSet<Wildcard>,
-        out: &mut Vec<MissingLiteral>,
+        out: &mut Vec<MissingAtom>,
     ) {
         let mut current: Vec<Bindings> = vec![seed.clone()];
         let mut invalid: HashSet<Wildcard> = HashSet::new();
@@ -84,7 +80,13 @@ impl<'a> MissingFactFinder<'a> {
         for atom in &rule.body {
             // If atom uses an invalidated wildcard, treat as failed immediately
             if self.atom_mentions_invalid(atom, &invalid) {
-                out.push(self.partial_instantiate(atom, &current[0], externals));
+                if !matches!(
+                    atom.predicate,
+                    PredicateIdentifier::Normal(Predicate::Custom(_))
+                ) && !self.is_impossible_native(atom, &current[0])
+                {
+                    out.push(self.partial_instantiate(atom, &current[0], externals));
+                }
                 invalid.extend(self.wildcards_in_atom(atom));
                 continue;
             }
@@ -102,7 +104,13 @@ impl<'a> MissingFactFinder<'a> {
 
             if next.is_empty() {
                 // Atom truly fails under current bindings
-                out.push(self.partial_instantiate(atom, &current[0], externals));
+                if !matches!(
+                    atom.predicate,
+                    PredicateIdentifier::Normal(Predicate::Custom(_))
+                ) && !self.is_impossible_native(atom, &current[0])
+                {
+                    out.push(self.partial_instantiate(atom, &current[0], externals));
+                }
                 invalid.extend(self.wildcards_in_atom(atom));
                 // We continue scanning tail so that later atoms that depend on these
                 // wildcards are captured as failed.
@@ -142,7 +150,7 @@ impl<'a> MissingFactFinder<'a> {
     // ------------------------------------------------------------
     fn fetch_relation(&self, atom: &Atom, b: &Bindings) -> Vec<Fact> {
         match &atom.predicate {
-            crate::solver::ir::PredicateIdentifier::Normal(pred) => {
+            PredicateIdentifier::Normal(pred) => {
                 // EDB + IDB via materializer
                 self.materializer
                     .materialize_statements(pred.clone(), atom.terms.clone(), b)
@@ -150,7 +158,7 @@ impl<'a> MissingFactFinder<'a> {
                     .into_iter()
                     .collect()
             }
-            crate::solver::ir::PredicateIdentifier::Magic { .. } => {
+            PredicateIdentifier::Magic { .. } => {
                 // Magic predicates are IDB-only – look them up directly in the fact store.
                 self.all_facts
                     .get(&atom.predicate)
@@ -159,7 +167,6 @@ impl<'a> MissingFactFinder<'a> {
                     .into_iter()
                     .collect()
             }
-            _ => Vec::new(),
         }
     }
 
@@ -177,7 +184,7 @@ impl<'a> MissingFactFinder<'a> {
         atom: &Atom,
         b: &Bindings,
         externals: &HashSet<Wildcard>,
-    ) -> MissingLiteral {
+    ) -> MissingAtom {
         let args = atom
             .terms
             .iter()
@@ -193,12 +200,45 @@ impl<'a> MissingFactFinder<'a> {
                 _ => t.clone(),
             })
             .collect();
-        MissingLiteral {
-            predicate: match &atom.predicate {
-                crate::solver::ir::PredicateIdentifier::Normal(p) => p.clone(),
+        MissingAtom {
+            pred: match &atom.predicate {
+                PredicateIdentifier::Normal(p) => p.clone(),
                 _ => unreachable!(),
             },
             args,
         }
+    }
+
+    fn is_impossible_native(&self, atom: &Atom, b: &Bindings) -> bool {
+        if let PredicateIdentifier::Normal(Predicate::Native(native_pred)) = &atom.predicate {
+            // Try to resolve all terms to concrete Values
+            let maybe_values: Option<Vec<Value>> = atom
+                .terms
+                .iter()
+                .map(|t| match t {
+                    StatementTmplArg::Literal(v) => Some(v.clone()),
+                    StatementTmplArg::Wildcard(wc) => b.get(wc).cloned(),
+                    StatementTmplArg::AnchoredKey(pod_wc, key) => b.get(pod_wc).and_then(|val| {
+                        if let Ok(pid) = PodId::try_from(val.typed()) {
+                            let ak = AnchoredKey::new(pid, key.clone());
+                            self.materializer.value_ref_to_value(&ValueRef::Key(ak))
+                        } else {
+                            None
+                        }
+                    }),
+                    _ => None,
+                })
+                .collect();
+
+            if let Some(vals) = maybe_values {
+                use crate::middleware::NativePredicate as NP;
+                match native_pred {
+                    NP::Equal => return vals[0] != vals[1],
+                    NP::NotEqual => return vals[0] == vals[1],
+                    _ => {}
+                }
+            }
+        }
+        false
     }
 }

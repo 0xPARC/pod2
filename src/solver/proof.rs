@@ -18,6 +18,7 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct Proof {
     pub root_nodes: Vec<Arc<ProofNode>>,
+    pub db: Arc<FactDB>,
 }
 
 impl fmt::Display for Proof {
@@ -106,7 +107,7 @@ impl Proof {
     /// Walks the proof graph in post-order and produces an `Operation` for each
     /// justification. The resulting vector of operations is ordered such that
     /// any operation's premises are guaranteed to have appeared earlier in the list.
-    pub fn to_operations(&self, db: &Arc<FactDB>) -> Vec<(Operation, bool)> {
+    pub fn to_operations(&self) -> Vec<(Operation, bool)> {
         // Identify nodes that correspond to the *direct premises* of the synthetic
         // `_request_goal` root.  Those should become **public** operations.
 
@@ -143,7 +144,7 @@ impl Proof {
                                 .iter()
                                 .map(|a| a.try_into().unwrap())
                                 .collect();
-                            handler.explain_special_derivation(&args, db).unwrap()
+                            handler.explain_special_derivation(&args, &self.db).unwrap()
                         } else {
                             panic!("Special justification for non-native predicate");
                         }
@@ -155,7 +156,7 @@ impl Proof {
                             .iter()
                             .map(|a| match a {
                                 StatementArg::Key(k) => {
-                                    db.anchored_key_to_equal_statement(k).unwrap().into()
+                                    self.db.anchored_key_to_equal_statement(k).unwrap().into()
                                 }
                                 StatementArg::Literal(l) => OperationArg::Literal(l.clone()),
                                 _ => panic!("Invalid statement arg"),
@@ -211,8 +212,8 @@ impl Proof {
 
     /// Returns the minimal set of PODs that provide every EDB statement referenced
     /// by the proof together with the list of operations (same as `to_operations`).
-    pub fn to_inputs(&self, db: &Arc<FactDB>) -> (Vec<PodId>, Vec<(Operation, bool)>) {
-        let ops_with_flag = self.to_operations(db);
+    pub fn to_inputs(&self) -> (Vec<PodId>, Vec<(Operation, bool)>) {
+        let ops_with_flag = self.to_operations();
 
         // Collect every Statement that is passed as an OperationArg *and* exists in the EDB.
         // Map statement → set of providers
@@ -221,7 +222,7 @@ impl Proof {
         for (op, _public) in &ops_with_flag {
             for arg in &op.1 {
                 if let OperationArg::Statement(st) = arg {
-                    if let Some(provs) = providers_for_statement(db, st) {
+                    if let Some(provs) = providers_for_statement(&self.db, st) {
                         stmt_providers.entry(st.clone()).or_default().extend(provs);
                     }
                 }

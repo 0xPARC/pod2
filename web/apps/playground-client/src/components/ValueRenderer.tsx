@@ -1,5 +1,6 @@
 import React from 'react';
-import type { Value, Dictionary, Set as PodSet, RawValue } from '../types/pod2';
+import type { Value, Dictionary, Set as PodSet, RawValue, Array as PodArray } from '../types/pod2';
+import { KeyRoundIcon } from 'lucide-react';
 
 interface ValueRendererProps {
   value: Value;
@@ -18,20 +19,6 @@ const ValueRenderer: React.FC<ValueRendererProps> = ({ value }) => {
     return <span className="font-mono text-purple-600 dark:text-purple-400">{value.toString()}</span>;
   }
 
-  if (Array.isArray(value)) { // This is the 'Array' variant from the schema
-    if (value.length === 0) return <span className="font-mono text-blue-600 dark:text-blue-400">[]</span>;
-    return (
-      <span className="font-mono text-blue-600 dark:text-blue-400">
-        [ {value.map((item, index) => (
-          <React.Fragment key={index}>
-            <ValueRenderer value={item} />
-            {index < value.length - 1 ? ', ' : ''}
-          </React.Fragment>
-        ))} ]
-      </span>
-    );
-  }
-
   if (typeof value === 'object') {
     if ('Int' in value) {
       return <span className="font-mono text-green-600 dark:text-green-400">{String((value as { Int: string }).Int)}</span>;
@@ -39,8 +26,25 @@ const ValueRenderer: React.FC<ValueRendererProps> = ({ value }) => {
     if ('Raw' in value) {
       return <span className="italic text-gray-700 dark:text-gray-300" title={(value as { Raw: RawValue }).Raw}>{(value as { Raw: RawValue }).Raw}</span>;
     }
-    if ('Set' in value) {
-      const set = (value as { Set: PodSet }).Set;
+    if ('PublicKey' in value) {
+      return <span className="font-mono text-blue-600 dark:text-blue-400 flex items-center gap-2"><KeyRoundIcon className="w-4 h-4" />{value.PublicKey}</span>;
+    }
+    if ('array' in value) {
+      let arr = value as PodArray;
+      if (arr.array.length === 0) return <span className="font-mono text-blue-600 dark:text-blue-400">[]</span>;
+      return (
+        <span className="font-mono text-blue-600 dark:text-blue-400">
+          [ {arr.array.map((item, index) => (
+            <React.Fragment key={index}>
+              <ValueRenderer value={item} />
+              {index < arr.array.length - 1 ? ', ' : ''}
+            </React.Fragment>
+          ))} ]
+        </span>
+      );
+    }
+    if ('set' in value) {
+      const set = value as PodSet
       if (set.set.length === 0) return <span className="font-mono text-orange-600 dark:text-orange-400">Set([])</span>;
       return (
         <span className="font-mono text-orange-600 dark:text-orange-400">

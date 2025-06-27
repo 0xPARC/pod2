@@ -122,7 +122,7 @@ impl fmt::Display for StatementTmplArg {
 }
 
 /// Statement Template for a Custom Predicate
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Hash)]
 pub struct StatementTmpl {
     pub pred: Predicate,
     pub args: Vec<StatementTmplArg>,
@@ -274,6 +274,18 @@ impl CustomPredicate {
             }),
             args: vec![],
         }
+    }
+    pub fn is_conjunction(&self) -> bool {
+        self.conjunction
+    }
+    pub fn statements(&self) -> &[StatementTmpl] {
+        &self.statements
+    }
+    pub fn wildcard_names(&self) -> &[String] {
+        &self.wildcard_names
+    }
+    pub fn args_len(&self) -> usize {
+        self.args_len
     }
 }
 

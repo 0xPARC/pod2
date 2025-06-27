@@ -7,8 +7,8 @@ use itertools::Itertools;
 
 use crate::{
     middleware::{
-        AnchoredKey as MWAnchoredKey, CustomPredicateRef, NativeOperation, PodId, Predicate,
-        Statement, StatementTmplArg, Value, ValueRef, Wildcard,
+        AnchoredKey as MWAnchoredKey, CustomPredicateRef, PodId, Predicate, Statement,
+        StatementTmplArg, Value, ValueRef, Wildcard,
     },
     solver::{
         engine::semi_naive::{Fact, FactSource, FactStore, ProvenanceStore},

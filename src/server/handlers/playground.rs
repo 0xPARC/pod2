@@ -102,58 +102,6 @@ fn lang_error_to_diagnostics(lang_error: &LangError) -> Vec<Diagnostic> {
     diagnostics
 }
 
-fn byte_span_to_line_col_span(
-    code: &str,
-    start_byte: usize,
-    end_byte: usize,
-) -> (usize, usize, usize, usize) {
-    let mut current_byte = 0;
-    let mut line = 1;
-    let mut col = 1;
-    let mut start_line_col = (1, 1);
-    let mut end_line_col = (1, 1);
-    let mut found_start = false;
-
-    for (byte_offset, char_val) in code.char_indices() {
-        if !found_start && byte_offset >= start_byte {
-            start_line_col = (line, col);
-            found_start = true;
-        }
-        if byte_offset >= end_byte {
-            end_line_col = (line, col);
-            break;
-        }
-
-        current_byte = byte_offset + char_val.len_utf8();
-
-        if char_val == '\n' {
-            line += 1;
-            col = 1;
-        } else {
-            col += 1;
-        }
-
-        if current_byte >= code.len() {
-            end_line_col = (line, col);
-            break;
-        }
-    }
-
-    if !found_start && start_byte >= code.len() {
-        start_line_col = (line, col);
-    }
-    if current_byte < end_byte && current_byte == code.len() {
-        end_line_col = (line, col);
-    }
-
-    (
-        start_line_col.0,
-        start_line_col.1,
-        end_line_col.0,
-        end_line_col.1,
-    )
-}
-
 pub async fn execute_code_handler(
     State(pool): State<ConnectionPool>,
     Json(payload): Json<ExecuteCodeRequest>,
@@ -366,7 +314,7 @@ pub async fn execute_code_handler(
     //     custom_definitions_from_batches(&[processed_output.custom_batch], &params);
     let request_templates = processed_output.request_templates;
 
-    let ((pod_ids, ops), _) = match solver::solve(
+    let (proof, _) = match solver::solve(
         &request_templates,
         &all_pods_for_facts,
         &params,
@@ -378,6 +326,8 @@ pub async fn execute_code_handler(
             return Err(PlaygroundApiError::Solver(e));
         }
     };
+
+    let (pod_ids, ops) = proof.to_inputs();
 
     let mut builder = MainPodBuilder::new(&params, &MOCK_VD_SET);
     for (operation, public) in ops {
@@ -406,7 +356,7 @@ pub async fn execute_code_handler(
 
     let result = ExecuteResult {
         main_pod: result_main_pod,
-        diagram: "".to_string(),
+        diagram: solver::vis::mermaid_markdown(&proof),
     };
 
     Ok(Json(result))
