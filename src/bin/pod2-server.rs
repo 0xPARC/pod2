@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use pod2::server::{config::Config, db, handlers::playground, routes};
+use pod2::server::{config::Config, db, routes, setup::setup_zukyc_space};
 use tokio::net::TcpListener;
 
 #[derive(Parser, Debug)]
@@ -35,7 +35,7 @@ async fn main() -> Result<()> {
         .await
         .context("Failed to create schema")?;
 
-    playground::setup_zukyc_space(&db_pool)
+    setup_zukyc_space(&db_pool)
         .await
         .context("Failed to setup Zukyc space")?;
 
