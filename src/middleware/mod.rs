@@ -774,7 +774,7 @@ pub fn normalize_statement(statement: &Statement, self_id: PodId) -> Statement {
     Statement::from_args(predicate, args).expect("statement was valid before normalization")
 }
 
-pub trait Pod: fmt::Debug + DynClone + Any {
+pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any {
     fn params(&self) -> &Params;
     fn verify(&self) -> Result<(), BackendError>;
     fn id(&self) -> PodId;
