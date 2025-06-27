@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::LazyLock,
-};
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
@@ -15,14 +12,12 @@ use serde_json::Value;
 
 use super::pod_management::{PodData, PodInfo};
 use crate::{
-    backends::plonky2::{
-        mock::mainpod::MockProver, primitives::ec::schnorr::SecretKey, signedpod::Signer,
-    },
+    backends::plonky2::{mainpod::Prover, primitives::ec::schnorr::SecretKey, signedpod::Signer},
     frontend::{
         serialization::SerializedSignedPod, MainPod, MainPodBuilder, SignedPod, SignedPodBuilder,
     },
     lang::{self, parser, LangError},
-    middleware::{containers::Set, Params, PodId, VDSet, Value as PodValue},
+    middleware::{containers::Set, Params, PodId, Value as PodValue, DEFAULT_VD_SET},
     server::{
         api_types::{
             Diagnostic, DiagnosticSeverity, ExecuteCodeRequest, ValidateCodeRequest,
@@ -32,8 +27,6 @@ use crate::{
     },
     solver::{self, db::IndexablePod, error::SolverError, metrics::MetricsLevel},
 };
-
-pub const MOCK_VD_SET: LazyLock<VDSet> = LazyLock::new(|| VDSet::new(6, &[]).unwrap());
 
 #[derive(Serialize, Deserialize)]
 pub struct ExecuteResult {
@@ -329,8 +322,9 @@ pub async fn execute_code_handler(
 
     let (pod_ids, ops) = proof.to_inputs();
 
-    let mut builder = MainPodBuilder::new(&params, &MOCK_VD_SET);
+    let mut builder = MainPodBuilder::new(&params, &DEFAULT_VD_SET);
     for (operation, public) in ops {
+        println!("operation {:?}", operation);
         if public {
             builder.pub_op(operation).unwrap();
         } else {
@@ -342,17 +336,21 @@ pub async fn execute_code_handler(
         if let Some(pod) = pod {
             match pod {
                 IndexablePod::SignedPod(pod) => {
+                    println!("adding signed pod {:?}", pod.id());
                     builder.add_signed_pod(pod);
                 }
                 IndexablePod::MainPod(pod) => {
+                    println!("adding recursive pod {:?}", pod.id());
                     builder.add_recursive_pod(pod.as_ref().clone());
                 }
-                IndexablePod::TestPod(pod) => {}
+                IndexablePod::TestPod(_pod) => {}
             }
         }
     }
-    let prover = MockProver {};
-    let result_main_pod = builder.prove(&prover, &params).unwrap();
+    let prover = Prover {};
+    let result_main_pod = builder.prove(&prover, &params);
+    println!("{:#?}", result_main_pod);
+    let result_main_pod = result_main_pod.unwrap();
 
     let result = ExecuteResult {
         main_pod: result_main_pod,

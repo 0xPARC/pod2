@@ -170,13 +170,18 @@ impl Proof {
                         )]
                     }
                     Justification::Custom(cpr, premises) => {
-                        let premise_statements: Vec<Statement> =
-                            premises.iter().map(|p| p.statement.clone()).collect();
-                        vec![Operation(
-                            OperationType::Custom(cpr.clone()),
-                            premise_statements.into_iter().map(|s| s.into()).collect(),
-                            OperationAux::None,
-                        )]
+                        // Skip the synthetic helper predicate added by the planner.
+                        if cpr.predicate().name == "_request_goal" {
+                            Vec::new()
+                        } else {
+                            let premise_statements: Vec<Statement> =
+                                premises.iter().map(|p| p.statement.clone()).collect();
+                            vec![Operation(
+                                OperationType::Custom(cpr.clone()),
+                                premise_statements.into_iter().map(|s| s.into()).collect(),
+                                OperationAux::None,
+                            )]
+                        }
                     }
                 };
 
