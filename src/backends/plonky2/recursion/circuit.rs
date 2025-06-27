@@ -422,7 +422,7 @@ fn estimate_verif_num_gates(degree_bits: usize) -> usize {
     {
         // Formula obtained via linear regression using `test_measure_recursion`
         // results with `standard_recursion_config`.
-        let num_gates: usize = 236 * degree_bits + 1171;
+        num_gates = 236 * degree_bits + 1171;
     }
     // Add 2% for error because the results are not a clean line
     num_gates * 102 / 100
@@ -441,6 +441,7 @@ fn estimate_gates_after_zk(degree_bits: usize) -> usize {
 }
 
 // how many blinding gates are in this zk circuit
+#[cfg(feature = "zk")]
 fn blinding_gates(degree_bits: usize) -> usize {
     // Table data obtained using `test_measure_zk_recursion`, and printing
     // `regular_poly_openings + 2 * z_openings` at method `blind` of the file
@@ -491,6 +492,7 @@ pub fn common_data_for_recursion<I: InnerCircuit>(
         // `ConstantGate`s (that's MAX_CONSTANT_GATES*2 constants in the
         // standard_recursion_config).  And if the zk feature is enabled, add
         // space for the blinding gates.
+        #[allow(unused_mut)]
         let mut total_num_gates = inner_num_gates
             + verif_num_gates * arity
             + circuit_data.common.num_public_inputs.div_ceil(8)
@@ -530,6 +532,7 @@ pub fn pad_circuit(builder: &mut CircuitBuilder<F, D>, common_data: &CommonCircu
     // have been registered, so we can't know exactly how many `ConstantGates` will be required.
     // We hope that no more than MAX_CONSTANT_GATES*2 constants are used :pray:.  Maybe we should
     // make a PR to plonky2 to expose this?
+    #[allow(unused_mut)]
     let mut num_gates = degree - common_data.num_public_inputs.div_ceil(8) - 1 - MAX_CONSTANT_GATES;
     #[cfg(feature = "zk")]
     {
