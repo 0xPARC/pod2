@@ -5,6 +5,7 @@ use core::ops::{Add, Mul};
 use std::{
     array, fmt,
     ops::{AddAssign, Neg, Sub},
+    str::FromStr,
     sync::LazyLock,
 };
 
@@ -117,6 +118,27 @@ impl fmt::Display for Point {
                 let xu_b58 = bs58::encode(xu_bytes).into_string();
                 write!(f, "{}", xu_b58)
             }
+        }
+    }
+}
+
+impl FromStr for Point {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let point_bytes = bs58::decode(s)
+            .into_vec()
+            .map_err(|e| Error::custom(format!("Base58 decode error: {}", e)))?;
+
+        if point_bytes.len() == 80 {
+            // Non-compressed
+            Ok(Point {
+                x: ec_field_from_bytes(&point_bytes[..40])?,
+                u: ec_field_from_bytes(&point_bytes[40..])?,
+            })
+        } else {
+            // Compressed
+            Self::from_bytes_into_subgroup(&point_bytes)
         }
     }
 }
