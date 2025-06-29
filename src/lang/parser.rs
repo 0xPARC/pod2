@@ -106,19 +106,42 @@ mod tests {
         // Raw - Require 64 hex digits (32 bytes, equal to 4 * 64-bit field elements)
         assert_parses(
             Rule::literal_raw,
-            "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "Raw(0x0000000000000000000000000000000000000000000000000000000000000000)",
         );
         assert_parses(
             Rule::literal_raw,
-            "0xabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd",
+            "Raw(0xabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd)",
         );
-        let long_valid_raw = format!("0x{}", "a".repeat(64));
+        let long_valid_raw = format!("Raw(0x{})", "a".repeat(64));
         assert_parses(Rule::literal_raw, &long_valid_raw);
 
         // Use anchored rule for failure cases
-        assert_fails(Rule::test_literal_raw, "0xabc"); // Fails (string is too short)
-        assert_fails(Rule::test_literal_raw, "0x"); // Fails (needs at least one pair)
-        assert_fails(Rule::test_literal_raw, &format!("0x{}", "a".repeat(66))); // Fails (string is too long)
+        assert_fails(
+            Rule::test_literal_raw,
+            "0x0000000000000000000000000000000000000000000000000000000000000000)",
+        ); // Missing Raw() wrapper
+        assert_fails(Rule::test_literal_raw, "Raw(0xabc)"); // Fails (string is too short)
+        assert_fails(Rule::test_literal_raw, "Raw(0x)"); // Fails (needs at least one pair)
+        assert_fails(
+            Rule::test_literal_raw,
+            &format!("Raw(0x{})", "a".repeat(66)),
+        ); // Fails (string is too long)
+
+        // PodId (essentially identical to Raw but without the wrapper)
+        assert_parses(
+            Rule::literal_pod_id,
+            "0x0000000000000000000000000000000000000000000000000000000000000000",
+        );
+        assert_parses(
+            Rule::literal_pod_id,
+            "0xabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd",
+        );
+        let long_valid_pod_id = format!("0x{}", "a".repeat(64));
+        assert_parses(Rule::literal_pod_id, &long_valid_pod_id);
+
+        assert_fails(Rule::test_literal_pod_id, "0xabc"); // Fails (string is too short)
+        assert_fails(Rule::test_literal_pod_id, "0x"); // Fails (needs at least one pair)
+        assert_fails(Rule::test_literal_pod_id, &format!("0x{}", "a".repeat(66))); // Fails (string is too long)
 
         // String
         assert_parses(Rule::literal_string, "\"hello\"");
@@ -126,10 +149,16 @@ mod tests {
         assert_parses(Rule::literal_string, "\"\\\\ backslash\"");
         assert_parses(Rule::literal_string, "\"\\uABCD\"");
         assert_fails(Rule::literal_string, "\"unterminated");
+
+        // PublicKey
+        assert_parses(Rule::literal_public_key, "PublicKey(base58string)");
+        assert_fails(Rule::literal_public_key, "PublicKey(OhNo)"); // Fails because O is not valid base58
+
         // Array
         assert_parses(Rule::literal_array, "[]");
         assert_parses(Rule::literal_array, "[1, \"two\", true]");
         assert_parses(Rule::literal_array, "[ [1], #[2] ]");
+
         // Set
         assert_parses(Rule::literal_set, "#[]");
         assert_parses(Rule::literal_set, "#[1, 2, 3]");
@@ -137,6 +166,7 @@ mod tests {
             Rule::literal_set,
             "#[ \"a\", 0x0000000000000000000000000000000000000000000000000000000000000000 ]",
         );
+
         // Dict
         assert_parses(Rule::literal_dict, "{}");
         assert_parses(Rule::literal_dict, "{ \"name\": \"Alice\", \"age\": 30 }");

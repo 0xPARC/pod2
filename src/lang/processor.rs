@@ -8,6 +8,7 @@ use plonky2::field::types::Field;
 
 use super::error::ProcessorError;
 use crate::{
+    backends::plonky2::primitives::ec::curve::Point,
     frontend::{BuilderArg, CustomPredicateBatchBuilder, StatementTmplBuilder},
     lang::parser::Rule,
     middleware::{
@@ -335,10 +336,10 @@ fn validate_and_build_statement_template(
                 | NativePredicate::Lt
                 | NativePredicate::LtEq
                 | NativePredicate::SetContains
+                | NativePredicate::NotContains
                 | NativePredicate::DictNotContains
                 | NativePredicate::SetNotContains => 2,
-                NativePredicate::NotContains
-                | NativePredicate::Contains
+                NativePredicate::Contains
                 | NativePredicate::ArrayContains
                 | NativePredicate::DictContains
                 | NativePredicate::SumOf
@@ -523,7 +524,6 @@ fn process_and_add_custom_predicate_to_batch(
     let public_args_strs: Vec<&str> = public_arg_strings.iter().map(AsRef::as_ref).collect();
     let private_args_strs: Vec<&str> = private_arg_strings.iter().map(AsRef::as_ref).collect();
     let sts_slice: &[StatementTmplBuilder] = &statement_builders;
-
     if conjunction {
         cpb_builder.predicate_and(&name, &public_args_strs, &private_args_strs, sts_slice)?;
     } else {
@@ -667,11 +667,11 @@ fn process_literal_value(
             Ok(Value::from(val))
         }
         Rule::literal_raw => {
-            let full_literal_str = inner_lit.as_str();
+            let full_literal_str = inner_lit.clone().into_inner().next().unwrap();
             let hex_str_no_prefix = full_literal_str
+                .as_str()
                 .strip_prefix("0x")
-                .unwrap_or(full_literal_str);
-
+                .unwrap_or(full_literal_str.as_str());
             parse_hex_str_to_raw_value(hex_str_no_prefix)
                 .map_err(|e| match e {
                     ProcessorError::InvalidLiteralFormat { kind, value, .. } => {
@@ -693,6 +693,27 @@ fn process_literal_value(
                     },
                 })
                 .map(Value::from)
+        }
+        Rule::literal_pod_id => {
+            let hex_str_no_prefix = inner_lit
+                .as_str()
+                .strip_prefix("0x")
+                .unwrap_or(inner_lit.as_str());
+            let pod_id = parse_hex_str_to_pod_id(hex_str_no_prefix)?;
+            Ok(Value::from(pod_id))
+        }
+        Rule::literal_public_key => {
+            let pk_str_pair = inner_lit.into_inner().next().unwrap();
+            let pk_b58 = pk_str_pair.as_str();
+            let point: Point =
+                pk_b58
+                    .parse()
+                    .map_err(|e| ProcessorError::InvalidLiteralFormat {
+                        kind: "PublicKey".to_string(),
+                        value: format!("{} (error: {})", pk_b58, e),
+                        span: Some(get_span(&pk_str_pair)),
+                    })?;
+            Ok(Value::from(point))
         }
         Rule::literal_string => Ok(Value::from(parse_pest_string_literal(&inner_lit)?)),
         Rule::literal_array => {
@@ -821,6 +842,11 @@ fn parse_hex_str_to_raw_value(hex_str: &str) -> Result<middleware::RawValue, Pro
         v[VALUE_SIZE - i - 1] = F::from_canonical_u64(u64_val);
     }
     Ok(middleware::RawValue(v))
+}
+
+fn parse_hex_str_to_pod_id(hex_str: &str) -> Result<middleware::PodId, ProcessorError> {
+    let raw = parse_hex_str_to_raw_value(hex_str)?;
+    Ok(middleware::PodId(raw.into()))
 }
 
 // Helper to resolve a wildcard name string to an indexed middleware::Wildcard
