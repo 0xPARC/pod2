@@ -83,6 +83,9 @@ impl Dictionary {
     pub fn kvs(&self) -> &HashMap<Key, Value> {
         &self.kvs
     }
+    pub fn max_depth(&self) -> usize {
+        self.max_depth
+    }
 }
 
 impl PartialEq for Dictionary {
@@ -171,6 +174,9 @@ impl Set {
     pub fn set(&self) -> &HashSet<Value> {
         &self.set
     }
+    pub fn max_depth(&self) -> usize {
+        self.max_depth
+    }
 }
 
 impl PartialEq for Set {
@@ -255,6 +261,9 @@ impl Array {
     }
     pub fn array(&self) -> &[Value] {
         &self.array
+    }
+    pub fn max_depth(&self) -> usize {
+        self.max_depth
     }
 }
 

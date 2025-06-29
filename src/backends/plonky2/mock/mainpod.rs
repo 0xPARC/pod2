@@ -40,7 +40,7 @@ impl PodProver for MockProver {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MockMainPod {
     params: Params,
     id: PodId,
@@ -56,19 +56,6 @@ pub struct MockMainPod {
     merkle_proofs_containers: Vec<MerkleClaimAndProof>,
 }
 
-impl PartialEq for MockMainPod {
-    fn eq(&self, other: &Self) -> bool {
-        self.params == other.params
-            && self.id == other.id
-            && self.vd_set == other.vd_set
-            && self.input_signed_pods == other.input_signed_pods
-            && self.input_recursive_pods == other.input_recursive_pods
-            && self.statements == other.statements
-            && self.operations == other.operations
-            && self.public_statements == other.public_statements
-            && self.merkle_proofs_containers == other.merkle_proofs_containers
-    }
-}
 impl Eq for MockMainPod {}
 
 impl fmt::Display for MockMainPod {

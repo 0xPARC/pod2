@@ -5,8 +5,10 @@ use serde::{Deserialize, Serialize};
 
 use super::Error;
 use crate::{
-    frontend::{MainPod, SignedPod, Statement},
-    middleware::{deserialize_pod, deserialize_signed_pod, Key, Params, PodId, VDSet, Value},
+    frontend::{MainPod, SignedPod},
+    middleware::{
+        deserialize_pod, deserialize_signed_pod, Key, Params, PodId, Statement, VDSet, Value,
+    },
 };
 
 #[derive(Serialize, Deserialize, JsonSchema)]
@@ -44,8 +46,8 @@ impl From<SignedPod> for SerializedSignedPod {
         SerializedSignedPod {
             pod_type: (pod_type, pod_type_name_str.to_string()),
             id: pod.id(),
-            data,
             entries: pod.kvs().clone(),
+            data,
         }
     }
 }
@@ -69,8 +71,8 @@ impl From<MainPod> for SerializedMainPod {
             id: pod.id(),
             vd_set: pod.pod.vd_set().clone(),
             params: pod.params.clone(),
+            public_statements: pod.pod.pub_statements(),
             data,
-            public_statements: pod.public_statements,
         }
     }
 }
