@@ -5,7 +5,7 @@ use std::{collections::HashMap, convert::From, fmt};
 
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use serialization::{SerializedMainPod, SerializedSignedPod};
+pub use serialization::{SerializedMainPod, SerializedSignedPod};
 
 use crate::middleware::{
     self, check_st_tmpl, hash_op, hash_str, max_op, prod_op, sum_op, AnchoredKey, Key,

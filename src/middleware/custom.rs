@@ -9,7 +9,7 @@ use crate::middleware::{
     EMPTY_HASH, F, VALUE_SIZE,
 };
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct Wildcard {
     pub name: String,
     pub index: usize,
@@ -37,7 +37,7 @@ impl ToFields for Wildcard {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", content = "value")]
 pub enum StatementTmplArg {
     None,
@@ -122,7 +122,7 @@ impl fmt::Display for StatementTmplArg {
 }
 
 /// Statement Template for a Custom Predicate
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct StatementTmpl {
     pub pred: Predicate,
     pub args: Vec<StatementTmplArg>,
@@ -179,7 +179,7 @@ impl ToFields for StatementTmpl {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 /// NOTE: fields are not public (outside of crate) to enforce the struct instantiation through
 /// the `::and/or` methods, which performs checks on the values.
@@ -275,6 +275,21 @@ impl CustomPredicate {
             args: vec![],
         }
     }
+    pub fn is_conjunction(&self) -> bool {
+        self.conjunction
+    }
+    pub fn is_disjunction(&self) -> bool {
+        !self.conjunction
+    }
+    pub fn statements(&self) -> &[StatementTmpl] {
+        &self.statements
+    }
+    pub fn args_len(&self) -> usize {
+        self.args_len
+    }
+    pub fn wildcard_names(&self) -> &[String] {
+        &self.wildcard_names
+    }
 }
 
 impl ToFields for CustomPredicate {
@@ -341,11 +356,17 @@ impl fmt::Display for CustomPredicate {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CustomPredicateBatch {
     id: Hash,
     pub name: String,
     pub(crate) predicates: Vec<CustomPredicate>,
+}
+
+impl std::hash::Hash for CustomPredicateBatch {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
 }
 
 impl ToFields for CustomPredicateBatch {
@@ -401,7 +422,7 @@ impl CustomPredicateBatch {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct CustomPredicateRef {
     pub batch: Arc<CustomPredicateBatch>,
     pub index: usize,

@@ -7,7 +7,7 @@ pub mod frontend;
 pub mod lang;
 pub mod middleware;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "examples"))]
 pub mod examples;
 
 #[cfg(feature = "time")]

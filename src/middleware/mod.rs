@@ -170,6 +170,20 @@ impl TryFrom<TypedValue> for Key {
     }
 }
 
+impl TryFrom<&TypedValue> for PodId {
+    type Error = Error;
+    fn try_from(v: &TypedValue) -> Result<Self> {
+        match v {
+            TypedValue::PodId(id) => Ok(*id),
+            TypedValue::Raw(v) => Ok(PodId(Hash(v.0))),
+            _ => Err(Error::custom(format!(
+                "Value {} cannot be converted to a PodId.",
+                v
+            ))),
+        }
+    }
+}
+
 impl fmt::Display for TypedValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
