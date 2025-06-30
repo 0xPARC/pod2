@@ -369,6 +369,7 @@ impl ToFields for StatementArg {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", content = "value")]
 pub enum ValueRef {
     Literal(Value),
     Key(AnchoredKey),
