@@ -31,7 +31,7 @@ mod tests {
         middleware::{
             hash_str, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key,
             NativePredicate, Params, PodId, PodType, Predicate, RawValue, StatementTmpl,
-            StatementTmplArg, Value, Wildcard, SELF_ID_HASH,
+            StatementTmplArg, Value, Wildcard, KEY_SIGNER, KEY_TYPE, SELF_ID_HASH,
         },
     };
 
@@ -950,6 +950,45 @@ mod tests {
                     assert_eq!(id, unknown_batch_id);
                 }
                 _ => panic!("Expected BatchNotFound error, but got {:?}", e),
+            },
+            e => panic!("Expected LangError::Processor, but got {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_e2e_undefined_wildcard() {
+        let params = Params::default();
+        let available_batches = &[];
+
+        let input = format!(
+            r#"
+            identity_verified(username, private: identity_pod) = AND(
+                Equal(?identity_pod["{key_type}"], {signed_pod_type})
+                Equal(?identity_pod["{key_signer}"], {identity_server_pk})
+                Equal(?identity_pod["username"], ?username)
+                Equal(?identity_pod["user_public_key"], ?user_public_key)
+            )
+        "#,
+            key_type = KEY_TYPE,
+            signed_pod_type = PodType::Signed as u32,
+            key_signer = KEY_SIGNER,
+            identity_server_pk =
+                "0x0000000000000000000000000000000000000000000000000000000000000000"
+        );
+
+        let result = parse(&input, &params, available_batches);
+
+        assert!(result.is_err());
+
+        match result.err().unwrap() {
+            LangError::Processor(e) => match *e {
+                ProcessorError::UndefinedWildcard {
+                    name, pred_name, ..
+                } => {
+                    assert_eq!(name, "user_public_key");
+                    assert_eq!(pred_name, "identity_verified");
+                }
+                _ => panic!("Expected UndefinedWildcard error, but got {:?}", e),
             },
             e => panic!("Expected LangError::Processor, but got {:?}", e),
         }
