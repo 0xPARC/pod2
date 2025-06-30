@@ -440,6 +440,8 @@ impl fmt::Display for PodId {
             write!(f, "self")
         } else if self.0 == EMPTY_HASH {
             write!(f, "null")
+        } else if f.alternate() {
+            write!(f, "{:#}", self.0)
         } else {
             write!(f, "{}", self.0)
         }

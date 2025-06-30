@@ -159,19 +159,7 @@ impl<'de> Deserialize<'de> for Point {
         D: Deserializer<'de>,
     {
         let point_b58 = String::deserialize(deserializer)?;
-        let point_bytes: Vec<u8> = bs58::decode(point_b58)
-            .into_vec()
-            .map_err(serde::de::Error::custom)?;
-        if point_bytes.len() == 80 {
-            // Non-compressed
-            Ok(Point {
-                x: ec_field_from_bytes(&point_bytes[..40]).map_err(serde::de::Error::custom)?,
-                u: ec_field_from_bytes(&point_bytes[40..]).map_err(serde::de::Error::custom)?,
-            })
-        } else {
-            // Compressed
-            Self::from_bytes_into_subgroup(&point_bytes).map_err(serde::de::Error::custom)
-        }
+        Self::from_str(&point_b58).map_err(serde::de::Error::custom)
     }
 }
 

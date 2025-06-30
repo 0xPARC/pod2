@@ -868,8 +868,8 @@ mod tests {
             r#"
             REQUEST(
                 Equal(?A["pk"], PublicKey({}))
-                Equal(?B["pod_id"], {})
-                Equal(?C["raw"], Raw({}))
+                Equal(?B["pod_id"], {:#})
+                Equal(?C["raw"], Raw({:#}))
                 Equal(?D["string"], "{}")
                 Equal(?E["int"], {})
                 Equal(?F["bool"], {})
