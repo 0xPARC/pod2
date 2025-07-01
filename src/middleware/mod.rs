@@ -53,8 +53,6 @@ pub enum TypedValue {
     // 53-bit precision for integers, integers are represented as tagged
     // strings, with a custom serializer and deserializer.
     // TAGGED TYPES:
-    Set(Set),
-    Dictionary(Dictionary),
     Int(
         #[serde(serialize_with = "serialize_i64", deserialize_with = "deserialize_i64")]
         // #[schemars(with = "String", regex(pattern = r"^\d+$"))]
@@ -66,6 +64,10 @@ pub enum TypedValue {
     PublicKey(PublicKey),
     PodId(PodId),
     // UNTAGGED TYPES:
+    #[serde(untagged)]
+    Set(Set),
+    #[serde(untagged)]
+    Dictionary(Dictionary),
     #[serde(untagged)]
     Array(Array),
     #[serde(untagged)]
@@ -230,18 +232,6 @@ impl JsonSchema for TypedValue {
     fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
         use schemars::schema::{InstanceType, Schema, SchemaObject, SingleOrVec};
 
-        let dictionary_schema = schemars::schema::SchemaObject {
-            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
-            object: Some(Box::new(schemars::schema::ObjectValidation {
-                properties: [("Dictionary".to_string(), gen.subschema_for::<Dictionary>())]
-                    .into_iter()
-                    .collect(),
-                required: ["Dictionary".to_string()].into_iter().collect(),
-                ..Default::default()
-            })),
-            ..Default::default()
-        };
-
         // Int is serialized/deserialized as a tagged string
         let int_schema = schemars::schema::SchemaObject {
             instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
@@ -293,17 +283,18 @@ impl JsonSchema for TypedValue {
         // This is the part that Schemars can't generate automatically:
         let untagged_array_schema = gen.subschema_for::<Array>();
         let untagged_set_schema = gen.subschema_for::<Set>();
+        let untagged_dictionary_schema = gen.subschema_for::<Dictionary>();
         let untagged_string_schema = gen.subschema_for::<String>();
         let untagged_bool_schema = gen.subschema_for::<bool>();
 
         Schema::Object(SchemaObject {
             subschemas: Some(Box::new(schemars::schema::SubschemaValidation {
                 any_of: Some(vec![
-                    Schema::Object(dictionary_schema),
                     Schema::Object(int_schema),
                     Schema::Object(raw_schema),
                     Schema::Object(public_key_schema),
                     untagged_array_schema,
+                    untagged_dictionary_schema,
                     untagged_string_schema,
                     untagged_set_schema,
                     untagged_bool_schema,

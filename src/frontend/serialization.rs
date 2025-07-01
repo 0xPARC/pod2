@@ -154,11 +154,11 @@ mod tests {
                     ]))
                     .unwrap(),
                 ),
-                "{\"Dictionary\":{\"max_depth\":32,\"kvs\":{\"\":\"baz\",\"\\u0000\":\"\",\"    hi\":false,\"!@£$%^&&*()\":\"\",\"foo\":{\"Int\":\"123\"},\"🥳\":\"party time!\"}}}",
+                "{\"max_depth\":32,\"kvs\":{\"\":\"baz\",\"\\u0000\":\"\",\"    hi\":false,\"!@£$%^&&*()\":\"\",\"foo\":{\"Int\":\"123\"},\"🥳\":\"party time!\"}}",
             ),
             (
                 TypedValue::Set(Set::new(params.max_depth_mt_containers, HashSet::from(["foo".into(), "bar".into()])).unwrap()),
-                "{\"Set\":{\"max_depth\":32,\"set\":[\"bar\",\"foo\"]}}",
+                "{\"max_depth\":32,\"set\":[\"bar\",\"foo\"]}",
             ),
         ];
 
