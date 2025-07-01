@@ -440,6 +440,8 @@ impl fmt::Display for PodId {
             write!(f, "self")
         } else if self.0 == EMPTY_HASH {
             write!(f, "null")
+        } else if f.alternate() {
+            write!(f, "{:#}", self.0)
         } else {
             write!(f, "{}", self.0)
         }
@@ -774,7 +776,21 @@ pub fn normalize_statement(statement: &Statement, self_id: PodId) -> Statement {
     Statement::from_args(predicate, args).expect("statement was valid before normalization")
 }
 
-pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any {
+pub trait EqualsAny {
+    fn equals_any(&self, other: &dyn Any) -> bool;
+}
+
+impl<T: Any + Eq> EqualsAny for T {
+    fn equals_any(&self, other: &dyn Any) -> bool {
+        if let Some(o) = other.downcast_ref::<T>() {
+            self == o
+        } else {
+            false
+        }
+    }
+}
+
+pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
     fn params(&self) -> &Params;
     fn verify(&self) -> Result<(), BackendError>;
     fn id(&self) -> PodId;
@@ -806,8 +822,9 @@ pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any {
             .collect()
     }
 
-    fn as_any(&self) -> &dyn Any;
-    fn equals(&self, other: &dyn Pod) -> bool;
+    fn equals(&self, other: &dyn Pod) -> bool {
+        self.equals_any(other as &dyn Any)
+    }
 }
 impl PartialEq for Box<dyn Pod> {
     fn eq(&self, other: &Self) -> bool {

@@ -1,5 +1,3 @@
-use std::any::Any;
-
 use itertools::Itertools;
 
 use crate::{
@@ -68,17 +66,6 @@ impl Pod for MockEmptyPod {
 
     fn serialize_data(&self) -> serde_json::Value {
         serde_json::Value::Null
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-    fn equals(&self, other: &dyn Pod) -> bool {
-        if let Some(other) = other.as_any().downcast_ref::<MockEmptyPod>() {
-            self == other
-        } else {
-            false
-        }
     }
 }
 

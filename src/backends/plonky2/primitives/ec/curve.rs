@@ -5,6 +5,7 @@ use core::ops::{Add, Mul};
 use std::{
     array, fmt,
     ops::{AddAssign, Neg, Sub},
+    str::FromStr,
     sync::LazyLock,
 };
 
@@ -121,6 +122,27 @@ impl fmt::Display for Point {
     }
 }
 
+impl FromStr for Point {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let point_bytes = bs58::decode(s)
+            .into_vec()
+            .map_err(|e| Error::custom(format!("Base58 decode error: {}", e)))?;
+
+        if point_bytes.len() == 80 {
+            // Non-compressed
+            Ok(Point {
+                x: ec_field_from_bytes(&point_bytes[..40])?,
+                u: ec_field_from_bytes(&point_bytes[40..])?,
+            })
+        } else {
+            // Compressed
+            Self::from_bytes_into_subgroup(&point_bytes)
+        }
+    }
+}
+
 impl Serialize for Point {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -137,19 +159,7 @@ impl<'de> Deserialize<'de> for Point {
         D: Deserializer<'de>,
     {
         let point_b58 = String::deserialize(deserializer)?;
-        let point_bytes: Vec<u8> = bs58::decode(point_b58)
-            .into_vec()
-            .map_err(serde::de::Error::custom)?;
-        if point_bytes.len() == 80 {
-            // Non-compressed
-            Ok(Point {
-                x: ec_field_from_bytes(&point_bytes[..40]).map_err(serde::de::Error::custom)?,
-                u: ec_field_from_bytes(&point_bytes[40..]).map_err(serde::de::Error::custom)?,
-            })
-        } else {
-            // Compressed
-            Self::from_bytes_into_subgroup(&point_bytes).map_err(serde::de::Error::custom)
-        }
+        Self::from_str(&point_b58).map_err(serde::de::Error::custom)
     }
 }
 

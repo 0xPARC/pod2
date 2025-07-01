@@ -32,7 +32,7 @@ document = { SOI ~ (use_statement | custom_predicate_def | request_def)* ~ EOI }
 use_statement = { "use" ~ use_predicate_list ~ "from" ~ batch_ref }
 use_predicate_list = { import_name ~ ("," ~ import_name)* }
 import_name = { identifier | "_" }
-batch_ref = { literal_raw }
+batch_ref = { hash_hex }
 
 request_def = { "REQUEST" ~ "(" ~ statement_list? ~ ")" } 
 
@@ -59,11 +59,13 @@ anchored_key = { wildcard ~ "[" ~ literal_string ~ "]" }
 
 // Literal Values (ordered to avoid ambiguity, e.g., string before int)
 literal_value = {
+    literal_public_key |
     literal_dict |
     literal_set |
     literal_array |
     literal_bool |
     literal_raw |
+    literal_pod_id |
     literal_string |
     literal_int
 }
@@ -72,9 +74,12 @@ literal_value = {
 literal_int = @{ "-"? ~ ASCII_DIGIT+ }
 literal_bool = @{ "true" | "false" }
 
-// literal_raw: 0x followed by exactly 32 PAIRS of hex digits (64 hex characters)
+// hash_hex: 0x followed by exactly 32 PAIRS of hex digits (64 hex characters)
 // representing a 32-byte value in big-endian order
-literal_raw = @{ "0x" ~ (ASCII_HEX_DIGIT ~ ASCII_HEX_DIGIT){32} }
+hash_hex = @{ "0x" ~ (ASCII_HEX_DIGIT ~ ASCII_HEX_DIGIT){32} }
+
+literal_raw = { "Raw" ~ "(" ~ hash_hex ~ ")" }
+literal_pod_id = { hash_hex }
 
 // String literal parsing based on https://pest.rs/book/examples/json.html
 literal_string = ${ "\"" ~ inner ~ "\"" } // Compound atomic string rule
@@ -84,6 +89,11 @@ char = { // Rule for a single logical character (unescaped or escaped)
     | "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t") // Simple escape sequences
     | "\\" ~ ("u" ~ ASCII_HEX_DIGIT{4}) // Unicode escape sequence
 }
+
+// PublicKey(...)
+base58_char = { '1'..'9' | 'A'..'H' | 'J'..'N' | 'P'..'Z' | 'a'..'k' | 'm'..'z' }
+base58_string = @{ base58_char+ }
+literal_public_key = { "PublicKey" ~ "(" ~ base58_string ~ ")" }
 
 // Container Literals (recursive definition using literal_value)
 literal_array = { "[" ~ (literal_value ~ ("," ~ literal_value)*)? ~ "]" }
@@ -95,7 +105,9 @@ dict_pair = { literal_string ~ ":" ~ literal_value }
 test_identifier = { SOI ~ identifier ~ EOI }
 test_wildcard = { SOI ~ wildcard ~ EOI }
 test_literal_int = { SOI ~ literal_int ~ EOI }
-test_literal_raw = { SOI ~ literal_raw ~ EOI } 
+test_hash_hex = { SOI ~ hash_hex ~ EOI } 
+test_literal_raw = { SOI ~ literal_raw ~ EOI }
+test_literal_pod_id = { SOI ~ literal_pod_id ~ EOI }
 test_literal_value = { SOI ~ literal_value ~ EOI }
 test_statement = { SOI ~ statement ~ EOI }
 test_custom_predicate_def = { SOI ~ custom_predicate_def ~ EOI } 
