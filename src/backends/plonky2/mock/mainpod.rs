@@ -2,7 +2,7 @@
 // MainPod
 //
 
-use std::{any::Any, fmt, iter};
+use std::{fmt, iter};
 
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -366,17 +366,6 @@ impl Pod for MockMainPod {
             input_recursive_pods,
         })
         .expect("serialization to json")
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-    fn equals(&self, other: &dyn Pod) -> bool {
-        if let Some(other) = other.as_any().downcast_ref::<MockMainPod>() {
-            self == other
-        } else {
-            false
-        }
     }
 }
 

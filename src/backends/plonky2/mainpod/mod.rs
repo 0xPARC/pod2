@@ -676,17 +676,6 @@ impl Pod for MainPod {
         })
         .expect("serialization to json")
     }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-    fn equals(&self, other: &dyn Pod) -> bool {
-        if let Some(other) = other.as_any().downcast_ref::<MainPod>() {
-            self == other
-        } else {
-            false
-        }
-    }
 }
 
 impl RecursivePod for MainPod {
