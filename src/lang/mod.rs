@@ -29,9 +29,9 @@ mod tests {
     use crate::{
         lang::error::ProcessorError,
         middleware::{
-            CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key, NativePredicate,
-            Params, PodType, Predicate, StatementTmpl, StatementTmplArg, Value, Wildcard,
-            SELF_ID_HASH,
+            hash_str, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key,
+            NativePredicate, Params, PodId, PodType, Predicate, RawValue, StatementTmpl,
+            StatementTmplArg, Value, Wildcard, SELF_ID_HASH,
         },
     };
 
@@ -850,6 +850,78 @@ mod tests {
         };
 
         assert_eq!(defined_pred.statements[0], expected_statement);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_e2e_literals() -> Result<(), LangError> {
+        let pk = crate::backends::plonky2::primitives::ec::curve::Point::generator();
+        let pk_b58 = pk.to_string();
+        let pod_id = PodId(hash_str("test"));
+        let raw = RawValue::from(1);
+        let string = "hello";
+        let int = 123;
+        let bool = true;
+
+        let input = format!(
+            r#"
+            REQUEST(
+                Equal(?A["pk"], PublicKey({}))
+                Equal(?B["pod_id"], {:#})
+                Equal(?C["raw"], Raw({:#}))
+                Equal(?D["string"], "{}")
+                Equal(?E["int"], {})
+                Equal(?F["bool"], {})
+            )
+        "#,
+            pk_b58, pod_id, raw, string, int, bool
+        );
+        /*
+            REQUEST(
+                Equal(?A["pk"], PublicKey(3t9fNuU194n7mSJPRdeaJRMqw6ZQCUddzvECWNe1k2b1rdBezXpJxF))
+                Equal(?B["pod_id"], 0x735b31d3aad0f5b66002ffe1dc7d2eaa0ee9c59c09b641e8261530c5f3a02f29)
+                Equal(?C["raw"], Raw(0x0000000000000000000000000000000000000000000000000000000000000001))
+                Equal(?D["string"], "hello")
+                Equal(?E["int"], 123)
+                Equal(?F["bool"], true)
+            )
+        */
+
+        let params = Params::default();
+        let processed = parse(&input, &params, &[])?;
+        let request_templates = processed.request_templates;
+
+        assert_eq!(request_templates.len(), 6);
+
+        let expected_templates = vec![
+            StatementTmpl {
+                pred: Predicate::Native(NativePredicate::Equal),
+                args: vec![sta_ak(("A", 0), "pk"), sta_lit(Value::from(pk))],
+            },
+            StatementTmpl {
+                pred: Predicate::Native(NativePredicate::Equal),
+                args: vec![sta_ak(("B", 1), "pod_id"), sta_lit(Value::from(pod_id))],
+            },
+            StatementTmpl {
+                pred: Predicate::Native(NativePredicate::Equal),
+                args: vec![sta_ak(("C", 2), "raw"), sta_lit(Value::from(raw))],
+            },
+            StatementTmpl {
+                pred: Predicate::Native(NativePredicate::Equal),
+                args: vec![sta_ak(("D", 3), "string"), sta_lit(Value::from(string))],
+            },
+            StatementTmpl {
+                pred: Predicate::Native(NativePredicate::Equal),
+                args: vec![sta_ak(("E", 4), "int"), sta_lit(Value::from(int))],
+            },
+            StatementTmpl {
+                pred: Predicate::Native(NativePredicate::Equal),
+                args: vec![sta_ak(("F", 5), "bool"), sta_lit(Value::from(bool))],
+            },
+        ];
+
+        assert_eq!(request_templates, expected_templates);
 
         Ok(())
     }
