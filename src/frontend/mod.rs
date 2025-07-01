@@ -219,11 +219,7 @@ impl MainPodBuilder {
                 )
             }),
             Native(SetNotContainsFromEntries) => <[_; 2]>::try_from(op.1).map(|[set, value]| {
-                Operation(
-                    Native(NotContainsFromEntries),
-                    vec![set, value.clone(), value],
-                    op.2,
-                )
+                Operation(Native(NotContainsFromEntries), vec![set, value], op.2)
             }),
             Native(ArrayContainsFromEntries) => {
                 <[_; 3]>::try_from(op.1).map(|[array, index, value]| {
