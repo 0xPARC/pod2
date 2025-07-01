@@ -306,8 +306,10 @@ pub(super) fn add_homog_offset<const D: usize, F: ECFieldExt<D>>(
 }
 
 const GROUP_ORDER_STR: &str = "1067993516717146951041484916571792702745057740581727230159139685185762082554198619328292418486241";
-pub static GROUP_ORDER: LazyLock<BigUint> =
-    LazyLock::new(|| BigUint::from_str_radix(GROUP_ORDER_STR, 10).unwrap());
+pub static GROUP_ORDER: LazyLock<BigUint> = LazyLock::new(|| {
+    BigUint::from_str_radix(GROUP_ORDER_STR, 10)
+        .expect("The input should be a valid decimal string.")
+});
 
 static FIELD_NUM_SQUARES: LazyLock<BigUint> =
     LazyLock::new(|| (ECField::order() - BigUint::one()) >> 1);
@@ -595,10 +597,8 @@ impl CircuitBuilderElliptic for CircuitBuilder<GoldilocksField, 2> {
         let outputs = ECAddHomogOffset::apply(self, &inputs);
         // plonky2 expects all gate constraints to be satisfied by the zero vector.
         // So our elliptic curve addition gate computes [x,z-b,u,t-b], and we have to add the b here.
-        let x = FieldTarget::new(outputs[0..5].try_into().unwrap());
-        let z = FieldTarget::new(outputs[5..10].try_into().unwrap());
-        let u = FieldTarget::new(outputs[10..15].try_into().unwrap());
-        let t = FieldTarget::new(outputs[15..20].try_into().unwrap());
+        let [x, z, u, t] =
+            array::from_fn(|j| FieldTarget::new(array::from_fn(|i| outputs[5 * j + i])));
         let b1 = self.constant(Point::B1);
         let z = self.nnf_add_scalar_times_generator_power(b1, 1, &z);
         let t = self.nnf_add_scalar_times_generator_power(b1, 1, &t);

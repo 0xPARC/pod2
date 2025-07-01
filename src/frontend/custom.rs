@@ -178,23 +178,25 @@ impl CustomPredicateBatchBuilder {
                 let args = stb
                     .args
                     .iter()
-                    .map(|a| match a {
-                        BuilderArg::Literal(v) => StatementTmplArg::Literal(v.clone()),
-                        BuilderArg::Key(pod_id_wc, key_str) => StatementTmplArg::AnchoredKey(
-                            resolve_wildcard(args, priv_args, pod_id_wc),
-                            Key::from(key_str),
-                        ),
-                        BuilderArg::WildcardLiteral(v) => {
-                            StatementTmplArg::Wildcard(resolve_wildcard(args, priv_args, v))
-                        }
+                    .map(|a| {
+                        Ok::<_, Error>(match a {
+                            BuilderArg::Literal(v) => StatementTmplArg::Literal(v.clone()),
+                            BuilderArg::Key(pod_id_wc, key_str) => StatementTmplArg::AnchoredKey(
+                                resolve_wildcard(args, priv_args, pod_id_wc)?,
+                                Key::from(key_str),
+                            ),
+                            BuilderArg::WildcardLiteral(v) => {
+                                StatementTmplArg::Wildcard(resolve_wildcard(args, priv_args, v)?)
+                            }
+                        })
                     })
-                    .collect();
-                StatementTmpl {
+                    .collect::<Result<_>>()?;
+                Ok(StatementTmpl {
                     pred: stb.predicate.clone(),
                     args,
-                }
+                })
             })
-            .collect();
+            .collect::<Result<_>>()?;
         let custom_predicate = CustomPredicate::new(
             &self.params,
             name.into(),
@@ -215,12 +217,16 @@ impl CustomPredicateBatchBuilder {
     }
 }
 
-fn resolve_wildcard(args: &[&str], priv_args: &[&str], s: &str) -> Wildcard {
+fn resolve_wildcard(args: &[&str], priv_args: &[&str], s: &str) -> Result<Wildcard> {
     args.iter()
         .chain(priv_args.iter())
         .enumerate()
         .find_map(|(i, name)| (s == *name).then_some(Wildcard::new(s.to_string(), i)))
-        .unwrap()
+        .ok_or(Error::custom(format!(
+            "Wildcard {} not amongst args {:?}",
+            s,
+            [args.to_vec(), priv_args.to_vec()].concat()
+        )))
 }
 
 #[cfg(test)]

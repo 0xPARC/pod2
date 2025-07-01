@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{array, marker::PhantomData};
 
 use num::BigUint;
 use plonky2::{
@@ -217,7 +217,7 @@ impl<const DEG: usize, NNF: OEF<DEG> + FieldExtension<DEG, BaseField = F>>
         inputs.extend_from_slice(&x.components);
         inputs.extend_from_slice(&y.components);
         let outputs = NNFMulSimple::<DEG, NNF>::apply(self, &inputs);
-        OEFTarget::new(outputs.try_into().unwrap())
+        OEFTarget::new(array::from_fn(|i| outputs[i]))
     }
     fn nnf_div(&mut self, x: &OEFTarget<DEG, NNF>, y: &OEFTarget<DEG, NNF>) -> OEFTarget<DEG, NNF> {
         let one = self.nnf_one();

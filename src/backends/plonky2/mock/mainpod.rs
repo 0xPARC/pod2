@@ -312,12 +312,11 @@ impl Pod for MockMainPod {
                     .deref(
                         &self.statements[..input_statement_offset + i],
                         &self.merkle_proofs_containers,
-                    )
-                    .unwrap()
-                    .check_and_log(&self.params, &s.clone().try_into().unwrap())
+                    )?
+                    .check_and_log(&self.params, &s.clone().try_into()?)
+                    .map_err(|e| e.into())
             })
-            .collect::<Result<Vec<_>, middleware::Error>>()
-            .unwrap();
+            .collect::<Result<Vec<_>>>()?;
         if !statement_check.iter().all(|b| *b) {
             return Err(Error::statement_not_check());
         }

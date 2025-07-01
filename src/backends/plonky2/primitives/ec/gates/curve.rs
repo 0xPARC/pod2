@@ -1,3 +1,5 @@
+use std::array;
+
 use plonky2::field::goldilocks_field::GoldilocksField;
 
 use crate::backends::plonky2::primitives::ec::{
@@ -39,10 +41,8 @@ impl SimpleGate for ECAddHomogOffset {
         Self::F: plonky2::field::extension::Extendable<D>,
     {
         let mut ans = Vec::with_capacity(20);
-        let x1 = QuinticTensor::from_base(wires[0..5].try_into().unwrap());
-        let u1 = QuinticTensor::from_base(wires[5..10].try_into().unwrap());
-        let x2 = QuinticTensor::from_base(wires[10..15].try_into().unwrap());
-        let u2 = QuinticTensor::from_base(wires[15..20].try_into().unwrap());
+        let [x1, u1, x2, u2] =
+            array::from_fn(|j| QuinticTensor::from_base(array::from_fn(|i| wires[5 * j + i])));
         let out = add_homog_offset(x1, u1, x2, u2);
         for v in out {
             ans.extend(v.to_base());

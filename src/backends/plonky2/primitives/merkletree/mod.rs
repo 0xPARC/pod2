@@ -528,7 +528,7 @@ impl Intermediate {
         h
     }
     fn hash(&self) -> Hash {
-        self.hash.unwrap()
+        self.hash.expect("Hash has not been computed.")
     }
 }
 
@@ -554,7 +554,7 @@ impl Leaf {
         h
     }
     fn hash(&self) -> Hash {
-        self.hash.unwrap()
+        self.hash.expect("Hash has not been computed.")
     }
 }
 

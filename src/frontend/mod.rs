@@ -200,45 +200,48 @@ impl MainPodBuilder {
     /// - {Dict,Array,Set}Contains/NotContains becomes Contains/NotContains.
     /// - GtEqFromEntries/GtFromEntries/GtToNotEqual becomes
     ///   LtEqFromEntries/LtFromEntries/LtToNotEqual.
-    fn lower_op(op: Operation) -> Operation {
+    fn lower_op(op: Operation) -> Result<Operation> {
         use NativeOperation::*;
         use OperationType::*;
+        let op_type = op.0.clone();
         match op.0 {
-            Native(DictContainsFromEntries) => {
-                let [dict, key, value] = op.1.try_into().unwrap(); // TODO: Error handling
+            Native(DictContainsFromEntries) => <[_; 3]>::try_from(op.1).map(|[dict, key, value]| {
                 Operation(Native(ContainsFromEntries), vec![dict, key, value], op.2)
-            }
-            Native(DictNotContainsFromEntries) => {
-                let [dict, key] = op.1.try_into().unwrap(); // TODO: Error handling
+            }),
+            Native(DictNotContainsFromEntries) => <[_; 2]>::try_from(op.1).map(|[dict, key]| {
                 Operation(Native(NotContainsFromEntries), vec![dict, key], op.2)
-            }
-            Native(SetContainsFromEntries) => {
-                let [set, value] = op.1.try_into().unwrap(); // TODO: Error handling
+            }),
+            Native(SetContainsFromEntries) => <[_; 2]>::try_from(op.1).map(|[set, value]| {
                 Operation(
                     Native(ContainsFromEntries),
                     vec![set, value.clone(), value],
                     op.2,
                 )
-            }
-            Native(SetNotContainsFromEntries) => {
-                let [set, value] = op.1.try_into().unwrap(); // TODO: Error handling
-                Operation(Native(NotContainsFromEntries), vec![set, value], op.2)
-            }
+            }),
+            Native(SetNotContainsFromEntries) => <[_; 2]>::try_from(op.1).map(|[set, value]| {
+                Operation(
+                    Native(NotContainsFromEntries),
+                    vec![set, value.clone(), value],
+                    op.2,
+                )
+            }),
             Native(ArrayContainsFromEntries) => {
-                let [array, index, value] = op.1.try_into().unwrap(); // TODO: Error handling
-                Operation(Native(ContainsFromEntries), vec![array, index, value], op.2)
+                <[_; 3]>::try_from(op.1).map(|[array, index, value]| {
+                    Operation(Native(ContainsFromEntries), vec![array, index, value], op.2)
+                })
             }
-            Native(GtEqFromEntries) => {
-                let [entry1, entry2] = op.1.try_into().unwrap(); // TODO: Error handling
+            Native(GtEqFromEntries) => <[_; 2]>::try_from(op.1).map(|[entry1, entry2]| {
                 Operation(Native(LtEqFromEntries), vec![entry2, entry1], op.2)
-            }
-            Native(GtFromEntries) => {
-                let [entry1, entry2] = op.1.try_into().unwrap(); // TODO: Error handling
+            }),
+            Native(GtFromEntries) => <[_; 2]>::try_from(op.1).map(|[entry1, entry2]| {
                 Operation(Native(LtFromEntries), vec![entry2, entry1], op.2)
-            }
-            Native(GtToNotEqual) => Operation(Native(LtToNotEqual), op.1, op.2),
-            _ => op,
+            }),
+            Native(GtToNotEqual) => Ok(Operation(Native(LtToNotEqual), op.1, op.2)),
+            _ => Ok(op),
         }
+        .map_err(|_| {
+            Error::op_invalid_args(format!("Invalid arg count in operation {:?}", op_type))
+        })
     }
 
     /// Fills in auxiliary data if necessary/possible.
@@ -494,7 +497,7 @@ impl MainPodBuilder {
     }
 
     fn op(&mut self, public: bool, op: Operation) -> Result<Statement> {
-        let op = Self::fill_in_aux(Self::lower_op(op))?;
+        let op = Self::fill_in_aux(Self::lower_op(op)?)?;
         let st = self.op_statement(op.clone())?;
         self.insert(public, (st, op));
 
