@@ -151,6 +151,14 @@ impl ToHex for RawValue {
     }
 }
 
+impl FromHex for RawValue {
+    type Error = FromHexError;
+
+    fn from_hex<T: AsRef<[u8]>>(hex: T) -> Result<Self, Self::Error> {
+        Hash::from_hex(hex).map(|h| RawValue(h.0))
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Hash(
     #[serde(
