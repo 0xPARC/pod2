@@ -39,11 +39,15 @@ pub enum Error {
         backtrace: Box<Backtrace>,
     },
     #[error(transparent)]
-    Infallible(#[from] std::convert::Infallible),
-    #[error(transparent)]
     Backend(#[from] BackendError),
     #[error(transparent)]
     Middleware(#[from] crate::middleware::Error),
+}
+
+impl From<std::convert::Infallible> for Error {
+    fn from(value: std::convert::Infallible) -> Self {
+        match value {}
+    }
 }
 
 impl Debug for Error {

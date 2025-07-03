@@ -185,7 +185,7 @@ impl Operation {
     }
     op_impl_oa!(dict_contains, DictContainsFromEntries, 3);
     op_impl_oa!(dict_not_contains, DictNotContainsFromEntries, 2);
-    op_impl_oa!(set_contains, SetContainsFromEntries, 3);
+    op_impl_oa!(set_contains, SetContainsFromEntries, 2);
     op_impl_oa!(set_not_contains, SetNotContainsFromEntries, 2);
     op_impl_oa!(array_contains, ArrayContainsFromEntries, 3);
 }

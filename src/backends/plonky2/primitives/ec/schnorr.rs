@@ -128,6 +128,7 @@ impl SignatureTarget {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SecretKey(pub BigUint);
 
 impl SecretKey {
