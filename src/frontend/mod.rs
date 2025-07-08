@@ -438,6 +438,19 @@ impl MainPodBuilder {
                     // TODO: validate proof
                     Statement::NotContains(r1, r2)
                 }
+                (PublicKeyOf, &[a1, a2]) => {
+                    let (r1, v1) = a1
+                        .value_and_ref()
+                        .ok_or_else(|| arg_error("public-key-from-entries"))?;
+                    let (r2, v2) = a2
+                        .value_and_ref()
+                        .ok_or_else(|| arg_error("public-key-from-entries"))?;
+                    if v1 == &public_key(v2.clone()) {
+                        Statement::PublicKeyOf(r1, r2)
+                    } else {
+                        return Err(arg_error("public-key-from-entries"));
+                    }
+                }
                 (t, _) => {
                     if t.is_syntactic_sugar() {
                         return Err(Error::custom(format!(

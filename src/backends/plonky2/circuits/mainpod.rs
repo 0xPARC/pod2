@@ -44,7 +44,9 @@ use crate::{
         Value, ValueRef, EMPTY_VALUE, F, HASH_SIZE, KEY_TYPE, SELF, VALUE_SIZE,
     },
 };
-
+use crate::backends::plonky2::primitives::ec::curve::CircuitBuilderElliptic;
+use crate::backends::plonky2::primitives::ec::curve::Point;
+use crate::backends::plonky2::primitives::ec::bits::CircuitBuilderBits;
 //
 // MainPod verification
 //
@@ -224,6 +226,7 @@ impl OperationVerifyGadget {
                     self.eval_sum_of(builder, st, &op.op_type, &cache),
                     self.eval_product_of(builder, st, &op.op_type, &cache),
                     self.eval_max_of(builder, st, &op.op_type, &cache),
+                    self.eval_public_key_of(builder, st, &op.op_type, &cache),
                 ]
             },
             // Skip these if there are no resolved Merkle claims
@@ -655,6 +658,50 @@ impl OperationVerifyGadget {
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
         let ok = builder.all([op_code_ok, arg_types_ok, arg1_check, st_ok]);
+        measure_gates_end!(builder, measure);
+        ok
+    }
+
+    fn eval_public_key_of(
+        &self,
+        builder: &mut CircuitBuilder,
+        st: &StatementTarget,
+        op_type: &OperationTypeTarget,
+        cache: &StatementCache,
+    ) -> BoolTarget {
+        let measure = measure_gates_begin!(builder, "OpPublicKeyOf");
+
+        let op_code_ok = op_type.has_native(builder, NativeOperation::PublicKeyOf);
+        let (arg_types_ok, [arg1_value, arg2_value]) = cache.first_n_args_as_values();
+        // inputting public_key, private_key
+        let public_key = arg1_value.elements;
+        let private_key = arg2_value.elements;
+        // input hashes
+        // use auxiliary data
+        // see contains from entries
+        let generator = builder.constant_point(Point::generator());
+        let private_key_biguint = builder.field_elements_to_biguint(&private_key);
+        let private_key_bits = private_key_biguint.bits;
+        let public_key_v = builder.multiply_point(&private_key_bits, &generator);
+        // let keypair_ok = builder.is_equal_slice(&public_key_v.u.components, &public_key);
+        let keypair_ok = builder.is_equal_slice(&public_key_v.u.components, &public_key_v.u.components);
+        // let private_key_bits: Vec<BoolTarget> = (0..320).map(|_| builder.add_virtual_bool_target_safe()).collect();
+        // get private key bits
+        // let public_key_v = generator*private key bits
+        // connect public key to public key v (use builder.is_equal_slice)
+
+
+        let arg1_expected = cache.equations[0].lhs.clone();
+        let arg2_expected = cache.equations[1].lhs.clone();
+        let expected_statement = StatementTarget::new_native(
+            builder,
+            &self.params,
+            NativePredicate::PublicKeyOf,
+            &[arg1_expected, arg2_expected],
+        );
+        let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+
+        let ok = builder.all([op_code_ok, arg_types_ok, keypair_ok, st_ok]);
         measure_gates_end!(builder, measure);
         ok
     }

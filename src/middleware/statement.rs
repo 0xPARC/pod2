@@ -32,6 +32,7 @@ pub enum NativePredicate {
     ProductOf = 9,
     MaxOf = 10,
     HashOf = 11,
+    PublicKeyOf = 12,
 
     // Syntactic sugar predicates.  These predicates are not supported by the backend.  The
     // frontend compiler is responsible of translating these predicates into the predicates above.
@@ -147,6 +148,7 @@ pub enum Statement {
     ProductOf(ValueRef, ValueRef, ValueRef),
     MaxOf(ValueRef, ValueRef, ValueRef),
     HashOf(ValueRef, ValueRef, ValueRef),
+    PublicKeyOf(ValueRef, ValueRef),
     Custom(CustomPredicateRef, Vec<Value>),
 }
 
@@ -181,6 +183,7 @@ impl Statement {
     statement_constructor!(product_of, ProductOf, 3);
     statement_constructor!(max_of, MaxOf, 3);
     statement_constructor!(hash_of, HashOf, 3);
+    statement_constructor!(public_key_of, HashOf, 2);
     pub fn predicate(&self) -> Predicate {
         use Predicate::*;
         match self {
@@ -195,6 +198,7 @@ impl Statement {
             Self::ProductOf(_, _, _) => Native(NativePredicate::ProductOf),
             Self::MaxOf(_, _, _) => Native(NativePredicate::MaxOf),
             Self::HashOf(_, _, _) => Native(NativePredicate::HashOf),
+            Self::PublicKeyOf(_, _) => Native(NativePredicate::PublicKeyOf),
             Self::Custom(cpr, _) => Custom(cpr.clone()),
         }
     }
@@ -212,6 +216,7 @@ impl Statement {
             Self::ProductOf(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
             Self::MaxOf(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
             Self::HashOf(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
+            Self::PublicKeyOf(ak1, ak2) => vec![ak1.into(), ak2.into()],
             Self::Custom(_, args) => Vec::from_iter(args.into_iter().map(Literal)),
         }
     }
@@ -255,6 +260,10 @@ impl Statement {
             }
             (Native(NativePredicate::HashOf), &[a1, a2, a3]) => {
                 Self::HashOf(a1.try_into()?, a2.try_into()?, a3.try_into()?)
+            }
+
+            (Native(NativePredicate::PublicKeyOf), &[a1, a2]) => {
+                Self::PublicKeyOf(a1.try_into()?, a2.try_into()?)
             }
 
             (Native(np), _) => {

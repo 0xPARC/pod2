@@ -369,7 +369,8 @@ fn validate_and_build_statement_template(
                 | NativePredicate::SetContains
                 | NativePredicate::DictNotContains
                 | NativePredicate::SetNotContains
-                | NativePredicate::NotContains => 2,
+                | NativePredicate::NotContains
+                | NativePredicate::PublicKeyOf => 2,
                 NativePredicate::Contains
                 | NativePredicate::ArrayContains
                 | NativePredicate::DictContains

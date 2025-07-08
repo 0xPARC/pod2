@@ -32,9 +32,9 @@ use serialization::*;
 pub use statement::*;
 
 use crate::backends::plonky2::primitives::{
-    ec::curve::Point as PublicKey, merkletree::MerkleProof,
+    ec::curve::Point as PublicKey, ec::bits::BigUInt320Target as PrivateKey, merkletree::MerkleProof,
 };
-
+use crate::backends::
 pub const SELF: PodId = PodId(SELF_ID_HASH);
 
 // TODO: Move all value-related types to to `value.rs`
@@ -62,6 +62,8 @@ pub enum TypedValue {
     Raw(RawValue),
     // Public key variant
     PublicKey(PublicKey),
+    // // Private key variant
+    // PrivateKey(PrivateKey),
     PodId(PodId),
     // UNTAGGED TYPES:
     #[serde(untagged)]
@@ -109,6 +111,12 @@ impl From<Hash> for TypedValue {
 impl From<PublicKey> for TypedValue {
     fn from(p: PublicKey) -> Self {
         TypedValue::PublicKey(p)
+    }
+}
+
+impl From<PrivateKey> for TypedValue {
+    fn from(p: PrivateKey) -> Self {
+        TypedValue::PrivateKey(p)
     }
 }
 
