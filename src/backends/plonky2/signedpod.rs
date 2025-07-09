@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::{
-        deserialize_bytes,
         error::{Error, Result},
         primitives::{
             ec::{
@@ -16,7 +15,6 @@ use crate::{
             },
             merkletree::MerkleTree,
         },
-        serialize_bytes,
     },
     middleware::{
         containers::Dictionary, AnchoredKey, Hash, Key, Params, Pod, PodId, PodSigner, PodType,
@@ -76,8 +74,8 @@ pub struct SignedPod {
 
 #[derive(Serialize, Deserialize)]
 struct Data {
-    signer: String,
-    signature: String,
+    signer: Point,
+    signature: Signature,
     kvs: Dictionary,
 }
 
@@ -93,27 +91,10 @@ fn dummy() -> SignedPod {
 impl SignedPod {
     pub(crate) fn deserialize(id: PodId, data: serde_json::Value) -> Result<Box<dyn Pod>> {
         let data: Data = serde_json::from_value(data)?;
-        let signer_bytes = deserialize_bytes(&data.signer)?;
-        let signature_bytes = deserialize_bytes(&data.signature)?;
-
-        if signer_bytes.len() != 40 {
-            return Err(Error::custom(
-                "Invalid byte encoding of signed POD signer.".to_string(),
-            ));
-        }
-        if signature_bytes.len() != 80 {
-            return Err(Error::custom(
-                "Invalid byte encoding of signed POD signature.".to_string(),
-            ));
-        }
-
-        let signer = Point::from_bytes_into_subgroup(&signer_bytes)?;
-        let signature = Signature::from_bytes(&signature_bytes)?;
-
         Ok(Box::new(Self {
             id,
-            signature,
-            signer,
+            signature: data.signature,
+            signer: data.signer,
             dict: data.kvs,
         }))
     }
@@ -189,16 +170,9 @@ impl Pod for SignedPod {
     }
 
     fn serialize_data(&self) -> serde_json::Value {
-        let signer = serialize_bytes(
-            &self
-                .signer
-                .as_bytes_from_subgroup()
-                .expect("Signer public key must lie in EC subgroup."),
-        );
-        let signature = serialize_bytes(&self.signature.as_bytes());
         serde_json::to_value(Data {
-            signer,
-            signature,
+            signer: self.signer,
+            signature: self.signature.clone(),
             kvs: self.dict.clone(),
         })
         .expect("serialization to json")
