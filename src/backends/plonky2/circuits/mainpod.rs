@@ -26,13 +26,13 @@ use crate::{
                 OperationTypeTarget, PredicateTarget, StatementArgTarget, StatementTarget,
                 StatementTmplArgTarget, StatementTmplTarget, ValueTarget,
             },
-            signedpod::{SignedPodVerifyGadget, SignedPodVerifyTarget},
+            signedpod::{verify_signed_pod_circuit, SignedPodVerifyTarget},
         },
         emptypod::{EmptyPod, STANDARD_EMPTY_POD_DATA},
         error::Result,
         mainpod::{self, pad_statement},
         primitives::merkletree::{
-            MerkleClaimAndProof, MerkleClaimAndProofTarget, MerkleProofGadget,
+            verify_merkle_proof_circuit, MerkleClaimAndProof, MerkleClaimAndProofTarget,
         },
         recursion::{InnerCircuit, VerifiedProofTarget},
         signedpod::SignedPod,
@@ -1203,10 +1203,8 @@ impl MainPodVerifyGadget {
         // 1a. Verify all input signed pods
         let mut signed_pods = Vec::new();
         for _ in 0..params.max_input_signed_pods {
-            let signed_pod = SignedPodVerifyGadget {
-                params: params.clone(),
-            }
-            .eval(builder)?;
+            let signed_pod = SignedPodVerifyTarget::new_virtual(params, builder);
+            verify_signed_pod_circuit(builder, &signed_pod)?;
             builder.assert_one(signed_pod.signature.enabled.target);
             signed_pods.push(signed_pod);
         }
@@ -1268,10 +1266,9 @@ impl MainPodVerifyGadget {
             //
 
             // add target for the vd_mt_proof
-            let vd_mt_proof = MerkleProofGadget {
-                max_depth: params.max_depth_mt_vds,
-            }
-            .eval(builder);
+            let vd_mt_proof =
+                MerkleClaimAndProofTarget::new_virtual(params.max_depth_mt_vds, builder);
+            verify_merkle_proof_circuit(builder, &vd_mt_proof);
 
             // ensure that mt_proof is enabled
             let true_targ = builder._true();
@@ -1311,11 +1308,13 @@ impl MainPodVerifyGadget {
             &input_statements[input_statements.len() - params.max_public_statements..];
 
         // Add Merkle claim/proof targets
-        let mp_gadget = MerkleProofGadget {
-            max_depth: params.max_depth_mt_containers,
-        };
         let merkle_proofs: Vec<_> = (0..params.max_merkle_proofs_containers)
-            .map(|_| mp_gadget.eval(builder))
+            .map(|_| {
+                let mt_proof =
+                    MerkleClaimAndProofTarget::new_virtual(params.max_depth_mt_containers, builder);
+                verify_merkle_proof_circuit(builder, &mt_proof);
+                mt_proof
+            })
             .collect();
         let merkle_claims: Vec<_> = merkle_proofs
             .clone()
@@ -1638,9 +1637,6 @@ mod tests {
             max_custom_predicate_verifications: 0,
             ..Default::default()
         };
-        let mp_gadget = MerkleProofGadget {
-            max_depth: params.max_depth_mt_containers,
-        };
 
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::new(config);
@@ -1652,7 +1648,14 @@ mod tests {
             .collect();
         let merkle_proofs_target: Vec<_> = merkle_proofs
             .iter()
-            .map(|_| mp_gadget.eval(&mut builder))
+            .map(|_| {
+                let mt_proof = MerkleClaimAndProofTarget::new_virtual(
+                    params.max_depth_mt_containers,
+                    &mut builder,
+                );
+                verify_merkle_proof_circuit(&mut builder, &mt_proof);
+                mt_proof
+            })
             .collect();
         let merkle_claims_target: Vec<_> = merkle_proofs_target
             .clone()

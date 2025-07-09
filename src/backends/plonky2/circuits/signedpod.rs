@@ -16,9 +16,10 @@ use crate::{
         error::Result,
         primitives::{
             merkletree::{
-                MerkleClaimAndProof, MerkleProofExistenceGadget, MerkleProofExistenceTarget,
+                verify_merkle_proof_existence_circuit, MerkleClaimAndProof,
+                MerkleProofExistenceTarget,
             },
-            signature::{SignatureVerifyGadget, SignatureVerifyTarget},
+            signature::{verify_signature_circuit, SignatureVerifyTarget},
         },
         signedpod::SignedPod,
     },
@@ -29,53 +30,45 @@ use crate::{
     },
 };
 
-pub struct SignedPodVerifyGadget {
-    pub params: Params,
-}
-
-impl SignedPodVerifyGadget {
-    pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<SignedPodVerifyTarget> {
-        let measure = measure_gates_begin!(builder, "SignedPodVerify");
-        // 1. Verify id
-        let id = builder.add_virtual_hash();
-        let mut mt_proofs = Vec::new();
-        for _ in 0..self.params.max_signed_pod_values {
-            let mt_proof = MerkleProofExistenceGadget {
-                max_depth: self.params.max_depth_mt_containers,
-            }
-            .eval(builder)?;
-            builder.connect_hashes(id, mt_proof.root);
-            mt_proofs.push(mt_proof);
-        }
-
-        // 2. Verify type
-        let type_mt_proof = &mt_proofs[0];
-        let key_type = builder.constant_value(hash_str(KEY_TYPE).into());
-        builder.connect_values(type_mt_proof.key, key_type);
-        let value_type = builder.constant_value(Value::from(PodType::Signed).raw());
-        builder.connect_values(type_mt_proof.value, value_type);
-
-        // 3.a. Verify signature
-        let signature = SignatureVerifyGadget {}.eval(builder)?;
-
-        // 3.b. Verify signer (ie. hash(signature.pk) == merkletree.signer_leaf)
-        let signer_mt_proof = &mt_proofs[1];
-        let key_signer = builder.constant_value(Key::from(KEY_SIGNER).raw());
-        let pk_hash = signature.pk.to_value(builder);
-        builder.connect_values(signer_mt_proof.key, key_signer);
-        builder.connect_values(signer_mt_proof.value, pk_hash);
-
-        // 3.c. connect signed message to pod.id
-        builder.connect_values(ValueTarget::from_slice(&id.elements), signature.msg);
-
-        measure_gates_end!(builder, measure);
-        Ok(SignedPodVerifyTarget {
-            params: self.params.clone(),
-            id,
-            mt_proofs,
-            signature,
-        })
+pub fn verify_signed_pod_circuit(
+    builder: &mut CircuitBuilder<F, D>,
+    signed_pod: &SignedPodVerifyTarget,
+) -> Result<()> {
+    let params = &signed_pod.params;
+    let measure = measure_gates_begin!(builder, "SignedPodVerify");
+    // 1. Verify id
+    assert_eq!(params.max_signed_pod_values, signed_pod.mt_proofs.len());
+    for mt_proof in &signed_pod.mt_proofs {
+        verify_merkle_proof_existence_circuit(builder, mt_proof);
+        builder.connect_hashes(signed_pod.id, mt_proof.root);
+        // mt_proofs.push(mt_proof);
     }
+
+    // 2. Verify type
+    let type_mt_proof = &signed_pod.mt_proofs[0];
+    let key_type = builder.constant_value(hash_str(KEY_TYPE).into());
+    builder.connect_values(type_mt_proof.key, key_type);
+    let value_type = builder.constant_value(Value::from(PodType::Signed).raw());
+    builder.connect_values(type_mt_proof.value, value_type);
+
+    // 3.a. Verify signature
+    verify_signature_circuit(builder, &signed_pod.signature);
+
+    // 3.b. Verify signer (ie. hash(signature.pk) == merkletree.signer_leaf)
+    let signer_mt_proof = &signed_pod.mt_proofs[1];
+    let key_signer = builder.constant_value(Key::from(KEY_SIGNER).raw());
+    let pk_hash = signed_pod.signature.pk.to_value(builder);
+    builder.connect_values(signer_mt_proof.key, key_signer);
+    builder.connect_values(signer_mt_proof.value, pk_hash);
+
+    // 3.c. connect signed message to pod.id
+    builder.connect_values(
+        ValueTarget::from_slice(&signed_pod.id.elements),
+        signed_pod.signature.msg,
+    );
+
+    measure_gates_end!(builder, measure);
+    Ok(())
 }
 
 pub struct SignedPodVerifyTarget {
@@ -88,6 +81,18 @@ pub struct SignedPodVerifyTarget {
 }
 
 impl SignedPodVerifyTarget {
+    pub fn new_virtual(params: &Params, builder: &mut CircuitBuilder<F, D>) -> Self {
+        SignedPodVerifyTarget {
+            params: params.clone(),
+            id: builder.add_virtual_hash(),
+            mt_proofs: (0..params.max_signed_pod_values)
+                .map(|_| {
+                    MerkleProofExistenceTarget::new_virtual(params.max_depth_mt_containers, builder)
+                })
+                .collect(),
+            signature: SignatureVerifyTarget::new_virtual(builder),
+        }
+    }
     pub fn pub_statements(
         &self,
         builder: &mut CircuitBuilder<F, D>,
@@ -229,7 +234,8 @@ pub mod tests {
         let mut pw = PartialWitness::<F>::new();
 
         // build the circuit logic
-        let signed_pod_verify = SignedPodVerifyGadget { params }.eval(&mut builder)?;
+        let signed_pod_verify = SignedPodVerifyTarget::new_virtual(&params, &mut builder);
+        verify_signed_pod_circuit(&mut builder, &signed_pod_verify)?;
 
         // set the signed_pod as target values for the circuit
         signed_pod_verify.set_targets(&mut pw, &signed_pod)?;
