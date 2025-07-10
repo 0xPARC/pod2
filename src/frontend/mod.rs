@@ -471,11 +471,14 @@ impl MainPodBuilder {
                 for (st_tmpl, st) in pred.statements.iter().zip(args.iter()) {
                     let st_args = st.args();
                     for (st_tmpl_arg, st_arg) in st_tmpl.args.iter().zip(&st_args) {
-                        if !check_st_tmpl(st_tmpl_arg, st_arg, &mut wildcard_map) {
+                        if let Err(st_tmpl_check_error) =
+                            check_st_tmpl(st_tmpl_arg, st_arg, &mut wildcard_map)
+                        {
                             return Err(Error::statements_dont_match(
                                 st.clone(),
                                 st_tmpl.clone(),
                                 wildcard_map,
+                                st_tmpl_check_error,
                             ));
                         }
                     }
