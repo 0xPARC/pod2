@@ -23,7 +23,7 @@ pub enum MiddlewareInnerError {
     DiffAmount(String, String, usize, usize),
     #[error("{0} should be assigned the value {1} but has previously been assigned {2}")]
     InvalidWildcardAssignment(Wildcard, Value, Value),
-    #[error("{0} matches POD ID {1}, yet the template key {0} does not match {1}")]
+    #[error("{0} matches POD ID {1}, yet the template key {2} does not match {3}")]
     MismatchedAnchoredKeyInStatementTmplArg(Wildcard, PodId, Key, Key),
     #[error("{0} does not match against {1}")]
     MismatchedStatementTmplArg(StatementTmplArg, StatementArg),
