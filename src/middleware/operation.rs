@@ -398,6 +398,8 @@ pub fn check_st_tmpl(
             pod_id_ok.and_then(|_| {
                 (key_tmpl == key).then_some(()).ok_or(
                     Error::mismatched_anchored_key_in_statement_tmpl_arg(
+                        pod_id_wc.clone(),
+                        *pod_id,
                         key_tmpl.clone(),
                         key.clone(),
                     ),
@@ -438,7 +440,6 @@ pub fn resolve_wildcard_values(
     // NOTE: We set unresolved wildcard slots with an empty value.  They can be unresolved because
     // they are beyond the number of used wildcards in this custom predicate, or they could be
     // private arguments that are unused in a particular disjunction.
-    // TODO: Should we keep track of this for less cryptic error reporting?
     Ok(wildcard_map
         .into_iter()
         .map(|opt| opt.unwrap_or(Value::from(0)))
@@ -487,11 +488,13 @@ fn check_custom_pred(
     let wildcard_map = resolve_wildcard_values(params, pred, args)?;
 
     // Check that the resolved wildcards match the statement arguments.
-    for (s_arg, wc_value) in s_args.iter().zip(wildcard_map.iter()) {
+    for (arg_index, (s_arg, wc_value)) in s_args.iter().zip(wildcard_map.iter()).enumerate() {
         if *wc_value != *s_arg {
             return Err(Error::mismatched_wildcard_value_and_statement_arg(
                 wc_value.clone(),
                 s_arg.clone(),
+                arg_index,
+                pred.clone(),
             ));
         }
     }

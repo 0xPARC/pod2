@@ -3,7 +3,8 @@
 use std::{backtrace::Backtrace, fmt::Debug};
 
 use crate::middleware::{
-    CustomPredicate, Key, Operation, Statement, StatementArg, StatementTmplArg, Value, Wildcard,
+    CustomPredicate, Key, Operation, PodId, Statement, StatementArg, StatementTmplArg, Value,
+    Wildcard,
 };
 
 pub type Result<T, E = Error> = core::result::Result<T, E>;
@@ -22,15 +23,19 @@ pub enum MiddlewareInnerError {
     DiffAmount(String, String, usize, usize),
     #[error("{0} should be assigned the value {1} but has previously been assigned {2}")]
     InvalidWildcardAssignment(Wildcard, Value, Value),
-    #[error("{0} does not match {1}")]
-    MismatchedAnchoredKeyInStatementTmplArg(Key, Key),
+    #[error("{0} matches POD ID {1}, yet the template key {0} does not match {1}")]
+    MismatchedAnchoredKeyInStatementTmplArg(Wildcard, PodId, Key, Key),
     #[error("{0} does not match against {1}")]
     MismatchedStatementTmplArg(StatementTmplArg, StatementArg),
-    #[error("{0} does not match {1}")]
-    MismatchedWildcardValueAndStatementArg(Value, Value),
-    #[error("Not all statement templates of {0} have been matched")]
+    #[error("Value {0} does not match argument {1} with index {2} in the following custom predicate:\n{3}")]
+    MismatchedWildcardValueAndStatementArg(Value, Value, usize, CustomPredicate),
+    #[error(
+        "Not all statement templates of the following custom predicate have been matched:\n{0}"
+    )]
     UnsatisfiedCustomPredicateConjunction(CustomPredicate),
-    #[error("None of the statement templates of {0} have been matched")]
+    #[error(
+        "None of the statement templates of the following custom predicate have been matched:\n{0}"
+    )]
     UnsatisfiedCustomPredicateDisjunction(CustomPredicate),
     // Other
     #[error("{0}")]
@@ -86,8 +91,18 @@ impl Error {
     ) -> Self {
         new!(InvalidWildcardAssignment(wildcard, value, prev_value))
     }
-    pub(crate) fn mismatched_anchored_key_in_statement_tmpl_arg(key_tmpl: Key, key: Key) -> Self {
-        new!(MismatchedAnchoredKeyInStatementTmplArg(key_tmpl, key))
+    pub(crate) fn mismatched_anchored_key_in_statement_tmpl_arg(
+        pod_id_wildcard: Wildcard,
+        pod_id: PodId,
+        key_tmpl: Key,
+        key: Key,
+    ) -> Self {
+        new!(MismatchedAnchoredKeyInStatementTmplArg(
+            pod_id_wildcard,
+            pod_id,
+            key_tmpl,
+            key
+        ))
     }
     pub(crate) fn mismatched_statement_tmpl_arg(
         st_tmpl_arg: StatementTmplArg,
@@ -98,8 +113,12 @@ impl Error {
     pub(crate) fn mismatched_wildcard_value_and_statement_arg(
         wc_value: Value,
         st_arg: Value,
+        arg_index: usize,
+        pred: CustomPredicate,
     ) -> Self {
-        new!(MismatchedWildcardValueAndStatementArg(wc_value, st_arg))
+        new!(MismatchedWildcardValueAndStatementArg(
+            wc_value, st_arg, arg_index, pred
+        ))
     }
     pub(crate) fn unsatisfied_custom_predicate_conjunction(pred: CustomPredicate) -> Self {
         new!(UnsatisfiedCustomPredicateConjunction(pred))
