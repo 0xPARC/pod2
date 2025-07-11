@@ -1,6 +1,10 @@
 pub mod operation;
 pub mod statement;
-use std::{any::Any, iter, sync::Arc};
+use std::{
+    any::Any,
+    iter,
+    sync::{Arc, Mutex, OnceLock},
+};
 
 use itertools::Itertools;
 pub use operation::*;
@@ -575,21 +579,27 @@ pub struct MainPod {
     proof: Proof,
 }
 
+static COMMON_DATA_CACHE: OnceLock<Mutex<CommonCircuitData<F, D>>> = OnceLock::new();
+
 // This is a helper function to get the CommonCircuitData necessary to decode
 // a serialized proof. At some point in the future, this data may be available
 // as a constant or with static initialization, but in the meantime we can
 // generate it on-demand.
 pub fn get_common_data(params: &Params) -> Result<CommonCircuitData<F, D>, Error> {
-    // TODO: Cache this somehow
-    // https://github.com/0xPARC/pod2/issues/247
-    let rec_circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
-    let (_, circuit_data) =
-        RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data_padded(
-            params.max_input_recursive_pods,
-            &rec_circuit_data.common,
-            params,
-        )?;
-    Ok(circuit_data.common.clone())
+    let cache = COMMON_DATA_CACHE.get_or_init(|| {
+        let rec_circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
+        let (_, circuit_data) =
+            RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data_padded(
+                params.max_input_recursive_pods,
+                &rec_circuit_data.common,
+                params,
+            )
+            .unwrap();
+        Mutex::new(circuit_data.common)
+    });
+
+    let data = cache.lock().unwrap();
+    Ok(data.clone())
 }
 
 #[derive(Serialize, Deserialize)]
