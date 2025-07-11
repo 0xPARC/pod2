@@ -223,56 +223,9 @@ impl MerkleTree {
 
     pub fn verify_state_transition(
         max_depth: usize,
-        old_root: Hash,
-        new_root: Hash,
         proof: &MerkleProofStateTransition,
-        key: &RawValue,
-        value: &RawValue,
     ) -> TreeResult<()> {
-        let mut old_siblings = proof.siblings.clone();
-        let mut new_siblings = proof.siblings.clone();
-
-        let path = keypath(max_depth, *key)?;
-        match proof.typ {
-            0..=1 => {
-                // type=insertion, add EMPTY_HASH to the siblings between the
-                // last proof.sibling and the key & other_leaf_key path
-                // divergence level
-
-                let path_leaf_sibling = keypath(max_depth, proof.old_key)?;
-                let divergence = zip_eq(path, path_leaf_sibling).position(|(x, y)| x != y);
-                let divergence: usize = match divergence {
-                    Some(d) => d,
-                    None => return Err(TreeError::max_depth()),
-                };
-                for _ in proof.siblings.len()..divergence {
-                    new_siblings.push(EMPTY_HASH);
-                }
-                // add the old_leaf as the last sibling to the new_siblings
-                let mut old_leaf = Leaf::new(max_depth, proof.old_key, proof.old_value)?;
-                new_siblings.push(old_leaf.compute_hash());
-            }
-            // 1 => {
-            //     // type=update
-            //     todo!();
-            // }
-            2 => {
-                // type=deletion
-                let path_leaf_sibling = keypath(max_depth, proof.old_key)?;
-                let divergence = zip_eq(path, path_leaf_sibling).position(|(x, y)| x != y);
-                let divergence: usize = match divergence {
-                    Some(d) => d,
-                    None => return Err(TreeError::max_depth()),
-                };
-                for _ in proof.siblings.len()..divergence {
-                    old_siblings.push(EMPTY_HASH);
-                }
-                // add the old_leaf as the last sibling to the new_siblings
-                let mut old_leaf = Leaf::new(max_depth, proof.old_key, proof.old_value)?;
-                old_siblings.push(old_leaf.compute_hash());
-            }
-            _ => todo!(),
-        }
+        let (old_siblings, new_siblings) = proof.prepare_siblings(max_depth)?;
 
         // check that old_siblings verify with the old_root
         let computed_old_root = MerkleProof {
@@ -281,7 +234,7 @@ impl MerkleTree {
             other_leaf: None,
         }
         .compute_root_from_leaf(max_depth, &proof.old_key, Some(proof.old_value))?;
-        if computed_old_root != old_root {
+        if computed_old_root != proof.old_root {
             return Err(TreeError::state_transition_fail(
                 "old_root does not match".to_string(),
             ));
@@ -293,8 +246,8 @@ impl MerkleTree {
             siblings: new_siblings,
             other_leaf: None,
         }
-        .compute_root_from_leaf(max_depth, key, Some(*value))?;
-        if computed_new_root != new_root {
+        .compute_root_from_leaf(max_depth, &proof.new_key, Some(proof.new_value))?;
+        if computed_new_root != proof.new_root {
             return Err(TreeError::state_transition_fail(
                 "new_root does not match".to_string(),
             ));
@@ -444,6 +397,47 @@ pub struct MerkleProofStateTransition {
     pub(crate) new_value: RawValue,
 
     pub(crate) siblings: Vec<Hash>,
+}
+
+impl MerkleProofStateTransition {
+    fn prepare_siblings(&self, max_depth: usize) -> TreeResult<(Vec<Hash>, Vec<Hash>)> {
+        let proof = self;
+        let old_siblings = proof.siblings.clone();
+        let mut new_siblings = proof.siblings.clone();
+
+        let path = keypath(max_depth, proof.new_key)?;
+        match proof.typ {
+            0 => {
+                // type=insertion, add EMPTY_HASH to the siblings between the
+                // last proof.sibling and the proof.new_key & other_leaf_key path
+                // divergence level
+
+                let path_leaf_sibling = keypath(max_depth, proof.old_key)?;
+                let divergence = zip_eq(path, path_leaf_sibling).position(|(x, y)| x != y);
+                let divergence: usize = match divergence {
+                    Some(d) => d,
+                    None => return Err(TreeError::max_depth()),
+                };
+                for _ in proof.siblings.len()..divergence {
+                    new_siblings.push(EMPTY_HASH);
+                }
+                // add the old_leaf as the last sibling to the new_siblings
+                let mut old_leaf = Leaf::new(max_depth, proof.old_key, proof.old_value)?;
+                new_siblings.push(old_leaf.compute_hash());
+            }
+            1 => {
+                // type=update
+                todo!()
+            }
+            2 => {
+                // type=deletion
+                todo!()
+            }
+            _ => return Err(TreeError::state_transition_fail("invalid type".to_string())),
+        }
+
+        Ok((old_siblings, new_siblings))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -848,7 +842,6 @@ pub mod tests {
         }
 
         let mut tree = MerkleTree::new(max_depth, &kvs)?;
-        println!("{}", tree);
         let old_root = tree.root();
 
         // key=37 shares path with key=5, till the level 6, needing 2 extra
@@ -858,15 +851,11 @@ pub mod tests {
         let value = RawValue::from(1037);
         let state_transition_proof = tree.insert(&key, &value)?;
 
-        println!("{}", tree);
-        MerkleTree::verify_state_transition(
-            max_depth,
-            old_root,
-            tree.root(),
-            &state_transition_proof,
-            &key,
-            &value,
-        )?;
+        MerkleTree::verify_state_transition(max_depth, &state_transition_proof)?;
+        assert_eq!(state_transition_proof.old_root, old_root);
+        assert_eq!(state_transition_proof.new_root, tree.root());
+        assert_eq!(state_transition_proof.new_key, key);
+        assert_eq!(state_transition_proof.new_value, value);
 
         Ok(())
     }
