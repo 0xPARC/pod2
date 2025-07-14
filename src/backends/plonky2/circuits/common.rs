@@ -1477,7 +1477,7 @@ pub(crate) mod tests {
         let params = Params::default();
         let config = CircuitConfig::standard_recursion_config();
 
-        let custom_predicate_batch = eth_dos_batch(&params, false)?;
+        let custom_predicate_batch = eth_dos_batch(&params)?;
 
         for (i, cp) in custom_predicate_batch.predicates().iter().enumerate() {
             let mut builder = CircuitBuilder::<F, D>::new(config.clone());
@@ -1540,7 +1540,7 @@ pub(crate) mod tests {
         helper_custom_predicate_batch_target_id(&params, &custom_predicate_batch).unwrap();
 
         // Some cases from the examples
-        let custom_predicate_batch = eth_dos_batch(&params, false)?;
+        let custom_predicate_batch = eth_dos_batch(&params)?;
         helper_custom_predicate_batch_target_id(&params, &custom_predicate_batch).unwrap();
 
         let custom_predicate_batch =

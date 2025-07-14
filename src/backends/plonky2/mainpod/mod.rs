@@ -18,7 +18,7 @@ use crate::{
         deserialize_proof,
         emptypod::EmptyPod,
         error::{Error, Result},
-        mock::{emptypod::MockEmptyPod, signedpod::MockSignedPod},
+        mock::emptypod::MockEmptyPod,
         primitives::merkletree::MerkleClaimAndProof,
         recursion::{hash_verifier_data, RecursiveCircuit, RecursiveParams},
         serialize_proof,
@@ -267,12 +267,7 @@ pub(crate) fn layout_statements(
     statements.push(middleware::Statement::None.into());
 
     // Input signed pods region
-    let dummy_signed_pod_box: Box<dyn Pod> =
-        if mock || inputs.signed_pods.len() == params.max_input_signed_pods {
-            Box::new(MockSignedPod::dummy())
-        } else {
-            Box::new(SignedPod::dummy())
-        };
+    let dummy_signed_pod_box: Box<dyn Pod> = Box::new(SignedPod::dummy());
     let dummy_signed_pod = dummy_signed_pod_box.as_ref();
     assert!(inputs.signed_pods.len() <= params.max_input_signed_pods);
     for i in 0..params.max_input_signed_pods {

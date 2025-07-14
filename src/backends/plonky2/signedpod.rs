@@ -53,8 +53,8 @@ impl Signer {
         self.sign_with_nonce(params, nonce, kvs)
     }
 
-    pub fn public_key(&self) -> Point {
-        self.0.public_key()
+    pub fn public_key(&self) -> Value {
+        Value::from(self.0.public_key())
     }
 }
 

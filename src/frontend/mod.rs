@@ -828,7 +828,9 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        backends::plonky2::mock::{mainpod::MockProver, signedpod::MockSigner},
+        backends::plonky2::{
+            mock::mainpod::MockProver, primitives::ec::schnorr::SecretKey, signedpod::Signer,
+        },
         examples::{
             attest_eth_friend, great_boy_pod_full_flow, tickets_pod_full_flow, zu_kyc_pod_builder,
             zu_kyc_sign_pod_builders, EthDosHelper, MOCK_VD_SET,
@@ -874,23 +876,17 @@ pub mod tests {
         println!("{}", gov_id);
         println!("{}", pay_stub);
 
-        let mut signer = MockSigner {
-            pk: "ZooGov".into(),
-        };
+        let mut signer = Signer(SecretKey(1u32.into()));
         let gov_id = gov_id.sign(&mut signer)?;
         check_kvs(&gov_id)?;
         println!("{}", gov_id);
 
-        let mut signer = MockSigner {
-            pk: "ZooDeel".into(),
-        };
+        let mut signer = Signer(SecretKey(2u32.into()));
         let pay_stub = pay_stub.sign(&mut signer)?;
         check_kvs(&pay_stub)?;
         println!("{}", pay_stub);
 
-        let mut signer = MockSigner {
-            pk: "ZooOFAC".into(),
-        };
+        let mut signer = Signer(SecretKey(3u32.into()));
         let sanction_list = sanction_list.sign(&mut signer)?;
         check_kvs(&sanction_list)?;
         println!("{}", sanction_list);
@@ -917,12 +913,10 @@ pub mod tests {
         };
         let vd_set = &*MOCK_VD_SET;
 
-        let mut alice = MockSigner { pk: "Alice".into() };
-        let mut bob = MockSigner { pk: "Bob".into() };
-        let mut charlie = MockSigner {
-            pk: "Charlie".into(),
-        };
-        let david = MockSigner { pk: "David".into() };
+        let mut alice = Signer(SecretKey(1u32.into()));
+        let mut bob = Signer(SecretKey(2u32.into()));
+        let mut charlie = Signer(SecretKey(3u32.into()));
+        let david = Signer(SecretKey(4u32.into()));
 
         let helper = EthDosHelper::new(&params, vd_set, true, alice.public_key())?;
 
@@ -977,7 +971,7 @@ pub mod tests {
         let mut signed_builder = SignedPodBuilder::new(&params);
         signed_builder.insert("a", 1);
         signed_builder.insert("b", 1);
-        let mut signer = MockSigner { pk: "key".into() };
+        let mut signer = Signer(SecretKey(1u32.into()));
         let signed_pod = signed_builder.sign(&mut signer).unwrap();
 
         let mut builder = MainPodBuilder::new(&params, &vd_set);
@@ -1028,10 +1022,7 @@ pub mod tests {
         let mut builder = SignedPodBuilder::new(&params);
 
         builder.insert("num", 2);
-
-        let mut signer = MockSigner {
-            pk: "signer".into(),
-        };
+        let mut signer = Signer(SecretKey(1u32.into()));
         let pod = builder.sign(&mut signer).unwrap();
 
         println!("{}", pod);
@@ -1063,9 +1054,7 @@ pub mod tests {
         let dict_root = Value::from(dict.clone());
         builder.insert("dict", dict_root);
 
-        let mut signer = MockSigner {
-            pk: "signer".into(),
-        };
+        let mut signer = Signer(SecretKey(1u32.into()));
         let pod = builder.sign(&mut signer).unwrap();
 
         let mut builder = MainPodBuilder::new(&params, &vd_set);

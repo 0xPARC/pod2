@@ -618,18 +618,16 @@ impl ToFields for PodId {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, FromRepr, Serialize, Deserialize, JsonSchema)]
 pub enum PodType {
-    MockSigned = 1,
-    MockMain = 2,
-    MockEmpty = 3,
-    Signed = 4,
-    Main = 5,
-    Empty = 6,
+    Signed = 1,
+    Main = 2,
+    Empty = 3,
+    MockMain = 102,
+    MockEmpty = 103,
 }
 
 impl fmt::Display for PodType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PodType::MockSigned => write!(f, "MockSigned"),
             PodType::MockMain => write!(f, "MockMain"),
             PodType::MockEmpty => write!(f, "MockEmpty"),
             PodType::Signed => write!(f, "Signed"),

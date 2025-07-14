@@ -255,7 +255,7 @@ mod tests {
         params.print_serialized_sizes();
 
         // ETH friend custom predicate batch
-        let eth_dos_batch = eth_dos_batch(&params, true)?;
+        let eth_dos_batch = eth_dos_batch(&params)?;
 
         // This batch only has 1 predicate, so we pick it already for convenience
         let eth_friend = eth_dos_batch.predicate_ref_by_name("eth_friend").unwrap();

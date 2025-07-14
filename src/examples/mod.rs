@@ -7,7 +7,7 @@ use custom::eth_dos_batch;
 pub const MOCK_VD_SET: LazyLock<VDSet> = LazyLock::new(|| VDSet::new(6, &[]).unwrap());
 
 use crate::{
-    backends::plonky2::mock::signedpod::MockSigner,
+    backends::plonky2::{primitives::ec::schnorr::SecretKey, signedpod::Signer},
     frontend::{MainPod, MainPodBuilder, Result, SignedPod, SignedPodBuilder},
     middleware::{
         containers::Set, CustomPredicateRef, Params, PodSigner, PodType, Predicate, Statement,
@@ -92,7 +92,7 @@ pub struct EthDosHelper {
 
 impl EthDosHelper {
     pub fn new(params: &Params, vd_set: &VDSet, mock: bool, src: Value) -> Result<Self> {
-        let eth_dos_batch = eth_dos_batch(params, mock)?;
+        let eth_dos_batch = eth_dos_batch(params)?;
         let eth_friend = eth_dos_batch.predicate_ref_by_name("eth_friend").unwrap();
         let eth_dos_base = eth_dos_batch.predicate_ref_by_name("eth_dos_base").unwrap();
         let eth_dos_ind = eth_dos_batch.predicate_ref_by_name("eth_dos_ind").unwrap();
@@ -196,11 +196,7 @@ impl EthDosHelper {
         n: i64,
     ) -> Result<()> {
         assert_eq!(
-            &Value::from(if self.mock {
-                PodType::MockSigned
-            } else {
-                PodType::Signed
-            }),
+            &Value::from(PodType::Signed),
             int_attestation.get(KEY_TYPE).expect("get KEY_TYPE")
         );
 
@@ -238,17 +234,17 @@ impl EthDosHelper {
 
 // GreatBoy
 
-pub fn good_boy_sign_pod_builder(params: &Params, user: &str, age: i64) -> SignedPodBuilder {
+pub fn good_boy_sign_pod_builder(params: &Params, user: &Value, age: i64) -> SignedPodBuilder {
     let mut good_boy = SignedPodBuilder::new(params);
-    good_boy.insert("user", user);
+    good_boy.insert("user", user.clone());
     good_boy.insert("age", age);
 
     good_boy
 }
 
-pub fn friend_sign_pod_builder(params: &Params, friend: &str) -> SignedPodBuilder {
+pub fn friend_sign_pod_builder(params: &Params, friend: &Value) -> SignedPodBuilder {
     let mut friend_pod = SignedPodBuilder::new(params);
-    friend_pod.insert("friend", friend);
+    friend_pod.insert("friend", friend.clone());
 
     friend_pod
 }
@@ -259,7 +255,7 @@ pub fn great_boy_pod_builder(
     good_boy_pods: [&SignedPod; 4],
     friend_pods: [&SignedPod; 2],
     good_boy_issuers: &Value,
-    receiver: &str,
+    receiver: &Value,
 ) -> Result<MainPodBuilder> {
     // Attestment chain (issuer -> good boy -> great boy):
     // issuer 0 -> good_boy_pods[0] => good boy 0
@@ -282,14 +278,14 @@ pub fn great_boy_pod_builder(
         great_boy.pub_op(op!(
             eq,
             (friend_pods[good_boy_idx], KEY_TYPE),
-            PodType::MockSigned as i64
+            PodType::Signed as i64
         ))?;
         for issuer_idx in 0..2 {
             // Type check
             great_boy.pub_op(op!(
                 eq,
                 (good_boy_pods[good_boy_idx * 2 + issuer_idx], KEY_TYPE),
-                PodType::MockSigned as i64
+                PodType::Signed as i64
             ))?;
             // Each good boy POD comes from a valid issuer
             great_boy.pub_op(op!(
@@ -311,7 +307,11 @@ pub fn great_boy_pod_builder(
             (good_boy_pods[good_boy_idx * 2 + 1], KEY_SIGNER)
         ))?;
         // Each good boy is receivers' friend
-        great_boy.pub_op(op!(eq, (friend_pods[good_boy_idx], "friend"), receiver))?;
+        great_boy.pub_op(op!(
+            eq,
+            (friend_pods[good_boy_idx], "friend"),
+            receiver.clone()
+        ))?;
     }
     // The two good boys are different
     great_boy.pub_op(op!(
@@ -334,44 +334,38 @@ pub fn great_boy_pod_full_flow() -> Result<(Params, MainPodBuilder)> {
     };
     let vd_set = &*MOCK_VD_SET;
 
-    let good_boy_issuers = ["Giggles", "Macrosoft", "FaeBook"];
-    let mut giggles_signer = MockSigner {
-        pk: good_boy_issuers[0].into(),
-    };
-    let mut macrosoft_signer = MockSigner {
-        pk: good_boy_issuers[1].into(),
-    };
-    let mut faebook_signer = MockSigner {
-        pk: good_boy_issuers[2].into(),
-    };
-    let bob = "Bob";
-    let charlie = "Charlie";
-    let alice = "Alice";
-    let mut bob_signer = MockSigner { pk: bob.into() };
-    let mut charlie_signer = MockSigner { pk: charlie.into() };
+    let mut giggles_signer = Signer(SecretKey(1u32.into()));
+    let mut macrosoft_signer = Signer(SecretKey(2u32.into()));
+    let mut faebook_signer = Signer(SecretKey(3u32.into()));
+    let good_boy_issuers =
+        [&giggles_signer, &macrosoft_signer, &faebook_signer].map(|s| s.0.public_key());
+    let mut bob_signer = Signer(SecretKey(11u32.into()));
+    let mut charlie_signer = Signer(SecretKey(12u32.into()));
+    let alice_signer = Signer(SecretKey(13u32.into()));
+    let bob = bob_signer.public_key();
+    let charlie = charlie_signer.public_key();
+    let alice = alice_signer.public_key();
 
     // Bob receives two good_boy pods from Giggles and Macrosoft.
 
-    let bob = "Bob";
     let mut bob_good_boys = Vec::new();
 
-    let good_boy = good_boy_sign_pod_builder(&params, bob, 36);
+    let good_boy = good_boy_sign_pod_builder(&params, &bob, 36);
     bob_good_boys.push(good_boy.sign(&mut giggles_signer).unwrap());
     bob_good_boys.push(good_boy.sign(&mut macrosoft_signer).unwrap());
 
     // Charlie receives two good_boy pods from Macrosoft and Faebook
 
-    let charlie = "Charlie";
     let mut charlie_good_boys = Vec::new();
 
-    let good_boy = good_boy_sign_pod_builder(&params, charlie, 27);
+    let good_boy = good_boy_sign_pod_builder(&params, &charlie, 27);
     charlie_good_boys.push(good_boy.sign(&mut macrosoft_signer).unwrap());
     charlie_good_boys.push(good_boy.sign(&mut faebook_signer).unwrap());
 
     // Bob and Charlie send Alice a Friend POD
 
     let mut alice_friend_pods = Vec::new();
-    let friend = friend_sign_pod_builder(&params, alice);
+    let friend = friend_sign_pod_builder(&params, &alice);
     alice_friend_pods.push(friend.sign(&mut bob_signer).unwrap());
     alice_friend_pods.push(friend.sign(&mut charlie_signer).unwrap());
 
@@ -391,7 +385,7 @@ pub fn great_boy_pod_full_flow() -> Result<(Params, MainPodBuilder)> {
         ],
         [&alice_friend_pods[0], &alice_friend_pods[1]],
         &good_boy_issuers,
-        alice,
+        &alice,
     )?;
 
     Ok((params, builder))
@@ -438,7 +432,8 @@ pub fn tickets_pod_full_flow() -> Result<MainPodBuilder> {
     let params = Params::default();
     let vd_set = &*MOCK_VD_SET;
     let builder = tickets_sign_pod_builder(&params);
-    let signed_pod = builder.sign(&mut MockSigner { pk: "test".into() }).unwrap();
+
+    let signed_pod = builder.sign(&mut Signer(SecretKey(1u32.into()))).unwrap();
     tickets_pod_builder(
         &params,
         vd_set,
