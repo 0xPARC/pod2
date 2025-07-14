@@ -941,38 +941,31 @@ fn make_custom_statement_circuit(
 }
 
 /// Replace references to SELF by `self_id` in a statement.
-struct NormalizeStatementGadget {
-    params: Params,
-}
-
-impl NormalizeStatementGadget {
-    fn eval(
-        &self,
-        builder: &mut CircuitBuilder,
-        statement: &StatementTarget,
-        self_id: &ValueTarget,
-    ) -> StatementTarget {
-        let zero_value = builder.constant_value(EMPTY_VALUE);
-        let self_value = builder.constant_value(SELF.0.into());
-        let args = statement
-            .args
-            .iter()
-            .map(|arg| {
-                let first = ValueTarget::from_slice(&arg.elements[..VALUE_SIZE]);
-                let second = ValueTarget::from_slice(&arg.elements[VALUE_SIZE..]);
-                let is_not_ak = builder.is_equal_flattenable(&zero_value, &second);
-                let is_ak = builder.not(is_not_ak);
-                let is_self = builder.is_equal_flattenable(&self_value, &first);
-                let normalize = builder.and(is_ak, is_self);
-                let first_normalized =
-                    builder.select_flattenable(&self.params, normalize, self_id, &first);
-                StatementArgTarget::new(first_normalized, second)
-            })
-            .collect_vec();
-        StatementTarget {
-            predicate: statement.predicate.clone(),
-            args,
-        }
+fn normalize_statement_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    statement: &StatementTarget,
+    self_id: &ValueTarget,
+) -> StatementTarget {
+    let zero_value = builder.constant_value(EMPTY_VALUE);
+    let self_value = builder.constant_value(SELF.0.into());
+    let args = statement
+        .args
+        .iter()
+        .map(|arg| {
+            let first = ValueTarget::from_slice(&arg.elements[..VALUE_SIZE]);
+            let second = ValueTarget::from_slice(&arg.elements[VALUE_SIZE..]);
+            let is_not_ak = builder.is_equal_flattenable(&zero_value, &second);
+            let is_ak = builder.not(is_not_ak);
+            let is_self = builder.is_equal_flattenable(&self_value, &first);
+            let normalize = builder.and(is_ak, is_self);
+            let first_normalized = builder.select_flattenable(params, normalize, self_id, &first);
+            StatementArgTarget::new(first_normalized, second)
+        })
+        .collect_vec();
+    StatementTarget {
+        predicate: statement.predicate.clone(),
+        args,
     }
 }
 
@@ -1220,9 +1213,6 @@ impl MainPodVerifyGadget {
         let id_gadget = CalculateIdGadget {
             params: params.clone(),
         };
-        let normalize_statement_gadget = NormalizeStatementGadget {
-            params: self.params.clone(),
-        };
         let vds_root = builder.add_virtual_hash();
         let mut input_pods_self_statements: Vec<Vec<StatementTarget>> = Vec::new();
         let mut vd_mt_proofs: Vec<MerkleClaimAndProofTarget> = Vec::new();
@@ -1244,7 +1234,8 @@ impl MainPodVerifyGadget {
             let mut input_pod_self_statements = Vec::new();
             for _ in 0..self.params.max_input_pods_public_statements {
                 let self_st = builder.add_virtual_statement(params);
-                let normalized_st = normalize_statement_gadget.eval(builder, &self_st, &id_value);
+                let normalized_st =
+                    normalize_statement_circuit(params, builder, &self_st, &id_value);
                 input_pod_self_statements.push(self_st);
                 statements.push(normalized_st);
             }
