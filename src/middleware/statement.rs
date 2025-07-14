@@ -32,6 +32,12 @@ pub enum NativePredicate {
     ProductOf = 9,
     MaxOf = 10,
     HashOf = 11,
+    // 1. Our goal is to introduce a new native predicate and a corresponding operation for
+    //    deriving a public key from the private key.  Since this changes the specification of pod2
+    //    (as native predicates are part of the spec) the best place to start with this change is
+    //    in the middleware.  First we need to add a new entry to this enum for `PublicKeyOf` with
+    //    a numerical identifier.  The numbers >= 1000 are reserved for syntax sugar.  So this new
+    //    native predicate should be number 12.
 
     // Syntactic sugar predicates.  These predicates are not supported by the backend.  The
     // frontend compiler is responsible of translating these predicates into the predicates above.
@@ -147,6 +153,12 @@ pub enum Statement {
     ProductOf(ValueRef, ValueRef, ValueRef),
     MaxOf(ValueRef, ValueRef, ValueRef),
     HashOf(ValueRef, ValueRef, ValueRef),
+    // 2. Similarly we need to add a new entry to this enum, which is a typed statement.  We need
+    //    to consider the arguments that `PublicKeyOf` will take.  I believe it should be 2: the
+    //    public key and the private key.  These arguments can be literals or anchored keys so they
+    //    need to be `ValueRef`.  After step 1 I would just recommend picking an existing native
+    //    predicate (like `HashOf`) and following it around the codebase (starting with the
+    //    middleware)  and extend the code for `PublicKeyOf`
     Custom(CustomPredicateRef, Vec<Value>),
 }
 
@@ -181,6 +193,7 @@ impl Statement {
     statement_constructor!(product_of, ProductOf, 3);
     statement_constructor!(max_of, MaxOf, 3);
     statement_constructor!(hash_of, HashOf, 3);
+    // 3. It will be useful to add a constructor here.
     pub fn predicate(&self) -> Predicate {
         use Predicate::*;
         match self {
@@ -195,6 +208,7 @@ impl Statement {
             Self::ProductOf(_, _, _) => Native(NativePredicate::ProductOf),
             Self::MaxOf(_, _, _) => Native(NativePredicate::MaxOf),
             Self::HashOf(_, _, _) => Native(NativePredicate::HashOf),
+            // 4. Some work needed here as well.
             Self::Custom(cpr, _) => Custom(cpr.clone()),
         }
     }
@@ -212,6 +226,7 @@ impl Statement {
             Self::ProductOf(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
             Self::MaxOf(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
             Self::HashOf(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
+            // 5. Some work needed here as well.
             Self::Custom(_, args) => Vec::from_iter(args.into_iter().map(Literal)),
         }
     }
@@ -256,7 +271,10 @@ impl Statement {
             (Native(NativePredicate::HashOf), &[a1, a2, a3]) => {
                 Self::HashOf(a1.try_into()?, a2.try_into()?, a3.try_into()?)
             }
-
+            // 6. Some work needed here as well.
+            //    I think we're done with the changes on the middleware regarding statements.  You
+            //    should run `cargo check` now and see if some match is missing the case for the
+            //    new entry, and if so, fill it in.  Next we'll move to the native operation.
             (Native(np), _) => {
                 return Err(Error::custom(format!("Predicate {:?} is syntax sugar", np)))
             }

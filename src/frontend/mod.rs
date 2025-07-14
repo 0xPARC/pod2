@@ -415,6 +415,9 @@ impl MainPodBuilder {
                         return Err(arg_error("hash-from-entries"));
                     }
                 }
+                // 14. Our frontend has an api that takes operations and builds statements from
+                //     them.  This code is responsible for that.  You need to add some code here
+                //     very similar to the `HashOf` case but for `PublicKeyOf`.
                 (ContainsFromEntries, &[a1, a2, a3]) => {
                     let (r1, _v1) = a1
                         .value_and_ref()

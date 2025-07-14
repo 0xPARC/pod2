@@ -147,6 +147,25 @@ impl SecretKey {
     }
 }
 
+// 19. The key derivation is implemented natively but not in circuit.  We need to define a
+//     `SecretKeyTarget` and implement the constraints for the key derivation: a function that
+//     returns a `PointTarget` from a `SecretKeyTarget`.  This will be used in the
+//     `eval_public_key_of` in the `MainPod` circuit.  Don't forget to add a test for these
+//     constraints!
+//
+// Here's my personal recommendation on how to approach the full implementation of the
+// `PublicKeyOf`.
+// - First implement everything except for the circuit code (no touching the backend yet).  Make
+//   sure everything works with unit tests as well as some full pod tests using the MockProver.
+// - Then implement the circuits incrementally and adding tests at each step
+//   - First the key derivation, and test.
+//   - Then the `eval_public_key_of` and test.
+//   - Finally full integration into the `MainPodVerifyGadget` and test.
+// - During the circuit implementation you may encounter errors such as:
+//   - Target not assigned
+//   - Target assigned twice with different values.
+//   - Please contact me for advise on how to debug these two issues efficiently.
+
 impl SignatureTarget {
     pub fn add_virtual_target(builder: &mut CircuitBuilder<GoldilocksField, 2>) -> Self {
         Self {

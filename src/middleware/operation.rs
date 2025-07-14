@@ -73,6 +73,11 @@ pub enum NativeOperation {
     ProductOf = 12,
     MaxOf = 13,
     HashOf = 14,
+    // 7. We'll add a native operation called `PublicKeyOf`.  This operation builds the
+    //    `PublicKeyOf` statement from entries (or literals).  It will be similar to the operation
+    //    `HashOf`.  But `HashOf` operation takes 3 arguments, `PublicKeyOf` will take 2 (public
+    //    key, private key).  This new operation will have number 15.  Next follow the usages of
+    //    `HashOf` around this file and add the corresponding code for `PublicKeyOf`.
 
     // Syntactic sugar operations.  These operations are not supported by the backend.  The
     // frontend compiler is responsible of translating these operations into the operations above.
@@ -130,6 +135,7 @@ impl OperationType {
                 NativeOperation::ProductOf => Some(Predicate::Native(NativePredicate::ProductOf)),
                 NativeOperation::MaxOf => Some(Predicate::Native(NativePredicate::MaxOf)),
                 NativeOperation::HashOf => Some(Predicate::Native(NativePredicate::HashOf)),
+                // 8. Some work to do here.
                 no => unreachable!("Unexpected syntactic sugar op {:?}", no),
             },
             OperationType::Custom(cpr) => Some(Predicate::Custom(cpr.clone())),
@@ -164,6 +170,7 @@ pub enum Operation {
     ProductOf(Statement, Statement, Statement),
     MaxOf(Statement, Statement, Statement),
     HashOf(Statement, Statement, Statement),
+    // 9. Some work to do here: typed operation.  How many arguments does our operation take?
     Custom(CustomPredicateRef, Vec<Statement>),
 }
 
@@ -203,6 +210,7 @@ impl Operation {
             Self::ProductOf(_, _, _) => OT::Native(ProductOf),
             Self::MaxOf(_, _, _) => OT::Native(MaxOf),
             Self::HashOf(_, _, _) => OT::Native(HashOf),
+            // 10. Some work to do here.
             Self::Custom(cpr, _) => OT::Custom(cpr.clone()),
         }
     }
@@ -224,6 +232,7 @@ impl Operation {
             Self::ProductOf(s1, s2, s3) => vec![s1, s2, s3],
             Self::MaxOf(s1, s2, s3) => vec![s1, s2, s3],
             Self::HashOf(s1, s2, s3) => vec![s1, s2, s3],
+            // 11. Some work to do here.
             Self::Custom(_, args) => args,
         }
     }
@@ -276,6 +285,7 @@ impl Operation {
                 (NO::HashOf, &[s1, s2, s3], OA::None) => {
                     Self::HashOf(s1.clone(), s2.clone(), s3.clone())
                 }
+                // 12. Some work to do here.
                 _ => Err(Error::custom(format!(
                     "Ill-formed operation {:?} with {} arguments {:?} and aux {:?}.",
                     op_code,
@@ -352,6 +362,10 @@ impl Operation {
             (Self::HashOf(s1, s2, s3), HashOf(v4, v5, v6)) => {
                 val(v4, s1)? == hash_op(val(v5, s2)?, val(v6, s3)?)
             }
+            // 13. Some work to do here.  This code implements the native check of the operation.
+            //     Here we need to plug in the public key key derivation code and check that the
+            //     public key corresponds to the private key.
+            //     We should be done touching the middleware.
             (Self::Custom(CustomPredicateRef { batch, index }, args), Custom(cpr, s_args))
                 if batch == &cpr.batch && index == &cpr.index =>
             {
@@ -523,3 +537,6 @@ pub(crate) fn value_from_op(input_st: &Statement, output_ref: &ValueRef) -> Opti
         _ => None,
     }
 }
+
+// 13.1 It'd be a good idea to add a test here for the `Operation::check` for the case of
+//    `PublicKeyOf` here.

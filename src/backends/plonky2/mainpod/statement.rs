@@ -70,6 +70,8 @@ impl TryFrom<Statement> for middleware::Statement {
                 (NP::MaxOf, &[a1, a2, a3]) => {
                     S::MaxOf(a1.try_into()?, a2.try_into()?, a3.try_into()?)
                 }
+                // 15. Oops, I think we forgot to add the case for HashOf here.
+                //     We should add a case for `PublicKeyOf`.
                 _ => Err(Error::custom(format!(
                     "Ill-formed statement expression {:?}",
                     s

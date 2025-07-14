@@ -224,6 +224,15 @@ impl OperationVerifyGadget {
                     self.eval_sum_of(builder, st, &op.op_type, &cache),
                     self.eval_product_of(builder, st, &op.op_type, &cache),
                     self.eval_max_of(builder, st, &op.op_type, &cache),
+                    // 16. Finally we move to the circuits.  We will implement the constraints for
+                    //     the key derivation.  I will descrive the naive approach, and afterwards
+                    //     we can discuss optimizations.
+                    //     Here we need to add a new entry to this vector for the result of the
+                    //     `public_key_of` operation check.  In this vector we check a bunch of
+                    //     operations that return a boolean target (that's a wire or signal in
+                    //     plonky2 terminology).  Then we expect that at least one of these
+                    //     booleans is true.  Of course we have to implement the constraints, which
+                    //     goes next.
                 ]
             },
             // Skip these if there are no resolved Merkle claims
@@ -537,6 +546,29 @@ impl OperationVerifyGadget {
         measure_gates_end!(builder, measure);
         ok
     }
+
+    // 17. Add `eval_public_key_of` here.  This method receives the target for a statement, an op
+    //     type, and the resolved arguments (statements).  You need to extract the operation
+    //     arguments and check if the key derivation is correct, and then from it build the
+    //     `PublicKeyOf` statement from those arguments and check it against the passed in
+    //     statement.  The key derivation check needs to return a boolean target, so that the
+    //     constraints still pass even if the key derivation is incorrect.  This is because the
+    //     circuit checks all operations for each pair of statement-operation at the same time.
+    //     You can mostly follow the `eval_hash_of` as an example, but replace
+    //     `builder.hash_values` by the constraints that do the key derivation.  Note that in the
+    //     Value type you don't have the public key (and maybe not even the secret key) but instead
+    //     a hash of it!  But you need the full elliptic curve to do the key derivation.  For that
+    //     you'll have to add constraints that take an elliptic curve point and hash it, then check
+    //     if it's equal to the hash in the ValueTarget.  (I call this "unhashing").  Potentially
+    //     you need to do something similar for the Secret Key.  But now we have
+    //     a problem... We have this Point target, and we have to assign the witness later
+    //     on.  But this function only returns `BoolTarget`.  We'll need to find a solution for
+    //     this.  We could add a new argument to `eval_hash_of` which is a PointTarget.  Then at
+    //     some point higher in the call chain we need to allocate a vector of PointTargets, one
+    //     for each operation in the operation table.  We'd need to store this vector of
+    //     PointTargets somewhere so that later on in `set_targets` we can do the witness
+    //     assignment.  Probably we want to store this vector in `MainPodVerifyTarget`.  If the
+    //     secret key also needs unhashing, we need to do the same for it.
 
     fn eval_sum_of(
         &self,
@@ -1546,6 +1578,14 @@ impl InnerCircuit for MainPodVerifyTarget {
         for (i, (st, op)) in zip_eq(&input.statements, &input.operations).enumerate() {
             self.statements[i].set_targets(pw, &self.params, st)?;
             self.operations[i].set_targets(pw, &self.params, op)?;
+            // 18. Here we need to assign the vector of public keys which hold the EC points for
+            //     each operation in the table.  If the operation is `PublicKeyOf` the EC point
+            //     will be defined by the user, and can be extracted from the statement argument or
+            //     dereferenced from operation argument (remember that operation arguments are
+            //     pointers to previous statements).  If the operation is not `PublicKeyOf` I
+            //     suggest you use a padding EC point that is in the curve (so that if we add
+            //     constraints to check that the point is in the curve, they always pass).
+            //     We may do the same for the private key.
         }
 
         assert!(input.merkle_proofs.len() <= self.params.max_merkle_proofs_containers);
@@ -2182,6 +2222,8 @@ mod tests {
         let prev_statements = vec![st1, st2, st3];
         operation_verify(st, op, prev_statements, vec![])
     }
+
+    // 18. Don't forget ot add a test for `eval_public_key_of` here.
 
     #[test]
     fn test_operation_verify_sumof() -> Result<()> {
