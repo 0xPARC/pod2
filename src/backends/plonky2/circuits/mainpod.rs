@@ -1162,7 +1162,7 @@ fn verify_main_pod_circuit(
     let measure = measure_gates_begin!(builder, "MainPodVerify");
     // 1a. Verify all input signed pods
     for signed_pod in &main_pod.signed_pods {
-        verify_signed_pod_circuit(builder, &signed_pod)?;
+        verify_signed_pod_circuit(builder, signed_pod)?;
         builder.assert_one(signed_pod.signature.enabled.target);
     }
 
@@ -1200,10 +1200,10 @@ fn verify_main_pod_circuit(
         };
 
         for self_st in input_pod_self_statements {
-            let normalized_st = normalize_statement_circuit(params, builder, &self_st, &id_value);
+            let normalized_st = normalize_statement_circuit(params, builder, self_st, &id_value);
             statements.push(normalized_st);
         }
-        let id = calculate_id_circuit(params, builder, &input_pod_self_statements);
+        let id = calculate_id_circuit(params, builder, input_pod_self_statements);
         builder.connect_hashes(expected_id, id);
 
         //
@@ -1211,7 +1211,7 @@ fn verify_main_pod_circuit(
         // array. This requires merkle proofs
         //
 
-        verify_merkle_proof_circuit(builder, &vd_mt_proof);
+        verify_merkle_proof_circuit(builder, vd_mt_proof);
 
         // ensure that mt_proof is enabled
         let true_targ = builder._true();
@@ -1250,7 +1250,7 @@ fn verify_main_pod_circuit(
         .merkle_proofs
         .iter()
         .map(|mt_proof| {
-            verify_merkle_proof_circuit(builder, &mt_proof);
+            verify_merkle_proof_circuit(builder, mt_proof);
             MerkleClaimTarget::from(mt_proof.clone())
         })
         .collect_vec();
@@ -1335,15 +1335,15 @@ impl MainPodVerifyTarget {
             input_pods_self_statements: (0..params.max_input_recursive_pods)
                 .map(|_| {
                     (0..params.max_input_pods_public_statements)
-                        .map(|_| builder.add_virtual_statement(&params))
+                        .map(|_| builder.add_virtual_statement(params))
                         .collect_vec()
                 })
                 .collect(),
             input_statements: (0..params.max_statements)
-                .map(|_| builder.add_virtual_statement(&params))
+                .map(|_| builder.add_virtual_statement(params))
                 .collect(),
             operations: (0..params.max_statements)
-                .map(|_| builder.add_virtual_operation(&params))
+                .map(|_| builder.add_virtual_operation(params))
                 .collect(),
             merkle_proofs: (0..params.max_merkle_proofs_containers)
                 .map(|_| {
