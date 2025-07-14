@@ -267,6 +267,10 @@ fn verify_operation_circuit(
     Ok(())
 }
 
+//
+// Native operation constraints
+//
+
 fn verify_contains_from_entries_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
@@ -766,6 +770,10 @@ fn verify_lt_to_neq_circuit(
     ok
 }
 
+//
+// Custom Predicate constraints
+//
+
 fn verify_copy_circuit(
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
@@ -783,158 +791,153 @@ fn verify_copy_circuit(
     ok
 }
 
-struct CustomOperationVerifyGadget {
-    params: Params,
-}
-
 // NOTE: This is a bit messy.  The target types are defined in `common.rs` because they are used in
 // `add_virtual_foo` methods in the trait for the `CircuitBuilder`.  But the constraint logic is
 // here.  Maybe we want to move everything related to custom predicates to its own module, but then
 // should we add a new trait for the `add_virtual_foo` methods so that everything is contained in a
 // module?
-impl CustomOperationVerifyGadget {
-    fn statement_arg_from_template(
-        &self,
-        builder: &mut CircuitBuilder,
-        st_tmpl_arg: &StatementTmplArgTarget,
-        args: &[ValueTarget],
-    ) -> StatementArgTarget {
-        let zero = builder.zero();
-        let (is_literal, value_literal) = st_tmpl_arg.as_literal(builder);
-        let (is_ak, ak_id_wc_index, ak_key_lit_or_wc) = st_tmpl_arg.as_anchored_key(builder);
-        let (is_wc_literal, wc_index) = st_tmpl_arg.as_wildcard_literal(builder);
+fn make_statement_arg_from_template_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    st_tmpl_arg: &StatementTmplArgTarget,
+    args: &[ValueTarget],
+) -> StatementArgTarget {
+    let zero = builder.zero();
+    let (is_literal, value_literal) = st_tmpl_arg.as_literal(builder);
+    let (is_ak, ak_id_wc_index, ak_key_lit_or_wc) = st_tmpl_arg.as_anchored_key(builder);
+    let (is_wc_literal, wc_index) = st_tmpl_arg.as_wildcard_literal(builder);
 
-        let ((_is_ak_key_lit, ak_key_lit), (is_ak_key_wc, ak_key_wc_index)) =
-            ak_key_lit_or_wc.cases(builder);
+    let ((_is_ak_key_lit, ak_key_lit), (is_ak_key_wc, ak_key_wc_index)) =
+        ak_key_lit_or_wc.cases(builder);
 
-        // optimization: ak_id_wc_index and wc_index use the same signals, so we only need to do one
-        // random access to resolve both of them
-        assert_eq!(ak_id_wc_index, wc_index);
-        // optimization: the wildcard indices have an offset of +1.  This allows us to set a fixed
-        // SELF in args[0] to resolve SelfOrWildcard::SELF encoded as a wildcard at index 0.
-        let value_self = ValueTarget::from_slice(&builder.constants(&SELF.0 .0));
-        let args = iter::once(value_self)
-            .chain(args.iter().cloned())
-            .collect_vec();
-        // If the index is not used, use a 0 instead to still pass the range constraints from
-        // vec_ref
-        let first_index = ak_id_wc_index;
-        let is_first_index_valid = builder.or(is_ak, is_wc_literal);
-        let first_index = builder.select(is_first_index_valid, first_index, zero);
-        let resolved_ak_id = builder.vec_ref(&self.params, &args, first_index);
-        let resolved_wc = resolved_ak_id;
+    // optimization: ak_id_wc_index and wc_index use the same signals, so we only need to do one
+    // random access to resolve both of them
+    assert_eq!(ak_id_wc_index, wc_index);
+    // optimization: the wildcard indices have an offset of +1.  This allows us to set a fixed
+    // SELF in args[0] to resolve SelfOrWildcard::SELF encoded as a wildcard at index 0.
+    let value_self = ValueTarget::from_slice(&builder.constants(&SELF.0 .0));
+    let args = iter::once(value_self)
+        .chain(args.iter().cloned())
+        .collect_vec();
+    // If the index is not used, use a 0 instead to still pass the range constraints from
+    // vec_ref
+    let first_index = ak_id_wc_index;
+    let is_first_index_valid = builder.or(is_ak, is_wc_literal);
+    let first_index = builder.select(is_first_index_valid, first_index, zero);
+    let resolved_ak_id = builder.vec_ref(params, &args, first_index);
+    let resolved_wc = resolved_ak_id;
 
-        // If the index is not used, use a 0 instead to still pass the range constraints from
-        // vec_ref
-        let second_index = ak_key_wc_index;
-        let is_second_index_valid = builder.and(is_ak, is_ak_key_wc);
-        let second_index = builder.select(is_second_index_valid, second_index, zero);
-        let resolved_ak_key = builder.vec_ref(&self.params, &args, second_index);
+    // If the index is not used, use a 0 instead to still pass the range constraints from
+    // vec_ref
+    let second_index = ak_key_wc_index;
+    let is_second_index_valid = builder.and(is_ak, is_ak_key_wc);
+    let second_index = builder.select(is_second_index_valid, second_index, zero);
+    let resolved_ak_key = builder.vec_ref(params, &args, second_index);
 
-        let ak_key = ak_key_lit; // is_ak_key_lit
-        let ak_key =
-            builder.select_flattenable(&self.params, is_ak_key_wc, &resolved_ak_key, &ak_key);
+    let ak_key = ak_key_lit; // is_ak_key_lit
+    let ak_key = builder.select_flattenable(params, is_ak_key_wc, &resolved_ak_key, &ak_key);
 
-        let first = ValueTarget::zero(builder); // is_none
-        let first = builder.select_flattenable(&self.params, is_literal, &value_literal, &first);
-        let first = builder.select_flattenable(&self.params, is_ak, &resolved_ak_id, &first);
-        let first = builder.select_flattenable(&self.params, is_wc_literal, &resolved_wc, &first);
+    let first = ValueTarget::zero(builder); // is_none
+    let first = builder.select_flattenable(params, is_literal, &value_literal, &first);
+    let first = builder.select_flattenable(params, is_ak, &resolved_ak_id, &first);
+    let first = builder.select_flattenable(params, is_wc_literal, &resolved_wc, &first);
 
-        let second = ValueTarget::zero(builder); // is_none or is_literal or is_wc_literal
-        let second = builder.select_flattenable(&self.params, is_ak, &ak_key, &second);
+    let second = ValueTarget::zero(builder); // is_none or is_literal or is_wc_literal
+    let second = builder.select_flattenable(params, is_ak, &ak_key, &second);
 
-        StatementArgTarget::new(first, second)
+    StatementArgTarget::new(first, second)
+}
+
+fn make_statement_from_template_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    st_tmpl: &StatementTmplTarget,
+    args: &[ValueTarget],
+) -> StatementTarget {
+    let measure = measure_gates_begin!(builder, "StArgFromTmpl");
+    let args = st_tmpl
+        .args
+        .iter()
+        .map(|st_tmpl_arg| {
+            make_statement_arg_from_template_circuit(params, builder, st_tmpl_arg, args)
+        })
+        .collect();
+    measure_gates_end!(builder, measure);
+    StatementTarget {
+        predicate: st_tmpl.pred.clone(),
+        args,
     }
+}
 
-    fn statement_from_template(
-        &self,
-        builder: &mut CircuitBuilder,
-        st_tmpl: &StatementTmplTarget,
-        args: &[ValueTarget],
-    ) -> StatementTarget {
-        let measure = measure_gates_begin!(builder, "StArgFromTmpl");
-        let args = st_tmpl
-            .args
-            .iter()
-            .map(|st_tmpl_arg| self.statement_arg_from_template(builder, st_tmpl_arg, args))
-            .collect();
-        measure_gates_end!(builder, measure);
-        StatementTarget {
-            predicate: st_tmpl.pred.clone(),
-            args,
-        }
-    }
+/// Given a custom predicate, a list of operation arguments (statements) and a list of wildcard
+/// values (args):
+/// - Verify that the custom predicate is satisfied with the given statements
+/// - Build the output statement
+/// - Build the expected operation type
+fn make_custom_statement_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    custom_predicate: &CustomPredicateEntryTarget,
+    op_args: &[StatementTarget],
+    args: &[ValueTarget], // arguments to the custom predicate, public and private
+) -> Result<(StatementTarget, OperationTypeTarget)> {
+    let measure = measure_gates_begin!(builder, "CustomOpVerify");
+    // Some sanity checks
+    assert_eq!(params.max_operation_args, op_args.len());
+    assert_eq!(params.max_custom_predicate_wildcards, args.len());
 
-    /// Given a custom predicate, a list of operation arguments (statements) and a list of wildcard
-    /// values (args):
-    /// - Verify that the custom predicate is satisfied with the given statements
-    /// - Build the output statement
-    /// - Build the expected operation type
-    fn eval(
-        &self,
-        builder: &mut CircuitBuilder,
-        custom_predicate: &CustomPredicateEntryTarget,
-        op_args: &[StatementTarget],
-        args: &[ValueTarget], // arguments to the custom predicate, public and private
-    ) -> Result<(StatementTarget, OperationTypeTarget)> {
-        let measure = measure_gates_begin!(builder, "CustomOpVerify");
-        // Some sanity checks
-        assert_eq!(self.params.max_operation_args, op_args.len());
-        assert_eq!(self.params.max_custom_predicate_wildcards, args.len());
+    let (batch_id, index) = (custom_predicate.id, custom_predicate.index);
+    let op_type = OperationTypeTarget::new_custom(builder, batch_id, index);
 
-        let (batch_id, index) = (custom_predicate.id, custom_predicate.index);
-        let op_type = OperationTypeTarget::new_custom(builder, batch_id, index);
+    // Build the statement
+    let st_predicate = PredicateTarget::new_custom(builder, batch_id, index);
+    let arg_none = ValueTarget::zero(builder);
+    let lt_mask = builder.lt_mask(
+        params.max_statement_args,
+        custom_predicate.predicate.args_len,
+    );
+    let st_args = (0..params.max_statement_args)
+        .map(|i| {
+            let v = builder.select_flattenable(params, lt_mask[i], &args[i], &arg_none);
+            StatementArgTarget::wildcard_literal(builder, &v)
+        })
+        .collect();
+    let statement = StatementTarget {
+        predicate: st_predicate,
+        args: st_args,
+    };
 
-        // Build the statement
-        let st_predicate = PredicateTarget::new_custom(builder, batch_id, index);
-        let arg_none = ValueTarget::zero(builder);
-        let lt_mask = builder.lt_mask(
-            self.params.max_statement_args,
-            custom_predicate.predicate.args_len,
-        );
-        let st_args = (0..self.params.max_statement_args)
-            .map(|i| {
-                let v = builder.select_flattenable(&self.params, lt_mask[i], &args[i], &arg_none);
-                StatementArgTarget::wildcard_literal(builder, &v)
-            })
-            .collect();
-        let statement = StatementTarget {
-            predicate: st_predicate,
-            args: st_args,
-        };
+    // Check the operation arguments
+    // From each statement template we generate an expected statement using replacing the
+    // wildcards by the arguments.  Then we compare the expected statement with the operation
+    // argument.
+    let expected_sts: Vec<_> = custom_predicate
+        .predicate
+        .statements
+        .iter()
+        .map(|st_tmpl| make_statement_from_template_circuit(params, builder, st_tmpl, args))
+        .collect();
+    // expected_sts.len() == params.max_custom_predicate_arity
+    // op_args.len() == params.max_operation_args;
+    assert!(params.max_custom_predicate_arity <= params.max_operation_args);
 
-        // Check the operation arguments
-        // From each statement template we generate an expected statement using replacing the
-        // wildcards by the arguments.  Then we compare the expected statement with the operation
-        // argument.
-        let expected_sts: Vec<_> = custom_predicate
-            .predicate
-            .statements
-            .iter()
-            .map(|st_tmpl| self.statement_from_template(builder, st_tmpl, args))
-            .collect();
-        // expected_sts.len() == self.params.max_custom_predicate_arity
-        // op_args.len() == self.params.max_operation_args;
-        assert!(self.params.max_custom_predicate_arity <= self.params.max_operation_args);
+    let sts_eq: Vec<_> = expected_sts
+        .iter()
+        .zip(op_args.iter())
+        .map(|(expected_st, st)| builder.is_equal_flattenable(expected_st, st))
+        .collect();
+    let all_st_eq = builder.all(sts_eq.clone());
+    let some_st_eq = builder.any(sts_eq);
+    // NOTE: This BoolTarget is safe because both inputs to the select are safe
+    let is_op_args_ok = BoolTarget::new_unsafe(builder.select(
+        custom_predicate.predicate.conjunction,
+        all_st_eq.target,
+        some_st_eq.target,
+    ));
 
-        let sts_eq: Vec<_> = expected_sts
-            .iter()
-            .zip(op_args.iter())
-            .map(|(expected_st, st)| builder.is_equal_flattenable(expected_st, st))
-            .collect();
-        let all_st_eq = builder.all(sts_eq.clone());
-        let some_st_eq = builder.any(sts_eq);
-        // NOTE: This BoolTarget is safe because both inputs to the select are safe
-        let is_op_args_ok = BoolTarget::new_unsafe(builder.select(
-            custom_predicate.predicate.conjunction,
-            all_st_eq.target,
-            some_st_eq.target,
-        ));
-
-        builder.assert_one(is_op_args_ok.target);
-        measure_gates_end!(builder, measure);
-        Ok((statement, op_type))
-    }
+    builder.assert_one(is_op_args_ok.target);
+    measure_gates_end!(builder, measure);
+    Ok((statement, op_type))
 }
 
 /// Replace references to SELF by `self_id` in a statement.
@@ -1150,10 +1153,8 @@ impl MainPodVerifyGadget {
                 .collect_vec();
 
             // Verify the custom predicate operation
-            let (statement, op_type) = CustomOperationVerifyGadget {
-                params: params.clone(),
-            }
-            .eval(builder, &custom_predicate, &op_args, &args)?;
+            let (statement, op_type) =
+                make_custom_statement_circuit(params, builder, &custom_predicate, &op_args, &args)?;
 
             // Check that the batch id is correct by querying the custom predicate batches table
             let table_query_hash =
@@ -2507,16 +2508,17 @@ mod tests {
     ) -> Result<()> {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::new(config);
-        let gadget = CustomOperationVerifyGadget {
-            params: params.clone(),
-        };
 
         let st_tmpl_arg_target = builder.add_virtual_statement_tmpl_arg();
         let args_target: Vec<_> = (0..args.len())
             .map(|_| builder.add_virtual_value())
             .collect();
-        let st_arg_target =
-            gadget.statement_arg_from_template(&mut builder, &st_tmpl_arg_target, &args_target);
+        let st_arg_target = make_statement_arg_from_template_circuit(
+            params,
+            &mut builder,
+            &st_tmpl_arg_target,
+            &args_target,
+        );
         // TODO: Instead of connect, assign witness to result
         let expected_st_arg_target = builder.add_virtual_statement_arg();
         builder.connect_array(expected_st_arg_target.elements, st_arg_target.elements);
@@ -2579,15 +2581,17 @@ mod tests {
     ) -> Result<()> {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::new(config);
-        let gadget = CustomOperationVerifyGadget {
-            params: params.clone(),
-        };
 
         let st_tmpl_target = builder.add_virtual_statement_tmpl(params);
         let args_target: Vec<_> = (0..args.len())
             .map(|_| builder.add_virtual_value())
             .collect();
-        let st_target = gadget.statement_from_template(&mut builder, &st_tmpl_target, &args_target);
+        let st_target = make_statement_from_template_circuit(
+            params,
+            &mut builder,
+            &st_tmpl_target,
+            &args_target,
+        );
         // TODO: Instead of connect, assign witness to result
         let expected_st_target = builder.add_virtual_statement(params);
         builder.connect_flattenable(&expected_st_target, &st_target);
@@ -2640,9 +2644,6 @@ mod tests {
     ) -> Result<()> {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::new(config);
-        let gadget = CustomOperationVerifyGadget {
-            params: params.clone(),
-        };
 
         let custom_predicate_target = builder.add_virtual_custom_predicate_entry(params);
         let op_args_target: Vec<_> = (0..args.len())
@@ -2651,7 +2652,8 @@ mod tests {
         let args_target: Vec<_> = (0..args.len())
             .map(|_| builder.add_virtual_value())
             .collect();
-        let (st_target, op_type_target) = gadget.eval(
+        let (st_target, op_type_target) = make_custom_statement_circuit(
+            params,
             &mut builder,
             &custom_predicate_target,
             &op_args_target,
