@@ -56,10 +56,6 @@ pub const PI_OFFSET_VDSROOT: usize = 4;
 
 pub const NUM_PUBLIC_INPUTS: usize = 8;
 
-struct OperationVerifyGadget {
-    params: Params,
-}
-
 const MAX_VALUE_ARGS: usize = 3;
 
 struct StatementArgCache {
@@ -140,656 +136,651 @@ impl StatementCache {
     }
 }
 
-impl OperationVerifyGadget {
-    #[allow(clippy::too_many_arguments)]
-    fn eval(
-        &self,
-        builder: &mut CircuitBuilder,
-        st: &StatementTarget,
-        op: &OperationTarget,
-        prev_statements: &[StatementTarget],
-        input_statements_offset: usize,
-        merkle_claims: &[MerkleClaimTarget],
-        custom_predicate_verification_table: &[HashOutTarget],
-    ) -> Result<()> {
-        let measure = measure_gates_begin!(builder, "OpVerify");
-        let _true = builder._true();
-        let _false = builder._false();
+#[allow(clippy::too_many_arguments)]
+fn verify_operation_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    st: &StatementTarget,
+    op: &OperationTarget,
+    prev_statements: &[StatementTarget],
+    input_statements_offset: usize,
+    merkle_claims: &[MerkleClaimTarget],
+    custom_predicate_verification_table: &[HashOutTarget],
+) -> Result<()> {
+    let measure = measure_gates_begin!(builder, "OpVerify");
+    let _true = builder._true();
+    let _false = builder._false();
 
-        // Verify that the operation `op` correctly generates the statement `st`.  The operation
-        // can reference any of the `prev_statements`.
-        // TODO: Clean this up.
-        let measure_resolve_op_args = measure_gates_begin!(builder, "ResolveOpArgs");
-        let cache = StatementCache::new(&self.params, builder, op, st, prev_statements);
-        measure_gates_end!(builder, measure_resolve_op_args);
-        // TODO: Can we have a single table with merkel claims and verified custom predicates
-        // together (with an identifying prefix) and then we only need one random access instead of
-        // two?
-        // Currently we use one slot of aux for the index to merkle claim and another slot of aux
-        // for the index to the verified custom predicate.  We can't use the same slot because then
-        // if one table is different size the random access to the smaller one may use an index
-        // that is too big and not pass the constraints.  Possible solutions to use a single slot
-        // are:
-        //  - a. Use a single table (mux both tables)
-        //  - b. select the index or 0 by checking the operation type here; but that breaks the
-        //    current abstraction a little bit.
+    // Verify that the operation `op` correctly generates the statement `st`.  The operation
+    // can reference any of the `prev_statements`.
+    // TODO: Clean this up.
+    let measure_resolve_op_args = measure_gates_begin!(builder, "ResolveOpArgs");
+    let cache = StatementCache::new(params, builder, op, st, prev_statements);
+    measure_gates_end!(builder, measure_resolve_op_args);
+    // TODO: Can we have a single table with merkel claims and verified custom predicates
+    // together (with an identifying prefix) and then we only need one random access instead of
+    // two?
+    // Currently we use one slot of aux for the index to merkle claim and another slot of aux
+    // for the index to the verified custom predicate.  We can't use the same slot because then
+    // if one table is different size the random access to the smaller one may use an index
+    // that is too big and not pass the constraints.  Possible solutions to use a single slot
+    // are:
+    //  - a. Use a single table (mux both tables)
+    //  - b. select the index or 0 by checking the operation type here; but that breaks the
+    //    current abstraction a little bit.
 
-        // Certain operations (Contains/NotContains) will refer to one
-        // of the provided Merkle proofs (if any). These proofs have already
-        // been verified, so we need only look up the claim.
-        let measure_resolve_merkle_claim = measure_gates_begin!(builder, "ResolveMerkleClaim");
-        let resolved_merkle_claim = (!merkle_claims.is_empty())
-            .then(|| builder.vec_ref(&self.params, merkle_claims, op.aux[0]));
-        measure_gates_end!(builder, measure_resolve_merkle_claim);
+    // Certain operations (Contains/NotContains) will refer to one
+    // of the provided Merkle proofs (if any). These proofs have already
+    // been verified, so we need only look up the claim.
+    let measure_resolve_merkle_claim = measure_gates_begin!(builder, "ResolveMerkleClaim");
+    let resolved_merkle_claim =
+        (!merkle_claims.is_empty()).then(|| builder.vec_ref(params, merkle_claims, op.aux[0]));
+    measure_gates_end!(builder, measure_resolve_merkle_claim);
 
-        // Operations from custom statements will refer to one
-        // of the provided custom predicates verifications (if any). These operations have already
-        // been verified, so we need only look up the entry.
-        let measure_resolve_custom_pred_verification =
-            measure_gates_begin!(builder, "ResolveCustomPredVerification");
-        let resolved_custom_pred_verification = (!custom_predicate_verification_table.is_empty())
-            .then(|| builder.vec_ref(&self.params, custom_predicate_verification_table, op.aux[1]));
-        measure_gates_end!(builder, measure_resolve_custom_pred_verification);
+    // Operations from custom statements will refer to one
+    // of the provided custom predicates verifications (if any). These operations have already
+    // been verified, so we need only look up the entry.
+    let measure_resolve_custom_pred_verification =
+        measure_gates_begin!(builder, "ResolveCustomPredVerification");
+    let resolved_custom_pred_verification = (!custom_predicate_verification_table.is_empty())
+        .then(|| builder.vec_ref(params, custom_predicate_verification_table, op.aux[1]));
+    measure_gates_end!(builder, measure_resolve_custom_pred_verification);
 
-        // The verification may require aux data which needs to be stored in the
-        // `OperationVerifyTarget` so that we can set during witness generation.
+    // The verification may require aux data which needs to be stored in the
+    // `OperationVerifyTarget` so that we can set during witness generation.
 
-        // For now only support native operations
-        // Op checks to carry out. Each 'eval_X' should
-        // be thought of as 'eval' restricted to the op of type X,
-        // where the returned target is `false` if the input targets
-        // lie outside of the domain.
-        let op_checks = [
+    // For now only support native operations
+    // Op checks to carry out. Each 'eval_X' should
+    // be thought of as 'eval' restricted to the op of type X,
+    // where the returned target is `false` if the input targets
+    // lie outside of the domain.
+    let op_checks = [
+        vec![
+            verify_none_circuit(params, builder, st, &op.op_type),
+            verify_new_entry_circuit(
+                params,
+                builder,
+                st,
+                &op.op_type,
+                prev_statements,
+                input_statements_offset,
+            ),
+        ],
+        // Skip these if there are no resolved op args
+        if cache.op_args.is_empty() {
+            vec![]
+        } else {
             vec![
-                self.eval_none(builder, st, &op.op_type),
-                self.eval_new_entry(
+                verify_copy_circuit(builder, st, &op.op_type, &cache.op_args),
+                verify_eq_neq_from_entries_circuit(params, builder, st, &op.op_type, &cache),
+                verify_lt_lteq_from_entries_circuit(params, builder, st, &op.op_type, &cache),
+                verify_transitive_eq_circuit(params, builder, st, &op.op_type, &cache.op_args),
+                verify_lt_to_neq_circuit(params, builder, st, &op.op_type, &cache.op_args),
+                verify_hash_of_circuit(params, builder, st, &op.op_type, &cache),
+                verify_sum_of_circuit(params, builder, st, &op.op_type, &cache),
+                verify_product_of_circuit(params, builder, st, &op.op_type, &cache),
+                verify_max_of_circuit(params, builder, st, &op.op_type, &cache),
+            ]
+        },
+        // Skip these if there are no resolved Merkle claims
+        if let Some(resolved_merkle_claim) = resolved_merkle_claim {
+            vec![
+                verify_contains_from_entries_circuit(
+                    params,
                     builder,
                     st,
                     &op.op_type,
-                    prev_statements,
-                    input_statements_offset,
+                    resolved_merkle_claim,
+                    &cache,
                 ),
-            ],
-            // Skip these if there are no resolved op args
-            if cache.op_args.is_empty() {
-                vec![]
-            } else {
-                vec![
-                    self.eval_copy(builder, st, &op.op_type, &cache.op_args),
-                    self.eval_eq_neq_from_entries(builder, st, &op.op_type, &cache),
-                    self.eval_lt_lteq_from_entries(builder, st, &op.op_type, &cache),
-                    self.eval_transitive_eq(builder, st, &op.op_type, &cache.op_args),
-                    self.eval_lt_to_neq(builder, st, &op.op_type, &cache.op_args),
-                    self.eval_hash_of(builder, st, &op.op_type, &cache),
-                    self.eval_sum_of(builder, st, &op.op_type, &cache),
-                    self.eval_product_of(builder, st, &op.op_type, &cache),
-                    self.eval_max_of(builder, st, &op.op_type, &cache),
-                ]
-            },
-            // Skip these if there are no resolved Merkle claims
-            if let Some(resolved_merkle_claim) = resolved_merkle_claim {
-                vec![
-                    self.eval_contains_from_entries(
-                        builder,
-                        st,
-                        &op.op_type,
-                        resolved_merkle_claim,
-                        &cache,
-                    ),
-                    self.eval_not_contains_from_entries(
-                        builder,
-                        st,
-                        &op.op_type,
-                        resolved_merkle_claim,
-                        &cache,
-                    ),
-                ]
-            } else {
-                vec![]
-            },
-            // Skip these if there are no resolved custom predicate verifications
-            if let Some(resolved_custom_pred_verification) = resolved_custom_pred_verification {
-                vec![self.eval_custom(
+                verify_not_contains_from_entries_circuit(
+                    params,
                     builder,
                     st,
                     &op.op_type,
-                    resolved_custom_pred_verification,
-                    &cache.op_args,
-                )]
-            } else {
-                vec![]
-            },
-        ]
-        .concat();
-
-        let ok = builder.any(op_checks);
-        builder.assert_one(ok.target);
-
-        measure_gates_end!(builder, measure);
-        Ok(())
-    }
-
-    fn eval_contains_from_entries(
-        &self,
-        builder: &mut CircuitBuilder,
-        st: &StatementTarget,
-        op_type: &OperationTypeTarget,
-        resolved_merkle_claim: MerkleClaimTarget,
-        cache: &StatementCache,
-    ) -> BoolTarget {
-        let measure = measure_gates_begin!(builder, "OpContainsFromEntries");
-        let op_code_ok = op_type.has_native(builder, NativeOperation::ContainsFromEntries);
-
-        let (arg_types_ok, [merkle_root_value, key_value, value_value]) =
-            cache.first_n_args_as_values();
-
-        // Check Merkle proof (verified elsewhere) against op args.
-        let merkle_proof_checks = [
-            /* The supplied Merkle proof must be enabled. */
-            resolved_merkle_claim.enabled,
-            /* ...and it must be an existence proof. */
-            resolved_merkle_claim.existence,
-            /* ...for the root-key-value triple in the resolved op args. */
-            builder.is_equal_slice(
-                &merkle_root_value.elements,
-                &resolved_merkle_claim.root.elements,
-            ),
-            builder.is_equal_slice(&key_value.elements, &resolved_merkle_claim.key.elements),
-            builder.is_equal_slice(&value_value.elements, &resolved_merkle_claim.value.elements),
-        ];
-
-        let merkle_proof_ok = builder.all(merkle_proof_checks);
-
-        // Check output statement
-        let arg1_expected = cache.equations[0].lhs.clone();
-        let arg2_expected = cache.equations[1].lhs.clone();
-        let arg3_expected = cache.equations[2].lhs.clone();
-        let expected_statement = StatementTarget::new_native(
-            builder,
-            &self.params,
-            NativePredicate::Contains,
-            &[arg1_expected, arg2_expected, arg3_expected],
-        );
-        let st_ok = builder.is_equal_flattenable(st, &expected_statement);
-
-        let ok = builder.all([op_code_ok, arg_types_ok, merkle_proof_ok, st_ok]);
-        measure_gates_end!(builder, measure);
-        ok
-    }
-
-    fn eval_not_contains_from_entries(
-        &self,
-        builder: &mut CircuitBuilder,
-        st: &StatementTarget,
-        op_type: &OperationTypeTarget,
-        resolved_merkle_claim: MerkleClaimTarget,
-        cache: &StatementCache,
-    ) -> BoolTarget {
-        let measure = measure_gates_begin!(builder, "OpNotContainsFromEntries");
-        let op_code_ok = op_type.has_native(builder, NativeOperation::NotContainsFromEntries);
-
-        let (arg_types_ok, [merkle_root_value, key_value]) = cache.first_n_args_as_values();
-
-        // Check Merkle proof (verified elsewhere) against op args.
-        let merkle_proof_checks = [
-            /* The supplied Merkle proof must be enabled. */
-            resolved_merkle_claim.enabled,
-            /* ...and it must be a nonexistence proof. */
-            builder.not(resolved_merkle_claim.existence),
-            /* ...for the root-key pair in the resolved op args. */
-            builder.is_equal_slice(
-                &merkle_root_value.elements,
-                &resolved_merkle_claim.root.elements,
-            ),
-            builder.is_equal_slice(&key_value.elements, &resolved_merkle_claim.key.elements),
-        ];
-
-        let merkle_proof_ok = builder.all(merkle_proof_checks);
-
-        // Check output statement
-        let arg1_expected = cache.equations[0].lhs.clone();
-        let arg2_expected = cache.equations[1].lhs.clone();
-        let expected_statement = StatementTarget::new_native(
-            builder,
-            &self.params,
-            NativePredicate::NotContains,
-            &[arg1_expected, arg2_expected],
-        );
-        let st_ok = builder.is_equal_flattenable(st, &expected_statement);
-
-        let ok = builder.all([op_code_ok, arg_types_ok, merkle_proof_ok, st_ok]);
-        measure_gates_end!(builder, measure);
-        ok
-    }
-
-    fn eval_custom(
-        &self,
-        builder: &mut CircuitBuilder,
-        st: &StatementTarget,
-        op_type: &OperationTypeTarget,
-        resolved_custom_pred_verification: HashOutTarget,
-        resolved_op_args: &[StatementTarget],
-    ) -> BoolTarget {
-        let measure = measure_gates_begin!(builder, "OpCustom");
-        let query = CustomPredicateVerifyQueryTarget {
-            statement: st.clone(),
-            op_type: op_type.clone(),
-            op_args: resolved_op_args.to_vec(),
-        };
-        let out_query_hash = query.hash(builder);
-        let ok = builder.is_equal_slice(
-            &resolved_custom_pred_verification.elements,
-            &out_query_hash.elements,
-        );
-        measure_gates_end!(builder, measure);
-        ok
-    }
-
-    /// Carries out the checks necessary for EqualFromEntries and
-    /// NotEqualFromEntries.
-    fn eval_eq_neq_from_entries(
-        &self,
-        builder: &mut CircuitBuilder,
-        st: &StatementTarget,
-        op_type: &OperationTypeTarget,
-        cache: &StatementCache,
-    ) -> BoolTarget {
-        let measure = measure_gates_begin!(builder, "OpEqNeqFromEntries");
-        let eq_op_st_code_ok = {
-            let op_code_ok = op_type.has_native(builder, NativeOperation::EqualFromEntries);
-            let st_code_ok = st.has_native_type(builder, &self.params, NativePredicate::Equal);
-            builder.and(op_code_ok, st_code_ok)
-        };
-        let neq_op_st_code_ok = {
-            let op_code_ok = op_type.has_native(builder, NativeOperation::NotEqualFromEntries);
-            let st_code_ok = st.has_native_type(builder, &self.params, NativePredicate::NotEqual);
-            builder.and(op_code_ok, st_code_ok)
-        };
-        let op_st_code_ok = builder.or(eq_op_st_code_ok, neq_op_st_code_ok);
-
-        let (arg_types_ok, [arg1_value, arg2_value]) = cache.first_n_args_as_values();
-
-        let op_args_eq = builder.is_equal_slice(&arg1_value.elements, &arg2_value.elements);
-        let op_args_ok = builder.is_equal(op_args_eq.target, eq_op_st_code_ok.target);
-
-        let arg1_expected = cache.equations[0].lhs.clone();
-        let arg2_expected = cache.equations[1].lhs.clone();
-
-        let expected_st_args: Vec<_> = [arg1_expected, arg2_expected]
-            .into_iter()
-            .chain(std::iter::repeat_with(|| StatementArgTarget::none(builder)))
-            .take(self.params.max_statement_args)
-            .flat_map(|arg| arg.elements)
-            .collect();
-
-        let st_args_ok = builder.is_equal_slice(
-            &expected_st_args,
-            &st.args
-                .iter()
-                .flat_map(|arg| arg.elements)
-                .collect::<Vec<_>>(),
-        );
-
-        let ok = builder.all([op_st_code_ok, arg_types_ok, op_args_ok, st_args_ok]);
-        measure_gates_end!(builder, measure);
-        ok
-    }
-
-    /// Carries out the checks necessary for LtFromEntries and
-    /// LtEqFromEntries.
-    fn eval_lt_lteq_from_entries(
-        &self,
-        builder: &mut CircuitBuilder,
-        st: &StatementTarget,
-        op_type: &OperationTypeTarget,
-        cache: &StatementCache,
-    ) -> BoolTarget {
-        let measure = measure_gates_begin!(builder, "OpLtLteqFromEntries");
-        let zero = ValueTarget::zero(builder);
-        let one = ValueTarget::one(builder);
-
-        let lt_op_st_code_ok = {
-            let op_code_ok = op_type.has_native(builder, NativeOperation::LtFromEntries);
-            let st_code_ok = st.has_native_type(builder, &self.params, NativePredicate::Lt);
-            builder.and(op_code_ok, st_code_ok)
-        };
-        let lteq_op_st_code_ok = {
-            let op_code_ok = op_type.has_native(builder, NativeOperation::LtEqFromEntries);
-            let st_code_ok = st.has_native_type(builder, &self.params, NativePredicate::LtEq);
-            builder.and(op_code_ok, st_code_ok)
-        };
-        let op_st_code_ok = builder.or(lt_op_st_code_ok, lteq_op_st_code_ok);
-
-        let (arg_types_ok, [arg1_value, arg2_value]) = cache.first_n_args_as_values();
-
-        // If we are not dealing with the right op & statement types,
-        // replace args with dummy values in the following checks.
-        let value1 = builder.select_value(op_st_code_ok, arg1_value, zero);
-        let value2 = builder.select_value(op_st_code_ok, arg2_value, one);
-
-        // Range check
-        builder.assert_i64(value1);
-        builder.assert_i64(value2);
-
-        // Check for equality.
-        let args_equal = builder.is_equal_slice(&value1.elements, &value2.elements);
-
-        // Check < if applicable.
-        let lt_check_flag = {
-            let not_args_equal = builder.not(args_equal);
-            let lteq_eq_case = builder.and(lteq_op_st_code_ok, not_args_equal);
-            builder.or(lt_op_st_code_ok, lteq_eq_case)
-        };
-        builder.assert_i64_less_if(lt_check_flag, value1, value2);
-
-        let arg1_expected = cache.equations[0].lhs.clone();
-        let arg2_expected = cache.equations[1].lhs.clone();
-
-        let expected_st_args: Vec<_> = [arg1_expected, arg2_expected]
-            .into_iter()
-            .chain(std::iter::repeat_with(|| StatementArgTarget::none(builder)))
-            .take(self.params.max_statement_args)
-            .flat_map(|arg| arg.elements)
-            .collect();
-
-        let st_args_ok = builder.is_equal_slice(
-            &expected_st_args,
-            &st.args
-                .iter()
-                .flat_map(|arg| arg.elements)
-                .collect::<Vec<_>>(),
-        );
-
-        let ok = builder.all([op_st_code_ok, arg_types_ok, st_args_ok]);
-        measure_gates_end!(builder, measure);
-        ok
-    }
-
-    fn eval_hash_of(
-        &self,
-        builder: &mut CircuitBuilder,
-        st: &StatementTarget,
-        op_type: &OperationTypeTarget,
-        cache: &StatementCache,
-    ) -> BoolTarget {
-        let measure = measure_gates_begin!(builder, "OpHashOf");
-        let op_code_ok = op_type.has_native(builder, NativeOperation::HashOf);
-
-        let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) = cache.first_n_args_as_values();
-
-        let expected_hash_value = builder.hash_values(arg2_value, arg3_value);
-
-        let hash_value_ok =
-            builder.is_equal_slice(&arg1_value.elements, &expected_hash_value.elements);
-
-        let arg1_expected = cache.equations[0].lhs.clone();
-        let arg2_expected = cache.equations[1].lhs.clone();
-        let arg3_expected = cache.equations[2].lhs.clone();
-        let expected_statement = StatementTarget::new_native(
-            builder,
-            &self.params,
-            NativePredicate::HashOf,
-            &[arg1_expected, arg2_expected, arg3_expected],
-        );
-        let st_ok = builder.is_equal_flattenable(st, &expected_statement);
-
-        let ok = builder.all([op_code_ok, arg_types_ok, hash_value_ok, st_ok]);
-        measure_gates_end!(builder, measure);
-        ok
-    }
-
-    fn eval_sum_of(
-        &self,
-        builder: &mut CircuitBuilder,
-        st: &StatementTarget,
-        op_type: &OperationTypeTarget,
-        cache: &StatementCache,
-    ) -> BoolTarget {
-        let measure = measure_gates_begin!(builder, "OpSumOf");
-        let value_zero = ValueTarget::zero(builder);
-
-        let op_code_ok = op_type.has_native(builder, NativeOperation::SumOf);
-
-        let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) = cache.first_n_args_as_values();
-
-        // Select to avoid overflow.
-        let summand1 = builder.select_value(op_code_ok, arg2_value, value_zero);
-        let summand2 = builder.select_value(op_code_ok, arg3_value, value_zero);
-
-        let expected_sum = builder.i64_add(summand1, summand2);
-
-        let sum_ok = builder.is_equal_slice(&arg1_value.elements, &expected_sum.elements);
-
-        let arg1_expected = cache.equations[0].lhs.clone();
-        let arg2_expected = cache.equations[1].lhs.clone();
-        let arg3_expected = cache.equations[2].lhs.clone();
-        let expected_statement = StatementTarget::new_native(
-            builder,
-            &self.params,
-            NativePredicate::SumOf,
-            &[arg1_expected, arg2_expected, arg3_expected],
-        );
-        let st_ok = builder.is_equal_flattenable(st, &expected_statement);
-
-        let ok = builder.all([op_code_ok, arg_types_ok, sum_ok, st_ok]);
-        measure_gates_end!(builder, measure);
-        ok
-    }
-
-    fn eval_product_of(
-        &self,
-        builder: &mut CircuitBuilder,
-        st: &StatementTarget,
-        op_type: &OperationTypeTarget,
-        cache: &StatementCache,
-    ) -> BoolTarget {
-        let measure = measure_gates_begin!(builder, "OpProductOf");
-        let value_zero = ValueTarget::zero(builder);
-
-        let op_code_ok = op_type.has_native(builder, NativeOperation::ProductOf);
-
-        let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) = cache.first_n_args_as_values();
-
-        // Select to avoid overflow.
-        let factor1 = builder.select_value(op_code_ok, arg2_value, value_zero);
-        let factor2 = builder.select_value(op_code_ok, arg3_value, value_zero);
-
-        let expected_product = builder.i64_mul(factor1, factor2);
-
-        let product_ok = builder.is_equal_slice(&arg1_value.elements, &expected_product.elements);
-
-        let arg1_expected = cache.equations[0].lhs.clone();
-        let arg2_expected = cache.equations[1].lhs.clone();
-        let arg3_expected = cache.equations[2].lhs.clone();
-        let expected_statement = StatementTarget::new_native(
-            builder,
-            &self.params,
-            NativePredicate::ProductOf,
-            &[arg1_expected, arg2_expected, arg3_expected],
-        );
-        let st_ok = builder.is_equal_flattenable(st, &expected_statement);
-
-        let ok = builder.all([op_code_ok, arg_types_ok, product_ok, st_ok]);
-        measure_gates_end!(builder, measure);
-        ok
-    }
-
-    fn eval_max_of(
-        &self,
-        builder: &mut CircuitBuilder,
-        st: &StatementTarget,
-        op_type: &OperationTypeTarget,
-        cache: &StatementCache,
-    ) -> BoolTarget {
-        let measure = measure_gates_begin!(builder, "OpMaxOf");
-        let op_code_ok = op_type.has_native(builder, NativeOperation::MaxOf);
-
-        let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) = cache.first_n_args_as_values();
-
-        // Check that arg1_value is equal to one of the other two
-        // values.
-        let arg1_eq_arg2 = builder.is_equal_slice(&arg1_value.elements, &arg2_value.elements);
-        let arg1_eq_arg3 = builder.is_equal_slice(&arg1_value.elements, &arg3_value.elements);
-
-        let all_eq = builder.and(arg1_eq_arg2, arg1_eq_arg3);
-        let not_all_eq = builder.not(all_eq);
-
-        let arg1_check = builder.or(arg1_eq_arg2, arg1_eq_arg3);
-
-        // If it is not equal to any of the other two values, it must be greater than it.
-        let lower_bound = builder.select_value(arg1_eq_arg2, arg3_value, arg2_value);
-
-        // Only check lower bound if not all args are equal.
-        let lt_check_enabled = builder.and(not_all_eq, op_code_ok);
-        builder.assert_i64_less_if(lt_check_enabled, lower_bound, arg1_value);
-
-        let arg1_expected = cache.equations[0].lhs.clone();
-        let arg2_expected = cache.equations[1].lhs.clone();
-        let arg3_expected = cache.equations[2].lhs.clone();
-        let expected_statement = StatementTarget::new_native(
-            builder,
-            &self.params,
-            NativePredicate::MaxOf,
-            &[arg1_expected, arg2_expected, arg3_expected],
-        );
-        let st_ok = builder.is_equal_flattenable(st, &expected_statement);
-
-        let ok = builder.all([op_code_ok, arg_types_ok, arg1_check, st_ok]);
-        measure_gates_end!(builder, measure);
-        ok
-    }
-
-    fn eval_transitive_eq(
-        &self,
-        builder: &mut CircuitBuilder,
-        st: &StatementTarget,
-        op_type: &OperationTypeTarget,
-        resolved_op_args: &[StatementTarget],
-    ) -> BoolTarget {
-        let measure = measure_gates_begin!(builder, "OpTransitiveEq");
-        let op_code_ok =
-            op_type.has_native(builder, NativeOperation::TransitiveEqualFromStatements);
-
-        let arg1_type_ok =
-            resolved_op_args[0].has_native_type(builder, &self.params, NativePredicate::Equal);
-        let arg2_type_ok =
-            resolved_op_args[1].has_native_type(builder, &self.params, NativePredicate::Equal);
-        let arg_types_ok = builder.all([arg1_type_ok, arg2_type_ok]);
-
-        let arg1_lhs = &resolved_op_args[0].args[0];
-        let arg1_rhs = &resolved_op_args[0].args[1];
-        let arg2_lhs = &resolved_op_args[1].args[0];
-        let arg2_rhs = &resolved_op_args[1].args[1];
-
-        let inner_args_match = builder.is_equal_slice(&arg1_rhs.elements, &arg2_lhs.elements);
-
-        let expected_statement = StatementTarget::new_native(
-            builder,
-            &self.params,
-            NativePredicate::Equal,
-            &[arg1_lhs.clone(), arg2_rhs.clone()],
-        );
-        let st_ok = builder.is_equal_flattenable(st, &expected_statement);
-
-        let ok = builder.all([op_code_ok, arg_types_ok, inner_args_match, st_ok]);
-        measure_gates_end!(builder, measure);
-        ok
-    }
-    fn eval_none(
-        &self,
-        builder: &mut CircuitBuilder,
-        st: &StatementTarget,
-        op_type: &OperationTypeTarget,
-    ) -> BoolTarget {
-        let measure = measure_gates_begin!(builder, "OpNone");
-        let op_code_ok = op_type.has_native(builder, NativeOperation::None);
-
-        let expected_statement =
-            StatementTarget::new_native(builder, &self.params, NativePredicate::None, &[]);
-        let st_ok = builder.is_equal_flattenable(st, &expected_statement);
-
-        let ok = builder.all([op_code_ok, st_ok]);
-        measure_gates_end!(builder, measure);
-        ok
-    }
-
-    fn eval_new_entry(
-        &self,
-        builder: &mut CircuitBuilder,
-        st: &StatementTarget,
-        op_type: &OperationTypeTarget,
-        prev_statements: &[StatementTarget],
-        input_statements_offset: usize,
-    ) -> BoolTarget {
-        let measure = measure_gates_begin!(builder, "OpNewEntry");
-        let op_code_ok = op_type.has_native(builder, NativeOperation::NewEntry);
-        let st_code_ok = st.has_native_type(builder, &self.params, NativePredicate::Equal);
-
-        let expected_arg_prefix = builder.constants(
-            &StatementArg::Key(AnchoredKey::from((SELF, ""))).to_fields(&self.params)[..VALUE_SIZE],
-        );
-        let arg_prefix_ok =
-            builder.is_equal_slice(&st.args[0].elements[..VALUE_SIZE], &expected_arg_prefix);
-
-        let input_statements = &prev_statements[input_statements_offset..];
-        let individual_dupe_checks = input_statements
+                    resolved_merkle_claim,
+                    &cache,
+                ),
+            ]
+        } else {
+            vec![]
+        },
+        // Skip these if there are no resolved custom predicate verifications
+        if let Some(resolved_custom_pred_verification) = resolved_custom_pred_verification {
+            vec![verify_custom_circuit(
+                builder,
+                st,
+                &op.op_type,
+                resolved_custom_pred_verification,
+                &cache.op_args,
+            )]
+        } else {
+            vec![]
+        },
+    ]
+    .concat();
+
+    let ok = builder.any(op_checks);
+    builder.assert_one(ok.target);
+
+    measure_gates_end!(builder, measure);
+    Ok(())
+}
+
+fn verify_contains_from_entries_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    st: &StatementTarget,
+    op_type: &OperationTypeTarget,
+    resolved_merkle_claim: MerkleClaimTarget,
+    cache: &StatementCache,
+) -> BoolTarget {
+    let measure = measure_gates_begin!(builder, "OpContainsFromEntries");
+    let op_code_ok = op_type.has_native(builder, NativeOperation::ContainsFromEntries);
+
+    let (arg_types_ok, [merkle_root_value, key_value, value_value]) =
+        cache.first_n_args_as_values();
+
+    // Check Merkle proof (verified elsewhere) against op args.
+    let merkle_proof_checks = [
+        /* The supplied Merkle proof must be enabled. */
+        resolved_merkle_claim.enabled,
+        /* ...and it must be an existence proof. */
+        resolved_merkle_claim.existence,
+        /* ...for the root-key-value triple in the resolved op args. */
+        builder.is_equal_slice(
+            &merkle_root_value.elements,
+            &resolved_merkle_claim.root.elements,
+        ),
+        builder.is_equal_slice(&key_value.elements, &resolved_merkle_claim.key.elements),
+        builder.is_equal_slice(&value_value.elements, &resolved_merkle_claim.value.elements),
+    ];
+
+    let merkle_proof_ok = builder.all(merkle_proof_checks);
+
+    // Check output statement
+    let arg1_expected = cache.equations[0].lhs.clone();
+    let arg2_expected = cache.equations[1].lhs.clone();
+    let arg3_expected = cache.equations[2].lhs.clone();
+    let expected_statement = StatementTarget::new_native(
+        builder,
+        params,
+        NativePredicate::Contains,
+        &[arg1_expected, arg2_expected, arg3_expected],
+    );
+    let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+
+    let ok = builder.all([op_code_ok, arg_types_ok, merkle_proof_ok, st_ok]);
+    measure_gates_end!(builder, measure);
+    ok
+}
+
+fn verify_not_contains_from_entries_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    st: &StatementTarget,
+    op_type: &OperationTypeTarget,
+    resolved_merkle_claim: MerkleClaimTarget,
+    cache: &StatementCache,
+) -> BoolTarget {
+    let measure = measure_gates_begin!(builder, "OpNotContainsFromEntries");
+    let op_code_ok = op_type.has_native(builder, NativeOperation::NotContainsFromEntries);
+
+    let (arg_types_ok, [merkle_root_value, key_value]) = cache.first_n_args_as_values();
+
+    // Check Merkle proof (verified elsewhere) against op args.
+    let merkle_proof_checks = [
+        /* The supplied Merkle proof must be enabled. */
+        resolved_merkle_claim.enabled,
+        /* ...and it must be a nonexistence proof. */
+        builder.not(resolved_merkle_claim.existence),
+        /* ...for the root-key pair in the resolved op args. */
+        builder.is_equal_slice(
+            &merkle_root_value.elements,
+            &resolved_merkle_claim.root.elements,
+        ),
+        builder.is_equal_slice(&key_value.elements, &resolved_merkle_claim.key.elements),
+    ];
+
+    let merkle_proof_ok = builder.all(merkle_proof_checks);
+
+    // Check output statement
+    let arg1_expected = cache.equations[0].lhs.clone();
+    let arg2_expected = cache.equations[1].lhs.clone();
+    let expected_statement = StatementTarget::new_native(
+        builder,
+        params,
+        NativePredicate::NotContains,
+        &[arg1_expected, arg2_expected],
+    );
+    let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+
+    let ok = builder.all([op_code_ok, arg_types_ok, merkle_proof_ok, st_ok]);
+    measure_gates_end!(builder, measure);
+    ok
+}
+
+fn verify_custom_circuit(
+    builder: &mut CircuitBuilder,
+    st: &StatementTarget,
+    op_type: &OperationTypeTarget,
+    resolved_custom_pred_verification: HashOutTarget,
+    resolved_op_args: &[StatementTarget],
+) -> BoolTarget {
+    let measure = measure_gates_begin!(builder, "OpCustom");
+    let query = CustomPredicateVerifyQueryTarget {
+        statement: st.clone(),
+        op_type: op_type.clone(),
+        op_args: resolved_op_args.to_vec(),
+    };
+    let out_query_hash = query.hash(builder);
+    let ok = builder.is_equal_slice(
+        &resolved_custom_pred_verification.elements,
+        &out_query_hash.elements,
+    );
+    measure_gates_end!(builder, measure);
+    ok
+}
+
+/// Carries out the checks necessary for EqualFromEntries and
+/// NotEqualFromEntries.
+fn verify_eq_neq_from_entries_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    st: &StatementTarget,
+    op_type: &OperationTypeTarget,
+    cache: &StatementCache,
+) -> BoolTarget {
+    let measure = measure_gates_begin!(builder, "OpEqNeqFromEntries");
+    let eq_op_st_code_ok = {
+        let op_code_ok = op_type.has_native(builder, NativeOperation::EqualFromEntries);
+        let st_code_ok = st.has_native_type(builder, params, NativePredicate::Equal);
+        builder.and(op_code_ok, st_code_ok)
+    };
+    let neq_op_st_code_ok = {
+        let op_code_ok = op_type.has_native(builder, NativeOperation::NotEqualFromEntries);
+        let st_code_ok = st.has_native_type(builder, params, NativePredicate::NotEqual);
+        builder.and(op_code_ok, st_code_ok)
+    };
+    let op_st_code_ok = builder.or(eq_op_st_code_ok, neq_op_st_code_ok);
+
+    let (arg_types_ok, [arg1_value, arg2_value]) = cache.first_n_args_as_values();
+
+    let op_args_eq = builder.is_equal_slice(&arg1_value.elements, &arg2_value.elements);
+    let op_args_ok = builder.is_equal(op_args_eq.target, eq_op_st_code_ok.target);
+
+    let arg1_expected = cache.equations[0].lhs.clone();
+    let arg2_expected = cache.equations[1].lhs.clone();
+
+    let expected_st_args: Vec<_> = [arg1_expected, arg2_expected]
+        .into_iter()
+        .chain(std::iter::repeat_with(|| StatementArgTarget::none(builder)))
+        .take(params.max_statement_args)
+        .flat_map(|arg| arg.elements)
+        .collect();
+
+    let st_args_ok = builder.is_equal_slice(
+        &expected_st_args,
+        &st.args
             .iter()
-            .map(|ps| builder.is_equal_slice(&st.args[0].elements, &ps.args[0].elements))
-            .collect::<Vec<_>>();
-        let dupe_check = builder.any(individual_dupe_checks);
-        let no_dupes_ok = builder.not(dupe_check);
+            .flat_map(|arg| arg.elements)
+            .collect::<Vec<_>>(),
+    );
 
-        let ok = builder.all([op_code_ok, st_code_ok, arg_prefix_ok, no_dupes_ok]);
-        measure_gates_end!(builder, measure);
-        ok
-    }
+    let ok = builder.all([op_st_code_ok, arg_types_ok, op_args_ok, st_args_ok]);
+    measure_gates_end!(builder, measure);
+    ok
+}
 
-    fn eval_lt_to_neq(
-        &self,
-        builder: &mut CircuitBuilder,
-        st: &StatementTarget,
-        op_type: &OperationTypeTarget,
-        resolved_op_args: &[StatementTarget],
-    ) -> BoolTarget {
-        let measure = measure_gates_begin!(builder, "OpLtToNeq");
-        let op_code_ok = op_type.has_native(builder, NativeOperation::LtToNotEqual);
+/// Carries out the checks necessary for LtFromEntries and
+/// LtEqFromEntries.
+fn verify_lt_lteq_from_entries_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    st: &StatementTarget,
+    op_type: &OperationTypeTarget,
+    cache: &StatementCache,
+) -> BoolTarget {
+    let measure = measure_gates_begin!(builder, "OpLtLteqFromEntries");
+    let zero = ValueTarget::zero(builder);
+    let one = ValueTarget::one(builder);
 
-        let arg_type_ok =
-            resolved_op_args[0].has_native_type(builder, &self.params, NativePredicate::Lt);
+    let lt_op_st_code_ok = {
+        let op_code_ok = op_type.has_native(builder, NativeOperation::LtFromEntries);
+        let st_code_ok = st.has_native_type(builder, params, NativePredicate::Lt);
+        builder.and(op_code_ok, st_code_ok)
+    };
+    let lteq_op_st_code_ok = {
+        let op_code_ok = op_type.has_native(builder, NativeOperation::LtEqFromEntries);
+        let st_code_ok = st.has_native_type(builder, params, NativePredicate::LtEq);
+        builder.and(op_code_ok, st_code_ok)
+    };
+    let op_st_code_ok = builder.or(lt_op_st_code_ok, lteq_op_st_code_ok);
 
-        let arg1_expected = resolved_op_args[0].args[0].clone();
-        let arg2_expected = resolved_op_args[0].args[1].clone();
+    let (arg_types_ok, [arg1_value, arg2_value]) = cache.first_n_args_as_values();
 
-        let expected_statement = StatementTarget::new_native(
-            builder,
-            &self.params,
-            NativePredicate::NotEqual,
-            &[arg1_expected, arg2_expected],
-        );
-        let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+    // If we are not dealing with the right op & statement types,
+    // replace args with dummy values in the following checks.
+    let value1 = builder.select_value(op_st_code_ok, arg1_value, zero);
+    let value2 = builder.select_value(op_st_code_ok, arg2_value, one);
 
-        let ok = builder.all([op_code_ok, arg_type_ok, st_ok]);
-        measure_gates_end!(builder, measure);
-        ok
-    }
+    // Range check
+    builder.assert_i64(value1);
+    builder.assert_i64(value2);
 
-    fn eval_copy(
-        &self,
-        builder: &mut CircuitBuilder,
-        st: &StatementTarget,
-        op_type: &OperationTypeTarget,
-        resolved_op_args: &[StatementTarget],
-    ) -> BoolTarget {
-        let measure = measure_gates_begin!(builder, "OpCopy");
-        let op_code_ok = op_type.has_native(builder, NativeOperation::CopyStatement);
+    // Check for equality.
+    let args_equal = builder.is_equal_slice(&value1.elements, &value2.elements);
 
-        let expected_statement = &resolved_op_args[0];
-        let st_ok = builder.is_equal_flattenable(st, expected_statement);
+    // Check < if applicable.
+    let lt_check_flag = {
+        let not_args_equal = builder.not(args_equal);
+        let lteq_eq_case = builder.and(lteq_op_st_code_ok, not_args_equal);
+        builder.or(lt_op_st_code_ok, lteq_eq_case)
+    };
+    builder.assert_i64_less_if(lt_check_flag, value1, value2);
 
-        let ok = builder.all([op_code_ok, st_ok]);
-        measure_gates_end!(builder, measure);
-        ok
-    }
+    let arg1_expected = cache.equations[0].lhs.clone();
+    let arg2_expected = cache.equations[1].lhs.clone();
+
+    let expected_st_args: Vec<_> = [arg1_expected, arg2_expected]
+        .into_iter()
+        .chain(std::iter::repeat_with(|| StatementArgTarget::none(builder)))
+        .take(params.max_statement_args)
+        .flat_map(|arg| arg.elements)
+        .collect();
+
+    let st_args_ok = builder.is_equal_slice(
+        &expected_st_args,
+        &st.args
+            .iter()
+            .flat_map(|arg| arg.elements)
+            .collect::<Vec<_>>(),
+    );
+
+    let ok = builder.all([op_st_code_ok, arg_types_ok, st_args_ok]);
+    measure_gates_end!(builder, measure);
+    ok
+}
+
+fn verify_hash_of_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    st: &StatementTarget,
+    op_type: &OperationTypeTarget,
+    cache: &StatementCache,
+) -> BoolTarget {
+    let measure = measure_gates_begin!(builder, "OpHashOf");
+    let op_code_ok = op_type.has_native(builder, NativeOperation::HashOf);
+
+    let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) = cache.first_n_args_as_values();
+
+    let expected_hash_value = builder.hash_values(arg2_value, arg3_value);
+
+    let hash_value_ok = builder.is_equal_slice(&arg1_value.elements, &expected_hash_value.elements);
+
+    let arg1_expected = cache.equations[0].lhs.clone();
+    let arg2_expected = cache.equations[1].lhs.clone();
+    let arg3_expected = cache.equations[2].lhs.clone();
+    let expected_statement = StatementTarget::new_native(
+        builder,
+        params,
+        NativePredicate::HashOf,
+        &[arg1_expected, arg2_expected, arg3_expected],
+    );
+    let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+
+    let ok = builder.all([op_code_ok, arg_types_ok, hash_value_ok, st_ok]);
+    measure_gates_end!(builder, measure);
+    ok
+}
+
+fn verify_sum_of_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    st: &StatementTarget,
+    op_type: &OperationTypeTarget,
+    cache: &StatementCache,
+) -> BoolTarget {
+    let measure = measure_gates_begin!(builder, "OpSumOf");
+    let value_zero = ValueTarget::zero(builder);
+
+    let op_code_ok = op_type.has_native(builder, NativeOperation::SumOf);
+
+    let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) = cache.first_n_args_as_values();
+
+    // Select to avoid overflow.
+    let summand1 = builder.select_value(op_code_ok, arg2_value, value_zero);
+    let summand2 = builder.select_value(op_code_ok, arg3_value, value_zero);
+
+    let expected_sum = builder.i64_add(summand1, summand2);
+
+    let sum_ok = builder.is_equal_slice(&arg1_value.elements, &expected_sum.elements);
+
+    let arg1_expected = cache.equations[0].lhs.clone();
+    let arg2_expected = cache.equations[1].lhs.clone();
+    let arg3_expected = cache.equations[2].lhs.clone();
+    let expected_statement = StatementTarget::new_native(
+        builder,
+        params,
+        NativePredicate::SumOf,
+        &[arg1_expected, arg2_expected, arg3_expected],
+    );
+    let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+
+    let ok = builder.all([op_code_ok, arg_types_ok, sum_ok, st_ok]);
+    measure_gates_end!(builder, measure);
+    ok
+}
+
+fn verify_product_of_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    st: &StatementTarget,
+    op_type: &OperationTypeTarget,
+    cache: &StatementCache,
+) -> BoolTarget {
+    let measure = measure_gates_begin!(builder, "OpProductOf");
+    let value_zero = ValueTarget::zero(builder);
+
+    let op_code_ok = op_type.has_native(builder, NativeOperation::ProductOf);
+
+    let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) = cache.first_n_args_as_values();
+
+    // Select to avoid overflow.
+    let factor1 = builder.select_value(op_code_ok, arg2_value, value_zero);
+    let factor2 = builder.select_value(op_code_ok, arg3_value, value_zero);
+
+    let expected_product = builder.i64_mul(factor1, factor2);
+
+    let product_ok = builder.is_equal_slice(&arg1_value.elements, &expected_product.elements);
+
+    let arg1_expected = cache.equations[0].lhs.clone();
+    let arg2_expected = cache.equations[1].lhs.clone();
+    let arg3_expected = cache.equations[2].lhs.clone();
+    let expected_statement = StatementTarget::new_native(
+        builder,
+        params,
+        NativePredicate::ProductOf,
+        &[arg1_expected, arg2_expected, arg3_expected],
+    );
+    let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+
+    let ok = builder.all([op_code_ok, arg_types_ok, product_ok, st_ok]);
+    measure_gates_end!(builder, measure);
+    ok
+}
+
+fn verify_max_of_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    st: &StatementTarget,
+    op_type: &OperationTypeTarget,
+    cache: &StatementCache,
+) -> BoolTarget {
+    let measure = measure_gates_begin!(builder, "OpMaxOf");
+    let op_code_ok = op_type.has_native(builder, NativeOperation::MaxOf);
+
+    let (arg_types_ok, [arg1_value, arg2_value, arg3_value]) = cache.first_n_args_as_values();
+
+    // Check that arg1_value is equal to one of the other two
+    // values.
+    let arg1_eq_arg2 = builder.is_equal_slice(&arg1_value.elements, &arg2_value.elements);
+    let arg1_eq_arg3 = builder.is_equal_slice(&arg1_value.elements, &arg3_value.elements);
+
+    let all_eq = builder.and(arg1_eq_arg2, arg1_eq_arg3);
+    let not_all_eq = builder.not(all_eq);
+
+    let arg1_check = builder.or(arg1_eq_arg2, arg1_eq_arg3);
+
+    // If it is not equal to any of the other two values, it must be greater than it.
+    let lower_bound = builder.select_value(arg1_eq_arg2, arg3_value, arg2_value);
+
+    // Only check lower bound if not all args are equal.
+    let lt_check_enabled = builder.and(not_all_eq, op_code_ok);
+    builder.assert_i64_less_if(lt_check_enabled, lower_bound, arg1_value);
+
+    let arg1_expected = cache.equations[0].lhs.clone();
+    let arg2_expected = cache.equations[1].lhs.clone();
+    let arg3_expected = cache.equations[2].lhs.clone();
+    let expected_statement = StatementTarget::new_native(
+        builder,
+        params,
+        NativePredicate::MaxOf,
+        &[arg1_expected, arg2_expected, arg3_expected],
+    );
+    let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+
+    let ok = builder.all([op_code_ok, arg_types_ok, arg1_check, st_ok]);
+    measure_gates_end!(builder, measure);
+    ok
+}
+
+fn verify_transitive_eq_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    st: &StatementTarget,
+    op_type: &OperationTypeTarget,
+    resolved_op_args: &[StatementTarget],
+) -> BoolTarget {
+    let measure = measure_gates_begin!(builder, "OpTransitiveEq");
+    let op_code_ok = op_type.has_native(builder, NativeOperation::TransitiveEqualFromStatements);
+
+    let arg1_type_ok = resolved_op_args[0].has_native_type(builder, params, NativePredicate::Equal);
+    let arg2_type_ok = resolved_op_args[1].has_native_type(builder, params, NativePredicate::Equal);
+    let arg_types_ok = builder.all([arg1_type_ok, arg2_type_ok]);
+
+    let arg1_lhs = &resolved_op_args[0].args[0];
+    let arg1_rhs = &resolved_op_args[0].args[1];
+    let arg2_lhs = &resolved_op_args[1].args[0];
+    let arg2_rhs = &resolved_op_args[1].args[1];
+
+    let inner_args_match = builder.is_equal_slice(&arg1_rhs.elements, &arg2_lhs.elements);
+
+    let expected_statement = StatementTarget::new_native(
+        builder,
+        params,
+        NativePredicate::Equal,
+        &[arg1_lhs.clone(), arg2_rhs.clone()],
+    );
+    let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+
+    let ok = builder.all([op_code_ok, arg_types_ok, inner_args_match, st_ok]);
+    measure_gates_end!(builder, measure);
+    ok
+}
+
+fn verify_none_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    st: &StatementTarget,
+    op_type: &OperationTypeTarget,
+) -> BoolTarget {
+    let measure = measure_gates_begin!(builder, "OpNone");
+    let op_code_ok = op_type.has_native(builder, NativeOperation::None);
+
+    let expected_statement =
+        StatementTarget::new_native(builder, params, NativePredicate::None, &[]);
+    let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+
+    let ok = builder.all([op_code_ok, st_ok]);
+    measure_gates_end!(builder, measure);
+    ok
+}
+
+fn verify_new_entry_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    st: &StatementTarget,
+    op_type: &OperationTypeTarget,
+    prev_statements: &[StatementTarget],
+    input_statements_offset: usize,
+) -> BoolTarget {
+    let measure = measure_gates_begin!(builder, "OpNewEntry");
+    let op_code_ok = op_type.has_native(builder, NativeOperation::NewEntry);
+    let st_code_ok = st.has_native_type(builder, params, NativePredicate::Equal);
+
+    let expected_arg_prefix = builder.constants(
+        &StatementArg::Key(AnchoredKey::from((SELF, ""))).to_fields(params)[..VALUE_SIZE],
+    );
+    let arg_prefix_ok =
+        builder.is_equal_slice(&st.args[0].elements[..VALUE_SIZE], &expected_arg_prefix);
+
+    let input_statements = &prev_statements[input_statements_offset..];
+    let individual_dupe_checks = input_statements
+        .iter()
+        .map(|ps| builder.is_equal_slice(&st.args[0].elements, &ps.args[0].elements))
+        .collect::<Vec<_>>();
+    let dupe_check = builder.any(individual_dupe_checks);
+    let no_dupes_ok = builder.not(dupe_check);
+
+    let ok = builder.all([op_code_ok, st_code_ok, arg_prefix_ok, no_dupes_ok]);
+    measure_gates_end!(builder, measure);
+    ok
+}
+
+fn verify_lt_to_neq_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    st: &StatementTarget,
+    op_type: &OperationTypeTarget,
+    resolved_op_args: &[StatementTarget],
+) -> BoolTarget {
+    let measure = measure_gates_begin!(builder, "OpLtToNeq");
+    let op_code_ok = op_type.has_native(builder, NativeOperation::LtToNotEqual);
+
+    let arg_type_ok = resolved_op_args[0].has_native_type(builder, params, NativePredicate::Lt);
+
+    let arg1_expected = resolved_op_args[0].args[0].clone();
+    let arg2_expected = resolved_op_args[0].args[1].clone();
+
+    let expected_statement = StatementTarget::new_native(
+        builder,
+        params,
+        NativePredicate::NotEqual,
+        &[arg1_expected, arg2_expected],
+    );
+    let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+
+    let ok = builder.all([op_code_ok, arg_type_ok, st_ok]);
+    measure_gates_end!(builder, measure);
+    ok
+}
+
+fn verify_copy_circuit(
+    builder: &mut CircuitBuilder,
+    st: &StatementTarget,
+    op_type: &OperationTypeTarget,
+    resolved_op_args: &[StatementTarget],
+) -> BoolTarget {
+    let measure = measure_gates_begin!(builder, "OpCopy");
+    let op_code_ok = op_type.has_native(builder, NativeOperation::CopyStatement);
+
+    let expected_statement = &resolved_op_args[0];
+    let st_ok = builder.is_equal_flattenable(st, expected_statement);
+
+    let ok = builder.all([op_code_ok, st_ok]);
+    measure_gates_end!(builder, measure);
+    ok
 }
 
 struct CustomOperationVerifyGadget {
@@ -1357,10 +1348,8 @@ impl MainPodVerifyGadget {
         // 5. Verify input statements
         for (i, (st, op)) in input_statements.iter().zip(operations.iter()).enumerate() {
             let prev_statements = &statements[..input_statements_offset + i];
-            OperationVerifyGadget {
-                params: params.clone(),
-            }
-            .eval(
+            verify_operation_circuit(
+                params,
                 builder,
                 st,
                 op,
@@ -1664,10 +1653,8 @@ mod tests {
             .collect();
         let custom_predicate_verification_table = vec![];
 
-        OperationVerifyGadget {
-            params: params.clone(),
-        }
-        .eval(
+        verify_operation_circuit(
+            &params,
             &mut builder,
             &st_target,
             &op_target,
