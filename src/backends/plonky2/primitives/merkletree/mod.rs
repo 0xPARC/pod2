@@ -451,13 +451,31 @@ impl fmt::Display for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Intermediate(n) => {
-                writeln!(
-                    f,
-                    "\"{}\" -> {{ \"{}\" \"{}\" }}",
-                    n.hash(),
-                    n.left.hash(),
-                    n.right.hash()
-                )?;
+                let left_hash: String = if n.left.is_empty() {
+                    writeln!(
+                        f,
+                        "\"{}_child_of_{}\" [label=\"{}\"]",
+                        n.left.hash(),
+                        n.hash(),
+                        n.left.hash()
+                    )?;
+                    format!("\"{}_child_of_{}\"", n.left.hash(), n.hash())
+                } else {
+                    format!("\"{}\"", n.left.hash())
+                };
+                let right_hash = if n.right.is_empty() {
+                    writeln!(
+                        f,
+                        "\"{}_child_of_{}\" [label=\"{}\"]",
+                        n.right.hash(),
+                        n.hash(),
+                        n.right.hash()
+                    )?;
+                    format!("\"{}_child_of_{}\"", n.right.hash(), n.hash())
+                } else {
+                    format!("\"{}\"", n.right.hash())
+                };
+                writeln!(f, "\"{}\" -> {{ {} {} }}", n.hash(), left_hash, right_hash,)?;
                 write!(f, "{}", n.left)?;
                 write!(f, "{}", n.right)
             }
