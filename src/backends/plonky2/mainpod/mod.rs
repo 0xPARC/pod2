@@ -739,12 +739,12 @@ pub mod tests {
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params);
-        let mut signer = Signer(SecretKey(BigUint::one()));
-        let gov_id_pod = gov_id_builder.sign(&mut signer)?;
-        let mut signer = Signer(SecretKey(2u64.into()));
-        let pay_stub_pod = pay_stub_builder.sign(&mut signer)?;
-        let mut signer = Signer(SecretKey(3u64.into()));
-        let sanction_list_pod = sanction_list_builder.sign(&mut signer)?;
+        let signer = Signer(SecretKey(BigUint::one()));
+        let gov_id_pod = gov_id_builder.sign(&signer)?;
+        let signer = Signer(SecretKey(2u64.into()));
+        let pay_stub_pod = pay_stub_builder.sign(&signer)?;
+        let signer = Signer(SecretKey(3u64.into()));
+        let sanction_list_pod = sanction_list_builder.sign(&signer)?;
         let kyc_builder = zu_kyc_pod_builder(
             &params,
             &vd_set,
@@ -753,8 +753,8 @@ pub mod tests {
             &sanction_list_pod,
         )?;
 
-        let mut prover = Prover {};
-        let kyc_pod = kyc_builder.prove(&mut prover, &params)?;
+        let prover = Prover {};
+        let kyc_pod = kyc_builder.prove(&prover, &params)?;
         crate::measure_gates_print!();
         let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
 
@@ -778,8 +778,8 @@ pub mod tests {
         gov_id_builder.insert("idNumber", "4242424242");
         gov_id_builder.insert("dateOfBirth", 1169909384);
         gov_id_builder.insert("socialSecurityNumber", "G2121210");
-        let mut signer = Signer(SecretKey(42u64.into()));
-        let gov_id = gov_id_builder.sign(&mut signer).unwrap();
+        let signer = Signer(SecretKey(42u64.into()));
+        let gov_id = gov_id_builder.sign(&signer).unwrap();
         let now_minus_18y: i64 = 1169909388;
         let mut kyc_builder = frontend::MainPodBuilder::new(&params, &vd_set);
         kyc_builder.add_signed_pod(&gov_id);
@@ -791,8 +791,8 @@ pub mod tests {
         println!();
 
         // Mock
-        let mut prover = MockProver {};
-        let kyc_pod = kyc_builder.prove(&mut prover, &params).unwrap();
+        let prover = MockProver {};
+        let kyc_pod = kyc_builder.prove(&prover, &params).unwrap();
         let pod = (kyc_pod.pod as Box<dyn Any>)
             .downcast::<MockMainPod>()
             .unwrap();
@@ -800,8 +800,8 @@ pub mod tests {
         println!("{:#}", pod);
 
         // Real
-        let mut prover = Prover {};
-        let kyc_pod = kyc_builder.prove(&mut prover, &params).unwrap();
+        let prover = Prover {};
+        let kyc_pod = kyc_builder.prove(&prover, &params).unwrap();
         let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
         pod.verify().unwrap()
     }
@@ -832,8 +832,8 @@ pub mod tests {
         let pod_builder = frontend::MainPodBuilder::new(&params, &vd_set);
 
         // Mock
-        let mut prover = MockProver {};
-        let kyc_pod = pod_builder.prove(&mut prover, &params).unwrap();
+        let prover = MockProver {};
+        let kyc_pod = pod_builder.prove(&prover, &params).unwrap();
         let pod = (kyc_pod.pod as Box<dyn Any>)
             .downcast::<MockMainPod>()
             .unwrap();
@@ -841,8 +841,8 @@ pub mod tests {
         println!("{:#}", pod);
 
         // Real
-        let mut prover = Prover {};
-        let kyc_pod = pod_builder.prove(&mut prover, &params).unwrap();
+        let prover = Prover {};
+        let kyc_pod = pod_builder.prove(&prover, &params).unwrap();
         let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
         pod.verify().unwrap()
     }
@@ -853,27 +853,23 @@ pub mod tests {
         println!("{:#?}", params);
         let vd_set = &*DEFAULT_VD_SET;
 
-        let mut alice = Signer(SecretKey(1u32.into()));
-        let mut bob = Signer(SecretKey(2u32.into()));
+        let alice = Signer(SecretKey(1u32.into()));
+        let bob = Signer(SecretKey(2u32.into()));
         let charlie = Signer(SecretKey(3u32.into()));
 
         // Alice attests that she is ETH friends with Bob and Bob
         // attests that he is ETH friends with Charlie.
-        let alice_attestation =
-            attest_eth_friend(&params, &mut alice, Value::from(bob.public_key()));
-        let bob_attestation =
-            attest_eth_friend(&params, &mut bob, Value::from(charlie.public_key()));
+        let alice_attestation = attest_eth_friend(&params, &alice, Value::from(bob.public_key()));
+        let bob_attestation = attest_eth_friend(&params, &bob, Value::from(charlie.public_key()));
 
         let helper = EthDosHelper::new(&params, vd_set, false, Value::from(alice.public_key()))?;
-        let mut prover = Prover {};
-        let dist_1 = helper
-            .dist_1(&alice_attestation)?
-            .prove(&mut prover, &params)?;
+        let prover = Prover {};
+        let dist_1 = helper.dist_1(&alice_attestation)?.prove(&prover, &params)?;
         crate::measure_gates_print!();
         dist_1.pod.verify()?;
         let dist_2 = helper
             .dist_n_plus_1(&dist_1, &bob_attestation)?
-            .prove(&mut prover, &params)?;
+            .prove(&prover, &params)?;
         Ok(dist_2.pod.verify()?)
     }
 
@@ -920,12 +916,12 @@ pub mod tests {
 
         let _st3 = pod_builder.priv_op(op!(custom, cpb_and.clone(), st0, st2))?;
 
-        let mut prover = MockProver {};
-        let pod = pod_builder.prove(&mut prover, &params)?;
+        let prover = MockProver {};
+        let pod = pod_builder.prove(&prover, &params)?;
         assert!(pod.pod.verify().is_ok());
 
-        let mut prover = Prover {};
-        let pod = pod_builder.prove(&mut prover, &params)?;
+        let prover = Prover {};
+        let pod = pod_builder.prove(&prover, &params)?;
         crate::measure_gates_print!();
 
         let pod = (pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
@@ -948,8 +944,8 @@ pub mod tests {
 
         builder.pub_op(op!(set_contains, st, 1))?;
 
-        let mut prover = Prover {};
-        let proof = builder.prove(&mut prover, &params).unwrap();
+        let prover = Prover {};
+        let proof = builder.prove(&prover, &params).unwrap();
         let pod = (proof.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
         Ok(pod.verify()?)
     }

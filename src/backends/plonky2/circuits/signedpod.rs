@@ -219,8 +219,8 @@ pub mod tests {
         pod.insert("dateOfBirth", 1169909384);
         pod.insert("socialSecurityNumber", "G2121210");
         let sk = SecretKey::new_rand();
-        let mut signer = Signer(sk);
-        let pod = pod.sign(&mut signer).unwrap();
+        let signer = Signer(sk);
+        let pod = pod.sign(&signer).unwrap();
         let signed_pod = (pod.pod as Box<dyn Any>).downcast::<SignedPod>().unwrap();
 
         // use the pod in the circuit

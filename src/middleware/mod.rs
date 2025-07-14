@@ -874,7 +874,7 @@ dyn_clone::clone_trait_object!(RecursivePod);
 
 pub trait PodSigner {
     fn sign(
-        &mut self,
+        &self,
         params: &Params,
         kvs: &HashMap<Key, Value>,
     ) -> Result<Box<dyn Pod>, BackendError>;
