@@ -969,91 +969,85 @@ fn normalize_statement_circuit(
     }
 }
 
-pub struct CalculateIdGadget {
-    /// `params.num_public_statements_id` is the total number of statements that will be hashed.
-    /// The id is calculated with front-padded none-statements and then the input statements
-    /// reversed.  The part of the hash from the front-padded none-statements is precomputed.
-    pub params: Params,
+/// Precompute the hash state by absorbing all full chunks from `inputs` and return the reminder
+/// elements that didn't fit into a chunk.
+fn precompute_hash_state<F: RichField, P: PlonkyPermutation<F>>(inputs: &[F]) -> (P, &[F]) {
+    let (inputs, inputs_rem) = inputs.split_at((inputs.len() / P::RATE) * P::RATE);
+    let mut perm = P::new(core::iter::repeat(F::ZERO));
+
+    // Absorb all inputs up to the biggest multiple of RATE.
+    for input_chunk in inputs.chunks(P::RATE) {
+        perm.set_from_slice(input_chunk, 0);
+        perm.permute();
+    }
+
+    (perm, inputs_rem)
 }
 
-impl CalculateIdGadget {
-    /// Precompute the hash state by absorbing all full chunks from `inputs` and return the reminder
-    /// elements that didn't fit into a chunk.
-    fn precompute_hash_state<F: RichField, P: PlonkyPermutation<F>>(inputs: &[F]) -> (P, &[F]) {
-        let (inputs, inputs_rem) = inputs.split_at((inputs.len() / P::RATE) * P::RATE);
-        let mut perm = P::new(core::iter::repeat(F::ZERO));
+/// Hash `inputs` starting from a circuit-constant `perm` state.
+fn hash_from_state_circuit<H: AlgebraicHasher<F>, P: PlonkyPermutation<F>>(
+    builder: &mut CircuitBuilder,
+    perm: P,
+    inputs: &[Target],
+) -> HashOutTarget {
+    let mut state =
+        H::AlgebraicPermutation::new(perm.as_ref().iter().map(|v| builder.constant(*v)));
 
-        // Absorb all inputs up to the biggest multiple of RATE.
-        for input_chunk in inputs.chunks(P::RATE) {
-            perm.set_from_slice(input_chunk, 0);
-            perm.permute();
-        }
-
-        (perm, inputs_rem)
+    // Absorb all input chunks.
+    for input_chunk in inputs.chunks(H::AlgebraicPermutation::RATE) {
+        // Overwrite the first r elements with the inputs. This differs from a standard sponge,
+        // where we would xor or add in the inputs. This is a well-known variant, though,
+        // sometimes called "overwrite mode".
+        state.set_from_slice(input_chunk, 0);
+        state = builder.permute::<H>(state);
     }
 
-    /// Hash `inputs` starting from a circuit-constant `perm` state.
-    fn hash_from_state<H: AlgebraicHasher<F>, P: PlonkyPermutation<F>>(
-        builder: &mut CircuitBuilder,
-        perm: P,
-        inputs: &[Target],
-    ) -> HashOutTarget {
-        let mut state =
-            H::AlgebraicPermutation::new(perm.as_ref().iter().map(|v| builder.constant(*v)));
-
-        // Absorb all input chunks.
-        for input_chunk in inputs.chunks(H::AlgebraicPermutation::RATE) {
-            // Overwrite the first r elements with the inputs. This differs from a standard sponge,
-            // where we would xor or add in the inputs. This is a well-known variant, though,
-            // sometimes called "overwrite mode".
-            state.set_from_slice(input_chunk, 0);
-            state = builder.permute::<H>(state);
-        }
-
-        let num_outputs = NUM_HASH_OUT_ELTS;
-        // Squeeze until we have the desired number of outputs.
-        let mut outputs = Vec::with_capacity(num_outputs);
-        loop {
-            for &s in state.squeeze() {
-                outputs.push(s);
-                if outputs.len() == num_outputs {
-                    return HashOutTarget::from_vec(outputs);
-                }
+    let num_outputs = NUM_HASH_OUT_ELTS;
+    // Squeeze until we have the desired number of outputs.
+    let mut outputs = Vec::with_capacity(num_outputs);
+    loop {
+        for &s in state.squeeze() {
+            outputs.push(s);
+            if outputs.len() == num_outputs {
+                return HashOutTarget::from_vec(outputs);
             }
-            state = builder.permute::<H>(state);
         }
+        state = builder.permute::<H>(state);
     }
+}
 
-    pub fn eval(
-        &self,
-        builder: &mut CircuitBuilder,
-        // These statements will be padded to reach `self.num_statements`
-        statements: &[StatementTarget],
-    ) -> HashOutTarget {
-        assert!(statements.len() <= self.params.num_public_statements_id);
-        let measure = measure_gates_begin!(builder, "CalculateId");
-        let statements_rev_flattened = statements.iter().rev().flat_map(|s| s.flatten());
-        let mut none_st = mainpod::Statement::from(Statement::None);
-        pad_statement(&self.params, &mut none_st);
-        let front_pad_elts = iter::repeat(&none_st)
-            .take(self.params.num_public_statements_id - statements.len())
-            .flat_map(|s| s.to_fields(&self.params))
-            .collect_vec();
-        let (perm, front_pad_elts_rem) =
-            Self::precompute_hash_state::<F, PoseidonPermutation<F>>(&front_pad_elts);
+/// `params.num_public_statements_id` is the total number of statements that will be hashed.
+/// The id is calculated with front-padded none-statements and then the input statements
+/// reversed.  The part of the hash from the front-padded none-statements is precomputed.
+pub fn calculate_id_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    // These statements will be padded to reach `num_statements`
+    statements: &[StatementTarget],
+) -> HashOutTarget {
+    assert!(statements.len() <= params.num_public_statements_id);
+    let measure = measure_gates_begin!(builder, "CalculateId");
+    let statements_rev_flattened = statements.iter().rev().flat_map(|s| s.flatten());
+    let mut none_st = mainpod::Statement::from(Statement::None);
+    pad_statement(params, &mut none_st);
+    let front_pad_elts = iter::repeat(&none_st)
+        .take(params.num_public_statements_id - statements.len())
+        .flat_map(|s| s.to_fields(params))
+        .collect_vec();
+    let (perm, front_pad_elts_rem) =
+        precompute_hash_state::<F, PoseidonPermutation<F>>(&front_pad_elts);
 
-        // Precompute the Poseidon state for the initial padding chunks
-        let inputs = front_pad_elts_rem
-            .iter()
-            .map(|v| builder.constant(*v))
-            .chain(statements_rev_flattened)
-            .collect_vec();
-        let id =
-            Self::hash_from_state::<PoseidonHash, PoseidonPermutation<F>>(builder, perm, &inputs);
+    // Precompute the Poseidon state for the initial padding chunks
+    let inputs = front_pad_elts_rem
+        .iter()
+        .map(|v| builder.constant(*v))
+        .chain(statements_rev_flattened)
+        .collect_vec();
+    let id =
+        hash_from_state_circuit::<PoseidonHash, PoseidonPermutation<F>>(builder, perm, &inputs);
 
-        measure_gates_end!(builder, measure);
-        id
-    }
+    measure_gates_end!(builder, measure);
+    id
 }
 
 struct MainPodVerifyGadget {
@@ -1210,9 +1204,6 @@ impl MainPodVerifyGadget {
         );
 
         // 1b. Verify all input recursive pods
-        let id_gadget = CalculateIdGadget {
-            params: params.clone(),
-        };
         let vds_root = builder.add_virtual_hash();
         let mut input_pods_self_statements: Vec<Vec<StatementTarget>> = Vec::new();
         let mut vd_mt_proofs: Vec<MerkleClaimAndProofTarget> = Vec::new();
@@ -1239,7 +1230,7 @@ impl MainPodVerifyGadget {
                 input_pod_self_statements.push(self_st);
                 statements.push(normalized_st);
             }
-            let id = id_gadget.eval(builder, &input_pod_self_statements);
+            let id = calculate_id_circuit(params, builder, &input_pod_self_statements);
             builder.connect_hashes(expected_id, id);
             input_pods_self_statements.push(input_pod_self_statements);
 
@@ -1314,10 +1305,7 @@ impl MainPodVerifyGadget {
             self.build_custom_predicate_verification_table(builder, &custom_predicate_table)?;
 
         // 2. Calculate the Pod Id from the public statements
-        let id = CalculateIdGadget {
-            params: self.params.clone(),
-        }
-        .eval(builder, pub_statements);
+        let id = calculate_id_circuit(params, builder, pub_statements);
 
         // 4. Verify type
         let type_statement = &pub_statements[0];
@@ -2949,14 +2937,11 @@ mod tests {
     fn helper_calculate_id(params: &Params, statements: &[Statement]) -> Result<()> {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::new(config);
-        let gadget = CalculateIdGadget {
-            params: params.clone(),
-        };
 
         let statements_target = (0..params.max_public_statements)
             .map(|_| builder.add_virtual_statement(params))
             .collect_vec();
-        let id_target = gadget.eval(&mut builder, &statements_target);
+        let id_target = calculate_id_circuit(params, &mut builder, &statements_target);
 
         let mut pw = PartialWitness::<F>::new();
 
