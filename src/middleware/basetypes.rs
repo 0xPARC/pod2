@@ -236,13 +236,13 @@ impl fmt::Display for Hash {
         if f.alternate() {
             write!(f, "0x{}", self.encode_hex::<String>())
         } else {
-            // display the lest significant field element in big endian
+            // display the least significant field element in big endian
             write!(f, "0x…")?;
-            let v3 = self.0[0].to_canonical_u64();
+            let v0 = self.0[0].to_canonical_u64();
             for i in (0..4).rev() {
-                write!(f, "{:02x}", (v3 >> (i * 8)) & 0xff)?;
+                write!(f, "{:02x}", (v0 >> (i * 8)) & 0xff)?;
             }
-            write!(f, "")
+            Ok(())
         }
     }
 }
