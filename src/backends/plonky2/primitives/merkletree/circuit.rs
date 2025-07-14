@@ -34,10 +34,6 @@ use crate::{
     middleware::{EMPTY_HASH, EMPTY_VALUE, F, HASH_SIZE},
 };
 
-// pub struct MerkleProofGadget {
-//     pub max_depth: usize,
-// }
-
 #[derive(Clone, Debug)]
 pub struct MerkleClaimAndProofTarget {
     pub(crate) max_depth: usize,
@@ -194,10 +190,6 @@ impl MerkleClaimAndProofTarget {
 
         Ok(())
     }
-}
-
-pub struct MerkleProofExistenceGadget {
-    pub max_depth: usize,
 }
 
 pub struct MerkleProofExistenceTarget {

@@ -35,6 +35,9 @@ use crate::{
     middleware::{Hash, Proof, RawValue, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE},
 };
 
+// TODO: This is a very simple wrapper over the signature verification implemented on
+// `SignatureTarget`.  I think we can remove this and use it directly.  Also we're not using the
+// `enabled` flag, so it should be straight-forward to remove this.
 pub struct SignatureVerifyTarget {
     // `enabled` determines if the signature verification is enabled
     pub(crate) enabled: BoolTarget,

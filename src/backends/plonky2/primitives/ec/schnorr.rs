@@ -109,6 +109,7 @@ pub trait WitnessWriteSchnorr: WitnessWrite<GoldilocksField> + WitnessWriteCurve
 
 impl<W: WitnessWrite<GoldilocksField>> WitnessWriteSchnorr for W {}
 
+// TODO: Rename this to a function `verify_signature_circuit`?
 impl SignatureTarget {
     pub fn verify(
         &self,
