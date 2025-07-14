@@ -579,10 +579,22 @@ pub struct CustomPredicateVerifyEntryTarget {
     pub custom_predicate_table_index: Target,
     pub custom_predicate: CustomPredicateEntryTarget,
     pub args: Vec<ValueTarget>,
-    pub query: CustomPredicateVerifyQueryTarget,
+    pub op_args: Vec<StatementTarget>,
 }
 
 impl CustomPredicateVerifyEntryTarget {
+    pub fn new_virtual(params: &Params, builder: &mut CircuitBuilder) -> Self {
+        CustomPredicateVerifyEntryTarget {
+            custom_predicate_table_index: builder.add_virtual_target(),
+            custom_predicate: builder.add_virtual_custom_predicate_entry(params),
+            args: (0..params.max_custom_predicate_wildcards)
+                .map(|_| builder.add_virtual_value())
+                .collect(),
+            op_args: (0..params.max_operation_args)
+                .map(|_| builder.add_virtual_statement(params))
+                .collect(),
+        }
+    }
     pub fn set_targets(
         &self,
         pw: &mut PartialWitness<F>,
@@ -606,7 +618,7 @@ impl CustomPredicateVerifyEntryTarget {
             arg_target.set_targets(pw, &Value::from(arg.raw()))?;
         }
         let pad_op_arg = Statement(Predicate::Native(NativePredicate::None), vec![]);
-        for (op_arg_target, op_arg) in self.query.op_args.iter().zip_eq(
+        for (op_arg_target, op_arg) in self.op_args.iter().zip_eq(
             cpv.op_args
                 .iter()
                 .chain(iter::repeat(&pad_op_arg))

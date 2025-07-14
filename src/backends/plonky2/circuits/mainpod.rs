@@ -1,6 +1,6 @@
 use std::{array, iter, sync::Arc};
 
-use itertools::{zip_eq, Itertools};
+use itertools::{izip, zip_eq, Itertools};
 use plonky2::{
     field::types::Field,
     hash::{
@@ -1071,17 +1071,16 @@ fn normalize_st_tmpl_circuit(
 
 /// Build a table of [batch_id, custom_predicate_index, custom_predicate] with queryable part as
 /// hash([batch_id, custom_predicate_index, custom_predicate]).  While building the table we
-/// calculate the id of each batch.
+/// calculate the id of each batch.  Return the hash of each table entry.
 fn build_custom_predicate_table_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
-) -> Result<(Vec<HashOutTarget>, Vec<CustomPredicateBatchTarget>)> {
+    custom_predicate_batches: &[CustomPredicateBatchTarget],
+) -> Result<Vec<HashOutTarget>> {
     let measure = measure_gates_begin!(builder, "BuildCustomPredTbl");
     let mut custom_predicate_table =
         Vec::with_capacity(params.max_custom_predicate_batches * params.max_custom_batch_size);
-    let mut custom_predicate_batches = Vec::with_capacity(params.max_custom_predicate_batches);
-    for _ in 0..params.max_custom_predicate_batches {
-        let cpb = builder.add_virtual_custom_predicate_batch(params);
+    for cpb in custom_predicate_batches {
         let id = cpb.id(builder); // constrain the id
         for (index, cp) in cpb.predicates.iter().enumerate() {
             let statements = cp
@@ -1103,81 +1102,68 @@ fn build_custom_predicate_table_circuit(
             let in_query_hash = entry.hash(builder);
             custom_predicate_table.push(in_query_hash);
         }
-        custom_predicate_batches.push(cpb); // We keep this for witness assignment
     }
     measure_gates_end!(builder, measure);
-    Ok((custom_predicate_table, custom_predicate_batches))
+    Ok(custom_predicate_table)
 }
 
 /// Build table of [batch_id, custom_predicate_index, custom_predicate, args, st, op, op_args]
 /// with queryable part as hash([st, op, op_args]).  While building the table we verify each
-/// custom predicate against the operation and statement.
+/// custom predicate against the operation and statement.  Return the hash of each table "query"
+/// sub-entry.
 fn build_custom_predicate_verification_table_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
     custom_predicate_table: &[HashOutTarget],
-) -> Result<(Vec<HashOutTarget>, Vec<CustomPredicateVerifyEntryTarget>)> {
+    custom_predicate_verifications: &[CustomPredicateVerifyEntryTarget],
+) -> Result<Vec<HashOutTarget>> {
     let measure = measure_gates_begin!(builder, "BuildCustomPredVerifyTbl");
-    let mut custom_predicate_verifications =
-        Vec::with_capacity(params.max_custom_predicate_verifications);
     let mut custom_predicate_verification_table =
         Vec::with_capacity(params.max_custom_predicate_verifications);
-    for _ in 0..params.max_custom_predicate_verifications {
-        let custom_predicate_table_index = builder.add_virtual_target();
-        let custom_predicate = builder.add_virtual_custom_predicate_entry(params);
-        let args = (0..params.max_custom_predicate_wildcards)
-            .map(|_| builder.add_virtual_value())
-            .collect_vec();
-        let op_args = (0..params.max_operation_args)
-            .map(|_| builder.add_virtual_statement(params))
-            .collect_vec();
-
+    for entry in custom_predicate_verifications {
         // Verify the custom predicate operation
-        let (statement, op_type) =
-            make_custom_statement_circuit(params, builder, &custom_predicate, &op_args, &args)?;
+        let (statement, op_type) = make_custom_statement_circuit(
+            params,
+            builder,
+            &entry.custom_predicate,
+            &entry.op_args,
+            &entry.args,
+        )?;
 
         // Check that the batch id is correct by querying the custom predicate batches table
-        let table_query_hash =
-            builder.vec_ref(params, custom_predicate_table, custom_predicate_table_index);
-        let out_query_hash = custom_predicate.hash(builder);
+        let table_query_hash = builder.vec_ref(
+            params,
+            custom_predicate_table,
+            entry.custom_predicate_table_index,
+        );
+        let out_query_hash = entry.custom_predicate.hash(builder);
         builder.connect_array(table_query_hash.elements, out_query_hash.elements);
 
-        let entry = CustomPredicateVerifyEntryTarget {
-            custom_predicate_table_index, // input
-            custom_predicate,             // input
-            args,                         // input
-            query: CustomPredicateVerifyQueryTarget {
-                statement, // output
-                op_type,   // output
-                op_args,   // input
-            },
+        let query = CustomPredicateVerifyQueryTarget {
+            statement,                      // output
+            op_type,                        // output
+            op_args: entry.op_args.clone(), // input
         };
-        let in_query_hash = entry.query.hash(builder);
+        let in_query_hash = query.hash(builder);
         custom_predicate_verification_table.push(in_query_hash);
-        custom_predicate_verifications.push(entry); // We keep this for witness assignment
     }
     measure_gates_end!(builder, measure);
-    Ok((
-        custom_predicate_verification_table,
-        custom_predicate_verifications,
-    ))
+    Ok(custom_predicate_verification_table)
 }
 
 fn verify_main_pod_circuit(
-    params: &Params,
     builder: &mut CircuitBuilder,
+    main_pod: &MainPodVerifyTarget,
     verified_proofs: &[VerifiedProofTarget],
-) -> Result<MainPodVerifyTarget> {
+) -> Result<HashOutTarget> {
+    let params = &main_pod.params;
     assert_eq!(params.max_input_recursive_pods, verified_proofs.len());
 
     let measure = measure_gates_begin!(builder, "MainPodVerify");
     // 1a. Verify all input signed pods
-    let mut signed_pods = Vec::new();
-    for _ in 0..params.max_input_signed_pods {
-        let signed_pod = SignedPodVerifyTarget::new_virtual(params, builder);
+    for signed_pod in &main_pod.signed_pods {
         verify_signed_pod_circuit(builder, &signed_pod)?;
         builder.assert_one(signed_pod.signature.enabled.target);
-        signed_pods.push(signed_pod);
     }
 
     // Build the statement array
@@ -1186,7 +1172,7 @@ fn verify_main_pod_circuit(
     // predicate statements
     let st_none = StatementTarget::new_native(builder, params, NativePredicate::None, &[]);
     statements.push(st_none);
-    for signed_pod in &signed_pods {
+    for signed_pod in &main_pod.signed_pods {
         statements.extend_from_slice(signed_pod.pub_statements(builder, false).as_slice());
     }
     debug_assert_eq!(
@@ -1195,11 +1181,11 @@ fn verify_main_pod_circuit(
     );
 
     // 1b. Verify all input recursive pods
-    let vds_root = builder.add_virtual_hash();
-    let mut input_pods_self_statements: Vec<Vec<StatementTarget>> = Vec::new();
-    let mut vd_mt_proofs: Vec<MerkleClaimAndProofTarget> = Vec::new();
-
-    for verified_proof in verified_proofs {
+    for (verified_proof, vd_mt_proof, input_pod_self_statements) in izip!(
+        verified_proofs,
+        &main_pod.vd_mt_proofs,
+        &main_pod.input_pods_self_statements
+    ) {
         let measure_in_pod = measure_gates_begin!(builder, "VerifyInPod");
 
         //
@@ -1213,24 +1199,18 @@ fn verify_main_pod_circuit(
             elements: expected_id.elements,
         };
 
-        let mut input_pod_self_statements = Vec::new();
-        for _ in 0..params.max_input_pods_public_statements {
-            let self_st = builder.add_virtual_statement(params);
+        for self_st in input_pod_self_statements {
             let normalized_st = normalize_statement_circuit(params, builder, &self_st, &id_value);
-            input_pod_self_statements.push(self_st);
             statements.push(normalized_st);
         }
         let id = calculate_id_circuit(params, builder, &input_pod_self_statements);
         builder.connect_hashes(expected_id, id);
-        input_pods_self_statements.push(input_pod_self_statements);
 
         //
         // Verify that all input pod proofs use verifier data from the public input VD
         // array. This requires merkle proofs
         //
 
-        // add target for the vd_mt_proof
-        let vd_mt_proof = MerkleClaimAndProofTarget::new_virtual(params.max_depth_mt_vds, builder);
         verify_merkle_proof_circuit(builder, &vd_mt_proof);
 
         // ensure that mt_proof is enabled
@@ -1238,13 +1218,12 @@ fn verify_main_pod_circuit(
         builder.connect(vd_mt_proof.enabled.target, true_targ.target);
         // connect the vd_mt_proof's root to the actual vds_root, to ensure that the mt proof
         // verifies against the vds_root
-        builder.connect_hashes(vds_root, vd_mt_proof.root);
+        builder.connect_hashes(main_pod.vds_root, vd_mt_proof.root);
         // connect vd_mt_proof's value with the verified_proof.verifier_data_hash
         builder.connect_hashes(
             verified_proof.verifier_data_hash,
             HashOutTarget::from_vec(vd_mt_proof.value.elements.to_vec()),
         );
-        vd_mt_proofs.push(vd_mt_proof);
 
         //
         // Verify that VD array that input pod uses is the same we use now.
@@ -1253,48 +1232,40 @@ fn verify_main_pod_circuit(
             &verified_proof.public_inputs[PI_OFFSET_VDSROOT..PI_OFFSET_VDSROOT + HASH_SIZE],
         )
         .expect("4 elements");
-        builder.connect_hashes(vds_root, verified_proof_vds_root);
+        builder.connect_hashes(main_pod.vds_root, verified_proof_vds_root);
 
         measure_gates_end!(builder, measure_in_pod);
     }
 
-    // Add the input (private and public) statements and corresponding operations
-    let mut operations = Vec::new();
     let input_statements_offset = statements.len();
-    for _ in 0..params.max_statements {
-        statements.push(builder.add_virtual_statement(params));
-        operations.push(builder.add_virtual_operation(params));
+    // Add the input (private and public) statements
+    for statement in &main_pod.input_statements {
+        statements.push(statement.clone());
     }
+    let pub_statements = &main_pod.input_statements
+        [main_pod.input_statements.len() - params.max_public_statements..];
 
-    let input_statements = &statements[input_statements_offset..];
-    let pub_statements = &input_statements[input_statements.len() - params.max_public_statements..];
-
-    // Add Merkle claim/proof targets
-    let merkle_proofs: Vec<_> = (0..params.max_merkle_proofs_containers)
-        .map(|_| {
-            let mt_proof =
-                MerkleClaimAndProofTarget::new_virtual(params.max_depth_mt_containers, builder);
+    // Verify Merkle claim/proof targets
+    let merkle_claims = main_pod
+        .merkle_proofs
+        .iter()
+        .map(|mt_proof| {
             verify_merkle_proof_circuit(builder, &mt_proof);
-            mt_proof
+            MerkleClaimTarget::from(mt_proof.clone())
         })
-        .collect();
-    let merkle_claims: Vec<_> = merkle_proofs
-        .clone()
-        .into_iter()
-        .map(|pf| pf.into())
-        .collect();
+        .collect_vec();
 
     // Table of custom predicate batches with batch_id calculation
-    let (custom_predicate_table, custom_predicate_batches) =
-        build_custom_predicate_table_circuit(params, builder)?;
+    let custom_predicate_table =
+        build_custom_predicate_table_circuit(params, builder, &main_pod.custom_predicate_batches)?;
 
     // Table of custom predicate statements verification against operations
-    let (custom_predicate_verification_table, custom_predicate_verifications) =
-        build_custom_predicate_verification_table_circuit(
-            params,
-            builder,
-            &custom_predicate_table,
-        )?;
+    let custom_predicate_verification_table = build_custom_predicate_verification_table_circuit(
+        params,
+        builder,
+        &custom_predicate_table,
+        &main_pod.custom_predicate_verifications,
+    )?;
 
     // 2. Calculate the Pod Id from the public statements
     let id = calculate_id_circuit(params, builder, pub_statements);
@@ -1318,7 +1289,7 @@ fn verify_main_pod_circuit(
     // 3. check that all `input_statements` of type `ValueOf` with origin=SELF have unique keys
     // (no duplicates).  We do this in the verification of NewEntry operation.
     // 5. Verify input statements
-    for (i, (st, op)) in input_statements.iter().zip(operations.iter()).enumerate() {
+    for (i, (st, op)) in izip!(&main_pod.input_statements, &main_pod.operations).enumerate() {
         let prev_statements = &statements[..input_statements_offset + i];
         verify_operation_circuit(
             params,
@@ -1333,34 +1304,60 @@ fn verify_main_pod_circuit(
     }
 
     measure_gates_end!(builder, measure);
-    Ok(MainPodVerifyTarget {
-        params: params.clone(),
-        vds_root,
-        vd_mt_proofs,
-        id,
-        signed_pods,
-        input_pods_self_statements,
-        statements: input_statements.to_vec(),
-        operations,
-        merkle_proofs,
-        custom_predicate_batches,
-        custom_predicate_verifications,
-    })
+    Ok(id)
 }
 
 pub struct MainPodVerifyTarget {
     params: Params,
     vds_root: HashOutTarget,
     vd_mt_proofs: Vec<MerkleClaimAndProofTarget>,
-    id: HashOutTarget,
     signed_pods: Vec<SignedPodVerifyTarget>,
     input_pods_self_statements: Vec<Vec<StatementTarget>>,
     // The KEY_TYPE statement must be the first public one
-    statements: Vec<StatementTarget>,
+    input_statements: Vec<StatementTarget>,
     operations: Vec<OperationTarget>,
     merkle_proofs: Vec<MerkleClaimAndProofTarget>,
     custom_predicate_batches: Vec<CustomPredicateBatchTarget>,
     custom_predicate_verifications: Vec<CustomPredicateVerifyEntryTarget>,
+}
+
+impl MainPodVerifyTarget {
+    pub fn new_virtual(params: &Params, builder: &mut CircuitBuilder) -> Self {
+        MainPodVerifyTarget {
+            params: params.clone(),
+            vds_root: builder.add_virtual_hash(),
+            vd_mt_proofs: (0..params.max_input_recursive_pods)
+                .map(|_| MerkleClaimAndProofTarget::new_virtual(params.max_depth_mt_vds, builder))
+                .collect(),
+            signed_pods: (0..params.max_input_signed_pods)
+                .map(|_| SignedPodVerifyTarget::new_virtual(params, builder))
+                .collect(),
+            input_pods_self_statements: (0..params.max_input_recursive_pods)
+                .map(|_| {
+                    (0..params.max_input_pods_public_statements)
+                        .map(|_| builder.add_virtual_statement(&params))
+                        .collect_vec()
+                })
+                .collect(),
+            input_statements: (0..params.max_statements)
+                .map(|_| builder.add_virtual_statement(&params))
+                .collect(),
+            operations: (0..params.max_statements)
+                .map(|_| builder.add_virtual_operation(&params))
+                .collect(),
+            merkle_proofs: (0..params.max_merkle_proofs_containers)
+                .map(|_| {
+                    MerkleClaimAndProofTarget::new_virtual(params.max_depth_mt_containers, builder)
+                })
+                .collect(),
+            custom_predicate_batches: (0..params.max_custom_predicate_batches)
+                .map(|_| builder.add_virtual_custom_predicate_batch(params))
+                .collect(),
+            custom_predicate_verifications: (0..params.max_custom_predicate_verifications)
+                .map(|_| CustomPredicateVerifyEntryTarget::new_virtual(params, builder))
+                .collect(),
+        }
+    }
 }
 
 pub struct CustomPredicateVerification {
@@ -1418,8 +1415,9 @@ impl InnerCircuit for MainPodVerifyTarget {
         params: &Self::Params,
         verified_proofs: &[VerifiedProofTarget],
     ) -> Result<Self> {
-        let main_pod = verify_main_pod_circuit(params, builder, verified_proofs)?;
-        builder.register_public_inputs(&main_pod.id.elements);
+        let main_pod = MainPodVerifyTarget::new_virtual(params, builder);
+        let id = verify_main_pod_circuit(builder, &main_pod, verified_proofs)?;
+        builder.register_public_inputs(&id.elements);
         builder.register_public_inputs(&main_pod.vds_root.elements);
         Ok(main_pod)
     }
@@ -1482,7 +1480,7 @@ impl InnerCircuit for MainPodVerifyTarget {
 
         assert_eq!(input.statements.len(), self.params.max_statements);
         for (i, (st, op)) in zip_eq(&input.statements, &input.operations).enumerate() {
-            self.statements[i].set_targets(pw, &self.params, st)?;
+            self.input_statements[i].set_targets(pw, &self.params, st)?;
             self.operations[i].set_targets(pw, &self.params, op)?;
         }
 
