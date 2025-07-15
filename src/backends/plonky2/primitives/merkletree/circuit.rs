@@ -401,10 +401,12 @@ pub struct MerkleProofStateTransitionTarget {
     pub(crate) enabled: BoolTarget,
     pub(crate) typ: Target,
 
+    // pub(crate) old_node_proof: MerkleClaimAndProofTarget,
     pub(crate) old_root: HashOutTarget,
-    pub(crate) old_key: ValueTarget,
-    pub(crate) old_value: ValueTarget,
-
+    pub(crate) proof_non_existence: MerkleProofExistenceTarget,
+    // pub(crate) old_key: ValueTarget,
+    // pub(crate) old_value: ValueTarget,
+    // pub(crate) old_node_is_leaf: BoolTarget,
     pub(crate) new_root: HashOutTarget,
     pub(crate) new_key: ValueTarget,
     pub(crate) new_value: ValueTarget,
@@ -424,8 +426,9 @@ impl MerkleProofStateTransitionGadget {
         let typ = builder.add_virtual_target();
 
         let old_root = builder.add_virtual_hash();
-        let old_key = builder.add_virtual_value();
-        let old_value = builder.add_virtual_value();
+        // let old_key = builder.add_virtual_value();
+        // let old_value = builder.add_virtual_value();
+        // let old_node_is_leaf = builder.add_virtual_bool_target_safe();
 
         let new_root = builder.add_virtual_hash();
         let new_key = builder.add_virtual_value();
@@ -439,6 +442,18 @@ impl MerkleProofStateTransitionGadget {
 
         // get old_leaf's hash
         let old_leaf_hash = kv_hash_target(builder, &old_key, &old_value);
+        // if `is_leaf`, return the computed hash, if not, return the given `key`
+        let old_leaf_hash: HashOutTarget = HashOutTarget::from_vec(
+            (0..HASH_SIZE)
+                .map(|j| {
+                    builder.select(
+                        old_node_is_leaf,
+                        old_leaf_hash.elements[j],
+                        old_key.elements[j],
+                    )
+                })
+                .collect(),
+        );
         // get old_key's path
         let old_key_path = keypath_target(self.max_depth, builder, &old_key);
         // compute the root for the given siblings and the computed old_leaf_hash
@@ -523,6 +538,8 @@ impl MerkleProofStateTransitionGadget {
                 builder.connect(new_sibling_d[j], old_leaf_hash_selected[j]);
             }
         }
+        /*
+         */
 
         measure_gates_end!(builder, measure);
 
@@ -533,6 +550,7 @@ impl MerkleProofStateTransitionGadget {
             old_root,
             old_key,
             old_value,
+            old_node_is_leaf,
             new_root,
             new_key,
             new_value,
@@ -551,54 +569,64 @@ impl MerkleProofStateTransitionTarget {
         enabled: bool,
         mp: &MerkleProofStateTransition,
     ) -> Result<()> {
-        pw.set_bool_target(self.enabled, enabled)?;
-        pw.set_target(self.typ, F::from_canonical_u8(mp.typ))?;
-
-        pw.set_hash_target(self.old_root, HashOut::from_vec(mp.old_root.0.to_vec()))?;
-        pw.set_target_arr(&self.old_key.elements, &mp.old_key.0)?;
-        pw.set_target_arr(&self.old_value.elements, &mp.old_value.0)?;
-
-        pw.set_hash_target(self.new_root, HashOut::from_vec(mp.new_root.0.to_vec()))?;
-        pw.set_target_arr(&self.new_key.elements, &mp.new_key.0)?;
-        pw.set_target_arr(&self.new_value.elements, &mp.new_value.0)?;
-
-        let (old_siblings, new_siblings) = mp.prepare_siblings(self.max_depth)?;
-
-        // pad siblings with zeros to length max_depth
-        assert!(old_siblings.len() <= self.max_depth);
-        for (i, sibling) in old_siblings
-            .iter()
-            .chain(iter::repeat(&EMPTY_HASH))
-            .take(self.max_depth)
-            .enumerate()
-        {
-            pw.set_hash_target(self.old_siblings[i], HashOut::from_vec(sibling.0.to_vec()))?;
-        }
-
-        assert!(new_siblings.len() <= self.max_depth);
-        for (i, sibling) in new_siblings
-            .iter()
-            .chain(iter::repeat(&EMPTY_HASH))
-            .take(self.max_depth)
-            .enumerate()
-        {
-            pw.set_hash_target(self.new_siblings[i], HashOut::from_vec(sibling.0.to_vec()))?;
-        }
-
-        // compute the divergence_level and set it as witness
-        let old_path = keypath(self.max_depth, mp.old_key)?;
-        let new_path = keypath(self.max_depth, mp.new_key)?;
-        let divergence_level = zip_eq(old_path, new_path).position(|(x, y)| x != y);
-        let divergence_level: u64 = match divergence_level {
-            Some(d) => d as u64,
-            None => return Err(Error::Tree(TreeError::max_depth())),
-        };
-        pw.set_target(
-            self.divergence_level,
-            F::from_canonical_u64(divergence_level as u64),
-        )?;
-
-        Ok(())
+        todo!()
+        // pw.set_bool_target(self.enabled, enabled)?;
+        // pw.set_target(self.typ, F::from_canonical_u8(mp.typ))?;
+        //
+        // pw.set_hash_target(self.old_root, HashOut::from_vec(mp.old_root.0.to_vec()))?;
+        // pw.set_target_arr(&self.old_key.elements, &mp.old_key.0)?;
+        // pw.set_target_arr(&self.old_value.elements, &mp.old_value.0)?;
+        // pw.set_bool_target(self.old_node_is_leaf, mp.old_node_is_leaf)?;
+        //
+        // pw.set_hash_target(self.new_root, HashOut::from_vec(mp.new_root.0.to_vec()))?;
+        // pw.set_target_arr(&self.new_key.elements, &mp.new_key.0)?;
+        // pw.set_target_arr(&self.new_value.elements, &mp.new_value.0)?;
+        //
+        // let (old_siblings, new_siblings) = mp.prepare_siblings(self.max_depth)?;
+        //
+        // // pad siblings with zeros to length max_depth
+        // assert!(old_siblings.len() <= self.max_depth);
+        // for (i, sibling) in old_siblings
+        //     .iter()
+        //     .chain(iter::repeat(&EMPTY_HASH))
+        //     .take(self.max_depth)
+        //     .enumerate()
+        // {
+        //     pw.set_hash_target(self.old_siblings[i], HashOut::from_vec(sibling.0.to_vec()))?;
+        // }
+        //
+        // assert!(new_siblings.len() <= self.max_depth);
+        // for (i, sibling) in new_siblings
+        //     .iter()
+        //     .chain(iter::repeat(&EMPTY_HASH))
+        //     .take(self.max_depth)
+        //     .enumerate()
+        // {
+        //     pw.set_hash_target(self.new_siblings[i], HashOut::from_vec(sibling.0.to_vec()))?;
+        // }
+        // dbg!("old");
+        // for s in old_siblings.iter() {
+        //     println!("{}", &s);
+        // }
+        // dbg!("new");
+        // for s in new_siblings.iter() {
+        //     println!("{}", &s);
+        // }
+        //
+        // // compute the divergence_level and set it as witness
+        // let old_path = keypath(self.max_depth, mp.old_key)?;
+        // let new_path = keypath(self.max_depth, mp.new_key)?;
+        // let divergence_level = zip_eq(old_path, new_path).position(|(x, y)| x != y);
+        // let divergence_level: u64 = match divergence_level {
+        //     Some(d) => d as u64,
+        //     None => return Err(Error::Tree(TreeError::max_depth())),
+        // };
+        // pw.set_target(
+        //     self.divergence_level,
+        //     F::from_canonical_u64(divergence_level as u64),
+        // )?;
+        //
+        // Ok(())
     }
 }
 
@@ -944,6 +972,24 @@ pub mod tests {
         Ok(())
     }
 
+    fn run_state_transition_circuit(
+        max_depth: usize,
+        state_transition_proof: &MerkleProofStateTransition,
+    ) -> Result<()> {
+        let config = CircuitConfig::standard_recursion_config();
+        let mut builder = CircuitBuilder::<F, D>::new(config);
+        let mut pw = PartialWitness::<F>::new();
+
+        let targets = MerkleProofStateTransitionGadget { max_depth }.eval(&mut builder);
+        targets.set_targets(&mut pw, true, &state_transition_proof)?;
+
+        dbg!(&builder.num_gates());
+        // generate & verify proof
+        let data = builder.build::<C>();
+        let proof = data.prove(pw)?;
+        data.verify(proof)?;
+        Ok(())
+    }
     #[test]
     fn test_state_transition_gadget() -> Result<()> {
         let max_depth: usize = 32;
@@ -966,21 +1012,19 @@ pub mod tests {
         println!("{}", tree);
 
         // circuit
-        let config = CircuitConfig::standard_recursion_config();
-        let mut builder = CircuitBuilder::<F, D>::new(config);
-        let mut pw = PartialWitness::<F>::new();
-
-        let targets = MerkleProofStateTransitionGadget { max_depth }.eval(&mut builder);
-        targets.set_targets(&mut pw, true, &state_transition_proof)?;
-
-        dbg!(&builder.num_gates());
-        // generate & verify proof
-        let data = builder.build::<C>();
-        let proof = data.prove(pw)?;
-        data.verify(proof)?;
+        run_state_transition_circuit(max_depth, &state_transition_proof)?;
 
         assert_eq!(state_transition_proof.old_root, old_root);
         assert_eq!(state_transition_proof.new_root, tree.root());
+
+        // 2nd part of the test. Add a new leaf
+        let key = RawValue::from(21);
+        let value = RawValue::from(1021);
+        let state_transition_proof = tree.insert(&key, &value)?;
+        println!("{}", tree);
+
+        dbg!("SECOND ROUND");
+        run_state_transition_circuit(max_depth, &state_transition_proof)?;
 
         Ok(())
     }
