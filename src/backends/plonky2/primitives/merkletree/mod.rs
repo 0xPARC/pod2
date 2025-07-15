@@ -218,6 +218,7 @@ impl MerkleTree {
             &proof.new_key,
         )?;
 
+        // TODO replace the next logic block by a call to verify() (merkleproof of existence)
         // check that new_siblings verify with the new_root
         let computed_new_root = MerkleProof {
             existence: true,
@@ -231,7 +232,12 @@ impl MerkleTree {
             ));
         }
 
-        // if newnode forced to go down_till_divergence
+        // let d=divergence_level, assert that:
+        // 1) old_siblings[i] == new_siblings[i] ∀ i \ {d}
+        // 2) at i=d:
+        //   if old_siblings[i] != new_siblings[i]:
+        //     old_siblings[i] == EMPTY_HASH
+        //     new_siblings[i] == old_leaf_hash
         let d = new_siblings.len() - 1;
         old_siblings.resize(d + 1, EMPTY_HASH);
         for i in 0..d {
