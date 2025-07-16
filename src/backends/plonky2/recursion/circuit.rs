@@ -832,7 +832,7 @@ mod tests {
         let common_data = &circuit_data_3.common;
 
         let (_, circuit_data_1) =
-            RC::<Circuit1>::target_and_circuit_data_padded(arity, &common_data, &inner_params)?;
+            RC::<Circuit1>::target_and_circuit_data_padded(arity, common_data, &inner_params)?;
         let params_1 = RecursiveParams {
             arity,
             common_data: circuit_data_1.common.clone(),
@@ -840,7 +840,7 @@ mod tests {
         };
 
         let (_, circuit_data_2) =
-            RC::<Circuit2>::target_and_circuit_data_padded(arity, &common_data, &inner_params)?;
+            RC::<Circuit2>::target_and_circuit_data_padded(arity, common_data, &inner_params)?;
         let params_2 = RecursiveParams {
             arity,
             common_data: circuit_data_2.common.clone(),

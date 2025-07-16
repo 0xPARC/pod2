@@ -4,7 +4,7 @@ use std::{collections::HashSet, sync::LazyLock};
 
 use custom::eth_dos_batch;
 
-pub const MOCK_VD_SET: LazyLock<VDSet> = LazyLock::new(|| VDSet::new(6, &[]).unwrap());
+pub static MOCK_VD_SET: LazyLock<VDSet> = LazyLock::new(|| VDSet::new(6, &[]).unwrap());
 
 use crate::{
     backends::plonky2::{primitives::ec::schnorr::SecretKey, signedpod::Signer},
@@ -266,11 +266,11 @@ pub fn great_boy_pod_builder(
     // good boy 1 -> friend_pods[1] => receiver
 
     let mut great_boy = MainPodBuilder::new(params, vd_set);
-    for i in 0..4 {
-        great_boy.add_signed_pod(good_boy_pods[i]);
+    for good_boy_pod in good_boy_pods {
+        great_boy.add_signed_pod(good_boy_pod);
     }
-    for i in 0..2 {
-        great_boy.add_signed_pod(friend_pods[i]);
+    for friend_pod in friend_pods {
+        great_boy.add_signed_pod(friend_pod);
     }
 
     for good_boy_idx in 0..2 {
@@ -376,7 +376,7 @@ pub fn great_boy_pod_full_flow() -> Result<(Params, MainPodBuilder)> {
 
     let builder = great_boy_pod_builder(
         &params,
-        &vd_set,
+        vd_set,
         [
             &bob_good_boys[0],
             &bob_good_boys[1],

@@ -449,7 +449,7 @@ pub mod tests {
         let sanction_list_pod = sanction_list_builder.sign(&signer)?;
         let kyc_builder = zu_kyc_pod_builder(
             &params,
-            &vd_set,
+            vd_set,
             &gov_id_pod,
             &pay_stub_pod,
             &sanction_list_pod,

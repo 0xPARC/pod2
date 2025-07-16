@@ -719,7 +719,7 @@ pub mod tests {
             self, literal, CustomPredicateBatchBuilder, MainPodBuilder, StatementTmplBuilder as STB,
         },
         middleware::{
-            self, containers::Set, CustomPredicateRef, NativePredicate as NP, Value, DEFAULT_VD_SET,
+            self, containers::Set, CustomPredicateRef, NativePredicate as NP, DEFAULT_VD_SET,
         },
         op,
     };
@@ -747,7 +747,7 @@ pub mod tests {
         let sanction_list_pod = sanction_list_builder.sign(&signer)?;
         let kyc_builder = zu_kyc_pod_builder(
             &params,
-            &vd_set,
+            vd_set,
             &gov_id_pod,
             &pay_stub_pod,
             &sanction_list_pod,
@@ -781,7 +781,7 @@ pub mod tests {
         let signer = Signer(SecretKey(42u64.into()));
         let gov_id = gov_id_builder.sign(&signer).unwrap();
         let now_minus_18y: i64 = 1169909388;
-        let mut kyc_builder = frontend::MainPodBuilder::new(&params, &vd_set);
+        let mut kyc_builder = frontend::MainPodBuilder::new(&params, vd_set);
         kyc_builder.add_signed_pod(&gov_id);
         kyc_builder
             .pub_op(op!(lt, (&gov_id, "dateOfBirth"), now_minus_18y))
@@ -829,7 +829,7 @@ pub mod tests {
         };
         let vd_set = &*DEFAULT_VD_SET;
 
-        let pod_builder = frontend::MainPodBuilder::new(&params, &vd_set);
+        let pod_builder = frontend::MainPodBuilder::new(&params, vd_set);
 
         // Mock
         let prover = MockProver {};
@@ -859,10 +859,10 @@ pub mod tests {
 
         // Alice attests that she is ETH friends with Bob and Bob
         // attests that he is ETH friends with Charlie.
-        let alice_attestation = attest_eth_friend(&params, &alice, Value::from(bob.public_key()));
-        let bob_attestation = attest_eth_friend(&params, &bob, Value::from(charlie.public_key()));
+        let alice_attestation = attest_eth_friend(&params, &alice, bob.public_key());
+        let bob_attestation = attest_eth_friend(&params, &bob, charlie.public_key());
 
-        let helper = EthDosHelper::new(&params, vd_set, false, Value::from(alice.public_key()))?;
+        let helper = EthDosHelper::new(&params, vd_set, false, alice.public_key())?;
         let prover = Prover {};
         let dist_1 = helper.dist_1(&alice_attestation)?.prove(&prover, &params)?;
         crate::measure_gates_print!();
@@ -908,7 +908,7 @@ pub mod tests {
         let cpb_and = CustomPredicateRef::new(cpb.clone(), 0);
         let _cpb_or = CustomPredicateRef::new(cpb.clone(), 1);
 
-        let mut pod_builder = MainPodBuilder::new(&params, &vd_set);
+        let mut pod_builder = MainPodBuilder::new(&params, vd_set);
 
         let st0 = pod_builder.priv_op(op!(new_entry, "score", 42))?;
         let st1 = pod_builder.priv_op(op!(new_entry, "key", 42))?;
@@ -932,7 +932,7 @@ pub mod tests {
     #[test]
     fn test_set_contains() -> frontend::Result<()> {
         let params = Params::default();
-        let mut builder = MainPodBuilder::new(&params, &*DEFAULT_VD_SET);
+        let mut builder = MainPodBuilder::new(&params, &DEFAULT_VD_SET);
         let set = [1, 2, 3].into_iter().map(|n| n.into()).collect();
         let st = builder
             .pub_op(op!(
