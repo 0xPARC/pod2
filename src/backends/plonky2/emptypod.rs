@@ -20,7 +20,7 @@ use crate::{
         basetypes::{Proof, C, D},
         circuits::{
             common::{Flattenable, StatementTarget},
-            mainpod::{CalculateIdGadget, PI_OFFSET_ID},
+            mainpod::{calculate_id_circuit, PI_OFFSET_ID},
         },
         deserialize_proof,
         error::{Error, Result},
@@ -52,10 +52,7 @@ impl EmptyPodVerifyCircuit {
             &self.params,
             &builder.constants(&type_statement().to_fields(&self.params)),
         );
-        let id = CalculateIdGadget {
-            params: self.params.clone(),
-        }
-        .eval(builder, &[type_statement]);
+        let id = calculate_id_circuit(&self.params, builder, &[type_statement]);
         let vds_root = builder.add_virtual_hash();
         builder.register_public_inputs(&id.elements);
         builder.register_public_inputs(&vds_root.elements);

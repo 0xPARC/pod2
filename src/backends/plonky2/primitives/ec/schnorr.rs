@@ -20,16 +20,18 @@ use plonky2::{
     plonk::circuit_builder::CircuitBuilder,
 };
 use rand::rngs::OsRng;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::curve::Point;
 use crate::{
     backends::plonky2::{
         circuits::common::CircuitBuilderPod,
+        deserialize_bytes,
         primitives::ec::{
             bits::{BigUInt320Target, CircuitBuilderBits},
             curve::{CircuitBuilderElliptic, PointTarget, WitnessWriteCurve, GROUP_ORDER},
         },
-        Error,
+        serialize_bytes, Error,
     },
     middleware::RawValue,
 };
@@ -76,6 +78,28 @@ impl Signature {
     }
 }
 
+impl Serialize for Signature {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let signature_b64 = serialize_bytes(&self.as_bytes());
+        serializer.serialize_str(&signature_b64)
+    }
+}
+
+impl<'de> Deserialize<'de> for Signature {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let signature_b64 = String::deserialize(deserializer)?;
+        let signature_bytes =
+            deserialize_bytes(&signature_b64).map_err(serde::de::Error::custom)?;
+        Signature::from_bytes(&signature_bytes).map_err(serde::de::Error::custom)
+    }
+}
+
 /// Targets for Schnorr signature over ecGFp5.
 #[derive(Clone, Debug)]
 pub struct SignatureTarget {
@@ -109,6 +133,10 @@ pub trait WitnessWriteSchnorr: WitnessWrite<GoldilocksField> + WitnessWriteCurve
 
 impl<W: WitnessWrite<GoldilocksField>> WitnessWriteSchnorr for W {}
 
+// TODO: Rename this to a function `verify_signature_circuit`?  I think this convention is also
+// nice as an object-oriented alternative to `verb_object_circuit` methods.  It's clear that this
+// is constraining vs native operation because the type is `*Target`.  But of course this
+// convention doesn't work for all situations.
 impl SignatureTarget {
     pub fn verify(
         &self,

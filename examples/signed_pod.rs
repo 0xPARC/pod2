@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pk = sk.public_key();
     println!("Public key: {}\n", pk);
 
-    let mut signer = Signer(sk);
+    let signer = Signer(sk);
 
     // Build the signed pod
     let mut builder = SignedPodBuilder::new(&params);
@@ -35,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Sign the pod and verify it
-    let pod = builder.sign(&mut signer)?;
+    let pod = builder.sign(&signer)?;
     pod.verify()?;
 
     println!("{}", pod);

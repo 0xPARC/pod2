@@ -60,9 +60,10 @@ pub enum ProcessorError {
     Internal(String),
     #[error("Middleware error: {0}")]
     Middleware(middleware::Error),
-    #[error("Undefined wildcard: '?{name}' at {span:?}")]
+    #[error("Undefined wildcard: '?{name}' in predicate '{pred_name}' at {span:?}")]
     UndefinedWildcard {
         name: String,
+        pred_name: String,
         span: Option<(usize, usize)>,
     },
     #[error("Invalid literal format for {kind}: '{value}' at {span:?}")]

@@ -259,7 +259,10 @@ fn process_use_statement(
 }
 
 enum StatementContext<'a> {
-    CustomPredicate,
+    CustomPredicate {
+        pred_name: &'a str,
+        argument_names: &'a HashSet<String>,
+    },
     Request {
         custom_batch: &'a Arc<CustomPredicateBatch>,
         wildcard_names: &'a mut Vec<String>,
@@ -295,6 +298,7 @@ fn second_pass(
 fn pest_pair_to_builder_arg(
     params: &Params,
     arg_content_pair: &Pair<Rule>,
+    context: &StatementContext,
 ) -> Result<BuilderArg, ProcessorError> {
     match arg_content_pair.as_rule() {
         Rule::literal_value => {
@@ -302,13 +306,40 @@ fn pest_pair_to_builder_arg(
             Ok(BuilderArg::Literal(value))
         }
         Rule::wildcard => {
-            let name = arg_content_pair.as_str().strip_prefix("?").unwrap();
-            Ok(BuilderArg::WildcardLiteral(name.to_string()))
+            let wc_str = arg_content_pair.as_str().strip_prefix("?").unwrap();
+            if let StatementContext::CustomPredicate {
+                argument_names,
+                pred_name,
+            } = context
+            {
+                if !argument_names.contains(wc_str) {
+                    return Err(ProcessorError::UndefinedWildcard {
+                        name: wc_str.to_string(),
+                        pred_name: pred_name.to_string(),
+                        span: Some(get_span(arg_content_pair)),
+                    });
+                }
+            }
+            Ok(BuilderArg::WildcardLiteral(wc_str.to_string()))
         }
         Rule::anchored_key => {
             let mut inner_ak_pairs = arg_content_pair.clone().into_inner();
             let pod_id_pair = inner_ak_pairs.next().unwrap();
             let pod_id_wc_str = pod_id_pair.as_str().strip_prefix("?").unwrap();
+
+            if let StatementContext::CustomPredicate {
+                argument_names,
+                pred_name,
+            } = context
+            {
+                if !argument_names.contains(pod_id_wc_str) {
+                    return Err(ProcessorError::UndefinedWildcard {
+                        name: pod_id_wc_str.to_string(),
+                        pred_name: pred_name.to_string(),
+                        span: Some(get_span(arg_content_pair)),
+                    });
+                }
+            }
 
             let key_part_pair = inner_ak_pairs.next().unwrap();
             let key_str = parse_pest_string_literal(&key_part_pair)?;
@@ -516,7 +547,10 @@ fn process_and_add_custom_predicate_to_batch(
             params,
             &stmt_pair,
             processing_ctx,
-            StatementContext::CustomPredicate,
+            &mut StatementContext::CustomPredicate {
+                pred_name: &name,
+                argument_names: &defined_arg_names,
+            },
         )?;
         statement_builders.push(stb);
     }
@@ -557,7 +591,7 @@ fn process_request_def(
                 params,
                 &stmt_pair,
                 processing_ctx,
-                StatementContext::Request {
+                &mut StatementContext::Request {
                     custom_batch,
                     wildcard_names: &mut request_wildcard_names,
                     defined_wildcards: &mut defined_request_wildcards,
@@ -582,7 +616,7 @@ fn process_statement_template(
     params: &Params,
     stmt_pair: &Pair<Rule>,
     processing_ctx: &ProcessingContext,
-    mut context: StatementContext,
+    context: &mut StatementContext,
 ) -> Result<StatementTmplBuilder, ProcessorError> {
     let mut inner_stmt_pairs = stmt_pair.clone().into_inner();
     let name_pair = inner_stmt_pairs
@@ -590,13 +624,13 @@ fn process_statement_template(
         .unwrap();
     let stmt_name_str = name_pair.as_str();
 
-    let builder_args = parse_statement_args(params, stmt_pair)?;
+    let builder_args = parse_statement_args(params, stmt_pair, context)?;
 
     if let StatementContext::Request {
         wildcard_names,
         defined_wildcards,
         ..
-    } = &mut context
+    } = context
     {
         let mut temp_stmt_wildcard_names: Vec<String> = Vec::new();
         for arg in &builder_args {
@@ -626,7 +660,7 @@ fn process_statement_template(
         .get(stmt_name_str)
     {
         match context {
-            StatementContext::CustomPredicate => Predicate::BatchSelf(*pred_index),
+            StatementContext::CustomPredicate { .. } => Predicate::BatchSelf(*pred_index),
             StatementContext::Request { custom_batch, .. } => {
                 let custom_pred_ref = CustomPredicateRef::new(custom_batch.clone(), *pred_index);
                 Predicate::Custom(custom_pred_ref)
@@ -861,6 +895,7 @@ fn resolve_wildcard(
         .map(|index| Wildcard::new(name_to_resolve.to_string(), index))
         .ok_or_else(|| ProcessorError::UndefinedWildcard {
             name: name_to_resolve.to_string(),
+            pred_name: "REQUEST".to_string(),
             span: None,
         })
 }
@@ -906,6 +941,7 @@ fn resolve_request_statement_builder(
 fn parse_statement_args(
     params: &Params,
     stmt_pair: &Pair<Rule>,
+    context: &StatementContext,
 ) -> Result<Vec<BuilderArg>, ProcessorError> {
     let mut builder_args = Vec::new();
     let mut inner_stmt_pairs = stmt_pair.clone().into_inner();
@@ -917,7 +953,7 @@ fn parse_statement_args(
             .filter(|p| p.as_rule() == Rule::statement_arg)
         {
             let arg_content_pair = arg_pair.into_inner().next().unwrap();
-            let builder_arg = pest_pair_to_builder_arg(params, &arg_content_pair)?;
+            let builder_arg = pest_pair_to_builder_arg(params, &arg_content_pair, context)?;
             builder_args.push(builder_arg);
         }
     }

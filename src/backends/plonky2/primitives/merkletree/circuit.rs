@@ -34,14 +34,6 @@ use crate::{
     middleware::{EMPTY_HASH, EMPTY_VALUE, F, HASH_SIZE},
 };
 
-/// `MerkleProofGadget` allows to verify both proofs of existence and proofs
-/// non-existence with the same circuit.
-/// If only proofs of existence are needed, use `MerkleProofExistenceGadget`,
-/// which requires less amount of constraints.
-pub struct MerkleProofGadget {
-    pub max_depth: usize,
-}
-
 #[derive(Clone, Debug)]
 pub struct MerkleClaimAndProofTarget {
     pub(crate) max_depth: usize,
@@ -57,108 +49,103 @@ pub struct MerkleClaimAndProofTarget {
     pub(crate) other_value: ValueTarget,
 }
 
-impl MerkleProofGadget {
-    /// creates the targets and defines the logic of the circuit
-    pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> MerkleClaimAndProofTarget {
-        let measure = measure_gates_begin!(builder, format!("MerkleProof_{}", self.max_depth));
-        let enabled = builder.add_virtual_bool_target_safe();
-        let root = builder.add_virtual_hash();
-        let key = builder.add_virtual_value();
-        let value = builder.add_virtual_value();
-        // from proof struct:
-        let existence = builder.add_virtual_bool_target_safe();
-        // siblings are padded till max_depth length
-        let siblings = builder.add_virtual_hashes(self.max_depth);
+/// Allows to verify both proofs of existence and proofs non-existence with the same circuit. If
+/// only proofs of existence are needed, use `verify_merkle_proof_existence_circuit`, which
+/// requires less amount of constraints.
+pub fn verify_merkle_proof_circuit(
+    builder: &mut CircuitBuilder<F, D>,
+    proof: &MerkleClaimAndProofTarget,
+) {
+    let max_depth = proof.max_depth;
+    let measure = measure_gates_begin!(builder, format!("MerkleProof_{}", max_depth));
 
-        let case_ii_selector = builder.add_virtual_bool_target_safe();
-        let other_key = builder.add_virtual_value();
-        let other_value = builder.add_virtual_value();
+    // We have 3 cases for when computing the Leaf's hash:
+    // - existence: leaf contains the given key & value
+    // - non-existence:
+    //      - case i) expected leaf does not exist
+    //      - case ii) expected leaf does exist but it has a different key
+    //
+    // The following table expresses the options with their in-circuit
+    // selectors:
+    // | existence   | case_ii   | leaf_hash                    |
+    // | ----------- | --------- | ---------------------------- |
+    // | 1           | 0         | H(key, value, 1)             |
+    // | 0           | 0         | EMPTY_HASH                   |
+    // | 0           | 1         | H(other_key, other_value, 1) |
+    // | 1           | 1         | invalid combination          |
 
-        // We have 3 cases for when computing the Leaf's hash:
-        // - existence: leaf contains the given key & value
-        // - non-existence:
-        //      - case i) expected leaf does not exist
-        //      - case ii) expected leaf does exist but it has a different key
-        //
-        // The following table expresses the options with their in-circuit
-        // selectors:
-        // | existence   | case_ii   | leaf_hash                    |
-        // | ----------- | --------- | ---------------------------- |
-        // | 1           | 0         | H(key, value, 1)             |
-        // | 0           | 0         | EMPTY_HASH                   |
-        // | 0           | 1         | H(other_key, other_value, 1) |
-        // | 1           | 1         | invalid combination          |
+    // First, ensure that both existence & case_ii are not true at the same
+    // time:
+    // 1. sum = existence + case_ii_selector
+    let sum = builder.add(proof.existence.target, proof.case_ii_selector.target);
+    // 2. sum * (sum-1) == 0
+    builder.assert_bool(BoolTarget::new_unsafe(sum));
 
-        // First, ensure that both existence & case_ii are not true at the same
-        // time:
-        // 1. sum = existence + case_ii_selector
-        let sum = builder.add(existence.target, case_ii_selector.target);
-        // 2. sum * (sum-1) == 0
-        builder.assert_bool(BoolTarget::new_unsafe(sum));
+    // define the case_i_selector as true when both existence and
+    // case_ii_selector are false:
+    let not_existence = builder.not(proof.existence);
+    let not_case_ii_selector = builder.not(proof.case_ii_selector);
+    let case_i_selector = builder.and(not_existence, not_case_ii_selector);
 
-        // define the case_i_selector as true when both existence and
-        // case_ii_selector are false:
-        let not_existence = builder.not(existence);
-        let not_case_ii_selector = builder.not(case_ii_selector);
-        let case_i_selector = builder.and(not_existence, not_case_ii_selector);
+    // use (key,value) or (other_key, other_value) depending if it's a proof
+    // of existence or of non-existence, ie:
+    // k = key * existence + other_key * (1-existence)
+    // v = value * existence + other_value * (1-existence)
+    let k = builder.select_value(proof.existence, proof.key, proof.other_key);
+    let v = builder.select_value(proof.existence, proof.value, proof.other_value);
 
-        // use (key,value) or (other_key, other_value) depending if it's a proof
-        // of existence or of non-existence, ie:
-        // k = key * existence + other_key * (1-existence)
-        // v = value * existence + other_value * (1-existence)
-        let k = builder.select_value(existence, key, other_key);
-        let v = builder.select_value(existence, value, other_value);
+    // get leaf's hash for the selected k & v
+    let h = kv_hash_target(builder, &k, &v);
 
-        // get leaf's hash for the selected k & v
-        let h = kv_hash_target(builder, &k, &v);
+    // if we're in the case i), use leaf_hash=EMPTY_HASH, else use the
+    // previously computed hash h.
+    let empty_hash = builder.constant_hash(HashOut::from(EMPTY_HASH.0));
+    let leaf_hash = HashOutTarget::from_vec(
+        (0..HASH_SIZE)
+            .map(|j| builder.select(case_i_selector, empty_hash.elements[j], h.elements[j]))
+            .collect(),
+    );
 
-        // if we're in the case i), use leaf_hash=EMPTY_HASH, else use the
-        // previously computed hash h.
-        let empty_hash = builder.constant_hash(HashOut::from(EMPTY_HASH.0));
-        let leaf_hash = HashOutTarget::from_vec(
-            (0..HASH_SIZE)
-                .map(|j| builder.select(case_i_selector, empty_hash.elements[j], h.elements[j]))
-                .collect(),
-        );
+    // get key's path
+    let path = keypath_target(max_depth, builder, &proof.key);
 
-        // get key's path
-        let path = keypath_target(self.max_depth, builder, &key);
+    // compute the root for the given siblings and the computed leaf_hash
+    // (this is for the three cases (existence, non-existence case i, and
+    // non-existence case ii).
+    let obtained_root =
+        compute_root_from_leaf(max_depth, builder, &path, &leaf_hash, &proof.siblings);
 
-        // compute the root for the given siblings and the computed leaf_hash
-        // (this is for the three cases (existence, non-existence case i, and
-        // non-existence case ii).
-        let obtained_root =
-            compute_root_from_leaf(self.max_depth, builder, &path, &leaf_hash, &siblings);
-
-        // check that obtained_root==root (from inputs), when enabled==true
-        let zero = builder.zero();
-        let expected_root: Vec<Target> = (0..HASH_SIZE)
-            .map(|j| builder.select(enabled, root.elements[j], zero))
-            .collect();
-        let computed_root: Vec<Target> = (0..HASH_SIZE)
-            .map(|j| builder.select(enabled, obtained_root.elements[j], zero))
-            .collect();
-        for j in 0..HASH_SIZE {
-            builder.connect(computed_root[j], expected_root[j]);
-        }
-        measure_gates_end!(builder, measure);
-
-        MerkleClaimAndProofTarget {
-            max_depth: self.max_depth,
-            enabled,
-            existence,
-            root,
-            siblings,
-            key,
-            value,
-            case_ii_selector,
-            other_key,
-            other_value,
-        }
+    // check that obtained_root==root (from inputs), when enabled==true
+    let zero = builder.zero();
+    let expected_root: Vec<Target> = (0..HASH_SIZE)
+        .map(|j| builder.select(proof.enabled, proof.root.elements[j], zero))
+        .collect();
+    let computed_root: Vec<Target> = (0..HASH_SIZE)
+        .map(|j| builder.select(proof.enabled, obtained_root.elements[j], zero))
+        .collect();
+    for j in 0..HASH_SIZE {
+        builder.connect(computed_root[j], expected_root[j]);
     }
+    measure_gates_end!(builder, measure);
 }
 
 impl MerkleClaimAndProofTarget {
+    pub fn new_virtual(max_depth: usize, builder: &mut CircuitBuilder<F, D>) -> Self {
+        MerkleClaimAndProofTarget {
+            max_depth,
+            enabled: builder.add_virtual_bool_target_safe(),
+            root: builder.add_virtual_hash(),
+            key: builder.add_virtual_value(),
+            value: builder.add_virtual_value(),
+            // from proof struct:
+            existence: builder.add_virtual_bool_target_safe(),
+            // siblings are padded till max_depth length
+            siblings: builder.add_virtual_hashes(max_depth),
+            case_ii_selector: builder.add_virtual_bool_target_safe(),
+            other_key: builder.add_virtual_value(),
+            other_value: builder.add_virtual_value(),
+        }
+    }
     /// assigns the given values to the targets
     #[allow(clippy::too_many_arguments)]
     pub fn set_targets(
@@ -205,12 +192,6 @@ impl MerkleClaimAndProofTarget {
     }
 }
 
-/// `MerkleProofExistenceCircuit` allows to verify proofs of existence only. If
-/// proofs of non-existence are needed, use `MerkleProofCircuit`.
-pub struct MerkleProofExistenceGadget {
-    pub max_depth: usize,
-}
-
 pub struct MerkleProofExistenceTarget {
     max_depth: usize,
     // `enabled` determines if the merkleproof verification is enabled
@@ -221,52 +202,51 @@ pub struct MerkleProofExistenceTarget {
     pub(crate) siblings: Vec<HashOutTarget>,
 }
 
-impl MerkleProofExistenceGadget {
-    /// creates the targets and defines the logic of the circuit
-    pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<MerkleProofExistenceTarget> {
-        let measure = measure_gates_begin!(builder, format!("MerkleProofExist_{}", self.max_depth));
-        let enabled = builder.add_virtual_bool_target_safe();
-        let root = builder.add_virtual_hash();
-        let key = builder.add_virtual_value();
-        let value = builder.add_virtual_value();
-        // siblings are padded till max_depth length
-        let siblings = builder.add_virtual_hashes(self.max_depth);
+/// Allows to verify proofs of existence only. If proofs of non-existence are needed, use
+/// `verify_merkle_proof_circuit`.
+pub fn verify_merkle_proof_existence_circuit(
+    builder: &mut CircuitBuilder<F, D>,
+    proof: &MerkleProofExistenceTarget,
+) {
+    let max_depth = proof.max_depth;
+    let measure = measure_gates_begin!(builder, format!("MerkleProofExist_{}", max_depth));
 
-        // get leaf's hash for the selected k & v
-        let leaf_hash = kv_hash_target(builder, &key, &value);
+    // get leaf's hash for the selected k & v
+    let leaf_hash = kv_hash_target(builder, &proof.key, &proof.value);
 
-        // get key's path
-        let path = keypath_target(self.max_depth, builder, &key);
+    // get key's path
+    let path = keypath_target(max_depth, builder, &proof.key);
 
-        // compute the root for the given siblings and the computed leaf_hash.
-        let obtained_root =
-            compute_root_from_leaf(self.max_depth, builder, &path, &leaf_hash, &siblings);
+    // compute the root for the given siblings and the computed leaf_hash.
+    let obtained_root =
+        compute_root_from_leaf(max_depth, builder, &path, &leaf_hash, &proof.siblings);
 
-        // check that obtained_root==root (from inputs), when enabled==true
-        let zero = builder.zero();
-        let expected_root: Vec<Target> = (0..HASH_SIZE)
-            .map(|j| builder.select(enabled, root.elements[j], zero))
-            .collect();
-        let computed_root: Vec<Target> = (0..HASH_SIZE)
-            .map(|j| builder.select(enabled, obtained_root.elements[j], zero))
-            .collect();
-        for j in 0..HASH_SIZE {
-            builder.connect(computed_root[j], expected_root[j]);
-        }
-        measure_gates_end!(builder, measure);
-
-        Ok(MerkleProofExistenceTarget {
-            max_depth: self.max_depth,
-            enabled,
-            root,
-            siblings,
-            key,
-            value,
-        })
+    // check that obtained_root==root (from inputs), when enabled==true
+    let zero = builder.zero();
+    let expected_root: Vec<Target> = (0..HASH_SIZE)
+        .map(|j| builder.select(proof.enabled, proof.root.elements[j], zero))
+        .collect();
+    let computed_root: Vec<Target> = (0..HASH_SIZE)
+        .map(|j| builder.select(proof.enabled, obtained_root.elements[j], zero))
+        .collect();
+    for j in 0..HASH_SIZE {
+        builder.connect(computed_root[j], expected_root[j]);
     }
+    measure_gates_end!(builder, measure);
 }
 
 impl MerkleProofExistenceTarget {
+    pub fn new_virtual(max_depth: usize, builder: &mut CircuitBuilder<F, D>) -> Self {
+        MerkleProofExistenceTarget {
+            max_depth,
+            enabled: builder.add_virtual_bool_target_safe(),
+            root: builder.add_virtual_hash(),
+            key: builder.add_virtual_value(),
+            value: builder.add_virtual_value(),
+            // siblings are padded till max_depth length
+            siblings: builder.add_virtual_hashes(max_depth),
+        }
+    }
     /// assigns the given values to the targets
     pub fn set_targets(
         &self,
@@ -545,7 +525,8 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = MerkleProofGadget { max_depth }.eval(&mut builder);
+        let targets = MerkleClaimAndProofTarget::new_virtual(max_depth, &mut builder);
+        verify_merkle_proof_circuit(&mut builder, &targets);
         targets.set_targets(
             &mut pw,
             true,
@@ -591,7 +572,8 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = MerkleProofExistenceGadget { max_depth }.eval(&mut builder)?;
+        let targets = MerkleClaimAndProofTarget::new_virtual(max_depth, &mut builder);
+        verify_merkle_proof_circuit(&mut builder, &targets);
         targets.set_targets(
             &mut pw,
             true,
@@ -666,7 +648,8 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = MerkleProofGadget { max_depth }.eval(&mut builder);
+        let targets = MerkleClaimAndProofTarget::new_virtual(max_depth, &mut builder);
+        verify_merkle_proof_circuit(&mut builder, &targets);
         targets.set_targets(
             &mut pw,
             true,
@@ -713,7 +696,8 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = MerkleProofGadget { max_depth }.eval(&mut builder);
+        let targets = MerkleClaimAndProofTarget::new_virtual(max_depth, &mut builder);
+        verify_merkle_proof_circuit(&mut builder, &targets);
         // verification enabled & proof of existence
         let mp = MerkleClaimAndProof::new(tree2.root(), key, Some(value), proof);
         targets.set_targets(&mut pw, true, &mp)?;
@@ -729,7 +713,8 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = MerkleProofGadget { max_depth }.eval(&mut builder);
+        let targets = MerkleClaimAndProofTarget::new_virtual(max_depth, &mut builder);
+        verify_merkle_proof_circuit(&mut builder, &targets);
         // verification disabled & proof of existence
         targets.set_targets(&mut pw, false, &mp)?;
 
