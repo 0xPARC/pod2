@@ -353,7 +353,7 @@ impl MerkleProof {
             return Err(TreeError::max_depth());
         }
 
-        let mut h = node_hash.clone();
+        let mut h = *node_hash;
         for (i, sibling) in self.siblings.iter().enumerate().rev() {
             let mut input: Vec<F> = if path[i] {
                 [sibling.0, h.0].concat()
