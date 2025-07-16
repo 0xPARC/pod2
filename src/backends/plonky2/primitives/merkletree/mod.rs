@@ -176,7 +176,7 @@ impl MerkleTree {
     }
 
     /// returns an iterator over the leaves of the tree
-    pub fn iter(&self) -> Iter {
+    pub fn iter(&self) -> Iter<'_> {
         Iter {
             state: vec![&self.root],
         }

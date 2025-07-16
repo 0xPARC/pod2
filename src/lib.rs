@@ -1,8 +1,8 @@
 #![allow(clippy::get_first)]
-#![feature(trait_upcasting)]
 #![feature(mapped_lock_guards)]
 
 pub mod backends;
+mod cache;
 pub mod frontend;
 pub mod lang;
 pub mod middleware;

@@ -1,7 +1,4 @@
-use std::{
-    collections::HashMap,
-    sync::{LazyLock, Mutex},
-};
+use std::sync::LazyLock;
 
 use itertools::Itertools;
 use plonky2::{
@@ -28,6 +25,7 @@ use crate::{
         recursion::pad_circuit,
         serialize_proof, DEFAULT_PARAMS, STANDARD_REC_MAIN_POD_CIRCUIT_DATA,
     },
+    cache,
     middleware::{
         self, AnchoredKey, Hash, Params, Pod, PodId, PodType, RecursivePod, Statement, ToFields,
         VDSet, Value, VerifierOnlyCircuitData, F, HASH_SIZE, KEY_TYPE, SELF,
@@ -73,7 +71,7 @@ impl EmptyPodVerifyTarget {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct EmptyPod {
     params: Params,
     id: PodId,
@@ -107,9 +105,6 @@ fn build() -> Result<(EmptyPodVerifyTarget, CircuitData)> {
     Ok((empty_pod_verify_target, data))
 }
 
-static EMPTY_POD_CACHE: LazyLock<Mutex<HashMap<Hash, EmptyPod>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
 impl EmptyPod {
     pub fn new(params: &Params, vd_set: VDSet) -> Result<EmptyPod> {
         let (empty_pod_verify_target, data) = &*STANDARD_EMPTY_POD_DATA;
@@ -130,12 +125,12 @@ impl EmptyPod {
         let default_params = &*DEFAULT_PARAMS;
         assert_eq!(default_params.id_params(), params.id_params());
 
-        let empty_pod = EMPTY_POD_CACHE
-            .lock()
-            .unwrap()
-            .entry(vd_set.root())
-            .or_insert_with(|| Self::new(params, vd_set).expect("prove EmptyPod"))
-            .clone();
+        let empty_pod = cache::get(
+            "empty_pod",
+            &(default_params, vd_set),
+            |(params, vd_set)| Self::new(params, vd_set.clone()).expect("prove EmptyPod"),
+        )
+        .expect("cache ok");
         Box::new(empty_pod)
     }
 }
