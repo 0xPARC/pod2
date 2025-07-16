@@ -32,9 +32,13 @@ use serialization::*;
 pub use statement::*;
 
 use crate::backends::plonky2::primitives::{
-    ec::curve::Point as PublicKey, ec::bits::BigUInt320Target as PrivateKey, merkletree::MerkleProof,
+    ec::curve::Point as PublicKey, merkletree::MerkleProof,
 };
-use crate::backends::
+use crate::backends::plonky2::primitives::ec::schnorr::SecretKey as SecretKey;
+
+
+
+
 pub const SELF: PodId = PodId(SELF_ID_HASH);
 
 // TODO: Move all value-related types to to `value.rs`
@@ -62,8 +66,8 @@ pub enum TypedValue {
     Raw(RawValue),
     // Public key variant
     PublicKey(PublicKey),
-    // // Private key variant
-    // PrivateKey(PrivateKey),
+    // Private key variant
+    SecretKey(SecretKey),
     PodId(PodId),
     // UNTAGGED TYPES:
     #[serde(untagged)]
@@ -114,9 +118,9 @@ impl From<PublicKey> for TypedValue {
     }
 }
 
-impl From<PrivateKey> for TypedValue {
-    fn from(p: PrivateKey) -> Self {
-        TypedValue::PrivateKey(p)
+impl From<SecretKey> for TypedValue {
+    fn from(sk: SecretKey) -> Self {
+        TypedValue::SecretKey(sk)
     }
 }
 
@@ -206,6 +210,7 @@ impl fmt::Display for TypedValue {
             TypedValue::Raw(v) => write!(f, "{}", v),
             TypedValue::PublicKey(p) => write!(f, "pk:{}", p),
             TypedValue::PodId(id) => write!(f, "pod_id:{}", id),
+            TypedValue::SecretKey(sk) => write!(f, "sk:{}", sk.0),
         }
     }
 }
@@ -221,6 +226,7 @@ impl From<&TypedValue> for RawValue {
             TypedValue::Array(a) => RawValue::from(a.commitment()),
             TypedValue::Raw(v) => *v,
             TypedValue::PublicKey(p) => RawValue::from(hash_fields(&p.as_fields())),
+            TypedValue::SecretKey(sk) => RawValue::from(hash_fields(&sk.to_base_p())),
             TypedValue::PodId(id) => RawValue::from(id.0),
         }
     }

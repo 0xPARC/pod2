@@ -183,7 +183,7 @@ impl Statement {
     statement_constructor!(product_of, ProductOf, 3);
     statement_constructor!(max_of, MaxOf, 3);
     statement_constructor!(hash_of, HashOf, 3);
-    statement_constructor!(public_key_of, HashOf, 2);
+    statement_constructor!(public_key_of, PublicKeyOf, 2);
     pub fn predicate(&self) -> Predicate {
         use Predicate::*;
         match self {

@@ -169,7 +169,38 @@ impl SecretKey {
         let s = (nonce + &self.0 * &e) % &*GROUP_ORDER;
         Signature { s, e }
     }
+    pub fn to_base_p(&self) -> [GoldilocksField; 5] {
+        // least significant digit first
+        todo!()
+    }
 }
+
+
+impl Serialize for SecretKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        todo!()
+        // TODO
+        // self.name.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for SecretKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        todo!()
+        // let name = String::deserialize(deserializer)?;
+        // Ok(SecretKey::new(name))
+    }
+}
+
+// impl fmt::Display for SecretKey {
+//     todo!()
+// }
 
 impl SignatureTarget {
     pub fn add_virtual_target(builder: &mut CircuitBuilder<GoldilocksField, 2>) -> Self {

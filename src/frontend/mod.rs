@@ -445,11 +445,14 @@ impl MainPodBuilder {
                     let (r2, v2) = a2
                         .value_and_ref()
                         .ok_or_else(|| arg_error("public-key-from-entries"))?;
-                    if v1 == &public_key(v2.clone()) {
-                        Statement::PublicKeyOf(r1, r2)
-                    } else {
-                        return Err(arg_error("public-key-from-entries"));
-                    }
+                    // if v1 == &public_key(v2.clone()) {
+                    //     Statement::PublicKeyOf(r1, r2)
+                    // } else {
+                    //     return Err(arg_error("public-key-from-entries"));
+                    // }
+                    // TODO: validate proof
+                    // Statement::PublicKeyOf(r1, r2)
+                    todo!()
                 }
                 (t, _) => {
                     if t.is_syntactic_sugar() {

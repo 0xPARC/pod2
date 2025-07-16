@@ -1,6 +1,7 @@
 use std::{array, iter, sync::Arc};
 
 use itertools::{zip_eq, Itertools};
+use num::BigUint;
 use plonky2::{
     field::types::Field,
     hash::{
@@ -47,6 +48,10 @@ use crate::{
 use crate::backends::plonky2::primitives::ec::curve::CircuitBuilderElliptic;
 use crate::backends::plonky2::primitives::ec::curve::Point;
 use crate::backends::plonky2::primitives::ec::bits::CircuitBuilderBits;
+use crate::backends::plonky2::primitives::ec::bits::BigUInt320Target;
+use crate::backends::plonky2::mainpod::OperationArg;
+use crate::middleware::OperationType;
+use crate::middleware::TypedValue;
 //
 // MainPod verification
 //
@@ -152,6 +157,7 @@ impl OperationVerifyGadget {
         prev_statements: &[StatementTarget],
         input_statements_offset: usize,
         merkle_claims: &[MerkleClaimTarget],
+        secret_key: &BigUInt320Target,
         custom_predicate_verification_table: &[HashOutTarget],
     ) -> Result<()> {
         let measure = measure_gates_begin!(builder, "OpVerify");
@@ -673,19 +679,23 @@ impl OperationVerifyGadget {
 
         let op_code_ok = op_type.has_native(builder, NativeOperation::PublicKeyOf);
         let (arg_types_ok, [arg1_value, arg2_value]) = cache.first_n_args_as_values();
-        // inputting public_key, private_key
+        // inputting public_key, secret_key
         let public_key = arg1_value.elements;
-        let private_key = arg2_value.elements;
+        let secret_key = arg2_value.elements;
+        let public_key_hash = arg1_value.elements;
+        let secret_key_hash = arg2_value.elements;
+        // hash(secret_key)=secret_key_hash
+        // hash(public_key)=public_key_hash
         // input hashes
         // use auxiliary data
         // see contains from entries
         let generator = builder.constant_point(Point::generator());
-        let private_key_biguint = builder.field_elements_to_biguint(&private_key);
-        let private_key_bits = private_key_biguint.bits;
-        let public_key_v = builder.multiply_point(&private_key_bits, &generator);
+        let secret_key_biguint = builder.field_elements_to_biguint(&secret_key);
+        let secret_key_bits = secret_key_biguint.bits;
+        let public_key_v = builder.multiply_point(&secret_key_bits, &generator);
         // let keypair_ok = builder.is_equal_slice(&public_key_v.u.components, &public_key);
         let keypair_ok = builder.is_equal_slice(&public_key_v.u.components, &public_key_v.u.components);
-        // let private_key_bits: Vec<BoolTarget> = (0..320).map(|_| builder.add_virtual_bool_target_safe()).collect();
+        // let secret_key_bits: Vec<BoolTarget> = (0..320).map(|_| builder.add_virtual_bool_target_safe()).collect();
         // get private key bits
         // let public_key_v = generator*private key bits
         // connect public key to public key v (use builder.is_equal_slice)
@@ -1258,6 +1268,8 @@ impl MainPodVerifyGadget {
             signed_pods.push(signed_pod);
         }
 
+        let mut secret_keys = Vec::new();
+
         // Build the statement array
         let mut statements = Vec::new();
         // Statement at index 0 is always None to be used for padding operation arguments in custom
@@ -1405,6 +1417,7 @@ impl MainPodVerifyGadget {
         // 5. Verify input statements
         for (i, (st, op)) in input_statements.iter().zip(operations.iter()).enumerate() {
             let prev_statements = &statements[..input_statements_offset + i];
+            let secret_key = builder.add_virtual_biguint320_target();
             OperationVerifyGadget {
                 params: params.clone(),
             }
@@ -1415,8 +1428,10 @@ impl MainPodVerifyGadget {
                 prev_statements,
                 input_statements_offset,
                 &merkle_claims,
+                &secret_key,
                 &custom_predicate_verification_table,
             )?;
+            secret_keys.push(secret_key);
         }
 
         measure_gates_end!(builder, measure);
@@ -1430,6 +1445,7 @@ impl MainPodVerifyGadget {
             statements: input_statements.to_vec(),
             operations,
             merkle_proofs,
+            secret_keys,
             custom_predicate_batches,
             custom_predicate_verifications,
         })
@@ -1447,6 +1463,7 @@ pub struct MainPodVerifyTarget {
     statements: Vec<StatementTarget>,
     operations: Vec<OperationTarget>,
     merkle_proofs: Vec<MerkleClaimAndProofTarget>,
+    secret_keys: Vec<BigUInt320Target>,
     custom_predicate_batches: Vec<CustomPredicateBatchTarget>,
     custom_predicate_verifications: Vec<CustomPredicateVerifyEntryTarget>,
 }
@@ -1593,6 +1610,36 @@ impl InnerCircuit for MainPodVerifyTarget {
         for (i, (st, op)) in zip_eq(&input.statements, &input.operations).enumerate() {
             self.statements[i].set_targets(pw, &self.params, st)?;
             self.operations[i].set_targets(pw, &self.params, op)?;
+            if(matches!(op.op_type(), OperationType::Native(NativeOperation::PublicKeyOf))){
+                if let StatementArg::Literal(value) = &st.1[1]{
+                    if let TypedValue::SecretKey(sk) = value.typed(){
+                        // self.secret_keys
+                        todo!()
+                    }
+                    else{
+                        panic!()
+                    }
+                }
+                else{
+                    if let OperationArg::Index(ind) = op.1[1]{
+                        if let StatementArg::Literal(value) = &input.statements[ind].1[1]{
+                            if let TypedValue::SecretKey(sk) = value.typed(){
+                                // self.secret_keys
+                                todo!()
+                            }
+                            else{
+                                panic!()
+                            }
+                        }
+                    }
+                    else{
+                        panic!()
+                    }
+                }
+            }
+            else{
+                // set to 0 to secret_keys
+            }
         }
 
         assert!(input.merkle_proofs.len() <= self.params.max_merkle_proofs_containers);
