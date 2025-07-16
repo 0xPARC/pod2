@@ -32,12 +32,9 @@ use serialization::*;
 pub use statement::*;
 
 use crate::backends::plonky2::primitives::{
-    ec::curve::Point as PublicKey, merkletree::MerkleProof,
+    ec::{curve::Point as PublicKey, schnorr::SecretKey},
+    merkletree::MerkleProof,
 };
-use crate::backends::plonky2::primitives::ec::schnorr::SecretKey as SecretKey;
-
-
-
 
 pub const SELF: PodId = PodId(SELF_ID_HASH);
 
@@ -64,9 +61,9 @@ pub enum TypedValue {
     ),
     // Uses the serialization for middleware::Value:
     Raw(RawValue),
-    // Public key variant
+    // Schnorr public key variant (EC point)
     PublicKey(PublicKey),
-    // Private key variant
+    // Schnorr secret key variant (scalar)
     SecretKey(SecretKey),
     PodId(PodId),
     // UNTAGGED TYPES:
@@ -209,8 +206,8 @@ impl fmt::Display for TypedValue {
             TypedValue::Array(a) => write!(f, "arr:{}", a.commitment()),
             TypedValue::Raw(v) => write!(f, "{}", v),
             TypedValue::PublicKey(p) => write!(f, "pk:{}", p),
+            TypedValue::SecretKey(k) => write!(f, "sk:{}", k),
             TypedValue::PodId(id) => write!(f, "pod_id:{}", id),
-            TypedValue::SecretKey(sk) => write!(f, "sk:{}", sk.0),
         }
     }
 }
@@ -226,7 +223,7 @@ impl From<&TypedValue> for RawValue {
             TypedValue::Array(a) => RawValue::from(a.commitment()),
             TypedValue::Raw(v) => *v,
             TypedValue::PublicKey(p) => RawValue::from(hash_fields(&p.as_fields())),
-            TypedValue::SecretKey(sk) => RawValue::from(hash_fields(&sk.to_base_p())),
+            TypedValue::SecretKey(sk) => RawValue::from(hash_fields(&sk.to_limbs())),
             TypedValue::PodId(id) => RawValue::from(id.0),
         }
     }
@@ -294,6 +291,19 @@ impl JsonSchema for TypedValue {
             ..Default::default()
         };
 
+        let secret_key_schema = schemars::schema::SchemaObject {
+            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
+            object: Some(Box::new(schemars::schema::ObjectValidation {
+                // SecretKey is serialized as a string
+                properties: [("SecretKey".to_string(), gen.subschema_for::<String>())]
+                    .into_iter()
+                    .collect(),
+                required: ["SecretKey".to_string()].into_iter().collect(),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+
         // This is the part that Schemars can't generate automatically:
         let untagged_array_schema = gen.subschema_for::<Array>();
         let untagged_set_schema = gen.subschema_for::<Set>();
@@ -307,6 +317,7 @@ impl JsonSchema for TypedValue {
                     Schema::Object(int_schema),
                     Schema::Object(raw_schema),
                     Schema::Object(public_key_schema),
+                    Schema::Object(secret_key_schema),
                     untagged_array_schema,
                     untagged_dictionary_schema,
                     untagged_string_schema,

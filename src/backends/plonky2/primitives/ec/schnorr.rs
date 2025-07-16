@@ -1,4 +1,4 @@
-use std::array;
+use std::{array, fmt};
 
 use num::BigUint;
 use num_bigint::RandBigInt;
@@ -6,7 +6,7 @@ use plonky2::{
     field::{
         extension::FieldExtension,
         goldilocks_field::GoldilocksField,
-        types::{Field, PrimeField},
+        types::{Field, PrimeField, PrimeField64},
     },
     hash::{
         hash_types::HashOutTarget,
@@ -169,38 +169,80 @@ impl SecretKey {
         let s = (nonce + &self.0 * &e) % &*GROUP_ORDER;
         Signature { s, e }
     }
-    pub fn to_base_p(&self) -> [GoldilocksField; 5] {
-        // least significant digit first
-        todo!()
+
+    pub fn as_bytes(&self) -> Vec<u8> {
+        let bytes = self.0.to_bytes_le();
+        assert!(bytes.len() <= 40);
+        bytes
+            .into_iter()
+            .chain(std::iter::repeat(0u8))
+            .take(40)
+            .collect()
+    }
+
+    pub fn from_bytes(sk_bytes: &[u8]) -> Result<Self, Error> {
+        if sk_bytes.len() != 40 {
+            return Err(Error::custom(
+                "Invalid byte encoding of Schnorr secret key.".to_string(),
+            ));
+        }
+
+        let big_uint = BigUint::from_bytes_le(&sk_bytes);
+
+        if big_uint > *GROUP_ORDER {
+            return Err(Error::custom(
+                "Invalid Schnorr secret key - above group order.".to_string(),
+            ));
+        }
+
+        Ok(Self(big_uint))
+    }
+
+    pub fn to_limbs(&self) -> [GoldilocksField; 10] {
+        assert!(self.0.bits() <= 320);
+        let digits = self.0.to_u32_digits();
+        array::from_fn(|i| {
+            let d = digits.get(i).copied().unwrap_or(0);
+            GoldilocksField::from_canonical_u32(d)
+        })
+    }
+
+    pub fn from_limbs(limbs: [GoldilocksField; 10]) -> Result<Self, Error> {
+        let mut limb_vec = vec![];
+        for gl in limbs.iter() {
+            let g64 = gl.to_canonical_u64();
+            if (g64 >= 1 << 32) {
+                return Err(Error::custom(
+                    "Invalid limb value in Schnorr secret key.".to_string(),
+                ));
+            }
+            limb_vec.push(g64 as u32);
+        }
+
+        return Ok(Self(BigUint::from_slice(&limb_vec)));
     }
 }
-
 
 impl Serialize for SecretKey {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: serde::Serializer,
+        S: Serializer,
     {
-        todo!()
-        // TODO
-        // self.name.serialize(serializer)
+        let sk_b64 = serialize_bytes(&self.as_bytes());
+        serializer.serialize_str(&sk_b64)
     }
 }
 
 impl<'de> Deserialize<'de> for SecretKey {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: serde::Deserializer<'de>,
+        D: Deserializer<'de>,
     {
-        todo!()
-        // let name = String::deserialize(deserializer)?;
-        // Ok(SecretKey::new(name))
+        let sk_b64 = String::deserialize(deserializer)?;
+        let sk_bytes = deserialize_bytes(&sk_b64).map_err(serde::de::Error::custom)?;
+        SecretKey::from_bytes(&sk_bytes).map_err(serde::de::Error::custom)
     }
 }
-
-// impl fmt::Display for SecretKey {
-//     todo!()
-// }
 
 impl SignatureTarget {
     pub fn add_virtual_target(builder: &mut CircuitBuilder<GoldilocksField, 2>) -> Self {
@@ -208,6 +250,12 @@ impl SignatureTarget {
             s: builder.add_virtual_biguint320_target(),
             e: builder.add_virtual_biguint320_target(),
         }
+    }
+}
+
+impl fmt::Display for SecretKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", serialize_bytes(self.as_bytes().as_slice()))
     }
 }
 
@@ -245,9 +293,14 @@ fn hash_array_circuit(
 
 #[cfg(test)]
 mod test {
+    use itertools::assert_equal;
+    use num::BigUint;
     use num_bigint::RandBigInt;
     use plonky2::{
-        field::{goldilocks_field::GoldilocksField, types::Sample},
+        field::{
+            goldilocks_field::GoldilocksField,
+            types::{Field, Sample},
+        },
         iop::{
             target::Target,
             witness::{PartialWitness, WitnessWrite},
@@ -377,6 +430,48 @@ mod test {
         let data = builder.build::<PoseidonGoldilocksConfig>();
         let proof = data.prove(pw)?;
         data.verify(proof)?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_secret_key_serialization() -> Result<(), anyhow::Error> {
+        let sk_123 = SecretKey(BigUint::from(123u32));
+        let str_123 = serde_json::to_string(&sk_123).unwrap();
+        let deser_123 = serde_json::from_str(&str_123).unwrap();
+        assert_eq!(sk_123, deser_123);
+
+        let sk_rand = SecretKey::new_rand();
+        assert_ne!(sk_123, sk_rand);
+        let str_rand = serde_json::to_string(&sk_rand).unwrap();
+        let deser_rand = serde_json::from_str(&str_rand).unwrap();
+        assert_eq!(sk_rand, deser_rand);
+
+        let sk_max = SecretKey(GROUP_ORDER.clone());
+        assert_ne!(sk_123, sk_max);
+        let str_max = serde_json::to_string(&sk_max).unwrap();
+        let deser_max = serde_json::from_str(&str_max).unwrap();
+        assert_eq!(sk_max, deser_max);
+
+        // Value is too big for group but fits within 320 bits.  Thus it
+        // survives the assert in as_bytes(), but gets caught during deserialization.
+        let sk_toobig = SecretKey(&*GROUP_ORDER + 1u32);
+        assert_ne!(sk_toobig, sk_123);
+        let str_toobig = serde_json::to_string(&sk_toobig).unwrap();
+        let deser_toobig: Result<SecretKey, _> = serde_json::from_str(&str_toobig);
+        assert!(matches!(deser_toobig, Err(_)));
+        assert_eq!(sk_rand, deser_rand);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_secret_key_limbs() -> Result<(), anyhow::Error> {
+        let sk_0 = SecretKey(BigUint::from(0u32));
+        let limbs_0 = sk_0.to_limbs();
+        assert_eq!(limbs_0, [GoldilocksField::from_canonical_u32(0); 10]);
+        let rsk_0 = SecretKey::from_limbs(limbs_0).unwrap();
+        assert_eq!(sk_0, rsk_0);
+
         Ok(())
     }
 }
