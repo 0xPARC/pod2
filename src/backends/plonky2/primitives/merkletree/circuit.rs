@@ -410,14 +410,16 @@ pub struct MerkleProofStateTransitionTarget {
 /// creates the targets and defines the logic of the circuit
 pub fn verify_merkle_state_transition_circuit(
     builder: &mut CircuitBuilder<F, D>,
-    proof: MerkleProofStateTransitionTarget,
+    proof: &MerkleProofStateTransitionTarget,
 ) {
     let measure = measure_gates_begin!(builder, format!("MerkleProof_{}", proof.max_depth));
     let zero = builder.zero();
 
+    // for now, only type=0 (insertion proof) is supported
+    builder.connect(proof.typ, zero);
+
+    // check that for the old_root, the new_key does not exist in the tree
     verify_merkle_proof_circuit(builder, &proof.proof_non_existence);
-    // assert that proof.proof_non_existence.existence==false
-    builder.is_equal(proof.proof_non_existence.existence.target, zero);
 
     let new_key_proof = MerkleProofExistenceTarget {
         max_depth: proof.max_depth,
@@ -429,15 +431,50 @@ pub fn verify_merkle_state_transition_circuit(
     };
     verify_merkle_proof_existence_circuit(builder, &new_key_proof);
 
-    let old_siblings = proof.proof_non_existence.siblings;
-    let new_siblings = proof.new_siblings;
+    // assert that proof_non_existence.existence==false
+    let mut acc = builder.is_equal(proof.proof_non_existence.existence.target, zero);
 
+    // assert proof_non_existence.root==old_root, and that it uses new_key &
+    // new_value
+    for j in 0..HASH_SIZE {
+        // assert that proof.proof_non_existence.root == proof.old_root
+        let check_j_1 = builder.is_equal(
+            proof.proof_non_existence.root.elements[j],
+            proof.old_root.elements[j],
+        );
+        // assert that the non-existence proof uses the new_key & new_value
+        let check_j_2 = builder.is_equal(
+            proof.proof_non_existence.key.elements[j],
+            proof.new_key.elements[j],
+        );
+        let check_j_3 = builder.is_equal(
+            proof.proof_non_existence.value.elements[j],
+            proof.new_value.elements[j],
+        );
+        let check_j_12 = builder.and(check_j_1, check_j_2);
+        let check_j_123 = builder.and(check_j_12, check_j_3);
+        acc = builder.and(acc, check_j_123);
+    }
+    // if enabled==true, assert the previous checks results are true too (if
+    // enabled=true, the accumulated result from previous checks should be true,
+    // if enabled=false, don't care)
+    acc = builder.and(proof.enabled, acc);
+    builder.connect(acc.target, proof.enabled.target);
+
+    // sanity check
+    builder.connect(
+        proof.proof_non_existence.enabled.target,
+        proof.enabled.target,
+    );
+
+    // check that old_siblings & new_siblings match.
     // let d=divergence_level, assert that:
     // 1) old_siblings[i] == new_siblings[i] ∀ i \ {d}
-    // 2) at i=d:
-    //   if old_siblings[i] != new_siblings[i]:
+    // 2) at i==d, if old_siblings[i] != new_siblings[i]:
     //     old_siblings[i] == EMPTY_HASH
     //     new_siblings[i] == old_leaf_hash
+    let old_siblings = proof.proof_non_existence.siblings.clone();
+    let new_siblings = proof.new_siblings.clone();
     for i in 0..proof.max_depth {
         let i_targ = builder.constant(F::from_canonical_u64(i as u64));
         let is_divergence_level = builder.is_equal(i_targ, proof.divergence_level);
@@ -454,7 +491,7 @@ pub fn verify_merkle_state_transition_circuit(
             builder.connect(old_sibling_i[j], new_sibling_i[j]);
         }
 
-        // 2) when i=d && if old_siblings[i] != new_siblings[i]
+        // 2) when i==d && if old_siblings[i] != new_siblings[i]
         //     old_siblings[i] == EMPTY_HASH && new_siblings[i] == old_leaf_hash
 
         // in_case_2=true if: i==d && old_siblings[i]!=new_siblings[i]
@@ -553,16 +590,16 @@ impl MerkleProofStateTransitionTarget {
         {
             pw.set_hash_target(self.new_siblings[i], HashOut::from_vec(sibling.0.to_vec()))?;
         }
-        dbg!("old");
-        for s in mp.proof_non_existence.siblings.iter() {
-            println!("{}", &s);
-        }
-        dbg!("new");
-        for s in new_siblings.iter() {
-            println!("{}", &s);
-        }
-        dbg!(mp.proof_non_existence.siblings.len());
-        dbg!(new_siblings.len());
+        // dbg!("old");
+        // for s in mp.proof_non_existence.siblings.iter() {
+        //     println!("{}", &s);
+        // }
+        // dbg!("new");
+        // for s in new_siblings.iter() {
+        //     println!("{}", &s);
+        // }
+        // dbg!(mp.proof_non_existence.siblings.len());
+        // dbg!(new_siblings.len());
 
         // compute the divergence_level and set it as witness
         // let old_path = keypath(self.max_depth, mp.old_key)?;
@@ -578,7 +615,7 @@ impl MerkleProofStateTransitionTarget {
         // )?;
         pw.set_target(
             self.divergence_level,
-            F::from_canonical_u64(new_siblings.len() as u64),
+            F::from_canonical_u64((new_siblings.len() - 1) as u64),
         )?;
 
         Ok(())
@@ -931,20 +968,24 @@ pub mod tests {
         max_depth: usize,
         state_transition_proof: &MerkleProofStateTransition,
     ) -> Result<()> {
+        // sanity check, run the out-circuit proof verification
+        MerkleTree::verify_state_transition(max_depth, &state_transition_proof)?;
+
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
         let targets = MerkleProofStateTransitionTarget::new_virtual(max_depth, &mut builder);
+        verify_merkle_state_transition_circuit(&mut builder, &targets);
         targets.set_targets(&mut pw, true, &state_transition_proof)?;
 
-        dbg!(&builder.num_gates());
         // generate & verify proof
         let data = builder.build::<C>();
         let proof = data.prove(pw)?;
         data.verify(proof)?;
         Ok(())
     }
+
     #[test]
     fn test_state_transition_gadget() -> Result<()> {
         let max_depth: usize = 32;
@@ -954,32 +995,71 @@ pub mod tests {
         }
 
         let mut tree = MerkleTree::new(max_depth, &kvs)?;
-        let old_root = tree.root();
-
-        println!("{}", tree);
 
         // key=37 shares path with key=5, till the level 6, needing 2 extra
         // 'empty' nodes between the original position of key=5 with the new
         // position of key=5 and key=37.
+        let old_root = tree.root();
         let key = RawValue::from(37);
         let value = RawValue::from(1037);
         let state_transition_proof = tree.insert(&key, &value)?;
-        println!("{}", tree);
 
-        // circuit
         run_state_transition_circuit(max_depth, &state_transition_proof)?;
-
         assert_eq!(state_transition_proof.old_root, old_root);
         assert_eq!(state_transition_proof.new_root, tree.root());
 
-        // 2nd part of the test. Add a new leaf
+        // add a new leaf, which shares path with the previous one, but diverges
+        // one level before, where there is no leaf yet to be pushed down.
+        let old_root = tree.root();
         let key = RawValue::from(21);
         let value = RawValue::from(1021);
         let state_transition_proof = tree.insert(&key, &value)?;
-        println!("{}", tree);
 
-        dbg!("SECOND ROUND");
         run_state_transition_circuit(max_depth, &state_transition_proof)?;
+        assert_eq!(state_transition_proof.old_root, old_root);
+        assert_eq!(state_transition_proof.new_root, tree.root());
+
+        // another leaf which will push further down the leaf with key=37
+        let old_root = tree.root();
+        let key = RawValue::from(101);
+        let value = RawValue::from(1101);
+        let state_transition_proof = tree.insert(&key, &value)?;
+
+        run_state_transition_circuit(max_depth, &state_transition_proof)?;
+        assert_eq!(state_transition_proof.old_root, old_root);
+        assert_eq!(state_transition_proof.new_root, tree.root());
+
+        // insert two more leaves, which share almost all the path except for
+        // the last level (max_depth-1)
+
+        let max_depth: usize = 32;
+        let mut kvs = HashMap::new();
+        for i in 0..8 {
+            kvs.insert(RawValue::from(i), RawValue::from(1000 + i));
+        }
+
+        let mut tree = MerkleTree::new(max_depth, &kvs)?;
+
+        let old_root = tree.root();
+        let key = RawValue::from(4294967295); // 0xffffffff
+        let value = RawValue::from(4294967295);
+        let state_transition_proof = tree.insert(&key, &value)?;
+
+        run_state_transition_circuit(max_depth, &state_transition_proof)?;
+        assert_eq!(state_transition_proof.old_root, old_root);
+        assert_eq!(state_transition_proof.new_root, tree.root());
+
+        // insert a leaf that shares the path with the previous one, except for
+        // the last level (in max_depth); which would force both leaves to be
+        // pushed down till max_depth-1 level.
+        let old_root = tree.root();
+        let key = RawValue::from(4026531839); // 0xefffffff
+        let value = RawValue::from(4026531839);
+        let state_transition_proof = tree.insert(&key, &value)?;
+
+        run_state_transition_circuit(max_depth, &state_transition_proof)?;
+        assert_eq!(state_transition_proof.old_root, old_root);
+        assert_eq!(state_transition_proof.new_root, tree.root());
 
         Ok(())
     }

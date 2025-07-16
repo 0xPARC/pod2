@@ -2,7 +2,6 @@
 //! https://0xparc.github.io/pod2/merkletree.html .
 use std::{collections::HashMap, fmt, iter::IntoIterator};
 
-use itertools::zip_eq;
 use plonky2::field::types::Field;
 use serde::{Deserialize, Serialize};
 
@@ -211,6 +210,7 @@ impl MerkleTree {
         let mut old_siblings = proof.proof_non_existence.siblings.clone();
         let new_siblings = proof.siblings.clone();
 
+        // check that for the old_root, the new_key does not exist in the tree
         Self::verify_nonexistence(
             max_depth,
             proof.old_root,
@@ -218,24 +218,22 @@ impl MerkleTree {
             &proof.new_key,
         )?;
 
-        // TODO replace the next logic block by a call to verify() (merkleproof of existence)
         // check that new_siblings verify with the new_root
-        let computed_new_root = MerkleProof {
-            existence: true,
-            siblings: new_siblings.clone(),
-            other_leaf: None,
-        }
-        .compute_root_from_leaf(max_depth, &proof.new_key, Some(proof.new_value))?;
-        if computed_new_root != proof.new_root {
-            return Err(TreeError::state_transition_fail(
-                "new_root does not match".to_string(),
-            ));
-        }
+        Self::verify(
+            max_depth,
+            proof.new_root,
+            &MerkleProof {
+                existence: true,
+                siblings: new_siblings.clone(),
+                other_leaf: None,
+            },
+            &proof.new_key,
+            &proof.new_value,
+        )?;
 
         // let d=divergence_level, assert that:
         // 1) old_siblings[i] == new_siblings[i] ∀ i \ {d}
-        // 2) at i=d:
-        //   if old_siblings[i] != new_siblings[i]:
+        // 2) at i==d, if old_siblings[i] != new_siblings[i]:
         //     old_siblings[i] == EMPTY_HASH
         //     new_siblings[i] == old_leaf_hash
         let d = new_siblings.len() - 1;
@@ -243,7 +241,7 @@ impl MerkleTree {
         for i in 0..d {
             if old_siblings[i] != new_siblings[i] {
                 return Err(TreeError::state_transition_fail(
-                    "siblings don't match: old[i]!=new[i] 0<=i<d".to_string(),
+                    "siblings don't match: old[i]!=new[i] ∀ i (except at i==d)".to_string(),
                 ));
             }
         }
@@ -412,65 +410,14 @@ pub struct MerkleProofStateTransition {
     pub(crate) typ: u8,
 
     pub(crate) old_root: Hash,
+    // proof of non-existence of the new_key for the old_root
     pub(crate) proof_non_existence: MerkleProof,
-    // pub(crate) old_key: RawValue,
-    // pub(crate) old_value: RawValue,
-    // pub(crate) old_node_is_leaf: bool,
-    // pub(crate) old_node_lvl: usize,
+
     pub(crate) new_root: Hash,
     pub(crate) new_key: RawValue,
     pub(crate) new_value: RawValue,
 
     pub(crate) siblings: Vec<Hash>,
-}
-
-impl MerkleProofStateTransition {
-    fn prepare_siblings(&self, max_depth: usize) -> TreeResult<(Vec<Hash>, Vec<Hash>)> {
-        let proof = self;
-        let old_siblings = proof.siblings.clone();
-        let mut new_siblings = proof.siblings.clone();
-
-        let path = keypath(max_depth, proof.new_key)?;
-        match proof.typ {
-            0 => {
-                // type=insertion, add EMPTY_HASH to the siblings between the
-                // last proof.sibling and the proof.new_key & other_leaf_key path
-                // divergence level
-
-                let (old_key, old_value) = proof.proof_non_existence.other_leaf.unwrap();
-
-                let path_leaf_sibling = keypath(max_depth, old_key)?;
-                let divergence = zip_eq(path, path_leaf_sibling).position(|(x, y)| x != y);
-                let divergence: usize = match divergence {
-                    Some(d) => d,
-                    None => return Err(TreeError::max_depth()),
-                };
-                for _ in proof.siblings.len()..divergence {
-                    new_siblings.push(EMPTY_HASH);
-                }
-                // add the old_leaf as the last sibling to the new_siblings
-                // println!("DBG3: {}", proof.old_key);
-                // let old_leaf_hash = if proof.old_key == EMPTY_VALUE {
-                //     EMPTY_HASH
-                // } else {
-                //     Leaf::new(max_depth, proof.old_key, proof.old_value)?.compute_hash()
-                // };
-                let old_leaf_hash = //if proof.old_node_is_leaf {
-                    Leaf::new(max_depth, old_key, old_value)?.compute_hash();
-                // } else {
-                //     Hash::from(proof.old_key)
-                // };
-                new_siblings.push(old_leaf_hash);
-            }
-            _ => {
-                return Err(TreeError::state_transition_fail(
-                    "invalid type, only insert supported".to_string(),
-                ))
-            }
-        }
-
-        Ok((old_siblings, new_siblings))
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -594,61 +541,6 @@ impl Node {
                 hash: _h,
             }) => Ok((Some((*key, *value)), lvl)),
             _ => Ok((None, lvl)),
-        }
-    }
-    // returns the key at the given `till_lvl`
-    fn get_sibling_at(
-        &self,
-        lvl: usize,
-        at_lvl: usize,
-        max_depth: usize,
-        path: Vec<bool>,
-        mut siblings: Option<&mut Vec<Hash>>,
-    ) -> TreeResult<Option<(RawValue, RawValue, bool)>> {
-        if lvl >= max_depth {
-            return Err(TreeError::max_depth());
-        }
-
-        if lvl + 1 == at_lvl {
-            match self {
-                Self::Intermediate(n) => {
-                    dbg!("DBG 0");
-                    println!("{}", n.right.hash());
-                    println!("{}", n.left.hash());
-                    // return the sibling
-                    if path[lvl + 1] {
-                        return Ok(Some((RawValue::from(n.right.hash()), EMPTY_VALUE, false)));
-                    } else {
-                        return Ok(Some((RawValue::from(n.left.hash()), EMPTY_VALUE, false)));
-                    }
-                }
-                _ => return Ok(Some((EMPTY_VALUE, EMPTY_VALUE, false))),
-            }
-        }
-
-        match self {
-            Self::Intermediate(n) => {
-                if path[lvl] {
-                    if let Some(s) = siblings.as_mut() {
-                        s.push(n.left.hash());
-                    }
-                    n.right
-                        .get_sibling_at(lvl + 1, at_lvl, max_depth, path, siblings)
-                } else {
-                    if let Some(s) = siblings.as_mut() {
-                        s.push(n.right.hash());
-                    }
-                    n.left
-                        .get_sibling_at(lvl + 1, at_lvl, max_depth, path, siblings)
-                }
-            }
-            Self::Leaf(Leaf {
-                key,
-                value,
-                path: _p,
-                hash: _h,
-            }) => Ok(Some((*key, *value, true))),
-            _ => Ok(None),
         }
     }
 
