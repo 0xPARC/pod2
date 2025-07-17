@@ -445,7 +445,7 @@ mod test {
         let deser_rand = serde_json::from_str(&str_rand).unwrap();
         assert_eq!(sk_rand, deser_rand);
 
-        let sk_max = SecretKey(GROUP_ORDER.clone());
+        let sk_max = SecretKey(&*GROUP_ORDER - 1u32);
         assert_ne!(sk_123, sk_max);
         let str_max = serde_json::to_string(&sk_max).unwrap();
         let deser_max = serde_json::from_str(&str_max).unwrap();
@@ -500,7 +500,7 @@ mod test {
             GoldilocksField::from_canonical_u32(7),
             GoldilocksField::from_canonical_u32(8),
             GoldilocksField::from_canonical_u32(9),
-            GoldilocksField::from_canonical_u32(1 << 32),
+            GoldilocksField::from_canonical_u64(1 << 32),
         ]);
         assert!(matches!(bad_result, Err(_)));
 
