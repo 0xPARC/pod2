@@ -261,11 +261,9 @@ impl Statement {
             (Native(NativePredicate::HashOf), &[a1, a2, a3]) => {
                 Self::HashOf(a1.try_into()?, a2.try_into()?, a3.try_into()?)
             }
-
             (Native(NativePredicate::PublicKeyOf), &[a1, a2]) => {
                 Self::PublicKeyOf(a1.try_into()?, a2.try_into()?)
             }
-
             (Native(np), _) => {
                 return Err(Error::custom(format!("Predicate {:?} is syntax sugar", np)))
             }

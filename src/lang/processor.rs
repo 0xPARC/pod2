@@ -39,6 +39,7 @@ pub fn native_predicate_from_string(s: &str) -> Option<NativePredicate> {
         "ProductOf" => Some(NativePredicate::ProductOf),
         "MaxOf" => Some(NativePredicate::MaxOf),
         "HashOf" => Some(NativePredicate::HashOf),
+        "PublicKeyOf" => Some(NativePredicate::PublicKeyOf),
         "DictContains" => Some(NativePredicate::DictContains),
         "DictNotContains" => Some(NativePredicate::DictNotContains),
         "ArrayContains" => Some(NativePredicate::ArrayContains),
