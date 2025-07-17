@@ -551,11 +551,7 @@ pub trait CircuitBuilderElliptic {
 
     fn add_point(&mut self, p1: &PointTarget, p2: &PointTarget) -> PointTarget;
     fn double_point(&mut self, p: &PointTarget) -> PointTarget;
-    fn multiply_point(
-        &mut self,
-        p1_scalar: &[BoolTarget; 320],
-        p1: &PointTarget,
-    ) -> PointTarget;
+    fn multiply_point(&mut self, p1_scalar: &[BoolTarget; 320], p1: &PointTarget) -> PointTarget;
     fn linear_combination_points(
         &mut self,
         p1_scalar: &[BoolTarget; 320],
@@ -658,11 +654,7 @@ impl CircuitBuilderElliptic for CircuitBuilder<GoldilocksField, 2> {
         */
     }
 
-    fn multiply_point(
-        &mut self,
-        p1_scalar: &[BoolTarget; 320],
-        p1: &PointTarget,
-    ) -> PointTarget {
+    fn multiply_point(&mut self, p1_scalar: &[BoolTarget; 320], p1: &PointTarget) -> PointTarget {
         let zero = self.identity_point();
         let mut ans = zero.clone();
         for i in (0..320).rev() {

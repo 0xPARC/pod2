@@ -31,9 +31,13 @@ use crate::{
         },
         emptypod::{EmptyPod, STANDARD_EMPTY_POD_DATA},
         error::Result,
-        mainpod::{self, pad_statement},
-        primitives::merkletree::{
-            MerkleClaimAndProof, MerkleClaimAndProofTarget, MerkleProofGadget,
+        mainpod::{self, pad_statement, OperationArg},
+        primitives::{
+            ec::{
+                bits::{BigUInt320Target, CircuitBuilderBits},
+                curve::{CircuitBuilderElliptic, Point, WitnessWriteCurve},
+            },
+            merkletree::{MerkleClaimAndProof, MerkleClaimAndProofTarget, MerkleProofGadget},
         },
         recursion::{InnerCircuit, VerifiedProofTarget},
         signedpod::SignedPod,
@@ -41,17 +45,11 @@ use crate::{
     measure_gates_begin, measure_gates_end,
     middleware::{
         AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, NativeOperation,
-        NativePredicate, Params, PodType, PredicatePrefix, Statement, StatementArg, ToFields,
-        Value, ValueRef, EMPTY_VALUE, F, HASH_SIZE, KEY_TYPE, SELF, VALUE_SIZE,
+        NativePredicate, OperationType, Params, PodType, PredicatePrefix, Statement, StatementArg,
+        ToFields, TypedValue, Value, ValueRef, EMPTY_VALUE, F, HASH_SIZE, KEY_TYPE, SELF,
+        VALUE_SIZE,
     },
 };
-use crate::backends::plonky2::primitives::ec::curve::CircuitBuilderElliptic;
-use crate::backends::plonky2::primitives::ec::curve::Point;
-use crate::backends::plonky2::primitives::ec::bits::CircuitBuilderBits;
-use crate::backends::plonky2::primitives::ec::bits::BigUInt320Target;
-use crate::backends::plonky2::mainpod::OperationArg;
-use crate::middleware::OperationType;
-use crate::middleware::TypedValue;
 //
 // MainPod verification
 //
@@ -232,7 +230,7 @@ impl OperationVerifyGadget {
                     self.eval_sum_of(builder, st, &op.op_type, &cache),
                     self.eval_product_of(builder, st, &op.op_type, &cache),
                     self.eval_max_of(builder, st, &op.op_type, &cache),
-                    self.eval_public_key_of(builder, st, &op.op_type, &cache),
+                    self.eval_public_key_of(builder, st, &op.op_type, secret_key.clone(), &cache),
                 ]
             },
             // Skip these if there are no resolved Merkle claims
@@ -673,6 +671,7 @@ impl OperationVerifyGadget {
         builder: &mut CircuitBuilder,
         st: &StatementTarget,
         op_type: &OperationTypeTarget,
+        secret_key: BigUInt320Target,
         cache: &StatementCache,
     ) -> BoolTarget {
         let measure = measure_gates_begin!(builder, "OpPublicKeyOf");
@@ -680,26 +679,26 @@ impl OperationVerifyGadget {
         let op_code_ok = op_type.has_native(builder, NativeOperation::PublicKeyOf);
         let (arg_types_ok, [arg1_value, arg2_value]) = cache.first_n_args_as_values();
         // inputting public_key, secret_key
-        let public_key = arg1_value.elements;
-        let secret_key = arg2_value.elements;
         let public_key_hash = arg1_value.elements;
         let secret_key_hash = arg2_value.elements;
-        // hash(secret_key)=secret_key_hash
-        // hash(public_key)=public_key_hash
-        // input hashes
-        // use auxiliary data
-        // see contains from entries
-        let generator = builder.constant_point(Point::generator());
-        let secret_key_biguint = builder.field_elements_to_biguint(&secret_key);
-        let secret_key_bits = secret_key_biguint.bits;
-        let public_key_v = builder.multiply_point(&secret_key_bits, &generator);
-        // let keypair_ok = builder.is_equal_slice(&public_key_v.u.components, &public_key);
-        let keypair_ok = builder.is_equal_slice(&public_key_v.u.components, &public_key_v.u.components);
-        // let secret_key_bits: Vec<BoolTarget> = (0..320).map(|_| builder.add_virtual_bool_target_safe()).collect();
-        // get private key bits
-        // let public_key_v = generator*private key bits
-        // connect public key to public key v (use builder.is_equal_slice)
 
+        let secret_key_hash_v =
+            builder.hash_n_to_hash_no_pad::<PoseidonHash>(secret_key.limbs.to_vec());
+        let skey_hash_ok = builder.is_equal_slice(&secret_key_hash, &secret_key_hash_v.elements);
+        let invgenerator = builder.constant_point(Point::generator().inverse());
+        let secret_key_bits = secret_key.bits;
+        // check secret_key<group order
+        // public_key = g^-secret key
+        let public_key = builder.multiply_point(&secret_key_bits, &invgenerator);
+        let public_key_hash_v = builder.hash_n_to_hash_no_pad::<PoseidonHash>(
+            public_key
+                .x
+                .components
+                .into_iter()
+                .chain(public_key.u.components)
+                .collect(),
+        );
+        let pkey_hash_ok = builder.is_equal_slice(&public_key_hash, &public_key_hash_v.elements);
 
         let arg1_expected = cache.equations[0].lhs.clone();
         let arg2_expected = cache.equations[1].lhs.clone();
@@ -711,7 +710,7 @@ impl OperationVerifyGadget {
         );
         let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-        let ok = builder.all([op_code_ok, arg_types_ok, keypair_ok, st_ok]);
+        let ok = builder.all([op_code_ok, arg_types_ok, pkey_hash_ok, skey_hash_ok, st_ok]);
         measure_gates_end!(builder, measure);
         ok
     }
@@ -1610,35 +1609,31 @@ impl InnerCircuit for MainPodVerifyTarget {
         for (i, (st, op)) in zip_eq(&input.statements, &input.operations).enumerate() {
             self.statements[i].set_targets(pw, &self.params, st)?;
             self.operations[i].set_targets(pw, &self.params, op)?;
-            if(matches!(op.op_type(), OperationType::Native(NativeOperation::PublicKeyOf))){
-                if let StatementArg::Literal(value) = &st.1[1]{
-                    if let TypedValue::SecretKey(sk) = value.typed(){
-                        // self.secret_keys
-                        todo!()
-                    }
-                    else{
+            if matches!(
+                op.op_type(),
+                OperationType::Native(NativeOperation::PublicKeyOf)
+            ) {
+                if let StatementArg::Literal(value) = &st.1[1] {
+                    if let TypedValue::SecretKey(sk) = value.typed() {
+                        pw.set_biguint320_target(&self.secret_keys[i], &sk.0)?;
+                    } else {
                         panic!()
                     }
-                }
-                else{
-                    if let OperationArg::Index(ind) = op.1[1]{
-                        if let StatementArg::Literal(value) = &input.statements[ind].1[1]{
-                            if let TypedValue::SecretKey(sk) = value.typed(){
-                                // self.secret_keys
-                                todo!()
-                            }
-                            else{
+                } else {
+                    if let OperationArg::Index(ind) = op.1[1] {
+                        if let StatementArg::Literal(value) = &input.statements[ind].1[1] {
+                            if let TypedValue::SecretKey(sk) = value.typed() {
+                                pw.set_biguint320_target(&self.secret_keys[i], &sk.0)?;
+                            } else {
                                 panic!()
                             }
                         }
-                    }
-                    else{
+                    } else {
                         panic!()
                     }
                 }
-            }
-            else{
-                // set to 0 to secret_keys
+            } else {
+                pw.set_biguint320_target(&self.secret_keys[i], &BigUint::ZERO)?;
             }
         }
 

@@ -73,9 +73,7 @@ impl TryFrom<Statement> for middleware::Statement {
                 (NP::HashOf, &[a1, a2, a3]) => {
                     S::HashOf(a1.try_into()?, a2.try_into()?, a3.try_into()?)
                 }
-                (NP::PublicKeyOf, &[a1, a2]) => {
-                    S::PublicKeyOf(a1.try_into()?, a2.try_into()?)
-                }
+                (NP::PublicKeyOf, &[a1, a2]) => S::PublicKeyOf(a1.try_into()?, a2.try_into()?),
                 _ => Err(Error::custom(format!(
                     "Ill-formed statement expression {:?}",
                     s
