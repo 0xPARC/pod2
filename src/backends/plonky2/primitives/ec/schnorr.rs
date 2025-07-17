@@ -211,7 +211,7 @@ impl SecretKey {
         let mut limb_vec = vec![];
         for gl in limbs.iter() {
             let g64 = gl.to_canonical_u64();
-            if (g64 >= 1 << 32) {
+            if g64 >= (1 << 32) {
                 return Err(Error::custom(
                     "Invalid limb value in Schnorr secret key.".to_string(),
                 ));
@@ -293,7 +293,6 @@ fn hash_array_circuit(
 
 #[cfg(test)]
 mod test {
-    use itertools::assert_equal;
     use num::BigUint;
     use num_bigint::RandBigInt;
     use plonky2::{

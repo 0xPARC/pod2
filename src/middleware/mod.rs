@@ -195,6 +195,28 @@ impl TryFrom<&TypedValue> for PodId {
     }
 }
 
+impl TryFrom<&TypedValue> for PublicKey {
+    type Error = Error;
+    fn try_from(v: &TypedValue) -> std::result::Result<Self, Self::Error> {
+        if let TypedValue::PublicKey(pk) = v {
+            Ok(pk.clone())
+        } else {
+            Err(Error::custom("Value not a public key".to_string()))
+        }
+    }
+}
+
+impl TryFrom<&TypedValue> for SecretKey {
+    type Error = Error;
+    fn try_from(v: &TypedValue) -> std::result::Result<Self, Self::Error> {
+        if let TypedValue::SecretKey(sk) = v {
+            Ok(sk.clone())
+        } else {
+            Err(Error::custom("Value not a secret key".to_string()))
+        }
+    }
+}
+
 impl fmt::Display for TypedValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
