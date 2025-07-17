@@ -604,7 +604,7 @@ pub mod tests {
     use crate::{
         backends::plonky2::{
             basetypes::C,
-            primitives::merkletree::{keypath, kv_hash, MerkleTree},
+            primitives::merkletree::{keypath, kv_hash, MerkleProof, MerkleTree},
         },
         middleware::{hash_value, RawValue},
     };
@@ -1026,6 +1026,70 @@ pub mod tests {
         assert_eq!(state_transition_proof.old_root, old_root);
         assert_eq!(state_transition_proof.new_root, tree.root());
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_state_transition_gadget_with_alteration() -> Result<()> {
+        let max_depth: usize = 32;
+        let mut kvs = HashMap::new();
+        for i in 0..8 {
+            kvs.insert(RawValue::from(i), RawValue::from(1000 + i));
+        }
+        let mut tree = MerkleTree::new(max_depth, &kvs)?;
+
+        // key=37 shares path with key=5, till the level 6, needing 2 extra
+        // 'empty' nodes between the original position of key=5 with the new
+        // position of key=5 and key=37.
+        let old_root = tree.root();
+        let key = RawValue::from(37);
+        let value = RawValue::from(1037);
+        let state_transition_proof = tree.insert(&key, &value)?;
+        run_state_transition_circuit(max_depth, &state_transition_proof)?;
+        assert_eq!(state_transition_proof.old_root, old_root);
+        assert_eq!(state_transition_proof.new_root, tree.root());
+
+        // add a new leaf, which shares path with the previous one, but diverges
+        // one level before, where there is no leaf yet to be pushed down.
+        let old_root = tree.root();
+        let key = RawValue::from(21);
+        let value = RawValue::from(1021);
+        let state_transition_proof = tree.insert(&key, &value)?;
+        run_state_transition_circuit(max_depth, &state_transition_proof)?;
+        assert_eq!(state_transition_proof.old_root, old_root);
+        assert_eq!(state_transition_proof.new_root, tree.root());
+
+        // another leaf which will push further down the leaf with key=37
+        let old_root = tree.root();
+        let key = RawValue::from(101);
+        let value = RawValue::from(1101);
+        let mut state_transition_proof = tree.insert(&key, &value)?;
+        // Tamper with state transition.
+        const OFFSET: usize = 20;
+        let other_leaf = state_transition_proof
+            .proof_non_existence
+            .other_leaf
+            .unwrap();
+        let altered_proof = MerkleProof {
+            existence: true,
+            siblings: [
+                state_transition_proof.proof_non_existence.siblings.clone(),
+                vec![EMPTY_HASH; OFFSET],
+                vec![kv_hash(&other_leaf.0, Some(other_leaf.1))],
+            ]
+            .concat(),
+            other_leaf: None,
+        };
+        let altered_root = altered_proof.compute_root_from_leaf(
+            max_depth,
+            &state_transition_proof.new_key,
+            Some(state_transition_proof.new_value),
+        )?;
+        state_transition_proof.siblings = altered_proof.siblings;
+        state_transition_proof.new_root = altered_root;
+        run_state_transition_circuit(max_depth, &state_transition_proof)?;
+        assert_eq!(state_transition_proof.old_root, old_root);
+        assert_ne!(state_transition_proof.new_root, tree.root()); // Tamper check
         Ok(())
     }
 
