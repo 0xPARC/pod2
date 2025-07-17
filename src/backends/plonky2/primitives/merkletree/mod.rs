@@ -2,6 +2,7 @@
 //! https://0xparc.github.io/pod2/merkletree.html .
 use std::{collections::HashMap, fmt, iter::IntoIterator};
 
+use itertools::zip_eq;
 use plonky2::field::types::Field;
 use serde::{Deserialize, Serialize};
 
@@ -230,6 +231,24 @@ impl MerkleTree {
             &proof.new_key,
             &proof.new_value,
         )?;
+
+        // if other_leaf exists, check path divergence
+        if proof.proof_non_existence.other_leaf.is_some() {
+            let (other_key, _) = proof.proof_non_existence.other_leaf.unwrap();
+            let old_path = keypath(max_depth, other_key)?;
+            let new_path = keypath(max_depth, proof.new_key)?;
+
+            let divergence_lvl: usize = match zip_eq(old_path, new_path).position(|(x, y)| x != y) {
+                Some(d) => d,
+                None => return Err(TreeError::max_depth()),
+            };
+
+            if divergence_lvl != new_siblings.len() - 1 {
+                return Err(TreeError::state_transition_fail(
+                    "paths divergence does not match".to_string(),
+                ));
+            }
+        }
 
         // let d=divergence_level, assert that:
         // 1) old_siblings[i] == new_siblings[i] ∀ i \ {d}

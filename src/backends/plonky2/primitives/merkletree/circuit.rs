@@ -50,9 +50,10 @@ pub struct MerkleClaimAndProofTarget {
     pub(crate) other_value: ValueTarget,
 }
 
-/// Allows to verify both proofs of existence and proofs non-existence with the same circuit. If
-/// only proofs of existence are needed, use `verify_merkle_proof_existence_circuit`, which
-/// requires less amount of constraints.
+/// Allows to verify both proofs of existence and proofs non-existence with the
+/// same circuit. If only proofs of existence are needed, use
+/// `verify_merkle_proof_existence_circuit`, which requires less amount of
+/// constraints.
 pub fn verify_merkle_proof_circuit(
     builder: &mut CircuitBuilder<F, D>,
     proof: &MerkleClaimAndProofTarget,
@@ -203,12 +204,14 @@ pub struct MerkleProofExistenceTarget {
     pub(crate) siblings: Vec<HashOutTarget>,
 }
 
-/// Allows to verify proofs of existence only. If proofs of non-existence are needed, use
-/// `verify_merkle_proof_circuit`.
+/// Allows to verify proofs of existence only. If proofs of non-existence are
+/// needed, use `verify_merkle_proof_circuit`.
+/// It returns the computed path, in case is needed at other parts of the upper
+/// logic to avoid recomputing it again.
 pub fn verify_merkle_proof_existence_circuit(
     builder: &mut CircuitBuilder<F, D>,
     proof: &MerkleProofExistenceTarget,
-) {
+) -> Vec<BoolTarget> {
     let max_depth = proof.max_depth;
     let measure = measure_gates_begin!(builder, format!("MerkleProofExist_{}", max_depth));
 
@@ -234,6 +237,8 @@ pub fn verify_merkle_proof_existence_circuit(
         builder.connect(computed_root[j], expected_root[j]);
     }
     measure_gates_end!(builder, measure);
+
+    path
 }
 
 impl MerkleProofExistenceTarget {
@@ -386,10 +391,9 @@ fn kv_hash_target(
     builder.hash_n_to_hash_no_pad::<PoseidonHash>(inputs)
 }
 
-/// Verifies that the merkletree state
-/// transition (from old_root to new_root) has been done correctly for the given
-/// new_key. This will allow verifying correct new leaf insertion, and leaf
-/// edition&deletion (if needed).
+/// Verifies that the merkletree state transition (from old_root to new_root)
+/// has been done correctly for the given new_key. This will allow verifying
+/// correct new leaf insertion, and leaf edition&deletion (if needed).
 pub struct MerkleProofStateTransitionTarget {
     pub(crate) max_depth: usize,
     // `enabled` determines if the merkleproof state transition verification is enabled
@@ -421,9 +425,10 @@ pub fn verify_merkle_state_transition_circuit(
     // for now, only type=0 (insertion proof) is supported
     builder.connect(proof.typ, zero);
 
-    // check that for the old_root, the new_key does not exist in the tree
+    // 1) check that for the old_root, the new_key does not exist in the tree
     verify_merkle_proof_circuit(builder, &proof.proof_non_existence);
 
+    // 2) check that for the new_root, the new_key does exist in the tree
     let new_key_proof = MerkleProofExistenceTarget {
         max_depth: proof.max_depth,
         enabled: proof.enabled,
@@ -432,25 +437,30 @@ pub fn verify_merkle_state_transition_circuit(
         value: proof.new_value,
         siblings: proof.new_siblings.clone(),
     };
-    verify_merkle_proof_existence_circuit(builder, &new_key_proof);
+    let new_leaf_path = verify_merkle_proof_existence_circuit(builder, &new_key_proof);
 
-    // assert that proof_non_existence.existence==false
+    // 3.1) assert that proof_non_existence.existence==false
     builder.conditional_assert_eq(
         proof.enabled.target,
         proof.proof_non_existence.existence.target,
         zero,
     );
+    // 3.2) assert that proof.enabled matches with proof_non_existence.enabled
+    builder.connect(
+        proof.proof_non_existence.enabled.target,
+        proof.enabled.target,
+    );
 
-    // assert proof_non_existence.root==old_root, and that it uses new_key &
+    // 4) assert proof_non_existence.root==old_root, and that it uses new_key &
     // new_value
     for j in 0..HASH_SIZE {
-        // assert that proof.proof_non_existence.root == proof.old_root
+        // 4.1) assert that proof.proof_non_existence.root == proof.old_root
         builder.conditional_assert_eq(
             proof.enabled.target,
             proof.proof_non_existence.root.elements[j],
             proof.old_root.elements[j],
         );
-        // assert that the non-existence proof uses the new_key & new_value
+        // 4.2) assert that the non-existence proof uses the new_key & new_value
         builder.conditional_assert_eq(
             proof.enabled.target,
             proof.proof_non_existence.key.elements[j],
@@ -463,26 +473,39 @@ pub fn verify_merkle_state_transition_circuit(
         );
     }
 
-    // sanity check
-    builder.connect(
-        proof.proof_non_existence.enabled.target,
-        proof.enabled.target,
+    // prepare values for check 5.3).
+    let other_key_is_empty =
+        proof
+            .proof_non_existence
+            .other_key
+            .elements
+            .iter()
+            .fold(builder._true(), |acc, e| {
+                let e_is_zero = builder.is_equal(*e, zero);
+                builder.and(acc, e_is_zero)
+            });
+    let old_key_not_empty = builder.not(other_key_is_empty);
+    let old_leaf_path = keypath_target(
+        proof.max_depth,
+        builder,
+        &proof.proof_non_existence.other_key,
     );
 
-    // check that old_siblings & new_siblings match as expected.
-    // Let d=divergence_level, assert that:
-    // 1) old_siblings[i] == new_siblings[i] ∀ i \ {d}
-    // 2) at i==d, if old_siblings[i] != new_siblings[i]:
-    //     old_siblings[i] == EMPTY_HASH
-    //     new_siblings[i] == old_leaf_hash
+    // 5) check that old_siblings & new_siblings match as expected. Let
+    //    d=divergence_level, assert that:
+    // 5.1) old_siblings[i] == new_siblings[i] ∀ i \ {d}
+    // 5.2) at i==d, if old_siblings[i] != new_siblings[i]: old_siblings[i] ==
+    //   EMPTY_HASH new_siblings[i] == old_leaf_hash
+    // 5.3) assert that if old_key!=empty, both old_leaf_path&new_leaf_path
+    //   should diverge at the inputted divergence level
     let old_siblings = proof.proof_non_existence.siblings.clone();
     let new_siblings = proof.new_siblings.clone();
     for i in 0..proof.max_depth {
         let i_targ = builder.constant(F::from_canonical_u64(i as u64));
         let is_divergence_level = builder.is_equal(i_targ, proof.divergence_level);
 
-        // 1) for all i except for i==divergence_level, assert that the siblings
-        //    are the same
+        // 5.1) for all i except for i==divergence_level, assert that the
+        //   siblings are the same
         let old_sibling_i: Vec<Target> = (0..HASH_SIZE)
             .map(|j| builder.select(is_divergence_level, zero, old_siblings[i].elements[j]))
             .collect();
@@ -493,10 +516,10 @@ pub fn verify_merkle_state_transition_circuit(
             builder.conditional_assert_eq(proof.enabled.target, old_sibling_i[j], new_sibling_i[j]);
         }
 
-        // 2) when i==d && if old_siblings[i] != new_siblings[i], check that:
-        //     old_siblings[i] == EMPTY_HASH && new_siblings[i] == old_leaf_hash
+        // 5.2) when i==d && if old_siblings[i] != new_siblings[i], check that:
+        //   old_siblings[i] == EMPTY_HASH && new_siblings[i] == old_leaf_hash
 
-        // in_case_2=true if: i==d (= is_divergence_level) && old_siblings[i]!=new_siblings[i]
+        // in_case_5_2=true if: i==d (= is_divergence_level) && old_siblings[i]!=new_siblings[i]
         let old_is_eq_new = zip_eq(old_siblings[i].elements, new_siblings[i].elements).fold(
             builder._true(),
             |acc, (old, new)| {
@@ -505,7 +528,7 @@ pub fn verify_merkle_state_transition_circuit(
             },
         );
         let old_is_noteq_new = builder.not(old_is_eq_new);
-        let in_case_2 = builder.and(old_is_noteq_new, is_divergence_level);
+        let in_case_5_2 = builder.and(old_is_noteq_new, is_divergence_level);
 
         // do the case2's checks
         let old_leaf_hash = kv_hash_target(
@@ -513,7 +536,7 @@ pub fn verify_merkle_state_transition_circuit(
             &proof.proof_non_existence.other_key,
             &proof.proof_non_existence.other_value,
         );
-        let sel = builder.and(proof.enabled, in_case_2);
+        let sel = builder.and(proof.enabled, in_case_5_2);
         for j in 0..HASH_SIZE {
             builder.conditional_assert_eq(sel.target, old_siblings[i].elements[j], zero);
             builder.conditional_assert_eq(
@@ -522,6 +545,18 @@ pub fn verify_merkle_state_transition_circuit(
                 old_leaf_hash.elements[j],
             );
         }
+
+        // 5.3) assert that if old_key!=empty, both old_leaf_path&new_leaf_path
+        //   should diverge at the inputted divergence level.
+        let old_key_not_empty_and_divergence_level =
+            builder.and(old_key_not_empty, is_divergence_level);
+        let paths_eq_at_d = builder.is_equal(old_leaf_path[i].target, new_leaf_path[i].target);
+        builder.conditional_assert_eq(
+            old_key_not_empty_and_divergence_level.target,
+            // expect them to not be equal, ie. the is_equal check to be 0
+            paths_eq_at_d.target,
+            zero,
+        );
     }
 
     measure_gates_end!(builder, measure);
@@ -937,11 +972,18 @@ pub mod tests {
     }
 
     fn run_state_transition_circuit(
+        expect_pass: bool,
         max_depth: usize,
         state_transition_proof: &MerkleProofStateTransition,
     ) -> Result<()> {
         // sanity check, run the out-circuit proof verification
-        MerkleTree::verify_state_transition(max_depth, &state_transition_proof)?;
+        if expect_pass {
+            MerkleTree::verify_state_transition(max_depth, &state_transition_proof)?;
+        } else {
+            // expect out-circuit verification to fail
+            let _ =
+                MerkleTree::verify_state_transition(max_depth, &state_transition_proof).is_err();
+        }
 
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
@@ -953,8 +995,12 @@ pub mod tests {
 
         // generate & verify proof
         let data = builder.build::<C>();
-        let proof = data.prove(pw)?;
-        data.verify(proof)?;
+        if expect_pass {
+            let proof = data.prove(pw)?;
+            data.verify(proof)?;
+        } else {
+            assert!(data.prove(pw).is_err()); // expect prove to fail
+        }
         Ok(())
     }
 
@@ -974,7 +1020,7 @@ pub mod tests {
         let key = RawValue::from(37);
         let value = RawValue::from(1037);
         let state_transition_proof = tree.insert(&key, &value)?;
-        run_state_transition_circuit(max_depth, &state_transition_proof)?;
+        run_state_transition_circuit(true, max_depth, &state_transition_proof)?;
         assert_eq!(state_transition_proof.old_root, old_root);
         assert_eq!(state_transition_proof.new_root, tree.root());
 
@@ -984,7 +1030,7 @@ pub mod tests {
         let key = RawValue::from(21);
         let value = RawValue::from(1021);
         let state_transition_proof = tree.insert(&key, &value)?;
-        run_state_transition_circuit(max_depth, &state_transition_proof)?;
+        run_state_transition_circuit(true, max_depth, &state_transition_proof)?;
         assert_eq!(state_transition_proof.old_root, old_root);
         assert_eq!(state_transition_proof.new_root, tree.root());
 
@@ -993,7 +1039,7 @@ pub mod tests {
         let key = RawValue::from(101);
         let value = RawValue::from(1101);
         let state_transition_proof = tree.insert(&key, &value)?;
-        run_state_transition_circuit(max_depth, &state_transition_proof)?;
+        run_state_transition_circuit(true, max_depth, &state_transition_proof)?;
         assert_eq!(state_transition_proof.old_root, old_root);
         assert_eq!(state_transition_proof.new_root, tree.root());
 
@@ -1011,7 +1057,7 @@ pub mod tests {
         let key = RawValue::from(4294967295); // 0xffffffff
         let value = RawValue::from(4294967295);
         let state_transition_proof = tree.insert(&key, &value)?;
-        run_state_transition_circuit(max_depth, &state_transition_proof)?;
+        run_state_transition_circuit(true, max_depth, &state_transition_proof)?;
         assert_eq!(state_transition_proof.old_root, old_root);
         assert_eq!(state_transition_proof.new_root, tree.root());
 
@@ -1022,7 +1068,7 @@ pub mod tests {
         let key = RawValue::from(4026531839); // 0xefffffff
         let value = RawValue::from(4026531839);
         let state_transition_proof = tree.insert(&key, &value)?;
-        run_state_transition_circuit(max_depth, &state_transition_proof)?;
+        run_state_transition_circuit(true, max_depth, &state_transition_proof)?;
         assert_eq!(state_transition_proof.old_root, old_root);
         assert_eq!(state_transition_proof.new_root, tree.root());
 
@@ -1045,7 +1091,7 @@ pub mod tests {
         let key = RawValue::from(37);
         let value = RawValue::from(1037);
         let state_transition_proof = tree.insert(&key, &value)?;
-        run_state_transition_circuit(max_depth, &state_transition_proof)?;
+        run_state_transition_circuit(true, max_depth, &state_transition_proof)?;
         assert_eq!(state_transition_proof.old_root, old_root);
         assert_eq!(state_transition_proof.new_root, tree.root());
 
@@ -1055,7 +1101,7 @@ pub mod tests {
         let key = RawValue::from(21);
         let value = RawValue::from(1021);
         let state_transition_proof = tree.insert(&key, &value)?;
-        run_state_transition_circuit(max_depth, &state_transition_proof)?;
+        run_state_transition_circuit(true, max_depth, &state_transition_proof)?;
         assert_eq!(state_transition_proof.old_root, old_root);
         assert_eq!(state_transition_proof.new_root, tree.root());
 
@@ -1064,6 +1110,7 @@ pub mod tests {
         let key = RawValue::from(101);
         let value = RawValue::from(1101);
         let mut state_transition_proof = tree.insert(&key, &value)?;
+
         // Tamper with state transition.
         const OFFSET: usize = 20;
         let other_leaf = state_transition_proof
@@ -1087,7 +1134,8 @@ pub mod tests {
         )?;
         state_transition_proof.siblings = altered_proof.siblings;
         state_transition_proof.new_root = altered_root;
-        run_state_transition_circuit(max_depth, &state_transition_proof)?;
+
+        run_state_transition_circuit(false, max_depth, &state_transition_proof)?;
         assert_eq!(state_transition_proof.old_root, old_root);
         assert_ne!(state_transition_proof.new_root, tree.root()); // Tamper check
         Ok(())
