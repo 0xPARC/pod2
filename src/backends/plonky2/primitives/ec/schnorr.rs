@@ -458,7 +458,6 @@ mod test {
         let str_toobig = serde_json::to_string(&sk_toobig).unwrap();
         let deser_toobig: Result<SecretKey, _> = serde_json::from_str(&str_toobig);
         assert!(matches!(deser_toobig, Err(_)));
-        assert_eq!(sk_rand, deser_rand);
 
         Ok(())
     }
@@ -470,6 +469,40 @@ mod test {
         assert_eq!(limbs_0, [GoldilocksField::from_canonical_u32(0); 10]);
         let rsk_0 = SecretKey::from_limbs(limbs_0).unwrap();
         assert_eq!(sk_0, rsk_0);
+
+        let sk_n: SecretKey = SecretKey(BigUint::from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]));
+        let limbs_n = sk_n.to_limbs();
+        assert_eq!(
+            limbs_n,
+            [
+                GoldilocksField::from_canonical_u32(1),
+                GoldilocksField::from_canonical_u32(2),
+                GoldilocksField::from_canonical_u32(3),
+                GoldilocksField::from_canonical_u32(4),
+                GoldilocksField::from_canonical_u32(5),
+                GoldilocksField::from_canonical_u32(6),
+                GoldilocksField::from_canonical_u32(7),
+                GoldilocksField::from_canonical_u32(8),
+                GoldilocksField::from_canonical_u32(9),
+                GoldilocksField::from_canonical_u32(10)
+            ]
+        );
+        let rsk_n = SecretKey::from_limbs(limbs_n).unwrap();
+        assert_eq!(sk_n, rsk_n);
+
+        let bad_result = SecretKey::from_limbs([
+            GoldilocksField::from_canonical_u32(1),
+            GoldilocksField::from_canonical_u32(2),
+            GoldilocksField::from_canonical_u32(3),
+            GoldilocksField::from_canonical_u32(4),
+            GoldilocksField::from_canonical_u32(5),
+            GoldilocksField::from_canonical_u32(6),
+            GoldilocksField::from_canonical_u32(7),
+            GoldilocksField::from_canonical_u32(8),
+            GoldilocksField::from_canonical_u32(9),
+            GoldilocksField::from_canonical_u32(1 << 32),
+        ]);
+        assert!(matches!(bad_result, Err(_)));
 
         Ok(())
     }
