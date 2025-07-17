@@ -189,9 +189,9 @@ impl SecretKey {
 
         let big_uint = BigUint::from_bytes_le(&sk_bytes);
 
-        if big_uint > *GROUP_ORDER {
+        if big_uint >= *GROUP_ORDER {
             return Err(Error::custom(
-                "Invalid Schnorr secret key - above group order.".to_string(),
+                "Invalid Schnorr secret key - not less than group order.".to_string(),
             ));
         }
 
@@ -244,18 +244,18 @@ impl<'de> Deserialize<'de> for SecretKey {
     }
 }
 
+impl fmt::Display for SecretKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", serialize_bytes(self.as_bytes().as_slice()))
+    }
+}
+
 impl SignatureTarget {
     pub fn add_virtual_target(builder: &mut CircuitBuilder<GoldilocksField, 2>) -> Self {
         Self {
             s: builder.add_virtual_biguint320_target(),
             e: builder.add_virtual_biguint320_target(),
         }
-    }
-}
-
-impl fmt::Display for SecretKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", serialize_bytes(self.as_bytes().as_slice()))
     }
 }
 
