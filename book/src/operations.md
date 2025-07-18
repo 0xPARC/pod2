@@ -22,6 +22,7 @@ The following table summarises the natively-supported operations:
 | 12   | `ProductOf`           | `s1`, `s2`, `s3`    | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `s3 = ValueOf(ak3, value3)`, `value1 = value2 * value3`     | `ProductOf(ak1, ak2, ak3)`                                     |
 | 13   | `MaxOf`               | `s1`, `s2`, `s3`    | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `s3 = ValueOf(ak3, value3)`, `value1 = max(value2, value3)` | `MaxOf(ak1, ak2, ak3)`                                         |
 | 14   | `HashOf`              | `s1`, `s2`, `s3`    | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `s3 = ValueOf(ak3, value3)`, `value1 = hash(value2, value3)`| `HashOf(ak1, ak2, ak3)`                                        |
+| 15   | `PublicKeyOf`         | `s1`, `s2`          | `s1 = ValueOf(ak1, value1)`, `s2 = ValueOf(ak2, value2)`, `value1 = derive_public_key(value2)`                        | `PublicKeyOf(ak1, ak2)`                                        |
 
 <br><br>
 
