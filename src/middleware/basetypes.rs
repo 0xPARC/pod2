@@ -55,7 +55,7 @@ pub const HASH_SIZE: usize = 4;
 pub const VALUE_SIZE: usize = 4;
 
 pub const EMPTY_VALUE: RawValue = RawValue([F::ZERO, F::ZERO, F::ZERO, F::ZERO]);
-pub const SELF_ID_HASH: Hash = Hash([F::ONE, F::ZERO, F::ZERO, F::ZERO]);
+pub const SELF_ID_HASH: Hash = Hash([F(0x5), F(0xe), F(0x1), F(0xf)]);
 pub const EMPTY_HASH: Hash = Hash([F::ZERO, F::ZERO, F::ZERO, F::ZERO]);
 
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

@@ -31,7 +31,7 @@ mod tests {
         middleware::{
             hash_str, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key,
             NativePredicate, Params, PodId, PodType, Predicate, RawValue, StatementTmpl,
-            StatementTmplArg, Value, Wildcard, KEY_SIGNER, KEY_TYPE, SELF_ID_HASH,
+            StatementTmplArg, Value, Wildcard, KEY_SIGNER, KEY_TYPE,
         },
     };
 
@@ -125,7 +125,7 @@ mod tests {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
                     sta_ak(("ConstPod", 0), "my_val"), // ?ConstPod["my_val"] -> Wildcard(0), Key("my_val")
-                    sta_lit(SELF_ID_HASH),
+                    sta_lit(RawValue::from(1)),
                 ],
             },
             StatementTmpl {

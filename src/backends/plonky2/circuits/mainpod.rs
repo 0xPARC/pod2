@@ -41,7 +41,7 @@ use crate::{
     middleware::{
         AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, NativeOperation,
         NativePredicate, Params, PodType, PredicatePrefix, Statement, StatementArg, ToFields,
-        Value, ValueRef, EMPTY_VALUE, F, HASH_SIZE, KEY_TYPE, SELF, VALUE_SIZE,
+        Value, ValueRef, F, HASH_SIZE, KEY_TYPE, SELF, VALUE_SIZE,
     },
 };
 
@@ -947,7 +947,6 @@ fn normalize_statement_circuit(
     statement: &StatementTarget,
     self_id: &ValueTarget,
 ) -> StatementTarget {
-    let zero_value = builder.constant_value(EMPTY_VALUE);
     let self_value = builder.constant_value(SELF.0.into());
     let args = statement
         .args
@@ -955,11 +954,8 @@ fn normalize_statement_circuit(
         .map(|arg| {
             let first = ValueTarget::from_slice(&arg.elements[..VALUE_SIZE]);
             let second = ValueTarget::from_slice(&arg.elements[VALUE_SIZE..]);
-            let is_not_ak = builder.is_equal_flattenable(&zero_value, &second);
-            let is_ak = builder.not(is_not_ak);
             let is_self = builder.is_equal_flattenable(&self_value, &first);
-            let normalize = builder.and(is_ak, is_self);
-            let first_normalized = builder.select_flattenable(params, normalize, self_id, &first);
+            let first_normalized = builder.select_flattenable(params, is_self, self_id, &first);
             StatementArgTarget::new(first_normalized, second)
         })
         .collect_vec();
