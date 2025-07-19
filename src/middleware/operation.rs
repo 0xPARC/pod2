@@ -578,14 +578,14 @@ mod tests {
         let root_ak = AnchoredKey::new(pod_id, Key::new("root".into()));
         let key_ak = AnchoredKey::new(pod_id, Key::new("key".into()));
         let val_ak = AnchoredKey::new(pod_id, Key::new("value".into()));
-        
+
         // Form Merkle tree
         let kvs = (0..10)
             .map(|i| (hash_value(&i.into()).into(), i.into()))
             .collect::<HashMap<_, _>>();
         let mt = MerkleTree::new(params.max_depth_mt_containers, &kvs)?;
         let root_s = Statement::Equal(root_ak.clone().into(), mt.root().into());
-        
+
         // Check existence proofs
         kvs.iter().try_for_each(|(k, v)| {
             // Form op args
