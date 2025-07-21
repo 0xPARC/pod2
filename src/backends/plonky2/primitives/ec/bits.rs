@@ -19,7 +19,7 @@ use plonky2::{
 
 use crate::backends::plonky2::basetypes::{D, F};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct ConditionalZeroGenerator<F: RichField + Extendable<D>, const D: usize> {
     if_zero: Target,
     then_zero: Target,
@@ -313,7 +313,7 @@ fn biguint_limbs_to_bits(builder: &mut CircuitBuilder<F, D>, limbs: &[Target]) -
 Copied from https://github.com/0xPolygonZero/plonky2/blob/82791c4809d6275682c34b926390ecdbdc2a5297/plonky2/src/gadgets/range_check.rs#L62
  */
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct LowHighGenerator {
     integer: Target,
     n_log: usize,

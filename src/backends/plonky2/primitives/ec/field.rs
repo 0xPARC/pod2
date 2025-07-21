@@ -106,7 +106,7 @@ impl<const DEG: usize, NNF: OEF<DEG>> Default for OEFTarget<DEG, NNF> {
 
 /// Quotient generator for OEF targets. Allows us to automagically
 /// generate quotients as witnesses.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct QuotientGeneratorOEF<const DEG: usize, NNF: OEF<DEG>> {
     numerator: OEFTarget<DEG, NNF>,
     denominator: OEFTarget<DEG, NNF>,

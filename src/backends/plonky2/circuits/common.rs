@@ -1374,7 +1374,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct LtMaskGenerator {
     pub(crate) n: Target,
     pub(crate) mask: Vec<Target>,

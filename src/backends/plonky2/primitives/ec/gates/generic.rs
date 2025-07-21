@@ -66,7 +66,7 @@ pub struct RecursiveGateAdapter<const D: usize, G: SimpleGate> {
     _gate: PhantomData<G>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RecursiveGenerator<const D: usize, G: SimpleGate> {
     row: usize,
     index: usize,
