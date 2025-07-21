@@ -803,6 +803,9 @@ pub mod build_utils {
         (max_of, $($arg:expr),+) => { $crate::frontend::Operation(
             $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::MaxOf),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
+        (hash_of, $($arg:expr),+) => { $crate::frontend::Operation(
+            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::HashOf),
+            $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
         (custom, $op:expr, $($arg:expr),*) => { $crate::frontend::Operation(
             $crate::middleware::OperationType::Custom($op),
             $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
