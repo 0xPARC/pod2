@@ -975,7 +975,7 @@ mod processor_tests {
         middleware::Params,
     };
 
-    fn get_document_content_pairs(input: &str) -> Result<Pairs<Rule>, ProcessorError> {
+    fn get_document_content_pairs(input: &str) -> Result<Pairs<'_, Rule>, ProcessorError> {
         let full_parse_tree = parse_podlang(input)
             .map_err(|e| ProcessorError::Internal(format!("Test parsing failed: {:?}", e)))?;
 
