@@ -31,7 +31,11 @@ pub(crate) fn get<T: Serialize + DeserializeOwned + Clone + Send + 'static, P: S
                 if let Some(data) = boxed_data.downcast_ref::<T>() {
                     return Ok(data.clone());
                 } else {
-                    panic!("type T doesn't match the type in the boxed value in the cache");
+                    panic!(
+                        "type={} doesn't match the type in the cached boxed value with name={}",
+                        std::any::type_name::<T>(),
+                        name
+                    );
                 }
             } else {
                 // Another thread is building this entry, let's retry again in 100 ms
