@@ -22,8 +22,13 @@ fn display_wc_map(wc_map: &[Option<Value>]) -> String {
 pub enum InnerError {
     #[error("{0} {1} is over the limit {2}")]
     MaxLength(String, usize, usize),
-    #[error("{0} doesn't match {1:#}.\nWildcard map:\n{map}", map=display_wc_map(.2))]
-    StatementsDontMatch(Statement, StatementTmpl, Vec<Option<Value>>),
+    #[error("{0} doesn't match {1:#}.\nWildcard map:\n{map}\nInternal error: {3}", map=display_wc_map(.2))]
+    StatementsDontMatch(
+        Statement,
+        StatementTmpl,
+        Vec<Option<Value>>,
+        crate::middleware::Error,
+    ),
     #[error("invalid arguments to {0} operation")]
     OpInvalidArgs(String),
     // Other
@@ -76,8 +81,9 @@ impl Error {
         s0: Statement,
         s1: StatementTmpl,
         wc_map: Vec<Option<Value>>,
+        mid_error: crate::middleware::Error,
     ) -> Self {
-        new!(StatementsDontMatch(s0, s1, wc_map))
+        new!(StatementsDontMatch(s0, s1, wc_map, mid_error))
     }
     pub(crate) fn max_length(obj: String, found: usize, expect: usize) -> Self {
         new!(MaxLength(obj, found, expect))

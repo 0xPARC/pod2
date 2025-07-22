@@ -119,9 +119,7 @@ mod tests {
     use super::*;
     use crate::{
         backends::plonky2::{
-            mainpod::Prover,
-            mock::{mainpod::MockProver, signedpod::MockSigner},
-            primitives::ec::schnorr::SecretKey,
+            mainpod::Prover, mock::mainpod::MockProver, primitives::ec::schnorr::SecretKey,
             signedpod::Signer,
         },
         examples::{
@@ -236,8 +234,8 @@ mod tests {
     #[test]
     fn test_signed_pod_serialization() {
         let builder = signed_pod_builder();
-        let mut signer = Signer(SecretKey(1u32.into()));
-        let pod = builder.sign(&mut signer).unwrap();
+        let signer = Signer(SecretKey(1u32.into()));
+        let pod = builder.sign(&signer).unwrap();
 
         let serialized = serde_json::to_string_pretty(&pod).unwrap();
         println!("serialized: {}", serialized);
@@ -254,8 +252,8 @@ mod tests {
     #[test]
     fn test_mock_signed_pod_serialization() {
         let builder = signed_pod_builder();
-        let mut signer = MockSigner { pk: "test".into() };
-        let pod = builder.sign(&mut signer).unwrap();
+        let signer = Signer(SecretKey(1u32.into()));
+        let pod = builder.sign(&signer).unwrap();
 
         let serialized = serde_json::to_string_pretty(&pod).unwrap();
         println!("serialized: {}", serialized);
@@ -275,29 +273,23 @@ mod tests {
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params);
-        let mut signer = MockSigner {
-            pk: "ZooGov".into(),
-        };
-        let gov_id_pod = gov_id_builder.sign(&mut signer).unwrap();
-        let mut signer = MockSigner {
-            pk: "ZooDeel".into(),
-        };
-        let pay_stub_pod = pay_stub_builder.sign(&mut signer).unwrap();
-        let mut signer = MockSigner {
-            pk: "ZooOFAC".into(),
-        };
-        let sanction_list_pod = sanction_list_builder.sign(&mut signer).unwrap();
+        let signer = Signer(SecretKey(1u32.into()));
+        let gov_id_pod = gov_id_builder.sign(&signer).unwrap();
+        let signer = Signer(SecretKey(2u32.into()));
+        let pay_stub_pod = pay_stub_builder.sign(&signer).unwrap();
+        let signer = Signer(SecretKey(3u32.into()));
+        let sanction_list_pod = sanction_list_builder.sign(&signer).unwrap();
         let kyc_builder = zu_kyc_pod_builder(
             &params,
-            &vd_set,
+            vd_set,
             &gov_id_pod,
             &pay_stub_pod,
             &sanction_list_pod,
         )
         .unwrap();
 
-        let mut prover = MockProver {};
-        let kyc_pod = kyc_builder.prove(&mut prover, &params).unwrap();
+        let prover = MockProver {};
+        let kyc_pod = kyc_builder.prove(&prover, &params).unwrap();
         Ok(kyc_pod)
     }
 
@@ -312,22 +304,22 @@ mod tests {
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params);
-        let mut signer = Signer(SecretKey(1u32.into()));
-        let gov_id_pod = gov_id_builder.sign(&mut signer)?;
-        let mut signer = Signer(SecretKey(2u32.into()));
-        let pay_stub_pod = pay_stub_builder.sign(&mut signer)?;
-        let mut signer = Signer(SecretKey(3u32.into()));
-        let sanction_list_pod = sanction_list_builder.sign(&mut signer)?;
+        let signer = Signer(SecretKey(1u32.into()));
+        let gov_id_pod = gov_id_builder.sign(&signer)?;
+        let signer = Signer(SecretKey(2u32.into()));
+        let pay_stub_pod = pay_stub_builder.sign(&signer)?;
+        let signer = Signer(SecretKey(3u32.into()));
+        let sanction_list_pod = sanction_list_builder.sign(&signer)?;
         let kyc_builder = zu_kyc_pod_builder(
             &params,
-            &vd_set,
+            vd_set,
             &gov_id_pod,
             &pay_stub_pod,
             &sanction_list_pod,
         )?;
 
-        let mut prover = Prover {};
-        let kyc_pod = kyc_builder.prove(&mut prover, &params)?;
+        let prover = Prover {};
+        let kyc_pod = kyc_builder.prove(&prover, &params)?;
 
         Ok(kyc_pod)
     }
@@ -368,25 +360,21 @@ mod tests {
         };
         let vd_set = &*MOCK_VD_SET;
 
-        let mut alice = MockSigner { pk: "Alice".into() };
-        let mut bob = MockSigner { pk: "Bob".into() };
-        let charlie = MockSigner {
-            pk: "Charlie".into(),
-        };
+        let alice = Signer(SecretKey(1u32.into()));
+        let bob = Signer(SecretKey(2u32.into()));
+        let charlie = Signer(SecretKey(3u32.into()));
 
         // Alice attests that she is ETH friends with Bob and Bob
         // attests that he is ETH friends with Charlie.
-        let alice_attestation = attest_eth_friend(&params, &mut alice, bob.public_key());
-        let bob_attestation = attest_eth_friend(&params, &mut bob, charlie.public_key());
+        let alice_attestation = attest_eth_friend(&params, &alice, bob.public_key());
+        let bob_attestation = attest_eth_friend(&params, &bob, charlie.public_key());
 
         let helper = EthDosHelper::new(&params, vd_set, true, alice.public_key())?;
-        let mut prover = MockProver {};
-        let dist_1 = helper
-            .dist_1(&alice_attestation)?
-            .prove(&mut prover, &params)?;
+        let prover = MockProver {};
+        let dist_1 = helper.dist_1(&alice_attestation)?.prove(&prover, &params)?;
         let dist_2 = helper
             .dist_n_plus_1(&dist_1, &bob_attestation)?
-            .prove(&mut prover, &params)?;
+            .prove(&prover, &params)?;
 
         Ok(dist_2)
     }
@@ -402,7 +390,7 @@ mod tests {
 
         let kyc_pod = build_mock_zukyc_pod().unwrap();
         let signed_pod = signed_pod_builder()
-            .sign(&mut MockSigner { pk: "test".into() })
+            .sign(&Signer(SecretKey(1u32.into())))
             .unwrap();
         let ethdos_pod = build_ethdos_pod().unwrap();
         let mainpod_schema_value = serde_json::to_value(&mainpod_schema).unwrap();

@@ -18,12 +18,7 @@ macro_rules! render {
 }
 
 /// Instantiates an ETHDos batch
-pub fn eth_dos_batch(params: &Params, mock: bool) -> Result<Arc<CustomPredicateBatch>> {
-    let pod_type = Value::from(if mock {
-        PodType::MockSigned
-    } else {
-        PodType::Signed
-    });
+pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
     let input = render!(
         r#"
         eth_friend(src, dst, private: attestation_pod) = AND(
@@ -48,7 +43,7 @@ pub fn eth_dos_batch(params: &Params, mock: bool) -> Result<Arc<CustomPredicateB
             eth_dos_ind(?src, ?dst, ?distance)
         )
         "#,
-        pod_type = pod_type,
+        pod_type = Value::from(PodType::Signed),
     );
     let batch = parse(&input, params, &[]).expect("lang parse").custom_batch;
     println!("a.0. {}", batch.predicates[0]);
@@ -65,6 +60,6 @@ mod tests {
     #[test]
     fn test_eth_friend_batch() {
         let params = Params::default();
-        eth_dos_batch(&params, true).unwrap();
+        eth_dos_batch(&params).unwrap();
     }
 }

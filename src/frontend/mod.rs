@@ -49,9 +49,7 @@ impl SignedPodBuilder {
         self.kvs.insert(key.into(), value.into());
     }
 
-    // TODO: Remove mut because Schnorr signature doesn't need any mutability of the signer, the
-    // nonces are sourced from OS randomness.
-    pub fn sign<S: PodSigner>(&self, signer: &mut S) -> Result<SignedPod> {
+    pub fn sign<S: PodSigner>(&self, signer: &S) -> Result<SignedPod> {
         // Sign POD with committed KV store.
         let pod = signer.sign(&self.params, &self.kvs)?;
 
@@ -471,11 +469,14 @@ impl MainPodBuilder {
                 for (st_tmpl, st) in pred.statements.iter().zip(args.iter()) {
                     let st_args = st.args();
                     for (st_tmpl_arg, st_arg) in st_tmpl.args.iter().zip(&st_args) {
-                        if !check_st_tmpl(st_tmpl_arg, st_arg, &mut wildcard_map) {
+                        if let Err(st_tmpl_check_error) =
+                            check_st_tmpl(st_tmpl_arg, st_arg, &mut wildcard_map)
+                        {
                             return Err(Error::statements_dont_match(
                                 st.clone(),
                                 st_tmpl.clone(),
                                 wildcard_map,
+                                st_tmpl_check_error,
                             ));
                         }
                     }
@@ -828,7 +829,9 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        backends::plonky2::mock::{mainpod::MockProver, signedpod::MockSigner},
+        backends::plonky2::{
+            mock::mainpod::MockProver, primitives::ec::schnorr::SecretKey, signedpod::Signer,
+        },
         examples::{
             attest_eth_friend, great_boy_pod_full_flow, tickets_pod_full_flow, zu_kyc_pod_builder,
             zu_kyc_sign_pod_builders, EthDosHelper, MOCK_VD_SET,
@@ -874,33 +877,27 @@ pub mod tests {
         println!("{}", gov_id);
         println!("{}", pay_stub);
 
-        let mut signer = MockSigner {
-            pk: "ZooGov".into(),
-        };
-        let gov_id = gov_id.sign(&mut signer)?;
+        let signer = Signer(SecretKey(1u32.into()));
+        let gov_id = gov_id.sign(&signer)?;
         check_kvs(&gov_id)?;
         println!("{}", gov_id);
 
-        let mut signer = MockSigner {
-            pk: "ZooDeel".into(),
-        };
-        let pay_stub = pay_stub.sign(&mut signer)?;
+        let signer = Signer(SecretKey(2u32.into()));
+        let pay_stub = pay_stub.sign(&signer)?;
         check_kvs(&pay_stub)?;
         println!("{}", pay_stub);
 
-        let mut signer = MockSigner {
-            pk: "ZooOFAC".into(),
-        };
-        let sanction_list = sanction_list.sign(&mut signer)?;
+        let signer = Signer(SecretKey(3u32.into()));
+        let sanction_list = sanction_list.sign(&signer)?;
         check_kvs(&sanction_list)?;
         println!("{}", sanction_list);
 
-        let kyc_builder = zu_kyc_pod_builder(&params, &vd_set, &gov_id, &pay_stub, &sanction_list)?;
+        let kyc_builder = zu_kyc_pod_builder(&params, vd_set, &gov_id, &pay_stub, &sanction_list)?;
         println!("{}", kyc_builder);
 
         // prove kyc with MockProver and print it
-        let mut prover = MockProver {};
-        let kyc = kyc_builder.prove(&mut prover, &params)?;
+        let prover = MockProver {};
+        let kyc = kyc_builder.prove(&prover, &params)?;
 
         println!("{}", kyc);
 
@@ -917,33 +914,29 @@ pub mod tests {
         };
         let vd_set = &*MOCK_VD_SET;
 
-        let mut alice = MockSigner { pk: "Alice".into() };
-        let mut bob = MockSigner { pk: "Bob".into() };
-        let mut charlie = MockSigner {
-            pk: "Charlie".into(),
-        };
-        let david = MockSigner { pk: "David".into() };
+        let alice = Signer(SecretKey(1u32.into()));
+        let bob = Signer(SecretKey(2u32.into()));
+        let charlie = Signer(SecretKey(3u32.into()));
+        let david = Signer(SecretKey(4u32.into()));
 
         let helper = EthDosHelper::new(&params, vd_set, true, alice.public_key())?;
 
-        let mut prover = MockProver {};
+        let prover = MockProver {};
 
-        let alice_attestation = attest_eth_friend(&params, &mut alice, bob.public_key());
-        let dist_1 = helper
-            .dist_1(&alice_attestation)?
-            .prove(&mut prover, &params)?;
+        let alice_attestation = attest_eth_friend(&params, &alice, bob.public_key());
+        let dist_1 = helper.dist_1(&alice_attestation)?.prove(&prover, &params)?;
         dist_1.pod.verify()?;
 
-        let bob_attestation = attest_eth_friend(&params, &mut bob, charlie.public_key());
+        let bob_attestation = attest_eth_friend(&params, &bob, charlie.public_key());
         let dist_2 = helper
             .dist_n_plus_1(&dist_1, &bob_attestation)?
-            .prove(&mut prover, &params)?;
+            .prove(&prover, &params)?;
         dist_2.pod.verify()?;
 
-        let charlie_attestation = attest_eth_friend(&params, &mut charlie, david.public_key());
+        let charlie_attestation = attest_eth_friend(&params, &charlie, david.public_key());
         let dist_3 = helper
             .dist_n_plus_1(&dist_2, &charlie_attestation)?
-            .prove(&mut prover, &params)?;
+            .prove(&prover, &params)?;
         dist_3.pod.verify()?;
 
         Ok(())
@@ -977,10 +970,10 @@ pub mod tests {
         let mut signed_builder = SignedPodBuilder::new(&params);
         signed_builder.insert("a", 1);
         signed_builder.insert("b", 1);
-        let mut signer = MockSigner { pk: "key".into() };
-        let signed_pod = signed_builder.sign(&mut signer).unwrap();
+        let signer = Signer(SecretKey(1u32.into()));
+        let signed_pod = signed_builder.sign(&signer).unwrap();
 
-        let mut builder = MainPodBuilder::new(&params, &vd_set);
+        let mut builder = MainPodBuilder::new(&params, vd_set);
         builder.add_signed_pod(&signed_pod);
 
         //let op_val1 = Operation{
@@ -1014,8 +1007,8 @@ pub mod tests {
         );
         builder.op(true, op_eq3).unwrap();
 
-        let mut prover = MockProver {};
-        let pod = builder.prove(&mut prover, &params).unwrap();
+        let prover = MockProver {};
+        let pod = builder.prove(&prover, &params).unwrap();
 
         println!("{}", pod);
     }
@@ -1028,20 +1021,17 @@ pub mod tests {
         let mut builder = SignedPodBuilder::new(&params);
 
         builder.insert("num", 2);
-
-        let mut signer = MockSigner {
-            pk: "signer".into(),
-        };
-        let pod = builder.sign(&mut signer).unwrap();
+        let signer = Signer(SecretKey(1u32.into()));
+        let pod = builder.sign(&signer).unwrap();
 
         println!("{}", pod);
 
-        let mut builder = MainPodBuilder::new(&params, &vd_set);
+        let mut builder = MainPodBuilder::new(&params, vd_set);
         builder.add_signed_pod(&pod);
         builder.pub_op(op!(gt, (&pod, "num"), 5)).unwrap();
 
-        let mut prover = MockProver {};
-        let false_pod = builder.prove(&mut prover, &params).unwrap();
+        let prover = MockProver {};
+        let false_pod = builder.prove(&prover, &params).unwrap();
 
         println!("{}", builder);
         println!("{}", false_pod);
@@ -1063,12 +1053,10 @@ pub mod tests {
         let dict_root = Value::from(dict.clone());
         builder.insert("dict", dict_root);
 
-        let mut signer = MockSigner {
-            pk: "signer".into(),
-        };
-        let pod = builder.sign(&mut signer).unwrap();
+        let signer = Signer(SecretKey(1u32.into()));
+        let pod = builder.sign(&signer).unwrap();
 
-        let mut builder = MainPodBuilder::new(&params, &vd_set);
+        let mut builder = MainPodBuilder::new(&params, vd_set);
         builder.add_signed_pod(&pod);
         let st0 = pod.get_statement("dict").unwrap();
         let st1 = builder.op(true, op!(new_entry, "key", "a")).unwrap();
@@ -1087,8 +1075,8 @@ pub mod tests {
                 OperationAux::MerkleProof(dict.prove(&Key::from("a")).unwrap().1),
             ))
             .unwrap();
-        let mut main_prover = MockProver {};
-        let main_pod = builder.prove(&mut main_prover, &params).unwrap();
+        let main_prover = MockProver {};
+        let main_pod = builder.prove(&main_prover, &params).unwrap();
 
         println!("{}", main_pod);
 
@@ -1105,7 +1093,7 @@ pub mod tests {
 
         let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
-        let mut builder = MainPodBuilder::new(&params, &vd_set);
+        let mut builder = MainPodBuilder::new(&params, vd_set);
         let st = Statement::equal(AnchoredKey::from((SELF, "a")), Value::from(3));
         let op_new_entry = Operation(
             OperationType::Native(NativeOperation::NewEntry),
@@ -1117,8 +1105,8 @@ pub mod tests {
         let st = Statement::equal(AnchoredKey::from((SELF, "a")), Value::from(28));
         builder.insert(false, (st, op_new_entry.clone()));
 
-        let mut prover = MockProver {};
-        let pod = builder.prove(&mut prover, &params).unwrap();
+        let prover = MockProver {};
+        let pod = builder.prove(&prover, &params).unwrap();
         pod.pod.verify().unwrap();
     }
 
@@ -1129,7 +1117,7 @@ pub mod tests {
         // right now the mock prover catches this when it calls compile()
         let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
-        let mut builder = MainPodBuilder::new(&params, &vd_set);
+        let mut builder = MainPodBuilder::new(&params, vd_set);
         let self_a = AnchoredKey::from((SELF, "a"));
         let self_b = AnchoredKey::from((SELF, "b"));
         let value_of_a = Statement::equal(self_a.clone(), Value::from(3));
@@ -1153,8 +1141,8 @@ pub mod tests {
         );
         builder.insert(false, (st, op));
 
-        let mut prover = MockProver {};
-        let pod = builder.prove(&mut prover, &params).unwrap();
+        let prover = MockProver {};
+        let pod = builder.prove(&prover, &params).unwrap();
         pod.pod.verify().unwrap();
     }
 }

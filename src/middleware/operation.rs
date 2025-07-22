@@ -5,7 +5,7 @@ use plonky2::field::types::Field;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    backends::plonky2::primitives::merkletree::MerkleProof,
+    backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree},
     middleware::{
         hash_values, AnchoredKey, CustomPredicate, CustomPredicateRef, Error, NativePredicate,
         Params, Predicate, Result, Statement, StatementArg, StatementTmplArg, ToFields, Value,
@@ -325,14 +325,31 @@ impl Operation {
             (Self::NotEqualFromEntries(s1, s2), NotEqual(v3, v4)) => val(v3, s1)? != val(v4, s2)?,
             (Self::LtEqFromEntries(s1, s2), LtEq(v3, v4)) => val(v3, s1)? <= val(v4, s2)?,
             (Self::LtFromEntries(s1, s2), Lt(v3, v4)) => val(v3, s1)? < val(v4, s2)?,
-            (Self::ContainsFromEntries(_, _, _, _), Contains(_, _, _)) =>
-            /* TODO */
-            {
+            (
+                Self::ContainsFromEntries(root_s, key_s, val_s, pf),
+                Contains(root_v, key_v, val_v),
+            ) => {
+                let root = val(root_v, root_s)?;
+                let key = val(key_v, key_s)?;
+                let value = val(val_v, val_s)?;
+                MerkleTree::verify(
+                    params.max_depth_mt_containers,
+                    root.raw().into(),
+                    pf,
+                    &key.raw(),
+                    &value.raw(),
+                )?;
                 true
             }
-            (Self::NotContainsFromEntries(_, _, _), NotContains(_, _)) =>
-            /* TODO */
-            {
+            (Self::NotContainsFromEntries(root_s, key_s, pf), NotContains(root_v, key_v)) => {
+                let root = val(root_v, root_s)?;
+                let key = val(key_v, key_s)?;
+                MerkleTree::verify_nonexistence(
+                    params.max_depth_mt_containers,
+                    root.raw().into(),
+                    pf,
+                    &key.raw(),
+                )?;
                 true
             }
             (
@@ -355,7 +372,7 @@ impl Operation {
             (Self::Custom(CustomPredicateRef { batch, index }, args), Custom(cpr, s_args))
                 if batch == &cpr.batch && index == &cpr.index =>
             {
-                check_custom_pred(params, cpr, args, s_args)?
+                check_custom_pred(params, cpr, args, s_args).map(|_| true)?
             }
             _ => return Err(deduction_err()),
         };
@@ -370,37 +387,49 @@ pub fn check_st_tmpl(
     st_arg: &StatementArg,
     // Map from wildcards to values that we have seen so far.
     wildcard_map: &mut [Option<Value>],
-) -> bool {
+) -> Result<()> {
     // Check that the value `v` at wildcard `wc` exists in the map or set it.
-    fn check_or_set(v: Value, wc: &Wildcard, wildcard_map: &mut [Option<Value>]) -> bool {
+    fn check_or_set(v: Value, wc: &Wildcard, wildcard_map: &mut [Option<Value>]) -> Result<()> {
         if let Some(prev) = &wildcard_map[wc.index] {
             if *prev != v {
-                // TODO: Return nice error
-                return false;
+                return Err(Error::invalid_wildcard_assignment(
+                    wc.clone(),
+                    v,
+                    prev.clone(),
+                ));
             }
         } else {
             wildcard_map[wc.index] = Some(v);
         }
-        true
+        Ok(())
     }
 
     match (st_tmpl_arg, st_arg) {
-        (StatementTmplArg::None, StatementArg::None) => true,
-        (StatementTmplArg::Literal(lhs), StatementArg::Literal(rhs)) if lhs == rhs => true,
+        (StatementTmplArg::None, StatementArg::None) => Ok(()),
+        (StatementTmplArg::Literal(lhs), StatementArg::Literal(rhs)) if lhs == rhs => Ok(()),
         (
             StatementTmplArg::AnchoredKey(pod_id_wc, key_tmpl),
             StatementArg::Key(AnchoredKey { pod_id, key }),
         ) => {
             let pod_id_ok = check_or_set(Value::from(*pod_id), pod_id_wc, wildcard_map);
-            pod_id_ok && (key_tmpl == key)
+            pod_id_ok.and_then(|_| {
+                (key_tmpl == key).then_some(()).ok_or(
+                    Error::mismatched_anchored_key_in_statement_tmpl_arg(
+                        pod_id_wc.clone(),
+                        *pod_id,
+                        key_tmpl.clone(),
+                        key.clone(),
+                    ),
+                )
+            })
         }
         (StatementTmplArg::Wildcard(wc), StatementArg::Literal(v)) => {
             check_or_set(v.clone(), wc, wildcard_map)
         }
-        _ => {
-            println!("DBG {:?} {:?}", st_tmpl_arg, st_arg);
-            false
-        }
+        _ => Err(Error::mismatched_statement_tmpl_arg(
+            st_tmpl_arg.clone(),
+            st_arg.clone(),
+        )),
     }
 }
 
@@ -408,7 +437,7 @@ pub fn resolve_wildcard_values(
     params: &Params,
     pred: &CustomPredicate,
     args: &[Statement],
-) -> Option<Vec<Value>> {
+) -> Result<Vec<Value>> {
     // Check that all wildcard have consistent values as assigned in the statements while storing a
     // map of their values.
     // NOTE: We assume the statements have the same order as defined in the custom predicate.  For
@@ -416,25 +445,22 @@ pub fn resolve_wildcard_values(
     let mut wildcard_map = vec![None; params.max_custom_predicate_wildcards];
     for (st_tmpl, st) in pred.statements.iter().zip(args) {
         let st_args = st.args();
-        for (st_tmpl_arg, st_arg) in st_tmpl.args.iter().zip(&st_args) {
-            if !check_st_tmpl(st_tmpl_arg, st_arg, &mut wildcard_map) {
-                // TODO: Better errors.  Example:
-                // println!("{} doesn't match {}", st_arg, st_tmpl_arg);
-                // println!("{} doesn't match {}", st, st_tmpl);
-                return None;
-            }
-        }
+        st_tmpl
+            .args
+            .iter()
+            .zip(&st_args)
+            .try_for_each(|(st_tmpl_arg, st_arg)| {
+                check_st_tmpl(st_tmpl_arg, st_arg, &mut wildcard_map)
+            })?;
     }
 
     // NOTE: We set unresolved wildcard slots with an empty value.  They can be unresolved because
     // they are beyond the number of used wildcards in this custom predicate, or they could be
     // private arguments that are unused in a particular disjunction.
-    Some(
-        wildcard_map
-            .into_iter()
-            .map(|opt| opt.unwrap_or(Value::from(0)))
-            .collect(),
-    )
+    Ok(wildcard_map
+        .into_iter()
+        .map(|opt| opt.unwrap_or(Value::from(0)))
+        .collect())
 }
 
 fn check_custom_pred(
@@ -442,7 +468,7 @@ fn check_custom_pred(
     custom_pred_ref: &CustomPredicateRef,
     args: &[Statement],
     s_args: &[Value],
-) -> Result<bool> {
+) -> Result<()> {
     let pred = custom_pred_ref.predicate();
     if pred.statements.len() != args.len() {
         return Err(Error::diff_amount(
@@ -476,23 +502,33 @@ fn check_custom_pred(
         }
     }
 
-    let wildcard_map = match resolve_wildcard_values(params, pred, args) {
-        Some(wc_map) => wc_map,
-        None => return Ok(false),
-    };
+    let wildcard_map = resolve_wildcard_values(params, pred, args)?;
 
-    // Check that the resolved wildcard match the statement arguments.
-    for (s_arg, wc_value) in s_args.iter().zip(wildcard_map.iter()) {
+    // Check that the resolved wildcards match the statement arguments.
+    for (arg_index, (s_arg, wc_value)) in s_args.iter().zip(wildcard_map.iter()).enumerate() {
         if *wc_value != *s_arg {
-            return Ok(false);
+            return Err(Error::mismatched_wildcard_value_and_statement_arg(
+                wc_value.clone(),
+                s_arg.clone(),
+                arg_index,
+                pred.clone(),
+            ));
         }
     }
 
     if pred.conjunction {
-        Ok(num_matches == pred.statements.len())
-    } else {
-        Ok(num_matches > 0)
+        if num_matches != pred.statements.len() {
+            return Err(Error::unsatisfied_custom_predicate_conjunction(
+                pred.clone(),
+            ));
+        }
+    } else if num_matches == 0 {
+        return Err(Error::unsatisfied_custom_predicate_disjunction(
+            pred.clone(),
+        ));
     }
+
+    Ok(())
 }
 
 impl ToFields for Operation {
@@ -521,5 +557,82 @@ pub(crate) fn value_from_op(input_st: &Statement, output_ref: &ValueRef) -> Opti
         (Statement::None, ValueRef::Literal(v)) => Some(v.clone()),
         (Statement::Equal(r1, ValueRef::Literal(v)), r2) if r1 == r2 => Some(v.clone()),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use crate::{
+        backends::plonky2::primitives::merkletree::MerkleTree,
+        middleware::{
+            hash_value, AnchoredKey, Error, Key, Operation, Params, PodId, Result, Statement,
+        },
+    };
+
+    #[test]
+    fn check_container_ops() -> Result<()> {
+        let params = Params::default();
+        let pod_id = PodId::default();
+        let root_ak = AnchoredKey::new(pod_id, Key::new("root".into()));
+        let key_ak = AnchoredKey::new(pod_id, Key::new("key".into()));
+        let val_ak = AnchoredKey::new(pod_id, Key::new("value".into()));
+
+        // Form Merkle tree
+        let kvs = (0..10)
+            .map(|i| (hash_value(&i.into()).into(), i.into()))
+            .collect::<HashMap<_, _>>();
+        let mt = MerkleTree::new(params.max_depth_mt_containers, &kvs)?;
+        let root_s = Statement::Equal(root_ak.clone().into(), mt.root().into());
+
+        // Check existence proofs
+        kvs.iter().try_for_each(|(k, v)| {
+            // Form op args
+            let key_s = Statement::Equal(key_ak.clone().into(), (*k).into());
+            let value_s = Statement::Equal(val_ak.clone().into(), (*v).into());
+            let (_, pf) = mt.prove(k)?;
+
+            // Form op
+            let op = Operation::ContainsFromEntries(root_s.clone(), key_s, value_s, pf);
+            // Form output statement
+            let st = Statement::Contains(
+                root_ak.clone().into(),
+                key_ak.clone().into(),
+                val_ak.clone().into(),
+            );
+
+            // Check op against output statement
+            op.check(&params, &st).and_then(|ind| {
+                if ind {
+                    Ok(())
+                } else {
+                    Err(Error::custom(format!(
+                        "ContainedFromEntries check failed for pair ({},{})",
+                        k, v
+                    )))
+                }
+            })
+        })?;
+
+        // Check non-existence proofs similarly
+        (50..60).try_for_each(|k| {
+            let key_s = Statement::Equal(key_ak.clone().into(), k.into());
+            let pf = mt.prove_nonexistence(&k.into())?;
+
+            let op = Operation::NotContainsFromEntries(root_s.clone(), key_s, pf);
+            let st = Statement::NotContains(root_ak.clone().into(), key_ak.clone().into());
+
+            op.check(&params, &st).and_then(|ind| {
+                if ind {
+                    Ok(())
+                } else {
+                    Err(Error::custom(format!(
+                        "NotContainedFromEntries check failed for key {}",
+                        k
+                    )))
+                }
+            })
+        })
     }
 }

@@ -16,9 +16,10 @@ use crate::{
             process_private_statements_operations, process_public_statements_operations, Operation,
             Statement,
         },
-        mock::{emptypod::MockEmptyPod, signedpod::MockSignedPod},
+        mock::emptypod::MockEmptyPod,
         primitives::merkletree::MerkleClaimAndProof,
         recursion::hash_verifier_data,
+        signedpod::SignedPod,
     },
     middleware::{
         self, deserialize_pod, deserialize_signed_pod, hash_str, AnchoredKey, Hash, MainPodInputs,
@@ -187,7 +188,7 @@ impl MockMainPod {
         // get the id out of the public statements
         let id: PodId = PodId(calculate_id(&public_statements, params));
 
-        let pad_signed_pod: Box<dyn Pod> = Box::new(MockSignedPod::dummy());
+        let pad_signed_pod: Box<dyn Pod> = Box::new(SignedPod::dummy());
         let input_signed_pods: Vec<Box<dyn Pod>> = inputs
             .signed_pods
             .iter()
@@ -425,7 +426,7 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        backends::plonky2::mock::signedpod::MockSigner,
+        backends::plonky2::{primitives::ec::schnorr::SecretKey, signedpod::Signer},
         examples::{
             great_boy_pod_full_flow, tickets_pod_full_flow, zu_kyc_pod_builder,
             zu_kyc_sign_pod_builders, MOCK_VD_SET,
@@ -440,28 +441,22 @@ pub mod tests {
         let vd_set = &*MOCK_VD_SET;
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params);
-        let mut signer = MockSigner {
-            pk: "ZooGov".into(),
-        };
-        let gov_id_pod = gov_id_builder.sign(&mut signer)?;
-        let mut signer = MockSigner {
-            pk: "ZooDeel".into(),
-        };
-        let pay_stub_pod = pay_stub_builder.sign(&mut signer)?;
-        let mut signer = MockSigner {
-            pk: "ZooOFAC".into(),
-        };
-        let sanction_list_pod = sanction_list_builder.sign(&mut signer)?;
+        let signer = Signer(SecretKey(1u32.into()));
+        let gov_id_pod = gov_id_builder.sign(&signer)?;
+        let signer = Signer(SecretKey(2u32.into()));
+        let pay_stub_pod = pay_stub_builder.sign(&signer)?;
+        let signer = Signer(SecretKey(3u32.into()));
+        let sanction_list_pod = sanction_list_builder.sign(&signer)?;
         let kyc_builder = zu_kyc_pod_builder(
             &params,
-            &vd_set,
+            vd_set,
             &gov_id_pod,
             &pay_stub_pod,
             &sanction_list_pod,
         )?;
 
-        let mut prover = MockProver {};
-        let kyc_pod = kyc_builder.prove(&mut prover, &params)?;
+        let prover = MockProver {};
+        let kyc_pod = kyc_builder.prove(&prover, &params)?;
         let pod = (kyc_pod.pod as Box<dyn Any>)
             .downcast::<MockMainPod>()
             .unwrap();
@@ -476,8 +471,8 @@ pub mod tests {
     fn test_mock_main_great_boy() -> frontend::Result<()> {
         let (params, great_boy_builder) = great_boy_pod_full_flow()?;
 
-        let mut prover = MockProver {};
-        let great_boy_pod = great_boy_builder.prove(&mut prover, &params)?;
+        let prover = MockProver {};
+        let great_boy_pod = great_boy_builder.prove(&prover, &params)?;
         let pod = (great_boy_pod.pod as Box<dyn Any>)
             .downcast::<MockMainPod>()
             .unwrap();
@@ -493,8 +488,8 @@ pub mod tests {
     fn test_mock_main_tickets() -> frontend::Result<()> {
         let params = middleware::Params::default();
         let tickets_builder = tickets_pod_full_flow()?;
-        let mut prover = MockProver {};
-        let proof_pod = tickets_builder.prove(&mut prover, &params)?;
+        let prover = MockProver {};
+        let proof_pod = tickets_builder.prove(&prover, &params)?;
         let pod = (proof_pod.pod as Box<dyn Any>)
             .downcast::<MockMainPod>()
             .unwrap();

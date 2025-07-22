@@ -543,7 +543,7 @@ mod tests {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
                     sta_ak(("attestation_pod", 2), "_type"), // Pub(0-1), Priv(2)
-                    sta_lit(PodType::MockSigned),
+                    sta_lit(PodType::Signed),
                 ],
             },
             StatementTmpl {
