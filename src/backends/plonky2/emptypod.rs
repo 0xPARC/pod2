@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::{
-        basetypes::{Proof, C, D},
+        basetypes::{Proof, VerifierCircuitData, C, D},
         circuits::{
             common::{Flattenable, StatementTarget},
             mainpod::{CalculateIdGadget, PI_OFFSET_ID},
@@ -22,7 +22,7 @@ use crate::{
         get_standard_rec_main_pod_circuit_data,
         mainpod::{self, calculate_id},
         recursion::pad_circuit,
-        serialization::CircuitDataSerializer,
+        serialization::{CircuitDataSerializer, VerifierCircuitDataSerializer},
         serialize_proof,
     },
     cache::{self, CacheEntry},
@@ -82,10 +82,23 @@ pub struct EmptyPod {
 
 type CircuitData = circuit_data::CircuitData<F, C, D>;
 
-pub fn get_standard_empty_pod_data() -> CacheEntry<(EmptyPodVerifyTarget, CircuitDataSerializer)> {
-    cache::get("standard_empty_pod_data", &(), |_| {
+// TODO: Make a function to store the verifier data which is more commonly used
+pub fn get_standard_empty_pod_circuit_data(
+) -> CacheEntry<(EmptyPodVerifyTarget, CircuitDataSerializer)> {
+    cache::get("standard_empty_pod_circuit_data", &(), |_| {
         let (target, circuit_data) = build().expect("successful build");
         (target, CircuitDataSerializer(circuit_data))
+    })
+    .expect("cache ok")
+}
+
+pub fn get_standard_empty_pod_verifier_circuit_data() -> CacheEntry<VerifierCircuitDataSerializer> {
+    cache::get("standard_empty_pod_verifier_circuit_data", &(), |_| {
+        let (_, standard_empty_pod_circuit_data) = &*get_standard_empty_pod_circuit_data();
+        VerifierCircuitDataSerializer(VerifierCircuitData {
+            verifier_only: standard_empty_pod_circuit_data.verifier_only.clone(),
+            common: standard_empty_pod_circuit_data.common.clone(),
+        })
     })
     .expect("cache ok")
 }
@@ -113,7 +126,7 @@ fn build() -> Result<(EmptyPodVerifyTarget, CircuitData)> {
 
 impl EmptyPod {
     pub fn new(params: &Params, vd_set: VDSet) -> Result<EmptyPod> {
-        let standard_empty_pod_data = get_standard_empty_pod_data();
+        let standard_empty_pod_data = get_standard_empty_pod_circuit_data();
         let (empty_pod_verify_target, data) = &*standard_empty_pod_data;
 
         let mut pw = PartialWitness::<F>::new();
@@ -169,13 +182,13 @@ impl Pod for EmptyPod {
             .cloned()
             .collect_vec();
 
-        let standard_empty_pod_data = get_standard_empty_pod_data();
-        let (_, data) = &*standard_empty_pod_data;
-        data.verify(ProofWithPublicInputs {
-            proof: self.proof.clone(),
-            public_inputs,
-        })
-        .map_err(|e| Error::plonky2_proof_fail("EmptyPod", e))
+        let standard_empty_pod_verifier_data = get_standard_empty_pod_verifier_circuit_data();
+        standard_empty_pod_verifier_data
+            .verify(ProofWithPublicInputs {
+                proof: self.proof.clone(),
+                public_inputs,
+            })
+            .map_err(|e| Error::plonky2_proof_fail("EmptyPod", e))
     }
 
     fn id(&self) -> PodId {
@@ -199,9 +212,11 @@ impl Pod for EmptyPod {
 
 impl RecursivePod for EmptyPod {
     fn verifier_data(&self) -> VerifierOnlyCircuitData {
-        let standard_empty_pod_data = get_standard_empty_pod_data();
-        let (_, data) = &*standard_empty_pod_data;
-        data.verifier_only.clone()
+        let standard_empty_pod_verifier_circuit_data =
+            get_standard_empty_pod_verifier_circuit_data();
+        standard_empty_pod_verifier_circuit_data
+            .verifier_only
+            .clone()
     }
     fn proof(&self) -> Proof {
         self.proof.clone()

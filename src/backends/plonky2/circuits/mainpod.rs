@@ -29,7 +29,7 @@ use crate::{
             },
             signedpod::{SignedPodVerifyGadget, SignedPodVerifyTarget},
         },
-        emptypod::{get_standard_empty_pod_data, EmptyPod},
+        emptypod::{get_standard_empty_pod_circuit_data, EmptyPod},
         error::Result,
         mainpod::{self, pad_statement},
         primitives::merkletree::{
@@ -1500,7 +1500,10 @@ impl InnerCircuit for MainPodVerifyTarget {
         let vd_emptypod_mt_proof =
             input
                 .vds_set
-                .get_vds_proofs(&[get_standard_empty_pod_data().1.verifier_only.clone()])?;
+                .get_vds_proofs(&[get_standard_empty_pod_circuit_data()
+                    .1
+                    .verifier_only
+                    .clone()])?;
         let vd_emptypod_mt_proof = vd_emptypod_mt_proof[0].clone();
         for i in input.vd_mt_proofs.len()..self.vd_mt_proofs.len() {
             self.vd_mt_proofs[i].set_targets(pw, true, &vd_emptypod_mt_proof)?;

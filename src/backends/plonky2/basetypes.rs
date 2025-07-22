@@ -43,7 +43,7 @@ use std::{collections::HashMap, sync::LazyLock};
 
 use crate::{
     backends::plonky2::{
-        emptypod::get_standard_empty_pod_data, get_standard_rec_main_pod_circuit_data,
+        emptypod::get_standard_empty_pod_circuit_data, get_standard_rec_main_pod_circuit_data,
         primitives::merkletree::MerkleClaimAndProof,
     },
     middleware::{containers::Array, Hash, Params, RawValue, Result, Value},
@@ -55,7 +55,10 @@ pub static DEFAULT_VD_SET: LazyLock<VDSet> = LazyLock::new(|| {
         get_standard_rec_main_pod_circuit_data()
             .verifier_only
             .clone(),
-        get_standard_empty_pod_data().1.verifier_only.clone(),
+        get_standard_empty_pod_circuit_data()
+            .1
+            .verifier_only
+            .clone(),
     ];
     VDSet::new(params.max_depth_mt_vds, &vds).unwrap()
 });

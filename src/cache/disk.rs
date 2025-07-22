@@ -89,8 +89,8 @@ pub(crate) fn get<T: Serialize + DeserializeOwned + Clone, P: Serialize>(
                     log::info!("building {} and storing to the disk cache", log_name);
                     let start = std::time::Instant::now();
                     let data = build_fn(params);
-                    let end = std::time::Instant::now() - start;
-                    log::debug!("built {} in {:?}", log_name, end);
+                    let elapsed = std::time::Instant::now() - start;
+                    log::debug!("built {} in {:?}", log_name, elapsed);
                     let data_cbor = minicbor_serde::to_vec(&data)?;
                     // First write the file to .tmp and then rename to avoid a corrupted file if we
                     // crash in the middle of the write.
@@ -107,13 +107,13 @@ pub(crate) fn get<T: Serialize + DeserializeOwned + Clone, P: Serialize>(
         let start = std::time::Instant::now();
         let mut data_cbor = Vec::new();
         file.read_to_end(&mut data_cbor)?;
-        let end = std::time::Instant::now() - start;
-        log::debug!("read {} from disk in {:?}", log_name, end);
+        let elapsed = std::time::Instant::now() - start;
+        log::debug!("read {} from disk in {:?}", log_name, elapsed);
 
         let start = std::time::Instant::now();
         let data: T = minicbor_serde::from_slice(&data_cbor)?;
-        let end = std::time::Instant::now() - start;
-        log::debug!("deserialized {} in {:?}", log_name, end);
+        let elapsed = std::time::Instant::now() - start;
+        log::debug!("deserialized {} in {:?}", log_name, elapsed);
 
         return Ok(CacheEntry { value: data });
     }

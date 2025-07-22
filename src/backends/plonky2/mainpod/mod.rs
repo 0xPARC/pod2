@@ -571,14 +571,18 @@ pub struct MainPod {
     proof: Proof,
 }
 
-// TODO: Rename remove "standard"
-fn get_standard_rec_main_pod_circuit_data_padded(
+fn get_rec_main_pod_circuit_data(
     params: &Params,
 ) -> CacheEntry<(
     RecursiveCircuitTarget<MainPodVerifyTarget>,
     CircuitDataSerializer,
 )> {
-    cache::get("rec_main_pod_circuit_data_padded", params, |params| {
+    // TODO(Edu): I believe that the standard_rec_main_pod_circuit data is the same as this when
+    // the params are Default: we're padding the circuit to itself, so we get the original one?
+    // If this is true we can deduplicate this cache entry because both rec_main_pod_circuit_data
+    // and standard_rec_main_pod_circuit_data are indexed by Params.  This can be easily tested by
+    // comparing the cached artifacts on disk :)
+    cache::get("rec_main_pod_circuit_data", params, |params| {
         let rec_circuit_data = get_standard_rec_main_pod_circuit_data();
         let (target, circuit_data) = timed!(
             "recursive MainPod circuit_data padded",
@@ -594,21 +598,15 @@ fn get_standard_rec_main_pod_circuit_data_padded(
     .expect("cache ok")
 }
 
-// TODO: Rename
 // This is a helper function to get the CommonCircuitData necessary to decode
 // a serialized proof. At some point in the future, this data may be available
 // as a constant or with static initialization, but in the meantime we can
 // generate it on-demand.
-pub fn get_common_data(params: &Params) -> CacheEntry<CommonCircuitDataSerializer> {
-    cache::get(
-        "rec_main_pod_common_circuit_data_padded",
-        params,
-        |params| {
-            let (_, rec_main_pod_circuit_data_padded) =
-                &*get_standard_rec_main_pod_circuit_data_padded(params);
-            CommonCircuitDataSerializer(rec_main_pod_circuit_data_padded.common.clone())
-        },
-    )
+pub fn get_rec_main_pod_common_data(params: &Params) -> CacheEntry<CommonCircuitDataSerializer> {
+    cache::get("rec_main_pod_common_circuit_data", params, |params| {
+        let (_, rec_main_pod_circuit_data_padded) = &*get_rec_main_pod_circuit_data(params);
+        CommonCircuitDataSerializer(rec_main_pod_circuit_data_padded.common.clone())
+    })
     .expect("cache ok")
 }
 
@@ -651,15 +649,7 @@ impl Pod for MainPod {
         }
 
         // 1, 3, 4, 5 verification via the zkSNARK proof
-        let rec_circuit_data = get_standard_rec_main_pod_circuit_data();
-        // TODO: cache these artefacts
-        // https://github.com/0xPARC/pod2/issues/247
-        let (_, circuit_data) =
-            RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data_padded(
-                self.params.max_input_recursive_pods,
-                &rec_circuit_data.common,
-                &self.params,
-            )?;
+        let (_, circuit_data) = &*get_rec_main_pod_circuit_data(&self.params);
         let public_inputs = id
             .to_fields(&self.params)
             .iter()
@@ -716,7 +706,7 @@ impl RecursivePod for MainPod {
         id: PodId,
     ) -> Result<Box<dyn RecursivePod>> {
         let data: Data = serde_json::from_value(data)?;
-        let common = get_common_data(&params);
+        let common = get_rec_main_pod_common_data(&params);
         let proof = deserialize_proof(&common, &data.proof)?;
         Ok(Box::new(Self {
             params,

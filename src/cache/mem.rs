@@ -72,8 +72,8 @@ pub(crate) fn get<T: Serialize + DeserializeOwned + Clone + Send + 'static, P: S
         log::info!("building {} and storing to the mem cache", name);
         let start = std::time::Instant::now();
         let data = build_fn(params);
-        let end = std::time::Instant::now() - start;
-        log::debug!("built {} in {:?}", name, end);
+        let elapsed = std::time::Instant::now() - start;
+        log::debug!("built {} in {:?}", name, elapsed);
 
         CACHE.lock()?.insert(key, Some(Box::new(data.clone())));
         // Call `get` again and this time we'll retreive the data from the cache

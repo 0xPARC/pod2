@@ -17,7 +17,7 @@ use plonky2::{
 use serde::{de, ser, Deserialize, Serialize};
 
 use crate::backends::plonky2::{
-    basetypes::{CircuitData, CommonCircuitData, C, D, F},
+    basetypes::{CircuitData, CommonCircuitData, VerifierCircuitData, C, D, F},
     circuits::{common::LtMaskGenerator, utils::DebugGenerator},
     primitives::ec::{
         bits::ConditionalZeroGenerator,
@@ -208,5 +208,45 @@ impl<'de> Deserialize<'de> for CommonCircuitDataSerializer {
         let circuit_data =
             CommonCircuitData::from_bytes(&bytes, &gate_serializer).map_err(de::Error::custom)?;
         Ok(CommonCircuitDataSerializer(circuit_data))
+    }
+}
+
+/// Helper type to serialize and deserialize the pod2 `VerifierCircuitData` using serde traits.
+#[derive(Clone)]
+pub struct VerifierCircuitDataSerializer(pub(crate) VerifierCircuitData);
+
+impl Deref for VerifierCircuitDataSerializer {
+    type Target = VerifierCircuitData;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Serialize for VerifierCircuitDataSerializer {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let gate_serializer = Pod2GateSerializer {};
+        let bytes = self
+            .0
+            .to_bytes(&gate_serializer)
+            .map_err(ser::Error::custom)?;
+        serde_bytes::ByteBuf::from(bytes).serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for VerifierCircuitDataSerializer {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let bytes = <&'de serde_bytes::Bytes>::deserialize(deserializer)?;
+
+        let gate_serializer = Pod2GateSerializer {};
+        let circuit_data =
+            VerifierCircuitData::from_bytes(&bytes, &gate_serializer).map_err(de::Error::custom)?;
+        Ok(VerifierCircuitDataSerializer(circuit_data))
     }
 }
