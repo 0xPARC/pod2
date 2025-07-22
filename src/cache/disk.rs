@@ -1,12 +1,25 @@
 use std::{
     fs::{create_dir_all, rename, File, TryLockError},
-    io::{Error, ErrorKind, Write},
+    io::{Error, ErrorKind, Read, Write},
+    ops::Deref,
     thread, time,
 };
 
 use directories::BaseDirs;
 use serde::{de::DeserializeOwned, Serialize};
 use sha2::{Digest, Sha256};
+
+pub struct CacheEntry<T> {
+    value: T,
+}
+
+impl<T> Deref for CacheEntry<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
 
 /// Get the artifact named `name` from the disk cache.  If it doesn't exist, it will be built by
 /// calling `build_fn` and stored.
@@ -15,18 +28,14 @@ pub(crate) fn get<T: Serialize + DeserializeOwned + Clone, P: Serialize>(
     name: &str,
     params: &P,
     build_fn: fn(&P) -> T,
-) -> Result<T, Box<dyn std::error::Error>> {
+) -> Result<CacheEntry<T>, Box<dyn std::error::Error>> {
     let commit_hash_str = env!("VERGEN_GIT_SHA");
     let params_json = serde_json::to_string(params)?;
     let params_json_hash = Sha256::digest(&params_json);
     let params_json_hash_str_long = format!("{:x}", params_json_hash);
     let params_json_hash_str = format!("{}", &params_json_hash_str_long[..32]);
-    log::debug!(
-        "getting {}/{}/{}.json from the disk cache",
-        commit_hash_str,
-        params_json_hash_str,
-        name
-    );
+    let log_name = format!("{}/{}/{}.cbor", commit_hash_str, params_json_hash_str, name);
+    log::debug!("getting {} from the disk cache", log_name);
 
     let base_dirs =
         BaseDirs::new().ok_or(Error::new(ErrorKind::Other, "no valid home directory"))?;
@@ -49,8 +58,8 @@ pub(crate) fn get<T: Serialize + DeserializeOwned + Clone, P: Serialize>(
         rename(params_path_tmp, params_path)?;
     }
 
-    let cache_path = cache_dir.join(format!("{}.json", name));
-    let cache_path_tmp = cache_dir.join(format!("{}.json.tmp", name));
+    let cache_path = cache_dir.join(format!("{}.cbor", name));
+    let cache_path_tmp = cache_dir.join(format!("{}.cbor.tmp", name));
 
     // First try to open the cached file.  If it exists we assume a previous build+cache succeeded
     // so we read, deserailize it and return it.
@@ -61,7 +70,7 @@ pub(crate) fn get<T: Serialize + DeserializeOwned + Clone, P: Serialize>(
     // complete or doesn't exist at all (in case of a crash the corruputed file will be tmp).
 
     loop {
-        let file = match File::open(&cache_path) {
+        let mut file = match File::open(&cache_path) {
             Ok(file) => file,
             Err(err) => {
                 if err.kind() == ErrorKind::NotFound {
@@ -77,25 +86,35 @@ pub(crate) fn get<T: Serialize + DeserializeOwned + Clone, P: Serialize>(
                         Err(TryLockError::Error(err)) => return Err(Box::new(err)),
                     }
                     // Exclusive lock acquired, build the artifact, serialize it and store it.
-                    log::info!(
-                        "building {}/{}/{}.json and storing to disk cache",
-                        commit_hash_str,
-                        params_json_hash_str,
-                        name
-                    );
+                    log::info!("building {} and storing to the disk cache", log_name);
+                    let start = std::time::Instant::now();
                     let data = build_fn(params);
-                    let data_json = serde_json::to_string(&data)?;
+                    let end = std::time::Instant::now() - start;
+                    log::debug!("built {} in {:?}", log_name, end);
+                    let data_cbor = minicbor_serde::to_vec(&data)?;
                     // First write the file to .tmp and then rename to avoid a corrupted file if we
                     // crash in the middle of the write.
-                    file_tmp.write_all(data_json.as_bytes())?;
+                    file_tmp.write_all(&data_cbor)?;
                     rename(cache_path_tmp, cache_path)?;
-                    return Ok(data);
+                    return Ok(CacheEntry { value: data });
                 } else {
                     return Err(Box::new(err));
                 }
             }
         };
-        let data: T = serde_json::from_reader(file)?;
-        return Ok(data);
+        log::debug!("found {} in the disk cache", log_name);
+
+        let start = std::time::Instant::now();
+        let mut data_cbor = Vec::new();
+        file.read_to_end(&mut data_cbor)?;
+        let end = std::time::Instant::now() - start;
+        log::debug!("read {} from disk in {:?}", log_name, end);
+
+        let start = std::time::Instant::now();
+        let data: T = minicbor_serde::from_slice(&data_cbor)?;
+        let end = std::time::Instant::now() - start;
+        log::debug!("deserialized {} in {:?}", log_name, end);
+
+        return Ok(CacheEntry { value: data });
     }
 }

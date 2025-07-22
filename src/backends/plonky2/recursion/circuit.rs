@@ -32,6 +32,7 @@ use plonky2::{
     },
     util::log2_ceil,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::{
@@ -138,7 +139,7 @@ pub struct RecursiveCircuit<I: InnerCircuit> {
     pub(crate) target: RecursiveCircuitTarget<I>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RecursiveCircuitTarget<I: InnerCircuit> {
     innercircuit_targ: I,
     proofs_targ: Vec<ProofWithPublicInputsTarget<D>>,

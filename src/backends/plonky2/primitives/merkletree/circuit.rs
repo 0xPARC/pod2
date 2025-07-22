@@ -22,6 +22,7 @@ use plonky2::{
     },
     plonk::circuit_builder::CircuitBuilder,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::{
@@ -42,7 +43,7 @@ pub struct MerkleProofGadget {
     pub max_depth: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MerkleClaimAndProofTarget {
     pub(crate) max_depth: usize,
     // `enabled` determines if the merkleproof verification is enabled
@@ -211,6 +212,7 @@ pub struct MerkleProofExistenceGadget {
     pub max_depth: usize,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 pub struct MerkleProofExistenceTarget {
     max_depth: usize,
     // `enabled` determines if the merkleproof verification is enabled

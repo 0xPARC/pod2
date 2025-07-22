@@ -34,6 +34,10 @@ hashbrown = { version = "0.14.3", default-features = false, features = ["serde"]
 pest = "2.8.0"
 pest_derive = "2.8.0"
 directories = { version = "6.0.0", optional = true }
+# cbor4ii = { version = "1.0.0", optional = true }
+minicbor-serde = { version = "0.5.0", features = ["std"], optional = true }
+serde_bytes = "0.11"
+serde_arrays = "0.2.0"
 sha2 = { version = "0.10.9" }
 
 # Uncomment for debugging with https://github.com/ed255/plonky2/ at branch `feat/debug`.  The repo directory needs to be checked out next to the pod2 repo directory.
@@ -55,5 +59,5 @@ zk = []
 metrics = []
 time = []
 examples = []
-disk_cache = ["directories"]
+disk_cache = ["directories", "minicbor-serde"]
 mem_cache = []

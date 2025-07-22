@@ -440,7 +440,7 @@ impl Mul<Point> for &BigUint {
 
 type FieldTarget = OEFTarget<5, QuinticExtension<GoldilocksField>>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize)]
 pub struct PointTarget {
     pub x: FieldTarget,
     pub u: FieldTarget,
@@ -470,8 +470,8 @@ impl PointTarget {
     }
 }
 
-#[derive(Clone, Debug)]
-struct PointSquareRootGenerator {
+#[derive(Clone, Default, Debug)]
+pub(crate) struct PointSquareRootGenerator {
     pub orig: PointTarget,
     pub sqrt: PointTarget,
 }

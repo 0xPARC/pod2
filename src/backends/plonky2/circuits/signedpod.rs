@@ -6,6 +6,7 @@ use plonky2::{
     iop::witness::{PartialWitness, WitnessWrite},
     plonk::circuit_builder::CircuitBuilder,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::{
@@ -78,6 +79,7 @@ impl SignedPodVerifyGadget {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SignedPodVerifyTarget {
     params: Params,
     id: HashOutTarget,

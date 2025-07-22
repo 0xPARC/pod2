@@ -20,6 +20,7 @@ use plonky2::{
         proof::{ProofWithPublicInputs, ProofWithPublicInputsTarget},
     },
 };
+use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::{
@@ -37,6 +38,7 @@ use crate::{
 
 pub struct SignatureVerifyGadget;
 
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SignatureVerifyTarget {
     // `enabled` determines if the signature verification is enabled
     pub(crate) enabled: BoolTarget,
