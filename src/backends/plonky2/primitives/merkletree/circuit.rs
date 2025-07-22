@@ -473,18 +473,13 @@ pub fn verify_merkle_state_transition_circuit(
         );
     }
 
-    // prepare values for check 5.3).
-    let other_key_is_empty =
-        proof
-            .proof_non_existence
-            .other_key
-            .elements
-            .iter()
-            .fold(builder._true(), |acc, e| {
-                let e_is_zero = builder.is_equal(*e, zero);
-                builder.and(acc, e_is_zero)
-            });
-    let old_key_not_empty = builder.not(other_key_is_empty);
+    // prepare value for check 5.2)
+    let old_leaf_hash = kv_hash_target(
+        builder,
+        &proof.proof_non_existence.other_key,
+        &proof.proof_non_existence.other_value,
+    );
+    // prepare values for check 5.3)
     let old_leaf_path = keypath_target(
         proof.max_depth,
         builder,
@@ -531,11 +526,6 @@ pub fn verify_merkle_state_transition_circuit(
         let in_case_5_2 = builder.and(old_is_noteq_new, is_divergence_level);
 
         // do the case2's checks
-        let old_leaf_hash = kv_hash_target(
-            builder,
-            &proof.proof_non_existence.other_key,
-            &proof.proof_non_existence.other_value,
-        );
         let sel = builder.and(proof.enabled, in_case_5_2);
         for j in 0..HASH_SIZE {
             builder.conditional_assert_eq(sel.target, old_siblings[i].elements[j], zero);
@@ -547,12 +537,12 @@ pub fn verify_merkle_state_transition_circuit(
         }
 
         // 5.3) assert that if old_key!=empty, both old_leaf_path&new_leaf_path
-        //   should diverge at the inputted divergence level.
-        let old_key_not_empty_and_divergence_level =
-            builder.and(old_key_not_empty, is_divergence_level);
+        //   should diverge at the inputted divergence level. We can check it
+        //   without having into account old_key!=empty, since if
+        //   old_key==empty, the paths would still diverge.
         let paths_eq_at_d = builder.is_equal(old_leaf_path[i].target, new_leaf_path[i].target);
         builder.conditional_assert_eq(
-            old_key_not_empty_and_divergence_level.target,
+            is_divergence_level.target,
             // expect them to not be equal, ie. the is_equal check to be 0
             paths_eq_at_d.target,
             zero,
@@ -978,11 +968,10 @@ pub mod tests {
     ) -> Result<()> {
         // sanity check, run the out-circuit proof verification
         if expect_pass {
-            MerkleTree::verify_state_transition(max_depth, &state_transition_proof)?;
+            MerkleTree::verify_state_transition(max_depth, state_transition_proof)?;
         } else {
             // expect out-circuit verification to fail
-            let _ =
-                MerkleTree::verify_state_transition(max_depth, &state_transition_proof).is_err();
+            let _ = MerkleTree::verify_state_transition(max_depth, state_transition_proof).is_err();
         }
 
         let config = CircuitConfig::standard_recursion_config();
@@ -991,7 +980,7 @@ pub mod tests {
 
         let targets = MerkleProofStateTransitionTarget::new_virtual(max_depth, &mut builder);
         verify_merkle_state_transition_circuit(&mut builder, &targets);
-        targets.set_targets(&mut pw, true, &state_transition_proof)?;
+        targets.set_targets(&mut pw, true, state_transition_proof)?;
 
         // generate & verify proof
         let data = builder.build::<C>();
@@ -1187,7 +1176,7 @@ pub mod tests {
 
         let targets = MerkleProofStateTransitionTarget::new_virtual(max_depth, &mut builder);
         verify_merkle_state_transition_circuit(&mut builder, &targets);
-        targets.set_targets(&mut pw, true, &state_transition_proof)?;
+        targets.set_targets(&mut pw, true, state_transition_proof)?;
 
         // generate proof, and expect it to fail
         let data = builder.build::<C>();
@@ -1199,7 +1188,7 @@ pub mod tests {
 
         let targets = MerkleProofStateTransitionTarget::new_virtual(max_depth, &mut builder);
         verify_merkle_state_transition_circuit(&mut builder, &targets);
-        targets.set_targets(&mut pw, false, &state_transition_proof)?;
+        targets.set_targets(&mut pw, false, state_transition_proof)?;
 
         // generate and expect it to pass
         let data = builder.build::<C>();
