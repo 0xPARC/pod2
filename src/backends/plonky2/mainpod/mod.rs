@@ -10,7 +10,7 @@ pub use statement::*;
 
 use crate::{
     backends::plonky2::{
-        basetypes::{Proof, ProofWithPublicInputs, VerifierOnlyCircuitData},
+        basetypes::{CircuitData, Proof, ProofWithPublicInputs, VerifierOnlyCircuitData},
         cache::{self, CacheEntry},
         cache_get_standard_rec_main_pod_common_circuit_data,
         circuits::mainpod::{CustomPredicateVerification, MainPodVerifyInput, MainPodVerifyTarget},
@@ -563,6 +563,21 @@ pub struct MainPod {
     proof: Proof,
 }
 
+pub(crate) fn rec_main_pod_circuit_data(
+    params: &Params,
+) -> (RecursiveCircuitTarget<MainPodVerifyTarget>, CircuitData) {
+    let rec_common_circuit_data = cache_get_standard_rec_main_pod_common_circuit_data();
+    timed!(
+        "recursive MainPod circuit_data padded",
+        RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data_padded(
+            params.max_input_recursive_pods,
+            &rec_common_circuit_data,
+            params,
+        )
+        .expect("calculate target_and_circuit_data_padded")
+    )
+}
+
 fn cache_get_rec_main_pod_circuit_data(
     params: &Params,
 ) -> CacheEntry<(
@@ -575,16 +590,7 @@ fn cache_get_rec_main_pod_circuit_data(
     // and standard_rec_main_pod_circuit_data are indexed by Params.  This can be easily tested by
     // comparing the cached artifacts on disk :)
     cache::get("rec_main_pod_circuit_data", params, |params| {
-        let rec_common_circuit_data = cache_get_standard_rec_main_pod_common_circuit_data();
-        let (target, circuit_data) = timed!(
-            "recursive MainPod circuit_data padded",
-            RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data_padded(
-                params.max_input_recursive_pods,
-                &rec_common_circuit_data,
-                params,
-            )
-            .expect("calculate target_and_circuit_data_padded")
-        );
+        let (target, circuit_data) = rec_main_pod_circuit_data(params);
         (target, CircuitDataSerializer(circuit_data))
     })
     .expect("cache ok")
@@ -738,7 +744,8 @@ pub mod tests {
             self, literal, CustomPredicateBatchBuilder, MainPodBuilder, StatementTmplBuilder as STB,
         },
         middleware::{
-            self, containers::Set, CustomPredicateRef, NativePredicate as NP, DEFAULT_VD_SET,
+            self, containers::Set, CustomPredicateRef, NativePredicate as NP, DEFAULT_VD_LIST,
+            DEFAULT_VD_SET,
         },
         op,
     };
@@ -754,7 +761,9 @@ pub mod tests {
             ..Default::default()
         };
         println!("{:#?}", params);
-        let vd_set = &*DEFAULT_VD_SET;
+        let mut vds = DEFAULT_VD_LIST.clone();
+        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params);
@@ -766,7 +775,7 @@ pub mod tests {
         let sanction_list_pod = sanction_list_builder.sign(&signer)?;
         let kyc_builder = zu_kyc_pod_builder(
             &params,
-            vd_set,
+            &vd_set,
             &gov_id_pod,
             &pay_stub_pod,
             &sanction_list_pod,
@@ -791,7 +800,9 @@ pub mod tests {
             max_input_pods_public_statements: 10,
             ..Default::default()
         };
-        let vd_set = &*DEFAULT_VD_SET;
+        let mut vds = DEFAULT_VD_LIST.clone();
+        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
 
         let mut gov_id_builder = frontend::SignedPodBuilder::new(&params);
         gov_id_builder.insert("idNumber", "4242424242");
@@ -800,7 +811,7 @@ pub mod tests {
         let signer = Signer(SecretKey(42u64.into()));
         let gov_id = gov_id_builder.sign(&signer).unwrap();
         let now_minus_18y: i64 = 1169909388;
-        let mut kyc_builder = frontend::MainPodBuilder::new(&params, vd_set);
+        let mut kyc_builder = frontend::MainPodBuilder::new(&params, &vd_set);
         kyc_builder.add_signed_pod(&gov_id);
         kyc_builder
             .pub_op(op!(lt, (&gov_id, "dateOfBirth"), now_minus_18y))
@@ -846,9 +857,11 @@ pub mod tests {
             max_depth_mt_containers: 4,
             max_depth_mt_vds: 6,
         };
-        let vd_set = &*DEFAULT_VD_SET;
+        let mut vds = DEFAULT_VD_LIST.clone();
+        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
 
-        let pod_builder = frontend::MainPodBuilder::new(&params, vd_set);
+        let pod_builder = frontend::MainPodBuilder::new(&params, &vd_set);
 
         // Mock
         let prover = MockProver {};
@@ -908,7 +921,9 @@ pub mod tests {
             ..Default::default()
         };
         println!("{:#?}", params);
-        let vd_set = &*DEFAULT_VD_SET;
+        let mut vds = DEFAULT_VD_LIST.clone();
+        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
 
         let mut cpb_builder = CustomPredicateBatchBuilder::new(params.clone(), "cpb".into());
         let stb0 = STB::new(NP::Equal).arg(("id", "score")).arg(literal(42));

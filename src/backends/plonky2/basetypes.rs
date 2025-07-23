@@ -49,16 +49,21 @@ use crate::{
     middleware::{containers::Array, Hash, Params, RawValue, Result, Value},
 };
 
-pub static DEFAULT_VD_SET: LazyLock<VDSet> = LazyLock::new(|| {
+pub static DEFAULT_VD_LIST: LazyLock<Vec<VerifierOnlyCircuitData>> = LazyLock::new(|| {
     let params = Params::default();
-    let vds = vec![
+    vec![
         cache_get_rec_main_pod_verifier_circuit_data(&params)
             .verifier_only
             .clone(),
         cache_get_standard_empty_pod_verifier_circuit_data()
             .verifier_only
             .clone(),
-    ];
+    ]
+});
+
+pub static DEFAULT_VD_SET: LazyLock<VDSet> = LazyLock::new(|| {
+    let params = Params::default();
+    let vds = &*DEFAULT_VD_LIST;
     VDSet::new(params.max_depth_mt_vds, &vds).unwrap()
 });
 
