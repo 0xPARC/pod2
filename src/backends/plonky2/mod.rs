@@ -18,28 +18,32 @@ use crate::{
         basetypes::{CommonCircuitData, Proof},
         circuits::mainpod::{MainPodVerifyTarget, NUM_PUBLIC_INPUTS},
         recursion::RecursiveCircuit,
-        serialization::CircuitDataSerializer,
+        serialization::CommonCircuitDataSerializer,
     },
     cache::{self, CacheEntry},
     middleware::Params,
     timed,
 };
 
-pub fn cache_get_standard_rec_main_pod_circuit_data() -> CacheEntry<CircuitDataSerializer> {
+pub fn cache_get_standard_rec_main_pod_common_circuit_data(
+) -> CacheEntry<CommonCircuitDataSerializer> {
     let params = Params::default();
-    cache::get("standard_rec_main_pod_circuit_data", &params, |params| {
-        let circuit_data = timed!(
-            "recursive MainPod circuit_data",
-            RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data(
-                params.max_input_recursive_pods,
-                NUM_PUBLIC_INPUTS,
-                params
-            )
-            .expect("calculate circuit_data")
-            .1
-        );
-        CircuitDataSerializer(circuit_data)
-    })
+    cache::get(
+        "standard_rec_main_pod_common_circuit_data",
+        &params,
+        |params| {
+            let circuit_data = timed!(
+                "recursive MainPod circuit_data",
+                RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data(
+                    params.max_input_recursive_pods,
+                    NUM_PUBLIC_INPUTS,
+                    params
+                )
+                .expect("calculate circuit_data")
+            );
+            CommonCircuitDataSerializer(circuit_data.1.common)
+        },
+    )
     .expect("cache ok")
 }
 

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     backends::plonky2::{
         basetypes::{Proof, C, D},
-        cache_get_standard_rec_main_pod_circuit_data,
+        cache_get_standard_rec_main_pod_common_circuit_data,
         circuits::{
             common::{Flattenable, StatementTarget},
             mainpod::{calculate_id_circuit, PI_OFFSET_ID},
@@ -110,11 +110,11 @@ fn build() -> Result<(EmptyPodVerifyTarget, CircuitData)> {
         params: params.clone(),
     }
     .eval(&mut builder)?;
-    let circuit_data = cache_get_standard_rec_main_pod_circuit_data();
-    pad_circuit(&mut builder, &circuit_data.common);
+    let common_circuit_data = &*cache_get_standard_rec_main_pod_common_circuit_data();
+    pad_circuit(&mut builder, common_circuit_data);
 
     let data = timed!("EmptyPod build", builder.build::<C>());
-    assert_eq!(circuit_data.common, data.common);
+    assert_eq!(common_circuit_data.0, data.common);
     Ok((empty_pod_verify_target, data))
 }
 
@@ -225,8 +225,8 @@ impl RecursivePod for EmptyPod {
         id: PodId,
     ) -> Result<Box<dyn RecursivePod>> {
         let data: Data = serde_json::from_value(data)?;
-        let circuit_data = cache_get_standard_rec_main_pod_circuit_data();
-        let proof = deserialize_proof(&circuit_data.common, &data.proof)?;
+        let common_circuit_data = cache_get_standard_rec_main_pod_common_circuit_data();
+        let proof = deserialize_proof(&common_circuit_data, &data.proof)?;
         Ok(Box::new(Self {
             params,
             id,

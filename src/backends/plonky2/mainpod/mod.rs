@@ -12,7 +12,7 @@ use crate::{
     backends::plonky2::{
         basetypes::{Proof, ProofWithPublicInputs, VerifierOnlyCircuitData},
         cache::{self, CacheEntry},
-        cache_get_standard_rec_main_pod_circuit_data,
+        cache_get_standard_rec_main_pod_common_circuit_data,
         circuits::mainpod::{CustomPredicateVerification, MainPodVerifyInput, MainPodVerifyTarget},
         deserialize_proof,
         emptypod::EmptyPod,
@@ -575,12 +575,12 @@ fn cache_get_rec_main_pod_circuit_data(
     // and standard_rec_main_pod_circuit_data are indexed by Params.  This can be easily tested by
     // comparing the cached artifacts on disk :)
     cache::get("rec_main_pod_circuit_data", params, |params| {
-        let rec_circuit_data = cache_get_standard_rec_main_pod_circuit_data();
+        let rec_common_circuit_data = cache_get_standard_rec_main_pod_common_circuit_data();
         let (target, circuit_data) = timed!(
             "recursive MainPod circuit_data padded",
             RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data_padded(
                 params.max_input_recursive_pods,
-                &rec_circuit_data.common,
+                &rec_common_circuit_data,
                 params,
             )
             .expect("calculate target_and_circuit_data_padded")
