@@ -5,7 +5,7 @@ use plonky2::field::types::Field;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    backends::plonky2::primitives::merkletree::MerkleProof,
+    backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree},
     middleware::{
         hash_values, AnchoredKey, CustomPredicate, CustomPredicateRef, Error, NativePredicate,
         Params, Predicate, Result, Statement, StatementArg, StatementTmplArg, ToFields, Value,
@@ -325,14 +325,31 @@ impl Operation {
             (Self::NotEqualFromEntries(s1, s2), NotEqual(v3, v4)) => val(v3, s1)? != val(v4, s2)?,
             (Self::LtEqFromEntries(s1, s2), LtEq(v3, v4)) => val(v3, s1)? <= val(v4, s2)?,
             (Self::LtFromEntries(s1, s2), Lt(v3, v4)) => val(v3, s1)? < val(v4, s2)?,
-            (Self::ContainsFromEntries(_, _, _, _), Contains(_, _, _)) =>
-            /* TODO */
-            {
+            (
+                Self::ContainsFromEntries(root_s, key_s, val_s, pf),
+                Contains(root_v, key_v, val_v),
+            ) => {
+                let root = val(root_v, root_s)?;
+                let key = val(key_v, key_s)?;
+                let value = val(val_v, val_s)?;
+                MerkleTree::verify(
+                    params.max_depth_mt_containers,
+                    root.raw().into(),
+                    pf,
+                    &key.raw(),
+                    &value.raw(),
+                )?;
                 true
             }
-            (Self::NotContainsFromEntries(_, _, _), NotContains(_, _)) =>
-            /* TODO */
-            {
+            (Self::NotContainsFromEntries(root_s, key_s, pf), NotContains(root_v, key_v)) => {
+                let root = val(root_v, root_s)?;
+                let key = val(key_v, key_s)?;
+                MerkleTree::verify_nonexistence(
+                    params.max_depth_mt_containers,
+                    root.raw().into(),
+                    pf,
+                    &key.raw(),
+                )?;
                 true
             }
             (
@@ -540,5 +557,82 @@ pub(crate) fn value_from_op(input_st: &Statement, output_ref: &ValueRef) -> Opti
         (Statement::None, ValueRef::Literal(v)) => Some(v.clone()),
         (Statement::Equal(r1, ValueRef::Literal(v)), r2) if r1 == r2 => Some(v.clone()),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use crate::{
+        backends::plonky2::primitives::merkletree::MerkleTree,
+        middleware::{
+            hash_value, AnchoredKey, Error, Key, Operation, Params, PodId, Result, Statement,
+        },
+    };
+
+    #[test]
+    fn check_container_ops() -> Result<()> {
+        let params = Params::default();
+        let pod_id = PodId::default();
+        let root_ak = AnchoredKey::new(pod_id, Key::new("root".into()));
+        let key_ak = AnchoredKey::new(pod_id, Key::new("key".into()));
+        let val_ak = AnchoredKey::new(pod_id, Key::new("value".into()));
+
+        // Form Merkle tree
+        let kvs = (0..10)
+            .map(|i| (hash_value(&i.into()).into(), i.into()))
+            .collect::<HashMap<_, _>>();
+        let mt = MerkleTree::new(params.max_depth_mt_containers, &kvs)?;
+        let root_s = Statement::Equal(root_ak.clone().into(), mt.root().into());
+
+        // Check existence proofs
+        kvs.iter().try_for_each(|(k, v)| {
+            // Form op args
+            let key_s = Statement::Equal(key_ak.clone().into(), (*k).into());
+            let value_s = Statement::Equal(val_ak.clone().into(), (*v).into());
+            let (_, pf) = mt.prove(k)?;
+
+            // Form op
+            let op = Operation::ContainsFromEntries(root_s.clone(), key_s, value_s, pf);
+            // Form output statement
+            let st = Statement::Contains(
+                root_ak.clone().into(),
+                key_ak.clone().into(),
+                val_ak.clone().into(),
+            );
+
+            // Check op against output statement
+            op.check(&params, &st).and_then(|ind| {
+                if ind {
+                    Ok(())
+                } else {
+                    Err(Error::custom(format!(
+                        "ContainedFromEntries check failed for pair ({},{})",
+                        k, v
+                    )))
+                }
+            })
+        })?;
+
+        // Check non-existence proofs similarly
+        (50..60).try_for_each(|k| {
+            let key_s = Statement::Equal(key_ak.clone().into(), k.into());
+            let pf = mt.prove_nonexistence(&k.into())?;
+
+            let op = Operation::NotContainsFromEntries(root_s.clone(), key_s, pf);
+            let st = Statement::NotContains(root_ak.clone().into(), key_ak.clone().into());
+
+            op.check(&params, &st).and_then(|ind| {
+                if ind {
+                    Ok(())
+                } else {
+                    Err(Error::custom(format!(
+                        "NotContainedFromEntries check failed for key {}",
+                        k
+                    )))
+                }
+            })
+        })
     }
 }

@@ -766,7 +766,7 @@ impl Params {
     }
 }
 
-/// Replace references to SELF by `self_id` in anchored keys of the statement.
+/// Replace references to SELF by `self_id`.
 pub fn normalize_statement(statement: &Statement, self_id: PodId) -> Statement {
     let predicate = statement.predicate();
     let args = statement
@@ -775,6 +775,9 @@ pub fn normalize_statement(statement: &Statement, self_id: PodId) -> Statement {
         .map(|sa| match &sa {
             StatementArg::Key(AnchoredKey { pod_id, key }) if *pod_id == SELF => {
                 StatementArg::Key(AnchoredKey::new(self_id, key.clone()))
+            }
+            StatementArg::Literal(value) if value.raw.0 == SELF.0 .0 => {
+                StatementArg::Literal(self_id.into())
             }
             _ => sa.clone(),
         })

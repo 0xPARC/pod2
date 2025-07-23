@@ -27,6 +27,12 @@ pub struct SerializedSignedPod {
     data: serde_json::Value,
 }
 
+impl SerializedSignedPod {
+    pub fn id(&self) -> PodId {
+        self.id
+    }
+}
+
 #[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[schemars(rename = "MainPod")]
@@ -37,6 +43,12 @@ pub struct SerializedMainPod {
     vd_set: VDSet,
     public_statements: Vec<Statement>,
     data: serde_json::Value,
+}
+
+impl SerializedMainPod {
+    pub fn id(&self) -> PodId {
+        self.id
+    }
 }
 
 impl From<SignedPod> for SerializedSignedPod {
@@ -269,7 +281,7 @@ mod tests {
         let sanction_list_pod = sanction_list_builder.sign(&signer).unwrap();
         let kyc_builder = zu_kyc_pod_builder(
             &params,
-            &vd_set,
+            vd_set,
             &gov_id_pod,
             &pay_stub_pod,
             &sanction_list_pod,
@@ -300,7 +312,7 @@ mod tests {
         let sanction_list_pod = sanction_list_builder.sign(&signer)?;
         let kyc_builder = zu_kyc_pod_builder(
             &params,
-            &vd_set,
+            vd_set,
             &gov_id_pod,
             &pay_stub_pod,
             &sanction_list_pod,
