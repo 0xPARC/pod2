@@ -1175,14 +1175,15 @@ pub mod tests {
                 Value::from(SecretKey(BigUint::from(123u32)))
             ))
             .unwrap();
-        let result = builder.pub_op(Operation(
-            // OperationType
-            OperationType::Native(NativeOperation::PublicKeyOf),
-            // Vec<OperationArg>
-            vec![OperationArg::Statement(st0), OperationArg::Statement(st1)],
-            OperationAux::None,
-        ));
-        assert!(matches!(result, Err(_)));
+        assert!(builder
+            .pub_op(Operation(
+                // OperationType
+                OperationType::Native(NativeOperation::PublicKeyOf),
+                // Vec<OperationArg>
+                vec![OperationArg::Statement(st0), OperationArg::Statement(st1)],
+                OperationAux::None,
+            ))
+            .is_err());
 
         Ok(())
     }
@@ -1199,33 +1200,35 @@ pub mod tests {
         let mut builder = MainPodBuilder::new(&params, &vd_set);
         let st_pk = builder.literal(false, Value::from(pk)).unwrap();
         let st_int1 = builder.literal(false, Value::from(123)).unwrap();
-        let result1 = builder.pub_op(Operation(
-            // OperationType
-            OperationType::Native(NativeOperation::PublicKeyOf),
-            // Vec<OperationArg>
-            vec![
-                OperationArg::Statement(st_pk),
-                OperationArg::Statement(st_int1),
-            ],
-            OperationAux::None,
-        ));
-        assert!(matches!(result1, Err(_)));
+        assert!(builder
+            .pub_op(Operation(
+                // OperationType
+                OperationType::Native(NativeOperation::PublicKeyOf),
+                // Vec<OperationArg>
+                vec![
+                    OperationArg::Statement(st_pk),
+                    OperationArg::Statement(st_int1),
+                ],
+                OperationAux::None,
+            ))
+            .is_err());
 
         // Try to build with wrong type in 2nd arg
         builder = MainPodBuilder::new(&params, &vd_set);
         let st_sk = builder.literal(false, Value::from(pk)).unwrap();
         let st_int2 = builder.literal(false, Value::from(123)).unwrap();
-        let result2 = builder.pub_op(Operation(
-            // OperationType
-            OperationType::Native(NativeOperation::PublicKeyOf),
-            // Vec<OperationArg>
-            vec![
-                OperationArg::Statement(st_int2),
-                OperationArg::Statement(st_sk),
-            ],
-            OperationAux::None,
-        ));
-        assert!(matches!(result2, Err(_)));
+        assert!(builder
+            .pub_op(Operation(
+                // OperationType
+                OperationType::Native(NativeOperation::PublicKeyOf),
+                // Vec<OperationArg>
+                vec![
+                    OperationArg::Statement(st_int2),
+                    OperationArg::Statement(st_sk),
+                ],
+                OperationAux::None,
+            ))
+            .is_err());
 
         Ok(())
     }

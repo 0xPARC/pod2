@@ -6,7 +6,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::primitives::{
-        ec::{curve::Point as PublicKey, schnorr::SecretKey},
+        ec::{
+            curve::{Point as PublicKey, GROUP_ORDER},
+            schnorr::SecretKey,
+        },
         merkletree::{MerkleProof, MerkleTree},
     },
     middleware::{
@@ -325,7 +328,7 @@ impl Operation {
     pub(crate) fn check_public_key(v1: &Value, v2: &Value) -> Result<bool> {
         let pk: PublicKey = v1.typed().try_into()?;
         let sk: SecretKey = v2.typed().try_into()?;
-        Ok(pk == sk.public_key())
+        Ok(sk.0 < *GROUP_ORDER && pk == sk.public_key())
     }
 
     /// Checks the given operation against a statement.
@@ -588,7 +591,10 @@ mod tests {
     use num::BigUint;
 
     use crate::{
-        backends::plonky2::primitives::{ec::schnorr::SecretKey, merkletree::MerkleTree},
+        backends::plonky2::primitives::{
+            ec::{curve::GROUP_ORDER, schnorr::SecretKey},
+            merkletree::MerkleTree,
+        },
         middleware::{
             hash_value, AnchoredKey, Error, Key, Operation, Params, PodId, Result, Statement,
         },
@@ -665,6 +671,10 @@ mod tests {
         let fixed_pk = fixed_sk.public_key();
         let rand_sk = SecretKey::new_rand();
         let rand_pk = rand_sk.public_key();
+        let small_sk = SecretKey(BigUint::from(0x1u32));
+        let small_pk = small_sk.public_key();
+        let too_large_sk = SecretKey(small_sk.0.clone() + GROUP_ORDER.clone());
+        assert_eq!(small_pk, too_large_sk.public_key());
 
         let test_cases = [
             // Valid pairs
@@ -673,6 +683,9 @@ mod tests {
             // Mismatched pairs
             (fixed_pk.clone(), rand_sk.clone(), false),
             (rand_pk.clone(), fixed_sk.clone(), false),
+            // Above group order
+            (small_pk.clone(), small_sk.clone(), true),
+            (small_pk.clone(), too_large_sk.clone(), false),
         ];
 
         let params = Params::default();
@@ -722,16 +735,14 @@ mod tests {
         let st = Statement::PublicKeyOf(pk_ak.clone().into(), pk_ak.clone().into());
 
         // Check
-        let bad_check = op.check(&params, &st);
-        assert!(matches!(bad_check, Err(_)));
+        assert!(op.check(&params, &st).is_err());
 
         // Bad op and statement with bad second args
         let op = Operation::PublicKeyOf(sk_s.clone(), sk_s.clone());
         let st = Statement::PublicKeyOf(sk_ak.clone().into(), sk_ak.clone().into());
 
         // Check
-        let bad_check = op.check(&params, &st);
-        assert!(matches!(bad_check, Err(_)));
+        assert!(op.check(&params, &st).is_err());
 
         Ok(())
     }
