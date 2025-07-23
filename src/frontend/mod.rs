@@ -836,6 +836,12 @@ pub mod build_utils {
         (array_contains, $array:expr, $index:expr, $value:expr) => { $crate::frontend::Operation(
             $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::ArrayContainsFromEntries),
             $crate::op_args!($array, $index, $value), $crate::middleware::OperationAux::None) };
+        (hash_of, $hash:expr, $val1:expr, $val2:expr) => { $crate::frontend::Operation(
+            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::HashOf),
+            $crate::op_args!($hash, $val1, $val2), $crate::middleware::OperationAux::None) };
+        (public_key_of, $pk:expr, $sk:expr) => { $crate::frontend::Operation(
+            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::PublicKeyOf),
+            $crate::op_args!($pk, $sk), $crate::middleware::OperationAux::None) };
     }
 }
 
