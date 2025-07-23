@@ -25,7 +25,7 @@ use crate::{
     timed,
 };
 
-pub fn get_standard_rec_main_pod_circuit_data() -> CacheEntry<CircuitDataSerializer> {
+pub fn cache_get_standard_rec_main_pod_circuit_data() -> CacheEntry<CircuitDataSerializer> {
     let params = Params::default();
     cache::get("standard_rec_main_pod_circuit_data", &params, |params| {
         let circuit_data = timed!(

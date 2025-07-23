@@ -12,14 +12,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::{
-        basetypes::{Proof, VerifierCircuitData, C, D},
+        basetypes::{Proof, C, D},
+        cache_get_standard_rec_main_pod_circuit_data,
         circuits::{
             common::{Flattenable, StatementTarget},
             mainpod::{CalculateIdGadget, PI_OFFSET_ID},
         },
         deserialize_proof,
         error::{Error, Result},
-        get_standard_rec_main_pod_circuit_data,
         mainpod::{self, calculate_id},
         recursion::pad_circuit,
         serialization::{CircuitDataSerializer, VerifierCircuitDataSerializer},
@@ -82,8 +82,7 @@ pub struct EmptyPod {
 
 type CircuitData = circuit_data::CircuitData<F, C, D>;
 
-// TODO: Make a function to store the verifier data which is more commonly used
-pub fn get_standard_empty_pod_circuit_data(
+pub fn cache_get_standard_empty_pod_circuit_data(
 ) -> CacheEntry<(EmptyPodVerifyTarget, CircuitDataSerializer)> {
     cache::get("standard_empty_pod_circuit_data", &(), |_| {
         let (target, circuit_data) = build().expect("successful build");
@@ -92,13 +91,11 @@ pub fn get_standard_empty_pod_circuit_data(
     .expect("cache ok")
 }
 
-pub fn get_standard_empty_pod_verifier_circuit_data() -> CacheEntry<VerifierCircuitDataSerializer> {
+pub fn cache_get_standard_empty_pod_verifier_circuit_data(
+) -> CacheEntry<VerifierCircuitDataSerializer> {
     cache::get("standard_empty_pod_verifier_circuit_data", &(), |_| {
-        let (_, standard_empty_pod_circuit_data) = &*get_standard_empty_pod_circuit_data();
-        VerifierCircuitDataSerializer(VerifierCircuitData {
-            verifier_only: standard_empty_pod_circuit_data.verifier_only.clone(),
-            common: standard_empty_pod_circuit_data.common.clone(),
-        })
+        let (_, standard_empty_pod_circuit_data) = &*cache_get_standard_empty_pod_circuit_data();
+        VerifierCircuitDataSerializer(standard_empty_pod_circuit_data.verifier_data().clone())
     })
     .expect("cache ok")
 }
@@ -116,7 +113,7 @@ fn build() -> Result<(EmptyPodVerifyTarget, CircuitData)> {
         params: params.clone(),
     }
     .eval(&mut builder)?;
-    let circuit_data = get_standard_rec_main_pod_circuit_data();
+    let circuit_data = cache_get_standard_rec_main_pod_circuit_data();
     pad_circuit(&mut builder, &circuit_data.common);
 
     let data = timed!("EmptyPod build", builder.build::<C>());
@@ -126,7 +123,7 @@ fn build() -> Result<(EmptyPodVerifyTarget, CircuitData)> {
 
 impl EmptyPod {
     pub fn new(params: &Params, vd_set: VDSet) -> Result<EmptyPod> {
-        let standard_empty_pod_data = get_standard_empty_pod_circuit_data();
+        let standard_empty_pod_data = cache_get_standard_empty_pod_circuit_data();
         let (empty_pod_verify_target, data) = &*standard_empty_pod_data;
 
         let mut pw = PartialWitness::<F>::new();
@@ -182,7 +179,7 @@ impl Pod for EmptyPod {
             .cloned()
             .collect_vec();
 
-        let standard_empty_pod_verifier_data = get_standard_empty_pod_verifier_circuit_data();
+        let standard_empty_pod_verifier_data = cache_get_standard_empty_pod_verifier_circuit_data();
         standard_empty_pod_verifier_data
             .verify(ProofWithPublicInputs {
                 proof: self.proof.clone(),
@@ -213,7 +210,7 @@ impl Pod for EmptyPod {
 impl RecursivePod for EmptyPod {
     fn verifier_data(&self) -> VerifierOnlyCircuitData {
         let standard_empty_pod_verifier_circuit_data =
-            get_standard_empty_pod_verifier_circuit_data();
+            cache_get_standard_empty_pod_verifier_circuit_data();
         standard_empty_pod_verifier_circuit_data
             .verifier_only
             .clone()
@@ -231,7 +228,7 @@ impl RecursivePod for EmptyPod {
         id: PodId,
     ) -> Result<Box<dyn RecursivePod>> {
         let data: Data = serde_json::from_value(data)?;
-        let circuit_data = get_standard_rec_main_pod_circuit_data();
+        let circuit_data = cache_get_standard_rec_main_pod_circuit_data();
         let proof = deserialize_proof(&circuit_data.common, &data.proof)?;
         Ok(Box::new(Self {
             params,

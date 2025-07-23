@@ -24,11 +24,10 @@ impl<T> Deref for CacheEntry<T> {
     }
 }
 
-// TODO: Remove `Clone` requirement
 /// Get the artifact named `name` from the memory cache.  If it doesn't exist, it will be built by
 /// calling `build_fn` and stored.
 /// The artifact is indexed by `params: P`.
-pub(crate) fn get<T: Serialize + DeserializeOwned + Clone + Send + 'static, P: Serialize>(
+pub(crate) fn get<T: Serialize + DeserializeOwned + Send + 'static, P: Serialize>(
     name: &str,
     params: &P,
     build_fn: fn(&P) -> T,

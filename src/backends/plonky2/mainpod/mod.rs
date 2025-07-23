@@ -12,17 +12,19 @@ use crate::{
     backends::plonky2::{
         basetypes::{Proof, ProofWithPublicInputs, VerifierOnlyCircuitData},
         cache::{self, CacheEntry},
+        cache_get_standard_rec_main_pod_circuit_data,
         circuits::mainpod::{CustomPredicateVerification, MainPodVerifyInput, MainPodVerifyTarget},
         deserialize_proof,
         emptypod::EmptyPod,
         error::{Error, Result},
-        get_standard_rec_main_pod_circuit_data,
         mock::emptypod::MockEmptyPod,
         primitives::merkletree::MerkleClaimAndProof,
         recursion::{
-            hash_verifier_data, RecursiveCircuit, RecursiveCircuitTarget, RecursiveParams,
+            hash_verifier_data, prove_rec_circuit, RecursiveCircuit, RecursiveCircuitTarget,
         },
-        serialization::{CircuitDataSerializer, CommonCircuitDataSerializer},
+        serialization::{
+            CircuitDataSerializer, CommonCircuitDataSerializer, VerifierCircuitDataSerializer,
+        },
         serialize_proof,
         signedpod::SignedPod,
     },
@@ -435,24 +437,6 @@ impl PodProver for Prover {
         vd_set: &VDSet,
         inputs: MainPodInputs,
     ) -> Result<Box<dyn RecursivePod>> {
-        let rec_circuit_data = get_standard_rec_main_pod_circuit_data();
-        let (main_pod_target, circuit_data) =
-            RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data_padded(
-                params.max_input_recursive_pods,
-                &rec_circuit_data.common,
-                params,
-            )?;
-        let rec_params = RecursiveParams {
-            arity: params.max_input_recursive_pods,
-            common_data: circuit_data.common.clone(),
-            verifier_data: circuit_data.verifier_data(),
-        };
-        let main_pod = RecursiveCircuit {
-            params: rec_params,
-            prover: circuit_data.prover_data(),
-            target: main_pod_target,
-        };
-
         let signed_pods_input: Vec<SignedPod> = inputs
             .signed_pods
             .iter()
@@ -542,9 +526,17 @@ impl PodProver for Prover {
             custom_predicate_batches,
             custom_predicate_verifications,
         };
+
+        let (main_pod_target, circuit_data) = &*cache_get_rec_main_pod_circuit_data(params);
         let proof_with_pis = timed!(
             "MainPod::prove",
-            main_pod.prove(&input, proofs, verifier_datas)?
+            prove_rec_circuit(
+                main_pod_target,
+                circuit_data,
+                &input,
+                proofs,
+                verifier_datas
+            )?
         );
 
         Ok(Box::new(MainPod {
@@ -571,7 +563,7 @@ pub struct MainPod {
     proof: Proof,
 }
 
-fn get_rec_main_pod_circuit_data(
+fn cache_get_rec_main_pod_circuit_data(
     params: &Params,
 ) -> CacheEntry<(
     RecursiveCircuitTarget<MainPodVerifyTarget>,
@@ -583,7 +575,7 @@ fn get_rec_main_pod_circuit_data(
     // and standard_rec_main_pod_circuit_data are indexed by Params.  This can be easily tested by
     // comparing the cached artifacts on disk :)
     cache::get("rec_main_pod_circuit_data", params, |params| {
-        let rec_circuit_data = get_standard_rec_main_pod_circuit_data();
+        let rec_circuit_data = cache_get_standard_rec_main_pod_circuit_data();
         let (target, circuit_data) = timed!(
             "recursive MainPod circuit_data padded",
             RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data_padded(
@@ -598,13 +590,23 @@ fn get_rec_main_pod_circuit_data(
     .expect("cache ok")
 }
 
+pub fn cache_get_rec_main_pod_verifier_circuit_data(
+    params: &Params,
+) -> CacheEntry<VerifierCircuitDataSerializer> {
+    cache::get("rec_main_pod_verifier_circuit_data", params, |params| {
+        let (_, rec_main_pod_circuit_data_padded) = &*cache_get_rec_main_pod_circuit_data(params);
+        VerifierCircuitDataSerializer(rec_main_pod_circuit_data_padded.verifier_data().clone())
+    })
+    .expect("cache ok")
+}
+
 // This is a helper function to get the CommonCircuitData necessary to decode
-// a serialized proof. At some point in the future, this data may be available
-// as a constant or with static initialization, but in the meantime we can
-// generate it on-demand.
-pub fn get_rec_main_pod_common_data(params: &Params) -> CacheEntry<CommonCircuitDataSerializer> {
+// a serialized proof.
+pub fn cache_get_rec_main_pod_common_circuit_data(
+    params: &Params,
+) -> CacheEntry<CommonCircuitDataSerializer> {
     cache::get("rec_main_pod_common_circuit_data", params, |params| {
-        let (_, rec_main_pod_circuit_data_padded) = &*get_rec_main_pod_circuit_data(params);
+        let (_, rec_main_pod_circuit_data_padded) = &*cache_get_rec_main_pod_circuit_data(params);
         CommonCircuitDataSerializer(rec_main_pod_circuit_data_padded.common.clone())
     })
     .expect("cache ok")
@@ -649,14 +651,15 @@ impl Pod for MainPod {
         }
 
         // 1, 3, 4, 5 verification via the zkSNARK proof
-        let (_, circuit_data) = &*get_rec_main_pod_circuit_data(&self.params);
+        let rec_main_pod_verifier_circuit_data =
+            &*cache_get_rec_main_pod_verifier_circuit_data(&self.params);
         let public_inputs = id
             .to_fields(&self.params)
             .iter()
             .chain(self.vd_set.root().0.iter())
             .cloned()
             .collect_vec();
-        circuit_data
+        rec_main_pod_verifier_circuit_data
             .verify(ProofWithPublicInputs {
                 proof: self.proof.clone(),
                 public_inputs,
@@ -690,8 +693,9 @@ impl Pod for MainPod {
 
 impl RecursivePod for MainPod {
     fn verifier_data(&self) -> VerifierOnlyCircuitData {
-        let data = get_standard_rec_main_pod_circuit_data();
-        data.verifier_only.clone()
+        let rec_main_pod_verifier_circuit_data =
+            cache_get_rec_main_pod_verifier_circuit_data(&self.params);
+        rec_main_pod_verifier_circuit_data.verifier_only.clone()
     }
     fn proof(&self) -> Proof {
         self.proof.clone()
@@ -706,7 +710,7 @@ impl RecursivePod for MainPod {
         id: PodId,
     ) -> Result<Box<dyn RecursivePod>> {
         let data: Data = serde_json::from_value(data)?;
-        let common = get_rec_main_pod_common_data(&params);
+        let common = cache_get_rec_main_pod_common_circuit_data(&params);
         let proof = deserialize_proof(&common, &data.proof)?;
         Ok(Box::new(Self {
             params,

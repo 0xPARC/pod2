@@ -42,7 +42,7 @@ sha2 = { version = "0.10.9" }
 
 # Uncomment for debugging with https://github.com/ed255/plonky2/ at branch `feat/debug`.  The repo directory needs to be checked out next to the pod2 repo directory.
 [patch."https://github.com/0xPolygonZero/plonky2"]
-plonky2 = { path = "../plonky2/plonky2" }
+plonky2 = { git = "https://github.com/0xPARC/plonky2.git", rev = "01b55edc45978ada93f47b1f63465cbdac03e2da" }
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"
