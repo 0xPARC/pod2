@@ -563,3 +563,90 @@ pub(crate) fn value_from_op(input_st: &Statement, output_ref: &ValueRef) -> Opti
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use num::BigUint;
+
+    use crate::{
+        backends::plonky2::primitives::ec::schnorr::SecretKey,
+        middleware::{AnchoredKey, Key, Operation, Params, PodId, Result, Statement},
+    };
+
+    #[test]
+    fn check_public_key_of_op() -> Result<()> {
+        let fixed_sk = SecretKey(BigUint::from(0x1234567890abcdefu64));
+        let fixed_pk = fixed_sk.public_key();
+        let rand_sk = SecretKey::new_rand();
+        let rand_pk = rand_sk.public_key();
+
+        let test_cases = [
+            // Valid pairs
+            (fixed_pk.clone(), fixed_sk.clone(), true),
+            (rand_pk.clone(), rand_sk.clone(), true),
+            // Mismatched pairs
+            (fixed_pk.clone(), rand_sk.clone(), false),
+            (rand_pk.clone(), fixed_sk.clone(), false),
+        ];
+
+        let params = Params::default();
+        let pod_id = PodId::default();
+        let pk_ak = AnchoredKey::new(pod_id, Key::new("pubkey".into()));
+        let sk_ak = AnchoredKey::new(pod_id, Key::new("secret".into()));
+
+        test_cases.iter().try_for_each(|(pk, sk, expect_good)| {
+            // Form op args
+            let pk_s = Statement::Equal(pk_ak.clone().into(), (*pk).into());
+            let sk_s = Statement::Equal(sk_ak.clone().into(), sk.clone().into());
+
+            // Form op
+            let op = Operation::PublicKeyOf(pk_s.clone(), sk_s.clone());
+
+            // Form output statement
+            let st = Statement::PublicKeyOf(pk_ak.clone().into(), sk_ak.clone().into());
+
+            // Check
+            op.check(&params, &st).and_then(|is_good| {
+                assert_eq!(
+                    is_good, *expect_good,
+                    "PublicKeyOf({}, {}) => {}",
+                    pk, sk, is_good
+                );
+                Ok(())
+            })
+        })
+    }
+
+    #[test]
+    fn check_public_key_of_op_arg_types() -> Result<()> {
+        let fixed_sk = SecretKey(BigUint::from(0x1234567890abcdefu64));
+        let fixed_pk = fixed_sk.public_key();
+
+        let params = Params::default();
+        let pod_id = PodId::default();
+        let pk_ak = AnchoredKey::new(pod_id, Key::new("pubkey".into()));
+        let sk_ak = AnchoredKey::new(pod_id, Key::new("secret".into()));
+
+        // Form op args
+        let pk_s = Statement::Equal(pk_ak.clone().into(), fixed_pk.clone().into());
+        let sk_s = Statement::Equal(sk_ak.clone().into(), fixed_sk.clone().into());
+
+        // Bad op and statement with bad first args
+        let op = Operation::PublicKeyOf(pk_s.clone(), pk_s.clone());
+        let st = Statement::PublicKeyOf(pk_ak.clone().into(), pk_ak.clone().into());
+
+        // Check
+        let bad_check = op.check(&params, &st);
+        assert!(matches!(bad_check, Err(_)));
+
+        // Bad op and statement with bad second args
+        let op = Operation::PublicKeyOf(sk_s.clone(), sk_s.clone());
+        let st = Statement::PublicKeyOf(sk_ak.clone().into(), sk_ak.clone().into());
+
+        // Check
+        let bad_check = op.check(&params, &st);
+        assert!(matches!(bad_check, Err(_)));
+
+        Ok(())
+    }
+}

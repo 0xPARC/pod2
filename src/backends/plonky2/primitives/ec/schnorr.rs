@@ -1,4 +1,4 @@
-use std::{array, fmt};
+use std::{array, fmt, str::FromStr};
 
 use num::BigUint;
 use num_bigint::RandBigInt;
@@ -250,6 +250,15 @@ impl fmt::Display for SecretKey {
     }
 }
 
+impl FromStr for SecretKey {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let sk_bytes = deserialize_bytes(&s)?;
+        SecretKey::from_bytes(&sk_bytes)
+    }
+}
+
 impl SignatureTarget {
     pub fn add_virtual_target(builder: &mut CircuitBuilder<GoldilocksField, 2>) -> Self {
         Self {
@@ -293,6 +302,7 @@ fn hash_array_circuit(
 
 #[cfg(test)]
 mod test {
+    use itertools::Itertools;
     use num::BigUint;
     use num_bigint::RandBigInt;
     use plonky2::{
@@ -330,6 +340,29 @@ mod test {
         let public_key = private_key.public_key();
         let sig = private_key.sign(msg, &nonce);
         (public_key, msg, sig)
+    }
+
+    #[test]
+    fn test_key_pairs() -> Result<(), anyhow::Error> {
+        let fixed_sk = SecretKey(BigUint::from(0x1234567890abcdefu64));
+        let fixed_sk_expected_str = "782rkHhWNBIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==";
+        assert_eq!(fixed_sk.to_string(), fixed_sk_expected_str);
+        let parsed_sk = fixed_sk_expected_str.parse::<SecretKey>()?;
+        assert_eq!(fixed_sk, parsed_sk);
+
+        let fixed_pk = fixed_sk.public_key();
+        let fixed_pk_expected_str = "8sctoHc2aduKbYtZwo7Z3v7YugSuimLUMAhE95V18CWU55tWMvZxEqA";
+        assert_eq!(fixed_pk.to_string(), fixed_pk_expected_str);
+        let parsed_pk = fixed_pk_expected_str.parse::<Point>()?;
+        assert_eq!(fixed_pk, parsed_pk);
+
+        let rand_sk = SecretKey::new_rand();
+        assert_ne!(fixed_sk, rand_sk);
+        assert_eq!(rand_sk, rand_sk.to_string().parse::<SecretKey>()?);
+        let rand_pk = rand_sk.public_key();
+        assert_ne!(fixed_pk, rand_pk);
+
+        Ok(())
     }
 
     #[test]
@@ -453,7 +486,7 @@ mod test {
 
         // Value is too big for group but fits within 320 bits.  Thus it
         // survives the assert in as_bytes(), but gets caught during deserialization.
-        let sk_toobig = SecretKey(&*GROUP_ORDER + 1u32);
+        let sk_toobig = SecretKey(GROUP_ORDER.clone());
         assert_ne!(sk_toobig, sk_123);
         let str_toobig = serde_json::to_string(&sk_toobig).unwrap();
         let deser_toobig: Result<SecretKey, _> = serde_json::from_str(&str_toobig);
@@ -470,38 +503,27 @@ mod test {
         let rsk_0 = SecretKey::from_limbs(limbs_0).unwrap();
         assert_eq!(sk_0, rsk_0);
 
-        let sk_n: SecretKey = SecretKey(BigUint::from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]));
+        let sk_n: SecretKey = SecretKey(BigUint::from_slice((0..10).collect_vec().as_slice()));
         let limbs_n = sk_n.to_limbs();
         assert_eq!(
-            limbs_n,
-            [
-                GoldilocksField::from_canonical_u32(1),
-                GoldilocksField::from_canonical_u32(2),
-                GoldilocksField::from_canonical_u32(3),
-                GoldilocksField::from_canonical_u32(4),
-                GoldilocksField::from_canonical_u32(5),
-                GoldilocksField::from_canonical_u32(6),
-                GoldilocksField::from_canonical_u32(7),
-                GoldilocksField::from_canonical_u32(8),
-                GoldilocksField::from_canonical_u32(9),
-                GoldilocksField::from_canonical_u32(10)
-            ]
+            limbs_n.as_slice(),
+            (0..10)
+                .map(|i| GoldilocksField::from_canonical_u32(i))
+                .collect_vec()
+                .as_slice()
         );
         let rsk_n = SecretKey::from_limbs(limbs_n).unwrap();
         assert_eq!(sk_n, rsk_n);
 
-        let bad_result = SecretKey::from_limbs([
-            GoldilocksField::from_canonical_u32(1),
-            GoldilocksField::from_canonical_u32(2),
-            GoldilocksField::from_canonical_u32(3),
-            GoldilocksField::from_canonical_u32(4),
-            GoldilocksField::from_canonical_u32(5),
-            GoldilocksField::from_canonical_u32(6),
-            GoldilocksField::from_canonical_u32(7),
-            GoldilocksField::from_canonical_u32(8),
-            GoldilocksField::from_canonical_u32(9),
-            GoldilocksField::from_canonical_u64(1 << 32),
-        ]);
+        let bad_result = SecretKey::from_limbs(
+            (0..9)
+                .chain([9u64 << 32])
+                .map(|i| GoldilocksField::from_canonical_u64(i))
+                .collect_vec()
+                .as_slice()
+                .try_into()
+                .unwrap(),
+        );
         assert!(matches!(bad_result, Err(_)));
 
         Ok(())
