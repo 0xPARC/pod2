@@ -842,9 +842,14 @@ pub mod build_utils {
 #[cfg(test)]
 pub mod tests {
 
+    use num::BigUint;
+
     use super::*;
     use crate::{
-        backends::plonky2::mock::{mainpod::MockProver, signedpod::MockSigner},
+        backends::plonky2::{
+            mock::{mainpod::MockProver, signedpod::MockSigner},
+            primitives::ec::schnorr::SecretKey,
+        },
         examples::{
             attest_eth_friend, great_boy_pod_full_flow, tickets_pod_full_flow, zu_kyc_pod_builder,
             zu_kyc_sign_pod_builders, EthDosHelper, MOCK_VD_SET,
@@ -1107,6 +1112,133 @@ pub mod tests {
         let main_pod = builder.prove(&mut main_prover, &params).unwrap();
 
         println!("{}", main_pod);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_public_key_of() -> Result<()> {
+        let params = Params::default();
+        let vd_set = &*MOCK_VD_SET;
+
+        let sk = SecretKey::new_rand();
+        let pk = sk.public_key();
+
+        // Signed POD contains public key as owner
+        let mut builder = SignedPodBuilder::new(&params);
+        builder.insert("owner", Value::from(pk));
+        builder.insert("other_data", Value::from(123));
+        let mut signer = MockSigner {
+            pk: "signer".into(),
+        };
+        let signed_pod = builder.sign(&mut signer).unwrap();
+
+        // Main POD proves ownership of the owner's secret key.
+        let mut builder = MainPodBuilder::new(&params, &vd_set);
+        builder.add_signed_pod(&signed_pod);
+        let st0 = signed_pod.get_statement("owner").unwrap();
+        let st1 = builder
+            .priv_op(op!(new_entry, "known_secret", Value::from(sk)))
+            .unwrap();
+        builder
+            .pub_op(Operation(
+                // OperationType
+                OperationType::Native(NativeOperation::PublicKeyOf),
+                // Vec<OperationArg>
+                vec![OperationArg::Statement(st0), OperationArg::Statement(st1)],
+                OperationAux::None,
+            ))
+            .unwrap();
+
+        // Prove Main POD to check.
+        let mut main_prover = MockProver {};
+        let main_pod = builder.prove(&mut main_prover, &params).unwrap();
+
+        println!("{}", main_pod);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_public_key_of_wrong_key() -> Result<()> {
+        let params = Params::default();
+        let vd_set = &*MOCK_VD_SET;
+
+        let sk = SecretKey::new_rand();
+        let pk = sk.public_key();
+
+        // Signed POD contains public key as owner
+        let mut builder = SignedPodBuilder::new(&params);
+        builder.insert("owner", Value::from(pk));
+        builder.insert("other_data", Value::from(123));
+        let mut signer = MockSigner {
+            pk: "signer".into(),
+        };
+        let signed_pod = builder.sign(&mut signer).unwrap();
+
+        // Try to build with the wrong secret key.  The pre-proving checks
+        // will catch this.
+        let mut builder = MainPodBuilder::new(&params, &vd_set);
+        builder.add_signed_pod(&signed_pod);
+        let st0 = signed_pod.get_statement("owner").unwrap();
+        let st1 = builder
+            .priv_op(op!(
+                new_entry,
+                "known_secret",
+                Value::from(SecretKey(BigUint::from(123u32)))
+            ))
+            .unwrap();
+        let result = builder.pub_op(Operation(
+            // OperationType
+            OperationType::Native(NativeOperation::PublicKeyOf),
+            // Vec<OperationArg>
+            vec![OperationArg::Statement(st0), OperationArg::Statement(st1)],
+            OperationAux::None,
+        ));
+        assert!(matches!(result, Err(_)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_public_key_of_wrong_type() -> Result<()> {
+        let params = Params::default();
+        let vd_set = &*MOCK_VD_SET;
+
+        let sk = SecretKey::new_rand();
+        let pk = sk.public_key();
+
+        // Try to build with wrong type in 1st arg
+        let mut builder = MainPodBuilder::new(&params, &vd_set);
+        let st_pk = builder.literal(false, Value::from(pk)).unwrap();
+        let st_int1 = builder.literal(false, Value::from(123)).unwrap();
+        let result1 = builder.pub_op(Operation(
+            // OperationType
+            OperationType::Native(NativeOperation::PublicKeyOf),
+            // Vec<OperationArg>
+            vec![
+                OperationArg::Statement(st_pk),
+                OperationArg::Statement(st_int1),
+            ],
+            OperationAux::None,
+        ));
+        assert!(matches!(result1, Err(_)));
+
+        // Try to build with wrong type in 2nd arg
+        builder = MainPodBuilder::new(&params, &vd_set);
+        let st_sk = builder.literal(false, Value::from(pk)).unwrap();
+        let st_int2 = builder.literal(false, Value::from(123)).unwrap();
+        let result2 = builder.pub_op(Operation(
+            // OperationType
+            OperationType::Native(NativeOperation::PublicKeyOf),
+            // Vec<OperationArg>
+            vec![
+                OperationArg::Statement(st_int2),
+                OperationArg::Statement(st_sk),
+            ],
+            OperationAux::None,
+        ));
+        assert!(matches!(result2, Err(_)));
 
         Ok(())
     }
