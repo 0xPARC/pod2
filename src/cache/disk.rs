@@ -62,7 +62,7 @@ pub(crate) fn get<T: Serialize + DeserializeOwned, P: Serialize>(
     let cache_path_tmp = cache_dir.join(format!("{}.cbor.tmp", name));
 
     // First try to open the cached file.  If it exists we assume a previous build+cache succeeded
-    // so we read, deserailize it and return it.
+    // so we read, deserialize it and return it.
     // If it doesn't exist we open a corresponding tmp file and try to acquire it exclusively.  If
     // we can't acquire it means another process is building the artifact so we retry again in 100
     // ms.  If we acquire the lock we build the artifact store it in the tmp file and finally

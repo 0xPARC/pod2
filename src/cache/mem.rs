@@ -77,7 +77,7 @@ pub(crate) fn get<T: Serialize + DeserializeOwned + Send + 'static, P: Serialize
         log::debug!("built {} in {:?}", name, elapsed);
 
         CACHE.lock()?.insert(key, Some(Box::new(data)));
-        // Call `get` again and this time we'll retreive the data from the cache
+        // Call `get` again and this time we'll retrieve the data from the cache
         return get(name, params, build_fn);
     }
 }
