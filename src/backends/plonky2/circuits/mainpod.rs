@@ -2704,8 +2704,7 @@ mod tests {
             Statement::equal(public_key_ak.clone(), public_key_value.clone()).into();
         let secret_key_st: mainpod::Statement =
             Statement::equal(secret_key_ak.clone(), secret_key_value.clone()).into();
-        let st: mainpod::Statement =
-            Statement::public_key_of(public_key_ak, secret_key_ak).into();
+        let st: mainpod::Statement = Statement::public_key_of(public_key_ak, secret_key_ak).into();
         let op = mainpod::Operation(
             OperationType::Native(NativeOperation::PublicKeyOf),
             vec![OperationArg::Index(0), OperationArg::Index(1)],
@@ -2714,7 +2713,6 @@ mod tests {
         let prev_statements = vec![public_key_st, secret_key_st];
         assert!(operation_verify(st, op, prev_statements, vec![], &secret_key).is_err())
     }
-
 
     fn helper_statement_arg_from_template(
         params: &Params,
