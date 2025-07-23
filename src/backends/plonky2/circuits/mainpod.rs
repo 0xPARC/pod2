@@ -2625,8 +2625,81 @@ mod tests {
     }
 
     #[test]
-    fn test_operation_verify_publickeyof_failure() {
-        let secret_key = &SecretKey(&*GROUP_ORDER - BigUint::ZERO);
+    fn test_operation_verify_publickeyof_failure_wrong_key() {
+        let secret_key = SecretKey(BigUint::one());
+        let public_key = SecretKey(BigUint::ZERO).public_key();
+        let public_key_value = Value::from(TypedValue::from(public_key));
+        let secret_key_value = Value::from(TypedValue::from(secret_key.clone()));
+        let public_key_ak = AnchoredKey::from((PodId(RawValue::from(88).into()), "public key"));
+        let secret_key_ak = AnchoredKey::from((PodId(RawValue::from(70).into()), "secret key"));
+        let public_key_st: mainpod::Statement =
+            Statement::equal(public_key_ak.clone(), public_key_value.clone()).into();
+        let secret_key_st: mainpod::Statement =
+            Statement::equal(secret_key_ak.clone(), secret_key_value.clone()).into();
+        let st: mainpod::Statement = Statement::public_key_of(public_key_ak, secret_key_ak).into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::PublicKeyOf),
+            vec![OperationArg::Index(0), OperationArg::Index(1)],
+            OperationAux::None,
+        );
+        let prev_statements = vec![public_key_st, secret_key_st];
+        assert!(operation_verify(st, op, prev_statements, vec![], &secret_key).is_err())
+    }
+
+    #[test]
+    fn test_operation_verify_publickeyof_failure_pk_type() {
+        let secret_key = SecretKey(BigUint::one());
+        let public_key = 123i64;
+        let public_key_value = Value::from(TypedValue::from(public_key));
+        let secret_key_value = Value::from(TypedValue::from(secret_key.clone()));
+        let public_key_ak = AnchoredKey::from((PodId(RawValue::from(88).into()), "public key"));
+        let secret_key_ak = AnchoredKey::from((PodId(RawValue::from(70).into()), "secret key"));
+        let public_key_st: mainpod::Statement =
+            Statement::equal(public_key_ak.clone(), public_key_value.clone()).into();
+        let secret_key_st: mainpod::Statement =
+            Statement::equal(secret_key_ak.clone(), secret_key_value.clone()).into();
+        let st: mainpod::Statement = Statement::public_key_of(public_key_ak, secret_key_ak).into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::PublicKeyOf),
+            vec![OperationArg::Index(0), OperationArg::Index(1)],
+            OperationAux::None,
+        );
+        let prev_statements = vec![public_key_st, secret_key_st];
+        assert!(operation_verify(st, op, prev_statements, vec![], &secret_key).is_err())
+    }
+
+    #[test]
+    fn test_operation_verify_publickeyof_failure_sk_type() {
+        let secret_key = 123i64;
+        let public_key = SecretKey(BigUint::from(123u32)).public_key();
+        let public_key_value = Value::from(TypedValue::from(public_key));
+        let secret_key_value = Value::from(TypedValue::from(secret_key.clone()));
+        let public_key_ak = AnchoredKey::from((PodId(RawValue::from(88).into()), "public key"));
+        let secret_key_ak = AnchoredKey::from((PodId(RawValue::from(70).into()), "secret key"));
+        let public_key_st: mainpod::Statement =
+            Statement::equal(public_key_ak.clone(), public_key_value.clone()).into();
+        let secret_key_st: mainpod::Statement =
+            Statement::equal(secret_key_ak.clone(), secret_key_value.clone()).into();
+        let st: mainpod::Statement = Statement::public_key_of(public_key_ak, secret_key_ak).into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::PublicKeyOf),
+            vec![OperationArg::Index(0), OperationArg::Index(1)],
+            OperationAux::None,
+        );
+        let prev_statements = vec![public_key_st, secret_key_st];
+        assert!(operation_verify(
+            st,
+            op,
+            prev_statements,
+            vec![],
+            &SecretKey(BigUint::from(123u32))
+        )
+        .is_err())
+    }
+
+    #[test]
+    fn test_operation_verify_publickeyof_failure_sk_size() {
+        let secret_key = SecretKey(&*GROUP_ORDER - BigUint::ZERO);
         let public_key = secret_key.public_key();
         let public_key_value = Value::from(TypedValue::from(public_key));
         let secret_key_value = Value::from(TypedValue::from(secret_key.clone()));
