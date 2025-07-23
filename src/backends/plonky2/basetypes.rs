@@ -64,7 +64,7 @@ pub static DEFAULT_VD_LIST: LazyLock<Vec<VerifierOnlyCircuitData>> = LazyLock::n
 pub static DEFAULT_VD_SET: LazyLock<VDSet> = LazyLock::new(|| {
     let params = Params::default();
     let vds = &*DEFAULT_VD_LIST;
-    VDSet::new(params.max_depth_mt_vds, &vds).unwrap()
+    VDSet::new(params.max_depth_mt_vds, vds).unwrap()
 });
 
 /// VDSet is the set of the allowed verifier_data hashes. When proving a

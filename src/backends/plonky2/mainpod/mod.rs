@@ -942,7 +942,7 @@ pub mod tests {
         let cpb_and = CustomPredicateRef::new(cpb.clone(), 0);
         let _cpb_or = CustomPredicateRef::new(cpb.clone(), 1);
 
-        let mut pod_builder = MainPodBuilder::new(&params, vd_set);
+        let mut pod_builder = MainPodBuilder::new(&params, &vd_set);
 
         let st0 = pod_builder.priv_op(op!(new_entry, "score", 42))?;
         let st1 = pod_builder.priv_op(op!(new_entry, "key", 42))?;
