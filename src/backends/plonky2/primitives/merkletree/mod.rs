@@ -233,8 +233,7 @@ impl MerkleTree {
         )?;
 
         // if other_leaf exists, check path divergence
-        if proof.proof_non_existence.other_leaf.is_some() {
-            let (other_key, _) = proof.proof_non_existence.other_leaf.unwrap();
+        if let Some((other_key, _)) = proof.proof_non_existence.other_leaf {
             let old_path = keypath(max_depth, other_key)?;
             let new_path = keypath(max_depth, proof.new_key)?;
 
@@ -274,7 +273,9 @@ impl MerkleTree {
                 .proof_non_existence
                 .other_leaf
                 .map(|(k, _)| k)
-                .unwrap_or(proof.new_key);
+                .ok_or(TreeError::state_transition_fail(
+                        "proof.proof_non_existence.other_leaf can not be empty for the case old_siblings[d]!=new_siblings[d]".to_string()
+                        ))?;
             let v: Option<RawValue> = proof.proof_non_existence.other_leaf.map(|(_, v)| v);
             let old_leaf_hash = kv_hash(&k, v);
             if new_siblings[d] != old_leaf_hash {
@@ -425,7 +426,7 @@ impl fmt::Display for MerkleClaimAndProof {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MerkleProofStateTransition {
-    // type: 0:insertion, 1:edition, 2:deletion
+    // type: 0:insertion, 1:update, 2:deletion
     pub(crate) typ: u8,
 
     pub(crate) old_root: Hash,

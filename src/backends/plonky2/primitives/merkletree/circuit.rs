@@ -451,8 +451,7 @@ pub fn verify_merkle_state_transition_circuit(
         proof.enabled.target,
     );
 
-    // 4) assert proof_non_existence.root==old_root, and that it uses new_key &
-    // new_value
+    // 4) assert proof_non_existence.root==old_root, and that it uses new_key
     for j in 0..HASH_SIZE {
         // 4.1) assert that proof.proof_non_existence.root == proof.old_root
         builder.conditional_assert_eq(
@@ -460,16 +459,12 @@ pub fn verify_merkle_state_transition_circuit(
             proof.proof_non_existence.root.elements[j],
             proof.old_root.elements[j],
         );
-        // 4.2) assert that the non-existence proof uses the new_key & new_value
+        // 4.2) assert that the non-existence proof uses the new_key (value not needed for
+        //   non-existence)
         builder.conditional_assert_eq(
             proof.enabled.target,
             proof.proof_non_existence.key.elements[j],
             proof.new_key.elements[j],
-        );
-        builder.conditional_assert_eq(
-            proof.enabled.target,
-            proof.proof_non_existence.value.elements[j],
-            proof.new_value.elements[j],
         );
     }
 
@@ -590,7 +585,7 @@ impl MerkleProofStateTransitionTarget {
             &MerkleClaimAndProof {
                 root: mp.old_root,
                 key: mp.new_key,
-                value: mp.new_value,
+                value: EMPTY_VALUE, // not needed for non-existence
                 proof: mp.proof_non_existence.clone(),
             },
         )?;
