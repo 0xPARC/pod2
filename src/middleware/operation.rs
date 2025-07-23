@@ -36,7 +36,6 @@ impl fmt::Display for OperationAux {
         match self {
             Self::None => write!(f, "<no aux>")?,
             Self::MerkleProof(pf) => write!(f, "merkle_proof({})", pf)?,
-            // Self::SecretKey(key) => write!(f, "secret_key({})", key)?,
         }
         Ok(())
     }

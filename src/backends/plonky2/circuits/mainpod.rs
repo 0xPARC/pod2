@@ -1371,6 +1371,7 @@ fn verify_main_pod_circuit(
             &custom_predicate_verification_table,
         )?;
     }
+
     measure_gates_end!(builder, measure);
     Ok(id)
 }
@@ -1562,20 +1563,18 @@ impl InnerCircuit for MainPodVerifyTarget {
                     if let TypedValue::SecretKey(sk) = value.typed() {
                         pw.set_biguint320_target(&self.secret_keys[i], &sk.0)?;
                     } else {
-                        panic!()
+                        panic!("SecretKey literal of incorrect type!")
+                    }
+                } else if let OperationArg::Index(ind) = op.1[1] {
+                    if let StatementArg::Literal(value) = &input.statements[ind].1[1] {
+                        if let TypedValue::SecretKey(sk) = value.typed() {
+                            pw.set_biguint320_target(&self.secret_keys[i], &sk.0)?;
+                        } else {
+                            panic!("SecretKey literal of incorrect type!")
+                        }
                     }
                 } else {
-                    if let OperationArg::Index(ind) = op.1[1] {
-                        if let StatementArg::Literal(value) = &input.statements[ind].1[1] {
-                            if let TypedValue::SecretKey(sk) = value.typed() {
-                                pw.set_biguint320_target(&self.secret_keys[i], &sk.0)?;
-                            } else {
-                                panic!()
-                            }
-                        }
-                    } else {
-                        panic!()
-                    }
+                    panic!("SecretKey arg not found!")
                 }
             } else {
                 pw.set_biguint320_target(&self.secret_keys[i], &BigUint::ZERO)?;
