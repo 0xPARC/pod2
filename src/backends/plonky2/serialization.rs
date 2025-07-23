@@ -166,7 +166,7 @@ impl<'de> Deserialize<'de> for CircuitDataSerializer {
         let bytes = <&'de serde_bytes::Bytes>::deserialize(deserializer)?;
         let gate_serializer = Pod2GateSerializer {};
         let generator_serializer = Pod2GeneratorSerializer {};
-        let circuit_data = CircuitData::from_bytes(&bytes, &gate_serializer, &generator_serializer)
+        let circuit_data = CircuitData::from_bytes(bytes, &gate_serializer, &generator_serializer)
             .map_err(de::Error::custom)?;
         Ok(CircuitDataSerializer(circuit_data))
     }
@@ -206,7 +206,7 @@ impl<'de> Deserialize<'de> for CommonCircuitDataSerializer {
         let bytes = <&'de serde_bytes::Bytes>::deserialize(deserializer)?;
         let gate_serializer = Pod2GateSerializer {};
         let circuit_data =
-            CommonCircuitData::from_bytes(&bytes, &gate_serializer).map_err(de::Error::custom)?;
+            CommonCircuitData::from_bytes(bytes, &gate_serializer).map_err(de::Error::custom)?;
         Ok(CommonCircuitDataSerializer(circuit_data))
     }
 }
@@ -246,7 +246,7 @@ impl<'de> Deserialize<'de> for VerifierCircuitDataSerializer {
 
         let gate_serializer = Pod2GateSerializer {};
         let circuit_data =
-            VerifierCircuitData::from_bytes(&bytes, &gate_serializer).map_err(de::Error::custom)?;
+            VerifierCircuitData::from_bytes(bytes, &gate_serializer).map_err(de::Error::custom)?;
         Ok(VerifierCircuitDataSerializer(circuit_data))
     }
 }

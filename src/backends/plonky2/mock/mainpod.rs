@@ -69,7 +69,7 @@ impl fmt::Display for MockMainPod {
         for (i, st) in self.statements.iter().enumerate() {
             if self.params.max_input_signed_pods > 0
                 && (i >= offset_input_signed_pods && i < offset_input_recursive_pods)
-                && ((i - offset_input_signed_pods) % self.params.max_signed_pod_values == 0)
+                && (i - offset_input_signed_pods).is_multiple_of(self.params.max_signed_pod_values)
             {
                 let index = (i - offset_input_signed_pods) / self.params.max_signed_pod_values;
                 let pod = &self.input_signed_pods[index];
@@ -84,9 +84,8 @@ impl fmt::Display for MockMainPod {
             if self.params.max_input_recursive_pods > 0
                 && (i >= offset_input_recursive_pods)
                 && (i < offset_input_statements)
-                && ((i - offset_input_recursive_pods)
-                    % self.params.max_input_pods_public_statements
-                    == 0)
+                && (i - offset_input_recursive_pods)
+                    .is_multiple_of(self.params.max_input_pods_public_statements)
             {
                 let index = (i - offset_input_recursive_pods)
                     / self.params.max_input_pods_public_statements;

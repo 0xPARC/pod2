@@ -9,6 +9,7 @@ use std::{
 use serde::{de::DeserializeOwned, Serialize};
 use sha2::{Digest, Sha256};
 
+#[allow(clippy::type_complexity)]
 static CACHE: LazyLock<Mutex<HashMap<String, Option<Box<dyn Any + Send + 'static>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -20,7 +21,7 @@ impl<T> Deref for CacheEntry<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        &self.value
+        self.value
     }
 }
 

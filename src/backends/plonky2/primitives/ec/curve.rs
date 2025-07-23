@@ -57,6 +57,7 @@ pub fn ec_field_sqrt(x: &ECField) -> Option<ECField> {
     ]);
     // Compute x^((r-1)/2) = x^(p*((1+p)/2)*(1+p^2))
     let x1 = x.frobenius();
+    #[allow(clippy::manual_div_ceil)]
     let x2 = x1.exp_u64((1 + GoldilocksField::ORDER) / 2);
     let den = x2 * x2.repeated_frobenius(2);
     Some(num / den)
