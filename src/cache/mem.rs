@@ -24,6 +24,7 @@ impl<T> Deref for CacheEntry<T> {
     }
 }
 
+// TODO: Remove `Clone` requirement
 /// Get the artifact named `name` from the memory cache.  If it doesn't exist, it will be built by
 /// calling `build_fn` and stored.
 /// The artifact is indexed by `params: P`.
@@ -75,7 +76,7 @@ pub(crate) fn get<T: Serialize + DeserializeOwned + Clone + Send + 'static, P: S
         let elapsed = std::time::Instant::now() - start;
         log::debug!("built {} in {:?}", name, elapsed);
 
-        CACHE.lock()?.insert(key, Some(Box::new(data.clone())));
+        CACHE.lock()?.insert(key, Some(Box::new(data)));
         // Call `get` again and this time we'll retreive the data from the cache
         return get(name, params, build_fn);
     }
