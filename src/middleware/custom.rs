@@ -466,6 +466,7 @@ mod tests {
         names.iter().map(|s| s.to_string()).collect()
     }
 
+    #[allow(clippy::upper_case_acronyms)]
     type STA = StatementTmplArg;
     type P = Predicate;
     type NP = NativePredicate;

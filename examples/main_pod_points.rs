@@ -46,14 +46,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let game_sk = SecretKey::new_rand();
     let game_pk = game_sk.public_key();
 
-    let mut game_signer = Signer(game_sk);
+    let game_signer = Signer(game_sk);
 
     // Build 2 signed pods where the game assigns points to a player that has completed a level.
     let mut builder = SignedPodBuilder::new(&params);
     builder.insert("player", "Alice");
     builder.insert("level", 1);
     builder.insert("points", 3512);
-    let pod_points_lvl_1 = builder.sign(&mut game_signer)?;
+    let pod_points_lvl_1 = builder.sign(&game_signer)?;
     pod_points_lvl_1.verify()?;
     println!("# pod_points_lvl_1:\n{}", pod_points_lvl_1);
 
@@ -61,7 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     builder.insert("player", "Alice");
     builder.insert("level", 2);
     builder.insert("points", 5771);
-    let pod_points_lvl_2 = builder.sign(&mut game_signer)?;
+    let pod_points_lvl_2 = builder.sign(&game_signer)?;
     pod_points_lvl_2.verify()?;
     println!("# pod_points_lvl_2:\n{}", pod_points_lvl_2);
 

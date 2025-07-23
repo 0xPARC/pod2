@@ -255,7 +255,7 @@ mod tests {
         params.print_serialized_sizes();
 
         // ETH friend custom predicate batch
-        let eth_dos_batch = eth_dos_batch(&params, true)?;
+        let eth_dos_batch = eth_dos_batch(&params)?;
 
         // This batch only has 1 predicate, so we pick it already for convenience
         let eth_friend = eth_dos_batch.predicate_ref_by_name("eth_friend").unwrap();
@@ -288,7 +288,7 @@ mod tests {
         let batch_clone = batch.clone();
         let gt_custom_pred = CustomPredicateRef::new(batch, 0);
 
-        let mut mp_builder = MainPodBuilder::new(&params, &vd_set);
+        let mut mp_builder = MainPodBuilder::new(&params, vd_set);
 
         // 2 > 1
         let s1 = mp_builder.priv_op(op!(new_entry, "s1_key", Value::from(2)))?;
@@ -311,8 +311,8 @@ mod tests {
         mp_builder.pub_op(op!(custom, gt_custom_pred, desugared_gt))?;
 
         // Check that the POD builds
-        let mut prover = MockProver {};
-        let proof = mp_builder.prove(&mut prover, &params)?;
+        let prover = MockProver {};
+        let proof = mp_builder.prove(&prover, &params)?;
 
         Ok(())
     }
@@ -337,7 +337,7 @@ mod tests {
         let batch = builder.finish();
         let batch_clone = batch.clone();
 
-        let mut mp_builder = MainPodBuilder::new(&params, &vd_set);
+        let mut mp_builder = MainPodBuilder::new(&params, vd_set);
 
         let set_values: HashSet<Value> = [1, 2, 3].iter().map(|i| Value::from(*i)).collect();
         let s1 = mp_builder.priv_op(op!(
@@ -360,8 +360,8 @@ mod tests {
         let set_contains_custom_pred = CustomPredicateRef::new(batch, 0);
         mp_builder.pub_op(op!(custom, set_contains_custom_pred, set_contains))?;
 
-        let mut prover = MockProver {};
-        let proof = mp_builder.prove(&mut prover, &params)?;
+        let prover = MockProver {};
+        let proof = mp_builder.prove(&prover, &params)?;
 
         Ok(())
     }

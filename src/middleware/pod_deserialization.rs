@@ -56,7 +56,7 @@ mod backend {
     use crate::backends::plonky2::{
         emptypod::EmptyPod,
         mainpod::MainPod,
-        mock::{emptypod::MockEmptyPod, mainpod::MockMainPod, signedpod::MockSignedPod},
+        mock::{emptypod::MockEmptyPod, mainpod::MockMainPod},
         signedpod::SignedPod,
     };
 
@@ -74,9 +74,7 @@ mod backend {
         id: PodId,
         data: serde_json::Value,
     ) -> Result<Box<dyn Pod>, BackendError> {
-        if pod_type == PodType::MockSigned as usize {
-            MockSignedPod::deserialize(id, data)
-        } else if pod_type == PodType::Signed as usize {
+        if pod_type == PodType::Signed as usize {
             SignedPod::deserialize(id, data)
         } else {
             Err(BackendError::custom(format!(

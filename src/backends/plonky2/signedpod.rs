@@ -27,7 +27,7 @@ pub struct Signer(pub SecretKey);
 
 impl Signer {
     fn sign_with_nonce(
-        &mut self,
+        &self,
         params: &Params,
         nonce: BigUint,
         kvs: &HashMap<Key, Value>,
@@ -48,18 +48,18 @@ impl Signer {
             dict,
         })
     }
-    fn _sign(&mut self, params: &Params, kvs: &HashMap<Key, Value>) -> Result<SignedPod> {
+    fn _sign(&self, params: &Params, kvs: &HashMap<Key, Value>) -> Result<SignedPod> {
         let nonce = OsRng.gen_biguint_below(&GROUP_ORDER);
         self.sign_with_nonce(params, nonce, kvs)
     }
 
-    pub fn public_key(&self) -> Point {
-        self.0.public_key()
+    pub fn public_key(&self) -> Value {
+        Value::from(self.0.public_key())
     }
 }
 
 impl PodSigner for Signer {
-    fn sign(&mut self, params: &Params, kvs: &HashMap<Key, Value>) -> Result<Box<dyn Pod>> {
+    fn sign(&self, params: &Params, kvs: &HashMap<Key, Value>) -> Result<Box<dyn Pod>> {
         Ok(self._sign(params, kvs).map(Box::new)?)
     }
 }
@@ -200,8 +200,8 @@ pub mod tests {
         pod.insert("socialSecurityNumber", "G2121210");
 
         let sk = SecretKey(123u64.into());
-        let mut signer = Signer(sk);
-        let pod = pod.sign(&mut signer).unwrap();
+        let signer = Signer(sk);
+        let pod = pod.sign(&signer).unwrap();
         let pod = (pod.pod as Box<dyn Any>).downcast::<SignedPod>().unwrap();
 
         pod.verify()?;

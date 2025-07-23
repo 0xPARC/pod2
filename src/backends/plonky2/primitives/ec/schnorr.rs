@@ -133,6 +133,10 @@ pub trait WitnessWriteSchnorr: WitnessWrite<GoldilocksField> + WitnessWriteCurve
 
 impl<W: WitnessWrite<GoldilocksField>> WitnessWriteSchnorr for W {}
 
+// TODO: Rename this to a function `verify_signature_circuit`?  I think this convention is also
+// nice as an object-oriented alternative to `verb_object_circuit` methods.  It's clear that this
+// is constraining vs native operation because the type is `*Target`.  But of course this
+// convention doesn't work for all situations.
 impl SignatureTarget {
     pub fn verify(
         &self,

@@ -665,18 +665,16 @@ impl ToFields for PodId {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, FromRepr, Serialize, Deserialize, JsonSchema)]
 pub enum PodType {
-    MockSigned = 1,
-    MockMain = 2,
-    MockEmpty = 3,
-    Signed = 4,
-    Main = 5,
-    Empty = 6,
+    Signed = 1,
+    Main = 2,
+    Empty = 3,
+    MockMain = 102,
+    MockEmpty = 103,
 }
 
 impl fmt::Display for PodType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PodType::MockSigned => write!(f, "MockSigned"),
             PodType::MockMain => write!(f, "MockMain"),
             PodType::MockEmpty => write!(f, "MockEmpty"),
             PodType::Signed => write!(f, "Signed"),
@@ -815,7 +813,7 @@ impl Params {
     }
 }
 
-/// Replace references to SELF by `self_id` in anchored keys of the statement.
+/// Replace references to SELF by `self_id`.
 pub fn normalize_statement(statement: &Statement, self_id: PodId) -> Statement {
     let predicate = statement.predicate();
     let args = statement
@@ -824,6 +822,9 @@ pub fn normalize_statement(statement: &Statement, self_id: PodId) -> Statement {
         .map(|sa| match &sa {
             StatementArg::Key(AnchoredKey { pod_id, key }) if *pod_id == SELF => {
                 StatementArg::Key(AnchoredKey::new(self_id, key.clone()))
+            }
+            StatementArg::Literal(value) if value.raw.0 == SELF.0 .0 => {
+                StatementArg::Literal(self_id.into())
             }
             _ => sa.clone(),
         })
@@ -923,7 +924,7 @@ dyn_clone::clone_trait_object!(RecursivePod);
 
 pub trait PodSigner {
     fn sign(
-        &mut self,
+        &self,
         params: &Params,
         kvs: &HashMap<Key, Value>,
     ) -> Result<Box<dyn Pod>, BackendError>;

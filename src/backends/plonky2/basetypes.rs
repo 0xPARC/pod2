@@ -2,16 +2,15 @@
 //! is enabled.
 //! See src/middleware/basetypes.rs for more details.
 
+/// F is the native field we use everywhere.  Currently it's Goldilocks from plonky2
+pub use plonky2::field::goldilocks_field::GoldilocksField as F;
 use plonky2::{
-    field::{extension::quadratic::QuadraticExtension, goldilocks_field::GoldilocksField},
+    field::extension::quadratic::QuadraticExtension,
     hash::{hash_types, poseidon::PoseidonHash},
     plonk::{circuit_builder, circuit_data, config::GenericConfig, proof},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
-
-/// F is the native field we use everywhere.  Currently it's Goldilocks from plonky2
-pub type F = GoldilocksField;
 
 /// D defines the extension degree of the field used in the Plonky2 proofs (quadratic extension).
 pub const D: usize = 2;

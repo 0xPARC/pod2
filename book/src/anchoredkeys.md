@@ -6,6 +6,8 @@ type AnchoredKey = (Origin, Key)
 type Key = String
 ```
 
+FIXME: This description is incorrect.  We don't have *gadget ID*.  And we don't think of *origin* as a triple, we just see it as a single value that encodes the *pod ID* or SELF.
+
 An *origin* is a triple consisting of a numeric identifier called the *origin ID*, a string called the *origin name* (omitted in the backend) and another numeric identifier called the *gadget ID*, which identifies the means by which the value corresponding to a given key is produced.
 
 The origin ID is defined to be 0 for 'no origin' and 1 for 'self origin', otherwise it is the content ID[^content-id] of the POD to which it refers. The origin name is not cryptographically significant and is merely a convenience for the frontend.

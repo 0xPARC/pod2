@@ -35,8 +35,9 @@ use crate::{
     middleware::{Hash, Proof, RawValue, EMPTY_HASH, EMPTY_VALUE, F, VALUE_SIZE},
 };
 
-pub struct SignatureVerifyGadget;
-
+// TODO: This is a very simple wrapper over the signature verification implemented on
+// `SignatureTarget`.  I think we can remove this and use it directly.  Also we're not using the
+// `enabled` flag, so it should be straight-forward to remove this.
 pub struct SignatureVerifyTarget {
     // `enabled` determines if the signature verification is enabled
     pub(crate) enabled: BoolTarget,
@@ -46,32 +47,34 @@ pub struct SignatureVerifyTarget {
     pub(crate) sig: SignatureTarget,
 }
 
-impl SignatureVerifyGadget {
-    /// creates the targets and defines the logic of the circuit
-    pub fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<SignatureVerifyTarget> {
-        let measure = measure_gates_begin!(builder, "SignatureVerify");
-        let enabled = builder.add_virtual_bool_target_safe();
-        let pk = builder.add_virtual_point_target();
-        let msg = builder.add_virtual_value();
-        let sig = builder.add_virtual_schnorr_signature_target();
-
-        let verified = sig.verify(builder, HashOutTarget::from(msg.elements), &pk);
-
-        let result = builder.mul_sub(enabled.target, verified.target, enabled.target);
-
-        builder.assert_zero(result);
-
-        measure_gates_end!(builder, measure);
-        Ok(SignatureVerifyTarget {
-            enabled,
-            pk,
-            msg,
-            sig,
-        })
-    }
+pub fn verify_signature_circuit(
+    builder: &mut CircuitBuilder<F, D>,
+    signature: &SignatureVerifyTarget,
+) {
+    let measure = measure_gates_begin!(builder, "SignatureVerify");
+    let verified = signature.sig.verify(
+        builder,
+        HashOutTarget::from(signature.msg.elements),
+        &signature.pk,
+    );
+    let result = builder.mul_sub(
+        signature.enabled.target,
+        verified.target,
+        signature.enabled.target,
+    );
+    builder.assert_zero(result);
+    measure_gates_end!(builder, measure);
 }
 
 impl SignatureVerifyTarget {
+    pub fn new_virtual(builder: &mut CircuitBuilder<F, D>) -> Self {
+        SignatureVerifyTarget {
+            enabled: builder.add_virtual_bool_target_safe(),
+            pk: builder.add_virtual_point_target(),
+            msg: builder.add_virtual_value(),
+            sig: builder.add_virtual_schnorr_signature_target(),
+        }
+    }
     /// assigns the given values to the targets
     pub fn set_targets(
         &self,
@@ -115,7 +118,8 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = SignatureVerifyGadget {}.eval(&mut builder)?;
+        let targets = SignatureVerifyTarget::new_virtual(&mut builder);
+        verify_signature_circuit(&mut builder, &targets);
         targets.set_targets(&mut pw, true, pk, msg, sig)?;
 
         // generate & verify proof
@@ -147,8 +151,9 @@ pub mod tests {
         // circuit
         let config = CircuitConfig::standard_recursion_zk_config();
         let mut builder = CircuitBuilder::<F, D>::new(config);
+        let targets = SignatureVerifyTarget::new_virtual(&mut builder);
+        verify_signature_circuit(&mut builder, &targets);
         let mut pw = PartialWitness::<F>::new();
-        let targets = SignatureVerifyGadget {}.eval(&mut builder)?;
         targets.set_targets(&mut pw, true, pk, msg, sig.clone())?; // enabled=true
 
         // generate proof, and expect it to fail
@@ -162,7 +167,8 @@ pub mod tests {
         let mut builder = CircuitBuilder::<F, D>::new(config);
         let mut pw = PartialWitness::<F>::new();
 
-        let targets = SignatureVerifyGadget {}.eval(&mut builder)?;
+        let targets = SignatureVerifyTarget::new_virtual(&mut builder);
+        verify_signature_circuit(&mut builder, &targets);
         targets.set_targets(&mut pw, false, pk, msg, sig)?; // enabled=false
 
         // generate & verify proof
