@@ -3,6 +3,8 @@
 
 use std::sync::Arc;
 
+use hex::ToHex;
+use itertools::Itertools;
 use strum_macros::FromRepr;
 mod basetypes;
 use std::{
@@ -189,15 +191,54 @@ impl TryFrom<&TypedValue> for PodId {
 impl fmt::Display for TypedValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TypedValue::String(s) => write!(f, "\"{}\"", s),
-            TypedValue::Int(v) => write!(f, "{}", v),
+            TypedValue::Int(i) => write!(f, "{}", i),
+            TypedValue::String(s) => {
+                // Use serde_json for proper JSON-style escaping
+                match serde_json::to_string(s) {
+                    Ok(escaped) => write!(f, "{}", escaped),
+                    Err(_) => write!(f, "\"{}\"", s),
+                }
+            }
             TypedValue::Bool(b) => write!(f, "{}", b),
-            TypedValue::Dictionary(d) => write!(f, "dict:{}", d.commitment()),
-            TypedValue::Set(s) => write!(f, "set:{}", s.commitment()),
-            TypedValue::Array(a) => write!(f, "arr:{}", a.commitment()),
-            TypedValue::Raw(v) => write!(f, "{}", v),
-            TypedValue::PublicKey(p) => write!(f, "pk:{}", p),
-            TypedValue::PodId(id) => write!(f, "pod_id:{}", id),
+            TypedValue::Array(a) => {
+                write!(f, "[")?;
+                for (i, v) in a.array().iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", v)?;
+                }
+                write!(f, "]")
+            }
+            TypedValue::Dictionary(d) => {
+                write!(f, "{{ ")?;
+                let kvs: Vec<_> = d.kvs().iter().sorted_by_key(|(k, _)| k.name()).collect();
+                for (i, (k, v)) in kvs.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}: {}", k, v)?;
+                }
+                write!(f, " }}")
+            }
+            TypedValue::Set(s) => {
+                write!(f, "#[")?;
+                let values: Vec<_> = s.set().iter().sorted().collect();
+                for (i, v) in values.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", v)?;
+                }
+                write!(f, "]")
+            }
+            TypedValue::PublicKey(p) => write!(f, "PublicKey({})", p),
+            TypedValue::PodId(p) => {
+                write!(f, "0x{}", p.0.encode_hex::<String>())
+            }
+            TypedValue::Raw(r) => {
+                write!(f, "Raw(0x{})", r.encode_hex::<String>())
+            }
         }
     }
 }

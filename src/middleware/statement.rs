@@ -1,4 +1,7 @@
-use std::{fmt, iter};
+use std::{
+    fmt::{self, Display},
+    iter,
+};
 
 use plonky2::field::types::Field;
 use schemars::JsonSchema;
@@ -42,6 +45,33 @@ pub enum NativePredicate {
     ArrayContains = 1004, // there is no ArrayNotContains
     GtEq = 1005,
     Gt = 1006,
+}
+
+impl Display for NativePredicate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            NativePredicate::None => "None",
+            NativePredicate::False => "False",
+            NativePredicate::Equal => "Equal",
+            NativePredicate::NotEqual => "NotEqual",
+            NativePredicate::Lt => "Lt",
+            NativePredicate::LtEq => "LtEq",
+            NativePredicate::Gt => "Gt",
+            NativePredicate::GtEq => "GtEq",
+            NativePredicate::Contains => "Contains",
+            NativePredicate::NotContains => "NotContains",
+            NativePredicate::SumOf => "SumOf",
+            NativePredicate::ProductOf => "ProductOf",
+            NativePredicate::MaxOf => "MaxOf",
+            NativePredicate::HashOf => "HashOf",
+            NativePredicate::DictContains => "DictContains",
+            NativePredicate::DictNotContains => "DictNotContains",
+            NativePredicate::ArrayContains => "ArrayContains",
+            NativePredicate::SetContains => "SetContains",
+            NativePredicate::SetNotContains => "SetNotContains",
+        };
+        write!(f, "{}", s)
+    }
 }
 
 impl ToFields for NativePredicate {

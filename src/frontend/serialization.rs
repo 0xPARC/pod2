@@ -11,12 +11,6 @@ use crate::{
     },
 };
 
-#[derive(Serialize, Deserialize, JsonSchema)]
-pub enum SignedPodType {
-    Signed,
-    MockSigned,
-}
-
 #[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[schemars(rename = "SignedPod")]

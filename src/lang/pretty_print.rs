@@ -2,12 +2,9 @@
 
 use std::fmt::Write;
 
-use hex::ToHex;
-use itertools::Itertools;
-
 use crate::middleware::{
-    CustomPredicate, CustomPredicateBatch, NativePredicate, Predicate, StatementTmpl,
-    StatementTmplArg, TypedValue, Value,
+    CustomPredicate, CustomPredicateBatch, Predicate, StatementTmpl, StatementTmplArg,
+    Value,
 };
 
 /// Trait for converting AST nodes to Podlang source code
@@ -15,6 +12,16 @@ use crate::middleware::{
 /// This trait provides a consistent interface for pretty-printing different
 /// types of AST nodes back to their Podlang source representation.
 pub trait PrettyPrint {
+    /// Write this AST node to a source writer
+    ///
+    /// Uses default formatting with no indentation.
+    fn fmt_podlang(&self, w: &mut dyn Write) -> std::fmt::Result {
+        self.fmt_podlang_with_indent(w, 0)
+    }
+
+    /// Write this AST node to a source writer with custom indentation
+    fn fmt_podlang_with_indent(&self, w: &mut dyn Write, indent: usize) -> std::fmt::Result;
+
     /// Convert this AST node to a Podlang source string
     ///
     /// Uses default formatting with no indentation.
@@ -23,184 +30,140 @@ pub trait PrettyPrint {
     }
 
     /// Convert this AST node to a Podlang source string with custom indentation
-    fn to_podlang_string_with_indent(&self, indent: usize) -> String;
-}
-
-impl PrettyPrint for CustomPredicate {
     fn to_podlang_string_with_indent(&self, indent: usize) -> String {
-        format_predicate_definition(self, indent, None)
-    }
-}
-
-impl PrettyPrint for StatementTmpl {
-    fn to_podlang_string_with_indent(&self, _indent: usize) -> String {
-        self.to_podlang_string_with_batch_context(None)
-    }
-}
-
-impl StatementTmpl {
-    fn to_podlang_string_with_batch_context(
-        &self,
-        batch_context: Option<&CustomPredicateBatch>,
-    ) -> String {
         let mut result = String::new();
-
-        match &self.pred {
-            Predicate::Native(native_pred) => {
-                let _ = write!(&mut result, "{}", format_native_predicate(native_pred));
-            }
-            Predicate::Custom(custom_ref) => {
-                let _ = write!(&mut result, "{}", custom_ref.predicate().name);
-            }
-            Predicate::BatchSelf(index) => {
-                if let Some(batch) = batch_context {
-                    if let Some(predicate) = batch.predicates.get(*index) {
-                        let _ = write!(&mut result, "{}", predicate.name);
-                    } else {
-                        let _ = write!(&mut result, "batch_self_{}", index);
-                    }
-                } else {
-                    let _ = write!(&mut result, "batch_self_{}", index);
-                }
-            }
-        }
-
-        let _ = write!(&mut result, "(");
-        for (i, arg) in self.args.iter().enumerate() {
-            if i > 0 {
-                let _ = write!(&mut result, ", ");
-            }
-            let _ = write!(&mut result, "{}", arg.to_podlang_string());
-        }
-        let _ = write!(&mut result, ")");
-
+        let _ = self.fmt_podlang_with_indent(&mut result, indent);
         result
     }
 }
 
+impl PrettyPrint for CustomPredicate {
+    fn fmt_podlang_with_indent(&self, w: &mut dyn Write, indent: usize) -> std::fmt::Result {
+        fmt_predicate_definition(w, self, indent, None)
+    }
+}
+
+impl PrettyPrint for StatementTmpl {
+    fn fmt_podlang_with_indent(&self, w: &mut dyn Write, _indent: usize) -> std::fmt::Result {
+        self.fmt_podlang_with_batch_context(w, None)
+    }
+}
+
+impl StatementTmpl {
+    fn fmt_podlang_with_batch_context(
+        &self,
+        w: &mut dyn Write,
+        batch_context: Option<&CustomPredicateBatch>,
+    ) -> std::fmt::Result {
+        match &self.pred {
+            Predicate::Native(native_pred) => {
+                write!(w, "{}", native_pred)?;
+            }
+            Predicate::Custom(custom_ref) => {
+                write!(w, "{}", custom_ref.predicate().name)?;
+            }
+            Predicate::BatchSelf(index) => {
+                if let Some(batch) = batch_context {
+                    if let Some(predicate) = batch.predicates.get(*index) {
+                        write!(w, "{}", predicate.name)?;
+                    } else {
+                        write!(w, "batch_self_{}", index)?;
+                    }
+                } else {
+                    write!(w, "batch_self_{}", index)?;
+                }
+            }
+        }
+
+        write!(w, "(")?;
+        for (i, arg) in self.args.iter().enumerate() {
+            if i > 0 {
+                write!(w, ", ")?;
+            }
+            arg.fmt_podlang(w)?;
+        }
+        write!(w, ")")?;
+
+        Ok(())
+    }
+}
+
 impl PrettyPrint for StatementTmplArg {
-    fn to_podlang_string_with_indent(&self, _indent: usize) -> String {
+    fn fmt_podlang_with_indent(&self, w: &mut dyn Write, _indent: usize) -> std::fmt::Result {
         match self {
-            StatementTmplArg::None => "none".to_string(),
-            StatementTmplArg::Literal(value) => value.to_podlang_string(),
+            StatementTmplArg::None => write!(w, "none"),
+            StatementTmplArg::Literal(value) => value.fmt_podlang(w),
             StatementTmplArg::AnchoredKey(wildcard, key) => {
-                format!("?{}[{}]", wildcard.name, key)
+                write!(w, "?{}[{}]", wildcard.name, key)
             }
             StatementTmplArg::Wildcard(wildcard) => {
-                format!("?{}", wildcard.name)
+                write!(w, "?{}", wildcard.name)
             }
         }
     }
 }
 
 impl PrettyPrint for CustomPredicateBatch {
-    fn to_podlang_string_with_indent(&self, indent: usize) -> String {
-        let mut result = String::new();
-
+    fn fmt_podlang_with_indent(&self, w: &mut dyn Write, indent: usize) -> std::fmt::Result {
         for (i, predicate) in self.predicates.iter().enumerate() {
             if i > 0 {
-                let _ = write!(&mut result, "\n\n");
+                write!(w, "\n\n")?;
             }
-            let _ = write!(
-                &mut result,
-                "{}",
-                self.format_predicate_with_context(predicate, indent)
-            );
+            self.fmt_predicate_with_context(w, predicate, indent)?;
         }
-
-        result
+        Ok(())
     }
 }
 
 impl CustomPredicateBatch {
-    fn format_predicate_with_context(&self, predicate: &CustomPredicate, indent: usize) -> String {
-        format_predicate_definition(predicate, indent, Some(self))
+    fn fmt_predicate_with_context(
+        &self,
+        w: &mut dyn Write,
+        predicate: &CustomPredicate,
+        indent: usize,
+    ) -> std::fmt::Result {
+        fmt_predicate_definition(w, predicate, indent, Some(self))
     }
 }
 
 impl PrettyPrint for Value {
-    fn to_podlang_string_with_indent(&self, _indent: usize) -> String {
-        match self.typed() {
-            TypedValue::Int(i) => i.to_string(),
-            TypedValue::String(s) => {
-                // Use serde_json for proper JSON-style escaping
-                serde_json::to_string(s).unwrap_or_else(|_| format!("\"{}\"", s))
-            }
-            TypedValue::Bool(b) => b.to_string(),
-            TypedValue::Array(a) => format!(
-                "[{}]",
-                a.array()
-                    .iter()
-                    .map(|v| v.to_podlang_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            TypedValue::Dictionary(d) => {
-                format!(
-                    "{{ {} }}",
-                    d.kvs()
-                        .iter()
-                        .sorted_by_key(|(k, _)| k.name())
-                        .map(|(k, v)| format!("{}: {}", k, v.to_podlang_string()))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            }
-            TypedValue::Set(s) => {
-                format!(
-                    "#[{}]",
-                    s.set()
-                        .iter()
-                        .sorted() // Ensure deterministic output
-                        .map(|v| v.to_podlang_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            }
-            TypedValue::PublicKey(p) => format!("PublicKey({p})"),
-            TypedValue::PodId(p) => {
-                format!("0x{}", p.0.encode_hex::<String>())
-            }
-            TypedValue::Raw(r) => {
-                format!("Raw(0x{})", r.encode_hex::<String>())
-            }
-        }
+    fn fmt_podlang_with_indent(&self, w: &mut dyn Write, _indent: usize) -> std::fmt::Result {
+        write!(w, "{}", self.typed())
     }
 }
 
-fn format_predicate_definition(
+fn fmt_predicate_definition(
+    w: &mut dyn Write,
     predicate: &CustomPredicate,
     indent: usize,
     batch_context: Option<&CustomPredicateBatch>,
-) -> String {
-    let mut result = String::new();
+) -> std::fmt::Result {
     let base_indent = " ".repeat(indent);
     let statement_indent = " ".repeat(indent + 4);
 
-    format_predicate_signature(&mut result, predicate, &base_indent);
+    fmt_predicate_signature(w, predicate, &base_indent)?;
 
     let conjunction_str = if predicate.conjunction { "AND" } else { "OR" };
-    let _ = writeln!(&mut result, " = {}(", conjunction_str);
+    writeln!(w, " = {}(", conjunction_str)?;
 
     for (i, statement) in predicate.statements.iter().enumerate() {
         if i > 0 {
-            let _ = writeln!(&mut result);
+            writeln!(w)?;
         }
-        let _ = write!(
-            &mut result,
-            "{}{}",
-            statement_indent,
-            statement.to_podlang_string_with_batch_context(batch_context)
-        );
+        write!(w, "{}", statement_indent)?;
+        statement.fmt_podlang_with_batch_context(w, batch_context)?;
     }
 
-    let _ = write!(&mut result, "\n{})", base_indent);
-    result
+    write!(w, "\n{})", base_indent)
 }
 
-fn format_predicate_signature(result: &mut String, predicate: &CustomPredicate, base_indent: &str) {
-    let _ = write!(result, "{}{}", base_indent, predicate.name);
-    let _ = write!(result, "(");
+fn fmt_predicate_signature(
+    w: &mut dyn Write,
+    predicate: &CustomPredicate,
+    base_indent: &str,
+) -> std::fmt::Result {
+    write!(w, "{}{}", base_indent, predicate.name)?;
+    write!(w, "(")?;
 
     let mut public_args = predicate
         .wildcard_names
@@ -208,9 +171,9 @@ fn format_predicate_signature(result: &mut String, predicate: &CustomPredicate, 
         .take(predicate.args_len)
         .peekable();
     while let Some(arg_name) = public_args.next() {
-        let _ = write!(result, "{}", arg_name);
+        write!(w, "{}", arg_name)?;
         if public_args.peek().is_some() {
-            let _ = write!(result, ", ");
+            write!(w, ", ")?;
         }
     }
 
@@ -221,42 +184,18 @@ fn format_predicate_signature(result: &mut String, predicate: &CustomPredicate, 
         .peekable();
     if private_args.peek().is_some() {
         if predicate.args_len > 0 {
-            let _ = write!(result, ", ");
+            write!(w, ", ")?;
         }
-        let _ = write!(result, "private: ");
+        write!(w, "private: ")?;
         while let Some(arg_name) = private_args.next() {
-            let _ = write!(result, "{}", arg_name);
+            write!(w, "{}", arg_name)?;
             if private_args.peek().is_some() {
-                let _ = write!(result, ", ");
+                write!(w, ", ")?;
             }
         }
     }
 
-    let _ = write!(result, ")");
-}
-
-fn format_native_predicate(pred: &NativePredicate) -> &'static str {
-    match pred {
-        NativePredicate::None => "None",
-        NativePredicate::False => "False",
-        NativePredicate::Equal => "Equal",
-        NativePredicate::NotEqual => "NotEqual",
-        NativePredicate::Lt => "Lt",
-        NativePredicate::LtEq => "LtEq",
-        NativePredicate::Gt => "Gt",
-        NativePredicate::GtEq => "GtEq",
-        NativePredicate::Contains => "Contains",
-        NativePredicate::NotContains => "NotContains",
-        NativePredicate::SumOf => "SumOf",
-        NativePredicate::ProductOf => "ProductOf",
-        NativePredicate::MaxOf => "MaxOf",
-        NativePredicate::HashOf => "HashOf",
-        NativePredicate::DictContains => "DictContains",
-        NativePredicate::DictNotContains => "DictNotContains",
-        NativePredicate::ArrayContains => "ArrayContains",
-        NativePredicate::SetContains => "SetContains",
-        NativePredicate::SetNotContains => "SetNotContains",
-    }
+    write!(w, ")")
 }
 
 #[cfg(test)]
