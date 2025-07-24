@@ -176,7 +176,6 @@ where
 {
     fn id(&self) -> String {
         format!("GateAdapter<{}>", std::any::type_name::<G>())
-        // G::ID.to_string()
     }
 
     fn serialize(
