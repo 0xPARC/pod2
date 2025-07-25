@@ -16,6 +16,7 @@ use plonky2::{
     plonk::config::AlgebraicHasher,
 };
 use plonky2_u32::gadgets::multiple_comparison::list_le_circuit;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::{
@@ -30,7 +31,7 @@ use crate::{
             },
             signedpod::{verify_signed_pod_circuit, SignedPodVerifyTarget},
         },
-        emptypod::{EmptyPod, STANDARD_EMPTY_POD_DATA},
+        emptypod::{cache_get_standard_empty_pod_circuit_data, EmptyPod},
         error::Result,
         mainpod::{self, pad_statement, OperationArg},
         primitives::{
@@ -1376,6 +1377,7 @@ fn verify_main_pod_circuit(
     Ok(id)
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 pub struct MainPodVerifyTarget {
     params: Params,
     vds_root: HashOutTarget,
@@ -1504,9 +1506,13 @@ impl InnerCircuit for MainPodVerifyTarget {
             self.vd_mt_proofs[i].set_targets(pw, true, vd_mt_proof)?;
         }
         // the rest of vd_mt_proofs set them to the empty_pod vd_mt_proof
-        let vd_emptypod_mt_proof = input
-            .vds_set
-            .get_vds_proofs(&[STANDARD_EMPTY_POD_DATA.1.verifier_only.clone()])?;
+        let vd_emptypod_mt_proof =
+            input
+                .vds_set
+                .get_vds_proofs(&[cache_get_standard_empty_pod_circuit_data()
+                    .1
+                    .verifier_only
+                    .clone()])?;
         let vd_emptypod_mt_proof = vd_emptypod_mt_proof[0].clone();
         for i in input.vd_mt_proofs.len()..self.vd_mt_proofs.len() {
             self.vd_mt_proofs[i].set_targets(pw, true, &vd_emptypod_mt_proof)?;

@@ -21,7 +21,7 @@ use plonky2::{
 ///     vec![v1, v2, v3],
 /// ));
 /// ```
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct DebugGenerator {
     pub(crate) name: String,
     pub(crate) xs: Vec<Target>,

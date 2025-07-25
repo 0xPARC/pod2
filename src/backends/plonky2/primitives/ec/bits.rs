@@ -16,11 +16,12 @@ use plonky2::{
     plonk::{circuit_builder::CircuitBuilder, circuit_data::CommonCircuitData},
     util::serialization::{Buffer, IoResult, Read, Write},
 };
+use serde::{Deserialize, Serialize};
 
 use crate::backends::plonky2::basetypes::{D, F};
 
-#[derive(Debug)]
-struct ConditionalZeroGenerator<F: RichField + Extendable<D>, const D: usize> {
+#[derive(Debug, Default, Clone)]
+pub(crate) struct ConditionalZeroGenerator<F: RichField + Extendable<D>, const D: usize> {
     if_zero: Target,
     then_zero: Target,
     quot: Target,
@@ -78,9 +79,11 @@ impl<F: RichField + Extendable<D>, const D: usize> SimpleGenerator<F, D>
 
 /// A big integer, represented in base `2^32` with 10 digits, in little endian
 /// form.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BigUInt320Target {
+    #[serde(with = "serde_arrays")]
     pub limbs: [Target; 10],
+    #[serde(with = "serde_arrays")]
     pub bits: [BoolTarget; 320],
 }
 
@@ -313,7 +316,7 @@ fn biguint_limbs_to_bits(builder: &mut CircuitBuilder<F, D>, limbs: &[Target]) -
 Copied from https://github.com/0xPolygonZero/plonky2/blob/82791c4809d6275682c34b926390ecdbdc2a5297/plonky2/src/gadgets/range_check.rs#L62
  */
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct LowHighGenerator {
     integer: Target,
     n_log: usize,

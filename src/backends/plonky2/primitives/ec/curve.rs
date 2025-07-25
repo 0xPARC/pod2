@@ -57,6 +57,7 @@ pub fn ec_field_sqrt(x: &ECField) -> Option<ECField> {
     ]);
     // Compute x^((r-1)/2) = x^(p*((1+p)/2)*(1+p^2))
     let x1 = x.frobenius();
+    #[allow(clippy::manual_div_ceil)]
     let x2 = x1.exp_u64((1 + GoldilocksField::ORDER) / 2);
     let den = x2 * x2.repeated_frobenius(2);
     Some(num / den)
@@ -440,7 +441,7 @@ impl Mul<Point> for &BigUint {
 
 type FieldTarget = OEFTarget<5, QuinticExtension<GoldilocksField>>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize)]
 pub struct PointTarget {
     pub x: FieldTarget,
     pub u: FieldTarget,
@@ -470,8 +471,8 @@ impl PointTarget {
     }
 }
 
-#[derive(Clone, Debug)]
-struct PointSquareRootGenerator {
+#[derive(Clone, Default, Debug)]
+pub(crate) struct PointSquareRootGenerator {
     pub orig: PointTarget,
     pub sqrt: PointTarget,
 }

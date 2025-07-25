@@ -32,6 +32,7 @@ use plonky2::{
     },
     util::log2_ceil,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::{
@@ -133,16 +134,57 @@ pub fn new_params_padded<I: InnerCircuit>(
 
 /// RecursiveCircuit defines the circuit that verifies `arity` proofs.
 pub struct RecursiveCircuit<I: InnerCircuit> {
-    pub(crate) params: RecursiveParams,
     pub(crate) prover: ProverCircuitData<F, C, D>,
     pub(crate) target: RecursiveCircuitTarget<I>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RecursiveCircuitTarget<I: InnerCircuit> {
     innercircuit_targ: I,
     proofs_targ: Vec<ProofWithPublicInputsTarget<D>>,
     verifier_datas_targ: Vec<VerifierCircuitTarget>,
+}
+
+impl<I: InnerCircuit> RecursiveCircuitTarget<I> {
+    fn set_targets(
+        &self,
+        pw: &mut PartialWitness<F>,
+        innercircuit_input: &I::Input,
+        recursive_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
+        verifier_datas: Vec<VerifierOnlyCircuitData<C, D>>,
+    ) -> Result<()> {
+        let n = self.proofs_targ.len();
+        assert_eq!(n, recursive_proofs.len());
+        assert_eq!(n, verifier_datas.len());
+
+        // set the InnerCircuit related values
+        self.innercircuit_targ.set_targets(pw, innercircuit_input)?;
+
+        #[allow(clippy::needless_range_loop)]
+        for i in 0..n {
+            pw.set_verifier_data_target(&self.verifier_datas_targ[i], &verifier_datas[i])?;
+            pw.set_proof_with_pis_target(&self.proofs_targ[i], &recursive_proofs[i])?;
+        }
+
+        Ok(())
+    }
+}
+
+pub fn prove_rec_circuit<I: InnerCircuit>(
+    target: &RecursiveCircuitTarget<I>,
+    circuit_data: &CircuitData<F, C, D>,
+    inner_inputs: &I::Input,
+    proofs: Vec<ProofWithPublicInputs<F, C, D>>,
+    verifier_datas: Vec<VerifierOnlyCircuitData<C, D>>,
+) -> Result<ProofWithPublicInputs<F, C, D>> {
+    let mut pw = PartialWitness::new();
+    target.set_targets(
+        &mut pw,
+        inner_inputs, // innercircuit_input
+        proofs,
+        verifier_datas,
+    )?;
+    Ok(circuit_data.prove(pw)?)
 }
 
 impl<I: InnerCircuit> RecursiveCircuit<I> {
@@ -153,7 +195,7 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
         verifier_datas: Vec<VerifierOnlyCircuitData<C, D>>,
     ) -> Result<ProofWithPublicInputs<F, C, D>> {
         let mut pw = PartialWitness::new();
-        self.set_targets(
+        self.target.set_targets(
             &mut pw,
             inner_inputs, // innercircuit_input
             proofs,
@@ -182,7 +224,6 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
 
         let prover: ProverCircuitData<F, C, D> = builder.build_prover::<C>();
         Ok(Self {
-            params: params.clone(),
             prover,
             target: targets,
         })
@@ -240,31 +281,6 @@ impl<I: InnerCircuit> RecursiveCircuit<I> {
             proofs_targ,
             verifier_datas_targ,
         })
-    }
-
-    fn set_targets(
-        &self,
-        pw: &mut PartialWitness<F>,
-        innercircuit_input: &I::Input,
-        recursive_proofs: Vec<ProofWithPublicInputs<F, C, D>>,
-        verifier_datas: Vec<VerifierOnlyCircuitData<C, D>>,
-    ) -> Result<()> {
-        let n = recursive_proofs.len();
-        assert_eq!(n, self.params.arity);
-        assert_eq!(n, verifier_datas.len());
-
-        // set the InnerCircuit related values
-        self.target
-            .innercircuit_targ
-            .set_targets(pw, innercircuit_input)?;
-
-        #[allow(clippy::needless_range_loop)]
-        for i in 0..self.params.arity {
-            pw.set_verifier_data_target(&self.target.verifier_datas_targ[i], &verifier_datas[i])?;
-            pw.set_proof_with_pis_target(&self.target.proofs_targ[i], &recursive_proofs[i])?;
-        }
-
-        Ok(())
     }
 
     /// returns the target full-recursive circuit and its CircuitData

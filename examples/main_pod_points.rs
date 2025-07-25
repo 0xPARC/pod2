@@ -1,3 +1,4 @@
+#![allow(clippy::uninlined_format_args)] // TODO: Remove this in another PR
 //! Example of building main pods that verify signed pods and other main pods using custom
 //! predicates
 //!
@@ -21,6 +22,7 @@ use pod2::{
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
     let args: Vec<String> = env::args().collect();
     let mock = args.get(1).is_some_and(|arg1| arg1 == "--mock");
     if mock {

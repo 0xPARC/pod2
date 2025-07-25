@@ -6,9 +6,8 @@ pub mod mainpod;
 pub mod mock;
 pub mod primitives;
 pub mod recursion;
+mod serialization;
 pub mod signedpod;
-
-use std::sync::LazyLock;
 
 use base64::{prelude::BASE64_STANDARD, Engine};
 pub use error::*;
@@ -16,29 +15,37 @@ use plonky2::util::serialization::{Buffer, Read};
 
 use crate::{
     backends::plonky2::{
-        basetypes::{CircuitData, CommonCircuitData, Proof},
+        basetypes::{CommonCircuitData, Proof},
         circuits::mainpod::{MainPodVerifyTarget, NUM_PUBLIC_INPUTS},
         recursion::RecursiveCircuit,
+        serialization::CommonCircuitDataSerializer,
     },
+    cache::{self, CacheEntry},
     middleware::Params,
     timed,
 };
 
-pub static DEFAULT_PARAMS: LazyLock<Params> = LazyLock::new(Params::default);
-
-pub static STANDARD_REC_MAIN_POD_CIRCUIT_DATA: LazyLock<CircuitData> = LazyLock::new(|| {
-    let params = &*DEFAULT_PARAMS;
-    timed!(
-        "recursive MainPod circuit_data",
-        RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data(
-            params.max_input_recursive_pods,
-            NUM_PUBLIC_INPUTS,
-            params
-        )
-        .expect("calculate circuit_data")
-        .1
+pub fn cache_get_standard_rec_main_pod_common_circuit_data(
+) -> CacheEntry<CommonCircuitDataSerializer> {
+    let params = Params::default();
+    cache::get(
+        "standard_rec_main_pod_common_circuit_data",
+        &params,
+        |params| {
+            let circuit_data = timed!(
+                "recursive MainPod circuit_data",
+                RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data(
+                    params.max_input_recursive_pods,
+                    NUM_PUBLIC_INPUTS,
+                    params
+                )
+                .expect("calculate circuit_data")
+            );
+            CommonCircuitDataSerializer(circuit_data.1.common)
+        },
     )
-});
+    .expect("cache ok")
+}
 
 pub fn serialize_bytes(bytes: &[u8]) -> String {
     BASE64_STANDARD.encode(bytes)

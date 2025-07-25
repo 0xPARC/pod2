@@ -1,3 +1,4 @@
+#![allow(clippy::uninlined_format_args)] // TODO: Remove this in another PR
 //! Simple example of building a signed pod and verifying it
 //!
 //! Run: `cargo run --release --example signed_pod`

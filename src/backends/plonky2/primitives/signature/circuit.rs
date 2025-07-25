@@ -20,6 +20,7 @@ use plonky2::{
         proof::{ProofWithPublicInputs, ProofWithPublicInputsTarget},
     },
 };
+use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::{
@@ -38,6 +39,7 @@ use crate::{
 // TODO: This is a very simple wrapper over the signature verification implemented on
 // `SignatureTarget`.  I think we can remove this and use it directly.  Also we're not using the
 // `enabled` flag, so it should be straight-forward to remove this.
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SignatureVerifyTarget {
     // `enabled` determines if the signature verification is enabled
     pub(crate) enabled: BoolTarget,

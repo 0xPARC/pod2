@@ -2,6 +2,7 @@
 name = "pod2"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
 
 [lib]
 name = "pod2"
@@ -19,8 +20,8 @@ env_logger = "0.11"
 lazy_static = "1.5.0"
 thiserror = { version = "2.0.12" }
 # enabled by features:
-plonky2 = { git = "https://github.com/0xPolygonZero/plonky2", optional = true }
-plonky2_u32 = { git = "https://github.com/ax0/plonky2-u32" }
+plonky2 = { git = "https://github.com/0xPARC/plonky2.git", rev = "3defd60532c8693cf5e9d2e6a8412c77ca58760f", optional = true }
+plonky2_u32 = { git = "https://github.com/ax0/plonky2-u32", rev = "472a7849866167bc1218fb936c4ae9e2b4164290" }
 serde = "1.0.219"
 serde_json = "1.0.140"
 base64 = "0.22.1"
@@ -33,6 +34,11 @@ rand = "0.8.5"
 hashbrown = { version = "0.14.3", default-features = false, features = ["serde"] }
 pest = "2.8.0"
 pest_derive = "2.8.0"
+directories = { version = "6.0.0", optional = true }
+minicbor-serde = { version = "0.5.0", features = ["std"], optional = true }
+serde_bytes = "0.11"
+serde_arrays = "0.2.0"
+sha2 = { version = "0.10.9" }
 
 # Uncomment for debugging with https://github.com/ed255/plonky2/ at branch `feat/debug`.  The repo directory needs to be checked out next to the pod2 repo directory.
 # [patch."https://github.com/0xPolygonZero/plonky2"]
@@ -43,10 +49,15 @@ pretty_assertions = "1.4.1"
 # Used only for testing JSON Schema generation and validation.
 jsonschema = "0.30.0"
 
+[build-dependencies]
+vergen-gitcl = { version = "1.0.0", features = ["build"] }
+
 [features]
-default = ["backend_plonky2", "zk"]
+default = ["backend_plonky2", "zk", "mem_cache"]
 backend_plonky2 = ["plonky2"]
 zk = []
 metrics = []
 time = []
 examples = []
+disk_cache = ["directories", "minicbor-serde"]
+mem_cache = []

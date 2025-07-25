@@ -19,6 +19,7 @@ use plonky2::{
     },
     util::serialization::{Buffer, IoResult, Read, Write},
 };
+use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::{
@@ -39,7 +40,7 @@ use crate::{
 pub const CODE_SIZE: usize = HASH_SIZE + 2;
 const NUM_BITS: usize = 32;
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct ValueTarget {
     pub elements: [Target; VALUE_SIZE],
 }
@@ -75,8 +76,9 @@ impl ValueTarget {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct StatementArgTarget {
+    #[serde(with = "serde_arrays")]
     pub elements: [Target; STATEMENT_ARG_F_LEN],
 }
 
@@ -128,7 +130,7 @@ impl StatementArgTarget {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct StatementTarget {
     pub predicate: PredicateTarget,
     pub args: Vec<StatementArgTarget>,
@@ -201,8 +203,9 @@ impl StatementTarget {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OperationTypeTarget {
+    #[serde(with = "serde_arrays")]
     pub elements: [Target; Params::operation_type_size()],
 }
 
@@ -249,10 +252,11 @@ impl OperationTypeTarget {
 }
 
 // TODO: Implement Operation::to_field to determine the size of each element
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OperationTarget {
     pub op_type: OperationTypeTarget,
     pub args: Vec<[Target; OPERATION_ARG_F_LEN]>,
+    #[serde(with = "serde_arrays")]
     pub aux: [Target; OPERATION_AUX_F_LEN],
 }
 
@@ -304,8 +308,9 @@ impl NativePredicateTarget {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct PredicateTarget {
+    #[serde(with = "serde_arrays")]
     pub(crate) elements: [Target; Params::predicate_size()],
 }
 
@@ -386,8 +391,9 @@ impl LiteralOrWildcardTarget {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct StatementTmplArgTarget {
+    #[serde(with = "serde_arrays")]
     pub elements: [Target; Params::statement_tmpl_arg_size()],
 }
 
@@ -432,7 +438,7 @@ impl StatementTmplArgTarget {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct StatementTmplTarget {
     pub pred: PredicateTarget,
     pub args: Vec<StatementTmplArgTarget>,
@@ -449,7 +455,7 @@ impl StatementTmplTarget {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CustomPredicateTarget {
     pub conjunction: BoolTarget,
     // len = params.max_custom_predicate_arity
@@ -468,7 +474,7 @@ impl CustomPredicateTarget {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CustomPredicateBatchTarget {
     pub predicates: Vec<CustomPredicateTarget>,
 }
@@ -500,6 +506,7 @@ impl CustomPredicateBatchTarget {
 }
 
 /// Custom predicate table entry
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CustomPredicateEntryTarget {
     pub id: HashOutTarget,
     pub index: Target,
@@ -575,6 +582,7 @@ impl CustomPredicateEntryTarget {
 }
 
 // Custom predicate verification table entry
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CustomPredicateVerifyEntryTarget {
     pub custom_predicate_table_index: Target,
     pub custom_predicate: CustomPredicateEntryTarget,
@@ -631,6 +639,7 @@ impl CustomPredicateVerifyEntryTarget {
 }
 
 /// Query for the custom predicate verification table
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CustomPredicateVerifyQueryTarget {
     pub statement: StatementTarget,
     pub op_type: OperationTypeTarget,
@@ -1386,7 +1395,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct LtMaskGenerator {
     pub(crate) n: Target,
     pub(crate) mask: Vec<Target>,

@@ -2,6 +2,7 @@
 //! https://0xparc.github.io/pod2/merkletree.html .
 use std::{collections::HashMap, fmt, iter::IntoIterator};
 
+use itertools::zip_eq;
 use plonky2::field::types::Field;
 use serde::{Deserialize, Serialize};
 
@@ -55,7 +56,7 @@ impl MerkleTree {
     /// returns the value at the given key
     pub fn get(&self, key: &RawValue) -> TreeResult<RawValue> {
         let path = keypath(self.max_depth, *key)?;
-        let key_resolution = self.root.down(0, self.max_depth, path, None)?;
+        let (key_resolution, _) = self.root.down(0, self.max_depth, path, None)?;
         match key_resolution {
             Some((k, v)) if &k == key => Ok(v),
             _ => Err(TreeError::key_not_found()),
@@ -66,7 +67,7 @@ impl MerkleTree {
     pub fn contains(&self, key: &RawValue) -> TreeResult<bool> {
         let path = keypath(self.max_depth, *key)?;
         match self.root.down(0, self.max_depth, path, None) {
-            Ok(Some((k, _))) => {
+            Ok((Some((k, _)), _)) => {
                 if &k == key {
                     Ok(true)
                 } else {
@@ -75,6 +76,34 @@ impl MerkleTree {
             }
             _ => Ok(false),
         }
+    }
+
+    pub fn insert(
+        &mut self,
+        key: &RawValue,
+        value: &RawValue,
+    ) -> TreeResult<MerkleProofStateTransition> {
+        let proof_non_existence = self.prove_nonexistence(key)?;
+
+        let old_root: Hash = self.root.hash();
+        self.root
+            .add_leaf(0, self.max_depth, Leaf::new(self.max_depth, *key, *value)?)?;
+        let new_root = self.root.compute_hash();
+
+        let (v, proof) = self.prove(key)?;
+        assert!(proof.existence);
+        assert_eq!(v, *value);
+        assert!(proof.other_leaf.is_none());
+
+        Ok(MerkleProofStateTransition {
+            typ: 0, // insertion
+            old_root,
+            proof_non_existence,
+            new_root,
+            new_key: *key,
+            new_value: *value,
+            siblings: proof.siblings,
+        })
     }
 
     /// returns a proof of existence, which proves that the given key exists in
@@ -89,7 +118,7 @@ impl MerkleTree {
             .root
             .down(0, self.max_depth, path, Some(&mut siblings))?
         {
-            Some((k, v)) if &k == key => Ok((
+            (Some((k, v)), _) if &k == key => Ok((
                 v,
                 MerkleProof {
                     existence: true,
@@ -116,20 +145,20 @@ impl MerkleTree {
             .down(0, self.max_depth, path, Some(&mut siblings))?
         {
             // case i) the expected leaf does not exist
-            None => Ok(MerkleProof {
+            (None, _) => Ok(MerkleProof {
                 existence: false,
                 siblings,
                 other_leaf: None,
             }),
             // case ii) the expected leaf does exist in the tree, but it has a different `key`
-            Some((k, v)) if &k != key => Ok(MerkleProof {
+            (Some((k, v)), _) if &k != key => Ok(MerkleProof {
                 existence: false,
                 siblings,
                 other_leaf: Some((k, v)),
             }),
             _ => Err(TreeError::key_not_found()),
         }
-        // both cases prove that the given key don't exist in the tree. ∎
+        // both cases prove that the given key don't exist in the tree.
     }
 
     /// verifies an inclusion proof for the given `key` and `value`
@@ -175,8 +204,92 @@ impl MerkleTree {
         }
     }
 
+    pub fn verify_state_transition(
+        max_depth: usize,
+        proof: &MerkleProofStateTransition,
+    ) -> TreeResult<()> {
+        let mut old_siblings = proof.proof_non_existence.siblings.clone();
+        let new_siblings = proof.siblings.clone();
+
+        // check that for the old_root, the new_key does not exist in the tree
+        Self::verify_nonexistence(
+            max_depth,
+            proof.old_root,
+            &proof.proof_non_existence,
+            &proof.new_key,
+        )?;
+
+        // check that new_siblings verify with the new_root
+        Self::verify(
+            max_depth,
+            proof.new_root,
+            &MerkleProof {
+                existence: true,
+                siblings: new_siblings.clone(),
+                other_leaf: None,
+            },
+            &proof.new_key,
+            &proof.new_value,
+        )?;
+
+        // if other_leaf exists, check path divergence
+        if let Some((other_key, _)) = proof.proof_non_existence.other_leaf {
+            let old_path = keypath(max_depth, other_key)?;
+            let new_path = keypath(max_depth, proof.new_key)?;
+
+            let divergence_lvl: usize = match zip_eq(old_path, new_path).position(|(x, y)| x != y) {
+                Some(d) => d,
+                None => return Err(TreeError::max_depth()),
+            };
+
+            if divergence_lvl != new_siblings.len() - 1 {
+                return Err(TreeError::state_transition_fail(
+                    "paths divergence does not match".to_string(),
+                ));
+            }
+        }
+
+        // let d=divergence_level, assert that:
+        // 1) old_siblings[i] == new_siblings[i] ∀ i \ {d}
+        // 2) at i==d, if old_siblings[i] != new_siblings[i]:
+        //     old_siblings[i] == EMPTY_HASH
+        //     new_siblings[i] == old_leaf_hash
+        let d = new_siblings.len() - 1;
+        old_siblings.resize(d + 1, EMPTY_HASH);
+        for i in 0..d {
+            if old_siblings[i] != new_siblings[i] {
+                return Err(TreeError::state_transition_fail(
+                    "siblings don't match: old[i]!=new[i] ∀ i (except at i==d)".to_string(),
+                ));
+            }
+        }
+        if old_siblings[d] != new_siblings[d] {
+            if old_siblings[d] != EMPTY_HASH {
+                return Err(TreeError::state_transition_fail(
+                    "siblings don't match: old[d]!=empty".to_string(),
+                ));
+            }
+            let k = proof
+                .proof_non_existence
+                .other_leaf
+                .map(|(k, _)| k)
+                .ok_or(TreeError::state_transition_fail(
+                        "proof.proof_non_existence.other_leaf can not be empty for the case old_siblings[d]!=new_siblings[d]".to_string()
+                        ))?;
+            let v: Option<RawValue> = proof.proof_non_existence.other_leaf.map(|(_, v)| v);
+            let old_leaf_hash = kv_hash(&k, v);
+            if new_siblings[d] != old_leaf_hash {
+                return Err(TreeError::state_transition_fail(
+                    "siblings don't match: new[d]!=old_leaf_hash".to_string(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
     /// returns an iterator over the leaves of the tree
-    pub fn iter(&self) -> Iter {
+    pub fn iter(&self) -> Iter<'_> {
         Iter {
             state: vec![&self.root],
         }
@@ -246,12 +359,21 @@ impl MerkleProof {
         key: &RawValue,
         value: Option<RawValue>,
     ) -> TreeResult<Hash> {
+        let path = keypath(max_depth, *key)?;
+        let h = kv_hash(key, value);
+        self.compute_root_from_node(max_depth, &h, path)
+    }
+    fn compute_root_from_node(
+        &self,
+        max_depth: usize,
+        node_hash: &Hash,
+        path: Vec<bool>,
+    ) -> TreeResult<Hash> {
         if self.siblings.len() >= max_depth {
             return Err(TreeError::max_depth());
         }
 
-        let path = keypath(max_depth, *key)?;
-        let mut h = kv_hash(key, value);
+        let mut h = *node_hash;
         for (i, sibling) in self.siblings.iter().enumerate().rev() {
             let mut input: Vec<F> = if path[i] {
                 [sibling.0, h.0].concat()
@@ -302,6 +424,22 @@ impl fmt::Display for MerkleClaimAndProof {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MerkleProofStateTransition {
+    // type: 0:insertion, 1:update, 2:deletion
+    pub(crate) typ: u8,
+
+    pub(crate) old_root: Hash,
+    // proof of non-existence of the new_key for the old_root
+    pub(crate) proof_non_existence: MerkleProof,
+
+    pub(crate) new_root: Hash,
+    pub(crate) new_key: RawValue,
+    pub(crate) new_value: RawValue,
+
+    pub(crate) siblings: Vec<Hash>,
+}
+
 #[derive(Clone, Debug)]
 enum Node {
     None,
@@ -313,13 +451,33 @@ impl fmt::Display for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Intermediate(n) => {
-                writeln!(
-                    f,
-                    "\"{}\" -> {{ \"{}\" \"{}\" }}",
-                    n.hash(),
-                    n.left.hash(),
-                    n.right.hash()
-                )?;
+                let left_hash: String = if n.left.is_empty() {
+                    writeln!(
+                        f,
+                        "\"{}_child_of_{}\" [label=\"{}\"]",
+                        n.left.hash(),
+                        n.hash(),
+                        n.left.hash()
+                    )?;
+                    format!("\"{}_child_of_{}\"", n.left.hash(), n.hash())
+                } else {
+                    writeln!(f, "\"{}\"", n.left.hash(),)?;
+                    format!("\"{}\"", n.left.hash())
+                };
+                let right_hash = if n.right.is_empty() {
+                    writeln!(
+                        f,
+                        "\"{}_child_of_{}\" [label=\"{}\"]",
+                        n.right.hash(),
+                        n.hash(),
+                        n.right.hash()
+                    )?;
+                    format!("\"{}_child_of_{}\"", n.right.hash(), n.hash())
+                } else {
+                    writeln!(f, "\"{}\"", n.right.hash(),)?;
+                    format!("\"{}\"", n.right.hash())
+                };
+                writeln!(f, "\"{}\" -> {{ {} {} }}", n.hash(), left_hash, right_hash,)?;
                 write!(f, "{}", n.left)?;
                 write!(f, "{}", n.right)
             }
@@ -377,7 +535,7 @@ impl Node {
         max_depth: usize,
         path: Vec<bool>,
         mut siblings: Option<&mut Vec<Hash>>,
-    ) -> TreeResult<Option<(RawValue, RawValue)>> {
+    ) -> TreeResult<(Option<(RawValue, RawValue)>, usize)> {
         if lvl >= max_depth {
             return Err(TreeError::max_depth());
         }
@@ -401,8 +559,8 @@ impl Node {
                 value,
                 path: _p,
                 hash: _h,
-            }) => Ok(Some((*key, *value))),
-            _ => Ok(None),
+            }) => Ok((Some((*key, *value)), lvl)),
+            _ => Ok((None, lvl)),
         }
     }
 
@@ -619,6 +777,7 @@ pub mod tests {
 
     #[test]
     fn test_merkletree() -> TreeResult<()> {
+        let max_depth: usize = 32;
         let mut kvs = HashMap::new();
         for i in 0..8 {
             if i == 1 {
@@ -630,7 +789,7 @@ pub mod tests {
         let value = RawValue::from(1013);
         kvs.insert(key, value);
 
-        let tree = MerkleTree::new(32, &kvs)?;
+        let tree = MerkleTree::new(max_depth, &kvs)?;
         // when printing the tree, it should print the same tree as in
         // https://0xparc.github.io/pod2/merkletree.html#example-2
         println!("{}", tree);
@@ -640,7 +799,7 @@ pub mod tests {
         assert_eq!(v, RawValue::from(1013));
         println!("{}", proof);
 
-        MerkleTree::verify(32, tree.root(), &proof, &key, &value)?;
+        MerkleTree::verify(max_depth, tree.root(), &proof, &key, &value)?;
 
         // Exclusion checks
         let key = RawValue::from(12);
@@ -651,14 +810,14 @@ pub mod tests {
         );
         println!("{}", proof);
 
-        MerkleTree::verify_nonexistence(32, tree.root(), &proof, &key)?;
+        MerkleTree::verify_nonexistence(max_depth, tree.root(), &proof, &key)?;
 
         let key = RawValue::from(1);
         let proof = tree.prove_nonexistence(&RawValue::from(1))?;
         assert_eq!(proof.other_leaf, None);
         println!("{}", proof);
 
-        MerkleTree::verify_nonexistence(32, tree.root(), &proof, &key)?;
+        MerkleTree::verify_nonexistence(max_depth, tree.root(), &proof, &key)?;
 
         // Check iterator
         let collected_kvs: Vec<_> = tree.into_iter().collect::<Vec<_>>();
@@ -686,10 +845,44 @@ pub mod tests {
 
         let sorted_kvs = kvs
             .iter()
-            .sorted_by(|(k1, _), (k2, _)| cmp(32)(**k1, **k2))
+            .sorted_by(|(k1, _), (k2, _)| cmp(max_depth)(**k1, **k2))
             .collect::<Vec<_>>();
 
         assert_eq!(collected_kvs, sorted_kvs);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_state_transition() -> TreeResult<()> {
+        let max_depth: usize = 32;
+        let mut kvs = HashMap::new();
+        for i in 0..8 {
+            kvs.insert(RawValue::from(i), RawValue::from(1000 + i));
+        }
+
+        let mut tree = MerkleTree::new(max_depth, &kvs)?;
+        let old_root = tree.root();
+
+        // key=37 shares path with key=5, till the level 6, needing 2 extra
+        // 'empty' nodes between the original position of key=5 with the new
+        // position of key=5 and key=37.
+        let key = RawValue::from(37);
+        let value = RawValue::from(1037);
+        let state_transition_proof = tree.insert(&key, &value)?;
+
+        MerkleTree::verify_state_transition(max_depth, &state_transition_proof)?;
+        assert_eq!(state_transition_proof.old_root, old_root);
+        assert_eq!(state_transition_proof.new_root, tree.root());
+        assert_eq!(state_transition_proof.new_key, key);
+        assert_eq!(state_transition_proof.new_value, value);
+
+        // 2nd part of the test. Add a new leaf
+        let key = RawValue::from(21);
+        let value = RawValue::from(1021);
+        let state_transition_proof = tree.insert(&key, &value)?;
+
+        MerkleTree::verify_state_transition(max_depth, &state_transition_proof)?;
 
         Ok(())
     }

@@ -4,31 +4,34 @@ use std::{any::Any, iter, sync::Arc};
 
 use itertools::Itertools;
 pub use operation::*;
-use plonky2::{
-    hash::poseidon::PoseidonHash,
-    plonk::{circuit_data::CommonCircuitData, config::Hasher},
-};
+use plonky2::{hash::poseidon::PoseidonHash, plonk::config::Hasher};
 use serde::{Deserialize, Serialize};
 pub use statement::*;
 
 use crate::{
     backends::plonky2::{
-        basetypes::{Proof, ProofWithPublicInputs, VerifierOnlyCircuitData, D},
+        basetypes::{CircuitData, Proof, ProofWithPublicInputs, VerifierOnlyCircuitData},
+        cache::{self, CacheEntry},
+        cache_get_standard_rec_main_pod_common_circuit_data,
         circuits::mainpod::{CustomPredicateVerification, MainPodVerifyInput, MainPodVerifyTarget},
         deserialize_proof,
         emptypod::EmptyPod,
         error::{Error, Result},
         mock::emptypod::MockEmptyPod,
         primitives::merkletree::MerkleClaimAndProof,
-        recursion::{hash_verifier_data, RecursiveCircuit, RecursiveParams},
+        recursion::{
+            hash_verifier_data, prove_rec_circuit, RecursiveCircuit, RecursiveCircuitTarget,
+        },
+        serialization::{
+            CircuitDataSerializer, CommonCircuitDataSerializer, VerifierCircuitDataSerializer,
+        },
         serialize_proof,
         signedpod::SignedPod,
-        STANDARD_REC_MAIN_POD_CIRCUIT_DATA,
     },
     middleware::{
         self, resolve_wildcard_values, value_from_op, AnchoredKey, CustomPredicateBatch, Hash,
         MainPodInputs, NativeOperation, OperationType, Params, Pod, PodId, PodProver, PodType,
-        RecursivePod, StatementArg, ToFields, VDSet, F, KEY_TYPE, SELF,
+        RecursivePod, StatementArg, ToFields, VDSet, KEY_TYPE, SELF,
     },
     timed,
 };
@@ -434,24 +437,6 @@ impl PodProver for Prover {
         vd_set: &VDSet,
         inputs: MainPodInputs,
     ) -> Result<Box<dyn RecursivePod>> {
-        let rec_circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
-        let (main_pod_target, circuit_data) =
-            RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data_padded(
-                params.max_input_recursive_pods,
-                &rec_circuit_data.common,
-                params,
-            )?;
-        let rec_params = RecursiveParams {
-            arity: params.max_input_recursive_pods,
-            common_data: circuit_data.common.clone(),
-            verifier_data: circuit_data.verifier_data(),
-        };
-        let main_pod = RecursiveCircuit {
-            params: rec_params,
-            prover: circuit_data.prover_data(),
-            target: main_pod_target,
-        };
-
         let signed_pods_input: Vec<SignedPod> = inputs
             .signed_pods
             .iter()
@@ -541,9 +526,17 @@ impl PodProver for Prover {
             custom_predicate_batches,
             custom_predicate_verifications,
         };
+
+        let (main_pod_target, circuit_data) = &*cache_get_rec_main_pod_circuit_data(params);
         let proof_with_pis = timed!(
             "MainPod::prove",
-            main_pod.prove(&input, proofs, verifier_datas)?
+            prove_rec_circuit(
+                main_pod_target,
+                circuit_data,
+                &input,
+                proofs,
+                verifier_datas
+            )?
         );
 
         Ok(Box::new(MainPod {
@@ -570,21 +563,59 @@ pub struct MainPod {
     proof: Proof,
 }
 
-// This is a helper function to get the CommonCircuitData necessary to decode
-// a serialized proof. At some point in the future, this data may be available
-// as a constant or with static initialization, but in the meantime we can
-// generate it on-demand.
-pub fn get_common_data(params: &Params) -> Result<CommonCircuitData<F, D>, Error> {
-    // TODO: Cache this somehow
-    // https://github.com/0xPARC/pod2/issues/247
-    let rec_circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
-    let (_, circuit_data) =
+pub(crate) fn rec_main_pod_circuit_data(
+    params: &Params,
+) -> (RecursiveCircuitTarget<MainPodVerifyTarget>, CircuitData) {
+    let rec_common_circuit_data = cache_get_standard_rec_main_pod_common_circuit_data();
+    timed!(
+        "recursive MainPod circuit_data padded",
         RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data_padded(
             params.max_input_recursive_pods,
-            &rec_circuit_data.common,
+            &rec_common_circuit_data,
             params,
-        )?;
-    Ok(circuit_data.common.clone())
+        )
+        .expect("calculate target_and_circuit_data_padded")
+    )
+}
+
+fn cache_get_rec_main_pod_circuit_data(
+    params: &Params,
+) -> CacheEntry<(
+    RecursiveCircuitTarget<MainPodVerifyTarget>,
+    CircuitDataSerializer,
+)> {
+    // TODO(Edu): I believe that the standard_rec_main_pod_circuit data is the same as this when
+    // the params are Default: we're padding the circuit to itself, so we get the original one?
+    // If this is true we can deduplicate this cache entry because both rec_main_pod_circuit_data
+    // and standard_rec_main_pod_circuit_data are indexed by Params.  This can be easily tested by
+    // comparing the cached artifacts on disk :)
+    cache::get("rec_main_pod_circuit_data", params, |params| {
+        let (target, circuit_data) = rec_main_pod_circuit_data(params);
+        (target, CircuitDataSerializer(circuit_data))
+    })
+    .expect("cache ok")
+}
+
+pub fn cache_get_rec_main_pod_verifier_circuit_data(
+    params: &Params,
+) -> CacheEntry<VerifierCircuitDataSerializer> {
+    cache::get("rec_main_pod_verifier_circuit_data", params, |params| {
+        let (_, rec_main_pod_circuit_data_padded) = &*cache_get_rec_main_pod_circuit_data(params);
+        VerifierCircuitDataSerializer(rec_main_pod_circuit_data_padded.verifier_data().clone())
+    })
+    .expect("cache ok")
+}
+
+// This is a helper function to get the CommonCircuitData necessary to decode
+// a serialized proof.
+pub fn cache_get_rec_main_pod_common_circuit_data(
+    params: &Params,
+) -> CacheEntry<CommonCircuitDataSerializer> {
+    cache::get("rec_main_pod_common_circuit_data", params, |params| {
+        let (_, rec_main_pod_circuit_data_padded) = &*cache_get_rec_main_pod_circuit_data(params);
+        CommonCircuitDataSerializer(rec_main_pod_circuit_data_padded.common.clone())
+    })
+    .expect("cache ok")
 }
 
 #[derive(Serialize, Deserialize)]
@@ -626,22 +657,15 @@ impl Pod for MainPod {
         }
 
         // 1, 3, 4, 5 verification via the zkSNARK proof
-        let rec_circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
-        // TODO: cache these artefacts
-        // https://github.com/0xPARC/pod2/issues/247
-        let (_, circuit_data) =
-            RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data_padded(
-                self.params.max_input_recursive_pods,
-                &rec_circuit_data.common,
-                &self.params,
-            )?;
+        let rec_main_pod_verifier_circuit_data =
+            &*cache_get_rec_main_pod_verifier_circuit_data(&self.params);
         let public_inputs = id
             .to_fields(&self.params)
             .iter()
             .chain(self.vd_set.root().0.iter())
             .cloned()
             .collect_vec();
-        circuit_data
+        rec_main_pod_verifier_circuit_data
             .verify(ProofWithPublicInputs {
                 proof: self.proof.clone(),
                 public_inputs,
@@ -675,8 +699,9 @@ impl Pod for MainPod {
 
 impl RecursivePod for MainPod {
     fn verifier_data(&self) -> VerifierOnlyCircuitData {
-        let data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
-        data.verifier_only.clone()
+        let rec_main_pod_verifier_circuit_data =
+            cache_get_rec_main_pod_verifier_circuit_data(&self.params);
+        rec_main_pod_verifier_circuit_data.verifier_only.clone()
     }
     fn proof(&self) -> Proof {
         self.proof.clone()
@@ -691,7 +716,7 @@ impl RecursivePod for MainPod {
         id: PodId,
     ) -> Result<Box<dyn RecursivePod>> {
         let data: Data = serde_json::from_value(data)?;
-        let common = get_common_data(&params)?;
+        let common = cache_get_rec_main_pod_common_circuit_data(&params);
         let proof = deserialize_proof(&common, &data.proof)?;
         Ok(Box::new(Self {
             params,
@@ -719,7 +744,8 @@ pub mod tests {
             self, literal, CustomPredicateBatchBuilder, MainPodBuilder, StatementTmplBuilder as STB,
         },
         middleware::{
-            self, containers::Set, CustomPredicateRef, NativePredicate as NP, DEFAULT_VD_SET,
+            self, containers::Set, CustomPredicateRef, NativePredicate as NP, DEFAULT_VD_LIST,
+            DEFAULT_VD_SET,
         },
         op,
     };
@@ -735,7 +761,9 @@ pub mod tests {
             ..Default::default()
         };
         println!("{:#?}", params);
-        let vd_set = &*DEFAULT_VD_SET;
+        let mut vds = DEFAULT_VD_LIST.clone();
+        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params);
@@ -747,7 +775,7 @@ pub mod tests {
         let sanction_list_pod = sanction_list_builder.sign(&signer)?;
         let kyc_builder = zu_kyc_pod_builder(
             &params,
-            vd_set,
+            &vd_set,
             &gov_id_pod,
             &pay_stub_pod,
             &sanction_list_pod,
@@ -772,7 +800,9 @@ pub mod tests {
             max_input_pods_public_statements: 10,
             ..Default::default()
         };
-        let vd_set = &*DEFAULT_VD_SET;
+        let mut vds = DEFAULT_VD_LIST.clone();
+        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
 
         let mut gov_id_builder = frontend::SignedPodBuilder::new(&params);
         gov_id_builder.insert("idNumber", "4242424242");
@@ -781,7 +811,7 @@ pub mod tests {
         let signer = Signer(SecretKey(42u64.into()));
         let gov_id = gov_id_builder.sign(&signer).unwrap();
         let now_minus_18y: i64 = 1169909388;
-        let mut kyc_builder = frontend::MainPodBuilder::new(&params, vd_set);
+        let mut kyc_builder = frontend::MainPodBuilder::new(&params, &vd_set);
         kyc_builder.add_signed_pod(&gov_id);
         kyc_builder
             .pub_op(op!(lt, (&gov_id, "dateOfBirth"), now_minus_18y))
@@ -827,9 +857,11 @@ pub mod tests {
             max_depth_mt_containers: 4,
             max_depth_mt_vds: 6,
         };
-        let vd_set = &*DEFAULT_VD_SET;
+        let mut vds = DEFAULT_VD_LIST.clone();
+        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
 
-        let pod_builder = frontend::MainPodBuilder::new(&params, vd_set);
+        let pod_builder = frontend::MainPodBuilder::new(&params, &vd_set);
 
         // Mock
         let prover = MockProver {};
@@ -889,7 +921,9 @@ pub mod tests {
             ..Default::default()
         };
         println!("{:#?}", params);
-        let vd_set = &*DEFAULT_VD_SET;
+        let mut vds = DEFAULT_VD_LIST.clone();
+        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
 
         let mut cpb_builder = CustomPredicateBatchBuilder::new(params.clone(), "cpb".into());
         let stb0 = STB::new(NP::Equal).arg(("id", "score")).arg(literal(42));
@@ -908,7 +942,7 @@ pub mod tests {
         let cpb_and = CustomPredicateRef::new(cpb.clone(), 0);
         let _cpb_or = CustomPredicateRef::new(cpb.clone(), 1);
 
-        let mut pod_builder = MainPodBuilder::new(&params, vd_set);
+        let mut pod_builder = MainPodBuilder::new(&params, &vd_set);
 
         let st0 = pod_builder.priv_op(op!(new_entry, "score", 42))?;
         let st1 = pod_builder.priv_op(op!(new_entry, "key", 42))?;

@@ -42,20 +42,29 @@ use std::{collections::HashMap, sync::LazyLock};
 
 use crate::{
     backends::plonky2::{
-        emptypod::STANDARD_EMPTY_POD_DATA, primitives::merkletree::MerkleClaimAndProof,
-        DEFAULT_PARAMS, STANDARD_REC_MAIN_POD_CIRCUIT_DATA,
+        emptypod::cache_get_standard_empty_pod_verifier_circuit_data,
+        mainpod::cache_get_rec_main_pod_verifier_circuit_data,
+        primitives::merkletree::MerkleClaimAndProof,
     },
-    middleware::{containers::Array, Hash, RawValue, Result, Value},
+    middleware::{containers::Array, Hash, Params, RawValue, Result, Value},
 };
 
-pub static DEFAULT_VD_SET: LazyLock<VDSet> = LazyLock::new(|| {
-    let params = &*DEFAULT_PARAMS;
+pub static DEFAULT_VD_LIST: LazyLock<Vec<VerifierOnlyCircuitData>> = LazyLock::new(|| {
+    let params = Params::default();
+    vec![
+        cache_get_rec_main_pod_verifier_circuit_data(&params)
+            .verifier_only
+            .clone(),
+        cache_get_standard_empty_pod_verifier_circuit_data()
+            .verifier_only
+            .clone(),
+    ]
+});
 
-    let vds = vec![
-        STANDARD_REC_MAIN_POD_CIRCUIT_DATA.verifier_only.clone(),
-        STANDARD_EMPTY_POD_DATA.1.verifier_only.clone(),
-    ];
-    VDSet::new(params.max_depth_mt_vds, &vds).unwrap()
+pub static DEFAULT_VD_SET: LazyLock<VDSet> = LazyLock::new(|| {
+    let params = Params::default();
+    let vds = &*DEFAULT_VD_LIST;
+    VDSet::new(params.max_depth_mt_vds, vds).unwrap()
 });
 
 /// VDSet is the set of the allowed verifier_data hashes. When proving a

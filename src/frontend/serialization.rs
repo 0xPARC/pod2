@@ -11,12 +11,6 @@ use crate::{
     },
 };
 
-#[derive(Serialize, Deserialize, JsonSchema)]
-pub enum SignedPodType {
-    Signed,
-    MockSigned,
-}
-
 #[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[schemars(rename = "SignedPod")]
@@ -119,7 +113,9 @@ mod tests {
     use super::*;
     use crate::{
         backends::plonky2::{
-            mainpod::Prover, mock::mainpod::MockProver, primitives::ec::schnorr::SecretKey,
+            mainpod::{rec_main_pod_circuit_data, Prover},
+            mock::mainpod::MockProver,
+            primitives::ec::schnorr::SecretKey,
             signedpod::Signer,
         },
         examples::{
@@ -130,7 +126,7 @@ mod tests {
         middleware::{
             self,
             containers::{Array, Dictionary, Set},
-            Params, TypedValue, DEFAULT_VD_SET,
+            Params, TypedValue, DEFAULT_VD_LIST,
         },
     };
 
@@ -300,7 +296,9 @@ mod tests {
             max_input_recursive_pods: 1,
             ..Default::default()
         };
-        let vd_set = &*DEFAULT_VD_SET;
+        let mut vds = DEFAULT_VD_LIST.clone();
+        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
             zu_kyc_sign_pod_builders(&params);
@@ -312,7 +310,7 @@ mod tests {
         let sanction_list_pod = sanction_list_builder.sign(&signer)?;
         let kyc_builder = zu_kyc_pod_builder(
             &params,
-            vd_set,
+            &vd_set,
             &gov_id_pod,
             &pay_stub_pod,
             &sanction_list_pod,

@@ -40,12 +40,11 @@ mod tests {
     }
 
     fn assert_fails(rule: Rule, input: &str) {
-        match PodlangParser::parse(rule, input) {
-            Ok(pairs) => panic!(
+        if let Ok(pairs) = PodlangParser::parse(rule, input) {
+            panic!(
                 "Expected parse to fail, but it succeeded. Parsed:\n{:#?}",
                 pairs
-            ),
-            Err(_) => (), // Failed as expected
+            )
         }
     }
 

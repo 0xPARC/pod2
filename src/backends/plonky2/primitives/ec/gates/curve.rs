@@ -25,7 +25,7 @@ use crate::backends::plonky2::primitives::ec::{
 /// operation when all its witness wire values are zero (so that when the gate is partially used,
 /// the unused slots still pass the constraints). This is the reason why this gate doesn't add the
 /// final offset: if it did, the constraints wouldn't pass on the zero witness values.
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct ECAddHomogOffset;
 
 impl SimpleGate for ECAddHomogOffset {

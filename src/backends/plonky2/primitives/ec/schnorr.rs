@@ -101,7 +101,7 @@ impl<'de> Deserialize<'de> for Signature {
 }
 
 /// Targets for Schnorr signature over ecGFp5.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SignatureTarget {
     pub s: BigUInt320Target,
     pub e: BigUInt320Target,
