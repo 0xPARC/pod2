@@ -65,6 +65,7 @@ impl Display for NativePredicate {
             NativePredicate::ProductOf => "ProductOf",
             NativePredicate::MaxOf => "MaxOf",
             NativePredicate::HashOf => "HashOf",
+            NativePredicate::PublicKeyOf => "PublicKeyOf",
             NativePredicate::DictContains => "DictContains",
             NativePredicate::DictNotContains => "DictNotContains",
             NativePredicate::ArrayContains => "ArrayContains",
