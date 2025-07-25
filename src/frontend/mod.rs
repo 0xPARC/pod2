@@ -978,7 +978,7 @@ pub mod tests {
 
     #[test]
     fn test_front_tickets() -> Result<()> {
-        let builder = tickets_pod_full_flow()?;
+        let builder = tickets_pod_full_flow(&Params::default(), &MOCK_VD_SET)?;
         println!("{}", builder);
 
         Ok(())

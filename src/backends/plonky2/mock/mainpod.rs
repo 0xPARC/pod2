@@ -430,8 +430,7 @@ pub mod tests {
             great_boy_pod_full_flow, tickets_pod_full_flow, zu_kyc_pod_builder,
             zu_kyc_sign_pod_builders, MOCK_VD_SET,
         },
-        frontend,
-        middleware::{self},
+        frontend, middleware,
     };
 
     #[test]
@@ -486,7 +485,7 @@ pub mod tests {
     #[test]
     fn test_mock_main_tickets() -> frontend::Result<()> {
         let params = middleware::Params::default();
-        let tickets_builder = tickets_pod_full_flow()?;
+        let tickets_builder = tickets_pod_full_flow(&params, &MOCK_VD_SET)?;
         let prover = MockProver {};
         let proof_pod = tickets_builder.prove(&prover, &params)?;
         let pod = (proof_pod.pod as Box<dyn Any>)
