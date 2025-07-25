@@ -89,16 +89,7 @@ impl StatementTmpl {
 
 impl PrettyPrint for StatementTmplArg {
     fn fmt_podlang_with_indent(&self, w: &mut dyn Write, _indent: usize) -> std::fmt::Result {
-        match self {
-            StatementTmplArg::None => write!(w, "none"),
-            StatementTmplArg::Literal(value) => value.fmt_podlang(w),
-            StatementTmplArg::AnchoredKey(wildcard, key) => {
-                write!(w, "?{}[{}]", wildcard.name, key)
-            }
-            StatementTmplArg::Wildcard(wildcard) => {
-                write!(w, "?{}", wildcard.name)
-            }
-        }
+        write!(w, "{}", self)
     }
 }
 
