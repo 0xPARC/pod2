@@ -11,8 +11,8 @@ use crate::{
     backends::plonky2::{primitives::ec::schnorr::SecretKey, signedpod::Signer},
     frontend::{MainPod, MainPodBuilder, Result, SignedPod, SignedPodBuilder},
     middleware::{
-        containers::Set, CustomPredicateRef, Params, PodSigner, PodType, Predicate, Statement,
-        StatementArg, TypedValue, VDSet, Value, KEY_SIGNER, KEY_TYPE,
+        containers::Set, hash_values, CustomPredicateRef, Params, PodSigner, PodType, Predicate,
+        Statement, StatementArg, TypedValue, VDSet, Value, KEY_SIGNER, KEY_TYPE,
     },
     op,
 };
@@ -431,11 +431,20 @@ pub fn tickets_pod_builder(
         (signed_pod, "attendeeEmail")
     ))?;
 
-    // This isn't the most secure way to prove ownership (it requires verifier
-    // to check pod ID on an anchored key to confirm statement wasn't copied),
-    // but it's the simplest.
+    // This isn't the most fool-proof way to prove ownership (it requires
+    // verifier to check pod ID on an anchored key to confirm statement wasn't
+    // copied), but it's the simplest.
     let st_sk = builder.priv_literal(TICKET_OWNER_SECRET_KEY)?;
-    builder.pub_op(op!(public_key_of, (signed_pod, "attendeePublicKey"), st_sk))?;
+    builder.pub_op(op!(
+        public_key_of,
+        (signed_pod, "attendeePublicKey"),
+        st_sk.clone()
+    ))?;
+
+    // Nullifier calculation is public, but based on the private sk.
+    let external_nullifier = "external nullifier";
+    let nullifier = hash_values(&[TICKET_OWNER_SECRET_KEY.into(), external_nullifier.into()]);
+    builder.pub_op(op!(hash_of, nullifier, st_sk, external_nullifier))?;
 
     Ok(builder)
 }
