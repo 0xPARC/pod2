@@ -199,7 +199,7 @@ impl TryFrom<&TypedValue> for PublicKey {
     type Error = Error;
     fn try_from(v: &TypedValue) -> std::result::Result<Self, Self::Error> {
         if let TypedValue::PublicKey(pk) = v {
-            Ok(pk.clone())
+            Ok(*pk)
         } else {
             Err(Error::custom("Value not a public key".to_string()))
         }

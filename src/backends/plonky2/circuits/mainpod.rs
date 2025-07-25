@@ -592,7 +592,7 @@ fn verify_public_key_of_circuit(
     let arg2_expected = cache.equations[1].lhs.clone();
     let expected_statement = StatementTarget::new_native(
         builder,
-        &params,
+        params,
         NativePredicate::PublicKeyOf,
         &[arg1_expected, arg2_expected],
     );
@@ -2619,7 +2619,7 @@ mod tests {
                 OperationAux::None,
             );
             let prev_statements = vec![public_key_st, secret_key_st];
-            operation_verify(st, op, prev_statements, vec![], &secret_key)
+            operation_verify(st, op, prev_statements, vec![], secret_key)
         })
     }
 
@@ -2672,7 +2672,7 @@ mod tests {
         let secret_key = 123i64;
         let public_key = SecretKey(BigUint::from(123u32)).public_key();
         let public_key_value = Value::from(TypedValue::from(public_key));
-        let secret_key_value = Value::from(TypedValue::from(secret_key.clone()));
+        let secret_key_value = Value::from(TypedValue::from(secret_key));
         let public_key_ak = AnchoredKey::from((PodId(RawValue::from(88).into()), "public key"));
         let secret_key_ak = AnchoredKey::from((PodId(RawValue::from(70).into()), "secret key"));
         let public_key_st: mainpod::Statement =

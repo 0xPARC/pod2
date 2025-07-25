@@ -677,14 +677,14 @@ mod tests {
 
         let test_cases = [
             // Valid pairs
-            (fixed_pk.clone(), fixed_sk.clone(), true),
-            (rand_pk.clone(), rand_sk.clone(), true),
+            (fixed_pk, fixed_sk.clone(), true),
+            (rand_pk, rand_sk.clone(), true),
             // Mismatched pairs
-            (fixed_pk.clone(), rand_sk.clone(), false),
-            (rand_pk.clone(), fixed_sk.clone(), false),
+            (fixed_pk, rand_sk.clone(), false),
+            (rand_pk, fixed_sk.clone(), false),
             // Above group order
-            (small_pk.clone(), small_sk.clone(), true),
-            (small_pk.clone(), too_large_sk.clone(), false),
+            (small_pk, small_sk.clone(), true),
+            (small_pk, too_large_sk.clone(), false),
         ];
 
         let params = Params::default();
@@ -704,13 +704,12 @@ mod tests {
             let st = Statement::PublicKeyOf(pk_ak.clone().into(), sk_ak.clone().into());
 
             // Check
-            op.check(&params, &st).and_then(|is_good| {
+            op.check(&params, &st).map(|is_good| {
                 assert_eq!(
                     is_good, *expect_good,
                     "PublicKeyOf({}, {}) => {}",
                     pk, sk, is_good
                 );
-                Ok(())
             })
         })
     }
@@ -726,7 +725,7 @@ mod tests {
         let sk_ak = AnchoredKey::new(pod_id, Key::new("secret".into()));
 
         // Form op args
-        let pk_s = Statement::Equal(pk_ak.clone().into(), fixed_pk.clone().into());
+        let pk_s = Statement::Equal(pk_ak.clone().into(), fixed_pk.into());
         let sk_s = Statement::Equal(sk_ak.clone().into(), fixed_sk.clone().into());
 
         // Bad op and statement with bad first args

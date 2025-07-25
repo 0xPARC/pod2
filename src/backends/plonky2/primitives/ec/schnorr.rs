@@ -191,7 +191,7 @@ impl SecretKey {
             ));
         }
 
-        let big_uint = BigUint::from_bytes_le(&sk_bytes);
+        let big_uint = BigUint::from_bytes_le(sk_bytes);
 
         if big_uint >= *GROUP_ORDER {
             return Err(Error::custom(
@@ -223,7 +223,7 @@ impl SecretKey {
             limb_vec.push(g64 as u32);
         }
 
-        return Ok(Self(BigUint::from_slice(&limb_vec)));
+        Ok(Self(BigUint::from_slice(&limb_vec)))
     }
 }
 
@@ -258,7 +258,7 @@ impl FromStr for SecretKey {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let sk_bytes = deserialize_bytes(&s)?;
+        let sk_bytes = deserialize_bytes(s)?;
         SecretKey::from_bytes(&sk_bytes)
     }
 }
@@ -493,8 +493,7 @@ mod test {
         let sk_toobig = SecretKey(GROUP_ORDER.clone());
         assert_ne!(sk_toobig, sk_123);
         let str_toobig = serde_json::to_string(&sk_toobig).unwrap();
-        let deser_toobig: Result<SecretKey, _> = serde_json::from_str(&str_toobig);
-        assert!(matches!(deser_toobig, Err(_)));
+        assert!(serde_json::from_str::<SecretKey>(&str_toobig).is_err());
 
         Ok(())
     }
@@ -512,23 +511,23 @@ mod test {
         assert_eq!(
             limbs_n.as_slice(),
             (0..10)
-                .map(|i| GoldilocksField::from_canonical_u32(i))
+                .map(GoldilocksField::from_canonical_u32)
                 .collect_vec()
                 .as_slice()
         );
         let rsk_n = SecretKey::from_limbs(limbs_n).unwrap();
         assert_eq!(sk_n, rsk_n);
 
-        let bad_result = SecretKey::from_limbs(
+        assert!(SecretKey::from_limbs(
             (0..9)
                 .chain([9u64 << 32])
-                .map(|i| GoldilocksField::from_canonical_u64(i))
+                .map(GoldilocksField::from_canonical_u64)
                 .collect_vec()
                 .as_slice()
                 .try_into()
                 .unwrap(),
-        );
-        assert!(matches!(bad_result, Err(_)));
+        )
+        .is_err());
 
         Ok(())
     }

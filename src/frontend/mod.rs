@@ -1123,7 +1123,7 @@ pub mod tests {
         let signed_pod = builder.sign(&signer).unwrap();
 
         // Main POD proves ownership of the owner's secret key.
-        let mut builder = MainPodBuilder::new(&params, &vd_set);
+        let mut builder = MainPodBuilder::new(&params, vd_set);
         builder.add_signed_pod(&signed_pod);
         let st0 = signed_pod.get_statement("owner").unwrap();
         let st1 = builder
@@ -1140,8 +1140,8 @@ pub mod tests {
             .unwrap();
 
         // Prove Main POD to check.
-        let mut main_prover = MockProver {};
-        let main_pod = builder.prove(&mut main_prover, &params).unwrap();
+        let main_prover = MockProver {};
+        let main_pod = builder.prove(&main_prover, &params).unwrap();
 
         println!("{}", main_pod);
 
@@ -1165,7 +1165,7 @@ pub mod tests {
 
         // Try to build with the wrong secret key.  The pre-proving checks
         // will catch this.
-        let mut builder = MainPodBuilder::new(&params, &vd_set);
+        let mut builder = MainPodBuilder::new(&params, vd_set);
         builder.add_signed_pod(&signed_pod);
         let st0 = signed_pod.get_statement("owner").unwrap();
         let st1 = builder
@@ -1197,7 +1197,7 @@ pub mod tests {
         let pk = sk.public_key();
 
         // Try to build with wrong type in 1st arg
-        let mut builder = MainPodBuilder::new(&params, &vd_set);
+        let mut builder = MainPodBuilder::new(&params, vd_set);
         let st_pk = builder.literal(false, Value::from(pk)).unwrap();
         let st_int1 = builder.literal(false, Value::from(123)).unwrap();
         assert!(builder
@@ -1214,7 +1214,7 @@ pub mod tests {
             .is_err());
 
         // Try to build with wrong type in 2nd arg
-        builder = MainPodBuilder::new(&params, &vd_set);
+        builder = MainPodBuilder::new(&params, vd_set);
         let st_sk = builder.literal(false, Value::from(pk)).unwrap();
         let st_int2 = builder.literal(false, Value::from(123)).unwrap();
         assert!(builder
