@@ -3,8 +3,7 @@
 use std::fmt::Write;
 
 use crate::middleware::{
-    CustomPredicate, CustomPredicateBatch, Predicate, StatementTmpl, StatementTmplArg,
-    Value,
+    CustomPredicate, CustomPredicateBatch, Predicate, StatementTmpl, StatementTmplArg, Value,
 };
 
 /// Trait for converting AST nodes to Podlang source code
