@@ -3,6 +3,7 @@ pub mod custom;
 use std::{collections::HashSet, sync::LazyLock};
 
 use custom::eth_dos_batch;
+use num::BigUint;
 
 pub static MOCK_VD_SET: LazyLock<VDSet> = LazyLock::new(|| VDSet::new(6, &[]).unwrap());
 
@@ -10,8 +11,8 @@ use crate::{
     backends::plonky2::{primitives::ec::schnorr::SecretKey, signedpod::Signer},
     frontend::{MainPod, MainPodBuilder, Result, SignedPod, SignedPodBuilder},
     middleware::{
-        containers::Set, CustomPredicateRef, Params, PodSigner, PodType, Predicate, Statement,
-        StatementArg, TypedValue, VDSet, Value, KEY_SIGNER, KEY_TYPE,
+        containers::Set, hash_values, CustomPredicateRef, Params, PodSigner, PodType, Predicate,
+        Statement, StatementArg, TypedValue, VDSet, Value, KEY_SIGNER, KEY_TYPE,
     },
     op,
 };
@@ -393,13 +394,17 @@ pub fn great_boy_pod_full_flow() -> Result<(Params, MainPodBuilder)> {
 
 // Tickets
 
+pub const TICKET_OWNER_SECRET_KEY: SecretKey = SecretKey(BigUint::ZERO);
+
 pub fn tickets_sign_pod_builder(params: &Params) -> SignedPodBuilder {
     // Create a signed pod with all atomic types (string, int, bool)
     let mut builder = SignedPodBuilder::new(params);
     builder.insert("eventId", 123);
     builder.insert("productId", 456);
-    builder.insert("attendeeName", "John Doe");
+    // Removed temporarily to make the example fit in 8 entries.
+    //builder.insert("attendeeName", "John Doe");
     builder.insert("attendeeEmail", "john.doe@example.com");
+    builder.insert("attendeePublicKey", TICKET_OWNER_SECRET_KEY.public_key());
     builder.insert("isConsumed", true);
     builder.insert("isRevoked", false);
     builder
@@ -425,17 +430,31 @@ pub fn tickets_pod_builder(
         blacklisted_email_set_value,
         (signed_pod, "attendeeEmail")
     ))?;
+
+    // This isn't the most fool-proof way to prove ownership (it requires
+    // verifier to check pod ID on an anchored key to confirm statement wasn't
+    // copied), but it's the simplest.
+    let st_sk = builder.priv_literal(TICKET_OWNER_SECRET_KEY)?;
+    builder.pub_op(op!(
+        public_key_of,
+        (signed_pod, "attendeePublicKey"),
+        st_sk.clone()
+    ))?;
+
+    // Nullifier calculation is public, but based on the private sk.
+    let external_nullifier = "external nullifier";
+    let nullifier = hash_values(&[TICKET_OWNER_SECRET_KEY.into(), external_nullifier.into()]);
+    builder.pub_op(op!(hash_of, nullifier, st_sk, external_nullifier))?;
+
     Ok(builder)
 }
 
-pub fn tickets_pod_full_flow() -> Result<MainPodBuilder> {
-    let params = Params::default();
-    let vd_set = &*MOCK_VD_SET;
-    let builder = tickets_sign_pod_builder(&params);
+pub fn tickets_pod_full_flow(params: &Params, vd_set: &VDSet) -> Result<MainPodBuilder> {
+    let builder = tickets_sign_pod_builder(params);
 
     let signed_pod = builder.sign(&Signer(SecretKey(1u32.into()))).unwrap();
     tickets_pod_builder(
-        &params,
+        params,
         vd_set,
         &signed_pod,
         123,

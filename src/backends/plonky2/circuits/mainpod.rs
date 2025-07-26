@@ -1,6 +1,7 @@
 use std::{array, iter, sync::Arc};
 
 use itertools::{izip, zip_eq, Itertools};
+use num::{BigUint, One};
 use plonky2::{
     field::types::Field,
     hash::{
@@ -14,6 +15,7 @@ use plonky2::{
     },
     plonk::config::AlgebraicHasher,
 };
+use plonky2_u32::gadgets::multiple_comparison::list_le_circuit;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -31,9 +33,15 @@ use crate::{
         },
         emptypod::{cache_get_standard_empty_pod_circuit_data, EmptyPod},
         error::Result,
-        mainpod::{self, pad_statement},
-        primitives::merkletree::{
-            verify_merkle_proof_circuit, MerkleClaimAndProof, MerkleClaimAndProofTarget,
+        mainpod::{self, pad_statement, OperationArg},
+        primitives::{
+            ec::{
+                bits::{BigUInt320Target, CircuitBuilderBits},
+                curve::{CircuitBuilderElliptic, Point, WitnessWriteCurve, GROUP_ORDER},
+            },
+            merkletree::{
+                verify_merkle_proof_circuit, MerkleClaimAndProof, MerkleClaimAndProofTarget,
+            },
         },
         recursion::{InnerCircuit, VerifiedProofTarget},
         signedpod::SignedPod,
@@ -41,11 +49,10 @@ use crate::{
     measure_gates_begin, measure_gates_end,
     middleware::{
         AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, NativeOperation,
-        NativePredicate, Params, PodType, PredicatePrefix, Statement, StatementArg, ToFields,
-        Value, ValueRef, F, HASH_SIZE, KEY_TYPE, SELF, VALUE_SIZE,
+        NativePredicate, OperationType, Params, PodType, PredicatePrefix, Statement, StatementArg,
+        ToFields, TypedValue, Value, ValueRef, F, HASH_SIZE, KEY_TYPE, SELF, VALUE_SIZE,
     },
 };
-
 //
 // MainPod verification
 //
@@ -146,6 +153,7 @@ fn verify_operation_circuit(
     prev_statements: &[StatementTarget],
     input_statements_offset: usize,
     merkle_claims: &[MerkleClaimTarget],
+    secret_key: &BigUInt320Target,
     custom_predicate_verification_table: &[HashOutTarget],
 ) -> Result<()> {
     let measure = measure_gates_begin!(builder, "OpVerify");
@@ -218,6 +226,7 @@ fn verify_operation_circuit(
                 verify_transitive_eq_circuit(params, builder, st, &op.op_type, &cache.op_args),
                 verify_lt_to_neq_circuit(params, builder, st, &op.op_type, &cache.op_args),
                 verify_hash_of_circuit(params, builder, st, &op.op_type, &cache),
+                verify_public_key_of_circuit(params, builder, st, &op.op_type, secret_key, &cache),
                 verify_sum_of_circuit(params, builder, st, &op.op_type, &cache),
                 verify_product_of_circuit(params, builder, st, &op.op_type, &cache),
                 verify_max_of_circuit(params, builder, st, &op.op_type, &cache),
@@ -535,6 +544,69 @@ fn verify_hash_of_circuit(
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
     let ok = builder.all([op_code_ok, arg_types_ok, hash_value_ok, st_ok]);
+    measure_gates_end!(builder, measure);
+    ok
+}
+
+fn verify_public_key_of_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    st: &StatementTarget,
+    op_type: &OperationTypeTarget,
+    secret_key: &BigUInt320Target,
+    cache: &StatementCache,
+) -> BoolTarget {
+    let measure = measure_gates_begin!(builder, "OpPublicKeyOf");
+
+    let op_code_ok = op_type.has_native(builder, NativeOperation::PublicKeyOf);
+    let (arg_types_ok, [arg1_value, arg2_value]) = cache.first_n_args_as_values();
+    // inputting public_key, secret_key
+    let public_key_hash = arg1_value.elements;
+    let secret_key_hash = arg2_value.elements;
+
+    let secret_key_hash_v =
+        builder.hash_n_to_hash_no_pad::<PoseidonHash>(secret_key.limbs.to_vec());
+    let skey_hash_ok = builder.is_equal_slice(&secret_key_hash, &secret_key_hash_v.elements);
+    let invgenerator = builder.constant_point(Point::generator().inverse());
+    let secret_key_bits = secret_key.bits;
+    let group_orderm1 = &*GROUP_ORDER - BigUint::one();
+    let group_orderm1target = builder.constant_biguint320(&group_orderm1);
+    let compare_ok = list_le_circuit(
+        builder,
+        secret_key.limbs.to_vec(),
+        group_orderm1target.limbs.to_vec(),
+        32,
+    );
+    // public_key = g^-secret key
+    let public_key = builder.multiply_point(&secret_key_bits, &invgenerator);
+    let public_key_hash_v = builder.hash_n_to_hash_no_pad::<PoseidonHash>(
+        public_key
+            .x
+            .components
+            .into_iter()
+            .chain(public_key.u.components)
+            .collect(),
+    );
+    let pkey_hash_ok = builder.is_equal_slice(&public_key_hash, &public_key_hash_v.elements);
+
+    let arg1_expected = cache.equations[0].lhs.clone();
+    let arg2_expected = cache.equations[1].lhs.clone();
+    let expected_statement = StatementTarget::new_native(
+        builder,
+        params,
+        NativePredicate::PublicKeyOf,
+        &[arg1_expected, arg2_expected],
+    );
+    let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+
+    let ok = builder.all([
+        op_code_ok,
+        arg_types_ok,
+        pkey_hash_ok,
+        skey_hash_ok,
+        compare_ok,
+        st_ok,
+    ]);
     measure_gates_end!(builder, measure);
     ok
 }
@@ -1296,6 +1368,7 @@ fn verify_main_pod_circuit(
             prev_statements,
             input_statements_offset,
             &merkle_claims,
+            &main_pod.secret_keys[i],
             &custom_predicate_verification_table,
         )?;
     }
@@ -1315,6 +1388,7 @@ pub struct MainPodVerifyTarget {
     input_statements: Vec<StatementTarget>,
     operations: Vec<OperationTarget>,
     merkle_proofs: Vec<MerkleClaimAndProofTarget>,
+    secret_keys: Vec<BigUInt320Target>,
     custom_predicate_batches: Vec<CustomPredicateBatchTarget>,
     custom_predicate_verifications: Vec<CustomPredicateVerifyEntryTarget>,
 }
@@ -1347,6 +1421,9 @@ impl MainPodVerifyTarget {
                 .map(|_| {
                     MerkleClaimAndProofTarget::new_virtual(params.max_depth_mt_containers, builder)
                 })
+                .collect(),
+            secret_keys: (0..params.max_statements)
+                .map(|_| builder.add_virtual_biguint320_target())
                 .collect(),
             custom_predicate_batches: (0..params.max_custom_predicate_batches)
                 .map(|_| builder.add_virtual_custom_predicate_batch(params))
@@ -1484,6 +1561,40 @@ impl InnerCircuit for MainPodVerifyTarget {
         for (i, (st, op)) in zip_eq(&input.statements, &input.operations).enumerate() {
             self.input_statements[i].set_targets(pw, &self.params, st)?;
             self.operations[i].set_targets(pw, &self.params, op)?;
+            if matches!(
+                op.op_type(),
+                OperationType::Native(NativeOperation::PublicKeyOf)
+            ) {
+                if let StatementArg::Literal(value) = &st.1[1] {
+                    if let TypedValue::SecretKey(sk) = value.typed() {
+                        pw.set_biguint320_target(&self.secret_keys[i], &sk.0)?;
+                    } else {
+                        panic!("SecretKey literal of incorrect type!")
+                    }
+                } else if let OperationArg::Index(ind) = op.1[1] {
+                    // TODO(artwyman): This adjustment only works if the
+                    // secret key came from a statement in the current POD.
+                    // A more general solution needs to be able index across
+                    // the virtual array of statements from all input PODs,
+                    // similar to what's done in plonky2::mainpod::layout_statements.
+                    let adjusted_index = ind
+                        - (1 + self.params.max_input_signed_pods
+                            * self.params.max_signed_pod_values
+                            + self.params.max_input_recursive_pods
+                                * self.params.max_public_statements);
+                    if let StatementArg::Literal(value) = &input.statements[adjusted_index].1[1] {
+                        if let TypedValue::SecretKey(sk) = value.typed() {
+                            pw.set_biguint320_target(&self.secret_keys[i], &sk.0)?;
+                        } else {
+                            panic!("SecretKey literal of incorrect type!")
+                        }
+                    }
+                } else {
+                    panic!("SecretKey arg not found!")
+                }
+            } else {
+                pw.set_biguint320_target(&self.secret_keys[i], &BigUint::ZERO)?;
+            }
         }
 
         assert!(input.merkle_proofs.len() <= self.params.max_merkle_proofs_containers);
@@ -1556,7 +1667,10 @@ mod tests {
             basetypes::C,
             circuits::common::tests::I64_TEST_PAIRS,
             mainpod::{calculate_id, OperationArg, OperationAux},
-            primitives::merkletree::{MerkleClaimAndProof, MerkleTree},
+            primitives::{
+                ec::schnorr::SecretKey,
+                merkletree::{MerkleClaimAndProof, MerkleTree},
+            },
         },
         frontend::{self, literal, CustomPredicateBatchBuilder, StatementTmplBuilder},
         middleware::{
@@ -1570,6 +1684,7 @@ mod tests {
         op: mainpod::Operation,
         prev_statements: Vec<mainpod::Statement>,
         merkle_proofs: Vec<MerkleClaimAndProof>,
+        secret_key: &SecretKey,
     ) -> Result<()> {
         let params = Params {
             max_custom_predicate_batches: 0,
@@ -1601,6 +1716,7 @@ mod tests {
             .into_iter()
             .map(|pf| pf.into())
             .collect();
+        let secret_key_target = builder.constant_biguint320(&secret_key.0);
         let custom_predicate_verification_table = vec![];
 
         verify_operation_circuit(
@@ -1611,6 +1727,7 @@ mod tests {
             &prev_statements_target,
             0,
             &merkle_claims_target,
+            &secret_key_target,
             &custom_predicate_verification_table,
         )?;
 
@@ -1771,7 +1888,13 @@ mod tests {
         .into_iter()
         .for_each(|(op, st)| {
             let check = std::panic::catch_unwind(|| {
-                operation_verify(st, op, prev_statements.to_vec(), vec![])
+                operation_verify(
+                    st,
+                    op,
+                    prev_statements.to_vec(),
+                    vec![],
+                    &SecretKey(BigUint::ZERO),
+                )
             });
             match check {
                 Err(e) => {
@@ -1836,7 +1959,14 @@ mod tests {
         ]
         .into_iter()
         .for_each(|(op, st)| {
-            assert!(operation_verify(st, op, prev_statements.to_vec(), vec![]).is_err())
+            assert!(operation_verify(
+                st,
+                op,
+                prev_statements.to_vec(),
+                vec![],
+                &SecretKey(BigUint::ZERO)
+            )
+            .is_err())
         });
     }
 
@@ -1849,7 +1979,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![Statement::None.into()];
-        operation_verify(st, op, prev_statements, vec![])
+        operation_verify(st, op, prev_statements, vec![], &SecretKey(BigUint::ZERO))
     }
 
     #[test]
@@ -1867,7 +1997,7 @@ mod tests {
             vec![],
             OperationAux::None,
         );
-        operation_verify(st1, op, prev_statements, vec![])
+        operation_verify(st1, op, prev_statements, vec![], &SecretKey(BigUint::ZERO))
     }
 
     #[test]
@@ -1879,7 +2009,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![Statement::None.into()];
-        operation_verify(st, op, prev_statements, vec![])
+        operation_verify(st, op, prev_statements, vec![], &SecretKey(BigUint::ZERO))
     }
 
     #[test]
@@ -1902,7 +2032,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2];
-        operation_verify(st, op, prev_statements, vec![])
+        operation_verify(st, op, prev_statements, vec![], &SecretKey(BigUint::ZERO))
     }
 
     #[test]
@@ -1925,7 +2055,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2];
-        operation_verify(st, op, prev_statements, vec![])
+        operation_verify(st, op, prev_statements, vec![], &SecretKey(BigUint::ZERO))
     }
 
     #[test]
@@ -1948,7 +2078,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2.clone()];
-        operation_verify(st, op, prev_statements, vec![])?;
+        operation_verify(st, op, prev_statements, vec![], &SecretKey(BigUint::ZERO))?;
 
         // Also check negative < negative
         let st3: mainpod::Statement = Statement::equal(
@@ -1972,7 +2102,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st3.clone(), st4];
-        operation_verify(st, op, prev_statements, vec![])?;
+        operation_verify(st, op, prev_statements, vec![], &SecretKey(BigUint::ZERO))?;
 
         // Also check negative < positive
         let st: mainpod::Statement = Statement::lt(
@@ -1986,7 +2116,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st3, st2];
-        operation_verify(st, op, prev_statements, vec![])
+        operation_verify(st, op, prev_statements, vec![], &SecretKey(BigUint::ZERO))
     }
 
     #[test]
@@ -2009,7 +2139,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2.clone()];
-        operation_verify(st, op, prev_statements, vec![])?;
+        operation_verify(st, op, prev_statements, vec![], &SecretKey(BigUint::ZERO))?;
 
         // Also check negative <= negative
         let st3: mainpod::Statement = Statement::equal(
@@ -2033,7 +2163,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st3.clone(), st4];
-        operation_verify(st, op, prev_statements, vec![])?;
+        operation_verify(st, op, prev_statements, vec![], &SecretKey(BigUint::ZERO))?;
 
         // Also check negative <= positive
         let st: mainpod::Statement = Statement::lt_eq(
@@ -2047,7 +2177,13 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st3, st2];
-        operation_verify(st, op, prev_statements.clone(), vec![])?;
+        operation_verify(
+            st,
+            op,
+            prev_statements.clone(),
+            vec![],
+            &SecretKey(BigUint::ZERO),
+        )?;
 
         // Also check equality, both positive and negative.
         let st: mainpod::Statement = Statement::lt_eq(
@@ -2060,7 +2196,13 @@ mod tests {
             vec![OperationArg::Index(0), OperationArg::Index(0)],
             OperationAux::None,
         );
-        operation_verify(st, op, prev_statements.clone(), vec![])?;
+        operation_verify(
+            st,
+            op,
+            prev_statements.clone(),
+            vec![],
+            &SecretKey(BigUint::ZERO),
+        )?;
         let st: mainpod::Statement = Statement::lt_eq(
             AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
             AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
@@ -2071,7 +2213,7 @@ mod tests {
             vec![OperationArg::Index(1), OperationArg::Index(1)],
             OperationAux::None,
         );
-        operation_verify(st, op, prev_statements, vec![])
+        operation_verify(st, op, prev_statements, vec![], &SecretKey(BigUint::ZERO))
     }
 
     #[test]
@@ -2120,7 +2262,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2, st3];
-        operation_verify(st, op, prev_statements, vec![])
+        operation_verify(st, op, prev_statements, vec![], &SecretKey(BigUint::ZERO))
     }
 
     #[test]
@@ -2166,7 +2308,7 @@ mod tests {
                     OperationAux::None,
                 );
                 let prev_statements = vec![st1, st2, st3];
-                operation_verify(st, op, prev_statements, vec![])
+                operation_verify(st, op, prev_statements, vec![], &SecretKey(BigUint::ZERO))
             })
     }
 
@@ -2213,7 +2355,7 @@ mod tests {
                     OperationAux::None,
                 );
                 let prev_statements = vec![st1, st2, st3];
-                operation_verify(st, op, prev_statements, vec![])
+                operation_verify(st, op, prev_statements, vec![], &SecretKey(BigUint::ZERO))
             })
     }
 
@@ -2255,7 +2397,7 @@ mod tests {
                 OperationAux::None,
             );
             let prev_statements = vec![st1, st2, st3];
-            operation_verify(st, op, prev_statements, vec![])
+            operation_verify(st, op, prev_statements, vec![], &SecretKey(BigUint::ZERO))
         })
     }
 
@@ -2300,7 +2442,13 @@ mod tests {
                 let prev_statements = [st1, st2, st3];
 
                 let check = std::panic::catch_unwind(|| {
-                    operation_verify(st, op, prev_statements.to_vec(), vec![])
+                    operation_verify(
+                        st,
+                        op,
+                        prev_statements.to_vec(),
+                        vec![],
+                        &SecretKey(BigUint::ZERO),
+                    )
                 });
                 match check {
                     Err(e) => {
@@ -2333,7 +2481,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1];
-        operation_verify(st, op, prev_statements, vec![])
+        operation_verify(st, op, prev_statements, vec![], &SecretKey(BigUint::ZERO))
     }
 
     #[test]
@@ -2359,7 +2507,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2];
-        operation_verify(st, op, prev_statements, vec![])
+        operation_verify(st, op, prev_statements, vec![], &SecretKey(BigUint::ZERO))
     }
 
     #[test]
@@ -2399,7 +2547,13 @@ mod tests {
             no_key_pf,
         )];
         let prev_statements = vec![root_st, key_st];
-        operation_verify(st, op, prev_statements, merkle_proofs)
+        operation_verify(
+            st,
+            op,
+            prev_statements,
+            merkle_proofs,
+            &SecretKey(BigUint::ZERO),
+        )
     }
 
     #[test]
@@ -2446,7 +2600,138 @@ mod tests {
             key_pf,
         )];
         let prev_statements = vec![root_st, key_st, value_st];
-        operation_verify(st, op, prev_statements, merkle_proofs)
+        operation_verify(
+            st,
+            op,
+            prev_statements,
+            merkle_proofs,
+            &SecretKey(BigUint::ZERO),
+        )
+    }
+
+    #[test]
+    fn test_operation_verify_publickeyof() -> Result<()> {
+        [
+            &SecretKey(BigUint::one()),
+            &SecretKey::new_rand(),
+            &SecretKey(&*GROUP_ORDER - BigUint::one()),
+        ]
+        .into_iter()
+        .try_for_each(|secret_key| {
+            let public_key = secret_key.public_key();
+            let public_key_value = Value::from(TypedValue::from(public_key));
+            let secret_key_value = Value::from(TypedValue::from(secret_key.clone()));
+            let public_key_ak = AnchoredKey::from((PodId(RawValue::from(88).into()), "public key"));
+            let secret_key_ak = AnchoredKey::from((PodId(RawValue::from(70).into()), "secret key"));
+            let public_key_st: mainpod::Statement =
+                Statement::equal(public_key_ak.clone(), public_key_value.clone()).into();
+            let secret_key_st: mainpod::Statement =
+                Statement::equal(secret_key_ak.clone(), secret_key_value.clone()).into();
+            let st: mainpod::Statement =
+                Statement::public_key_of(public_key_ak, secret_key_ak).into();
+            let op = mainpod::Operation(
+                OperationType::Native(NativeOperation::PublicKeyOf),
+                vec![OperationArg::Index(0), OperationArg::Index(1)],
+                OperationAux::None,
+            );
+            let prev_statements = vec![public_key_st, secret_key_st];
+            operation_verify(st, op, prev_statements, vec![], secret_key)
+        })
+    }
+
+    #[test]
+    fn test_operation_verify_publickeyof_failure_wrong_key() {
+        let secret_key = SecretKey(BigUint::one());
+        let public_key = SecretKey(BigUint::ZERO).public_key();
+        let public_key_value = Value::from(TypedValue::from(public_key));
+        let secret_key_value = Value::from(TypedValue::from(secret_key.clone()));
+        let public_key_ak = AnchoredKey::from((PodId(RawValue::from(88).into()), "public key"));
+        let secret_key_ak = AnchoredKey::from((PodId(RawValue::from(70).into()), "secret key"));
+        let public_key_st: mainpod::Statement =
+            Statement::equal(public_key_ak.clone(), public_key_value.clone()).into();
+        let secret_key_st: mainpod::Statement =
+            Statement::equal(secret_key_ak.clone(), secret_key_value.clone()).into();
+        let st: mainpod::Statement = Statement::public_key_of(public_key_ak, secret_key_ak).into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::PublicKeyOf),
+            vec![OperationArg::Index(0), OperationArg::Index(1)],
+            OperationAux::None,
+        );
+        let prev_statements = vec![public_key_st, secret_key_st];
+        assert!(operation_verify(st, op, prev_statements, vec![], &secret_key).is_err())
+    }
+
+    #[test]
+    fn test_operation_verify_publickeyof_failure_pk_type() {
+        let secret_key = SecretKey(BigUint::one());
+        let public_key = 123i64;
+        let public_key_value = Value::from(TypedValue::from(public_key));
+        let secret_key_value = Value::from(TypedValue::from(secret_key.clone()));
+        let public_key_ak = AnchoredKey::from((PodId(RawValue::from(88).into()), "public key"));
+        let secret_key_ak = AnchoredKey::from((PodId(RawValue::from(70).into()), "secret key"));
+        let public_key_st: mainpod::Statement =
+            Statement::equal(public_key_ak.clone(), public_key_value.clone()).into();
+        let secret_key_st: mainpod::Statement =
+            Statement::equal(secret_key_ak.clone(), secret_key_value.clone()).into();
+        let st: mainpod::Statement = Statement::public_key_of(public_key_ak, secret_key_ak).into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::PublicKeyOf),
+            vec![OperationArg::Index(0), OperationArg::Index(1)],
+            OperationAux::None,
+        );
+        let prev_statements = vec![public_key_st, secret_key_st];
+        assert!(operation_verify(st, op, prev_statements, vec![], &secret_key).is_err())
+    }
+
+    #[test]
+    fn test_operation_verify_publickeyof_failure_sk_type() {
+        let secret_key = 123i64;
+        let public_key = SecretKey(BigUint::from(123u32)).public_key();
+        let public_key_value = Value::from(TypedValue::from(public_key));
+        let secret_key_value = Value::from(TypedValue::from(secret_key));
+        let public_key_ak = AnchoredKey::from((PodId(RawValue::from(88).into()), "public key"));
+        let secret_key_ak = AnchoredKey::from((PodId(RawValue::from(70).into()), "secret key"));
+        let public_key_st: mainpod::Statement =
+            Statement::equal(public_key_ak.clone(), public_key_value.clone()).into();
+        let secret_key_st: mainpod::Statement =
+            Statement::equal(secret_key_ak.clone(), secret_key_value.clone()).into();
+        let st: mainpod::Statement = Statement::public_key_of(public_key_ak, secret_key_ak).into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::PublicKeyOf),
+            vec![OperationArg::Index(0), OperationArg::Index(1)],
+            OperationAux::None,
+        );
+        let prev_statements = vec![public_key_st, secret_key_st];
+        assert!(operation_verify(
+            st,
+            op,
+            prev_statements,
+            vec![],
+            &SecretKey(BigUint::from(123u32))
+        )
+        .is_err())
+    }
+
+    #[test]
+    fn test_operation_verify_publickeyof_failure_sk_size() {
+        let secret_key = SecretKey(&*GROUP_ORDER - BigUint::ZERO);
+        let public_key = secret_key.public_key();
+        let public_key_value = Value::from(TypedValue::from(public_key));
+        let secret_key_value = Value::from(TypedValue::from(secret_key.clone()));
+        let public_key_ak = AnchoredKey::from((PodId(RawValue::from(88).into()), "public key"));
+        let secret_key_ak = AnchoredKey::from((PodId(RawValue::from(70).into()), "secret key"));
+        let public_key_st: mainpod::Statement =
+            Statement::equal(public_key_ak.clone(), public_key_value.clone()).into();
+        let secret_key_st: mainpod::Statement =
+            Statement::equal(secret_key_ak.clone(), secret_key_value.clone()).into();
+        let st: mainpod::Statement = Statement::public_key_of(public_key_ak, secret_key_ak).into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::PublicKeyOf),
+            vec![OperationArg::Index(0), OperationArg::Index(1)],
+            OperationAux::None,
+        );
+        let prev_statements = vec![public_key_st, secret_key_st];
+        assert!(operation_verify(st, op, prev_statements, vec![], &secret_key).is_err())
     }
 
     fn helper_statement_arg_from_template(

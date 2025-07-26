@@ -739,7 +739,10 @@ pub mod tests {
             primitives::ec::schnorr::SecretKey,
             signedpod::Signer,
         },
-        examples::{attest_eth_friend, zu_kyc_pod_builder, zu_kyc_sign_pod_builders, EthDosHelper},
+        examples::{
+            attest_eth_friend, tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_sign_pod_builders,
+            EthDosHelper,
+        },
         frontend::{
             self, literal, CustomPredicateBatchBuilder, MainPodBuilder, StatementTmplBuilder as STB,
         },
@@ -783,6 +786,19 @@ pub mod tests {
 
         let prover = Prover {};
         let kyc_pod = kyc_builder.prove(&prover, &params)?;
+        crate::measure_gates_print!();
+        let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
+
+        Ok(pod.verify()?)
+    }
+
+    #[test]
+    fn test_main_tickets() -> frontend::Result<()> {
+        let params = Params::default();
+
+        let ticket_builder = tickets_pod_full_flow(&params, &DEFAULT_VD_SET)?;
+        let prover = Prover {};
+        let kyc_pod = ticket_builder.prove(&prover, &params)?;
         crate::measure_gates_print!();
         let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
 

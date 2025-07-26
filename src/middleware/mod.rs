@@ -34,7 +34,8 @@ use serialization::*;
 pub use statement::*;
 
 use crate::backends::plonky2::primitives::{
-    ec::curve::Point as PublicKey, merkletree::MerkleProof,
+    ec::{curve::Point as PublicKey, schnorr::SecretKey},
+    merkletree::MerkleProof,
 };
 
 pub const SELF: PodId = PodId(SELF_ID_HASH);
@@ -62,8 +63,10 @@ pub enum TypedValue {
     ),
     // Uses the serialization for middleware::Value:
     Raw(RawValue),
-    // Public key variant
+    // Schnorr public key variant (EC point)
     PublicKey(PublicKey),
+    // Schnorr secret key variant (scalar)
+    SecretKey(SecretKey),
     PodId(PodId),
     // UNTAGGED TYPES:
     #[serde(untagged)]
@@ -111,6 +114,12 @@ impl From<Hash> for TypedValue {
 impl From<PublicKey> for TypedValue {
     fn from(p: PublicKey) -> Self {
         TypedValue::PublicKey(p)
+    }
+}
+
+impl From<SecretKey> for TypedValue {
+    fn from(sk: SecretKey) -> Self {
+        TypedValue::SecretKey(sk)
     }
 }
 
@@ -188,6 +197,28 @@ impl TryFrom<&TypedValue> for PodId {
     }
 }
 
+impl TryFrom<&TypedValue> for PublicKey {
+    type Error = Error;
+    fn try_from(v: &TypedValue) -> std::result::Result<Self, Self::Error> {
+        if let TypedValue::PublicKey(pk) = v {
+            Ok(*pk)
+        } else {
+            Err(Error::custom("Value not a public key".to_string()))
+        }
+    }
+}
+
+impl TryFrom<&TypedValue> for SecretKey {
+    type Error = Error;
+    fn try_from(v: &TypedValue) -> std::result::Result<Self, Self::Error> {
+        if let TypedValue::SecretKey(sk) = v {
+            Ok(sk.clone())
+        } else {
+            Err(Error::custom("Value not a secret key".to_string()))
+        }
+    }
+}
+
 impl fmt::Display for TypedValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -233,6 +264,7 @@ impl fmt::Display for TypedValue {
                 write!(f, "]")
             }
             TypedValue::PublicKey(p) => write!(f, "PublicKey({})", p),
+            TypedValue::SecretKey(p) => write!(f, "SecretKey({})", p),
             TypedValue::PodId(p) => {
                 write!(f, "0x{}", p.0.encode_hex::<String>())
             }
@@ -254,6 +286,7 @@ impl From<&TypedValue> for RawValue {
             TypedValue::Array(a) => RawValue::from(a.commitment()),
             TypedValue::Raw(v) => *v,
             TypedValue::PublicKey(p) => RawValue::from(hash_fields(&p.as_fields())),
+            TypedValue::SecretKey(sk) => RawValue::from(hash_fields(&sk.to_limbs())),
             TypedValue::PodId(id) => RawValue::from(id.0),
         }
     }
@@ -321,6 +354,19 @@ impl JsonSchema for TypedValue {
             ..Default::default()
         };
 
+        let secret_key_schema = schemars::schema::SchemaObject {
+            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
+            object: Some(Box::new(schemars::schema::ObjectValidation {
+                // SecretKey is serialized as a string
+                properties: [("SecretKey".to_string(), gen.subschema_for::<String>())]
+                    .into_iter()
+                    .collect(),
+                required: ["SecretKey".to_string()].into_iter().collect(),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+
         // This is the part that Schemars can't generate automatically:
         let untagged_array_schema = gen.subschema_for::<Array>();
         let untagged_set_schema = gen.subschema_for::<Set>();
@@ -334,6 +380,7 @@ impl JsonSchema for TypedValue {
                     Schema::Object(int_schema),
                     Schema::Object(raw_schema),
                     Schema::Object(public_key_schema),
+                    Schema::Object(secret_key_schema),
                     untagged_array_schema,
                     untagged_dictionary_schema,
                     untagged_string_schema,

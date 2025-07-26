@@ -39,6 +39,7 @@ pub fn native_predicate_from_string(s: &str) -> Option<NativePredicate> {
         "ProductOf" => Some(NativePredicate::ProductOf),
         "MaxOf" => Some(NativePredicate::MaxOf),
         "HashOf" => Some(NativePredicate::HashOf),
+        "PublicKeyOf" => Some(NativePredicate::PublicKeyOf),
         "DictContains" => Some(NativePredicate::DictContains),
         "DictNotContains" => Some(NativePredicate::DictNotContains),
         "ArrayContains" => Some(NativePredicate::ArrayContains),
@@ -369,7 +370,8 @@ fn validate_and_build_statement_template(
                 | NativePredicate::SetContains
                 | NativePredicate::DictNotContains
                 | NativePredicate::SetNotContains
-                | NativePredicate::NotContains => 2,
+                | NativePredicate::NotContains
+                | NativePredicate::PublicKeyOf => 2,
                 NativePredicate::Contains
                 | NativePredicate::ArrayContains
                 | NativePredicate::DictContains

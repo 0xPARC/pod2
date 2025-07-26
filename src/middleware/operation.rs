@@ -5,7 +5,13 @@ use plonky2::field::types::Field;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree},
+    backends::plonky2::primitives::{
+        ec::{
+            curve::{Point as PublicKey, GROUP_ORDER},
+            schnorr::SecretKey,
+        },
+        merkletree::{MerkleProof, MerkleTree},
+    },
     middleware::{
         hash_values, AnchoredKey, CustomPredicate, CustomPredicateRef, Error, NativePredicate,
         Params, Predicate, Result, Statement, StatementArg, StatementTmplArg, ToFields, Value,
@@ -73,6 +79,7 @@ pub enum NativeOperation {
     ProductOf = 12,
     MaxOf = 13,
     HashOf = 14,
+    PublicKeyOf = 15,
 
     // Syntactic sugar operations.  These operations are not supported by the backend.  The
     // frontend compiler is responsible of translating these operations into the operations above.
@@ -130,6 +137,9 @@ impl OperationType {
                 NativeOperation::ProductOf => Some(Predicate::Native(NativePredicate::ProductOf)),
                 NativeOperation::MaxOf => Some(Predicate::Native(NativePredicate::MaxOf)),
                 NativeOperation::HashOf => Some(Predicate::Native(NativePredicate::HashOf)),
+                NativeOperation::PublicKeyOf => {
+                    Some(Predicate::Native(NativePredicate::PublicKeyOf))
+                }
                 no => unreachable!("Unexpected syntactic sugar op {:?}", no),
             },
             OperationType::Custom(cpr) => Some(Predicate::Custom(cpr.clone())),
@@ -164,6 +174,7 @@ pub enum Operation {
     ProductOf(Statement, Statement, Statement),
     MaxOf(Statement, Statement, Statement),
     HashOf(Statement, Statement, Statement),
+    PublicKeyOf(Statement, Statement),
     Custom(CustomPredicateRef, Vec<Statement>),
 }
 
@@ -203,6 +214,7 @@ impl Operation {
             Self::ProductOf(_, _, _) => OT::Native(ProductOf),
             Self::MaxOf(_, _, _) => OT::Native(MaxOf),
             Self::HashOf(_, _, _) => OT::Native(HashOf),
+            Self::PublicKeyOf(_, _) => OT::Native(PublicKeyOf),
             Self::Custom(cpr, _) => OT::Custom(cpr.clone()),
         }
     }
@@ -224,6 +236,7 @@ impl Operation {
             Self::ProductOf(s1, s2, s3) => vec![s1, s2, s3],
             Self::MaxOf(s1, s2, s3) => vec![s1, s2, s3],
             Self::HashOf(s1, s2, s3) => vec![s1, s2, s3],
+            Self::PublicKeyOf(s1, s2) => vec![s1, s2],
             Self::Custom(_, args) => args,
         }
     }
@@ -276,6 +289,7 @@ impl Operation {
                 (NO::HashOf, &[s1, s2, s3], OA::None) => {
                     Self::HashOf(s1.clone(), s2.clone(), s3.clone())
                 }
+                (NO::PublicKeyOf, &[s1, s2], OA::None) => Self::PublicKeyOf(s1.clone(), s2.clone()),
                 _ => Err(Error::custom(format!(
                     "Ill-formed operation {:?} with {} arguments {:?} and aux {:?}.",
                     op_code,
@@ -308,6 +322,12 @@ impl Operation {
         let i2: i64 = v2.typed().try_into()?;
         let i3: i64 = v3.typed().try_into()?;
         Ok(i1 == f(i2, i3))
+    }
+
+    pub(crate) fn check_public_key(v1: &Value, v2: &Value) -> Result<bool> {
+        let pk: PublicKey = v1.typed().try_into()?;
+        let sk: SecretKey = v2.typed().try_into()?;
+        Ok(sk.0 < *GROUP_ORDER && pk == sk.public_key())
     }
 
     /// Checks the given operation against a statement.
@@ -368,6 +388,9 @@ impl Operation {
             }
             (Self::HashOf(s1, s2, s3), HashOf(v4, v5, v6)) => {
                 val(v4, s1)? == hash_op(val(v5, s2)?, val(v6, s3)?)
+            }
+            (Self::PublicKeyOf(s1, s2), PublicKeyOf(v3, v4)) => {
+                Self::check_public_key(&val(v3, s1)?, &val(v4, s2)?)?
             }
             (Self::Custom(CustomPredicateRef { batch, index }, args), Custom(cpr, s_args))
                 if batch == &cpr.batch && index == &cpr.index =>
@@ -564,8 +587,13 @@ pub(crate) fn value_from_op(input_st: &Statement, output_ref: &ValueRef) -> Opti
 mod tests {
     use std::collections::HashMap;
 
+    use num::BigUint;
+
     use crate::{
-        backends::plonky2::primitives::merkletree::MerkleTree,
+        backends::plonky2::primitives::{
+            ec::{curve::GROUP_ORDER, schnorr::SecretKey},
+            merkletree::MerkleTree,
+        },
         middleware::{
             hash_value, AnchoredKey, Error, Key, Operation, Params, PodId, Result, Statement,
         },
@@ -634,5 +662,86 @@ mod tests {
                 }
             })
         })
+    }
+
+    #[test]
+    fn check_public_key_of_op() -> Result<()> {
+        let fixed_sk = SecretKey(BigUint::from(0x1234567890abcdefu64));
+        let fixed_pk = fixed_sk.public_key();
+        let rand_sk = SecretKey::new_rand();
+        let rand_pk = rand_sk.public_key();
+        let small_sk = SecretKey(BigUint::from(0x1u32));
+        let small_pk = small_sk.public_key();
+        let too_large_sk = SecretKey(small_sk.0.clone() + GROUP_ORDER.clone());
+        assert_eq!(small_pk, too_large_sk.public_key());
+
+        let test_cases = [
+            // Valid pairs
+            (fixed_pk, fixed_sk.clone(), true),
+            (rand_pk, rand_sk.clone(), true),
+            // Mismatched pairs
+            (fixed_pk, rand_sk.clone(), false),
+            (rand_pk, fixed_sk.clone(), false),
+            // Above group order
+            (small_pk, small_sk.clone(), true),
+            (small_pk, too_large_sk.clone(), false),
+        ];
+
+        let params = Params::default();
+        let pod_id = PodId::default();
+        let pk_ak = AnchoredKey::new(pod_id, Key::new("pubkey".into()));
+        let sk_ak = AnchoredKey::new(pod_id, Key::new("secret".into()));
+
+        test_cases.iter().try_for_each(|(pk, sk, expect_good)| {
+            // Form op args
+            let pk_s = Statement::Equal(pk_ak.clone().into(), (*pk).into());
+            let sk_s = Statement::Equal(sk_ak.clone().into(), sk.clone().into());
+
+            // Form op
+            let op = Operation::PublicKeyOf(pk_s.clone(), sk_s.clone());
+
+            // Form output statement
+            let st = Statement::PublicKeyOf(pk_ak.clone().into(), sk_ak.clone().into());
+
+            // Check
+            op.check(&params, &st).map(|is_good| {
+                assert_eq!(
+                    is_good, *expect_good,
+                    "PublicKeyOf({}, {}) => {}",
+                    pk, sk, is_good
+                );
+            })
+        })
+    }
+
+    #[test]
+    fn check_public_key_of_op_arg_types() -> Result<()> {
+        let fixed_sk = SecretKey(BigUint::from(0x1234567890abcdefu64));
+        let fixed_pk = fixed_sk.public_key();
+
+        let params = Params::default();
+        let pod_id = PodId::default();
+        let pk_ak = AnchoredKey::new(pod_id, Key::new("pubkey".into()));
+        let sk_ak = AnchoredKey::new(pod_id, Key::new("secret".into()));
+
+        // Form op args
+        let pk_s = Statement::Equal(pk_ak.clone().into(), fixed_pk.into());
+        let sk_s = Statement::Equal(sk_ak.clone().into(), fixed_sk.clone().into());
+
+        // Bad op and statement with bad first args
+        let op = Operation::PublicKeyOf(pk_s.clone(), pk_s.clone());
+        let st = Statement::PublicKeyOf(pk_ak.clone().into(), pk_ak.clone().into());
+
+        // Check
+        assert!(op.check(&params, &st).is_err());
+
+        // Bad op and statement with bad second args
+        let op = Operation::PublicKeyOf(sk_s.clone(), sk_s.clone());
+        let st = Statement::PublicKeyOf(sk_ak.clone().into(), sk_ak.clone().into());
+
+        // Check
+        assert!(op.check(&params, &st).is_err());
+
+        Ok(())
     }
 }
