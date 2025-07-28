@@ -1,5 +1,6 @@
 pub mod error;
 pub mod parser;
+mod pod_request;
 pub mod pretty_print;
 pub mod processor;
 
@@ -7,6 +8,7 @@ use std::sync::Arc;
 
 pub use error::LangError;
 pub use parser::{parse_podlang, Pairs, ParseError, Rule};
+pub use pod_request::PodRequest;
 pub use pretty_print::PrettyPrint;
 pub use processor::process_pest_tree;
 use processor::PodlangOutput;
@@ -70,7 +72,7 @@ mod tests {
         let params = Params::default();
         let processed = parse(input, &params, &[])?;
         let batch_result = processed.custom_batch;
-        let request_result = processed.request_templates;
+        let request_result = processed.request.templates();
 
         assert_eq!(request_result.len(), 0);
         assert_eq!(batch_result.predicates.len(), 1);
@@ -115,12 +117,10 @@ mod tests {
         let params = Params::default();
         let processed = parse(input, &params, &[])?;
         let batch_result = processed.custom_batch;
-        let request_templates = processed.request_templates;
+        let request_templates = processed.request.templates();
 
         assert_eq!(batch_result.predicates.len(), 0);
         assert!(!request_templates.is_empty());
-
-        let request_templates = request_templates;
 
         // Expected structure
         let expected_templates = vec![
@@ -157,7 +157,7 @@ mod tests {
         let params = Params::default();
         let processed = parse(input, &params, &[])?;
         let batch_result = processed.custom_batch;
-        let request_result = processed.request_templates;
+        let request_result = processed.request.templates();
 
         assert_eq!(request_result.len(), 0);
         assert_eq!(batch_result.predicates.len(), 1);
@@ -214,13 +214,12 @@ mod tests {
         let params = Params::default();
         let processed = parse(input, &params, &[])?;
         let batch_result = processed.custom_batch;
-        let request_templates = processed.request_templates;
+        let request_templates = processed.request.templates();
 
         assert_eq!(batch_result.predicates.len(), 1);
         assert!(!request_templates.is_empty());
 
         let batch = batch_result;
-        let request_templates = request_templates;
 
         // Expected Batch structure
         let expected_pred_statements = vec![StatementTmpl {
@@ -278,12 +277,10 @@ mod tests {
         let params = Params::default();
         let processed = parse(input, &params, &[])?;
         let batch_result = processed.custom_batch;
-        let request_templates = processed.request_templates;
+        let request_templates = processed.request.templates();
 
         assert_eq!(batch_result.predicates.len(), 1); // some_pred is defined
         assert!(!request_templates.is_empty());
-
-        let request_templates = request_templates;
 
         // Expected Wildcard Indices in Request Scope:
         // ?Var1 -> 0
@@ -330,12 +327,10 @@ mod tests {
         let params = Params::default();
         let processed = parse(input, &params, &[])?;
         let batch_result = processed.custom_batch;
-        let request_templates = processed.request_templates;
+        let request_templates = processed.request.templates();
 
         assert_eq!(batch_result.predicates.len(), 0);
         assert!(!request_templates.is_empty());
-
-        let request_templates = request_templates;
 
         let expected_templates = vec![
             StatementTmpl {
@@ -389,7 +384,7 @@ mod tests {
 
         // Parse the input string
         let processed = super::parse(input, &Params::default(), &[])?;
-        let parsed_templates = processed.request_templates;
+        let parsed_templates = processed.request.templates();
 
         //  Define Expected Templates (Copied from prover/mod.rs)
         let now_minus_18y_val = Value::from(1169909388_i64);
@@ -529,7 +524,7 @@ mod tests {
         let processed = super::parse(input, &params, &[])?;
 
         assert!(
-            processed.request_templates.is_empty(),
+            processed.request.templates().is_empty(),
             "Expected no request templates"
         );
         assert_eq!(
@@ -719,7 +714,7 @@ mod tests {
 
         // 3. Parse the input
         let processed = parse(&input, &params, &available_batches)?;
-        let request_templates = processed.request_templates;
+        let request_templates = processed.request.templates();
 
         assert!(
             processed.custom_batch.predicates.is_empty(),
@@ -771,7 +766,7 @@ mod tests {
 
         // 3. Parse the input
         let processed = parse(&input, &params, &available_batches)?;
-        let request_templates = processed.request_templates;
+        let request_templates = processed.request.templates();
 
         assert_eq!(request_templates.len(), 2, "Expected two request templates");
 
@@ -830,7 +825,7 @@ mod tests {
         let processed = parse(&input, &params, &available_batches)?;
 
         assert!(
-            processed.request_templates.is_empty(),
+            processed.request.templates().is_empty(),
             "No request should be defined"
         );
         assert_eq!(
@@ -903,7 +898,7 @@ mod tests {
 
         let params = Params::default();
         let processed = parse(&input, &params, &[])?;
-        let request_templates = processed.request_templates;
+        let request_templates = processed.request.templates();
 
         let expected_templates = vec![
             StatementTmpl {

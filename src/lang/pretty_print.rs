@@ -2,8 +2,11 @@
 
 use std::fmt::Write;
 
-use crate::middleware::{
-    CustomPredicate, CustomPredicateBatch, Predicate, StatementTmpl, StatementTmplArg, Value,
+use crate::{
+    lang::PodRequest,
+    middleware::{
+        CustomPredicate, CustomPredicateBatch, Predicate, StatementTmpl, StatementTmplArg, Value,
+    },
 };
 
 /// Trait for converting AST nodes to Podlang source code
@@ -119,6 +122,19 @@ impl CustomPredicateBatch {
 impl PrettyPrint for Value {
     fn fmt_podlang_with_indent(&self, w: &mut dyn Write, _indent: usize) -> std::fmt::Result {
         write!(w, "{}", self.typed())
+    }
+}
+
+impl PrettyPrint for PodRequest {
+    fn fmt_podlang_with_indent(&self, w: &mut dyn Write, _indent: usize) -> std::fmt::Result {
+        write!(w, "REQUEST(")?;
+        for (i, template) in self.request_templates.iter().enumerate() {
+            if i > 0 {
+                write!(w, ", ")?;
+            }
+            template.fmt_podlang_with_indent(w, 4)?;
+        }
+        write!(w, ")")
     }
 }
 

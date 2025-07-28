@@ -10,6 +10,7 @@ pub static MOCK_VD_SET: LazyLock<VDSet> = LazyLock::new(|| VDSet::new(6, &[]).un
 use crate::{
     backends::plonky2::{primitives::ec::schnorr::SecretKey, signedpod::Signer},
     frontend::{MainPod, MainPodBuilder, Result, SignedPod, SignedPodBuilder},
+    lang::{parse, PodRequest},
     middleware::{
         containers::Set, hash_values, CustomPredicateRef, Params, PodSigner, PodType, Predicate,
         Statement, StatementArg, TypedValue, VDSet, Value, KEY_SIGNER, KEY_TYPE,
@@ -19,13 +20,7 @@ use crate::{
 
 // ZuKYC
 
-pub fn zu_kyc_sign_pod_builders(
-    params: &Params,
-) -> (SignedPodBuilder, SignedPodBuilder, SignedPodBuilder) {
-    let sanctions_values: HashSet<Value> = ["A343434340"].iter().map(|s| Value::from(*s)).collect();
-    let sanction_set =
-        Value::from(Set::new(params.max_depth_mt_containers, sanctions_values).unwrap());
-
+pub fn zu_kyc_sign_pod_builders(params: &Params) -> (SignedPodBuilder, SignedPodBuilder) {
     let mut gov_id = SignedPodBuilder::new(params);
     gov_id.insert("idNumber", "4242424242");
     gov_id.insert("dateOfBirth", 1169909384);
@@ -35,32 +30,32 @@ pub fn zu_kyc_sign_pod_builders(
     pay_stub.insert("socialSecurityNumber", "G2121210");
     pay_stub.insert("startDate", 1706367566);
 
-    let mut sanction_list = SignedPodBuilder::new(params);
-
-    sanction_list.insert("sanctionList", sanction_set);
-
-    (gov_id, pay_stub, sanction_list)
+    (gov_id, pay_stub)
 }
+
+pub const ZU_KYC_NOW_MINUS_18Y: i64 = 1169909388;
+pub const ZU_KYC_NOW_MINUS_1Y: i64 = 1706367566;
+pub const ZU_KYC_SANCTION_LIST: &[&str] = &["A343434340"];
 
 pub fn zu_kyc_pod_builder(
     params: &Params,
     vd_set: &VDSet,
     gov_id: &SignedPod,
     pay_stub: &SignedPod,
-    sanction_list: &SignedPod,
 ) -> Result<MainPodBuilder> {
-    let now_minus_18y: i64 = 1169909388;
-    let now_minus_1y: i64 = 1706367566;
+    let now_minus_18y = ZU_KYC_NOW_MINUS_18Y;
+    let now_minus_1y = ZU_KYC_NOW_MINUS_1Y;
+    let sanctions_values: HashSet<Value> = ZU_KYC_SANCTION_LIST
+        .iter()
+        .map(|s| Value::from(*s))
+        .collect();
+    let sanction_set =
+        Value::from(Set::new(params.max_depth_mt_containers, sanctions_values).unwrap());
 
     let mut kyc = MainPodBuilder::new(params, vd_set);
     kyc.add_signed_pod(gov_id);
     kyc.add_signed_pod(pay_stub);
-    kyc.add_signed_pod(sanction_list);
-    kyc.pub_op(op!(
-        set_not_contains,
-        (sanction_list, "sanctionList"),
-        (gov_id, "idNumber")
-    ))?;
+    kyc.pub_op(op!(set_not_contains, sanction_set, (gov_id, "idNumber")))?;
     kyc.pub_op(op!(lt, (gov_id, "dateOfBirth"), now_minus_18y))?;
     kyc.pub_op(op!(
         eq,
@@ -68,8 +63,40 @@ pub fn zu_kyc_pod_builder(
         (pay_stub, "socialSecurityNumber")
     ))?;
     kyc.pub_op(op!(eq, (pay_stub, "startDate"), now_minus_1y))?;
+    kyc.pub_op(op!(eq, (gov_id, "_signer"), gov_id.get("_signer").unwrap()))?;
+    kyc.pub_op(op!(
+        eq,
+        (pay_stub, "_signer"),
+        pay_stub.get("_signer").unwrap()
+    ))?;
 
     Ok(kyc)
+}
+
+pub fn zu_kyc_pod_request(gov_signer: &Value, pay_signer: &Value) -> Result<PodRequest> {
+    let params = Params::default();
+    let sanctions_values: HashSet<Value> = ZU_KYC_SANCTION_LIST
+        .iter()
+        .map(|s| Value::from(*s))
+        .collect();
+    let sanction_set =
+        Value::from(Set::new(params.max_depth_mt_containers, sanctions_values).unwrap());
+    let input = format!(
+        r#"
+    REQUEST(
+        SetNotContains({sanction_set}, ?gov["idNumber"])
+        Lt(?gov["dateOfBirth"], {ZU_KYC_NOW_MINUS_18Y})
+        Equal(?pay["startDate"], {ZU_KYC_NOW_MINUS_1Y})
+        Equal(?gov["socialSecurityNumber"], ?pay["socialSecurityNumber"])
+        Equal(?gov["_signer"], {gov_signer})
+        Equal(?pay["_signer"], {pay_signer})
+        // TODO: Ownership check and watermarking
+        // Depends partly on https://github.com/0xPARC/pod2/issues/351
+    )
+    "#,
+    );
+    let parsed = parse(&input, &Params::default(), &[])?;
+    Ok(parsed.request)
 }
 
 // ETHDoS

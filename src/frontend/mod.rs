@@ -857,7 +857,8 @@ pub mod tests {
             mock::mainpod::MockProver, primitives::ec::schnorr::SecretKey, signedpod::Signer,
         },
         examples::{
-            attest_eth_friend, great_boy_pod_full_flow, tickets_pod_full_flow, zu_kyc_pod_builder,
+            attest_eth_friend, custom::eth_dos_request, great_boy_pod_full_flow,
+            tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_pod_request,
             zu_kyc_sign_pod_builders, EthDosHelper, MOCK_VD_SET,
         },
         middleware::{containers::Dictionary, Value},
@@ -896,7 +897,7 @@ pub mod tests {
     fn test_front_zu_kyc() -> Result<()> {
         let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
-        let (gov_id, pay_stub, sanction_list) = zu_kyc_sign_pod_builders(&params);
+        let (gov_id, pay_stub) = zu_kyc_sign_pod_builders(&params);
 
         println!("{}", gov_id);
         println!("{}", pay_stub);
@@ -911,12 +912,7 @@ pub mod tests {
         check_kvs(&pay_stub)?;
         println!("{}", pay_stub);
 
-        let signer = Signer(SecretKey(3u32.into()));
-        let sanction_list = sanction_list.sign(&signer)?;
-        check_kvs(&sanction_list)?;
-        println!("{}", sanction_list);
-
-        let kyc_builder = zu_kyc_pod_builder(&params, vd_set, &gov_id, &pay_stub, &sanction_list)?;
+        let kyc_builder = zu_kyc_pod_builder(&params, vd_set, &gov_id, &pay_stub)?;
         println!("{}", kyc_builder);
 
         // prove kyc with MockProver and print it
@@ -924,6 +920,12 @@ pub mod tests {
         let kyc = kyc_builder.prove(&prover, &params)?;
 
         println!("{}", kyc);
+
+        let request = zu_kyc_pod_request(
+            gov_id.get("_signer").unwrap(),
+            pay_stub.get("_signer").unwrap(),
+        )?;
+        assert!(request.exact_match_pod(&*kyc.pod));
 
         check_public_statements(&kyc)
     }
@@ -950,18 +952,22 @@ pub mod tests {
         let alice_attestation = attest_eth_friend(&params, &alice, bob.public_key());
         let dist_1 = helper.dist_1(&alice_attestation)?.prove(&prover, &params)?;
         dist_1.pod.verify()?;
+        let request = eth_dos_request()?;
+        assert!(request.exact_match_pod(&*dist_1.pod));
 
         let bob_attestation = attest_eth_friend(&params, &bob, charlie.public_key());
         let dist_2 = helper
             .dist_n_plus_1(&dist_1, &bob_attestation)?
             .prove(&prover, &params)?;
         dist_2.pod.verify()?;
+        assert!(request.exact_match_pod(&*dist_2.pod));
 
         let charlie_attestation = attest_eth_friend(&params, &charlie, david.public_key());
         let dist_3 = helper
             .dist_n_plus_1(&dist_2, &charlie_attestation)?
             .prove(&prover, &params)?;
         dist_3.pod.verify()?;
+        assert!(request.exact_match_pod(&*dist_3.pod));
 
         Ok(())
     }

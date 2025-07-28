@@ -768,21 +768,12 @@ pub mod tests {
         vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
         let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
 
-        let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
-            zu_kyc_sign_pod_builders(&params);
+        let (gov_id_builder, pay_stub_builder) = zu_kyc_sign_pod_builders(&params);
         let signer = Signer(SecretKey(BigUint::one()));
         let gov_id_pod = gov_id_builder.sign(&signer)?;
         let signer = Signer(SecretKey(2u64.into()));
         let pay_stub_pod = pay_stub_builder.sign(&signer)?;
-        let signer = Signer(SecretKey(3u64.into()));
-        let sanction_list_pod = sanction_list_builder.sign(&signer)?;
-        let kyc_builder = zu_kyc_pod_builder(
-            &params,
-            &vd_set,
-            &gov_id_pod,
-            &pay_stub_pod,
-            &sanction_list_pod,
-        )?;
+        let kyc_builder = zu_kyc_pod_builder(&params, &vd_set, &gov_id_pod, &pay_stub_pod)?;
 
         let prover = Prover {};
         let kyc_pod = kyc_builder.prove(&prover, &params)?;
