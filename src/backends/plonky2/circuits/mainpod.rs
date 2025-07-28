@@ -1572,11 +1572,12 @@ impl InnerCircuit for MainPodVerifyTarget {
                         panic!("SecretKey literal of incorrect type!")
                     }
                 } else if let OperationArg::Index(ind) = op.1[1] {
-                    // TODO(artwyman): This adjustment only works if the
-                    // secret key came from a statement in the current POD.
-                    // A more general solution needs to be able index across
-                    // the virtual array of statements from all input PODs,
-                    // similar to what's done in plonky2::mainpod::layout_statements.
+                    // TODO: This adjustment only works if the secret key came
+                    // from a statement in the current POD, which is the most
+                    // common case.  A more general solution needs to be able
+                    // index across the virtual array of statements from all
+                    // input PODs, similar to what's done in
+                    // plonky2::mainpod::layout_statements.
                     let adjusted_index = ind
                         - (1 + self.params.max_input_signed_pods
                             * self.params.max_signed_pod_values
