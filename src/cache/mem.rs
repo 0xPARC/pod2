@@ -10,7 +10,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use sha2::{Digest, Sha256};
 
 #[allow(clippy::type_complexity)]
-static CACHE: LazyLock<Mutex<HashMap<String, Option<Box<dyn Any + Send + 'static>>>>> =
+static CACHE: LazyLock<Mutex<HashMap<String, Option<&'static (dyn Any + Sync)>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub struct CacheEntry<T: 'static> {
@@ -28,7 +28,7 @@ impl<T> Deref for CacheEntry<T> {
 /// Get the artifact named `name` from the memory cache.  If it doesn't exist, it will be built by
 /// calling `build_fn` and stored.
 /// The artifact is indexed by `params: P`.
-pub(crate) fn get<T: Serialize + DeserializeOwned + Send + 'static, P: Serialize>(
+pub(crate) fn get<T: Serialize + DeserializeOwned + Sync + 'static, P: Serialize>(
     name: &str,
     params: &P,
     build_fn: fn(&P) -> T,
@@ -43,14 +43,9 @@ pub(crate) fn get<T: Serialize + DeserializeOwned + Send + 'static, P: Serialize
         let mut cache = CACHE.lock()?;
         if let Some(entry) = cache.get(&key) {
             if let Some(boxed_data) = entry {
-                if let Some(data) = boxed_data.downcast_ref::<T>() {
+                if let Some(data) = (*boxed_data as &dyn Any).downcast_ref::<T>() {
                     log::debug!("found {} in the mem cache", name);
-                    // The data is now in the heap (boxed), and will never go away because we can
-                    // only insert into the CACHE if there's no entry, we can't delete nor update.
-                    // Since it's not going away, not moving, and the CACHE is 'static, it's safe
-                    // to extend the lifetime of data to 'static.
-                    let data_static = unsafe { std::mem::transmute::<&T, &'static T>(data) };
-                    return Ok(CacheEntry { value: data_static });
+                    return Ok(CacheEntry { value: data });
                 } else {
                     panic!(
                         "type={} doesn't match the type in the cached boxed value with name={}",
@@ -76,7 +71,7 @@ pub(crate) fn get<T: Serialize + DeserializeOwned + Send + 'static, P: Serialize
         let elapsed = std::time::Instant::now() - start;
         log::debug!("built {} in {:?}", name, elapsed);
 
-        CACHE.lock()?.insert(key, Some(Box::new(data)));
+        CACHE.lock()?.insert(key, Some(Box::leak(Box::new(data))));
         // Call `get` again and this time we'll retrieve the data from the cache
         return get(name, params, build_fn);
     }

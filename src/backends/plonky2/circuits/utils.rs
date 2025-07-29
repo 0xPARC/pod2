@@ -7,7 +7,7 @@ use plonky2::{
         witness::{PartitionWitness, Witness},
     },
     plonk::circuit_data::CommonCircuitData,
-    util::serialization::{Buffer, IoResult, Read, Write},
+    util::serialization::{Buffer, IoError, IoResult, Read, Write},
 };
 
 /// Plonky2 generator that allows debugging values assigned to targets.  This generator doesn't
@@ -66,7 +66,7 @@ impl<F: RichField + Extendable<D>, const D: usize> SimpleGenerator<F, D> for Deb
         let name_len = src.read_usize()?;
         let mut name_buf = vec![0; name_len];
         src.read_exact(&mut name_buf)?;
-        let name = unsafe { String::from_utf8_unchecked(name_buf) };
+        let name = String::from_utf8(name_buf).map_err(|_| IoError)?;
         let xs = src.read_target_vec()?;
         Ok(Self { name, xs })
     }
