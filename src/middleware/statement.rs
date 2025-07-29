@@ -18,8 +18,6 @@ pub const KEY_SIGNER: &str = "_signer";
 // hash(KEY_TYPE) = [17948789436443445142, 12513915140657440811, 15878361618879468769, 938231894693848619]
 pub const KEY_TYPE: &str = "_type";
 pub const STATEMENT_ARG_F_LEN: usize = 8;
-pub const OPERATION_ARG_F_LEN: usize = 1;
-pub const OPERATION_AUX_F_LEN: usize = 2;
 
 #[derive(Clone, Copy, Debug, FromRepr, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum NativePredicate {

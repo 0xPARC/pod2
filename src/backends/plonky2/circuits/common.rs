@@ -671,7 +671,8 @@ impl Flattenable for CustomPredicateVerifyQueryTarget {
     fn from_flattened(params: &Params, vs: &[Target]) -> Self {
         let (pos, size) = (0, params.statement_size());
         let statement = StatementTarget::from_flattened(params, &vs[pos..pos + size]);
-        let (pos, size) = (pos + size, params.operation_size());
+        let operation_arg_f_len = IndexTarget::f_len(params.statement_table_size());
+        let (pos, size) = (pos + size, params.operation_size(operation_arg_f_len));
         let op_type = OperationTypeTarget {
             elements: vs[pos..pos + size]
                 .try_into()
@@ -880,6 +881,15 @@ pub struct IndexTarget {
 }
 
 impl IndexTarget {
+    // Length in field elements
+    pub fn f_len(array_len: usize) -> usize {
+        let bits = (array_len - 1).ilog2() + 1;
+        if bits > 6 {
+            1 + bits as usize - 6
+        } else {
+            1
+        }
+    }
     pub fn new_virtual(array_len: usize, builder: &mut CircuitBuilder) -> Self {
         // Limit the maximum array length to avoid abusing `vec_ref`
         assert!(array_len <= 256);
@@ -1729,7 +1739,7 @@ pub(crate) mod tests {
             let mut builder = CircuitBuilder::<F, D>::new(config);
 
             let array = builder.add_virtual_targets(*len);
-            let index_target = IndexTarget::new_virtual(len, &mut builder);
+            let index_target = IndexTarget::new_virtual(*len, &mut builder);
             let res = builder.random_access_long(&index_target, &array);
 
             let data = builder.build::<PoseidonGoldilocksConfig>();
