@@ -880,10 +880,19 @@ pub struct IndexTarget {
     high: Vec<BoolTarget>,
 }
 
+/// bits needed to represent a value `< max` or 0 if `max == 0`
+fn usize_bits(max: usize) -> u32 {
+    if max > 0 {
+        (max - 1).ilog2() + 1
+    } else {
+        0
+    }
+}
+
 impl IndexTarget {
     // Length in field elements
     pub fn f_len(array_len: usize) -> usize {
-        let bits = (array_len - 1).ilog2() + 1;
+        let bits = usize_bits(array_len);
         if bits > 6 {
             1 + bits as usize - 6
         } else {
@@ -893,7 +902,7 @@ impl IndexTarget {
     pub fn new_virtual(array_len: usize, builder: &mut CircuitBuilder) -> Self {
         // Limit the maximum array length to avoid abusing `vec_ref`
         assert!(array_len <= 256);
-        let bits = (array_len - 1).ilog2() + 1;
+        let bits = usize_bits(array_len);
         Self {
             low: builder.add_virtual_target(),
             high: if bits > 6 {
