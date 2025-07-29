@@ -29,6 +29,7 @@ mod tests {
 
     use super::*;
     use crate::{
+        backends::plonky2::primitives::ec::schnorr::SecretKey,
         lang::error::ProcessorError,
         middleware::{
             hash_str, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key,
@@ -859,25 +860,32 @@ mod tests {
     #[test]
     fn test_e2e_literals() -> Result<(), LangError> {
         let pk = crate::backends::plonky2::primitives::ec::curve::Point::generator();
-        let pk_b58 = pk.to_string();
         let pod_id = PodId(hash_str("test"));
         let raw = RawValue::from(1);
         let string = "hello";
         let int = 123;
         let bool = true;
+        let sk = SecretKey::new_rand();
 
         let input = format!(
             r#"
             REQUEST(
-                Equal(?A["pk"], PublicKey({}))
-                Equal(?B["pod_id"], {:#})
-                Equal(?C["raw"], Raw({:#}))
-                Equal(?D["string"], "{}")
+                Equal(?A["pk"], {})
+                Equal(?B["pod_id"], {})
+                Equal(?C["raw"], {})
+                Equal(?D["string"], {})
                 Equal(?E["int"], {})
                 Equal(?F["bool"], {})
+                Equal(?G["sk"], {})
             )
         "#,
-            pk_b58, pod_id, raw, string, int, bool
+            Value::from(pk).to_podlang_string(),
+            Value::from(pod_id).to_podlang_string(),
+            Value::from(raw).to_podlang_string(),
+            Value::from(string).to_podlang_string(),
+            Value::from(int).to_podlang_string(),
+            Value::from(bool).to_podlang_string(),
+            Value::from(sk.clone()).to_podlang_string()
         );
         /*
             REQUEST(
@@ -894,7 +902,7 @@ mod tests {
         let processed = parse(&input, &params, &[])?;
         let request_templates = processed.request_templates;
 
-        assert_eq!(request_templates.len(), 6);
+        assert_eq!(request_templates.len(), 7);
 
         let expected_templates = vec![
             StatementTmpl {
@@ -920,6 +928,10 @@ mod tests {
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![sta_ak(("F", 5), "bool"), sta_lit(Value::from(bool))],
+            },
+            StatementTmpl {
+                pred: Predicate::Native(NativePredicate::Equal),
+                args: vec![sta_ak(("G", 6), "sk"), sta_lit(Value::from(sk))],
             },
         ];
 

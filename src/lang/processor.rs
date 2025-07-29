@@ -8,9 +8,12 @@ use plonky2::field::types::Field;
 
 use super::error::ProcessorError;
 use crate::{
-    backends::plonky2::primitives::ec::curve::Point,
+    backends::plonky2::{
+        deserialize_bytes,
+        primitives::ec::{curve::Point, schnorr::SecretKey},
+    },
     frontend::{BuilderArg, CustomPredicateBatchBuilder, StatementTmplBuilder},
-    lang::parser::Rule,
+    lang::Rule,
     middleware::{
         self, CustomPredicateBatch, CustomPredicateRef, Key, NativePredicate, Params, Predicate,
         StatementTmpl, StatementTmplArg, Value, Wildcard, F, VALUE_SIZE,
@@ -794,6 +797,25 @@ fn process_literal_value(
                         ProcessorError::Internal(format!("Failed to create Dictionary: {}", e))
                     })?;
             Ok(Value::from(middleware_dict))
+        }
+        Rule::literal_secret_key => {
+            let sk_str_pair = inner_lit.clone().into_inner().next().unwrap();
+            let sk_base64 = sk_str_pair.as_str();
+            let bytes = deserialize_bytes(sk_base64).map_err(|_e| {
+                ProcessorError::InvalidLiteralFormat {
+                    kind: "SecretKey".to_string(),
+                    value: sk_base64.to_string(),
+                    span: Some(get_span(&inner_lit)),
+                }
+            })?;
+            let secret_key = SecretKey::from_bytes(&bytes).map_err(|_e| {
+                ProcessorError::InvalidLiteralFormat {
+                    kind: "SecretKey".to_string(),
+                    value: sk_base64.to_string(),
+                    span: Some(get_span(&inner_lit)),
+                }
+            })?;
+            Ok(Value::from(secret_key))
         }
         _ => unreachable!("Unexpected rule: {:?}", inner_lit.as_rule()),
     }

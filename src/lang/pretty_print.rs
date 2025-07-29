@@ -192,6 +192,7 @@ fn fmt_predicate_signature(
 mod tests {
     use super::*;
     use crate::{
+        backends::plonky2::primitives::ec::schnorr::SecretKey,
         lang::parse,
         middleware::{
             CustomPredicate, Key, NativePredicate, Params, Predicate, StatementTmpl,
@@ -490,6 +491,20 @@ mod tests {
             )
         "#;
         assert_round_trip(input);
+    }
+
+    #[test]
+    fn test_round_trip_secret_key() {
+        let sk = SecretKey::new_rand();
+        let input = format!(
+            r#"
+            secret_key_test(Pod) = AND(
+                Equal(?Pod["sk"], {})
+            )
+            "#,
+            Value::from(sk.clone()).to_podlang_string()
+        );
+        assert_round_trip(&input);
     }
 
     #[test]

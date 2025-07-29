@@ -60,6 +60,7 @@ anchored_key = { wildcard ~ "[" ~ literal_string ~ "]" }
 // Literal Values (ordered to avoid ambiguity, e.g., string before int)
 literal_value = {
     literal_public_key |
+    literal_secret_key |
     literal_dict |
     literal_set |
     literal_array |
@@ -94,6 +95,11 @@ char = { // Rule for a single logical character (unescaped or escaped)
 base58_char = { '1'..'9' | 'A'..'H' | 'J'..'N' | 'P'..'Z' | 'a'..'k' | 'm'..'z' }
 base58_string = @{ base58_char+ }
 literal_public_key = { "PublicKey" ~ "(" ~ base58_string ~ ")" }
+
+// SecretKey(...)
+base64_char = { 'a'..'z' | 'A'..'Z' | '0'..'9' | "+" | "/" | "=" }
+base64_string = @{ base64_char+ }
+literal_secret_key = { "SecretKey" ~ "(" ~ base64_string ~ ")" }
 
 // Container Literals (recursive definition using literal_value)
 literal_array = { "[" ~ (literal_value ~ ("," ~ literal_value)*)? ~ "]" }
