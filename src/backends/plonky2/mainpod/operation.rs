@@ -32,6 +32,13 @@ impl OperationArg {
     pub fn is_none(&self) -> bool {
         matches!(self, OperationArg::None)
     }
+
+    pub fn as_usize(&self) -> usize {
+        match self {
+            Self::None => 0,
+            Self::Index(i) => *i,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -49,6 +56,16 @@ impl ToFields for OperationAux {
             Self::CustomPredVerifyIndex(i) => [F::ZERO, F::from_canonical_usize(*i)],
         };
         vec![fs[0], fs[1]]
+    }
+}
+
+impl OperationAux {
+    pub fn as_usizes(&self) -> [usize; 2] {
+        match self {
+            Self::None => [0, 0],
+            Self::MerkleProofIndex(i) => [*i, 0],
+            Self::CustomPredVerifyIndex(i) => [0, *i],
+        }
     }
 }
 

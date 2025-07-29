@@ -95,8 +95,7 @@ impl StatementCache {
             // converting a length 1 array into a scalar.
             op.args
                 .iter()
-                .flatten()
-                .map(|&i| builder.vec_ref(params, prev_statements, i))
+                .map(|i| builder.vec_ref(params, prev_statements, i))
                 .collect::<Vec<_>>()
         };
         assert!(params.max_operation_args >= 3);
@@ -224,7 +223,7 @@ fn verify_operation_circuit(
     // been verified, so we need only look up the claim.
     let measure_resolve_merkle_claim = measure_gates_begin!(builder, "ResolveMerkleClaim");
     let resolved_merkle_claim =
-        (!merkle_claims.is_empty()).then(|| builder.vec_ref(params, merkle_claims, op.aux[0]));
+        (!merkle_claims.is_empty()).then(|| builder.vec_ref(params, merkle_claims, &op.aux[0]));
     measure_gates_end!(builder, measure_resolve_merkle_claim);
 
     // Operations from custom statements will refer to one
@@ -233,7 +232,7 @@ fn verify_operation_circuit(
     let measure_resolve_custom_pred_verification =
         measure_gates_begin!(builder, "ResolveCustomPredVerification");
     let resolved_custom_pred_verification = (!custom_predicate_verification_table.is_empty())
-        .then(|| builder.vec_ref(params, custom_predicate_verification_table, op.aux[1]));
+        .then(|| builder.vec_ref(params, custom_predicate_verification_table, &op.aux[1]));
     measure_gates_end!(builder, measure_resolve_custom_pred_verification);
 
     // The verification may require aux data which needs to be stored in the
@@ -938,7 +937,7 @@ fn make_statement_arg_from_template_circuit(
     let first_index = ak_id_wc_index;
     let is_first_index_valid = builder.or(is_ak, is_wc_literal);
     let first_index = builder.select(is_first_index_valid, first_index, zero);
-    let resolved_ak_id = builder.vec_ref(params, &args, first_index);
+    let resolved_ak_id = builder.vec_ref_small(params, &args, first_index);
     let resolved_wc = resolved_ak_id;
 
     // If the index is not used, use a 0 instead to still pass the range constraints from
@@ -946,7 +945,7 @@ fn make_statement_arg_from_template_circuit(
     let second_index = ak_key_wc_index;
     let is_second_index_valid = builder.and(is_ak, is_ak_key_wc);
     let second_index = builder.select(is_second_index_valid, second_index, zero);
-    let resolved_ak_key = builder.vec_ref(params, &args, second_index);
+    let resolved_ak_key = builder.vec_ref_small(params, &args, second_index);
 
     let ak_key = ak_key_lit; // is_ak_key_lit
     let ak_key = builder.select_flattenable(params, is_ak_key_wc, &resolved_ak_key, &ak_key);
@@ -1244,7 +1243,7 @@ fn build_custom_predicate_verification_table_circuit(
         let table_query_hash = builder.vec_ref(
             params,
             custom_predicate_table,
-            entry.custom_predicate_table_index,
+            &entry.custom_predicate_table_index,
         );
         let out_query_hash = entry.custom_predicate.hash(builder);
         builder.connect_array(table_query_hash.elements, out_query_hash.elements);
