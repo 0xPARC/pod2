@@ -9,8 +9,8 @@ pub static MOCK_VD_SET: LazyLock<VDSet> = LazyLock::new(|| VDSet::new(6, &[]).un
 
 use crate::{
     backends::plonky2::{primitives::ec::schnorr::SecretKey, signedpod::Signer},
-    frontend::{MainPod, MainPodBuilder, Result, SignedPod, SignedPodBuilder},
-    lang::{parse, PodRequest},
+    frontend::{MainPod, MainPodBuilder, PodRequest, Result, SignedPod, SignedPodBuilder},
+    lang::parse,
     middleware::{
         containers::Set, hash_values, CustomPredicateRef, Params, PodSigner, PodType, Predicate,
         Statement, StatementArg, TypedValue, VDSet, Value, KEY_SIGNER, KEY_TYPE,

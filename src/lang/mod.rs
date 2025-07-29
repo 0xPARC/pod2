@@ -1,6 +1,5 @@
 pub mod error;
 pub mod parser;
-mod pod_request;
 pub mod pretty_print;
 pub mod processor;
 
@@ -8,7 +7,6 @@ use std::sync::Arc;
 
 pub use error::LangError;
 pub use parser::{parse_podlang, Pairs, ParseError, Rule};
-pub use pod_request::PodRequest;
 pub use pretty_print::PrettyPrint;
 pub use processor::process_pest_tree;
 use processor::PodlangOutput;

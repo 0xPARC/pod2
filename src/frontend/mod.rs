@@ -16,10 +16,12 @@ use crate::middleware::{
 mod custom;
 mod error;
 mod operation;
+mod pod_request;
 mod serialization;
 pub use custom::*;
 pub use error::*;
 pub use operation::*;
+pub use pod_request::*;
 
 #[derive(Clone, Debug)]
 pub struct SignedPodBuilder {
@@ -925,7 +927,11 @@ pub mod tests {
             gov_id.get("_signer").unwrap(),
             pay_stub.get("_signer").unwrap(),
         )?;
-        assert!(request.exact_match_pod(&*kyc.pod));
+        assert!(request.exact_match_pod(&*kyc.pod).is_ok());
+        // Check the bindings of the "gov" and "pay" wildcards from the PodRequest
+        let bindings = request.exact_match_pod(&*kyc.pod).unwrap();
+        assert_eq!(*bindings.get("gov").unwrap(), gov_id.id().into());
+        assert_eq!(*bindings.get("pay").unwrap(), pay_stub.id().into());
 
         check_public_statements(&kyc)
     }
@@ -953,21 +959,33 @@ pub mod tests {
         let dist_1 = helper.dist_1(&alice_attestation)?.prove(&prover, &params)?;
         dist_1.pod.verify()?;
         let request = eth_dos_request()?;
-        assert!(request.exact_match_pod(&*dist_1.pod));
+        assert!(request.exact_match_pod(&*dist_1.pod).is_ok());
+        let bindings = request.exact_match_pod(&*dist_1.pod).unwrap();
+        assert_eq!(*bindings.get("src").unwrap(), alice.public_key());
+        assert_eq!(*bindings.get("dst").unwrap(), bob.public_key());
+        assert_eq!(*bindings.get("distance").unwrap(), 1.into());
 
         let bob_attestation = attest_eth_friend(&params, &bob, charlie.public_key());
         let dist_2 = helper
             .dist_n_plus_1(&dist_1, &bob_attestation)?
             .prove(&prover, &params)?;
         dist_2.pod.verify()?;
-        assert!(request.exact_match_pod(&*dist_2.pod));
+        assert!(request.exact_match_pod(&*dist_2.pod).is_ok());
+        let bindings = request.exact_match_pod(&*dist_2.pod).unwrap();
+        assert_eq!(*bindings.get("src").unwrap(), alice.public_key());
+        assert_eq!(*bindings.get("dst").unwrap(), charlie.public_key());
+        assert_eq!(*bindings.get("distance").unwrap(), 2.into());
 
         let charlie_attestation = attest_eth_friend(&params, &charlie, david.public_key());
         let dist_3 = helper
             .dist_n_plus_1(&dist_2, &charlie_attestation)?
             .prove(&prover, &params)?;
         dist_3.pod.verify()?;
-        assert!(request.exact_match_pod(&*dist_3.pod));
+        assert!(request.exact_match_pod(&*dist_3.pod).is_ok());
+        let bindings = request.exact_match_pod(&*dist_3.pod).unwrap();
+        assert_eq!(*bindings.get("src").unwrap(), alice.public_key());
+        assert_eq!(*bindings.get("dst").unwrap(), david.public_key());
+        assert_eq!(*bindings.get("distance").unwrap(), 3.into());
 
         Ok(())
     }

@@ -12,8 +12,8 @@ use crate::{
         deserialize_bytes,
         primitives::ec::{curve::Point, schnorr::SecretKey},
     },
-    frontend::{BuilderArg, CustomPredicateBatchBuilder, StatementTmplBuilder},
-    lang::{parser::Rule, PodRequest},
+    frontend::{BuilderArg, CustomPredicateBatchBuilder, PodRequest, StatementTmplBuilder},
+    lang::parser::Rule,
     middleware::{
         self, CustomPredicateBatch, CustomPredicateRef, Key, NativePredicate, Params, Predicate,
         StatementTmpl, StatementTmplArg, Value, Wildcard, F, VALUE_SIZE,

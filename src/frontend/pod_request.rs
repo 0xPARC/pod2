@@ -1,6 +1,7 @@
 use std::{collections::HashMap, fmt::Display};
 
 use crate::{
+    frontend::{Error, Result},
     lang::PrettyPrint,
     middleware::{Pod, Statement, StatementArg, StatementTmpl, StatementTmplArg, Value},
 };
@@ -25,11 +26,15 @@ impl PodRequest {
     ///
     /// TODO: matching on SELF as part of https://github.com/0xPARC/pod2/issues/351
     /// Until then, matching on SELF anchored keys is not supported.
-    pub fn exact_match_pod(&self, pod: &dyn Pod) -> bool {
+    pub fn exact_match_pod(&self, pod: &dyn Pod) -> Result<HashMap<String, Value>> {
         let pod_statements = pod.pub_statements();
         let mut bindings: HashMap<String, Value> = HashMap::new();
 
-        self.dfs_match_all(&pod_statements, &mut bindings, 0)
+        if self.dfs_match_all(&pod_statements, &mut bindings, 0) {
+            Ok(bindings)
+        } else {
+            Err(Error::pod_request_validation("No match found".to_string()))
+        }
     }
 
     /// Performs a depth-first search through the statement templates, trying to
@@ -199,7 +204,7 @@ mod tests {
             pay_stub.get("_signer").unwrap(),
         )
         .unwrap();
-        assert!(request.exact_match_pod(&*kyc.pod));
+        assert!(request.exact_match_pod(&*kyc.pod).is_ok());
 
         // This request does not match the POD, because the POD does not contain a NotEqual statement.
         let non_matching_request = parse(
@@ -213,6 +218,6 @@ mod tests {
         )
         .unwrap()
         .request;
-        assert!(!non_matching_request.exact_match_pod(&*kyc.pod));
+        assert!(non_matching_request.exact_match_pod(&*kyc.pod).is_err());
     }
 }

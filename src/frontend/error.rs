@@ -33,6 +33,8 @@ pub enum InnerError {
     OpInvalidArgs(String),
     #[error("Podlang parse error: {0}")]
     PodlangParse(String),
+    #[error("POD Request validation error: {0}")]
+    PodRequestValidation(String),
     // Other
     #[error("{0}")]
     Custom(String),
@@ -98,5 +100,8 @@ impl Error {
     }
     pub(crate) fn podlang_parse(e: crate::lang::LangError) -> Self {
         new!(PodlangParse(e.to_string()))
+    }
+    pub(crate) fn pod_request_validation(e: String) -> Self {
+        new!(PodRequestValidation(e))
     }
 }

@@ -458,7 +458,7 @@ pub mod tests {
             gov_id_pod.get("_signer").unwrap(),
             pay_stub_pod.get("_signer").unwrap(),
         )?;
-        assert!(request.exact_match_pod(&*pod));
+        assert!(request.exact_match_pod(&*pod).is_ok());
 
         Ok(())
     }
