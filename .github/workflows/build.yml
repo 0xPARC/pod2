@@ -15,9 +15,7 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: Set up Rust
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
+      uses: actions-rust-lang/setup-rust-toolchain@v1
     - name: Build default
       run: cargo build
     - name: Build non-zk # check without the zk feature enabled
