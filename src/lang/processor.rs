@@ -817,6 +817,7 @@ fn process_literal_value(
             })?;
             Ok(Value::from(secret_key))
         }
+        Rule::self_keyword => Ok(Value::from(middleware::SELF)),
         _ => unreachable!("Unexpected rule: {:?}", inner_lit.as_rule()),
     }
 }

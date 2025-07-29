@@ -68,7 +68,8 @@ literal_value = {
     literal_raw |
     literal_pod_id |
     literal_string |
-    literal_int
+    literal_int |
+    self_keyword
 }
 
 // Primitive literal types

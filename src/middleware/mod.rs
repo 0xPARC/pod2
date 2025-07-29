@@ -341,6 +341,18 @@ impl JsonSchema for TypedValue {
             ..Default::default()
         };
 
+        let pod_id_schema = schemars::schema::SchemaObject {
+            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
+            object: Some(Box::new(schemars::schema::ObjectValidation {
+                properties: [("PodId".to_string(), gen.subschema_for::<PodId>())]
+                    .into_iter()
+                    .collect(),
+                required: ["PodId".to_string()].into_iter().collect(),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+
         let public_key_schema = schemars::schema::SchemaObject {
             instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
             object: Some(Box::new(schemars::schema::ObjectValidation {
@@ -377,6 +389,7 @@ impl JsonSchema for TypedValue {
         Schema::Object(SchemaObject {
             subschemas: Some(Box::new(schemars::schema::SubschemaValidation {
                 any_of: Some(vec![
+                    Schema::Object(pod_id_schema),
                     Schema::Object(int_schema),
                     Schema::Object(raw_schema),
                     Schema::Object(public_key_schema),

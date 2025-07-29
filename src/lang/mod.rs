@@ -34,7 +34,7 @@ mod tests {
         middleware::{
             hash_str, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key,
             NativePredicate, Params, PodId, PodType, Predicate, RawValue, StatementTmpl,
-            StatementTmplArg, Value, Wildcard, KEY_SIGNER, KEY_TYPE,
+            StatementTmplArg, Value, Wildcard, KEY_SIGNER, KEY_TYPE, SELF,
         },
     };
 
@@ -877,6 +877,7 @@ mod tests {
                 Equal(?E["int"], {})
                 Equal(?F["bool"], {})
                 Equal(?G["sk"], {})
+                Equal(?H["self"], SELF)
             )
         "#,
             Value::from(pk).to_podlang_string(),
@@ -895,14 +896,14 @@ mod tests {
                 Equal(?D["string"], "hello")
                 Equal(?E["int"], 123)
                 Equal(?F["bool"], true)
+                Equal(?G["sk"], SecretKey(random_secret_key_base_64))
+                Equal(?H["self"], SELF)
             )
         */
 
         let params = Params::default();
         let processed = parse(&input, &params, &[])?;
         let request_templates = processed.request_templates;
-
-        assert_eq!(request_templates.len(), 7);
 
         let expected_templates = vec![
             StatementTmpl {
@@ -932,6 +933,10 @@ mod tests {
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![sta_ak(("G", 6), "sk"), sta_lit(Value::from(sk))],
+            },
+            StatementTmpl {
+                pred: Predicate::Native(NativePredicate::Equal),
+                args: vec![sta_ak(("H", 7), "self"), sta_lit(Value::from(SELF))],
             },
         ];
 
