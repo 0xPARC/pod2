@@ -578,7 +578,7 @@ pub(crate) fn rec_main_pod_circuit_data(
     )
 }
 
-fn cache_get_rec_main_pod_circuit_data(
+pub(crate) fn cache_get_rec_main_pod_circuit_data(
     params: &Params,
 ) -> CacheEntry<(
     RecursiveCircuitTarget<MainPodVerifyTarget>,
