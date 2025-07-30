@@ -553,7 +553,7 @@ impl MainPodBuilder {
         self.public_statements.push(st.clone());
     }
 
-    pub fn prove(&self, prover: &dyn PodProver, params: &Params) -> Result<MainPod> {
+    pub fn prove(&self, prover: &dyn PodProver) -> Result<MainPod> {
         let compiler = MainPodCompiler::new(&self.params);
         let inputs = MainPodCompilerInputs {
             // signed_pods: &self.input_signed_pods,
@@ -563,7 +563,7 @@ impl MainPodBuilder {
             public_statements: &self.public_statements,
         };
 
-        let (statements, operations, public_statements) = compiler.compile(inputs, params)?;
+        let (statements, operations, public_statements) = compiler.compile(inputs, &self.params)?;
 
         let inputs = MainPodInputs {
             signed_pods: &self
@@ -919,7 +919,7 @@ pub mod tests {
 
         // prove kyc with MockProver and print it
         let prover = MockProver {};
-        let kyc = kyc_builder.prove(&prover, &params)?;
+        let kyc = kyc_builder.prove(&prover)?;
 
         println!("{}", kyc);
 
@@ -955,7 +955,7 @@ pub mod tests {
         let prover = MockProver {};
 
         let alice_attestation = attest_eth_friend(&params, &alice, bob.public_key());
-        let dist_1 = helper.dist_1(&alice_attestation)?.prove(&prover, &params)?;
+        let dist_1 = helper.dist_1(&alice_attestation)?.prove(&prover)?;
         dist_1.pod.verify()?;
         let request = eth_dos_request()?;
         assert!(request.exact_match_pod(&*dist_1.pod).is_ok());
@@ -967,7 +967,7 @@ pub mod tests {
         let bob_attestation = attest_eth_friend(&params, &bob, charlie.public_key());
         let dist_2 = helper
             .dist_n_plus_1(&dist_1, &bob_attestation)?
-            .prove(&prover, &params)?;
+            .prove(&prover)?;
         dist_2.pod.verify()?;
         assert!(request.exact_match_pod(&*dist_2.pod).is_ok());
         let bindings = request.exact_match_pod(&*dist_2.pod).unwrap();
@@ -978,7 +978,7 @@ pub mod tests {
         let charlie_attestation = attest_eth_friend(&params, &charlie, david.public_key());
         let dist_3 = helper
             .dist_n_plus_1(&dist_2, &charlie_attestation)?
-            .prove(&prover, &params)?;
+            .prove(&prover)?;
         dist_3.pod.verify()?;
         assert!(request.exact_match_pod(&*dist_3.pod).is_ok());
         let bindings = request.exact_match_pod(&*dist_3.pod).unwrap();
@@ -991,7 +991,7 @@ pub mod tests {
 
     #[test]
     fn test_front_great_boy() -> Result<()> {
-        let (_, great_boy) = great_boy_pod_full_flow()?;
+        let great_boy = great_boy_pod_full_flow()?;
         println!("{}", great_boy);
 
         // TODO: prove great_boy with MockProver and print it
@@ -1055,7 +1055,7 @@ pub mod tests {
         builder.op(true, op_eq3).unwrap();
 
         let prover = MockProver {};
-        let pod = builder.prove(&prover, &params).unwrap();
+        let pod = builder.prove(&prover).unwrap();
 
         println!("{}", pod);
     }
@@ -1078,7 +1078,7 @@ pub mod tests {
         builder.pub_op(op!(gt, (&pod, "num"), 5)).unwrap();
 
         let prover = MockProver {};
-        let false_pod = builder.prove(&prover, &params).unwrap();
+        let false_pod = builder.prove(&prover).unwrap();
 
         println!("{}", builder);
         println!("{}", false_pod);
@@ -1123,7 +1123,7 @@ pub mod tests {
             ))
             .unwrap();
         let main_prover = MockProver {};
-        let main_pod = builder.prove(&main_prover, &params).unwrap();
+        let main_pod = builder.prove(&main_prover).unwrap();
 
         println!("{}", main_pod);
 
@@ -1164,7 +1164,7 @@ pub mod tests {
 
         // Prove Main POD to check.
         let main_prover = MockProver {};
-        let main_pod = builder.prove(&main_prover, &params).unwrap();
+        let main_pod = builder.prove(&main_prover).unwrap();
 
         println!("{}", main_pod);
 
@@ -1279,7 +1279,7 @@ pub mod tests {
         builder.insert(false, (st, op_new_entry.clone()));
 
         let prover = MockProver {};
-        let pod = builder.prove(&prover, &params).unwrap();
+        let pod = builder.prove(&prover).unwrap();
         pod.pod.verify().unwrap();
     }
 
@@ -1315,7 +1315,7 @@ pub mod tests {
         builder.insert(false, (st, op));
 
         let prover = MockProver {};
-        let pod = builder.prove(&prover, &params).unwrap();
+        let pod = builder.prove(&prover).unwrap();
         pod.pod.verify().unwrap();
     }
 }

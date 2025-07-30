@@ -275,7 +275,7 @@ mod tests {
         let kyc_builder = zu_kyc_pod_builder(&params, vd_set, &gov_id_pod, &pay_stub_pod).unwrap();
 
         let prover = MockProver {};
-        let kyc_pod = kyc_builder.prove(&prover, &params).unwrap();
+        let kyc_pod = kyc_builder.prove(&prover).unwrap();
         Ok(kyc_pod)
     }
 
@@ -298,7 +298,7 @@ mod tests {
         let kyc_builder = zu_kyc_pod_builder(&params, &vd_set, &gov_id_pod, &pay_stub_pod)?;
 
         let prover = Prover {};
-        let kyc_pod = kyc_builder.prove(&prover, &params)?;
+        let kyc_pod = kyc_builder.prove(&prover)?;
 
         Ok(kyc_pod)
     }
@@ -350,10 +350,10 @@ mod tests {
 
         let helper = EthDosHelper::new(&params, vd_set, true, alice.public_key())?;
         let prover = MockProver {};
-        let dist_1 = helper.dist_1(&alice_attestation)?.prove(&prover, &params)?;
+        let dist_1 = helper.dist_1(&alice_attestation)?.prove(&prover)?;
         let dist_2 = helper
             .dist_n_plus_1(&dist_1, &bob_attestation)?
-            .prove(&prover, &params)?;
+            .prove(&prover)?;
 
         Ok(dist_2)
     }

@@ -194,7 +194,7 @@ mod tests {
         let pay_stub = pay_stub.sign(&Signer(SecretKey(2u32.into()))).unwrap();
         let builder = zu_kyc_pod_builder(&Params::default(), vd_set, &gov_id, &pay_stub).unwrap();
         let prover = MockProver {};
-        let kyc = builder.prove(&prover, &params).unwrap();
+        let kyc = builder.prove(&prover).unwrap();
 
         // This request matches the POD
         let request = zu_kyc_pod_request(
@@ -231,7 +231,7 @@ mod tests {
 
         let prover = MockProver {};
 
-        let pod = builder.prove(&prover, &params).unwrap();
+        let pod = builder.prove(&prover).unwrap();
 
         println!("{pod}");
 

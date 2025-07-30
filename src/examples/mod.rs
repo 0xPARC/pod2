@@ -351,7 +351,7 @@ pub fn great_boy_pod_builder(
     Ok(great_boy)
 }
 
-pub fn great_boy_pod_full_flow() -> Result<(Params, MainPodBuilder)> {
+pub fn great_boy_pod_full_flow() -> Result<MainPodBuilder> {
     let params = Params {
         max_input_signed_pods: 6,
         max_input_recursive_pods: 0,
@@ -416,7 +416,7 @@ pub fn great_boy_pod_full_flow() -> Result<(Params, MainPodBuilder)> {
         &alice,
     )?;
 
-    Ok((params, builder))
+    Ok(builder)
 }
 
 // Tickets

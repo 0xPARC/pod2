@@ -114,7 +114,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         st_level,
         st_points
     ))?;
-    let pod_alice_lvl_1_points = builder.prove(prover, &params).unwrap();
+    let pod_alice_lvl_1_points = builder.prove(prover).unwrap();
     println!("# pod_alice_lvl_1_points\n:{}", pod_alice_lvl_1_points);
     pod_alice_lvl_1_points.pod.verify().unwrap();
 
@@ -135,7 +135,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         st_level,
         st_points
     ))?;
-    let pod_alice_lvl_2_points = builder.prove(prover, &params).unwrap();
+    let pod_alice_lvl_2_points = builder.prove(prover).unwrap();
     println!("# pod_alice_lvl_2_points\n:{}", pod_alice_lvl_2_points);
     pod_alice_lvl_2_points.pod.verify().unwrap();
 
@@ -153,7 +153,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         st_points_total,
         st_gt_9000
     ));
-    let pod_alice_over_9000 = builder.prove(prover, &params).unwrap();
+    let pod_alice_over_9000 = builder.prove(prover).unwrap();
     println!("# pod_alice_over_9000\n:{}", pod_alice_over_9000);
     pod_alice_over_9000.pod.verify().unwrap();
 

@@ -312,7 +312,7 @@ mod tests {
 
         // Check that the POD builds
         let prover = MockProver {};
-        let proof = mp_builder.prove(&prover, &params)?;
+        let proof = mp_builder.prove(&prover)?;
 
         Ok(())
     }
@@ -361,7 +361,7 @@ mod tests {
         mp_builder.pub_op(op!(custom, set_contains_custom_pred, set_contains))?;
 
         let prover = MockProver {};
-        let proof = mp_builder.prove(&prover, &params)?;
+        let proof = mp_builder.prove(&prover)?;
 
         Ok(())
     }

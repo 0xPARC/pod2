@@ -776,7 +776,7 @@ pub mod tests {
         let kyc_builder = zu_kyc_pod_builder(&params, &vd_set, &gov_id_pod, &pay_stub_pod)?;
 
         let prover = Prover {};
-        let kyc_pod = kyc_builder.prove(&prover, &params)?;
+        let kyc_pod = kyc_builder.prove(&prover)?;
         crate::measure_gates_print!();
         let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
 
@@ -789,7 +789,7 @@ pub mod tests {
 
         let ticket_builder = tickets_pod_full_flow(&params, &DEFAULT_VD_SET)?;
         let prover = Prover {};
-        let kyc_pod = ticket_builder.prove(&prover, &params)?;
+        let kyc_pod = ticket_builder.prove(&prover)?;
         crate::measure_gates_print!();
         let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
 
@@ -829,7 +829,7 @@ pub mod tests {
 
         // Mock
         let prover = MockProver {};
-        let kyc_pod = kyc_builder.prove(&prover, &params).unwrap();
+        let kyc_pod = kyc_builder.prove(&prover).unwrap();
         let pod = (kyc_pod.pod as Box<dyn Any>)
             .downcast::<MockMainPod>()
             .unwrap();
@@ -838,7 +838,7 @@ pub mod tests {
 
         // Real
         let prover = Prover {};
-        let kyc_pod = kyc_builder.prove(&prover, &params).unwrap();
+        let kyc_pod = kyc_builder.prove(&prover).unwrap();
         let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
         pod.verify().unwrap()
     }
@@ -872,7 +872,7 @@ pub mod tests {
 
         // Mock
         let prover = MockProver {};
-        let kyc_pod = pod_builder.prove(&prover, &params).unwrap();
+        let kyc_pod = pod_builder.prove(&prover).unwrap();
         let pod = (kyc_pod.pod as Box<dyn Any>)
             .downcast::<MockMainPod>()
             .unwrap();
@@ -881,7 +881,7 @@ pub mod tests {
 
         // Real
         let prover = Prover {};
-        let kyc_pod = pod_builder.prove(&prover, &params).unwrap();
+        let kyc_pod = pod_builder.prove(&prover).unwrap();
         let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
         pod.verify().unwrap()
     }
@@ -903,12 +903,12 @@ pub mod tests {
 
         let helper = EthDosHelper::new(&params, vd_set, false, alice.public_key())?;
         let prover = Prover {};
-        let dist_1 = helper.dist_1(&alice_attestation)?.prove(&prover, &params)?;
+        let dist_1 = helper.dist_1(&alice_attestation)?.prove(&prover)?;
         crate::measure_gates_print!();
         dist_1.pod.verify()?;
         let dist_2 = helper
             .dist_n_plus_1(&dist_1, &bob_attestation)?
-            .prove(&prover, &params)?;
+            .prove(&prover)?;
         Ok(dist_2.pod.verify()?)
     }
 
@@ -958,11 +958,11 @@ pub mod tests {
         let _st3 = pod_builder.priv_op(op!(custom, cpb_and.clone(), st0, st2))?;
 
         let prover = MockProver {};
-        let pod = pod_builder.prove(&prover, &params)?;
+        let pod = pod_builder.prove(&prover)?;
         assert!(pod.pod.verify().is_ok());
 
         let prover = Prover {};
-        let pod = pod_builder.prove(&prover, &params)?;
+        let pod = pod_builder.prove(&prover)?;
         crate::measure_gates_print!();
 
         let pod = (pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
@@ -986,7 +986,7 @@ pub mod tests {
         builder.pub_op(op!(set_contains, st, 1))?;
 
         let prover = Prover {};
-        let proof = builder.prove(&prover, &params).unwrap();
+        let proof = builder.prove(&prover).unwrap();
         let pod = (proof.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
         Ok(pod.verify()?)
     }
