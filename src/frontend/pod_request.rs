@@ -182,6 +182,7 @@ mod tests {
             mock::mainpod::MockProver, primitives::ec::schnorr::SecretKey, signedpod::Signer,
         },
         examples::{zu_kyc_pod_builder, zu_kyc_pod_request, zu_kyc_sign_pod_builders, MOCK_VD_SET},
+        frontend::{MainPodBuilder, Operation},
         lang::parse,
         middleware::Params,
     };
@@ -219,5 +220,41 @@ mod tests {
         .unwrap()
         .request;
         assert!(non_matching_request.exact_match_pod(&*kyc.pod).is_err());
+    }
+
+    #[test]
+    fn test_ambiguous_pod() {
+        let params = Params::default();
+        let vd_set = &*MOCK_VD_SET;
+
+        let mut builder = MainPodBuilder::new(&params, vd_set);
+        let _sum_of_stmt_1 = builder.pub_op(Operation::sum_of(11, 1, 10));
+        let _sum_of_stmt_2 = builder.pub_op(Operation::sum_of(10, 9, 1));
+        let _eq_stmt = builder.pub_op(Operation::eq(10, 10));
+
+        let prover = MockProver {};
+
+        let pod = builder.prove(&prover, &params).unwrap();
+
+        println!("{pod}");
+
+        let request = parse(
+            r#"
+        REQUEST(
+            SumOf(?a, ?b, ?c)
+            Equal(?a, 10)
+        )
+        "#,
+            &params,
+            &[],
+        )
+        .unwrap();
+
+        let match_result = request.request.exact_match_pod(&*pod.pod);
+        assert!(match_result.is_ok());
+        let bindings = match_result.unwrap();
+        assert_eq!(*bindings.get("a").unwrap(), 10.into());
+        assert_eq!(*bindings.get("b").unwrap(), 9.into());
+        assert_eq!(*bindings.get("c").unwrap(), 1.into());
     }
 }
