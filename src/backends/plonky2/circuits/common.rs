@@ -671,8 +671,7 @@ impl Flattenable for CustomPredicateVerifyQueryTarget {
     fn from_flattened(params: &Params, vs: &[Target]) -> Self {
         let (pos, size) = (0, params.statement_size());
         let statement = StatementTarget::from_flattened(params, &vs[pos..pos + size]);
-        let operation_arg_f_len = IndexTarget::f_len(params.statement_table_size());
-        let (pos, size) = (pos + size, params.operation_size(operation_arg_f_len));
+        let (pos, size) = (pos + size, params.operation_size(IndexTarget::f_len()));
         let op_type = OperationTypeTarget {
             elements: vs[pos..pos + size]
                 .try_into()
@@ -876,8 +875,9 @@ impl Flattenable for StatementTmplArgTarget {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct IndexTarget {
+    bits: u32,
     low: Target,
-    high: Vec<BoolTarget>,
+    high: Target,
 }
 
 /// bits needed to represent a value `< max` or 0 if `max == 0`
@@ -891,37 +891,28 @@ fn usize_bits(max: usize) -> u32 {
 
 impl IndexTarget {
     // Length in field elements
-    pub fn f_len(array_len: usize) -> usize {
-        let bits = usize_bits(array_len);
-        if bits > 6 {
-            1 + bits as usize - 6
-        } else {
-            1
-        }
+    pub const fn f_len() -> usize {
+        2
     }
     pub fn new_virtual(array_len: usize, builder: &mut CircuitBuilder) -> Self {
         // Limit the maximum array length to avoid abusing `vec_ref`
         assert!(array_len <= 256);
         let bits = usize_bits(array_len);
         Self {
+            bits,
             low: builder.add_virtual_target(),
             high: if bits > 6 {
-                (0..(bits - 6))
-                    .map(|_| builder.add_virtual_bool_target_safe())
-                    .collect()
+                builder.add_virtual_target()
             } else {
-                Vec::new()
+                builder.zero()
             },
         }
     }
 
     pub fn set_targets(&self, pw: &mut PartialWitness<F>, index: usize) -> Result<()> {
-        assert!(index < 64 * (1 << self.high.len()));
-        pw.set_target(self.low, F::from_canonical_usize(index & 0b11_1111))?;
-        for (i, bit_target) in self.high.iter().enumerate() {
-            let bit = (index >> (6 + i)) & 1;
-            pw.set_target(bit_target.target, F::from_canonical_usize(bit))?;
-        }
+        assert!(index < (1 << self.bits));
+        pw.set_target(self.low, F::from_canonical_usize(index & ((1 << 6) - 1)))?;
+        pw.set_target(self.high, F::from_canonical_usize(index >> 6))?;
         Ok(())
     }
 }
@@ -991,13 +982,13 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     /// Creates value target that is a hash of two given values.
     fn hash_values(&mut self, x: ValueTarget, y: ValueTarget) -> ValueTarget;
 
-    /// TODO
+    /// Like `random_access` but allows using longer arrays.
     fn random_access_long(&mut self, i: &IndexTarget, array: &[Target]) -> Target;
 
-    // Convenience methods for accessing and connecting elements of
-    // (vectors of) flattenables.
+    /// Convenience methods for accessing and connecting elements of
+    /// (vectors of) flattenables.
     fn vec_ref<T: Flattenable>(&mut self, params: &Params, ts: &[T], i: &IndexTarget) -> T;
-    // Like `vec_ref` but only supports arrays up to 64 elements and the index is a simple `Target`
+    /// Like `vec_ref` but only supports arrays up to 64 elements and the index is a simple `Target`
     fn vec_ref_small<T: Flattenable>(&mut self, params: &Params, ts: &[T], i: Target) -> T;
     fn select_flattenable<T: Flattenable>(
         &mut self,
@@ -1009,11 +1000,11 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     fn connect_flattenable<T: Flattenable>(&mut self, xs: &T, ys: &T);
     fn is_equal_flattenable<T: Flattenable>(&mut self, xs: &T, ys: &T) -> BoolTarget;
 
-    // Convenience methods for Boolean into-iters.
+    /// Convenience methods for Boolean into-iters.
     fn all(&mut self, xs: impl IntoIterator<Item = BoolTarget>) -> BoolTarget;
     fn any(&mut self, xs: impl IntoIterator<Item = BoolTarget>) -> BoolTarget;
 
-    // Return a bit-mask of size `len` that selects all positions lower than `n`
+    /// Return a bit-mask of size `len` that selects all positions lower than `n`
     fn lt_mask(&mut self, len: usize, n: Target) -> Vec<BoolTarget>;
 }
 
@@ -1362,7 +1353,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
 
     fn random_access_long(&mut self, i: &IndexTarget, array: &[Target]) -> Target {
         const CHUNK_LEN: usize = 64; // Max size of a single gate native random access
-        assert!(array.len() <= 64 || CHUNK_LEN * (1 << (i.high.len() - 1)) < array.len());
+        assert!(array.len() <= (1 << i.bits));
         // Limit to 4 chunks (combination of 4 random_access of CHUNK_LEN elements) to avoid
         // abusing this method.
         assert!(array.len() <= 4 * CHUNK_LEN);
@@ -1371,22 +1362,21 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
         // index.  Then we combine them using the highest bits of the index.
         let mut chunk_res = Vec::new();
         let num_chunks = array.len().div_ceil(CHUNK_LEN);
-        let index_high = self.le_sum(i.high.iter());
         for chunk in array.chunks(CHUNK_LEN) {
             let mut index_chunk = i.low;
             // I we have several chunks and the last one is smaller (it's index needs less than 6
             // bits), make it zero except when it's used so that the range check over the index
             // passes.
-            if chunk.len() <= CHUNK_LEN / 2 && !i.high.is_empty() {
+            if chunk.len() <= CHUNK_LEN / 2 && i.bits > 6 {
                 let last_chunk_index_high = self.constant(F::from_canonical_usize(num_chunks - 1));
-                let selector = self.is_equal(index_high, last_chunk_index_high);
+                let selector = self.is_equal(i.high, last_chunk_index_high);
                 index_chunk = self.mul(index_chunk, selector.target);
             }
             let res = self.random_access(index_chunk, chunk.to_vec());
             chunk_res.push(res);
         }
 
-        self.random_access(index_high, chunk_res)
+        self.random_access(i.high, chunk_res)
     }
 
     // TODO: Implement a version of vec_ref for types `T` which are big and support hashing.
@@ -1419,12 +1409,14 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
     }
 
     fn vec_ref_small<T: Flattenable>(&mut self, params: &Params, ts: &[T], i: Target) -> T {
+        let zero = self.zero();
         self.vec_ref(
             params,
             ts,
             &IndexTarget {
+                bits: 6,
                 low: i,
-                high: Vec::new(),
+                high: zero,
             },
         )
     }
