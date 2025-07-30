@@ -266,7 +266,11 @@ impl fmt::Display for TypedValue {
             TypedValue::PublicKey(p) => write!(f, "PublicKey({})", p),
             TypedValue::SecretKey(p) => write!(f, "SecretKey({})", p),
             TypedValue::PodId(p) => {
-                write!(f, "0x{}", p.0.encode_hex::<String>())
+                if *p == SELF {
+                    write!(f, "SELF")
+                } else {
+                    write!(f, "0x{}", p.0.encode_hex::<String>())
+                }
             }
             TypedValue::Raw(r) => {
                 write!(f, "Raw(0x{})", r.encode_hex::<String>())

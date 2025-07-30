@@ -508,6 +508,16 @@ mod tests {
     }
 
     #[test]
+    fn test_round_trip_self() {
+        let input = r#"
+            self_test(Pod) = AND(
+                Equal(?Pod["self"], SELF)
+            )
+        "#;
+        assert_round_trip(input);
+    }
+
+    #[test]
     fn test_pretty_print_demonstration() {
         let input = r#"
             base_check(Pod) = AND(
