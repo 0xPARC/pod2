@@ -927,7 +927,6 @@ pub mod tests {
             gov_id.get("_signer").unwrap(),
             pay_stub.get("_signer").unwrap(),
         )?;
-        assert!(request.exact_match_pod(&*kyc.pod).is_ok());
         // Check the bindings of the "gov" and "pay" wildcards from the PodRequest
         let bindings = request.exact_match_pod(&*kyc.pod).unwrap();
         assert_eq!(*bindings.get("gov").unwrap(), gov_id.id().into());

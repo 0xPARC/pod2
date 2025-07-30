@@ -250,9 +250,7 @@ mod tests {
         )
         .unwrap();
 
-        let match_result = request.request.exact_match_pod(&*pod.pod);
-        assert!(match_result.is_ok());
-        let bindings = match_result.unwrap();
+        let bindings = request.request.exact_match_pod(&*pod.pod).unwrap();
         assert_eq!(*bindings.get("a").unwrap(), 10.into());
         assert_eq!(*bindings.get("b").unwrap(), 9.into());
         assert_eq!(*bindings.get("c").unwrap(), 1.into());
