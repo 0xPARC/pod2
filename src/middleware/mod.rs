@@ -830,7 +830,7 @@ impl Params {
     /// Total size of the statement table including None, input statements from signed pods and
     /// input recursive pods and new statements (public & private)
     pub fn statement_table_size(&self) -> usize {
-        1 + self.max_input_signed_pods * self.max_input_signed_pods
+        1 + self.max_input_signed_pods * self.max_signed_pod_values
             + self.max_input_recursive_pods * self.max_input_pods_public_statements
             + self.max_statements
     }
