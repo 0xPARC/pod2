@@ -172,20 +172,27 @@ impl MainPodBuilder {
     pub fn add_recursive_pod(&mut self, pod: MainPod) {
         self.input_recursive_pods.push(pod);
     }
-    pub fn insert(&mut self, public: bool, st_op: (Statement, Operation)) {
+    pub fn insert(&mut self, public: bool, st_op: (Statement, Operation)) -> Result<()> {
         // TODO: Do error handling instead of panic
         let (st, op) = st_op;
         if public {
             self.public_statements.push(st.clone());
         }
         if self.public_statements.len() > self.params.max_public_statements {
-            panic!("too many public statements");
+            return Err(Error::too_many_public_statements(
+                self.public_statements.len(),
+                self.params.max_public_statements,
+            ));
         }
         self.statements.push(st);
         self.operations.push(op);
         if self.statements.len() > self.params.max_statements {
-            panic!("too many statements");
+            return Err(Error::too_many_statements(
+                self.statements.len(),
+                self.params.max_statements,
+            ));
         }
+        Ok(())
     }
 
     pub fn pub_op(&mut self, op: Operation) -> Result<Statement> {
@@ -511,7 +518,7 @@ impl MainPodBuilder {
     fn op(&mut self, public: bool, op: Operation) -> Result<Statement> {
         let op = Self::fill_in_aux(Self::lower_op(op)?)?;
         let st = self.op_statement(op.clone())?;
-        self.insert(public, (st, op));
+        self.insert(public, (st, op))?;
 
         Ok(self.statements[self.statements.len() - 1].clone())
     }
@@ -1273,10 +1280,10 @@ pub mod tests {
             vec![],
             OperationAux::None,
         );
-        builder.insert(false, (st, op_new_entry.clone()));
+        builder.insert(false, (st, op_new_entry.clone())).unwrap();
 
         let st = Statement::equal(AnchoredKey::from((SELF, "a")), Value::from(28));
-        builder.insert(false, (st, op_new_entry.clone()));
+        builder.insert(false, (st, op_new_entry.clone())).unwrap();
 
         let prover = MockProver {};
         let pod = builder.prove(&prover, &params).unwrap();
@@ -1301,8 +1308,12 @@ pub mod tests {
             vec![],
             OperationAux::None,
         );
-        builder.insert(false, (value_of_a.clone(), op_new_entry.clone()));
-        builder.insert(false, (value_of_b.clone(), op_new_entry));
+        builder
+            .insert(false, (value_of_a.clone(), op_new_entry.clone()))
+            .unwrap();
+        builder
+            .insert(false, (value_of_b.clone(), op_new_entry))
+            .unwrap();
         let st = Statement::equal(self_a, self_b);
         let op = Operation(
             OperationType::Native(NativeOperation::EqualFromEntries),
@@ -1312,7 +1323,7 @@ pub mod tests {
             ],
             OperationAux::None,
         );
-        builder.insert(false, (st, op));
+        builder.insert(false, (st, op)).unwrap();
 
         let prover = MockProver {};
         let pod = builder.prove(&prover, &params).unwrap();
