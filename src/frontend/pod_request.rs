@@ -6,14 +6,14 @@ use crate::{
     middleware::{Pod, Statement, StatementArg, StatementTmpl, StatementTmplArg, Value},
 };
 
+/// Represents a request for a POD, in terms of a set of statement templates.
+/// The response should be a POD (or PODs) containing a set of statements which
+/// satisfy the templates, with consistent wildcard bindings across all templates.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PodRequest {
     pub request_templates: Vec<StatementTmpl>,
 }
 
-/// Represents a request for a POD, in terms of a set of statement templates.
-/// The response should be a POD (or PODs) containing a set of statements which
-/// satisfy the templates, with consistent wildcard bindings across all templates.
 impl PodRequest {
     pub fn new(request_templates: Vec<StatementTmpl>) -> Self {
         Self { request_templates }
@@ -23,9 +23,6 @@ impl PodRequest {
     /// This checks for exact matches to the statement templates; that is to say
     /// that it performs a "syntactic" match, not a "semantic" match; no
     /// processing of the semantics of the statements is performed.
-    ///
-    /// TODO: matching on SELF as part of https://github.com/0xPARC/pod2/issues/351
-    /// Until then, matching on SELF anchored keys is not supported.
     pub fn exact_match_pod(&self, pod: &dyn Pod) -> Result<HashMap<String, Value>> {
         let pod_statements = pod.pub_statements();
         let mut bindings: HashMap<String, Value> = HashMap::new();
