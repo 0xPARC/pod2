@@ -901,7 +901,7 @@ impl IndexTarget {
     }
 
     pub fn set_targets(&self, pw: &mut PartialWitness<F>, index: usize) -> Result<()> {
-        assert!(index < self.max_array_len);
+        assert!(index == 0 || index < self.max_array_len);
         pw.set_target(self.low, F::from_canonical_usize(index & ((1 << 6) - 1)))?;
         pw.set_target(self.high, F::from_canonical_usize(index >> 6))?;
         Ok(())
