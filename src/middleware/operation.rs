@@ -14,8 +14,8 @@ use crate::{
     },
     middleware::{
         hash_values, AnchoredKey, CustomPredicate, CustomPredicateRef, Error, NativePredicate,
-        Params, Predicate, Result, Statement, StatementArg, StatementTmplArg, ToFields, Value,
-        ValueRef, Wildcard, F, SELF,
+        Params, Predicate, Result, Statement, StatementArg, StatementTmpl, StatementTmplArg,
+        ToFields, Value, ValueRef, Wildcard, F, SELF,
     },
 };
 
@@ -486,7 +486,37 @@ pub fn resolve_wildcard_values(
         .collect())
 }
 
-fn check_custom_pred(
+fn check_custom_pred_argument(
+    custom_pred_ref: &CustomPredicateRef,
+    template: &StatementTmpl,
+    statement: &Statement,
+) -> Result<()> {
+    let template_pred = match &template.pred {
+        &Predicate::BatchSelf(i) => Predicate::Custom(CustomPredicateRef {
+            batch: custom_pred_ref.batch.clone(),
+            index: i,
+        }),
+        p => p.clone(),
+    };
+    if template_pred != statement.predicate() {
+        return Err(Error::mismatched_statement_type(
+            template_pred,
+            statement.predicate(),
+        ));
+    }
+    let st_args_len = statement.args().len();
+    if template.args.len() != st_args_len {
+        return Err(Error::diff_amount(
+            "statement template in custom predicate".to_string(),
+            "arguments".to_string(),
+            st_args_len,
+            template.args.len(),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn check_custom_pred(
     params: &Params,
     custom_pred_ref: &CustomPredicateRef,
     args: &[Statement],
@@ -510,19 +540,24 @@ fn check_custom_pred(
         ));
     }
 
-    // Count the number of statements that match the templates by predicate.
-    let mut num_matches = 0;
+    let mut match_exists = false;
     for (st_tmpl, st) in pred.statements.iter().zip(args) {
-        let st_tmpl_pred = match &st_tmpl.pred {
-            Predicate::BatchSelf(i) => Predicate::Custom(CustomPredicateRef {
-                batch: custom_pred_ref.batch.clone(),
-                index: *i,
-            }),
-            p => p.clone(),
-        };
-        if st_tmpl_pred == st.predicate() {
-            num_matches += 1;
+        // For `or` predicates, only one statement needs to match the template.
+        // The rest of the statements can be `None`.
+        if !pred.conjunction
+            && matches!(st, Statement::None)
+            && st_tmpl.pred != Predicate::Native(NativePredicate::None)
+        {
+            continue;
         }
+        check_custom_pred_argument(custom_pred_ref, st_tmpl, st)?;
+        match_exists = true;
+    }
+
+    if !pred.conjunction && !match_exists {
+        return Err(Error::unsatisfied_custom_predicate_disjunction(
+            pred.clone(),
+        ));
     }
 
     let wildcard_map = resolve_wildcard_values(params, pred, args)?;
@@ -537,18 +572,6 @@ fn check_custom_pred(
                 pred.clone(),
             ));
         }
-    }
-
-    if pred.conjunction {
-        if num_matches != pred.statements.len() {
-            return Err(Error::unsatisfied_custom_predicate_conjunction(
-                pred.clone(),
-            ));
-        }
-    } else if num_matches == 0 {
-        return Err(Error::unsatisfied_custom_predicate_disjunction(
-            pred.clone(),
-        ));
     }
 
     Ok(())

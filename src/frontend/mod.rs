@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 pub use serialization::{SerializedMainPod, SerializedSignedPod};
 
 use crate::middleware::{
-    self, check_st_tmpl, hash_op, hash_str, max_op, prod_op, sum_op, AnchoredKey, Key,
-    MainPodInputs, NativeOperation, OperationAux, OperationType, Params, PodId, PodProver,
-    PodSigner, Predicate, Statement, StatementArg, VDSet, Value, ValueRef, KEY_TYPE, SELF,
+    self, check_custom_pred, check_st_tmpl, hash_op, hash_str, max_op, prod_op, sum_op,
+    AnchoredKey, Key, MainPodInputs, NativeOperation, OperationAux, OperationType, Params, PodId,
+    PodProver, PodSigner, Statement, StatementArg, VDSet, Value, ValueRef, KEY_TYPE, SELF,
 };
 
 mod custom;
@@ -428,44 +428,17 @@ impl MainPodBuilder {
                 let mut wildcard_map =
                     vec![Option::None; self.params.max_custom_predicate_wildcards];
                 for (st_tmpl, st) in pred.statements.iter().zip(args.iter()) {
-                    if !(pred.is_disjunction() && matches!(st, Statement::None)) {
-                        let st_args = st.args();
-                        let predicates_dont_match = match st_tmpl.pred {
-                            // TODO: check that the custom predicate is the correct one
-                            Predicate::BatchSelf(_) => {
-                                !matches!(st.predicate(), Predicate::Custom(_))
-                            }
-                            _ => st_tmpl.pred != st.predicate(),
-                        };
-                        if predicates_dont_match {
+                    let st_args = st.args();
+                    for (st_tmpl_arg, st_arg) in st_tmpl.args.iter().zip(&st_args) {
+                        if let Err(st_tmpl_check_error) =
+                            check_st_tmpl(st_tmpl_arg, st_arg, &mut wildcard_map)
+                        {
                             return Err(Error::statements_dont_match(
                                 st.clone(),
                                 st_tmpl.clone(),
                                 wildcard_map,
-                                middleware::Error::custom(
-                                    "Statement types do not match.".to_string(),
-                                ),
+                                st_tmpl_check_error,
                             ));
-                        }
-                        if st_args.len() != st_tmpl.args.len() {
-                            return Err(Error::statements_dont_match(
-                                st.clone(),
-                                st_tmpl.clone(),
-                                wildcard_map,
-                                middleware::Error::incorrect_statements_args(),
-                            ));
-                        }
-                        for (st_tmpl_arg, st_arg) in st_tmpl.args.iter().zip(&st_args) {
-                            if let Err(st_tmpl_check_error) =
-                                check_st_tmpl(st_tmpl_arg, st_arg, &mut wildcard_map)
-                            {
-                                return Err(Error::statements_dont_match(
-                                    st.clone(),
-                                    st_tmpl.clone(),
-                                    wildcard_map,
-                                    st_tmpl_check_error,
-                                ));
-                            }
                         }
                     }
                 }
@@ -475,6 +448,7 @@ impl MainPodBuilder {
                     .take(pred.args_len)
                     .map(|v| v.unwrap_or_else(|| v_default.clone()))
                     .collect();
+                check_custom_pred(&self.params, &cpr, &args, &st_args)?;
                 Statement::Custom(cpr, st_args)
             }
         };
