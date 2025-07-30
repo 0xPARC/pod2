@@ -873,20 +873,12 @@ impl Flattenable for StatementTmplArgTarget {
     }
 }
 
+/// Index to an array for random acess
 #[derive(Clone, Serialize, Deserialize)]
 pub struct IndexTarget {
-    bits: u32,
+    max_array_len: usize,
     low: Target,
     high: Target,
-}
-
-/// bits needed to represent a value `< max` or 0 if `max == 0`
-fn usize_bits(max: usize) -> u32 {
-    if max > 0 {
-        (max - 1).ilog2() + 1
-    } else {
-        0
-    }
 }
 
 impl IndexTarget {
@@ -894,14 +886,13 @@ impl IndexTarget {
     pub const fn f_len() -> usize {
         2
     }
-    pub fn new_virtual(array_len: usize, builder: &mut CircuitBuilder) -> Self {
+    pub fn new_virtual(max_array_len: usize, builder: &mut CircuitBuilder) -> Self {
         // Limit the maximum array length to avoid abusing `vec_ref`
-        assert!(array_len <= 256);
-        let bits = usize_bits(array_len);
+        assert!(max_array_len <= 256);
         Self {
-            bits,
+            max_array_len,
             low: builder.add_virtual_target(),
-            high: if bits > 6 {
+            high: if max_array_len > 64 {
                 builder.add_virtual_target()
             } else {
                 builder.zero()
@@ -910,7 +901,7 @@ impl IndexTarget {
     }
 
     pub fn set_targets(&self, pw: &mut PartialWitness<F>, index: usize) -> Result<()> {
-        assert!(index < (1 << self.bits));
+        assert!(index < self.max_array_len);
         pw.set_target(self.low, F::from_canonical_usize(index & ((1 << 6) - 1)))?;
         pw.set_target(self.high, F::from_canonical_usize(index >> 6))?;
         Ok(())
@@ -1353,7 +1344,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
 
     fn random_access_long(&mut self, i: &IndexTarget, array: &[Target]) -> Target {
         const CHUNK_LEN: usize = 64; // Max size of a single gate native random access
-        assert!(array.len() <= (1 << i.bits));
+        assert!(array.len() <= i.max_array_len);
         // Limit to 4 chunks (combination of 4 random_access of CHUNK_LEN elements) to avoid
         // abusing this method.
         assert!(array.len() <= 4 * CHUNK_LEN);
@@ -1367,7 +1358,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
             // I we have several chunks and the last one is smaller (it's index needs less than 6
             // bits), make it zero except when it's used so that the range check over the index
             // passes.
-            if chunk.len() <= CHUNK_LEN / 2 && i.bits > 6 {
+            if chunk.len() <= CHUNK_LEN / 2 && num_chunks > 1 {
                 let last_chunk_index_high = self.constant(F::from_canonical_usize(num_chunks - 1));
                 let selector = self.is_equal(i.high, last_chunk_index_high);
                 index_chunk = self.mul(index_chunk, selector.target);
@@ -1414,7 +1405,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
             params,
             ts,
             &IndexTarget {
-                bits: 6,
+                max_array_len: 64,
                 low: i,
                 high: zero,
             },
