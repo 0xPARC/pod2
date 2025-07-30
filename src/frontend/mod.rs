@@ -10,7 +10,7 @@ pub use serialization::{SerializedMainPod, SerializedSignedPod};
 use crate::middleware::{
     self, check_st_tmpl, hash_op, hash_str, max_op, prod_op, sum_op, AnchoredKey, Key,
     MainPodInputs, NativeOperation, OperationAux, OperationType, Params, PodId, PodProver,
-    PodSigner, Statement, StatementArg, VDSet, Value, ValueRef, KEY_TYPE, SELF,
+    PodSigner, Predicate, Statement, StatementArg, VDSet, Value, ValueRef, KEY_TYPE, SELF,
 };
 
 mod custom;
@@ -276,190 +276,138 @@ impl MainPodBuilder {
 
     fn op_statement(&mut self, op: Operation) -> Result<Statement> {
         use NativeOperation::*;
-        let arg_error = |s: &str| Error::op_invalid_args(s.to_string());
         let st = match op.0 {
-            OperationType::Native(o) => match (o, &op.1.as_slice()) {
-                (None, &[]) => Statement::None,
-                (NewEntry, &[OperationArg::Entry(k, v)]) => {
-                    Statement::equal(AnchoredKey::from((SELF, k.as_str())), v.clone())
-                }
-                (EqualFromEntries, &[a1, a2]) => {
-                    let (r1, v1) = a1
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("equal-from-entries"))?;
-                    let (r2, v2) = a2
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("equal-from-entries"))?;
-                    if v1 == v2 {
-                        Statement::equal(r1, r2)
-                    } else {
-                        return Err(arg_error("equal-from-entries"));
+            OperationType::Native(o) => {
+                let native_arg_error = move || Error::op_invalid_args(format!("{o:?}"));
+                match (o, &op.1.as_slice()) {
+                    (None, &[]) => Statement::None,
+                    (NewEntry, &[OperationArg::Entry(k, v)]) => {
+                        Statement::equal(AnchoredKey::from((SELF, k.as_str())), v.clone())
+                    }
+                    (EqualFromEntries, &[a1, a2]) => {
+                        let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        if v1 == v2 {
+                            Statement::equal(r1, r2)
+                        } else {
+                            return Err(native_arg_error());
+                        }
+                    }
+                    (NotEqualFromEntries, &[a1, a2]) => {
+                        let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        if v1 != v2 {
+                            Statement::not_equal(r1, r2)
+                        } else {
+                            return Err(native_arg_error());
+                        }
+                    }
+                    (LtFromEntries, &[a1, a2]) => {
+                        let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        if v1 < v2 {
+                            Statement::lt(r1, r2)
+                        } else {
+                            return Err(native_arg_error());
+                        }
+                    }
+                    (LtEqFromEntries, &[a1, a2]) => {
+                        let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        if v1 <= v2 {
+                            Statement::not_equal(r1, r2)
+                        } else {
+                            return Err(native_arg_error());
+                        }
+                    }
+                    (CopyStatement, &[OperationArg::Statement(s)]) => s.clone(),
+                    (
+                        TransitiveEqualFromStatements,
+                        &[OperationArg::Statement(Statement::Equal(r1, r2)), OperationArg::Statement(Statement::Equal(r3, r4))],
+                    ) => {
+                        if r2 == r3 {
+                            Statement::Equal(r1.clone(), r4.clone())
+                        } else {
+                            return Err(native_arg_error());
+                        }
+                    }
+                    (LtToNotEqual, &[OperationArg::Statement(Statement::Lt(r1, r2))]) => {
+                        Statement::NotEqual(r1.clone(), r2.clone())
+                    }
+                    (SumOf, &[a1, a2, a3]) => {
+                        let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r3, v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
+                        if middleware::Operation::check_int_fn(v1, v2, v3, sum_op)? {
+                            Statement::SumOf(r1, r2, r3)
+                        } else {
+                            return Err(native_arg_error());
+                        }
+                    }
+                    (ProductOf, &[a1, a2, a3]) => {
+                        let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r3, v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
+                        if middleware::Operation::check_int_fn(v1, v2, v3, prod_op)? {
+                            Statement::ProductOf(r1, r2, r3)
+                        } else {
+                            return Err(native_arg_error());
+                        }
+                    }
+                    (MaxOf, &[a1, a2, a3]) => {
+                        let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r3, v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
+                        if middleware::Operation::check_int_fn(v1, v2, v3, max_op)? {
+                            Statement::MaxOf(r1, r2, r3)
+                        } else {
+                            return Err(native_arg_error());
+                        }
+                    }
+                    (HashOf, &[a1, a2, a3]) => {
+                        let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r3, v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
+                        if v1 == &hash_op(v2.clone(), v3.clone()) {
+                            Statement::HashOf(r1, r2, r3)
+                        } else {
+                            return Err(native_arg_error());
+                        }
+                    }
+                    (ContainsFromEntries, &[a1, a2, a3]) => {
+                        let (r1, _v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, _v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r3, _v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
+                        // TODO: validate proof
+                        Statement::Contains(r1, r2, r3)
+                    }
+                    (NotContainsFromEntries, &[a1, a2]) => {
+                        let (r1, _v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, _v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        // TODO: validate proof
+                        Statement::NotContains(r1, r2)
+                    }
+                    (PublicKeyOf, &[a1, a2]) => {
+                        let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        if middleware::Operation::check_public_key(v1, v2)? {
+                            Statement::PublicKeyOf(r1, r2)
+                        } else {
+                            return Err(native_arg_error());
+                        }
+                    }
+                    (t, _) => {
+                        if t.is_syntactic_sugar() {
+                            return Err(Error::custom(format!(
+                                "Unexpected syntactic sugar: {:?}",
+                                t
+                            )));
+                        } else {
+                            return Err(native_arg_error());
+                        }
                     }
                 }
-                (NotEqualFromEntries, &[a1, a2]) => {
-                    let (r1, v1) = a1
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("not-equal-from-entries"))?;
-                    let (r2, v2) = a2
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("not-equal-from-entries"))?;
-                    if v1 != v2 {
-                        Statement::not_equal(r1, r2)
-                    } else {
-                        return Err(arg_error("not-equal-from-entries"));
-                    }
-                }
-                (LtFromEntries, &[a1, a2]) => {
-                    let (r1, v1) = a1
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("lt-from-entries"))?;
-                    let (r2, v2) = a2
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("lt-from-entries"))?;
-                    if v1 < v2 {
-                        Statement::lt(r1, r2)
-                    } else {
-                        return Err(arg_error("lt-from-entries"));
-                    }
-                }
-                (LtEqFromEntries, &[a1, a2]) => {
-                    let (r1, v1) = a1
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("lt-eq-from-entries"))?;
-                    let (r2, v2) = a2
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("lt-eq-from-entries"))?;
-                    if v1 <= v2 {
-                        Statement::not_equal(r1, r2)
-                    } else {
-                        return Err(arg_error("lt-eq-from-entries"));
-                    }
-                }
-                (CopyStatement, &[OperationArg::Statement(s)]) => s.clone(),
-                (
-                    TransitiveEqualFromStatements,
-                    &[OperationArg::Statement(Statement::Equal(r1, r2)), OperationArg::Statement(Statement::Equal(r3, r4))],
-                ) => {
-                    if r2 == r3 {
-                        Statement::Equal(r1.clone(), r4.clone())
-                    } else {
-                        return Err(arg_error("transitive-eq"));
-                    }
-                }
-                (LtToNotEqual, &[OperationArg::Statement(Statement::Lt(r1, r2))]) => {
-                    Statement::NotEqual(r1.clone(), r2.clone())
-                }
-                (SumOf, &[a1, a2, a3]) => {
-                    let (r1, v1) = a1
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("sum-from-entries"))?;
-                    let (r2, v2) = a2
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("sum-from-entries"))?;
-                    let (r3, v3) = a3
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("sum-from-entries"))?;
-                    if middleware::Operation::check_int_fn(v1, v2, v3, sum_op)? {
-                        Statement::SumOf(r1, r2, r3)
-                    } else {
-                        return Err(arg_error("sum-from-entries"));
-                    }
-                }
-                (ProductOf, &[a1, a2, a3]) => {
-                    let (r1, v1) = a1
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("prod-from-entries"))?;
-                    let (r2, v2) = a2
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("prod-from-entries"))?;
-                    let (r3, v3) = a3
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("prod-from-entries"))?;
-                    if middleware::Operation::check_int_fn(v1, v2, v3, prod_op)? {
-                        Statement::ProductOf(r1, r2, r3)
-                    } else {
-                        return Err(arg_error("prod-from-entries"));
-                    }
-                }
-                (MaxOf, &[a1, a2, a3]) => {
-                    let (r1, v1) = a1
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("max-from-entries"))?;
-                    let (r2, v2) = a2
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("max-from-entries"))?;
-                    let (r3, v3) = a3
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("max-from-entries"))?;
-                    if middleware::Operation::check_int_fn(v1, v2, v3, max_op)? {
-                        Statement::MaxOf(r1, r2, r3)
-                    } else {
-                        return Err(arg_error("max-from-entries"));
-                    }
-                }
-                (HashOf, &[a1, a2, a3]) => {
-                    let (r1, v1) = a1
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("hash-from-entries"))?;
-                    let (r2, v2) = a2
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("hash-from-entries"))?;
-                    let (r3, v3) = a3
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("hash-from-entries"))?;
-                    if v1 == &hash_op(v2.clone(), v3.clone()) {
-                        Statement::HashOf(r1, r2, r3)
-                    } else {
-                        return Err(arg_error("hash-from-entries"));
-                    }
-                }
-                (ContainsFromEntries, &[a1, a2, a3]) => {
-                    let (r1, _v1) = a1
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("contains-from-entries"))?;
-                    let (r2, _v2) = a2
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("contains-from-entries"))?;
-                    let (r3, _v3) = a3
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("contains-from-entries"))?;
-                    // TODO: validate proof
-                    Statement::Contains(r1, r2, r3)
-                }
-                (NotContainsFromEntries, &[a1, a2]) => {
-                    let (r1, _v1) = a1
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("contains-from-entries"))?;
-                    let (r2, _v2) = a2
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("contains-from-entries"))?;
-                    // TODO: validate proof
-                    Statement::NotContains(r1, r2)
-                }
-                (PublicKeyOf, &[a1, a2]) => {
-                    let (r1, v1) = a1
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("public-key-from-entries"))?;
-                    let (r2, v2) = a2
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("public-key-from-entries"))?;
-                    if middleware::Operation::check_public_key(v1, v2)? {
-                        Statement::PublicKeyOf(r1, r2)
-                    } else {
-                        return Err(arg_error("public-key-from-entries"));
-                    }
-                }
-                (t, _) => {
-                    if t.is_syntactic_sugar() {
-                        return Err(Error::custom(format!(
-                            "Unexpected syntactic sugar: {:?}",
-                            t
-                        )));
-                    } else {
-                        return Err(arg_error("malformed operation"));
-                    }
-                }
-            },
+            }
             OperationType::Custom(cpr) => {
                 let pred = &cpr.batch.predicates()[cpr.index];
                 if pred.statements.len() != op.1.len() {
@@ -480,17 +428,44 @@ impl MainPodBuilder {
                 let mut wildcard_map =
                     vec![Option::None; self.params.max_custom_predicate_wildcards];
                 for (st_tmpl, st) in pred.statements.iter().zip(args.iter()) {
-                    let st_args = st.args();
-                    for (st_tmpl_arg, st_arg) in st_tmpl.args.iter().zip(&st_args) {
-                        if let Err(st_tmpl_check_error) =
-                            check_st_tmpl(st_tmpl_arg, st_arg, &mut wildcard_map)
-                        {
+                    if !(pred.is_disjunction() && matches!(st, Statement::None)) {
+                        let st_args = st.args();
+                        let predicates_dont_match = match st_tmpl.pred {
+                            // TODO: check that the custom predicate is the correct one
+                            Predicate::BatchSelf(_) => {
+                                !matches!(st.predicate(), Predicate::Custom(_))
+                            }
+                            _ => st_tmpl.pred != st.predicate(),
+                        };
+                        if predicates_dont_match {
                             return Err(Error::statements_dont_match(
                                 st.clone(),
                                 st_tmpl.clone(),
                                 wildcard_map,
-                                st_tmpl_check_error,
+                                middleware::Error::custom(
+                                    "Statement types do not match.".to_string(),
+                                ),
                             ));
+                        }
+                        if st_args.len() != st_tmpl.args.len() {
+                            return Err(Error::statements_dont_match(
+                                st.clone(),
+                                st_tmpl.clone(),
+                                wildcard_map,
+                                middleware::Error::incorrect_statements_args(),
+                            ));
+                        }
+                        for (st_tmpl_arg, st_arg) in st_tmpl.args.iter().zip(&st_args) {
+                            if let Err(st_tmpl_check_error) =
+                                check_st_tmpl(st_tmpl_arg, st_arg, &mut wildcard_map)
+                            {
+                                return Err(Error::statements_dont_match(
+                                    st.clone(),
+                                    st_tmpl.clone(),
+                                    wildcard_map,
+                                    st_tmpl_check_error,
+                                ));
+                            }
                         }
                     }
                 }

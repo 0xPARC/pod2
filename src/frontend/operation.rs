@@ -164,10 +164,10 @@ macro_rules! op_impl_st {
 }
 
 impl Operation {
-    pub fn new_entry(a1: impl Into<OperationArg>, a2: impl Into<Value>) -> Self {
+    pub fn new_entry(a1: impl Into<String>, a2: impl Into<Value>) -> Self {
         Self(
             OperationType::Native(NativeOperation::NewEntry),
-            vec![a1.into(), a2.into().into()],
+            vec![OperationArg::Entry(a1.into(), a2.into())],
             OperationAux::None,
         )
     }
@@ -180,6 +180,12 @@ impl Operation {
     op_impl_oa!(sum_of, SumOf, 3);
     op_impl_oa!(product_of, ProductOf, 3);
     op_impl_oa!(max_of, MaxOf, 3);
+    /// Creates a custom operation.
+    ///
+    /// `args` should contain the statements that are needed to prove the
+    /// custom statement.  It should have the same length as
+    /// `cpr.predicate().statements()`.  If `cpr` refers to an `or` predicate,
+    /// then all but one of the statements should be `Statement::None`.
     pub fn custom(cpr: CustomPredicateRef, args: Vec<OperationArg>) -> Self {
         Self(OperationType::Custom(cpr), args, OperationAux::None)
     }
