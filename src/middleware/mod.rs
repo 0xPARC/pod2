@@ -811,10 +811,6 @@ impl Params {
         Self::predicate_size() + STATEMENT_ARG_F_LEN * self.max_statement_args
     }
 
-    pub fn operation_size(&self, operation_arg_f_len: usize) -> usize {
-        Self::operation_type_size() + operation_arg_f_len * self.max_operation_args
-    }
-
     pub const fn statement_tmpl_size(&self) -> usize {
         Self::predicate_size() + self.max_statement_args * Self::statement_tmpl_arg_size()
     }
