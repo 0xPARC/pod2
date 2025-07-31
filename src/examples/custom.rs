@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
+use hex::ToHex;
+
 use crate::{
-    frontend::Result,
+    frontend::{PodRequest, Result},
     lang::parse,
     middleware::{CustomPredicateBatch, Params, PodType, Value, KEY_SIGNER, KEY_TYPE},
 };
@@ -51,6 +53,21 @@ pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
     println!("a.2. {}", batch.predicates[2]);
     println!("a.3. {}", batch.predicates[3]);
     Ok(batch)
+}
+
+pub fn eth_dos_request() -> Result<PodRequest> {
+    let batch = eth_dos_batch(&Params::default())?;
+    let batch_id = batch.id().encode_hex::<String>();
+    let input = format!(
+        r#"
+        use _, _, _, eth_dos from 0x{batch_id}
+        REQUEST(
+            eth_dos(?src, ?dst, ?distance)
+        )
+        "#,
+    );
+    let parsed = parse(&input, &Params::default(), &[batch])?;
+    Ok(parsed.request)
 }
 
 #[cfg(test)]

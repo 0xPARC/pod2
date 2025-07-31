@@ -266,7 +266,11 @@ impl fmt::Display for TypedValue {
             TypedValue::PublicKey(p) => write!(f, "PublicKey({})", p),
             TypedValue::SecretKey(p) => write!(f, "SecretKey({})", p),
             TypedValue::PodId(p) => {
-                write!(f, "0x{}", p.0.encode_hex::<String>())
+                if *p == SELF {
+                    write!(f, "SELF")
+                } else {
+                    write!(f, "0x{}", p.0.encode_hex::<String>())
+                }
             }
             TypedValue::Raw(r) => {
                 write!(f, "Raw(0x{})", r.encode_hex::<String>())
@@ -341,6 +345,18 @@ impl JsonSchema for TypedValue {
             ..Default::default()
         };
 
+        let pod_id_schema = schemars::schema::SchemaObject {
+            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
+            object: Some(Box::new(schemars::schema::ObjectValidation {
+                properties: [("PodId".to_string(), gen.subschema_for::<PodId>())]
+                    .into_iter()
+                    .collect(),
+                required: ["PodId".to_string()].into_iter().collect(),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+
         let public_key_schema = schemars::schema::SchemaObject {
             instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
             object: Some(Box::new(schemars::schema::ObjectValidation {
@@ -377,6 +393,7 @@ impl JsonSchema for TypedValue {
         Schema::Object(SchemaObject {
             subschemas: Some(Box::new(schemars::schema::SubschemaValidation {
                 any_of: Some(vec![
+                    Schema::Object(pod_id_schema),
                     Schema::Object(int_schema),
                     Schema::Object(raw_schema),
                     Schema::Object(public_key_schema),

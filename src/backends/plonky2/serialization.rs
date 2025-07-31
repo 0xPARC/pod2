@@ -14,6 +14,7 @@ use plonky2::{
     get_gate_tag_impl, impl_gate_serializer, read_gate_impl,
     util::serialization::GateSerializer,
 };
+use plonky2_u32::gates::comparison::{ComparisonGate, ComparisonGenerator};
 use serde::{de, ser, Deserialize, Serialize};
 
 use crate::backends::plonky2::{
@@ -56,7 +57,8 @@ impl GateSerializer<F, D> for Pod2GateSerializer {
         GateAdapter::<NNFMulSimple<5, QuinticExtension<F>>>,
         RecursiveGateAdapter::<D, NNFMulSimple<5, QuinticExtension<F>>>,
         GateAdapter::<ECAddHomogOffset>,
-        RecursiveGateAdapter::<D, ECAddHomogOffset>
+        RecursiveGateAdapter::<D, ECAddHomogOffset>,
+        ComparisonGate::<F, D>
     }
 }
 
@@ -127,7 +129,8 @@ impl WitnessGeneratorSerializer<F, D> for Pod2GeneratorSerializer {
         RecursiveGenerator<D, NNFMulSimple<5, QuinticExtension<F>>>,
         RecursiveGenerator<1, NNFMulSimple<5, QuinticExtension<F>>>,
         RecursiveGenerator<D, ECAddHomogOffset>,
-        RecursiveGenerator<1, ECAddHomogOffset>
+        RecursiveGenerator<1, ECAddHomogOffset>,
+        ComparisonGenerator<F, D>
     }
 }
 
@@ -248,5 +251,30 @@ impl<'de> Deserialize<'de> for VerifierCircuitDataSerializer {
         let circuit_data =
             VerifierCircuitData::from_bytes(bytes, &gate_serializer).map_err(de::Error::custom)?;
         Ok(VerifierCircuitDataSerializer(circuit_data))
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use crate::{
+        backends::plonky2::mainpod::cache_get_rec_main_pod_circuit_data, middleware::Params,
+    };
+
+    // Round trip of CircuitData serialization and deserialization.  This test should pass if
+    // we have registered all the gates and generators used in the recursive MainPod
+    // circuit.
+    #[test]
+    fn test_serialize_main_pod_circuit_data() {
+        let params = Params::default();
+        let (_, circuit_data) = &*cache_get_rec_main_pod_circuit_data(&params);
+        let gate_serializer = Pod2GateSerializer {};
+        let generator_serializer = Pod2GeneratorSerializer {};
+        let bytes = circuit_data
+            .to_bytes(&gate_serializer, &generator_serializer)
+            .unwrap();
+        let circuit_data_de =
+            CircuitData::from_bytes(&bytes, &gate_serializer, &generator_serializer).unwrap();
+        assert_eq!(circuit_data.0, circuit_data_de);
     }
 }

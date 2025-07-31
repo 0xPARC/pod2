@@ -8,8 +8,11 @@ use plonky2::field::types::Field;
 
 use super::error::ProcessorError;
 use crate::{
-    backends::plonky2::primitives::ec::curve::Point,
-    frontend::{BuilderArg, CustomPredicateBatchBuilder, StatementTmplBuilder},
+    backends::plonky2::{
+        deserialize_bytes,
+        primitives::ec::{curve::Point, schnorr::SecretKey},
+    },
+    frontend::{BuilderArg, CustomPredicateBatchBuilder, PodRequest, StatementTmplBuilder},
     lang::parser::Rule,
     middleware::{
         self, CustomPredicateBatch, CustomPredicateRef, Key, NativePredicate, Params, Predicate,
@@ -54,7 +57,7 @@ pub fn native_predicate_from_string(s: &str) -> Option<NativePredicate> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PodlangOutput {
     pub custom_batch: Arc<CustomPredicateBatch>,
-    pub request_templates: Vec<StatementTmpl>,
+    pub request: PodRequest,
 }
 
 struct ProcessingContext<'a> {
@@ -292,7 +295,7 @@ fn second_pass(
 
     Ok(PodlangOutput {
         custom_batch,
-        request_templates,
+        request: PodRequest::new(request_templates),
     })
 }
 
@@ -795,6 +798,26 @@ fn process_literal_value(
                     })?;
             Ok(Value::from(middleware_dict))
         }
+        Rule::literal_secret_key => {
+            let sk_str_pair = inner_lit.clone().into_inner().next().unwrap();
+            let sk_base64 = sk_str_pair.as_str();
+            let bytes = deserialize_bytes(sk_base64).map_err(|_e| {
+                ProcessorError::InvalidLiteralFormat {
+                    kind: "SecretKey".to_string(),
+                    value: sk_base64.to_string(),
+                    span: Some(get_span(&inner_lit)),
+                }
+            })?;
+            let secret_key = SecretKey::from_bytes(&bytes).map_err(|_e| {
+                ProcessorError::InvalidLiteralFormat {
+                    kind: "SecretKey".to_string(),
+                    value: sk_base64.to_string(),
+                    span: Some(get_span(&inner_lit)),
+                }
+            })?;
+            Ok(Value::from(secret_key))
+        }
+        Rule::self_keyword => Ok(Value::from(middleware::SELF)),
         _ => unreachable!("Unexpected rule: {:?}", inner_lit.as_rule()),
     }
 }

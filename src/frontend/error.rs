@@ -31,6 +31,14 @@ pub enum InnerError {
     ),
     #[error("invalid arguments to {0} operation")]
     OpInvalidArgs(String),
+    #[error("Podlang parse error: {0}")]
+    PodlangParse(String),
+    #[error("POD Request validation error: {0}")]
+    PodRequestValidation(String),
+    #[error("Too many public statements provided: {0} were provided, but the maximum is {1}")]
+    TooManyPublicStatements(usize, usize),
+    #[error("Too many statements provided: {0} were provided, but the maximum is {1}")]
+    TooManyStatements(usize, usize),
     // Other
     #[error("{0}")]
     Custom(String),
@@ -52,6 +60,12 @@ pub enum Error {
 impl From<std::convert::Infallible> for Error {
     fn from(value: std::convert::Infallible) -> Self {
         match value {}
+    }
+}
+
+impl From<crate::lang::LangError> for Error {
+    fn from(value: crate::lang::LangError) -> Self {
+        Error::podlang_parse(value)
     }
 }
 
@@ -87,5 +101,17 @@ impl Error {
     }
     pub(crate) fn max_length(obj: String, found: usize, expect: usize) -> Self {
         new!(MaxLength(obj, found, expect))
+    }
+    pub(crate) fn podlang_parse(e: crate::lang::LangError) -> Self {
+        new!(PodlangParse(e.to_string()))
+    }
+    pub(crate) fn pod_request_validation(e: String) -> Self {
+        new!(PodRequestValidation(e))
+    }
+    pub(crate) fn too_many_public_statements(found: usize, max: usize) -> Self {
+        new!(TooManyPublicStatements(found, max))
+    }
+    pub(crate) fn too_many_statements(found: usize, max: usize) -> Self {
+        new!(TooManyStatements(found, max))
     }
 }

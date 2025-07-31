@@ -227,6 +227,14 @@ impl CustomPredicate {
     ) -> Result<Self> {
         Self::new(params, name, false, statements, args_len, wildcard_names)
     }
+    /// Creates a new custom predicate.
+    ///
+    /// # Arguments
+    /// * `name` - The name of the custom predicate.
+    /// * `conjunction` - `true` for an `and` predicate, `false` for an `or` predicate.
+    /// * `statements` - The statements required to apply the custom predicate.
+    /// * `args_len` - The number of public arguments.
+    /// * `wildcard_names` - The names of the arguments (public and private).
     pub fn new(
         params: &Params,
         name: String,

@@ -3,8 +3,8 @@
 use std::{backtrace::Backtrace, fmt::Debug};
 
 use crate::middleware::{
-    CustomPredicate, Key, Operation, PodId, Statement, StatementArg, StatementTmplArg, Value,
-    Wildcard,
+    CustomPredicate, Key, Operation, PodId, Predicate, Statement, StatementArg, StatementTmplArg,
+    Value, Wildcard,
 };
 
 pub type Result<T, E = Error> = core::result::Result<T, E>;
@@ -19,7 +19,7 @@ pub enum MiddlewareInnerError {
     InvalidStatementArg(StatementArg, String),
     #[error("{0} {1} is over the limit {2}")]
     MaxLength(String, usize, usize),
-    #[error("{0} amount of {1} should be {1} but it's {2}")]
+    #[error("{0} amount of {1} should be {2} but it's {3}")]
     DiffAmount(String, String, usize, usize),
     #[error("{0} should be assigned the value {1} but has previously been assigned {2}")]
     InvalidWildcardAssignment(Wildcard, Value, Value),
@@ -27,12 +27,10 @@ pub enum MiddlewareInnerError {
     MismatchedAnchoredKeyInStatementTmplArg(Wildcard, PodId, Key, Key),
     #[error("{0} does not match against {1}")]
     MismatchedStatementTmplArg(StatementTmplArg, StatementArg),
+    #[error("Expected a statement of type {0}, got {1}")]
+    MismatchedStatementType(Predicate, Predicate),
     #[error("Value {0} does not match argument {1} with index {2} in the following custom predicate:\n{3}")]
     MismatchedWildcardValueAndStatementArg(Value, Value, usize, CustomPredicate),
-    #[error(
-        "Not all statement templates of the following custom predicate have been matched:\n{0}"
-    )]
-    UnsatisfiedCustomPredicateConjunction(CustomPredicate),
     #[error(
         "None of the statement templates of the following custom predicate have been matched:\n{0}"
     )]
@@ -110,6 +108,9 @@ impl Error {
     ) -> Self {
         new!(MismatchedStatementTmplArg(st_tmpl_arg, st_arg))
     }
+    pub(crate) fn mismatched_statement_type(expected: Predicate, seen: Predicate) -> Self {
+        new!(MismatchedStatementType(expected, seen))
+    }
     pub(crate) fn mismatched_wildcard_value_and_statement_arg(
         wc_value: Value,
         st_arg: Value,
@@ -119,9 +120,6 @@ impl Error {
         new!(MismatchedWildcardValueAndStatementArg(
             wc_value, st_arg, arg_index, pred
         ))
-    }
-    pub(crate) fn unsatisfied_custom_predicate_conjunction(pred: CustomPredicate) -> Self {
-        new!(UnsatisfiedCustomPredicateConjunction(pred))
     }
     pub(crate) fn unsatisfied_custom_predicate_disjunction(pred: CustomPredicate) -> Self {
         new!(UnsatisfiedCustomPredicateDisjunction(pred))

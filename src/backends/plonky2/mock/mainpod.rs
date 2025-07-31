@@ -427,7 +427,7 @@ pub mod tests {
     use crate::{
         backends::plonky2::{primitives::ec::schnorr::SecretKey, signedpod::Signer},
         examples::{
-            great_boy_pod_full_flow, tickets_pod_full_flow, zu_kyc_pod_builder,
+            great_boy_pod_full_flow, tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_pod_request,
             zu_kyc_sign_pod_builders, MOCK_VD_SET,
         },
         frontend, middleware,
@@ -437,24 +437,15 @@ pub mod tests {
     fn test_mock_main_zu_kyc() -> frontend::Result<()> {
         let params = middleware::Params::default();
         let vd_set = &*MOCK_VD_SET;
-        let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
-            zu_kyc_sign_pod_builders(&params);
+        let (gov_id_builder, pay_stub_builder) = zu_kyc_sign_pod_builders(&params);
         let signer = Signer(SecretKey(1u32.into()));
         let gov_id_pod = gov_id_builder.sign(&signer)?;
         let signer = Signer(SecretKey(2u32.into()));
         let pay_stub_pod = pay_stub_builder.sign(&signer)?;
-        let signer = Signer(SecretKey(3u32.into()));
-        let sanction_list_pod = sanction_list_builder.sign(&signer)?;
-        let kyc_builder = zu_kyc_pod_builder(
-            &params,
-            vd_set,
-            &gov_id_pod,
-            &pay_stub_pod,
-            &sanction_list_pod,
-        )?;
+        let kyc_builder = zu_kyc_pod_builder(&params, vd_set, &gov_id_pod, &pay_stub_pod)?;
 
         let prover = MockProver {};
-        let kyc_pod = kyc_builder.prove(&prover, &params)?;
+        let kyc_pod = kyc_builder.prove(&prover)?;
         let pod = (kyc_pod.pod as Box<dyn Any>)
             .downcast::<MockMainPod>()
             .unwrap();
@@ -462,15 +453,22 @@ pub mod tests {
         println!("{:#}", pod);
 
         pod.verify()?;
+
+        let request = zu_kyc_pod_request(
+            gov_id_pod.get("_signer").unwrap(),
+            pay_stub_pod.get("_signer").unwrap(),
+        )?;
+        assert!(request.exact_match_pod(&*pod).is_ok());
+
         Ok(())
     }
 
     #[test]
     fn test_mock_main_great_boy() -> frontend::Result<()> {
-        let (params, great_boy_builder) = great_boy_pod_full_flow()?;
+        let great_boy_builder = great_boy_pod_full_flow()?;
 
         let prover = MockProver {};
-        let great_boy_pod = great_boy_builder.prove(&prover, &params)?;
+        let great_boy_pod = great_boy_builder.prove(&prover)?;
         let pod = (great_boy_pod.pod as Box<dyn Any>)
             .downcast::<MockMainPod>()
             .unwrap();
@@ -487,7 +485,7 @@ pub mod tests {
         let params = middleware::Params::default();
         let tickets_builder = tickets_pod_full_flow(&params, &MOCK_VD_SET)?;
         let prover = MockProver {};
-        let proof_pod = tickets_builder.prove(&prover, &params)?;
+        let proof_pod = tickets_builder.prove(&prover)?;
         let pod = (proof_pod.pod as Box<dyn Any>)
             .downcast::<MockMainPod>()
             .unwrap();

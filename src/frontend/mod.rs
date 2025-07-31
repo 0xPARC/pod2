@@ -8,18 +8,20 @@ use serde::{Deserialize, Serialize};
 pub use serialization::{SerializedMainPod, SerializedSignedPod};
 
 use crate::middleware::{
-    self, check_st_tmpl, hash_op, hash_str, max_op, prod_op, sum_op, AnchoredKey, Key,
-    MainPodInputs, NativeOperation, OperationAux, OperationType, Params, PodId, PodProver,
-    PodSigner, Statement, StatementArg, VDSet, Value, ValueRef, KEY_TYPE, SELF,
+    self, check_custom_pred, check_st_tmpl, hash_op, hash_str, max_op, prod_op, sum_op,
+    AnchoredKey, Key, MainPodInputs, NativeOperation, OperationAux, OperationType, Params, PodId,
+    PodProver, PodSigner, Statement, StatementArg, VDSet, Value, ValueRef, KEY_TYPE, SELF,
 };
 
 mod custom;
 mod error;
 mod operation;
+mod pod_request;
 mod serialization;
 pub use custom::*;
 pub use error::*;
 pub use operation::*;
+pub use pod_request::*;
 
 #[derive(Clone, Debug)]
 pub struct SignedPodBuilder {
@@ -170,20 +172,27 @@ impl MainPodBuilder {
     pub fn add_recursive_pod(&mut self, pod: MainPod) {
         self.input_recursive_pods.push(pod);
     }
-    pub fn insert(&mut self, public: bool, st_op: (Statement, Operation)) {
+    pub fn insert(&mut self, public: bool, st_op: (Statement, Operation)) -> Result<()> {
         // TODO: Do error handling instead of panic
         let (st, op) = st_op;
         if public {
             self.public_statements.push(st.clone());
         }
         if self.public_statements.len() > self.params.max_public_statements {
-            panic!("too many public statements");
+            return Err(Error::too_many_public_statements(
+                self.public_statements.len(),
+                self.params.max_public_statements,
+            ));
         }
         self.statements.push(st);
         self.operations.push(op);
         if self.statements.len() > self.params.max_statements {
-            panic!("too many statements");
+            return Err(Error::too_many_statements(
+                self.statements.len(),
+                self.params.max_statements,
+            ));
         }
+        Ok(())
     }
 
     pub fn pub_op(&mut self, op: Operation) -> Result<Statement> {
@@ -276,190 +285,138 @@ impl MainPodBuilder {
 
     fn op_statement(&mut self, op: Operation) -> Result<Statement> {
         use NativeOperation::*;
-        let arg_error = |s: &str| Error::op_invalid_args(s.to_string());
         let st = match op.0 {
-            OperationType::Native(o) => match (o, &op.1.as_slice()) {
-                (None, &[]) => Statement::None,
-                (NewEntry, &[OperationArg::Entry(k, v)]) => {
-                    Statement::equal(AnchoredKey::from((SELF, k.as_str())), v.clone())
-                }
-                (EqualFromEntries, &[a1, a2]) => {
-                    let (r1, v1) = a1
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("equal-from-entries"))?;
-                    let (r2, v2) = a2
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("equal-from-entries"))?;
-                    if v1 == v2 {
-                        Statement::equal(r1, r2)
-                    } else {
-                        return Err(arg_error("equal-from-entries"));
+            OperationType::Native(o) => {
+                let native_arg_error = move || Error::op_invalid_args(format!("{o:?}"));
+                match (o, &op.1.as_slice()) {
+                    (None, &[]) => Statement::None,
+                    (NewEntry, &[OperationArg::Entry(k, v)]) => {
+                        Statement::equal(AnchoredKey::from((SELF, k.as_str())), v.clone())
+                    }
+                    (EqualFromEntries, &[a1, a2]) => {
+                        let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        if v1 == v2 {
+                            Statement::equal(r1, r2)
+                        } else {
+                            return Err(native_arg_error());
+                        }
+                    }
+                    (NotEqualFromEntries, &[a1, a2]) => {
+                        let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        if v1 != v2 {
+                            Statement::not_equal(r1, r2)
+                        } else {
+                            return Err(native_arg_error());
+                        }
+                    }
+                    (LtFromEntries, &[a1, a2]) => {
+                        let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        if v1 < v2 {
+                            Statement::lt(r1, r2)
+                        } else {
+                            return Err(native_arg_error());
+                        }
+                    }
+                    (LtEqFromEntries, &[a1, a2]) => {
+                        let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        if v1 <= v2 {
+                            Statement::not_equal(r1, r2)
+                        } else {
+                            return Err(native_arg_error());
+                        }
+                    }
+                    (CopyStatement, &[OperationArg::Statement(s)]) => s.clone(),
+                    (
+                        TransitiveEqualFromStatements,
+                        &[OperationArg::Statement(Statement::Equal(r1, r2)), OperationArg::Statement(Statement::Equal(r3, r4))],
+                    ) => {
+                        if r2 == r3 {
+                            Statement::Equal(r1.clone(), r4.clone())
+                        } else {
+                            return Err(native_arg_error());
+                        }
+                    }
+                    (LtToNotEqual, &[OperationArg::Statement(Statement::Lt(r1, r2))]) => {
+                        Statement::NotEqual(r1.clone(), r2.clone())
+                    }
+                    (SumOf, &[a1, a2, a3]) => {
+                        let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r3, v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
+                        if middleware::Operation::check_int_fn(v1, v2, v3, sum_op)? {
+                            Statement::SumOf(r1, r2, r3)
+                        } else {
+                            return Err(native_arg_error());
+                        }
+                    }
+                    (ProductOf, &[a1, a2, a3]) => {
+                        let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r3, v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
+                        if middleware::Operation::check_int_fn(v1, v2, v3, prod_op)? {
+                            Statement::ProductOf(r1, r2, r3)
+                        } else {
+                            return Err(native_arg_error());
+                        }
+                    }
+                    (MaxOf, &[a1, a2, a3]) => {
+                        let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r3, v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
+                        if middleware::Operation::check_int_fn(v1, v2, v3, max_op)? {
+                            Statement::MaxOf(r1, r2, r3)
+                        } else {
+                            return Err(native_arg_error());
+                        }
+                    }
+                    (HashOf, &[a1, a2, a3]) => {
+                        let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r3, v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
+                        if v1 == &hash_op(v2.clone(), v3.clone()) {
+                            Statement::HashOf(r1, r2, r3)
+                        } else {
+                            return Err(native_arg_error());
+                        }
+                    }
+                    (ContainsFromEntries, &[a1, a2, a3]) => {
+                        let (r1, _v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, _v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r3, _v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
+                        // TODO: validate proof
+                        Statement::Contains(r1, r2, r3)
+                    }
+                    (NotContainsFromEntries, &[a1, a2]) => {
+                        let (r1, _v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, _v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        // TODO: validate proof
+                        Statement::NotContains(r1, r2)
+                    }
+                    (PublicKeyOf, &[a1, a2]) => {
+                        let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        if middleware::Operation::check_public_key(v1, v2)? {
+                            Statement::PublicKeyOf(r1, r2)
+                        } else {
+                            return Err(native_arg_error());
+                        }
+                    }
+                    (t, _) => {
+                        if t.is_syntactic_sugar() {
+                            return Err(Error::custom(format!(
+                                "Unexpected syntactic sugar: {:?}",
+                                t
+                            )));
+                        } else {
+                            return Err(native_arg_error());
+                        }
                     }
                 }
-                (NotEqualFromEntries, &[a1, a2]) => {
-                    let (r1, v1) = a1
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("not-equal-from-entries"))?;
-                    let (r2, v2) = a2
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("not-equal-from-entries"))?;
-                    if v1 != v2 {
-                        Statement::not_equal(r1, r2)
-                    } else {
-                        return Err(arg_error("not-equal-from-entries"));
-                    }
-                }
-                (LtFromEntries, &[a1, a2]) => {
-                    let (r1, v1) = a1
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("lt-from-entries"))?;
-                    let (r2, v2) = a2
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("lt-from-entries"))?;
-                    if v1 < v2 {
-                        Statement::lt(r1, r2)
-                    } else {
-                        return Err(arg_error("lt-from-entries"));
-                    }
-                }
-                (LtEqFromEntries, &[a1, a2]) => {
-                    let (r1, v1) = a1
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("lt-eq-from-entries"))?;
-                    let (r2, v2) = a2
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("lt-eq-from-entries"))?;
-                    if v1 <= v2 {
-                        Statement::not_equal(r1, r2)
-                    } else {
-                        return Err(arg_error("lt-eq-from-entries"));
-                    }
-                }
-                (CopyStatement, &[OperationArg::Statement(s)]) => s.clone(),
-                (
-                    TransitiveEqualFromStatements,
-                    &[OperationArg::Statement(Statement::Equal(r1, r2)), OperationArg::Statement(Statement::Equal(r3, r4))],
-                ) => {
-                    if r2 == r3 {
-                        Statement::Equal(r1.clone(), r4.clone())
-                    } else {
-                        return Err(arg_error("transitive-eq"));
-                    }
-                }
-                (LtToNotEqual, &[OperationArg::Statement(Statement::Lt(r1, r2))]) => {
-                    Statement::NotEqual(r1.clone(), r2.clone())
-                }
-                (SumOf, &[a1, a2, a3]) => {
-                    let (r1, v1) = a1
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("sum-from-entries"))?;
-                    let (r2, v2) = a2
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("sum-from-entries"))?;
-                    let (r3, v3) = a3
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("sum-from-entries"))?;
-                    if middleware::Operation::check_int_fn(v1, v2, v3, sum_op)? {
-                        Statement::SumOf(r1, r2, r3)
-                    } else {
-                        return Err(arg_error("sum-from-entries"));
-                    }
-                }
-                (ProductOf, &[a1, a2, a3]) => {
-                    let (r1, v1) = a1
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("prod-from-entries"))?;
-                    let (r2, v2) = a2
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("prod-from-entries"))?;
-                    let (r3, v3) = a3
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("prod-from-entries"))?;
-                    if middleware::Operation::check_int_fn(v1, v2, v3, prod_op)? {
-                        Statement::ProductOf(r1, r2, r3)
-                    } else {
-                        return Err(arg_error("prod-from-entries"));
-                    }
-                }
-                (MaxOf, &[a1, a2, a3]) => {
-                    let (r1, v1) = a1
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("max-from-entries"))?;
-                    let (r2, v2) = a2
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("max-from-entries"))?;
-                    let (r3, v3) = a3
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("max-from-entries"))?;
-                    if middleware::Operation::check_int_fn(v1, v2, v3, max_op)? {
-                        Statement::MaxOf(r1, r2, r3)
-                    } else {
-                        return Err(arg_error("max-from-entries"));
-                    }
-                }
-                (HashOf, &[a1, a2, a3]) => {
-                    let (r1, v1) = a1
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("hash-from-entries"))?;
-                    let (r2, v2) = a2
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("hash-from-entries"))?;
-                    let (r3, v3) = a3
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("hash-from-entries"))?;
-                    if v1 == &hash_op(v2.clone(), v3.clone()) {
-                        Statement::HashOf(r1, r2, r3)
-                    } else {
-                        return Err(arg_error("hash-from-entries"));
-                    }
-                }
-                (ContainsFromEntries, &[a1, a2, a3]) => {
-                    let (r1, _v1) = a1
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("contains-from-entries"))?;
-                    let (r2, _v2) = a2
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("contains-from-entries"))?;
-                    let (r3, _v3) = a3
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("contains-from-entries"))?;
-                    // TODO: validate proof
-                    Statement::Contains(r1, r2, r3)
-                }
-                (NotContainsFromEntries, &[a1, a2]) => {
-                    let (r1, _v1) = a1
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("contains-from-entries"))?;
-                    let (r2, _v2) = a2
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("contains-from-entries"))?;
-                    // TODO: validate proof
-                    Statement::NotContains(r1, r2)
-                }
-                (PublicKeyOf, &[a1, a2]) => {
-                    let (r1, v1) = a1
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("public-key-from-entries"))?;
-                    let (r2, v2) = a2
-                        .value_and_ref()
-                        .ok_or_else(|| arg_error("public-key-from-entries"))?;
-                    if middleware::Operation::check_public_key(v1, v2)? {
-                        Statement::PublicKeyOf(r1, r2)
-                    } else {
-                        return Err(arg_error("public-key-from-entries"));
-                    }
-                }
-                (t, _) => {
-                    if t.is_syntactic_sugar() {
-                        return Err(Error::custom(format!(
-                            "Unexpected syntactic sugar: {:?}",
-                            t
-                        )));
-                    } else {
-                        return Err(arg_error("malformed operation"));
-                    }
-                }
-            },
+            }
             OperationType::Custom(cpr) => {
                 let pred = &cpr.batch.predicates()[cpr.index];
                 if pred.statements.len() != op.1.len() {
@@ -500,6 +457,7 @@ impl MainPodBuilder {
                     .take(pred.args_len)
                     .map(|v| v.unwrap_or_else(|| v_default.clone()))
                     .collect();
+                check_custom_pred(&self.params, &cpr, &args, &st_args)?;
                 Statement::Custom(cpr, st_args)
             }
         };
@@ -509,7 +467,7 @@ impl MainPodBuilder {
     fn op(&mut self, public: bool, op: Operation) -> Result<Statement> {
         let op = Self::fill_in_aux(Self::lower_op(op)?)?;
         let st = self.op_statement(op.clone())?;
-        self.insert(public, (st, op));
+        self.insert(public, (st, op))?;
 
         Ok(self.statements[self.statements.len() - 1].clone())
     }
@@ -551,7 +509,7 @@ impl MainPodBuilder {
         self.public_statements.push(st.clone());
     }
 
-    pub fn prove(&self, prover: &dyn PodProver, params: &Params) -> Result<MainPod> {
+    pub fn prove(&self, prover: &dyn PodProver) -> Result<MainPod> {
         let compiler = MainPodCompiler::new(&self.params);
         let inputs = MainPodCompilerInputs {
             // signed_pods: &self.input_signed_pods,
@@ -561,7 +519,7 @@ impl MainPodBuilder {
             public_statements: &self.public_statements,
         };
 
-        let (statements, operations, public_statements) = compiler.compile(inputs, params)?;
+        let (statements, operations, public_statements) = compiler.compile(inputs, &self.params)?;
 
         let inputs = MainPodInputs {
             signed_pods: &self
@@ -857,7 +815,8 @@ pub mod tests {
             mock::mainpod::MockProver, primitives::ec::schnorr::SecretKey, signedpod::Signer,
         },
         examples::{
-            attest_eth_friend, great_boy_pod_full_flow, tickets_pod_full_flow, zu_kyc_pod_builder,
+            attest_eth_friend, custom::eth_dos_request, great_boy_pod_full_flow,
+            tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_pod_request,
             zu_kyc_sign_pod_builders, EthDosHelper, MOCK_VD_SET,
         },
         middleware::{containers::Dictionary, Value},
@@ -896,7 +855,7 @@ pub mod tests {
     fn test_front_zu_kyc() -> Result<()> {
         let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
-        let (gov_id, pay_stub, sanction_list) = zu_kyc_sign_pod_builders(&params);
+        let (gov_id, pay_stub) = zu_kyc_sign_pod_builders(&params);
 
         println!("{}", gov_id);
         println!("{}", pay_stub);
@@ -911,19 +870,23 @@ pub mod tests {
         check_kvs(&pay_stub)?;
         println!("{}", pay_stub);
 
-        let signer = Signer(SecretKey(3u32.into()));
-        let sanction_list = sanction_list.sign(&signer)?;
-        check_kvs(&sanction_list)?;
-        println!("{}", sanction_list);
-
-        let kyc_builder = zu_kyc_pod_builder(&params, vd_set, &gov_id, &pay_stub, &sanction_list)?;
+        let kyc_builder = zu_kyc_pod_builder(&params, vd_set, &gov_id, &pay_stub)?;
         println!("{}", kyc_builder);
 
         // prove kyc with MockProver and print it
         let prover = MockProver {};
-        let kyc = kyc_builder.prove(&prover, &params)?;
+        let kyc = kyc_builder.prove(&prover)?;
 
         println!("{}", kyc);
+
+        let request = zu_kyc_pod_request(
+            gov_id.get("_signer").unwrap(),
+            pay_stub.get("_signer").unwrap(),
+        )?;
+        // Check the bindings of the "gov" and "pay" wildcards from the PodRequest
+        let bindings = request.exact_match_pod(&*kyc.pod).unwrap();
+        assert_eq!(*bindings.get("gov").unwrap(), gov_id.id().into());
+        assert_eq!(*bindings.get("pay").unwrap(), pay_stub.id().into());
 
         check_public_statements(&kyc)
     }
@@ -948,27 +911,43 @@ pub mod tests {
         let prover = MockProver {};
 
         let alice_attestation = attest_eth_friend(&params, &alice, bob.public_key());
-        let dist_1 = helper.dist_1(&alice_attestation)?.prove(&prover, &params)?;
+        let dist_1 = helper.dist_1(&alice_attestation)?.prove(&prover)?;
         dist_1.pod.verify()?;
+        let request = eth_dos_request()?;
+        assert!(request.exact_match_pod(&*dist_1.pod).is_ok());
+        let bindings = request.exact_match_pod(&*dist_1.pod).unwrap();
+        assert_eq!(*bindings.get("src").unwrap(), alice.public_key());
+        assert_eq!(*bindings.get("dst").unwrap(), bob.public_key());
+        assert_eq!(*bindings.get("distance").unwrap(), 1.into());
 
         let bob_attestation = attest_eth_friend(&params, &bob, charlie.public_key());
         let dist_2 = helper
             .dist_n_plus_1(&dist_1, &bob_attestation)?
-            .prove(&prover, &params)?;
+            .prove(&prover)?;
         dist_2.pod.verify()?;
+        assert!(request.exact_match_pod(&*dist_2.pod).is_ok());
+        let bindings = request.exact_match_pod(&*dist_2.pod).unwrap();
+        assert_eq!(*bindings.get("src").unwrap(), alice.public_key());
+        assert_eq!(*bindings.get("dst").unwrap(), charlie.public_key());
+        assert_eq!(*bindings.get("distance").unwrap(), 2.into());
 
         let charlie_attestation = attest_eth_friend(&params, &charlie, david.public_key());
         let dist_3 = helper
             .dist_n_plus_1(&dist_2, &charlie_attestation)?
-            .prove(&prover, &params)?;
+            .prove(&prover)?;
         dist_3.pod.verify()?;
+        assert!(request.exact_match_pod(&*dist_3.pod).is_ok());
+        let bindings = request.exact_match_pod(&*dist_3.pod).unwrap();
+        assert_eq!(*bindings.get("src").unwrap(), alice.public_key());
+        assert_eq!(*bindings.get("dst").unwrap(), david.public_key());
+        assert_eq!(*bindings.get("distance").unwrap(), 3.into());
 
         Ok(())
     }
 
     #[test]
     fn test_front_great_boy() -> Result<()> {
-        let (_, great_boy) = great_boy_pod_full_flow()?;
+        let great_boy = great_boy_pod_full_flow()?;
         println!("{}", great_boy);
 
         // TODO: prove great_boy with MockProver and print it
@@ -1032,7 +1011,7 @@ pub mod tests {
         builder.op(true, op_eq3).unwrap();
 
         let prover = MockProver {};
-        let pod = builder.prove(&prover, &params).unwrap();
+        let pod = builder.prove(&prover).unwrap();
 
         println!("{}", pod);
     }
@@ -1055,7 +1034,7 @@ pub mod tests {
         builder.pub_op(op!(gt, (&pod, "num"), 5)).unwrap();
 
         let prover = MockProver {};
-        let false_pod = builder.prove(&prover, &params).unwrap();
+        let false_pod = builder.prove(&prover).unwrap();
 
         println!("{}", builder);
         println!("{}", false_pod);
@@ -1100,7 +1079,7 @@ pub mod tests {
             ))
             .unwrap();
         let main_prover = MockProver {};
-        let main_pod = builder.prove(&main_prover, &params).unwrap();
+        let main_pod = builder.prove(&main_prover).unwrap();
 
         println!("{}", main_pod);
 
@@ -1141,7 +1120,7 @@ pub mod tests {
 
         // Prove Main POD to check.
         let main_prover = MockProver {};
-        let main_pod = builder.prove(&main_prover, &params).unwrap();
+        let main_pod = builder.prove(&main_prover).unwrap();
 
         println!("{}", main_pod);
 
@@ -1250,13 +1229,13 @@ pub mod tests {
             vec![],
             OperationAux::None,
         );
-        builder.insert(false, (st, op_new_entry.clone()));
+        builder.insert(false, (st, op_new_entry.clone())).unwrap();
 
         let st = Statement::equal(AnchoredKey::from((SELF, "a")), Value::from(28));
-        builder.insert(false, (st, op_new_entry.clone()));
+        builder.insert(false, (st, op_new_entry.clone())).unwrap();
 
         let prover = MockProver {};
-        let pod = builder.prove(&prover, &params).unwrap();
+        let pod = builder.prove(&prover).unwrap();
         pod.pod.verify().unwrap();
     }
 
@@ -1278,8 +1257,12 @@ pub mod tests {
             vec![],
             OperationAux::None,
         );
-        builder.insert(false, (value_of_a.clone(), op_new_entry.clone()));
-        builder.insert(false, (value_of_b.clone(), op_new_entry));
+        builder
+            .insert(false, (value_of_a.clone(), op_new_entry.clone()))
+            .unwrap();
+        builder
+            .insert(false, (value_of_b.clone(), op_new_entry))
+            .unwrap();
         let st = Statement::equal(self_a, self_b);
         let op = Operation(
             OperationType::Native(NativeOperation::EqualFromEntries),
@@ -1289,10 +1272,10 @@ pub mod tests {
             ],
             OperationAux::None,
         );
-        builder.insert(false, (st, op));
+        builder.insert(false, (st, op)).unwrap();
 
         let prover = MockProver {};
-        let pod = builder.prove(&prover, &params).unwrap();
+        let pod = builder.prove(&prover).unwrap();
         pod.pod.verify().unwrap();
     }
 }

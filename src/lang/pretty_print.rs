@@ -2,8 +2,11 @@
 
 use std::fmt::Write;
 
-use crate::middleware::{
-    CustomPredicate, CustomPredicateBatch, Predicate, StatementTmpl, StatementTmplArg, Value,
+use crate::{
+    frontend::PodRequest,
+    middleware::{
+        CustomPredicate, CustomPredicateBatch, Predicate, StatementTmpl, StatementTmplArg, Value,
+    },
 };
 
 /// Trait for converting AST nodes to Podlang source code
@@ -122,6 +125,19 @@ impl PrettyPrint for Value {
     }
 }
 
+impl PrettyPrint for PodRequest {
+    fn fmt_podlang_with_indent(&self, w: &mut dyn Write, _indent: usize) -> std::fmt::Result {
+        write!(w, "REQUEST(")?;
+        for (i, template) in self.request_templates.iter().enumerate() {
+            if i > 0 {
+                write!(w, ", ")?;
+            }
+            template.fmt_podlang_with_indent(w, 4)?;
+        }
+        write!(w, ")")
+    }
+}
+
 fn fmt_predicate_definition(
     w: &mut dyn Write,
     predicate: &CustomPredicate,
@@ -192,6 +208,7 @@ fn fmt_predicate_signature(
 mod tests {
     use super::*;
     use crate::{
+        backends::plonky2::primitives::ec::schnorr::SecretKey,
         lang::parse,
         middleware::{
             CustomPredicate, Key, NativePredicate, Params, Predicate, StatementTmpl,
@@ -487,6 +504,30 @@ mod tests {
             container_checks(List, Item, Dict, Key, Value) = AND(
                 Contains(?List, ?Item, ?Value)
                 NotContains(?Dict, ?Key)
+            )
+        "#;
+        assert_round_trip(input);
+    }
+
+    #[test]
+    fn test_round_trip_secret_key() {
+        let sk = SecretKey::new_rand();
+        let input = format!(
+            r#"
+            secret_key_test(Pod) = AND(
+                Equal(?Pod["sk"], {})
+            )
+            "#,
+            Value::from(sk.clone()).to_podlang_string()
+        );
+        assert_round_trip(&input);
+    }
+
+    #[test]
+    fn test_round_trip_self() {
+        let input = r#"
+            self_test(Pod) = AND(
+                Equal(?Pod["self"], SELF)
             )
         "#;
         assert_round_trip(input);

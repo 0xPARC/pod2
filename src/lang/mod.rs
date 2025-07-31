@@ -29,11 +29,12 @@ mod tests {
 
     use super::*;
     use crate::{
+        backends::plonky2::primitives::ec::schnorr::SecretKey,
         lang::error::ProcessorError,
         middleware::{
             hash_str, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key,
             NativePredicate, Params, PodId, PodType, Predicate, RawValue, StatementTmpl,
-            StatementTmplArg, Value, Wildcard, KEY_SIGNER, KEY_TYPE,
+            StatementTmplArg, Value, Wildcard, KEY_SIGNER, KEY_TYPE, SELF,
         },
     };
 
@@ -69,7 +70,7 @@ mod tests {
         let params = Params::default();
         let processed = parse(input, &params, &[])?;
         let batch_result = processed.custom_batch;
-        let request_result = processed.request_templates;
+        let request_result = processed.request.templates();
 
         assert_eq!(request_result.len(), 0);
         assert_eq!(batch_result.predicates.len(), 1);
@@ -114,12 +115,10 @@ mod tests {
         let params = Params::default();
         let processed = parse(input, &params, &[])?;
         let batch_result = processed.custom_batch;
-        let request_templates = processed.request_templates;
+        let request_templates = processed.request.templates();
 
         assert_eq!(batch_result.predicates.len(), 0);
         assert!(!request_templates.is_empty());
-
-        let request_templates = request_templates;
 
         // Expected structure
         let expected_templates = vec![
@@ -156,7 +155,7 @@ mod tests {
         let params = Params::default();
         let processed = parse(input, &params, &[])?;
         let batch_result = processed.custom_batch;
-        let request_result = processed.request_templates;
+        let request_result = processed.request.templates();
 
         assert_eq!(request_result.len(), 0);
         assert_eq!(batch_result.predicates.len(), 1);
@@ -213,13 +212,12 @@ mod tests {
         let params = Params::default();
         let processed = parse(input, &params, &[])?;
         let batch_result = processed.custom_batch;
-        let request_templates = processed.request_templates;
+        let request_templates = processed.request.templates();
 
         assert_eq!(batch_result.predicates.len(), 1);
         assert!(!request_templates.is_empty());
 
         let batch = batch_result;
-        let request_templates = request_templates;
 
         // Expected Batch structure
         let expected_pred_statements = vec![StatementTmpl {
@@ -277,12 +275,10 @@ mod tests {
         let params = Params::default();
         let processed = parse(input, &params, &[])?;
         let batch_result = processed.custom_batch;
-        let request_templates = processed.request_templates;
+        let request_templates = processed.request.templates();
 
         assert_eq!(batch_result.predicates.len(), 1); // some_pred is defined
         assert!(!request_templates.is_empty());
-
-        let request_templates = request_templates;
 
         // Expected Wildcard Indices in Request Scope:
         // ?Var1 -> 0
@@ -329,12 +325,10 @@ mod tests {
         let params = Params::default();
         let processed = parse(input, &params, &[])?;
         let batch_result = processed.custom_batch;
-        let request_templates = processed.request_templates;
+        let request_templates = processed.request.templates();
 
         assert_eq!(batch_result.predicates.len(), 0);
         assert!(!request_templates.is_empty());
-
-        let request_templates = request_templates;
 
         let expected_templates = vec![
             StatementTmpl {
@@ -388,7 +382,7 @@ mod tests {
 
         // Parse the input string
         let processed = super::parse(input, &Params::default(), &[])?;
-        let parsed_templates = processed.request_templates;
+        let parsed_templates = processed.request.templates();
 
         //  Define Expected Templates (Copied from prover/mod.rs)
         let now_minus_18y_val = Value::from(1169909388_i64);
@@ -528,7 +522,7 @@ mod tests {
         let processed = super::parse(input, &params, &[])?;
 
         assert!(
-            processed.request_templates.is_empty(),
+            processed.request.templates().is_empty(),
             "Expected no request templates"
         );
         assert_eq!(
@@ -718,7 +712,7 @@ mod tests {
 
         // 3. Parse the input
         let processed = parse(&input, &params, &available_batches)?;
-        let request_templates = processed.request_templates;
+        let request_templates = processed.request.templates();
 
         assert!(
             processed.custom_batch.predicates.is_empty(),
@@ -770,7 +764,7 @@ mod tests {
 
         // 3. Parse the input
         let processed = parse(&input, &params, &available_batches)?;
-        let request_templates = processed.request_templates;
+        let request_templates = processed.request.templates();
 
         assert_eq!(request_templates.len(), 2, "Expected two request templates");
 
@@ -829,7 +823,7 @@ mod tests {
         let processed = parse(&input, &params, &available_batches)?;
 
         assert!(
-            processed.request_templates.is_empty(),
+            processed.request.templates().is_empty(),
             "No request should be defined"
         );
         assert_eq!(
@@ -859,25 +853,33 @@ mod tests {
     #[test]
     fn test_e2e_literals() -> Result<(), LangError> {
         let pk = crate::backends::plonky2::primitives::ec::curve::Point::generator();
-        let pk_b58 = pk.to_string();
         let pod_id = PodId(hash_str("test"));
         let raw = RawValue::from(1);
         let string = "hello";
         let int = 123;
         let bool = true;
+        let sk = SecretKey::new_rand();
 
         let input = format!(
             r#"
             REQUEST(
-                Equal(?A["pk"], PublicKey({}))
-                Equal(?B["pod_id"], {:#})
-                Equal(?C["raw"], Raw({:#}))
-                Equal(?D["string"], "{}")
+                Equal(?A["pk"], {})
+                Equal(?B["pod_id"], {})
+                Equal(?C["raw"], {})
+                Equal(?D["string"], {})
                 Equal(?E["int"], {})
                 Equal(?F["bool"], {})
+                Equal(?G["sk"], {})
+                Equal(?H["self"], SELF)
             )
         "#,
-            pk_b58, pod_id, raw, string, int, bool
+            Value::from(pk).to_podlang_string(),
+            Value::from(pod_id).to_podlang_string(),
+            Value::from(raw).to_podlang_string(),
+            Value::from(string).to_podlang_string(),
+            Value::from(int).to_podlang_string(),
+            Value::from(bool).to_podlang_string(),
+            Value::from(sk.clone()).to_podlang_string()
         );
         /*
             REQUEST(
@@ -887,14 +889,14 @@ mod tests {
                 Equal(?D["string"], "hello")
                 Equal(?E["int"], 123)
                 Equal(?F["bool"], true)
+                Equal(?G["sk"], SecretKey(random_secret_key_base_64))
+                Equal(?H["self"], SELF)
             )
         */
 
         let params = Params::default();
         let processed = parse(&input, &params, &[])?;
-        let request_templates = processed.request_templates;
-
-        assert_eq!(request_templates.len(), 6);
+        let request_templates = processed.request.templates();
 
         let expected_templates = vec![
             StatementTmpl {
@@ -920,6 +922,14 @@ mod tests {
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![sta_ak(("F", 5), "bool"), sta_lit(Value::from(bool))],
+            },
+            StatementTmpl {
+                pred: Predicate::Native(NativePredicate::Equal),
+                args: vec![sta_ak(("G", 6), "sk"), sta_lit(Value::from(sk))],
+            },
+            StatementTmpl {
+                pred: Predicate::Native(NativePredicate::Equal),
+                args: vec![sta_ak(("H", 7), "self"), sta_lit(Value::from(SELF))],
             },
         ];
 

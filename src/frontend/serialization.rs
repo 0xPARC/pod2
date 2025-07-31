@@ -267,25 +267,15 @@ mod tests {
         let params = middleware::Params::default();
         let vd_set = &*MOCK_VD_SET;
 
-        let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
-            zu_kyc_sign_pod_builders(&params);
+        let (gov_id_builder, pay_stub_builder) = zu_kyc_sign_pod_builders(&params);
         let signer = Signer(SecretKey(1u32.into()));
         let gov_id_pod = gov_id_builder.sign(&signer).unwrap();
         let signer = Signer(SecretKey(2u32.into()));
         let pay_stub_pod = pay_stub_builder.sign(&signer).unwrap();
-        let signer = Signer(SecretKey(3u32.into()));
-        let sanction_list_pod = sanction_list_builder.sign(&signer).unwrap();
-        let kyc_builder = zu_kyc_pod_builder(
-            &params,
-            vd_set,
-            &gov_id_pod,
-            &pay_stub_pod,
-            &sanction_list_pod,
-        )
-        .unwrap();
+        let kyc_builder = zu_kyc_pod_builder(&params, vd_set, &gov_id_pod, &pay_stub_pod).unwrap();
 
         let prover = MockProver {};
-        let kyc_pod = kyc_builder.prove(&prover, &params).unwrap();
+        let kyc_pod = kyc_builder.prove(&prover).unwrap();
         Ok(kyc_pod)
     }
 
@@ -300,24 +290,15 @@ mod tests {
         vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
         let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
 
-        let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
-            zu_kyc_sign_pod_builders(&params);
+        let (gov_id_builder, pay_stub_builder) = zu_kyc_sign_pod_builders(&params);
         let signer = Signer(SecretKey(1u32.into()));
         let gov_id_pod = gov_id_builder.sign(&signer)?;
         let signer = Signer(SecretKey(2u32.into()));
         let pay_stub_pod = pay_stub_builder.sign(&signer)?;
-        let signer = Signer(SecretKey(3u32.into()));
-        let sanction_list_pod = sanction_list_builder.sign(&signer)?;
-        let kyc_builder = zu_kyc_pod_builder(
-            &params,
-            &vd_set,
-            &gov_id_pod,
-            &pay_stub_pod,
-            &sanction_list_pod,
-        )?;
+        let kyc_builder = zu_kyc_pod_builder(&params, &vd_set, &gov_id_pod, &pay_stub_pod)?;
 
         let prover = Prover {};
-        let kyc_pod = kyc_builder.prove(&prover, &params)?;
+        let kyc_pod = kyc_builder.prove(&prover)?;
 
         Ok(kyc_pod)
     }
@@ -369,10 +350,10 @@ mod tests {
 
         let helper = EthDosHelper::new(&params, vd_set, true, alice.public_key())?;
         let prover = MockProver {};
-        let dist_1 = helper.dist_1(&alice_attestation)?.prove(&prover, &params)?;
+        let dist_1 = helper.dist_1(&alice_attestation)?.prove(&prover)?;
         let dist_2 = helper
             .dist_n_plus_1(&dist_1, &bob_attestation)?
-            .prove(&prover, &params)?;
+            .prove(&prover)?;
 
         Ok(dist_2)
     }

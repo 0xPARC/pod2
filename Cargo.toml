@@ -21,7 +21,7 @@ lazy_static = "1.5.0"
 thiserror = { version = "2.0.12" }
 # enabled by features:
 plonky2 = { git = "https://github.com/0xPARC/plonky2.git", rev = "3defd60532c8693cf5e9d2e6a8412c77ca58760f", optional = true }
-plonky2_u32 = { git = "https://github.com/ax0/plonky2-u32", rev = "7a38240693455d6182210c2efecba99cbf871a6f" }
+plonky2_u32 = { git = "https://github.com/ax0/plonky2-u32", rev = "e5548e8e4a27d6660b686c65543f0d7d9731aa30" }
 serde = "1.0.219"
 serde_json = "1.0.140"
 base64 = "0.22.1"
