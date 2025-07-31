@@ -1982,6 +1982,7 @@ mod tests {
         let params = Params {
             max_custom_predicate_batches: 0,
             max_custom_predicate_verifications: 0,
+            max_merkle_proofs_containers: merkle_proofs.len(),
             ..Default::default()
         };
 
