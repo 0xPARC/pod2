@@ -1,6 +1,6 @@
 //! Module that implements the MerkleTree specified at
 //! https://0xparc.github.io/pod2/merkletree.html .
-use std::{collections::HashMap, fmt, iter::IntoIterator};
+use std::{collections::HashMap, fmt, iter, iter::IntoIterator};
 
 use itertools::zip_eq;
 use plonky2::field::types::Field;
@@ -421,6 +421,37 @@ impl MerkleClaimAndProof {
 impl fmt::Display for MerkleClaimAndProof {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.proof.fmt(f)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct MerkleClaim {
+    pub root: Hash,
+    pub key: RawValue,
+    pub value: RawValue,
+    pub existence: bool,
+}
+
+impl From<&MerkleClaimAndProof> for MerkleClaim {
+    fn from(pf: &MerkleClaimAndProof) -> Self {
+        Self {
+            root: pf.root.clone(),
+            key: pf.key.clone(),
+            value: pf.value.clone(),
+            existence: pf.proof.existence,
+        }
+    }
+}
+
+impl MerkleClaim {
+    /// Mirrors the layout of `MerkleClaimTarget: Flattenable`.
+    pub fn to_fields(&self, enabled: bool) -> Vec<F> {
+        iter::once(&F(enabled as u64))
+            .chain(self.root.0.iter())
+            .chain(self.key.0.iter())
+            .chain(iter::once(&F(self.existence as u64)))
+            .copied()
+            .collect()
     }
 }
 

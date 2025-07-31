@@ -33,14 +33,15 @@ use crate::{
         },
         emptypod::{cache_get_standard_empty_pod_circuit_data, EmptyPod},
         error::Result,
-        mainpod::{self, pad_statement, OperationArg},
+        mainpod::{self, pad_statement, OperationArg, OperationAux},
         primitives::{
             ec::{
                 bits::{BigUInt320Target, CircuitBuilderBits},
                 curve::{CircuitBuilderElliptic, Point, WitnessWriteCurve, GROUP_ORDER},
             },
             merkletree::{
-                verify_merkle_proof_circuit, MerkleClaimAndProof, MerkleClaimAndProofTarget,
+                verify_merkle_proof_circuit, MerkleClaim, MerkleClaimAndProof,
+                MerkleClaimAndProofTarget,
             },
         },
         recursion::{InnerCircuit, VerifiedProofTarget},
@@ -49,8 +50,9 @@ use crate::{
     measure_gates_begin, measure_gates_end,
     middleware::{
         AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, NativeOperation,
-        NativePredicate, OperationType, Params, PodType, PredicatePrefix, Statement, StatementArg,
-        ToFields, TypedValue, Value, ValueRef, F, HASH_SIZE, KEY_TYPE, SELF, VALUE_SIZE,
+        NativePredicate, OperationType, Params, PodType, Predicate, PredicatePrefix, Statement,
+        StatementArg, ToFields, TypedValue, Value, ValueRef, F, HASH_SIZE, KEY_TYPE, SELF,
+        VALUE_SIZE,
     },
 };
 //
@@ -185,6 +187,7 @@ fn verify_operation_public_statement_circuit(
 }
 
 enum OperationAuxTableTag {
+    None = 0,
     MerkleProof = 1,
     CustomPredVerify = 2,
 }
@@ -195,6 +198,7 @@ fn hash_tagged_table_entry_circuit(
     tag: OperationAuxTableTag,
     flattened_entry: &[Target],
 ) -> HashOutTarget {
+    let measure = measure_gates_begin!(builder, "HashTaggedTblEntry");
     let flattened = [&[builder.constant(F(tag as u64))], flattened_entry].concat();
     let front_pad_elts = if let Some(max_flattened_entry_len) = max_flattened_entry_len {
         assert!(flattened_entry.len() <= max_flattened_entry_len);
@@ -219,6 +223,7 @@ fn hash_tagged_table_entry_circuit(
     let hash =
         hash_from_state_circuit::<PoseidonHash, PoseidonPermutation<F>>(builder, perm, &inputs);
 
+    measure_gates_end!(builder, measure);
     hash
 }
 
@@ -241,6 +246,7 @@ fn build_operation_aux_table_circuit(
     custom_predicate_verifications: &[CustomPredicateVerifyEntryTarget],
     custom_predicate_table: &[HashOutTarget],
 ) -> Result<Vec<HashOutTarget>> {
+    let measure = measure_gates_begin!(builder, "BuildOpAuxTbl");
     assert_eq!(
         params.max_custom_predicate_verifications,
         custom_predicate_verifications.len()
@@ -264,6 +270,7 @@ fn build_operation_aux_table_circuit(
 
     // CustomPredVerify
     for entry in custom_predicate_verifications {
+        let measure = measure_gates_begin!(builder, "CustomPredVerify");
         // Verify the custom predicate operation
         let (statement, op_type) = make_custom_statement_circuit(
             params,
@@ -293,8 +300,10 @@ fn build_operation_aux_table_circuit(
             OperationAuxTableTag::CustomPredVerify,
             &query.flatten(),
         ));
+        measure_gates_end!(builder, measure);
     }
 
+    measure_gates_end!(builder, measure);
     Ok(table)
 }
 
@@ -1575,7 +1584,7 @@ fn verify_main_pod_circuit(
                 prev_statements,
                 input_statements_offset,
                 &aux_table,
-                &aux,
+                aux,
                 &main_pod.secret_keys[i],
             )?;
         } else {
@@ -1663,6 +1672,44 @@ pub struct CustomPredicateVerification {
     pub custom_predicate: CustomPredicateRef,
     pub args: Vec<Value>,
     pub op_args: Vec<mainpod::Statement>,
+}
+
+struct CustomPredicateVerifyQuery {
+    statement: mainpod::Statement,
+    op_type: OperationType,
+    op_args: Vec<mainpod::Statement>,
+}
+
+impl From<&CustomPredicateVerification> for CustomPredicateVerifyQuery {
+    fn from(cpv: &CustomPredicateVerification) -> Self {
+        Self {
+            statement: mainpod::Statement(
+                Predicate::Custom(cpv.custom_predicate.clone()),
+                cpv.args
+                    .iter()
+                    .map(|a| StatementArg::Literal(a.clone()))
+                    .collect(),
+            ),
+            op_type: OperationType::Custom(cpv.custom_predicate.clone()),
+            op_args: cpv.op_args.clone(),
+        }
+    }
+}
+
+impl CustomPredicateVerifyQuery {
+    /// Mirror of `CustomPredicateVerifyQueryTarget: Flattenable`
+    fn to_fields(&self, params: &Params) -> Vec<F> {
+        self.statement
+            .to_fields(params)
+            .into_iter()
+            .chain(self.op_type.to_fields(params))
+            .chain(
+                self.op_args
+                    .iter()
+                    .flat_map(|op_arg| op_arg.to_fields(params)),
+            )
+            .collect()
+    }
 }
 
 pub struct MainPodVerifyInput {
@@ -1781,9 +1828,31 @@ impl InnerCircuit for MainPodVerifyTarget {
         }
 
         assert_eq!(input.statements.len(), self.params.max_statements);
+        let tagged_aux_entry_max_len = 1 + max_operation_aux_entry_len(&self.params);
         for (i, (st, op)) in zip_eq(&input.statements, &input.operations).enumerate() {
             self.input_statements[i].set_targets(pw, &self.params, st)?;
             self.operations[i].set_targets(pw, &self.params, op)?;
+            let (aux_tag, flattened_aux_entry) = match op.aux() {
+                &OperationAux::None => (OperationAuxTableTag::None, vec![]),
+                &OperationAux::MerkleProofIndex(j) => (
+                    OperationAuxTableTag::MerkleProof,
+                    MerkleClaim::from(&input.merkle_proofs[j]).to_fields(true),
+                ),
+                &OperationAux::CustomPredVerifyIndex(j) => (
+                    OperationAuxTableTag::CustomPredVerify,
+                    CustomPredicateVerifyQuery::from(&input.custom_predicate_verifications[j])
+                        .to_fields(&self.params),
+                ),
+            };
+            let flattened_tagged_aux_entry = iter::once(F(aux_tag as u64))
+                .chain(flattened_aux_entry.into_iter())
+                .chain(iter::repeat(F::ZERO))
+                .take(tagged_aux_entry_max_len)
+                .collect_vec();
+            if i < self.params.max_priv_statements() {
+                pw.set_target_arr(&self.aux[i], &flattened_tagged_aux_entry)?;
+            }
+
             if matches!(
                 op.op_type(),
                 OperationType::Native(NativeOperation::PublicKeyOf)

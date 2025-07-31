@@ -718,6 +718,7 @@ pub trait Flattenable {
     fn size(params: &Params) -> usize;
 }
 
+// TODO: Figure out why this is defined in common and not in the merkletree directory
 /// For the purpose of op verification, we need only look up the
 /// Merkle claim rather than the Merkle proof since it is verified
 /// elsewhere.
