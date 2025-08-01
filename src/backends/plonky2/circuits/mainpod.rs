@@ -1773,19 +1773,19 @@ fn set_targets_aux(
     custom_predicate_verifications: &[CustomPredicateVerification],
 ) -> Result<()> {
     let tagged_aux_entry_max_len = 1 + aux_entry_max_len;
-    let (aux_tag, flattened_aux_entry) = match op_aux {
-        &OperationAux::None => (OperationAuxTableTag::None, vec![]),
-        &OperationAux::MerkleProofIndex(i) => (
+    let (aux_tag, flattened_aux_entry) = match *op_aux {
+        OperationAux::None => (OperationAuxTableTag::None, vec![]),
+        OperationAux::MerkleProofIndex(i) => (
             OperationAuxTableTag::MerkleProof,
             MerkleClaim::from(&merkle_proofs[i]).to_fields(true),
         ),
-        &OperationAux::CustomPredVerifyIndex(i) => (
+        OperationAux::CustomPredVerifyIndex(i) => (
             OperationAuxTableTag::CustomPredVerify,
-            CustomPredicateVerifyQuery::from(&custom_predicate_verifications[i]).to_fields(&params),
+            CustomPredicateVerifyQuery::from(&custom_predicate_verifications[i]).to_fields(params),
         ),
     };
     let flattened_tagged_aux_entry = iter::once(F(aux_tag as u64))
-        .chain(flattened_aux_entry.into_iter())
+        .chain(flattened_aux_entry)
         .chain(iter::repeat(F::ZERO))
         .take(tagged_aux_entry_max_len)
         .collect_vec();

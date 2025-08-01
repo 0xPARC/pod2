@@ -435,9 +435,9 @@ pub struct MerkleClaim {
 impl From<&MerkleClaimAndProof> for MerkleClaim {
     fn from(pf: &MerkleClaimAndProof) -> Self {
         Self {
-            root: pf.root.clone(),
-            key: pf.key.clone(),
-            value: pf.value.clone(),
+            root: pf.root,
+            key: pf.key,
+            value: pf.value,
             existence: pf.proof.existence,
         }
     }
