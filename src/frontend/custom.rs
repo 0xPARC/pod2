@@ -237,9 +237,8 @@ mod tests {
     use crate::{
         backends::plonky2::mock::mainpod::MockProver,
         examples::{custom::eth_dos_batch, MOCK_VD_SET},
-        frontend::MainPodBuilder,
+        frontend::{MainPodBuilder, Operation},
         middleware::{self, containers::Set, CustomPredicateRef, Params, PodType, DEFAULT_VD_SET},
-        op,
     };
 
     #[test]
@@ -291,11 +290,11 @@ mod tests {
         let mut mp_builder = MainPodBuilder::new(&params, vd_set);
 
         // 2 > 1
-        let s1 = mp_builder.priv_op(op!(new_entry, "s1_key", Value::from(2)))?;
-        let s2 = mp_builder.priv_op(op!(new_entry, "s2_key", Value::from(1)))?;
+        let s1 = mp_builder.priv_op(Operation::new_entry("s1_key", Value::from(2)))?;
+        let s2 = mp_builder.priv_op(Operation::new_entry("s2_key", Value::from(1)))?;
 
         // Adding a gt operation will produce a desugared lt operation
-        let desugared_gt = mp_builder.pub_op(op!(gt, s1, s2))?;
+        let desugared_gt = mp_builder.pub_op(Operation::gt(s1, s2))?;
         assert_eq!(
             desugared_gt.predicate(),
             Predicate::Native(NativePredicate::Lt)
@@ -308,7 +307,7 @@ mod tests {
 
         // Check that our custom predicate matches the statement template
         // against the desugared gt statement (actually a lt statement)
-        mp_builder.pub_op(op!(custom, gt_custom_pred, desugared_gt))?;
+        mp_builder.pub_op(Operation::custom(gt_custom_pred, [desugared_gt]))?;
 
         // Check that the POD builds
         let prover = MockProver {};
@@ -340,14 +339,13 @@ mod tests {
         let mut mp_builder = MainPodBuilder::new(&params, vd_set);
 
         let set_values: HashSet<Value> = [1, 2, 3].iter().map(|i| Value::from(*i)).collect();
-        let s1 = mp_builder.priv_op(op!(
-            new_entry,
+        let s1 = mp_builder.priv_op(Operation::new_entry(
             "s1_key",
-            Value::from(Set::new(params.max_depth_mt_containers, set_values)?)
+            Value::from(Set::new(params.max_depth_mt_containers, set_values)?),
         ))?;
-        let s2 = mp_builder.priv_op(op!(new_entry, "s2_key", Value::from(1)))?;
+        let s2 = mp_builder.priv_op(Operation::new_entry("s2_key", Value::from(1)))?;
 
-        let set_contains = mp_builder.pub_op(op!(set_contains, s1, s2))?;
+        let set_contains = mp_builder.pub_op(Operation::set_contains(s1, s2))?;
         assert_eq!(
             set_contains.predicate(),
             Predicate::Native(NativePredicate::Contains)
@@ -358,7 +356,7 @@ mod tests {
         );
 
         let set_contains_custom_pred = CustomPredicateRef::new(batch, 0);
-        mp_builder.pub_op(op!(custom, set_contains_custom_pred, set_contains))?;
+        mp_builder.pub_op(Operation::custom(set_contains_custom_pred, [set_contains]))?;
 
         let prover = MockProver {};
         let proof = mp_builder.prove(&prover)?;

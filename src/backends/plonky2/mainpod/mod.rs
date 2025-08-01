@@ -750,7 +750,6 @@ pub mod tests {
             self, containers::Set, CustomPredicateRef, NativePredicate as NP, DEFAULT_VD_LIST,
             DEFAULT_VD_SET,
         },
-        op,
     };
 
     #[test]
@@ -821,7 +820,10 @@ pub mod tests {
         let mut kyc_builder = frontend::MainPodBuilder::new(&params, &vd_set);
         kyc_builder.add_signed_pod(&gov_id);
         kyc_builder
-            .pub_op(op!(lt, (&gov_id, "dateOfBirth"), now_minus_18y))
+            .pub_op(frontend::Operation::lt(
+                (&gov_id, "dateOfBirth"),
+                now_minus_18y,
+            ))
             .unwrap();
 
         println!("{}", kyc_builder);
@@ -951,11 +953,11 @@ pub mod tests {
 
         let mut pod_builder = MainPodBuilder::new(&params, &vd_set);
 
-        let st0 = pod_builder.priv_op(op!(new_entry, "score", 42))?;
-        let st1 = pod_builder.priv_op(op!(new_entry, "key", 42))?;
-        let st2 = pod_builder.priv_op(op!(eq, st1.clone(), st0.clone()))?;
+        let st0 = pod_builder.priv_op(frontend::Operation::new_entry("score", 42))?;
+        let st1 = pod_builder.priv_op(frontend::Operation::new_entry("key", 42))?;
+        let st2 = pod_builder.priv_op(frontend::Operation::eq(st1.clone(), st0.clone()))?;
 
-        let _st3 = pod_builder.priv_op(op!(custom, cpb_and.clone(), st0, st2))?;
+        let _st3 = pod_builder.priv_op(frontend::Operation::custom(cpb_and.clone(), [st0, st2]))?;
 
         let prover = MockProver {};
         let pod = pod_builder.prove(&prover)?;
@@ -976,14 +978,13 @@ pub mod tests {
         let mut builder = MainPodBuilder::new(&params, &DEFAULT_VD_SET);
         let set = [1, 2, 3].into_iter().map(|n| n.into()).collect();
         let st = builder
-            .pub_op(op!(
-                new_entry,
+            .pub_op(frontend::Operation::new_entry(
                 "entry",
-                Set::new(params.max_merkle_proofs_containers, set).unwrap()
+                Set::new(params.max_merkle_proofs_containers, set).unwrap(),
             ))
             .unwrap();
 
-        builder.pub_op(op!(set_contains, st, 1))?;
+        builder.pub_op(frontend::Operation::set_contains(st, 1))?;
 
         let prover = Prover {};
         let proof = builder.prove(&prover).unwrap();

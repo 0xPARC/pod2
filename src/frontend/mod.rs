@@ -726,84 +726,6 @@ impl MainPodCompiler {
     }
 }
 
-// TODO fn fmt_signed_pod_builder
-// TODO fn fmt_main_pod
-
-#[macro_use]
-pub mod build_utils {
-    #[macro_export]
-    macro_rules! op_args {
-        ($($arg:expr),+) => {vec![$($crate::frontend::OperationArg::from($arg)),*]}
-    }
-
-    #[macro_export]
-    macro_rules! op {
-        (new_entry, $key:expr, $value:expr) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::NewEntry),
-            $crate::op_args!(($key, $value)), $crate::middleware::OperationAux::None) };
-        (copy, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::CopyStatement),
-            $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
-        (eq, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::EqualFromEntries),
-            $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
-        (ne, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::NotEqualFromEntries),
-            $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
-        (gt, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::GtFromEntries),
-            $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
-        (lt, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::LtFromEntries),
-            $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
-        (transitive_eq, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::TransitiveEqualFromStatements),
-            $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
-        (gt_to_ne, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::GtToNotEqual),
-            $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
-        (lt_to_ne, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::LtToNotEqual),
-            $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
-        (sum_of, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::SumOf),
-            $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
-        (product_of, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::ProductOf),
-            $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
-        (max_of, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::MaxOf),
-            $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
-        (hash_of, $($arg:expr),+) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::HashOf),
-            $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
-        (custom, $op:expr, $($arg:expr),*) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Custom($op),
-            $crate::op_args!($($arg),*), $crate::middleware::OperationAux::None) };
-        (dict_contains, $dict:expr, $key:expr, $value:expr) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::DictContainsFromEntries),
-            $crate::op_args!($dict, $key, $value), $crate::middleware::OperationAux::None) };
-        (dict_not_contains, $dict:expr, $key:expr) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::DictNotContainsFromEntries),
-            $crate::op_args!($dict, $key), $crate::middleware::OperationAux::None) };
-        (set_contains, $set:expr, $value:expr) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::SetContainsFromEntries),
-            $crate::op_args!($set, $value), $crate::middleware::OperationAux::None) };
-        (set_not_contains, $set:expr, $value:expr) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::SetNotContainsFromEntries),
-            $crate::op_args!($set, $value), $crate::middleware::OperationAux::None) };
-        (array_contains, $array:expr, $index:expr, $value:expr) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::ArrayContainsFromEntries),
-            $crate::op_args!($array, $index, $value), $crate::middleware::OperationAux::None) };
-        (hash_of, $hash:expr, $val1:expr, $val2:expr) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::HashOf),
-            $crate::op_args!($hash, $val1, $val2), $crate::middleware::OperationAux::None) };
-        (public_key_of, $pk:expr, $sk:expr) => { $crate::frontend::Operation(
-            $crate::middleware::OperationType::Native($crate::middleware::NativeOperation::PublicKeyOf),
-            $crate::op_args!($pk, $sk), $crate::middleware::OperationAux::None) };
-    }
-}
-
 #[cfg(test)]
 pub mod tests {
 
@@ -1031,7 +953,7 @@ pub mod tests {
 
         let mut builder = MainPodBuilder::new(&params, vd_set);
         builder.add_signed_pod(&pod);
-        builder.pub_op(op!(gt, (&pod, "num"), 5)).unwrap();
+        builder.pub_op(Operation::gt((&pod, "num"), 5)).unwrap();
 
         let prover = MockProver {};
         let false_pod = builder.prove(&prover).unwrap();
@@ -1062,7 +984,7 @@ pub mod tests {
         let mut builder = MainPodBuilder::new(&params, vd_set);
         builder.add_signed_pod(&pod);
         let st0 = pod.get_statement("dict").unwrap();
-        let st1 = builder.op(true, op!(new_entry, "key", "a")).unwrap();
+        let st1 = builder.op(true, Operation::new_entry("key", "a")).unwrap();
         let st2 = builder.literal(false, Value::from(1)).unwrap();
 
         builder
@@ -1106,7 +1028,7 @@ pub mod tests {
         builder.add_signed_pod(&signed_pod);
         let st0 = signed_pod.get_statement("owner").unwrap();
         let st1 = builder
-            .priv_op(op!(new_entry, "known_secret", Value::from(sk)))
+            .priv_op(Operation::new_entry("known_secret", Value::from(sk)))
             .unwrap();
         builder
             .pub_op(Operation(
@@ -1148,10 +1070,9 @@ pub mod tests {
         builder.add_signed_pod(&signed_pod);
         let st0 = signed_pod.get_statement("owner").unwrap();
         let st1 = builder
-            .priv_op(op!(
-                new_entry,
+            .priv_op(Operation::new_entry(
                 "known_secret",
-                Value::from(SecretKey(BigUint::from(123u32)))
+                Value::from(SecretKey(BigUint::from(123u32))),
             ))
             .unwrap();
         assert!(builder
