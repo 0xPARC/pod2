@@ -17,7 +17,7 @@ use plonky2::{
         types::{Field, PrimeField},
     },
     hash::poseidon::PoseidonHash,
-    iop::{generator::SimpleGenerator, target::BoolTarget, witness::WitnessWrite},
+    iop::{generator::SimpleGenerator, target::{BoolTarget,Target}, witness::WitnessWrite},
     plonk::circuit_builder::CircuitBuilder,
     util::serialization::{Read, Write},
 };
@@ -28,7 +28,7 @@ use crate::backends::plonky2::{
     primitives::ec::{
         bits::BigUInt320Target,
         field::{get_nnf_target, CircuitBuilderNNF, OEFTarget},
-        gates::{curve::ECAddHomogOffset, generic::SimpleGate},
+        gates::{curve::{ECAddHomogOffset,ECAddXu}, generic::SimpleGate},
     },
     Error,
 };
@@ -174,6 +174,23 @@ pub(super) fn add_homog<const D: usize, F: ECFieldExt<D>>(x1: F, u1: F, x2: F, u
     let u = t6 * (-t1).add_field_gen(Point::B1);
     let t = t7 + t9;
     [x, z, u, t]
+}
+
+pub(super) fn add_xu<const D: usize, F: ECFieldExt<D> + std::ops::Div<Output = F>>(x1: F, u1: F, x2: F, u2: F) -> [F; 2] {
+    let t1 = x1 * x2;
+    let t3 = u1 * u2;
+    let t5 = x1 + x2;
+    let t6 = u1 + u2;
+    let t7 = t1.add_field_gen(Point::B1);
+    let t9 = t3 * (t5.mul_field_gen(2 * Point::B1_U32) + t7.double());
+    let t10 = t3.double().add_scalar(GoldilocksField::ONE) * (t5 + t7);
+    let x = (t10 - t7).mul_field_gen(Point::B1_U32);
+    let z = t7 - t9;
+    let u = t6 * (-t1).add_field_gen(Point::B1);
+    let t = t7 + t9;
+    let x1 = x / z;
+    let u1 = u / t;
+    [x1, u1]
 }
 
 // See CircuitBuilderEllptic::add_point for an explanation of why we need this function.
@@ -424,6 +441,101 @@ where
     }
 }
 
+
+pub trait CircuitBuilderEllipticNew {
+    fn linear_combination_points_new(
+        &mut self,
+        p1_scalar: &[BoolTarget; 320],
+        p2_scalar: &[BoolTarget; 320],
+        p1: &PointTarget,
+        p2: &PointTarget,
+    ) -> PointTarget;
+}
+
+impl CircuitBuilderEllipticNew for CircuitBuilder<GoldilocksField, 2> {
+
+    fn linear_combination_points_new(
+        &mut self,
+        p1_scalar: &[BoolTarget; 320],
+        p2_scalar: &[BoolTarget; 320],
+        _p1: &PointTarget, // g
+        p2: &PointTarget, // y
+    ) -> PointTarget {
+
+        let y = p2;
+        let zero = self.identity_point();
+        let zero_target = self.zero();
+
+        let mut ans = zero.clone(); // accumulator
+        let arb_target = self.zero();
+
+        let mut all_rows = [0usize; 107];
+        for x in 0..107 {
+            let (row, _slot) = self.find_slot(ECAddXu::new_from_config(), &[], &[]);
+            all_rows[x] = row;
+
+            // prepare to apply gate
+            let mut inputs = Vec::with_capacity(30);
+
+            // scalar bits for p1 (g)
+            if x == 0 {
+                inputs.push(zero_target);
+            } else {
+                inputs.push(p1_scalar[320 - 3*x].target);
+            }
+            inputs.push(p1_scalar[319 - 3*x].target);
+            inputs.push(p1_scalar[318 - 3*x].target);
+            inputs.push(arb_target);
+            inputs.push(arb_target);
+
+            // scalar bits for p2 (y)
+            if x == 0 {
+                inputs.push(zero_target);
+            } else {
+                inputs.push(p2_scalar[320 - 3*x].target);
+            }
+            inputs.push(p2_scalar[319 - 3*x].target);
+            inputs.push(p2_scalar[318 - 3*x].target);
+            inputs.push(arb_target);
+            inputs.push(arb_target);
+
+            // y point
+            inputs.extend_from_slice(&y.x.components);
+            inputs.extend_from_slice(&y.u.components);
+
+            // accumulator
+            inputs.extend_from_slice(&ans.x.components);
+            inputs.extend_from_slice(&ans.u.components);
+
+            // apply gate
+            let outputs = ECAddXu::apply(self, &inputs, row);
+            let x = FieldTarget::new(outputs[15..20].try_into().unwrap());
+            let u = FieldTarget::new(outputs[20..25].try_into().unwrap());
+            ans = PointTarget {
+                x: x,
+                u: u,
+                checked_on_curve: true,
+                checked_in_subgroup: p2.checked_in_subgroup,
+            };
+
+            for col in 0..30 {
+                self.connect (inputs[col], Target::wire(row, col));
+            }
+        }
+
+        // copy accumulator from one row to the next
+        for x in 0..106 {
+            for y in 20..30 {
+                self.connect (Target::wire(all_rows[x], y+25), Target::wire(all_rows[x+1], y))
+            }
+        }
+
+        ans
+    }
+}
+
+
+
 pub trait CircuitBuilderElliptic {
     fn add_virtual_point_target_unsafe(&mut self) -> PointTarget;
     fn add_virtual_point_target(&mut self) -> PointTarget;
@@ -508,32 +620,6 @@ impl CircuitBuilderElliptic for CircuitBuilder<GoldilocksField, 2> {
 
     fn double_point(&mut self, p: &PointTarget) -> PointTarget {
         self.add_point(p, p)
-        /*
-        let t3 = self.nnf_mul(&p.u, &p.u);
-        let one = self.one();
-        let neg_one = self.neg_one();
-        let two = self.two();
-        let neg_four = self.constant(GoldilocksField::from_noncanonical_i64(-4));
-        let four_b = self.constant(GoldilocksField::from_canonical_u32(4 * Point::B1_U32));
-        let w1_1 = self.nnf_add_scalar_times_generator_power(one, 0, &p.x);
-        let w1_2 = self.nnf_add(&w1_1, &w1_1);
-        let w1_3 = self.nnf_mul(&w1_2, &t3);
-        let w1_4 = self.nnf_mul_scalar(neg_one, &w1_3);
-        let w1 = self.nnf_add_scalar_times_generator_power(one, 0, &w1_4);
-        let x_1 = self.nnf_mul_scalar(four_b, &t3);
-        let x = self.nnf_mul_generator(&x_1);
-        let z = self.nnf_mul(&w1, &w1);
-        let u_1 = self.nnf_add(&w1, &p.u);
-        let u_2 = self.nnf_mul(&u_1, &u_1);
-        let u_3 = self.nnf_sub(&u_2, &t3);
-        let u = self.nnf_sub(&u_3, &z);
-        let t_1 = self.nnf_mul_scalar(neg_four, &t3);
-        let t_2 = self.nnf_add_scalar_times_generator_power(two, 0, &t_1);
-        let t = self.nnf_sub(&t_2, &z);
-        let xq = self.nnf_div(&x, &z);
-        let uq = self.nnf_div(&u, &t);
-        PointTarget { x: xq, u: uq }
-        */
     }
 
     fn linear_combination_points(
@@ -640,6 +726,7 @@ pub trait WitnessWriteCurve: WitnessWrite<GoldilocksField> {
         Ok(())
     }
 }
+
 
 impl<W: WitnessWrite<GoldilocksField>> WitnessWriteCurve for W {}
 
