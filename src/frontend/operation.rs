@@ -180,18 +180,21 @@ impl Operation {
     op_impl_oa!(sum_of, SumOf, 3);
     op_impl_oa!(product_of, ProductOf, 3);
     op_impl_oa!(max_of, MaxOf, 3);
+    op_impl_oa!(hash_of, HashOf, 3);
     /// Creates a custom operation.
     ///
     /// `args` should contain the statements that are needed to prove the
     /// custom statement.  It should have the same length as
     /// `cpr.predicate().statements()`.  If `cpr` refers to an `or` predicate,
     /// then all but one of the statements should be `Statement::None`.
-    pub fn custom(cpr: CustomPredicateRef, args: Vec<OperationArg>) -> Self {
-        Self(OperationType::Custom(cpr), args, OperationAux::None)
+    pub fn custom(cpr: CustomPredicateRef, args: impl IntoIterator<Item = Statement>) -> Self {
+        let op_args = args.into_iter().map(OperationArg::from).collect();
+        Self(OperationType::Custom(cpr), op_args, OperationAux::None)
     }
     op_impl_oa!(dict_contains, DictContainsFromEntries, 3);
     op_impl_oa!(dict_not_contains, DictNotContainsFromEntries, 2);
     op_impl_oa!(set_contains, SetContainsFromEntries, 2);
     op_impl_oa!(set_not_contains, SetNotContainsFromEntries, 2);
     op_impl_oa!(array_contains, ArrayContainsFromEntries, 3);
+    op_impl_oa!(public_key_of, PublicKeyOf, 2);
 }
