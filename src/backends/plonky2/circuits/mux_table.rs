@@ -46,6 +46,7 @@ impl MuxTableTarget {
         }
     }
 
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.hashed_tagged_entries.len()
     }
@@ -89,7 +90,7 @@ impl MuxTableTarget {
     }
 
     pub fn get(&self, builder: &mut CircuitBuilder, index: &IndexTarget) -> TableEntryTarget {
-        let entry_hash = builder.vec_ref(&self.params, &self.hashed_tagged_entries, &index);
+        let entry_hash = builder.vec_ref(&self.params, &self.hashed_tagged_entries, index);
 
         let mut rev_resolved_tagged_flattened =
             builder.add_virtual_targets(1 + self.max_flattened_entry_len);
@@ -159,7 +160,7 @@ impl<F: RichField + Extendable<D>, const D: usize> SimpleGenerator<F, D> for Tab
 
         dst.write_usize(self.get_tagged_entry.len())?;
         for tagged_entry in &self.tagged_entries {
-            dst.write_target_vec(&tagged_entry)?;
+            dst.write_target_vec(tagged_entry)?;
         }
 
         dst.write_target_vec(&self.get_tagged_entry)
