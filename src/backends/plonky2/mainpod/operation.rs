@@ -39,13 +39,14 @@ pub enum OperationAux {
 
 impl OperationAux {
     fn table_offset_merkle_proof(_params: &Params) -> usize {
-        0
+        // At index 0 we store a zero entry
+        1
     }
     fn table_offset_custom_pred_verify(params: &Params) -> usize {
         Self::table_offset_merkle_proof(params) + params.max_merkle_proofs_containers
     }
     pub(crate) fn table_size(params: &Params) -> usize {
-        params.max_merkle_proofs_containers + params.max_custom_predicate_verifications
+        1 + params.max_merkle_proofs_containers + params.max_custom_predicate_verifications
     }
     pub fn table_index(&self, params: &Params) -> usize {
         match self {

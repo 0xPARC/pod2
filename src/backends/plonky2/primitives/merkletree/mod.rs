@@ -449,6 +449,7 @@ impl MerkleClaim {
         iter::once(&F(enabled as u64))
             .chain(self.root.0.iter())
             .chain(self.key.0.iter())
+            .chain(self.value.0.iter())
             .chain(iter::once(&F(self.existence as u64)))
             .copied()
             .collect()

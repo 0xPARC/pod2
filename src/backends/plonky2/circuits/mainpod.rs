@@ -192,6 +192,7 @@ enum OperationAuxTableTag {
     CustomPredVerify = 2,
 }
 
+// TODO: generalize the front-padded-rev hashing into its own function
 fn hash_tagged_table_entry_circuit(
     max_flattened_entry_len: Option<usize>,
     builder: &mut CircuitBuilder,
@@ -254,6 +255,14 @@ fn build_operation_aux_table_circuit(
     assert_eq!(params.max_merkle_proofs_containers, merkle_proofs.len());
     let max_entry_len = max_operation_aux_entry_len(params);
     let mut table = Vec::new();
+
+    // None
+    table.push(hash_tagged_table_entry_circuit(
+        Some(max_entry_len),
+        builder,
+        OperationAuxTableTag::None,
+        &[],
+    ));
 
     // MerkleProofs
     for merkle_proof in merkle_proofs {
@@ -345,8 +354,10 @@ fn verify_operation_circuit(
     // of the provided Merkle proofs (if any). These proofs have already
     // been verified, so we need only look up the claim.
     // let measure_resolve_merkle_claim = measure_gates_begin!(builder, "ResolveMerkleClaim");
+    // The aux table always has a fixed zero entry, so we check if there are more than 1 entries to
+    // trigger the unhashing.
     let resolved_aux_hash =
-        (!aux_table.is_empty()).then(|| builder.vec_ref(params, aux_table, &op.aux_index));
+        (aux_table.len() > 1).then(|| builder.vec_ref(params, aux_table, &op.aux_index));
     // let resolved_merkle_claim =
     //     (!merkle_claims.is_empty()).then(|| builder.vec_ref(params, merkle_claims, &op.aux[0]));
     // measure_gates_end!(builder, measure_resolve_merkle_claim);
@@ -397,8 +408,9 @@ fn verify_operation_circuit(
     }
     // Skip these if there are no resolved aux entries
     if let Some(resolved_aux_hash) = resolved_aux_hash {
-        let hash =
-            builder.hash_n_to_hash_no_pad::<PoseidonHash>(resolved_tagged_aux_flattened.to_vec());
+        let mut rev_resolved_tagged_aux_flattened = resolved_tagged_aux_flattened.to_vec();
+        rev_resolved_tagged_aux_flattened.reverse();
+        let hash = builder.hash_n_to_hash_no_pad::<PoseidonHash>(rev_resolved_tagged_aux_flattened);
         builder.connect_flattenable(&resolved_aux_hash, &hash);
         let aux_tag = resolved_tagged_aux_flattened[0];
         let flattened_aux_entry = &resolved_tagged_aux_flattened[1..];
@@ -1751,6 +1763,36 @@ fn set_targets_input_pods_self_statements(
     Ok(())
 }
 
+fn set_targets_aux(
+    pw: &mut PartialWitness<F>,
+    params: &Params,
+    aux_entry_max_len: usize,
+    aux: &[Target],
+    op_aux: &OperationAux,
+    merkle_proofs: &[MerkleClaimAndProof],
+    custom_predicate_verifications: &[CustomPredicateVerification],
+) -> Result<()> {
+    let tagged_aux_entry_max_len = 1 + aux_entry_max_len;
+    let (aux_tag, flattened_aux_entry) = match op_aux {
+        &OperationAux::None => (OperationAuxTableTag::None, vec![]),
+        &OperationAux::MerkleProofIndex(i) => (
+            OperationAuxTableTag::MerkleProof,
+            MerkleClaim::from(&merkle_proofs[i]).to_fields(true),
+        ),
+        &OperationAux::CustomPredVerifyIndex(i) => (
+            OperationAuxTableTag::CustomPredVerify,
+            CustomPredicateVerifyQuery::from(&custom_predicate_verifications[i]).to_fields(&params),
+        ),
+    };
+    let flattened_tagged_aux_entry = iter::once(F(aux_tag as u64))
+        .chain(flattened_aux_entry.into_iter())
+        .chain(iter::repeat(F::ZERO))
+        .take(tagged_aux_entry_max_len)
+        .collect_vec();
+    pw.set_target_arr(aux, &flattened_tagged_aux_entry)?;
+    Ok(())
+}
+
 impl InnerCircuit for MainPodVerifyTarget {
     type Input = MainPodVerifyInput;
     type Params = Params;
@@ -1828,29 +1870,20 @@ impl InnerCircuit for MainPodVerifyTarget {
         }
 
         assert_eq!(input.statements.len(), self.params.max_statements);
-        let tagged_aux_entry_max_len = 1 + max_operation_aux_entry_len(&self.params);
+        let aux_entry_max_len = max_operation_aux_entry_len(&self.params);
         for (i, (st, op)) in zip_eq(&input.statements, &input.operations).enumerate() {
             self.input_statements[i].set_targets(pw, &self.params, st)?;
             self.operations[i].set_targets(pw, &self.params, op)?;
-            let (aux_tag, flattened_aux_entry) = match op.aux() {
-                &OperationAux::None => (OperationAuxTableTag::None, vec![]),
-                &OperationAux::MerkleProofIndex(j) => (
-                    OperationAuxTableTag::MerkleProof,
-                    MerkleClaim::from(&input.merkle_proofs[j]).to_fields(true),
-                ),
-                &OperationAux::CustomPredVerifyIndex(j) => (
-                    OperationAuxTableTag::CustomPredVerify,
-                    CustomPredicateVerifyQuery::from(&input.custom_predicate_verifications[j])
-                        .to_fields(&self.params),
-                ),
-            };
-            let flattened_tagged_aux_entry = iter::once(F(aux_tag as u64))
-                .chain(flattened_aux_entry.into_iter())
-                .chain(iter::repeat(F::ZERO))
-                .take(tagged_aux_entry_max_len)
-                .collect_vec();
             if i < self.params.max_priv_statements() {
-                pw.set_target_arr(&self.aux[i], &flattened_tagged_aux_entry)?;
+                set_targets_aux(
+                    pw,
+                    &self.params,
+                    aux_entry_max_len,
+                    &self.aux[i],
+                    op.aux(),
+                    &input.merkle_proofs,
+                    &input.custom_predicate_verifications,
+                )?;
             }
 
             if matches!(
@@ -2042,6 +2075,17 @@ mod tests {
         {
             merkle_proof_target.set_targets(&mut pw, true, merkle_proof)?
         }
+
+        let aux_entry_max_len = max_operation_aux_entry_len(&params);
+        set_targets_aux(
+            &mut pw,
+            &params,
+            aux_entry_max_len,
+            &aux,
+            op.aux(),
+            &merkle_proofs,
+            &[],
+        )?;
 
         // generate & verify proof
         let data = builder.build::<C>();
