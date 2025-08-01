@@ -19,16 +19,16 @@ use serde::{de, ser, Deserialize, Serialize};
 use crate::backends::plonky2::{
     basetypes::{CircuitData, CommonCircuitData, VerifierCircuitData, C, D, F},
     circuits::{common::LtMaskGenerator, utils::DebugGenerator},
-    primitives::ec::{
-        bits::ConditionalZeroGenerator,
-        curve::PointSquareRootGenerator,
-        field::QuotientGeneratorOEF,
-        gates::{
-            curve::ECAddHomogOffset,
-            field::NNFMulSimple,
-            generic::{GateAdapter, RecursiveGateAdapter, RecursiveGenerator},
-        },
-    },
+    // primitives::ec::{
+    //     bits::ConditionalZeroGenerator,
+    //     curve::PointSquareRootGenerator,
+    //     field::QuotientGeneratorOEF,
+    //     gates::{
+    //         curve::ECAddHomogOffset,
+    //         field::NNFMulSimple,
+    //         generic::{GateAdapter, RecursiveGateAdapter, RecursiveGenerator},
+    //     },
+    // },
 };
 
 #[derive(Debug)]
@@ -51,12 +51,12 @@ impl GateSerializer<F, D> for Pod2GateSerializer {
         PublicInputGate,
         RandomAccessGate<F, D>,
         ReducingExtensionGate<D>,
-        ReducingGate<D>,
+        ReducingGate<D>
         // pod2 custom gates
-        GateAdapter::<NNFMulSimple<5, QuinticExtension<F>>>,
-        RecursiveGateAdapter::<D, NNFMulSimple<5, QuinticExtension<F>>>,
-        GateAdapter::<ECAddHomogOffset>,
-        RecursiveGateAdapter::<D, ECAddHomogOffset>
+        // GateAdapter::<NNFMulSimple<5, QuinticExtension<F>>>,
+        // RecursiveGateAdapter::<D, NNFMulSimple<5, QuinticExtension<F>>>,
+        // GateAdapter::<ECAddHomogOffset>,
+        // RecursiveGateAdapter::<D, ECAddHomogOffset>
     }
 }
 
@@ -117,17 +117,17 @@ impl WitnessGeneratorSerializer<F, D> for Pod2GeneratorSerializer {
         ReducingGenerator<D>,
         ReducingExtensionGenerator<D>,
         SplitGenerator,
-        WireSplitGenerator,
+        WireSplitGenerator
         // pod2 custom generators
-        DebugGenerator,
-        LtMaskGenerator,
-        QuotientGeneratorOEF<5, QuinticExtension<F>>,
-        PointSquareRootGenerator,
-        ConditionalZeroGenerator<F, D>,
-        RecursiveGenerator<D, NNFMulSimple<5, QuinticExtension<F>>>,
-        RecursiveGenerator<1, NNFMulSimple<5, QuinticExtension<F>>>,
-        RecursiveGenerator<D, ECAddHomogOffset>,
-        RecursiveGenerator<1, ECAddHomogOffset>
+        // DebugGenerator,
+        // LtMaskGenerator,
+        // QuotientGeneratorOEF<5, QuinticExtension<F>>,
+        // PointSquareRootGenerator,
+        // ConditionalZeroGenerator<F, D>,
+        // RecursiveGenerator<D, NNFMulSimple<5, QuinticExtension<F>>>,
+        // RecursiveGenerator<1, NNFMulSimple<5, QuinticExtension<F>>>,
+        // RecursiveGenerator<D, ECAddHomogOffset>,
+        // RecursiveGenerator<1, ECAddHomogOffset>
     }
 }
 

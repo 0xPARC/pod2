@@ -38,9 +38,9 @@ use crate::{
     backends::plonky2::{
         basetypes::{C, D},
         error::Result,
-        primitives::ec::gates::{
-            curve::ECAddHomogOffset, field::NNFMulSimple, generic::GateAdapter,
-        },
+        // primitives::ec::gates::{
+        //     curve::ECAddHomogOffset, field::NNFMulSimple, generic::GateAdapter,
+        // },
     },
     measure_gates_begin, measure_gates_end,
     middleware::F,
@@ -364,9 +364,10 @@ fn coset_interpolation_gate(
 /// NOTE: The overhead between verifying any proof with just the `NoopGate` and verifying a proof
 /// with all these standard gates is about 400 num_gates (rows), no matter the circuit size.
 fn standard_gates(config: &CircuitConfig) -> Vec<GateRef<F, D>> {
-    let nnf_mul_simple =
-        GateAdapter::<NNFMulSimple<5, QuinticExtension<F>>>::new_from_config(config);
-    let ec_add_homog_offset = GateAdapter::<ECAddHomogOffset>::new_from_config(config);
+    // let nnf_mul_simple =
+    //     GateAdapter::<NNFMulSimple<5, QuinticExtension<F>>>::new_from_config(config);
+    // let ec_add_homog_offset = GateAdapter::<ECAddHomogOffset>::new_from_config(config);
+    dbg!("STANDARD_GATES");
     vec![
         GateRef::new(plonky2::gates::noop::NoopGate {}),
         GateRef::new(plonky2::gates::constant::ConstantGate::new(
@@ -391,10 +392,10 @@ fn standard_gates(config: &CircuitConfig) -> Vec<GateRef<F, D>> {
         GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(config, 4)),
         GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(config, 5)),
         GateRef::new(plonky2::gates::random_access::RandomAccessGate::new_from_config(config, 6)),
-        GateRef::new(nnf_mul_simple.recursive_gate()),
-        GateRef::new(nnf_mul_simple),
-        GateRef::new(ec_add_homog_offset.recursive_gate()),
-        GateRef::new(ec_add_homog_offset),
+        // GateRef::new(nnf_mul_simple.recursive_gate()),
+        // GateRef::new(nnf_mul_simple),
+        // GateRef::new(ec_add_homog_offset.recursive_gate()),
+        // GateRef::new(ec_add_homog_offset),
         GateRef::new(plonky2::gates::exponentiation::ExponentiationGate::new_from_config(config)),
         // It would be better do `CosetInterpolationGate::with_max_degree(4, 6)` but unfortunately
         // that plonk2 method is `pub(crate)`, so we need to get around that somehow.

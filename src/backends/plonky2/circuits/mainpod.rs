@@ -1327,9 +1327,10 @@ impl MainPodVerifyTarget {
             vd_mt_proofs: (0..params.max_input_recursive_pods)
                 .map(|_| MerkleClaimAndProofTarget::new_virtual(params.max_depth_mt_vds, builder))
                 .collect(),
-            signed_pods: (0..params.max_input_signed_pods)
-                .map(|_| SignedPodVerifyTarget::new_virtual(params, builder))
-                .collect(),
+            signed_pods: vec![],
+            // signed_pods: (0..params.max_input_signed_pods)
+            //     .map(|_| SignedPodVerifyTarget::new_virtual(params, builder))
+            //     .collect(),
             input_pods_self_statements: (0..params.max_input_recursive_pods)
                 .map(|_| {
                     (0..params.max_input_pods_public_statements)
