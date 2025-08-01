@@ -925,6 +925,7 @@ pub mod tests {
             max_custom_batch_size: 3,
             max_custom_predicate_wildcards: 4,
             max_custom_predicate_verifications: 2,
+            max_merkle_proofs_containers: 0,
             ..Default::default()
         };
         println!("{:#?}", params);

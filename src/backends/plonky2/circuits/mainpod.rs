@@ -3,17 +3,19 @@ use std::{array, iter, sync::Arc};
 use itertools::{izip, zip_eq, Itertools};
 use num::{BigUint, One};
 use plonky2::{
-    field::types::Field,
+    field::{extension::Extendable, types::Field},
     hash::{
         hash_types::{HashOutTarget, RichField, NUM_HASH_OUT_ELTS},
         hashing::PlonkyPermutation,
         poseidon::{PoseidonHash, PoseidonPermutation},
     },
     iop::{
+        generator::{GeneratedValues, SimpleGenerator},
         target::{BoolTarget, Target},
-        witness::{PartialWitness, WitnessWrite},
+        witness::{PartialWitness, PartitionWitness, Witness, WitnessWrite},
     },
-    plonk::config::AlgebraicHasher,
+    plonk::{circuit_data::CommonCircuitData, config::AlgebraicHasher},
+    util::serialization::{Buffer, IoError, IoResult, Read, Write},
 };
 use plonky2_u32::gadgets::multiple_comparison::list_le_circuit;
 use serde::{Deserialize, Serialize};
@@ -25,11 +27,12 @@ use crate::{
             common::{
                 CircuitBuilderPod, CustomPredicateBatchTarget, CustomPredicateEntryTarget,
                 CustomPredicateTarget, CustomPredicateVerifyEntryTarget,
-                CustomPredicateVerifyQueryTarget, Flattenable, MerkleClaimTarget, OperationTarget,
-                OperationTypeTarget, PredicateTarget, StatementArgTarget, StatementTarget,
-                StatementTmplArgTarget, StatementTmplTarget, ValueTarget,
+                CustomPredicateVerifyQueryTarget, Flattenable, IndexTarget, MerkleClaimTarget,
+                OperationTarget, OperationTypeTarget, PredicateTarget, StatementArgTarget,
+                StatementTarget, StatementTmplArgTarget, StatementTmplTarget, ValueTarget,
             },
             signedpod::{verify_signed_pod_circuit, SignedPodVerifyTarget},
+            // utils::DebugGenerator,
         },
         emptypod::{cache_get_standard_empty_pod_circuit_data, EmptyPod},
         error::Result,
@@ -186,6 +189,173 @@ fn verify_operation_public_statement_circuit(
     Ok(())
 }
 
+struct MuxTableTarget {
+    params: Params,
+    max_flattened_entry_len: usize,
+    hashed_tagged_entries: Vec<HashOutTarget>,
+    tagged_entries: Vec<Vec<Target>>,
+}
+
+impl MuxTableTarget {
+    fn new(params: &Params, max_flattened_entry_len: usize) -> Self {
+        Self {
+            params: params.clone(),
+            max_flattened_entry_len,
+            hashed_tagged_entries: Vec::new(),
+            tagged_entries: Vec::new(),
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.hashed_tagged_entries.len()
+    }
+
+    fn push<T: Flattenable>(&mut self, builder: &mut CircuitBuilder, tag: u32, entry: &T) {
+        let flattened_entry = entry.flatten();
+        self.push_flattened(builder, tag, &flattened_entry);
+    }
+
+    fn push_flattened(
+        &mut self,
+        builder: &mut CircuitBuilder,
+        tag: u32,
+        flattened_entry: &[Target],
+    ) {
+        let measure = measure_gates_begin!(builder, "HashTaggedTblEntry");
+        assert!(flattened_entry.len() <= self.max_flattened_entry_len);
+        let flattened = [&[builder.constant(F(tag as u64))], flattened_entry].concat();
+        self.tagged_entries.push(flattened.clone());
+
+        let tagged_entry_max_len = 1 + self.max_flattened_entry_len;
+        let front_pad_elts = iter::repeat(F::ZERO)
+            .take(tagged_entry_max_len - flattened.len())
+            .collect_vec();
+
+        let (perm, front_pad_elts_rem) =
+            precompute_hash_state::<F, PoseidonPermutation<F>>(&front_pad_elts);
+
+        let rev_flattened = flattened.iter().rev().copied();
+        // Precompute the Poseidon state for the initial padding chunks
+        let inputs = front_pad_elts_rem
+            .iter()
+            .map(|v| builder.constant(*v))
+            .chain(rev_flattened)
+            .collect_vec();
+        let hash =
+            hash_from_state_circuit::<PoseidonHash, PoseidonPermutation<F>>(builder, perm, &inputs);
+
+        measure_gates_end!(builder, measure);
+        self.hashed_tagged_entries.push(hash);
+    }
+
+    fn get(&self, builder: &mut CircuitBuilder, index: &IndexTarget) -> TableEntryTarget {
+        let entry_hash = builder.vec_ref(&self.params, &self.hashed_tagged_entries, &index);
+
+        let mut rev_resolved_tagged_flattened =
+            builder.add_virtual_targets(self.max_flattened_entry_len);
+        let query_hash =
+            builder.hash_n_to_hash_no_pad::<PoseidonHash>(rev_resolved_tagged_flattened.clone());
+        builder.connect_flattenable(&entry_hash, &query_hash);
+        rev_resolved_tagged_flattened.reverse();
+
+        TableEntryTarget {
+            params: self.params.clone(),
+            tagged_flattened_entry: rev_resolved_tagged_flattened,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TableGetGenerator {
+    index: IndexTarget,
+    tagged_entries: Vec<Vec<Target>>,
+    get_tagged_entry: Vec<Target>,
+}
+
+impl<F: RichField + Extendable<D>, const D: usize> SimpleGenerator<F, D> for TableGetGenerator {
+    fn id(&self) -> String {
+        "TableGetGenerator".to_string()
+    }
+
+    fn dependencies(&self) -> Vec<Target> {
+        [self.index.low, self.index.high]
+            .into_iter()
+            .chain(self.tagged_entries.iter().flatten().copied())
+            .collect()
+    }
+
+    fn run_once(
+        &self,
+        witness: &PartitionWitness<F>,
+        out_buffer: &mut GeneratedValues<F>,
+    ) -> anyhow::Result<()> {
+        let index_low = witness.get_target(self.index.low);
+        let index_high = witness.get_target(self.index.high);
+        let index = (index_low + index_high * F::from_canonical_usize(1 << 6)).to_canonical_u64();
+
+        let entry = witness.get_targets(&self.tagged_entries[index as usize]);
+
+        for (target, value) in self.get_tagged_entry.iter().zip(
+            entry
+                .iter()
+                .chain(iter::repeat(&F::ZERO).take(self.get_tagged_entry.len())),
+        ) {
+            out_buffer.set_target(*target, *value)?;
+        }
+
+        Ok(())
+    }
+
+    fn serialize(&self, dst: &mut Vec<u8>, _common_data: &CommonCircuitData<F, D>) -> IoResult<()> {
+        dst.write_usize(self.index.max_array_len)?;
+        dst.write_target(self.index.low)?;
+        dst.write_target(self.index.high)?;
+
+        dst.write_usize(self.get_tagged_entry.len())?;
+        for tagged_entry in &self.tagged_entries {
+            dst.write_target_vec(&tagged_entry)?;
+        }
+
+        dst.write_target_vec(&self.get_tagged_entry)
+    }
+
+    fn deserialize(src: &mut Buffer, _common_data: &CommonCircuitData<F, D>) -> IoResult<Self> {
+        let index = IndexTarget {
+            max_array_len: src.read_usize()?,
+            low: src.read_target()?,
+            high: src.read_target()?,
+        };
+        let len = src.read_usize()?;
+        let mut tagged_entries = Vec::with_capacity(len);
+        for _ in 0..len {
+            tagged_entries.push(src.read_target_vec()?);
+        }
+        let get_tagged_entry = src.read_target_vec()?;
+
+        Ok(Self {
+            index,
+            tagged_entries,
+            get_tagged_entry,
+        })
+    }
+}
+
+struct TableEntryTarget {
+    params: Params,
+    tagged_flattened_entry: Vec<Target>,
+}
+
+impl TableEntryTarget {
+    fn as_type<T: Flattenable>(&self, builder: &mut CircuitBuilder, tag: u32) -> (BoolTarget, T) {
+        let tag_target = self.tagged_flattened_entry[0];
+        let flattened_entry = &self.tagged_flattened_entry[1..];
+        let entry = T::from_flattened(&self.params, &flattened_entry[..T::size(&self.params)]);
+        let tag_expect = builder.constant(F(tag as u64));
+        let tag_ok = builder.is_equal(tag_expect, tag_target);
+        (tag_ok, entry)
+    }
+}
+
 enum OperationAuxTableTag {
     None = 0,
     MerkleProof = 1,
@@ -201,6 +371,7 @@ fn hash_tagged_table_entry_circuit(
 ) -> HashOutTarget {
     let measure = measure_gates_begin!(builder, "HashTaggedTblEntry");
     let flattened = [&[builder.constant(F(tag as u64))], flattened_entry].concat();
+    // builder.add_simple_generator(DebugGenerator::new(format!("in flat"), flattened.clone()));
     let front_pad_elts = if let Some(max_flattened_entry_len) = max_flattened_entry_len {
         assert!(flattened_entry.len() <= max_flattened_entry_len);
         let tagged_entry_max_len = 1 + max_flattened_entry_len;
@@ -409,9 +580,13 @@ fn verify_operation_circuit(
     // Skip these if there are no resolved aux entries
     if let Some(resolved_aux_hash) = resolved_aux_hash {
         let mut rev_resolved_tagged_aux_flattened = resolved_tagged_aux_flattened.to_vec();
+        // builder.add_simple_generator(DebugGenerator::new(
+        //     format!("out flat"),
+        //     rev_resolved_tagged_aux_flattened.clone(),
+        // ));
         rev_resolved_tagged_aux_flattened.reverse();
         let hash = builder.hash_n_to_hash_no_pad::<PoseidonHash>(rev_resolved_tagged_aux_flattened);
-        builder.connect_flattenable(&resolved_aux_hash, &hash);
+        // builder.connect_flattenable(&resolved_aux_hash, &hash); // TODO: uncomment
         let aux_tag = resolved_tagged_aux_flattened[0];
         let flattened_aux_entry = &resolved_tagged_aux_flattened[1..];
         if params.max_merkle_proofs_containers > 0 {
