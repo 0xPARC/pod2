@@ -19,7 +19,7 @@ use serde::{de, ser, Deserialize, Serialize};
 
 use crate::backends::plonky2::{
     basetypes::{CircuitData, CommonCircuitData, VerifierCircuitData, C, D, F},
-    circuits::{common::LtMaskGenerator, utils::DebugGenerator},
+    circuits::{common::LtMaskGenerator, mux_table::TableGetGenerator, utils::DebugGenerator},
     primitives::ec::{
         bits::ConditionalZeroGenerator,
         curve::PointSquareRootGenerator,
@@ -92,7 +92,6 @@ use plonky2::{
 #[derive(Debug)]
 pub(crate) struct Pod2GeneratorSerializer {}
 
-// TODO: Add pod2 custom generators
 impl WitnessGeneratorSerializer<F, D> for Pod2GeneratorSerializer {
     impl_generator_serializer! {
         Pod2GeneratorSerializer,
@@ -130,7 +129,8 @@ impl WitnessGeneratorSerializer<F, D> for Pod2GeneratorSerializer {
         RecursiveGenerator<1, NNFMulSimple<5, QuinticExtension<F>>>,
         RecursiveGenerator<D, ECAddHomogOffset>,
         RecursiveGenerator<1, ECAddHomogOffset>,
-        ComparisonGenerator<F, D>
+        ComparisonGenerator<F, D>,
+        TableGetGenerator
     }
 }
 
