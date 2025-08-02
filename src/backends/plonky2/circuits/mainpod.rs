@@ -276,7 +276,6 @@ fn verify_operation_circuit(
     prev_statements: &[StatementTarget],
     input_statements_offset: usize,
     aux_table: &MuxTableTarget,
-    // resolved_tagged_aux_flattened: &[Target],
     secret_key: &BigUInt320Target,
 ) -> Result<()> {
     let measure = measure_gates_begin!(builder, "OpVerify");
@@ -289,45 +288,17 @@ fn verify_operation_circuit(
     let measure_resolve_op_args = measure_gates_begin!(builder, "ResolveOpArgs");
     let cache = StatementCache::new(params, builder, op, st, prev_statements);
     measure_gates_end!(builder, measure_resolve_op_args);
-    // TODO: Can we have a single table with merkel claims and verified custom predicates
-    // together (with an identifying prefix) and then we only need one random access instead of
-    // two?
-    // Currently we use one slot of aux for the index to merkle claim and another slot of aux
-    // for the index to the verified custom predicate.  We can't use the same slot because then
-    // if one table is different size the random access to the smaller one may use an index
-    // that is too big and not pass the constraints.  Possible solutions to use a single slot
-    // are:
-    //  - a. Use a single table (mux both tables)
-    //  - b. select the index or 0 by checking the operation type here; but that breaks the
-    //    current abstraction a little bit.
 
-    // Certain operations (Contains/NotContains) will refer to one
-    // of the provided Merkle proofs (if any). These proofs have already
-    // been verified, so we need only look up the claim.
-    // let measure_resolve_merkle_claim = measure_gates_begin!(builder, "ResolveMerkleClaim");
+    // Certain operations (e.g.: Contains/NotContains) will refer to one of the provided verified
+    // entries in a table (e.g.: Merkle proofs ). These entries have already been verified, so we
+    // need only look up the claim.
+
     // The aux table always has a fixed zero entry, so we check if there are more than 1 entries to
     // trigger the unhashing.
     let resolved_aux = (aux_table.len() > 1).then(|| aux_table.get(builder, &op.aux_index));
-    // let resolved_merkle_claim =
-    //     (!merkle_claims.is_empty()).then(|| builder.vec_ref(params, merkle_claims, &op.aux[0]));
-    // measure_gates_end!(builder, measure_resolve_merkle_claim);
 
-    // Operations from custom statements will refer to one
-    // of the provided custom predicates verifications (if any). These operations have already
-    // been verified, so we need only look up the entry.
-    // let measure_resolve_custom_pred_verification =
-    //     measure_gates_begin!(builder, "ResolveCustomPredVerification");
-    // let resolved_custom_pred_verification = (!custom_predicate_verification_table.is_empty())
-    //     .then(|| builder.vec_ref(params, custom_predicate_verification_table, &op.aux[1]));
-    // measure_gates_end!(builder, measure_resolve_custom_pred_verification);
-
-    // The verification may require aux data which needs to be stored in the
-    // `OperationVerifyTarget` so that we can set during witness generation.
-
-    // For now only support native operations
-    // Op checks to carry out. Each 'eval_X' should
-    // be thought of as 'eval' restricted to the op of type X,
-    // where the returned target is `false` if the input targets
+    // Op checks to carry out. Each 'verify_X_circuit' should be thought of as operation check
+    // restricted to the op of type X, where the returned target is `false` if the input targets
     // lie outside of the domain.
     let mut op_checks = Vec::new();
     op_checks.extend_from_slice(&[
