@@ -367,7 +367,6 @@ fn standard_gates(config: &CircuitConfig) -> Vec<GateRef<F, D>> {
     // let nnf_mul_simple =
     //     GateAdapter::<NNFMulSimple<5, QuinticExtension<F>>>::new_from_config(config);
     // let ec_add_homog_offset = GateAdapter::<ECAddHomogOffset>::new_from_config(config);
-    dbg!("STANDARD_GATES");
     vec![
         GateRef::new(plonky2::gates::noop::NoopGate {}),
         GateRef::new(plonky2::gates::constant::ConstantGate::new(
