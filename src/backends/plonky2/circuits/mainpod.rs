@@ -5,15 +5,13 @@ use num::{BigUint, One};
 use plonky2::{
     field::types::Field,
     hash::{
-        hash_types::{HashOutTarget, RichField, NUM_HASH_OUT_ELTS},
-        hashing::PlonkyPermutation,
+        hash_types::HashOutTarget,
         poseidon::{PoseidonHash, PoseidonPermutation},
     },
     iop::{
-        target::{BoolTarget, Target},
+        target::BoolTarget,
         witness::{PartialWitness, WitnessWrite},
     },
-    plonk::config::AlgebraicHasher,
 };
 use plonky2_u32::gadgets::multiple_comparison::list_le_circuit;
 use serde::{Deserialize, Serialize};
@@ -29,6 +27,8 @@ use crate::{
                 OperationTypeTarget, PredicateTarget, StatementArgTarget, StatementTarget,
                 StatementTmplArgTarget, StatementTmplTarget, ValueTarget,
             },
+            hash::{hash_from_state_circuit, precompute_hash_state},
+            mux_table::{MuxTableTarget, TableEntryTarget},
             signedpod::{verify_signed_pod_circuit, SignedPodVerifyTarget},
         },
         emptypod::{cache_get_standard_empty_pod_circuit_data, EmptyPod},
@@ -184,6 +184,89 @@ fn verify_operation_public_statement_circuit(
     Ok(())
 }
 
+enum OperationAuxTableTag {
+    None = 0,
+    MerkleProof = 1,
+    CustomPredVerify = 2,
+}
+
+fn max_operation_aux_entry_len(params: &Params) -> usize {
+    [
+        (params.max_merkle_proofs_containers > 0).then(|| MerkleClaimTarget::size(params)),
+        (params.max_custom_predicate_verifications > 0)
+            .then(|| CustomPredicateVerifyQueryTarget::size(params)),
+    ]
+    .into_iter()
+    .flatten()
+    .max()
+    .unwrap_or(0)
+}
+
+fn build_operation_aux_table_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    merkle_proofs: &[MerkleClaimAndProofTarget],
+    custom_predicate_verifications: &[CustomPredicateVerifyEntryTarget],
+    custom_predicate_table: &[HashOutTarget],
+) -> Result<MuxTableTarget> {
+    let measure = measure_gates_begin!(builder, "BuildOpAuxTbl");
+    assert_eq!(
+        params.max_custom_predicate_verifications,
+        custom_predicate_verifications.len()
+    );
+    assert_eq!(params.max_merkle_proofs_containers, merkle_proofs.len());
+    let max_entry_len = max_operation_aux_entry_len(params);
+    let mut table = MuxTableTarget::new(params, max_entry_len);
+
+    // None
+    table.push_flattened(builder, OperationAuxTableTag::None as u32, &[]);
+
+    // MerkleProofs: verify container merkle proofs (inclusion/non-inclusion)
+    for merkle_proof in merkle_proofs {
+        verify_merkle_proof_circuit(builder, merkle_proof);
+        let entry = MerkleClaimTarget::from(merkle_proof.clone());
+
+        table.push(builder, OperationAuxTableTag::MerkleProof as u32, &entry);
+    }
+
+    // CustomPredVerify: verify custom predicate statements verification against operations
+    for entry in custom_predicate_verifications {
+        let measure = measure_gates_begin!(builder, "CustomPredVerify");
+        // Verify the custom predicate operation
+        let (statement, op_type) = make_custom_statement_circuit(
+            params,
+            builder,
+            &entry.custom_predicate,
+            &entry.op_args,
+            &entry.args,
+        )?;
+
+        // Check that the batch id is correct by querying the custom predicate batches table
+        let table_query_hash = builder.vec_ref(
+            params,
+            custom_predicate_table,
+            &entry.custom_predicate_table_index,
+        );
+        let out_query_hash = entry.custom_predicate.hash(builder);
+        builder.connect_array(table_query_hash.elements, out_query_hash.elements);
+
+        let query = CustomPredicateVerifyQueryTarget {
+            statement,                      // output
+            op_type,                        // output
+            op_args: entry.op_args.clone(), // input
+        };
+        table.push(
+            builder,
+            OperationAuxTableTag::CustomPredVerify as u32,
+            &query,
+        );
+        measure_gates_end!(builder, measure);
+    }
+
+    measure_gates_end!(builder, measure);
+    Ok(table)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn verify_operation_circuit(
     params: &Params,
@@ -192,9 +275,9 @@ fn verify_operation_circuit(
     op: &OperationTarget,
     prev_statements: &[StatementTarget],
     input_statements_offset: usize,
-    merkle_claims: &[MerkleClaimTarget],
+    aux_table: &MuxTableTarget,
+    // resolved_tagged_aux_flattened: &[Target],
     secret_key: &BigUInt320Target,
-    custom_predicate_verification_table: &[HashOutTarget],
 ) -> Result<()> {
     let measure = measure_gates_begin!(builder, "OpVerify");
     let _true = builder._true();
@@ -221,19 +304,22 @@ fn verify_operation_circuit(
     // Certain operations (Contains/NotContains) will refer to one
     // of the provided Merkle proofs (if any). These proofs have already
     // been verified, so we need only look up the claim.
-    let measure_resolve_merkle_claim = measure_gates_begin!(builder, "ResolveMerkleClaim");
-    let resolved_merkle_claim =
-        (!merkle_claims.is_empty()).then(|| builder.vec_ref(params, merkle_claims, &op.aux[0]));
-    measure_gates_end!(builder, measure_resolve_merkle_claim);
+    // let measure_resolve_merkle_claim = measure_gates_begin!(builder, "ResolveMerkleClaim");
+    // The aux table always has a fixed zero entry, so we check if there are more than 1 entries to
+    // trigger the unhashing.
+    let resolved_aux = (aux_table.len() > 1).then(|| aux_table.get(builder, &op.aux_index));
+    // let resolved_merkle_claim =
+    //     (!merkle_claims.is_empty()).then(|| builder.vec_ref(params, merkle_claims, &op.aux[0]));
+    // measure_gates_end!(builder, measure_resolve_merkle_claim);
 
     // Operations from custom statements will refer to one
     // of the provided custom predicates verifications (if any). These operations have already
     // been verified, so we need only look up the entry.
-    let measure_resolve_custom_pred_verification =
-        measure_gates_begin!(builder, "ResolveCustomPredVerification");
-    let resolved_custom_pred_verification = (!custom_predicate_verification_table.is_empty())
-        .then(|| builder.vec_ref(params, custom_predicate_verification_table, &op.aux[1]));
-    measure_gates_end!(builder, measure_resolve_custom_pred_verification);
+    // let measure_resolve_custom_pred_verification =
+    //     measure_gates_begin!(builder, "ResolveCustomPredVerification");
+    // let resolved_custom_pred_verification = (!custom_predicate_verification_table.is_empty())
+    //     .then(|| builder.vec_ref(params, custom_predicate_verification_table, &op.aux[1]));
+    // measure_gates_end!(builder, measure_resolve_custom_pred_verification);
 
     // The verification may require aux data which needs to be stored in the
     // `OperationVerifyTarget` so that we can set during witness generation.
@@ -243,44 +329,43 @@ fn verify_operation_circuit(
     // be thought of as 'eval' restricted to the op of type X,
     // where the returned target is `false` if the input targets
     // lie outside of the domain.
-    let op_checks = [
-        vec![
-            verify_none_circuit(params, builder, st, &op.op_type),
-            verify_new_entry_circuit(
-                params,
-                builder,
-                st,
-                &op.op_type,
-                prev_statements,
-                input_statements_offset,
-            ),
-        ],
-        // Skip these if there are no resolved op args
-        if cache.op_args.is_empty() {
-            vec![]
-        } else {
-            vec![
-                verify_copy_circuit(builder, st, &op.op_type, &cache.op_args),
-                verify_eq_neq_from_entries_circuit(params, builder, st, &op.op_type, &cache),
-                verify_lt_lteq_from_entries_circuit(params, builder, st, &op.op_type, &cache),
-                verify_transitive_eq_circuit(params, builder, st, &op.op_type, &cache.op_args),
-                verify_lt_to_neq_circuit(params, builder, st, &op.op_type, &cache.op_args),
-                verify_hash_of_circuit(params, builder, st, &op.op_type, &cache),
-                verify_public_key_of_circuit(params, builder, st, &op.op_type, secret_key, &cache),
-                verify_sum_of_circuit(params, builder, st, &op.op_type, &cache),
-                verify_product_of_circuit(params, builder, st, &op.op_type, &cache),
-                verify_max_of_circuit(params, builder, st, &op.op_type, &cache),
-            ]
-        },
-        // Skip these if there are no resolved Merkle claims
-        if let Some(resolved_merkle_claim) = resolved_merkle_claim {
-            vec![
+    let mut op_checks = Vec::new();
+    op_checks.extend_from_slice(&[
+        verify_none_circuit(params, builder, st, &op.op_type),
+        verify_new_entry_circuit(
+            params,
+            builder,
+            st,
+            &op.op_type,
+            prev_statements,
+            input_statements_offset,
+        ),
+    ]);
+    // Skip these if there are no resolved op args
+    if !cache.op_args.is_empty() {
+        op_checks.extend_from_slice(&[
+            verify_copy_circuit(builder, st, &op.op_type, &cache.op_args),
+            verify_eq_neq_from_entries_circuit(params, builder, st, &op.op_type, &cache),
+            verify_lt_lteq_from_entries_circuit(params, builder, st, &op.op_type, &cache),
+            verify_transitive_eq_circuit(params, builder, st, &op.op_type, &cache.op_args),
+            verify_lt_to_neq_circuit(params, builder, st, &op.op_type, &cache.op_args),
+            verify_hash_of_circuit(params, builder, st, &op.op_type, &cache),
+            verify_public_key_of_circuit(params, builder, st, &op.op_type, secret_key, &cache),
+            verify_sum_of_circuit(params, builder, st, &op.op_type, &cache),
+            verify_product_of_circuit(params, builder, st, &op.op_type, &cache),
+            verify_max_of_circuit(params, builder, st, &op.op_type, &cache),
+        ]);
+    }
+    // Skip these if there are no resolved aux entries
+    if let Some(resolved_aux) = resolved_aux {
+        if params.max_merkle_proofs_containers > 0 {
+            op_checks.extend_from_slice(&[
                 verify_contains_from_entries_circuit(
                     params,
                     builder,
                     st,
                     &op.op_type,
-                    resolved_merkle_claim,
+                    &resolved_aux,
                     &cache,
                 ),
                 verify_not_contains_from_entries_circuit(
@@ -288,27 +373,21 @@ fn verify_operation_circuit(
                     builder,
                     st,
                     &op.op_type,
-                    resolved_merkle_claim,
+                    &resolved_aux,
                     &cache,
                 ),
-            ]
-        } else {
-            vec![]
-        },
-        // Skip these if there are no resolved custom predicate verifications
-        if let Some(resolved_custom_pred_verification) = resolved_custom_pred_verification {
-            vec![verify_custom_circuit(
+            ]);
+        }
+        if params.max_custom_predicate_verifications > 0 {
+            op_checks.push(verify_custom_circuit(
                 builder,
                 st,
                 &op.op_type,
-                resolved_custom_pred_verification,
+                &resolved_aux,
                 &cache.op_args,
-            )]
-        } else {
-            vec![]
-        },
-    ]
-    .concat();
+            ));
+        }
+    }
 
     let ok = builder.any(op_checks);
     builder.assert_one(ok.target);
@@ -326,10 +405,12 @@ fn verify_contains_from_entries_circuit(
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
-    resolved_merkle_claim: MerkleClaimTarget,
+    aux: &TableEntryTarget,
     cache: &StatementCache,
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "OpContainsFromEntries");
+    let (aux_tag_ok, resolved_merkle_claim) =
+        aux.as_type::<MerkleClaimTarget>(builder, OperationAuxTableTag::MerkleProof as u32);
     let op_code_ok = op_type.has_native(builder, NativeOperation::ContainsFromEntries);
 
     let (arg_types_ok, [merkle_root_value, key_value, value_value]) =
@@ -364,7 +445,7 @@ fn verify_contains_from_entries_circuit(
     );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-    let ok = builder.all([op_code_ok, arg_types_ok, merkle_proof_ok, st_ok]);
+    let ok = builder.all([aux_tag_ok, op_code_ok, arg_types_ok, merkle_proof_ok, st_ok]);
     measure_gates_end!(builder, measure);
     ok
 }
@@ -374,10 +455,12 @@ fn verify_not_contains_from_entries_circuit(
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
-    resolved_merkle_claim: MerkleClaimTarget,
+    aux: &TableEntryTarget,
     cache: &StatementCache,
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "OpNotContainsFromEntries");
+    let (aux_tag_ok, resolved_merkle_claim) =
+        aux.as_type::<MerkleClaimTarget>(builder, OperationAuxTableTag::MerkleProof as u32);
     let op_code_ok = op_type.has_native(builder, NativeOperation::NotContainsFromEntries);
 
     let (arg_types_ok, [merkle_root_value, key_value]) = cache.first_n_args_as_values();
@@ -409,7 +492,7 @@ fn verify_not_contains_from_entries_circuit(
     );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-    let ok = builder.all([op_code_ok, arg_types_ok, merkle_proof_ok, st_ok]);
+    let ok = builder.all([aux_tag_ok, op_code_ok, arg_types_ok, merkle_proof_ok, st_ok]);
     measure_gates_end!(builder, measure);
     ok
 }
@@ -418,20 +501,24 @@ fn verify_custom_circuit(
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
-    resolved_custom_pred_verification: HashOutTarget,
+    aux: &TableEntryTarget,
     resolved_op_args: &[StatementTarget],
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "OpCustom");
-    let query = CustomPredicateVerifyQueryTarget {
-        statement: st.clone(),
-        op_type: op_type.clone(),
-        op_args: resolved_op_args.to_vec(),
-    };
-    let out_query_hash = query.hash(builder);
-    let ok = builder.is_equal_slice(
-        &resolved_custom_pred_verification.elements,
-        &out_query_hash.elements,
+    let (aux_tag_ok, resolved_query) = aux.as_type::<CustomPredicateVerifyQueryTarget>(
+        builder,
+        OperationAuxTableTag::CustomPredVerify as u32,
     );
+
+    let query_ok = builder.is_equal_flattenable(
+        &resolved_query,
+        &CustomPredicateVerifyQueryTarget {
+            statement: st.clone(),
+            op_type: op_type.clone(),
+            op_args: resolved_op_args.to_vec(),
+        },
+    );
+    let ok = builder.all([aux_tag_ok, query_ok]);
     measure_gates_end!(builder, measure);
     ok
 }
@@ -1078,53 +1165,6 @@ fn normalize_statement_circuit(
     }
 }
 
-/// Precompute the hash state by absorbing all full chunks from `inputs` and return the reminder
-/// elements that didn't fit into a chunk.
-fn precompute_hash_state<F: RichField, P: PlonkyPermutation<F>>(inputs: &[F]) -> (P, &[F]) {
-    let (inputs, inputs_rem) = inputs.split_at((inputs.len() / P::RATE) * P::RATE);
-    let mut perm = P::new(core::iter::repeat(F::ZERO));
-
-    // Absorb all inputs up to the biggest multiple of RATE.
-    for input_chunk in inputs.chunks(P::RATE) {
-        perm.set_from_slice(input_chunk, 0);
-        perm.permute();
-    }
-
-    (perm, inputs_rem)
-}
-
-/// Hash `inputs` starting from a circuit-constant `perm` state.
-fn hash_from_state_circuit<H: AlgebraicHasher<F>, P: PlonkyPermutation<F>>(
-    builder: &mut CircuitBuilder,
-    perm: P,
-    inputs: &[Target],
-) -> HashOutTarget {
-    let mut state =
-        H::AlgebraicPermutation::new(perm.as_ref().iter().map(|v| builder.constant(*v)));
-
-    // Absorb all input chunks.
-    for input_chunk in inputs.chunks(H::AlgebraicPermutation::RATE) {
-        // Overwrite the first r elements with the inputs. This differs from a standard sponge,
-        // where we would xor or add in the inputs. This is a well-known variant, though,
-        // sometimes called "overwrite mode".
-        state.set_from_slice(input_chunk, 0);
-        state = builder.permute::<H>(state);
-    }
-
-    let num_outputs = NUM_HASH_OUT_ELTS;
-    // Squeeze until we have the desired number of outputs.
-    let mut outputs = Vec::with_capacity(num_outputs);
-    loop {
-        for &s in state.squeeze() {
-            outputs.push(s);
-            if outputs.len() == num_outputs {
-                return HashOutTarget::from_vec(outputs);
-            }
-        }
-        state = builder.permute::<H>(state);
-    }
-}
-
 /// `params.num_public_statements_id` is the total number of statements that will be hashed.
 /// The id is calculated with front-padded none-statements and then the input statements
 /// reversed.  The part of the hash from the front-padded none-statements is precomputed.
@@ -1214,50 +1254,6 @@ fn build_custom_predicate_table_circuit(
     }
     measure_gates_end!(builder, measure);
     Ok(custom_predicate_table)
-}
-
-/// Build table of [batch_id, custom_predicate_index, custom_predicate, args, st, op, op_args]
-/// with queryable part as hash([st, op, op_args]).  While building the table we verify each
-/// custom predicate against the operation and statement.  Return the hash of each table "query"
-/// sub-entry.
-fn build_custom_predicate_verification_table_circuit(
-    params: &Params,
-    builder: &mut CircuitBuilder,
-    custom_predicate_table: &[HashOutTarget],
-    custom_predicate_verifications: &[CustomPredicateVerifyEntryTarget],
-) -> Result<Vec<HashOutTarget>> {
-    let measure = measure_gates_begin!(builder, "BuildCustomPredVerifyTbl");
-    let mut custom_predicate_verification_table =
-        Vec::with_capacity(params.max_custom_predicate_verifications);
-    for entry in custom_predicate_verifications {
-        // Verify the custom predicate operation
-        let (statement, op_type) = make_custom_statement_circuit(
-            params,
-            builder,
-            &entry.custom_predicate,
-            &entry.op_args,
-            &entry.args,
-        )?;
-
-        // Check that the batch id is correct by querying the custom predicate batches table
-        let table_query_hash = builder.vec_ref(
-            params,
-            custom_predicate_table,
-            &entry.custom_predicate_table_index,
-        );
-        let out_query_hash = entry.custom_predicate.hash(builder);
-        builder.connect_array(table_query_hash.elements, out_query_hash.elements);
-
-        let query = CustomPredicateVerifyQueryTarget {
-            statement,                      // output
-            op_type,                        // output
-            op_args: entry.op_args.clone(), // input
-        };
-        let in_query_hash = query.hash(builder);
-        custom_predicate_verification_table.push(in_query_hash);
-    }
-    measure_gates_end!(builder, measure);
-    Ok(custom_predicate_verification_table)
 }
 
 fn verify_main_pod_circuit(
@@ -1354,26 +1350,16 @@ fn verify_main_pod_circuit(
     let public_statements_offset = main_pod.input_statements.len() - params.max_public_statements;
     let pub_statements = &main_pod.input_statements[public_statements_offset..];
 
-    // Verify Merkle claim/proof targets
-    let merkle_claims = main_pod
-        .merkle_proofs
-        .iter()
-        .map(|mt_proof| {
-            verify_merkle_proof_circuit(builder, mt_proof);
-            MerkleClaimTarget::from(mt_proof.clone())
-        })
-        .collect_vec();
-
     // Table of custom predicate batches with batch_id calculation
     let custom_predicate_table =
         build_custom_predicate_table_circuit(params, builder, &main_pod.custom_predicate_batches)?;
 
-    // Table of custom predicate statements verification against operations
-    let custom_predicate_verification_table = build_custom_predicate_verification_table_circuit(
+    let aux_table = build_operation_aux_table_circuit(
         params,
         builder,
-        &custom_predicate_table,
+        &main_pod.merkle_proofs,
         &main_pod.custom_predicate_verifications,
+        &custom_predicate_table,
     )?;
 
     // 2. Calculate the Pod Id from the public statements
@@ -1408,9 +1394,8 @@ fn verify_main_pod_circuit(
                 op,
                 prev_statements,
                 input_statements_offset,
-                &merkle_claims,
+                &aux_table,
                 &main_pod.secret_keys[i],
-                &custom_predicate_verification_table,
             )?;
         } else {
             verify_operation_public_statement_circuit(
@@ -1609,9 +1594,11 @@ impl InnerCircuit for MainPodVerifyTarget {
         }
 
         assert_eq!(input.statements.len(), self.params.max_statements);
+        // let aux_entry_max_len = max_operation_aux_entry_len(&self.params);
         for (i, (st, op)) in zip_eq(&input.statements, &input.operations).enumerate() {
             self.input_statements[i].set_targets(pw, &self.params, st)?;
             self.operations[i].set_targets(pw, &self.params, op)?;
+
             if matches!(
                 op.op_type(),
                 OperationType::Native(NativeOperation::PublicKeyOf)
@@ -1741,6 +1728,7 @@ mod tests {
         let params = Params {
             max_custom_predicate_batches: 0,
             max_custom_predicate_verifications: 0,
+            max_merkle_proofs_containers: merkle_proofs.len(),
             ..Default::default()
         };
 
@@ -1752,6 +1740,7 @@ mod tests {
         let prev_statements_target: Vec<_> = (0..prev_statements.len())
             .map(|_| builder.add_virtual_statement(&params))
             .collect();
+
         let merkle_proofs_target: Vec<_> = merkle_proofs
             .iter()
             .map(|_| {
@@ -1763,13 +1752,18 @@ mod tests {
                 mt_proof
             })
             .collect();
-        let merkle_claims_target: Vec<_> = merkle_proofs_target
-            .clone()
-            .into_iter()
-            .map(|pf| pf.into())
-            .collect();
+
         let secret_key_target = builder.constant_biguint320(&secret_key.0);
-        let custom_predicate_verification_table = vec![];
+
+        let aux_table = build_operation_aux_table_circuit(
+            &params,
+            &mut builder,
+            &merkle_proofs_target,
+            &[],
+            &[],
+        )?;
+        // let max_aux_entry_len = max_operation_aux_entry_len(&params);
+        // let aux = builder.add_virtual_targets(1 + max_aux_entry_len);
 
         verify_operation_circuit(
             &params,
@@ -1778,9 +1772,9 @@ mod tests {
             &op_target,
             &prev_statements_target,
             0,
-            &merkle_claims_target,
+            &aux_table,
+            // &aux,
             &secret_key_target,
-            &custom_predicate_verification_table,
         )?;
 
         let mut pw = PartialWitness::<F>::new();
@@ -1794,6 +1788,17 @@ mod tests {
         {
             merkle_proof_target.set_targets(&mut pw, true, merkle_proof)?
         }
+
+        // let aux_entry_max_len = max_operation_aux_entry_len(&params);
+        // set_targets_aux(
+        //     &mut pw,
+        //     &params,
+        //     aux_entry_max_len,
+        //     &aux,
+        //     op.aux(),
+        //     &merkle_proofs,
+        //     &[],
+        // )?;
 
         // generate & verify proof
         let data = builder.build::<C>();

@@ -26,7 +26,7 @@ use crate::{
         basetypes::{CircuitBuilder, CommonCircuitData, D},
         circuits::mainpod::CustomPredicateVerification,
         error::Result,
-        mainpod::{Operation, OperationArg, Statement},
+        mainpod::{Operation, OperationArg, OperationAux, Statement},
         primitives::merkletree::MerkleClaimAndProofTarget,
     },
     middleware::{
@@ -127,6 +127,10 @@ impl StatementArgTarget {
     /// first!
     pub fn as_value(&self) -> ValueTarget {
         ValueTarget::from_slice(&self.elements[..VALUE_SIZE])
+    }
+
+    fn size(_params: &Params) -> usize {
+        STATEMENT_ARG_F_LEN
     }
 }
 
@@ -249,6 +253,10 @@ impl OperationTypeTarget {
     ) -> Result<()> {
         Ok(pw.set_target_arr(&self.elements, &op_type.to_fields(params))?)
     }
+
+    fn size(_params: &Params) -> usize {
+        Params::operation_type_size()
+    }
 }
 
 // TODO: Implement Operation::to_field to determine the size of each element
@@ -256,8 +264,7 @@ impl OperationTypeTarget {
 pub struct OperationTarget {
     pub op_type: OperationTypeTarget,
     pub args: Vec<IndexTarget>,
-    #[serde(with = "serde_arrays")]
-    pub aux: [IndexTarget; 2],
+    pub aux_index: IndexTarget,
 }
 
 impl OperationTarget {
@@ -277,11 +284,13 @@ impl OperationTarget {
         {
             self.args[i].set_targets(pw, arg.as_usize())?;
         }
-        let indexes = op.aux().as_usizes();
-        for (index_target, index) in self.aux.iter().zip_eq(indexes.iter()) {
-            index_target.set_targets(pw, *index)?;
-        }
-        Ok(())
+        self.aux_index.set_targets(pw, op.aux().table_index(params))
+    }
+
+    fn size(params: &Params) -> usize {
+        OperationTypeTarget::size(params)
+            + params.max_operation_args * IndexTarget::size(params)
+            + IndexTarget::size(params)
     }
 }
 
@@ -570,11 +579,15 @@ impl Flattenable for CustomPredicateEntryTarget {
             .collect()
     }
     fn from_flattened(params: &Params, vs: &[Target]) -> Self {
+        assert_eq!(vs.len(), Self::size(params));
         Self {
             id: HashOutTarget::from_flattened(params, &vs[0..4]),
             index: vs[4],
             predicate: CustomPredicateTarget::from_flattened(params, &vs[5..]),
         }
+    }
+    fn size(params: &Params) -> usize {
+        HashOutTarget::size(params) + 1 + CustomPredicateTarget::size(params)
     }
 }
 
@@ -669,15 +682,16 @@ impl Flattenable for CustomPredicateVerifyQueryTarget {
             .collect()
     }
     fn from_flattened(params: &Params, vs: &[Target]) -> Self {
-        let (pos, size) = (0, params.statement_size());
+        assert_eq!(vs.len(), Self::size(params));
+        let (pos, size) = (0, StatementTarget::size(params));
         let statement = StatementTarget::from_flattened(params, &vs[pos..pos + size]);
-        let (pos, size) = (pos + size, params.operation_size(IndexTarget::f_len()));
+        let (pos, size) = (pos + size, OperationTypeTarget::size(params));
         let op_type = OperationTypeTarget {
             elements: vs[pos..pos + size]
                 .try_into()
                 .expect("len = operation_type_size"),
         };
-        let (pos, size) = (pos + size, params.statement_size());
+        let (pos, size) = (pos + size, StatementTarget::size(params));
         let op_args = (0..params.max_operation_args)
             .map(|i| {
                 StatementTarget::from_flattened(params, &vs[pos + i * size..pos + (1 + i) * size])
@@ -689,6 +703,10 @@ impl Flattenable for CustomPredicateVerifyQueryTarget {
             op_args,
         }
     }
+    fn size(params: &Params) -> usize {
+        StatementTarget::size(params) * (1 + params.max_operation_args)
+            + OperationTarget::size(params)
+    }
 }
 
 /// Trait for target structs that may be converted to and from vectors
@@ -696,8 +714,11 @@ impl Flattenable for CustomPredicateVerifyQueryTarget {
 pub trait Flattenable {
     fn flatten(&self) -> Vec<Target>;
     fn from_flattened(params: &Params, vs: &[Target]) -> Self;
+    /// Size in number of `Target`s
+    fn size(params: &Params) -> usize;
 }
 
+// TODO: Figure out why this is defined in common and not in the merkletree directory
 /// For the purpose of op verification, we need only look up the
 /// Merkle claim rather than the Merkle proof since it is verified
 /// elsewhere.
@@ -726,11 +747,14 @@ impl Flattenable for HashOutTarget {
     fn flatten(&self) -> Vec<Target> {
         self.elements.to_vec()
     }
-    fn from_flattened(_params: &Params, vs: &[Target]) -> Self {
-        assert_eq!(vs.len(), HASH_SIZE);
+    fn from_flattened(params: &Params, vs: &[Target]) -> Self {
+        assert_eq!(vs.len(), Self::size(params));
         Self {
             elements: array::from_fn(|i| vs[i]),
         }
+    }
+    fn size(_params: &Params) -> usize {
+        4
     }
 }
 
@@ -738,8 +762,12 @@ impl Flattenable for ValueTarget {
     fn flatten(&self) -> Vec<Target> {
         self.elements.to_vec()
     }
-    fn from_flattened(_params: &Params, vs: &[Target]) -> Self {
+    fn from_flattened(params: &Params, vs: &[Target]) -> Self {
+        assert_eq!(vs.len(), Self::size(params));
         Self::from_slice(vs)
+    }
+    fn size(_params: &Params) -> usize {
+        4
     }
 }
 
@@ -755,7 +783,8 @@ impl Flattenable for MerkleClaimTarget {
         .concat()
     }
 
-    fn from_flattened(_params: &Params, vs: &[Target]) -> Self {
+    fn from_flattened(params: &Params, vs: &[Target]) -> Self {
+        assert_eq!(vs.len(), Self::size(params));
         Self {
             enabled: BoolTarget::new_unsafe(vs[0]),
             root: HashOutTarget::from_vec(vs[1..1 + NUM_HASH_OUT_ELTS].to_vec()),
@@ -768,6 +797,10 @@ impl Flattenable for MerkleClaimTarget {
             existence: BoolTarget::new_unsafe(vs[1 + NUM_HASH_OUT_ELTS + 2 * VALUE_SIZE]),
         }
     }
+
+    fn size(params: &Params) -> usize {
+        2 + HashOutTarget::size(params) + 2 * ValueTarget::size(params)
+    }
 }
 
 impl Flattenable for PredicateTarget {
@@ -775,10 +808,14 @@ impl Flattenable for PredicateTarget {
         self.elements.to_vec()
     }
 
-    fn from_flattened(_params: &Params, v: &[Target]) -> Self {
+    fn from_flattened(params: &Params, v: &[Target]) -> Self {
+        assert_eq!(v.len(), Self::size(params));
         Self {
             elements: v.try_into().expect("len is predicate_size"),
         }
+    }
+    fn size(_params: &Params) -> usize {
+        Params::predicate_size()
     }
 }
 
@@ -792,13 +829,9 @@ impl Flattenable for StatementTarget {
     }
 
     fn from_flattened(params: &Params, v: &[Target]) -> Self {
-        let num_args = (v.len() - Params::predicate_size()) / STATEMENT_ARG_F_LEN;
-        assert_eq!(
-            v.len(),
-            Params::predicate_size() + num_args * STATEMENT_ARG_F_LEN
-        );
+        assert_eq!(v.len(), Self::size(params));
         let predicate = PredicateTarget::from_flattened(params, &v[..Params::predicate_size()]);
-        let args = (0..num_args)
+        let args = (0..params.max_statement_args)
             .map(|i| StatementArgTarget {
                 elements: array::from_fn(|j| {
                     v[Params::predicate_size() + i * STATEMENT_ARG_F_LEN + j]
@@ -807,6 +840,10 @@ impl Flattenable for StatementTarget {
             .collect();
 
         Self { predicate, args }
+    }
+
+    fn size(params: &Params) -> usize {
+        PredicateTarget::size(params) + params.max_statement_args * StatementArgTarget::size(params)
     }
 }
 
@@ -819,6 +856,7 @@ impl Flattenable for CustomPredicateTarget {
     }
 
     fn from_flattened(params: &Params, v: &[Target]) -> Self {
+        assert_eq!(v.len(), Self::size(params));
         // We assume that `from_flattened` is always called with the output of `flattened`, so
         // this `BoolTarget` should actually safe.
         let conjunction = BoolTarget::new_unsafe(v[0]);
@@ -836,6 +874,9 @@ impl Flattenable for CustomPredicateTarget {
             args_len,
         }
     }
+    fn size(params: &Params) -> usize {
+        2 + params.max_custom_predicate_arity * StatementTmplTarget::size(params)
+    }
 }
 
 impl Flattenable for StatementTmplTarget {
@@ -848,6 +889,7 @@ impl Flattenable for StatementTmplTarget {
     }
 
     fn from_flattened(params: &Params, v: &[Target]) -> Self {
+        assert_eq!(v.len(), Self::size(params));
         let pred_end = Params::predicate_size();
         let pred = PredicateTarget::from_flattened(params, &v[..pred_end]);
         let sta_size = Params::statement_tmpl_arg_size();
@@ -859,6 +901,11 @@ impl Flattenable for StatementTmplTarget {
             .collect();
         Self { pred, args }
     }
+
+    fn size(params: &Params) -> usize {
+        PredicateTarget::size(params)
+            + params.max_statement_args * StatementTmplArgTarget::size(params)
+    }
 }
 
 impl Flattenable for StatementTmplArgTarget {
@@ -866,24 +913,28 @@ impl Flattenable for StatementTmplArgTarget {
         self.elements.to_vec()
     }
 
-    fn from_flattened(_params: &Params, v: &[Target]) -> Self {
+    fn from_flattened(params: &Params, v: &[Target]) -> Self {
+        assert_eq!(v.len(), Self::size(params));
         Self {
             elements: v.try_into().expect("len is statement_tmpl_arg_size"),
         }
     }
+    fn size(_params: &Params) -> usize {
+        Params::statement_tmpl_arg_size()
+    }
 }
 
 /// Index to an array for random access
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct IndexTarget {
-    max_array_len: usize,
-    low: Target,
-    high: Target,
+    pub max_array_len: usize,
+    pub low: Target,
+    pub high: Target,
 }
 
 impl IndexTarget {
     // Length in field elements
-    pub const fn f_len() -> usize {
+    pub fn size(_params: &Params) -> usize {
         2
     }
     pub fn new_virtual(max_array_len: usize, builder: &mut CircuitBuilder) -> Self {
@@ -1051,10 +1102,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
             args: (0..params.max_operation_args)
                 .map(|_| IndexTarget::new_virtual(params.statement_table_size(), self))
                 .collect(),
-            aux: [
-                IndexTarget::new_virtual(params.max_merkle_proofs_containers, self),
-                IndexTarget::new_virtual(params.max_custom_predicate_verifications, self),
-            ],
+            aux_index: IndexTarget::new_virtual(OperationAux::table_size(params), self),
         }
     }
 

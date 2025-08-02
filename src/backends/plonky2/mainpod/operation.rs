@@ -8,7 +8,7 @@ use crate::{
         mainpod::Statement,
         primitives::merkletree::MerkleClaimAndProof,
     },
-    middleware::{self, OperationType},
+    middleware::{self, OperationType, Params},
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -38,11 +38,21 @@ pub enum OperationAux {
 }
 
 impl OperationAux {
-    pub fn as_usizes(&self) -> [usize; 2] {
+    fn table_offset_merkle_proof(_params: &Params) -> usize {
+        // At index 0 we store a zero entry
+        1
+    }
+    fn table_offset_custom_pred_verify(params: &Params) -> usize {
+        Self::table_offset_merkle_proof(params) + params.max_merkle_proofs_containers
+    }
+    pub(crate) fn table_size(params: &Params) -> usize {
+        1 + params.max_merkle_proofs_containers + params.max_custom_predicate_verifications
+    }
+    pub fn table_index(&self, params: &Params) -> usize {
         match self {
-            Self::None => [0, 0],
-            Self::MerkleProofIndex(i) => [*i, 0],
-            Self::CustomPredVerifyIndex(i) => [0, *i],
+            Self::None => 0,
+            Self::MerkleProofIndex(i) => Self::table_offset_merkle_proof(params) + *i,
+            Self::CustomPredVerifyIndex(i) => Self::table_offset_custom_pred_verify(params) + *i,
         }
     }
 }
