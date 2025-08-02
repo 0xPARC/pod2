@@ -925,7 +925,7 @@ impl Flattenable for StatementTmplArgTarget {
 }
 
 /// Index to an array for random access
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct IndexTarget {
     pub max_array_len: usize,
     pub low: Target,

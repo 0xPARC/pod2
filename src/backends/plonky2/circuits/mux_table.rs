@@ -112,7 +112,7 @@ impl MuxTableTarget {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TableGetGenerator {
     index: IndexTarget,
     tagged_entries: Vec<Vec<Target>>,
