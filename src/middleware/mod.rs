@@ -764,8 +764,11 @@ pub struct Params {
     pub max_depth_mt_containers: usize,
     // maximum depth of the merkle tree gadget used for verifier_data membership
     // check.  This allows creating verifying sets of pod circuits of size
-    // 2^max_depth_mt_vds.
+    // 2^max_depth_mt_vds.  Limits the number of container operations of the type Contains,
+    // NotContains.
     pub max_depth_mt_vds: usize,
+    // maximum number of public key derivations used for PublicKeyOf operation
+    pub max_public_key_of: usize,
     //
     // The following parameters define how a pod id is calculated.  They need to be the same among
     // different circuits to be compatible in their verification.
@@ -803,6 +806,7 @@ impl Default for Params {
             max_merkle_proofs_containers: 5,
             max_depth_mt_containers: 32,
             max_depth_mt_vds: 6, // up to 64 (2^6) different pod circuits
+            max_public_key_of: 2,
         }
     }
 }

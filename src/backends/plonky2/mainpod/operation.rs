@@ -30,11 +30,12 @@ impl OperationArg {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum OperationAux {
     None,
     MerkleProofIndex(usize),
     CustomPredVerifyIndex(usize),
+    PublicKeyOfIndex(usize),
 }
 
 impl OperationAux {
@@ -42,16 +43,22 @@ impl OperationAux {
         // At index 0 we store a zero entry
         1
     }
+    fn table_offset_public_key_of(params: &Params) -> usize {
+        Self::table_offset_merkle_proof(params) + params.max_public_key_of
+    }
     fn table_offset_custom_pred_verify(params: &Params) -> usize {
-        Self::table_offset_merkle_proof(params) + params.max_merkle_proofs_containers
+        Self::table_offset_public_key_of(params) + params.max_merkle_proofs_containers
     }
     pub(crate) fn table_size(params: &Params) -> usize {
-        1 + params.max_merkle_proofs_containers + params.max_custom_predicate_verifications
+        1 + params.max_merkle_proofs_containers
+            + params.max_public_key_of
+            + params.max_custom_predicate_verifications
     }
     pub fn table_index(&self, params: &Params) -> usize {
         match self {
             Self::None => 0,
             Self::MerkleProofIndex(i) => Self::table_offset_merkle_proof(params) + *i,
+            Self::PublicKeyOfIndex(i) => Self::table_offset_public_key_of(params) + *i,
             Self::CustomPredVerifyIndex(i) => Self::table_offset_custom_pred_verify(params) + *i,
         }
     }
@@ -97,6 +104,7 @@ impl Operation {
                     .proof
                     .clone(),
             ),
+            OperationAux::PublicKeyOfIndex(_) => crate::middleware::OperationAux::None,
         };
         Ok(middleware::Operation::op(
             self.0.clone(),
@@ -124,6 +132,7 @@ impl fmt::Display for Operation {
             OperationAux::None => (),
             OperationAux::MerkleProofIndex(i) => write!(f, " merkle_proof_{:02}", i)?,
             OperationAux::CustomPredVerifyIndex(i) => write!(f, " custom_pred_verify_{:02}", i)?,
+            OperationAux::PublicKeyOfIndex(i) => write!(f, " public_key_of_{:02}", i)?,
         }
         Ok(())
     }

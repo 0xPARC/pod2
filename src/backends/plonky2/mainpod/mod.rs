@@ -18,7 +18,7 @@ use crate::{
         emptypod::EmptyPod,
         error::{Error, Result},
         mock::emptypod::MockEmptyPod,
-        primitives::merkletree::MerkleClaimAndProof,
+        primitives::{ec::schnorr::SecretKey, merkletree::MerkleClaimAndProof},
         recursion::{
             hash_verifier_data, prove_rec_circuit, RecursiveCircuit, RecursiveCircuitTarget,
         },
@@ -29,9 +29,9 @@ use crate::{
         signedpod::SignedPod,
     },
     middleware::{
-        self, resolve_wildcard_values, value_from_op, AnchoredKey, CustomPredicateBatch, Hash,
-        MainPodInputs, NativeOperation, OperationType, Params, Pod, PodId, PodProver, PodType,
-        RecursivePod, StatementArg, ToFields, VDSet, KEY_TYPE, SELF,
+        self, resolve_wildcard_values, value_from_op, AnchoredKey, CustomPredicateBatch,
+        Error as MiddlewareError, Hash, MainPodInputs, NativeOperation, OperationType, Params, Pod,
+        PodId, PodProver, PodType, RecursivePod, StatementArg, ToFields, VDSet, KEY_TYPE, SELF,
     },
     timed,
 };
@@ -87,16 +87,13 @@ pub(crate) fn extract_custom_predicate_batches(
 /// Extracts all custom predicate operations with all the data required to verify them.
 pub(crate) fn extract_custom_predicate_verifications(
     params: &Params,
+    aux_list: &mut Vec<OperationAux>,
     operations: &[middleware::Operation],
     custom_predicate_batches: &[Arc<CustomPredicateBatch>],
 ) -> Result<Vec<CustomPredicateVerification>> {
-    let custom_predicate_data: Vec<_> = operations
-        .iter()
-        .flat_map(|op| match op {
-            middleware::Operation::Custom(cpr, sts) => Some((cpr, sts)),
-            _ => None,
-        })
-        .map(|(cpr, sts)| {
+    let mut table = Vec::new();
+    for (i, op) in operations.iter().enumerate() {
+        if let middleware::Operation::Custom(cpr, sts) = op {
             let wildcard_values =
                 resolve_wildcard_values(params, cpr.predicate(), sts).expect("resolved wildcards");
             let sts = sts.iter().map(|s| Statement::from(s.clone())).collect();
@@ -107,73 +104,105 @@ pub(crate) fn extract_custom_predicate_verifications(
                 .expect("find the custom predicate from the extracted unique list");
             let custom_predicate_table_index =
                 batch_index * params.max_custom_batch_size + cpr.index;
-            CustomPredicateVerification {
+            aux_list[i] = OperationAux::CustomPredVerifyIndex(table.len());
+            table.push(CustomPredicateVerification {
                 custom_predicate_table_index,
                 custom_predicate: cpr.clone(),
                 args: wildcard_values,
                 op_args: sts,
-            }
-        })
-        .collect();
-    if custom_predicate_data.len() > params.max_custom_predicate_verifications {
+            });
+        }
+    }
+
+    if table.len() > params.max_custom_predicate_verifications {
         return Err(Error::custom(format!(
             "The number of required custom predicate verifications ({}) exceeds the maximum number ({}).",
-            custom_predicate_data.len(),
+            table.len(),
             params.max_custom_predicate_verifications
         )));
     }
-    Ok(custom_predicate_data)
+    Ok(table)
 }
 
 /// Extracts Merkle proofs from Contains/NotContains ops.
 pub(crate) fn extract_merkle_proofs(
     params: &Params,
+    aux_list: &mut Vec<OperationAux>,
     operations: &[middleware::Operation],
     statements: &[middleware::Statement],
 ) -> Result<Vec<MerkleClaimAndProof>> {
-    assert_eq!(operations.len(), statements.len());
-    let merkle_proofs: Vec<_> = operations
-        .iter()
-        .zip(statements.iter())
-        .flat_map(|(op, st)| match (op, st) {
+    let mut table = Vec::new();
+    for (i, (op, st)) in operations.iter().zip(statements.iter()).enumerate() {
+        let deduction_err = || MiddlewareError::invalid_deduction(op.clone(), st.clone());
+        let (root, key, value, pf) = match (op, st) {
             (
                 middleware::Operation::ContainsFromEntries(root_s, key_s, value_s, pf),
                 middleware::Statement::Contains(root_ref, key_ref, value_ref),
             ) => {
-                let root = value_from_op(root_s, root_ref)?;
-                let key = value_from_op(key_s, key_ref)?;
-                let value = value_from_op(value_s, value_ref)?;
-                Some(MerkleClaimAndProof::new(
-                    Hash::from(root.raw()),
-                    key.raw(),
-                    Some(value.raw()),
-                    pf.clone(),
-                ))
+                let root = value_from_op(root_s, root_ref).ok_or_else(deduction_err)?;
+                let key = value_from_op(key_s, key_ref).ok_or_else(deduction_err)?;
+                let value = value_from_op(value_s, value_ref).ok_or_else(deduction_err)?;
+                (root.raw(), key.raw(), Some(value.raw()), pf)
             }
             (
                 middleware::Operation::NotContainsFromEntries(root_s, key_s, pf),
                 middleware::Statement::NotContains(root_ref, key_ref),
             ) => {
-                let root = value_from_op(root_s, root_ref)?;
-                let key = value_from_op(key_s, key_ref)?;
-                Some(MerkleClaimAndProof::new(
-                    Hash::from(root.raw()),
-                    key.raw(),
-                    None,
-                    pf.clone(),
-                ))
+                let root = value_from_op(root_s, root_ref).ok_or_else(deduction_err)?;
+                let key = value_from_op(key_s, key_ref).ok_or_else(deduction_err)?;
+                (root.raw(), key.raw(), None, pf)
             }
-            _ => None,
-        })
-        .collect();
-    if merkle_proofs.len() > params.max_merkle_proofs_containers {
+            _ => continue,
+        };
+        aux_list[i] = OperationAux::MerkleProofIndex(table.len());
+        table.push(MerkleClaimAndProof::new(
+            Hash::from(root),
+            key,
+            value,
+            pf.clone(),
+        ));
+    }
+    if table.len() > params.max_merkle_proofs_containers {
         return Err(Error::custom(format!(
             "The number of required Merkle proofs ({}) exceeds the maximum number ({}).",
-            merkle_proofs.len(),
+            table.len(),
             params.max_merkle_proofs_containers
         )));
     }
-    Ok(merkle_proofs)
+    Ok(table)
+}
+
+pub(crate) fn extract_public_key_of(
+    params: &Params,
+    aux_list: &mut Vec<OperationAux>,
+    operations: &[middleware::Operation],
+    statements: &[middleware::Statement],
+) -> Result<Vec<SecretKey>> {
+    let mut table = Vec::new();
+    for (i, (op, st)) in operations.iter().zip(statements.iter()).enumerate() {
+        if let (
+            middleware::Operation::PublicKeyOf(_, sk_s),
+            middleware::Statement::PublicKeyOf(_, sk_ref),
+        ) = (op, st)
+        {
+            let deduction_err = || MiddlewareError::invalid_deduction(op.clone(), st.clone());
+            let sk = SecretKey::try_from(
+                value_from_op(sk_s, sk_ref)
+                    .ok_or_else(deduction_err)?
+                    .typed(),
+            )?;
+            aux_list[i] = OperationAux::PublicKeyOfIndex(table.len());
+            table.push(sk);
+        }
+    }
+    if table.len() > params.max_public_key_of {
+        return Err(Error::custom(format!(
+            "The number of required PublicKeyOf verifications ({}) exceeds the maximum number ({}).",
+            table.len(),
+            params.max_public_statements
+        )));
+    }
+    Ok(table)
 }
 
 /// Find the operation argument statement in the list of previous statements and return the index.
@@ -190,52 +219,6 @@ fn find_op_arg(statements: &[Statement], op_arg: &middleware::Statement) -> Resu
             "Statement corresponding to op arg {} not found",
             op_arg
         )))
-}
-
-/// Find the operation auxiliary data in the list of auxiliary data and return the index.
-// NOTE: The `custom_predicate_verifications` is optional because in the MainPod we want to store
-// the index of a custom predicate verification in the aux data, but in the MockMainPod we don't
-// need that because we keep a reference to the custom predicate in the operation type, which
-// removes the need for indexing.  We could change the OperationType and Predicate for the backend
-// to not keep a reference to the custom predicate and instead just keep the id and index and then
-// do the same double indexing that the MainPod does to verify custom predicates.
-fn find_op_aux(
-    merkle_proofs: &[MerkleClaimAndProof],
-    custom_predicate_verifications: Option<&[CustomPredicateVerification]>,
-    op: &middleware::Operation,
-) -> Result<OperationAux> {
-    let op_aux = op.aux();
-    if let (middleware::Operation::Custom(cpr, op_args), Some(cpvs)) =
-        (op, custom_predicate_verifications)
-    {
-        return Ok(cpvs
-            .iter()
-            .enumerate()
-            .find_map(|(i, cpv)| {
-                (cpv.custom_predicate.batch.id() == cpr.batch.id()
-                    && cpv.custom_predicate.index == cpr.index
-                    && cpv
-                        .op_args
-                        .iter()
-                        .zip_eq(op_args.iter())
-                        .all(|(a0, a1)| a0.0 == a1.predicate() && a0.1 == a1.args()))
-                .then_some(i)
-            })
-            .map(OperationAux::CustomPredVerifyIndex)
-            .expect("custom predicate verification in the list"));
-    }
-    match &op_aux {
-        middleware::OperationAux::None => Ok(OperationAux::None),
-        middleware::OperationAux::MerkleProof(pf_arg) => merkle_proofs
-            .iter()
-            .enumerate()
-            .find_map(|(i, pf)| (pf.proof == *pf_arg).then_some(i))
-            .map(OperationAux::MerkleProofIndex)
-            .ok_or(Error::custom(format!(
-                "Merkle proof corresponding to op arg {} not found",
-                op_aux
-            ))),
-    }
 }
 
 fn fill_pad<T: Clone>(v: &mut Vec<T>, pad_value: T, len: usize) {
@@ -367,8 +350,7 @@ pub(crate) fn layout_statements(
 pub(crate) fn process_private_statements_operations(
     params: &Params,
     statements: &[Statement],
-    merkle_proofs: &[MerkleClaimAndProof],
-    custom_predicate_verifications: Option<&[CustomPredicateVerification]>,
+    aux_list: &[OperationAux],
     input_operations: &[middleware::Operation],
 ) -> Result<Vec<Operation>> {
     let mut operations = Vec::new();
@@ -383,8 +365,7 @@ pub(crate) fn process_private_statements_operations(
             .map(|mid_arg| find_op_arg(statements, mid_arg))
             .collect::<Result<Vec<_>>>()?;
 
-        let aux = find_op_aux(merkle_proofs, custom_predicate_verifications, &op)?;
-
+        let aux = aux_list[i];
         pad_operation_args(params, &mut args);
         operations.push(Operation(op.op_type(), args, aux));
     }
@@ -475,20 +456,25 @@ impl PodProver for Prover {
             })
             .collect_vec();
 
-        let merkle_proofs = extract_merkle_proofs(params, inputs.operations, inputs.statements)?;
+        // Aux values for backend::Operation
+        let mut aux_list = Vec::new();
+        let merkle_proofs =
+            extract_merkle_proofs(params, &mut aux_list, inputs.operations, inputs.statements)?;
         let custom_predicate_batches = extract_custom_predicate_batches(params, inputs.operations)?;
         let custom_predicate_verifications = extract_custom_predicate_verifications(
             params,
+            &mut aux_list,
             inputs.operations,
             &custom_predicate_batches,
         )?;
+        let public_key_of_sks =
+            extract_public_key_of(params, &mut aux_list, inputs.operations, inputs.statements)?;
 
         let (statements, public_statements) = layout_statements(params, false, &inputs)?;
         let operations = process_private_statements_operations(
             params,
             &statements,
-            &merkle_proofs,
-            Some(&custom_predicate_verifications),
+            &aux_list,
             inputs.operations,
         )?;
         let operations = process_public_statements_operations(params, &statements, operations)?;
@@ -523,6 +509,7 @@ impl PodProver for Prover {
             statements: statements[statements.len() - params.max_statements..].to_vec(),
             operations,
             merkle_proofs,
+            public_key_of_sks,
             custom_predicate_batches,
             custom_predicate_verifications,
         };

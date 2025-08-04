@@ -172,14 +172,15 @@ impl MockMainPod {
 
     pub fn new(params: &Params, inputs: MainPodInputs) -> Result<Self> {
         let (statements, public_statements) = layout_statements(params, true, &inputs)?;
+        let mut aux_list = Vec::new();
         // Extract Merkle proofs and pad.
-        let merkle_proofs = extract_merkle_proofs(params, inputs.operations, inputs.statements)?;
+        let merkle_proofs =
+            extract_merkle_proofs(params, &mut aux_list, inputs.operations, inputs.statements)?;
 
         let operations = process_private_statements_operations(
             params,
             &statements,
-            &merkle_proofs,
-            None,
+            &aux_list,
             inputs.operations,
         )?;
         let operations = process_public_statements_operations(params, &statements, operations)?;
