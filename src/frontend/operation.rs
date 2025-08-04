@@ -153,7 +153,7 @@ macro_rules! op_impl_st {
     };
 
     ($fn_name: ident, $op_name: ident, 2) => {
-        pub fn $fn_name(a1: &Statement, a2: &Statement) -> Self {
+        pub fn $fn_name(a1: Statement, a2: Statement) -> Self {
             Self(
                 OperationType::Native(NativeOperation::$op_name),
                 vec![a1.into(), a2.into()],
