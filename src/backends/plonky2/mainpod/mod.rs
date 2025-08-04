@@ -850,6 +850,7 @@ pub mod tests {
             max_custom_predicate_wildcards: 3,
             max_custom_batch_size: 2,
             max_merkle_proofs_containers: 2,
+            max_public_key_of: 2,
             max_depth_mt_containers: 4,
             max_depth_mt_vds: 6,
         };
