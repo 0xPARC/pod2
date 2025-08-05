@@ -87,7 +87,7 @@ pub(crate) fn extract_custom_predicate_batches(
 /// Extracts all custom predicate operations with all the data required to verify them.
 pub(crate) fn extract_custom_predicate_verifications(
     params: &Params,
-    aux_list: &mut Vec<OperationAux>,
+    aux_list: &mut [OperationAux],
     operations: &[middleware::Operation],
     custom_predicate_batches: &[Arc<CustomPredicateBatch>],
 ) -> Result<Vec<CustomPredicateVerification>> {
@@ -127,7 +127,7 @@ pub(crate) fn extract_custom_predicate_verifications(
 /// Extracts Merkle proofs from Contains/NotContains ops.
 pub(crate) fn extract_merkle_proofs(
     params: &Params,
-    aux_list: &mut Vec<OperationAux>,
+    aux_list: &mut [OperationAux],
     operations: &[middleware::Operation],
     statements: &[middleware::Statement],
 ) -> Result<Vec<MerkleClaimAndProof>> {
@@ -174,7 +174,7 @@ pub(crate) fn extract_merkle_proofs(
 
 pub(crate) fn extract_public_key_of(
     params: &Params,
-    aux_list: &mut Vec<OperationAux>,
+    aux_list: &mut [OperationAux],
     operations: &[middleware::Operation],
     statements: &[middleware::Statement],
 ) -> Result<Vec<SecretKey>> {
@@ -353,8 +353,9 @@ pub(crate) fn process_private_statements_operations(
     aux_list: &[OperationAux],
     input_operations: &[middleware::Operation],
 ) -> Result<Vec<Operation>> {
+    assert_eq!(params.max_priv_statements(), aux_list.len());
     let mut operations = Vec::new();
-    for i in 0..params.max_priv_statements() {
+    for (i, aux) in aux_list.iter().enumerate() {
         let op = input_operations
             .get(i)
             .unwrap_or(&middleware::Operation::None)
@@ -365,9 +366,8 @@ pub(crate) fn process_private_statements_operations(
             .map(|mid_arg| find_op_arg(statements, mid_arg))
             .collect::<Result<Vec<_>>>()?;
 
-        let aux = aux_list[i];
         pad_operation_args(params, &mut args);
-        operations.push(Operation(op.op_type(), args, aux));
+        operations.push(Operation(op.op_type(), args, *aux));
     }
     Ok(operations)
 }
@@ -457,7 +457,7 @@ impl PodProver for Prover {
             .collect_vec();
 
         // Aux values for backend::Operation
-        let mut aux_list = Vec::new();
+        let mut aux_list = vec![OperationAux::None; params.max_priv_statements()];
         let merkle_proofs =
             extract_merkle_proofs(params, &mut aux_list, inputs.operations, inputs.statements)?;
         let custom_predicate_batches = extract_custom_predicate_batches(params, inputs.operations)?;

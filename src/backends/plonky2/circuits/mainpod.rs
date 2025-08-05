@@ -30,7 +30,6 @@ use crate::{
             hash::{hash_from_state_circuit, precompute_hash_state},
             mux_table::{MuxTableTarget, TableEntryTarget},
             signedpod::{verify_signed_pod_circuit, SignedPodVerifyTarget},
-            utils::DebugGenerator,
         },
         emptypod::{cache_get_standard_empty_pod_circuit_data, EmptyPod},
         error::Result,
@@ -217,7 +216,7 @@ impl Flattenable for KeyPairTarget {
         self.pk_hash
             .elements
             .into_iter()
-            .chain(self.sk_hash.elements.into_iter())
+            .chain(self.sk_hash.elements)
             .collect()
     }
     fn from_flattened(params: &Params, vs: &[Target]) -> Self {
@@ -720,10 +719,6 @@ fn verify_public_key_of_circuit(
     let measure = measure_gates_begin!(builder, "OpPublicKeyOf");
     let (aux_tag_ok, resolved_key_pair) =
         aux.as_type::<KeyPairTarget>(builder, OperationAuxTableTag::PublicKeyOf as u32);
-    builder.add_simple_generator(DebugGenerator::new(
-        format!("aux_tag_ok"),
-        vec![aux_tag_ok.target],
-    ));
 
     let op_code_ok = op_type.has_native(builder, NativeOperation::PublicKeyOf);
     let (arg_types_ok, [arg1_value, arg2_value]) = cache.first_n_args_as_values();
@@ -739,14 +734,6 @@ fn verify_public_key_of_circuit(
         &public_key_hash.elements,
         &resolved_key_pair.pk_hash.elements,
     );
-    builder.add_simple_generator(DebugGenerator::new(
-        format!("skey_hash_ok"),
-        vec![skey_hash_ok.target],
-    ));
-    builder.add_simple_generator(DebugGenerator::new(
-        format!("pkey_hash_ok"),
-        vec![pkey_hash_ok.target],
-    ));
 
     let arg1_expected = cache.equations[0].lhs.clone();
     let arg2_expected = cache.equations[1].lhs.clone();
