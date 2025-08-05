@@ -1780,17 +1780,6 @@ mod tests {
             merkle_proof_target.set_targets(&mut pw, true, merkle_proof)?
         }
 
-        // let aux_entry_max_len = max_operation_aux_entry_len(&params);
-        // set_targets_aux(
-        //     &mut pw,
-        //     &params,
-        //     aux_entry_max_len,
-        //     &aux,
-        //     op.aux(),
-        //     &merkle_proofs,
-        //     &[],
-        // )?;
-
         // generate & verify proof
         let data = builder.build::<C>();
         let proof = data.prove(pw)?;
