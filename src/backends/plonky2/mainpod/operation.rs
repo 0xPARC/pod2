@@ -34,8 +34,8 @@ impl OperationArg {
 pub enum OperationAux {
     None,
     MerkleProofIndex(usize),
-    CustomPredVerifyIndex(usize),
     PublicKeyOfIndex(usize),
+    CustomPredVerifyIndex(usize),
 }
 
 impl OperationAux {
@@ -44,10 +44,10 @@ impl OperationAux {
         1
     }
     fn table_offset_public_key_of(params: &Params) -> usize {
-        Self::table_offset_merkle_proof(params) + params.max_public_key_of
+        Self::table_offset_merkle_proof(params) + params.max_merkle_proofs_containers
     }
     fn table_offset_custom_pred_verify(params: &Params) -> usize {
-        Self::table_offset_public_key_of(params) + params.max_merkle_proofs_containers
+        Self::table_offset_public_key_of(params) + params.max_public_key_of
     }
     pub(crate) fn table_size(params: &Params) -> usize {
         1 + params.max_merkle_proofs_containers

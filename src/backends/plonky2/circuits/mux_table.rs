@@ -28,7 +28,13 @@ use crate::{
     middleware::{Params, F},
 };
 
-// TODO: Document
+// This structure allows multiplexing multiple tables into one by using tags.  The table entries
+// are computed by hashing the concatenation of the tag with the flattened target, with zero
+// padding to normalize the size of all flattened entries.  We use zero-padding on then reverse the
+// array so that smaller entries can skip the initial hashes by using the precomputed hash state of
+// the prefixed zeroes.
+// The table offers an indexing API that returns a flattened entry that includes the "unhashing",
+// this allows doing a single lookup for different possible tagged entries at the same time.
 pub struct MuxTableTarget {
     params: Params,
     max_flattened_entry_len: usize,
@@ -158,7 +164,7 @@ impl<F: RichField + Extendable<D>, const D: usize> SimpleGenerator<F, D> for Tab
         dst.write_target(self.index.low)?;
         dst.write_target(self.index.high)?;
 
-        dst.write_usize(self.get_tagged_entry.len())?;
+        dst.write_usize(self.tagged_entries.len())?;
         for tagged_entry in &self.tagged_entries {
             dst.write_target_vec(tagged_entry)?;
         }

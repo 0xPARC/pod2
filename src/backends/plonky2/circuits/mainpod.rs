@@ -30,6 +30,7 @@ use crate::{
             hash::{hash_from_state_circuit, precompute_hash_state},
             mux_table::{MuxTableTarget, TableEntryTarget},
             signedpod::{verify_signed_pod_circuit, SignedPodVerifyTarget},
+            utils::DebugGenerator,
         },
         emptypod::{cache_get_standard_empty_pod_circuit_data, EmptyPod},
         error::Result,
@@ -195,6 +196,7 @@ enum OperationAuxTableTag {
 fn max_operation_aux_entry_len(params: &Params) -> usize {
     [
         (params.max_merkle_proofs_containers > 0).then(|| MerkleClaimTarget::size(params)),
+        (params.max_public_key_of > 0).then(|| KeyPairTarget::size(params)),
         (params.max_custom_predicate_verifications > 0)
             .then(|| CustomPredicateVerifyQueryTarget::size(params)),
     ]
@@ -718,17 +720,33 @@ fn verify_public_key_of_circuit(
     let measure = measure_gates_begin!(builder, "OpPublicKeyOf");
     let (aux_tag_ok, resolved_key_pair) =
         aux.as_type::<KeyPairTarget>(builder, OperationAuxTableTag::PublicKeyOf as u32);
+    builder.add_simple_generator(DebugGenerator::new(
+        format!("aux_tag_ok"),
+        vec![aux_tag_ok.target],
+    ));
 
     let op_code_ok = op_type.has_native(builder, NativeOperation::PublicKeyOf);
     let (arg_types_ok, [arg1_value, arg2_value]) = cache.first_n_args_as_values();
     // inputting public_key, secret_key
-    let public_key_hash = arg1_value.elements;
-    let secret_key_hash = arg2_value.elements;
+    let public_key_hash = arg1_value;
+    let secret_key_hash = arg2_value;
 
-    let skey_hash_ok =
-        builder.is_equal_slice(&secret_key_hash, &resolved_key_pair.sk_hash.elements);
-    let pkey_hash_ok =
-        builder.is_equal_slice(&public_key_hash, &resolved_key_pair.pk_hash.elements);
+    let skey_hash_ok = builder.is_equal_slice(
+        &secret_key_hash.elements,
+        &resolved_key_pair.sk_hash.elements,
+    );
+    let pkey_hash_ok = builder.is_equal_slice(
+        &public_key_hash.elements,
+        &resolved_key_pair.pk_hash.elements,
+    );
+    builder.add_simple_generator(DebugGenerator::new(
+        format!("skey_hash_ok"),
+        vec![skey_hash_ok.target],
+    ));
+    builder.add_simple_generator(DebugGenerator::new(
+        format!("pkey_hash_ok"),
+        vec![pkey_hash_ok.target],
+    ));
 
     let arg1_expected = cache.equations[0].lhs.clone();
     let arg2_expected = cache.equations[1].lhs.clone();
@@ -1713,6 +1731,7 @@ mod tests {
             max_custom_predicate_batches: 0,
             max_custom_predicate_verifications: 0,
             max_merkle_proofs_containers: merkle_proofs.len(),
+            max_public_key_of: secret_keys.len(),
             ..Default::default()
         };
 
@@ -2605,7 +2624,7 @@ mod tests {
     }
 
     #[test]
-    fn test_operation_verify_publickeyof() -> Result<()> {
+    fn test_operation_verify_publickeyof_ok() -> Result<()> {
         [
             SecretKey(BigUint::one()),
             SecretKey::new_rand(),
@@ -2627,7 +2646,7 @@ mod tests {
             let op = mainpod::Operation(
                 OperationType::Native(NativeOperation::PublicKeyOf),
                 vec![OperationArg::Index(0), OperationArg::Index(1)],
-                OperationAux::None,
+                OperationAux::PublicKeyOfIndex(0),
             );
             let prev_statements = vec![public_key_st, secret_key_st];
             operation_verify(st, op, prev_statements, vec![], vec![secret_key])
@@ -2650,7 +2669,7 @@ mod tests {
         let op = mainpod::Operation(
             OperationType::Native(NativeOperation::PublicKeyOf),
             vec![OperationArg::Index(0), OperationArg::Index(1)],
-            OperationAux::None,
+            OperationAux::PublicKeyOfIndex(0),
         );
         let prev_statements = vec![public_key_st, secret_key_st];
         assert!(operation_verify(st, op, prev_statements, vec![], vec![secret_key]).is_err())
@@ -2694,7 +2713,7 @@ mod tests {
         let op = mainpod::Operation(
             OperationType::Native(NativeOperation::PublicKeyOf),
             vec![OperationArg::Index(0), OperationArg::Index(1)],
-            OperationAux::None,
+            OperationAux::PublicKeyOfIndex(0),
         );
         let prev_statements = vec![public_key_st, secret_key_st];
         assert!(operation_verify(
@@ -2723,7 +2742,7 @@ mod tests {
         let op = mainpod::Operation(
             OperationType::Native(NativeOperation::PublicKeyOf),
             vec![OperationArg::Index(0), OperationArg::Index(1)],
-            OperationAux::None,
+            OperationAux::PublicKeyOfIndex(0),
         );
         let prev_statements = vec![public_key_st, secret_key_st];
         assert!(operation_verify(st, op, prev_statements, vec![], vec![secret_key]).is_err())
