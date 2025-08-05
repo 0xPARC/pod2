@@ -969,7 +969,7 @@ pub mod tests {
         let st = builder
             .pub_op(frontend::Operation::new_entry(
                 "entry",
-                Set::new(params.max_merkle_proofs_containers, set).unwrap(),
+                Set::new(params.max_depth_mt_containers, set).unwrap(),
             ))
             .unwrap();
 

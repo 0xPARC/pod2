@@ -14,7 +14,7 @@ use crate::{
         mainpod::{
             calculate_id, extract_merkle_proofs, layout_statements,
             process_private_statements_operations, process_public_statements_operations, Operation,
-            Statement,
+            OperationAux, Statement,
         },
         mock::emptypod::MockEmptyPod,
         primitives::merkletree::MerkleClaimAndProof,
@@ -172,7 +172,7 @@ impl MockMainPod {
 
     pub fn new(params: &Params, inputs: MainPodInputs) -> Result<Self> {
         let (statements, public_statements) = layout_statements(params, true, &inputs)?;
-        let mut aux_list = Vec::new();
+        let mut aux_list = vec![OperationAux::None; params.max_priv_statements()];
         // Extract Merkle proofs and pad.
         let merkle_proofs =
             extract_merkle_proofs(params, &mut aux_list, inputs.operations, inputs.statements)?;
