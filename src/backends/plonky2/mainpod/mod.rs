@@ -832,6 +832,45 @@ pub mod tests {
         pod.verify().unwrap()
     }
 
+    // This pod does nothing but it's useful for debugging to keep things small.
+    #[ignore]
+    #[test]
+    fn test_mini_1() {
+        let params = middleware::Params {
+            max_input_signed_pods: 0,
+            max_input_recursive_pods: 0,
+            max_signed_pod_values: 0,
+            max_statements: 2,
+            max_public_statements: 1,
+            max_input_pods_public_statements: 0,
+            max_merkle_proofs_containers: 0,
+            max_public_key_of: 0,
+            max_custom_predicate_verifications: 0,
+            max_custom_predicate_batches: 0,
+            ..Default::default()
+        };
+        let mut vds = DEFAULT_VD_LIST.clone();
+        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
+
+        let builder = frontend::MainPodBuilder::new(&params, &vd_set);
+        println!("{}", builder);
+        println!();
+
+        // Mock
+        let prover = MockProver {};
+        let pod = builder.prove(&prover).unwrap();
+        let pod = (pod.pod as Box<dyn Any>).downcast::<MockMainPod>().unwrap();
+        pod.verify().unwrap();
+        println!("{:#}", pod);
+
+        // Real
+        let prover = Prover {};
+        let pod = builder.prove(&prover).unwrap();
+        let pod = (pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
+        pod.verify().unwrap()
+    }
+
     #[test]
     fn test_mainpod_small_empty() {
         let params = middleware::Params {

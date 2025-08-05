@@ -1,6 +1,6 @@
 use std::{array, iter, sync::Arc};
 
-use itertools::{izip, Itertools};
+use itertools::{izip, zip_eq, Itertools};
 use num::{BigUint, One};
 use plonky2::{
     field::types::Field,
@@ -1614,6 +1614,10 @@ impl InnerCircuit for MainPodVerifyTarget {
         }
 
         assert_eq!(input.statements.len(), self.params.max_statements);
+        for (i, (st, op)) in zip_eq(&input.statements, &input.operations).enumerate() {
+            self.input_statements[i].set_targets(pw, &self.params, st)?;
+            self.operations[i].set_targets(pw, &self.params, op)?;
+        }
 
         assert!(input.merkle_proofs.len() <= self.params.max_merkle_proofs_containers);
         for (i, mp) in input.merkle_proofs.iter().enumerate() {
