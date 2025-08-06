@@ -261,6 +261,7 @@ fn build_operation_aux_table_circuit(
 
     // PublicKeyOf: verify the derivation from a Schnorr secret key to public key
     for sk in public_key_of_sks {
+        let measure = measure_gates_begin!(builder, "PublicKeyOf");
         let invgenerator = builder.constant_point(Point::generator().inverse());
         let group_orderm1 = &*GROUP_ORDER - BigUint::one();
         let group_orderm1target = builder.constant_biguint320(&group_orderm1);
@@ -281,6 +282,7 @@ fn build_operation_aux_table_circuit(
         let entry = KeyPairTarget { pk_hash, sk_hash };
 
         table.push(builder, OperationAuxTableTag::PublicKeyOf as u32, &entry);
+        measure_gates_end!(builder, measure);
     }
 
     // CustomPredVerify: verify custom predicate statements verification against operations

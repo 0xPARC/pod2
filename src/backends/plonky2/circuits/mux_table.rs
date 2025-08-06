@@ -96,6 +96,7 @@ impl MuxTableTarget {
     }
 
     pub fn get(&self, builder: &mut CircuitBuilder, index: &IndexTarget) -> TableEntryTarget {
+        let measure = measure_gates_begin!(builder, "GetTaggedTblEntry");
         let entry_hash = builder.vec_ref(&self.params, &self.hashed_tagged_entries, index);
 
         let mut rev_resolved_tagged_flattened =
@@ -111,6 +112,7 @@ impl MuxTableTarget {
             tagged_entries: self.tagged_entries.clone(),
             get_tagged_entry: resolved_tagged_flattened.clone(),
         });
+        measure_gates_end!(builder, measure);
         TableEntryTarget {
             params: self.params.clone(),
             tagged_flattened_entry: resolved_tagged_flattened,
