@@ -712,26 +712,27 @@ impl Node {
 
         // If we are dealing with a deletion, normalise along key
         // path.
-        match op {
-            MerkleTreeOp::Delete => self.normalise_path(&key_path),
-            _ => Ok(()),
+        if let MerkleTreeOp::Delete = op {
+            self.normalise_path(&key_path);
         }
+
+        Ok(())
     }
 
     /// Normalises a Merkle tree along a specified path. Useful
     /// post-deletion.
-    fn normalise_path(&mut self, key_path: &[bool]) -> TreeResult<()> {
+    fn normalise_path(&mut self, key_path: &[bool]) {
         match self {
-            Self::Leaf(_) | Self::None => Ok(()),
+            Self::Leaf(_) | Self::None => (),
             Self::Intermediate(Intermediate {
                 hash: _h,
                 left,
                 right,
             }) => {
                 if key_path[0] {
-                    right.normalise_path(&key_path[1..])?;
+                    right.normalise_path(&key_path[1..]);
                 } else {
-                    left.normalise_path(&key_path[1..])?;
+                    left.normalise_path(&key_path[1..]);
                 }
 
                 // If we have a branch with children (NIL, X) or (X,
@@ -741,7 +742,6 @@ impl Node {
                 } else if right.is_empty() && !left.is_intermediate() {
                     *self = *left.clone();
                 }
-                Ok(())
             }
         }
     }
