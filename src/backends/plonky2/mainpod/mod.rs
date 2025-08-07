@@ -483,11 +483,12 @@ impl PodProver for Prover {
         // get the id out of the public statements
         let id: PodId = PodId(calculate_id(&public_statements, params));
 
+        let common_hash: String = cache_get_rec_main_pod_common_hash(&params).clone();
         let proofs = inputs
             .recursive_pods
             .iter()
             .map(|pod| {
-                // TODO: Validate common_hash to detect incompatibilities as early as possible
+                assert_eq!(pod.common_hash(), common_hash);
                 assert_eq!(inputs.vd_set.root(), pod.vd_set().root());
                 ProofWithPublicInputs {
                     proof: pod.proof(),
@@ -528,7 +529,6 @@ impl PodProver for Prover {
             )?
         );
 
-        let common_hash: String = cache_get_rec_main_pod_common_hash(&params).clone();
         Ok(Box::new(MainPod {
             params: params.clone(),
             verifier_only: circuit_data.verifier_only.clone(),
