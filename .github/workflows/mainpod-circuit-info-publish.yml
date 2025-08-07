@@ -41,7 +41,7 @@ jobs:
           set -e
 
           cd $GITHUB_WORKSPACE/${{github.repository}}
-          table_entry=$(.github/workflows/scripts/circuit-info-table.sh)
+          table_entry=$(.github/workflows/scripts/mainpod-circuit-info-table.sh)
           params=$(.github/workflows/scripts/mainpod-circuit-info.sh params)
           data=$(.github/workflows/scripts/mainpod-circuit-info.sh circuit-data)
           params_hash=$(echo "${data}" | jq .params_hash)
