@@ -143,7 +143,7 @@ macro_rules! op_impl_oa {
 
 macro_rules! op_impl_st {
     ($fn_name: ident, $op_name: ident, 1) => {
-        pub fn $fn_name(a1: &Statement) -> Self {
+        pub fn $fn_name(a1: Statement) -> Self {
             Self(
                 OperationType::Native(NativeOperation::$op_name),
                 vec![a1.into()],
@@ -153,7 +153,7 @@ macro_rules! op_impl_st {
     };
 
     ($fn_name: ident, $op_name: ident, 2) => {
-        pub fn $fn_name(a1: &Statement, a2: &Statement) -> Self {
+        pub fn $fn_name(a1: Statement, a2: Statement) -> Self {
             Self(
                 OperationType::Native(NativeOperation::$op_name),
                 vec![a1.into(), a2.into()],
@@ -173,9 +173,13 @@ impl Operation {
     }
     op_impl_oa!(eq, EqualFromEntries, 2);
     op_impl_oa!(ne, NotEqualFromEntries, 2);
+    op_impl_oa!(gt_eq, GtEqFromEntries, 2);
     op_impl_oa!(gt, GtFromEntries, 2);
+    op_impl_oa!(lt_eq, LtEqFromEntries, 2);
     op_impl_oa!(lt, LtFromEntries, 2);
+    op_impl_st!(copy, CopyStatement, 1);
     op_impl_st!(transitive_eq, TransitiveEqualFromStatements, 2);
+    op_impl_st!(lt_to_ne, LtToNotEqual, 1);
     op_impl_st!(gt_to_ne, GtToNotEqual, 1);
     op_impl_oa!(sum_of, SumOf, 3);
     op_impl_oa!(product_of, ProductOf, 3);

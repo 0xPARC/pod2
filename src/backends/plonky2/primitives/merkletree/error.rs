@@ -12,12 +12,12 @@ pub enum TreeInnerError {
     KeyExists,
     #[error("max depth reached")]
     MaxDepth,
-    #[error("reached empty node, should not have entered")]
-    EmptyNode,
     #[error("proof of {0} does not verify")]
     ProofFail(String), // inclusion / exclusion
     #[error("invalid {0} proof")]
     InvalidProof(String),
+    #[error("invalid state transition proof argument: {0}")]
+    InvalidStateTransitionProogArg(String),
     #[error("state transition proof does not verify, reason: {0}")]
     StateTransitionProofFail(String),
     #[error("key too short (key length: {0}) for the max_depth: {1}")]
@@ -66,14 +66,14 @@ impl TreeError {
     pub(crate) fn max_depth() -> Self {
         new!(MaxDepth)
     }
-    pub(crate) fn empty_node() -> Self {
-        new!(EmptyNode)
-    }
     pub(crate) fn proof_fail(obj: String) -> Self {
         new!(ProofFail(obj))
     }
     pub(crate) fn invalid_proof(obj: String) -> Self {
         new!(InvalidProof(obj))
+    }
+    pub(crate) fn invalid_state_transition_proof_arg(reason: String) -> Self {
+        new!(InvalidStateTransitionProogArg(reason))
     }
     pub(crate) fn state_transition_fail(reason: String) -> Self {
         new!(StateTransitionProofFail(reason))
