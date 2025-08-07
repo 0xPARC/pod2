@@ -14,9 +14,10 @@ use crate::{
         cache::{self, CacheEntry},
         cache_get_standard_rec_main_pod_common_circuit_data,
         circuits::mainpod::{CustomPredicateVerification, MainPodVerifyInput, MainPodVerifyTarget},
-        deserialize_proof,
+        deserialize_proof, deserialize_verifier_only,
         emptypod::EmptyPod,
         error::{Error, Result},
+        hash_common_data,
         mock::emptypod::MockEmptyPod,
         primitives::{ec::schnorr::SecretKey, merkletree::MerkleClaimAndProof},
         recursion::{
@@ -25,7 +26,7 @@ use crate::{
         serialization::{
             CircuitDataSerializer, CommonCircuitDataSerializer, VerifierCircuitDataSerializer,
         },
-        serialize_proof,
+        serialize_proof, serialize_verifier_only,
         signedpod::SignedPod,
     },
     middleware::{
@@ -486,6 +487,7 @@ impl PodProver for Prover {
             .recursive_pods
             .iter()
             .map(|pod| {
+                // TODO: Validate common_hash to detect incompatibilities as early as possible
                 assert_eq!(inputs.vd_set.root(), pod.vd_set().root());
                 ProofWithPublicInputs {
                     proof: pod.proof(),
@@ -526,8 +528,11 @@ impl PodProver for Prover {
             )?
         );
 
+        let common_hash: String = cache_get_rec_main_pod_common_hash(&params).clone();
         Ok(Box::new(MainPod {
             params: params.clone(),
+            verifier_only: circuit_data.verifier_only.clone(),
+            common_hash,
             id,
             vd_set: inputs.vd_set,
             public_statements,
@@ -540,6 +545,8 @@ impl PodProver for Prover {
 pub struct MainPod {
     params: Params,
     id: PodId,
+    verifier_only: VerifierOnlyCircuitData,
+    common_hash: String,
     /// vds_root is the merkle-root of the `VDSet`, which contains the
     /// verifier_data hashes of the allowed set of VerifierOnlyCircuitData, for
     /// the succession of recursive MainPods, which when proving the POD, it is
@@ -605,10 +612,20 @@ pub fn cache_get_rec_main_pod_common_circuit_data(
     .expect("cache ok")
 }
 
+pub fn cache_get_rec_main_pod_common_hash(params: &Params) -> CacheEntry<String> {
+    cache::get("rec_main_pod_common_hash", params, |params| {
+        let common = &*cache_get_rec_main_pod_common_circuit_data(&params);
+        hash_common_data(common).expect("hash ok")
+    })
+    .expect("cache ok")
+}
+
 #[derive(Serialize, Deserialize)]
 struct Data {
     public_statements: Vec<Statement>,
     proof: String,
+    verifier_only: String,
+    common_hash: String,
 }
 
 impl MainPod {
@@ -626,6 +643,14 @@ impl Pod for MainPod {
         &self.params
     }
     fn verify(&self) -> Result<()> {
+        // 0. Assert that the CommonCircuitData of the pod is the current one
+        let expect_common_hash = &*cache_get_rec_main_pod_common_hash(&self.params);
+        if &self.common_hash != expect_common_hash {
+            return Err(Error::custom(format!(
+                "The pod common_hash: {} is different than the current one: {}",
+                self.common_hash, expect_common_hash,
+            )));
+        }
         // 2. get the id out of the public statements
         let id = PodId(calculate_id(&self.public_statements, &self.params));
         if id != self.id {
@@ -679,6 +704,8 @@ impl Pod for MainPod {
         serde_json::to_value(Data {
             proof: serialize_proof(&self.proof),
             public_statements: self.public_statements.clone(),
+            verifier_only: serialize_verifier_only(&self.verifier_only),
+            common_hash: self.common_hash.clone(),
         })
         .expect("serialization to json")
     }
@@ -686,9 +713,10 @@ impl Pod for MainPod {
 
 impl RecursivePod for MainPod {
     fn verifier_data(&self) -> VerifierOnlyCircuitData {
-        let rec_main_pod_verifier_circuit_data =
-            cache_get_rec_main_pod_verifier_circuit_data(&self.params);
-        rec_main_pod_verifier_circuit_data.verifier_only.clone()
+        self.verifier_only.clone()
+    }
+    fn common_hash(&self) -> String {
+        self.common_hash.clone()
     }
     fn proof(&self) -> Proof {
         self.proof.clone()
@@ -705,9 +733,12 @@ impl RecursivePod for MainPod {
         let data: Data = serde_json::from_value(data)?;
         let common = cache_get_rec_main_pod_common_circuit_data(&params);
         let proof = deserialize_proof(&common, &data.proof)?;
+        let verifier_only = deserialize_verifier_only(&data.verifier_only)?;
         Ok(Box::new(Self {
             params,
             id,
+            verifier_only,
+            common_hash: data.common_hash,
             vd_set,
             proof,
             public_statements: data.public_statements,
@@ -1018,5 +1049,14 @@ pub mod tests {
         let proof = builder.prove(&prover).unwrap();
         let pod = (proof.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
         Ok(pod.verify()?)
+    }
+
+    #[test]
+    fn test_common() {
+        use pretty_assertions::assert_eq;
+        let params = Params::default();
+        let main_common = &*cache_get_rec_main_pod_common_circuit_data(&params);
+        let std_common = &*cache_get_standard_rec_main_pod_common_circuit_data();
+        assert_eq!(std_common.0, main_common.0);
     }
 }

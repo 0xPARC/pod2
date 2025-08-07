@@ -964,6 +964,9 @@ dyn_clone::clone_trait_object!(Pod);
 /// recursion: for example an introduction Pod in general is not recursive.
 pub trait RecursivePod: Pod {
     fn verifier_data(&self) -> VerifierOnlyCircuitData;
+    /// Return a hash of the CommonCircuitData that uniquely identifies the circuit
+    /// configuration and list of custom gates.
+    fn common_hash(&self) -> String;
     fn proof(&self) -> Proof;
     fn vd_set(&self) -> &VDSet;
 

@@ -18,12 +18,15 @@ use crate::{
             common::{Flattenable, StatementTarget},
             mainpod::{calculate_id_circuit, PI_OFFSET_ID},
         },
-        deserialize_proof,
+        deserialize_proof, deserialize_verifier_only,
         error::{Error, Result},
+        hash_common_data,
         mainpod::{self, calculate_id},
         recursion::pad_circuit,
-        serialization::{CircuitDataSerializer, VerifierCircuitDataSerializer},
-        serialize_proof,
+        serialization::{
+            CircuitDataSerializer, VerifierCircuitDataSerializer, VerifierOnlyCircuitDataSerializer,
+        },
+        serialize_proof, serialize_verifier_only,
     },
     cache::{self, CacheEntry},
     middleware::{
@@ -73,6 +76,8 @@ impl EmptyPodVerifyTarget {
 pub struct EmptyPod {
     params: Params,
     id: PodId,
+    verifier_only: VerifierOnlyCircuitDataSerializer,
+    common_hash: String,
     vd_set: VDSet,
     proof: Proof,
 }
@@ -119,17 +124,19 @@ fn build() -> Result<(EmptyPodVerifyTarget, CircuitData)> {
 }
 
 impl EmptyPod {
-    pub fn new(params: &Params, vd_set: VDSet) -> Result<EmptyPod> {
-        let standard_empty_pod_data = cache_get_standard_empty_pod_circuit_data();
-        let (empty_pod_verify_target, data) = &*standard_empty_pod_data;
+    fn new(params: &Params, vd_set: VDSet) -> Result<EmptyPod> {
+        let (empty_pod_verify_target, data) = &*cache_get_standard_empty_pod_circuit_data();
 
         let mut pw = PartialWitness::<F>::new();
         empty_pod_verify_target.set_targets(&mut pw, vd_set.root())?;
         let proof = timed!("EmptyPod prove", data.prove(pw)?);
         let id = &proof.public_inputs[PI_OFFSET_ID..PI_OFFSET_ID + HASH_SIZE];
         let id = PodId(Hash([id[0], id[1], id[2], id[3]]));
+        let common_hash = hash_common_data(&data.common).expect("hash ok");
         Ok(EmptyPod {
             params: params.clone(),
+            verifier_only: VerifierOnlyCircuitDataSerializer(data.verifier_only.clone()),
+            common_hash,
             id,
             vd_set,
             proof: proof.proof,
@@ -152,6 +159,8 @@ impl EmptyPod {
 #[derive(Serialize, Deserialize)]
 struct Data {
     proof: String,
+    verifier_only: String,
+    common_hash: String,
 }
 
 impl Pod for EmptyPod {
@@ -199,6 +208,8 @@ impl Pod for EmptyPod {
     fn serialize_data(&self) -> serde_json::Value {
         serde_json::to_value(Data {
             proof: serialize_proof(&self.proof),
+            verifier_only: serialize_verifier_only(&self.verifier_only),
+            common_hash: self.common_hash.clone(),
         })
         .expect("serialization to json")
     }
@@ -206,11 +217,10 @@ impl Pod for EmptyPod {
 
 impl RecursivePod for EmptyPod {
     fn verifier_data(&self) -> VerifierOnlyCircuitData {
-        let standard_empty_pod_verifier_circuit_data =
-            cache_get_standard_empty_pod_verifier_circuit_data();
-        standard_empty_pod_verifier_circuit_data
-            .verifier_only
-            .clone()
+        self.verifier_only.0.clone()
+    }
+    fn common_hash(&self) -> String {
+        self.common_hash.clone()
     }
     fn proof(&self) -> Proof {
         self.proof.clone()
@@ -227,9 +237,12 @@ impl RecursivePod for EmptyPod {
         let data: Data = serde_json::from_value(data)?;
         let common_circuit_data = cache_get_standard_rec_main_pod_common_circuit_data();
         let proof = deserialize_proof(&common_circuit_data, &data.proof)?;
+        let verifier_only = deserialize_verifier_only(&data.verifier_only)?;
         Ok(Box::new(Self {
             params,
             id,
+            verifier_only: VerifierOnlyCircuitDataSerializer(verifier_only),
+            common_hash: data.common_hash,
             vd_set,
             proof,
         }))

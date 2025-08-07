@@ -73,6 +73,9 @@ impl RecursivePod for MockEmptyPod {
     fn verifier_data(&self) -> VerifierOnlyCircuitData {
         panic!("MockEmptyPod can't be verified in a recursive MainPod circuit");
     }
+    fn common_hash(&self) -> String {
+        panic!("MockEmptyPod can't be verified in a recursive MainPod circuit");
+    }
     fn proof(&self) -> Proof {
         panic!("MockEmptyPod can't be verified in a recursive MainPod circuit");
     }
