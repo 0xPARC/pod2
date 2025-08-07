@@ -180,6 +180,6 @@ pub fn hash_common_data(common: &CommonCircuitData) -> serde_json::Result<String
     let json = serde_json::to_string(&data)?;
     let json_hash = Sha256::digest(&json);
     let json_hash_str_long = format!("{:x}", json_hash);
-    let json_hash_str = format!("{}", &json_hash_str_long[..32]);
+    let json_hash_str = json_hash_str_long[..32].to_string();
     Ok(json_hash_str)
 }

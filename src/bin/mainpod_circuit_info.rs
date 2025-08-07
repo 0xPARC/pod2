@@ -31,7 +31,7 @@ fn main() -> anyhow::Result<()> {
             let params_json = serde_json::to_string(&params)?;
             let params_json_hash = Sha256::digest(&params_json);
             let params_json_hash_str_long = format!("{params_json_hash:x}");
-            let params_json_hash_str = format!("{}", &params_json_hash_str_long[..32]);
+            let params_json_hash_str = params_json_hash_str_long[..32].to_string();
 
             let vd = &*cache_get_rec_main_pod_verifier_circuit_data(&params);
             let info = Info {

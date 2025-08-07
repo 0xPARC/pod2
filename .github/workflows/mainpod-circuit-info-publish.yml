@@ -52,4 +52,5 @@ jobs:
           mkdir -p params
           echo "$params" > params/${params_hash}.json
           echo "$table_entry" >> MainPod-circuit-info.md
+          git add .
           git diff-index --quiet HEAD || git commit -m "action: update MainPod-circuit-info" && git push
