@@ -483,7 +483,7 @@ impl PodProver for Prover {
         // get the id out of the public statements
         let id: PodId = PodId(calculate_id(&public_statements, params));
 
-        let common_hash: String = cache_get_rec_main_pod_common_hash(&params).clone();
+        let common_hash: String = cache_get_rec_main_pod_common_hash(params).clone();
         let proofs = inputs
             .recursive_pods
             .iter()
@@ -614,7 +614,7 @@ pub fn cache_get_rec_main_pod_common_circuit_data(
 
 pub fn cache_get_rec_main_pod_common_hash(params: &Params) -> CacheEntry<String> {
     cache::get("rec_main_pod_common_hash", params, |params| {
-        let common = &*cache_get_rec_main_pod_common_circuit_data(&params);
+        let common = &*cache_get_rec_main_pod_common_circuit_data(params);
         hash_common_data(common).expect("hash ok")
     })
     .expect("cache ok")

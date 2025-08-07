@@ -114,7 +114,7 @@ pub fn serialize_proof(proof: &Proof) -> String {
 fn rand_vec(rng: &mut impl RngCore, len: usize) -> Vec<F> {
     iter::repeat_with(|| rng.next_u64())
         .filter(|v| *v < F::ORDER)
-        .map(|v| F::from_canonical_u64(v))
+        .map(F::from_canonical_u64)
         .take(len)
         .collect()
 }
@@ -135,11 +135,11 @@ fn gate_fingerprints(common: &CommonCircuitData) -> Vec<(String, F)> {
     let r = rand_vec(&mut rng, 1)[0];
     let local_constants: Vec<Ext> = rand_vec(&mut rng, config.num_constants)
         .into_iter()
-        .map(|v| Ext::from(v))
+        .map(Ext::from)
         .collect();
     let local_wires: Vec<Ext> = rand_vec(&mut rng, config.num_wires)
         .into_iter()
-        .map(|v| Ext::from(v))
+        .map(Ext::from)
         .collect();
     let public_inputs_hash = HashOut::from_vec(rand_vec(&mut rng, 4));
     let vars = EvaluationVars {
@@ -151,7 +151,7 @@ fn gate_fingerprints(common: &CommonCircuitData) -> Vec<(String, F)> {
     for gate in &common.gates {
         let eval: Vec<F> = gate
             .0
-            .eval_unfiltered(vars.clone())
+            .eval_unfiltered(vars)
             .into_iter()
             .map(|e| e.0[0])
             .collect();
@@ -171,7 +171,7 @@ pub fn hash_common_data(common: &CommonCircuitData) -> serde_json::Result<String
     let bytes = common
         .to_bytes(&gate_serializer)
         .map_err(ser::Error::custom)?;
-    let gate_fingerprints = gate_fingerprints(&common);
+    let gate_fingerprints = gate_fingerprints(common);
     let data = CommonFingerprintData {
         common: serialize_bytes(&bytes),
         gate_fingerprints,

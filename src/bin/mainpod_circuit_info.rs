@@ -9,7 +9,6 @@ use pod2::{
     middleware::{Hash, Params},
 };
 use serde::Serialize;
-use serde_json;
 use sha2::{Digest, Sha256};
 
 #[derive(Serialize)]
@@ -26,12 +25,12 @@ fn main() -> anyhow::Result<()> {
     match args.get(1).map(|s| s.as_str()) {
         Some("params") => {
             let params_json = serde_json::to_string_pretty(&params)?;
-            println!("{}", params_json);
+            println!("{params_json}");
         }
         Some("circuit-info") => {
             let params_json = serde_json::to_string(&params)?;
             let params_json_hash = Sha256::digest(&params_json);
-            let params_json_hash_str_long = format!("{:x}", params_json_hash);
+            let params_json_hash_str_long = format!("{params_json_hash:x}");
             let params_json_hash_str = format!("{}", &params_json_hash_str_long[..32]);
 
             let vd = &*cache_get_rec_main_pod_verifier_circuit_data(&params);
@@ -41,7 +40,7 @@ fn main() -> anyhow::Result<()> {
                 common_hash: hash_common_data(&vd.common)?,
             };
             let json = serde_json::to_string_pretty(&info)?;
-            println!("{}", json);
+            println!("{json}");
         }
         _ => {
             return Err(anyhow!(
