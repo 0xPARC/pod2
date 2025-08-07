@@ -2,10 +2,6 @@
 name: Publish MainPod circuit info
 
 on:
-  # TODO: Uncomment before merging
-  pull_request:
-    branches: [ main ]
-    types: [ready_for_review, opened, synchronize, reopened]
   push:
     branches: ["main"]
 
@@ -21,7 +17,7 @@ permissions:
 
 jobs:
   wiki:
-    name: Update MainPod circuit info to GitHub Wiki
+    name: Update Wiki with new MainPod circuit info
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -35,6 +31,9 @@ jobs:
         with:
           repository: ${{github.repository}}.wiki
           path: ${{github.repository}}.wiki
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - name: Push to wiki
         run: |
