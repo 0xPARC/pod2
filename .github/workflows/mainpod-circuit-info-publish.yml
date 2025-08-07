@@ -44,7 +44,7 @@ jobs:
           table_entry=$(.github/workflows/scripts/mainpod-circuit-info-table.sh)
           params=$(.github/workflows/scripts/mainpod-circuit-info.sh params)
           data=$(.github/workflows/scripts/mainpod-circuit-info.sh circuit-info)
-          params_hash=$(echo "${data}" | jq .params_hash)
+          params_hash=$(echo "${data}" | jq --raw-output .params_hash)
 
           cd $GITHUB_WORKSPACE/${{github.repository}}.wiki
           git config --local user.email "action@github.com"
