@@ -5,7 +5,7 @@ set -e
 # Generate the markdown table entry of the MainPod circuit information
 
 scripts_dir=$(dirname "$0")
-data=$(./${scripts_dir}/mainpod-circuit-info.sh circuit-data)
+data=$(./${scripts_dir}/mainpod-circuit-info.sh circuit-info)
 date=$(date --utc --iso-8601=minutes)
 commit=$(git rev-parse HEAD)
 params_hash=$(echo "$data" | jq --raw-output .params_hash)
