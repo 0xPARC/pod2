@@ -52,9 +52,7 @@ pub enum NativePredicate {
     DictDelete = 1011,
     SetInsert = 1012,
     SetDelete = 1013,
-    ArrayPush = 1014,
-    ArrayUpdate = 1015,
-    ArrayPop = 1016,
+    ArrayUpdate = 1014,
 }
 
 impl Display for NativePredicate {
@@ -88,9 +86,7 @@ impl Display for NativePredicate {
             NativePredicate::DictDelete => "DictDelete",
             NativePredicate::SetInsert => "SetInsert",
             NativePredicate::SetDelete => "SetDelete",
-            NativePredicate::ArrayPush => "ArrayPush",
             NativePredicate::ArrayUpdate => "ArrayUpdate",
-            NativePredicate::ArrayPop => "ArrayPop",
         };
         write!(f, "{}", s)
     }

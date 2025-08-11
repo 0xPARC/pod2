@@ -221,7 +221,5 @@ impl Operation {
     op_impl_oa!(dict_delete, DictDeleteFromEntries, 3);
     op_impl_oa!(set_insert, SetInsertFromEntries, 3);
     op_impl_oa!(set_delete, SetDeleteFromEntries, 3);
-    op_impl_oa!(array_push, ArrayPushFromEntries, 3);
     op_impl_oa!(array_update, ArrayUpdateFromEntries, 4);
-    op_impl_oa!(array_pop, ArrayPopFromEntries, 3);
 }

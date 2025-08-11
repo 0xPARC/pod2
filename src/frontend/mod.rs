@@ -10,8 +10,7 @@ pub use serialization::{SerializedMainPod, SerializedSignedPod};
 use crate::middleware::{
     self, check_custom_pred, check_st_tmpl, hash_op, hash_str, max_op, prod_op, sum_op,
     AnchoredKey, Key, MainPodInputs, NativeOperation, OperationAux, OperationType, Params, PodId,
-    PodProver, PodSigner, Statement, StatementArg, TypedValue, VDSet, Value, ValueRef, KEY_TYPE,
-    SELF,
+    PodProver, PodSigner, Statement, StatementArg, VDSet, Value, ValueRef, KEY_TYPE, SELF,
 };
 
 mod custom;
@@ -286,7 +285,6 @@ impl MainPodBuilder {
                     )
                 })
             }
-            Native(ArrayPushFromEntries) => (op.1.len() == 3).then_some(op).ok_or(vec![]),
             Native(ArrayUpdateFromEntries) => {
                 <[_; 4]>::try_from(op.1).map(|[new_arr, old_arr, i, value]| {
                     Operation(
@@ -296,44 +294,10 @@ impl MainPodBuilder {
                     )
                 })
             }
-            Native(ArrayPopFromEntries) => (op.1.len() == 2).then_some(op).ok_or(vec![]),
             _ => Ok(op),
         }
         .map_err(|_| {
             Error::op_invalid_args(format!("Invalid arg count in operation {:?}", op_type))
-        })
-        .and_then(|op| match op.0 {
-            Native(ArrayPushFromEntries) | Native(ArrayPopFromEntries) => {
-                let old_arr = op.1[1].clone();
-                let i = match old_arr
-                    .value()
-                    .ok_or(Error::op_invalid_args(format!(
-                        "Invalid argument to operation {:?}",
-                        op_type
-                    )))?
-                    .typed()
-                {
-                    TypedValue::Array(a) => Ok(a.len()),
-                    _ => Err(Error::custom(format!(
-                        "Container argument to operation {:?} must be an array.",
-                        op_type
-                    ))),
-                }? as i64;
-                if let Native(ArrayPushFromEntries) = op_type {
-                    Ok(Operation(
-                        Native(ContainerInsertFromEntries),
-                        vec![op.1[0].clone(), op.1[1].clone(), i.into(), op.1[2].clone()],
-                        op.2,
-                    ))
-                } else {
-                    Ok(Operation(
-                        Native(ContainerDeleteFromEntries),
-                        vec![op.1[0].clone(), op.1[1].clone(), (i - 1).into()],
-                        op.2,
-                    ))
-                }
-            }
-            _ => Ok(op),
         })
     }
 
@@ -398,12 +362,12 @@ impl MainPodBuilder {
                         )));
                 let proof = match op_type {
                     Native(ContainerInsertFromEntries) => {
-                        old_container.insertion_proof(key, value?)?
+                        old_container.prove_insertion(key, value?)?
                     }
                     Native(ContainerUpdateFromEntries) => {
-                        old_container.update_proof(key, value?)?
+                        old_container.prove_update(key, value?)?
                     }
-                    _ => old_container.deletion_proof(key)?,
+                    _ => old_container.prove_deletion(key)?,
                 };
                 Ok(Operation(
                     op_type.clone(),
@@ -1261,48 +1225,17 @@ pub mod tests {
         let vd_set = &*MOCK_VD_SET;
         let mut builder = MainPodBuilder::new(&params, vd_set);
 
-        let empty_array = Array::new(params.max_depth_mt_containers, [].into())?;
-
-        let mut array1 = empty_array.clone();
-        array1.push(&1.into())?;
+        let array1 = Array::new(params.max_depth_mt_containers, [1.into()].into())?;
 
         let mut array2 = array1.clone();
-        array2.pop()?;
-
-        let mut array3 = array1.clone();
-        array3.update(0, &5.into())?;
-
-        assert_eq!(array2, empty_array);
-
-        builder.pub_op(Operation(
-            // OperationType
-            OperationType::Native(NativeOperation::ArrayPushFromEntries),
-            // Vec<OperationArg>
-            vec![
-                Value::from(array1.clone()).into(),
-                Value::from(empty_array.clone()).into(),
-                1.into(),
-            ],
-            OperationAux::None,
-        ))?;
-
-        builder.pub_op(Operation(
-            // OperationType
-            OperationType::Native(NativeOperation::ArrayPopFromEntries),
-            // Vec<OperationArg>
-            vec![
-                Value::from(empty_array.clone()).into(),
-                Value::from(array1.clone()).into(),
-            ],
-            OperationAux::None,
-        ))?;
+        array2.update(0, &5.into())?;
 
         builder.pub_op(Operation(
             // OperationType
             OperationType::Native(NativeOperation::ArrayUpdateFromEntries),
             // Vec<OperationArg>
             vec![
-                Value::from(array3.clone()).into(),
+                Value::from(array2.clone()).into(),
                 Value::from(array1.clone()).into(),
                 0.into(),
                 5.into(),

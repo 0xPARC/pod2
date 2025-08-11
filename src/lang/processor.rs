@@ -374,8 +374,7 @@ fn validate_and_build_statement_template(
                 | NativePredicate::DictNotContains
                 | NativePredicate::SetNotContains
                 | NativePredicate::NotContains
-                | NativePredicate::PublicKeyOf
-                | NativePredicate::ArrayPop => 2,
+                | NativePredicate::PublicKeyOf => 2,
                 NativePredicate::Contains
                 | NativePredicate::ArrayContains
                 | NativePredicate::DictContains
@@ -386,8 +385,7 @@ fn validate_and_build_statement_template(
                 | NativePredicate::ContainerDelete
                 | NativePredicate::DictDelete
                 | NativePredicate::SetInsert
-                | NativePredicate::SetDelete
-                | NativePredicate::ArrayPush => 3,
+                | NativePredicate::SetDelete => 3,
                 NativePredicate::ContainerInsert
                 | NativePredicate::ContainerUpdate
                 | NativePredicate::DictInsert

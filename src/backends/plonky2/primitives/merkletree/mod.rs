@@ -562,6 +562,7 @@ pub struct MerkleTreeStateTransitionProof {
 }
 
 impl MerkleTreeStateTransitionProof {
+    /// Value used for padding.
     pub fn empty() -> Self {
         let empty_proof_and_claim = MerkleClaimAndProof::empty();
         Self {

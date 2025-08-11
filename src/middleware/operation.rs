@@ -104,9 +104,7 @@ pub enum NativeOperation {
     DictDeleteFromEntries = 1011,
     SetInsertFromEntries = 1012,
     SetDeleteFromEntries = 1013,
-    ArrayPushFromEntries = 1014,
-    ArrayUpdateFromEntries = 1015,
-    ArrayPopFromEntries = 1016,
+    ArrayUpdateFromEntries = 1014,
 }
 
 impl NativeOperation {
@@ -212,13 +210,13 @@ pub enum Operation {
         /* old_root */ Statement,
         /*  key    */ Statement,
         /*  value  */ Statement,
-        /*  proot  */ MerkleTreeStateTransitionProof,
+        /*  proof  */ MerkleTreeStateTransitionProof,
     ),
     ContainerDeleteFromEntries(
         /* new_root */ Statement,
         /* old_root */ Statement,
         /*  key    */ Statement,
-        /*  proot  */ MerkleTreeStateTransitionProof,
+        /*  proof  */ MerkleTreeStateTransitionProof,
     ),
     Custom(CustomPredicateRef, Vec<Statement>),
 }

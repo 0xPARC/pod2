@@ -537,14 +537,13 @@ impl Value {
     }
     /// Returns a Merkle state transition proof for inserting a
     /// key-value pair (if applicable).
-    pub(crate) fn insertion_proof(
+    pub(crate) fn prove_insertion(
         &self,
         key: &Value,
         value: &Value,
     ) -> Result<MerkleTreeStateTransitionProof> {
         let container = self.typed().clone();
         match container {
-            TypedValue::Array(mut a) => a.push(value),
             TypedValue::Dictionary(mut d) => d.insert(&key.typed().clone().try_into()?, value),
             TypedValue::Set(mut s) => s.insert(value),
             _ => Err(Error::custom(format!(
@@ -555,7 +554,7 @@ impl Value {
     }
     /// Returns a Merkle state transition proof for updating a
     /// key-value pair (if applicable).
-    pub(crate) fn update_proof(
+    pub(crate) fn prove_update(
         &self,
         key: &Value,
         value: &Value,
@@ -578,10 +577,9 @@ impl Value {
     }
     /// Returns a Merkle state transition proof for deleting a
     /// key (if applicable).
-    pub(crate) fn deletion_proof(&self, key: &Value) -> Result<MerkleTreeStateTransitionProof> {
+    pub(crate) fn prove_deletion(&self, key: &Value) -> Result<MerkleTreeStateTransitionProof> {
         let container = self.typed().clone();
         match container {
-            TypedValue::Array(mut a) => a.pop(),
             TypedValue::Dictionary(mut d) => d.delete(&key.typed().clone().try_into()?),
             TypedValue::Set(mut s) => s.delete(key),
             _ => Err(Error::custom(format!(

@@ -275,12 +275,6 @@ impl Array {
     pub fn commitment(&self) -> Hash {
         self.mt.root()
     }
-    pub fn len(&self) -> usize {
-        self.array.len()
-    }
-    pub fn is_empty(&self) -> bool {
-        self.array.is_empty()
-    }
     pub fn get(&self, i: usize) -> Result<&Value> {
         self.array.get(i).ok_or_else(|| {
             Error::custom(format!("index {} out of bounds 0..{}", i, self.array.len()))
@@ -290,18 +284,6 @@ impl Array {
         let (_, mtp) = self.mt.prove(&RawValue::from(i as i64))?;
         let value = self.array.get(i).expect("valid index");
         Ok((value, mtp))
-    }
-    pub fn push(&mut self, value: &Value) -> Result<MerkleTreeStateTransitionProof> {
-        let i = self.array.len();
-        let mtp = self.mt.insert(&(i as i64).into(), &value.raw())?;
-        self.array.push(value.clone());
-        Ok(mtp)
-    }
-    pub fn pop(&mut self) -> Result<MerkleTreeStateTransitionProof> {
-        let i = self.array.len() - 1;
-        let mtp = self.mt.delete(&(i as i64).into())?;
-        self.array.pop();
-        Ok(mtp)
     }
     pub fn update(&mut self, i: usize, value: &Value) -> Result<MerkleTreeStateTransitionProof> {
         let mtp = self.mt.update(&(i as i64).into(), &value.raw())?;

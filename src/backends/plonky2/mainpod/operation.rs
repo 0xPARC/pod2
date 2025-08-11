@@ -34,8 +34,8 @@ impl OperationArg {
 pub enum OperationAux {
     None,
     MerkleProofIndex(usize),
-    MerkleTreeStateTransitionProofIndex(usize),
     PublicKeyOfIndex(usize),
+    MerkleTreeStateTransitionProofIndex(usize),
     CustomPredVerifyIndex(usize),
 }
 
