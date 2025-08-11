@@ -374,14 +374,25 @@ fn validate_and_build_statement_template(
                 | NativePredicate::DictNotContains
                 | NativePredicate::SetNotContains
                 | NativePredicate::NotContains
-                | NativePredicate::PublicKeyOf => 2,
+                | NativePredicate::PublicKeyOf
+                | NativePredicate::ArrayPop => 2,
                 NativePredicate::Contains
                 | NativePredicate::ArrayContains
                 | NativePredicate::DictContains
                 | NativePredicate::SumOf
                 | NativePredicate::ProductOf
                 | NativePredicate::MaxOf
-                | NativePredicate::HashOf => 3,
+                | NativePredicate::HashOf
+                | NativePredicate::ContainerDelete
+                | NativePredicate::DictDelete
+                | NativePredicate::SetInsert
+                | NativePredicate::SetDelete
+                | NativePredicate::ArrayPush => 3,
+                NativePredicate::ContainerInsert
+                | NativePredicate::ContainerUpdate
+                | NativePredicate::DictInsert
+                | NativePredicate::DictUpdate
+                | NativePredicate::ArrayUpdate => 4,
                 NativePredicate::None | NativePredicate::False => 0,
             };
 

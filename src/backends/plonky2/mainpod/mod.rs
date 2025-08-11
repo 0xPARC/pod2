@@ -18,7 +18,10 @@ use crate::{
         emptypod::EmptyPod,
         error::{Error, Result},
         mock::emptypod::MockEmptyPod,
-        primitives::{ec::schnorr::SecretKey, merkletree::MerkleClaimAndProof},
+        primitives::{
+            ec::schnorr::SecretKey,
+            merkletree::{MerkleClaimAndProof, MerkleTreeStateTransitionProof},
+        },
         recursion::{
             hash_verifier_data, prove_rec_circuit, RecursiveCircuit, RecursiveCircuitTarget,
         },
@@ -163,6 +166,33 @@ pub(crate) fn extract_merkle_proofs(
         ));
     }
     if table.len() > params.max_merkle_proofs_containers {
+        return Err(Error::custom(format!(
+            "The number of required Merkle proofs ({}) exceeds the maximum number ({}).",
+            table.len(),
+            params.max_merkle_proofs_containers
+        )));
+    }
+    Ok(table)
+}
+
+/// Extracts Merkle state transition proofs from container update ops.
+pub(crate) fn extract_merkle_tree_state_transition_proofs(
+    params: &Params,
+    aux_list: &mut [OperationAux],
+    operations: &[middleware::Operation],
+) -> Result<Vec<MerkleTreeStateTransitionProof>> {
+    let mut table = Vec::new();
+    for (i, op) in operations.iter().enumerate() {
+        let pf = match op {
+            middleware::Operation::ContainerInsertFromEntries(_, _, _, _, pf)
+            | middleware::Operation::ContainerUpdateFromEntries(_, _, _, _, pf)
+            | middleware::Operation::ContainerDeleteFromEntries(_, _, _, pf) => pf.clone(),
+            _ => continue,
+        };
+        aux_list[i] = OperationAux::MerkleTreeStateTransitionProofIndex(table.len());
+        table.push(pf);
+    }
+    if table.len() > params.max_merkle_tree_state_transition_proofs_containers {
         return Err(Error::custom(format!(
             "The number of required Merkle proofs ({}) exceeds the maximum number ({}).",
             table.len(),
@@ -470,6 +500,9 @@ impl PodProver for Prover {
         let public_key_of_sks =
             extract_public_key_of(params, &mut aux_list, inputs.operations, inputs.statements)?;
 
+        let merkle_tree_state_transition_proofs =
+            extract_merkle_tree_state_transition_proofs(params, &mut aux_list, inputs.operations)?;
+
         let (statements, public_statements) = layout_statements(params, false, &inputs)?;
         let operations = process_private_statements_operations(
             params,
@@ -510,6 +543,7 @@ impl PodProver for Prover {
             operations,
             merkle_proofs,
             public_key_of_sks,
+            merkle_tree_state_transition_proofs,
             custom_predicate_batches,
             custom_predicate_verifications,
         };
@@ -881,14 +915,15 @@ pub mod tests {
             max_signed_pod_values: 2,
             max_public_statements: 2,
             num_public_statements_id: 4,
-            max_statement_args: 3,
-            max_operation_args: 3,
+            max_statement_args: 4,
+            max_operation_args: 4,
             max_custom_predicate_batches: 2,
             max_custom_predicate_verifications: 2,
             max_custom_predicate_arity: 2,
             max_custom_predicate_wildcards: 3,
             max_custom_batch_size: 2,
             max_merkle_proofs_containers: 2,
+            max_merkle_tree_state_transition_proofs_containers: 2,
             max_public_key_of: 2,
             max_depth_mt_containers: 4,
             max_depth_mt_vds: 6,
@@ -948,13 +983,14 @@ pub mod tests {
             max_input_recursive_pods: 0,
             max_statements: 9,
             max_public_statements: 4,
-            max_statement_args: 3,
-            max_operation_args: 3,
+            max_statement_args: 4,
+            max_operation_args: 4,
             max_custom_predicate_arity: 3,
             max_custom_batch_size: 3,
             max_custom_predicate_wildcards: 4,
             max_custom_predicate_verifications: 2,
             max_merkle_proofs_containers: 0,
+            max_merkle_tree_state_transition_proofs_containers: 0,
             ..Default::default()
         };
         println!("{:#?}", params);

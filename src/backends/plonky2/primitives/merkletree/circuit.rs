@@ -399,6 +399,7 @@ fn kv_hash_target(
 /// has been done correctly for the given new_key. This will allow verifying
 /// correct new leaf insertion, and leaf edition&deletion (if needed).
 /// See `MerkleTreeStateTransitionProof` struct for an explanation of the fields.
+#[derive(Clone, Serialize, Deserialize)]
 pub struct MerkleTreeStateTransitionProofTarget {
     pub(crate) max_depth: usize,
     // `enabled` determines if the merkleproof state transition verification is enabled

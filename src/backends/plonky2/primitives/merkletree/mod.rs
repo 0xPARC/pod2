@@ -344,6 +344,17 @@ impl MerkleTree {
                 // 2) at i==d, if old_siblings[i] != new_siblings[i]:
                 //     old_siblings[i] == EMPTY_HASH
                 //     new_siblings[i] == old_leaf_hash
+
+                // First rule out the case of insertion into empty tree.
+                if new_siblings.is_empty() {
+                    return (old_siblings.is_empty() && proof.old_root == EMPTY_HASH)
+                        .then_some(())
+                        .ok_or(TreeError::state_transition_fail(
+                            "new tree has no siblings yet old tree is not the empty tree"
+                                .to_string(),
+                        ));
+                }
+
                 let d = new_siblings.len() - 1;
                 old_siblings.resize(d + 1, EMPTY_HASH);
                 for i in 0..d {
@@ -548,6 +559,22 @@ pub struct MerkleTreeStateTransitionProof {
     /// Update: siblings of updated (op_key, op_value) leading to new_root
     /// Delete: siblings of deleted (op_key, op_value) leading to old_root
     pub(crate) siblings: Vec<Hash>,
+}
+
+impl MerkleTreeStateTransitionProof {
+    pub fn empty() -> Self {
+        let empty_proof_and_claim = MerkleClaimAndProof::empty();
+        Self {
+            op: MerkleTreeOp::Insert,
+            old_root: empty_proof_and_claim.root,
+            op_proof: empty_proof_and_claim.proof,
+            new_root: empty_proof_and_claim.root,
+            op_key: empty_proof_and_claim.key,
+            op_value: empty_proof_and_claim.value,
+            value: None,
+            siblings: vec![],
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

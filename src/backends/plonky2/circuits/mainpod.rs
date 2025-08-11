@@ -23,9 +23,10 @@ use crate::{
             common::{
                 CircuitBuilderPod, CustomPredicateBatchTarget, CustomPredicateEntryTarget,
                 CustomPredicateTarget, CustomPredicateVerifyEntryTarget,
-                CustomPredicateVerifyQueryTarget, Flattenable, MerkleClaimTarget, OperationTarget,
-                OperationTypeTarget, PredicateTarget, StatementArgTarget, StatementTarget,
-                StatementTmplArgTarget, StatementTmplTarget, ValueTarget,
+                CustomPredicateVerifyQueryTarget, Flattenable, MerkleClaimTarget,
+                MerkleTreeStateTransitionClaimTarget, OperationTarget, OperationTypeTarget,
+                PredicateTarget, StatementArgTarget, StatementTarget, StatementTmplArgTarget,
+                StatementTmplTarget, ValueTarget,
             },
             hash::{hash_from_state_circuit, precompute_hash_state},
             mux_table::{MuxTableTarget, TableEntryTarget},
@@ -41,7 +42,9 @@ use crate::{
                 schnorr::SecretKey,
             },
             merkletree::{
-                verify_merkle_proof_circuit, MerkleClaimAndProof, MerkleClaimAndProofTarget,
+                verify_merkle_proof_circuit, verify_merkle_state_transition_circuit,
+                MerkleClaimAndProof, MerkleClaimAndProofTarget, MerkleTreeOp,
+                MerkleTreeStateTransitionProof, MerkleTreeStateTransitionProofTarget,
             },
         },
         recursion::{InnerCircuit, VerifiedProofTarget},
@@ -65,7 +68,7 @@ pub const PI_OFFSET_VDSROOT: usize = 4;
 
 pub const NUM_PUBLIC_INPUTS: usize = 8;
 
-const MAX_VALUE_ARGS: usize = 3;
+const MAX_VALUE_ARGS: usize = 4;
 
 struct StatementArgCache {
     rhs: ValueTarget,
@@ -99,8 +102,8 @@ impl StatementCache {
                 .map(|i| builder.vec_ref(params, prev_statements, i))
                 .collect::<Vec<_>>()
         };
-        assert!(params.max_operation_args >= 3);
-        assert!(params.max_statement_args >= 3);
+        assert!(params.max_operation_args >= MAX_VALUE_ARGS);
+        assert!(params.max_statement_args >= MAX_VALUE_ARGS);
         let equations = array::from_fn(|i| {
             let pred_is_none = op_args[i].has_native_type(builder, params, NativePredicate::None);
             let arg_is_value = builder.statement_arg_is_value(&st.args[i]);
@@ -189,13 +192,16 @@ enum OperationAuxTableTag {
     None = 0,
     MerkleProof = 1,
     PublicKeyOf = 2,
-    CustomPredVerify = 3,
+    MerkleTreeStateTransitionProof = 3,
+    CustomPredVerify = 4,
 }
 
 fn max_operation_aux_entry_len(params: &Params) -> usize {
     [
         (params.max_merkle_proofs_containers > 0).then(|| MerkleClaimTarget::size(params)),
         (params.max_public_key_of > 0).then(|| KeyPairTarget::size(params)),
+        (params.max_merkle_tree_state_transition_proofs_containers > 0)
+            .then(|| MerkleTreeStateTransitionClaimTarget::size(params)),
         (params.max_custom_predicate_verifications > 0)
             .then(|| CustomPredicateVerifyQueryTarget::size(params)),
     ]
@@ -236,6 +242,7 @@ fn build_operation_aux_table_circuit(
     builder: &mut CircuitBuilder,
     merkle_proofs: &[MerkleClaimAndProofTarget],
     public_key_of_sks: &[BigUInt320Target],
+    merkle_tree_state_transition_proofs: &[MerkleTreeStateTransitionProofTarget],
     custom_predicate_verifications: &[CustomPredicateVerifyEntryTarget],
     custom_predicate_table: &[HashOutTarget],
 ) -> Result<MuxTableTarget> {
@@ -283,6 +290,19 @@ fn build_operation_aux_table_circuit(
 
         table.push(builder, OperationAuxTableTag::PublicKeyOf as u32, &entry);
         measure_gates_end!(builder, measure);
+    }
+
+    // Merkle state transition proofs: verify op proof (insert/update/delete)
+    for merkle_tree_state_transition_proof in merkle_tree_state_transition_proofs {
+        verify_merkle_state_transition_circuit(builder, merkle_tree_state_transition_proof);
+        let entry =
+            MerkleTreeStateTransitionClaimTarget::from(merkle_tree_state_transition_proof.clone());
+
+        table.push(
+            builder,
+            OperationAuxTableTag::MerkleTreeStateTransitionProof as u32,
+            &entry,
+        );
     }
 
     // CustomPredVerify: verify custom predicate statements verification against operations
@@ -413,6 +433,34 @@ fn verify_operation_circuit(
                 &cache,
             ));
         }
+        if params.max_merkle_tree_state_transition_proofs_containers > 0 {
+            op_checks.extend_from_slice(&[
+                verify_merkle_insert_circuit(
+                    params,
+                    builder,
+                    st,
+                    &op.op_type,
+                    &resolved_aux,
+                    &cache,
+                ),
+                verify_merkle_update_circuit(
+                    params,
+                    builder,
+                    st,
+                    &op.op_type,
+                    &resolved_aux,
+                    &cache,
+                ),
+                verify_merkle_delete_circuit(
+                    params,
+                    builder,
+                    st,
+                    &op.op_type,
+                    &resolved_aux,
+                    &cache,
+                ),
+            ]);
+        }
         if params.max_custom_predicate_verifications > 0 {
             op_checks.push(verify_custom_circuit(
                 builder,
@@ -524,6 +572,224 @@ fn verify_not_contains_from_entries_circuit(
         params,
         NativePredicate::NotContains,
         &[arg1_expected, arg2_expected],
+    );
+    let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+
+    let ok = builder.all([op_code_ok, aux_tag_ok, arg_types_ok, merkle_proof_ok, st_ok]);
+    measure_gates_end!(builder, measure);
+    ok
+}
+
+fn verify_merkle_insert_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    st: &StatementTarget,
+    op_type: &OperationTypeTarget,
+    aux: &TableEntryTarget,
+    cache: &StatementCache,
+) -> BoolTarget {
+    let measure = measure_gates_begin!(builder, "MerkleInsertOp");
+    let (aux_tag_ok, resolved_merkle_tree_state_transition_claim) =
+        aux.as_type::<MerkleTreeStateTransitionClaimTarget>(
+            builder,
+            OperationAuxTableTag::MerkleTreeStateTransitionProof as u32,
+        );
+    let op_code_ok = op_type.has_native(builder, NativeOperation::ContainerInsertFromEntries);
+
+    let (arg_types_ok, [new_root_value, old_root_value, op_key_value, op_value_value]) =
+        cache.first_n_args_as_values();
+
+    let expected_merkle_op = builder.constant(F::from_canonical_u8(MerkleTreeOp::Insert as u8));
+
+    // Check Merkle proof (verified elsewhere) against op args.
+    let merkle_proof_checks = [
+        /* The supplied Merkle transition proof must be enabled. */
+        resolved_merkle_tree_state_transition_claim.enabled,
+        /* ...and it must be an insertion proof. */
+        builder.is_equal(
+            resolved_merkle_tree_state_transition_claim.op,
+            expected_merkle_op,
+        ),
+        /* ...for the root-key-value combination in the resolved op args. */
+        builder.is_equal_slice(
+            &old_root_value.elements,
+            &resolved_merkle_tree_state_transition_claim
+                .old_root
+                .elements,
+        ),
+        builder.is_equal_slice(
+            &new_root_value.elements,
+            &resolved_merkle_tree_state_transition_claim
+                .new_root
+                .elements,
+        ),
+        builder.is_equal_slice(
+            &op_key_value.elements,
+            &resolved_merkle_tree_state_transition_claim.op_key.elements,
+        ),
+        builder.is_equal_slice(
+            &op_value_value.elements,
+            &resolved_merkle_tree_state_transition_claim
+                .op_value
+                .elements,
+        ),
+    ];
+
+    let merkle_proof_ok = builder.all(merkle_proof_checks);
+
+    // Check output statement
+    let arg1_expected = cache.equations[0].lhs.clone();
+    let arg2_expected = cache.equations[1].lhs.clone();
+    let arg3_expected = cache.equations[2].lhs.clone();
+    let arg4_expected = cache.equations[3].lhs.clone();
+    let expected_statement = StatementTarget::new_native(
+        builder,
+        params,
+        NativePredicate::ContainerInsert,
+        &[arg1_expected, arg2_expected, arg3_expected, arg4_expected],
+    );
+    let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+
+    let ok = builder.all([op_code_ok, aux_tag_ok, arg_types_ok, merkle_proof_ok, st_ok]);
+    measure_gates_end!(builder, measure);
+    ok
+}
+
+fn verify_merkle_update_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    st: &StatementTarget,
+    op_type: &OperationTypeTarget,
+    aux: &TableEntryTarget,
+    cache: &StatementCache,
+) -> BoolTarget {
+    let measure = measure_gates_begin!(builder, "MerkleUpdateOp");
+    let (aux_tag_ok, resolved_merkle_tree_state_transition_claim) =
+        aux.as_type::<MerkleTreeStateTransitionClaimTarget>(
+            builder,
+            OperationAuxTableTag::MerkleTreeStateTransitionProof as u32,
+        );
+    let op_code_ok = op_type.has_native(builder, NativeOperation::ContainerUpdateFromEntries);
+
+    let (arg_types_ok, [new_root_value, old_root_value, op_key_value, op_value_value]) =
+        cache.first_n_args_as_values();
+
+    let expected_merkle_op = builder.constant(F::from_canonical_u8(MerkleTreeOp::Update as u8));
+
+    // Check Merkle proof (verified elsewhere) against op args.
+    let merkle_proof_checks = [
+        /* The supplied Merkle transition proof must be enabled. */
+        resolved_merkle_tree_state_transition_claim.enabled,
+        /* ...and it must be an update proof. */
+        builder.is_equal(
+            resolved_merkle_tree_state_transition_claim.op,
+            expected_merkle_op,
+        ),
+        /* ...for the root-key-value combination in the resolved op args. */
+        builder.is_equal_slice(
+            &old_root_value.elements,
+            &resolved_merkle_tree_state_transition_claim
+                .old_root
+                .elements,
+        ),
+        builder.is_equal_slice(
+            &new_root_value.elements,
+            &resolved_merkle_tree_state_transition_claim
+                .new_root
+                .elements,
+        ),
+        builder.is_equal_slice(
+            &op_key_value.elements,
+            &resolved_merkle_tree_state_transition_claim.op_key.elements,
+        ),
+        builder.is_equal_slice(
+            &op_value_value.elements,
+            &resolved_merkle_tree_state_transition_claim
+                .op_value
+                .elements,
+        ),
+    ];
+
+    let merkle_proof_ok = builder.all(merkle_proof_checks);
+
+    // Check output statement
+    let arg1_expected = cache.equations[0].lhs.clone();
+    let arg2_expected = cache.equations[1].lhs.clone();
+    let arg3_expected = cache.equations[2].lhs.clone();
+    let arg4_expected = cache.equations[3].lhs.clone();
+    let expected_statement = StatementTarget::new_native(
+        builder,
+        params,
+        NativePredicate::ContainerUpdate,
+        &[arg1_expected, arg2_expected, arg3_expected, arg4_expected],
+    );
+    let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+
+    let ok = builder.all([op_code_ok, aux_tag_ok, arg_types_ok, merkle_proof_ok, st_ok]);
+    measure_gates_end!(builder, measure);
+    ok
+}
+
+fn verify_merkle_delete_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    st: &StatementTarget,
+    op_type: &OperationTypeTarget,
+    aux: &TableEntryTarget,
+    cache: &StatementCache,
+) -> BoolTarget {
+    let measure = measure_gates_begin!(builder, "MerkleDeleteOp");
+    let (aux_tag_ok, resolved_merkle_tree_state_transition_claim) =
+        aux.as_type::<MerkleTreeStateTransitionClaimTarget>(
+            builder,
+            OperationAuxTableTag::MerkleTreeStateTransitionProof as u32,
+        );
+    let op_code_ok = op_type.has_native(builder, NativeOperation::ContainerDeleteFromEntries);
+
+    let (arg_types_ok, [new_root_value, old_root_value, op_key_value]) =
+        cache.first_n_args_as_values();
+
+    let expected_merkle_op = builder.constant(F::from_canonical_u8(MerkleTreeOp::Delete as u8));
+
+    // Check Merkle proof (verified elsewhere) against op args.
+    let merkle_proof_checks = [
+        /* The supplied Merkle transition proof must be enabled. */
+        resolved_merkle_tree_state_transition_claim.enabled,
+        /* ...and it must be a deletion proof. */
+        builder.is_equal(
+            resolved_merkle_tree_state_transition_claim.op,
+            expected_merkle_op,
+        ),
+        /* ...for the root-key combination in the resolved op args. */
+        builder.is_equal_slice(
+            &old_root_value.elements,
+            &resolved_merkle_tree_state_transition_claim
+                .old_root
+                .elements,
+        ),
+        builder.is_equal_slice(
+            &new_root_value.elements,
+            &resolved_merkle_tree_state_transition_claim
+                .new_root
+                .elements,
+        ),
+        builder.is_equal_slice(
+            &op_key_value.elements,
+            &resolved_merkle_tree_state_transition_claim.op_key.elements,
+        ),
+    ];
+
+    let merkle_proof_ok = builder.all(merkle_proof_checks);
+
+    // Check output statement
+    let arg1_expected = cache.equations[0].lhs.clone();
+    let arg2_expected = cache.equations[1].lhs.clone();
+    let arg3_expected = cache.equations[2].lhs.clone();
+    let expected_statement = StatementTarget::new_native(
+        builder,
+        params,
+        NativePredicate::ContainerDelete,
+        &[arg1_expected, arg2_expected, arg3_expected],
     );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
@@ -1117,9 +1383,9 @@ fn make_custom_statement_circuit(
         params.max_statement_args,
         custom_predicate.predicate.args_len,
     );
-    let st_args = (0..params.max_statement_args)
-        .map(|i| {
-            let v = builder.select_flattenable(params, lt_mask[i], &args[i], &arg_none);
+    let st_args = std::iter::zip(lt_mask, args)
+        .map(|(mask, arg)| {
+            let v = builder.select_flattenable(params, mask, arg, &arg_none);
             StatementArgTarget::wildcard_literal(builder, &v)
         })
         .collect();
@@ -1380,6 +1646,7 @@ fn verify_main_pod_circuit(
         builder,
         &main_pod.merkle_proofs,
         &main_pod.public_key_of_sks,
+        &main_pod.merkle_tree_state_transition_proofs,
         &main_pod.custom_predicate_verifications,
         &custom_predicate_table,
     )?;
@@ -1446,6 +1713,7 @@ pub struct MainPodVerifyTarget {
     operations: Vec<OperationTarget>,
     merkle_proofs: Vec<MerkleClaimAndProofTarget>,
     public_key_of_sks: Vec<BigUInt320Target>,
+    merkle_tree_state_transition_proofs: Vec<MerkleTreeStateTransitionProofTarget>,
     custom_predicate_batches: Vec<CustomPredicateBatchTarget>,
     custom_predicate_verifications: Vec<CustomPredicateVerifyEntryTarget>,
 }
@@ -1482,6 +1750,15 @@ impl MainPodVerifyTarget {
             public_key_of_sks: (0..params.max_public_key_of)
                 .map(|_| builder.add_virtual_biguint320_target())
                 .collect(),
+            merkle_tree_state_transition_proofs: (0..params
+                .max_merkle_tree_state_transition_proofs_containers)
+                .map(|_| {
+                    MerkleTreeStateTransitionProofTarget::new_virtual(
+                        params.max_depth_mt_containers,
+                        builder,
+                    )
+                })
+                .collect(),
             custom_predicate_batches: (0..params.max_custom_predicate_batches)
                 .map(|_| builder.add_virtual_custom_predicate_batch(params))
                 .collect(),
@@ -1511,6 +1788,7 @@ pub struct MainPodVerifyInput {
     pub operations: Vec<mainpod::Operation>,
     pub merkle_proofs: Vec<MerkleClaimAndProof>,
     pub public_key_of_sks: Vec<SecretKey>,
+    pub merkle_tree_state_transition_proofs: Vec<MerkleTreeStateTransitionProof>,
     pub custom_predicate_batches: Vec<Arc<CustomPredicateBatch>>,
     pub custom_predicate_verifications: Vec<CustomPredicateVerification>,
 }
@@ -1641,6 +1919,25 @@ impl InnerCircuit for MainPodVerifyTarget {
             pw.set_biguint320_target(&self.public_key_of_sks[i], &pad_sk)?;
         }
 
+        assert!(
+            input.merkle_tree_state_transition_proofs.len()
+                <= self
+                    .params
+                    .max_merkle_tree_state_transition_proofs_containers
+        );
+        for (i, mtp) in input.merkle_tree_state_transition_proofs.iter().enumerate() {
+            self.merkle_tree_state_transition_proofs[i].set_targets(pw, true, mtp)?;
+        }
+        // Padding
+        let pad_mtp = MerkleTreeStateTransitionProof::empty();
+        for i in input.merkle_tree_state_transition_proofs.len()
+            ..self
+                .params
+                .max_merkle_tree_state_transition_proofs_containers
+        {
+            self.merkle_tree_state_transition_proofs[i].set_targets(pw, false, &pad_mtp)?;
+        }
+
         assert!(input.custom_predicate_batches.len() <= self.params.max_custom_predicate_batches);
         for (i, cpb) in input.custom_predicate_batches.iter().enumerate() {
             self.custom_predicate_batches[i].set_targets(pw, &self.params, cpb)?;
@@ -1703,7 +2000,7 @@ mod tests {
             mainpod::{calculate_id, OperationArg, OperationAux},
             primitives::{
                 ec::schnorr::SecretKey,
-                merkletree::{MerkleClaimAndProof, MerkleTree},
+                merkletree::{MerkleClaimAndProof, MerkleTree, MerkleTreeStateTransitionProof},
             },
         },
         frontend::{self, literal, CustomPredicateBatchBuilder, StatementTmplBuilder},
@@ -1719,6 +2016,7 @@ mod tests {
         prev_statements: Vec<mainpod::Statement>,
         merkle_proofs: Vec<MerkleClaimAndProof>,
         secret_keys: Vec<SecretKey>,
+        merkle_tree_state_transition_proofs: Vec<MerkleTreeStateTransitionProof>,
     ) -> Result<()> {
         let params = Params {
             max_custom_predicate_batches: 0,
@@ -1749,11 +2047,23 @@ mod tests {
             .map(|sk| builder.constant_biguint320(&sk.0))
             .collect();
 
+        let merkle_tree_state_transition_proofs_target: Vec<_> =
+            merkle_tree_state_transition_proofs
+                .iter()
+                .map(|_| {
+                    MerkleTreeStateTransitionProofTarget::new_virtual(
+                        params.max_depth_mt_containers,
+                        &mut builder,
+                    )
+                })
+                .collect();
+
         let aux_table = build_operation_aux_table_circuit(
             &params,
             &mut builder,
             &merkle_proofs_target,
             &secret_keys_target,
+            &merkle_tree_state_transition_proofs_target,
             &[],
             &[],
         )?;
@@ -1780,6 +2090,17 @@ mod tests {
             merkle_proofs_target.iter().zip(merkle_proofs.iter())
         {
             merkle_proof_target.set_targets(&mut pw, true, merkle_proof)?
+        }
+        for (merkle_tree_state_transition_proof_target, merkle_tree_state_transition_proof) in
+            merkle_tree_state_transition_proofs_target
+                .iter()
+                .zip(merkle_tree_state_transition_proofs.iter())
+        {
+            merkle_tree_state_transition_proof_target.set_targets(
+                &mut pw,
+                true,
+                merkle_tree_state_transition_proof,
+            )?
         }
 
         // generate & verify proof
@@ -1927,7 +2248,7 @@ mod tests {
         .into_iter()
         .for_each(|(op, st)| {
             let check = std::panic::catch_unwind(|| {
-                operation_verify(st, op, prev_statements.to_vec(), vec![], vec![])
+                operation_verify(st, op, prev_statements.to_vec(), vec![], vec![], vec![])
             });
             match check {
                 Err(e) => {
@@ -1992,7 +2313,9 @@ mod tests {
         ]
         .into_iter()
         .for_each(|(op, st)| {
-            assert!(operation_verify(st, op, prev_statements.to_vec(), vec![], vec![]).is_err())
+            assert!(
+                operation_verify(st, op, prev_statements.to_vec(), vec![], vec![], vec![]).is_err()
+            )
         });
     }
 
@@ -2005,7 +2328,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![Statement::None.into()];
-        operation_verify(st, op, prev_statements, vec![], vec![])
+        operation_verify(st, op, prev_statements, vec![], vec![], vec![])
     }
 
     #[test]
@@ -2023,7 +2346,7 @@ mod tests {
             vec![],
             OperationAux::None,
         );
-        operation_verify(st1, op, prev_statements, vec![], vec![])
+        operation_verify(st1, op, prev_statements, vec![], vec![], vec![])
     }
 
     #[test]
@@ -2035,7 +2358,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![Statement::None.into()];
-        operation_verify(st, op, prev_statements, vec![], vec![])
+        operation_verify(st, op, prev_statements, vec![], vec![], vec![])
     }
 
     #[test]
@@ -2058,7 +2381,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2];
-        operation_verify(st, op, prev_statements, vec![], vec![])
+        operation_verify(st, op, prev_statements, vec![], vec![], vec![])
     }
 
     #[test]
@@ -2081,7 +2404,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2];
-        operation_verify(st, op, prev_statements, vec![], vec![])
+        operation_verify(st, op, prev_statements, vec![], vec![], vec![])
     }
 
     #[test]
@@ -2104,7 +2427,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2.clone()];
-        operation_verify(st, op, prev_statements, vec![], vec![])?;
+        operation_verify(st, op, prev_statements, vec![], vec![], vec![])?;
 
         // Also check negative < negative
         let st3: mainpod::Statement = Statement::equal(
@@ -2128,7 +2451,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st3.clone(), st4];
-        operation_verify(st, op, prev_statements, vec![], vec![])?;
+        operation_verify(st, op, prev_statements, vec![], vec![], vec![])?;
 
         // Also check negative < positive
         let st: mainpod::Statement = Statement::lt(
@@ -2142,7 +2465,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st3, st2];
-        operation_verify(st, op, prev_statements, vec![], vec![])
+        operation_verify(st, op, prev_statements, vec![], vec![], vec![])
     }
 
     #[test]
@@ -2165,7 +2488,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2.clone()];
-        operation_verify(st, op, prev_statements, vec![], vec![])?;
+        operation_verify(st, op, prev_statements, vec![], vec![], vec![])?;
 
         // Also check negative <= negative
         let st3: mainpod::Statement = Statement::equal(
@@ -2189,7 +2512,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st3.clone(), st4];
-        operation_verify(st, op, prev_statements, vec![], vec![])?;
+        operation_verify(st, op, prev_statements, vec![], vec![], vec![])?;
 
         // Also check negative <= positive
         let st: mainpod::Statement = Statement::lt_eq(
@@ -2203,7 +2526,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st3, st2];
-        operation_verify(st, op, prev_statements.clone(), vec![], vec![])?;
+        operation_verify(st, op, prev_statements.clone(), vec![], vec![], vec![])?;
 
         // Also check equality, both positive and negative.
         let st: mainpod::Statement = Statement::lt_eq(
@@ -2216,7 +2539,7 @@ mod tests {
             vec![OperationArg::Index(0), OperationArg::Index(0)],
             OperationAux::None,
         );
-        operation_verify(st, op, prev_statements.clone(), vec![], vec![])?;
+        operation_verify(st, op, prev_statements.clone(), vec![], vec![], vec![])?;
         let st: mainpod::Statement = Statement::lt_eq(
             AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
             AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
@@ -2227,7 +2550,7 @@ mod tests {
             vec![OperationArg::Index(1), OperationArg::Index(1)],
             OperationAux::None,
         );
-        operation_verify(st, op, prev_statements, vec![], vec![])
+        operation_verify(st, op, prev_statements, vec![], vec![], vec![])
     }
 
     #[test]
@@ -2276,7 +2599,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2, st3];
-        operation_verify(st, op, prev_statements, vec![], vec![])
+        operation_verify(st, op, prev_statements, vec![], vec![], vec![])
     }
 
     #[test]
@@ -2322,7 +2645,7 @@ mod tests {
                     OperationAux::None,
                 );
                 let prev_statements = vec![st1, st2, st3];
-                operation_verify(st, op, prev_statements, vec![], vec![])
+                operation_verify(st, op, prev_statements, vec![], vec![], vec![])
             })
     }
 
@@ -2369,7 +2692,7 @@ mod tests {
                     OperationAux::None,
                 );
                 let prev_statements = vec![st1, st2, st3];
-                operation_verify(st, op, prev_statements, vec![], vec![])
+                operation_verify(st, op, prev_statements, vec![], vec![], vec![])
             })
     }
 
@@ -2411,7 +2734,7 @@ mod tests {
                 OperationAux::None,
             );
             let prev_statements = vec![st1, st2, st3];
-            operation_verify(st, op, prev_statements, vec![], vec![])
+            operation_verify(st, op, prev_statements, vec![], vec![], vec![])
         })
     }
 
@@ -2456,7 +2779,7 @@ mod tests {
                 let prev_statements = [st1, st2, st3];
 
                 let check = std::panic::catch_unwind(|| {
-                    operation_verify(st, op, prev_statements.to_vec(), vec![], vec![])
+                    operation_verify(st, op, prev_statements.to_vec(), vec![], vec![], vec![])
                 });
                 match check {
                     Err(e) => {
@@ -2489,7 +2812,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1];
-        operation_verify(st, op, prev_statements, vec![], vec![])
+        operation_verify(st, op, prev_statements, vec![], vec![], vec![])
     }
 
     #[test]
@@ -2515,7 +2838,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2];
-        operation_verify(st, op, prev_statements, vec![], vec![])
+        operation_verify(st, op, prev_statements, vec![], vec![], vec![])
     }
 
     #[test]
@@ -2555,7 +2878,7 @@ mod tests {
             no_key_pf,
         )];
         let prev_statements = vec![root_st, key_st];
-        operation_verify(st, op, prev_statements, merkle_proofs, vec![])
+        operation_verify(st, op, prev_statements, merkle_proofs, vec![], vec![])
     }
 
     #[test]
@@ -2602,7 +2925,163 @@ mod tests {
             key_pf,
         )];
         let prev_statements = vec![root_st, key_st, value_st];
-        operation_verify(st, op, prev_statements, merkle_proofs, vec![])
+        operation_verify(st, op, prev_statements, merkle_proofs, vec![], vec![])
+    }
+
+    #[test]
+    fn test_operation_verify_merkle_insert() -> Result<()> {
+        let params = Params::default();
+
+        let mut tree = MerkleTree::new(params.max_depth_mt_containers, &[].into())?;
+
+        let key = 175.into();
+        let key_ak = AnchoredKey::from((PodId(RawValue::from(70).into()), "key"));
+
+        let value = 0.into();
+        let value_ak = AnchoredKey::from((PodId(RawValue::from(72).into()), "value"));
+
+        let state_transition_proof = tree.insert(&key, &value)?;
+
+        let old_root = Value::from(state_transition_proof.old_root);
+        let old_root_ak = AnchoredKey::from((PodId(RawValue::from(73).into()), "old_root"));
+
+        let new_root = Value::from(state_transition_proof.new_root);
+        let new_root_ak = AnchoredKey::from((PodId(RawValue::from(74).into()), "new_root"));
+
+        let new_root_st: mainpod::Statement =
+            Statement::equal(new_root_ak.clone(), new_root.clone()).into();
+        let old_root_st: mainpod::Statement =
+            Statement::equal(old_root_ak.clone(), old_root.clone()).into();
+        let key_st: mainpod::Statement = Statement::equal(key_ak.clone(), key).into();
+        let value_st: mainpod::Statement = Statement::equal(value_ak.clone(), value).into();
+
+        let st: mainpod::Statement =
+            Statement::insert(new_root_ak, old_root_ak, key_ak, value_ak).into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::ContainerInsertFromEntries),
+            vec![
+                OperationArg::Index(0),
+                OperationArg::Index(1),
+                OperationArg::Index(2),
+                OperationArg::Index(3),
+            ],
+            OperationAux::MerkleTreeStateTransitionProofIndex(0),
+        );
+
+        let merkle_tree_state_transition_proofs = vec![state_transition_proof];
+        let prev_statements = vec![new_root_st, old_root_st, key_st, value_st];
+        operation_verify(
+            st,
+            op,
+            prev_statements,
+            vec![],
+            vec![],
+            merkle_tree_state_transition_proofs,
+        )
+    }
+
+    #[test]
+    fn test_operation_verify_merkle_update() -> Result<()> {
+        let params = Params::default();
+
+        let mut tree = MerkleTree::new(
+            params.max_depth_mt_containers,
+            &[(175.into(), 55.into())].into(),
+        )?;
+
+        let key = 175.into();
+        let key_ak = AnchoredKey::from((PodId(RawValue::from(70).into()), "key"));
+
+        let value = 0.into();
+        let value_ak = AnchoredKey::from((PodId(RawValue::from(72).into()), "value"));
+
+        let state_transition_proof = tree.update(&key, &value)?;
+
+        let old_root = Value::from(state_transition_proof.old_root);
+        let old_root_ak = AnchoredKey::from((PodId(RawValue::from(73).into()), "old_root"));
+
+        let new_root = Value::from(state_transition_proof.new_root);
+        let new_root_ak = AnchoredKey::from((PodId(RawValue::from(74).into()), "new_root"));
+
+        let new_root_st: mainpod::Statement =
+            Statement::equal(new_root_ak.clone(), new_root.clone()).into();
+        let old_root_st: mainpod::Statement =
+            Statement::equal(old_root_ak.clone(), old_root.clone()).into();
+        let key_st: mainpod::Statement = Statement::equal(key_ak.clone(), key).into();
+        let value_st: mainpod::Statement = Statement::equal(value_ak.clone(), value).into();
+
+        let st: mainpod::Statement =
+            Statement::update(new_root_ak, old_root_ak, key_ak, value_ak).into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::ContainerUpdateFromEntries),
+            vec![
+                OperationArg::Index(0),
+                OperationArg::Index(1),
+                OperationArg::Index(2),
+                OperationArg::Index(3),
+            ],
+            OperationAux::MerkleTreeStateTransitionProofIndex(0),
+        );
+
+        let merkle_tree_state_transition_proofs = vec![state_transition_proof];
+        let prev_statements = vec![new_root_st, old_root_st, key_st, value_st];
+        operation_verify(
+            st,
+            op,
+            prev_statements,
+            vec![],
+            vec![],
+            merkle_tree_state_transition_proofs,
+        )
+    }
+
+    #[test]
+    fn test_operation_verify_merkle_delete() -> Result<()> {
+        let params = Params::default();
+
+        let mut tree = MerkleTree::new(
+            params.max_depth_mt_containers,
+            &[(175.into(), 55.into())].into(),
+        )?;
+
+        let key = 175.into();
+        let key_ak = AnchoredKey::from((PodId(RawValue::from(70).into()), "key"));
+
+        let state_transition_proof = tree.delete(&key)?;
+
+        let old_root = Value::from(state_transition_proof.old_root);
+        let old_root_ak = AnchoredKey::from((PodId(RawValue::from(73).into()), "old_root"));
+
+        let new_root = Value::from(state_transition_proof.new_root);
+        let new_root_ak = AnchoredKey::from((PodId(RawValue::from(74).into()), "new_root"));
+
+        let new_root_st: mainpod::Statement =
+            Statement::equal(new_root_ak.clone(), new_root.clone()).into();
+        let old_root_st: mainpod::Statement =
+            Statement::equal(old_root_ak.clone(), old_root.clone()).into();
+        let key_st: mainpod::Statement = Statement::equal(key_ak.clone(), key).into();
+
+        let st: mainpod::Statement = Statement::delete(new_root_ak, old_root_ak, key_ak).into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::ContainerDeleteFromEntries),
+            vec![
+                OperationArg::Index(0),
+                OperationArg::Index(1),
+                OperationArg::Index(2),
+            ],
+            OperationAux::MerkleTreeStateTransitionProofIndex(0),
+        );
+
+        let merkle_tree_state_transition_proofs = vec![state_transition_proof];
+        let prev_statements = vec![new_root_st, old_root_st, key_st];
+        operation_verify(
+            st,
+            op,
+            prev_statements,
+            vec![],
+            vec![],
+            merkle_tree_state_transition_proofs,
+        )
     }
 
     #[test]
@@ -2631,7 +3110,7 @@ mod tests {
                 OperationAux::PublicKeyOfIndex(0),
             );
             let prev_statements = vec![public_key_st, secret_key_st];
-            operation_verify(st, op, prev_statements, vec![], vec![secret_key])
+            operation_verify(st, op, prev_statements, vec![], vec![secret_key], vec![])
         })
     }
 
@@ -2654,7 +3133,9 @@ mod tests {
             OperationAux::PublicKeyOfIndex(0),
         );
         let prev_statements = vec![public_key_st, secret_key_st];
-        assert!(operation_verify(st, op, prev_statements, vec![], vec![secret_key]).is_err())
+        assert!(
+            operation_verify(st, op, prev_statements, vec![], vec![secret_key], vec![]).is_err()
+        )
     }
 
     #[test]
@@ -2676,7 +3157,9 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![public_key_st, secret_key_st];
-        assert!(operation_verify(st, op, prev_statements, vec![], vec![secret_key]).is_err())
+        assert!(
+            operation_verify(st, op, prev_statements, vec![], vec![secret_key], vec![]).is_err()
+        )
     }
 
     #[test]
@@ -2703,7 +3186,8 @@ mod tests {
             op,
             prev_statements,
             vec![],
-            vec![SecretKey(BigUint::from(123u32))]
+            vec![SecretKey(BigUint::from(123u32))],
+            vec![]
         )
         .is_err())
     }
@@ -2727,7 +3211,9 @@ mod tests {
             OperationAux::PublicKeyOfIndex(0),
         );
         let prev_statements = vec![public_key_st, secret_key_st];
-        assert!(operation_verify(st, op, prev_statements, vec![], vec![secret_key]).is_err())
+        assert!(
+            operation_verify(st, op, prev_statements, vec![], vec![secret_key], vec![]).is_err()
+        )
     }
 
     fn helper_statement_arg_from_template(

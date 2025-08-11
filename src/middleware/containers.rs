@@ -9,7 +9,10 @@ use serde::{Deserialize, Deserializer, Serialize};
 use super::serialization::{ordered_map, ordered_set};
 #[cfg(feature = "backend_plonky2")]
 use crate::backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTree};
-use crate::middleware::{Error, Hash, Key, RawValue, Result, Value};
+use crate::{
+    backends::plonky2::primitives::merkletree::MerkleTreeStateTransitionProof,
+    middleware::{Error, Hash, Key, RawValue, Result, Value},
+};
 
 /// Dictionary: the user original keys and values are hashed to be used in the leaf.
 ///    leaf.key=hash(original_key)
@@ -52,6 +55,21 @@ impl Dictionary {
     pub fn prove_nonexistence(&self, key: &Key) -> Result<MerkleProof> {
         Ok(self.mt.prove_nonexistence(&key.raw())?)
     }
+    pub fn insert(&mut self, key: &Key, value: &Value) -> Result<MerkleTreeStateTransitionProof> {
+        let mtp = self.mt.insert(&key.raw(), &value.raw())?;
+        self.kvs.insert(key.clone(), value.clone());
+        Ok(mtp)
+    }
+    pub fn update(&mut self, key: &Key, value: &Value) -> Result<MerkleTreeStateTransitionProof> {
+        let mtp = self.mt.update(&key.raw(), &value.raw())?;
+        self.kvs.insert(key.clone(), value.clone());
+        Ok(mtp)
+    }
+    pub fn delete(&mut self, key: &Key) -> Result<MerkleTreeStateTransitionProof> {
+        let mtp = self.mt.delete(&key.raw())?;
+        self.kvs.remove(key);
+        Ok(mtp)
+    }
     pub fn verify(
         max_depth: usize,
         root: Hash,
@@ -78,6 +96,12 @@ impl Dictionary {
         Ok(MerkleTree::verify_nonexistence(
             max_depth, root, proof, &key,
         )?)
+    }
+    pub fn verify_state_transition(
+        max_depth: usize,
+        proof: &MerkleTreeStateTransitionProof,
+    ) -> Result<()> {
+        MerkleTree::verify_state_transition(max_depth, proof).map_err(|e| e.into())
     }
     // TODO: Rename to dict to be consistent maybe?
     pub fn kvs(&self) -> &HashMap<Key, Value> {
@@ -156,6 +180,17 @@ impl Set {
         let rv = value.raw();
         Ok(self.mt.prove_nonexistence(&rv)?)
     }
+    pub fn insert(&mut self, value: &Value) -> Result<MerkleTreeStateTransitionProof> {
+        let raw_value = value.raw();
+        let mtp = self.mt.insert(&raw_value, &raw_value)?;
+        self.set.insert(value.clone());
+        Ok(mtp)
+    }
+    pub fn delete(&mut self, value: &Value) -> Result<MerkleTreeStateTransitionProof> {
+        let mtp = self.mt.delete(&value.raw())?;
+        self.set.remove(value);
+        Ok(mtp)
+    }
     pub fn verify(max_depth: usize, root: Hash, proof: &MerkleProof, value: &Value) -> Result<()> {
         let rv = value.raw();
         Ok(MerkleTree::verify(max_depth, root, proof, &rv, &rv)?)
@@ -170,6 +205,12 @@ impl Set {
         Ok(MerkleTree::verify_nonexistence(
             max_depth, root, proof, &rv,
         )?)
+    }
+    pub fn verify_state_transition(
+        max_depth: usize,
+        proof: &MerkleTreeStateTransitionProof,
+    ) -> Result<()> {
+        MerkleTree::verify_state_transition(max_depth, proof).map_err(|e| e.into())
     }
     pub fn set(&self) -> &HashSet<Value> {
         &self.set
@@ -234,6 +275,12 @@ impl Array {
     pub fn commitment(&self) -> Hash {
         self.mt.root()
     }
+    pub fn len(&self) -> usize {
+        self.array.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.array.is_empty()
+    }
     pub fn get(&self, i: usize) -> Result<&Value> {
         self.array.get(i).ok_or_else(|| {
             Error::custom(format!("index {} out of bounds 0..{}", i, self.array.len()))
@@ -243,6 +290,23 @@ impl Array {
         let (_, mtp) = self.mt.prove(&RawValue::from(i as i64))?;
         let value = self.array.get(i).expect("valid index");
         Ok((value, mtp))
+    }
+    pub fn push(&mut self, value: &Value) -> Result<MerkleTreeStateTransitionProof> {
+        let i = self.array.len();
+        let mtp = self.mt.insert(&(i as i64).into(), &value.raw())?;
+        self.array.push(value.clone());
+        Ok(mtp)
+    }
+    pub fn pop(&mut self) -> Result<MerkleTreeStateTransitionProof> {
+        let i = self.array.len() - 1;
+        let mtp = self.mt.delete(&(i as i64).into())?;
+        self.array.pop();
+        Ok(mtp)
+    }
+    pub fn update(&mut self, i: usize, value: &Value) -> Result<MerkleTreeStateTransitionProof> {
+        let mtp = self.mt.update(&(i as i64).into(), &value.raw())?;
+        self.array[i] = value.clone();
+        Ok(mtp)
     }
     pub fn verify(
         max_depth: usize,
@@ -258,6 +322,12 @@ impl Array {
             &RawValue::from(i as i64),
             &value.raw(),
         )?)
+    }
+    pub fn verify_state_transition(
+        max_depth: usize,
+        proof: &MerkleTreeStateTransitionProof,
+    ) -> Result<()> {
+        MerkleTree::verify_state_transition(max_depth, proof).map_err(|e| e.into())
     }
     pub fn array(&self) -> &[Value] {
         &self.array

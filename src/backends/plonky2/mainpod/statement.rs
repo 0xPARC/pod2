@@ -74,6 +74,21 @@ impl TryFrom<Statement> for middleware::Statement {
                     S::HashOf(a1.try_into()?, a2.try_into()?, a3.try_into()?)
                 }
                 (NP::PublicKeyOf, &[a1, a2]) => S::PublicKeyOf(a1.try_into()?, a2.try_into()?),
+                (NP::ContainerInsert, &[a1, a2, a3, a4]) => S::ContainerInsert(
+                    a1.try_into()?,
+                    a2.try_into()?,
+                    a3.try_into()?,
+                    a4.try_into()?,
+                ),
+                (NP::ContainerUpdate, &[a1, a2, a3, a4]) => S::ContainerUpdate(
+                    a1.try_into()?,
+                    a2.try_into()?,
+                    a3.try_into()?,
+                    a4.try_into()?,
+                ),
+                (NP::ContainerDelete, &[a1, a2, a3]) => {
+                    S::ContainerDelete(a1.try_into()?, a2.try_into()?, a3.try_into()?)
+                }
                 _ => Err(Error::custom(format!(
                     "Ill-formed statement expression {:?}",
                     s

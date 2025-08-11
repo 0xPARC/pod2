@@ -139,6 +139,21 @@ macro_rules! op_impl_oa {
             )
         }
     };
+
+    ($fn_name: ident, $op_name: ident, 4) => {
+        pub fn $fn_name(
+            a1: impl Into<OperationArg>,
+            a2: impl Into<OperationArg>,
+            a3: impl Into<OperationArg>,
+            a4: impl Into<OperationArg>,
+        ) -> Self {
+            Self(
+                OperationType::Native(NativeOperation::$op_name),
+                vec![a1.into(), a2.into(), a3.into(), a4.into()],
+                OperationAux::None,
+            )
+        }
+    };
 }
 
 macro_rules! op_impl_st {
@@ -201,4 +216,12 @@ impl Operation {
     op_impl_oa!(set_not_contains, SetNotContainsFromEntries, 2);
     op_impl_oa!(array_contains, ArrayContainsFromEntries, 3);
     op_impl_oa!(public_key_of, PublicKeyOf, 2);
+    op_impl_oa!(dict_insert, DictInsertFromEntries, 4);
+    op_impl_oa!(dict_update, DictUpdateFromEntries, 4);
+    op_impl_oa!(dict_delete, DictDeleteFromEntries, 3);
+    op_impl_oa!(set_insert, SetInsertFromEntries, 3);
+    op_impl_oa!(set_delete, SetDeleteFromEntries, 3);
+    op_impl_oa!(array_push, ArrayPushFromEntries, 3);
+    op_impl_oa!(array_update, ArrayUpdateFromEntries, 4);
+    op_impl_oa!(array_pop, ArrayPopFromEntries, 3);
 }

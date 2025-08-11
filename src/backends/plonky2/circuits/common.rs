@@ -27,7 +27,7 @@ use crate::{
         circuits::mainpod::CustomPredicateVerification,
         error::Result,
         mainpod::{Operation, OperationArg, OperationAux, Statement},
-        primitives::merkletree::MerkleClaimAndProofTarget,
+        primitives::merkletree::{MerkleClaimAndProofTarget, MerkleTreeStateTransitionProofTarget},
     },
     middleware::{
         CustomPredicate, CustomPredicateBatch, CustomPredicateRef, NativeOperation,
@@ -743,6 +743,32 @@ impl From<MerkleClaimAndProofTarget> for MerkleClaimTarget {
     }
 }
 
+/// For the purpose of op verification, we need only look up the
+/// Merkle state transition claim rather than the Merkle state
+/// transition proof since it is verified elsewhere.
+#[derive(Copy, Clone)]
+pub struct MerkleTreeStateTransitionClaimTarget {
+    pub(crate) enabled: BoolTarget,
+    pub(crate) op: Target,
+    pub(crate) old_root: HashOutTarget,
+    pub(crate) new_root: HashOutTarget,
+    pub(crate) op_key: ValueTarget,
+    pub(crate) op_value: ValueTarget,
+}
+
+impl From<MerkleTreeStateTransitionProofTarget> for MerkleTreeStateTransitionClaimTarget {
+    fn from(pf: MerkleTreeStateTransitionProofTarget) -> Self {
+        Self {
+            enabled: pf.enabled,
+            op: pf.op,
+            old_root: pf.old_root,
+            new_root: pf.new_root,
+            op_key: pf.op_key,
+            op_value: pf.op_value,
+        }
+    }
+}
+
 impl Flattenable for HashOutTarget {
     fn flatten(&self) -> Vec<Target> {
         self.elements.to_vec()
@@ -800,6 +826,42 @@ impl Flattenable for MerkleClaimTarget {
 
     fn size(params: &Params) -> usize {
         2 + HashOutTarget::size(params) + 2 * ValueTarget::size(params)
+    }
+}
+
+impl Flattenable for MerkleTreeStateTransitionClaimTarget {
+    fn flatten(&self) -> Vec<Target> {
+        [
+            vec![self.enabled.target, self.op],
+            self.old_root.elements.to_vec(),
+            self.new_root.elements.to_vec(),
+            self.op_key.elements.to_vec(),
+            self.op_value.elements.to_vec(),
+        ]
+        .concat()
+    }
+
+    fn from_flattened(params: &Params, vs: &[Target]) -> Self {
+        assert_eq!(vs.len(), Self::size(params));
+        Self {
+            enabled: BoolTarget::new_unsafe(vs[0]),
+            op: vs[1],
+            old_root: HashOutTarget::from_vec(vs[2..2 + NUM_HASH_OUT_ELTS].to_vec()),
+            new_root: HashOutTarget::from_vec(
+                vs[2 + NUM_HASH_OUT_ELTS..2 * (1 + NUM_HASH_OUT_ELTS)].to_vec(),
+            ),
+            op_key: ValueTarget::from_slice(
+                &vs[2 * (1 + NUM_HASH_OUT_ELTS)..2 * (1 + NUM_HASH_OUT_ELTS) + VALUE_SIZE],
+            ),
+            op_value: ValueTarget::from_slice(
+                &vs[2 * (1 + NUM_HASH_OUT_ELTS) + VALUE_SIZE
+                    ..2 * (1 + NUM_HASH_OUT_ELTS) + 2 * VALUE_SIZE],
+            ),
+        }
+    }
+
+    fn size(params: &Params) -> usize {
+        2 * (1 + HashOutTarget::size(params)) + 2 * ValueTarget::size(params)
     }
 }
 

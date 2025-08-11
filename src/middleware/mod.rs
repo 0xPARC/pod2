@@ -35,7 +35,7 @@ pub use statement::*;
 
 use crate::backends::plonky2::primitives::{
     ec::{curve::Point as PublicKey, schnorr::SecretKey},
-    merkletree::MerkleProof,
+    merkletree::{MerkleProof, MerkleTreeStateTransitionProof},
 };
 
 pub const SELF: PodId = PodId(SELF_ID_HASH);
@@ -535,6 +535,61 @@ impl Value {
             ))),
         }
     }
+    /// Returns a Merkle state transition proof for inserting a
+    /// key-value pair (if applicable).
+    pub(crate) fn insertion_proof(
+        &self,
+        key: &Value,
+        value: &Value,
+    ) -> Result<MerkleTreeStateTransitionProof> {
+        let container = self.typed().clone();
+        match container {
+            TypedValue::Array(mut a) => a.push(value),
+            TypedValue::Dictionary(mut d) => d.insert(&key.typed().clone().try_into()?, value),
+            TypedValue::Set(mut s) => s.insert(value),
+            _ => Err(Error::custom(format!(
+                "Invalid container value {}",
+                self.typed()
+            ))),
+        }
+    }
+    /// Returns a Merkle state transition proof for updating a
+    /// key-value pair (if applicable).
+    pub(crate) fn update_proof(
+        &self,
+        key: &Value,
+        value: &Value,
+    ) -> Result<MerkleTreeStateTransitionProof> {
+        let container = self.typed().clone();
+        match container {
+            TypedValue::Array(mut a) => match key.typed() {
+                TypedValue::Int(i) if i >= &0 => a.update(*i as usize, value),
+                _ => Err(Error::custom(format!(
+                    "Invalid key {} for container {}.",
+                    key, self
+                )))?,
+            },
+            TypedValue::Dictionary(mut d) => d.update(&key.typed().clone().try_into()?, value),
+            _ => Err(Error::custom(format!(
+                "Invalid container value {} for update op",
+                self.typed()
+            ))),
+        }
+    }
+    /// Returns a Merkle state transition proof for deleting a
+    /// key (if applicable).
+    pub(crate) fn deletion_proof(&self, key: &Value) -> Result<MerkleTreeStateTransitionProof> {
+        let container = self.typed().clone();
+        match container {
+            TypedValue::Array(mut a) => a.pop(),
+            TypedValue::Dictionary(mut d) => d.delete(&key.typed().clone().try_into()?),
+            TypedValue::Set(mut s) => s.delete(key),
+            _ => Err(Error::custom(format!(
+                "Invalid container value {}",
+                self.typed()
+            ))),
+        }
+    }
 }
 
 // A Value can be created from any type Into<TypedValue> type: bool, string-like, i64, ...
@@ -760,6 +815,8 @@ pub struct Params {
     pub max_custom_predicate_wildcards: usize,
     // maximum number of merkle proofs used for container operations
     pub max_merkle_proofs_containers: usize,
+    // maximum number of merkle tree state transition proofs used for container update operations
+    pub max_merkle_tree_state_transition_proofs_containers: usize,
     // maximum depth for merkle tree gadget used for container operations
     pub max_depth_mt_containers: usize,
     // maximum depth of the merkle tree gadget used for verifier_data membership
@@ -804,6 +861,7 @@ impl Default for Params {
             max_custom_predicate_wildcards: 10,
             max_custom_batch_size: 5, // TODO: Move down to 4?
             max_merkle_proofs_containers: 5,
+            max_merkle_tree_state_transition_proofs_containers: 5,
             max_depth_mt_containers: 32,
             max_depth_mt_vds: 6, // up to 64 (2^6) different pod circuits
             max_public_key_of: 2,

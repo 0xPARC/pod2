@@ -10,7 +10,8 @@ pub use serialization::{SerializedMainPod, SerializedSignedPod};
 use crate::middleware::{
     self, check_custom_pred, check_st_tmpl, hash_op, hash_str, max_op, prod_op, sum_op,
     AnchoredKey, Key, MainPodInputs, NativeOperation, OperationAux, OperationType, Params, PodId,
-    PodProver, PodSigner, Statement, StatementArg, VDSet, Value, ValueRef, KEY_TYPE, SELF,
+    PodProver, PodSigner, Statement, StatementArg, TypedValue, VDSet, Value, ValueRef, KEY_TYPE,
+    SELF,
 };
 
 mod custom;
@@ -240,16 +241,108 @@ impl MainPodBuilder {
                 Operation(Native(LtFromEntries), vec![entry2, entry1], op.2)
             }),
             Native(GtToNotEqual) => Ok(Operation(Native(LtToNotEqual), op.1, op.2)),
+            Native(DictInsertFromEntries) => {
+                <[_; 4]>::try_from(op.1).map(|[new_dict, old_dict, key, value]| {
+                    Operation(
+                        Native(ContainerInsertFromEntries),
+                        vec![new_dict, old_dict, key, value],
+                        op.2,
+                    )
+                })
+            }
+            Native(DictUpdateFromEntries) => {
+                <[_; 4]>::try_from(op.1).map(|[new_dict, old_dict, key, value]| {
+                    Operation(
+                        Native(ContainerUpdateFromEntries),
+                        vec![new_dict, old_dict, key, value],
+                        op.2,
+                    )
+                })
+            }
+            Native(DictDeleteFromEntries) => {
+                <[_; 3]>::try_from(op.1).map(|[new_dict, old_dict, key]| {
+                    Operation(
+                        Native(ContainerDeleteFromEntries),
+                        vec![new_dict, old_dict, key],
+                        op.2,
+                    )
+                })
+            }
+            Native(SetInsertFromEntries) => {
+                <[_; 3]>::try_from(op.1).map(|[new_set, old_set, value]| {
+                    Operation(
+                        Native(ContainerInsertFromEntries),
+                        vec![new_set, old_set, value.clone(), value],
+                        op.2,
+                    )
+                })
+            }
+            Native(SetDeleteFromEntries) => {
+                <[_; 3]>::try_from(op.1).map(|[new_set, old_set, value]| {
+                    Operation(
+                        Native(ContainerDeleteFromEntries),
+                        vec![new_set, old_set, value],
+                        op.2,
+                    )
+                })
+            }
+            Native(ArrayPushFromEntries) => (op.1.len() == 3).then_some(op).ok_or(vec![]),
+            Native(ArrayUpdateFromEntries) => {
+                <[_; 4]>::try_from(op.1).map(|[new_arr, old_arr, i, value]| {
+                    Operation(
+                        Native(ContainerUpdateFromEntries),
+                        vec![new_arr, old_arr, i, value],
+                        op.2,
+                    )
+                })
+            }
+            Native(ArrayPopFromEntries) => (op.1.len() == 2).then_some(op).ok_or(vec![]),
             _ => Ok(op),
         }
         .map_err(|_| {
             Error::op_invalid_args(format!("Invalid arg count in operation {:?}", op_type))
         })
+        .and_then(|op| match op.0 {
+            Native(ArrayPushFromEntries) | Native(ArrayPopFromEntries) => {
+                let old_arr = op.1[1].clone();
+                let i = match old_arr
+                    .value()
+                    .ok_or(Error::op_invalid_args(format!(
+                        "Invalid argument to operation {:?}",
+                        op_type
+                    )))?
+                    .typed()
+                {
+                    TypedValue::Array(a) => Ok(a.len()),
+                    _ => Err(Error::custom(format!(
+                        "Container argument to operation {:?} must be an array.",
+                        op_type
+                    ))),
+                }? as i64;
+                if let Native(ArrayPushFromEntries) = op_type {
+                    Ok(Operation(
+                        Native(ContainerInsertFromEntries),
+                        vec![op.1[0].clone(), op.1[1].clone(), i.into(), op.1[2].clone()],
+                        op.2,
+                    ))
+                } else {
+                    Ok(Operation(
+                        Native(ContainerDeleteFromEntries),
+                        vec![op.1[0].clone(), op.1[1].clone(), (i - 1).into()],
+                        op.2,
+                    ))
+                }
+            }
+            _ => Ok(op),
+        })
     }
 
     /// Fills in auxiliary data if necessary/possible.
     fn fill_in_aux(op: Operation) -> Result<Operation> {
-        use NativeOperation::{ContainsFromEntries, NotContainsFromEntries};
+        use NativeOperation::{
+            ContainerDeleteFromEntries, ContainerInsertFromEntries, ContainerUpdateFromEntries,
+            ContainsFromEntries, NotContainsFromEntries,
+        };
         use OperationAux as OpAux;
         use OperationType::Native;
 
@@ -278,6 +371,45 @@ impl MainPodBuilder {
                     container.prove_nonexistence(key)?
                 };
                 Ok(Operation(op_type.clone(), op.1, OpAux::MerkleProof(proof)))
+            }
+            (Native(ContainerInsertFromEntries), OpAux::None)
+            | (Native(ContainerUpdateFromEntries), OpAux::None)
+            | (Native(ContainerDeleteFromEntries), OpAux::None) => {
+                let old_container =
+                    op.1.get(1)
+                        .and_then(|arg| arg.value())
+                        .ok_or(Error::custom(format!(
+                            "Invalid container argument for op {}.",
+                            op
+                        )))?;
+                let key =
+                    op.1.get(2)
+                        .and_then(|arg| arg.value())
+                        .ok_or(Error::custom(format!(
+                            "Invalid key argument for op {}.",
+                            op
+                        )))?;
+                let value =
+                    op.1.get(3)
+                        .and_then(|arg| arg.value())
+                        .ok_or(Error::custom(format!(
+                            "Invalid key argument for op {}.",
+                            op
+                        )));
+                let proof = match op_type {
+                    Native(ContainerInsertFromEntries) => {
+                        old_container.insertion_proof(key, value?)?
+                    }
+                    Native(ContainerUpdateFromEntries) => {
+                        old_container.update_proof(key, value?)?
+                    }
+                    _ => old_container.deletion_proof(key)?,
+                };
+                Ok(Operation(
+                    op_type.clone(),
+                    op.1,
+                    OpAux::MerkleTreeStateTransitionProof(proof),
+                ))
             }
             _ => Ok(op),
         }
@@ -404,6 +536,29 @@ impl MainPodBuilder {
                         } else {
                             return Err(native_arg_error());
                         }
+                    }
+                    (ContainerInsertFromEntries, &[a1, a2, a3, a4]) => {
+                        let (r1, _v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, _v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r3, _v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r4, _v4) = a4.value_and_ref().ok_or_else(native_arg_error)?;
+                        // TODO: validate proof
+                        Statement::ContainerInsert(r1, r2, r3, r4)
+                    }
+                    (ContainerUpdateFromEntries, &[a1, a2, a3, a4]) => {
+                        let (r1, _v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, _v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r3, _v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r4, _v4) = a4.value_and_ref().ok_or_else(native_arg_error)?;
+                        // TODO: validate proof
+                        Statement::ContainerUpdate(r1, r2, r3, r4)
+                    }
+                    (ContainerDeleteFromEntries, &[a1, a2, a3]) => {
+                        let (r1, _v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, _v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r3, _v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
+                        // TODO: validate proof
+                        Statement::ContainerDelete(r1, r2, r3)
                     }
                     (t, _) => {
                         if t.is_syntactic_sugar() {
@@ -741,7 +896,10 @@ pub mod tests {
             tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_pod_request,
             zu_kyc_sign_pod_builders, EthDosHelper, MOCK_VD_SET,
         },
-        middleware::{containers::Dictionary, Value},
+        middleware::{
+            containers::{Array, Dictionary, Set},
+            Value,
+        },
     };
 
     // Check that frontend public statements agree with those
@@ -987,19 +1145,171 @@ pub mod tests {
         let st1 = builder.op(true, Operation::new_entry("key", "a")).unwrap();
         let st2 = builder.literal(false, Value::from(1)).unwrap();
 
-        builder
-            .pub_op(Operation(
-                // OperationType
-                OperationType::Native(NativeOperation::DictContainsFromEntries),
-                // Vec<OperationArg>
-                vec![
-                    OperationArg::Statement(st0),
-                    OperationArg::Statement(st1),
-                    OperationArg::Statement(st2),
-                ],
-                OperationAux::MerkleProof(dict.prove(&Key::from("a")).unwrap().1),
-            ))
-            .unwrap();
+        builder.pub_op(Operation(
+            // OperationType
+            OperationType::Native(NativeOperation::DictContainsFromEntries),
+            // Vec<OperationArg>
+            vec![
+                OperationArg::Statement(st0.clone()),
+                OperationArg::Statement(st1),
+                OperationArg::Statement(st2),
+            ],
+            OperationAux::MerkleProof(dict.prove(&Key::from("a")).unwrap().1),
+        ))?;
+
+        let mut new_dict = dict.clone();
+        new_dict.insert(&Key::from("d"), &Value::from(4))?;
+
+        builder.pub_op(Operation(
+            OperationType::Native(NativeOperation::DictInsertFromEntries),
+            vec![
+                Value::from(new_dict.clone()).into(),
+                OperationArg::Statement(st0.clone()),
+                "d".into(),
+                4.into(),
+            ],
+            OperationAux::None,
+        ))?;
+
+        let mut new_old_dict = new_dict.clone();
+        new_old_dict.delete(&Key::from("d"))?;
+
+        assert_eq!(new_old_dict, dict);
+
+        builder.pub_op(Operation(
+            OperationType::Native(NativeOperation::DictDeleteFromEntries),
+            vec![
+                OperationArg::Statement(st0.clone()),
+                Value::from(new_dict).into(),
+                "d".into(),
+            ],
+            OperationAux::None,
+        ))?;
+
+        new_old_dict.update(&Key::from("c"), &55.into())?;
+
+        builder.pub_op(Operation(
+            OperationType::Native(NativeOperation::DictUpdateFromEntries),
+            vec![
+                Value::from(new_old_dict).into(),
+                OperationArg::Statement(st0.clone()),
+                "c".into(),
+                55.into(),
+            ],
+            OperationAux::None,
+        ))?;
+
+        let main_prover = MockProver {};
+        let main_pod = builder.prove(&main_prover).unwrap();
+
+        println!("{}", main_pod);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_sets() -> Result<()> {
+        let params = Params::default();
+        let vd_set = &*MOCK_VD_SET;
+        let mut builder = MainPodBuilder::new(&params, vd_set);
+
+        let empty_set = Set::new(params.max_depth_mt_containers, [].into())?;
+
+        let mut set1 = empty_set.clone();
+        set1.insert(&1.into())?;
+
+        let mut set2 = set1.clone();
+        set2.delete(&1.into())?;
+
+        assert_eq!(set2, empty_set);
+
+        builder.pub_op(Operation(
+            // OperationType
+            OperationType::Native(NativeOperation::SetInsertFromEntries),
+            // Vec<OperationArg>
+            vec![
+                Value::from(set1.clone()).into(),
+                Value::from(empty_set.clone()).into(),
+                1.into(),
+            ],
+            OperationAux::None,
+        ))?;
+
+        builder.pub_op(Operation(
+            // OperationType
+            OperationType::Native(NativeOperation::SetDeleteFromEntries),
+            // Vec<OperationArg>
+            vec![
+                Value::from(empty_set.clone()).into(),
+                Value::from(set1.clone()).into(),
+                1.into(),
+            ],
+            OperationAux::None,
+        ))?;
+
+        let main_prover = MockProver {};
+        let main_pod = builder.prove(&main_prover).unwrap();
+
+        println!("{}", main_pod);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_arrays() -> Result<()> {
+        let params = Params::default();
+        let vd_set = &*MOCK_VD_SET;
+        let mut builder = MainPodBuilder::new(&params, vd_set);
+
+        let empty_array = Array::new(params.max_depth_mt_containers, [].into())?;
+
+        let mut array1 = empty_array.clone();
+        array1.push(&1.into())?;
+
+        let mut array2 = array1.clone();
+        array2.pop()?;
+
+        let mut array3 = array1.clone();
+        array3.update(0, &5.into())?;
+
+        assert_eq!(array2, empty_array);
+
+        builder.pub_op(Operation(
+            // OperationType
+            OperationType::Native(NativeOperation::ArrayPushFromEntries),
+            // Vec<OperationArg>
+            vec![
+                Value::from(array1.clone()).into(),
+                Value::from(empty_array.clone()).into(),
+                1.into(),
+            ],
+            OperationAux::None,
+        ))?;
+
+        builder.pub_op(Operation(
+            // OperationType
+            OperationType::Native(NativeOperation::ArrayPopFromEntries),
+            // Vec<OperationArg>
+            vec![
+                Value::from(empty_array.clone()).into(),
+                Value::from(array1.clone()).into(),
+            ],
+            OperationAux::None,
+        ))?;
+
+        builder.pub_op(Operation(
+            // OperationType
+            OperationType::Native(NativeOperation::ArrayUpdateFromEntries),
+            // Vec<OperationArg>
+            vec![
+                Value::from(array3.clone()).into(),
+                Value::from(array1.clone()).into(),
+                0.into(),
+                5.into(),
+            ],
+            OperationAux::None,
+        ))?;
+
         let main_prover = MockProver {};
         let main_pod = builder.prove(&main_prover).unwrap();
 

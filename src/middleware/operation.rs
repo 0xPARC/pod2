@@ -10,7 +10,7 @@ use crate::{
             curve::{Point as PublicKey, GROUP_ORDER},
             schnorr::SecretKey,
         },
-        merkletree::{MerkleProof, MerkleTree},
+        merkletree::{MerkleProof, MerkleTree, MerkleTreeOp, MerkleTreeStateTransitionProof},
     },
     middleware::{
         hash_values, AnchoredKey, CustomPredicate, CustomPredicateRef, Error, NativePredicate,
@@ -29,6 +29,7 @@ pub enum OperationType {
 pub enum OperationAux {
     None,
     MerkleProof(MerkleProof),
+    MerkleTreeStateTransitionProof(MerkleTreeStateTransitionProof),
 }
 
 impl fmt::Display for OperationAux {
@@ -36,6 +37,10 @@ impl fmt::Display for OperationAux {
         match self {
             Self::None => write!(f, "<no aux>")?,
             Self::MerkleProof(pf) => write!(f, "merkle_proof({})", pf)?,
+            // TODO: Make this look nicer.
+            Self::MerkleTreeStateTransitionProof(pf) => {
+                write!(f, "merkle_tree_state_transition_proof({:?})", pf)?
+            }
         }
         Ok(())
     }
@@ -80,6 +85,9 @@ pub enum NativeOperation {
     MaxOf = 13,
     HashOf = 14,
     PublicKeyOf = 15,
+    ContainerInsertFromEntries = 16,
+    ContainerUpdateFromEntries = 17,
+    ContainerDeleteFromEntries = 18,
 
     // Syntactic sugar operations.  These operations are not supported by the backend.  The
     // frontend compiler is responsible of translating these operations into the operations above.
@@ -91,6 +99,14 @@ pub enum NativeOperation {
     GtEqFromEntries = 1006,
     GtFromEntries = 1007,
     GtToNotEqual = 1008,
+    DictInsertFromEntries = 1009,
+    DictUpdateFromEntries = 1010,
+    DictDeleteFromEntries = 1011,
+    SetInsertFromEntries = 1012,
+    SetDeleteFromEntries = 1013,
+    ArrayPushFromEntries = 1014,
+    ArrayUpdateFromEntries = 1015,
+    ArrayPopFromEntries = 1016,
 }
 
 impl NativeOperation {
@@ -140,6 +156,15 @@ impl OperationType {
                 NativeOperation::PublicKeyOf => {
                     Some(Predicate::Native(NativePredicate::PublicKeyOf))
                 }
+                NativeOperation::ContainerInsertFromEntries => {
+                    Some(Predicate::Native(NativePredicate::ContainerInsert))
+                }
+                NativeOperation::ContainerUpdateFromEntries => {
+                    Some(Predicate::Native(NativePredicate::ContainerUpdate))
+                }
+                NativeOperation::ContainerDeleteFromEntries => {
+                    Some(Predicate::Native(NativePredicate::ContainerDelete))
+                }
                 no => unreachable!("Unexpected syntactic sugar op {:?}", no),
             },
             OperationType::Custom(cpr) => Some(Predicate::Custom(cpr.clone())),
@@ -175,6 +200,26 @@ pub enum Operation {
     MaxOf(Statement, Statement, Statement),
     HashOf(Statement, Statement, Statement),
     PublicKeyOf(Statement, Statement),
+    ContainerInsertFromEntries(
+        /* new_root */ Statement,
+        /* old_root */ Statement,
+        /*  key    */ Statement,
+        /*  value  */ Statement,
+        /*  proot  */ MerkleTreeStateTransitionProof,
+    ),
+    ContainerUpdateFromEntries(
+        /* new_root */ Statement,
+        /* old_root */ Statement,
+        /*  key    */ Statement,
+        /*  value  */ Statement,
+        /*  proot  */ MerkleTreeStateTransitionProof,
+    ),
+    ContainerDeleteFromEntries(
+        /* new_root */ Statement,
+        /* old_root */ Statement,
+        /*  key    */ Statement,
+        /*  proot  */ MerkleTreeStateTransitionProof,
+    ),
     Custom(CustomPredicateRef, Vec<Statement>),
 }
 
@@ -215,6 +260,13 @@ impl Operation {
             Self::MaxOf(_, _, _) => OT::Native(MaxOf),
             Self::HashOf(_, _, _) => OT::Native(HashOf),
             Self::PublicKeyOf(_, _) => OT::Native(PublicKeyOf),
+            Self::ContainerInsertFromEntries(_, _, _, _, _) => {
+                OT::Native(ContainerInsertFromEntries)
+            }
+            Self::ContainerUpdateFromEntries(_, _, _, _, _) => {
+                OT::Native(ContainerUpdateFromEntries)
+            }
+            Self::ContainerDeleteFromEntries(_, _, _, _) => OT::Native(ContainerDeleteFromEntries),
             Self::Custom(cpr, _) => OT::Custom(cpr.clone()),
         }
     }
@@ -237,6 +289,9 @@ impl Operation {
             Self::MaxOf(s1, s2, s3) => vec![s1, s2, s3],
             Self::HashOf(s1, s2, s3) => vec![s1, s2, s3],
             Self::PublicKeyOf(s1, s2) => vec![s1, s2],
+            Self::ContainerInsertFromEntries(s1, s2, s3, s4, _pf) => vec![s1, s2, s3, s4],
+            Self::ContainerUpdateFromEntries(s1, s2, s3, s4, _pf) => vec![s1, s2, s3, s4],
+            Self::ContainerDeleteFromEntries(s1, s2, s3, _pf) => vec![s1, s2, s3],
             Self::Custom(_, args) => args,
         }
     }
@@ -290,6 +345,33 @@ impl Operation {
                     Self::HashOf(s1.clone(), s2.clone(), s3.clone())
                 }
                 (NO::PublicKeyOf, &[s1, s2], OA::None) => Self::PublicKeyOf(s1.clone(), s2.clone()),
+                (
+                    NO::ContainerInsertFromEntries,
+                    &[s1, s2, s3, s4],
+                    OA::MerkleTreeStateTransitionProof(pf),
+                ) => Self::ContainerInsertFromEntries(
+                    s1.clone(),
+                    s2.clone(),
+                    s3.clone(),
+                    s4.clone(),
+                    pf,
+                ),
+                (
+                    NO::ContainerUpdateFromEntries,
+                    &[s1, s2, s3, s4],
+                    OA::MerkleTreeStateTransitionProof(pf),
+                ) => Self::ContainerUpdateFromEntries(
+                    s1.clone(),
+                    s2.clone(),
+                    s3.clone(),
+                    s4.clone(),
+                    pf,
+                ),
+                (
+                    NO::ContainerDeleteFromEntries,
+                    &[s1, s2, s3],
+                    OA::MerkleTreeStateTransitionProof(pf),
+                ) => Self::ContainerDeleteFromEntries(s1.clone(), s2.clone(), s3.clone(), pf),
                 _ => Err(Error::custom(format!(
                     "Ill-formed operation {:?} with {} arguments {:?} and aux {:?}.",
                     op_code,
@@ -391,6 +473,67 @@ impl Operation {
             }
             (Self::PublicKeyOf(s1, s2), PublicKeyOf(v3, v4)) => {
                 Self::check_public_key(&val(v3, s1)?, &val(v4, s2)?)?
+            }
+            (
+                Self::ContainerInsertFromEntries(new_root_s, old_root_s, key_s, val_s, pf),
+                ContainerInsert(new_root_v, old_root_v, key_v, val_v),
+            ) => {
+                let old_root = val(old_root_v, old_root_s)?;
+                let new_root = val(new_root_v, new_root_s)?;
+                let key = val(key_v, key_s)?;
+                let value = val(val_v, val_s)?;
+                (pf.op == MerkleTreeOp::Insert
+                    && Value::from(pf.old_root) == old_root
+                    && Value::from(pf.new_root) == new_root
+                    && pf.op_key == key.raw()
+                    && pf.op_value == value.raw())
+                .then_some(())
+                .ok_or(Error::custom(
+                    "The provided Merkle tree state transition proof does not match the claim."
+                        .into(),
+                ))?;
+                MerkleTree::verify_state_transition(params.max_depth_mt_containers, pf)?;
+                true
+            }
+            (
+                Self::ContainerUpdateFromEntries(new_root_s, old_root_s, key_s, val_s, pf),
+                ContainerUpdate(new_root_v, old_root_v, key_v, val_v),
+            ) => {
+                let old_root = val(old_root_v, old_root_s)?;
+                let new_root = val(new_root_v, new_root_s)?;
+                let key = val(key_v, key_s)?;
+                let value = val(val_v, val_s)?;
+                (pf.op == MerkleTreeOp::Update
+                    && Value::from(pf.old_root) == old_root
+                    && Value::from(pf.new_root) == new_root
+                    && pf.op_key == key.raw()
+                    && pf.op_value == value.raw())
+                .then_some(())
+                .ok_or(Error::custom(
+                    "The provided Merkle tree state transition proof does not match the claim."
+                        .into(),
+                ))?;
+                MerkleTree::verify_state_transition(params.max_depth_mt_containers, pf)?;
+                true
+            }
+            (
+                Self::ContainerDeleteFromEntries(new_root_s, old_root_s, key_s, pf),
+                ContainerDelete(new_root_v, old_root_v, key_v),
+            ) => {
+                let old_root = val(old_root_v, old_root_s)?;
+                let new_root = val(new_root_v, new_root_s)?;
+                let key = val(key_v, key_s)?;
+                (pf.op == MerkleTreeOp::Delete
+                    && Value::from(pf.old_root) == old_root
+                    && Value::from(pf.new_root) == new_root
+                    && pf.op_key == key.raw())
+                .then_some(())
+                .ok_or(Error::custom(
+                    "The provided Merkle tree state transition proof does not match the claim."
+                        .into(),
+                ))?;
+                MerkleTree::verify_state_transition(params.max_depth_mt_containers, pf)?;
+                true
             }
             (Self::Custom(CustomPredicateRef { batch, index }, args), Custom(cpr, s_args))
                 if batch == &cpr.batch && index == &cpr.index =>
@@ -685,6 +828,126 @@ mod tests {
                 }
             })
         })
+    }
+
+    #[test]
+    fn check_container_update_ops() -> Result<()> {
+        let params = Params::default();
+        let pod_id = PodId::default();
+        let new_root_ak = AnchoredKey::new(pod_id, Key::new("new_root".into()));
+        let old_root_ak = AnchoredKey::new(pod_id, Key::new("new_root".into()));
+        let key_ak = AnchoredKey::new(pod_id, Key::new("key".into()));
+        let val_ak = AnchoredKey::new(pod_id, Key::new("value".into()));
+
+        // Form Merkle tree
+        let kvs = (0..10)
+            .map(|i| (hash_value(&i.into()).into(), i.into()))
+            .collect::<HashMap<_, _>>();
+        let mut mt = MerkleTree::new(params.max_depth_mt_containers, &kvs)?;
+
+        // Check insertion proofs
+        (11..20)
+            .map(|i| (hash_value(&i.into()).into(), i.into()))
+            .try_for_each(|(k, v)| {
+                let old_root_s = Statement::Equal(old_root_ak.clone().into(), mt.root().into());
+                let mtp = mt.insert(&k, &v)?;
+                // Form op args
+                let new_root_s = Statement::Equal(new_root_ak.clone().into(), mt.root().into());
+                let key_s = Statement::Equal(key_ak.clone().into(), k.into());
+                let value_s = Statement::Equal(val_ak.clone().into(), v.into());
+
+                // Form op
+                let op = Operation::ContainerInsertFromEntries(
+                    new_root_s, old_root_s, key_s, value_s, mtp,
+                );
+                // Form output statement
+                let st = Statement::ContainerInsert(
+                    new_root_ak.clone().into(),
+                    old_root_ak.clone().into(),
+                    key_ak.clone().into(),
+                    val_ak.clone().into(),
+                );
+
+                // Check op against output statement
+                op.check(&params, &st).and_then(|ind| {
+                    if ind {
+                        Ok(())
+                    } else {
+                        Err(Error::custom(format!(
+                            "Insertion op check failed for pair ({},{})",
+                            k, v
+                        )))
+                    }
+                })
+            })?;
+
+        // Check update proofs
+        (11..20)
+            .map(|i| (hash_value(&i.into()).into(), (i + 1).into()))
+            .try_for_each(|(k, v)| {
+                let old_root_s = Statement::Equal(old_root_ak.clone().into(), mt.root().into());
+                let mtp = mt.update(&k, &v)?;
+                // Form op args
+                let new_root_s = Statement::Equal(new_root_ak.clone().into(), mt.root().into());
+                let key_s = Statement::Equal(key_ak.clone().into(), k.into());
+                let value_s = Statement::Equal(val_ak.clone().into(), v.into());
+
+                // Form op
+                let op = Operation::ContainerUpdateFromEntries(
+                    new_root_s, old_root_s, key_s, value_s, mtp,
+                );
+                // Form output statement
+                let st = Statement::ContainerUpdate(
+                    new_root_ak.clone().into(),
+                    old_root_ak.clone().into(),
+                    key_ak.clone().into(),
+                    val_ak.clone().into(),
+                );
+
+                // Check op against output statement
+                op.check(&params, &st).and_then(|ind| {
+                    if ind {
+                        Ok(())
+                    } else {
+                        Err(Error::custom(format!(
+                            "Update op check failed for pair ({},{})",
+                            k, v
+                        )))
+                    }
+                })
+            })?;
+
+        // Check deletion proofs
+        (11..20)
+            .map(|i| hash_value(&i.into()).into())
+            .try_for_each(|k| {
+                let old_root_s = Statement::Equal(old_root_ak.clone().into(), mt.root().into());
+                let mtp = mt.delete(&k)?;
+                // Form op args
+                let new_root_s = Statement::Equal(new_root_ak.clone().into(), mt.root().into());
+                let key_s = Statement::Equal(key_ak.clone().into(), k.into());
+
+                // Form op
+                let op = Operation::ContainerDeleteFromEntries(new_root_s, old_root_s, key_s, mtp);
+                // Form output statement
+                let st = Statement::ContainerDelete(
+                    new_root_ak.clone().into(),
+                    old_root_ak.clone().into(),
+                    key_ak.clone().into(),
+                );
+
+                // Check op against output statement
+                op.check(&params, &st).and_then(|ind| {
+                    if ind {
+                        Ok(())
+                    } else {
+                        Err(Error::custom(format!(
+                            "Deletion op check failed for key {}",
+                            k
+                        )))
+                    }
+                })
+            })
     }
 
     #[test]
