@@ -360,6 +360,20 @@ impl PredicateTarget {
         }
     }
 
+    pub fn new_intro(builder: &mut CircuitBuilder, vd_hash: HashOutTarget) -> Self {
+        let prefix = builder.constant(F::from(PredicatePrefix::Intro));
+        let vh = vd_hash.elements;
+        let zero = builder.zero();
+        Self {
+            elements: [prefix, vh[0], vh[1], vh[2], vh[3], zero],
+        }
+    }
+
+    pub fn is_intro(&self, builder: &mut CircuitBuilder) -> BoolTarget {
+        let prefix = builder.constant(F::from(PredicatePrefix::Intro));
+        builder.is_equal(prefix, self.elements[0])
+    }
+
     pub fn set_targets(
         &self,
         pw: &mut PartialWitness<F>,

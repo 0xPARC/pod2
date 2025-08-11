@@ -64,6 +64,9 @@ impl StatementTmpl {
             Predicate::Custom(custom_ref) => {
                 write!(w, "{}", custom_ref.predicate().name)?;
             }
+            Predicate::Intro(intro_ref) => {
+                write!(w, "{}", intro_ref.name)?;
+            }
             Predicate::BatchSelf(index) => {
                 if let Some(batch) = batch_context {
                     if let Some(predicate) = batch.predicates.get(*index) {
