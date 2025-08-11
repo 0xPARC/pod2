@@ -353,6 +353,38 @@ fn pest_pair_to_builder_arg(
     }
 }
 
+fn validate_dyn_len_predicate(
+    stmt_name_str: &str,
+    args: &[BuilderArg],
+    expected_arity: usize,
+    stmt_span: (usize, usize),
+    stmt_name_span: (usize, usize),
+) -> Result<(), ProcessorError> {
+    if args.len() != expected_arity {
+        return Err(ProcessorError::ArgumentCountMismatch {
+            predicate: stmt_name_str.to_string(),
+            expected: expected_arity,
+            found: args.len(),
+            span: Some(stmt_name_span),
+        });
+    }
+    for (idx, arg) in args.iter().enumerate() {
+        if !matches!(arg, BuilderArg::WildcardLiteral(_) | BuilderArg::Literal(_)) {
+            return Err(ProcessorError::TypeError {
+                expected: "Wildcard or Literal".to_string(),
+                found: format!("{:?}", arg),
+                item: format!(
+                    "argument {} of custom predicate call '{}'",
+                    idx + 1,
+                    stmt_name_str
+                ),
+                span: Some(stmt_span),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn validate_and_build_statement_template(
     stmt_name_str: &str,
     pred: &Predicate,
@@ -396,28 +428,23 @@ fn validate_and_build_statement_template(
         }
         Predicate::Custom(custom_ref) => {
             let expected_arity = custom_ref.predicate().args_len;
-            if args.len() != expected_arity {
-                return Err(ProcessorError::ArgumentCountMismatch {
-                    predicate: stmt_name_str.to_string(),
-                    expected: expected_arity,
-                    found: args.len(),
-                    span: Some(stmt_name_span),
-                });
-            }
-            for (idx, arg) in args.iter().enumerate() {
-                if !matches!(arg, BuilderArg::WildcardLiteral(_) | BuilderArg::Literal(_)) {
-                    return Err(ProcessorError::TypeError {
-                        expected: "Wildcard or Literal".to_string(),
-                        found: format!("{:?}", arg),
-                        item: format!(
-                            "argument {} of custom predicate call '{}'",
-                            idx + 1,
-                            stmt_name_str
-                        ),
-                        span: Some(stmt_span),
-                    });
-                }
-            }
+            validate_dyn_len_predicate(
+                stmt_name_str,
+                &args,
+                expected_arity,
+                stmt_span,
+                stmt_name_span,
+            )?;
+        }
+        Predicate::Intro(intro_ref) => {
+            let expected_arity = intro_ref.args_len;
+            validate_dyn_len_predicate(
+                stmt_name_str,
+                &args,
+                expected_arity,
+                stmt_span,
+                stmt_name_span,
+            )?;
         }
         Predicate::BatchSelf(_) => {
             let (_original_pred_idx, expected_arity_val) = processing_ctx

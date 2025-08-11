@@ -1,9 +1,10 @@
+use std::io::empty;
+
 use itertools::Itertools;
 use plonky2::{
     hash::hash_types::HashOutTarget,
     iop::witness::{PartialWitness, WitnessWrite},
     plonk::{
-        circuit_builder::CircuitBuilder,
         circuit_data::{self, CircuitConfig},
         proof::ProofWithPublicInputs,
     },
@@ -12,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::{
-        basetypes::{Proof, C, D},
+        basetypes::{CircuitBuilder, Proof, C, D},
         cache_get_standard_rec_main_pod_common_circuit_data,
         circuits::{
             common::{Flattenable, StatementTarget},
@@ -30,35 +31,22 @@ use crate::{
     },
     cache::{self, CacheEntry},
     middleware::{
-        self, AnchoredKey, Hash, Params, Pod, PodId, PodType, RecursivePod, Statement, ToFields,
-        VDSet, Value, VerifierOnlyCircuitData, F, HASH_SIZE, KEY_TYPE, SELF,
+        self, AnchoredKey, Hash, IntroPredicateRef, Params, Pod, PodId, PodType, RecursivePod,
+        Statement, ToFields, VDSet, Value, VerifierOnlyCircuitData, EMPTY_HASH, F, HASH_SIZE,
+        KEY_TYPE, SELF,
     },
     timed,
 };
 
-struct EmptyPodVerifyCircuit {
-    params: Params,
-}
-
-fn type_statement() -> Statement {
-    Statement::equal(
-        AnchoredKey::from((SELF, KEY_TYPE)),
-        Value::from(PodType::Empty),
+fn empty_statement() -> Statement {
+    Statement::Intro(
+        IntroPredicateRef {
+            name: "empty".to_string(),
+            args_len: 0,
+            verifier_data_hash: EMPTY_HASH,
+        },
+        vec![],
     )
-}
-
-impl EmptyPodVerifyCircuit {
-    fn eval(&self, builder: &mut CircuitBuilder<F, D>) -> Result<EmptyPodVerifyTarget> {
-        let type_statement = StatementTarget::from_flattened(
-            &self.params,
-            &builder.constants(&type_statement().to_fields(&self.params)),
-        );
-        let id = calculate_id_circuit(&self.params, builder, &[type_statement]);
-        let vds_root = builder.add_virtual_hash();
-        builder.register_public_inputs(&id.elements);
-        builder.register_public_inputs(&vds_root.elements);
-        Ok(EmptyPodVerifyTarget { vds_root })
-    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -67,9 +55,28 @@ pub struct EmptyPodVerifyTarget {
 }
 
 impl EmptyPodVerifyTarget {
+    pub fn new_virtual(builder: &mut CircuitBuilder) -> Self {
+        Self {
+            vds_root: builder.add_virtual_hash(),
+        }
+    }
     pub fn set_targets(&self, pw: &mut PartialWitness<F>, vds_root: Hash) -> Result<()> {
         Ok(pw.set_target_arr(&self.vds_root.elements, &vds_root.0)?)
     }
+}
+
+fn verify_empty_pod_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    empty_pod: &EmptyPodVerifyTarget,
+) {
+    let empty_statement = StatementTarget::from_flattened(
+        params,
+        &builder.constants(&empty_statement().to_fields(params)),
+    );
+    let id = calculate_id_circuit(params, builder, &[empty_statement]);
+    builder.register_public_inputs(&id.elements);
+    builder.register_public_inputs(&empty_pod.vds_root.elements);
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -110,17 +117,15 @@ fn build() -> Result<(EmptyPodVerifyTarget, CircuitData)> {
     #[cfg(feature = "zk")]
     let config = CircuitConfig::standard_recursion_zk_config();
 
-    let mut builder = CircuitBuilder::<F, D>::new(config);
-    let empty_pod_verify_target = EmptyPodVerifyCircuit {
-        params: params.clone(),
-    }
-    .eval(&mut builder)?;
+    let mut builder = CircuitBuilder::new(config);
+    let empty_pod = EmptyPodVerifyTarget::new_virtual(&mut builder);
+    verify_empty_pod_circuit(&params, &mut builder, &empty_pod);
     let common_circuit_data = &*cache_get_standard_rec_main_pod_common_circuit_data();
     pad_circuit(&mut builder, common_circuit_data);
 
     let data = timed!("EmptyPod build", builder.build::<C>());
     assert_eq!(common_circuit_data.0, data.common);
-    Ok((empty_pod_verify_target, data))
+    Ok((empty_pod, data))
 }
 
 impl EmptyPod {
@@ -202,7 +207,7 @@ impl Pod for EmptyPod {
     }
 
     fn pub_self_statements(&self) -> Vec<middleware::Statement> {
-        vec![type_statement()]
+        vec![empty_statement()]
     }
 
     fn serialize_data(&self) -> serde_json::Value {

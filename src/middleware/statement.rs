@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use strum_macros::FromRepr;
 
 use crate::middleware::{
-    AnchoredKey, CustomPredicateRef, Error, Params, Result, ToFields, Value, F, VALUE_SIZE,
+    self, AnchoredKey, CustomPredicateRef, Error, Params, Result, ToFields, Value, F, VALUE_SIZE,
 };
 
 // TODO: Maybe store KEY_SIGNER and KEY_TYPE as Key with lazy_static
@@ -81,11 +81,19 @@ impl ToFields for NativePredicate {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub struct IntroPredicateRef {
+    pub name: String,
+    pub args_len: usize,
+    pub verifier_data_hash: middleware::Hash,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", content = "value")]
 pub enum Predicate {
     Native(NativePredicate),
     BatchSelf(usize),
     Custom(CustomPredicateRef),
+    Intro(IntroPredicateRef),
 }
 
 impl From<NativePredicate> for Predicate {
@@ -99,6 +107,7 @@ pub enum PredicatePrefix {
     Native = 1,
     BatchSelf = 2,
     Custom = 3,
+    Intro = 4,
 }
 
 impl From<PredicatePrefix> for F {
@@ -115,6 +124,8 @@ impl ToFields for Predicate {
         // CustomPredicateRef(pb, i) as
         // (3, [hash of pb], i) -- pb hashes to 4 field elements
         //                      -- i: usize
+        // IntroPredicateRef(vd_hash) as
+        // (4, [vd_hash], 0)
 
         // in every case: pad to (hash_size + 2) field elements
         let mut fields: Vec<F> = match self {
@@ -130,6 +141,11 @@ impl ToFields for Predicate {
                     .chain(iter::once(F::from_canonical_usize(*index)))
                     .collect()
             }
+            Self::Intro(IntroPredicateRef {
+                verifier_data_hash, ..
+            }) => iter::once(F::from(PredicatePrefix::Intro))
+                .chain(verifier_data_hash.0)
+                .collect(),
         };
         fields.resize_with(Params::predicate_size(), || F::from_canonical_u64(0));
         fields
@@ -154,6 +170,7 @@ impl fmt::Display for Predicate {
                     write!(f, "{}", batch.predicates()[*index].name)
                 }
             }
+            Self::Intro(IntroPredicateRef { name, .. }) => write!(f, "{}", name),
         }
     }
 }
@@ -179,6 +196,7 @@ pub enum Statement {
     HashOf(ValueRef, ValueRef, ValueRef),
     PublicKeyOf(ValueRef, ValueRef),
     Custom(CustomPredicateRef, Vec<Value>),
+    Intro(IntroPredicateRef, Vec<Value>),
 }
 
 macro_rules! statement_constructor {
@@ -229,6 +247,7 @@ impl Statement {
             Self::HashOf(_, _, _) => Native(NativePredicate::HashOf),
             Self::PublicKeyOf(_, _) => Native(NativePredicate::PublicKeyOf),
             Self::Custom(cpr, _) => Custom(cpr.clone()),
+            Self::Intro(ir, _) => Intro(ir.clone()),
         }
     }
     pub fn args(&self) -> Vec<StatementArg> {
@@ -247,6 +266,7 @@ impl Statement {
             Self::HashOf(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
             Self::PublicKeyOf(ak1, ak2) => vec![ak1.into(), ak2.into()],
             Self::Custom(_, args) => Vec::from_iter(args.into_iter().map(Literal)),
+            Self::Intro(_, args) => Vec::from_iter(args.into_iter().map(Literal)),
         }
     }
 
@@ -306,6 +326,16 @@ impl Statement {
                     })
                     .collect();
                 Self::Custom(cpr, v_args?)
+            }
+            (Intro(ir), _) => {
+                let v_args: Result<Vec<Value>> = args
+                    .iter()
+                    .map(|x| match x {
+                        StatementArg::Literal(v) => Ok(v.clone()),
+                        _ => Err(Error::incorrect_statements_args()),
+                    })
+                    .collect();
+                Self::Intro(ir, v_args?)
             }
         };
         Ok(st)

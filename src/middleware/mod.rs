@@ -6,6 +6,8 @@ use std::sync::Arc;
 use hex::ToHex;
 use itertools::Itertools;
 use strum_macros::FromRepr;
+
+use crate::backends::plonky2::recursion::hash_verifier_data;
 mod basetypes;
 use std::{
     cmp::{Ordering, PartialEq, PartialOrd},
@@ -879,23 +881,19 @@ impl Params {
     }
 }
 
-/// Replace references to SELF by `self_id`.
-pub fn normalize_statement(statement: &Statement, self_id: PodId) -> Statement {
-    let predicate = statement.predicate();
-    let args = statement
-        .args()
-        .iter()
-        .map(|sa| match &sa {
-            StatementArg::Key(AnchoredKey { pod_id, key }) if *pod_id == SELF => {
-                StatementArg::Key(AnchoredKey::new(self_id, key.clone()))
-            }
-            StatementArg::Literal(value) if value.raw.0 == SELF.0 .0 => {
-                StatementArg::Literal(self_id.into())
-            }
-            _ => sa.clone(),
-        })
-        .collect();
-    Statement::from_args(predicate, args).expect("statement was valid before normalization")
+/// Replace EMPTY_HASH in IntroPredicateRef by verifier_data_hash
+pub fn normalize_statement(statement: &Statement, verifier_data_hash: Hash) -> Statement {
+    match statement {
+        Statement::Intro(ir, args) if ir.verifier_data_hash == EMPTY_HASH => Statement::Intro(
+            IntroPredicateRef {
+                name: ir.name.clone(),
+                args_len: ir.args_len,
+                verifier_data_hash,
+            },
+            args.clone(),
+        ),
+        s => s.clone(),
+    }
 }
 
 pub trait EqualsAny {
@@ -915,6 +913,9 @@ impl<T: Any + Eq> EqualsAny for T {
 pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
     fn params(&self) -> &Params;
     fn verify(&self) -> Result<(), BackendError>;
+    fn _verifier_data(&self) -> VerifierOnlyCircuitData {
+        todo!()
+    }
     fn id(&self) -> PodId;
     /// Return a uuid of the pod type and its name.  The name is only used as metadata.
     fn pod_type(&self) -> (usize, &'static str);
@@ -924,9 +925,10 @@ pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
     /// Normalized statements, where self-referencing arguments use the pod id instead of SELF in
     /// the anchored key.
     fn pub_statements(&self) -> Vec<Statement> {
+        let verifier_data_hash = Hash(hash_verifier_data(&self._verifier_data()).elements);
         self.pub_self_statements()
             .into_iter()
-            .map(|statement| normalize_statement(&statement, self.id()))
+            .map(|statement| normalize_statement(&statement, verifier_data_hash))
             .collect()
     }
     /// Return this Pods data serialized into a json value.  This serialization can skip `params,
