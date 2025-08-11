@@ -205,7 +205,7 @@ pub enum Operation {
         /* old_root */ Statement,
         /*  key    */ Statement,
         /*  value  */ Statement,
-        /*  proot  */ MerkleTreeStateTransitionProof,
+        /*  proof  */ MerkleTreeStateTransitionProof,
     ),
     ContainerUpdateFromEntries(
         /* new_root */ Statement,
