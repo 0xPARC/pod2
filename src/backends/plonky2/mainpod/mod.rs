@@ -196,7 +196,7 @@ pub(crate) fn extract_merkle_tree_state_transition_proofs(
         return Err(Error::custom(format!(
             "The number of required Merkle proofs ({}) exceeds the maximum number ({}).",
             table.len(),
-            params.max_merkle_proofs_containers
+            params.max_merkle_tree_state_transition_proofs_containers
         )));
     }
     Ok(table)
