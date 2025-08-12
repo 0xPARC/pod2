@@ -43,16 +43,16 @@ use crate::{
 /// `max_public_statements` only pay for `max_public_statements` by starting the poseidon state
 /// with a precomputed constant corresponding to the front-padding part:
 /// `id = hash(serialize(reverse(statements || none-statements)))`
-pub fn calculate_id(statements: &[Statement], params: &Params) -> middleware::Hash {
-    assert!(statements.len() <= params.num_public_statements_id);
-    assert!(params.max_public_statements <= params.num_public_statements_id);
+pub fn calculate_sts_hash(statements: &[Statement], params: &Params) -> middleware::Hash {
+    assert!(statements.len() <= params.num_public_statements_hash);
+    assert!(params.max_public_statements <= params.num_public_statements_hash);
 
     let mut none_st: Statement = middleware::Statement::None.into();
     pad_statement(params, &mut none_st);
     let statements_back_padded = statements
         .iter()
         .chain(iter::repeat(&none_st))
-        .take(params.num_public_statements_id)
+        .take(params.num_public_statements_hash)
         .collect_vec();
     let field_elems = statements_back_padded
         .iter()
@@ -481,7 +481,7 @@ impl PodProver for Prover {
         let operations = process_public_statements_operations(params, &statements, operations)?;
 
         // get the id out of the public statements
-        let id: PodId = PodId(calculate_id(&public_statements, params));
+        let id: PodId = PodId(calculate_sts_hash(&public_statements, params));
 
         let common_hash: String = cache_get_rec_main_pod_common_hash(params).clone();
         let proofs = inputs
@@ -652,7 +652,7 @@ impl Pod for MainPod {
             )));
         }
         // 2. get the id out of the public statements
-        let id = PodId(calculate_id(&self.public_statements, &self.params));
+        let id = PodId(calculate_sts_hash(&self.public_statements, &self.params));
         if id != self.id {
             return Err(Error::id_not_equal(self.id, id));
         }
@@ -911,7 +911,7 @@ pub mod tests {
             max_statements: 5,
             max_signed_pod_values: 2,
             max_public_statements: 2,
-            num_public_statements_id: 4,
+            num_public_statements_hash: 4,
             max_statement_args: 3,
             max_operation_args: 3,
             max_custom_predicate_batches: 2,

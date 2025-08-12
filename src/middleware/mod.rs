@@ -775,9 +775,9 @@ pub struct Params {
     // The following parameters define how a pod id is calculated.  They need to be the same among
     // different circuits to be compatible in their verification.
     //
-    // Number of public statements to hash to calculate the id.  Must be equal or greater than
-    // `max_public_statements`.
-    pub num_public_statements_id: usize,
+    // Number of public statements to hash to calculate the public inputs.  Must be equal or
+    // greater than `max_public_statements`.
+    pub num_public_statements_hash: usize,
     pub max_statement_args: usize,
     //
     // The following parameters define how a custom predicate batch id is calculated.
@@ -797,7 +797,7 @@ impl Default for Params {
             max_statements: 20,
             max_signed_pod_values: 8,
             max_public_statements: 10,
-            num_public_statements_id: 16,
+            num_public_statements_hash: 16,
             max_statement_args: 5,
             max_operation_args: 5,
             max_custom_predicate_batches: 2,
@@ -857,7 +857,7 @@ impl Params {
     /// Parameters that define how the id is calculated
     pub fn id_params(&self) -> Vec<usize> {
         vec![
-            self.num_public_statements_id,
+            self.num_public_statements_hash,
             self.max_statement_args,
             self.max_custom_predicate_arity,
             self.max_custom_batch_size,
@@ -913,10 +913,22 @@ impl<T: Any + Eq> EqualsAny for T {
 pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
     fn params(&self) -> &Params;
     fn verify(&self) -> Result<(), BackendError>;
+    fn is_mock(&self) -> bool {
+        false
+    }
+    fn is_main(&self) -> bool {
+        false
+    }
     fn _verifier_data(&self) -> VerifierOnlyCircuitData {
         todo!()
     }
+    fn _verifier_data_hash(&self) -> Hash {
+        // TODO
+        EMPTY_HASH
+    }
+    // TODO: Remove
     fn id(&self) -> PodId;
+    // TODO: Remove
     /// Return a uuid of the pod type and its name.  The name is only used as metadata.
     fn pod_type(&self) -> (usize, &'static str);
     /// Statements as internally generated, where self-referencing arguments use SELF in the
@@ -925,7 +937,7 @@ pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
     /// Normalized statements, where self-referencing arguments use the pod id instead of SELF in
     /// the anchored key.
     fn pub_statements(&self) -> Vec<Statement> {
-        let verifier_data_hash = Hash(hash_verifier_data(&self._verifier_data()).elements);
+        let verifier_data_hash = self._verifier_data_hash();
         self.pub_self_statements()
             .into_iter()
             .map(|statement| normalize_statement(&statement, verifier_data_hash))
@@ -935,6 +947,7 @@ pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
     /// id, vds_root`
     fn serialize_data(&self) -> serde_json::Value;
 
+    // TODO: Remove?
     /// Extract key-values from ValueOf public statements
     fn kvs(&self) -> HashMap<AnchoredKey, Value> {
         self.pub_statements()

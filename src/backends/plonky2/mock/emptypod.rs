@@ -4,7 +4,7 @@ use crate::{
     backends::plonky2::{
         basetypes::{Proof, VerifierOnlyCircuitData},
         error::{Error, Result},
-        mainpod::{self, calculate_id},
+        mainpod::{self, calculate_sts_hash},
     },
     middleware::{
         AnchoredKey, Params, Pod, PodId, PodType, RecursivePod, Statement, VDSet, Value, KEY_TYPE,
@@ -29,7 +29,7 @@ fn type_statement() -> Statement {
 impl MockEmptyPod {
     pub fn new_boxed(params: &Params, vd_set: VDSet) -> Box<dyn RecursivePod> {
         let statements = [mainpod::Statement::from(type_statement())];
-        let id = PodId(calculate_id(&statements, params));
+        let id = PodId(calculate_sts_hash(&statements, params));
         Box::new(Self {
             params: params.clone(),
             id,
@@ -48,7 +48,7 @@ impl Pod for MockEmptyPod {
             .into_iter()
             .map(mainpod::Statement::from)
             .collect_vec();
-        let id = PodId(calculate_id(&statements, &self.params));
+        let id = PodId(calculate_sts_hash(&statements, &self.params));
         if id != self.id {
             return Err(Error::id_not_equal(self.id, id));
         }

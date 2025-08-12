@@ -17,12 +17,12 @@ use crate::{
         cache_get_standard_rec_main_pod_common_circuit_data,
         circuits::{
             common::{Flattenable, StatementTarget},
-            mainpod::{calculate_id_circuit, PI_OFFSET_ID},
+            mainpod::{calculate_sts_hash_circuit, PI_OFFSET_STS_HASH},
         },
         deserialize_proof, deserialize_verifier_only,
         error::{Error, Result},
         hash_common_data,
-        mainpod::{self, calculate_id},
+        mainpod::{self, calculate_sts_hash},
         recursion::pad_circuit,
         serialization::{
             CircuitDataSerializer, VerifierCircuitDataSerializer, VerifierOnlyCircuitDataSerializer,
@@ -74,7 +74,7 @@ fn verify_empty_pod_circuit(
         params,
         &builder.constants(&empty_statement().to_fields(params)),
     );
-    let id = calculate_id_circuit(params, builder, &[empty_statement]);
+    let id = calculate_sts_hash_circuit(params, builder, &[empty_statement]);
     builder.register_public_inputs(&id.elements);
     builder.register_public_inputs(&empty_pod.vds_root.elements);
 }
@@ -135,7 +135,7 @@ impl EmptyPod {
         let mut pw = PartialWitness::<F>::new();
         empty_pod_verify_target.set_targets(&mut pw, vd_set.root())?;
         let proof = timed!("EmptyPod prove", data.prove(pw)?);
-        let id = &proof.public_inputs[PI_OFFSET_ID..PI_OFFSET_ID + HASH_SIZE];
+        let id = &proof.public_inputs[PI_OFFSET_STS_HASH..PI_OFFSET_STS_HASH + HASH_SIZE];
         let id = PodId(Hash([id[0], id[1], id[2], id[3]]));
         let common_hash = hash_common_data(&data.common).expect("hash ok");
         Ok(EmptyPod {
@@ -178,7 +178,7 @@ impl Pod for EmptyPod {
             .into_iter()
             .map(mainpod::Statement::from)
             .collect_vec();
-        let id = PodId(calculate_id(&statements, &self.params));
+        let id = PodId(calculate_sts_hash(&statements, &self.params));
         if id != self.id {
             return Err(Error::id_not_equal(self.id, id));
         }
