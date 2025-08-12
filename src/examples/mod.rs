@@ -347,7 +347,7 @@ pub fn great_boy_pod_full_flow() -> Result<MainPodBuilder> {
         max_input_recursive_pods: 0,
         max_statements: 100,
         max_public_statements: 50,
-        num_public_statements_id: 50,
+        num_public_statements_hash: 50,
         ..Default::default()
     };
     let vd_set = &*MOCK_VD_SET;

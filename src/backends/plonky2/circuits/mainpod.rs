@@ -2,6 +2,7 @@ use std::{array, iter, sync::Arc};
 
 use itertools::{izip, zip_eq, Itertools};
 use num::{BigUint, One};
+use pest::state;
 use plonky2::{
     field::types::Field,
     hash::{
@@ -61,8 +62,8 @@ use crate::{
 // MainPod verification
 //
 
-/// Offset in public inputs where we store the pod id
-pub const PI_OFFSET_ID: usize = 0;
+/// Offset in public inputs where we store the statements hash
+pub const PI_OFFSET_STS_HASH: usize = 0;
 /// Offset in public inputs where we store the verified data array root
 pub const PI_OFFSET_VDSROOT: usize = 4;
 
@@ -1427,47 +1428,45 @@ fn make_custom_statement_circuit(
     Ok((statement, op_type))
 }
 
-/// Replace references to SELF by `self_id` in a statement.
+/// Replace the blank verifier_data_hash slots in intro predicates by `vd_hash`
 fn normalize_statement_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
     statement: &StatementTarget,
-    self_id: &ValueTarget,
+    vd_hash: &HashOutTarget,
 ) -> StatementTarget {
-    let self_value = builder.constant_value(SELF.0.into());
-    let args = statement
-        .args
-        .iter()
-        .map(|arg| {
-            let first = ValueTarget::from_slice(&arg.elements[..VALUE_SIZE]);
-            let second = ValueTarget::from_slice(&arg.elements[VALUE_SIZE..]);
-            let is_self = builder.is_equal_flattenable(&self_value, &first);
-            let first_normalized = builder.select_flattenable(params, is_self, self_id, &first);
-            StatementArgTarget::new(first_normalized, second)
-        })
-        .collect_vec();
+    let is_intro = statement.predicate.is_intro(builder);
+    let old_pred = statement.predicate.elements;
+    let old = HashOutTarget::try_from(&old_pred[1..1 + HASH_SIZE]).expect("len = 4");
+    let new = builder
+        .select_flattenable(params, is_intro, vd_hash, &old)
+        .elements;
+
     StatementTarget {
-        predicate: statement.predicate.clone(),
-        args,
+        predicate: PredicateTarget {
+            elements: [old_pred[0], new[0], new[1], new[2], new[3], old_pred[5]],
+        },
+        args: statement.args.clone(),
     }
 }
 
-/// `params.num_public_statements_id` is the total number of statements that will be hashed.
-/// The id is calculated with front-padded none-statements and then the input statements
-/// reversed.  The part of the hash from the front-padded none-statements is precomputed.
-pub fn calculate_id_circuit(
+/// `params.num_public_statements_hash` is the total number of statements that will be hashed.
+/// The statements hash is calculated with front-padded none-statements and then the input
+/// statements reversed.  The part of the hash from the front-padded none-statements is
+/// precomputed.
+pub fn calculate_sts_hash_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
     // These statements will be padded to reach `num_statements`
     statements: &[StatementTarget],
 ) -> HashOutTarget {
-    assert!(statements.len() <= params.num_public_statements_id);
+    assert!(statements.len() <= params.num_public_statements_hash);
     let measure = measure_gates_begin!(builder, "CalculateId");
     let statements_rev_flattened = statements.iter().rev().flat_map(|s| s.flatten());
     let mut none_st = mainpod::Statement::from(Statement::None);
     pad_statement(params, &mut none_st);
     let front_pad_elts = iter::repeat(&none_st)
-        .take(params.num_public_statements_id - statements.len())
+        .take(params.num_public_statements_hash - statements.len())
         .flat_map(|s| s.to_fields(params))
         .collect_vec();
     let (perm, front_pad_elts_rem) =
@@ -1479,11 +1478,11 @@ pub fn calculate_id_circuit(
         .map(|v| builder.constant(*v))
         .chain(statements_rev_flattened)
         .collect_vec();
-    let id =
+    let sts_hash =
         hash_from_state_circuit::<PoseidonHash, PoseidonPermutation<F>>(builder, perm, &inputs);
 
     measure_gates_end!(builder, measure);
-    id
+    sts_hash
 }
 
 // Replace predicates of batch-self with the corresponding global custom predicate batch_id and
@@ -1583,31 +1582,35 @@ fn verify_main_pod_circuit(
         //
         // Verify id from the statements
         //
-        let expected_id = HashOutTarget::try_from(
-            &verified_proof.public_inputs[PI_OFFSET_ID..PI_OFFSET_ID + HASH_SIZE],
+        let expected_sts_hash = HashOutTarget::try_from(
+            &verified_proof.public_inputs[PI_OFFSET_STS_HASH..PI_OFFSET_STS_HASH + HASH_SIZE],
         )
         .expect("4 elements");
-        let id_value = ValueTarget {
-            elements: expected_id.elements,
-        };
 
+        let is_intro = input_pod_self_statements[0].predicate.is_intro(builder);
+        let is_main = builder.not(is_intro);
         for self_st in input_pod_self_statements {
-            let normalized_st = normalize_statement_circuit(params, builder, self_st, &id_value);
+            let normalized_st = normalize_statement_circuit(
+                params,
+                builder,
+                self_st,
+                &verified_proof.verifier_data_hash,
+            );
             statements.push(normalized_st);
         }
-        let id = calculate_id_circuit(params, builder, input_pod_self_statements);
-        builder.connect_hashes(expected_id, id);
+        let sts_hash = calculate_sts_hash_circuit(params, builder, input_pod_self_statements);
+        builder.connect_hashes(expected_sts_hash, sts_hash);
 
         //
-        // Verify that all input pod proofs use verifier data from the public input VD
-        // array. This requires merkle proofs
+        // Verify that all main input pod proofs use verifier data from the public input VD
+        // array. This requires merkle proofs.  introduciton pods are not checked here because
+        // their verifier_data_hash appears in their introduction statement.
         //
 
         verify_merkle_proof_circuit(builder, vd_mt_proof);
 
-        // ensure that mt_proof is enabled
-        let true_targ = builder._true();
-        builder.connect(vd_mt_proof.enabled.target, true_targ.target);
+        // ensure that mt_proof is enabled if it's a main pod
+        builder.connect(vd_mt_proof.enabled.target, is_main.target);
         // connect the vd_mt_proof's root to the actual vds_root, to ensure that the mt proof
         // verifies against the vds_root
         builder.connect_hashes(main_pod.vds_root, vd_mt_proof.root);
@@ -1652,7 +1655,7 @@ fn verify_main_pod_circuit(
     )?;
 
     // 2. Calculate the Pod Id from the public statements
-    let id = calculate_id_circuit(params, builder, pub_statements);
+    let sts_hash = calculate_sts_hash_circuit(params, builder, pub_statements);
 
     // 4. Verify type
     let type_statement = &pub_statements[0];
@@ -1698,7 +1701,7 @@ fn verify_main_pod_circuit(
     }
 
     measure_gates_end!(builder, measure);
-    Ok(id)
+    Ok(sts_hash)
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -1803,7 +1806,7 @@ fn set_targets_input_pods_self_statements(
         statements_target.len(),
         params.max_input_pods_public_statements
     );
-    assert!(statements.len() <= params.num_public_statements_id);
+    assert!(statements.len() <= params.num_public_statements_hash);
 
     for (i, statement) in statements.iter().enumerate() {
         statements_target[i].set_targets(pw, params, &statement.clone().into())?;
@@ -1827,8 +1830,8 @@ impl InnerCircuit for MainPodVerifyTarget {
         verified_proofs: &[VerifiedProofTarget],
     ) -> Result<Self> {
         let main_pod = MainPodVerifyTarget::new_virtual(params, builder);
-        let id = verify_main_pod_circuit(builder, &main_pod, verified_proofs)?;
-        builder.register_public_inputs(&id.elements);
+        let sts_hash = verify_main_pod_circuit(builder, &main_pod, verified_proofs)?;
+        builder.register_public_inputs(&sts_hash.elements);
         builder.register_public_inputs(&main_pod.vds_root.elements);
         Ok(main_pod)
     }
@@ -1997,7 +2000,7 @@ mod tests {
         backends::plonky2::{
             basetypes::C,
             circuits::common::tests::I64_TEST_PAIRS,
-            mainpod::{calculate_id, OperationArg, OperationAux},
+            mainpod::{calculate_sts_hash, OperationArg, OperationAux},
             primitives::{
                 ec::schnorr::SecretKey,
                 merkletree::{MerkleClaimAndProof, MerkleTree, MerkleTreeStateTransitionProof},
@@ -3671,14 +3674,14 @@ mod tests {
         Ok(())
     }
 
-    fn helper_calculate_id(params: &Params, statements: &[Statement]) -> Result<()> {
+    fn helper_calculate_sts_hash(params: &Params, statements: &[Statement]) -> Result<()> {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::new(config);
 
         let statements_target = (0..params.max_public_statements)
             .map(|_| builder.add_virtual_statement(params))
             .collect_vec();
-        let id_target = calculate_id_circuit(params, &mut builder, &statements_target);
+        let sts_hash_target = calculate_sts_hash_circuit(params, &mut builder, &statements_target);
 
         let mut pw = PartialWitness::<F>::new();
 
@@ -3695,11 +3698,11 @@ mod tests {
             st_target.set_targets(&mut pw, params, st)?;
         }
         // Expected Output
-        let expected_id = calculate_id(&statements, params);
+        let expected_sts_hash = calculate_sts_hash(&statements, params);
         pw.set_hash_target(
-            id_target,
+            sts_hash_target,
             HashOut {
-                elements: expected_id.0,
+                elements: expected_sts_hash.0,
             },
         )?;
 
@@ -3714,16 +3717,16 @@ mod tests {
         // Case with no public public statements
         let params = Params {
             max_public_statements: 0,
-            num_public_statements_id: 8,
+            num_public_statements_hash: 8,
             ..Default::default()
         };
 
-        helper_calculate_id(&params, &[]).unwrap();
+        helper_calculate_sts_hash(&params, &[]).unwrap();
 
         // Case with number of statements for the id equal to number of public statements
         let params = Params {
             max_public_statements: 2,
-            num_public_statements_id: 2,
+            num_public_statements_hash: 2,
             ..Default::default()
         };
 
@@ -3739,12 +3742,12 @@ mod tests {
         .take(params.max_public_statements)
         .collect_vec();
 
-        helper_calculate_id(&params, &statements).unwrap();
+        helper_calculate_sts_hash(&params, &statements).unwrap();
 
         // Case with more  statements for the id than the number of public statements
         let params = Params {
             max_public_statements: 4,
-            num_public_statements_id: 6,
+            num_public_statements_hash: 6,
             ..Default::default()
         };
 
@@ -3765,7 +3768,7 @@ mod tests {
         .take(params.max_public_statements)
         .collect_vec();
 
-        helper_calculate_id(&params, &statements).unwrap();
+        helper_calculate_sts_hash(&params, &statements).unwrap();
 
         Ok(())
     }

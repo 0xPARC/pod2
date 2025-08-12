@@ -12,7 +12,7 @@ use crate::{
         basetypes::{Proof, VerifierOnlyCircuitData},
         error::{Error, Result},
         mainpod::{
-            calculate_id, extract_merkle_proofs, extract_merkle_tree_state_transition_proofs,
+            calculate_sts_hash, extract_merkle_proofs, extract_merkle_tree_state_transition_proofs,
             layout_statements, process_private_statements_operations,
             process_public_statements_operations, Operation, OperationAux, Statement,
         },
@@ -192,7 +192,7 @@ impl MockMainPod {
         let operations = process_public_statements_operations(params, &statements, operations)?;
 
         // get the id out of the public statements
-        let id: PodId = PodId(calculate_id(&public_statements, params));
+        let id: PodId = PodId(calculate_sts_hash(&public_statements, params));
 
         let pad_signed_pod: Box<dyn Pod> = Box::new(SignedPod::dummy());
         let input_signed_pods: Vec<Box<dyn Pod>> = inputs
@@ -248,14 +248,14 @@ impl Pod for MockMainPod {
                     self.vd_set.root(),
                 )));
             }
-            let (pod_type, _) = pod.pod_type();
-            // If the pod is not mock, check that its verifier data is in the set
-            if pod_type != PodType::MockMain as usize && pod_type != PodType::MockEmpty as usize {
+            // If the pod is not mock and main (MainPod family) check that its verifier data is in
+            // the set
+            if !pod.is_mock() && pod.is_main() {
                 let verifier_data = pod.verifier_data();
                 let verifier_data_hash = hash_verifier_data(&verifier_data);
                 if !self.vd_set.contains(verifier_data_hash) {
                     return Err(Error::custom(format!(
-                        "vds_root in input recursive pod not in the set: {} not in {}",
+                        "vds_root in input recursive MainPod not in the set: {} not in {}",
                         Hash(verifier_data_hash.elements),
                         self.vd_set.root(),
                     )));
@@ -266,49 +266,52 @@ impl Pod for MockMainPod {
         let input_statement_offset = self.offset_input_statements();
         // get the input_statements from the self.statements
         let input_statements = &self.statements[input_statement_offset..];
+        // TODO: remove: nothing to do with id!
         // 2. get the id out of the public statements, and ensure it is equal to self.id
-        if self.id != PodId(calculate_id(&self.public_statements, &self.params)) {
-            return Err(Error::pod_id_invalid());
-        }
+        // if self.id != PodId(calculate_id(&self.public_statements, &self.params)) {
+        //     return Err(Error::pod_id_invalid());
+        // }
         // 4. Verify type
         // find a ValueOf statement from the public statements with key=KEY_TYPE and check that the
         // value is PodType::MockMainPod
-        let type_statement = &self.public_statements[0];
-        let type_statement_ok = type_statement.0 == Predicate::Native(NativePredicate::Equal)
-            && {
-                if let [StatementArg::Key(AnchoredKey { pod_id, ref key }), StatementArg::Literal(pod_type)] =
-                    &type_statement.1[..2]
-                {
-                    pod_id == &SELF
-                        && key.hash() == hash_str(KEY_TYPE)
-                        && *pod_type == Value::from(PodType::MockMain)
-                } else {
-                    false
-                }
-            };
-        if !type_statement_ok {
-            return Err(Error::not_type_statement());
-        }
+        // TODO: remove: no type!
+        // let type_statement = &self.public_statements[0];
+        // let type_statement_ok = type_statement.0 == Predicate::Native(NativePredicate::Equal)
+        //     && {
+        //         if let [StatementArg::Key(AnchoredKey { pod_id, ref key }), StatementArg::Literal(pod_type)] =
+        //             &type_statement.1[..2]
+        //         {
+        //             pod_id == &SELF
+        //                 && key.hash() == hash_str(KEY_TYPE)
+        //                 && *pod_type == Value::from(PodType::MockMain)
+        //         } else {
+        //             false
+        //         }
+        //     };
+        // if !type_statement_ok {
+        //     return Err(Error::not_type_statement());
+        // }
+        // TODO: remove: no NewEntry op!
         // 3. check that all `NewEntry` operations have unique keys
         // (no duplicates)
-        let value_ofs_unique = input_statements
-            .iter()
-            .zip(self.operations.iter())
-            .filter_map(|(s, o)| {
-                if matches!(o.0, OperationType::Native(NativeOperation::NewEntry)) {
-                    match s.1.get(0) {
-                        Some(StatementArg::Key(k)) => Some(k),
-                        // malformed NewEntry operations are caught in step 5
-                        _ => None,
-                    }
-                } else {
-                    None
-                }
-            })
-            .all_unique();
-        if !value_ofs_unique {
-            return Err(Error::repeated_value_of());
-        }
+        // let value_ofs_unique = input_statements
+        //     .iter()
+        //     .zip(self.operations.iter())
+        //     .filter_map(|(s, o)| {
+        //         if matches!(o.0, OperationType::Native(NativeOperation::NewEntry)) {
+        //             match s.1.get(0) {
+        //                 Some(StatementArg::Key(k)) => Some(k),
+        //                 // malformed NewEntry operations are caught in step 5
+        //                 _ => None,
+        //             }
+        //         } else {
+        //             None
+        //         }
+        //     })
+        //     .all_unique();
+        // if !value_ofs_unique {
+        //     return Err(Error::repeated_value_of());
+        // }
 
         // 5. verify that all `input_statements` are correctly generated
         // by `self.operations` (where each operation can only access previous statements)
