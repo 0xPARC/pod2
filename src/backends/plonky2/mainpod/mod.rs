@@ -1095,4 +1095,14 @@ pub mod tests {
         let std_common = &*cache_get_standard_rec_main_pod_common_circuit_data();
         assert_eq!(std_common.0, main_common.0);
     }
+
+    #[test]
+    fn test_negative_less_than_zero() -> frontend::Result<()> {
+        let params = Params::default();
+        let mut builder = MainPodBuilder::new(&params, &DEFAULT_VD_SET);
+        builder.pub_op(frontend::Operation::lt(-1, 0))?;
+        let prover = Prover {};
+        builder.prove(&prover)?;
+        Ok(())
+    }
 }

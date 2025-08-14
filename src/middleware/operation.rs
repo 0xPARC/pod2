@@ -15,7 +15,7 @@ use crate::{
     middleware::{
         hash_values, AnchoredKey, CustomPredicate, CustomPredicateRef, Error, NativePredicate,
         Params, Predicate, Result, Statement, StatementArg, StatementTmpl, StatementTmplArg,
-        ToFields, Value, ValueRef, Wildcard, F, SELF,
+        ToFields, TypedValue, Value, ValueRef, Wildcard, F, SELF,
     },
 };
 
@@ -415,6 +415,13 @@ impl Operation {
         use Statement::*;
         let deduction_err = || Error::invalid_deduction(self.clone(), output_statement.clone());
         let val = |v, s| value_from_op(s, v).ok_or_else(deduction_err);
+        let int_val = |v, s| {
+            let v_op = value_from_op(s, v).ok_or_else(deduction_err)?;
+            match v_op.typed() {
+                &TypedValue::Int(i) => Ok(i),
+                _ => Err(deduction_err()),
+            }
+        };
         let b = match (self, output_statement) {
             (Self::None, None) => true,
             (Self::NewEntry, Equal(ValueRef::Key(AnchoredKey { pod_id, .. }), _)) => {
@@ -423,8 +430,8 @@ impl Operation {
             (Self::CopyStatement(s1), s2) => s1 == s2,
             (Self::EqualFromEntries(s1, s2), Equal(v3, v4)) => val(v3, s1)? == val(v4, s2)?,
             (Self::NotEqualFromEntries(s1, s2), NotEqual(v3, v4)) => val(v3, s1)? != val(v4, s2)?,
-            (Self::LtEqFromEntries(s1, s2), LtEq(v3, v4)) => val(v3, s1)? <= val(v4, s2)?,
-            (Self::LtFromEntries(s1, s2), Lt(v3, v4)) => val(v3, s1)? < val(v4, s2)?,
+            (Self::LtEqFromEntries(s1, s2), LtEq(v3, v4)) => int_val(v3, s1)? <= int_val(v4, s2)?,
+            (Self::LtFromEntries(s1, s2), Lt(v3, v4)) => int_val(v3, s1)? < int_val(v4, s2)?,
             (
                 Self::ContainsFromEntries(root_s, key_s, val_s, pf),
                 Contains(root_v, key_v, val_v),

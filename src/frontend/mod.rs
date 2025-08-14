@@ -408,8 +408,8 @@ impl MainPodBuilder {
                         }
                     }
                     (LtFromEntries, &[a1, a2]) => {
-                        let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
-                        let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r1, v1) = a1.int_value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, v2) = a2.int_value_and_ref().ok_or_else(native_arg_error)?;
                         if v1 < v2 {
                             Statement::lt(r1, r2)
                         } else {
@@ -417,10 +417,10 @@ impl MainPodBuilder {
                         }
                     }
                     (LtEqFromEntries, &[a1, a2]) => {
-                        let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
-                        let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r1, v1) = a1.int_value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, v2) = a2.int_value_and_ref().ok_or_else(native_arg_error)?;
                         if v1 <= v2 {
-                            Statement::not_equal(r1, r2)
+                            Statement::lt_eq(r1, r2)
                         } else {
                             return Err(native_arg_error());
                         }
