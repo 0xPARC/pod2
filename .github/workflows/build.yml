@@ -15,13 +15,15 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: Set up Rust
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
+      uses: actions-rust-lang/setup-rust-toolchain@v1
     - name: Build default
       run: cargo build
+    - name: Build non-zk # check without the zk feature enabled
+      run: cargo build --no-default-features --features backend_plonky2,mem_cache
     - name: Build metrics
       run: cargo build --features metrics
     - name: Build time
       run: cargo build --features time
+    - name: Build disk_cache
+      run: cargo build --no-default-features --features backend_plonky2,zk,disk_cache
 

@@ -20,6 +20,8 @@ use plonky2::{
     },
     util::serialization::{IoResult, Buffer, Write, Read},
 };
+use std::array;
+
 use crate::backends::plonky2::primitives::ec::{
     curve::{add_homog_offset, ECFieldExt, add_homog, add_xu, Point},
     gates::{field::QuinticTensor, generic::SimpleGate},
@@ -43,7 +45,7 @@ use crate::backends::plonky2::primitives::ec::{
 /// operation when all its witness wire values are zero (so that when the gate is partially used,
 /// the unused slots still pass the constraints). This is the reason why this gate doesn't add the
 /// final offset: if it did, the constraints wouldn't pass on the zero witness values.
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct ECAddHomogOffset;
 
 impl SimpleGate for ECAddHomogOffset {
@@ -59,10 +61,8 @@ impl SimpleGate for ECAddHomogOffset {
         Self::F: plonky2::field::extension::Extendable<D>,
     {
         let mut ans = Vec::with_capacity(20);
-        let x1 = QuinticTensor::from_base(wires[0..5].try_into().unwrap());
-        let u1 = QuinticTensor::from_base(wires[5..10].try_into().unwrap());
-        let x2 = QuinticTensor::from_base(wires[10..15].try_into().unwrap());
-        let u2 = QuinticTensor::from_base(wires[15..20].try_into().unwrap());
+        let [x1, u1, x2, u2] =
+            array::from_fn(|j| QuinticTensor::from_base(array::from_fn(|i| wires[5 * j + i])));
         let out = add_homog_offset(x1, u1, x2, u2);
         for v in out {
             ans.extend(v.to_base());
@@ -71,7 +71,7 @@ impl SimpleGate for ECAddHomogOffset {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ECAddXuGenerator {
     row: usize,
 }

@@ -5,11 +5,17 @@ use plonky2::field::types::Field;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    backends::plonky2::primitives::merkletree::MerkleProof,
+    backends::plonky2::primitives::{
+        ec::{
+            curve::{Point as PublicKey, GROUP_ORDER},
+            schnorr::SecretKey,
+        },
+        merkletree::{MerkleProof, MerkleTree, MerkleTreeOp, MerkleTreeStateTransitionProof},
+    },
     middleware::{
-        custom::KeyOrWildcard, AnchoredKey, CustomPredicate, CustomPredicateRef, Error,
-        NativePredicate, Params, Predicate, Result, SelfOrWildcard, Statement, StatementArg,
-        StatementTmplArg, ToFields, Wildcard, WildcardValue, F, SELF,
+        hash_values, AnchoredKey, CustomPredicate, CustomPredicateRef, Error, NativePredicate,
+        Params, Predicate, Result, Statement, StatementArg, StatementTmpl, StatementTmplArg,
+        ToFields, Value, ValueRef, Wildcard, F, SELF,
     },
 };
 
@@ -23,6 +29,7 @@ pub enum OperationType {
 pub enum OperationAux {
     None,
     MerkleProof(MerkleProof),
+    MerkleTreeStateTransitionProof(MerkleTreeStateTransitionProof),
 }
 
 impl fmt::Display for OperationAux {
@@ -30,6 +37,10 @@ impl fmt::Display for OperationAux {
         match self {
             Self::None => write!(f, "<no aux>")?,
             Self::MerkleProof(pf) => write!(f, "merkle_proof({})", pf)?,
+            // TODO: Make this look nicer.
+            Self::MerkleTreeStateTransitionProof(pf) => {
+                write!(f, "merkle_tree_state_transition_proof({:?})", pf)?
+            }
         }
         Ok(())
     }
@@ -56,7 +67,7 @@ impl ToFields for OperationType {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NativeOperation {
     None = 0,
     NewEntry = 1,
@@ -73,6 +84,10 @@ pub enum NativeOperation {
     ProductOf = 12,
     MaxOf = 13,
     HashOf = 14,
+    PublicKeyOf = 15,
+    ContainerInsertFromEntries = 16,
+    ContainerUpdateFromEntries = 17,
+    ContainerDeleteFromEntries = 18,
 
     // Syntactic sugar operations.  These operations are not supported by the backend.  The
     // frontend compiler is responsible of translating these operations into the operations above.
@@ -84,6 +99,18 @@ pub enum NativeOperation {
     GtEqFromEntries = 1006,
     GtFromEntries = 1007,
     GtToNotEqual = 1008,
+    DictInsertFromEntries = 1009,
+    DictUpdateFromEntries = 1010,
+    DictDeleteFromEntries = 1011,
+    SetInsertFromEntries = 1012,
+    SetDeleteFromEntries = 1013,
+    ArrayUpdateFromEntries = 1014,
+}
+
+impl NativeOperation {
+    pub fn is_syntactic_sugar(self) -> bool {
+        (self as usize) >= 1000
+    }
 }
 
 impl ToFields for NativeOperation {
@@ -100,7 +127,7 @@ impl OperationType {
         match self {
             OperationType::Native(native_op) => match native_op {
                 NativeOperation::None => Some(Predicate::Native(NativePredicate::None)),
-                NativeOperation::NewEntry => Some(Predicate::Native(NativePredicate::ValueOf)),
+                NativeOperation::NewEntry => Some(Predicate::Native(NativePredicate::Equal)),
                 NativeOperation::CopyStatement => None,
                 NativeOperation::EqualFromEntries => {
                     Some(Predicate::Native(NativePredicate::Equal))
@@ -124,6 +151,18 @@ impl OperationType {
                 NativeOperation::ProductOf => Some(Predicate::Native(NativePredicate::ProductOf)),
                 NativeOperation::MaxOf => Some(Predicate::Native(NativePredicate::MaxOf)),
                 NativeOperation::HashOf => Some(Predicate::Native(NativePredicate::HashOf)),
+                NativeOperation::PublicKeyOf => {
+                    Some(Predicate::Native(NativePredicate::PublicKeyOf))
+                }
+                NativeOperation::ContainerInsertFromEntries => {
+                    Some(Predicate::Native(NativePredicate::ContainerInsert))
+                }
+                NativeOperation::ContainerUpdateFromEntries => {
+                    Some(Predicate::Native(NativePredicate::ContainerUpdate))
+                }
+                NativeOperation::ContainerDeleteFromEntries => {
+                    Some(Predicate::Native(NativePredicate::ContainerDelete))
+                }
                 no => unreachable!("Unexpected syntactic sugar op {:?}", no),
             },
             OperationType::Custom(cpr) => Some(Predicate::Custom(cpr.clone())),
@@ -158,7 +197,44 @@ pub enum Operation {
     ProductOf(Statement, Statement, Statement),
     MaxOf(Statement, Statement, Statement),
     HashOf(Statement, Statement, Statement),
+    PublicKeyOf(Statement, Statement),
+    ContainerInsertFromEntries(
+        /* new_root */ Statement,
+        /* old_root */ Statement,
+        /*  key    */ Statement,
+        /*  value  */ Statement,
+        /*  proof  */ MerkleTreeStateTransitionProof,
+    ),
+    ContainerUpdateFromEntries(
+        /* new_root */ Statement,
+        /* old_root */ Statement,
+        /*  key    */ Statement,
+        /*  value  */ Statement,
+        /*  proof  */ MerkleTreeStateTransitionProof,
+    ),
+    ContainerDeleteFromEntries(
+        /* new_root */ Statement,
+        /* old_root */ Statement,
+        /*  key    */ Statement,
+        /*  proof  */ MerkleTreeStateTransitionProof,
+    ),
     Custom(CustomPredicateRef, Vec<Statement>),
+}
+
+pub(crate) fn sum_op(x: i64, y: i64) -> i64 {
+    x + y
+}
+
+pub(crate) fn prod_op(x: i64, y: i64) -> i64 {
+    x * y
+}
+
+pub(crate) fn max_op(x: i64, y: i64) -> i64 {
+    x.max(y)
+}
+
+pub(crate) fn hash_op(x: Value, y: Value) -> Value {
+    Value::from(hash_values(&[x, y]))
 }
 
 impl Operation {
@@ -181,6 +257,14 @@ impl Operation {
             Self::ProductOf(_, _, _) => OT::Native(ProductOf),
             Self::MaxOf(_, _, _) => OT::Native(MaxOf),
             Self::HashOf(_, _, _) => OT::Native(HashOf),
+            Self::PublicKeyOf(_, _) => OT::Native(PublicKeyOf),
+            Self::ContainerInsertFromEntries(_, _, _, _, _) => {
+                OT::Native(ContainerInsertFromEntries)
+            }
+            Self::ContainerUpdateFromEntries(_, _, _, _, _) => {
+                OT::Native(ContainerUpdateFromEntries)
+            }
+            Self::ContainerDeleteFromEntries(_, _, _, _) => OT::Native(ContainerDeleteFromEntries),
             Self::Custom(cpr, _) => OT::Custom(cpr.clone()),
         }
     }
@@ -202,6 +286,10 @@ impl Operation {
             Self::ProductOf(s1, s2, s3) => vec![s1, s2, s3],
             Self::MaxOf(s1, s2, s3) => vec![s1, s2, s3],
             Self::HashOf(s1, s2, s3) => vec![s1, s2, s3],
+            Self::PublicKeyOf(s1, s2) => vec![s1, s2],
+            Self::ContainerInsertFromEntries(s1, s2, s3, s4, _pf) => vec![s1, s2, s3, s4],
+            Self::ContainerUpdateFromEntries(s1, s2, s3, s4, _pf) => vec![s1, s2, s3, s4],
+            Self::ContainerDeleteFromEntries(s1, s2, s3, _pf) => vec![s1, s2, s3],
             Self::Custom(_, args) => args,
         }
     }
@@ -219,56 +307,81 @@ impl Operation {
     pub fn op(op_code: OperationType, args: &[Statement], aux: &OperationAux) -> Result<Self> {
         type OA = OperationAux;
         type NO = NativeOperation;
-        let arg_tup = (
-            args.first().cloned(),
-            args.get(1).cloned(),
-            args.get(2).cloned(),
-        );
         Ok(match op_code {
-            OperationType::Native(o) => match (o, arg_tup, aux.clone(), args.len()) {
-                (NO::None, (None, None, None), OA::None, 0) => Self::None,
-                (NO::NewEntry, (None, None, None), OA::None, 0) => Self::NewEntry,
-                (NO::CopyStatement, (Some(s), None, None), OA::None, 1) => Self::CopyStatement(s),
-                (NO::EqualFromEntries, (Some(s1), Some(s2), None), OA::None, 2) => {
-                    Self::EqualFromEntries(s1, s2)
+            OperationType::Native(o) => match (o, &args, aux.clone()) {
+                (NO::None, &[], OA::None) => Self::None,
+                (NO::NewEntry, &[], OA::None) => Self::NewEntry,
+                (NO::CopyStatement, &[s], OA::None) => Self::CopyStatement(s.clone()),
+                (NO::EqualFromEntries, &[s1, s2], OA::None) => {
+                    Self::EqualFromEntries(s1.clone(), s2.clone())
                 }
-                (NO::NotEqualFromEntries, (Some(s1), Some(s2), None), OA::None, 2) => {
-                    Self::NotEqualFromEntries(s1, s2)
+                (NO::NotEqualFromEntries, &[s1, s2], OA::None) => {
+                    Self::NotEqualFromEntries(s1.clone(), s2.clone())
                 }
-                (NO::LtEqFromEntries, (Some(s1), Some(s2), None), OA::None, 2) => {
-                    Self::LtEqFromEntries(s1, s2)
+                (NO::LtEqFromEntries, &[s1, s2], OA::None) => {
+                    Self::LtEqFromEntries(s1.clone(), s2.clone())
                 }
-                (NO::LtFromEntries, (Some(s1), Some(s2), None), OA::None, 2) => {
-                    Self::LtFromEntries(s1, s2)
+                (NO::LtFromEntries, &[s1, s2], OA::None) => {
+                    Self::LtFromEntries(s1.clone(), s2.clone())
                 }
+                (NO::ContainsFromEntries, &[s1, s2, s3], OA::MerkleProof(pf)) => {
+                    Self::ContainsFromEntries(s1.clone(), s2.clone(), s3.clone(), pf)
+                }
+                (NO::NotContainsFromEntries, &[s1, s2], OA::MerkleProof(pf)) => {
+                    Self::NotContainsFromEntries(s1.clone(), s2.clone(), pf)
+                }
+                (NO::SumOf, &[s1, s2, s3], OA::None) => {
+                    Self::SumOf(s1.clone(), s2.clone(), s3.clone())
+                }
+                (NO::ProductOf, &[s1, s2, s3], OA::None) => {
+                    Self::ProductOf(s1.clone(), s2.clone(), s3.clone())
+                }
+                (NO::MaxOf, &[s1, s2, s3], OA::None) => {
+                    Self::MaxOf(s1.clone(), s2.clone(), s3.clone())
+                }
+                (NO::HashOf, &[s1, s2, s3], OA::None) => {
+                    Self::HashOf(s1.clone(), s2.clone(), s3.clone())
+                }
+                (NO::PublicKeyOf, &[s1, s2], OA::None) => Self::PublicKeyOf(s1.clone(), s2.clone()),
                 (
-                    NO::ContainsFromEntries,
-                    (Some(s1), Some(s2), Some(s3)),
-                    OA::MerkleProof(pf),
-                    3,
-                ) => Self::ContainsFromEntries(s1, s2, s3, pf),
+                    NO::ContainerInsertFromEntries,
+                    &[s1, s2, s3, s4],
+                    OA::MerkleTreeStateTransitionProof(pf),
+                ) => Self::ContainerInsertFromEntries(
+                    s1.clone(),
+                    s2.clone(),
+                    s3.clone(),
+                    s4.clone(),
+                    pf,
+                ),
                 (
-                    NO::NotContainsFromEntries,
-                    (Some(s1), Some(s2), None),
-                    OA::MerkleProof(pf),
-                    2,
-                ) => Self::NotContainsFromEntries(s1, s2, pf),
-                (NO::SumOf, (Some(s1), Some(s2), Some(s3)), OA::None, 3) => Self::SumOf(s1, s2, s3),
-                (NO::ProductOf, (Some(s1), Some(s2), Some(s3)), OA::None, 3) => {
-                    Self::ProductOf(s1, s2, s3)
-                }
-                (NO::MaxOf, (Some(s1), Some(s2), Some(s3)), OA::None, 3) => Self::MaxOf(s1, s2, s3),
-                (NO::HashOf, (Some(s1), Some(s2), Some(s3)), OA::None, 3) => {
-                    Self::HashOf(s1, s2, s3)
-                }
+                    NO::ContainerUpdateFromEntries,
+                    &[s1, s2, s3, s4],
+                    OA::MerkleTreeStateTransitionProof(pf),
+                ) => Self::ContainerUpdateFromEntries(
+                    s1.clone(),
+                    s2.clone(),
+                    s3.clone(),
+                    s4.clone(),
+                    pf,
+                ),
+                (
+                    NO::ContainerDeleteFromEntries,
+                    &[s1, s2, s3],
+                    OA::MerkleTreeStateTransitionProof(pf),
+                ) => Self::ContainerDeleteFromEntries(s1.clone(), s2.clone(), s3.clone(), pf),
                 _ => Err(Error::custom(format!(
-                    "Ill-formed operation {:?} with arguments {:?}.",
-                    op_code, args
+                    "Ill-formed operation {:?} with {} arguments {:?} and aux {:?}.",
+                    op_code,
+                    args.len(),
+                    args,
+                    aux
                 )))?,
             },
             OperationType::Custom(cpr) => Self::Custom(cpr, args.to_vec()),
         })
     }
+
     /// Checks the given operation against a statement, and prints information if the check does not pass
     pub fn check_and_log(&self, params: &Params, output_statement: &Statement) -> Result<bool> {
         let valid: bool = self.check(params, output_statement)?;
@@ -278,59 +391,156 @@ impl Operation {
         }
         Ok(valid)
     }
+
+    pub(crate) fn check_int_fn(
+        v1: &Value,
+        v2: &Value,
+        v3: &Value,
+        f: impl FnOnce(i64, i64) -> i64,
+    ) -> Result<bool> {
+        let i1: i64 = v1.typed().try_into()?;
+        let i2: i64 = v2.typed().try_into()?;
+        let i3: i64 = v3.typed().try_into()?;
+        Ok(i1 == f(i2, i3))
+    }
+
+    pub(crate) fn check_public_key(v1: &Value, v2: &Value) -> Result<bool> {
+        let pk: PublicKey = v1.typed().try_into()?;
+        let sk: SecretKey = v2.typed().try_into()?;
+        Ok(sk.0 < *GROUP_ORDER && pk == sk.public_key())
+    }
+
     /// Checks the given operation against a statement.
     pub fn check(&self, params: &Params, output_statement: &Statement) -> Result<bool> {
         use Statement::*;
-        match (self, output_statement) {
-            (Self::None, None) => Ok(true),
-            (Self::NewEntry, ValueOf(AnchoredKey { pod_id, .. }, _)) => Ok(pod_id == &SELF),
-            (Self::CopyStatement(s1), s2) => Ok(s1 == s2),
-            (Self::EqualFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)), Equal(ak3, ak4)) => {
-                Ok(v1 == v2 && ak3 == ak1 && ak4 == ak2)
+        let deduction_err = || Error::invalid_deduction(self.clone(), output_statement.clone());
+        let val = |v, s| value_from_op(s, v).ok_or_else(deduction_err);
+        let b = match (self, output_statement) {
+            (Self::None, None) => true,
+            (Self::NewEntry, Equal(ValueRef::Key(AnchoredKey { pod_id, .. }), _)) => {
+                pod_id == &SELF
             }
-            (Self::NotEqualFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)), NotEqual(ak3, ak4)) => {
-                Ok(v1 != v2 && ak3 == ak1 && ak4 == ak2)
+            (Self::CopyStatement(s1), s2) => s1 == s2,
+            (Self::EqualFromEntries(s1, s2), Equal(v3, v4)) => val(v3, s1)? == val(v4, s2)?,
+            (Self::NotEqualFromEntries(s1, s2), NotEqual(v3, v4)) => val(v3, s1)? != val(v4, s2)?,
+            (Self::LtEqFromEntries(s1, s2), LtEq(v3, v4)) => val(v3, s1)? <= val(v4, s2)?,
+            (Self::LtFromEntries(s1, s2), Lt(v3, v4)) => val(v3, s1)? < val(v4, s2)?,
+            (
+                Self::ContainsFromEntries(root_s, key_s, val_s, pf),
+                Contains(root_v, key_v, val_v),
+            ) => {
+                let root = val(root_v, root_s)?;
+                let key = val(key_v, key_s)?;
+                let value = val(val_v, val_s)?;
+                MerkleTree::verify(
+                    params.max_depth_mt_containers,
+                    root.raw().into(),
+                    pf,
+                    &key.raw(),
+                    &value.raw(),
+                )?;
+                true
             }
-            (Self::LtEqFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)), LtEq(ak3, ak4)) => {
-                Ok(v1 <= v2 && ak3 == ak1 && ak4 == ak2)
-            }
-            (Self::LtFromEntries(ValueOf(ak1, v1), ValueOf(ak2, v2)), Lt(ak3, ak4)) => {
-                Ok(v1 < v2 && ak3 == ak1 && ak4 == ak2)
-            }
-            (Self::ContainsFromEntries(_, _, _, _), Contains(_, _, _)) =>
-            /* TODO */
-            {
-                Ok(true)
-            }
-            (Self::NotContainsFromEntries(_, _, _), NotContains(_, _)) =>
-            /* TODO */
-            {
-                Ok(true)
+            (Self::NotContainsFromEntries(root_s, key_s, pf), NotContains(root_v, key_v)) => {
+                let root = val(root_v, root_s)?;
+                let key = val(key_v, key_s)?;
+                MerkleTree::verify_nonexistence(
+                    params.max_depth_mt_containers,
+                    root.raw().into(),
+                    pf,
+                    &key.raw(),
+                )?;
+                true
             }
             (
                 Self::TransitiveEqualFromStatements(Equal(ak1, ak2), Equal(ak3, ak4)),
                 Equal(ak5, ak6),
-            ) => Ok(ak2 == ak3 && ak5 == ak1 && ak6 == ak4),
-            (Self::LtToNotEqual(Lt(ak1, ak2)), NotEqual(ak3, ak4)) => Ok(ak1 == ak3 && ak2 == ak4),
+            ) => ak2 == ak3 && ak5 == ak1 && ak6 == ak4,
+            (Self::LtToNotEqual(Lt(ak1, ak2)), NotEqual(ak3, ak4)) => ak1 == ak3 && ak2 == ak4,
+            (Self::SumOf(s1, s2, s3), SumOf(v4, v5, v6)) => {
+                Self::check_int_fn(&val(v4, s1)?, &val(v5, s2)?, &val(v6, s3)?, sum_op)?
+            }
+            (Self::ProductOf(s1, s2, s3), ProductOf(v4, v5, v6)) => {
+                Self::check_int_fn(&val(v4, s1)?, &val(v5, s2)?, &val(v6, s3)?, prod_op)?
+            }
+            (Self::MaxOf(s1, s2, s3), MaxOf(v4, v5, v6)) => {
+                Self::check_int_fn(&val(v4, s1)?, &val(v5, s2)?, &val(v6, s3)?, max_op)?
+            }
+            (Self::HashOf(s1, s2, s3), HashOf(v4, v5, v6)) => {
+                val(v4, s1)? == hash_op(val(v5, s2)?, val(v6, s3)?)
+            }
+            (Self::PublicKeyOf(s1, s2), PublicKeyOf(v3, v4)) => {
+                Self::check_public_key(&val(v3, s1)?, &val(v4, s2)?)?
+            }
             (
-                Self::SumOf(ValueOf(ak1, v1), ValueOf(ak2, v2), ValueOf(ak3, v3)),
-                SumOf(ak4, ak5, ak6),
+                Self::ContainerInsertFromEntries(new_root_s, old_root_s, key_s, val_s, pf),
+                ContainerInsert(new_root_v, old_root_v, key_v, val_v),
             ) => {
-                let v1: i64 = v1.typed().try_into()?;
-                let v2: i64 = v2.typed().try_into()?;
-                let v3: i64 = v3.typed().try_into()?;
-                Ok((v1 == v2 + v3) && ak4 == ak1 && ak5 == ak2 && ak6 == ak3)
+                let old_root = val(old_root_v, old_root_s)?;
+                let new_root = val(new_root_v, new_root_s)?;
+                let key = val(key_v, key_s)?;
+                let value = val(val_v, val_s)?;
+                (pf.op == MerkleTreeOp::Insert
+                    && Value::from(pf.old_root) == old_root
+                    && Value::from(pf.new_root) == new_root
+                    && pf.op_key == key.raw()
+                    && pf.op_value == value.raw())
+                .then_some(())
+                .ok_or(Error::custom(
+                    "The provided Merkle tree state transition proof does not match the claim."
+                        .into(),
+                ))?;
+                MerkleTree::verify_state_transition(params.max_depth_mt_containers, pf)?;
+                true
+            }
+            (
+                Self::ContainerUpdateFromEntries(new_root_s, old_root_s, key_s, val_s, pf),
+                ContainerUpdate(new_root_v, old_root_v, key_v, val_v),
+            ) => {
+                let old_root = val(old_root_v, old_root_s)?;
+                let new_root = val(new_root_v, new_root_s)?;
+                let key = val(key_v, key_s)?;
+                let value = val(val_v, val_s)?;
+                (pf.op == MerkleTreeOp::Update
+                    && Value::from(pf.old_root) == old_root
+                    && Value::from(pf.new_root) == new_root
+                    && pf.op_key == key.raw()
+                    && pf.op_value == value.raw())
+                .then_some(())
+                .ok_or(Error::custom(
+                    "The provided Merkle tree state transition proof does not match the claim."
+                        .into(),
+                ))?;
+                MerkleTree::verify_state_transition(params.max_depth_mt_containers, pf)?;
+                true
+            }
+            (
+                Self::ContainerDeleteFromEntries(new_root_s, old_root_s, key_s, pf),
+                ContainerDelete(new_root_v, old_root_v, key_v),
+            ) => {
+                let old_root = val(old_root_v, old_root_s)?;
+                let new_root = val(new_root_v, new_root_s)?;
+                let key = val(key_v, key_s)?;
+                (pf.op == MerkleTreeOp::Delete
+                    && Value::from(pf.old_root) == old_root
+                    && Value::from(pf.new_root) == new_root
+                    && pf.op_key == key.raw())
+                .then_some(())
+                .ok_or(Error::custom(
+                    "The provided Merkle tree state transition proof does not match the claim."
+                        .into(),
+                ))?;
+                MerkleTree::verify_state_transition(params.max_depth_mt_containers, pf)?;
+                true
             }
             (Self::Custom(CustomPredicateRef { batch, index }, args), Custom(cpr, s_args))
                 if batch == &cpr.batch && index == &cpr.index =>
             {
-                check_custom_pred(params, cpr, args, s_args)
+                check_custom_pred(params, cpr, args, s_args).map(|_| true)?
             }
-            _ => Err(Error::invalid_deduction(
-                self.clone(),
-                output_statement.clone(),
-            )),
-        }
+            _ => return Err(deduction_err()),
+        };
+        Ok(b)
     }
 }
 
@@ -340,50 +550,50 @@ pub fn check_st_tmpl(
     st_tmpl_arg: &StatementTmplArg,
     st_arg: &StatementArg,
     // Map from wildcards to values that we have seen so far.
-    wildcard_map: &mut [Option<WildcardValue>],
-) -> bool {
+    wildcard_map: &mut [Option<Value>],
+) -> Result<()> {
     // Check that the value `v` at wildcard `wc` exists in the map or set it.
-    fn check_or_set(
-        v: WildcardValue,
-        wc: &Wildcard,
-        wildcard_map: &mut [Option<WildcardValue>],
-    ) -> bool {
+    fn check_or_set(v: Value, wc: &Wildcard, wildcard_map: &mut [Option<Value>]) -> Result<()> {
         if let Some(prev) = &wildcard_map[wc.index] {
             if *prev != v {
-                // TODO: Return nice error
-                return false;
+                return Err(Error::invalid_wildcard_assignment(
+                    wc.clone(),
+                    v,
+                    prev.clone(),
+                ));
             }
         } else {
             wildcard_map[wc.index] = Some(v);
         }
-        true
+        Ok(())
     }
 
     match (st_tmpl_arg, st_arg) {
-        (StatementTmplArg::None, StatementArg::None) => true,
-        (StatementTmplArg::Literal(lhs), StatementArg::Literal(rhs)) if lhs == rhs => true,
+        (StatementTmplArg::None, StatementArg::None) => Ok(()),
+        (StatementTmplArg::Literal(lhs), StatementArg::Literal(rhs)) if lhs == rhs => Ok(()),
         (
-            StatementTmplArg::AnchoredKey(self_or_wc, key_or_wc),
+            StatementTmplArg::AnchoredKey(pod_id_wc, key_tmpl),
             StatementArg::Key(AnchoredKey { pod_id, key }),
         ) => {
-            let pod_id_ok = match self_or_wc {
-                SelfOrWildcard::SELF => SELF == *pod_id,
-                SelfOrWildcard::Wildcard(pod_id_wc) => {
-                    check_or_set(WildcardValue::PodId(*pod_id), pod_id_wc, wildcard_map)
-                }
-            };
-            let key_ok = match key_or_wc {
-                KeyOrWildcard::Key(tmpl_key) => tmpl_key == key,
-                KeyOrWildcard::Wildcard(key_wc) => {
-                    check_or_set(WildcardValue::Key(key.clone()), key_wc, wildcard_map)
-                }
-            };
-            pod_id_ok && key_ok
+            let pod_id_ok = check_or_set(Value::from(*pod_id), pod_id_wc, wildcard_map);
+            pod_id_ok.and_then(|_| {
+                (key_tmpl == key).then_some(()).ok_or(
+                    Error::mismatched_anchored_key_in_statement_tmpl_arg(
+                        pod_id_wc.clone(),
+                        *pod_id,
+                        key_tmpl.clone(),
+                        key.clone(),
+                    ),
+                )
+            })
         }
-        (StatementTmplArg::WildcardLiteral(wc), StatementArg::WildcardLiteral(v)) => {
+        (StatementTmplArg::Wildcard(wc), StatementArg::Literal(v)) => {
             check_or_set(v.clone(), wc, wildcard_map)
         }
-        _ => false,
+        _ => Err(Error::mismatched_statement_tmpl_arg(
+            st_tmpl_arg.clone(),
+            st_arg.clone(),
+        )),
     }
 }
 
@@ -391,7 +601,7 @@ pub fn resolve_wildcard_values(
     params: &Params,
     pred: &CustomPredicate,
     args: &[Statement],
-) -> Option<Vec<WildcardValue>> {
+) -> Result<Vec<Value>> {
     // Check that all wildcard have consistent values as assigned in the statements while storing a
     // map of their values.
     // NOTE: We assume the statements have the same order as defined in the custom predicate.  For
@@ -399,33 +609,60 @@ pub fn resolve_wildcard_values(
     let mut wildcard_map = vec![None; params.max_custom_predicate_wildcards];
     for (st_tmpl, st) in pred.statements.iter().zip(args) {
         let st_args = st.args();
-        for (st_tmpl_arg, st_arg) in st_tmpl.args.iter().zip(&st_args) {
-            if !check_st_tmpl(st_tmpl_arg, st_arg, &mut wildcard_map) {
-                // TODO: Better errors.  Example:
-                // println!("{} doesn't match {}", st_arg, st_tmpl_arg);
-                // println!("{} doesn't match {}", st, st_tmpl);
-                return None;
-            }
-        }
+        st_tmpl
+            .args
+            .iter()
+            .zip(&st_args)
+            .try_for_each(|(st_tmpl_arg, st_arg)| {
+                check_st_tmpl(st_tmpl_arg, st_arg, &mut wildcard_map)
+            })?;
     }
 
     // NOTE: We set unresolved wildcard slots with an empty value.  They can be unresolved because
     // they are beyond the number of used wildcards in this custom predicate, or they could be
     // private arguments that are unused in a particular disjunction.
-    Some(
-        wildcard_map
-            .into_iter()
-            .map(|opt| opt.unwrap_or(WildcardValue::None))
-            .collect(),
-    )
+    Ok(wildcard_map
+        .into_iter()
+        .map(|opt| opt.unwrap_or(Value::from(0)))
+        .collect())
 }
 
-fn check_custom_pred(
+fn check_custom_pred_argument(
+    custom_pred_ref: &CustomPredicateRef,
+    template: &StatementTmpl,
+    statement: &Statement,
+) -> Result<()> {
+    let template_pred = match &template.pred {
+        &Predicate::BatchSelf(i) => Predicate::Custom(CustomPredicateRef {
+            batch: custom_pred_ref.batch.clone(),
+            index: i,
+        }),
+        p => p.clone(),
+    };
+    if template_pred != statement.predicate() {
+        return Err(Error::mismatched_statement_type(
+            template_pred,
+            statement.predicate(),
+        ));
+    }
+    let st_args_len = statement.args().len();
+    if template.args.len() != st_args_len {
+        return Err(Error::diff_amount(
+            "statement template in custom predicate".to_string(),
+            "arguments".to_string(),
+            st_args_len,
+            template.args.len(),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn check_custom_pred(
     params: &Params,
     custom_pred_ref: &CustomPredicateRef,
     args: &[Statement],
-    s_args: &[WildcardValue],
-) -> Result<bool> {
+    s_args: &[Value],
+) -> Result<()> {
     let pred = custom_pred_ref.predicate();
     if pred.statements.len() != args.len() {
         return Err(Error::diff_amount(
@@ -444,38 +681,41 @@ fn check_custom_pred(
         ));
     }
 
-    // Count the number of statements that match the templates by predicate.
-    let mut num_matches = 0;
+    let mut match_exists = false;
     for (st_tmpl, st) in pred.statements.iter().zip(args) {
-        let st_tmpl_pred = match &st_tmpl.pred {
-            Predicate::BatchSelf(i) => Predicate::Custom(CustomPredicateRef {
-                batch: custom_pred_ref.batch.clone(),
-                index: *i,
-            }),
-            p => p.clone(),
-        };
-        if st_tmpl_pred == st.predicate() {
-            num_matches += 1;
+        // For `or` predicates, only one statement needs to match the template.
+        // The rest of the statements can be `None`.
+        if !pred.conjunction
+            && matches!(st, Statement::None)
+            && st_tmpl.pred != Predicate::Native(NativePredicate::None)
+        {
+            continue;
         }
+        check_custom_pred_argument(custom_pred_ref, st_tmpl, st)?;
+        match_exists = true;
     }
 
-    let wildcard_map = match resolve_wildcard_values(params, pred, args) {
-        Some(wc_map) => wc_map,
-        None => return Ok(false),
-    };
+    if !pred.conjunction && !match_exists {
+        return Err(Error::unsatisfied_custom_predicate_disjunction(
+            pred.clone(),
+        ));
+    }
 
-    // Check that the resolved wildcard match the statement arguments.
-    for (s_arg, wc_value) in s_args.iter().zip(wildcard_map.iter()) {
+    let wildcard_map = resolve_wildcard_values(params, pred, args)?;
+
+    // Check that the resolved wildcards match the statement arguments.
+    for (arg_index, (s_arg, wc_value)) in s_args.iter().zip(wildcard_map.iter()).enumerate() {
         if *wc_value != *s_arg {
-            return Ok(false);
+            return Err(Error::mismatched_wildcard_value_and_statement_arg(
+                wc_value.clone(),
+                s_arg.clone(),
+                arg_index,
+                pred.clone(),
+            ));
         }
     }
 
-    if pred.conjunction {
-        Ok(num_matches == pred.statements.len())
-    } else {
-        Ok(num_matches > 0)
-    }
+    Ok(())
 }
 
 impl ToFields for Operation {
@@ -491,6 +731,301 @@ impl fmt::Display for Operation {
         for arg in self.args().iter() {
             writeln!(f, "    {}", arg)?;
         }
+        Ok(())
+    }
+}
+
+/// Returns the value associated with `output_ref`.
+/// If `output_ref` is a concrete value, returns that value.
+/// Otherwise, `output_ref` was constructed using an `Equal` statement, and `input_st`
+/// must be that statement.
+pub(crate) fn value_from_op(input_st: &Statement, output_ref: &ValueRef) -> Option<Value> {
+    match (input_st, output_ref) {
+        (Statement::None, ValueRef::Literal(v)) => Some(v.clone()),
+        (Statement::Equal(r1, ValueRef::Literal(v)), r2) if r1 == r2 => Some(v.clone()),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use num::BigUint;
+
+    use crate::{
+        backends::plonky2::primitives::{
+            ec::{curve::GROUP_ORDER, schnorr::SecretKey},
+            merkletree::MerkleTree,
+        },
+        middleware::{
+            hash_value, AnchoredKey, Error, Key, Operation, Params, PodId, Result, Statement,
+        },
+    };
+
+    #[test]
+    fn check_container_ops() -> Result<()> {
+        let params = Params::default();
+        let pod_id = PodId::default();
+        let root_ak = AnchoredKey::new(pod_id, Key::new("root".into()));
+        let key_ak = AnchoredKey::new(pod_id, Key::new("key".into()));
+        let val_ak = AnchoredKey::new(pod_id, Key::new("value".into()));
+
+        // Form Merkle tree
+        let kvs = (0..10)
+            .map(|i| (hash_value(&i.into()).into(), i.into()))
+            .collect::<HashMap<_, _>>();
+        let mt = MerkleTree::new(params.max_depth_mt_containers, &kvs)?;
+        let root_s = Statement::Equal(root_ak.clone().into(), mt.root().into());
+
+        // Check existence proofs
+        kvs.iter().try_for_each(|(k, v)| {
+            // Form op args
+            let key_s = Statement::Equal(key_ak.clone().into(), (*k).into());
+            let value_s = Statement::Equal(val_ak.clone().into(), (*v).into());
+            let (_, pf) = mt.prove(k)?;
+
+            // Form op
+            let op = Operation::ContainsFromEntries(root_s.clone(), key_s, value_s, pf);
+            // Form output statement
+            let st = Statement::Contains(
+                root_ak.clone().into(),
+                key_ak.clone().into(),
+                val_ak.clone().into(),
+            );
+
+            // Check op against output statement
+            op.check(&params, &st).and_then(|ind| {
+                if ind {
+                    Ok(())
+                } else {
+                    Err(Error::custom(format!(
+                        "ContainedFromEntries check failed for pair ({},{})",
+                        k, v
+                    )))
+                }
+            })
+        })?;
+
+        // Check non-existence proofs similarly
+        (50..60).try_for_each(|k| {
+            let key_s = Statement::Equal(key_ak.clone().into(), k.into());
+            let pf = mt.prove_nonexistence(&k.into())?;
+
+            let op = Operation::NotContainsFromEntries(root_s.clone(), key_s, pf);
+            let st = Statement::NotContains(root_ak.clone().into(), key_ak.clone().into());
+
+            op.check(&params, &st).and_then(|ind| {
+                if ind {
+                    Ok(())
+                } else {
+                    Err(Error::custom(format!(
+                        "NotContainedFromEntries check failed for key {}",
+                        k
+                    )))
+                }
+            })
+        })
+    }
+
+    #[test]
+    fn check_container_update_ops() -> Result<()> {
+        let params = Params::default();
+        let pod_id = PodId::default();
+        let new_root_ak = AnchoredKey::new(pod_id, Key::new("new_root".into()));
+        let old_root_ak = AnchoredKey::new(pod_id, Key::new("new_root".into()));
+        let key_ak = AnchoredKey::new(pod_id, Key::new("key".into()));
+        let val_ak = AnchoredKey::new(pod_id, Key::new("value".into()));
+
+        // Form Merkle tree
+        let kvs = (0..10)
+            .map(|i| (hash_value(&i.into()).into(), i.into()))
+            .collect::<HashMap<_, _>>();
+        let mut mt = MerkleTree::new(params.max_depth_mt_containers, &kvs)?;
+
+        // Check insertion proofs
+        (11..20)
+            .map(|i| (hash_value(&i.into()).into(), i.into()))
+            .try_for_each(|(k, v)| {
+                let old_root_s = Statement::Equal(old_root_ak.clone().into(), mt.root().into());
+                let mtp = mt.insert(&k, &v)?;
+                // Form op args
+                let new_root_s = Statement::Equal(new_root_ak.clone().into(), mt.root().into());
+                let key_s = Statement::Equal(key_ak.clone().into(), k.into());
+                let value_s = Statement::Equal(val_ak.clone().into(), v.into());
+
+                // Form op
+                let op = Operation::ContainerInsertFromEntries(
+                    new_root_s, old_root_s, key_s, value_s, mtp,
+                );
+                // Form output statement
+                let st = Statement::ContainerInsert(
+                    new_root_ak.clone().into(),
+                    old_root_ak.clone().into(),
+                    key_ak.clone().into(),
+                    val_ak.clone().into(),
+                );
+
+                // Check op against output statement
+                op.check(&params, &st).and_then(|ind| {
+                    if ind {
+                        Ok(())
+                    } else {
+                        Err(Error::custom(format!(
+                            "Insertion op check failed for pair ({},{})",
+                            k, v
+                        )))
+                    }
+                })
+            })?;
+
+        // Check update proofs
+        (11..20)
+            .map(|i| (hash_value(&i.into()).into(), (i + 1).into()))
+            .try_for_each(|(k, v)| {
+                let old_root_s = Statement::Equal(old_root_ak.clone().into(), mt.root().into());
+                let mtp = mt.update(&k, &v)?;
+                // Form op args
+                let new_root_s = Statement::Equal(new_root_ak.clone().into(), mt.root().into());
+                let key_s = Statement::Equal(key_ak.clone().into(), k.into());
+                let value_s = Statement::Equal(val_ak.clone().into(), v.into());
+
+                // Form op
+                let op = Operation::ContainerUpdateFromEntries(
+                    new_root_s, old_root_s, key_s, value_s, mtp,
+                );
+                // Form output statement
+                let st = Statement::ContainerUpdate(
+                    new_root_ak.clone().into(),
+                    old_root_ak.clone().into(),
+                    key_ak.clone().into(),
+                    val_ak.clone().into(),
+                );
+
+                // Check op against output statement
+                op.check(&params, &st).and_then(|ind| {
+                    if ind {
+                        Ok(())
+                    } else {
+                        Err(Error::custom(format!(
+                            "Update op check failed for pair ({},{})",
+                            k, v
+                        )))
+                    }
+                })
+            })?;
+
+        // Check deletion proofs
+        (11..20)
+            .map(|i| hash_value(&i.into()).into())
+            .try_for_each(|k| {
+                let old_root_s = Statement::Equal(old_root_ak.clone().into(), mt.root().into());
+                let mtp = mt.delete(&k)?;
+                // Form op args
+                let new_root_s = Statement::Equal(new_root_ak.clone().into(), mt.root().into());
+                let key_s = Statement::Equal(key_ak.clone().into(), k.into());
+
+                // Form op
+                let op = Operation::ContainerDeleteFromEntries(new_root_s, old_root_s, key_s, mtp);
+                // Form output statement
+                let st = Statement::ContainerDelete(
+                    new_root_ak.clone().into(),
+                    old_root_ak.clone().into(),
+                    key_ak.clone().into(),
+                );
+
+                // Check op against output statement
+                op.check(&params, &st).and_then(|ind| {
+                    if ind {
+                        Ok(())
+                    } else {
+                        Err(Error::custom(format!(
+                            "Deletion op check failed for key {}",
+                            k
+                        )))
+                    }
+                })
+            })
+    }
+
+    #[test]
+    fn check_public_key_of_op() -> Result<()> {
+        let fixed_sk = SecretKey(BigUint::from(0x1234567890abcdefu64));
+        let fixed_pk = fixed_sk.public_key();
+        let rand_sk = SecretKey::new_rand();
+        let rand_pk = rand_sk.public_key();
+        let small_sk = SecretKey(BigUint::from(0x1u32));
+        let small_pk = small_sk.public_key();
+        let too_large_sk = SecretKey(small_sk.0.clone() + GROUP_ORDER.clone());
+        assert_eq!(small_pk, too_large_sk.public_key());
+
+        let test_cases = [
+            // Valid pairs
+            (fixed_pk, fixed_sk.clone(), true),
+            (rand_pk, rand_sk.clone(), true),
+            // Mismatched pairs
+            (fixed_pk, rand_sk.clone(), false),
+            (rand_pk, fixed_sk.clone(), false),
+            // Above group order
+            (small_pk, small_sk.clone(), true),
+            (small_pk, too_large_sk.clone(), false),
+        ];
+
+        let params = Params::default();
+        let pod_id = PodId::default();
+        let pk_ak = AnchoredKey::new(pod_id, Key::new("pubkey".into()));
+        let sk_ak = AnchoredKey::new(pod_id, Key::new("secret".into()));
+
+        test_cases.iter().try_for_each(|(pk, sk, expect_good)| {
+            // Form op args
+            let pk_s = Statement::Equal(pk_ak.clone().into(), (*pk).into());
+            let sk_s = Statement::Equal(sk_ak.clone().into(), sk.clone().into());
+
+            // Form op
+            let op = Operation::PublicKeyOf(pk_s.clone(), sk_s.clone());
+
+            // Form output statement
+            let st = Statement::PublicKeyOf(pk_ak.clone().into(), sk_ak.clone().into());
+
+            // Check
+            op.check(&params, &st).map(|is_good| {
+                assert_eq!(
+                    is_good, *expect_good,
+                    "PublicKeyOf({}, {}) => {}",
+                    pk, sk, is_good
+                );
+            })
+        })
+    }
+
+    #[test]
+    fn check_public_key_of_op_arg_types() -> Result<()> {
+        let fixed_sk = SecretKey(BigUint::from(0x1234567890abcdefu64));
+        let fixed_pk = fixed_sk.public_key();
+
+        let params = Params::default();
+        let pod_id = PodId::default();
+        let pk_ak = AnchoredKey::new(pod_id, Key::new("pubkey".into()));
+        let sk_ak = AnchoredKey::new(pod_id, Key::new("secret".into()));
+
+        // Form op args
+        let pk_s = Statement::Equal(pk_ak.clone().into(), fixed_pk.into());
+        let sk_s = Statement::Equal(sk_ak.clone().into(), fixed_sk.clone().into());
+
+        // Bad op and statement with bad first args
+        let op = Operation::PublicKeyOf(pk_s.clone(), pk_s.clone());
+        let st = Statement::PublicKeyOf(pk_ak.clone().into(), pk_ak.clone().into());
+
+        // Check
+        assert!(op.check(&params, &st).is_err());
+
+        // Bad op and statement with bad second args
+        let op = Operation::PublicKeyOf(sk_s.clone(), sk_s.clone());
+        let st = Statement::PublicKeyOf(sk_ak.clone().into(), sk_ak.clone().into());
+
+        // Check
+        assert!(op.check(&params, &st).is_err());
+
         Ok(())
     }
 }

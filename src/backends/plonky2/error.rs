@@ -39,8 +39,8 @@ pub enum Error {
     },
     #[error("anyhow::Error: {0}")]
     Anyhow(#[from] anyhow::Error),
-    #[error("Plonky2 proof failed to verify: {0}")]
-    Plonky2ProofFail(anyhow::Error),
+    #[error("Plonky2 proof failed to verify {0}: {1}")]
+    Plonky2ProofFail(String, anyhow::Error),
     #[error("base64::DecodeError: {0}")]
     Base64Decode(#[from] base64::DecodeError),
     #[error("serde_json::Error: {0}")]
@@ -70,8 +70,8 @@ impl Error {
     pub fn custom(s: String) -> Self {
         new!(Custom(s))
     }
-    pub fn plonky2_proof_fail(e: anyhow::Error) -> Self {
-        Self::Plonky2ProofFail(e)
+    pub fn plonky2_proof_fail(context: impl Into<String>, e: anyhow::Error) -> Self {
+        Self::Plonky2ProofFail(context.into(), e)
     }
     pub fn key_not_found() -> Self {
         new!(KeyNotFound)

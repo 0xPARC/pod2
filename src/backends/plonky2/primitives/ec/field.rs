@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{array, marker::PhantomData};
 
 use num::BigUint;
 use plonky2::{
@@ -15,6 +15,7 @@ use plonky2::{
     plonk::{circuit_builder::CircuitBuilder, circuit_data::CommonCircuitData},
     util::serialization::{Buffer, IoError, Read, Write},
 };
+use serde::{Deserialize, Serialize};
 
 //use super::gates::field::NNFMulGate;
 use crate::{
@@ -83,8 +84,9 @@ pub trait CircuitBuilderNNF<
 }
 
 /// Target type modelled on OEF.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OEFTarget<const DEG: usize, NNF: OEF<DEG>> {
+    #[serde(with = "serde_arrays")]
     pub components: [Target; DEG],
     _phantom_data: PhantomData<NNF>,
 }
@@ -106,8 +108,8 @@ impl<const DEG: usize, NNF: OEF<DEG>> Default for OEFTarget<DEG, NNF> {
 
 /// Quotient generator for OEF targets. Allows us to automagically
 /// generate quotients as witnesses.
-#[derive(Debug, Default)]
-struct QuotientGeneratorOEF<const DEG: usize, NNF: OEF<DEG>> {
+#[derive(Debug, Default, Clone)]
+pub(crate) struct QuotientGeneratorOEF<const DEG: usize, NNF: OEF<DEG>> {
     numerator: OEFTarget<DEG, NNF>,
     denominator: OEFTarget<DEG, NNF>,
     quotient: OEFTarget<DEG, NNF>,
@@ -121,7 +123,11 @@ impl<
     > SimpleGenerator<F, D> for QuotientGeneratorOEF<DEG, NNF>
 {
     fn id(&self) -> String {
-        "QuotientGeneratorOEF".to_string()
+        format!(
+            "QuotientGeneratorOEF<{}, {}>",
+            DEG,
+            std::any::type_name::<NNF>()
+        )
     }
 
     fn dependencies(&self) -> Vec<Target> {
@@ -217,7 +223,7 @@ impl<const DEG: usize, NNF: OEF<DEG> + FieldExtension<DEG, BaseField = F>>
         inputs.extend_from_slice(&x.components);
         inputs.extend_from_slice(&y.components);
         let outputs = NNFMulSimple::<DEG, NNF>::apply(self, &inputs);
-        OEFTarget::new(outputs.try_into().unwrap())
+        OEFTarget::new(array::from_fn(|i| outputs[i]))
     }
     fn nnf_div(&mut self, x: &OEFTarget<DEG, NNF>, y: &OEFTarget<DEG, NNF>) -> OEFTarget<DEG, NNF> {
         let one = self.nnf_one();

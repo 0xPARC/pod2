@@ -18,4 +18,4 @@ jobs:
         with:
           components: clippy
       - name: Check lints with clippy
-        run: cargo clippy
+        run: cargo clippy --tests --examples

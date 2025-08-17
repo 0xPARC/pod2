@@ -3,25 +3,28 @@
 //! We roughly follow pornin/ecgfp5.
 use core::ops::{Add, Mul};
 use std::{
-    array,
+    array, fmt,
     ops::{AddAssign, Neg, Sub},
+    str::FromStr,
     sync::LazyLock,
 };
 
 use num::{bigint::BigUint, Num, One};
+use num_bigint::RandBigInt;
 use plonky2::{
     field::{
-        extension::{quintic::QuinticExtension, Extendable, FieldExtension},
+        extension::{quintic::QuinticExtension, Extendable, FieldExtension, Frobenius},
         goldilocks_field::GoldilocksField,
         ops::Square,
-        types::{Field, PrimeField},
+        types::{Field, Field64, PrimeField},
     },
     hash::poseidon::PoseidonHash,
     iop::{generator::SimpleGenerator, target::{BoolTarget,Target}, witness::WitnessWrite},
     plonk::circuit_builder::CircuitBuilder,
     util::serialization::{Read, Write},
 };
-use serde::{Deserialize, Serialize};
+use rand::rngs::OsRng;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::backends::plonky2::{
     circuits::common::ValueTarget,
@@ -34,6 +37,31 @@ use crate::backends::plonky2::{
 };
 
 type ECField = QuinticExtension<GoldilocksField>;
+
+/// Computes sqrt in ECField as sqrt(x) = sqrt(x^r)/x^((r-1)/2) with r
+/// = 1 + p + ... + p^4, where the numerator involves a sqrt in
+/// GoldilocksField, cf.
+/// https://github.com/pornin/ecgfp5/blob/ce059c6d1e1662db437aecbf3db6bb67fe63c716/rust/src/field.rs#L1041
+pub fn ec_field_sqrt(x: &ECField) -> Option<ECField> {
+    // Compute x^r.
+    let x_to_the_r = (0..5)
+        .map(|i| x.repeated_frobenius(i))
+        .reduce(|a, b| a * b)
+        .expect("Iterator should be nonempty.");
+    let num = QuinticExtension([
+        x_to_the_r.0[0].sqrt()?,
+        GoldilocksField::ZERO,
+        GoldilocksField::ZERO,
+        GoldilocksField::ZERO,
+        GoldilocksField::ZERO,
+    ]);
+    // Compute x^((r-1)/2) = x^(p*((1+p)/2)*(1+p^2))
+    let x1 = x.frobenius();
+    #[allow(clippy::manual_div_ceil)]
+    let x2 = x1.exp_u64((1 + GoldilocksField::ORDER) / 2);
+    let den = x2 * x2.repeated_frobenius(2);
+    Some(num / den)
+}
 
 fn ec_field_to_bytes(x: &ECField) -> Vec<u8> {
     x.0.iter()
@@ -68,24 +96,114 @@ fn ec_field_from_bytes(b: &[u8]) -> Result<ECField, Error> {
     Ok(QuinticExtension(array::from_fn(|i| fields[i])))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Point {
     pub x: ECField,
     pub u: ECField,
 }
 
+impl fmt::Display for Point {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        #[allow(clippy::collapsible_else_if)]
+        if f.alternate() {
+            write!(f, "({}, {})", self.x, self.u)
+        } else {
+            if self.is_in_subgroup() {
+                // Compressed
+                let u_bytes = self.as_bytes_from_subgroup().expect("point in subgroup");
+                let u_b58 = bs58::encode(u_bytes).into_string();
+                write!(f, "{}", u_b58)
+            } else {
+                // Non-compressed
+                let xu_bytes = [ec_field_to_bytes(&self.x), ec_field_to_bytes(&self.u)].concat();
+                let xu_b58 = bs58::encode(xu_bytes).into_string();
+                write!(f, "{}", xu_b58)
+            }
+        }
+    }
+}
+
+impl FromStr for Point {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let point_bytes = bs58::decode(s)
+            .into_vec()
+            .map_err(|e| Error::custom(format!("Base58 decode error: {}", e)))?;
+
+        if point_bytes.len() == 80 {
+            // Non-compressed
+            Ok(Point {
+                x: ec_field_from_bytes(&point_bytes[..40])?,
+                u: ec_field_from_bytes(&point_bytes[40..])?,
+            })
+        } else {
+            // Compressed
+            Self::from_bytes_into_subgroup(&point_bytes)
+        }
+    }
+}
+
+impl Serialize for Point {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let point_b58 = format!("{}", self);
+        serializer.serialize_str(&point_b58)
+    }
+}
+
+impl<'de> Deserialize<'de> for Point {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let point_b58 = String::deserialize(deserializer)?;
+        Self::from_str(&point_b58).map_err(serde::de::Error::custom)
+    }
+}
+
 impl Point {
+    pub fn new_rand_from_subgroup() -> Self {
+        &OsRng.gen_biguint_below(&GROUP_ORDER) * Self::generator()
+    }
     pub fn as_fields(&self) -> Vec<crate::middleware::F> {
         self.x.0.iter().chain(self.u.0.iter()).cloned().collect()
     }
-    pub fn as_bytes(&self) -> Vec<u8> {
-        [ec_field_to_bytes(&self.x), ec_field_to_bytes(&self.u)].concat()
+    pub fn compress_from_subgroup(&self) -> Result<ECField, Error> {
+        match self.is_in_subgroup() {
+            true => Ok(self.u),
+            false => Err(Error::custom(format!(
+                "Point must lie in EC subgroup: {}",
+                self
+            ))),
+        }
     }
-    pub fn from_bytes(b: &[u8]) -> Result<Self, Error> {
-        let x_bytes = &b[..40];
-        let u_bytes = &b[40..];
-        ec_field_from_bytes(x_bytes)
-            .and_then(|x| ec_field_from_bytes(u_bytes).map(|u| Self { x, u }))
+    pub fn decompress_into_subgroup(u: &ECField) -> Result<Self, Error> {
+        if u == &ECField::ZERO {
+            return Ok(Self::ZERO);
+        }
+        // Figure out x.
+        let b = ECField::TWO - ECField::ONE / (u.square());
+        let d = b.square() - ECField::TWO.square() * Self::b();
+        let alpha = ECField::NEG_ONE * b / ECField::TWO;
+        let beta = ec_field_sqrt(&d)
+            .ok_or(Error::custom(format!("Not a quadratic residue: {}", d)))?
+            / ECField::TWO;
+        let mut points = [ECField::ONE, ECField::NEG_ONE].into_iter().map(|s| Point {
+            x: alpha + s * beta,
+            u: *u,
+        });
+        points.find(|p| p.is_in_subgroup()).ok_or(Error::custom(
+            "One of the points must lie in the EC subgroup.".into(),
+        ))
+    }
+    pub fn as_bytes_from_subgroup(&self) -> Result<Vec<u8>, Error> {
+        self.compress_from_subgroup().map(|u| ec_field_to_bytes(&u))
+    }
+    pub fn from_bytes_into_subgroup(b: &[u8]) -> Result<Self, Error> {
+        ec_field_from_bytes(b).and_then(|u| Self::decompress_into_subgroup(&u))
     }
 }
 
@@ -216,8 +334,10 @@ pub(super) fn add_homog_offset<const D: usize, F: ECFieldExt<D>>(
 }
 
 const GROUP_ORDER_STR: &str = "1067993516717146951041484916571792702745057740581727230159139685185762082554198619328292418486241";
-pub static GROUP_ORDER: LazyLock<BigUint> =
-    LazyLock::new(|| BigUint::from_str_radix(GROUP_ORDER_STR, 10).unwrap());
+pub static GROUP_ORDER: LazyLock<BigUint> = LazyLock::new(|| {
+    BigUint::from_str_radix(GROUP_ORDER_STR, 10)
+        .expect("The input should be a valid decimal string.")
+});
 
 static FIELD_NUM_SQUARES: LazyLock<BigUint> =
     LazyLock::new(|| (ECField::order() - BigUint::one()) >> 1);
@@ -338,7 +458,7 @@ impl Mul<Point> for &BigUint {
 
 type FieldTarget = OEFTarget<5, QuinticExtension<GoldilocksField>>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize)]
 pub struct PointTarget {
     pub x: FieldTarget,
     pub u: FieldTarget,
@@ -368,8 +488,8 @@ impl PointTarget {
     }
 }
 
-#[derive(Clone, Debug)]
-struct PointSquareRootGenerator {
+#[derive(Clone, Default, Debug)]
+pub(crate) struct PointSquareRootGenerator {
     pub orig: PointTarget,
     pub sqrt: PointTarget,
 }
@@ -544,6 +664,7 @@ pub trait CircuitBuilderElliptic {
 
     fn add_point(&mut self, p1: &PointTarget, p2: &PointTarget) -> PointTarget;
     fn double_point(&mut self, p: &PointTarget) -> PointTarget;
+    fn multiply_point(&mut self, p1_scalar: &[BoolTarget; 320], p1: &PointTarget) -> PointTarget;
     fn linear_combination_points(
         &mut self,
         p1_scalar: &[BoolTarget; 320],
@@ -600,10 +721,8 @@ impl CircuitBuilderElliptic for CircuitBuilder<GoldilocksField, 2> {
         let outputs = ECAddHomogOffset::apply(self, &inputs);
         // plonky2 expects all gate constraints to be satisfied by the zero vector.
         // So our elliptic curve addition gate computes [x,z-b,u,t-b], and we have to add the b here.
-        let x = FieldTarget::new(outputs[0..5].try_into().unwrap());
-        let z = FieldTarget::new(outputs[5..10].try_into().unwrap());
-        let u = FieldTarget::new(outputs[10..15].try_into().unwrap());
-        let t = FieldTarget::new(outputs[15..20].try_into().unwrap());
+        let [x, z, u, t] =
+            array::from_fn(|j| FieldTarget::new(array::from_fn(|i| outputs[5 * j + i])));
         let b1 = self.constant(Point::B1);
         let z = self.nnf_add_scalar_times_generator_power(b1, 1, &z);
         let t = self.nnf_add_scalar_times_generator_power(b1, 1, &t);
@@ -620,6 +739,17 @@ impl CircuitBuilderElliptic for CircuitBuilder<GoldilocksField, 2> {
 
     fn double_point(&mut self, p: &PointTarget) -> PointTarget {
         self.add_point(p, p)
+    }
+
+    fn multiply_point(&mut self, p1_scalar: &[BoolTarget; 320], p1: &PointTarget) -> PointTarget {
+        let zero = self.identity_point();
+        let mut ans = zero.clone();
+        for i in (0..320).rev() {
+            ans = self.double_point(&ans);
+            let maybe_p1 = self.if_point(p1_scalar[i], p1, &zero);
+            ans = self.add_point(&ans, &maybe_p1);
+        }
+        ans
     }
 
     fn linear_combination_points(
@@ -735,7 +865,12 @@ mod test {
     use num::{BigUint, FromPrimitive};
     use num_bigint::RandBigInt;
     use plonky2::{
-        field::{goldilocks_field::GoldilocksField, types::Field},
+        field::{
+            extension::quintic::QuinticExtension,
+            goldilocks_field::GoldilocksField,
+            ops::Square,
+            types::{Field, Sample},
+        },
         iop::witness::PartialWitness,
         plonk::{
             circuit_builder::CircuitBuilder, circuit_data::CircuitConfig,
@@ -744,9 +879,15 @@ mod test {
     };
     use rand::rngs::OsRng;
 
-    use crate::backends::plonky2::primitives::ec::{
-        bits::CircuitBuilderBits,
-        curve::{CircuitBuilderElliptic, ECField, Point, WitnessWriteCurve, GROUP_ORDER},
+    use crate::backends::plonky2::{
+        primitives::ec::{
+            bits::CircuitBuilderBits,
+            curve::{
+                ec_field_sqrt, CircuitBuilderElliptic, ECField, Point, WitnessWriteCurve,
+                GROUP_ORDER,
+            },
+        },
+        Error,
     };
 
     #[test]
@@ -773,6 +914,13 @@ mod test {
         let p3 = (&three) * g;
         assert_eq!(p1, p2);
         assert_eq!(p2, p3);
+    }
+
+    #[test]
+    fn test_sqrt() {
+        let x = QuinticExtension::rand().square();
+        let y = ec_field_sqrt(&x);
+        assert_eq!(y.map(|a| a.square()), Some(x));
     }
 
     #[test]
@@ -813,6 +961,23 @@ mod test {
         };
         assert!(not_sub.is_on_curve());
         assert!(!not_sub.is_in_subgroup());
+    }
+
+    #[test]
+    fn test_roundtrip_compression() -> Result<(), Error> {
+        (0..10).try_for_each(|_| {
+            let p = Point::new_rand_from_subgroup();
+            let p_compressed = p.compress_from_subgroup()?;
+            let q = Point::decompress_into_subgroup(&p_compressed)?;
+
+            match p == q {
+                true => Ok(()),
+                false => Err(Error::custom(format!(
+                    "Roundtrip compression failed: {} ≠ {}",
+                    p, q
+                ))),
+            }
+        })
     }
 
     #[test]
@@ -893,6 +1058,30 @@ mod test {
         pw.set_point_target(&pt, &not_sub)?;
         let data = builder.build::<PoseidonGoldilocksConfig>();
         assert!(data.prove(pw).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn test_point_serialize_deserialize() -> Result<(), anyhow::Error> {
+        // In subgroup
+        let g = Point::generator();
+
+        let serialized = serde_json::to_string_pretty(&g)?;
+        println!("g = {}", serialized);
+        let deserialized = serde_json::from_str(&serialized)?;
+        assert_eq!(g, deserialized);
+
+        // Not in subgroup
+        let not_sub = Point {
+            x: Point::b() / g.x,
+            u: g.u,
+        };
+
+        let serialized = serde_json::to_string_pretty(&not_sub)?;
+        println!("not_sub = {}", serialized);
+        let deserialized = serde_json::from_str(&serialized)?;
+        assert_eq!(not_sub, deserialized);
+
         Ok(())
     }
 }

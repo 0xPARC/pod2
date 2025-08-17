@@ -3,6 +3,8 @@
 
 use std::sync::Arc;
 
+use hex::ToHex;
+use itertools::Itertools;
 use strum_macros::FromRepr;
 mod basetypes;
 use std::{
@@ -32,7 +34,8 @@ use serialization::*;
 pub use statement::*;
 
 use crate::backends::plonky2::primitives::{
-    ec::curve::Point as PublicKey, merkletree::MerkleProof,
+    ec::{curve::Point as PublicKey, schnorr::SecretKey},
+    merkletree::{MerkleProof, MerkleTreeStateTransitionProof},
 };
 
 pub const SELF: PodId = PodId(SELF_ID_HASH);
@@ -53,8 +56,6 @@ pub enum TypedValue {
     // 53-bit precision for integers, integers are represented as tagged
     // strings, with a custom serializer and deserializer.
     // TAGGED TYPES:
-    Set(Set),
-    Dictionary(Dictionary),
     Int(
         #[serde(serialize_with = "serialize_i64", deserialize_with = "deserialize_i64")]
         // #[schemars(with = "String", regex(pattern = r"^\d+$"))]
@@ -62,9 +63,16 @@ pub enum TypedValue {
     ),
     // Uses the serialization for middleware::Value:
     Raw(RawValue),
-    // Public key variant
+    // Schnorr public key variant (EC point)
     PublicKey(PublicKey),
+    // Schnorr secret key variant (scalar)
+    SecretKey(SecretKey),
+    PodId(PodId),
     // UNTAGGED TYPES:
+    #[serde(untagged)]
+    Set(Set),
+    #[serde(untagged)]
+    Dictionary(Dictionary),
     #[serde(untagged)]
     Array(Array),
     #[serde(untagged)]
@@ -106,6 +114,18 @@ impl From<Hash> for TypedValue {
 impl From<PublicKey> for TypedValue {
     fn from(p: PublicKey) -> Self {
         TypedValue::PublicKey(p)
+    }
+}
+
+impl From<SecretKey> for TypedValue {
+    fn from(sk: SecretKey) -> Self {
+        TypedValue::SecretKey(sk)
+    }
+}
+
+impl From<PodId> for TypedValue {
+    fn from(id: PodId) -> Self {
+        TypedValue::PodId(id)
     }
 }
 
@@ -163,17 +183,98 @@ impl TryFrom<TypedValue> for Key {
     }
 }
 
+impl TryFrom<&TypedValue> for PodId {
+    type Error = Error;
+    fn try_from(v: &TypedValue) -> Result<Self> {
+        match v {
+            TypedValue::PodId(id) => Ok(*id),
+            TypedValue::Raw(v) => Ok(PodId(Hash(v.0))),
+            _ => Err(Error::custom(format!(
+                "Value {} cannot be converted to a PodId.",
+                v
+            ))),
+        }
+    }
+}
+
+impl TryFrom<&TypedValue> for PublicKey {
+    type Error = Error;
+    fn try_from(v: &TypedValue) -> std::result::Result<Self, Self::Error> {
+        if let TypedValue::PublicKey(pk) = v {
+            Ok(*pk)
+        } else {
+            Err(Error::custom("Value not a public key".to_string()))
+        }
+    }
+}
+
+impl TryFrom<&TypedValue> for SecretKey {
+    type Error = Error;
+    fn try_from(v: &TypedValue) -> std::result::Result<Self, Self::Error> {
+        if let TypedValue::SecretKey(sk) = v {
+            Ok(sk.clone())
+        } else {
+            Err(Error::custom("Value not a secret key".to_string()))
+        }
+    }
+}
+
 impl fmt::Display for TypedValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TypedValue::String(s) => write!(f, "\"{}\"", s),
-            TypedValue::Int(v) => write!(f, "{}", v),
+            TypedValue::Int(i) => write!(f, "{}", i),
+            TypedValue::String(s) => {
+                // Use serde_json for proper JSON-style escaping
+                match serde_json::to_string(s) {
+                    Ok(escaped) => write!(f, "{}", escaped),
+                    Err(_) => write!(f, "\"{}\"", s),
+                }
+            }
             TypedValue::Bool(b) => write!(f, "{}", b),
-            TypedValue::Dictionary(d) => write!(f, "dict:{}", d.commitment()),
-            TypedValue::Set(s) => write!(f, "set:{}", s.commitment()),
-            TypedValue::Array(a) => write!(f, "arr:{}", a.commitment()),
-            TypedValue::Raw(v) => write!(f, "{}", v),
-            TypedValue::PublicKey(p) => write!(f, "ecGFp5_pt:({},{})", p.x, p.u),
+            TypedValue::Array(a) => {
+                write!(f, "[")?;
+                for (i, v) in a.array().iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", v)?;
+                }
+                write!(f, "]")
+            }
+            TypedValue::Dictionary(d) => {
+                write!(f, "{{ ")?;
+                let kvs: Vec<_> = d.kvs().iter().sorted_by_key(|(k, _)| k.name()).collect();
+                for (i, (k, v)) in kvs.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}: {}", k, v)?;
+                }
+                write!(f, " }}")
+            }
+            TypedValue::Set(s) => {
+                write!(f, "#[")?;
+                let values: Vec<_> = s.set().iter().sorted().collect();
+                for (i, v) in values.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", v)?;
+                }
+                write!(f, "]")
+            }
+            TypedValue::PublicKey(p) => write!(f, "PublicKey({})", p),
+            TypedValue::SecretKey(p) => write!(f, "SecretKey({})", p),
+            TypedValue::PodId(p) => {
+                if *p == SELF {
+                    write!(f, "SELF")
+                } else {
+                    write!(f, "0x{}", p.0.encode_hex::<String>())
+                }
+            }
+            TypedValue::Raw(r) => {
+                write!(f, "Raw(0x{})", r.encode_hex::<String>())
+            }
         }
     }
 }
@@ -189,6 +290,8 @@ impl From<&TypedValue> for RawValue {
             TypedValue::Array(a) => RawValue::from(a.commitment()),
             TypedValue::Raw(v) => *v,
             TypedValue::PublicKey(p) => RawValue::from(hash_fields(&p.as_fields())),
+            TypedValue::SecretKey(sk) => RawValue::from(hash_fields(&sk.to_limbs())),
+            TypedValue::PodId(id) => RawValue::from(id.0),
         }
     }
 }
@@ -206,30 +309,6 @@ impl JsonSchema for TypedValue {
 
     fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
         use schemars::schema::{InstanceType, Schema, SchemaObject, SingleOrVec};
-
-        let set_schema = schemars::schema::SchemaObject {
-            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
-            object: Some(Box::new(schemars::schema::ObjectValidation {
-                properties: [("Set".to_string(), gen.subschema_for::<Set>())]
-                    .into_iter()
-                    .collect(),
-                required: ["Set".to_string()].into_iter().collect(),
-                ..Default::default()
-            })),
-            ..Default::default()
-        };
-
-        let dictionary_schema = schemars::schema::SchemaObject {
-            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
-            object: Some(Box::new(schemars::schema::ObjectValidation {
-                properties: [("Dictionary".to_string(), gen.subschema_for::<Dictionary>())]
-                    .into_iter()
-                    .collect(),
-                required: ["Dictionary".to_string()].into_iter().collect(),
-                ..Default::default()
-            })),
-            ..Default::default()
-        };
 
         // Int is serialized/deserialized as a tagged string
         let int_schema = schemars::schema::SchemaObject {
@@ -266,20 +345,63 @@ impl JsonSchema for TypedValue {
             ..Default::default()
         };
 
+        let pod_id_schema = schemars::schema::SchemaObject {
+            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
+            object: Some(Box::new(schemars::schema::ObjectValidation {
+                properties: [("PodId".to_string(), gen.subschema_for::<PodId>())]
+                    .into_iter()
+                    .collect(),
+                required: ["PodId".to_string()].into_iter().collect(),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+
+        let public_key_schema = schemars::schema::SchemaObject {
+            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
+            object: Some(Box::new(schemars::schema::ObjectValidation {
+                // PublicKey is serialized as a string
+                properties: [("PublicKey".to_string(), gen.subschema_for::<String>())]
+                    .into_iter()
+                    .collect(),
+                required: ["PublicKey".to_string()].into_iter().collect(),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+
+        let secret_key_schema = schemars::schema::SchemaObject {
+            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
+            object: Some(Box::new(schemars::schema::ObjectValidation {
+                // SecretKey is serialized as a string
+                properties: [("SecretKey".to_string(), gen.subschema_for::<String>())]
+                    .into_iter()
+                    .collect(),
+                required: ["SecretKey".to_string()].into_iter().collect(),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+
         // This is the part that Schemars can't generate automatically:
         let untagged_array_schema = gen.subschema_for::<Array>();
+        let untagged_set_schema = gen.subschema_for::<Set>();
+        let untagged_dictionary_schema = gen.subschema_for::<Dictionary>();
         let untagged_string_schema = gen.subschema_for::<String>();
         let untagged_bool_schema = gen.subschema_for::<bool>();
 
         Schema::Object(SchemaObject {
             subschemas: Some(Box::new(schemars::schema::SubschemaValidation {
                 any_of: Some(vec![
-                    Schema::Object(set_schema),
-                    Schema::Object(dictionary_schema),
+                    Schema::Object(pod_id_schema),
                     Schema::Object(int_schema),
                     Schema::Object(raw_schema),
+                    Schema::Object(public_key_schema),
+                    Schema::Object(secret_key_schema),
                     untagged_array_schema,
+                    untagged_dictionary_schema,
                     untagged_string_schema,
+                    untagged_set_schema,
                     untagged_bool_schema,
                 ]),
                 ..Default::default()
@@ -341,7 +463,7 @@ impl Eq for Value {}
 
 impl PartialOrd for Value {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.raw.cmp(&other.raw))
+        Some(self.cmp(other))
     }
 }
 
@@ -413,6 +535,59 @@ impl Value {
             ))),
         }
     }
+    /// Returns a Merkle state transition proof for inserting a
+    /// key-value pair (if applicable).
+    pub(crate) fn prove_insertion(
+        &self,
+        key: &Value,
+        value: &Value,
+    ) -> Result<MerkleTreeStateTransitionProof> {
+        let container = self.typed().clone();
+        match container {
+            TypedValue::Dictionary(mut d) => d.insert(&key.typed().clone().try_into()?, value),
+            TypedValue::Set(mut s) => s.insert(value),
+            _ => Err(Error::custom(format!(
+                "Invalid container value {}",
+                self.typed()
+            ))),
+        }
+    }
+    /// Returns a Merkle state transition proof for updating a
+    /// key-value pair (if applicable).
+    pub(crate) fn prove_update(
+        &self,
+        key: &Value,
+        value: &Value,
+    ) -> Result<MerkleTreeStateTransitionProof> {
+        let container = self.typed().clone();
+        match container {
+            TypedValue::Array(mut a) => match key.typed() {
+                TypedValue::Int(i) if i >= &0 => a.update(*i as usize, value),
+                _ => Err(Error::custom(format!(
+                    "Invalid key {} for container {}.",
+                    key, self
+                )))?,
+            },
+            TypedValue::Dictionary(mut d) => d.update(&key.typed().clone().try_into()?, value),
+            _ => Err(Error::custom(format!(
+                "Invalid container value {} for update op",
+                self.typed()
+            ))),
+        }
+    }
+    /// Returns a Merkle state transition proof for deleting a
+    /// key (if applicable).
+    pub(crate) fn prove_deletion(&self, key: &Value) -> Result<MerkleTreeStateTransitionProof> {
+        let container = self.typed().clone();
+        match container {
+            TypedValue::Dictionary(mut d) => d.delete(&key.typed().clone().try_into()?),
+            TypedValue::Set(mut s) => s.delete(key),
+            _ => Err(Error::custom(format!(
+                "Invalid container value {}",
+                self.typed()
+            ))),
+        }
+    }
 }
 
 // A Value can be created from any type Into<TypedValue> type: bool, string-like, i64, ...
@@ -431,6 +606,8 @@ impl fmt::Display for PodId {
             write!(f, "self")
         } else if self.0 == EMPTY_HASH {
             write!(f, "null")
+        } else if f.alternate() {
+            write!(f, "{:#}", self.0)
         } else {
             write!(f, "{}", self.0)
         }
@@ -599,20 +776,16 @@ impl ToFields for PodId {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, FromRepr, Serialize, Deserialize, JsonSchema)]
 pub enum PodType {
-    None = 0,
-    MockSigned = 1,
-    MockMain = 2,
-    MockEmpty = 3,
-    Signed = 4,
-    Main = 5,
-    Empty = 6,
+    Signed = 1,
+    Main = 2,
+    Empty = 3,
+    MockMain = 102,
+    MockEmpty = 103,
 }
 
 impl fmt::Display for PodType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PodType::None => write!(f, "None"),
-            PodType::MockSigned => write!(f, "MockSigned"),
             PodType::MockMain => write!(f, "MockMain"),
             PodType::MockEmpty => write!(f, "MockEmpty"),
             PodType::Signed => write!(f, "Signed"),
@@ -640,12 +813,17 @@ pub struct Params {
     pub max_custom_predicate_wildcards: usize,
     // maximum number of merkle proofs used for container operations
     pub max_merkle_proofs_containers: usize,
+    // maximum number of merkle tree state transition proofs used for container update operations
+    pub max_merkle_tree_state_transition_proofs_containers: usize,
     // maximum depth for merkle tree gadget used for container operations
     pub max_depth_mt_containers: usize,
     // maximum depth of the merkle tree gadget used for verifier_data membership
     // check.  This allows creating verifying sets of pod circuits of size
-    // 2^max_depth_mt_vds.
+    // 2^max_depth_mt_vds.  Limits the number of container operations of the type Contains,
+    // NotContains.
     pub max_depth_mt_vds: usize,
+    // maximum number of public key derivations used for PublicKeyOf operation
+    pub max_public_key_of: usize,
     //
     // The following parameters define how a pod id is calculated.  They need to be the same among
     // different circuits to be compatible in their verification.
@@ -673,17 +851,18 @@ impl Default for Params {
             max_signed_pod_values: 8,
             max_public_statements: 10,
             num_public_statements_id: 16,
-            // TODO: Reduce to 5 or less after https://github.com/0xPARC/pod2/issues/229
-            max_statement_args: 6,
+            max_statement_args: 5,
             max_operation_args: 5,
             max_custom_predicate_batches: 2,
             max_custom_predicate_verifications: 5,
             max_custom_predicate_arity: 5,
             max_custom_predicate_wildcards: 10,
-            max_custom_batch_size: 5,
+            max_custom_batch_size: 5, // TODO: Move down to 4?
             max_merkle_proofs_containers: 5,
+            max_merkle_tree_state_transition_proofs_containers: 5,
             max_depth_mt_containers: 32,
             max_depth_mt_vds: 6, // up to 64 (2^6) different pod circuits
+            max_public_key_of: 2,
         }
     }
 }
@@ -709,10 +888,6 @@ impl Params {
         Self::predicate_size() + STATEMENT_ARG_F_LEN * self.max_statement_args
     }
 
-    pub fn operation_size(&self) -> usize {
-        Self::operation_type_size() + OPERATION_ARG_F_LEN * self.max_operation_args
-    }
-
     pub const fn statement_tmpl_size(&self) -> usize {
         Self::predicate_size() + self.max_statement_args * Self::statement_tmpl_arg_size()
     }
@@ -723,6 +898,14 @@ impl Params {
 
     pub fn custom_predicate_batch_size_field_elts(&self) -> usize {
         self.max_custom_batch_size * self.custom_predicate_size()
+    }
+
+    /// Total size of the statement table including None, input statements from signed pods and
+    /// input recursive pods and new statements (public & private)
+    pub fn statement_table_size(&self) -> usize {
+        1 + self.max_input_signed_pods * self.max_signed_pod_values
+            + self.max_input_recursive_pods * self.max_input_pods_public_statements
+            + self.max_statements
     }
 
     /// Parameters that define how the id is calculated
@@ -752,7 +935,7 @@ impl Params {
     }
 }
 
-/// Replace references to SELF by `self_id` in anchored keys of the statement.
+/// Replace references to SELF by `self_id`.
 pub fn normalize_statement(statement: &Statement, self_id: PodId) -> Statement {
     let predicate = statement.predicate();
     let args = statement
@@ -762,17 +945,32 @@ pub fn normalize_statement(statement: &Statement, self_id: PodId) -> Statement {
             StatementArg::Key(AnchoredKey { pod_id, key }) if *pod_id == SELF => {
                 StatementArg::Key(AnchoredKey::new(self_id, key.clone()))
             }
+            StatementArg::Literal(value) if value.raw.0 == SELF.0 .0 => {
+                StatementArg::Literal(self_id.into())
+            }
             _ => sa.clone(),
         })
         .collect();
     Statement::from_args(predicate, args).expect("statement was valid before normalization")
 }
 
-pub type DynError = dyn std::error::Error + Send + Sync;
+pub trait EqualsAny {
+    fn equals_any(&self, other: &dyn Any) -> bool;
+}
 
-pub trait Pod: fmt::Debug + DynClone + Any {
+impl<T: Any + Eq> EqualsAny for T {
+    fn equals_any(&self, other: &dyn Any) -> bool {
+        if let Some(o) = other.downcast_ref::<T>() {
+            self == o
+        } else {
+            false
+        }
+    }
+}
+
+pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
     fn params(&self) -> &Params;
-    fn verify(&self) -> Result<(), Box<DynError>>;
+    fn verify(&self) -> Result<(), BackendError>;
     fn id(&self) -> PodId;
     /// Return a uuid of the pod type and its name.  The name is only used as metadata.
     fn pod_type(&self) -> (usize, &'static str);
@@ -790,29 +988,29 @@ pub trait Pod: fmt::Debug + DynClone + Any {
     /// Return this Pods data serialized into a json value.  This serialization can skip `params,
     /// id, vds_root`
     fn serialize_data(&self) -> serde_json::Value;
+
     /// Extract key-values from ValueOf public statements
     fn kvs(&self) -> HashMap<AnchoredKey, Value> {
         self.pub_statements()
             .into_iter()
             .filter_map(|st| match st {
-                Statement::ValueOf(ak, v) => Some((ak, v)),
+                Statement::Equal(ValueRef::Key(ak), ValueRef::Literal(v)) => Some((ak, v)),
                 _ => None,
             })
             .collect()
     }
 
-    // Front-end Pods keep references to middleware Pods. Most of the
-    // middleware data can be derived directly from front-end data, but the
-    // "proof" data is only created at the point of proving/signing, and
-    // cannot be reconstructed. As such, we need to serialize it whenever
-    // we serialize a front-end Pod. Since the front-end does not understand
-    // the implementation details of the middleware, this method allows the
-    // middleware to provide some serialized data that can be used to
-    // reconstruct the proof.
-    // It is an important principle that this data is opaque to the front-end
-    // and any third-party code.
-    // fn serialized_proof(&self) -> String;
+    fn equals(&self, other: &dyn Pod) -> bool {
+        self.equals_any(other as &dyn Any)
+    }
 }
+impl PartialEq for Box<dyn Pod> {
+    fn eq(&self, other: &Self) -> bool {
+        self.equals(&**other)
+    }
+}
+
+impl Eq for Box<dyn Pod> {}
 
 // impl Clone for Box<dyn Pod>
 dyn_clone::clone_trait_object!(Pod);
@@ -822,47 +1020,39 @@ dyn_clone::clone_trait_object!(Pod);
 /// recursion: for example an introduction Pod in general is not recursive.
 pub trait RecursivePod: Pod {
     fn verifier_data(&self) -> VerifierOnlyCircuitData;
+    /// Return a hash of the CommonCircuitData that uniquely identifies the circuit
+    /// configuration and list of custom gates.
+    fn common_hash(&self) -> String;
     fn proof(&self) -> Proof;
-    fn vds_root(&self) -> Hash;
+    fn vd_set(&self) -> &VDSet;
+
+    /// Returns the deserialized RecursivePod.
+    fn deserialize_data(
+        params: Params,
+        data: serde_json::Value,
+        vd_set: VDSet,
+        id: PodId,
+    ) -> Result<Box<dyn RecursivePod>, BackendError>
+    where
+        Self: Sized;
 }
+impl PartialEq for Box<dyn RecursivePod> {
+    fn eq(&self, other: &Self) -> bool {
+        self.equals(&**other)
+    }
+}
+
+impl Eq for Box<dyn RecursivePod> {}
 
 // impl Clone for Box<dyn RecursivePod>
 dyn_clone::clone_trait_object!(RecursivePod);
 
 pub trait PodSigner {
     fn sign(
-        &mut self,
+        &self,
         params: &Params,
         kvs: &HashMap<Key, Value>,
-    ) -> Result<Box<dyn Pod>, Box<DynError>>;
-}
-
-// TODO: Delete once we have a fully working EmptyPod and a dumb SignedPod
-// https://github.com/0xPARC/pod2/issues/246
-/// This is a filler type that fulfills the Pod trait and always verifies.  It's empty.  This
-/// can be used to simulate padding in a circuit.
-#[derive(Debug, Clone)]
-pub struct NonePod {}
-
-impl Pod for NonePod {
-    fn params(&self) -> &Params {
-        panic!("NonePod doesn't have params");
-    }
-    fn verify(&self) -> Result<(), Box<DynError>> {
-        Ok(())
-    }
-    fn id(&self) -> PodId {
-        PodId(EMPTY_HASH)
-    }
-    fn pod_type(&self) -> (usize, &'static str) {
-        (PodType::None as usize, "None")
-    }
-    fn pub_self_statements(&self) -> Vec<Statement> {
-        Vec::new()
-    }
-    fn serialize_data(&self) -> serde_json::Value {
-        serde_json::Value::Null
-    }
+    ) -> Result<Box<dyn Pod>, BackendError>;
 }
 
 #[derive(Debug)]
@@ -874,7 +1064,8 @@ pub struct MainPodInputs<'a> {
     /// Statements that need to be made public (they can come from input pods or input
     /// statements)
     pub public_statements: &'a [Statement],
-    pub vds_set: VDSet,
+    // TODO: REMOVE THIS
+    pub vd_set: VDSet,
 }
 
 pub trait PodProver {
@@ -883,7 +1074,7 @@ pub trait PodProver {
         params: &Params,
         vd_set: &VDSet,
         inputs: MainPodInputs,
-    ) -> Result<Box<dyn RecursivePod>, Box<DynError>>;
+    ) -> Result<Box<dyn RecursivePod>, BackendError>;
 }
 
 pub trait ToFields {

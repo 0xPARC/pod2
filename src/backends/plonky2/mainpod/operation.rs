@@ -1,15 +1,14 @@
 use std::fmt;
 
-use plonky2::field::types::Field;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::{
         error::{Error, Result},
         mainpod::Statement,
-        primitives::merkletree::MerkleClaimAndProof,
+        primitives::merkletree::{MerkleClaimAndProof, MerkleTreeStateTransitionProof},
     },
-    middleware::{self, OperationType, Params, ToFields, F},
+    middleware::{self, OperationType, Params},
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -18,37 +17,59 @@ pub enum OperationArg {
     Index(usize),
 }
 
-impl ToFields for OperationArg {
-    fn to_fields(&self, _params: &Params) -> Vec<F> {
-        let f = match self {
-            Self::None => F::ZERO,
-            Self::Index(i) => F::from_canonical_usize(*i),
-        };
-        vec![f]
-    }
-}
-
 impl OperationArg {
     pub fn is_none(&self) -> bool {
         matches!(self, OperationArg::None)
     }
+
+    pub fn as_usize(&self) -> usize {
+        match self {
+            Self::None => 0,
+            Self::Index(i) => *i,
+        }
+    }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum OperationAux {
     None,
     MerkleProofIndex(usize),
+    PublicKeyOfIndex(usize),
+    MerkleTreeStateTransitionProofIndex(usize),
     CustomPredVerifyIndex(usize),
 }
 
-impl ToFields for OperationAux {
-    fn to_fields(&self, _params: &Params) -> Vec<F> {
-        let fs = match self {
-            Self::None => [F::ZERO, F::ZERO],
-            Self::MerkleProofIndex(i) => [F::from_canonical_usize(*i), F::ZERO],
-            Self::CustomPredVerifyIndex(i) => [F::ZERO, F::from_canonical_usize(*i)],
-        };
-        vec![fs[0], fs[1]]
+impl OperationAux {
+    fn table_offset_merkle_proof(_params: &Params) -> usize {
+        // At index 0 we store a zero entry
+        1
+    }
+    fn table_offset_public_key_of(params: &Params) -> usize {
+        Self::table_offset_merkle_proof(params) + params.max_merkle_proofs_containers
+    }
+    fn table_offset_merkle_tree_state_transition_proof(params: &Params) -> usize {
+        Self::table_offset_public_key_of(params) + params.max_public_key_of
+    }
+    fn table_offset_custom_pred_verify(params: &Params) -> usize {
+        Self::table_offset_merkle_tree_state_transition_proof(params)
+            + params.max_merkle_tree_state_transition_proofs_containers
+    }
+    pub(crate) fn table_size(params: &Params) -> usize {
+        1 + params.max_merkle_proofs_containers
+            + params.max_public_key_of
+            + params.max_merkle_tree_state_transition_proofs_containers
+            + params.max_custom_predicate_verifications
+    }
+    pub fn table_index(&self, params: &Params) -> usize {
+        match self {
+            Self::None => 0,
+            Self::MerkleProofIndex(i) => Self::table_offset_merkle_proof(params) + *i,
+            Self::PublicKeyOfIndex(i) => Self::table_offset_public_key_of(params) + *i,
+            Self::MerkleTreeStateTransitionProofIndex(i) => {
+                Self::table_offset_merkle_tree_state_transition_proof(params) + *i
+            }
+            Self::CustomPredVerifyIndex(i) => Self::table_offset_custom_pred_verify(params) + *i,
+        }
     }
 }
 
@@ -69,13 +90,18 @@ impl Operation {
         &self,
         statements: &[Statement],
         merkle_proofs: &[MerkleClaimAndProof],
+        merkle_tree_state_transition_proofs: &[MerkleTreeStateTransitionProof],
     ) -> Result<crate::middleware::Operation> {
         let deref_args = self
             .1
             .iter()
             .flat_map(|arg| match arg {
                 OperationArg::None => None,
-                OperationArg::Index(i) => Some(statements[*i].clone().try_into()),
+                OperationArg::Index(i) => {
+                    let st: Result<crate::middleware::Statement> =
+                        statements[*i].clone().try_into();
+                    Some(st)
+                }
             })
             .collect::<Result<Vec<_>>>()?;
         let deref_aux = match self.2 {
@@ -88,6 +114,18 @@ impl Operation {
                     .proof
                     .clone(),
             ),
+            OperationAux::MerkleTreeStateTransitionProofIndex(i) => {
+                crate::middleware::OperationAux::MerkleTreeStateTransitionProof(
+                    merkle_tree_state_transition_proofs
+                        .get(i)
+                        .ok_or(Error::custom(format!(
+                            "Missing Merkle state transition proof index {}",
+                            i
+                        )))?
+                        .clone(),
+                )
+            }
+            OperationAux::PublicKeyOfIndex(_) => crate::middleware::OperationAux::None,
         };
         Ok(middleware::Operation::op(
             self.0.clone(),
@@ -115,6 +153,10 @@ impl fmt::Display for Operation {
             OperationAux::None => (),
             OperationAux::MerkleProofIndex(i) => write!(f, " merkle_proof_{:02}", i)?,
             OperationAux::CustomPredVerifyIndex(i) => write!(f, " custom_pred_verify_{:02}", i)?,
+            OperationAux::PublicKeyOfIndex(i) => write!(f, " public_key_of_{:02}", i)?,
+            OperationAux::MerkleTreeStateTransitionProofIndex(i) => {
+                write!(f, " merkle_tree_state_transition_proof_{:02}", i)?
+            }
         }
         Ok(())
     }

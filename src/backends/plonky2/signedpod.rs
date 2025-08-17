@@ -1,13 +1,12 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::LazyLock};
 
 use itertools::Itertools;
-use num_bigint::RandBigInt;
+use num_bigint::{BigUint, RandBigInt};
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::{
-        deserialize_bytes,
         error::{Error, Result},
         primitives::{
             ec::{
@@ -16,19 +15,23 @@ use crate::{
             },
             merkletree::MerkleTree,
         },
-        serialize_bytes,
     },
-    constants::MAX_DEPTH,
     middleware::{
-        containers::Dictionary, AnchoredKey, DynError, Hash, Key, Params, Pod, PodId, PodSigner,
-        PodType, RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE, SELF,
+        containers::Dictionary, AnchoredKey, Hash, Key, Params, Pod, PodId, PodSigner, PodType,
+        RawValue, Statement, Value, KEY_SIGNER, KEY_TYPE, SELF,
     },
+    timed,
 };
 
 pub struct Signer(pub SecretKey);
 
 impl Signer {
-    fn _sign(&mut self, params: &Params, kvs: &HashMap<Key, Value>) -> Result<SignedPod> {
+    fn sign_with_nonce(
+        &self,
+        params: &Params,
+        nonce: BigUint,
+        kvs: &HashMap<Key, Value>,
+    ) -> Result<SignedPod> {
         let mut kvs = kvs.clone();
         let pubkey = self.0.public_key();
         kvs.insert(Key::from(KEY_SIGNER), Value::from(pubkey));
@@ -37,8 +40,7 @@ impl Signer {
         let dict = Dictionary::new(params.max_depth_mt_containers, kvs)?;
         let id = RawValue::from(dict.commitment()); // PodId as Value
 
-        let nonce = OsRng.gen_biguint_below(&GROUP_ORDER);
-        let signature: Signature = self.0.sign(id, &nonce);
+        let signature: Signature = timed!("SignedPod::sign", self.0.sign(id, &nonce));
         Ok(SignedPod {
             id: PodId(Hash::from(id)),
             signature,
@@ -46,23 +48,23 @@ impl Signer {
             dict,
         })
     }
+    fn _sign(&self, params: &Params, kvs: &HashMap<Key, Value>) -> Result<SignedPod> {
+        let nonce = OsRng.gen_biguint_below(&GROUP_ORDER);
+        self.sign_with_nonce(params, nonce, kvs)
+    }
 
-    pub fn public_key(&self) -> Point {
-        self.0.public_key()
+    pub fn public_key(&self) -> Value {
+        Value::from(self.0.public_key())
     }
 }
 
 impl PodSigner for Signer {
-    fn sign(
-        &mut self,
-        params: &Params,
-        kvs: &HashMap<Key, Value>,
-    ) -> Result<Box<dyn Pod>, Box<DynError>> {
+    fn sign(&self, params: &Params, kvs: &HashMap<Key, Value>) -> Result<Box<dyn Pod>> {
         Ok(self._sign(params, kvs).map(Box::new)?)
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SignedPod {
     pub id: PodId,
     pub signature: Signature,
@@ -72,13 +74,43 @@ pub struct SignedPod {
 
 #[derive(Serialize, Deserialize)]
 struct Data {
-    signer: String,
-    signature: String,
+    signer: Point,
+    signature: Signature,
     kvs: Dictionary,
 }
 
+static DUMMY_POD: LazyLock<SignedPod> = LazyLock::new(dummy);
+
+fn dummy() -> SignedPod {
+    let nonce = BigUint::from(2u32);
+    Signer(SecretKey(BigUint::from(1u32)))
+        .sign_with_nonce(&Params::default(), nonce, &HashMap::new())
+        .expect("valid")
+}
+
 impl SignedPod {
-    fn _verify(&self) -> Result<()> {
+    pub(crate) fn deserialize(id: PodId, data: serde_json::Value) -> Result<Box<dyn Pod>> {
+        let data: Data = serde_json::from_value(data)?;
+        Ok(Box::new(Self {
+            id,
+            signature: data.signature,
+            signer: data.signer,
+            dict: data.kvs,
+        }))
+    }
+
+    /// Generate a valid SignedPod with a public deterministic secret key and nonce and no other
+    /// key-values than the default ones.  This is used for padding.
+    pub fn dummy() -> SignedPod {
+        DUMMY_POD.clone()
+    }
+}
+
+impl Pod for SignedPod {
+    fn params(&self) -> &Params {
+        panic!("SignedPod doesn't have params");
+    }
+    fn verify(&self) -> Result<()> {
         // 1. Verify type
         let value_at_type = self.dict.get(&Key::from(KEY_TYPE))?;
         if Value::from(PodType::Signed) != *value_at_type {
@@ -90,7 +122,7 @@ impl SignedPod {
 
         // 2. Verify id
         let mt = MerkleTree::new(
-            MAX_DEPTH,
+            self.dict.max_depth(),
             &self
                 .dict
                 .kvs()
@@ -116,42 +148,6 @@ impl SignedPod {
             .ok_or(Error::custom("Invalid signature!".into()))
     }
 
-    pub(crate) fn deserialize(id: PodId, data: serde_json::Value) -> Result<Box<dyn Pod>> {
-        let data: Data = serde_json::from_value(data)?;
-        let signer_bytes = deserialize_bytes(&data.signer)?;
-        let signature_bytes = deserialize_bytes(&data.signature)?;
-
-        if signer_bytes.len() != 80 {
-            return Err(Error::custom(
-                "Invalid byte encoding of signed POD signer.".to_string(),
-            ));
-        }
-        if signature_bytes.len() != 80 {
-            return Err(Error::custom(
-                "Invalid byte encoding of signed POD signature.".to_string(),
-            ));
-        }
-
-        let signer = Point::from_bytes(&signer_bytes)?;
-        let signature = Signature::from_bytes(&signature_bytes)?;
-
-        Ok(Box::new(Self {
-            id,
-            signature,
-            signer,
-            dict: data.kvs,
-        }))
-    }
-}
-
-impl Pod for SignedPod {
-    fn params(&self) -> &Params {
-        panic!("SignedPod doesn't have params");
-    }
-    fn verify(&self) -> Result<(), Box<DynError>> {
-        Ok(self._verify().map_err(Box::new)?)
-    }
-
     fn id(&self) -> PodId {
         self.id
     }
@@ -169,16 +165,14 @@ impl Pod for SignedPod {
         [(key_type, value_type), (key_signer, value_signer)]
             .into_iter()
             .chain(kvs.into_iter().sorted_by_key(|kv| kv.0.hash()))
-            .map(|(k, v)| Statement::ValueOf(AnchoredKey::from((SELF, k)), v))
+            .map(|(k, v)| Statement::equal(AnchoredKey::from((SELF, k)), v))
             .collect()
     }
 
     fn serialize_data(&self) -> serde_json::Value {
-        let signer = serialize_bytes(&self.signer.as_bytes());
-        let signature = serialize_bytes(&self.signature.as_bytes());
         serde_json::to_value(Data {
-            signer,
-            signature,
+            signer: self.signer,
+            signature: self.signature.clone(),
             kvs: self.dict.clone(),
         })
         .expect("serialization to json")
@@ -206,11 +200,11 @@ pub mod tests {
         pod.insert("socialSecurityNumber", "G2121210");
 
         let sk = SecretKey(123u64.into());
-        let mut signer = Signer(sk);
-        let pod = pod.sign(&mut signer).unwrap();
+        let signer = Signer(sk);
+        let pod = pod.sign(&signer).unwrap();
         let pod = (pod.pod as Box<dyn Any>).downcast::<SignedPod>().unwrap();
 
-        pod._verify()?;
+        pod.verify()?;
         println!("id: {}", pod.id());
         println!("kvs: {:?}", pod.kvs());
 

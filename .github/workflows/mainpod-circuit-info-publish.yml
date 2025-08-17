@@ -1,0 +1,55 @@
+---
+name: Publish MainPod circuit info
+
+on:
+  push:
+    branches: ["main"]
+
+  # Allows to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+concurrency:
+  group: wiki
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  wiki:
+    name: Update Wiki with new MainPod circuit info
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          repository: ${{github.repository}}
+          path: ${{github.repository}}
+
+      - name: Checkout Wiki
+        uses: actions/checkout@v4
+        with:
+          repository: ${{github.repository}}.wiki
+          path: ${{github.repository}}.wiki
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Push to wiki
+        run: |
+          set -e
+
+          cd $GITHUB_WORKSPACE/${{github.repository}}
+          table_entry=$(.github/workflows/scripts/mainpod-circuit-info-table.sh)
+          params=$(.github/workflows/scripts/mainpod-circuit-info.sh params)
+          data=$(.github/workflows/scripts/mainpod-circuit-info.sh circuit-info)
+          params_hash=$(echo "${data}" | jq --raw-output .params_hash)
+
+          cd $GITHUB_WORKSPACE/${{github.repository}}.wiki
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          mkdir -p params
+          echo "$params" > params/${params_hash}.json
+          echo "$table_entry" >> MainPod-circuit-info.md
+          git add .
+          git diff-index --quiet HEAD || git commit -m "action: update MainPod-circuit-info" && git push

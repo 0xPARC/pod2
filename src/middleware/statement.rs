@@ -1,4 +1,7 @@
-use std::{fmt, iter};
+use std::{
+    fmt::{self, Display},
+    iter,
+};
 
 use plonky2::field::types::Field;
 use schemars::JsonSchema;
@@ -6,8 +9,7 @@ use serde::{Deserialize, Serialize};
 use strum_macros::FromRepr;
 
 use crate::middleware::{
-    AnchoredKey, CustomPredicateRef, Error, Key, Params, PodId, RawValue, Result, ToFields, Value,
-    EMPTY_VALUE, F, VALUE_SIZE,
+    AnchoredKey, CustomPredicateRef, Error, Params, Result, ToFields, Value, F, VALUE_SIZE,
 };
 
 // TODO: Maybe store KEY_SIGNER and KEY_TYPE as Key with lazy_static
@@ -16,24 +18,25 @@ pub const KEY_SIGNER: &str = "_signer";
 // hash(KEY_TYPE) = [17948789436443445142, 12513915140657440811, 15878361618879468769, 938231894693848619]
 pub const KEY_TYPE: &str = "_type";
 pub const STATEMENT_ARG_F_LEN: usize = 8;
-pub const OPERATION_ARG_F_LEN: usize = 1;
-pub const OPERATION_AUX_F_LEN: usize = 2;
 
 #[derive(Clone, Copy, Debug, FromRepr, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum NativePredicate {
     None = 0,  // Always true
     False = 1, // Always false
-    ValueOf = 2,
-    Equal = 3,
-    NotEqual = 4,
-    LtEq = 5,
-    Lt = 6,
-    Contains = 7,
-    NotContains = 8,
-    SumOf = 9,
-    ProductOf = 10,
-    MaxOf = 11,
-    HashOf = 12,
+    Equal = 2,
+    NotEqual = 3,
+    LtEq = 4,
+    Lt = 5,
+    Contains = 6,
+    NotContains = 7,
+    SumOf = 8,
+    ProductOf = 9,
+    MaxOf = 10,
+    HashOf = 11,
+    PublicKeyOf = 12,
+    ContainerInsert = 13,
+    ContainerUpdate = 14,
+    ContainerDelete = 15,
 
     // Syntactic sugar predicates.  These predicates are not supported by the backend.  The
     // frontend compiler is responsible of translating these predicates into the predicates above.
@@ -44,6 +47,49 @@ pub enum NativePredicate {
     ArrayContains = 1004, // there is no ArrayNotContains
     GtEq = 1005,
     Gt = 1006,
+    DictInsert = 1009,
+    DictUpdate = 1010,
+    DictDelete = 1011,
+    SetInsert = 1012,
+    SetDelete = 1013,
+    ArrayUpdate = 1014,
+}
+
+impl Display for NativePredicate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            NativePredicate::None => "None",
+            NativePredicate::False => "False",
+            NativePredicate::Equal => "Equal",
+            NativePredicate::NotEqual => "NotEqual",
+            NativePredicate::Lt => "Lt",
+            NativePredicate::LtEq => "LtEq",
+            NativePredicate::Gt => "Gt",
+            NativePredicate::GtEq => "GtEq",
+            NativePredicate::Contains => "Contains",
+            NativePredicate::NotContains => "NotContains",
+            NativePredicate::SumOf => "SumOf",
+            NativePredicate::ProductOf => "ProductOf",
+            NativePredicate::MaxOf => "MaxOf",
+            NativePredicate::HashOf => "HashOf",
+            NativePredicate::PublicKeyOf => "PublicKeyOf",
+            NativePredicate::ContainerInsert => "ContainerInsert",
+            NativePredicate::ContainerUpdate => "ContainerUpdate",
+            NativePredicate::ContainerDelete => "ContainerDelete",
+            NativePredicate::DictContains => "DictContains",
+            NativePredicate::DictNotContains => "DictNotContains",
+            NativePredicate::ArrayContains => "ArrayContains",
+            NativePredicate::SetContains => "SetContains",
+            NativePredicate::SetNotContains => "SetNotContains",
+            NativePredicate::DictInsert => "DictInsert",
+            NativePredicate::DictUpdate => "DictUpdate",
+            NativePredicate::DictDelete => "DictDelete",
+            NativePredicate::SetInsert => "SetInsert",
+            NativePredicate::SetDelete => "SetDelete",
+            NativePredicate::ArrayUpdate => "ArrayUpdate",
+        };
+        write!(f, "{}", s)
+    }
 }
 
 impl ToFields for NativePredicate {
@@ -52,40 +98,7 @@ impl ToFields for NativePredicate {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub enum WildcardValue {
-    None,
-    PodId(PodId),
-    Key(Key),
-}
-
-impl WildcardValue {
-    pub fn raw(&self) -> RawValue {
-        match self {
-            WildcardValue::None => EMPTY_VALUE,
-            WildcardValue::PodId(pod_id) => RawValue::from(pod_id.0),
-            WildcardValue::Key(key) => key.raw(),
-        }
-    }
-}
-
-impl fmt::Display for WildcardValue {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            WildcardValue::None => write!(f, "none"),
-            WildcardValue::PodId(pod_id) => pod_id.fmt(f),
-            WildcardValue::Key(key) => key.fmt(f),
-        }
-    }
-}
-
-impl ToFields for WildcardValue {
-    fn to_fields(&self, params: &Params) -> Vec<F> {
-        self.raw().to_fields(params)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", content = "value")]
 pub enum Predicate {
     Native(NativePredicate),
@@ -164,37 +177,94 @@ impl fmt::Display for Predicate {
 }
 
 /// Type encapsulating statements with their associated arguments.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "predicate", content = "args")]
 pub enum Statement {
     None,
-    ValueOf(AnchoredKey, Value),
-    Equal(AnchoredKey, AnchoredKey),
-    NotEqual(AnchoredKey, AnchoredKey),
-    LtEq(AnchoredKey, AnchoredKey),
-    Lt(AnchoredKey, AnchoredKey),
+    Equal(ValueRef, ValueRef),
+    NotEqual(ValueRef, ValueRef),
+    LtEq(ValueRef, ValueRef),
+    Lt(ValueRef, ValueRef),
     Contains(
-        /* root  */ AnchoredKey,
-        /* key   */ AnchoredKey,
-        /* value */ AnchoredKey,
+        /* root  */ ValueRef,
+        /* key   */ ValueRef,
+        /* value */ ValueRef,
     ),
-    NotContains(/* root  */ AnchoredKey, /* key   */ AnchoredKey),
-    SumOf(AnchoredKey, AnchoredKey, AnchoredKey),
-    ProductOf(AnchoredKey, AnchoredKey, AnchoredKey),
-    MaxOf(AnchoredKey, AnchoredKey, AnchoredKey),
-    HashOf(AnchoredKey, AnchoredKey, AnchoredKey),
-    Custom(CustomPredicateRef, Vec<WildcardValue>),
+    NotContains(/* root  */ ValueRef, /* key   */ ValueRef),
+    SumOf(ValueRef, ValueRef, ValueRef),
+    ProductOf(ValueRef, ValueRef, ValueRef),
+    MaxOf(ValueRef, ValueRef, ValueRef),
+    HashOf(ValueRef, ValueRef, ValueRef),
+    PublicKeyOf(ValueRef, ValueRef),
+    ContainerInsert(
+        /* new_root */ ValueRef,
+        /* old_root */ ValueRef,
+        /*   key    */ ValueRef,
+        /*  value   */ ValueRef,
+    ),
+    ContainerUpdate(
+        /* new_root */ ValueRef,
+        /* old_root */ ValueRef,
+        /*   key    */ ValueRef,
+        /*  value   */ ValueRef,
+    ),
+    ContainerDelete(
+        /* new_root */ ValueRef,
+        /* old_root */ ValueRef,
+        /*   key    */ ValueRef,
+    ),
+    Custom(CustomPredicateRef, Vec<Value>),
+}
+
+macro_rules! statement_constructor {
+    ($var_name: ident, $cons_name: ident, 2) => {
+        pub fn $var_name(v1: impl Into<ValueRef>, v2: impl Into<ValueRef>) -> Self {
+            Self::$cons_name(v1.into(), v2.into())
+        }
+    };
+    ($var_name: ident, $cons_name: ident, 3) => {
+        pub fn $var_name(
+            v1: impl Into<ValueRef>,
+            v2: impl Into<ValueRef>,
+            v3: impl Into<ValueRef>,
+        ) -> Self {
+            Self::$cons_name(v1.into(), v2.into(), v3.into())
+        }
+    };
+    ($var_name: ident, $cons_name: ident, 4) => {
+        pub fn $var_name(
+            v1: impl Into<ValueRef>,
+            v2: impl Into<ValueRef>,
+            v3: impl Into<ValueRef>,
+            v4: impl Into<ValueRef>,
+        ) -> Self {
+            Self::$cons_name(v1.into(), v2.into(), v3.into(), v4.into())
+        }
+    };
 }
 
 impl Statement {
     pub fn is_none(&self) -> bool {
         self == &Self::None
     }
+    statement_constructor!(equal, Equal, 2);
+    statement_constructor!(not_equal, NotEqual, 2);
+    statement_constructor!(lt_eq, LtEq, 2);
+    statement_constructor!(lt, Lt, 2);
+    statement_constructor!(contains, Contains, 3);
+    statement_constructor!(not_contains, NotContains, 2);
+    statement_constructor!(sum_of, SumOf, 3);
+    statement_constructor!(product_of, ProductOf, 3);
+    statement_constructor!(max_of, MaxOf, 3);
+    statement_constructor!(hash_of, HashOf, 3);
+    statement_constructor!(public_key_of, PublicKeyOf, 2);
+    statement_constructor!(insert, ContainerInsert, 4);
+    statement_constructor!(update, ContainerUpdate, 4);
+    statement_constructor!(delete, ContainerDelete, 3);
     pub fn predicate(&self) -> Predicate {
         use Predicate::*;
         match self {
             Self::None => Native(NativePredicate::None),
-            Self::ValueOf(_, _) => Native(NativePredicate::ValueOf),
             Self::Equal(_, _) => Native(NativePredicate::Equal),
             Self::NotEqual(_, _) => Native(NativePredicate::NotEqual),
             Self::LtEq(_, _) => Native(NativePredicate::LtEq),
@@ -205,6 +275,10 @@ impl Statement {
             Self::ProductOf(_, _, _) => Native(NativePredicate::ProductOf),
             Self::MaxOf(_, _, _) => Native(NativePredicate::MaxOf),
             Self::HashOf(_, _, _) => Native(NativePredicate::HashOf),
+            Self::PublicKeyOf(_, _) => Native(NativePredicate::PublicKeyOf),
+            Self::ContainerInsert(_, _, _, _) => Native(NativePredicate::ContainerInsert),
+            Self::ContainerUpdate(_, _, _, _) => Native(NativePredicate::ContainerUpdate),
+            Self::ContainerDelete(_, _, _) => Native(NativePredicate::ContainerDelete),
             Self::Custom(cpr, _) => Custom(cpr.clone()),
         }
     }
@@ -212,128 +286,102 @@ impl Statement {
         use StatementArg::*;
         match self.clone() {
             Self::None => vec![],
-            Self::ValueOf(ak, v) => vec![Key(ak), Literal(v)],
-            Self::Equal(ak1, ak2) => vec![Key(ak1), Key(ak2)],
-            Self::NotEqual(ak1, ak2) => vec![Key(ak1), Key(ak2)],
-            Self::LtEq(ak1, ak2) => vec![Key(ak1), Key(ak2)],
-            Self::Lt(ak1, ak2) => vec![Key(ak1), Key(ak2)],
-            Self::Contains(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
-            Self::NotContains(ak1, ak2) => vec![Key(ak1), Key(ak2)],
-            Self::SumOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
-            Self::ProductOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
-            Self::MaxOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
-            Self::HashOf(ak1, ak2, ak3) => vec![Key(ak1), Key(ak2), Key(ak3)],
-            Self::Custom(_, args) => Vec::from_iter(args.into_iter().map(WildcardLiteral)),
+            Self::Equal(ak1, ak2) => vec![ak1.into(), ak2.into()],
+            Self::NotEqual(ak1, ak2) => vec![ak1.into(), ak2.into()],
+            Self::LtEq(ak1, ak2) => vec![ak1.into(), ak2.into()],
+            Self::Lt(ak1, ak2) => vec![ak1.into(), ak2.into()],
+            Self::Contains(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
+            Self::NotContains(ak1, ak2) => vec![ak1.into(), ak2.into()],
+            Self::SumOf(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
+            Self::ProductOf(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
+            Self::MaxOf(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
+            Self::HashOf(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
+            Self::PublicKeyOf(ak1, ak2) => vec![ak1.into(), ak2.into()],
+            Self::ContainerInsert(ak1, ak2, ak3, ak4) => {
+                vec![ak1.into(), ak2.into(), ak3.into(), ak4.into()]
+            }
+            Self::ContainerUpdate(ak1, ak2, ak3, ak4) => {
+                vec![ak1.into(), ak2.into(), ak3.into(), ak4.into()]
+            }
+            Self::ContainerDelete(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
+            Self::Custom(_, args) => Vec::from_iter(args.into_iter().map(Literal)),
         }
     }
+
+    pub fn as_entry(&self) -> Option<(&AnchoredKey, &Value)> {
+        if let Self::Equal(ValueRef::Key(k), ValueRef::Literal(v)) = self {
+            Some((k, v))
+        } else {
+            None
+        }
+    }
+
     pub fn from_args(pred: Predicate, args: Vec<StatementArg>) -> Result<Self> {
         use Predicate::*;
-        let st: Result<Self> = match pred {
-            Native(NativePredicate::None) => Ok(Self::None),
-            Native(NativePredicate::ValueOf) => {
-                if let (StatementArg::Key(a0), StatementArg::Literal(v1)) =
-                    (args[0].clone(), args[1].clone())
-                {
-                    Ok(Self::ValueOf(a0, v1))
-                } else {
-                    Err(Error::incorrect_statements_args())
-                }
+        let st = match (pred, &args.as_slice()) {
+            (Native(NativePredicate::None), &[]) => Self::None,
+            (Native(NativePredicate::Equal), &[a1, a2]) => {
+                Self::Equal(a1.try_into()?, a2.try_into()?)
             }
-            Native(NativePredicate::Equal) => {
-                if let (StatementArg::Key(a0), StatementArg::Key(a1)) =
-                    (args[0].clone(), args[1].clone())
-                {
-                    Ok(Self::Equal(a0, a1))
-                } else {
-                    Err(Error::incorrect_statements_args())
-                }
+            (Native(NativePredicate::NotEqual), &[a1, a2]) => {
+                Self::NotEqual(a1.try_into()?, a2.try_into()?)
             }
-            Native(NativePredicate::NotEqual) => {
-                if let (StatementArg::Key(a0), StatementArg::Key(a1)) =
-                    (args[0].clone(), args[1].clone())
-                {
-                    Ok(Self::NotEqual(a0, a1))
-                } else {
-                    Err(Error::incorrect_statements_args())
-                }
+            (Native(NativePredicate::LtEq), &[a1, a2]) => {
+                Self::LtEq(a1.try_into()?, a2.try_into()?)
             }
-            Native(NativePredicate::LtEq) => {
-                if let (StatementArg::Key(a0), StatementArg::Key(a1)) =
-                    (args[0].clone(), args[1].clone())
-                {
-                    Ok(Self::LtEq(a0, a1))
-                } else {
-                    Err(Error::incorrect_statements_args())
-                }
+            (Native(NativePredicate::Lt), &[a1, a2]) => Self::Lt(a1.try_into()?, a2.try_into()?),
+            (Native(NativePredicate::Contains), &[a1, a2, a3]) => {
+                Self::Contains(a1.try_into()?, a2.try_into()?, a3.try_into()?)
             }
-            Native(NativePredicate::Lt) => {
-                if let (StatementArg::Key(a0), StatementArg::Key(a1)) =
-                    (args[0].clone(), args[1].clone())
-                {
-                    Ok(Self::Lt(a0, a1))
-                } else {
-                    Err(Error::incorrect_statements_args())
-                }
+            (Native(NativePredicate::NotContains), &[a1, a2]) => {
+                Self::NotContains(a1.try_into()?, a2.try_into()?)
             }
-            Native(NativePredicate::Contains) => {
-                if let (StatementArg::Key(a0), StatementArg::Key(a1), StatementArg::Key(a2)) =
-                    (args[0].clone(), args[1].clone(), args[2].clone())
-                {
-                    Ok(Self::Contains(a0, a1, a2))
-                } else {
-                    Err(Error::incorrect_statements_args())
-                }
+            (Native(NativePredicate::SumOf), &[a1, a2, a3]) => {
+                Self::SumOf(a1.try_into()?, a2.try_into()?, a3.try_into()?)
             }
-            Native(NativePredicate::NotContains) => {
-                if let (StatementArg::Key(a0), StatementArg::Key(a1)) =
-                    (args[0].clone(), args[1].clone())
-                {
-                    Ok(Self::NotContains(a0, a1))
-                } else {
-                    Err(Error::incorrect_statements_args())
-                }
+            (Native(NativePredicate::ProductOf), &[a1, a2, a3]) => {
+                Self::ProductOf(a1.try_into()?, a2.try_into()?, a3.try_into()?)
             }
-            Native(NativePredicate::SumOf) => {
-                if let (StatementArg::Key(a0), StatementArg::Key(a1), StatementArg::Key(a2)) =
-                    (args[0].clone(), args[1].clone(), args[2].clone())
-                {
-                    Ok(Self::SumOf(a0, a1, a2))
-                } else {
-                    Err(Error::incorrect_statements_args())
-                }
+            (Native(NativePredicate::MaxOf), &[a1, a2, a3]) => {
+                Self::MaxOf(a1.try_into()?, a2.try_into()?, a3.try_into()?)
             }
-            Native(NativePredicate::ProductOf) => {
-                if let (StatementArg::Key(a0), StatementArg::Key(a1), StatementArg::Key(a2)) =
-                    (args[0].clone(), args[1].clone(), args[2].clone())
-                {
-                    Ok(Self::ProductOf(a0, a1, a2))
-                } else {
-                    Err(Error::incorrect_statements_args())
-                }
+            (Native(NativePredicate::HashOf), &[a1, a2, a3]) => {
+                Self::HashOf(a1.try_into()?, a2.try_into()?, a3.try_into()?)
             }
-            Native(NativePredicate::MaxOf) => {
-                if let (StatementArg::Key(a0), StatementArg::Key(a1), StatementArg::Key(a2)) =
-                    (args[0].clone(), args[1].clone(), args[2].clone())
-                {
-                    Ok(Self::MaxOf(a0, a1, a2))
-                } else {
-                    Err(Error::incorrect_statements_args())
-                }
+            (Native(NativePredicate::PublicKeyOf), &[a1, a2]) => {
+                Self::PublicKeyOf(a1.try_into()?, a2.try_into()?)
             }
-            Native(np) => Err(Error::custom(format!("Predicate {:?} is syntax sugar", np))),
-            BatchSelf(_) => unreachable!(),
-            Custom(cpr) => {
-                let v_args: Result<Vec<WildcardValue>> = args
+            (Native(NativePredicate::ContainerInsert), &[a1, a2, a3, a4]) => Self::ContainerInsert(
+                a1.try_into()?,
+                a2.try_into()?,
+                a3.try_into()?,
+                a4.try_into()?,
+            ),
+            (Native(NativePredicate::ContainerUpdate), &[a1, a2, a3, a4]) => Self::ContainerUpdate(
+                a1.try_into()?,
+                a2.try_into()?,
+                a3.try_into()?,
+                a4.try_into()?,
+            ),
+            (Native(NativePredicate::ContainerDelete), &[a1, a2, a3]) => {
+                Self::ContainerDelete(a1.try_into()?, a2.try_into()?, a3.try_into()?)
+            }
+            (Native(np), _) => {
+                return Err(Error::custom(format!("Predicate {:?} is syntax sugar", np)))
+            }
+            (BatchSelf(_), _) => unreachable!(),
+            (Custom(cpr), _) => {
+                let v_args: Result<Vec<Value>> = args
                     .iter()
                     .map(|x| match x {
-                        StatementArg::WildcardLiteral(v) => Ok(v.clone()),
+                        StatementArg::Literal(v) => Ok(v.clone()),
                         _ => Err(Error::incorrect_statements_args()),
                     })
                     .collect();
-                Ok(Self::Custom(cpr, v_args?))
+                Self::Custom(cpr, v_args?)
             }
         };
-        st
+        Ok(st)
     }
 }
 
@@ -365,7 +413,6 @@ pub enum StatementArg {
     None,
     Literal(Value),
     Key(AnchoredKey),
-    WildcardLiteral(WildcardValue),
 }
 
 impl fmt::Display for StatementArg {
@@ -374,7 +421,6 @@ impl fmt::Display for StatementArg {
             StatementArg::None => write!(f, "none"),
             StatementArg::Literal(v) => v.fmt(f),
             StatementArg::Key(r) => r.fmt(f),
-            StatementArg::WildcardLiteral(v) => v.fmt(f),
         }
     }
 }
@@ -425,15 +471,61 @@ impl ToFields for StatementArg {
                 fields.extend(ak.key.to_fields(params));
                 fields
             }
-            StatementArg::WildcardLiteral(v) => v
-                .raw()
-                .0
-                .into_iter()
-                .chain(iter::repeat(F::ZERO).take(STATEMENT_ARG_F_LEN - VALUE_SIZE))
-                .collect(),
         };
         assert_eq!(f.len(), STATEMENT_ARG_F_LEN); // sanity check
         f
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", content = "value")]
+pub enum ValueRef {
+    Literal(Value),
+    Key(AnchoredKey),
+}
+
+impl From<ValueRef> for StatementArg {
+    fn from(value: ValueRef) -> Self {
+        match value {
+            ValueRef::Literal(v) => StatementArg::Literal(v),
+            ValueRef::Key(v) => StatementArg::Key(v),
+        }
+    }
+}
+
+impl TryFrom<StatementArg> for ValueRef {
+    type Error = crate::middleware::Error;
+    fn try_from(value: StatementArg) -> std::result::Result<Self, Self::Error> {
+        match value {
+            StatementArg::Literal(v) => Ok(Self::Literal(v)),
+            StatementArg::Key(k) => Ok(Self::Key(k)),
+            _ => Err(Self::Error::invalid_statement_arg(
+                value,
+                "literal or key".to_string(),
+            )),
+        }
+    }
+}
+
+impl TryFrom<&StatementArg> for ValueRef {
+    type Error = crate::middleware::Error;
+    fn try_from(value: &StatementArg) -> std::result::Result<Self, Self::Error> {
+        value.clone().try_into()
+    }
+}
+
+impl From<AnchoredKey> for ValueRef {
+    fn from(value: AnchoredKey) -> Self {
+        Self::Key(value)
+    }
+}
+
+impl<T> From<T> for ValueRef
+where
+    T: Into<Value>,
+{
+    fn from(value: T) -> Self {
+        Self::Literal(value.into())
     }
 }
 

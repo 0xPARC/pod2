@@ -66,7 +66,7 @@ pub struct RecursiveGateAdapter<const D: usize, G: SimpleGate> {
     _gate: PhantomData<G>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default, Clone)]
 pub struct RecursiveGenerator<const D: usize, G: SimpleGate> {
     row: usize,
     index: usize,
@@ -175,7 +175,7 @@ where
     G::F: RichField + Extendable<D> + Extendable<1>,
 {
     fn id(&self) -> String {
-        G::ID.to_string()
+        format!("GateAdapter<{}>", std::any::type_name::<G>())
     }
 
     fn serialize(
@@ -336,7 +336,7 @@ where
     }
 
     fn id(&self) -> String {
-        format!("Generator<{},{}>", D, G::ID)
+        format!("RecursiveGenerator<{}, {}>", D, std::any::type_name::<G>())
     }
 
     fn dependencies(&self) -> Vec<Target> {
@@ -374,7 +374,11 @@ where
     F: RichField + Extendable<D>,
 {
     fn id(&self) -> String {
-        format!("Recursive<{},{}>", D, G::ID)
+        format!(
+            "RecursiveGateAdapter<{}, {}>",
+            D,
+            std::any::type_name::<G>()
+        )
     }
 
     fn serialize(&self, dst: &mut Vec<u8>, _common_data: &CommonCircuitData<F, D>) -> IoResult<()> {

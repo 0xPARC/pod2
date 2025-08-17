@@ -4,32 +4,40 @@ use std::{any::Any, iter, sync::Arc};
 
 use itertools::Itertools;
 pub use operation::*;
-use plonky2::{
-    hash::poseidon::PoseidonHash,
-    plonk::{circuit_data::CommonCircuitData, config::Hasher},
-};
+use plonky2::{hash::poseidon::PoseidonHash, plonk::config::Hasher};
 use serde::{Deserialize, Serialize};
 pub use statement::*;
 
 use crate::{
     backends::plonky2::{
-        basetypes::{Proof, ProofWithPublicInputs, VerifierOnlyCircuitData, D},
+        basetypes::{CircuitData, Proof, ProofWithPublicInputs, VerifierOnlyCircuitData},
+        cache::{self, CacheEntry},
+        cache_get_standard_rec_main_pod_common_circuit_data,
         circuits::mainpod::{CustomPredicateVerification, MainPodVerifyInput, MainPodVerifyTarget},
-        deserialize_proof,
+        deserialize_proof, deserialize_verifier_only,
         emptypod::EmptyPod,
         error::{Error, Result},
+        hash_common_data,
         mock::emptypod::MockEmptyPod,
-        primitives::merkletree::MerkleClaimAndProof,
-        recursion::{RecursiveCircuit, RecursiveParams},
-        serialize_proof,
+        primitives::{
+            ec::schnorr::SecretKey,
+            merkletree::{MerkleClaimAndProof, MerkleTreeStateTransitionProof},
+        },
+        recursion::{
+            hash_verifier_data, prove_rec_circuit, RecursiveCircuit, RecursiveCircuitTarget,
+        },
+        serialization::{
+            CircuitDataSerializer, CommonCircuitDataSerializer, VerifierCircuitDataSerializer,
+        },
+        serialize_proof, serialize_verifier_only,
         signedpod::SignedPod,
-        STANDARD_REC_MAIN_POD_CIRCUIT_DATA,
     },
     middleware::{
-        self, resolve_wildcard_values, AnchoredKey, CustomPredicateBatch, DynError, Hash,
-        MainPodInputs, NativeOperation, NonePod, OperationType, Params, Pod, PodId, PodProver,
-        PodType, RecursivePod, StatementArg, ToFields, VDSet, F, KEY_TYPE, SELF,
+        self, resolve_wildcard_values, value_from_op, AnchoredKey, CustomPredicateBatch,
+        Error as MiddlewareError, Hash, MainPodInputs, NativeOperation, OperationType, Params, Pod,
+        PodId, PodProver, PodType, RecursivePod, StatementArg, ToFields, VDSet, KEY_TYPE, SELF,
     },
+    timed,
 };
 
 /// Hash a list of public statements to derive the PodId.  To make circuits with different number
@@ -83,16 +91,13 @@ pub(crate) fn extract_custom_predicate_batches(
 /// Extracts all custom predicate operations with all the data required to verify them.
 pub(crate) fn extract_custom_predicate_verifications(
     params: &Params,
+    aux_list: &mut [OperationAux],
     operations: &[middleware::Operation],
     custom_predicate_batches: &[Arc<CustomPredicateBatch>],
 ) -> Result<Vec<CustomPredicateVerification>> {
-    let custom_predicate_data: Vec<_> = operations
-        .iter()
-        .flat_map(|op| match op {
-            middleware::Operation::Custom(cpr, sts) => Some((cpr, sts)),
-            _ => None,
-        })
-        .map(|(cpr, sts)| {
+    let mut table = Vec::new();
+    for (i, op) in operations.iter().enumerate() {
+        if let middleware::Operation::Custom(cpr, sts) = op {
             let wildcard_values =
                 resolve_wildcard_values(params, cpr.predicate(), sts).expect("resolved wildcards");
             let sts = sts.iter().map(|s| Statement::from(s.clone())).collect();
@@ -103,64 +108,132 @@ pub(crate) fn extract_custom_predicate_verifications(
                 .expect("find the custom predicate from the extracted unique list");
             let custom_predicate_table_index =
                 batch_index * params.max_custom_batch_size + cpr.index;
-            CustomPredicateVerification {
+            aux_list[i] = OperationAux::CustomPredVerifyIndex(table.len());
+            table.push(CustomPredicateVerification {
                 custom_predicate_table_index,
                 custom_predicate: cpr.clone(),
                 args: wildcard_values,
                 op_args: sts,
-            }
-        })
-        .collect();
-    if custom_predicate_data.len() > params.max_custom_predicate_verifications {
+            });
+        }
+    }
+
+    if table.len() > params.max_custom_predicate_verifications {
         return Err(Error::custom(format!(
             "The number of required custom predicate verifications ({}) exceeds the maximum number ({}).",
-            custom_predicate_data.len(),
+            table.len(),
             params.max_custom_predicate_verifications
         )));
     }
-    Ok(custom_predicate_data)
+    Ok(table)
 }
 
 /// Extracts Merkle proofs from Contains/NotContains ops.
 pub(crate) fn extract_merkle_proofs(
     params: &Params,
+    aux_list: &mut [OperationAux],
     operations: &[middleware::Operation],
+    statements: &[middleware::Statement],
 ) -> Result<Vec<MerkleClaimAndProof>> {
-    let merkle_proofs: Vec<_> = operations
-        .iter()
-        .flat_map(|op| match op {
-            middleware::Operation::ContainsFromEntries(
-                middleware::Statement::ValueOf(_, root),
-                middleware::Statement::ValueOf(_, key),
-                middleware::Statement::ValueOf(_, value),
-                pf,
-            ) => Some(MerkleClaimAndProof::new(
-                Hash::from(root.raw()),
-                key.raw(),
-                Some(value.raw()),
-                pf.clone(),
-            )),
-            middleware::Operation::NotContainsFromEntries(
-                middleware::Statement::ValueOf(_, root),
-                middleware::Statement::ValueOf(_, key),
-                pf,
-            ) => Some(MerkleClaimAndProof::new(
-                Hash::from(root.raw()),
-                key.raw(),
-                None,
-                pf.clone(),
-            )),
-            _ => None,
-        })
-        .collect();
-    if merkle_proofs.len() > params.max_merkle_proofs_containers {
+    let mut table = Vec::new();
+    for (i, (op, st)) in operations.iter().zip(statements.iter()).enumerate() {
+        let deduction_err = || MiddlewareError::invalid_deduction(op.clone(), st.clone());
+        let (root, key, value, pf) = match (op, st) {
+            (
+                middleware::Operation::ContainsFromEntries(root_s, key_s, value_s, pf),
+                middleware::Statement::Contains(root_ref, key_ref, value_ref),
+            ) => {
+                let root = value_from_op(root_s, root_ref).ok_or_else(deduction_err)?;
+                let key = value_from_op(key_s, key_ref).ok_or_else(deduction_err)?;
+                let value = value_from_op(value_s, value_ref).ok_or_else(deduction_err)?;
+                (root.raw(), key.raw(), Some(value.raw()), pf)
+            }
+            (
+                middleware::Operation::NotContainsFromEntries(root_s, key_s, pf),
+                middleware::Statement::NotContains(root_ref, key_ref),
+            ) => {
+                let root = value_from_op(root_s, root_ref).ok_or_else(deduction_err)?;
+                let key = value_from_op(key_s, key_ref).ok_or_else(deduction_err)?;
+                (root.raw(), key.raw(), None, pf)
+            }
+            _ => continue,
+        };
+        aux_list[i] = OperationAux::MerkleProofIndex(table.len());
+        table.push(MerkleClaimAndProof::new(
+            Hash::from(root),
+            key,
+            value,
+            pf.clone(),
+        ));
+    }
+    if table.len() > params.max_merkle_proofs_containers {
         return Err(Error::custom(format!(
             "The number of required Merkle proofs ({}) exceeds the maximum number ({}).",
-            merkle_proofs.len(),
+            table.len(),
             params.max_merkle_proofs_containers
         )));
     }
-    Ok(merkle_proofs)
+    Ok(table)
+}
+
+/// Extracts Merkle state transition proofs from container update ops.
+pub(crate) fn extract_merkle_tree_state_transition_proofs(
+    params: &Params,
+    aux_list: &mut [OperationAux],
+    operations: &[middleware::Operation],
+) -> Result<Vec<MerkleTreeStateTransitionProof>> {
+    let mut table = Vec::new();
+    for (i, op) in operations.iter().enumerate() {
+        let pf = match op {
+            middleware::Operation::ContainerInsertFromEntries(_, _, _, _, pf)
+            | middleware::Operation::ContainerUpdateFromEntries(_, _, _, _, pf)
+            | middleware::Operation::ContainerDeleteFromEntries(_, _, _, pf) => pf.clone(),
+            _ => continue,
+        };
+        aux_list[i] = OperationAux::MerkleTreeStateTransitionProofIndex(table.len());
+        table.push(pf);
+    }
+    if table.len() > params.max_merkle_tree_state_transition_proofs_containers {
+        return Err(Error::custom(format!(
+            "The number of required Merkle proofs ({}) exceeds the maximum number ({}).",
+            table.len(),
+            params.max_merkle_tree_state_transition_proofs_containers
+        )));
+    }
+    Ok(table)
+}
+
+pub(crate) fn extract_public_key_of(
+    params: &Params,
+    aux_list: &mut [OperationAux],
+    operations: &[middleware::Operation],
+    statements: &[middleware::Statement],
+) -> Result<Vec<SecretKey>> {
+    let mut table = Vec::new();
+    for (i, (op, st)) in operations.iter().zip(statements.iter()).enumerate() {
+        if let (
+            middleware::Operation::PublicKeyOf(_, sk_s),
+            middleware::Statement::PublicKeyOf(_, sk_ref),
+        ) = (op, st)
+        {
+            let deduction_err = || MiddlewareError::invalid_deduction(op.clone(), st.clone());
+            let sk = SecretKey::try_from(
+                value_from_op(sk_s, sk_ref)
+                    .ok_or_else(deduction_err)?
+                    .typed(),
+            )?;
+            aux_list[i] = OperationAux::PublicKeyOfIndex(table.len());
+            table.push(sk);
+        }
+    }
+    if table.len() > params.max_public_key_of {
+        return Err(Error::custom(format!(
+            "The number of required PublicKeyOf verifications ({}) exceeds the maximum number ({}).",
+            table.len(),
+            params.max_public_statements
+        )));
+    }
+    Ok(table)
 }
 
 /// Find the operation argument statement in the list of previous statements and return the index.
@@ -177,52 +250,6 @@ fn find_op_arg(statements: &[Statement], op_arg: &middleware::Statement) -> Resu
             "Statement corresponding to op arg {} not found",
             op_arg
         )))
-}
-
-/// Find the operation auxiliary data in the list of auxiliary data and return the index.
-// NOTE: The `custom_predicate_verifications` is optional because in the MainPod we want to store
-// the index of a custom predicate verification in the aux data, but in the MockMainPod we don't
-// need that because we keep a reference to the custom predicate in the operation type, which
-// removes the need for indexing.  We could change the OperationType and Predicate for the backend
-// to not keep a reference to the custom predicate and instead just keep the id and index and then
-// do the same double indexing that the MainPod does to verify custom predicates.
-fn find_op_aux(
-    merkle_proofs: &[MerkleClaimAndProof],
-    custom_predicate_verifications: Option<&[CustomPredicateVerification]>,
-    op: &middleware::Operation,
-) -> Result<OperationAux> {
-    let op_aux = op.aux();
-    if let (middleware::Operation::Custom(cpr, op_args), Some(cpvs)) =
-        (op, custom_predicate_verifications)
-    {
-        return Ok(cpvs
-            .iter()
-            .enumerate()
-            .find_map(|(i, cpv)| {
-                (cpv.custom_predicate.batch.id() == cpr.batch.id()
-                    && cpv.custom_predicate.index == cpr.index
-                    && cpv
-                        .op_args
-                        .iter()
-                        .zip_eq(op_args.iter())
-                        .all(|(a0, a1)| a0.0 == a1.predicate() && a0.1 == a1.args()))
-                .then_some(i)
-            })
-            .map(OperationAux::CustomPredVerifyIndex)
-            .expect("custom predicate verification in the list"));
-    }
-    match &op_aux {
-        middleware::OperationAux::None => Ok(OperationAux::None),
-        middleware::OperationAux::MerkleProof(pf_arg) => merkle_proofs
-            .iter()
-            .enumerate()
-            .find_map(|(i, pf)| (pf.proof == *pf_arg).then_some(i))
-            .map(OperationAux::MerkleProofIndex)
-            .ok_or(Error::custom(format!(
-                "Merkle proof corresponding to op arg {} not found",
-                op_aux
-            ))),
-    }
 }
 
 fn fill_pad<T: Clone>(v: &mut Vec<T>, pad_value: T, len: usize) {
@@ -257,13 +284,11 @@ pub(crate) fn layout_statements(
     statements.push(middleware::Statement::None.into());
 
     // Input signed pods region
-    // TODO: Replace this with a dumb signed pod
-    // https://github.com/0xPARC/pod2/issues/246
-    let none_sig_pod_box: Box<dyn Pod> = Box::new(NonePod {});
-    let none_sig_pod = none_sig_pod_box.as_ref();
+    let dummy_signed_pod_box: Box<dyn Pod> = Box::new(SignedPod::dummy());
+    let dummy_signed_pod = dummy_signed_pod_box.as_ref();
     assert!(inputs.signed_pods.len() <= params.max_input_signed_pods);
     for i in 0..params.max_input_signed_pods {
-        let pod = inputs.signed_pods.get(i).unwrap_or(&none_sig_pod);
+        let pod = inputs.signed_pods.get(i).unwrap_or(&dummy_signed_pod);
         let sts = pod.pub_statements();
         assert!(sts.len() <= params.max_signed_pod_values);
         for j in 0..params.max_signed_pod_values {
@@ -281,9 +306,9 @@ pub(crate) fn layout_statements(
     let empty_pod_box: Box<dyn RecursivePod> =
         if mock || inputs.recursive_pods.len() == params.max_input_recursive_pods {
             // We mocking or we don't need padding so we skip creating an EmptyPod
-            MockEmptyPod::new_boxed(params)
+            MockEmptyPod::new_boxed(params, inputs.vd_set.clone())
         } else {
-            EmptyPod::new_boxed(params, inputs.vds_set.root())
+            EmptyPod::new_boxed(params, inputs.vd_set.clone())
         };
     let empty_pod = empty_pod_box.as_ref();
     assert!(inputs.recursive_pods.len() <= params.max_input_recursive_pods);
@@ -303,7 +328,12 @@ pub(crate) fn layout_statements(
     }
 
     // Input statements
-    assert!(inputs.statements.len() <= params.max_priv_statements());
+    assert!(
+        inputs.statements.len() <= params.max_priv_statements(),
+        "inputs.statements.len={} > params.max_priv_statements={}",
+        inputs.statements.len(),
+        params.max_priv_statements()
+    );
     for i in 0..params.max_priv_statements() {
         let mut st = inputs
             .statements
@@ -317,9 +347,14 @@ pub(crate) fn layout_statements(
 
     // Public statements
     assert!(inputs.public_statements.len() < params.max_public_statements);
-    let mut type_st = middleware::Statement::ValueOf(
-        AnchoredKey::from((SELF, KEY_TYPE)),
-        middleware::Value::from(PodType::MockMain),
+    let pod_type = if mock {
+        PodType::MockMain
+    } else {
+        PodType::Main
+    };
+    let mut type_st = middleware::Statement::Equal(
+        AnchoredKey::from((SELF, KEY_TYPE)).into(),
+        middleware::Value::from(pod_type).into(),
     )
     .into();
     pad_statement(params, &mut type_st);
@@ -346,12 +381,12 @@ pub(crate) fn layout_statements(
 pub(crate) fn process_private_statements_operations(
     params: &Params,
     statements: &[Statement],
-    merkle_proofs: &[MerkleClaimAndProof],
-    custom_predicate_verifications: Option<&[CustomPredicateVerification]>,
+    aux_list: &[OperationAux],
     input_operations: &[middleware::Operation],
 ) -> Result<Vec<Operation>> {
+    assert_eq!(params.max_priv_statements(), aux_list.len());
     let mut operations = Vec::new();
-    for i in 0..params.max_priv_statements() {
+    for (i, aux) in aux_list.iter().enumerate() {
         let op = input_operations
             .get(i)
             .unwrap_or(&middleware::Operation::None)
@@ -362,10 +397,8 @@ pub(crate) fn process_private_statements_operations(
             .map(|mid_arg| find_op_arg(statements, mid_arg))
             .collect::<Result<Vec<_>>>()?;
 
-        let aux = find_op_aux(merkle_proofs, custom_predicate_verifications, &op)?;
-
         pad_operation_args(params, &mut args);
-        operations.push(Operation(op.op_type(), args, aux));
+        operations.push(Operation(op.op_type(), args, *aux));
     }
     Ok(operations)
 }
@@ -409,26 +442,13 @@ pub(crate) fn process_public_statements_operations(
 
 pub struct Prover {}
 
-impl Prover {
-    fn _prove(&self, params: &Params, vd_set: &VDSet, inputs: MainPodInputs) -> Result<MainPod> {
-        let rec_circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
-        let (main_pod_target, circuit_data) =
-            RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data_padded(
-                params.max_input_recursive_pods,
-                &rec_circuit_data.common,
-                params,
-            )?;
-        let rec_params = RecursiveParams {
-            arity: params.max_input_recursive_pods,
-            common_data: circuit_data.common.clone(),
-            verifier_data: circuit_data.verifier_data(),
-        };
-        let main_pod = RecursiveCircuit {
-            params: rec_params,
-            prover: circuit_data.prover_data(),
-            target: main_pod_target,
-        };
-
+impl PodProver for Prover {
+    fn prove(
+        &self,
+        params: &Params,
+        vd_set: &VDSet,
+        inputs: MainPodInputs,
+    ) -> Result<Box<dyn RecursivePod>> {
         let signed_pods_input: Vec<SignedPod> = inputs
             .signed_pods
             .iter()
@@ -443,9 +463,9 @@ impl Prover {
         // Pad input recursive pods with empty pods if necessary
         let empty_pod = if inputs.recursive_pods.len() == params.max_input_recursive_pods {
             // We don't need padding so we skip creating an EmptyPod
-            MockEmptyPod::new_boxed(params)
+            MockEmptyPod::new_boxed(params, inputs.vd_set.clone())
         } else {
-            EmptyPod::new_boxed(params, inputs.vds_set.root())
+            EmptyPod::new_boxed(params, inputs.vd_set.clone())
         };
         let inputs = MainPodInputs {
             recursive_pods: &inputs
@@ -467,20 +487,28 @@ impl Prover {
             })
             .collect_vec();
 
-        let merkle_proofs = extract_merkle_proofs(params, inputs.operations)?;
+        // Aux values for backend::Operation
+        let mut aux_list = vec![OperationAux::None; params.max_priv_statements()];
+        let merkle_proofs =
+            extract_merkle_proofs(params, &mut aux_list, inputs.operations, inputs.statements)?;
         let custom_predicate_batches = extract_custom_predicate_batches(params, inputs.operations)?;
         let custom_predicate_verifications = extract_custom_predicate_verifications(
             params,
+            &mut aux_list,
             inputs.operations,
             &custom_predicate_batches,
         )?;
+        let public_key_of_sks =
+            extract_public_key_of(params, &mut aux_list, inputs.operations, inputs.statements)?;
+
+        let merkle_tree_state_transition_proofs =
+            extract_merkle_tree_state_transition_proofs(params, &mut aux_list, inputs.operations)?;
 
         let (statements, public_statements) = layout_statements(params, false, &inputs)?;
         let operations = process_private_statements_operations(
             params,
             &statements,
-            &merkle_proofs,
-            Some(&custom_predicate_verifications),
+            &aux_list,
             inputs.operations,
         )?;
         let operations = process_public_statements_operations(params, &statements, operations)?;
@@ -488,14 +516,16 @@ impl Prover {
         // get the id out of the public statements
         let id: PodId = PodId(calculate_id(&public_statements, params));
 
+        let common_hash: String = cache_get_rec_main_pod_common_hash(params).clone();
         let proofs = inputs
             .recursive_pods
             .iter()
             .map(|pod| {
-                assert_eq!(inputs.vds_set.root(), pod.vds_root());
+                assert_eq!(pod.common_hash(), common_hash);
+                assert_eq!(inputs.vd_set.root(), pod.vd_set().root());
                 ProofWithPublicInputs {
                     proof: pod.proof(),
-                    public_inputs: [pod.id().0 .0, inputs.vds_set.root().0].concat(),
+                    public_inputs: [pod.id().0 .0, inputs.vd_set.root().0].concat(),
                 }
             })
             .collect_vec();
@@ -508,136 +538,137 @@ impl Prover {
         let vd_mt_proofs = vd_set.get_vds_proofs(&verifier_datas)?;
 
         let input = MainPodVerifyInput {
-            vds_set: inputs.vds_set.clone(),
+            vds_set: inputs.vd_set.clone(),
             vd_mt_proofs,
             signed_pods: signed_pods_input,
             recursive_pods_pub_self_statements,
             statements: statements[statements.len() - params.max_statements..].to_vec(),
             operations,
             merkle_proofs,
+            public_key_of_sks,
+            merkle_tree_state_transition_proofs,
             custom_predicate_batches,
             custom_predicate_verifications,
         };
-        let proof_with_pis = main_pod.prove(&input, proofs, verifier_datas)?;
 
-        Ok(MainPod {
+        let (main_pod_target, circuit_data) = &*cache_get_rec_main_pod_circuit_data(params);
+        let proof_with_pis = timed!(
+            "MainPod::prove",
+            prove_rec_circuit(
+                main_pod_target,
+                circuit_data,
+                &input,
+                proofs,
+                verifier_datas
+            )?
+        );
+
+        Ok(Box::new(MainPod {
             params: params.clone(),
+            verifier_only: circuit_data.verifier_only.clone(),
+            common_hash,
             id,
-            vds_root: inputs.vds_set.root(),
+            vd_set: inputs.vd_set,
             public_statements,
             proof: proof_with_pis.proof,
-        })
+        }))
     }
 }
 
-impl PodProver for Prover {
-    fn prove(
-        &self,
-        params: &Params,
-        vd_set: &VDSet,
-        inputs: MainPodInputs,
-    ) -> Result<Box<dyn RecursivePod>, Box<DynError>> {
-        Ok(self._prove(params, vd_set, inputs).map(Box::new)?)
-    }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MainPod {
     params: Params,
     id: PodId,
+    verifier_only: VerifierOnlyCircuitData,
+    common_hash: String,
     /// vds_root is the merkle-root of the `VDSet`, which contains the
     /// verifier_data hashes of the allowed set of VerifierOnlyCircuitData, for
     /// the succession of recursive MainPods, which when proving the POD, it is
     /// proven that all the recursive proofs that are being verified in-circuit
     /// use one of the verifier_data's contained in the VDSet.
-    vds_root: Hash,
+    vd_set: VDSet,
     public_statements: Vec<Statement>,
     proof: Proof,
 }
 
-// This is a helper function to get the CommonCircuitData necessary to decode
-// a serialized proof. At some point in the future, this data may be available
-// as a constant or with static initialization, but in the meantime we can
-// generate it on-demand.
-fn get_common_data(params: &Params) -> Result<CommonCircuitData<F, D>, Error> {
-    // TODO: Cache this somehow
-    // https://github.com/0xPARC/pod2/issues/247
-    let rec_circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
-    let (_, circuit_data) =
+pub(crate) fn rec_main_pod_circuit_data(
+    params: &Params,
+) -> (RecursiveCircuitTarget<MainPodVerifyTarget>, CircuitData) {
+    let rec_common_circuit_data = cache_get_standard_rec_main_pod_common_circuit_data();
+    timed!(
+        "recursive MainPod circuit_data padded",
         RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data_padded(
             params.max_input_recursive_pods,
-            &rec_circuit_data.common,
+            &rec_common_circuit_data,
             params,
-        )?;
-    Ok(circuit_data.common.clone())
+        )
+        .expect("calculate target_and_circuit_data_padded")
+    )
+}
+
+pub(crate) fn cache_get_rec_main_pod_circuit_data(
+    params: &Params,
+) -> CacheEntry<(
+    RecursiveCircuitTarget<MainPodVerifyTarget>,
+    CircuitDataSerializer,
+)> {
+    // TODO(Edu): I believe that the standard_rec_main_pod_circuit data is the same as this when
+    // the params are Default: we're padding the circuit to itself, so we get the original one?
+    // If this is true we can deduplicate this cache entry because both rec_main_pod_circuit_data
+    // and standard_rec_main_pod_circuit_data are indexed by Params.  This can be easily tested by
+    // comparing the cached artifacts on disk :)
+    cache::get("rec_main_pod_circuit_data", params, |params| {
+        let (target, circuit_data) = rec_main_pod_circuit_data(params);
+        (target, CircuitDataSerializer(circuit_data))
+    })
+    .expect("cache ok")
+}
+
+pub fn cache_get_rec_main_pod_verifier_circuit_data(
+    params: &Params,
+) -> CacheEntry<VerifierCircuitDataSerializer> {
+    cache::get("rec_main_pod_verifier_circuit_data", params, |params| {
+        let (_, rec_main_pod_circuit_data_padded) = &*cache_get_rec_main_pod_circuit_data(params);
+        VerifierCircuitDataSerializer(rec_main_pod_circuit_data_padded.verifier_data().clone())
+    })
+    .expect("cache ok")
+}
+
+// This is a helper function to get the CommonCircuitData necessary to decode
+// a serialized proof.
+pub fn cache_get_rec_main_pod_common_circuit_data(
+    params: &Params,
+) -> CacheEntry<CommonCircuitDataSerializer> {
+    cache::get("rec_main_pod_common_circuit_data", params, |params| {
+        let (_, rec_main_pod_circuit_data_padded) = &*cache_get_rec_main_pod_circuit_data(params);
+        CommonCircuitDataSerializer(rec_main_pod_circuit_data_padded.common.clone())
+    })
+    .expect("cache ok")
+}
+
+pub fn cache_get_rec_main_pod_common_hash(params: &Params) -> CacheEntry<String> {
+    cache::get("rec_main_pod_common_hash", params, |params| {
+        let common = &*cache_get_rec_main_pod_common_circuit_data(params);
+        hash_common_data(common).expect("hash ok")
+    })
+    .expect("cache ok")
 }
 
 #[derive(Serialize, Deserialize)]
 struct Data {
     public_statements: Vec<Statement>,
     proof: String,
+    verifier_only: String,
+    common_hash: String,
 }
 
 impl MainPod {
-    fn _verify(&self) -> Result<()> {
-        // 2. get the id out of the public statements
-        let id = PodId(calculate_id(&self.public_statements, &self.params));
-        if id != self.id {
-            return Err(Error::id_not_equal(self.id, id));
-        }
-
-        // 1, 3, 4, 5 verification via the zkSNARK proof
-        let rec_circuit_data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
-        // TODO: cache these artefacts
-        // https://github.com/0xPARC/pod2/issues/247
-        let (_, circuit_data) =
-            RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data_padded(
-                self.params.max_input_recursive_pods,
-                &rec_circuit_data.common,
-                &self.params,
-            )?;
-        let public_inputs = id
-            .to_fields(&self.params)
-            .iter()
-            .chain(self.vds_root.0.iter())
-            .cloned()
-            .collect_vec();
-        circuit_data
-            .verify(ProofWithPublicInputs {
-                proof: self.proof.clone(),
-                public_inputs,
-            })
-            .map_err(|e| Error::custom(format!("MainPod proof verification failure: {:?}", e)))
-    }
-
     pub fn proof(&self) -> Proof {
         self.proof.clone()
     }
 
-    pub fn vds_root(&self) -> Hash {
-        self.vds_root
-    }
-
     pub fn params(&self) -> &Params {
         &self.params
-    }
-
-    pub(crate) fn deserialize(
-        params: Params,
-        id: PodId,
-        vds_root: Hash,
-        data: serde_json::Value,
-    ) -> Result<Box<dyn RecursivePod>> {
-        let data: Data = serde_json::from_value(data)?;
-        let common = get_common_data(&params)?;
-        let proof = deserialize_proof(&common, &data.proof)?;
-        Ok(Box::new(Self {
-            params,
-            id,
-            vds_root,
-            proof,
-            public_statements: data.public_statements,
-        }))
     }
 }
 
@@ -645,8 +676,47 @@ impl Pod for MainPod {
     fn params(&self) -> &Params {
         &self.params
     }
-    fn verify(&self) -> Result<(), Box<DynError>> {
-        Ok(self._verify()?)
+    fn verify(&self) -> Result<()> {
+        // 0. Assert that the CommonCircuitData of the pod is the current one
+        let expect_common_hash = &*cache_get_rec_main_pod_common_hash(&self.params);
+        if &self.common_hash != expect_common_hash {
+            return Err(Error::custom(format!(
+                "The pod common_hash: {} is different than the current one: {}",
+                self.common_hash, expect_common_hash,
+            )));
+        }
+        // 2. get the id out of the public statements
+        let id = PodId(calculate_id(&self.public_statements, &self.params));
+        if id != self.id {
+            return Err(Error::id_not_equal(self.id, id));
+        }
+
+        // 7. verifier_data_hash is in the VDSet
+        let verifier_data = self.verifier_data();
+        let verifier_data_hash = hash_verifier_data(&verifier_data);
+        if !self.vd_set.contains(verifier_data_hash) {
+            return Err(Error::custom(format!(
+                "vds_root in input recursive pod not in the set: {} not in {}",
+                Hash(verifier_data_hash.elements),
+                self.vd_set.root(),
+            )));
+        }
+
+        // 1, 3, 4, 5 verification via the zkSNARK proof
+        let rec_main_pod_verifier_circuit_data =
+            &*cache_get_rec_main_pod_verifier_circuit_data(&self.params);
+        let public_inputs = id
+            .to_fields(&self.params)
+            .iter()
+            .chain(self.vd_set.root().0.iter())
+            .cloned()
+            .collect_vec();
+        rec_main_pod_verifier_circuit_data
+            .verify(ProofWithPublicInputs {
+                proof: self.proof.clone(),
+                public_inputs,
+            })
+            .map_err(|e| Error::plonky2_proof_fail("MainPod", e))
     }
 
     fn id(&self) -> PodId {
@@ -668,6 +738,8 @@ impl Pod for MainPod {
         serde_json::to_value(Data {
             proof: serialize_proof(&self.proof),
             public_statements: self.public_statements.clone(),
+            verifier_only: serialize_verifier_only(&self.verifier_only),
+            common_hash: self.common_hash.clone(),
         })
         .expect("serialization to json")
     }
@@ -675,14 +747,36 @@ impl Pod for MainPod {
 
 impl RecursivePod for MainPod {
     fn verifier_data(&self) -> VerifierOnlyCircuitData {
-        let data = &*STANDARD_REC_MAIN_POD_CIRCUIT_DATA;
-        data.verifier_only.clone()
+        self.verifier_only.clone()
+    }
+    fn common_hash(&self) -> String {
+        self.common_hash.clone()
     }
     fn proof(&self) -> Proof {
         self.proof.clone()
     }
-    fn vds_root(&self) -> Hash {
-        self.vds_root
+    fn vd_set(&self) -> &VDSet {
+        &self.vd_set
+    }
+    fn deserialize_data(
+        params: Params,
+        data: serde_json::Value,
+        vd_set: VDSet,
+        id: PodId,
+    ) -> Result<Box<dyn RecursivePod>> {
+        let data: Data = serde_json::from_value(data)?;
+        let common = cache_get_rec_main_pod_common_circuit_data(&params);
+        let proof = deserialize_proof(&common, &data.proof)?;
+        let verifier_only = deserialize_verifier_only(&data.verifier_only)?;
+        Ok(Box::new(Self {
+            params,
+            id,
+            verifier_only,
+            common_hash: data.common_hash,
+            vd_set,
+            proof,
+            public_statements: data.public_statements,
+        }))
     }
 }
 
@@ -698,16 +792,16 @@ pub mod tests {
             signedpod::Signer,
         },
         examples::{
-            eth_dos_pod_builder, eth_friend_signed_pod_builder, zu_kyc_pod_builder,
-            zu_kyc_sign_pod_builders,
+            attest_eth_friend, tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_sign_pod_builders,
+            EthDosHelper,
         },
         frontend::{
-            key, literal, CustomPredicateBatchBuilder, MainPodBuilder, StatementTmplBuilder as STB,
-            {self},
+            self, literal, CustomPredicateBatchBuilder, MainPodBuilder, StatementTmplBuilder as STB,
         },
-        middleware,
-        middleware::{CustomPredicateRef, NativePredicate as NP, DEFAULT_VD_SET},
-        op,
+        middleware::{
+            self, containers::Set, CustomPredicateRef, NativePredicate as NP, DEFAULT_VD_LIST,
+            DEFAULT_VD_SET,
+        },
     };
 
     #[test]
@@ -721,26 +815,32 @@ pub mod tests {
             ..Default::default()
         };
         println!("{:#?}", params);
-        let vd_set = &*DEFAULT_VD_SET;
+        let mut vds = DEFAULT_VD_LIST.clone();
+        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
 
-        let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
-            zu_kyc_sign_pod_builders(&params);
-        let mut signer = Signer(SecretKey(BigUint::one()));
-        let gov_id_pod = gov_id_builder.sign(&mut signer)?;
-        let mut signer = Signer(SecretKey(2u64.into()));
-        let pay_stub_pod = pay_stub_builder.sign(&mut signer)?;
-        let mut signer = Signer(SecretKey(3u64.into()));
-        let sanction_list_pod = sanction_list_builder.sign(&mut signer)?;
-        let kyc_builder = zu_kyc_pod_builder(
-            &params,
-            &vd_set,
-            &gov_id_pod,
-            &pay_stub_pod,
-            &sanction_list_pod,
-        )?;
+        let (gov_id_builder, pay_stub_builder) = zu_kyc_sign_pod_builders(&params);
+        let signer = Signer(SecretKey(BigUint::one()));
+        let gov_id_pod = gov_id_builder.sign(&signer)?;
+        let signer = Signer(SecretKey(2u64.into()));
+        let pay_stub_pod = pay_stub_builder.sign(&signer)?;
+        let kyc_builder = zu_kyc_pod_builder(&params, &vd_set, &gov_id_pod, &pay_stub_pod)?;
 
-        let mut prover = Prover {};
-        let kyc_pod = kyc_builder.prove(&mut prover, &params)?;
+        let prover = Prover {};
+        let kyc_pod = kyc_builder.prove(&prover)?;
+        crate::measure_gates_print!();
+        let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
+
+        Ok(pod.verify()?)
+    }
+
+    #[test]
+    fn test_main_tickets() -> frontend::Result<()> {
+        let params = Params::default();
+
+        let ticket_builder = tickets_pod_full_flow(&params, &DEFAULT_VD_SET)?;
+        let prover = Prover {};
+        let kyc_pod = ticket_builder.prove(&prover)?;
         crate::measure_gates_print!();
         let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
 
@@ -758,27 +858,32 @@ pub mod tests {
             max_input_pods_public_statements: 10,
             ..Default::default()
         };
-        let vd_set = &*DEFAULT_VD_SET;
+        let mut vds = DEFAULT_VD_LIST.clone();
+        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
 
         let mut gov_id_builder = frontend::SignedPodBuilder::new(&params);
         gov_id_builder.insert("idNumber", "4242424242");
         gov_id_builder.insert("dateOfBirth", 1169909384);
         gov_id_builder.insert("socialSecurityNumber", "G2121210");
-        let mut signer = Signer(SecretKey(42u64.into()));
-        let gov_id = gov_id_builder.sign(&mut signer).unwrap();
+        let signer = Signer(SecretKey(42u64.into()));
+        let gov_id = gov_id_builder.sign(&signer).unwrap();
         let now_minus_18y: i64 = 1169909388;
         let mut kyc_builder = frontend::MainPodBuilder::new(&params, &vd_set);
         kyc_builder.add_signed_pod(&gov_id);
         kyc_builder
-            .pub_op(op!(lt, (&gov_id, "dateOfBirth"), now_minus_18y))
+            .pub_op(frontend::Operation::lt(
+                (&gov_id, "dateOfBirth"),
+                now_minus_18y,
+            ))
             .unwrap();
 
         println!("{}", kyc_builder);
         println!();
 
         // Mock
-        let mut prover = MockProver {};
-        let kyc_pod = kyc_builder.prove(&mut prover, &params).unwrap();
+        let prover = MockProver {};
+        let kyc_pod = kyc_builder.prove(&prover).unwrap();
         let pod = (kyc_pod.pod as Box<dyn Any>)
             .downcast::<MockMainPod>()
             .unwrap();
@@ -786,9 +891,48 @@ pub mod tests {
         println!("{:#}", pod);
 
         // Real
-        let mut prover = Prover {};
-        let kyc_pod = kyc_builder.prove(&mut prover, &params).unwrap();
+        let prover = Prover {};
+        let kyc_pod = kyc_builder.prove(&prover).unwrap();
         let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
+        pod.verify().unwrap()
+    }
+
+    // This pod does nothing but it's useful for debugging to keep things small.
+    #[ignore]
+    #[test]
+    fn test_mini_1() {
+        let params = middleware::Params {
+            max_input_signed_pods: 0,
+            max_input_recursive_pods: 0,
+            max_signed_pod_values: 0,
+            max_statements: 2,
+            max_public_statements: 1,
+            max_input_pods_public_statements: 0,
+            max_merkle_proofs_containers: 0,
+            max_public_key_of: 0,
+            max_custom_predicate_verifications: 0,
+            max_custom_predicate_batches: 0,
+            ..Default::default()
+        };
+        let mut vds = DEFAULT_VD_LIST.clone();
+        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
+
+        let builder = frontend::MainPodBuilder::new(&params, &vd_set);
+        println!("{}", builder);
+        println!();
+
+        // Mock
+        let prover = MockProver {};
+        let pod = builder.prove(&prover).unwrap();
+        let pod = (pod.pod as Box<dyn Any>).downcast::<MockMainPod>().unwrap();
+        pod.verify().unwrap();
+        println!("{:#}", pod);
+
+        // Real
+        let prover = Prover {};
+        let pod = builder.prove(&prover).unwrap();
+        let pod = (pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
         pod.verify().unwrap()
     }
 
@@ -802,24 +946,28 @@ pub mod tests {
             max_signed_pod_values: 2,
             max_public_statements: 2,
             num_public_statements_id: 4,
-            max_statement_args: 2,
-            max_operation_args: 3,
+            max_statement_args: 4,
+            max_operation_args: 4,
             max_custom_predicate_batches: 2,
             max_custom_predicate_verifications: 2,
             max_custom_predicate_arity: 2,
-            max_custom_predicate_wildcards: 2,
+            max_custom_predicate_wildcards: 3,
             max_custom_batch_size: 2,
             max_merkle_proofs_containers: 2,
+            max_merkle_tree_state_transition_proofs_containers: 2,
+            max_public_key_of: 2,
             max_depth_mt_containers: 4,
             max_depth_mt_vds: 6,
         };
-        let vd_set = &*DEFAULT_VD_SET;
+        let mut vds = DEFAULT_VD_LIST.clone();
+        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
 
         let pod_builder = frontend::MainPodBuilder::new(&params, &vd_set);
 
         // Mock
-        let mut prover = MockProver {};
-        let kyc_pod = pod_builder.prove(&mut prover, &params).unwrap();
+        let prover = MockProver {};
+        let kyc_pod = pod_builder.prove(&prover).unwrap();
         let pod = (kyc_pod.pod as Box<dyn Any>)
             .downcast::<MockMainPod>()
             .unwrap();
@@ -827,60 +975,36 @@ pub mod tests {
         println!("{:#}", pod);
 
         // Real
-        let mut prover = Prover {};
-        let kyc_pod = pod_builder.prove(&mut prover, &params).unwrap();
+        let prover = Prover {};
+        let kyc_pod = pod_builder.prove(&prover).unwrap();
         let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
         pod.verify().unwrap()
     }
 
     #[test]
     fn test_main_ethdos() -> frontend::Result<()> {
-        let params = Params {
-            max_input_signed_pods: 2,
-            max_input_recursive_pods: 1,
-            max_statements: 26,
-            max_public_statements: 5,
-            max_signed_pod_values: 8,
-            max_operation_args: 5,
-            max_custom_predicate_wildcards: 6,
-            max_custom_predicate_verifications: 8,
-            ..Default::default()
-        };
+        let params = Params::default();
         println!("{:#?}", params);
         let vd_set = &*DEFAULT_VD_SET;
 
-        let mut alice = Signer(SecretKey(1u32.into()));
+        let alice = Signer(SecretKey(1u32.into()));
         let bob = Signer(SecretKey(2u32.into()));
-        let mut charlie = Signer(SecretKey(3u32.into()));
+        let charlie = Signer(SecretKey(3u32.into()));
 
-        // Alice attests that she is ETH friends with Charlie and Charlie
-        // attests that he is ETH friends with Bob.
-        let alice_attestation =
-            eth_friend_signed_pod_builder(&params, charlie.public_key().into()).sign(&mut alice)?;
-        let charlie_attestation =
-            eth_friend_signed_pod_builder(&params, bob.public_key().into()).sign(&mut charlie)?;
+        // Alice attests that she is ETH friends with Bob and Bob
+        // attests that he is ETH friends with Charlie.
+        let alice_attestation = attest_eth_friend(&params, &alice, bob.public_key());
+        let bob_attestation = attest_eth_friend(&params, &bob, charlie.public_key());
 
-        let alice_bob_ethdos_builder = eth_dos_pod_builder(
-            &params,
-            &vd_set,
-            false,
-            &alice_attestation,
-            &charlie_attestation,
-            bob.public_key().into(),
-        )?;
-
-        let mut prover = MockProver {};
-        let pod = alice_bob_ethdos_builder.prove(&mut prover, &params)?;
-        assert!(pod.pod.verify().is_ok());
-
-        let mut prover = Prover {};
-        let alice_bob_ethdos = alice_bob_ethdos_builder.prove(&mut prover, &params)?;
+        let helper = EthDosHelper::new(&params, vd_set, false, alice.public_key())?;
+        let prover = Prover {};
+        let dist_1 = helper.dist_1(&alice_attestation)?.prove(&prover)?;
         crate::measure_gates_print!();
-        let pod = (alice_bob_ethdos.pod as Box<dyn Any>)
-            .downcast::<MainPod>()
-            .unwrap();
-
-        Ok(pod.verify()?)
+        dist_1.pod.verify()?;
+        let dist_2 = helper
+            .dist_n_plus_1(&dist_1, &bob_attestation)?
+            .prove(&prover)?;
+        Ok(dist_2.pod.verify()?)
     }
 
     #[test]
@@ -890,31 +1014,33 @@ pub mod tests {
             max_input_recursive_pods: 0,
             max_statements: 9,
             max_public_statements: 4,
-            max_statement_args: 3,
-            max_operation_args: 3,
+            max_statement_args: 4,
+            max_operation_args: 4,
             max_custom_predicate_arity: 3,
             max_custom_batch_size: 3,
             max_custom_predicate_wildcards: 4,
             max_custom_predicate_verifications: 2,
+            max_merkle_proofs_containers: 0,
+            max_merkle_tree_state_transition_proofs_containers: 0,
             ..Default::default()
         };
         println!("{:#?}", params);
-        let vd_set = &*DEFAULT_VD_SET;
+        let mut vds = DEFAULT_VD_LIST.clone();
+        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
 
         let mut cpb_builder = CustomPredicateBatchBuilder::new(params.clone(), "cpb".into());
-        let stb0 = STB::new(NP::ValueOf)
-            .arg(("id", key("score")))
-            .arg(literal(42));
+        let stb0 = STB::new(NP::Equal).arg(("id", "score")).arg(literal(42));
         let stb1 = STB::new(NP::Equal)
-            .arg(("id", "secret_key"))
-            .arg(("id", key("score")));
+            .arg(("secret_id", "key"))
+            .arg(("id", "score"));
         let _ = cpb_builder.predicate_and(
             "pred_and",
             &["id"],
-            &["secret_key"],
+            &["secret_id"],
             &[stb0.clone(), stb1.clone()],
         )?;
-        let _ = cpb_builder.predicate_or("pred_or", &["id"], &["secret_key"], &[stb0, stb1])?;
+        let _ = cpb_builder.predicate_or("pred_or", &["id"], &["secret_id"], &[stb0, stb1])?;
         let cpb = cpb_builder.finish();
 
         let cpb_and = CustomPredicateRef::new(cpb.clone(), 0);
@@ -922,22 +1048,51 @@ pub mod tests {
 
         let mut pod_builder = MainPodBuilder::new(&params, &vd_set);
 
-        let st0 = pod_builder.priv_op(op!(new_entry, ("score", 42)))?;
-        let st1 = pod_builder.priv_op(op!(new_entry, ("foo", 42)))?;
-        let st2 = pod_builder.priv_op(op!(eq, st1.clone(), st0.clone()))?;
+        let st0 = pod_builder.priv_op(frontend::Operation::new_entry("score", 42))?;
+        let st1 = pod_builder.priv_op(frontend::Operation::new_entry("key", 42))?;
+        let st2 = pod_builder.priv_op(frontend::Operation::eq(st1.clone(), st0.clone()))?;
 
-        let _st3 = pod_builder.priv_op(op!(custom, cpb_and.clone(), st0, st2))?;
+        let _st3 = pod_builder.priv_op(frontend::Operation::custom(cpb_and.clone(), [st0, st2]))?;
 
-        let mut prover = MockProver {};
-        let pod = pod_builder.prove(&mut prover, &params)?;
+        let prover = MockProver {};
+        let pod = pod_builder.prove(&prover)?;
         assert!(pod.pod.verify().is_ok());
 
-        let mut prover = Prover {};
-        let pod = pod_builder.prove(&mut prover, &params)?;
+        let prover = Prover {};
+        let pod = pod_builder.prove(&prover)?;
         crate::measure_gates_print!();
 
         let pod = (pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
 
         Ok(pod.verify()?)
+    }
+
+    #[test]
+    fn test_set_contains() -> frontend::Result<()> {
+        let params = Params::default();
+        let mut builder = MainPodBuilder::new(&params, &DEFAULT_VD_SET);
+        let set = [1, 2, 3].into_iter().map(|n| n.into()).collect();
+        let st = builder
+            .pub_op(frontend::Operation::new_entry(
+                "entry",
+                Set::new(params.max_depth_mt_containers, set).unwrap(),
+            ))
+            .unwrap();
+
+        builder.pub_op(frontend::Operation::set_contains(st, 1))?;
+
+        let prover = Prover {};
+        let proof = builder.prove(&prover).unwrap();
+        let pod = (proof.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
+        Ok(pod.verify()?)
+    }
+
+    #[test]
+    fn test_common() {
+        use pretty_assertions::assert_eq;
+        let params = Params::default();
+        let main_common = &*cache_get_rec_main_pod_common_circuit_data(&params);
+        let std_common = &*cache_get_standard_rec_main_pod_common_circuit_data();
+        assert_eq!(std_common.0, main_common.0);
     }
 }

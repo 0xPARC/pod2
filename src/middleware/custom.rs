@@ -6,10 +6,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::middleware::{
     hash_fields, Error, Hash, Key, NativePredicate, Params, Predicate, Result, ToFields, Value,
-    EMPTY_HASH, F, HASH_SIZE, VALUE_SIZE,
+    EMPTY_HASH, F, VALUE_SIZE,
 };
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct Wildcard {
     pub name: String,
     pub index: usize,
@@ -37,75 +37,14 @@ impl ToFields for Wildcard {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type", content = "value")]
-pub enum KeyOrWildcard {
-    Key(Key),
-    Wildcard(Wildcard),
-}
-
-impl fmt::Display for KeyOrWildcard {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Self::Key(k) => k.fmt(f),
-            Self::Wildcard(wc) => wc.fmt(f),
-        }
-    }
-}
-
-impl ToFields for KeyOrWildcard {
-    // Encoding:
-    // - Key(k) => [[k]]
-    // - Wildcard(index) => [[index + 1], 0, 0, 0]
-    fn to_fields(&self, params: &Params) -> Vec<F> {
-        match self {
-            KeyOrWildcard::Key(k) => k.hash().to_fields(params),
-            KeyOrWildcard::Wildcard(wc) => iter::once(F::from_canonical_u64(wc.index as u64 + 1))
-                .chain(iter::repeat(F::ZERO))
-                .take(HASH_SIZE)
-                .collect(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type", content = "value")]
-pub enum SelfOrWildcard {
-    SELF,
-    Wildcard(Wildcard),
-}
-
-impl fmt::Display for SelfOrWildcard {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Self::SELF => write!(f, "SELF"),
-            Self::Wildcard(wc) => wc.fmt(f),
-        }
-    }
-}
-
-impl ToFields for SelfOrWildcard {
-    // Encoding:
-    // - Self => [0]
-    // - Wildcard(index) => [index+1]
-    fn to_fields(&self, _params: &Params) -> Vec<F> {
-        match self {
-            SelfOrWildcard::SELF => vec![F::ZERO],
-            SelfOrWildcard::Wildcard(wc) => vec![F::from_canonical_u64(wc.index as u64 + 1)],
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", content = "value")]
 pub enum StatementTmplArg {
     None,
     Literal(Value),
-    // AnchoredKey
-    AnchoredKey(SelfOrWildcard, KeyOrWildcard),
-    // TODO: This naming is a bit confusing: a WildcardLiteral that contains a Wildcard...
-    // Could we merge WildcardValue and Value and allow wildcard value apart from pod_id and key?
-    WildcardLiteral(Wildcard),
+    // AnchoredKey where the origin is a wildcard
+    AnchoredKey(Wildcard, Key),
+    Wildcard(Wildcard),
 }
 
 #[derive(Clone, Copy)]
@@ -154,7 +93,7 @@ impl ToFields for StatementTmplArg {
                     .collect();
                 fields
             }
-            StatementTmplArg::WildcardLiteral(wc) => {
+            StatementTmplArg::Wildcard(wc) => {
                 let fields: Vec<F> = iter::once(F::from(StatementTmplArgPrefix::WildcardLiteral))
                     .chain(wc.to_fields(params))
                     .chain(iter::repeat(F::ZERO))
@@ -177,13 +116,13 @@ impl fmt::Display for StatementTmplArg {
                 key.fmt(f)?;
                 write!(f, "]")
             }
-            Self::WildcardLiteral(v) => v.fmt(f),
+            Self::Wildcard(v) => v.fmt(f),
         }
     }
 }
 
 /// Statement Template for a Custom Predicate
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct StatementTmpl {
     pub pred: Predicate,
     pub args: Vec<StatementTmplArg>,
@@ -208,7 +147,7 @@ impl fmt::Display for StatementTmpl {
             }
             arg.fmt(f)?;
         }
-        writeln!(f)
+        write!(f, ")")
     }
 }
 
@@ -240,7 +179,7 @@ impl ToFields for StatementTmpl {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 /// NOTE: fields are not public (outside of crate) to enforce the struct instantiation through
 /// the `::and/or` methods, which performs checks on the values.
@@ -288,6 +227,14 @@ impl CustomPredicate {
     ) -> Result<Self> {
         Self::new(params, name, false, statements, args_len, wildcard_names)
     }
+    /// Creates a new custom predicate.
+    ///
+    /// # Arguments
+    /// * `name` - The name of the custom predicate.
+    /// * `conjunction` - `true` for an `and` predicate, `false` for an `or` predicate.
+    /// * `statements` - The statements required to apply the custom predicate.
+    /// * `args_len` - The number of public arguments.
+    /// * `wildcard_names` - The names of the arguments (public and private).
     pub fn new(
         params: &Params,
         name: String,
@@ -335,6 +282,21 @@ impl CustomPredicate {
             }),
             args: vec![],
         }
+    }
+    pub fn is_conjunction(&self) -> bool {
+        self.conjunction
+    }
+    pub fn is_disjunction(&self) -> bool {
+        !self.conjunction
+    }
+    pub fn statements(&self) -> &[StatementTmpl] {
+        &self.statements
+    }
+    pub fn args_len(&self) -> usize {
+        self.args_len
+    }
+    pub fn wildcard_names(&self) -> &[String] {
+        &self.wildcard_names
     }
 }
 
@@ -402,11 +364,17 @@ impl fmt::Display for CustomPredicate {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CustomPredicateBatch {
     id: Hash,
     pub name: String,
     pub(crate) predicates: Vec<CustomPredicate>,
+}
+
+impl std::hash::Hash for CustomPredicateBatch {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
 }
 
 impl ToFields for CustomPredicateBatch {
@@ -451,9 +419,18 @@ impl CustomPredicateBatch {
     pub fn predicates(&self) -> &[CustomPredicate] {
         &self.predicates
     }
+    pub fn predicate_ref_by_name(
+        self: &Arc<CustomPredicateBatch>,
+        name: &str,
+    ) -> Option<CustomPredicateRef> {
+        self.predicates
+            .iter()
+            .enumerate()
+            .find_map(|(i, cp)| (cp.name == name).then(|| CustomPredicateRef::new(self.clone(), i)))
+    }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct CustomPredicateRef {
     pub batch: Arc<CustomPredicateBatch>,
     pub index: usize,
@@ -473,26 +450,19 @@ impl CustomPredicateRef {
 
 #[cfg(test)]
 mod tests {
-    use std::array;
-
-    use plonky2::field::goldilocks_field::GoldilocksField;
-
     use super::*;
     use crate::middleware::{
-        AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash,
-        KeyOrWildcard, NativePredicate, Operation, Params, PodId, PodType, Predicate, Statement,
-        StatementTmpl, StatementTmplArg, WildcardValue, SELF,
+        AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key,
+        NativePredicate, Operation, Params, PodType, Predicate, Statement, StatementTmpl,
+        StatementTmplArg, SELF,
     };
 
     fn st(p: Predicate, args: Vec<StatementTmplArg>) -> StatementTmpl {
         StatementTmpl { pred: p, args }
     }
 
-    fn kow_wc(i: usize) -> KOW {
-        KOW::Wildcard(wc(i))
-    }
-    fn sow_wc(i: usize) -> SOW {
-        SOW::Wildcard(wc(i))
+    fn key(name: &str) -> Key {
+        Key::from(name)
     }
     fn wc(i: usize) -> Wildcard {
         Wildcard {
@@ -504,9 +474,8 @@ mod tests {
         names.iter().map(|s| s.to_string()).collect()
     }
 
+    #[allow(clippy::upper_case_acronyms)]
     type STA = StatementTmplArg;
-    type KOW = KeyOrWildcard;
-    type SOW = SelfOrWildcard;
     type P = Predicate;
     type NP = NativePredicate;
 
@@ -527,42 +496,36 @@ mod tests {
                 "_".into(),
                 vec![
                     st(
-                        P::Native(NP::ValueOf),
-                        vec![
-                            STA::AnchoredKey(sow_wc(4), kow_wc(5)),
-                            STA::Literal(2.into()),
-                        ],
+                        P::Native(NP::Equal),
+                        vec![STA::AnchoredKey(wc(1), key("c")), STA::Literal(2.into())],
                     ),
                     st(
                         P::Native(NP::ProductOf),
                         vec![
-                            STA::AnchoredKey(sow_wc(0), kow_wc(1)),
-                            STA::AnchoredKey(sow_wc(4), kow_wc(5)),
-                            STA::AnchoredKey(sow_wc(2), kow_wc(3)),
+                            STA::AnchoredKey(wc(0), key("a")),
+                            STA::AnchoredKey(wc(1), key("b")),
+                            STA::Literal(Value::from(3)),
                         ],
                     ),
                 ],
-                2,
-                names(&["1", "2", "3", "4", "5"]),
+                1,
+                names(&["0", "1", "2"]),
             )?],
         );
 
         let custom_statement = Statement::Custom(
             CustomPredicateRef::new(cust_pred_batch.clone(), 0),
-            vec![
-                WildcardValue::PodId(SELF),
-                WildcardValue::Key(Key::from("Some value")),
-            ],
+            vec![Value::from(SELF)],
         );
 
         let custom_deduction = Operation::Custom(
             CustomPredicateRef::new(cust_pred_batch, 0),
             vec![
-                Statement::ValueOf(AnchoredKey::from((SELF, "Some constant")), 2.into()),
-                Statement::ProductOf(
-                    AnchoredKey::from((SELF, "Some value")),
-                    AnchoredKey::from((SELF, "Some constant")),
-                    AnchoredKey::from((SELF, "Some other value")),
+                Statement::equal(AnchoredKey::from((SELF, "c")), 2),
+                Statement::product_of(
+                    AnchoredKey::from((SELF, "a")),
+                    AnchoredKey::from((SELF, "b")),
+                    Value::from(3),
                 ),
             ],
         );
@@ -580,38 +543,38 @@ mod tests {
             ..Default::default()
         };
 
-        let eth_friend_cp = CustomPredicate::and(
+        let eth_friend = CustomPredicate::and(
             &params,
-            "eth_friend_cp".into(),
+            "eth_friend".into(),
             vec![
                 st(
-                    P::Native(NP::ValueOf),
+                    P::Native(NP::Equal),
                     vec![
-                        STA::AnchoredKey(sow_wc(4), KeyOrWildcard::Key("type".into())),
+                        STA::AnchoredKey(wc(2), Key::from("_type")),
                         STA::Literal(PodType::Signed.into()),
                     ],
                 ),
                 st(
                     P::Native(NP::Equal),
                     vec![
-                        STA::AnchoredKey(sow_wc(4), KeyOrWildcard::Key("signer".into())),
-                        STA::AnchoredKey(sow_wc(0), kow_wc(1)),
+                        STA::AnchoredKey(wc(2), Key::from("_signer")),
+                        STA::Wildcard(wc(0)),
                     ],
                 ),
                 st(
                     P::Native(NP::Equal),
                     vec![
-                        STA::AnchoredKey(sow_wc(4), KeyOrWildcard::Key("attestation".into())),
-                        STA::AnchoredKey(sow_wc(2), kow_wc(3)),
+                        STA::AnchoredKey(wc(2), Key::from("attestation")),
+                        STA::Wildcard(wc(1)),
                     ],
                 ),
             ],
-            4,
-            names(&["1", "2", "3", "4"]),
+            2,
+            names(&["0", "1", "2"]),
         )?;
 
         let eth_friend_batch =
-            CustomPredicateBatch::new(&params, "eth_friend".to_string(), vec![eth_friend_cp]);
+            CustomPredicateBatch::new(&params, "eth_friend".to_string(), vec![eth_friend]);
 
         // 0
         let eth_dos_base = CustomPredicate::and(
@@ -620,21 +583,15 @@ mod tests {
             vec![
                 st(
                     P::Native(NP::Equal),
-                    vec![
-                        STA::AnchoredKey(sow_wc(0), kow_wc(1)),
-                        STA::AnchoredKey(sow_wc(2), kow_wc(3)),
-                    ],
+                    vec![STA::Wildcard(wc(0)), STA::Wildcard(wc(1))],
                 ),
                 st(
-                    P::Native(NP::ValueOf),
-                    vec![
-                        STA::AnchoredKey(sow_wc(4), kow_wc(5)),
-                        STA::Literal(0.into()),
-                    ],
+                    P::Native(NP::Equal),
+                    vec![STA::Wildcard(wc(2)), STA::Literal(0.into())],
                 ),
             ],
-            6,
-            names(&["0", "1", "2", "3", "4", "5"]),
+            3,
+            names(&["0", "1", "2"]),
         )?;
 
         // 1
@@ -645,98 +602,64 @@ mod tests {
                 st(
                     P::BatchSelf(2),
                     vec![
-                        STA::WildcardLiteral(wc(0)),
-                        STA::WildcardLiteral(wc(1)),
-                        STA::WildcardLiteral(wc(10)),
-                        STA::WildcardLiteral(wc(11)),
-                        STA::WildcardLiteral(wc(8)),
-                        STA::WildcardLiteral(wc(9)),
-                    ],
-                ),
-                st(
-                    P::Native(NP::ValueOf),
-                    vec![
-                        STA::AnchoredKey(sow_wc(6), kow_wc(7)),
-                        STA::Literal(1.into()),
+                        STA::Wildcard(wc(0)),
+                        STA::Wildcard(wc(4)),
+                        STA::Wildcard(wc(3)),
                     ],
                 ),
                 st(
                     P::Native(NP::SumOf),
                     vec![
-                        STA::AnchoredKey(sow_wc(4), kow_wc(5)),
-                        STA::AnchoredKey(sow_wc(8), kow_wc(9)),
-                        STA::AnchoredKey(sow_wc(6), kow_wc(7)),
+                        STA::Wildcard(wc(2)),
+                        STA::Wildcard(wc(3)),
+                        STA::Literal(Value::from(1)),
                     ],
                 ),
                 st(
                     P::Custom(CustomPredicateRef::new(eth_friend_batch.clone(), 0)),
-                    vec![
-                        STA::WildcardLiteral(wc(10)),
-                        STA::WildcardLiteral(wc(11)),
-                        STA::WildcardLiteral(wc(2)),
-                        STA::WildcardLiteral(wc(3)),
-                    ],
+                    vec![STA::Wildcard(wc(4)), STA::Wildcard(wc(1))],
                 ),
             ],
-            6,
-            names(&["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"]),
+            3,
+            names(&["0", "1", "2", "3", "4"]),
         )?;
 
         // 2
-        let eth_dos_distance_either = CustomPredicate::or(
+        let eth_dos = CustomPredicate::or(
             &params,
-            "eth_dos_distance_either".into(),
+            "eth_dos".into(),
             vec![
                 st(
                     P::BatchSelf(0),
                     vec![
-                        STA::WildcardLiteral(wc(0)),
-                        STA::WildcardLiteral(wc(1)),
-                        STA::WildcardLiteral(wc(2)),
-                        STA::WildcardLiteral(wc(3)),
-                        STA::WildcardLiteral(wc(4)),
-                        STA::WildcardLiteral(wc(5)),
+                        STA::Wildcard(wc(0)),
+                        STA::Wildcard(wc(1)),
+                        STA::Wildcard(wc(2)),
                     ],
                 ),
                 st(
                     P::BatchSelf(1),
                     vec![
-                        STA::WildcardLiteral(wc(0)),
-                        STA::WildcardLiteral(wc(1)),
-                        STA::WildcardLiteral(wc(2)),
-                        STA::WildcardLiteral(wc(3)),
-                        STA::WildcardLiteral(wc(4)),
-                        STA::WildcardLiteral(wc(5)),
+                        STA::Wildcard(wc(0)),
+                        STA::Wildcard(wc(1)),
+                        STA::Wildcard(wc(2)),
                     ],
                 ),
             ],
-            6,
-            names(&["0", "1", "2", "3", "4", "5"]),
+            3,
+            names(&["0", "1", "2"]),
         )?;
 
         let eth_dos_distance_batch = CustomPredicateBatch::new(
             &params,
             "ETHDoS_distance".to_string(),
-            vec![eth_dos_base, eth_dos_ind, eth_dos_distance_either],
+            vec![eth_dos_base, eth_dos_ind, eth_dos],
         );
-
-        // Some POD IDs
-        let pod_id1 = PodId(Hash(array::from_fn(|i| GoldilocksField(i as u64))));
-        let pod_id2 = PodId(Hash(array::from_fn(|i| GoldilocksField((i * i) as u64))));
-        let pod_id3 = PodId(Hash(array::from_fn(|i| GoldilocksField((2 * i) as u64))));
-        let pod_id4 = PodId(Hash(array::from_fn(|i| GoldilocksField((2 * i) as u64))));
 
         // Example statement
         let ethdos_example = Statement::Custom(
             CustomPredicateRef::new(eth_dos_distance_batch.clone(), 2),
-            vec![
-                WildcardValue::PodId(pod_id1),
-                WildcardValue::Key(Key::from("Alice")),
-                WildcardValue::PodId(pod_id2),
-                WildcardValue::Key(Key::from("Bob")),
-                WildcardValue::PodId(SELF),
-                WildcardValue::Key(Key::from("Seven")),
-            ],
+            vec![Value::from("Alice"), Value::from("Bob"), Value::from(7)],
         );
 
         // Copies should work.
@@ -745,14 +668,7 @@ mod tests {
         // This could arise as the inductive step.
         let ethdos_ind_example = Statement::Custom(
             CustomPredicateRef::new(eth_dos_distance_batch.clone(), 1),
-            vec![
-                WildcardValue::PodId(pod_id1),
-                WildcardValue::Key(Key::from("Alice")),
-                WildcardValue::PodId(pod_id2),
-                WildcardValue::Key(Key::from("Bob")),
-                WildcardValue::PodId(SELF),
-                WildcardValue::Key(Key::from("Seven")),
-            ],
+            vec![Value::from("Alice"), Value::from("Bob"), Value::from(7)],
         );
 
         assert!(Operation::Custom(
@@ -767,29 +683,12 @@ mod tests {
         let ethdos_facts = vec![
             Statement::Custom(
                 CustomPredicateRef::new(eth_dos_distance_batch.clone(), 2),
-                vec![
-                    WildcardValue::PodId(pod_id1),
-                    WildcardValue::Key(Key::from("Alice")),
-                    WildcardValue::PodId(pod_id3),
-                    WildcardValue::Key(Key::from("Charlie")),
-                    WildcardValue::PodId(pod_id4),
-                    WildcardValue::Key(Key::from("Six")),
-                ],
+                vec![Value::from("Alice"), Value::from("Charlie"), Value::from(6)],
             ),
-            Statement::ValueOf(AnchoredKey::from((SELF, "One")), 1.into()),
-            Statement::SumOf(
-                AnchoredKey::from((SELF, "Seven")),
-                AnchoredKey::from((pod_id4, "Six")),
-                AnchoredKey::from((SELF, "One")),
-            ),
+            Statement::sum_of(Value::from(7), Value::from(6), Value::from(1)),
             Statement::Custom(
                 CustomPredicateRef::new(eth_friend_batch.clone(), 0),
-                vec![
-                    WildcardValue::PodId(pod_id3),
-                    WildcardValue::Key(Key::from("Charlie")),
-                    WildcardValue::PodId(pod_id2),
-                    WildcardValue::Key(Key::from("Bob")),
-                ],
+                vec![Value::from("Charlie"), Value::from("Bob")],
             ),
         ];
 
