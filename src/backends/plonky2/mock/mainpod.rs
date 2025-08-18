@@ -4,7 +4,6 @@
 
 use std::{fmt, iter};
 
-use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -22,9 +21,8 @@ use crate::{
         signedpod::SignedPod,
     },
     middleware::{
-        self, deserialize_pod, deserialize_signed_pod, hash_str, AnchoredKey, Hash, MainPodInputs,
-        NativeOperation, NativePredicate, OperationType, Params, Pod, PodId, PodProver, PodType,
-        Predicate, RecursivePod, StatementArg, VDSet, Value, KEY_TYPE, SELF,
+        self, deserialize_pod, deserialize_signed_pod, Hash, MainPodInputs, Params, Pod, PodId,
+        PodProver, PodType, RecursivePod, VDSet,
     },
 };
 

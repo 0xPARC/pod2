@@ -1,5 +1,3 @@
-use std::io::empty;
-
 use itertools::Itertools;
 use plonky2::{
     hash::hash_types::HashOutTarget,
@@ -31,9 +29,8 @@ use crate::{
     },
     cache::{self, CacheEntry},
     middleware::{
-        self, AnchoredKey, Hash, IntroPredicateRef, Params, Pod, PodId, PodType, RecursivePod,
-        Statement, ToFields, VDSet, Value, VerifierOnlyCircuitData, EMPTY_HASH, F, HASH_SIZE,
-        KEY_TYPE, SELF,
+        self, Hash, IntroPredicateRef, Params, Pod, PodId, PodType, RecursivePod, Statement,
+        ToFields, VDSet, VerifierOnlyCircuitData, EMPTY_HASH, F, HASH_SIZE,
     },
     timed,
 };

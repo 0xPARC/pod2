@@ -406,7 +406,8 @@ fn validate_and_build_statement_template(
                 | NativePredicate::DictNotContains
                 | NativePredicate::SetNotContains
                 | NativePredicate::NotContains
-                | NativePredicate::PublicKeyOf => 2,
+                | NativePredicate::PublicKeyOf
+                | NativePredicate::SignedBy => 2,
                 NativePredicate::Contains
                 | NativePredicate::ArrayContains
                 | NativePredicate::DictContains

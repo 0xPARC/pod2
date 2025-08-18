@@ -2,7 +2,6 @@ use std::{array, iter, sync::Arc};
 
 use itertools::{izip, zip_eq, Itertools};
 use num::{BigUint, One};
-use pest::state;
 use plonky2::{
     field::types::Field,
     hash::{
@@ -1580,7 +1579,7 @@ fn verify_main_pod_circuit(
         let measure_in_pod = measure_gates_begin!(builder, "VerifyInPod");
 
         //
-        // Verify id from the statements
+        // Verify sts_hash from the statements
         //
         let expected_sts_hash = HashOutTarget::try_from(
             &verified_proof.public_inputs[PI_OFFSET_STS_HASH..PI_OFFSET_STS_HASH + HASH_SIZE],

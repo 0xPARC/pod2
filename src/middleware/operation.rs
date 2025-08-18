@@ -8,7 +8,7 @@ use crate::{
     backends::plonky2::primitives::{
         ec::{
             curve::{Point as PublicKey, GROUP_ORDER},
-            schnorr::SecretKey,
+            schnorr::{SecretKey, Signature},
         },
         merkletree::{MerkleProof, MerkleTree, MerkleTreeOp, MerkleTreeStateTransitionProof},
     },
@@ -30,6 +30,7 @@ pub enum OperationAux {
     None,
     MerkleProof(MerkleProof),
     MerkleTreeStateTransitionProof(MerkleTreeStateTransitionProof),
+    Signature(Signature),
 }
 
 impl fmt::Display for OperationAux {
@@ -41,6 +42,7 @@ impl fmt::Display for OperationAux {
             Self::MerkleTreeStateTransitionProof(pf) => {
                 write!(f, "merkle_tree_state_transition_proof({:?})", pf)?
             }
+            Self::Signature(sig) => write!(f, "signature({:?})", sig)?,
         }
         Ok(())
     }
@@ -85,9 +87,10 @@ pub enum NativeOperation {
     MaxOf = 13,
     HashOf = 14,
     PublicKeyOf = 15,
-    ContainerInsertFromEntries = 16,
-    ContainerUpdateFromEntries = 17,
-    ContainerDeleteFromEntries = 18,
+    SignedBy = 16,
+    ContainerInsertFromEntries = 17,
+    ContainerUpdateFromEntries = 18,
+    ContainerDeleteFromEntries = 19,
 
     // Syntactic sugar operations.  These operations are not supported by the backend.  The
     // frontend compiler is responsible of translating these operations into the operations above.
@@ -154,6 +157,7 @@ impl OperationType {
                 NativeOperation::PublicKeyOf => {
                     Some(Predicate::Native(NativePredicate::PublicKeyOf))
                 }
+                NativeOperation::SignedBy => Some(Predicate::Native(NativePredicate::SignedBy)),
                 NativeOperation::ContainerInsertFromEntries => {
                     Some(Predicate::Native(NativePredicate::ContainerInsert))
                 }
@@ -198,6 +202,7 @@ pub enum Operation {
     MaxOf(Statement, Statement, Statement),
     HashOf(Statement, Statement, Statement),
     PublicKeyOf(Statement, Statement),
+    SignedBy(Statement, Statement, Signature),
     ContainerInsertFromEntries(
         /* new_root */ Statement,
         /* old_root */ Statement,
@@ -258,6 +263,7 @@ impl Operation {
             Self::MaxOf(_, _, _) => OT::Native(MaxOf),
             Self::HashOf(_, _, _) => OT::Native(HashOf),
             Self::PublicKeyOf(_, _) => OT::Native(PublicKeyOf),
+            Self::SignedBy(_, _, _) => OT::Native(SignedBy),
             Self::ContainerInsertFromEntries(_, _, _, _, _) => {
                 OT::Native(ContainerInsertFromEntries)
             }
@@ -287,6 +293,7 @@ impl Operation {
             Self::MaxOf(s1, s2, s3) => vec![s1, s2, s3],
             Self::HashOf(s1, s2, s3) => vec![s1, s2, s3],
             Self::PublicKeyOf(s1, s2) => vec![s1, s2],
+            Self::SignedBy(s1, s2, _sig) => vec![s1, s2],
             Self::ContainerInsertFromEntries(s1, s2, s3, s4, _pf) => vec![s1, s2, s3, s4],
             Self::ContainerUpdateFromEntries(s1, s2, s3, s4, _pf) => vec![s1, s2, s3, s4],
             Self::ContainerDeleteFromEntries(s1, s2, s3, _pf) => vec![s1, s2, s3],
@@ -343,6 +350,9 @@ impl Operation {
                     Self::HashOf(s1.clone(), s2.clone(), s3.clone())
                 }
                 (NO::PublicKeyOf, &[s1, s2], OA::None) => Self::PublicKeyOf(s1.clone(), s2.clone()),
+                (NO::SignedBy, &[s1, s2], OA::Signature(sig)) => {
+                    Self::SignedBy(s1.clone(), s2.clone(), sig)
+                }
                 (
                     NO::ContainerInsertFromEntries,
                     &[s1, s2, s3, s4],
@@ -410,6 +420,11 @@ impl Operation {
         Ok(sk.0 < *GROUP_ORDER && pk == sk.public_key())
     }
 
+    pub(crate) fn signature_verify(msg: &Value, pk: &Value, sig: &Signature) -> Result<bool> {
+        let pk: PublicKey = pk.typed().try_into()?;
+        Ok(sig.verify(pk, msg.raw()))
+    }
+
     /// Checks the given operation against a statement.
     pub fn check(&self, params: &Params, output_statement: &Statement) -> Result<bool> {
         use Statement::*;
@@ -472,6 +487,9 @@ impl Operation {
             (Self::PublicKeyOf(s1, s2), PublicKeyOf(v3, v4)) => {
                 Self::check_public_key(&val(v3, s1)?, &val(v4, s2)?)?
             }
+            (Self::SignedBy(msg_s, pk_s, sig), SignedBy(msg_v, pk_v)) => {
+                Self::signature_verify(&val(msg_v, msg_s)?, &val(pk_v, pk_s)?, sig)?
+            }
             (
                 Self::ContainerInsertFromEntries(new_root_s, old_root_s, key_s, val_s, pf),
                 ContainerInsert(new_root_v, old_root_v, key_v, val_v),
@@ -532,7 +550,6 @@ impl Operation {
                 ))?;
                 MerkleTree::verify_state_transition(params.max_depth_mt_containers, pf)?;
                 true
-            }
             (Self::Custom(CustomPredicateRef { batch, index }, args), Custom(cpr, s_args))
                 if batch == &cpr.batch && index == &cpr.index =>
             {
@@ -1027,5 +1044,10 @@ mod tests {
         assert!(op.check(&params, &st).is_err());
 
         Ok(())
+    }
+
+    #[test]
+    fn check_signed_by_op() -> Result<()> {
+        todo!()
     }
 }

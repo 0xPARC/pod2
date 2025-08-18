@@ -7,7 +7,6 @@ use hex::ToHex;
 use itertools::Itertools;
 use strum_macros::FromRepr;
 
-use crate::backends::plonky2::recursion::hash_verifier_data;
 mod basetypes;
 use std::{
     cmp::{Ordering, PartialEq, PartialOrd},
@@ -826,6 +825,8 @@ pub struct Params {
     pub max_depth_mt_vds: usize,
     // maximum number of public key derivations used for PublicKeyOf operation
     pub max_public_key_of: usize,
+    // maximum number of signature verifications used for SignedBy operation
+    pub max_signed_by: usize,
     //
     // The following parameters define how a pod id is calculated.  They need to be the same among
     // different circuits to be compatible in their verification.
@@ -865,6 +866,7 @@ impl Default for Params {
             max_depth_mt_containers: 32,
             max_depth_mt_vds: 6, // up to 64 (2^6) different pod circuits
             max_public_key_of: 2,
+            max_signed_by: 3,
         }
     }
 }

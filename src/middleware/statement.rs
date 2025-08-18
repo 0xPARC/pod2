@@ -34,9 +34,10 @@ pub enum NativePredicate {
     MaxOf = 10,
     HashOf = 11,
     PublicKeyOf = 12,
-    ContainerInsert = 13,
-    ContainerUpdate = 14,
-    ContainerDelete = 15,
+    SignedBy = 13,
+    ContainerInsert = 14,
+    ContainerUpdate = 15,
+    ContainerDelete = 16,
 
     // Syntactic sugar predicates.  These predicates are not supported by the backend.  The
     // frontend compiler is responsible of translating these predicates into the predicates above.
@@ -73,6 +74,7 @@ impl Display for NativePredicate {
             NativePredicate::MaxOf => "MaxOf",
             NativePredicate::HashOf => "HashOf",
             NativePredicate::PublicKeyOf => "PublicKeyOf",
+            NativePredicate::SignedBy => "SignedBy",
             NativePredicate::ContainerInsert => "ContainerInsert",
             NativePredicate::ContainerUpdate => "ContainerUpdate",
             NativePredicate::ContainerDelete => "ContainerDelete",
@@ -213,6 +215,7 @@ pub enum Statement {
     MaxOf(ValueRef, ValueRef, ValueRef),
     HashOf(ValueRef, ValueRef, ValueRef),
     PublicKeyOf(ValueRef, ValueRef),
+    SignedBy(ValueRef, ValueRef),
     ContainerInsert(
         /* new_root */ ValueRef,
         /* old_root */ ValueRef,
@@ -276,6 +279,7 @@ impl Statement {
     statement_constructor!(max_of, MaxOf, 3);
     statement_constructor!(hash_of, HashOf, 3);
     statement_constructor!(public_key_of, PublicKeyOf, 2);
+    statement_constructor!(signed_by, SignedBy, 2);
     statement_constructor!(insert, ContainerInsert, 4);
     statement_constructor!(update, ContainerUpdate, 4);
     statement_constructor!(delete, ContainerDelete, 3);
@@ -294,6 +298,7 @@ impl Statement {
             Self::MaxOf(_, _, _) => Native(NativePredicate::MaxOf),
             Self::HashOf(_, _, _) => Native(NativePredicate::HashOf),
             Self::PublicKeyOf(_, _) => Native(NativePredicate::PublicKeyOf),
+            Self::SignedBy(_, _) => Native(NativePredicate::SignedBy),
             Self::ContainerInsert(_, _, _, _) => Native(NativePredicate::ContainerInsert),
             Self::ContainerUpdate(_, _, _, _) => Native(NativePredicate::ContainerUpdate),
             Self::ContainerDelete(_, _, _) => Native(NativePredicate::ContainerDelete),
@@ -316,6 +321,7 @@ impl Statement {
             Self::MaxOf(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
             Self::HashOf(ak1, ak2, ak3) => vec![ak1.into(), ak2.into(), ak3.into()],
             Self::PublicKeyOf(ak1, ak2) => vec![ak1.into(), ak2.into()],
+            Self::SignedBy(ak1, ak2) => vec![ak1.into(), ak2.into()],
             Self::ContainerInsert(ak1, ak2, ak3, ak4) => {
                 vec![ak1.into(), ak2.into(), ak3.into(), ak4.into()]
             }
@@ -371,6 +377,9 @@ impl Statement {
             (Native(NativePredicate::PublicKeyOf), &[a1, a2]) => {
                 Self::PublicKeyOf(a1.try_into()?, a2.try_into()?)
             }
+            (Native(NativePredicate::SignedBy), &[a1, a2]) => {
+                Self::SignedBy(a1.try_into()?, a2.try_into()?)
+            }
             (Native(NativePredicate::ContainerInsert), &[a1, a2, a3, a4]) => Self::ContainerInsert(
                 a1.try_into()?,
                 a2.try_into()?,
@@ -385,7 +394,6 @@ impl Statement {
             ),
             (Native(NativePredicate::ContainerDelete), &[a1, a2, a3]) => {
                 Self::ContainerDelete(a1.try_into()?, a2.try_into()?, a3.try_into()?)
-            }
             (Native(np), _) => {
                 return Err(Error::custom(format!("Predicate {:?} is syntax sugar", np)))
             }
