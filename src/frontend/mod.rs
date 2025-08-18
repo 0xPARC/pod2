@@ -5,12 +5,13 @@ use std::{collections::HashMap, convert::From, fmt};
 
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-pub use serialization::{SerializedMainPod, SerializedSignedPod};
 
+// pub use serialization::{SerializedMainPod, SerializedSignedDict};
 use crate::middleware::{
-    self, check_custom_pred, check_st_tmpl, hash_op, hash_str, max_op, prod_op, sum_op,
-    AnchoredKey, Key, MainPodInputs, NativeOperation, OperationAux, OperationType, Params, PodId,
-    PodProver, PodSigner, Statement, StatementArg, VDSet, Value, ValueRef, KEY_TYPE, SELF,
+    self, check_custom_pred, check_st_tmpl, containers::Dictionary, hash_op, hash_str, max_op,
+    prod_op, sum_op, AnchoredKey, Key, MainPodInputs, NativeOperation, OperationAux, OperationType,
+    Params, PodId, PodProver, PublicKey, RawValue, Signature, Signer, Statement, StatementArg,
+    VDSet, Value, ValueRef, KEY_TYPE, SELF,
 };
 
 mod custom;
@@ -24,14 +25,14 @@ pub use operation::*;
 pub use pod_request::*;
 
 #[derive(Clone, Debug)]
-pub struct SignedPodBuilder {
+pub struct SignedDictBuilder {
     pub params: Params,
     pub kvs: HashMap<Key, Value>,
 }
 
-impl fmt::Display for SignedPodBuilder {
+impl fmt::Display for SignedDictBuilder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "SignedPodBuilder:")?;
+        writeln!(f, "SignedDictBuilder:")?;
         for (k, v) in self.kvs.iter().sorted_by_key(|kv| kv.0.hash()) {
             writeln!(f, "  - {}: {}", k, v)?;
         }
@@ -39,7 +40,7 @@ impl fmt::Display for SignedPodBuilder {
     }
 }
 
-impl SignedPodBuilder {
+impl SignedDictBuilder {
     pub fn new(params: &Params) -> Self {
         Self {
             params: params.clone(),
@@ -51,66 +52,74 @@ impl SignedPodBuilder {
         self.kvs.insert(key.into(), value.into());
     }
 
-    pub fn sign<S: PodSigner>(&self, signer: &S) -> Result<SignedPod> {
-        // Sign POD with committed KV store.
-        let pod = signer.sign(&self.params, &self.kvs)?;
+    pub fn sign<S: Signer>(&self, signer: &S) -> Result<SignedDict> {
+        // Sign committed KV store.
+        let dict = Dictionary::new(self.params.max_depth_mt_containers, self.kvs.clone())?;
+        // NOTE: This is the same way that `TypedValue::Dictionary` computes the `RawValue`
+        let msg_raw = RawValue::from(dict.commitment());
+        let signature = signer.sign(msg_raw)?;
 
-        Ok(SignedPod::new(pod))
+        Ok(SignedDict {
+            dict,
+            public_key: signer.public_key(),
+            signature,
+        })
     }
 }
 
-/// SignedPod is a wrapper on top of backend::SignedPod, which additionally stores the
-/// string<-->hash relation of the keys.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(try_from = "SerializedSignedPod", into = "SerializedSignedPod")]
-pub struct SignedPod {
-    pub pod: Box<dyn middleware::Pod>,
-    // We store a copy of the key values for quick access
-    kvs: HashMap<Key, Value>,
+// #[serde(try_from = "SerializedSignedDict", into = "SerializedSignedDict")]
+pub struct SignedDict {
+    dict: Dictionary,
+    public_key: PublicKey,
+    signature: Signature,
 }
 
-impl fmt::Display for SignedPod {
+impl fmt::Display for SignedDict {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "SignedPod (id:{}):", self.id())?;
+        writeln!(f, "SignedDict (raw:{}):", self.dict.commitment())?;
         // Note: current version iterates sorting by keys of the kvs, but the merkletree defined at
         // https://0xparc.github.io/pod2/merkletree.html will not need it since it will be
         // deterministic based on the keys values not on the order of the keys when added into the
         // tree.
-        for (k, v) in self.pod.kvs().iter().sorted_by_key(|kv| kv.0.key.hash()) {
+        for (k, v) in self.dict.kvs().iter().sorted_by_key(|kv| kv.0.hash()) {
             writeln!(f, "  - {} = {}", k, v)?;
         }
         Ok(())
     }
 }
 
-impl SignedPod {
-    pub fn new(pod: Box<dyn middleware::Pod>) -> Self {
-        let kvs = pod
-            .kvs()
-            .into_iter()
-            .map(|(AnchoredKey { key, .. }, v)| (key, v))
-            .collect();
-        Self { pod, kvs }
-    }
-    pub fn id(&self) -> PodId {
-        self.pod.id()
-    }
+impl SignedDict {
+    // pub fn new(pod: Box<dyn middleware::Pod>) -> Self {
+    //     let kvs = pod
+    //         .kvs()
+    //         .into_iter()
+    //         .map(|(AnchoredKey { key, .. }, v)| (key, v))
+    //         .collect();
+    //     Self { pod, kvs }
+    // }
+    // pub fn id(&self) -> PodId {
+    //     self.pod.id()
+    // }
     pub fn verify(&self) -> Result<()> {
-        self.pod.verify().map_err(Error::Backend)
+        self.signature
+            .verify(self.public_key, RawValue::from(self.dict.commitment()))
+            .then_some(())
+            .ok_or(Error::custom("Invalid signature!"))
     }
     pub fn kvs(&self) -> &HashMap<Key, Value> {
-        &self.kvs
+        self.dict.kvs()
     }
     pub fn get(&self, key: impl Into<Key>) -> Option<&Value> {
-        self.kvs.get(&key.into())
+        self.kvs().get(&key.into())
     }
     // Returns the Equal statement that defines key if it exists.
-    pub fn get_statement(&self, key: impl Into<Key>) -> Option<Statement> {
-        let key: Key = key.into();
-        self.kvs()
-            .get(&key)
-            .map(|value| Statement::equal(AnchoredKey::from((self.id(), key)), value.clone()))
-    }
+    // pub fn get_statement(&self, key: impl Into<Key>) -> Option<Statement> {
+    //     let key: Key = key.into();
+    //     self.kvs()
+    //         .get(&key)
+    //         .map(|value| Statement::equal(AnchoredKey::from((self.id(), key)), value.clone()))
+    // }
 }
 
 /// The MainPodBuilder allows interactive creation of a MainPod by applying operations and creating
@@ -119,7 +128,8 @@ impl SignedPod {
 pub struct MainPodBuilder {
     pub params: Params,
     pub vd_set: VDSet,
-    pub input_signed_pods: Vec<SignedPod>,
+    // pub input_signed_pods: Vec<SignedDict>,
+    // TODO: Rename to `input_pods`
     pub input_recursive_pods: Vec<MainPod>,
     pub statements: Vec<Statement>,
     pub operations: Vec<Operation>,
@@ -134,10 +144,10 @@ pub struct MainPodBuilder {
 impl fmt::Display for MainPodBuilder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "MainPod:")?;
-        writeln!(f, "  input_signed_pods:")?;
-        for in_pod in &self.input_signed_pods {
-            writeln!(f, "    - {}", in_pod.id())?;
-        }
+        // writeln!(f, "  input_signed_pods:")?;
+        // for in_pod in &self.input_signed_pods {
+        //     writeln!(f, "    - {}", in_pod.id())?;
+        // }
         writeln!(f, "  input_main_pods:")?;
         for in_pod in &self.input_recursive_pods {
             writeln!(f, "    - {}", in_pod.id())?;
@@ -157,7 +167,7 @@ impl MainPodBuilder {
         Self {
             params: params.clone(),
             vd_set: vd_set.clone(),
-            input_signed_pods: Vec::new(),
+            // input_signed_pods: Vec::new(),
             input_recursive_pods: Vec::new(),
             statements: Vec::new(),
             operations: Vec::new(),
@@ -166,9 +176,9 @@ impl MainPodBuilder {
             literals: HashMap::new(),
         }
     }
-    pub fn add_signed_pod(&mut self, pod: &SignedPod) {
-        self.input_signed_pods.push(pod.clone());
-    }
+    // pub fn add_signed_pod(&mut self, pod: &SignedDict) {
+    //     self.input_signed_pods.push(pod.clone());
+    // }
     pub fn add_recursive_pod(&mut self, pod: MainPod) {
         self.input_recursive_pods.push(pod);
     }
@@ -641,11 +651,11 @@ impl MainPodBuilder {
         let (statements, operations, public_statements) = compiler.compile(inputs, &self.params)?;
 
         let inputs = MainPodInputs {
-            signed_pods: &self
-                .input_signed_pods
-                .iter()
-                .map(|p| p.pod.as_ref())
-                .collect_vec(),
+            // signed_pods: &self
+            //     .input_signed_pods
+            //     .iter()
+            //     .map(|p| p.pod.as_ref())
+            //     .collect_vec(),
             recursive_pods: &self
                 .input_recursive_pods
                 .iter()
@@ -876,7 +886,7 @@ pub mod tests {
 
     // Check that frontend key-values agree with those embedded in a
     // SignedPod.
-    fn check_kvs(pod: &SignedPod) -> Result<()> {
+    fn check_kvs(pod: &SignedDict) -> Result<()> {
         let kvs = pod.kvs.clone().into_iter().collect::<HashMap<_, _>>();
         let embedded_kvs = pod
             .pod
@@ -1014,7 +1024,7 @@ pub mod tests {
         let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
 
-        let mut signed_builder = SignedPodBuilder::new(&params);
+        let mut signed_builder = SignedDictBuilder::new(&params);
         signed_builder.insert("a", 1);
         signed_builder.insert("b", 1);
         let signer = Signer(SecretKey(1u32.into()));
@@ -1065,7 +1075,7 @@ pub mod tests {
     fn test_false_st() {
         let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
-        let mut builder = SignedPodBuilder::new(&params);
+        let mut builder = SignedDictBuilder::new(&params);
 
         builder.insert("num", 2);
         let signer = Signer(SecretKey(1u32.into()));
@@ -1088,7 +1098,7 @@ pub mod tests {
     fn test_dictionaries() -> Result<()> {
         let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
-        let mut builder = SignedPodBuilder::new(&params);
+        let mut builder = SignedDictBuilder::new(&params);
 
         let mut my_dict_kvs: HashMap<Key, Value> = HashMap::new();
         my_dict_kvs.insert(Key::from("a"), Value::from(1));
@@ -1260,7 +1270,7 @@ pub mod tests {
         let pk = sk.public_key();
 
         // Signed POD contains public key as owner
-        let mut builder = SignedPodBuilder::new(&params);
+        let mut builder = SignedDictBuilder::new(&params);
         builder.insert("owner", Value::from(pk));
         builder.insert("other_data", Value::from(123));
         let signer = Signer(SecretKey(1u32.into()));
@@ -1301,7 +1311,7 @@ pub mod tests {
         let pk = sk.public_key();
 
         // Signed POD contains public key as owner
-        let mut builder = SignedPodBuilder::new(&params);
+        let mut builder = SignedDictBuilder::new(&params);
         builder.insert("owner", Value::from(pk));
         builder.insert("other_data", Value::from(123));
         let signer = Signer(SecretKey(1u32.into()));

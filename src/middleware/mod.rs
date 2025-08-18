@@ -34,9 +34,8 @@ pub use pod_deserialization::*;
 use serialization::*;
 pub use statement::*;
 
-use crate::backends::plonky2::primitives::{
-    ec::{curve::Point as PublicKey, schnorr::SecretKey},
-    merkletree::{MerkleProof, MerkleTreeStateTransitionProof},
+use crate::backends::plonky2::primitives::merkletree::{
+    MerkleProof, MerkleTreeStateTransitionProof,
 };
 
 pub const SELF: PodId = PodId(SELF_ID_HASH);
@@ -1064,17 +1063,15 @@ impl Eq for Box<dyn RecursivePod> {}
 // impl Clone for Box<dyn RecursivePod>
 dyn_clone::clone_trait_object!(RecursivePod);
 
-pub trait PodSigner {
-    fn sign(
-        &self,
-        params: &Params,
-        kvs: &HashMap<Key, Value>,
-    ) -> Result<Box<dyn Pod>, BackendError>;
+pub trait Signer {
+    fn sign(&self, msg: RawValue) -> Result<Signature, BackendError>;
+    fn public_key(&self) -> PublicKey;
 }
 
 #[derive(Debug)]
 pub struct MainPodInputs<'a> {
-    pub signed_pods: &'a [&'a dyn Pod],
+    // pub signed_pods: &'a [&'a dyn Pod],
+    // TODO: Rename to just "pods"
     pub recursive_pods: &'a [&'a dyn RecursivePod],
     pub statements: &'a [Statement],
     pub operations: &'a [Operation],
@@ -1085,6 +1082,7 @@ pub struct MainPodInputs<'a> {
     pub vd_set: VDSet,
 }
 
+// TODO: Rename to MainPodProver
 pub trait PodProver {
     fn prove(
         &self,

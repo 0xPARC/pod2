@@ -40,6 +40,10 @@ pub type HashOut = hash_types::HashOut<F>;
 
 use std::{collections::HashMap, sync::LazyLock};
 
+pub use crate::backends::plonky2::primitives::ec::{
+    curve::Point as PublicKey,
+    schnorr::{SecretKey, Signature},
+};
 use crate::{
     backends::plonky2::{
         emptypod::cache_get_standard_empty_pod_verifier_circuit_data,

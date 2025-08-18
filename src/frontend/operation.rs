@@ -1,7 +1,7 @@
 use std::fmt;
 
 use crate::{
-    frontend::{MainPod, SignedPod},
+    frontend::{MainPod, SignedDict},
     middleware::{
         AnchoredKey, CustomPredicateRef, NativeOperation, OperationAux, OperationType, Statement,
         Value, ValueRef,
@@ -57,8 +57,8 @@ impl From<&Value> for OperationArg {
     }
 }
 
-impl From<(&SignedPod, &str)> for OperationArg {
-    fn from((pod, key): (&SignedPod, &str)) -> Self {
+impl From<(&SignedDict, &str)> for OperationArg {
+    fn from((pod, key): (&SignedDict, &str)) -> Self {
         // TODO: TryFrom.
         let value = pod
             .kvs()

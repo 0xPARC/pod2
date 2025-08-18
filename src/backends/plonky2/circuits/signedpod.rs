@@ -221,7 +221,7 @@ pub mod tests {
         // KEY_SIGNER and one empty leaf.
 
         // prepare a signedpod
-        let mut pod = crate::frontend::SignedPodBuilder::new(&params);
+        let mut pod = crate::frontend::SignedDictBuilder::new(&params);
         pod.insert("idNumber", "4242424242");
         pod.insert("dateOfBirth", 1169909384);
         pod.insert("socialSecurityNumber", "G2121210");

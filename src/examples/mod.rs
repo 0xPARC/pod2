@@ -10,24 +10,24 @@ pub static MOCK_VD_SET: LazyLock<VDSet> = LazyLock::new(|| VDSet::new(6, &[]).un
 use crate::{
     backends::plonky2::{primitives::ec::schnorr::SecretKey, signedpod::Signer},
     frontend::{
-        MainPod, MainPodBuilder, Operation, PodRequest, Result, SignedPod, SignedPodBuilder,
+        MainPod, MainPodBuilder, Operation, PodRequest, Result, SignedDict, SignedDictBuilder,
     },
     lang::parse,
     middleware::{
-        containers::Set, hash_values, CustomPredicateRef, Params, PodSigner, PodType, Predicate,
+        containers::Set, hash_values, CustomPredicateRef, Params, PodType, Predicate, Signer,
         Statement, StatementArg, TypedValue, VDSet, Value, KEY_SIGNER, KEY_TYPE,
     },
 };
 
 // ZuKYC
 
-pub fn zu_kyc_sign_pod_builders(params: &Params) -> (SignedPodBuilder, SignedPodBuilder) {
-    let mut gov_id = SignedPodBuilder::new(params);
+pub fn zu_kyc_sign_pod_builders(params: &Params) -> (SignedDictBuilder, SignedDictBuilder) {
+    let mut gov_id = SignedDictBuilder::new(params);
     gov_id.insert("idNumber", "4242424242");
     gov_id.insert("dateOfBirth", 1169909384);
     gov_id.insert("socialSecurityNumber", "G2121210");
 
-    let mut pay_stub = SignedPodBuilder::new(params);
+    let mut pay_stub = SignedDictBuilder::new(params);
     pay_stub.insert("socialSecurityNumber", "G2121210");
     pay_stub.insert("startDate", 1706367566);
 
@@ -41,8 +41,8 @@ pub const ZU_KYC_SANCTION_LIST: &[&str] = &["A343434340"];
 pub fn zu_kyc_pod_builder(
     params: &Params,
     vd_set: &VDSet,
-    gov_id: &SignedPod,
-    pay_stub: &SignedPod,
+    gov_id: &SignedDict,
+    pay_stub: &SignedDict,
 ) -> Result<MainPodBuilder> {
     let now_minus_18y = ZU_KYC_NOW_MINUS_18Y;
     let now_minus_1y = ZU_KYC_NOW_MINUS_1Y;
@@ -106,8 +106,8 @@ pub fn zu_kyc_pod_request(gov_signer: &Value, pay_signer: &Value) -> Result<PodR
 
 // ETHDoS
 
-pub fn attest_eth_friend(params: &Params, src: &impl PodSigner, dst: Value) -> SignedPod {
-    let mut attestation = SignedPodBuilder::new(params);
+pub fn attest_eth_friend(params: &Params, src: &impl Signer, dst: Value) -> SignedDict {
+    let mut attestation = SignedDictBuilder::new(params);
     attestation.insert("attestation", dst);
     attestation.sign(src).unwrap()
 }
@@ -142,7 +142,7 @@ impl EthDosHelper {
         })
     }
 
-    pub fn dist_1(&self, src_attestation: &SignedPod) -> Result<MainPodBuilder> {
+    pub fn dist_1(&self, src_attestation: &SignedDict) -> Result<MainPodBuilder> {
         assert_eq!(
             &self.src,
             src_attestation.get(KEY_SIGNER).expect("get KEY_SIGNER")
@@ -171,7 +171,7 @@ impl EthDosHelper {
     pub fn dist_n_plus_1(
         &self,
         eth_dos_src_to_int_pod: &MainPod,
-        int_attestation: &SignedPod, // int signs dst
+        int_attestation: &SignedDict, // int signs dst
     ) -> Result<MainPodBuilder> {
         assert_eq!(
             Value::from(if self.mock {
@@ -221,7 +221,7 @@ impl EthDosHelper {
         &self,
         pod: &mut MainPodBuilder,
         eth_dos_int_to_dst: Statement,
-        int_attestation: &SignedPod,
+        int_attestation: &SignedDict,
         n: i64,
     ) -> Result<()> {
         assert_eq!(
@@ -259,16 +259,16 @@ impl EthDosHelper {
 
 // GreatBoy
 
-pub fn good_boy_sign_pod_builder(params: &Params, user: &Value, age: i64) -> SignedPodBuilder {
-    let mut good_boy = SignedPodBuilder::new(params);
+pub fn good_boy_sign_pod_builder(params: &Params, user: &Value, age: i64) -> SignedDictBuilder {
+    let mut good_boy = SignedDictBuilder::new(params);
     good_boy.insert("user", user.clone());
     good_boy.insert("age", age);
 
     good_boy
 }
 
-pub fn friend_sign_pod_builder(params: &Params, friend: &Value) -> SignedPodBuilder {
-    let mut friend_pod = SignedPodBuilder::new(params);
+pub fn friend_sign_pod_builder(params: &Params, friend: &Value) -> SignedDictBuilder {
+    let mut friend_pod = SignedDictBuilder::new(params);
     friend_pod.insert("friend", friend.clone());
 
     friend_pod
@@ -277,8 +277,8 @@ pub fn friend_sign_pod_builder(params: &Params, friend: &Value) -> SignedPodBuil
 pub fn great_boy_pod_builder(
     params: &Params,
     vd_set: &VDSet,
-    good_boy_pods: [&SignedPod; 4],
-    friend_pods: [&SignedPod; 2],
+    good_boy_pods: [&SignedDict; 4],
+    friend_pods: [&SignedDict; 2],
     good_boy_issuers: &Value,
     receiver: &Value,
 ) -> Result<MainPodBuilder> {
@@ -413,9 +413,9 @@ pub fn great_boy_pod_full_flow() -> Result<MainPodBuilder> {
 
 pub const TICKET_OWNER_SECRET_KEY: SecretKey = SecretKey(BigUint::ZERO);
 
-pub fn tickets_sign_pod_builder(params: &Params) -> SignedPodBuilder {
+pub fn tickets_sign_pod_builder(params: &Params) -> SignedDictBuilder {
     // Create a signed pod with all atomic types (string, int, bool)
-    let mut builder = SignedPodBuilder::new(params);
+    let mut builder = SignedDictBuilder::new(params);
     builder.insert("eventId", 123);
     builder.insert("productId", 456);
     // Removed temporarily to make the example fit in 8 entries.
@@ -430,7 +430,7 @@ pub fn tickets_sign_pod_builder(params: &Params) -> SignedPodBuilder {
 pub fn tickets_pod_builder(
     params: &Params,
     vd_set: &VDSet,
-    signed_pod: &SignedPod,
+    signed_pod: &SignedDict,
     expected_event_id: i64,
     expect_consumed: bool,
     blacklisted_emails: &Set,

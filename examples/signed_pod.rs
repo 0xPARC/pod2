@@ -6,7 +6,7 @@ use std::collections::HashSet;
 
 use pod2::{
     backends::plonky2::{primitives::ec::schnorr::SecretKey, signedpod::Signer},
-    frontend::SignedPodBuilder,
+    frontend::SignedDictBuilder,
     middleware::{containers::Set, Params, Value},
 };
 
@@ -21,7 +21,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let signer = Signer(sk);
 
     // Build the signed pod
-    let mut builder = SignedPodBuilder::new(&params);
+    let mut builder = SignedDictBuilder::new(&params);
     // The values can be String, i64, bool, Array, Set, Dictionary, ...
     builder.insert("name", "Alice");
     builder.insert("lucky_number", 42);

@@ -1,0 +1,18 @@
+commit 7b38a1ee1e7397ca86848920dc133d5ebcd158f8 (HEAD -> feat/intro-pred)
+Author: Eduard S. <eduardsanou@posteo.net>
+Date:   Mon Aug 18 16:10:30 2025 +0200
+
+    add middleware SignedBy st/op
+
+commit b52b9771531ba9d0722b5a0bdaeebac971127b23 (origin/feat/intro-pred)
+Author: Eduard S. <eduardsanou@posteo.net>
+Date:   Tue Aug 12 16:55:52 2025 -0700
+
+    wip: intro predicate refactored
+
+commit a64311554bb90f675f095e94e7d0cb1e74c81f6e
+Author: Eduard S. <eduardsanou@posteo.net>
+Date:   Mon Aug 11 11:09:38 2025 -0700
+
+    wip
+

@@ -862,7 +862,7 @@ pub mod tests {
         vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
         let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
 
-        let mut gov_id_builder = frontend::SignedPodBuilder::new(&params);
+        let mut gov_id_builder = frontend::SignedDictBuilder::new(&params);
         gov_id_builder.insert("idNumber", "4242424242");
         gov_id_builder.insert("dateOfBirth", 1169909384);
         gov_id_builder.insert("socialSecurityNumber", "G2121210");
