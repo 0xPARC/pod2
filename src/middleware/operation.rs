@@ -550,6 +550,7 @@ impl Operation {
                 ))?;
                 MerkleTree::verify_state_transition(params.max_depth_mt_containers, pf)?;
                 true
+            }
             (Self::Custom(CustomPredicateRef { batch, index }, args), Custom(cpr, s_args))
                 if batch == &cpr.batch && index == &cpr.index =>
             {

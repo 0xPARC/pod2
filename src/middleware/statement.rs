@@ -394,6 +394,7 @@ impl Statement {
             ),
             (Native(NativePredicate::ContainerDelete), &[a1, a2, a3]) => {
                 Self::ContainerDelete(a1.try_into()?, a2.try_into()?, a3.try_into()?)
+            }
             (Native(np), _) => {
                 return Err(Error::custom(format!("Predicate {:?} is syntax sugar", np)))
             }
