@@ -153,11 +153,11 @@ impl From<RawValue> for TypedValue {
     }
 }
 
-impl From<PodType> for TypedValue {
-    fn from(t: PodType) -> Self {
-        TypedValue::from(t as i64)
-    }
-}
+// impl From<PodType> for TypedValue {
+//     fn from(t: PodType) -> Self {
+//         TypedValue::from(t as i64)
+//     }
+// }
 
 impl TryFrom<&TypedValue> for i64 {
     type Error = Error;
@@ -984,7 +984,7 @@ pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
     }
     // TODO: Remove
     fn id(&self) -> Hash;
-    // TODO: Remove
+    // TODO: String instead of &str
     /// Return a uuid of the pod type and its name.  The name is only used as metadata.
     fn pod_type(&self) -> (usize, &'static str);
     /// Statements as internally generated, where self-referencing arguments use SELF in the

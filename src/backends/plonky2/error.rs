@@ -1,6 +1,6 @@
 use std::{backtrace::Backtrace, fmt::Debug};
 
-use crate::middleware::{Hash, PodType, Value};
+use crate::middleware::{Hash, Value};
 
 pub type Result<T, E = Error> = core::result::Result<T, E>;
 
@@ -8,8 +8,8 @@ pub type Result<T, E = Error> = core::result::Result<T, E>;
 pub enum InnerError {
     #[error("Statements hash does not match, expected {0}, found {1}")]
     StsHashNotEqual(Hash, Hash),
-    #[error("type does not match, expected {0}, found {1}")]
-    TypeNotEqual(PodType, Value),
+    // #[error("type does not match, expected {0}, found {1}")]
+    // TypeNotEqual(PodType, Value),
     #[error("signer public key does not match, expected {0}, found {1}")]
     SignerNotEqual(Value, Value),
 
@@ -91,9 +91,9 @@ impl Error {
     pub fn sts_hash_not_equal(expected: Hash, found: Hash) -> Self {
         new!(StsHashNotEqual(expected, found))
     }
-    pub fn type_not_equal(expected: PodType, found: Value) -> Self {
-        new!(TypeNotEqual(expected, found))
-    }
+    // pub fn type_not_equal(expected: PodType, found: Value) -> Self {
+    //     new!(TypeNotEqual(expected, found))
+    // }
     pub(crate) fn signer_not_equal(expected: Value, found: Value) -> Self {
         new!(SignerNotEqual(expected, found))
     }

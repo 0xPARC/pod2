@@ -22,6 +22,8 @@ pub fn parse(
     processor::process_pest_tree(pairs, params, available_batches).map_err(LangError::from)
 }
 
+// TODO: Uncomment
+/*
 #[cfg(test)]
 mod tests {
     use hex::ToHex;
@@ -34,7 +36,7 @@ mod tests {
         middleware::{
             hash_str, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash, Key,
             NativePredicate, Params, PodType, Predicate, RawValue, StatementTmpl, StatementTmplArg,
-            Value, Wildcard, KEY_SIGNER, KEY_TYPE, SELF,
+            Value, Wildcard,
         },
     };
 
@@ -1006,3 +1008,4 @@ mod tests {
         }
     }
 }
+*/

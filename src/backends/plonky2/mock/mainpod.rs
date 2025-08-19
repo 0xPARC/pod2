@@ -7,6 +7,7 @@ use std::{fmt, iter};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
+use crate::middleware::PodType;
 use crate::{
     backends::plonky2::{
         basetypes::{Proof, VerifierOnlyCircuitData},
@@ -23,7 +24,7 @@ use crate::{
     },
     middleware::{
         self, deserialize_pod, hash_str, AnchoredKey, Hash, MainPodInputs, NativeOperation,
-        NativePredicate, OperationType, Params, Pod, PodProver, PodType, Predicate, RecursivePod,
+        NativePredicate, OperationType, Params, Pod, PodProver, Predicate, RecursivePod,
         StatementArg, VDSet, Value,
     },
 };

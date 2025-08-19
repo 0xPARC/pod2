@@ -17,8 +17,8 @@ use crate::{
         },
     },
     middleware::{
-        self, containers::Dictionary, AnchoredKey, Hash, Key, Params, Pod, PodType, RawValue,
-        Statement, Value,
+        self, containers::Dictionary, AnchoredKey, Hash, Key, Params, Pod, RawValue, Statement,
+        Value,
     },
     timed,
 };

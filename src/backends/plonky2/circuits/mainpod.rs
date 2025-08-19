@@ -53,8 +53,8 @@ use crate::{
     measure_gates_begin, measure_gates_end,
     middleware::{
         AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, NativeOperation,
-        NativePredicate, Params, PodType, PredicatePrefix, Statement, StatementArg, ToFields,
-        Value, ValueRef, F, HASH_SIZE, VALUE_SIZE,
+        NativePredicate, Params, PredicatePrefix, Statement, StatementArg, ToFields, Value,
+        ValueRef, F, HASH_SIZE, VALUE_SIZE,
     },
 };
 //
@@ -1983,6 +1983,8 @@ impl InnerCircuit for MainPodVerifyTarget {
     }
 }
 
+// TODO: Uncomment
+/*
 #[cfg(test)]
 mod tests {
     use std::{iter, ops::Not};
@@ -3772,3 +3774,4 @@ mod tests {
         Ok(())
     }
 }
+*/

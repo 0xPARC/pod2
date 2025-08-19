@@ -454,7 +454,7 @@ mod tests {
     use crate::middleware::{
         AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key,
         NativePredicate, Operation, Params, PodType, Predicate, Statement, StatementTmpl,
-        StatementTmplArg, SELF,
+        StatementTmplArg,
     };
 
     fn st(p: Predicate, args: Vec<StatementTmplArg>) -> StatementTmpl {

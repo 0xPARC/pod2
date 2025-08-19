@@ -1,4 +1,5 @@
 pub mod operation;
+use crate::middleware::PodType;
 pub mod statement;
 use std::{any::Any, iter, sync::Arc};
 
@@ -37,7 +38,7 @@ use crate::{
     middleware::{
         self, resolve_wildcard_values, value_from_op, AnchoredKey, CustomPredicateBatch,
         Error as MiddlewareError, Hash, MainPodInputs, NativeOperation, OperationType, Params, Pod,
-        PodProver, PodType, RecursivePod, StatementArg, ToFields, VDSet,
+        PodProver, RecursivePod, StatementArg, ToFields, VDSet,
     },
     timed,
 };

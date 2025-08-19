@@ -8,14 +8,14 @@ use num::BigUint;
 pub static MOCK_VD_SET: LazyLock<VDSet> = LazyLock::new(|| VDSet::new(6, &[]).unwrap());
 
 use crate::{
-    backends::plonky2::{primitives::ec::schnorr::SecretKey, signedpod::Signer},
+    backends::plonky2::primitives::ec::schnorr::SecretKey,
     frontend::{
         MainPod, MainPodBuilder, Operation, PodRequest, Result, SignedDict, SignedDictBuilder,
     },
     lang::parse,
     middleware::{
         containers::Set, hash_values, CustomPredicateRef, Params, PodType, Predicate, Signer,
-        Statement, StatementArg, TypedValue, VDSet, Value, KEY_SIGNER, KEY_TYPE,
+        Statement, StatementArg, TypedValue, VDSet, Value,
     },
 };
 
