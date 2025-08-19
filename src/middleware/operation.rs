@@ -13,9 +13,9 @@ use crate::{
         merkletree::{MerkleProof, MerkleTree, MerkleTreeOp, MerkleTreeStateTransitionProof},
     },
     middleware::{
-        hash_values, AnchoredKey, CustomPredicate, CustomPredicateRef, Error, NativePredicate,
-        Params, Predicate, Result, Statement, StatementArg, StatementTmpl, StatementTmplArg,
-        ToFields, Value, ValueRef, Wildcard, F,
+        hash_values, AnchoredKey, CustomPredicate, CustomPredicateRef, Error, Hash, Key,
+        NativePredicate, Params, Predicate, Result, Statement, StatementArg, StatementTmpl,
+        StatementTmplArg, ToFields, Value, ValueRef, Wildcard, F,
     },
 };
 
@@ -69,7 +69,7 @@ impl ToFields for OperationType {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, std::hash::Hash, Serialize, Deserialize)]
 pub enum NativeOperation {
     None = 0,
     NewEntry = 1,
@@ -420,7 +420,7 @@ impl Operation {
         Ok(sk.0 < *GROUP_ORDER && pk == sk.public_key())
     }
 
-    pub(crate) fn signature_verify(msg: &Value, pk: &Value, sig: &Signature) -> Result<bool> {
+    pub(crate) fn check_signed_by(msg: &Value, pk: &Value, sig: &Signature) -> Result<bool> {
         let pk: PublicKey = pk.typed().try_into()?;
         Ok(sig.verify(pk, msg.raw()))
     }
@@ -488,7 +488,7 @@ impl Operation {
                 Self::check_public_key(&val(v3, s1)?, &val(v4, s2)?)?
             }
             (Self::SignedBy(msg_s, pk_s, sig), SignedBy(msg_v, pk_v)) => {
-                Self::signature_verify(&val(msg_v, msg_s)?, &val(pk_v, pk_s)?, sig)?
+                Self::check_signed_by(&val(msg_v, msg_s)?, &val(pk_v, pk_s)?, sig)?
             }
             (
                 Self::ContainerInsertFromEntries(new_root_s, old_root_s, key_s, val_s, pf),
@@ -753,14 +753,28 @@ impl fmt::Display for Operation {
     }
 }
 
+pub(crate) fn root_key_to_ak(root: &Value, key: &Value) -> Option<AnchoredKey> {
+    let root_hash = Hash::from(root.raw());
+    Key::try_from(key.typed())
+        .map(|key| AnchoredKey::new(root_hash, key))
+        .ok()
+}
+
 /// Returns the value associated with `output_ref`.
 /// If `output_ref` is a concrete value, returns that value.
-/// Otherwise, `output_ref` was constructed using an `Equal` statement, and `input_st`
+/// Otherwise, `output_ref` was constructed using a `Contains` statement, and `input_st`
 /// must be that statement.
 pub(crate) fn value_from_op(input_st: &Statement, output_ref: &ValueRef) -> Option<Value> {
     match (input_st, output_ref) {
         (Statement::None, ValueRef::Literal(v)) => Some(v.clone()),
-        (Statement::Equal(r1, ValueRef::Literal(v)), r2) if r1 == r2 => Some(v.clone()),
+        (
+            Statement::Contains(
+                ValueRef::Literal(root),
+                ValueRef::Literal(key),
+                ValueRef::Literal(v),
+            ),
+            ValueRef::Key(out_ak),
+        ) => root_key_to_ak(root, key).and_then(|ak| (*out_ak == ak).then(|| v.clone())),
         _ => None,
     }
 }

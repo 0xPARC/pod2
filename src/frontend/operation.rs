@@ -3,8 +3,8 @@ use std::fmt;
 use crate::{
     frontend::{MainPod, SignedDict},
     middleware::{
-        containers::Dictionary, AnchoredKey, CustomPredicateRef, NativeOperation, OperationAux,
-        OperationType, Statement, Value, ValueRef,
+        containers::Dictionary, root_key_to_ak, AnchoredKey, CustomPredicateRef, Hash, Key,
+        NativeOperation, OperationAux, OperationType, Signature, Statement, Value, ValueRef,
     },
 };
 
@@ -16,12 +16,12 @@ pub enum OperationArg {
 }
 
 impl OperationArg {
-    /// Extracts the value underlying literal and `ValueOf` statement
+    /// Extracts the value underlying literal and `Contains` statement
     /// operation args.
     pub(crate) fn value(&self) -> Option<&Value> {
         match self {
             Self::Literal(v) => Some(v),
-            Self::Statement(Statement::Equal(_, ValueRef::Literal(v))) => Some(v),
+            Self::Statement(Statement::Contains(_, _, ValueRef::Literal(v))) => Some(v),
             _ => None,
         }
     }
@@ -29,7 +29,11 @@ impl OperationArg {
     pub(crate) fn value_and_ref(&self) -> Option<(ValueRef, &Value)> {
         match self {
             Self::Literal(v) => Some((ValueRef::Literal(v.clone()), v)),
-            Self::Statement(Statement::Equal(k, ValueRef::Literal(v))) => Some((k.clone(), v)),
+            Self::Statement(Statement::Contains(
+                ValueRef::Literal(root),
+                ValueRef::Literal(key),
+                ValueRef::Literal(v),
+            )) => root_key_to_ak(root, key).and_then(|ak| Some((ValueRef::Key(ak), v))),
             _ => None,
         }
     }
@@ -57,20 +61,23 @@ impl From<&Value> for OperationArg {
     }
 }
 
-// TODO:
-//impl From<(&Dictionary, &str)> for OperationArg {
-//    fn from((dict, key): (&Dictionary, &str)) -> Self {
-//        // TODO: TryFrom.
-//        let value = dict
-//            .get(&key.into())
-//            .cloned()
-//            .unwrap_or_else(|| panic!("Key {} is not present in POD: {}", key, dict));
-//        Self::Statement(Statement::Equal(
-//            AnchoredKey::from((dict.id(), key)).into(),
-//            value.into(),
-//        ))
-//    }
-//}
+impl From<(&Dictionary, &str)> for OperationArg {
+    fn from((dict, key): (&Dictionary, &str)) -> Self {
+        // TODO: Use TryFrom
+        let value = dict.get(&key.into()).cloned().unwrap();
+        Self::Statement(Statement::Contains(
+            dict.clone().into(),
+            key.into(),
+            value.into(),
+        ))
+    }
+}
+
+impl From<(&SignedDict, &str)> for OperationArg {
+    fn from((signed_dict, key): (&SignedDict, &str)) -> Self {
+        OperationArg::from((&signed_dict.dict, key))
+    }
+}
 
 // TODO:
 // impl From<(&MainPod, &str)> for OperationArg {
@@ -224,4 +231,15 @@ impl Operation {
     op_impl_oa!(set_insert, SetInsertFromEntries, 3);
     op_impl_oa!(set_delete, SetDeleteFromEntries, 3);
     op_impl_oa!(array_update, ArrayUpdateFromEntries, 4);
+    pub fn signed_by(
+        msg: impl Into<OperationArg>,
+        pk: impl Into<OperationArg>,
+        sig: Signature,
+    ) -> Self {
+        Self(
+            OperationType::Native(NativeOperation::SignedBy),
+            vec![msg.into(), pk.into()],
+            OperationAux::Signature(sig),
+        )
+    }
 }

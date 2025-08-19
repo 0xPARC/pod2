@@ -7,7 +7,7 @@ use std::{fmt, iter};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
-use crate::middleware::PodType;
+use crate::{backends::plonky2::mainpod::extract_signatures, middleware::PodType};
 use crate::{
     backends::plonky2::{
         basetypes::{Proof, VerifierOnlyCircuitData},
@@ -15,7 +15,7 @@ use crate::{
         mainpod::{
             calculate_sts_hash, extract_merkle_proofs, extract_merkle_tree_state_transition_proofs,
             layout_statements, process_private_statements_operations,
-            process_public_statements_operations, Operation, OperationAux, Statement,
+            process_public_statements_operations, Operation, OperationAux, SignedBy, Statement,
         },
         mock::emptypod::MockEmptyPod,
         primitives::merkletree::{MerkleClaimAndProof, MerkleTreeStateTransitionProof},
@@ -58,6 +58,8 @@ pub struct MockMainPod {
     merkle_proofs_containers: Vec<MerkleClaimAndProof>,
     // All Merkle tree state transition proofs
     merkle_tree_state_transition_proofs_containers: Vec<MerkleTreeStateTransitionProof>,
+    // All verified signatures
+    signatures: Vec<SignedBy>,
 }
 
 impl Eq for MockMainPod {}
@@ -149,6 +151,7 @@ struct Data {
     statements: Vec<Statement>,
     merkle_proofs: Vec<MerkleClaimAndProof>,
     merkle_tree_state_transition_proofs: Vec<MerkleTreeStateTransitionProof>,
+    signatures: Vec<SignedBy>,
     // input_signed_pods: Vec<(usize, Hash, serde_json::Value)>,
     input_recursive_pods: Vec<(usize, Params, Hash, VDSet, serde_json::Value)>,
 }
@@ -182,6 +185,8 @@ impl MockMainPod {
         // Similarly for Merkle state transition proofs.
         let merkle_tree_state_transition_proofs =
             extract_merkle_tree_state_transition_proofs(params, &mut aux_list, inputs.operations)?;
+        let signatures =
+            extract_signatures(params, &mut aux_list, inputs.operations, inputs.statements)?;
 
         let operations = process_private_statements_operations(
             params,
@@ -221,6 +226,7 @@ impl MockMainPod {
             operations,
             merkle_proofs_containers: merkle_proofs,
             merkle_tree_state_transition_proofs_containers: merkle_tree_state_transition_proofs,
+            signatures,
         })
     }
 
@@ -322,6 +328,7 @@ impl Pod for MockMainPod {
                 self.operations[i]
                     .deref(
                         &self.statements[..input_statement_offset + i],
+                        &self.signatures,
                         &self.merkle_proofs_containers,
                         &self.merkle_tree_state_transition_proofs_containers,
                     )?
@@ -376,6 +383,7 @@ impl Pod for MockMainPod {
             merkle_tree_state_transition_proofs: self
                 .merkle_tree_state_transition_proofs_containers
                 .clone(),
+            signatures: self.signatures.clone(),
             // input_signed_pods,
             input_recursive_pods,
         })
@@ -411,6 +419,7 @@ impl RecursivePod for MockMainPod {
             statements,
             merkle_proofs,
             merkle_tree_state_transition_proofs,
+            signatures,
             input_recursive_pods,
         } = serde_json::from_value(data)?;
         // let input_signed_pods = input_signed_pods
@@ -434,6 +443,7 @@ impl RecursivePod for MockMainPod {
             statements,
             merkle_proofs_containers: merkle_proofs,
             merkle_tree_state_transition_proofs_containers: merkle_tree_state_transition_proofs,
+            signatures,
         }))
     }
 }
@@ -449,7 +459,7 @@ pub mod tests {
         backends::plonky2::{primitives::ec::schnorr::SecretKey, signedpod::Signer},
         examples::{
             great_boy_pod_full_flow, tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_pod_request,
-            zu_kyc_sign_pod_builders, MOCK_VD_SET,
+            zu_kyc_sign_dict_builders, MOCK_VD_SET,
         },
         frontend, middleware,
     };
@@ -458,7 +468,7 @@ pub mod tests {
     fn test_mock_main_zu_kyc() -> frontend::Result<()> {
         let params = middleware::Params::default();
         let vd_set = &*MOCK_VD_SET;
-        let (gov_id_builder, pay_stub_builder) = zu_kyc_sign_pod_builders(&params);
+        let (gov_id_builder, pay_stub_builder) = zu_kyc_sign_dict_builders(&params);
         let signer = Signer(SecretKey(1u32.into()));
         let gov_id_pod = gov_id_builder.sign(&signer)?;
         let signer = Signer(SecretKey(2u32.into()));

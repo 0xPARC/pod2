@@ -180,7 +180,7 @@ mod tests {
         backends::plonky2::{
             mock::mainpod::MockProver, primitives::ec::schnorr::SecretKey, signedpod::Signer,
         },
-        examples::{zu_kyc_pod_builder, zu_kyc_pod_request, zu_kyc_sign_pod_builders, MOCK_VD_SET},
+        examples::{zu_kyc_pod_builder, zu_kyc_pod_request, zu_kyc_sign_dict_builders, MOCK_VD_SET},
         frontend::{MainPodBuilder, Operation},
         lang::parse,
         middleware::Params,
@@ -191,7 +191,7 @@ mod tests {
         let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
 
-        let (gov_id, pay_stub) = zu_kyc_sign_pod_builders(&params);
+        let (gov_id, pay_stub) = zu_kyc_sign_dict_builders(&params);
         let gov_id = gov_id.sign(&Signer(SecretKey(1u32.into()))).unwrap();
         let pay_stub = pay_stub.sign(&Signer(SecretKey(2u32.into()))).unwrap();
         let builder = zu_kyc_pod_builder(&Params::default(), vd_set, &gov_id, &pay_stub).unwrap();

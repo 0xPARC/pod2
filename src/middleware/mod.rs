@@ -170,16 +170,23 @@ impl TryFrom<&TypedValue> for i64 {
     }
 }
 
-impl TryFrom<TypedValue> for Key {
+impl TryFrom<&TypedValue> for String {
     type Error = Error;
-    fn try_from(tv: TypedValue) -> Result<Self> {
+    fn try_from(tv: &TypedValue) -> Result<Self> {
         match tv {
-            TypedValue::String(s) => Ok(Key::new(s)),
+            TypedValue::String(s) => Ok(s.clone()),
             _ => Err(Error::custom(format!(
-                "Value {} cannot be converted to a key.",
+                "Value {} cannot be converted to a string.",
                 tv
             ))),
         }
+    }
+}
+
+impl TryFrom<&TypedValue> for Key {
+    type Error = Error;
+    fn try_from(tv: &TypedValue) -> Result<Self> {
+        Ok(Key::new(String::try_from(tv)?))
     }
 }
 
@@ -513,7 +520,7 @@ impl Value {
                     key, self
                 )))?,
             },
-            TypedValue::Dictionary(d) => d.prove(&key.typed().clone().try_into()?),
+            TypedValue::Dictionary(d) => d.prove(&key.typed().try_into()?),
             TypedValue::Set(s) => Ok((key, s.prove(key)?)),
             _ => Err(Error::custom(format!(
                 "Invalid container value {}",
@@ -527,7 +534,7 @@ impl Value {
             TypedValue::Array(_) => Err(Error::custom(
                 "Arrays do not support `NotContains` operation.".to_string(),
             )),
-            TypedValue::Dictionary(d) => d.prove_nonexistence(&key.typed().clone().try_into()?),
+            TypedValue::Dictionary(d) => d.prove_nonexistence(&key.typed().try_into()?),
             TypedValue::Set(s) => s.prove_nonexistence(key),
             _ => Err(Error::custom(format!(
                 "Invalid container value {}",
@@ -544,7 +551,7 @@ impl Value {
     ) -> Result<MerkleTreeStateTransitionProof> {
         let container = self.typed().clone();
         match container {
-            TypedValue::Dictionary(mut d) => d.insert(&key.typed().clone().try_into()?, value),
+            TypedValue::Dictionary(mut d) => d.insert(&key.typed().try_into()?, value),
             TypedValue::Set(mut s) => s.insert(value),
             _ => Err(Error::custom(format!(
                 "Invalid container value {}",
@@ -568,7 +575,7 @@ impl Value {
                     key, self
                 )))?,
             },
-            TypedValue::Dictionary(mut d) => d.update(&key.typed().clone().try_into()?, value),
+            TypedValue::Dictionary(mut d) => d.update(&key.typed().try_into()?, value),
             _ => Err(Error::custom(format!(
                 "Invalid container value {} for update op",
                 self.typed()
@@ -580,7 +587,7 @@ impl Value {
     pub(crate) fn prove_deletion(&self, key: &Value) -> Result<MerkleTreeStateTransitionProof> {
         let container = self.typed().clone();
         match container {
-            TypedValue::Dictionary(mut d) => d.delete(&key.typed().clone().try_into()?),
+            TypedValue::Dictionary(mut d) => d.delete(&key.typed().try_into()?),
             TypedValue::Set(mut s) => s.delete(key),
             _ => Err(Error::custom(format!(
                 "Invalid container value {}",
@@ -858,7 +865,7 @@ impl Default for Params {
             // max_input_signed_pods: 3,
             max_input_recursive_pods: 2,
             max_input_pods_public_statements: 10,
-            max_statements: 20,
+            max_statements: 40,
             max_signed_pod_values: 8,
             max_public_statements: 10,
             num_public_statements_hash: 16,
@@ -869,7 +876,7 @@ impl Default for Params {
             max_custom_predicate_arity: 5,
             max_custom_predicate_wildcards: 10,
             max_custom_batch_size: 5, // TODO: Move down to 4?
-            max_merkle_proofs_containers: 5,
+            max_merkle_proofs_containers: 16,
             max_merkle_tree_state_transition_proofs_containers: 5,
             max_depth_mt_containers: 32,
             max_depth_mt_vds: 6, // up to 64 (2^6) different pod circuits

@@ -70,9 +70,9 @@ impl SignedDictBuilder {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 // #[serde(try_from = "SerializedSignedDict", into = "SerializedSignedDict")]
 pub struct SignedDict {
-    dict: Dictionary,
-    public_key: PublicKey,
-    signature: Signature,
+    pub dict: Dictionary,
+    pub public_key: PublicKey,
+    pub signature: Signature,
 }
 
 impl fmt::Display for SignedDict {
@@ -139,6 +139,7 @@ pub struct MainPodBuilder {
     const_cnt: usize,
     /// Map from (public, Value) to Key of already created literals via Equal statements.
     literals: HashMap<(bool, Value), Key>,
+    dict_contains: Vec<(Value, Value)>, // (root, key)
 }
 
 impl fmt::Display for MainPodBuilder {
@@ -174,6 +175,7 @@ impl MainPodBuilder {
             public_statements: Vec::new(),
             const_cnt: 0,
             literals: HashMap::new(),
+            dict_contains: Vec::new(),
         }
     }
     // pub fn add_signed_pod(&mut self, pod: &SignedDict) {
@@ -394,12 +396,12 @@ impl MainPodBuilder {
         let st = match op.0 {
             OperationType::Native(o) => {
                 let native_arg_error = move || Error::op_invalid_args(format!("{o:?}"));
-                match (o, &op.1.as_slice()) {
-                    (None, &[]) => Statement::None,
+                match (o, &op.1.as_slice(), &op.2) {
+                    (None, &[], _) => Statement::None,
                     // (NewEntry, &[OperationArg::Entry(k, v)]) => {
                     //     Statement::equal(AnchoredKey::from((SELF, k.as_str())), v.clone())
                     // }
-                    (EqualFromEntries, &[a1, a2]) => {
+                    (EqualFromEntries, &[a1, a2], _) => {
                         let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         if v1 == v2 {
@@ -408,7 +410,7 @@ impl MainPodBuilder {
                             return Err(native_arg_error());
                         }
                     }
-                    (NotEqualFromEntries, &[a1, a2]) => {
+                    (NotEqualFromEntries, &[a1, a2], _) => {
                         let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         if v1 != v2 {
@@ -417,7 +419,7 @@ impl MainPodBuilder {
                             return Err(native_arg_error());
                         }
                     }
-                    (LtFromEntries, &[a1, a2]) => {
+                    (LtFromEntries, &[a1, a2], _) => {
                         let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         if v1 < v2 {
@@ -426,7 +428,7 @@ impl MainPodBuilder {
                             return Err(native_arg_error());
                         }
                     }
-                    (LtEqFromEntries, &[a1, a2]) => {
+                    (LtEqFromEntries, &[a1, a2], _) => {
                         let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         if v1 <= v2 {
@@ -435,10 +437,11 @@ impl MainPodBuilder {
                             return Err(native_arg_error());
                         }
                     }
-                    (CopyStatement, &[OperationArg::Statement(s)]) => s.clone(),
+                    (CopyStatement, &[OperationArg::Statement(s)], _) => s.clone(),
                     (
                         TransitiveEqualFromStatements,
                         &[OperationArg::Statement(Statement::Equal(r1, r2)), OperationArg::Statement(Statement::Equal(r3, r4))],
+                        _,
                     ) => {
                         if r2 == r3 {
                             Statement::Equal(r1.clone(), r4.clone())
@@ -446,10 +449,10 @@ impl MainPodBuilder {
                             return Err(native_arg_error());
                         }
                     }
-                    (LtToNotEqual, &[OperationArg::Statement(Statement::Lt(r1, r2))]) => {
+                    (LtToNotEqual, &[OperationArg::Statement(Statement::Lt(r1, r2))], _) => {
                         Statement::NotEqual(r1.clone(), r2.clone())
                     }
-                    (SumOf, &[a1, a2, a3]) => {
+                    (SumOf, &[a1, a2, a3], _) => {
                         let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r3, v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
@@ -459,7 +462,7 @@ impl MainPodBuilder {
                             return Err(native_arg_error());
                         }
                     }
-                    (ProductOf, &[a1, a2, a3]) => {
+                    (ProductOf, &[a1, a2, a3], _) => {
                         let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r3, v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
@@ -469,7 +472,7 @@ impl MainPodBuilder {
                             return Err(native_arg_error());
                         }
                     }
-                    (MaxOf, &[a1, a2, a3]) => {
+                    (MaxOf, &[a1, a2, a3], _) => {
                         let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r3, v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
@@ -479,7 +482,7 @@ impl MainPodBuilder {
                             return Err(native_arg_error());
                         }
                     }
-                    (HashOf, &[a1, a2, a3]) => {
+                    (HashOf, &[a1, a2, a3], _) => {
                         let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r3, v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
@@ -489,20 +492,20 @@ impl MainPodBuilder {
                             return Err(native_arg_error());
                         }
                     }
-                    (ContainsFromEntries, &[a1, a2, a3]) => {
+                    (ContainsFromEntries, &[a1, a2, a3], _) => {
                         let (r1, _v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, _v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r3, _v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
                         // TODO: validate proof
                         Statement::Contains(r1, r2, r3)
                     }
-                    (NotContainsFromEntries, &[a1, a2]) => {
+                    (NotContainsFromEntries, &[a1, a2], _) => {
                         let (r1, _v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, _v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         // TODO: validate proof
                         Statement::NotContains(r1, r2)
                     }
-                    (PublicKeyOf, &[a1, a2]) => {
+                    (PublicKeyOf, &[a1, a2], _) => {
                         let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         if middleware::Operation::check_public_key(v1, v2)? {
@@ -511,7 +514,16 @@ impl MainPodBuilder {
                             return Err(native_arg_error());
                         }
                     }
-                    (ContainerInsertFromEntries, &[a1, a2, a3, a4]) => {
+                    (SignedBy, &[a1, a2], OperationAux::Signature(sig)) => {
+                        let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
+                        if middleware::Operation::check_signed_by(v1, v2, sig)? {
+                            Statement::SignedBy(r1, r2)
+                        } else {
+                            return Err(native_arg_error());
+                        }
+                    }
+                    (ContainerInsertFromEntries, &[a1, a2, a3, a4], _) => {
                         let (r1, _v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, _v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r3, _v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
@@ -519,7 +531,7 @@ impl MainPodBuilder {
                         // TODO: validate proof
                         Statement::ContainerInsert(r1, r2, r3, r4)
                     }
-                    (ContainerUpdateFromEntries, &[a1, a2, a3, a4]) => {
+                    (ContainerUpdateFromEntries, &[a1, a2, a3, a4], _) => {
                         let (r1, _v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, _v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r3, _v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
@@ -527,14 +539,14 @@ impl MainPodBuilder {
                         // TODO: validate proof
                         Statement::ContainerUpdate(r1, r2, r3, r4)
                     }
-                    (ContainerDeleteFromEntries, &[a1, a2, a3]) => {
+                    (ContainerDeleteFromEntries, &[a1, a2, a3], _) => {
                         let (r1, _v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, _v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r3, _v3) = a3.value_and_ref().ok_or_else(native_arg_error)?;
                         // TODO: validate proof
                         Statement::ContainerDelete(r1, r2, r3)
                     }
-                    (t, _) => {
+                    (t, _, _) => {
                         if t.is_syntactic_sugar() {
                             return Err(Error::custom(format!(
                                 "Unexpected syntactic sugar: {:?}",
@@ -593,7 +605,30 @@ impl MainPodBuilder {
         Ok(st)
     }
 
+    /// For every operation that has Entry statements as arguments we add a Contains statement to
+    /// open the dictionary.
+    fn add_entries_contains(&mut self, op: &Operation) -> Result<()> {
+        for arg in &op.1 {
+            match arg {
+                OperationArg::Statement(Statement::Contains(
+                    ValueRef::Literal(dict),
+                    ValueRef::Literal(key),
+                    ValueRef::Literal(v),
+                )) => {
+                    let root_key = (dict.clone(), key.clone());
+                    if !self.dict_contains.contains(&root_key) {
+                        self.dict_contains.push(root_key);
+                        self.priv_op(Operation::dict_contains(dict, key, v))?;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     fn op(&mut self, public: bool, op: Operation) -> Result<Statement> {
+        self.add_entries_contains(&op)?;
         let op = Self::fill_in_aux(Self::lower_op(op)?)?;
         let st = self.op_statement(op.clone())?;
         self.insert(public, (st, op))?;
@@ -858,8 +893,6 @@ impl MainPodCompiler {
     }
 }
 
-// TODO: Uncomment
-/*
 #[cfg(test)]
 pub mod tests {
 
@@ -868,16 +901,21 @@ pub mod tests {
     use super::*;
     use crate::{
         backends::plonky2::{
-            mock::mainpod::MockProver, primitives::ec::schnorr::SecretKey, signedpod::Signer,
+            mock::mainpod::MockProver, primitives::ec::schnorr::SecretKey, signer::Signer,
         },
+        dict,
+        // examples::{
+        //     attest_eth_friend, custom::eth_dos_request, great_boy_pod_full_flow,
+        //     tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_pod_request,
+        //     zu_kyc_sign_dict_builders, EthDosHelper, MOCK_VD_SET,
+        // },
         examples::{
-            attest_eth_friend, custom::eth_dos_request, great_boy_pod_full_flow,
-            tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_pod_request,
-            zu_kyc_sign_pod_builders, EthDosHelper, MOCK_VD_SET,
+            custom::eth_dos_request, zu_kyc_pod_builder, zu_kyc_pod_request,
+            zu_kyc_sign_dict_builders, MOCK_VD_SET,
         },
         middleware::{
             containers::{Array, Dictionary, Set},
-            Value,
+            Signer as _, Value,
         },
     };
 
@@ -891,42 +929,40 @@ pub mod tests {
 
     // Check that frontend key-values agree with those embedded in a
     // SignedPod.
-    fn check_kvs(pod: &SignedDict) -> Result<()> {
-        let kvs = pod.kvs.clone().into_iter().collect::<HashMap<_, _>>();
-        let embedded_kvs = pod
-            .pod
-            .kvs()
-            .into_iter()
-            .map(|(middleware::AnchoredKey { key, .. }, v)| (key, v))
-            .collect::<HashMap<_, _>>();
+    // fn check_kvs(pod: &SignedDict) -> Result<()> {
+    //     let kvs = pod.kvs.clone().into_iter().collect::<HashMap<_, _>>();
+    //     let embedded_kvs = pod
+    //         .pod
+    //         .kvs()
+    //         .into_iter()
+    //         .map(|(middleware::AnchoredKey { key, .. }, v)| (key, v))
+    //         .collect::<HashMap<_, _>>();
 
-        if kvs == embedded_kvs {
-            Ok(())
-        } else {
-            Err(Error::custom(format!(
-                "KVs {:?} do not agree with those embedded in the POD: {:?}",
-                kvs, embedded_kvs
-            )))
-        }
-    }
+    //     if kvs == embedded_kvs {
+    //         Ok(())
+    //     } else {
+    //         Err(Error::custom(format!(
+    //             "KVs {:?} do not agree with those embedded in the POD: {:?}",
+    //             kvs, embedded_kvs
+    //         )))
+    //     }
+    // }
 
     #[test]
     fn test_front_zu_kyc() -> Result<()> {
         let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
-        let (gov_id, pay_stub) = zu_kyc_sign_pod_builders(&params);
+        let (gov_id, pay_stub) = zu_kyc_sign_dict_builders(&params);
 
         println!("{}", gov_id);
         println!("{}", pay_stub);
 
-        let signer = Signer(SecretKey(1u32.into()));
-        let gov_id = gov_id.sign(&signer)?;
-        check_kvs(&gov_id)?;
+        let gov_id_signer = Signer(SecretKey(1u32.into()));
+        let gov_id = gov_id.sign(&gov_id_signer)?;
         println!("{}", gov_id);
 
-        let signer = Signer(SecretKey(2u32.into()));
-        let pay_stub = pay_stub.sign(&signer)?;
-        check_kvs(&pay_stub)?;
+        let pay_stub_signer = Signer(SecretKey(2u32.into()));
+        let pay_stub = pay_stub.sign(&pay_stub_signer)?;
         println!("{}", pay_stub);
 
         let kyc_builder = zu_kyc_pod_builder(&params, vd_set, &gov_id, &pay_stub)?;
@@ -938,333 +974,341 @@ pub mod tests {
 
         println!("{}", kyc);
 
+        kyc.pod.verify()?;
+
         let request = zu_kyc_pod_request(
-            gov_id.get("_signer").unwrap(),
-            pay_stub.get("_signer").unwrap(),
+            &Value::from(gov_id_signer.public_key()),
+            &Value::from(pay_stub_signer.public_key()),
         )?;
         // Check the bindings of the "gov" and "pay" wildcards from the PodRequest
         let bindings = request.exact_match_pod(&*kyc.pod).unwrap();
-        assert_eq!(*bindings.get("gov").unwrap(), gov_id.id().into());
-        assert_eq!(*bindings.get("pay").unwrap(), pay_stub.id().into());
+        assert_eq!(
+            *bindings.get("gov").unwrap(),
+            gov_id.dict.commitment().into()
+        );
+        assert_eq!(
+            *bindings.get("pay").unwrap(),
+            pay_stub.dict.commitment().into()
+        );
 
         check_public_statements(&kyc)
     }
 
-    #[test]
-    fn test_ethdos_recursive() -> Result<()> {
-        let params = Params {
-            max_input_pods_public_statements: 8,
-            max_statements: 24,
-            max_public_statements: 8,
-            ..Default::default()
-        };
-        let vd_set = &*MOCK_VD_SET;
+    // #[test]
+    // fn test_ethdos_recursive() -> Result<()> {
+    //     let params = Params {
+    //         max_input_pods_public_statements: 8,
+    //         max_statements: 24,
+    //         max_public_statements: 8,
+    //         ..Default::default()
+    //     };
+    //     let vd_set = &*MOCK_VD_SET;
 
-        let alice = Signer(SecretKey(1u32.into()));
-        let bob = Signer(SecretKey(2u32.into()));
-        let charlie = Signer(SecretKey(3u32.into()));
-        let david = Signer(SecretKey(4u32.into()));
+    //     let alice = Signer(SecretKey(1u32.into()));
+    //     let bob = Signer(SecretKey(2u32.into()));
+    //     let charlie = Signer(SecretKey(3u32.into()));
+    //     let david = Signer(SecretKey(4u32.into()));
 
-        let helper = EthDosHelper::new(&params, vd_set, true, alice.public_key())?;
+    //     let helper = EthDosHelper::new(&params, vd_set, true, alice.public_key())?;
 
-        let prover = MockProver {};
+    //     let prover = MockProver {};
 
-        let alice_attestation = attest_eth_friend(&params, &alice, bob.public_key());
-        let dist_1 = helper.dist_1(&alice_attestation)?.prove(&prover)?;
-        dist_1.pod.verify()?;
-        let request = eth_dos_request()?;
-        assert!(request.exact_match_pod(&*dist_1.pod).is_ok());
-        let bindings = request.exact_match_pod(&*dist_1.pod).unwrap();
-        assert_eq!(*bindings.get("src").unwrap(), alice.public_key());
-        assert_eq!(*bindings.get("dst").unwrap(), bob.public_key());
-        assert_eq!(*bindings.get("distance").unwrap(), 1.into());
+    //     let alice_attestation = attest_eth_friend(&params, &alice, bob.public_key());
+    //     let dist_1 = helper.dist_1(&alice_attestation)?.prove(&prover)?;
+    //     dist_1.pod.verify()?;
+    //     let request = eth_dos_request()?;
+    //     assert!(request.exact_match_pod(&*dist_1.pod).is_ok());
+    //     let bindings = request.exact_match_pod(&*dist_1.pod).unwrap();
+    //     assert_eq!(*bindings.get("src").unwrap(), alice.public_key());
+    //     assert_eq!(*bindings.get("dst").unwrap(), bob.public_key());
+    //     assert_eq!(*bindings.get("distance").unwrap(), 1.into());
 
-        let bob_attestation = attest_eth_friend(&params, &bob, charlie.public_key());
-        let dist_2 = helper
-            .dist_n_plus_1(&dist_1, &bob_attestation)?
-            .prove(&prover)?;
-        dist_2.pod.verify()?;
-        assert!(request.exact_match_pod(&*dist_2.pod).is_ok());
-        let bindings = request.exact_match_pod(&*dist_2.pod).unwrap();
-        assert_eq!(*bindings.get("src").unwrap(), alice.public_key());
-        assert_eq!(*bindings.get("dst").unwrap(), charlie.public_key());
-        assert_eq!(*bindings.get("distance").unwrap(), 2.into());
+    //     let bob_attestation = attest_eth_friend(&params, &bob, charlie.public_key());
+    //     let dist_2 = helper
+    //         .dist_n_plus_1(&dist_1, &bob_attestation)?
+    //         .prove(&prover)?;
+    //     dist_2.pod.verify()?;
+    //     assert!(request.exact_match_pod(&*dist_2.pod).is_ok());
+    //     let bindings = request.exact_match_pod(&*dist_2.pod).unwrap();
+    //     assert_eq!(*bindings.get("src").unwrap(), alice.public_key());
+    //     assert_eq!(*bindings.get("dst").unwrap(), charlie.public_key());
+    //     assert_eq!(*bindings.get("distance").unwrap(), 2.into());
 
-        let charlie_attestation = attest_eth_friend(&params, &charlie, david.public_key());
-        let dist_3 = helper
-            .dist_n_plus_1(&dist_2, &charlie_attestation)?
-            .prove(&prover)?;
-        dist_3.pod.verify()?;
-        assert!(request.exact_match_pod(&*dist_3.pod).is_ok());
-        let bindings = request.exact_match_pod(&*dist_3.pod).unwrap();
-        assert_eq!(*bindings.get("src").unwrap(), alice.public_key());
-        assert_eq!(*bindings.get("dst").unwrap(), david.public_key());
-        assert_eq!(*bindings.get("distance").unwrap(), 3.into());
+    //     let charlie_attestation = attest_eth_friend(&params, &charlie, david.public_key());
+    //     let dist_3 = helper
+    //         .dist_n_plus_1(&dist_2, &charlie_attestation)?
+    //         .prove(&prover)?;
+    //     dist_3.pod.verify()?;
+    //     assert!(request.exact_match_pod(&*dist_3.pod).is_ok());
+    //     let bindings = request.exact_match_pod(&*dist_3.pod).unwrap();
+    //     assert_eq!(*bindings.get("src").unwrap(), alice.public_key());
+    //     assert_eq!(*bindings.get("dst").unwrap(), david.public_key());
+    //     assert_eq!(*bindings.get("distance").unwrap(), 3.into());
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
-    #[test]
-    fn test_front_great_boy() -> Result<()> {
-        let great_boy = great_boy_pod_full_flow()?;
-        println!("{}", great_boy);
+    // #[test]
+    // fn test_front_great_boy() -> Result<()> {
+    //     let great_boy = great_boy_pod_full_flow()?;
+    //     println!("{}", great_boy);
 
-        // TODO: prove great_boy with MockProver and print it
+    //     // TODO: prove great_boy with MockProver and print it
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
-    #[test]
-    fn test_front_tickets() -> Result<()> {
-        let builder = tickets_pod_full_flow(&Params::default(), &MOCK_VD_SET)?;
-        println!("{}", builder);
+    // #[test]
+    // fn test_front_tickets() -> Result<()> {
+    //     let builder = tickets_pod_full_flow(&Params::default(), &MOCK_VD_SET)?;
+    //     println!("{}", builder);
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
-    #[test]
-    // Transitive equality not implemented yet
-    #[should_panic]
-    fn test_equal() {
-        let params = Params::default();
-        let vd_set = &*MOCK_VD_SET;
+    // #[test]
+    // // Transitive equality not implemented yet
+    // #[should_panic]
+    // fn test_equal() {
+    //     let params = Params::default();
+    //     let vd_set = &*MOCK_VD_SET;
 
-        let mut signed_builder = SignedDictBuilder::new(&params);
-        signed_builder.insert("a", 1);
-        signed_builder.insert("b", 1);
-        let signer = Signer(SecretKey(1u32.into()));
-        let signed_pod = signed_builder.sign(&signer).unwrap();
+    //     let mut signed_builder = SignedDictBuilder::new(&params);
+    //     signed_builder.insert("a", 1);
+    //     signed_builder.insert("b", 1);
+    //     let signer = Signer(SecretKey(1u32.into()));
+    //     let signed_pod = signed_builder.sign(&signer).unwrap();
 
-        let mut builder = MainPodBuilder::new(&params, vd_set);
-        builder.add_signed_pod(&signed_pod);
+    //     let mut builder = MainPodBuilder::new(&params, vd_set);
+    //     builder.add_signed_pod(&signed_pod);
 
-        //let op_val1 = Operation{
-        //    OperationType::Native(NativeOperation::CopyStatement),
-        //    signed_pod.
-        //}
+    //     //let op_val1 = Operation{
+    //     //    OperationType::Native(NativeOperation::CopyStatement),
+    //     //    signed_pod.
+    //     //}
 
-        let op_eq1 = Operation(
-            OperationType::Native(NativeOperation::EqualFromEntries),
-            vec![
-                OperationArg::from((&signed_pod, "a")),
-                OperationArg::from((&signed_pod, "b")),
-            ],
-            OperationAux::None,
-        );
-        let st1 = builder.op(true, op_eq1).unwrap();
-        let op_eq2 = Operation(
-            OperationType::Native(NativeOperation::EqualFromEntries),
-            vec![
-                OperationArg::from((&signed_pod, "b")),
-                OperationArg::from((&signed_pod, "a")),
-            ],
-            OperationAux::None,
-        );
-        let st2 = builder.op(true, op_eq2).unwrap();
+    //     let op_eq1 = Operation(
+    //         OperationType::Native(NativeOperation::EqualFromEntries),
+    //         vec![
+    //             OperationArg::from((&signed_pod, "a")),
+    //             OperationArg::from((&signed_pod, "b")),
+    //         ],
+    //         OperationAux::None,
+    //     );
+    //     let st1 = builder.op(true, op_eq1).unwrap();
+    //     let op_eq2 = Operation(
+    //         OperationType::Native(NativeOperation::EqualFromEntries),
+    //         vec![
+    //             OperationArg::from((&signed_pod, "b")),
+    //             OperationArg::from((&signed_pod, "a")),
+    //         ],
+    //         OperationAux::None,
+    //     );
+    //     let st2 = builder.op(true, op_eq2).unwrap();
 
-        let op_eq3 = Operation(
-            OperationType::Native(NativeOperation::TransitiveEqualFromStatements),
-            vec![OperationArg::Statement(st1), OperationArg::Statement(st2)],
-            OperationAux::None,
-        );
-        builder.op(true, op_eq3).unwrap();
+    //     let op_eq3 = Operation(
+    //         OperationType::Native(NativeOperation::TransitiveEqualFromStatements),
+    //         vec![OperationArg::Statement(st1), OperationArg::Statement(st2)],
+    //         OperationAux::None,
+    //     );
+    //     builder.op(true, op_eq3).unwrap();
 
-        let prover = MockProver {};
-        let pod = builder.prove(&prover).unwrap();
+    //     let prover = MockProver {};
+    //     let pod = builder.prove(&prover).unwrap();
 
-        println!("{}", pod);
-    }
+    //     println!("{}", pod);
+    // }
 
-    #[test]
-    #[should_panic]
-    fn test_false_st() {
-        let params = Params::default();
-        let vd_set = &*MOCK_VD_SET;
-        let mut builder = SignedDictBuilder::new(&params);
+    // #[test]
+    // #[should_panic]
+    // fn test_false_st() {
+    //     let params = Params::default();
+    //     let vd_set = &*MOCK_VD_SET;
+    //     let mut builder = SignedDictBuilder::new(&params);
 
-        builder.insert("num", 2);
-        let signer = Signer(SecretKey(1u32.into()));
-        let pod = builder.sign(&signer).unwrap();
+    //     builder.insert("num", 2);
+    //     let signer = Signer(SecretKey(1u32.into()));
+    //     let pod = builder.sign(&signer).unwrap();
 
-        println!("{}", pod);
+    //     println!("{}", pod);
 
-        let mut builder = MainPodBuilder::new(&params, vd_set);
-        builder.add_signed_pod(&pod);
-        builder.pub_op(Operation::gt((&pod, "num"), 5)).unwrap();
+    //     let mut builder = MainPodBuilder::new(&params, vd_set);
+    //     builder.add_signed_pod(&pod);
+    //     builder.pub_op(Operation::gt((&pod, "num"), 5)).unwrap();
 
-        let prover = MockProver {};
-        let false_pod = builder.prove(&prover).unwrap();
+    //     let prover = MockProver {};
+    //     let false_pod = builder.prove(&prover).unwrap();
 
-        println!("{}", builder);
-        println!("{}", false_pod);
-    }
+    //     println!("{}", builder);
+    //     println!("{}", false_pod);
+    // }
 
-    #[test]
-    fn test_dictionaries() -> Result<()> {
-        let params = Params::default();
-        let vd_set = &*MOCK_VD_SET;
-        let mut builder = SignedDictBuilder::new(&params);
+    // #[test]
+    // fn test_dictionaries() -> Result<()> {
+    //     let params = Params::default();
+    //     let vd_set = &*MOCK_VD_SET;
+    //     let mut builder = SignedDictBuilder::new(&params);
 
-        let mut my_dict_kvs: HashMap<Key, Value> = HashMap::new();
-        my_dict_kvs.insert(Key::from("a"), Value::from(1));
-        my_dict_kvs.insert(Key::from("b"), Value::from(2));
-        my_dict_kvs.insert(Key::from("c"), Value::from(3));
-        //        let my_dict_as_mt = MerkleTree::new(5, &my_dict_kvs).unwrap();
-        //        let dict = Dictionary { mt: my_dict_as_mt };
-        let dict = Dictionary::new(params.max_depth_mt_containers, my_dict_kvs)?;
-        let dict_root = Value::from(dict.clone());
-        builder.insert("dict", dict_root);
+    //     let mut my_dict_kvs: HashMap<Key, Value> = HashMap::new();
+    //     my_dict_kvs.insert(Key::from("a"), Value::from(1));
+    //     my_dict_kvs.insert(Key::from("b"), Value::from(2));
+    //     my_dict_kvs.insert(Key::from("c"), Value::from(3));
+    //     //        let my_dict_as_mt = MerkleTree::new(5, &my_dict_kvs).unwrap();
+    //     //        let dict = Dictionary { mt: my_dict_as_mt };
+    //     let dict = Dictionary::new(params.max_depth_mt_containers, my_dict_kvs)?;
+    //     let dict_root = Value::from(dict.clone());
+    //     builder.insert("dict", dict_root);
 
-        let signer = Signer(SecretKey(1u32.into()));
-        let pod = builder.sign(&signer).unwrap();
+    //     let signer = Signer(SecretKey(1u32.into()));
+    //     let pod = builder.sign(&signer).unwrap();
 
-        let mut builder = MainPodBuilder::new(&params, vd_set);
-        builder.add_signed_pod(&pod);
-        let st0 = pod.get_statement("dict").unwrap();
-        let st1 = builder.op(true, Operation::new_entry("key", "a")).unwrap();
-        let st2 = builder.literal(false, Value::from(1)).unwrap();
+    //     let mut builder = MainPodBuilder::new(&params, vd_set);
+    //     builder.add_signed_pod(&pod);
+    //     let st0 = pod.get_statement("dict").unwrap();
+    //     let st1 = builder.op(true, Operation::new_entry("key", "a")).unwrap();
+    //     let st2 = builder.literal(false, Value::from(1)).unwrap();
 
-        builder.pub_op(Operation(
-            // OperationType
-            OperationType::Native(NativeOperation::DictContainsFromEntries),
-            // Vec<OperationArg>
-            vec![
-                OperationArg::Statement(st0.clone()),
-                OperationArg::Statement(st1),
-                OperationArg::Statement(st2),
-            ],
-            OperationAux::MerkleProof(dict.prove(&Key::from("a")).unwrap().1),
-        ))?;
+    //     builder.pub_op(Operation(
+    //         // OperationType
+    //         OperationType::Native(NativeOperation::DictContainsFromEntries),
+    //         // Vec<OperationArg>
+    //         vec![
+    //             OperationArg::Statement(st0.clone()),
+    //             OperationArg::Statement(st1),
+    //             OperationArg::Statement(st2),
+    //         ],
+    //         OperationAux::MerkleProof(dict.prove(&Key::from("a")).unwrap().1),
+    //     ))?;
 
-        let mut new_dict = dict.clone();
-        new_dict.insert(&Key::from("d"), &Value::from(4))?;
+    //     let mut new_dict = dict.clone();
+    //     new_dict.insert(&Key::from("d"), &Value::from(4))?;
 
-        builder.pub_op(Operation(
-            OperationType::Native(NativeOperation::DictInsertFromEntries),
-            vec![
-                Value::from(new_dict.clone()).into(),
-                OperationArg::Statement(st0.clone()),
-                "d".into(),
-                4.into(),
-            ],
-            OperationAux::None,
-        ))?;
+    //     builder.pub_op(Operation(
+    //         OperationType::Native(NativeOperation::DictInsertFromEntries),
+    //         vec![
+    //             Value::from(new_dict.clone()).into(),
+    //             OperationArg::Statement(st0.clone()),
+    //             "d".into(),
+    //             4.into(),
+    //         ],
+    //         OperationAux::None,
+    //     ))?;
 
-        let mut new_old_dict = new_dict.clone();
-        new_old_dict.delete(&Key::from("d"))?;
+    //     let mut new_old_dict = new_dict.clone();
+    //     new_old_dict.delete(&Key::from("d"))?;
 
-        assert_eq!(new_old_dict, dict);
+    //     assert_eq!(new_old_dict, dict);
 
-        builder.pub_op(Operation(
-            OperationType::Native(NativeOperation::DictDeleteFromEntries),
-            vec![
-                OperationArg::Statement(st0.clone()),
-                Value::from(new_dict).into(),
-                "d".into(),
-            ],
-            OperationAux::None,
-        ))?;
+    //     builder.pub_op(Operation(
+    //         OperationType::Native(NativeOperation::DictDeleteFromEntries),
+    //         vec![
+    //             OperationArg::Statement(st0.clone()),
+    //             Value::from(new_dict).into(),
+    //             "d".into(),
+    //         ],
+    //         OperationAux::None,
+    //     ))?;
 
-        new_old_dict.update(&Key::from("c"), &55.into())?;
+    //     new_old_dict.update(&Key::from("c"), &55.into())?;
 
-        builder.pub_op(Operation(
-            OperationType::Native(NativeOperation::DictUpdateFromEntries),
-            vec![
-                Value::from(new_old_dict).into(),
-                OperationArg::Statement(st0.clone()),
-                "c".into(),
-                55.into(),
-            ],
-            OperationAux::None,
-        ))?;
+    //     builder.pub_op(Operation(
+    //         OperationType::Native(NativeOperation::DictUpdateFromEntries),
+    //         vec![
+    //             Value::from(new_old_dict).into(),
+    //             OperationArg::Statement(st0.clone()),
+    //             "c".into(),
+    //             55.into(),
+    //         ],
+    //         OperationAux::None,
+    //     ))?;
 
-        let main_prover = MockProver {};
-        let main_pod = builder.prove(&main_prover).unwrap();
+    //     let main_prover = MockProver {};
+    //     let main_pod = builder.prove(&main_prover).unwrap();
 
-        println!("{}", main_pod);
+    //     println!("{}", main_pod);
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
-    #[test]
-    fn test_sets() -> Result<()> {
-        let params = Params::default();
-        let vd_set = &*MOCK_VD_SET;
-        let mut builder = MainPodBuilder::new(&params, vd_set);
+    // #[test]
+    // fn test_sets() -> Result<()> {
+    //     let params = Params::default();
+    //     let vd_set = &*MOCK_VD_SET;
+    //     let mut builder = MainPodBuilder::new(&params, vd_set);
 
-        let empty_set = Set::new(params.max_depth_mt_containers, [].into())?;
+    //     let empty_set = Set::new(params.max_depth_mt_containers, [].into())?;
 
-        let mut set1 = empty_set.clone();
-        set1.insert(&1.into())?;
+    //     let mut set1 = empty_set.clone();
+    //     set1.insert(&1.into())?;
 
-        let mut set2 = set1.clone();
-        set2.delete(&1.into())?;
+    //     let mut set2 = set1.clone();
+    //     set2.delete(&1.into())?;
 
-        assert_eq!(set2, empty_set);
+    //     assert_eq!(set2, empty_set);
 
-        builder.pub_op(Operation(
-            // OperationType
-            OperationType::Native(NativeOperation::SetInsertFromEntries),
-            // Vec<OperationArg>
-            vec![
-                Value::from(set1.clone()).into(),
-                Value::from(empty_set.clone()).into(),
-                1.into(),
-            ],
-            OperationAux::None,
-        ))?;
+    //     builder.pub_op(Operation(
+    //         // OperationType
+    //         OperationType::Native(NativeOperation::SetInsertFromEntries),
+    //         // Vec<OperationArg>
+    //         vec![
+    //             Value::from(set1.clone()).into(),
+    //             Value::from(empty_set.clone()).into(),
+    //             1.into(),
+    //         ],
+    //         OperationAux::None,
+    //     ))?;
 
-        builder.pub_op(Operation(
-            // OperationType
-            OperationType::Native(NativeOperation::SetDeleteFromEntries),
-            // Vec<OperationArg>
-            vec![
-                Value::from(empty_set.clone()).into(),
-                Value::from(set1.clone()).into(),
-                1.into(),
-            ],
-            OperationAux::None,
-        ))?;
+    //     builder.pub_op(Operation(
+    //         // OperationType
+    //         OperationType::Native(NativeOperation::SetDeleteFromEntries),
+    //         // Vec<OperationArg>
+    //         vec![
+    //             Value::from(empty_set.clone()).into(),
+    //             Value::from(set1.clone()).into(),
+    //             1.into(),
+    //         ],
+    //         OperationAux::None,
+    //     ))?;
 
-        let main_prover = MockProver {};
-        let main_pod = builder.prove(&main_prover).unwrap();
+    //     let main_prover = MockProver {};
+    //     let main_pod = builder.prove(&main_prover).unwrap();
 
-        println!("{}", main_pod);
+    //     println!("{}", main_pod);
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
-    #[test]
-    fn test_arrays() -> Result<()> {
-        let params = Params::default();
-        let vd_set = &*MOCK_VD_SET;
-        let mut builder = MainPodBuilder::new(&params, vd_set);
+    // #[test]
+    // fn test_arrays() -> Result<()> {
+    //     let params = Params::default();
+    //     let vd_set = &*MOCK_VD_SET;
+    //     let mut builder = MainPodBuilder::new(&params, vd_set);
 
-        let array1 = Array::new(params.max_depth_mt_containers, [1.into()].into())?;
+    //     let array1 = Array::new(params.max_depth_mt_containers, [1.into()].into())?;
 
-        let mut array2 = array1.clone();
-        array2.update(0, &5.into())?;
+    //     let mut array2 = array1.clone();
+    //     array2.update(0, &5.into())?;
 
-        builder.pub_op(Operation(
-            // OperationType
-            OperationType::Native(NativeOperation::ArrayUpdateFromEntries),
-            // Vec<OperationArg>
-            vec![
-                Value::from(array2.clone()).into(),
-                Value::from(array1.clone()).into(),
-                0.into(),
-                5.into(),
-            ],
-            OperationAux::None,
-        ))?;
+    //     builder.pub_op(Operation(
+    //         // OperationType
+    //         OperationType::Native(NativeOperation::ArrayUpdateFromEntries),
+    //         // Vec<OperationArg>
+    //         vec![
+    //             Value::from(array2.clone()).into(),
+    //             Value::from(array1.clone()).into(),
+    //             0.into(),
+    //             5.into(),
+    //         ],
+    //         OperationAux::None,
+    //     ))?;
 
-        let main_prover = MockProver {};
-        let main_pod = builder.prove(&main_prover).unwrap();
+    //     let main_prover = MockProver {};
+    //     let main_pod = builder.prove(&main_prover).unwrap();
 
-        println!("{}", main_pod);
+    //     println!("{}", main_pod);
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
     #[test]
     fn test_public_key_of() -> Result<()> {
@@ -1274,25 +1318,35 @@ pub mod tests {
         let sk = SecretKey::new_rand();
         let pk = sk.public_key();
 
-        // Signed POD contains public key as owner
+        // Signed Dict contains public key as owner
         let mut builder = SignedDictBuilder::new(&params);
         builder.insert("owner", Value::from(pk));
         builder.insert("other_data", Value::from(123));
         let signer = Signer(SecretKey(1u32.into()));
-        let signed_pod = builder.sign(&signer).unwrap();
+        let signed_dict = builder.sign(&signer).unwrap();
 
         // Main POD proves ownership of the owner's secret key.
         let mut builder = MainPodBuilder::new(&params, vd_set);
-        builder.add_signed_pod(&signed_pod);
-        let st0 = signed_pod.get_statement("owner").unwrap();
-        let st1 = builder
-            .priv_op(Operation::new_entry("known_secret", Value::from(sk)))
-            .unwrap();
+        builder.pub_op(Operation::signed_by(
+            Value::from(signed_dict.dict.clone()),
+            Value::from(signed_dict.public_key),
+            signed_dict.signature.clone(),
+        ))?;
+
+        let st0 = builder.priv_op(Operation::dict_contains(
+            signed_dict.dict,
+            "owner",
+            Value::from(pk),
+        ))?;
+        let local = dict!(32, { "known_secret" => sk.clone() })?;
+        let st1 = builder.priv_op(Operation::dict_contains(
+            local,
+            "known_secret",
+            Value::from(sk),
+        ))?;
         builder
             .pub_op(Operation(
-                // OperationType
                 OperationType::Native(NativeOperation::PublicKeyOf),
-                // Vec<OperationArg>
                 vec![OperationArg::Statement(st0), OperationArg::Statement(st1)],
                 OperationAux::None,
             ))
@@ -1307,155 +1361,154 @@ pub mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_public_key_of_wrong_key() -> Result<()> {
-        let params = Params::default();
-        let vd_set = &*MOCK_VD_SET;
+    // #[test]
+    // fn test_public_key_of_wrong_key() -> Result<()> {
+    //     let params = Params::default();
+    //     let vd_set = &*MOCK_VD_SET;
 
-        let sk = SecretKey::new_rand();
-        let pk = sk.public_key();
+    //     let sk = SecretKey::new_rand();
+    //     let pk = sk.public_key();
 
-        // Signed POD contains public key as owner
-        let mut builder = SignedDictBuilder::new(&params);
-        builder.insert("owner", Value::from(pk));
-        builder.insert("other_data", Value::from(123));
-        let signer = Signer(SecretKey(1u32.into()));
-        let signed_pod = builder.sign(&signer).unwrap();
+    //     // Signed POD contains public key as owner
+    //     let mut builder = SignedDictBuilder::new(&params);
+    //     builder.insert("owner", Value::from(pk));
+    //     builder.insert("other_data", Value::from(123));
+    //     let signer = Signer(SecretKey(1u32.into()));
+    //     let signed_pod = builder.sign(&signer).unwrap();
 
-        // Try to build with the wrong secret key.  The pre-proving checks
-        // will catch this.
-        let mut builder = MainPodBuilder::new(&params, vd_set);
-        builder.add_signed_pod(&signed_pod);
-        let st0 = signed_pod.get_statement("owner").unwrap();
-        let st1 = builder
-            .priv_op(Operation::new_entry(
-                "known_secret",
-                Value::from(SecretKey(BigUint::from(123u32))),
-            ))
-            .unwrap();
-        assert!(builder
-            .pub_op(Operation(
-                // OperationType
-                OperationType::Native(NativeOperation::PublicKeyOf),
-                // Vec<OperationArg>
-                vec![OperationArg::Statement(st0), OperationArg::Statement(st1)],
-                OperationAux::None,
-            ))
-            .is_err());
+    //     // Try to build with the wrong secret key.  The pre-proving checks
+    //     // will catch this.
+    //     let mut builder = MainPodBuilder::new(&params, vd_set);
+    //     builder.add_signed_pod(&signed_pod);
+    //     let st0 = signed_pod.get_statement("owner").unwrap();
+    //     let st1 = builder
+    //         .priv_op(Operation::new_entry(
+    //             "known_secret",
+    //             Value::from(SecretKey(BigUint::from(123u32))),
+    //         ))
+    //         .unwrap();
+    //     assert!(builder
+    //         .pub_op(Operation(
+    //             // OperationType
+    //             OperationType::Native(NativeOperation::PublicKeyOf),
+    //             // Vec<OperationArg>
+    //             vec![OperationArg::Statement(st0), OperationArg::Statement(st1)],
+    //             OperationAux::None,
+    //         ))
+    //         .is_err());
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
-    #[test]
-    fn test_public_key_of_wrong_type() -> Result<()> {
-        let params = Params::default();
-        let vd_set = &*MOCK_VD_SET;
+    // #[test]
+    // fn test_public_key_of_wrong_type() -> Result<()> {
+    //     let params = Params::default();
+    //     let vd_set = &*MOCK_VD_SET;
 
-        let sk = SecretKey::new_rand();
-        let pk = sk.public_key();
+    //     let sk = SecretKey::new_rand();
+    //     let pk = sk.public_key();
 
-        // Try to build with wrong type in 1st arg
-        let mut builder = MainPodBuilder::new(&params, vd_set);
-        let st_pk = builder.literal(false, Value::from(pk)).unwrap();
-        let st_int1 = builder.literal(false, Value::from(123)).unwrap();
-        assert!(builder
-            .pub_op(Operation(
-                // OperationType
-                OperationType::Native(NativeOperation::PublicKeyOf),
-                // Vec<OperationArg>
-                vec![
-                    OperationArg::Statement(st_pk),
-                    OperationArg::Statement(st_int1),
-                ],
-                OperationAux::None,
-            ))
-            .is_err());
+    //     // Try to build with wrong type in 1st arg
+    //     let mut builder = MainPodBuilder::new(&params, vd_set);
+    //     let st_pk = builder.literal(false, Value::from(pk)).unwrap();
+    //     let st_int1 = builder.literal(false, Value::from(123)).unwrap();
+    //     assert!(builder
+    //         .pub_op(Operation(
+    //             // OperationType
+    //             OperationType::Native(NativeOperation::PublicKeyOf),
+    //             // Vec<OperationArg>
+    //             vec![
+    //                 OperationArg::Statement(st_pk),
+    //                 OperationArg::Statement(st_int1),
+    //             ],
+    //             OperationAux::None,
+    //         ))
+    //         .is_err());
 
-        // Try to build with wrong type in 2nd arg
-        builder = MainPodBuilder::new(&params, vd_set);
-        let st_sk = builder.literal(false, Value::from(pk)).unwrap();
-        let st_int2 = builder.literal(false, Value::from(123)).unwrap();
-        assert!(builder
-            .pub_op(Operation(
-                // OperationType
-                OperationType::Native(NativeOperation::PublicKeyOf),
-                // Vec<OperationArg>
-                vec![
-                    OperationArg::Statement(st_int2),
-                    OperationArg::Statement(st_sk),
-                ],
-                OperationAux::None,
-            ))
-            .is_err());
+    //     // Try to build with wrong type in 2nd arg
+    //     builder = MainPodBuilder::new(&params, vd_set);
+    //     let st_sk = builder.literal(false, Value::from(pk)).unwrap();
+    //     let st_int2 = builder.literal(false, Value::from(123)).unwrap();
+    //     assert!(builder
+    //         .pub_op(Operation(
+    //             // OperationType
+    //             OperationType::Native(NativeOperation::PublicKeyOf),
+    //             // Vec<OperationArg>
+    //             vec![
+    //                 OperationArg::Statement(st_int2),
+    //                 OperationArg::Statement(st_sk),
+    //             ],
+    //             OperationAux::None,
+    //         ))
+    //         .is_err());
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
-    #[should_panic]
-    #[test]
-    fn test_reject_duplicate_new_entry() {
-        // try to insert the same key multiple times
-        // right now this is not caught when you build the pod,
-        // but it is caught on verify
-        env_logger::init();
+    // #[should_panic]
+    // #[test]
+    // fn test_reject_duplicate_new_entry() {
+    //     // try to insert the same key multiple times
+    //     // right now this is not caught when you build the pod,
+    //     // but it is caught on verify
+    //     env_logger::init();
 
-        let params = Params::default();
-        let vd_set = &*MOCK_VD_SET;
-        let mut builder = MainPodBuilder::new(&params, vd_set);
-        let st = Statement::equal(AnchoredKey::from((SELF, "a")), Value::from(3));
-        let op_new_entry = Operation(
-            OperationType::Native(NativeOperation::NewEntry),
-            vec![],
-            OperationAux::None,
-        );
-        builder.insert(false, (st, op_new_entry.clone())).unwrap();
+    //     let params = Params::default();
+    //     let vd_set = &*MOCK_VD_SET;
+    //     let mut builder = MainPodBuilder::new(&params, vd_set);
+    //     let st = Statement::equal(AnchoredKey::from((SELF, "a")), Value::from(3));
+    //     let op_new_entry = Operation(
+    //         OperationType::Native(NativeOperation::NewEntry),
+    //         vec![],
+    //         OperationAux::None,
+    //     );
+    //     builder.insert(false, (st, op_new_entry.clone())).unwrap();
 
-        let st = Statement::equal(AnchoredKey::from((SELF, "a")), Value::from(28));
-        builder.insert(false, (st, op_new_entry.clone())).unwrap();
+    //     let st = Statement::equal(AnchoredKey::from((SELF, "a")), Value::from(28));
+    //     builder.insert(false, (st, op_new_entry.clone())).unwrap();
 
-        let prover = MockProver {};
-        let pod = builder.prove(&prover).unwrap();
-        pod.pod.verify().unwrap();
-    }
+    //     let prover = MockProver {};
+    //     let pod = builder.prove(&prover).unwrap();
+    //     pod.pod.verify().unwrap();
+    // }
 
-    #[should_panic]
-    #[test]
-    fn test_reject_unsound_statement() {
-        // try to insert a statement that doesn't follow from the operation
-        // right now the mock prover catches this when it calls compile()
-        let params = Params::default();
-        let vd_set = &*MOCK_VD_SET;
-        let mut builder = MainPodBuilder::new(&params, vd_set);
-        let self_a = AnchoredKey::from((SELF, "a"));
-        let self_b = AnchoredKey::from((SELF, "b"));
-        let value_of_a = Statement::equal(self_a.clone(), Value::from(3));
-        let value_of_b = Statement::equal(self_b.clone(), Value::from(27));
+    // #[should_panic]
+    // #[test]
+    // fn test_reject_unsound_statement() {
+    //     // try to insert a statement that doesn't follow from the operation
+    //     // right now the mock prover catches this when it calls compile()
+    //     let params = Params::default();
+    //     let vd_set = &*MOCK_VD_SET;
+    //     let mut builder = MainPodBuilder::new(&params, vd_set);
+    //     let self_a = AnchoredKey::from((SELF, "a"));
+    //     let self_b = AnchoredKey::from((SELF, "b"));
+    //     let value_of_a = Statement::equal(self_a.clone(), Value::from(3));
+    //     let value_of_b = Statement::equal(self_b.clone(), Value::from(27));
 
-        let op_new_entry = Operation(
-            OperationType::Native(NativeOperation::NewEntry),
-            vec![],
-            OperationAux::None,
-        );
-        builder
-            .insert(false, (value_of_a.clone(), op_new_entry.clone()))
-            .unwrap();
-        builder
-            .insert(false, (value_of_b.clone(), op_new_entry))
-            .unwrap();
-        let st = Statement::equal(self_a, self_b);
-        let op = Operation(
-            OperationType::Native(NativeOperation::EqualFromEntries),
-            vec![
-                OperationArg::Statement(value_of_a),
-                OperationArg::Statement(value_of_b),
-            ],
-            OperationAux::None,
-        );
-        builder.insert(false, (st, op)).unwrap();
+    //     let op_new_entry = Operation(
+    //         OperationType::Native(NativeOperation::NewEntry),
+    //         vec![],
+    //         OperationAux::None,
+    //     );
+    //     builder
+    //         .insert(false, (value_of_a.clone(), op_new_entry.clone()))
+    //         .unwrap();
+    //     builder
+    //         .insert(false, (value_of_b.clone(), op_new_entry))
+    //         .unwrap();
+    //     let st = Statement::equal(self_a, self_b);
+    //     let op = Operation(
+    //         OperationType::Native(NativeOperation::EqualFromEntries),
+    //         vec![
+    //             OperationArg::Statement(value_of_a),
+    //             OperationArg::Statement(value_of_b),
+    //         ],
+    //         OperationAux::None,
+    //     );
+    //     builder.insert(false, (st, op)).unwrap();
 
-        let prover = MockProver {};
-        let pod = builder.prove(&prover).unwrap();
-        pod.pod.verify().unwrap();
-    }
+    //     let prover = MockProver {};
+    //     let pod = builder.prove(&prover).unwrap();
+    //     pod.pod.verify().unwrap();
+    // }
 }
-*/

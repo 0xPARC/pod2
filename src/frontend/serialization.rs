@@ -125,7 +125,7 @@ mod tests {
             signedpod::Signer,
         },
         examples::{
-            attest_eth_friend, zu_kyc_pod_builder, zu_kyc_sign_pod_builders, EthDosHelper,
+            attest_eth_friend, zu_kyc_pod_builder, zu_kyc_sign_dict_builders, EthDosHelper,
             MOCK_VD_SET,
         },
         frontend::{Result, SignedDictBuilder},
@@ -274,7 +274,7 @@ mod tests {
         let vd_set = &*MOCK_VD_SET;
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
-            zu_kyc_sign_pod_builders(&params);
+            zu_kyc_sign_dict_builders(&params);
         let signer = Signer(SecretKey(1u32.into()));
         let gov_id_pod = gov_id_builder.sign(&signer).unwrap();
         let signer = Signer(SecretKey(2u32.into()));
@@ -307,7 +307,7 @@ mod tests {
         let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
 
         let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
-            zu_kyc_sign_pod_builders(&params);
+            zu_kyc_sign_dict_builders(&params);
         let signer = Signer(SecretKey(1u32.into()));
         let gov_id_pod = gov_id_builder.sign(&signer)?;
         let signer = Signer(SecretKey(2u32.into()));

@@ -22,7 +22,7 @@ use crate::{
         hash_common_data,
         mock::emptypod::MockEmptyPod,
         primitives::{
-            ec::schnorr::SecretKey,
+            ec::schnorr::{SecretKey, Signature},
             merkletree::{MerkleClaimAndProof, MerkleTreeStateTransitionProof},
         },
         recursion::{
@@ -38,7 +38,7 @@ use crate::{
     middleware::{
         self, resolve_wildcard_values, value_from_op, AnchoredKey, CustomPredicateBatch,
         Error as MiddlewareError, Hash, MainPodInputs, NativeOperation, OperationType, Params, Pod,
-        PodProver, RecursivePod, StatementArg, ToFields, VDSet,
+        PodProver, RecursivePod, StatementArg, ToFields, VDSet, Value,
     },
     timed,
 };
@@ -234,6 +234,48 @@ pub(crate) fn extract_public_key_of(
             "The number of required PublicKeyOf verifications ({}) exceeds the maximum number ({}).",
             table.len(),
             params.max_public_statements
+        )));
+    }
+    Ok(table)
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct SignedBy {
+    msg: Value,
+    pk: Value,
+    sig: Signature,
+}
+
+/// Extracts Signatures verification data from SignedBy ops.
+pub(crate) fn extract_signatures(
+    params: &Params,
+    aux_list: &mut [OperationAux],
+    operations: &[middleware::Operation],
+    statements: &[middleware::Statement],
+) -> Result<Vec<SignedBy>> {
+    let mut table = Vec::new();
+    for (i, (op, st)) in operations.iter().zip(statements.iter()).enumerate() {
+        let deduction_err = || MiddlewareError::invalid_deduction(op.clone(), st.clone());
+        if let (
+            middleware::Operation::SignedBy(msg_s, pk_s, sig),
+            middleware::Statement::SignedBy(msg_ref, pk_ref),
+        ) = (op, st)
+        {
+            let msg = value_from_op(msg_s, msg_ref).ok_or_else(deduction_err)?;
+            let pk = value_from_op(pk_s, pk_ref).ok_or_else(deduction_err)?;
+            aux_list[i] = OperationAux::SignedBy(table.len());
+            table.push(SignedBy {
+                msg,
+                pk,
+                sig: sig.clone(),
+            });
+        }
+    }
+    if table.len() > params.max_signed_by {
+        return Err(Error::custom(format!(
+            "The number of required signatures ({}) exceeds the maximum number ({}).",
+            table.len(),
+            params.max_signed_by
         )));
     }
     Ok(table)
@@ -797,7 +839,7 @@ pub mod tests {
             signedpod::Signer,
         },
         examples::{
-            attest_eth_friend, tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_sign_pod_builders,
+            attest_eth_friend, tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_sign_dict_builders,
             EthDosHelper,
         },
         frontend::{
@@ -824,7 +866,7 @@ pub mod tests {
         vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
         let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
 
-        let (gov_id_builder, pay_stub_builder) = zu_kyc_sign_pod_builders(&params);
+        let (gov_id_builder, pay_stub_builder) = zu_kyc_sign_dict_builders(&params);
         let signer = Signer(SecretKey(BigUint::one()));
         let gov_id_pod = gov_id_builder.sign(&signer)?;
         let signer = Signer(SecretKey(2u64.into()));
