@@ -6,7 +6,7 @@ use schemars::JsonSchema;
 use crate::{
     frontend::{AnchoredKey, Error, Result, Statement, StatementArg},
     middleware::{
-        self, hash_str, CustomPredicate, CustomPredicateBatch, Key, NativePredicate, Params, PodId,
+        self, hash_str, CustomPredicate, CustomPredicateBatch, Hash, Key, NativePredicate, Params,
         Predicate, StatementTmpl, StatementTmplArg, ToFields, Value, Wildcard,
     },
 };

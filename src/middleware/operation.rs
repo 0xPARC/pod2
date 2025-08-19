@@ -15,7 +15,7 @@ use crate::{
     middleware::{
         hash_values, AnchoredKey, CustomPredicate, CustomPredicateRef, Error, NativePredicate,
         Params, Predicate, Result, Statement, StatementArg, StatementTmpl, StatementTmplArg,
-        ToFields, Value, ValueRef, Wildcard, F, SELF,
+        ToFields, Value, ValueRef, Wildcard, F,
     },
 };
 
@@ -432,9 +432,9 @@ impl Operation {
         let val = |v, s| value_from_op(s, v).ok_or_else(deduction_err);
         let b = match (self, output_statement) {
             (Self::None, None) => true,
-            (Self::NewEntry, Equal(ValueRef::Key(AnchoredKey { pod_id, .. }), _)) => {
-                pod_id == &SELF
-            }
+            // (Self::NewEntry, Equal(ValueRef::Key(AnchoredKey { root: pod_id, .. }), _)) => {
+            //     pod_id == &SELF
+            // }
             (Self::CopyStatement(s1), s2) => s1 == s2,
             (Self::EqualFromEntries(s1, s2), Equal(v3, v4)) => val(v3, s1)? == val(v4, s2)?,
             (Self::NotEqualFromEntries(s1, s2), NotEqual(v3, v4)) => val(v3, s1)? != val(v4, s2)?,
@@ -591,7 +591,7 @@ pub fn check_st_tmpl(
         (StatementTmplArg::Literal(lhs), StatementArg::Literal(rhs)) if lhs == rhs => Ok(()),
         (
             StatementTmplArg::AnchoredKey(pod_id_wc, key_tmpl),
-            StatementArg::Key(AnchoredKey { pod_id, key }),
+            StatementArg::Key(AnchoredKey { root: pod_id, key }),
         ) => {
             let pod_id_ok = check_or_set(Value::from(*pod_id), pod_id_wc, wildcard_map);
             pod_id_ok.and_then(|_| {
@@ -777,14 +777,14 @@ mod tests {
             merkletree::MerkleTree,
         },
         middleware::{
-            hash_value, AnchoredKey, Error, Key, Operation, Params, PodId, Result, Statement,
+            hash_value, AnchoredKey, Error, Hash, Key, Operation, Params, Result, Statement,
         },
     };
 
     #[test]
     fn check_container_ops() -> Result<()> {
         let params = Params::default();
-        let pod_id = PodId::default();
+        let pod_id = Hash::default();
         let root_ak = AnchoredKey::new(pod_id, Key::new("root".into()));
         let key_ak = AnchoredKey::new(pod_id, Key::new("key".into()));
         let val_ak = AnchoredKey::new(pod_id, Key::new("value".into()));
@@ -849,7 +849,7 @@ mod tests {
     #[test]
     fn check_container_update_ops() -> Result<()> {
         let params = Params::default();
-        let pod_id = PodId::default();
+        let pod_id = Hash::default();
         let new_root_ak = AnchoredKey::new(pod_id, Key::new("new_root".into()));
         let old_root_ak = AnchoredKey::new(pod_id, Key::new("new_root".into()));
         let key_ak = AnchoredKey::new(pod_id, Key::new("key".into()));
@@ -990,7 +990,7 @@ mod tests {
         ];
 
         let params = Params::default();
-        let pod_id = PodId::default();
+        let pod_id = Hash::default();
         let pk_ak = AnchoredKey::new(pod_id, Key::new("pubkey".into()));
         let sk_ak = AnchoredKey::new(pod_id, Key::new("secret".into()));
 
@@ -1022,7 +1022,7 @@ mod tests {
         let fixed_pk = fixed_sk.public_key();
 
         let params = Params::default();
-        let pod_id = PodId::default();
+        let pod_id = Hash::default();
         let pk_ak = AnchoredKey::new(pod_id, Key::new("pubkey".into()));
         let sk_ak = AnchoredKey::new(pod_id, Key::new("secret".into()));
 

@@ -770,14 +770,14 @@ fn process_literal_value(
                 })
                 .map(Value::from)
         }
-        Rule::literal_pod_id => {
-            let hex_str_no_prefix = inner_lit
-                .as_str()
-                .strip_prefix("0x")
-                .unwrap_or(inner_lit.as_str());
-            let pod_id = parse_hex_str_to_pod_id(hex_str_no_prefix)?;
-            Ok(Value::from(pod_id))
-        }
+        // Rule::literal_pod_id => {
+        //     let hex_str_no_prefix = inner_lit
+        //         .as_str()
+        //         .strip_prefix("0x")
+        //         .unwrap_or(inner_lit.as_str());
+        //     let pod_id = parse_hex_str_to_pod_id(hex_str_no_prefix)?;
+        //     Ok(Value::from(pod_id))
+        // }
         Rule::literal_public_key => {
             let pk_str_pair = inner_lit.into_inner().next().unwrap();
             let pk_b58 = pk_str_pair.as_str();
@@ -854,7 +854,7 @@ fn process_literal_value(
             })?;
             Ok(Value::from(secret_key))
         }
-        Rule::self_keyword => Ok(Value::from(middleware::SELF)),
+        // Rule::self_keyword => Ok(Value::from(middleware::SELF)),
         _ => unreachable!("Unexpected rule: {:?}", inner_lit.as_rule()),
     }
 }
@@ -940,10 +940,10 @@ fn parse_hex_str_to_raw_value(hex_str: &str) -> Result<middleware::RawValue, Pro
     Ok(middleware::RawValue(v))
 }
 
-fn parse_hex_str_to_pod_id(hex_str: &str) -> Result<middleware::PodId, ProcessorError> {
-    let raw = parse_hex_str_to_raw_value(hex_str)?;
-    Ok(middleware::PodId(raw.into()))
-}
+// fn parse_hex_str_to_pod_id(hex_str: &str) -> Result<middleware::PodId, ProcessorError> {
+//     let raw = parse_hex_str_to_raw_value(hex_str)?;
+//     Ok(middleware::PodId(raw.into()))
+// }
 
 // Helper to resolve a wildcard name string to an indexed middleware::Wildcard
 // based on an ordered list of names from the current scope (e.g., request or predicate def).

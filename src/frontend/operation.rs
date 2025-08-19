@@ -3,8 +3,8 @@ use std::fmt;
 use crate::{
     frontend::{MainPod, SignedDict},
     middleware::{
-        AnchoredKey, CustomPredicateRef, NativeOperation, OperationAux, OperationType, Statement,
-        Value, ValueRef,
+        containers::Dictionary, AnchoredKey, CustomPredicateRef, NativeOperation, OperationAux,
+        OperationType, Statement, Value, ValueRef,
     },
 };
 
@@ -57,29 +57,31 @@ impl From<&Value> for OperationArg {
     }
 }
 
-impl From<(&SignedDict, &str)> for OperationArg {
-    fn from((pod, key): (&SignedDict, &str)) -> Self {
-        // TODO: TryFrom.
-        let value = pod
-            .kvs()
-            .get(&key.into())
-            .cloned()
-            .unwrap_or_else(|| panic!("Key {} is not present in POD: {}", key, pod));
-        Self::Statement(Statement::Equal(
-            AnchoredKey::from((pod.id(), key)).into(),
-            value.into(),
-        ))
-    }
-}
-impl From<(&MainPod, &str)> for OperationArg {
-    fn from((pod, key): (&MainPod, &str)) -> Self {
-        // TODO: TryFrom.
-        let value = pod
-            .get(key)
-            .unwrap_or_else(|| panic!("Key {} is not present in POD: {}", key, pod));
-        Self::Statement(Statement::equal(AnchoredKey::from((pod.id(), key)), value))
-    }
-}
+// TODO:
+//impl From<(&Dictionary, &str)> for OperationArg {
+//    fn from((dict, key): (&Dictionary, &str)) -> Self {
+//        // TODO: TryFrom.
+//        let value = dict
+//            .get(&key.into())
+//            .cloned()
+//            .unwrap_or_else(|| panic!("Key {} is not present in POD: {}", key, dict));
+//        Self::Statement(Statement::Equal(
+//            AnchoredKey::from((dict.id(), key)).into(),
+//            value.into(),
+//        ))
+//    }
+//}
+
+// TODO:
+// impl From<(&MainPod, &str)> for OperationArg {
+//     fn from((pod, key): (&MainPod, &str)) -> Self {
+//         // TODO: TryFrom.
+//         let value = pod
+//             .get(key)
+//             .unwrap_or_else(|| panic!("Key {} is not present in POD: {}", key, pod));
+//         Self::Statement(Statement::equal(AnchoredKey::from((pod.id(), key)), value))
+//     }
+// }
 
 impl From<Statement> for OperationArg {
     fn from(s: Statement) -> Self {

@@ -6,9 +6,7 @@ use serde::{Deserialize, Serialize};
 use super::Error;
 use crate::{
     frontend::{MainPod, SignedDict},
-    middleware::{
-        deserialize_pod, deserialize_signed_pod, Key, Params, PodId, Statement, VDSet, Value,
-    },
+    middleware::{deserialize_pod, Hash, Key, Params, Statement, VDSet, Value},
 };
 
 // #[derive(Serialize, Deserialize, JsonSchema)]
@@ -39,14 +37,14 @@ use crate::{
 pub struct SerializedMainPod {
     params: Params,
     pod_type: (usize, String),
-    id: PodId,
+    id: Hash,
     vd_set: VDSet,
     public_statements: Vec<Statement>,
     data: serde_json::Value,
 }
 
 impl SerializedMainPod {
-    pub fn id(&self) -> PodId {
+    pub fn id(&self) -> Hash {
         self.id
     }
 }

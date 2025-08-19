@@ -30,7 +30,7 @@ use crate::{
             },
             hash::{hash_from_state_circuit, precompute_hash_state},
             mux_table::{MuxTableTarget, TableEntryTarget},
-            signedpod::{verify_signed_pod_circuit, SignedPodVerifyTarget},
+            // signedpod::{verify_signed_pod_circuit, SignedPodVerifyTarget},
         },
         emptypod::{cache_get_standard_empty_pod_circuit_data, EmptyPod},
         error::Result,
@@ -48,13 +48,13 @@ use crate::{
             },
         },
         recursion::{InnerCircuit, VerifiedProofTarget},
-        signedpod::SignedPod,
+        // signedpod::SignedPod,
     },
     measure_gates_begin, measure_gates_end,
     middleware::{
         AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, NativeOperation,
         NativePredicate, Params, PodType, PredicatePrefix, Statement, StatementArg, ToFields,
-        Value, ValueRef, F, HASH_SIZE, KEY_TYPE, SELF, VALUE_SIZE,
+        Value, ValueRef, F, HASH_SIZE, KEY_TYPE, VALUE_SIZE,
     },
 };
 //
@@ -1206,27 +1206,28 @@ fn verify_new_entry_circuit(
     prev_statements: &[StatementTarget],
     input_statements_offset: usize,
 ) -> BoolTarget {
-    let measure = measure_gates_begin!(builder, "OpNewEntry");
-    let op_code_ok = op_type.has_native(builder, NativeOperation::NewEntry);
-    let st_code_ok = st.has_native_type(builder, params, NativePredicate::Equal);
+    todo!()
+    // let measure = measure_gates_begin!(builder, "OpNewEntry");
+    // let op_code_ok = op_type.has_native(builder, NativeOperation::NewEntry);
+    // let st_code_ok = st.has_native_type(builder, params, NativePredicate::Equal);
 
-    let expected_arg_prefix = builder.constants(
-        &StatementArg::Key(AnchoredKey::from((SELF, ""))).to_fields(params)[..VALUE_SIZE],
-    );
-    let arg_prefix_ok =
-        builder.is_equal_slice(&st.args[0].elements[..VALUE_SIZE], &expected_arg_prefix);
+    // let expected_arg_prefix = builder.constants(
+    //     &StatementArg::Key(AnchoredKey::from((SELF, ""))).to_fields(params)[..VALUE_SIZE],
+    // );
+    // let arg_prefix_ok =
+    //     builder.is_equal_slice(&st.args[0].elements[..VALUE_SIZE], &expected_arg_prefix);
 
-    let input_statements = &prev_statements[input_statements_offset..];
-    let individual_dupe_checks = input_statements
-        .iter()
-        .map(|ps| builder.is_equal_slice(&st.args[0].elements, &ps.args[0].elements))
-        .collect::<Vec<_>>();
-    let dupe_check = builder.any(individual_dupe_checks);
-    let no_dupes_ok = builder.not(dupe_check);
+    // let input_statements = &prev_statements[input_statements_offset..];
+    // let individual_dupe_checks = input_statements
+    //     .iter()
+    //     .map(|ps| builder.is_equal_slice(&st.args[0].elements, &ps.args[0].elements))
+    //     .collect::<Vec<_>>();
+    // let dupe_check = builder.any(individual_dupe_checks);
+    // let no_dupes_ok = builder.not(dupe_check);
 
-    let ok = builder.all([op_code_ok, st_code_ok, arg_prefix_ok, no_dupes_ok]);
-    measure_gates_end!(builder, measure);
-    ok
+    // let ok = builder.all([op_code_ok, st_code_ok, arg_prefix_ok, no_dupes_ok]);
+    // measure_gates_end!(builder, measure);
+    // ok
 }
 
 fn verify_lt_to_neq_circuit(
@@ -1302,10 +1303,9 @@ fn make_statement_arg_from_template_circuit(
     assert_eq!(ak_id_wc_index, wc_index);
     // optimization: the wildcard indices have an offset of +1.  This allows us to set a fixed
     // SELF in args[0] to resolve SelfOrWildcard::SELF encoded as a wildcard at index 0.
-    let value_self = ValueTarget::from_slice(&builder.constants(&SELF.0 .0));
-    let args = iter::once(value_self)
-        .chain(args.iter().cloned())
-        .collect_vec();
+    // let value_self = ValueTarget::from_slice(&builder.constants(&SELF.0 .0));
+    // TODO: Remove the +1 offset
+
     // If the index is not used, use a 0 instead to still pass the range constraints from
     // vec_ref
     let first_index = ak_id_wc_index;
@@ -1551,10 +1551,10 @@ fn verify_main_pod_circuit(
 
     let measure = measure_gates_begin!(builder, "MainPodVerify");
     // 1a. Verify all input signed pods
-    for signed_pod in &main_pod.signed_pods {
-        verify_signed_pod_circuit(builder, signed_pod)?;
-        builder.assert_one(signed_pod.signature.enabled.target);
-    }
+    // for signed_pod in &main_pod.signed_pods {
+    //     verify_signed_pod_circuit(builder, signed_pod)?;
+    //     builder.assert_one(signed_pod.signature.enabled.target);
+    // }
 
     // Build the statement array
     let mut statements = Vec::new();
@@ -1562,13 +1562,13 @@ fn verify_main_pod_circuit(
     // predicate statements
     let st_none = StatementTarget::new_native(builder, params, NativePredicate::None, &[]);
     statements.push(st_none);
-    for signed_pod in &main_pod.signed_pods {
-        statements.extend_from_slice(signed_pod.pub_statements(builder, false).as_slice());
-    }
-    debug_assert_eq!(
-        statements.len(),
-        1 + params.max_input_signed_pods * params.max_signed_pod_values
-    );
+    // for signed_pod in &main_pod.signed_pods {
+    //     statements.extend_from_slice(signed_pod.pub_statements(builder, false).as_slice());
+    // }
+    // debug_assert_eq!(
+    //     statements.len(),
+    //     1 + params.max_input_signed_pods * params.max_signed_pod_values
+    // );
 
     // 1b. Verify all input recursive pods
     for (verified_proof, vd_mt_proof, input_pod_self_statements) in izip!(
@@ -1660,17 +1660,17 @@ fn verify_main_pod_circuit(
     let type_statement = &pub_statements[0];
     // TODO: Store this hash in a global static with lazy init so that we don't have to
     // compute it every time.
-    let expected_type_statement = StatementTarget::from_flattened(
-        params,
-        &builder.constants(
-            &Statement::equal(
-                ValueRef::Key(AnchoredKey::from((SELF, KEY_TYPE))),
-                ValueRef::Literal(Value::from(PodType::Main)),
-            )
-            .to_fields(params),
-        ),
-    );
-    builder.connect_flattenable(type_statement, &expected_type_statement);
+    // let expected_type_statement = StatementTarget::from_flattened(
+    //     params,
+    //     &builder.constants(
+    //         &Statement::equal(
+    //             ValueRef::Key(AnchoredKey::from((SELF, KEY_TYPE))),
+    //             ValueRef::Literal(Value::from(PodType::Main)),
+    //         )
+    //         .to_fields(params),
+    //     ),
+    // );
+    // builder.connect_flattenable(type_statement, &expected_type_statement);
 
     // 3. check that all `input_statements` of type `ValueOf` with origin=SELF have unique keys
     // (no duplicates).  We do this in the verification of NewEntry operation.
@@ -1708,7 +1708,7 @@ pub struct MainPodVerifyTarget {
     params: Params,
     vds_root: HashOutTarget,
     vd_mt_proofs: Vec<MerkleClaimAndProofTarget>,
-    signed_pods: Vec<SignedPodVerifyTarget>,
+    // signed_pods: Vec<SignedPodVerifyTarget>,
     input_pods_self_statements: Vec<Vec<StatementTarget>>,
     // The KEY_TYPE statement must be the first public one
     input_statements: Vec<StatementTarget>,
@@ -1728,9 +1728,9 @@ impl MainPodVerifyTarget {
             vd_mt_proofs: (0..params.max_input_recursive_pods)
                 .map(|_| MerkleClaimAndProofTarget::new_virtual(params.max_depth_mt_vds, builder))
                 .collect(),
-            signed_pods: (0..params.max_input_signed_pods)
-                .map(|_| SignedPodVerifyTarget::new_virtual(params, builder))
-                .collect(),
+            // signed_pods: (0..params.max_input_signed_pods)
+            //     .map(|_| SignedPodVerifyTarget::new_virtual(params, builder))
+            //     .collect(),
             input_pods_self_statements: (0..params.max_input_recursive_pods)
                 .map(|_| {
                     (0..params.max_input_pods_public_statements)
@@ -1784,7 +1784,7 @@ pub struct MainPodVerifyInput {
     // inide the MainPodVerifyTarget circuit, since it is the InnerCircuit for
     // the RecursiveCircuit, we don't have access to the used verifier_datas.
     pub vd_mt_proofs: Vec<MerkleClaimAndProof>,
-    pub signed_pods: Vec<SignedPod>,
+    // pub signed_pods: Vec<SignedPod>,
     pub recursive_pods_pub_self_statements: Vec<Vec<Statement>>,
     pub statements: Vec<mainpod::Statement>,
     pub operations: Vec<mainpod::Operation>,
@@ -1856,17 +1856,17 @@ impl InnerCircuit for MainPodVerifyTarget {
             self.vd_mt_proofs[i].set_targets(pw, true, &vd_emptypod_mt_proof)?;
         }
 
-        assert!(input.signed_pods.len() <= self.params.max_input_signed_pods);
-        for (i, signed_pod) in input.signed_pods.iter().enumerate() {
-            self.signed_pods[i].set_targets(pw, signed_pod)?;
-        }
-        // Padding
-        if input.signed_pods.len() != self.params.max_input_signed_pods {
-            let dummy = SignedPod::dummy();
-            for i in input.signed_pods.len()..self.params.max_input_signed_pods {
-                self.signed_pods[i].set_targets(pw, &dummy)?;
-            }
-        }
+        // assert!(input.signed_pods.len() <= self.params.max_input_signed_pods);
+        // for (i, signed_pod) in input.signed_pods.iter().enumerate() {
+        //     self.signed_pods[i].set_targets(pw, signed_pod)?;
+        // }
+        // // Padding
+        // if input.signed_pods.len() != self.params.max_input_signed_pods {
+        //     let dummy = SignedPod::dummy();
+        //     for i in input.signed_pods.len()..self.params.max_input_signed_pods {
+        //         self.signed_pods[i].set_targets(pw, &dummy)?;
+        //     }
+        // }
 
         assert!(
             input.recursive_pods_pub_self_statements.len() <= self.params.max_input_recursive_pods

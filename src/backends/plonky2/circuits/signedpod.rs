@@ -22,12 +22,11 @@ use crate::{
             },
             signature::{verify_signature_circuit, SignatureVerifyTarget},
         },
-        signedpod::SignedPod,
+        // signedpod::SignedPod,
     },
     measure_gates_begin, measure_gates_end,
     middleware::{
         hash_str, Key, NativePredicate, Params, PodType, RawValue, Value, F, KEY_SIGNER, KEY_TYPE,
-        SELF,
     },
 };
 

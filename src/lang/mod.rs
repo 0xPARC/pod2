@@ -32,9 +32,9 @@ mod tests {
         backends::plonky2::primitives::ec::schnorr::SecretKey,
         lang::error::ProcessorError,
         middleware::{
-            hash_str, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key,
-            NativePredicate, Params, PodId, PodType, Predicate, RawValue, StatementTmpl,
-            StatementTmplArg, Value, Wildcard, KEY_SIGNER, KEY_TYPE, SELF,
+            hash_str, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash, Key,
+            NativePredicate, Params, PodType, Predicate, RawValue, StatementTmpl, StatementTmplArg,
+            Value, Wildcard, KEY_SIGNER, KEY_TYPE, SELF,
         },
     };
 
@@ -853,7 +853,7 @@ mod tests {
     #[test]
     fn test_e2e_literals() -> Result<(), LangError> {
         let pk = crate::backends::plonky2::primitives::ec::curve::Point::generator();
-        let pod_id = PodId(hash_str("test"));
+        let pod_id = Hash(hash_str("test"));
         let raw = RawValue::from(1);
         let string = "hello";
         let int = 123;

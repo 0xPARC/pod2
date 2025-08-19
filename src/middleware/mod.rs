@@ -38,7 +38,7 @@ use crate::backends::plonky2::primitives::merkletree::{
     MerkleProof, MerkleTreeStateTransitionProof,
 };
 
-pub const SELF: PodId = PodId(SELF_ID_HASH);
+// pub const SELF: Hash = Hash(SELF_ID_HASH);
 
 // TODO: Move all value-related types to to `value.rs`
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
@@ -67,7 +67,7 @@ pub enum TypedValue {
     PublicKey(PublicKey),
     // Schnorr secret key variant (scalar)
     SecretKey(SecretKey),
-    PodId(PodId),
+    // PodId(Hash),
     // UNTAGGED TYPES:
     #[serde(untagged)]
     Set(Set),
@@ -123,11 +123,11 @@ impl From<SecretKey> for TypedValue {
     }
 }
 
-impl From<PodId> for TypedValue {
-    fn from(id: PodId) -> Self {
-        TypedValue::PodId(id)
-    }
-}
+// impl From<Hash> for TypedValue {
+//     fn from(id: Hash) -> Self {
+//         TypedValue::PodId(id)
+//     }
+// }
 
 impl From<Set> for TypedValue {
     fn from(s: Set) -> Self {
@@ -183,19 +183,19 @@ impl TryFrom<TypedValue> for Key {
     }
 }
 
-impl TryFrom<&TypedValue> for PodId {
-    type Error = Error;
-    fn try_from(v: &TypedValue) -> Result<Self> {
-        match v {
-            TypedValue::PodId(id) => Ok(*id),
-            TypedValue::Raw(v) => Ok(PodId(Hash(v.0))),
-            _ => Err(Error::custom(format!(
-                "Value {} cannot be converted to a PodId.",
-                v
-            ))),
-        }
-    }
-}
+// impl TryFrom<&TypedValue> for Hash {
+//     type Error = Error;
+//     fn try_from(v: &TypedValue) -> Result<Self> {
+//         match v {
+//             TypedValue::PodId(id) => Ok(*id),
+//             TypedValue::Raw(v) => Ok(Hash(Hash(v.0))),
+//             _ => Err(Error::custom(format!(
+//                 "Value {} cannot be converted to a PodId.",
+//                 v
+//             ))),
+//         }
+//     }
+// }
 
 impl TryFrom<&TypedValue> for PublicKey {
     type Error = Error;
@@ -265,13 +265,13 @@ impl fmt::Display for TypedValue {
             }
             TypedValue::PublicKey(p) => write!(f, "PublicKey({})", p),
             TypedValue::SecretKey(p) => write!(f, "SecretKey({})", p),
-            TypedValue::PodId(p) => {
-                if *p == SELF {
-                    write!(f, "SELF")
-                } else {
-                    write!(f, "0x{}", p.0.encode_hex::<String>())
-                }
-            }
+            // TypedValue::PodId(p) => {
+            //     if *p == SELF {
+            //         write!(f, "SELF")
+            //     } else {
+            //         write!(f, "0x{}", p.0.encode_hex::<String>())
+            //     }
+            // }
             TypedValue::Raw(r) => {
                 write!(f, "Raw(0x{})", r.encode_hex::<String>())
             }
@@ -291,7 +291,7 @@ impl From<&TypedValue> for RawValue {
             TypedValue::Raw(v) => *v,
             TypedValue::PublicKey(p) => RawValue::from(hash_fields(&p.as_fields())),
             TypedValue::SecretKey(sk) => RawValue::from(hash_fields(&sk.to_limbs())),
-            TypedValue::PodId(id) => RawValue::from(id.0),
+            // TypedValue::PodId(id) => RawValue::from(id.0),
         }
     }
 }
@@ -348,7 +348,7 @@ impl JsonSchema for TypedValue {
         let pod_id_schema = schemars::schema::SchemaObject {
             instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
             object: Some(Box::new(schemars::schema::ObjectValidation {
-                properties: [("PodId".to_string(), gen.subschema_for::<PodId>())]
+                properties: [("PodId".to_string(), gen.subschema_for::<Hash>())]
                     .into_iter()
                     .collect(),
                 required: ["PodId".to_string()].into_iter().collect(),
@@ -600,25 +600,25 @@ where
     }
 }
 
-impl fmt::Display for PodId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if *self == SELF {
-            write!(f, "self")
-        } else if self.0 == EMPTY_HASH {
-            write!(f, "null")
-        } else if f.alternate() {
-            write!(f, "{:#}", self.0)
-        } else {
-            write!(f, "{}", self.0)
-        }
-    }
-}
-
-impl From<&Value> for Hash {
-    fn from(v: &Value) -> Self {
-        Self(v.raw.0)
-    }
-}
+// impl fmt::Display for Hash {
+//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//         if *self == SELF {
+//             write!(f, "self")
+//         } else if self.0 == EMPTY_HASH {
+//             write!(f, "null")
+//         } else if f.alternate() {
+//             write!(f, "{:#}", self.0)
+//         } else {
+//             write!(f, "{}", self.0)
+//         }
+//     }
+// }
+//
+// impl From<&Value> for Hash {
+//     fn from(v: &Value) -> Self {
+//         Self(v.raw.0)
+//     }
+// }
 
 #[derive(Clone, Debug, Eq)]
 pub struct Key {
@@ -723,32 +723,32 @@ impl JsonSchema for Key {
 #[derive(Clone, Debug, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AnchoredKey {
-    pub pod_id: PodId,
+    pub root: Hash,
     pub key: Key,
 }
 
 impl AnchoredKey {
-    pub fn new(pod_id: PodId, key: Key) -> Self {
-        Self { pod_id, key }
+    pub fn new(root: Hash, key: Key) -> Self {
+        Self { root, key }
     }
 }
 
 impl hash::Hash for AnchoredKey {
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
-        self.pod_id.hash(state);
+        self.root.hash(state);
         self.key.hash.hash(state);
     }
 }
 
 impl PartialEq for AnchoredKey {
     fn eq(&self, other: &Self) -> bool {
-        self.pod_id == other.pod_id && self.key.hash == other.key.hash
+        self.root == other.root && self.key.hash == other.key.hash
     }
 }
 
 impl fmt::Display for AnchoredKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.pod_id.fmt(f)?;
+        self.root.fmt(f)?;
         write!(f, "[")?;
         self.key.fmt(f)?;
         write!(f, "]")?;
@@ -756,31 +756,31 @@ impl fmt::Display for AnchoredKey {
     }
 }
 
-impl<T> From<(PodId, T)> for AnchoredKey
+impl<T> From<(Hash, T)> for AnchoredKey
 where
     T: Into<Key>,
 {
-    fn from((pod_id, t): (PodId, T)) -> Self {
-        Self::new(pod_id, t.into())
+    fn from((root, t): (Hash, T)) -> Self {
+        Self::new(root, t.into())
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
-pub struct PodId(pub Hash);
-
-impl ToFields for PodId {
-    fn to_fields(&self, params: &Params) -> Vec<F> {
-        self.0.to_fields(params)
-    }
-}
+// #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+// pub struct Hash(pub Hash);
+//
+// impl ToFields for Hash {
+//     fn to_fields(&self, params: &Params) -> Vec<F> {
+//         self.0.to_fields(params)
+//     }
+// }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, FromRepr, Serialize, Deserialize, JsonSchema)]
 pub enum PodType {
-    Signed = 1,
-    Main = 2,
-    Empty = 3,
-    MockMain = 102,
-    MockEmpty = 103,
+    // Signed = 1,
+    Main = 1,
+    Empty = 2,
+    MockMain = 101,
+    MockEmpty = 102,
 }
 
 impl fmt::Display for PodType {
@@ -788,7 +788,7 @@ impl fmt::Display for PodType {
         match self {
             PodType::MockMain => write!(f, "MockMain"),
             PodType::MockEmpty => write!(f, "MockEmpty"),
-            PodType::Signed => write!(f, "Signed"),
+            // PodType::Signed => write!(f, "Signed"),
             PodType::Main => write!(f, "Main"),
             PodType::Empty => write!(f, "Empty"),
         }
@@ -799,7 +799,7 @@ impl fmt::Display for PodType {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Hash)]
 #[serde(rename_all = "camelCase")]
 pub struct Params {
-    pub max_input_signed_pods: usize,
+    // pub max_input_signed_pods: usize,
     pub max_input_recursive_pods: usize,
     pub max_input_pods_public_statements: usize,
     pub max_statements: usize,
@@ -846,7 +846,7 @@ pub struct Params {
 impl Default for Params {
     fn default() -> Self {
         Self {
-            max_input_signed_pods: 3,
+            // max_input_signed_pods: 3,
             max_input_recursive_pods: 2,
             max_input_pods_public_statements: 10,
             max_statements: 20,
@@ -906,8 +906,7 @@ impl Params {
     /// Total size of the statement table including None, input statements from signed pods and
     /// input recursive pods and new statements (public & private)
     pub fn statement_table_size(&self) -> usize {
-        1 + self.max_input_signed_pods * self.max_signed_pod_values
-            + self.max_input_recursive_pods * self.max_input_pods_public_statements
+        1 + self.max_input_recursive_pods * self.max_input_pods_public_statements
             + self.max_statements
     }
 
@@ -984,7 +983,7 @@ pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
         EMPTY_HASH
     }
     // TODO: Remove
-    fn id(&self) -> PodId;
+    fn id(&self) -> Hash;
     // TODO: Remove
     /// Return a uuid of the pod type and its name.  The name is only used as metadata.
     fn pod_type(&self) -> (usize, &'static str);
@@ -1047,7 +1046,7 @@ pub trait RecursivePod: Pod {
         params: Params,
         data: serde_json::Value,
         vd_set: VDSet,
-        id: PodId,
+        id: Hash,
     ) -> Result<Box<dyn RecursivePod>, BackendError>
     where
         Self: Sized;

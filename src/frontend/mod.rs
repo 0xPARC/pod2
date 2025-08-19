@@ -5,13 +5,13 @@ use std::{collections::HashMap, convert::From, fmt};
 
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
+pub use serialization::SerializedMainPod;
 
-// pub use serialization::{SerializedMainPod, SerializedSignedDict};
 use crate::middleware::{
     self, check_custom_pred, check_st_tmpl, containers::Dictionary, hash_op, hash_str, max_op,
-    prod_op, sum_op, AnchoredKey, Key, MainPodInputs, NativeOperation, OperationAux, OperationType,
-    Params, PodId, PodProver, PublicKey, RawValue, Signature, Signer, Statement, StatementArg,
-    VDSet, Value, ValueRef, KEY_TYPE, SELF,
+    prod_op, sum_op, AnchoredKey, Hash, Key, MainPodInputs, NativeOperation, OperationAux,
+    OperationType, Params, PodProver, PublicKey, RawValue, Signature, Signer, Statement,
+    StatementArg, VDSet, Value, ValueRef, KEY_TYPE,
 };
 
 mod custom;
@@ -396,9 +396,9 @@ impl MainPodBuilder {
                 let native_arg_error = move || Error::op_invalid_args(format!("{o:?}"));
                 match (o, &op.1.as_slice()) {
                     (None, &[]) => Statement::None,
-                    (NewEntry, &[OperationArg::Entry(k, v)]) => {
-                        Statement::equal(AnchoredKey::from((SELF, k.as_str())), v.clone())
-                    }
+                    // (NewEntry, &[OperationArg::Entry(k, v)]) => {
+                    //     Statement::equal(AnchoredKey::from((SELF, k.as_str())), v.clone())
+                    // }
                     (EqualFromEntries, &[a1, a2]) => {
                         let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
@@ -612,26 +612,27 @@ impl MainPodBuilder {
     }
 
     fn literal(&mut self, public: bool, value: Value) -> Result<Statement> {
-        let public_value = (public, value);
-        if let Some(key) = self.literals.get(&public_value) {
-            Ok(Statement::equal(
-                AnchoredKey::new(SELF, key.clone()),
-                public_value.1,
-            ))
-        } else {
-            let key = format!("c{}", self.const_cnt);
-            self.literals
-                .insert(public_value.clone(), Key::new(key.clone()));
-            self.const_cnt += 1;
-            self.op(
-                public,
-                Operation(
-                    OperationType::Native(NativeOperation::NewEntry),
-                    vec![OperationArg::Entry(key.clone(), public_value.1)],
-                    OperationAux::None,
-                ),
-            )
-        }
+        todo!()
+        // let public_value = (public, value);
+        // if let Some(key) = self.literals.get(&public_value) {
+        //     Ok(Statement::equal(
+        //         AnchoredKey::new(SELF, key.clone()),
+        //         public_value.1,
+        //     ))
+        // } else {
+        //     let key = format!("c{}", self.const_cnt);
+        //     self.literals
+        //         .insert(public_value.clone(), Key::new(key.clone()));
+        //     self.const_cnt += 1;
+        //     self.op(
+        //         public,
+        //         Operation(
+        //             OperationType::Native(NativeOperation::NewEntry),
+        //             vec![OperationArg::Entry(key.clone(), public_value.1)],
+        //             OperationAux::None,
+        //         ),
+        //     )
+        // }
     }
 
     pub fn reveal(&mut self, st: &Statement) {
@@ -676,7 +677,7 @@ impl MainPodBuilder {
             .pub_statements()
             .into_iter()
             .find_map(|s| match s.as_entry() {
-                Some((AnchoredKey { pod_id: id, key }, _))
+                Some((AnchoredKey { root: id, key }, _))
                     if id == &pod_id && key.hash() == type_key_hash =>
                 {
                     Some(s)
@@ -697,12 +698,12 @@ impl MainPodBuilder {
                 let s_args = s
                     .args()
                     .into_iter()
-                    .map(|arg| match arg {
-                        StatementArg::Key(AnchoredKey { pod_id: id, key }) if id == SELF => {
-                            StatementArg::Key(AnchoredKey::new(pod_id, key))
-                        }
-                        _ => arg,
-                    })
+                    // .map(|arg| match arg {
+                    //     StatementArg::Key(AnchoredKey { root: id, key }) if id == SELF => {
+                    //         StatementArg::Key(AnchoredKey::new(pod_id, key))
+                    //     }
+                    //     _ => arg,
+                    // })
                     .collect();
                 Statement::from_args(s_type, s_args).expect("valid arguments")
             }))
@@ -741,7 +742,7 @@ impl fmt::Display for MainPod {
 }
 
 impl MainPod {
-    pub fn id(&self) -> PodId {
+    pub fn id(&self) -> Hash {
         self.pod.id()
     }
 
@@ -752,7 +753,7 @@ impl MainPod {
             .iter()
             .find_map(|st| match st {
                 Statement::Equal(ValueRef::Key(ak), ValueRef::Literal(value))
-                    if ak.pod_id == self.id() && ak.key.hash() == key.hash() =>
+                    if ak.root == self.id() && ak.key.hash() == key.hash() =>
                 {
                     Some(value)
                 }

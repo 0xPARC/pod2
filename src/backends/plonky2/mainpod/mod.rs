@@ -14,7 +14,8 @@ use crate::{
         cache::{self, CacheEntry},
         cache_get_standard_rec_main_pod_common_circuit_data,
         circuits::mainpod::{CustomPredicateVerification, MainPodVerifyInput, MainPodVerifyTarget},
-        deserialize_proof, deserialize_verifier_only,
+        deserialize_proof,
+        deserialize_verifier_only,
         emptypod::EmptyPod,
         error::{Error, Result},
         hash_common_data,
@@ -29,13 +30,14 @@ use crate::{
         serialization::{
             CircuitDataSerializer, CommonCircuitDataSerializer, VerifierCircuitDataSerializer,
         },
-        serialize_proof, serialize_verifier_only,
-        signedpod::SignedPod,
+        serialize_proof,
+        serialize_verifier_only,
+        // signedpod::SignedPod,
     },
     middleware::{
         self, resolve_wildcard_values, value_from_op, AnchoredKey, CustomPredicateBatch,
         Error as MiddlewareError, Hash, MainPodInputs, NativeOperation, OperationType, Params, Pod,
-        PodId, PodProver, PodType, RecursivePod, StatementArg, ToFields, VDSet, KEY_TYPE, SELF,
+        PodProver, PodType, RecursivePod, StatementArg, ToFields, VDSet, KEY_TYPE,
     },
     timed,
 };
@@ -284,23 +286,23 @@ pub(crate) fn layout_statements(
     statements.push(middleware::Statement::None.into());
 
     // Input signed pods region
-    let dummy_signed_pod_box: Box<dyn Pod> = Box::new(SignedPod::dummy());
-    let dummy_signed_pod = dummy_signed_pod_box.as_ref();
-    assert!(inputs.signed_pods.len() <= params.max_input_signed_pods);
-    for i in 0..params.max_input_signed_pods {
-        let pod = inputs.signed_pods.get(i).unwrap_or(&dummy_signed_pod);
-        let sts = pod.pub_statements();
-        assert!(sts.len() <= params.max_signed_pod_values);
-        for j in 0..params.max_signed_pod_values {
-            let mut st = sts
-                .get(j)
-                .unwrap_or(&middleware::Statement::None)
-                .clone()
-                .into();
-            pad_statement(params, &mut st);
-            statements.push(st);
-        }
-    }
+    // let dummy_signed_pod_box: Box<dyn Pod> = Box::new(SignedPod::dummy());
+    // let dummy_signed_pod = dummy_signed_pod_box.as_ref();
+    // assert!(inputs.signed_pods.len() <= params.max_input_signed_pods);
+    // for i in 0..params.max_input_signed_pods {
+    //     let pod = inputs.signed_pods.get(i).unwrap_or(&dummy_signed_pod);
+    //     let sts = pod.pub_statements();
+    //     assert!(sts.len() <= params.max_signed_pod_values);
+    //     for j in 0..params.max_signed_pod_values {
+    //         let mut st = sts
+    //             .get(j)
+    //             .unwrap_or(&middleware::Statement::None)
+    //             .clone()
+    //             .into();
+    //         pad_statement(params, &mut st);
+    //         statements.push(st);
+    //     }
+    // }
 
     // Input main pods region
     let empty_pod_box: Box<dyn RecursivePod> =
@@ -347,18 +349,18 @@ pub(crate) fn layout_statements(
 
     // Public statements
     assert!(inputs.public_statements.len() < params.max_public_statements);
-    let pod_type = if mock {
-        PodType::MockMain
-    } else {
-        PodType::Main
-    };
-    let mut type_st = middleware::Statement::Equal(
-        AnchoredKey::from((SELF, KEY_TYPE)).into(),
-        middleware::Value::from(pod_type).into(),
-    )
-    .into();
-    pad_statement(params, &mut type_st);
-    statements.push(type_st);
+    // let pod_type = if mock {
+    //     PodType::MockMain
+    // } else {
+    //     PodType::Main
+    // };
+    // let mut type_st = middleware::Statement::Equal(
+    //     AnchoredKey::from((SELF, KEY_TYPE)).into(),
+    //     middleware::Value::from(pod_type).into(),
+    // )
+    // .into();
+    // pad_statement(params, &mut type_st);
+    // statements.push(type_st);
 
     for i in 0..(params.max_public_statements - 1) {
         let mut st = inputs
@@ -449,16 +451,16 @@ impl PodProver for Prover {
         vd_set: &VDSet,
         inputs: MainPodInputs,
     ) -> Result<Box<dyn RecursivePod>> {
-        let signed_pods_input: Vec<SignedPod> = inputs
-            .signed_pods
-            .iter()
-            .map(|p| {
-                let p = (*p as &dyn Any)
-                    .downcast_ref::<SignedPod>()
-                    .expect("type SignedPod");
-                p.clone()
-            })
-            .collect_vec();
+        // let signed_pods_input: Vec<SignedPod> = inputs
+        //     .signed_pods
+        //     .iter()
+        //     .map(|p| {
+        //         let p = (*p as &dyn Any)
+        //             .downcast_ref::<SignedPod>()
+        //             .expect("type SignedPod");
+        //         p.clone()
+        //     })
+        //     .collect_vec();
 
         // Pad input recursive pods with empty pods if necessary
         let empty_pod = if inputs.recursive_pods.len() == params.max_input_recursive_pods {
@@ -514,7 +516,7 @@ impl PodProver for Prover {
         let operations = process_public_statements_operations(params, &statements, operations)?;
 
         // get the id out of the public statements
-        let id: PodId = PodId(calculate_sts_hash(&public_statements, params));
+        let sts_hash = calculate_sts_hash(&public_statements, params);
 
         let common_hash: String = cache_get_rec_main_pod_common_hash(params).clone();
         let proofs = inputs
@@ -525,7 +527,7 @@ impl PodProver for Prover {
                 assert_eq!(inputs.vd_set.root(), pod.vd_set().root());
                 ProofWithPublicInputs {
                     proof: pod.proof(),
-                    public_inputs: [pod.id().0 .0, inputs.vd_set.root().0].concat(),
+                    public_inputs: [pod.id().0, inputs.vd_set.root().0].concat(),
                 }
             })
             .collect_vec();
@@ -540,7 +542,7 @@ impl PodProver for Prover {
         let input = MainPodVerifyInput {
             vds_set: inputs.vd_set.clone(),
             vd_mt_proofs,
-            signed_pods: signed_pods_input,
+            // signed_pods: signed_pods_input,
             recursive_pods_pub_self_statements,
             statements: statements[statements.len() - params.max_statements..].to_vec(),
             operations,
@@ -567,7 +569,7 @@ impl PodProver for Prover {
             params: params.clone(),
             verifier_only: circuit_data.verifier_only.clone(),
             common_hash,
-            id,
+            sts_hash,
             vd_set: inputs.vd_set,
             public_statements,
             proof: proof_with_pis.proof,
@@ -578,7 +580,7 @@ impl PodProver for Prover {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MainPod {
     params: Params,
-    id: PodId,
+    sts_hash: Hash,
     verifier_only: VerifierOnlyCircuitData,
     common_hash: String,
     /// vds_root is the merkle-root of the `VDSet`, which contains the
@@ -686,9 +688,9 @@ impl Pod for MainPod {
             )));
         }
         // 2. get the id out of the public statements
-        let id = PodId(calculate_sts_hash(&self.public_statements, &self.params));
-        if id != self.id {
-            return Err(Error::id_not_equal(self.id, id));
+        let sts_hash = calculate_sts_hash(&self.public_statements, &self.params);
+        if sts_hash != self.sts_hash {
+            return Err(Error::sts_hash_not_equal(self.sts_hash, sts_hash));
         }
 
         // 7. verifier_data_hash is in the VDSet
@@ -705,7 +707,7 @@ impl Pod for MainPod {
         // 1, 3, 4, 5 verification via the zkSNARK proof
         let rec_main_pod_verifier_circuit_data =
             &*cache_get_rec_main_pod_verifier_circuit_data(&self.params);
-        let public_inputs = id
+        let public_inputs = sts_hash
             .to_fields(&self.params)
             .iter()
             .chain(self.vd_set.root().0.iter())
@@ -719,8 +721,8 @@ impl Pod for MainPod {
             .map_err(|e| Error::plonky2_proof_fail("MainPod", e))
     }
 
-    fn id(&self) -> PodId {
-        self.id
+    fn id(&self) -> Hash {
+        self.sts_hash
     }
     fn pod_type(&self) -> (usize, &'static str) {
         (PodType::Main as usize, "Main")
@@ -762,7 +764,7 @@ impl RecursivePod for MainPod {
         params: Params,
         data: serde_json::Value,
         vd_set: VDSet,
-        id: PodId,
+        id: Hash,
     ) -> Result<Box<dyn RecursivePod>> {
         let data: Data = serde_json::from_value(data)?;
         let common = cache_get_rec_main_pod_common_circuit_data(&params);
@@ -770,7 +772,7 @@ impl RecursivePod for MainPod {
         let verifier_only = deserialize_verifier_only(&data.verifier_only)?;
         Ok(Box::new(Self {
             params,
-            id,
+            sts_hash: id,
             verifier_only,
             common_hash: data.common_hash,
             vd_set,

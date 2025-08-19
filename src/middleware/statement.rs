@@ -506,7 +506,7 @@ impl ToFields for StatementArg {
                 .chain(iter::repeat(F::ZERO).take(STATEMENT_ARG_F_LEN - VALUE_SIZE))
                 .collect(),
             StatementArg::Key(ak) => {
-                let mut fields = ak.pod_id.to_fields(params);
+                let mut fields = ak.root.to_fields(params);
                 fields.extend(ak.key.to_fields(params));
                 fields
             }
