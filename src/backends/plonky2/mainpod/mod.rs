@@ -22,6 +22,7 @@ use crate::{
         hash_common_data,
         mock::emptypod::MockEmptyPod,
         primitives::{
+            ec::curve::Point as PublicKey,
             ec::schnorr::{SecretKey, Signature},
             merkletree::{MerkleClaimAndProof, MerkleTreeStateTransitionProof},
         },
@@ -38,7 +39,7 @@ use crate::{
     middleware::{
         self, resolve_wildcard_values, value_from_op, AnchoredKey, CustomPredicateBatch,
         Error as MiddlewareError, Hash, MainPodInputs, NativeOperation, OperationType, Params, Pod,
-        PodProver, RecursivePod, StatementArg, ToFields, VDSet, Value,
+        PodProver, RawValue, RecursivePod, StatementArg, ToFields, VDSet, Value,
     },
     timed,
 };
@@ -241,8 +242,8 @@ pub(crate) fn extract_public_key_of(
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct SignedBy {
-    msg: Value,
-    pk: Value,
+    msg: RawValue,
+    pk: PublicKey,
     sig: Signature,
 }
 
@@ -265,8 +266,8 @@ pub(crate) fn extract_signatures(
             let pk = value_from_op(pk_s, pk_ref).ok_or_else(deduction_err)?;
             aux_list[i] = OperationAux::SignedBy(table.len());
             table.push(SignedBy {
-                msg,
-                pk,
+                msg: msg.raw(),
+                pk: PublicKey::try_from(pk.typed())?,
                 sig: sig.clone(),
             });
         }
