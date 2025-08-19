@@ -178,6 +178,7 @@ impl MockMainPod {
 
     pub fn new(params: &Params, inputs: MainPodInputs) -> Result<Self> {
         let (statements, public_statements) = layout_statements(params, true, &inputs)?;
+        dbg!(statements.len());
         let mut aux_list = vec![OperationAux::None; params.max_priv_statements()];
         // Extract Merkle proofs and pad.
         let merkle_proofs =
@@ -195,6 +196,10 @@ impl MockMainPod {
             inputs.operations,
         )?;
         let operations = process_public_statements_operations(params, &statements, operations)?;
+
+        for (i, op) in operations.iter().enumerate() {
+            println!("{} op: {}", i, op);
+        }
 
         // get the id out of the public statements
         let sts_hash = calculate_sts_hash(&public_statements, params);
@@ -318,6 +323,15 @@ impl Pod for MockMainPod {
         // if !value_ofs_unique {
         //     return Err(Error::repeated_value_of());
         // }
+
+        for (i, st) in self
+            .statements
+            .iter()
+            .skip(input_statement_offset)
+            .enumerate()
+        {
+            println!("{} st: {}", i, st);
+        }
 
         // 5. verify that all `input_statements` are correctly generated
         // by `self.operations` (where each operation can only access previous statements)

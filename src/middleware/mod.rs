@@ -249,15 +249,17 @@ impl fmt::Display for TypedValue {
                 write!(f, "]")
             }
             TypedValue::Dictionary(d) => {
-                write!(f, "{{ ")?;
-                let kvs: Vec<_> = d.kvs().iter().sorted_by_key(|(k, _)| k.name()).collect();
-                for (i, (k, v)) in kvs.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}: {}", k, v)?;
-                }
-                write!(f, " }}")
+                // TODO: Revert
+                write!(f, "dict:{}", d.commitment())
+                // write!(f, "{{ ")?;
+                // let kvs: Vec<_> = d.kvs().iter().sorted_by_key(|(k, _)| k.name()).collect();
+                // for (i, (k, v)) in kvs.iter().enumerate() {
+                //     if i > 0 {
+                //         write!(f, ", ")?;
+                //     }
+                //     write!(f, "{}: {}", k, v)?;
+                // }
+                // write!(f, " }}")
             }
             TypedValue::Set(s) => {
                 write!(f, "#[")?;

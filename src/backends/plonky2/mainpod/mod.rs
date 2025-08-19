@@ -406,7 +406,7 @@ pub(crate) fn layout_statements(
     // pad_statement(params, &mut type_st);
     // statements.push(type_st);
 
-    for i in 0..(params.max_public_statements - 1) {
+    for i in 0..params.max_public_statements {
         let mut st = inputs
             .public_statements
             .get(i)
@@ -458,14 +458,10 @@ pub(crate) fn process_public_statements_operations(
     statements: &[Statement],
     mut operations: Vec<Operation>,
 ) -> Result<Vec<Operation>> {
+    dbg!(operations.len());
     let offset_public_statements = statements.len() - params.max_public_statements;
-    operations.push(Operation(
-        OperationType::Native(NativeOperation::NewEntry),
-        vec![],
-        OperationAux::None,
-    ));
-    for i in 0..(params.max_public_statements - 1) {
-        let st = &statements[offset_public_statements + i + 1];
+    for st in statements.iter().skip(offset_public_statements) {
+        println!("pub st: {}", st);
         let mut op = if st.is_none() {
             Operation(
                 OperationType::Native(NativeOperation::None),
