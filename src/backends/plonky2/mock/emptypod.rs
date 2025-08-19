@@ -8,7 +8,7 @@ use crate::{
     },
     middleware::{
         AnchoredKey, Hash, IntroPredicateRef, Params, Pod, PodType, RecursivePod, Statement, VDSet,
-        Value, EMPTY_HASH, KEY_TYPE,
+        Value, EMPTY_HASH,
     },
 };
 

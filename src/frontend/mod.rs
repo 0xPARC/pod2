@@ -11,7 +11,7 @@ use crate::middleware::{
     self, check_custom_pred, check_st_tmpl, containers::Dictionary, hash_op, hash_str, max_op,
     prod_op, sum_op, AnchoredKey, Hash, Key, MainPodInputs, NativeOperation, OperationAux,
     OperationType, Params, PodProver, PublicKey, RawValue, Signature, Signer, Statement,
-    StatementArg, VDSet, Value, ValueRef, KEY_TYPE,
+    StatementArg, VDSet, Value, ValueRef,
 };
 
 mod custom;
@@ -672,28 +672,30 @@ impl MainPodBuilder {
         // Gather public statements, making sure to inject the type
         // information specified by the backend.
         let pod_id = pod.id();
-        let type_key_hash = hash_str(KEY_TYPE);
-        let type_statement = pod
-            .pub_statements()
-            .into_iter()
-            .find_map(|s| match s.as_entry() {
-                Some((AnchoredKey { root: id, key }, _))
-                    if id == &pod_id && key.hash() == type_key_hash =>
-                {
-                    Some(s)
-                }
-                _ => None,
-            })
-            .ok_or(Error::custom(format!(
-                // TODO use a specific Error
-                "Missing POD type information in POD: {:?}",
-                pod
-            )))?;
+        // let type_key_hash = hash_str(KEY_TYPE);
+        // let type_statement = pod
+        //    .pub_statements()
+        //    .into_iter()
+        //    .find_map(|s| match s.as_entry() {
+        //        Some((AnchoredKey { root: id, key }, _))
+        //            if id == &pod_id && key.hash() == type_key_hash =>
+        //        {
+        //            Some(s)
+        //        }
+        //        _ => None,
+        //    })
+        //    .ok_or(Error::custom(format!(
+        //        // TODO use a specific Error
+        //        "Missing POD type information in POD: {:?}",
+        //        pod
+        //    )))?;
         // Replace instances of `SELF` with the POD ID for consistency
         // with `pub_statements` method.
-        let public_statements = [type_statement]
+        let public_statements = self
+            .public_statements
+            .clone()
             .into_iter()
-            .chain(self.public_statements.clone().into_iter().map(|s| {
+            .map(|s| {
                 let s_type = s.predicate();
                 let s_args = s
                     .args()
@@ -706,7 +708,7 @@ impl MainPodBuilder {
                     // })
                     .collect();
                 Statement::from_args(s_type, s_args).expect("valid arguments")
-            }))
+            })
             .collect();
 
         Ok(MainPod {

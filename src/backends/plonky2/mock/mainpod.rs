@@ -24,7 +24,7 @@ use crate::{
     middleware::{
         self, deserialize_pod, hash_str, AnchoredKey, Hash, MainPodInputs, NativeOperation,
         NativePredicate, OperationType, Params, Pod, PodProver, PodType, Predicate, RecursivePod,
-        StatementArg, VDSet, Value, KEY_TYPE,
+        StatementArg, VDSet, Value,
     },
 };
 

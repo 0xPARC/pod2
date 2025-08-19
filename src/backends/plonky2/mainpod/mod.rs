@@ -37,7 +37,7 @@ use crate::{
     middleware::{
         self, resolve_wildcard_values, value_from_op, AnchoredKey, CustomPredicateBatch,
         Error as MiddlewareError, Hash, MainPodInputs, NativeOperation, OperationType, Params, Pod,
-        PodProver, PodType, RecursivePod, StatementArg, ToFields, VDSet, KEY_TYPE,
+        PodProver, PodType, RecursivePod, StatementArg, ToFields, VDSet,
     },
     timed,
 };

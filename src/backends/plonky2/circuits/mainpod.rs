@@ -54,7 +54,7 @@ use crate::{
     middleware::{
         AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, NativeOperation,
         NativePredicate, Params, PodType, PredicatePrefix, Statement, StatementArg, ToFields,
-        Value, ValueRef, F, HASH_SIZE, KEY_TYPE, VALUE_SIZE,
+        Value, ValueRef, F, HASH_SIZE, VALUE_SIZE,
     },
 };
 //
