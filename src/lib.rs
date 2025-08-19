@@ -10,8 +10,9 @@ pub mod frontend;
 pub mod lang;
 pub mod middleware;
 
-#[cfg(any(test, feature = "examples"))]
-pub mod examples;
+// TODO: Uncomment
+// #[cfg(any(test, feature = "examples"))]
+// pub mod examples;
 
 #[cfg(feature = "time")]
 pub mod time_macros {

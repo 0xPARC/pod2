@@ -567,17 +567,3 @@ where
         Self::Literal(value.into())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::middleware::hash_str;
-
-    #[test]
-    fn test_print_special_keys() {
-        let key = hash_str(KEY_SIGNER);
-        println!("hash(KEY_SIGNER) = {:?}", key);
-        let key = hash_str(KEY_TYPE);
-        println!("hash(KEY_TYPE) = {:?}", key);
-    }
-}

@@ -451,10 +451,13 @@ impl CustomPredicateRef {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::middleware::{
-        AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key,
-        NativePredicate, Operation, Params, PodType, Predicate, Statement, StatementTmpl,
-        StatementTmplArg,
+    use crate::{
+        dict,
+        middleware::{
+            containers::Dictionary, AnchoredKey, CustomPredicate, CustomPredicateBatch,
+            CustomPredicateRef, Key, NativePredicate, Operation, Params, PodType, Predicate,
+            Statement, StatementTmpl, StatementTmplArg,
+        },
     };
 
     fn st(p: Predicate, args: Vec<StatementTmplArg>) -> StatementTmpl {
@@ -513,18 +516,25 @@ mod tests {
             )?],
         );
 
+        let d0 = dict!(32, {
+            "a" => 10,
+        })?;
+        let d1 = dict!(32, {
+            "b" => 15,
+            "c" => 17,
+        })?;
         let custom_statement = Statement::Custom(
             CustomPredicateRef::new(cust_pred_batch.clone(), 0),
-            vec![Value::from(SELF)],
+            vec![Value::from(d0.clone())],
         );
 
         let custom_deduction = Operation::Custom(
             CustomPredicateRef::new(cust_pred_batch, 0),
             vec![
-                Statement::equal(AnchoredKey::from((SELF, "c")), 2),
+                Statement::equal(AnchoredKey::from((&d1, "c")), 2),
                 Statement::product_of(
-                    AnchoredKey::from((SELF, "a")),
-                    AnchoredKey::from((SELF, "b")),
+                    AnchoredKey::from((&d0, "a")),
+                    AnchoredKey::from((&d1, "b")),
                     Value::from(3),
                 ),
             ],
@@ -548,18 +558,8 @@ mod tests {
             "eth_friend".into(),
             vec![
                 st(
-                    P::Native(NP::Equal),
-                    vec![
-                        STA::AnchoredKey(wc(2), Key::from("_type")),
-                        STA::Literal(PodType::Signed.into()),
-                    ],
-                ),
-                st(
-                    P::Native(NP::Equal),
-                    vec![
-                        STA::AnchoredKey(wc(2), Key::from("_signer")),
-                        STA::Wildcard(wc(0)),
-                    ],
+                    P::Native(NP::SignedBy),
+                    vec![STA::Wildcard(wc(2)), STA::Wildcard(wc(0))],
                 ),
                 st(
                     P::Native(NP::Equal),

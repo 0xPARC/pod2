@@ -772,12 +772,16 @@ mod tests {
     use num::BigUint;
 
     use crate::{
-        backends::plonky2::primitives::{
-            ec::{curve::GROUP_ORDER, schnorr::SecretKey},
-            merkletree::MerkleTree,
+        backends::plonky2::{
+            primitives::{
+                ec::{curve::GROUP_ORDER, schnorr::SecretKey},
+                merkletree::MerkleTree,
+            },
+            signer::Signer,
         },
         middleware::{
-            hash_value, AnchoredKey, Error, Hash, Key, Operation, Params, Result, Statement,
+            hash_value, AnchoredKey, Error, Hash, Key, Operation, Params, Result, Signer as _,
+            Statement, Value,
         },
     };
 
@@ -1049,6 +1053,24 @@ mod tests {
 
     #[test]
     fn check_signed_by_op() -> Result<()> {
-        todo!()
+        let params = Params::default();
+
+        let fixed_sk = SecretKey(BigUint::from(0x1234567890abcdefu64));
+        let fixed_pk = fixed_sk.public_key();
+        let msg = Value::from("hello");
+        let sig = Signer(fixed_sk).sign(msg.raw());
+
+        let dict = Hash::default();
+        let msg_ak = AnchoredKey::new(dict, Key::new("msg".into()));
+        let pk_ak = AnchoredKey::new(dict, Key::new("pk".into()));
+
+        let pk_s = Statement::Equal(pk_ak.clone().into(), fixed_pk.into());
+        let msg_s = Statement::Equal(msg_ak.clone().into(), msg.clone().into());
+
+        let op = Operation::SignedBy(msg_s.clone(), pk_s.clone(), sig);
+        let st = Statement::SignedBy(msg_ak.clone().into(), pk_ak.clone().into());
+        op.check(&params, &st)?;
+
+        Ok(())
     }
 }

@@ -26,14 +26,14 @@ use crate::{
 pub struct Signer(pub SecretKey);
 
 impl Signer {
-    fn sign_with_nonce(&self, nonce: BigUint, msg: RawValue) -> Result<Signature> {
+    fn sign_with_nonce(&self, nonce: BigUint, msg: RawValue) -> Signature {
         let signature: Signature = timed!("SignedPod::sign", self.0.sign(msg, &nonce));
-        Ok(signature)
+        signature
     }
 }
 
 impl middleware::Signer for Signer {
-    fn sign(&self, msg: RawValue) -> Result<Signature> {
+    fn sign(&self, msg: RawValue) -> Signature {
         let nonce = OsRng.gen_biguint_below(&GROUP_ORDER);
         self.sign_with_nonce(nonce, msg)
     }

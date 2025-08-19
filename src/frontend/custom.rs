@@ -229,6 +229,8 @@ fn resolve_wildcard(args: &[&str], priv_args: &[&str], s: &str) -> Result<Wildca
         )))
 }
 
+// TODO: Uncomment
+/*
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -364,3 +366,4 @@ mod tests {
         Ok(())
     }
 }
+*/

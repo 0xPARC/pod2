@@ -7,7 +7,7 @@ pub mod mock;
 pub mod primitives;
 pub mod recursion;
 pub mod serialization;
-pub mod signedpod;
+pub mod signer;
 
 use std::iter;
 

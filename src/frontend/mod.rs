@@ -57,7 +57,7 @@ impl SignedDictBuilder {
         let dict = Dictionary::new(self.params.max_depth_mt_containers, self.kvs.clone())?;
         // NOTE: This is the same way that `TypedValue::Dictionary` computes the `RawValue`
         let msg_raw = RawValue::from(dict.commitment());
-        let signature = signer.sign(msg_raw)?;
+        let signature = signer.sign(msg_raw);
 
         Ok(SignedDict {
             dict,

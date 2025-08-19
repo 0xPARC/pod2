@@ -27,6 +27,18 @@ pub struct Dictionary {
     kvs: HashMap<Key, Value>,
 }
 
+#[macro_export]
+macro_rules! dict {
+    ($max_depth:expr, { $($key:expr => $val:expr),* , }) => (
+        $crate::dict!($max_depth, { $($key => $val),* })
+    );
+    ($max_depth:expr, { $($key:expr => $val:expr),* }) => ({
+        let mut map = ::std::collections::HashMap::new();
+        $( map.insert($crate::middleware::Key::from($key), $crate::middleware::Value::from($val)); )*
+        $crate::middleware::containers::Dictionary::new($max_depth, map)
+    });
+}
+
 impl Dictionary {
     /// max_depth determines the depth of the underlying MerkleTree, allowing to
     /// store 2^max_depth elements in the Dictionary

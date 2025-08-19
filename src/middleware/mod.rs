@@ -765,6 +765,15 @@ where
     }
 }
 
+impl<T> From<(&Dictionary, T)> for AnchoredKey
+where
+    T: Into<Key>,
+{
+    fn from((dict, t): (&Dictionary, T)) -> Self {
+        Self::new(dict.commitment(), t.into())
+    }
+}
+
 // #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
 // pub struct Hash(pub Hash);
 //
@@ -1063,7 +1072,7 @@ impl Eq for Box<dyn RecursivePod> {}
 dyn_clone::clone_trait_object!(RecursivePod);
 
 pub trait Signer {
-    fn sign(&self, msg: RawValue) -> Result<Signature, BackendError>;
+    fn sign(&self, msg: RawValue) -> Signature;
     fn public_key(&self) -> PublicKey;
 }
 
