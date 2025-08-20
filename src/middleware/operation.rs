@@ -809,33 +809,26 @@ mod tests {
     #[test]
     fn check_container_ops() -> Result<()> {
         let params = Params::default();
-        let pod_id = Hash::default();
-        let root_ak = AnchoredKey::new(pod_id, Key::new("root".into()));
-        let key_ak = AnchoredKey::new(pod_id, Key::new("key".into()));
-        let val_ak = AnchoredKey::new(pod_id, Key::new("value".into()));
-
         // Form Merkle tree
         let kvs = (0..10)
             .map(|i| (hash_value(&i.into()).into(), i.into()))
             .collect::<HashMap<_, _>>();
         let mt = MerkleTree::new(params.max_depth_mt_containers, &kvs)?;
-        let root_s = Statement::Equal(root_ak.clone().into(), mt.root().into());
+        let root = mt.root();
 
         // Check existence proofs
         kvs.iter().try_for_each(|(k, v)| {
-            // Form op args
-            let key_s = Statement::Equal(key_ak.clone().into(), (*k).into());
-            let value_s = Statement::Equal(val_ak.clone().into(), (*v).into());
             let (_, pf) = mt.prove(k)?;
 
             // Form op
-            let op = Operation::ContainsFromEntries(root_s.clone(), key_s, value_s, pf);
-            // Form output statement
-            let st = Statement::Contains(
-                root_ak.clone().into(),
-                key_ak.clone().into(),
-                val_ak.clone().into(),
+            let op = Operation::ContainsFromEntries(
+                Statement::None,
+                Statement::None,
+                Statement::None,
+                pf,
             );
+            // Form output statement
+            let st = Statement::Contains(root.clone().into(), k.clone().into(), v.clone().into());
 
             // Check op against output statement
             op.check(&params, &st).and_then(|ind| {
@@ -852,11 +845,10 @@ mod tests {
 
         // Check non-existence proofs similarly
         (50..60).try_for_each(|k| {
-            let key_s = Statement::Equal(key_ak.clone().into(), k.into());
             let pf = mt.prove_nonexistence(&k.into())?;
 
-            let op = Operation::NotContainsFromEntries(root_s.clone(), key_s, pf);
-            let st = Statement::NotContains(root_ak.clone().into(), key_ak.clone().into());
+            let op = Operation::NotContainsFromEntries(Statement::None, Statement::None, pf);
+            let st = Statement::NotContains(root.clone().into(), k.clone().into());
 
             op.check(&params, &st).and_then(|ind| {
                 if ind {
@@ -874,11 +866,6 @@ mod tests {
     #[test]
     fn check_container_update_ops() -> Result<()> {
         let params = Params::default();
-        let pod_id = Hash::default();
-        let new_root_ak = AnchoredKey::new(pod_id, Key::new("new_root".into()));
-        let old_root_ak = AnchoredKey::new(pod_id, Key::new("new_root".into()));
-        let key_ak = AnchoredKey::new(pod_id, Key::new("key".into()));
-        let val_ak = AnchoredKey::new(pod_id, Key::new("value".into()));
 
         // Form Merkle tree
         let kvs = (0..10)
@@ -890,23 +877,24 @@ mod tests {
         (11..20)
             .map(|i| (hash_value(&i.into()).into(), i.into()))
             .try_for_each(|(k, v)| {
-                let old_root_s = Statement::Equal(old_root_ak.clone().into(), mt.root().into());
+                let old_root = mt.root();
                 let mtp = mt.insert(&k, &v)?;
-                // Form op args
-                let new_root_s = Statement::Equal(new_root_ak.clone().into(), mt.root().into());
-                let key_s = Statement::Equal(key_ak.clone().into(), k.into());
-                let value_s = Statement::Equal(val_ak.clone().into(), v.into());
+                let new_root = mt.root();
 
                 // Form op
                 let op = Operation::ContainerInsertFromEntries(
-                    new_root_s, old_root_s, key_s, value_s, mtp,
+                    Statement::None,
+                    Statement::None,
+                    Statement::None,
+                    Statement::None,
+                    mtp,
                 );
                 // Form output statement
                 let st = Statement::ContainerInsert(
-                    new_root_ak.clone().into(),
-                    old_root_ak.clone().into(),
-                    key_ak.clone().into(),
-                    val_ak.clone().into(),
+                    new_root.clone().into(),
+                    old_root.clone().into(),
+                    k.clone().into(),
+                    v.clone().into(),
                 );
 
                 // Check op against output statement
@@ -926,23 +914,24 @@ mod tests {
         (11..20)
             .map(|i| (hash_value(&i.into()).into(), (i + 1).into()))
             .try_for_each(|(k, v)| {
-                let old_root_s = Statement::Equal(old_root_ak.clone().into(), mt.root().into());
+                let old_root = mt.root();
                 let mtp = mt.update(&k, &v)?;
-                // Form op args
-                let new_root_s = Statement::Equal(new_root_ak.clone().into(), mt.root().into());
-                let key_s = Statement::Equal(key_ak.clone().into(), k.into());
-                let value_s = Statement::Equal(val_ak.clone().into(), v.into());
+                let new_root = mt.root();
 
                 // Form op
                 let op = Operation::ContainerUpdateFromEntries(
-                    new_root_s, old_root_s, key_s, value_s, mtp,
+                    Statement::None,
+                    Statement::None,
+                    Statement::None,
+                    Statement::None,
+                    mtp,
                 );
                 // Form output statement
                 let st = Statement::ContainerUpdate(
-                    new_root_ak.clone().into(),
-                    old_root_ak.clone().into(),
-                    key_ak.clone().into(),
-                    val_ak.clone().into(),
+                    new_root.clone().into(),
+                    old_root.clone().into(),
+                    k.clone().into(),
+                    v.clone().into(),
                 );
 
                 // Check op against output statement
@@ -962,19 +951,22 @@ mod tests {
         (11..20)
             .map(|i| hash_value(&i.into()).into())
             .try_for_each(|k| {
-                let old_root_s = Statement::Equal(old_root_ak.clone().into(), mt.root().into());
+                let old_root = mt.root();
                 let mtp = mt.delete(&k)?;
-                // Form op args
-                let new_root_s = Statement::Equal(new_root_ak.clone().into(), mt.root().into());
-                let key_s = Statement::Equal(key_ak.clone().into(), k.into());
+                let new_root = mt.root();
 
                 // Form op
-                let op = Operation::ContainerDeleteFromEntries(new_root_s, old_root_s, key_s, mtp);
+                let op = Operation::ContainerDeleteFromEntries(
+                    Statement::None,
+                    Statement::None,
+                    Statement::None,
+                    mtp,
+                );
                 // Form output statement
                 let st = Statement::ContainerDelete(
-                    new_root_ak.clone().into(),
-                    old_root_ak.clone().into(),
-                    key_ak.clone().into(),
+                    new_root.clone().into(),
+                    old_root.clone().into(),
+                    k.clone().into(),
                 );
 
                 // Check op against output statement
@@ -1015,20 +1007,13 @@ mod tests {
         ];
 
         let params = Params::default();
-        let pod_id = Hash::default();
-        let pk_ak = AnchoredKey::new(pod_id, Key::new("pubkey".into()));
-        let sk_ak = AnchoredKey::new(pod_id, Key::new("secret".into()));
 
         test_cases.iter().try_for_each(|(pk, sk, expect_good)| {
-            // Form op args
-            let pk_s = Statement::Equal(pk_ak.clone().into(), (*pk).into());
-            let sk_s = Statement::Equal(sk_ak.clone().into(), sk.clone().into());
-
             // Form op
-            let op = Operation::PublicKeyOf(pk_s.clone(), sk_s.clone());
+            let op = Operation::PublicKeyOf(Statement::None, Statement::None);
 
             // Form output statement
-            let st = Statement::PublicKeyOf(pk_ak.clone().into(), sk_ak.clone().into());
+            let st = Statement::PublicKeyOf(pk.clone().into(), sk.clone().into());
 
             // Check
             op.check(&params, &st).map(|is_good| {
@@ -1047,24 +1032,17 @@ mod tests {
         let fixed_pk = fixed_sk.public_key();
 
         let params = Params::default();
-        let pod_id = Hash::default();
-        let pk_ak = AnchoredKey::new(pod_id, Key::new("pubkey".into()));
-        let sk_ak = AnchoredKey::new(pod_id, Key::new("secret".into()));
-
-        // Form op args
-        let pk_s = Statement::Equal(pk_ak.clone().into(), fixed_pk.into());
-        let sk_s = Statement::Equal(sk_ak.clone().into(), fixed_sk.clone().into());
 
         // Bad op and statement with bad first args
-        let op = Operation::PublicKeyOf(pk_s.clone(), pk_s.clone());
-        let st = Statement::PublicKeyOf(pk_ak.clone().into(), pk_ak.clone().into());
+        let op = Operation::PublicKeyOf(Statement::None, Statement::None);
+        let st = Statement::PublicKeyOf(fixed_pk.clone().into(), fixed_pk.clone().into());
 
         // Check
         assert!(op.check(&params, &st).is_err());
 
         // Bad op and statement with bad second args
-        let op = Operation::PublicKeyOf(sk_s.clone(), sk_s.clone());
-        let st = Statement::PublicKeyOf(sk_ak.clone().into(), sk_ak.clone().into());
+        let op = Operation::PublicKeyOf(Statement::None, Statement::None);
+        let st = Statement::PublicKeyOf(fixed_sk.clone().into(), fixed_sk.clone().into());
 
         // Check
         assert!(op.check(&params, &st).is_err());
@@ -1076,20 +1054,13 @@ mod tests {
     fn check_signed_by_op() -> Result<()> {
         let params = Params::default();
 
-        let fixed_sk = SecretKey(BigUint::from(0x1234567890abcdefu64));
-        let fixed_pk = fixed_sk.public_key();
+        let sk = SecretKey(BigUint::from(0x1234567890abcdefu64));
+        let pk = sk.public_key();
         let msg = Value::from("hello");
-        let sig = Signer(fixed_sk).sign(msg.raw());
+        let sig = Signer(sk).sign(msg.raw());
 
-        let dict = Hash::default();
-        let msg_ak = AnchoredKey::new(dict, Key::new("msg".into()));
-        let pk_ak = AnchoredKey::new(dict, Key::new("pk".into()));
-
-        let pk_s = Statement::Equal(pk_ak.clone().into(), fixed_pk.into());
-        let msg_s = Statement::Equal(msg_ak.clone().into(), msg.clone().into());
-
-        let op = Operation::SignedBy(msg_s.clone(), pk_s.clone(), sig);
-        let st = Statement::SignedBy(msg_ak.clone().into(), pk_ak.clone().into());
+        let op = Operation::SignedBy(Statement::None, Statement::None, sig);
+        let st = Statement::SignedBy(msg.into(), pk.into());
         op.check(&params, &st)?;
 
         Ok(())

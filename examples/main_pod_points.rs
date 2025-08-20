@@ -1,3 +1,4 @@
+/*
 #![allow(clippy::uninlined_format_args)] // TODO: Remove this in another PR
 //! Example of building main pods that verify signed pods and other main pods using custom
 //! predicates
@@ -159,3 +160,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+*/
+
+fn main() {}

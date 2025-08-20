@@ -1,3 +1,4 @@
+/*
 #![allow(clippy::uninlined_format_args)] // TODO: Remove this in another PR
 //! Simple example of building a signed pod and verifying it
 //!
@@ -43,3 +44,5 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+*/
+fn main() {}

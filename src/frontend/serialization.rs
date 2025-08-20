@@ -122,16 +122,15 @@ mod tests {
             primitives::ec::schnorr::SecretKey,
             signer::Signer,
         },
-        // examples::{
-        //     attest_eth_friend, zu_kyc_pod_builder, zu_kyc_sign_dict_builders, EthDosHelper,
-        //     MOCK_VD_SET,
-        // },
-        examples::{zu_kyc_pod_builder, zu_kyc_sign_dict_builders, MOCK_VD_SET},
+        examples::{
+            attest_eth_friend, zu_kyc_pod_builder, zu_kyc_sign_dict_builders, EthDosHelper,
+            MOCK_VD_SET,
+        },
         frontend::{Result, SignedDictBuilder},
         middleware::{
             self,
             containers::{Array, Dictionary, Set},
-            Params, TypedValue, DEFAULT_VD_LIST,
+            Params, Signer as _, TypedValue, DEFAULT_VD_LIST,
         },
     };
 
@@ -328,61 +327,61 @@ mod tests {
     //     Ok(())
     // }
 
-    // fn build_ethdos_pod() -> Result<MainPod> {
-    //     let params = Params {
-    //         max_input_pods_public_statements: 8,
-    //         max_statements: 24,
-    //         max_public_statements: 8,
-    //         ..Default::default()
-    //     };
-    //     let vd_set = &*MOCK_VD_SET;
+    fn build_ethdos_pod() -> Result<MainPod> {
+        let params = Params {
+            max_input_pods_public_statements: 8,
+            max_statements: 24,
+            max_public_statements: 8,
+            ..Default::default()
+        };
+        let vd_set = &*MOCK_VD_SET;
 
-    //     let alice = Signer(SecretKey(1u32.into()));
-    //     let bob = Signer(SecretKey(2u32.into()));
-    //     let charlie = Signer(SecretKey(3u32.into()));
+        let alice = Signer(SecretKey(1u32.into()));
+        let bob = Signer(SecretKey(2u32.into()));
+        let charlie = Signer(SecretKey(3u32.into()));
 
-    //     // Alice attests that she is ETH friends with Bob and Bob
-    //     // attests that he is ETH friends with Charlie.
-    //     let alice_attestation = attest_eth_friend(&params, &alice, bob.public_key());
-    //     let bob_attestation = attest_eth_friend(&params, &bob, charlie.public_key());
+        // Alice attests that she is ETH friends with Bob and Bob
+        // attests that he is ETH friends with Charlie.
+        let alice_attestation = attest_eth_friend(&params, &alice, bob.public_key());
+        let bob_attestation = attest_eth_friend(&params, &bob, charlie.public_key());
 
-    //     let helper = EthDosHelper::new(&params, vd_set, true, alice.public_key())?;
-    //     let prover = MockProver {};
-    //     let dist_1 = helper.dist_1(&alice_attestation)?.prove(&prover, &params)?;
-    //     let dist_2 = helper
-    //         .dist_n_plus_1(&dist_1, &bob_attestation)?
-    //         .prove(&prover, &params)?;
+        let helper = EthDosHelper::new(&params, vd_set, true, alice.public_key())?;
+        let prover = MockProver {};
+        let dist_1 = helper.dist_1(&alice_attestation)?.prove(&prover)?;
+        let dist_2 = helper
+            .dist_n_plus_1(&dist_1, &bob_attestation)?
+            .prove(&prover)?;
 
-    //     Ok(dist_2)
-    // }
+        Ok(dist_2)
+    }
 
-    // #[test]
-    // // This tests that we can generate JSON Schemas for the MainPod and
-    // // SignedPod types, and that we can validate Signed and Main Pods
-    // // against the schemas. Since both Mock and Plonky2 PODs have the same
-    // // public interface, we can assume that the schema works for both.
-    // fn test_schema() {
-    //     let mainpod_schema = schema_for!(SerializedMainPod);
-    //     let signeddict_schema = schema_for!(SignedDict);
+    #[test]
+    // This tests that we can generate JSON Schemas for the MainPod and
+    // SignedPod types, and that we can validate Signed and Main Pods
+    // against the schemas. Since both Mock and Plonky2 PODs have the same
+    // public interface, we can assume that the schema works for both.
+    fn test_schema() {
+        let mainpod_schema = schema_for!(SerializedMainPod);
+        let signeddict_schema = schema_for!(SignedDict);
 
-    //     let kyc_pod = build_mock_zukyc_pod().unwrap();
-    //     let signed_pod = signed_pod_builder()
-    //         .sign(&Signer(SecretKey(1u32.into())))
-    //         .unwrap();
-    //     let ethdos_pod = build_ethdos_pod().unwrap();
-    //     let mainpod_schema_value = serde_json::to_value(&mainpod_schema).unwrap();
-    //     let signedpod_schema_value = serde_json::to_value(&signeddict_schema).unwrap();
+        let kyc_pod = build_mock_zukyc_pod().unwrap();
+        let signed_pod = signed_pod_builder()
+            .sign(&Signer(SecretKey(1u32.into())))
+            .unwrap();
+        let ethdos_pod = build_ethdos_pod().unwrap();
+        let mainpod_schema_value = serde_json::to_value(&mainpod_schema).unwrap();
+        let signedpod_schema_value = serde_json::to_value(&signeddict_schema).unwrap();
 
-    //     let kyc_pod_value = serde_json::to_value(&kyc_pod).unwrap();
-    //     let mainpod_valid = jsonschema::validate(&mainpod_schema_value, &kyc_pod_value);
-    //     assert!(mainpod_valid.is_ok(), "{:#?}", mainpod_valid);
+        let kyc_pod_value = serde_json::to_value(&kyc_pod).unwrap();
+        let mainpod_valid = jsonschema::validate(&mainpod_schema_value, &kyc_pod_value);
+        assert!(mainpod_valid.is_ok(), "{:#?}", mainpod_valid);
 
-    //     let signed_pod_value = serde_json::to_value(&signed_pod).unwrap();
-    //     let signedpod_valid = jsonschema::validate(&signedpod_schema_value, &signed_pod_value);
-    //     assert!(signedpod_valid.is_ok(), "{:#?}", signedpod_valid);
+        let signed_pod_value = serde_json::to_value(&signed_pod).unwrap();
+        let signedpod_valid = jsonschema::validate(&signedpod_schema_value, &signed_pod_value);
+        assert!(signedpod_valid.is_ok(), "{:#?}", signedpod_valid);
 
-    //     let ethdos_pod_value = serde_json::to_value(&ethdos_pod).unwrap();
-    //     let ethdos_pod_valid = jsonschema::validate(&mainpod_schema_value, &ethdos_pod_value);
-    //     assert!(ethdos_pod_valid.is_ok(), "{:#?}", ethdos_pod_valid);
-    // }
+        let ethdos_pod_value = serde_json::to_value(&ethdos_pod).unwrap();
+        let ethdos_pod_valid = jsonschema::validate(&mainpod_schema_value, &ethdos_pod_value);
+        assert!(ethdos_pod_valid.is_ok(), "{:#?}", ethdos_pod_valid);
+    }
 }

@@ -4,6 +4,7 @@
 use std::{collections::HashMap, convert::From, fmt};
 
 use itertools::Itertools;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 pub use serialization::SerializedMainPod;
 
@@ -67,7 +68,7 @@ impl SignedDictBuilder {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 // #[serde(try_from = "SerializedSignedDict", into = "SerializedSignedDict")]
 pub struct SignedDict {
     pub dict: Dictionary,
