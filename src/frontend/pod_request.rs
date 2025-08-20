@@ -172,18 +172,18 @@ impl Display for PodRequest {
     }
 }
 
-// TODO: Uncomment
-/*
 #[cfg(test)]
 mod tests {
     use crate::{
         backends::plonky2::{
-            mock::mainpod::MockProver, primitives::ec::schnorr::SecretKey, signedpod::Signer,
+            mock::mainpod::MockProver, primitives::ec::schnorr::SecretKey, signer::Signer,
         },
-        examples::{zu_kyc_pod_builder, zu_kyc_pod_request, zu_kyc_sign_dict_builders, MOCK_VD_SET},
+        examples::{
+            zu_kyc_pod_builder, zu_kyc_pod_request, zu_kyc_sign_dict_builders, MOCK_VD_SET,
+        },
         frontend::{MainPodBuilder, Operation},
         lang::parse,
-        middleware::Params,
+        middleware::{Params, Value},
     };
 
     #[test]
@@ -200,8 +200,8 @@ mod tests {
 
         // This request matches the POD
         let request = zu_kyc_pod_request(
-            gov_id.get("_signer").unwrap(),
-            pay_stub.get("_signer").unwrap(),
+            &Value::from(gov_id.public_key),
+            &Value::from(pay_stub.public_key),
         )
         .unwrap();
         assert!(request.exact_match_pod(&*kyc.pod).is_ok());
@@ -255,4 +255,3 @@ mod tests {
         assert_eq!(*bindings.get("c").unwrap(), 1.into());
     }
 }
-*/

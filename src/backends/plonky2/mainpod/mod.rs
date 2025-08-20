@@ -458,10 +458,8 @@ pub(crate) fn process_public_statements_operations(
     statements: &[Statement],
     mut operations: Vec<Operation>,
 ) -> Result<Vec<Operation>> {
-    dbg!(operations.len());
     let offset_public_statements = statements.len() - params.max_public_statements;
     for st in statements.iter().skip(offset_public_statements) {
-        println!("pub st: {}", st);
         let mut op = if st.is_none() {
             Operation(
                 OperationType::Native(NativeOperation::None),
