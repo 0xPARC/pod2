@@ -196,13 +196,13 @@ macro_rules! op_impl_st {
 }
 
 impl Operation {
-    pub fn new_entry(a1: impl Into<String>, a2: impl Into<Value>) -> Self {
-        Self(
-            OperationType::Native(NativeOperation::NewEntry),
-            vec![OperationArg::Entry(a1.into(), a2.into())],
-            OperationAux::None,
-        )
-    }
+    // pub fn new_entry(a1: impl Into<String>, a2: impl Into<Value>) -> Self {
+    //     Self(
+    //         OperationType::Native(NativeOperation::NewEntry),
+    //         vec![OperationArg::Entry(a1.into(), a2.into())],
+    //         OperationAux::None,
+    //     )
+    // }
     op_impl_oa!(eq, EqualFromEntries, 2);
     op_impl_oa!(ne, NotEqualFromEntries, 2);
     op_impl_oa!(gt_eq, GtEqFromEntries, 2);

@@ -640,40 +640,40 @@ impl MainPodBuilder {
         Ok(self.statements[self.statements.len() - 1].clone())
     }
 
-    /// Convenience method for introducing public constants.
-    pub fn pub_literal(&mut self, v: impl Into<Value>) -> Result<Statement> {
-        self.literal(true, v.into())
-    }
+    // /// Convenience method for introducing public constants.
+    // pub fn pub_literal(&mut self, v: impl Into<Value>) -> Result<Statement> {
+    //     self.literal(true, v.into())
+    // }
 
-    /// Convenience method for introducing private constants.
-    pub fn priv_literal(&mut self, v: impl Into<Value>) -> Result<Statement> {
-        self.literal(false, v.into())
-    }
+    // /// Convenience method for introducing private constants.
+    // pub fn priv_literal(&mut self, v: impl Into<Value>) -> Result<Statement> {
+    //     self.literal(false, v.into())
+    // }
 
     // TODO: Remove because we have literals in the args now
-    fn literal(&mut self, public: bool, value: Value) -> Result<Statement> {
-        todo!()
-        // let public_value = (public, value);
-        // if let Some(key) = self.literals.get(&public_value) {
-        //     Ok(Statement::equal(
-        //         AnchoredKey::new(SELF, key.clone()),
-        //         public_value.1,
-        //     ))
-        // } else {
-        //     let key = format!("c{}", self.const_cnt);
-        //     self.literals
-        //         .insert(public_value.clone(), Key::new(key.clone()));
-        //     self.const_cnt += 1;
-        //     self.op(
-        //         public,
-        //         Operation(
-        //             OperationType::Native(NativeOperation::NewEntry),
-        //             vec![OperationArg::Entry(key.clone(), public_value.1)],
-        //             OperationAux::None,
-        //         ),
-        //     )
-        // }
-    }
+    // fn literal(&mut self, public: bool, value: Value) -> Result<Statement> {
+    //     todo!()
+    //     // let public_value = (public, value);
+    //     // if let Some(key) = self.literals.get(&public_value) {
+    //     //     Ok(Statement::equal(
+    //     //         AnchoredKey::new(SELF, key.clone()),
+    //     //         public_value.1,
+    //     //     ))
+    //     // } else {
+    //     //     let key = format!("c{}", self.const_cnt);
+    //     //     self.literals
+    //     //         .insert(public_value.clone(), Key::new(key.clone()));
+    //     //     self.const_cnt += 1;
+    //     //     self.op(
+    //     //         public,
+    //     //         Operation(
+    //     //             OperationType::Native(NativeOperation::NewEntry),
+    //     //             vec![OperationArg::Entry(key.clone(), public_value.1)],
+    //     //             OperationAux::None,
+    //     //         ),
+    //     //     )
+    //     // }
+    // }
 
     pub fn reveal(&mut self, st: &Statement) {
         self.public_statements.push(st.clone());
@@ -1501,16 +1501,16 @@ pub mod tests {
         let value_of_a = Statement::contains(local.clone(), "a", 3);
         let value_of_b = Statement::contains(local.clone(), "b", 27);
 
-        let op_new_entry = Operation(
-            OperationType::Native(NativeOperation::NewEntry),
+        let op_contains = Operation(
+            OperationType::Native(NativeOperation::DictContainsFromEntries),
             vec![],
             OperationAux::None,
         );
         builder
-            .insert(false, (value_of_a.clone(), op_new_entry.clone()))
+            .insert(false, (value_of_a.clone(), op_contains.clone()))
             .unwrap();
         builder
-            .insert(false, (value_of_b.clone(), op_new_entry))
+            .insert(false, (value_of_b.clone(), op_contains))
             .unwrap();
         let st = Statement::equal(
             AnchoredKey::from((&local, "a")),

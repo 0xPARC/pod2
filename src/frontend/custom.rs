@@ -229,8 +229,6 @@ fn resolve_wildcard(args: &[&str], priv_args: &[&str], s: &str) -> Result<Wildca
         )))
 }
 
-// TODO: Uncomment
-/*
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -276,15 +274,10 @@ mod tests {
         let mut builder = CustomPredicateBatchBuilder::new(params.clone(), "gt_custom_pred".into());
 
         let gt_stb = StatementTmplBuilder::new(NativePredicate::Gt)
-            .arg(("s1_origin", "s1_key"))
-            .arg(("s2_origin", "s2_key"));
+            .arg("s1")
+            .arg("s2");
 
-        builder.predicate_and(
-            "gt_custom_pred",
-            &["s1_origin", "s2_origin"],
-            &[],
-            &[gt_stb],
-        )?;
+        builder.predicate_and("gt_custom_pred", &["s1", "s2"], &[], &[gt_stb])?;
         let batch = builder.finish();
         let batch_clone = batch.clone();
         let gt_custom_pred = CustomPredicateRef::new(batch, 0);
@@ -292,11 +285,8 @@ mod tests {
         let mut mp_builder = MainPodBuilder::new(&params, vd_set);
 
         // 2 > 1
-        let s1 = mp_builder.priv_op(Operation::new_entry("s1_key", Value::from(2)))?;
-        let s2 = mp_builder.priv_op(Operation::new_entry("s2_key", Value::from(1)))?;
-
         // Adding a gt operation will produce a desugared lt operation
-        let desugared_gt = mp_builder.pub_op(Operation::gt(s1, s2))?;
+        let desugared_gt = mp_builder.pub_op(Operation::gt(2, 1))?;
         assert_eq!(
             desugared_gt.predicate(),
             Predicate::Native(NativePredicate::Lt)
@@ -326,12 +316,12 @@ mod tests {
             CustomPredicateBatchBuilder::new(params.clone(), "set_contains_custom_pred".into());
 
         let set_contains_stb = StatementTmplBuilder::new(NativePredicate::SetContains)
-            .arg(("s1_origin", "s1_key"))
-            .arg(("s2_origin", "s2_key"));
+            .arg("s1")
+            .arg("s2");
 
         builder.predicate_and(
             "set_contains_custom_pred",
-            &["s1_origin", "s2_origin"],
+            &["s1", "s2"],
             &[],
             &[set_contains_stb],
         )?;
@@ -341,11 +331,8 @@ mod tests {
         let mut mp_builder = MainPodBuilder::new(&params, vd_set);
 
         let set_values: HashSet<Value> = [1, 2, 3].iter().map(|i| Value::from(*i)).collect();
-        let s1 = mp_builder.priv_op(Operation::new_entry(
-            "s1_key",
-            Value::from(Set::new(params.max_depth_mt_containers, set_values)?),
-        ))?;
-        let s2 = mp_builder.priv_op(Operation::new_entry("s2_key", Value::from(1)))?;
+        let s1 = Set::new(params.max_depth_mt_containers, set_values)?;
+        let s2 = 1;
 
         let set_contains = mp_builder.pub_op(Operation::set_contains(s1, s2))?;
         assert_eq!(
@@ -366,4 +353,3 @@ mod tests {
         Ok(())
     }
 }
-*/

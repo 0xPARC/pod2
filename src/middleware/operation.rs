@@ -72,7 +72,7 @@ impl ToFields for OperationType {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, std::hash::Hash, Serialize, Deserialize)]
 pub enum NativeOperation {
     None = 0,
-    NewEntry = 1,
+    // NewEntry = 1,
     CopyStatement = 2,
     EqualFromEntries = 3,
     NotEqualFromEntries = 4,
@@ -130,7 +130,7 @@ impl OperationType {
         match self {
             OperationType::Native(native_op) => match native_op {
                 NativeOperation::None => Some(Predicate::Native(NativePredicate::None)),
-                NativeOperation::NewEntry => Some(Predicate::Native(NativePredicate::Equal)),
+                // NativeOperation::NewEntry => Some(Predicate::Native(NativePredicate::Equal)),
                 NativeOperation::CopyStatement => None,
                 NativeOperation::EqualFromEntries => {
                     Some(Predicate::Native(NativePredicate::Equal))
@@ -178,7 +178,7 @@ impl OperationType {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Operation {
     None,
-    NewEntry,
+    // NewEntry,
     CopyStatement(Statement),
     EqualFromEntries(Statement, Statement),
     NotEqualFromEntries(Statement, Statement),
@@ -248,7 +248,7 @@ impl Operation {
         use NativeOperation::*;
         match self {
             Self::None => OT::Native(None),
-            Self::NewEntry => OT::Native(NewEntry),
+            // Self::NewEntry => OT::Native(NewEntry),
             Self::CopyStatement(_) => OT::Native(CopyStatement),
             Self::EqualFromEntries(_, _) => OT::Native(EqualFromEntries),
             Self::NotEqualFromEntries(_, _) => OT::Native(NotEqualFromEntries),
@@ -278,7 +278,7 @@ impl Operation {
     pub fn args(&self) -> Vec<Statement> {
         match self.clone() {
             Self::None => vec![],
-            Self::NewEntry => vec![],
+            // Self::NewEntry => vec![],
             Self::CopyStatement(s) => vec![s],
             Self::EqualFromEntries(s1, s2) => vec![s1, s2],
             Self::NotEqualFromEntries(s1, s2) => vec![s1, s2],
@@ -317,7 +317,7 @@ impl Operation {
         Ok(match op_code {
             OperationType::Native(o) => match (o, &args, aux.clone()) {
                 (NO::None, &[], OA::None) => Self::None,
-                (NO::NewEntry, &[], OA::None) => Self::NewEntry,
+                // (NO::NewEntry, &[], OA::None) => Self::NewEntry,
                 (NO::CopyStatement, &[s], OA::None) => Self::CopyStatement(s.clone()),
                 (NO::EqualFromEntries, &[s1, s2], OA::None) => {
                     Self::EqualFromEntries(s1.clone(), s2.clone())
