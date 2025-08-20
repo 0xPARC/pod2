@@ -4,7 +4,8 @@ use crate::{
     frontend::{MainPod, SignedDict},
     middleware::{
         containers::Dictionary, root_key_to_ak, AnchoredKey, CustomPredicateRef, Hash, Key,
-        NativeOperation, OperationAux, OperationType, Signature, Statement, Value, ValueRef,
+        NativeOperation, OperationAux, OperationType, Signature, Statement, TypedValue, Value,
+        ValueRef,
     },
 };
 
@@ -36,6 +37,13 @@ impl OperationArg {
             )) => root_key_to_ak(root, key).and_then(|ak| Some((ValueRef::Key(ak), v))),
             _ => None,
         }
+    }
+
+    pub(crate) fn int_value_and_ref(&self) -> Option<(ValueRef, i64)> {
+        self.value_and_ref().and_then(|(r, v)| match v.typed() {
+            &TypedValue::Int(i) => Some((r, i)),
+            _ => None,
+        })
     }
 }
 
