@@ -107,8 +107,6 @@ impl TryFrom<SerializedMainPod> for MainPod {
     }
 }
 
-// TODO: Uncomment
-/*
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};
@@ -122,12 +120,13 @@ mod tests {
             mainpod::{rec_main_pod_circuit_data, Prover},
             mock::mainpod::MockProver,
             primitives::ec::schnorr::SecretKey,
-            signedpod::Signer,
+            signer::Signer,
         },
-        examples::{
-            attest_eth_friend, zu_kyc_pod_builder, zu_kyc_sign_dict_builders, EthDosHelper,
-            MOCK_VD_SET,
-        },
+        // examples::{
+        //     attest_eth_friend, zu_kyc_pod_builder, zu_kyc_sign_dict_builders, EthDosHelper,
+        //     MOCK_VD_SET,
+        // },
+        examples::{zu_kyc_pod_builder, zu_kyc_sign_dict_builders, MOCK_VD_SET},
         frontend::{Result, SignedDictBuilder},
         middleware::{
             self,
@@ -188,6 +187,7 @@ mod tests {
         }
     }
 
+    // TODO: Rename to signed_dict_builder
     fn signed_pod_builder() -> SignedDictBuilder {
         let params = &Params::default();
         let mut builder = SignedDictBuilder::new(params);
@@ -234,99 +234,72 @@ mod tests {
     }
 
     #[test]
-    fn test_signed_pod_serialization() {
+    fn test_signed_dict_serialization() {
         let builder = signed_pod_builder();
         let signer = Signer(SecretKey(1u32.into()));
-        let pod = builder.sign(&signer).unwrap();
+        let signed_dict = builder.sign(&signer).unwrap();
 
-        let serialized = serde_json::to_string_pretty(&pod).unwrap();
+        let serialized = serde_json::to_string_pretty(&signed_dict).unwrap();
         println!("serialized: {}", serialized);
         let deserialized: SignedDict = serde_json::from_str(&serialized).unwrap();
         println!(
             "deserialized: {}",
             serde_json::to_string_pretty(&deserialized).unwrap()
         );
-        assert_eq!(pod.kvs, deserialized.kvs);
-        assert_eq!(pod.verify().is_ok(), deserialized.verify().is_ok());
-        assert_eq!(pod.id(), deserialized.id())
-    }
-
-    #[test]
-    fn test_mock_signed_pod_serialization() {
-        let builder = signed_pod_builder();
-        let signer = Signer(SecretKey(1u32.into()));
-        let pod = builder.sign(&signer).unwrap();
-
-        let serialized = serde_json::to_string_pretty(&pod).unwrap();
-        println!("serialized: {}", serialized);
-        let deserialized: SignedDict = serde_json::from_str(&serialized).unwrap();
-        println!(
-            "deserialized: {}",
-            serde_json::to_string_pretty(&deserialized).unwrap()
-        );
-        assert_eq!(pod.kvs, deserialized.kvs);
-        assert_eq!(pod.verify().is_ok(), deserialized.verify().is_ok());
-        assert_eq!(pod.id(), deserialized.id())
+        assert_eq!(signed_dict.dict.kvs(), deserialized.dict.kvs());
+        assert_eq!(signed_dict.public_key, deserialized.public_key);
+        assert_eq!(signed_dict.signature, deserialized.signature);
+        assert_eq!(signed_dict.verify().is_ok(), deserialized.verify().is_ok());
     }
 
     fn build_mock_zukyc_pod() -> Result<MainPod> {
         let params = middleware::Params::default();
         let vd_set = &*MOCK_VD_SET;
 
-        let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
-            zu_kyc_sign_dict_builders(&params);
+        let (gov_id_builder, pay_stub_builder) = zu_kyc_sign_dict_builders(&params);
         let signer = Signer(SecretKey(1u32.into()));
         let gov_id_pod = gov_id_builder.sign(&signer).unwrap();
         let signer = Signer(SecretKey(2u32.into()));
         let pay_stub_pod = pay_stub_builder.sign(&signer).unwrap();
-        let signer = Signer(SecretKey(3u32.into()));
-        let sanction_list_pod = sanction_list_builder.sign(&signer).unwrap();
-        let kyc_builder = zu_kyc_pod_builder(
-            &params,
-            vd_set,
-            &gov_id_pod,
-            &pay_stub_pod,
-            &sanction_list_pod,
-        )
-        .unwrap();
+        let kyc_builder = zu_kyc_pod_builder(&params, vd_set, &gov_id_pod, &pay_stub_pod).unwrap();
 
         let prover = MockProver {};
-        let kyc_pod = kyc_builder.prove(&prover, &params).unwrap();
+        let kyc_pod = kyc_builder.prove(&prover).unwrap();
         Ok(kyc_pod)
     }
 
-    fn build_plonky2_zukyc_pod() -> Result<MainPod> {
-        let params = middleware::Params {
-            // Currently the circuit uses random access that only supports vectors of length 64.
-            // With max_input_main_pods=3 we need random access to a vector of length 73.
-            max_input_recursive_pods: 1,
-            ..Default::default()
-        };
-        let mut vds = DEFAULT_VD_LIST.clone();
-        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
-        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
+    // fn build_plonky2_zukyc_pod() -> Result<MainPod> {
+    //     let params = middleware::Params {
+    //         // Currently the circuit uses random access that only supports vectors of length 64.
+    //         // With max_input_main_pods=3 we need random access to a vector of length 73.
+    //         max_input_recursive_pods: 1,
+    //         ..Default::default()
+    //     };
+    //     let mut vds = DEFAULT_VD_LIST.clone();
+    //     vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+    //     let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
 
-        let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
-            zu_kyc_sign_dict_builders(&params);
-        let signer = Signer(SecretKey(1u32.into()));
-        let gov_id_pod = gov_id_builder.sign(&signer)?;
-        let signer = Signer(SecretKey(2u32.into()));
-        let pay_stub_pod = pay_stub_builder.sign(&signer)?;
-        let signer = Signer(SecretKey(3u32.into()));
-        let sanction_list_pod = sanction_list_builder.sign(&signer)?;
-        let kyc_builder = zu_kyc_pod_builder(
-            &params,
-            &vd_set,
-            &gov_id_pod,
-            &pay_stub_pod,
-            &sanction_list_pod,
-        )?;
+    //     let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
+    //         zu_kyc_sign_dict_builders(&params);
+    //     let signer = Signer(SecretKey(1u32.into()));
+    //     let gov_id_pod = gov_id_builder.sign(&signer)?;
+    //     let signer = Signer(SecretKey(2u32.into()));
+    //     let pay_stub_pod = pay_stub_builder.sign(&signer)?;
+    //     let signer = Signer(SecretKey(3u32.into()));
+    //     let sanction_list_pod = sanction_list_builder.sign(&signer)?;
+    //     let kyc_builder = zu_kyc_pod_builder(
+    //         &params,
+    //         &vd_set,
+    //         &gov_id_pod,
+    //         &pay_stub_pod,
+    //         &sanction_list_pod,
+    //     )?;
 
-        let prover = Prover {};
-        let kyc_pod = kyc_builder.prove(&prover, &params)?;
+    //     let prover = Prover {};
+    //     let kyc_pod = kyc_builder.prove(&prover, &params)?;
 
-        Ok(kyc_pod)
-    }
+    //     Ok(kyc_pod)
+    // }
 
     #[test]
     fn test_mock_main_pod_serialization() -> Result<()> {
@@ -342,75 +315,74 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_plonky2_main_pod_serialization() -> Result<()> {
-        let kyc_pod = build_plonky2_zukyc_pod()?;
-        let serialized = serde_json::to_string_pretty(&kyc_pod).unwrap();
-        let deserialized: MainPod = serde_json::from_str(&serialized).unwrap();
+    // #[test]
+    // fn test_plonky2_main_pod_serialization() -> Result<()> {
+    //     let kyc_pod = build_plonky2_zukyc_pod()?;
+    //     let serialized = serde_json::to_string_pretty(&kyc_pod).unwrap();
+    //     let deserialized: MainPod = serde_json::from_str(&serialized).unwrap();
 
-        assert_eq!(kyc_pod.public_statements, deserialized.public_statements);
-        assert_eq!(kyc_pod.pod.id(), deserialized.pod.id());
-        assert_eq!(kyc_pod.pod.verify()?, deserialized.pod.verify()?);
+    //     assert_eq!(kyc_pod.public_statements, deserialized.public_statements);
+    //     assert_eq!(kyc_pod.pod.id(), deserialized.pod.id());
+    //     assert_eq!(kyc_pod.pod.verify()?, deserialized.pod.verify()?);
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
-    fn build_ethdos_pod() -> Result<MainPod> {
-        let params = Params {
-            max_input_pods_public_statements: 8,
-            max_statements: 24,
-            max_public_statements: 8,
-            ..Default::default()
-        };
-        let vd_set = &*MOCK_VD_SET;
+    // fn build_ethdos_pod() -> Result<MainPod> {
+    //     let params = Params {
+    //         max_input_pods_public_statements: 8,
+    //         max_statements: 24,
+    //         max_public_statements: 8,
+    //         ..Default::default()
+    //     };
+    //     let vd_set = &*MOCK_VD_SET;
 
-        let alice = Signer(SecretKey(1u32.into()));
-        let bob = Signer(SecretKey(2u32.into()));
-        let charlie = Signer(SecretKey(3u32.into()));
+    //     let alice = Signer(SecretKey(1u32.into()));
+    //     let bob = Signer(SecretKey(2u32.into()));
+    //     let charlie = Signer(SecretKey(3u32.into()));
 
-        // Alice attests that she is ETH friends with Bob and Bob
-        // attests that he is ETH friends with Charlie.
-        let alice_attestation = attest_eth_friend(&params, &alice, bob.public_key());
-        let bob_attestation = attest_eth_friend(&params, &bob, charlie.public_key());
+    //     // Alice attests that she is ETH friends with Bob and Bob
+    //     // attests that he is ETH friends with Charlie.
+    //     let alice_attestation = attest_eth_friend(&params, &alice, bob.public_key());
+    //     let bob_attestation = attest_eth_friend(&params, &bob, charlie.public_key());
 
-        let helper = EthDosHelper::new(&params, vd_set, true, alice.public_key())?;
-        let prover = MockProver {};
-        let dist_1 = helper.dist_1(&alice_attestation)?.prove(&prover, &params)?;
-        let dist_2 = helper
-            .dist_n_plus_1(&dist_1, &bob_attestation)?
-            .prove(&prover, &params)?;
+    //     let helper = EthDosHelper::new(&params, vd_set, true, alice.public_key())?;
+    //     let prover = MockProver {};
+    //     let dist_1 = helper.dist_1(&alice_attestation)?.prove(&prover, &params)?;
+    //     let dist_2 = helper
+    //         .dist_n_plus_1(&dist_1, &bob_attestation)?
+    //         .prove(&prover, &params)?;
 
-        Ok(dist_2)
-    }
+    //     Ok(dist_2)
+    // }
 
-    #[test]
-    // This tests that we can generate JSON Schemas for the MainPod and
-    // SignedPod types, and that we can validate Signed and Main Pods
-    // against the schemas. Since both Mock and Plonky2 PODs have the same
-    // public interface, we can assume that the schema works for both.
-    fn test_schema() {
-        let mainpod_schema = schema_for!(SerializedMainPod);
-        let signeddict_schema = schema_for!(SignedDict);
+    // #[test]
+    // // This tests that we can generate JSON Schemas for the MainPod and
+    // // SignedPod types, and that we can validate Signed and Main Pods
+    // // against the schemas. Since both Mock and Plonky2 PODs have the same
+    // // public interface, we can assume that the schema works for both.
+    // fn test_schema() {
+    //     let mainpod_schema = schema_for!(SerializedMainPod);
+    //     let signeddict_schema = schema_for!(SignedDict);
 
-        let kyc_pod = build_mock_zukyc_pod().unwrap();
-        let signed_pod = signed_pod_builder()
-            .sign(&Signer(SecretKey(1u32.into())))
-            .unwrap();
-        let ethdos_pod = build_ethdos_pod().unwrap();
-        let mainpod_schema_value = serde_json::to_value(&mainpod_schema).unwrap();
-        let signedpod_schema_value = serde_json::to_value(&signeddict_schema).unwrap();
+    //     let kyc_pod = build_mock_zukyc_pod().unwrap();
+    //     let signed_pod = signed_pod_builder()
+    //         .sign(&Signer(SecretKey(1u32.into())))
+    //         .unwrap();
+    //     let ethdos_pod = build_ethdos_pod().unwrap();
+    //     let mainpod_schema_value = serde_json::to_value(&mainpod_schema).unwrap();
+    //     let signedpod_schema_value = serde_json::to_value(&signeddict_schema).unwrap();
 
-        let kyc_pod_value = serde_json::to_value(&kyc_pod).unwrap();
-        let mainpod_valid = jsonschema::validate(&mainpod_schema_value, &kyc_pod_value);
-        assert!(mainpod_valid.is_ok(), "{:#?}", mainpod_valid);
+    //     let kyc_pod_value = serde_json::to_value(&kyc_pod).unwrap();
+    //     let mainpod_valid = jsonschema::validate(&mainpod_schema_value, &kyc_pod_value);
+    //     assert!(mainpod_valid.is_ok(), "{:#?}", mainpod_valid);
 
-        let signed_pod_value = serde_json::to_value(&signed_pod).unwrap();
-        let signedpod_valid = jsonschema::validate(&signedpod_schema_value, &signed_pod_value);
-        assert!(signedpod_valid.is_ok(), "{:#?}", signedpod_valid);
+    //     let signed_pod_value = serde_json::to_value(&signed_pod).unwrap();
+    //     let signedpod_valid = jsonschema::validate(&signedpod_schema_value, &signed_pod_value);
+    //     assert!(signedpod_valid.is_ok(), "{:#?}", signedpod_valid);
 
-        let ethdos_pod_value = serde_json::to_value(&ethdos_pod).unwrap();
-        let ethdos_pod_valid = jsonschema::validate(&mainpod_schema_value, &ethdos_pod_value);
-        assert!(ethdos_pod_valid.is_ok(), "{:#?}", ethdos_pod_valid);
-    }
+    //     let ethdos_pod_value = serde_json::to_value(&ethdos_pod).unwrap();
+    //     let ethdos_pod_valid = jsonschema::validate(&mainpod_schema_value, &ethdos_pod_value);
+    //     assert!(ethdos_pod_valid.is_ok(), "{:#?}", ethdos_pod_valid);
+    // }
 }
-*/

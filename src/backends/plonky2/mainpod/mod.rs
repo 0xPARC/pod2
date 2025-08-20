@@ -419,7 +419,7 @@ pub(crate) fn layout_statements(
 
     let offset_public_statements = statements.len() - params.max_public_statements;
     let public_statements = statements
-        [offset_public_statements..offset_public_statements + 1 + inputs.public_statements.len()]
+        [offset_public_statements..offset_public_statements + inputs.public_statements.len()]
         .to_vec();
     Ok((statements, public_statements))
 }

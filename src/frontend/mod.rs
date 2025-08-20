@@ -711,7 +711,7 @@ impl MainPodBuilder {
 
         // Gather public statements, making sure to inject the type
         // information specified by the backend.
-        let pod_id = pod.id();
+        // let pod_id = pod.id();
         // let type_key_hash = hash_str(KEY_TYPE);
         // let type_statement = pod
         //    .pub_statements()
@@ -731,30 +731,30 @@ impl MainPodBuilder {
         //    )))?;
         // Replace instances of `SELF` with the POD ID for consistency
         // with `pub_statements` method.
-        let public_statements = self
-            .public_statements
-            .clone()
-            .into_iter()
-            .map(|s| {
-                let s_type = s.predicate();
-                let s_args = s
-                    .args()
-                    .into_iter()
-                    // .map(|arg| match arg {
-                    //     StatementArg::Key(AnchoredKey { root: id, key }) if id == SELF => {
-                    //         StatementArg::Key(AnchoredKey::new(pod_id, key))
-                    //     }
-                    //     _ => arg,
-                    // })
-                    .collect();
-                Statement::from_args(s_type, s_args).expect("valid arguments")
-            })
-            .collect();
+        // let public_statements = self
+        //     .public_statements
+        //     .clone()
+        //     .into_iter()
+        //     .map(|s| {
+        //         let s_type = s.predicate();
+        //         let s_args = s
+        //             .args()
+        //             .into_iter()
+        //             // .map(|arg| match arg {
+        //             //     StatementArg::Key(AnchoredKey { root: id, key }) if id == SELF => {
+        //             //         StatementArg::Key(AnchoredKey::new(pod_id, key))
+        //             //     }
+        //             //     _ => arg,
+        //             // })
+        //             .collect();
+        //         Statement::from_args(s_type, s_args).expect("valid arguments")
+        //     })
+        //     .collect();
 
         Ok(MainPod {
             pod,
             params: self.params.clone(),
-            public_statements,
+            public_statements: self.public_statements.clone(),
         })
     }
 }
@@ -915,8 +915,9 @@ pub mod tests {
         //     zu_kyc_sign_dict_builders, EthDosHelper, MOCK_VD_SET,
         // },
         examples::{
-            custom::eth_dos_request, zu_kyc_pod_builder, zu_kyc_pod_request,
-            zu_kyc_sign_dict_builders, MOCK_VD_SET,
+            attest_eth_friend, custom::eth_dos_request, great_boy_pod_full_flow,
+            tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_pod_request,
+            zu_kyc_sign_dict_builders, EthDosHelper, MOCK_VD_SET,
         },
         middleware::{
             containers::{Array, Dictionary, Set},
@@ -1000,77 +1001,77 @@ pub mod tests {
         check_public_statements(&kyc)
     }
 
-    // #[test]
-    // fn test_ethdos_recursive() -> Result<()> {
-    //     let params = Params {
-    //         max_input_pods_public_statements: 8,
-    //         max_statements: 24,
-    //         max_public_statements: 8,
-    //         ..Default::default()
-    //     };
-    //     let vd_set = &*MOCK_VD_SET;
+    #[test]
+    fn test_ethdos_recursive() -> Result<()> {
+        let params = Params {
+            max_input_pods_public_statements: 8,
+            max_statements: 24,
+            max_public_statements: 8,
+            ..Default::default()
+        };
+        let vd_set = &*MOCK_VD_SET;
 
-    //     let alice = Signer(SecretKey(1u32.into()));
-    //     let bob = Signer(SecretKey(2u32.into()));
-    //     let charlie = Signer(SecretKey(3u32.into()));
-    //     let david = Signer(SecretKey(4u32.into()));
+        let alice = Signer(SecretKey(1u32.into()));
+        let bob = Signer(SecretKey(2u32.into()));
+        let charlie = Signer(SecretKey(3u32.into()));
+        let david = Signer(SecretKey(4u32.into()));
 
-    //     let helper = EthDosHelper::new(&params, vd_set, true, alice.public_key())?;
+        let helper = EthDosHelper::new(&params, vd_set, true, alice.public_key())?;
 
-    //     let prover = MockProver {};
+        let prover = MockProver {};
 
-    //     let alice_attestation = attest_eth_friend(&params, &alice, bob.public_key());
-    //     let dist_1 = helper.dist_1(&alice_attestation)?.prove(&prover)?;
-    //     dist_1.pod.verify()?;
-    //     let request = eth_dos_request()?;
-    //     assert!(request.exact_match_pod(&*dist_1.pod).is_ok());
-    //     let bindings = request.exact_match_pod(&*dist_1.pod).unwrap();
-    //     assert_eq!(*bindings.get("src").unwrap(), alice.public_key());
-    //     assert_eq!(*bindings.get("dst").unwrap(), bob.public_key());
-    //     assert_eq!(*bindings.get("distance").unwrap(), 1.into());
+        let alice_attestation = attest_eth_friend(&params, &alice, bob.public_key());
+        let dist_1 = helper.dist_1(&alice_attestation)?.prove(&prover)?;
+        dist_1.pod.verify()?;
+        let request = eth_dos_request()?;
+        assert!(request.exact_match_pod(&*dist_1.pod).is_ok());
+        let bindings = request.exact_match_pod(&*dist_1.pod).unwrap();
+        assert_eq!(*bindings.get("src").unwrap(), alice.public_key().into());
+        assert_eq!(*bindings.get("dst").unwrap(), bob.public_key().into());
+        assert_eq!(*bindings.get("distance").unwrap(), 1.into());
 
-    //     let bob_attestation = attest_eth_friend(&params, &bob, charlie.public_key());
-    //     let dist_2 = helper
-    //         .dist_n_plus_1(&dist_1, &bob_attestation)?
-    //         .prove(&prover)?;
-    //     dist_2.pod.verify()?;
-    //     assert!(request.exact_match_pod(&*dist_2.pod).is_ok());
-    //     let bindings = request.exact_match_pod(&*dist_2.pod).unwrap();
-    //     assert_eq!(*bindings.get("src").unwrap(), alice.public_key());
-    //     assert_eq!(*bindings.get("dst").unwrap(), charlie.public_key());
-    //     assert_eq!(*bindings.get("distance").unwrap(), 2.into());
+        let bob_attestation = attest_eth_friend(&params, &bob, charlie.public_key());
+        let dist_2 = helper
+            .dist_n_plus_1(&dist_1, &bob_attestation)?
+            .prove(&prover)?;
+        dist_2.pod.verify()?;
+        assert!(request.exact_match_pod(&*dist_2.pod).is_ok());
+        let bindings = request.exact_match_pod(&*dist_2.pod).unwrap();
+        assert_eq!(*bindings.get("src").unwrap(), alice.public_key().into());
+        assert_eq!(*bindings.get("dst").unwrap(), charlie.public_key().into());
+        assert_eq!(*bindings.get("distance").unwrap(), 2.into());
 
-    //     let charlie_attestation = attest_eth_friend(&params, &charlie, david.public_key());
-    //     let dist_3 = helper
-    //         .dist_n_plus_1(&dist_2, &charlie_attestation)?
-    //         .prove(&prover)?;
-    //     dist_3.pod.verify()?;
-    //     assert!(request.exact_match_pod(&*dist_3.pod).is_ok());
-    //     let bindings = request.exact_match_pod(&*dist_3.pod).unwrap();
-    //     assert_eq!(*bindings.get("src").unwrap(), alice.public_key());
-    //     assert_eq!(*bindings.get("dst").unwrap(), david.public_key());
-    //     assert_eq!(*bindings.get("distance").unwrap(), 3.into());
+        let charlie_attestation = attest_eth_friend(&params, &charlie, david.public_key());
+        let dist_3 = helper
+            .dist_n_plus_1(&dist_2, &charlie_attestation)?
+            .prove(&prover)?;
+        dist_3.pod.verify()?;
+        assert!(request.exact_match_pod(&*dist_3.pod).is_ok());
+        let bindings = request.exact_match_pod(&*dist_3.pod).unwrap();
+        assert_eq!(*bindings.get("src").unwrap(), alice.public_key().into());
+        assert_eq!(*bindings.get("dst").unwrap(), david.public_key().into());
+        assert_eq!(*bindings.get("distance").unwrap(), 3.into());
 
-    //     Ok(())
-    // }
+        Ok(())
+    }
 
-    // #[test]
-    // fn test_front_great_boy() -> Result<()> {
-    //     let great_boy = great_boy_pod_full_flow()?;
-    //     println!("{}", great_boy);
+    #[test]
+    fn test_front_great_boy() -> Result<()> {
+        let great_boy = great_boy_pod_full_flow()?;
+        println!("{}", great_boy);
 
-    //     // TODO: prove great_boy with MockProver and print it
+        // TODO: prove great_boy with MockProver and print it
 
-    //     Ok(())
-    // }
+        Ok(())
+    }
 
-    // #[test]
-    // fn test_front_tickets() -> Result<()> {
-    //     let builder = tickets_pod_full_flow(&Params::default(), &MOCK_VD_SET)?;
-    //     println!("{}", builder);
+    #[test]
+    fn test_front_tickets() -> Result<()> {
+        let builder = tickets_pod_full_flow(&Params::default(), &MOCK_VD_SET)?;
+        println!("{}", builder);
 
-    //     Ok(())
-    // }
+        Ok(())
+    }
 
     #[test]
     // Transitive equality not implemented yet

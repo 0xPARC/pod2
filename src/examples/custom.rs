@@ -24,7 +24,7 @@ pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
     let input = r#"
         eth_friend(src, dst, private: attestation) = AND(
             SignedBy(?attestation, ?src)
-            Equal(?attestation["attestation"], ?dst)
+            Contains(?attestation, "attestation", ?dst)
         )
 
         eth_dos_base(src, dst, distance) = AND(

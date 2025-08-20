@@ -178,6 +178,7 @@ impl MockMainPod {
 
     pub fn new(params: &Params, inputs: MainPodInputs) -> Result<Self> {
         let (statements, public_statements) = layout_statements(params, true, &inputs)?;
+        dbg!(public_statements.len());
         let mut aux_list = vec![OperationAux::None; params.max_priv_statements()];
         // Extract Merkle proofs and pad.
         let merkle_proofs =
@@ -375,6 +376,7 @@ impl Pod for MockMainPod {
                 )
             })
             .collect();
+        dbg!(self.public_statements.len());
         serde_json::to_value(Data {
             public_statements: self.public_statements.clone(),
             operations: self.operations.clone(),
@@ -422,6 +424,7 @@ impl RecursivePod for MockMainPod {
             signatures,
             input_recursive_pods,
         } = serde_json::from_value(data)?;
+        dbg!(public_statements.len());
         // let input_signed_pods = input_signed_pods
         //     .into_iter()
         //     .map(|(pod_type, id, data)| deserialize_signed_pod(pod_type, id, data))
