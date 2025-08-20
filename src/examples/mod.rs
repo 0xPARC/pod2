@@ -56,16 +56,8 @@ pub fn zu_kyc_pod_builder(
     let mut kyc = MainPodBuilder::new(params, vd_set);
     // kyc.add_signed_pod(gov_id);
     // kyc.add_signed_pod(pay_stub);
-    kyc.pub_op(Operation::signed_by(
-        Value::from(gov_id.dict.clone()),
-        Value::from(gov_id.public_key),
-        gov_id.signature.clone(),
-    ))?;
-    kyc.pub_op(Operation::signed_by(
-        Value::from(pay_stub.dict.clone()),
-        Value::from(pay_stub.public_key),
-        pay_stub.signature.clone(),
-    ))?;
+    kyc.pub_op(Operation::dict_signed_by(&gov_id))?;
+    kyc.pub_op(Operation::dict_signed_by(&pay_stub))?;
 
     kyc.pub_op(Operation::set_not_contains(
         sanction_set,

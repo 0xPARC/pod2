@@ -250,4 +250,11 @@ impl Operation {
             OperationAux::Signature(sig),
         )
     }
+    pub fn dict_signed_by(signed_dict: &SignedDict) -> Self {
+        Self::signed_by(
+            Value::from(signed_dict.dict.clone()),
+            Value::from(signed_dict.public_key),
+            signed_dict.signature.clone(),
+        )
+    }
 }
