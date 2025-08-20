@@ -650,6 +650,7 @@ impl MainPodBuilder {
         self.literal(false, v.into())
     }
 
+    // TODO: Remove because we have literals in the args now
     fn literal(&mut self, public: bool, value: Value) -> Result<Statement> {
         todo!()
         // let public_value = (public, value);
@@ -1245,85 +1246,85 @@ pub mod tests {
         Ok(())
     }
 
-    // #[test]
-    // fn test_sets() -> Result<()> {
-    //     let params = Params::default();
-    //     let vd_set = &*MOCK_VD_SET;
-    //     let mut builder = MainPodBuilder::new(&params, vd_set);
+    #[test]
+    fn test_sets() -> Result<()> {
+        let params = Params::default();
+        let vd_set = &*MOCK_VD_SET;
+        let mut builder = MainPodBuilder::new(&params, vd_set);
 
-    //     let empty_set = Set::new(params.max_depth_mt_containers, [].into())?;
+        let empty_set = Set::new(params.max_depth_mt_containers, [].into())?;
 
-    //     let mut set1 = empty_set.clone();
-    //     set1.insert(&1.into())?;
+        let mut set1 = empty_set.clone();
+        set1.insert(&1.into())?;
 
-    //     let mut set2 = set1.clone();
-    //     set2.delete(&1.into())?;
+        let mut set2 = set1.clone();
+        set2.delete(&1.into())?;
 
-    //     assert_eq!(set2, empty_set);
+        assert_eq!(set2, empty_set);
 
-    //     builder.pub_op(Operation(
-    //         // OperationType
-    //         OperationType::Native(NativeOperation::SetInsertFromEntries),
-    //         // Vec<OperationArg>
-    //         vec![
-    //             Value::from(set1.clone()).into(),
-    //             Value::from(empty_set.clone()).into(),
-    //             1.into(),
-    //         ],
-    //         OperationAux::None,
-    //     ))?;
+        builder.pub_op(Operation(
+            // OperationType
+            OperationType::Native(NativeOperation::SetInsertFromEntries),
+            // Vec<OperationArg>
+            vec![
+                Value::from(set1.clone()).into(),
+                Value::from(empty_set.clone()).into(),
+                1.into(),
+            ],
+            OperationAux::None,
+        ))?;
 
-    //     builder.pub_op(Operation(
-    //         // OperationType
-    //         OperationType::Native(NativeOperation::SetDeleteFromEntries),
-    //         // Vec<OperationArg>
-    //         vec![
-    //             Value::from(empty_set.clone()).into(),
-    //             Value::from(set1.clone()).into(),
-    //             1.into(),
-    //         ],
-    //         OperationAux::None,
-    //     ))?;
+        builder.pub_op(Operation(
+            // OperationType
+            OperationType::Native(NativeOperation::SetDeleteFromEntries),
+            // Vec<OperationArg>
+            vec![
+                Value::from(empty_set.clone()).into(),
+                Value::from(set1.clone()).into(),
+                1.into(),
+            ],
+            OperationAux::None,
+        ))?;
 
-    //     let main_prover = MockProver {};
-    //     let main_pod = builder.prove(&main_prover).unwrap();
+        let main_prover = MockProver {};
+        let main_pod = builder.prove(&main_prover).unwrap();
 
-    //     println!("{}", main_pod);
+        println!("{}", main_pod);
 
-    //     Ok(())
-    // }
+        Ok(())
+    }
 
-    // #[test]
-    // fn test_arrays() -> Result<()> {
-    //     let params = Params::default();
-    //     let vd_set = &*MOCK_VD_SET;
-    //     let mut builder = MainPodBuilder::new(&params, vd_set);
+    #[test]
+    fn test_arrays() -> Result<()> {
+        let params = Params::default();
+        let vd_set = &*MOCK_VD_SET;
+        let mut builder = MainPodBuilder::new(&params, vd_set);
 
-    //     let array1 = Array::new(params.max_depth_mt_containers, [1.into()].into())?;
+        let array1 = Array::new(params.max_depth_mt_containers, [1.into()].into())?;
 
-    //     let mut array2 = array1.clone();
-    //     array2.update(0, &5.into())?;
+        let mut array2 = array1.clone();
+        array2.update(0, &5.into())?;
 
-    //     builder.pub_op(Operation(
-    //         // OperationType
-    //         OperationType::Native(NativeOperation::ArrayUpdateFromEntries),
-    //         // Vec<OperationArg>
-    //         vec![
-    //             Value::from(array2.clone()).into(),
-    //             Value::from(array1.clone()).into(),
-    //             0.into(),
-    //             5.into(),
-    //         ],
-    //         OperationAux::None,
-    //     ))?;
+        builder.pub_op(Operation(
+            // OperationType
+            OperationType::Native(NativeOperation::ArrayUpdateFromEntries),
+            // Vec<OperationArg>
+            vec![
+                Value::from(array2.clone()).into(),
+                Value::from(array1.clone()).into(),
+                0.into(),
+                5.into(),
+            ],
+            OperationAux::None,
+        ))?;
 
-    //     let main_prover = MockProver {};
-    //     let main_pod = builder.prove(&main_prover).unwrap();
+        let main_prover = MockProver {};
+        let main_pod = builder.prove(&main_prover).unwrap();
 
-    //     println!("{}", main_pod);
+        println!("{}", main_pod);
 
-    //     Ok(())
-    // }
+        Ok(())
+    }
 
     #[test]
     fn test_public_key_of() -> Result<()> {
@@ -1376,90 +1377,91 @@ pub mod tests {
         Ok(())
     }
 
-    // #[test]
-    // fn test_public_key_of_wrong_key() -> Result<()> {
-    //     let params = Params::default();
-    //     let vd_set = &*MOCK_VD_SET;
+    #[test]
+    fn test_public_key_of_wrong_key() -> Result<()> {
+        let params = Params::default();
+        let vd_set = &*MOCK_VD_SET;
 
-    //     let sk = SecretKey::new_rand();
-    //     let pk = sk.public_key();
+        let sk = SecretKey::new_rand();
+        let pk = sk.public_key();
 
-    //     // Signed POD contains public key as owner
-    //     let mut builder = SignedDictBuilder::new(&params);
-    //     builder.insert("owner", Value::from(pk));
-    //     builder.insert("other_data", Value::from(123));
-    //     let signer = Signer(SecretKey(1u32.into()));
-    //     let signed_pod = builder.sign(&signer).unwrap();
+        // Signed POD contains public key as owner
+        let mut builder = SignedDictBuilder::new(&params);
+        builder.insert("owner", Value::from(pk));
+        builder.insert("other_data", Value::from(123));
+        let signer = Signer(SecretKey(1u32.into()));
+        let signed_dict = builder.sign(&signer).unwrap();
 
-    //     // Try to build with the wrong secret key.  The pre-proving checks
-    //     // will catch this.
-    //     let mut builder = MainPodBuilder::new(&params, vd_set);
-    //     builder.add_signed_pod(&signed_pod);
-    //     let st0 = signed_pod.get_statement("owner").unwrap();
-    //     let st1 = builder
-    //         .priv_op(Operation::new_entry(
-    //             "known_secret",
-    //             Value::from(SecretKey(BigUint::from(123u32))),
-    //         ))
-    //         .unwrap();
-    //     assert!(builder
-    //         .pub_op(Operation(
-    //             // OperationType
-    //             OperationType::Native(NativeOperation::PublicKeyOf),
-    //             // Vec<OperationArg>
-    //             vec![OperationArg::Statement(st0), OperationArg::Statement(st1)],
-    //             OperationAux::None,
-    //         ))
-    //         .is_err());
+        // Try to build with the wrong secret key.  The pre-proving checks
+        // will catch this.
+        let mut builder = MainPodBuilder::new(&params, vd_set);
+        builder
+            .pub_op(Operation::dict_signed_by(&signed_dict))
+            .unwrap();
+        let st0 = signed_dict.get_statement("owner").unwrap();
+        let local = dict!(32, {"known_secret" => SecretKey(BigUint::from(123u32))})?;
+        let st1 = builder
+            .op(
+                true,
+                Operation::dict_contains(local, "known_secret", SecretKey(BigUint::from(123u32))),
+            )
+            .unwrap();
+        assert!(builder
+            .pub_op(Operation(
+                // OperationType
+                OperationType::Native(NativeOperation::PublicKeyOf),
+                // Vec<OperationArg>
+                vec![OperationArg::Statement(st0), OperationArg::Statement(st1)],
+                OperationAux::None,
+            ))
+            .is_err());
 
-    //     Ok(())
-    // }
+        Ok(())
+    }
 
-    // #[test]
-    // fn test_public_key_of_wrong_type() -> Result<()> {
-    //     let params = Params::default();
-    //     let vd_set = &*MOCK_VD_SET;
+    #[test]
+    fn test_public_key_of_wrong_type() -> Result<()> {
+        let params = Params::default();
+        let vd_set = &*MOCK_VD_SET;
 
-    //     let sk = SecretKey::new_rand();
-    //     let pk = sk.public_key();
+        let sk = SecretKey::new_rand();
+        let pk = sk.public_key();
 
-    //     // Try to build with wrong type in 1st arg
-    //     let mut builder = MainPodBuilder::new(&params, vd_set);
-    //     let st_pk = builder.literal(false, Value::from(pk)).unwrap();
-    //     let st_int1 = builder.literal(false, Value::from(123)).unwrap();
-    //     assert!(builder
-    //         .pub_op(Operation(
-    //             // OperationType
-    //             OperationType::Native(NativeOperation::PublicKeyOf),
-    //             // Vec<OperationArg>
-    //             vec![
-    //                 OperationArg::Statement(st_pk),
-    //                 OperationArg::Statement(st_int1),
-    //             ],
-    //             OperationAux::None,
-    //         ))
-    //         .is_err());
+        // Try to build with wrong type in 1st arg
+        let mut builder = MainPodBuilder::new(&params, vd_set);
+        let pk = Value::from(pk);
+        let int1 = Value::from(123);
+        assert!(builder
+            .pub_op(Operation(
+                // OperationType
+                OperationType::Native(NativeOperation::PublicKeyOf),
+                // Vec<OperationArg>
+                vec![
+                    OperationArg::Literal(pk.clone()),
+                    OperationArg::Literal(int1),
+                ],
+                OperationAux::None,
+            ))
+            .is_err());
 
-    //     // Try to build with wrong type in 2nd arg
-    //     builder = MainPodBuilder::new(&params, vd_set);
-    //     let st_sk = builder.literal(false, Value::from(pk)).unwrap();
-    //     let st_int2 = builder.literal(false, Value::from(123)).unwrap();
-    //     assert!(builder
-    //         .pub_op(Operation(
-    //             // OperationType
-    //             OperationType::Native(NativeOperation::PublicKeyOf),
-    //             // Vec<OperationArg>
-    //             vec![
-    //                 OperationArg::Statement(st_int2),
-    //                 OperationArg::Statement(st_sk),
-    //             ],
-    //             OperationAux::None,
-    //         ))
-    //         .is_err());
+        // Try to build with wrong type in 2nd arg
+        builder = MainPodBuilder::new(&params, vd_set);
+        let sk = Value::from(pk);
+        let int2 = Value::from(123);
+        assert!(builder
+            .pub_op(Operation(
+                // OperationType
+                OperationType::Native(NativeOperation::PublicKeyOf),
+                // Vec<OperationArg>
+                vec![OperationArg::Literal(int2), OperationArg::Literal(sk),],
+                OperationAux::None,
+            ))
+            .is_err());
 
-    //     Ok(())
-    // }
+        Ok(())
+    }
 
+    // TODO: Delete, we no longer have NewEntry
     // #[should_panic]
     // #[test]
     // fn test_reject_duplicate_new_entry() {
@@ -1487,43 +1489,45 @@ pub mod tests {
     //     pod.pod.verify().unwrap();
     // }
 
-    // #[should_panic]
-    // #[test]
-    // fn test_reject_unsound_statement() {
-    //     // try to insert a statement that doesn't follow from the operation
-    //     // right now the mock prover catches this when it calls compile()
-    //     let params = Params::default();
-    //     let vd_set = &*MOCK_VD_SET;
-    //     let mut builder = MainPodBuilder::new(&params, vd_set);
-    //     let self_a = AnchoredKey::from((SELF, "a"));
-    //     let self_b = AnchoredKey::from((SELF, "b"));
-    //     let value_of_a = Statement::equal(self_a.clone(), Value::from(3));
-    //     let value_of_b = Statement::equal(self_b.clone(), Value::from(27));
+    #[should_panic]
+    #[test]
+    fn test_reject_unsound_statement() {
+        // try to insert a statement that doesn't follow from the operation
+        // right now the mock prover catches this when it calls compile()
+        let params = Params::default();
+        let vd_set = &*MOCK_VD_SET;
+        let mut builder = MainPodBuilder::new(&params, vd_set);
+        let local = dict!(32, {"a" => 3, "b" => 27}).unwrap();
+        let value_of_a = Statement::contains(local.clone(), "a", 3);
+        let value_of_b = Statement::contains(local.clone(), "b", 27);
 
-    //     let op_new_entry = Operation(
-    //         OperationType::Native(NativeOperation::NewEntry),
-    //         vec![],
-    //         OperationAux::None,
-    //     );
-    //     builder
-    //         .insert(false, (value_of_a.clone(), op_new_entry.clone()))
-    //         .unwrap();
-    //     builder
-    //         .insert(false, (value_of_b.clone(), op_new_entry))
-    //         .unwrap();
-    //     let st = Statement::equal(self_a, self_b);
-    //     let op = Operation(
-    //         OperationType::Native(NativeOperation::EqualFromEntries),
-    //         vec![
-    //             OperationArg::Statement(value_of_a),
-    //             OperationArg::Statement(value_of_b),
-    //         ],
-    //         OperationAux::None,
-    //     );
-    //     builder.insert(false, (st, op)).unwrap();
+        let op_new_entry = Operation(
+            OperationType::Native(NativeOperation::NewEntry),
+            vec![],
+            OperationAux::None,
+        );
+        builder
+            .insert(false, (value_of_a.clone(), op_new_entry.clone()))
+            .unwrap();
+        builder
+            .insert(false, (value_of_b.clone(), op_new_entry))
+            .unwrap();
+        let st = Statement::equal(
+            AnchoredKey::from((&local, "a")),
+            AnchoredKey::from((&local, "b")),
+        );
+        let op = Operation(
+            OperationType::Native(NativeOperation::EqualFromEntries),
+            vec![
+                OperationArg::Statement(value_of_a),
+                OperationArg::Statement(value_of_b),
+            ],
+            OperationAux::None,
+        );
+        builder.insert(false, (st, op)).unwrap();
 
-    //     let prover = MockProver {};
-    //     let pod = builder.prove(&prover).unwrap();
-    //     pod.pod.verify().unwrap();
-    // }
+        let prover = MockProver {};
+        let pod = builder.prove(&prover).unwrap();
+        pod.pod.verify().unwrap();
+    }
 }
