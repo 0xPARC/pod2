@@ -457,7 +457,6 @@ fn estimate_gates_after_zk(degree_bits: usize) -> usize {
 }
 
 // how many blinding gates are in this zk circuit
-#[cfg(feature = "zk")]
 fn blinding_gates(degree_bits: usize) -> usize {
     // Table data obtained using `test_measure_zk_recursion`, and printing
     // `regular_poly_openings + 2 * z_openings` at method `blind` of the file
