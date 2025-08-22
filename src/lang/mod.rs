@@ -22,8 +22,6 @@ pub fn parse(
     processor::process_pest_tree(pairs, params, available_batches).map_err(LangError::from)
 }
 
-// TODO: Uncomment
-/*
 #[cfg(test)]
 mod tests {
     use hex::ToHex;
@@ -109,7 +107,7 @@ mod tests {
     fn test_e2e_simple_request() -> Result<(), LangError> {
         let input = r#"
             REQUEST(
-                Equal(?ConstPod["my_val"], 0x0000000000000000000000000000000000000000000000000000000000000001)
+                Equal(?ConstPod["my_val"], Raw(0x0000000000000000000000000000000000000000000000000000000000000001))
                 Lt(?GovPod["dob"], ?ConstPod["my_val"])
             )
         "#;
@@ -484,7 +482,6 @@ mod tests {
     #[test]
     fn test_e2e_ethdos_predicates() -> Result<(), LangError> {
         let params = Params {
-            max_input_signed_pods: 3,
             max_input_recursive_pods: 3,
             max_statements: 31,
             max_signed_pod_values: 8,
@@ -498,10 +495,9 @@ mod tests {
         };
 
         let input = r#"
-            eth_friend(src, dst, private: attestation_pod) = AND(
-                Equal(?attestation_pod["_type"], 1)
-                Equal(?attestation_pod["_signer"], ?src)
-                Equal(?attestation_pod["attestation"], ?dst)
+            eth_friend(src, dst, private: attestation_dict) = AND(
+                SignedBy(?attestation_dict, ?src)
+                Equal(?attestation_dict["attestation"], ?dst)
             )
 
             eth_dos_distance_base(src, dst, distance) = AND(
@@ -538,23 +534,13 @@ mod tests {
         // eth_friend (Index 0)
         let expected_friend_stmts = vec![
             StatementTmpl {
-                pred: Predicate::Native(NativePredicate::Equal),
-                args: vec![
-                    sta_ak(("attestation_pod", 2), "_type"), // Pub(0-1), Priv(2)
-                    sta_lit(PodType::Signed),
-                ],
+                pred: Predicate::Native(NativePredicate::SignedBy),
+                args: vec![sta_wc_lit("attestation_dict", 2), sta_wc_lit("src", 0)],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
-                    sta_ak(("attestation_pod", 2), "_signer"),
-                    sta_wc_lit("src", 0), // Pub arg 0
-                ],
-            },
-            StatementTmpl {
-                pred: Predicate::Native(NativePredicate::Equal),
-                args: vec![
-                    sta_ak(("attestation_pod", 2), "attestation"),
+                    sta_ak(("attestation_dict", 2), "attestation"),
                     sta_wc_lit("dst", 1), // Pub arg 1
                 ],
             },
@@ -565,7 +551,7 @@ mod tests {
             true, // AND
             expected_friend_stmts,
             2, // public_args_len: src, dst
-            names(&["src", "dst", "attestation_pod"]),
+            names(&["src", "dst", "attestation_dict"]),
         )?;
 
         // eth_dos_distance_base (Index 1)
@@ -855,7 +841,6 @@ mod tests {
     #[test]
     fn test_e2e_literals() -> Result<(), LangError> {
         let pk = crate::backends::plonky2::primitives::ec::curve::Point::generator();
-        let pod_id = Hash(hash_str("test"));
         let raw = RawValue::from(1);
         let string = "hello";
         let int = 123;
@@ -866,17 +851,14 @@ mod tests {
             r#"
             REQUEST(
                 Equal(?A["pk"], {})
-                Equal(?B["pod_id"], {})
-                Equal(?C["raw"], {})
-                Equal(?D["string"], {})
-                Equal(?E["int"], {})
-                Equal(?F["bool"], {})
-                Equal(?G["sk"], {})
-                Equal(?H["self"], SELF)
+                Equal(?B["raw"], {})
+                Equal(?C["string"], {})
+                Equal(?D["int"], {})
+                Equal(?E["bool"], {})
+                Equal(?F["sk"], {})
             )
         "#,
             Value::from(pk).to_podlang_string(),
-            Value::from(pod_id).to_podlang_string(),
             Value::from(raw).to_podlang_string(),
             Value::from(string).to_podlang_string(),
             Value::from(int).to_podlang_string(),
@@ -907,31 +889,23 @@ mod tests {
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
-                args: vec![sta_ak(("B", 1), "pod_id"), sta_lit(Value::from(pod_id))],
+                args: vec![sta_ak(("B", 1), "raw"), sta_lit(Value::from(raw))],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
-                args: vec![sta_ak(("C", 2), "raw"), sta_lit(Value::from(raw))],
+                args: vec![sta_ak(("C", 2), "string"), sta_lit(Value::from(string))],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
-                args: vec![sta_ak(("D", 3), "string"), sta_lit(Value::from(string))],
+                args: vec![sta_ak(("D", 3), "int"), sta_lit(Value::from(int))],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
-                args: vec![sta_ak(("E", 4), "int"), sta_lit(Value::from(int))],
+                args: vec![sta_ak(("E", 4), "bool"), sta_lit(Value::from(bool))],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
-                args: vec![sta_ak(("F", 5), "bool"), sta_lit(Value::from(bool))],
-            },
-            StatementTmpl {
-                pred: Predicate::Native(NativePredicate::Equal),
-                args: vec![sta_ak(("G", 6), "sk"), sta_lit(Value::from(sk))],
-            },
-            StatementTmpl {
-                pred: Predicate::Native(NativePredicate::Equal),
-                args: vec![sta_ak(("H", 7), "self"), sta_lit(Value::from(SELF))],
+                args: vec![sta_ak(("F", 5), "sk"), sta_lit(Value::from(sk))],
             },
         ];
 
@@ -974,21 +948,13 @@ mod tests {
         let params = Params::default();
         let available_batches = &[];
 
-        let input = format!(
-            r#"
-            identity_verified(username, private: identity_pod) = AND(
-                Equal(?identity_pod["{key_type}"], {signed_pod_type})
-                Equal(?identity_pod["{key_signer}"], {identity_server_pk})
-                Equal(?identity_pod["username"], ?username)
-                Equal(?identity_pod["user_public_key"], ?user_public_key)
+        let input = r#"
+            identity_verified(username, private: identity_dict) = AND(
+                Equal(?identity_dict["username"], ?username)
+                Equal(?identity_dict["user_public_key"], ?user_public_key)
             )
-        "#,
-            key_type = KEY_TYPE,
-            signed_pod_type = PodType::Signed as u32,
-            key_signer = KEY_SIGNER,
-            identity_server_pk =
-                "0x0000000000000000000000000000000000000000000000000000000000000000"
-        );
+        "#
+        .to_string();
 
         let result = parse(&input, &params, available_batches);
 
@@ -1008,4 +974,3 @@ mod tests {
         }
     }
 }
-*/
