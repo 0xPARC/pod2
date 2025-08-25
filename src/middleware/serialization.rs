@@ -4,10 +4,14 @@ use std::{
     str::FromStr,
 };
 
+use base64::{prelude::BASE64_STANDARD, Engine};
 use plonky2::field::types::Field;
 use serde::{
     de::{
-        value::{MapDeserializer, SeqDeserializer, StrDeserializer, U32Deserializer},
+        value::{
+            MapAccessDeserializer, MapDeserializer, SeqDeserializer, StrDeserializer,
+            U32Deserializer,
+        },
         IntoDeserializer, Unexpected,
     },
     forward_to_deserialize_any,
@@ -258,15 +262,13 @@ impl Serializer for ValueSerializer {
     }
 
     fn serialize_f32(self, v: f32) -> Result<Self::Ok, Self::Error> {
-        self.serialize_f64(v as f64)
+        let s = format!("{v:.8e}");
+        self.serialize_str(&s)
     }
 
     fn serialize_f64(self, v: f64) -> Result<Self::Ok, Self::Error> {
-        // serialize as string?
-        Err(serde::de::Error::invalid_value(
-            Unexpected::Float(v),
-            &"pod-compatible type",
-        ))
+        let s = format!("{v:.16e}");
+        self.serialize_str(&s)
     }
 
     fn serialize_str(self, v: &str) -> Result<Self::Ok, Self::Error> {
@@ -292,11 +294,8 @@ impl Serializer for ValueSerializer {
     }
 
     fn serialize_bytes(self, v: &[u8]) -> Result<Self::Ok, Self::Error> {
-        // TODO: serialize as Array, or base64 string?
-        Err(serde::de::Error::invalid_value(
-            Unexpected::Bytes(v),
-            &"pod-compatible type",
-        ))
+        let s = BASE64_STANDARD.encode(v);
+        self.serialize_str(&s)
     }
 
     fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
@@ -359,7 +358,7 @@ impl Serializer for ValueSerializer {
         let mut map = HashMap::new();
         map.insert(Key::from(variant), ser_value);
         Ok(Value::from(
-            Dictionary::new(self.container_depth, map).map_err(serde::de::Error::custom)?,
+            Dictionary::new(self.container_depth, map).map_err(serde::ser::Error::custom)?,
         ))
     }
 
@@ -384,13 +383,13 @@ impl Serializer for ValueSerializer {
 
     fn serialize_tuple_variant(
         self,
-        name: &'static str,
+        _name: &'static str,
         _variant_index: u32,
-        _variant: &'static str,
+        variant: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeTupleVariant, Self::Error> {
         Ok(ValueSerializeTupleVariant {
-            name,
+            name: variant,
             inner: ValueSerializeSeq {
                 data: Vec::new(),
                 container_depth: self.container_depth,
@@ -648,6 +647,9 @@ impl<'de> serde::Deserializer<'de> for &TypedValue {
                     self.deserialize_any(visitor)
                 }
             }
+            TypedValue::Dictionary(d) => visitor.visit_enum(MapAccessDeserializer::new(
+                MapDeserializer::new(d.kvs().iter()),
+            )),
             _ => self.deserialize_any(visitor),
         }
     }
@@ -696,16 +698,82 @@ impl<'de> serde::Deserializer<'de> for &TypedValue {
         }
     }
 
-    forward_to_deserialize_any! { bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string bytes byte_buf unit_struct seq tuple_struct tuple map struct identifier ignored_any }
+    fn deserialize_bytes<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        match self {
+            TypedValue::String(s) => {
+                let b = BASE64_STANDARD
+                    .decode(s)
+                    .map_err(|e| serde::de::Error::custom(e.to_string()))?;
+                visitor.visit_bytes(&b)
+            }
+            _ => self.deserialize_any(visitor),
+        }
+    }
+
+    fn deserialize_byte_buf<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        match self {
+            TypedValue::String(s) => {
+                let b = BASE64_STANDARD
+                    .decode(s)
+                    .map_err(|e| serde::de::Error::custom(e.to_string()))?;
+                visitor.visit_byte_buf(b)
+            }
+            _ => self.deserialize_any(visitor),
+        }
+    }
+
+    fn deserialize_f32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        match self {
+            TypedValue::String(s) => {
+                if let Ok(f) = f32::from_str(s) {
+                    visitor.visit_f32(f)
+                } else {
+                    self.deserialize_any(visitor)
+                }
+            }
+            _ => self.deserialize_any(visitor),
+        }
+    }
+
+    fn deserialize_f64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        match self {
+            TypedValue::String(s) => {
+                if let Ok(f) = f64::from_str(s) {
+                    visitor.visit_f64(f)
+                } else {
+                    self.deserialize_any(visitor)
+                }
+            }
+            _ => self.deserialize_any(visitor),
+        }
+    }
+
+    forward_to_deserialize_any! { bool i8 i16 i32 i64 u8 u16 u32 u64 char str string unit_struct seq tuple_struct tuple map struct identifier ignored_any }
 }
 
 #[cfg(test)]
 mod test {
-    use serde::{de::DeserializeOwned, Deserialize, Serialize};
+
+    use serde::{
+        de::{DeserializeOwned, Visitor},
+        Deserialize, Serialize,
+    };
 
     use crate::{
         backends::plonky2::primitives::ec::{curve::Point, schnorr::SecretKey},
-        middleware::{serialization::ValueSerializer, Params, RawValue},
+        middleware::{serialization::ValueSerializer, Params, RawValue, TypedValue, Value},
     };
 
     #[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -713,6 +781,64 @@ mod test {
         Search,
         Mine,
     }
+
+    #[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
+    struct Inner {
+        ch: char,
+        b: bool,
+    }
+
+    #[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
+    struct Tuple(u8, u32);
+
+    #[derive(PartialEq, Eq, Debug)]
+    struct Bytes(Vec<u8>);
+
+    struct BytesVisitor;
+
+    impl<'de> Visitor<'de> for BytesVisitor {
+        type Value = Bytes;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(formatter, "a byte buffer")
+        }
+
+        fn visit_byte_buf<E>(self, v: Vec<u8>) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(Bytes(v))
+        }
+    }
+
+    impl Serialize for Bytes {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            serializer.serialize_bytes(&self.0)
+        }
+    }
+
+    impl<'de> Deserialize<'de> for Bytes {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            deserializer.deserialize_byte_buf(BytesVisitor)
+        }
+    }
+
+    #[derive(Serialize, Deserialize, Debug)]
+    struct Float(f32);
+
+    impl PartialEq for Float {
+        fn eq(&self, other: &Self) -> bool {
+            self.0 == other.0 || (self.0.is_nan() && other.0.is_nan())
+        }
+    }
+
+    impl Eq for Float {}
 
     #[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
     struct FrogDesc {
@@ -724,6 +850,14 @@ mod test {
         unit: (),
         sk: SecretKey,
         pk: Point,
+        fancy1: Fancy,
+        fancy2: Fancy,
+        inner: Inner,
+        tuple: Tuple,
+        bytes: Bytes,
+        float: Float,
+        inf: Float,
+        nan: Float,
     }
 
     fn test_roundtrip<T: Serialize + DeserializeOwned + Eq + std::fmt::Debug>(t: T) {
@@ -732,6 +866,24 @@ mod test {
         println!("{val:?}");
         let out: T = Deserialize::deserialize(val.typed()).unwrap();
         assert_eq!(t, out);
+    }
+
+    fn test_preserved<T: Serialize + Eq + std::fmt::Debug>(t: T)
+    where
+        TypedValue: From<T>,
+    {
+        let depth = Params::default().max_depth_mt_containers;
+        let ser = t.serialize(ValueSerializer::new(depth)).unwrap();
+        let val = Value::from(TypedValue::from(t));
+        println!("{}", serde_json::to_string(&ser).unwrap());
+        println!("{}", serde_json::to_string(&val).unwrap());
+        assert_eq!(ser, val);
+    }
+
+    #[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
+    enum Fancy {
+        B(i64, i64),
+        C { x: i64, y: Vec<i64> },
     }
 
     #[test]
@@ -751,7 +903,31 @@ mod test {
             unit: (),
             sk,
             pk,
+            fancy1: Fancy::B(0, 1),
+            fancy2: Fancy::C {
+                x: 1,
+                y: vec![2, 3],
+            },
+            inner: Inner {
+                ch: '\u{200b}',
+                b: true,
+            },
+            tuple: Tuple(5, 6),
+            bytes: Bytes(b"abc".to_vec()),
+            float: Float(3.0),
+            inf: Float(f32::NEG_INFINITY),
+            nan: Float(f32::NAN),
         };
         test_roundtrip(desc);
+    }
+
+    #[test]
+    fn test_pod_types() {
+        let raw = RawValue::default();
+        let sk = SecretKey::new_rand();
+        let pt = sk.public_key();
+        test_preserved(raw);
+        test_preserved(sk);
+        test_preserved(pt);
     }
 }
