@@ -4,6 +4,7 @@ pub mod statement;
 use std::{any::Any, iter, sync::Arc};
 
 use itertools::Itertools;
+use num_bigint::{BigUint, RandBigInt};
 pub use operation::*;
 use plonky2::{hash::poseidon::PoseidonHash, plonk::config::Hasher};
 use serde::{Deserialize, Serialize};
@@ -11,7 +12,7 @@ pub use statement::*;
 
 use crate::{
     backends::plonky2::{
-        basetypes::{CircuitData, Proof, ProofWithPublicInputs, VerifierOnlyCircuitData},
+        basetypes::{CircuitData, Proof, ProofWithPublicInputs, VerifierOnlyCircuitData, F},
         cache::{self, CacheEntry},
         cache_get_standard_rec_main_pod_common_circuit_data,
         circuits::mainpod::{CustomPredicateVerification, MainPodVerifyInput, MainPodVerifyTarget},
@@ -241,10 +242,22 @@ pub(crate) fn extract_public_key_of(
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct SignedBy {
-    msg: RawValue,
-    pk: PublicKey,
-    sig: Signature,
+pub struct SignedBy {
+    pub msg: RawValue,
+    pub pk: PublicKey,
+    pub sig: Signature,
+}
+
+impl SignedBy {
+    /// A valid deterministic signature from a known private key and nonce, used for padding
+    pub fn dummy() -> Self {
+        let sk = SecretKey(BigUint::from(1u32));
+        let pk = sk.public_key();
+        let msg = RawValue([F(0), F(0), F(0), F(0)]);
+        let nonce = BigUint::from(2u32);
+        let sig = sk.sign(msg, &nonce);
+        Self { msg, pk, sig }
+    }
 }
 
 /// Extracts Signatures verification data from SignedBy ops.
@@ -264,7 +277,7 @@ pub(crate) fn extract_signatures(
         {
             let msg = value_from_op(msg_s, msg_ref).ok_or_else(deduction_err)?;
             let pk = value_from_op(pk_s, pk_ref).ok_or_else(deduction_err)?;
-            aux_list[i] = OperationAux::SignedBy(table.len());
+            aux_list[i] = OperationAux::SignedByIndex(table.len());
             table.push(SignedBy {
                 msg: msg.raw(),
                 pk: PublicKey::try_from(pk.typed())?,
@@ -540,6 +553,8 @@ impl PodProver for Prover {
         )?;
         let public_key_of_sks =
             extract_public_key_of(params, &mut aux_list, inputs.operations, inputs.statements)?;
+        let signed_bys =
+            extract_signatures(params, &mut aux_list, inputs.operations, inputs.statements)?;
 
         let merkle_tree_state_transition_proofs =
             extract_merkle_tree_state_transition_proofs(params, &mut aux_list, inputs.operations)?;
@@ -575,7 +590,14 @@ impl PodProver for Prover {
             .map(|pod| pod.verifier_data())
             .collect_vec();
 
-        let vd_mt_proofs = vd_set.get_vds_proofs(&verifier_datas)?;
+        let mut vd_mt_proofs = Vec::with_capacity(inputs.recursive_pods.len());
+        for (pod, vd) in inputs.recursive_pods.iter().zip(&verifier_datas) {
+            vd_mt_proofs.push(if pod.is_main() {
+                Some(vd_set.get_vds_proof(&vd)?)
+            } else {
+                None
+            });
+        }
 
         let input = MainPodVerifyInput {
             vds_set: inputs.vd_set.clone(),
@@ -586,6 +608,7 @@ impl PodProver for Prover {
             operations,
             merkle_proofs,
             public_key_of_sks,
+            signed_bys,
             merkle_tree_state_transition_proofs,
             custom_predicate_batches,
             custom_predicate_verifications,
@@ -716,6 +739,9 @@ impl Pod for MainPod {
     fn params(&self) -> &Params {
         &self.params
     }
+    fn is_main(&self) -> bool {
+        true
+    }
     fn verify(&self) -> Result<()> {
         // 0. Assert that the CommonCircuitData of the pod is the current one
         let expect_common_hash = &*cache_get_rec_main_pod_common_hash(&self.params);
@@ -820,8 +846,6 @@ impl RecursivePod for MainPod {
     }
 }
 
-// TODO: Uncomment
-/*
 #[cfg(test)]
 pub mod tests {
     use num::{BigUint, One};
@@ -831,11 +855,11 @@ pub mod tests {
         backends::plonky2::{
             mock::mainpod::{MockMainPod, MockProver},
             primitives::ec::schnorr::SecretKey,
-            signedpod::Signer,
+            signer::Signer,
         },
         examples::{
-            attest_eth_friend, tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_sign_dict_builders,
-            EthDosHelper,
+            attest_eth_friend, tickets_pod_full_flow, zu_kyc_pod_builder,
+            zu_kyc_sign_dict_builders, EthDosHelper,
         },
         frontend::{
             self, literal, CustomPredicateBatchBuilder, MainPodBuilder, StatementTmplBuilder as STB,
@@ -846,54 +870,54 @@ pub mod tests {
         },
     };
 
-    #[test]
-    fn test_main_zu_kyc() -> frontend::Result<()> {
-        let params = middleware::Params {
-            // Currently the circuit uses random access that only supports vectors of length 64.
-            // With max_input_main_pods=3 we need random access to a vector of length 73.
-            max_input_recursive_pods: 0,
-            max_custom_predicate_batches: 0,
-            max_custom_predicate_verifications: 0,
-            ..Default::default()
-        };
-        println!("{:#?}", params);
-        let mut vds = DEFAULT_VD_LIST.clone();
-        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
-        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
+    // #[test]
+    // fn test_main_zu_kyc() -> frontend::Result<()> {
+    //     let params = middleware::Params {
+    //         // Currently the circuit uses random access that only supports vectors of length 64.
+    //         // With max_input_main_pods=3 we need random access to a vector of length 73.
+    //         max_input_recursive_pods: 0,
+    //         max_custom_predicate_batches: 0,
+    //         max_custom_predicate_verifications: 0,
+    //         ..Default::default()
+    //     };
+    //     println!("{:#?}", params);
+    //     let mut vds = DEFAULT_VD_LIST.clone();
+    //     vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+    //     let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
 
-        let (gov_id_builder, pay_stub_builder) = zu_kyc_sign_dict_builders(&params);
-        let signer = Signer(SecretKey(BigUint::one()));
-        let gov_id_pod = gov_id_builder.sign(&signer)?;
-        let signer = Signer(SecretKey(2u64.into()));
-        let pay_stub_pod = pay_stub_builder.sign(&signer)?;
-        let kyc_builder = zu_kyc_pod_builder(&params, &vd_set, &gov_id_pod, &pay_stub_pod)?;
+    //     let (gov_id_builder, pay_stub_builder) = zu_kyc_sign_dict_builders(&params);
+    //     let signer = Signer(SecretKey(BigUint::one()));
+    //     let gov_id_pod = gov_id_builder.sign(&signer)?;
+    //     let signer = Signer(SecretKey(2u64.into()));
+    //     let pay_stub_pod = pay_stub_builder.sign(&signer)?;
+    //     let kyc_builder = zu_kyc_pod_builder(&params, &vd_set, &gov_id_pod, &pay_stub_pod)?;
 
-        let prover = Prover {};
-        let kyc_pod = kyc_builder.prove(&prover)?;
-        crate::measure_gates_print!();
-        let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
+    //     let prover = Prover {};
+    //     let kyc_pod = kyc_builder.prove(&prover)?;
+    //     crate::measure_gates_print!();
+    //     let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
 
-        Ok(pod.verify()?)
-    }
+    //     Ok(pod.verify()?)
+    // }
 
-    #[test]
-    fn test_main_tickets() -> frontend::Result<()> {
-        let params = Params::default();
+    // #[test]
+    // fn test_main_tickets() -> frontend::Result<()> {
+    //     let params = Params::default();
 
-        let ticket_builder = tickets_pod_full_flow(&params, &DEFAULT_VD_SET)?;
-        let prover = Prover {};
-        let kyc_pod = ticket_builder.prove(&prover)?;
-        crate::measure_gates_print!();
-        let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
+    //     let ticket_builder = tickets_pod_full_flow(&params, &DEFAULT_VD_SET)?;
+    //     let prover = Prover {};
+    //     let kyc_pod = ticket_builder.prove(&prover)?;
+    //     crate::measure_gates_print!();
+    //     let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
 
-        Ok(pod.verify()?)
-    }
+    //     Ok(pod.verify()?)
+    // }
 
     #[test]
     fn test_mini_0() {
         let params = middleware::Params {
-            max_input_signed_pods: 1,
-            max_input_recursive_pods: 1,
+            max_signed_by: 1,
+            max_input_recursive_pods: 1, // TODO: Failing
             max_signed_pod_values: 6,
             max_statements: 8,
             max_public_statements: 4,
@@ -912,7 +936,10 @@ pub mod tests {
         let gov_id = gov_id_builder.sign(&signer).unwrap();
         let now_minus_18y: i64 = 1169909388;
         let mut kyc_builder = frontend::MainPodBuilder::new(&params, &vd_set);
-        kyc_builder.add_signed_pod(&gov_id);
+
+        kyc_builder
+            .priv_op(frontend::Operation::dict_signed_by(&gov_id))
+            .unwrap();
         kyc_builder
             .pub_op(frontend::Operation::lt(
                 (&gov_id, "dateOfBirth"),
@@ -939,49 +966,49 @@ pub mod tests {
         pod.verify().unwrap()
     }
 
-    // This pod does nothing but it's useful for debugging to keep things small.
-    #[ignore]
-    #[test]
-    fn test_mini_1() {
-        let params = middleware::Params {
-            max_input_signed_pods: 0,
-            max_input_recursive_pods: 0,
-            max_signed_pod_values: 0,
-            max_statements: 2,
-            max_public_statements: 1,
-            max_input_pods_public_statements: 0,
-            max_merkle_proofs_containers: 0,
-            max_public_key_of: 0,
-            max_custom_predicate_verifications: 0,
-            max_custom_predicate_batches: 0,
-            ..Default::default()
-        };
-        let mut vds = DEFAULT_VD_LIST.clone();
-        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
-        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
+    // // This pod does nothing but it's useful for debugging to keep things small.
+    // #[ignore]
+    // #[test]
+    // fn test_mini_1() {
+    //     let params = middleware::Params {
+    //         max_input_signed_pods: 0,
+    //         max_input_recursive_pods: 0,
+    //         max_signed_pod_values: 0,
+    //         max_statements: 2,
+    //         max_public_statements: 1,
+    //         max_input_pods_public_statements: 0,
+    //         max_merkle_proofs_containers: 0,
+    //         max_public_key_of: 0,
+    //         max_custom_predicate_verifications: 0,
+    //         max_custom_predicate_batches: 0,
+    //         ..Default::default()
+    //     };
+    //     let mut vds = DEFAULT_VD_LIST.clone();
+    //     vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+    //     let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
 
-        let builder = frontend::MainPodBuilder::new(&params, &vd_set);
-        println!("{}", builder);
-        println!();
+    //     let builder = frontend::MainPodBuilder::new(&params, &vd_set);
+    //     println!("{}", builder);
+    //     println!();
 
-        // Mock
-        let prover = MockProver {};
-        let pod = builder.prove(&prover).unwrap();
-        let pod = (pod.pod as Box<dyn Any>).downcast::<MockMainPod>().unwrap();
-        pod.verify().unwrap();
-        println!("{:#}", pod);
+    //     // Mock
+    //     let prover = MockProver {};
+    //     let pod = builder.prove(&prover).unwrap();
+    //     let pod = (pod.pod as Box<dyn Any>).downcast::<MockMainPod>().unwrap();
+    //     pod.verify().unwrap();
+    //     println!("{:#}", pod);
 
-        // Real
-        let prover = Prover {};
-        let pod = builder.prove(&prover).unwrap();
-        let pod = (pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
-        pod.verify().unwrap()
-    }
+    //     // Real
+    //     let prover = Prover {};
+    //     let pod = builder.prove(&prover).unwrap();
+    //     let pod = (pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
+    //     pod.verify().unwrap()
+    // }
 
     #[test]
     fn test_mainpod_small_empty() {
         let params = middleware::Params {
-            max_input_signed_pods: 0,
+            max_signed_by: 0,
             max_input_recursive_pods: 0,
             max_input_pods_public_statements: 2,
             max_statements: 5,
@@ -1023,111 +1050,111 @@ pub mod tests {
         pod.verify().unwrap()
     }
 
-    #[test]
-    fn test_main_ethdos() -> frontend::Result<()> {
-        let params = Params::default();
-        println!("{:#?}", params);
-        let vd_set = &*DEFAULT_VD_SET;
+    // #[test]
+    // fn test_main_ethdos() -> frontend::Result<()> {
+    //     let params = Params::default();
+    //     println!("{:#?}", params);
+    //     let vd_set = &*DEFAULT_VD_SET;
 
-        let alice = Signer(SecretKey(1u32.into()));
-        let bob = Signer(SecretKey(2u32.into()));
-        let charlie = Signer(SecretKey(3u32.into()));
+    //     let alice = Signer(SecretKey(1u32.into()));
+    //     let bob = Signer(SecretKey(2u32.into()));
+    //     let charlie = Signer(SecretKey(3u32.into()));
 
-        // Alice attests that she is ETH friends with Bob and Bob
-        // attests that he is ETH friends with Charlie.
-        let alice_attestation = attest_eth_friend(&params, &alice, bob.public_key());
-        let bob_attestation = attest_eth_friend(&params, &bob, charlie.public_key());
+    //     // Alice attests that she is ETH friends with Bob and Bob
+    //     // attests that he is ETH friends with Charlie.
+    //     let alice_attestation = attest_eth_friend(&params, &alice, bob.public_key());
+    //     let bob_attestation = attest_eth_friend(&params, &bob, charlie.public_key());
 
-        let helper = EthDosHelper::new(&params, vd_set, false, alice.public_key())?;
-        let prover = Prover {};
-        let dist_1 = helper.dist_1(&alice_attestation)?.prove(&prover)?;
-        crate::measure_gates_print!();
-        dist_1.pod.verify()?;
-        let dist_2 = helper
-            .dist_n_plus_1(&dist_1, &bob_attestation)?
-            .prove(&prover)?;
-        Ok(dist_2.pod.verify()?)
-    }
+    //     let helper = EthDosHelper::new(&params, vd_set, false, alice.public_key())?;
+    //     let prover = Prover {};
+    //     let dist_1 = helper.dist_1(&alice_attestation)?.prove(&prover)?;
+    //     crate::measure_gates_print!();
+    //     dist_1.pod.verify()?;
+    //     let dist_2 = helper
+    //         .dist_n_plus_1(&dist_1, &bob_attestation)?
+    //         .prove(&prover)?;
+    //     Ok(dist_2.pod.verify()?)
+    // }
 
-    #[test]
-    fn test_main_mini_custom_1() -> frontend::Result<()> {
-        let params = Params {
-            max_input_signed_pods: 0,
-            max_input_recursive_pods: 0,
-            max_statements: 9,
-            max_public_statements: 4,
-            max_statement_args: 4,
-            max_operation_args: 4,
-            max_custom_predicate_arity: 3,
-            max_custom_batch_size: 3,
-            max_custom_predicate_wildcards: 4,
-            max_custom_predicate_verifications: 2,
-            max_merkle_proofs_containers: 0,
-            max_merkle_tree_state_transition_proofs_containers: 0,
-            ..Default::default()
-        };
-        println!("{:#?}", params);
-        let mut vds = DEFAULT_VD_LIST.clone();
-        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
-        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
+    // #[test]
+    // fn test_main_mini_custom_1() -> frontend::Result<()> {
+    //     let params = Params {
+    //         max_input_signed_pods: 0,
+    //         max_input_recursive_pods: 0,
+    //         max_statements: 9,
+    //         max_public_statements: 4,
+    //         max_statement_args: 4,
+    //         max_operation_args: 4,
+    //         max_custom_predicate_arity: 3,
+    //         max_custom_batch_size: 3,
+    //         max_custom_predicate_wildcards: 4,
+    //         max_custom_predicate_verifications: 2,
+    //         max_merkle_proofs_containers: 0,
+    //         max_merkle_tree_state_transition_proofs_containers: 0,
+    //         ..Default::default()
+    //     };
+    //     println!("{:#?}", params);
+    //     let mut vds = DEFAULT_VD_LIST.clone();
+    //     vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+    //     let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
 
-        let mut cpb_builder = CustomPredicateBatchBuilder::new(params.clone(), "cpb".into());
-        let stb0 = STB::new(NP::Equal).arg(("id", "score")).arg(literal(42));
-        let stb1 = STB::new(NP::Equal)
-            .arg(("secret_id", "key"))
-            .arg(("id", "score"));
-        let _ = cpb_builder.predicate_and(
-            "pred_and",
-            &["id"],
-            &["secret_id"],
-            &[stb0.clone(), stb1.clone()],
-        )?;
-        let _ = cpb_builder.predicate_or("pred_or", &["id"], &["secret_id"], &[stb0, stb1])?;
-        let cpb = cpb_builder.finish();
+    //     let mut cpb_builder = CustomPredicateBatchBuilder::new(params.clone(), "cpb".into());
+    //     let stb0 = STB::new(NP::Equal).arg(("id", "score")).arg(literal(42));
+    //     let stb1 = STB::new(NP::Equal)
+    //         .arg(("secret_id", "key"))
+    //         .arg(("id", "score"));
+    //     let _ = cpb_builder.predicate_and(
+    //         "pred_and",
+    //         &["id"],
+    //         &["secret_id"],
+    //         &[stb0.clone(), stb1.clone()],
+    //     )?;
+    //     let _ = cpb_builder.predicate_or("pred_or", &["id"], &["secret_id"], &[stb0, stb1])?;
+    //     let cpb = cpb_builder.finish();
 
-        let cpb_and = CustomPredicateRef::new(cpb.clone(), 0);
-        let _cpb_or = CustomPredicateRef::new(cpb.clone(), 1);
+    //     let cpb_and = CustomPredicateRef::new(cpb.clone(), 0);
+    //     let _cpb_or = CustomPredicateRef::new(cpb.clone(), 1);
 
-        let mut pod_builder = MainPodBuilder::new(&params, &vd_set);
+    //     let mut pod_builder = MainPodBuilder::new(&params, &vd_set);
 
-        let st0 = pod_builder.priv_op(frontend::Operation::new_entry("score", 42))?;
-        let st1 = pod_builder.priv_op(frontend::Operation::new_entry("key", 42))?;
-        let st2 = pod_builder.priv_op(frontend::Operation::eq(st1.clone(), st0.clone()))?;
+    //     let st0 = pod_builder.priv_op(frontend::Operation::new_entry("score", 42))?;
+    //     let st1 = pod_builder.priv_op(frontend::Operation::new_entry("key", 42))?;
+    //     let st2 = pod_builder.priv_op(frontend::Operation::eq(st1.clone(), st0.clone()))?;
 
-        let _st3 = pod_builder.priv_op(frontend::Operation::custom(cpb_and.clone(), [st0, st2]))?;
+    //     let _st3 = pod_builder.priv_op(frontend::Operation::custom(cpb_and.clone(), [st0, st2]))?;
 
-        let prover = MockProver {};
-        let pod = pod_builder.prove(&prover)?;
-        assert!(pod.pod.verify().is_ok());
+    //     let prover = MockProver {};
+    //     let pod = pod_builder.prove(&prover)?;
+    //     assert!(pod.pod.verify().is_ok());
 
-        let prover = Prover {};
-        let pod = pod_builder.prove(&prover)?;
-        crate::measure_gates_print!();
+    //     let prover = Prover {};
+    //     let pod = pod_builder.prove(&prover)?;
+    //     crate::measure_gates_print!();
 
-        let pod = (pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
+    //     let pod = (pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
 
-        Ok(pod.verify()?)
-    }
+    //     Ok(pod.verify()?)
+    // }
 
-    #[test]
-    fn test_set_contains() -> frontend::Result<()> {
-        let params = Params::default();
-        let mut builder = MainPodBuilder::new(&params, &DEFAULT_VD_SET);
-        let set = [1, 2, 3].into_iter().map(|n| n.into()).collect();
-        let st = builder
-            .pub_op(frontend::Operation::new_entry(
-                "entry",
-                Set::new(params.max_depth_mt_containers, set).unwrap(),
-            ))
-            .unwrap();
+    // #[test]
+    // fn test_set_contains() -> frontend::Result<()> {
+    //     let params = Params::default();
+    //     let mut builder = MainPodBuilder::new(&params, &DEFAULT_VD_SET);
+    //     let set = [1, 2, 3].into_iter().map(|n| n.into()).collect();
+    //     let st = builder
+    //         .pub_op(frontend::Operation::new_entry(
+    //             "entry",
+    //             Set::new(params.max_depth_mt_containers, set).unwrap(),
+    //         ))
+    //         .unwrap();
 
-        builder.pub_op(frontend::Operation::set_contains(st, 1))?;
+    //     builder.pub_op(frontend::Operation::set_contains(st, 1))?;
 
-        let prover = Prover {};
-        let proof = builder.prove(&prover).unwrap();
-        let pod = (proof.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
-        Ok(pod.verify()?)
-    }
+    //     let prover = Prover {};
+    //     let proof = builder.prove(&prover).unwrap();
+    //     let pod = (proof.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
+    //     Ok(pod.verify()?)
+    // }
 
     #[test]
     fn test_common() {
@@ -1138,14 +1165,13 @@ pub mod tests {
         assert_eq!(std_common.0, main_common.0);
     }
 
-    #[test]
-    fn test_negative_less_than_zero() -> frontend::Result<()> {
-        let params = Params::default();
-        let mut builder = MainPodBuilder::new(&params, &DEFAULT_VD_SET);
-        builder.pub_op(frontend::Operation::lt(-1, 0))?;
-        let prover = Prover {};
-        builder.prove(&prover)?;
-        Ok(())
-    }
+    // #[test]
+    // fn test_negative_less_than_zero() -> frontend::Result<()> {
+    //     let params = Params::default();
+    //     let mut builder = MainPodBuilder::new(&params, &DEFAULT_VD_SET);
+    //     builder.pub_op(frontend::Operation::lt(-1, 0))?;
+    //     let prover = Prover {};
+    //     builder.prove(&prover)?;
+    //     Ok(())
+    // }
 }
-*/

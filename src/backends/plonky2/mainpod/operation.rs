@@ -35,7 +35,7 @@ pub enum OperationAux {
     None,
     MerkleProofIndex(usize),
     PublicKeyOfIndex(usize),
-    SignedBy(usize),
+    SignedByIndex(usize),
     MerkleTreeStateTransitionProofIndex(usize),
     CustomPredVerifyIndex(usize),
 }
@@ -70,7 +70,7 @@ impl OperationAux {
             Self::None => 0,
             Self::MerkleProofIndex(i) => Self::table_offset_merkle_proof(params) + *i,
             Self::PublicKeyOfIndex(i) => Self::table_offset_public_key_of(params) + *i,
-            Self::SignedBy(i) => Self::table_offset_signed_by(params) + *i,
+            Self::SignedByIndex(i) => Self::table_offset_signed_by(params) + *i,
             Self::MerkleTreeStateTransitionProofIndex(i) => {
                 Self::table_offset_merkle_tree_state_transition_proof(params) + *i
             }
@@ -132,7 +132,7 @@ impl Operation {
                         .clone(),
                 )
             }
-            OperationAux::SignedBy(i) => crate::middleware::OperationAux::Signature(
+            OperationAux::SignedByIndex(i) => crate::middleware::OperationAux::Signature(
                 signatures
                     .get(i)
                     .ok_or(Error::custom(format!("Missing SignedBy data index {}", i)))?
@@ -168,7 +168,7 @@ impl fmt::Display for Operation {
             OperationAux::MerkleProofIndex(i) => write!(f, " merkle_proof_{:02}", i)?,
             OperationAux::CustomPredVerifyIndex(i) => write!(f, " custom_pred_verify_{:02}", i)?,
             OperationAux::PublicKeyOfIndex(i) => write!(f, " public_key_of_{:02}", i)?,
-            OperationAux::SignedBy(i) => write!(f, " signed_by_{:02}", i)?,
+            OperationAux::SignedByIndex(i) => write!(f, " signed_by_{:02}", i)?,
             OperationAux::MerkleTreeStateTransitionProofIndex(i) => {
                 write!(f, " merkle_tree_state_transition_proof_{:02}", i)?
             }

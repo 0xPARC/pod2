@@ -806,6 +806,7 @@ pub struct Params {
     pub max_input_recursive_pods: usize,
     pub max_input_pods_public_statements: usize,
     pub max_statements: usize,
+    // TODO: Delete
     pub max_signed_pod_values: usize,
     pub max_public_statements: usize,
     pub max_operation_args: usize,
@@ -972,9 +973,12 @@ impl<T: Any + Eq> EqualsAny for T {
 pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
     fn params(&self) -> &Params;
     fn verify(&self) -> Result<(), BackendError>;
+    /// Overwrite this method to return true in a mock pod to skip plonky2 verification
     fn is_mock(&self) -> bool {
         false
     }
+    /// Overwrite this method to return true in a MainPod to generate verifier key inclusion proof
+    /// into the vd set
     fn is_main(&self) -> bool {
         false
     }

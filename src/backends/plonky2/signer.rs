@@ -26,7 +26,7 @@ use crate::{
 pub struct Signer(pub SecretKey);
 
 impl Signer {
-    fn sign_with_nonce(&self, nonce: BigUint, msg: RawValue) -> Signature {
+    pub(crate) fn sign_with_nonce(&self, nonce: BigUint, msg: RawValue) -> Signature {
         let signature: Signature = timed!("SignedPod::sign", self.0.sign(msg, &nonce));
         signature
     }

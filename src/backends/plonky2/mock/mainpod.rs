@@ -240,6 +240,9 @@ impl Pod for MockMainPod {
     fn params(&self) -> &Params {
         &self.params
     }
+    fn is_mock(&self) -> bool {
+        true
+    }
 
     fn verify(&self) -> Result<()> {
         // 1. Verify input pods

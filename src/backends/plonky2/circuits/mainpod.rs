@@ -1,7 +1,7 @@
 use std::{array, iter, sync::Arc};
 
 use itertools::{izip, zip_eq, Itertools};
-use num::{BigUint, One};
+use num::{BigUint, FromPrimitive, One, Signed};
 use plonky2::{
     field::types::Field,
     hash::{
@@ -34,20 +34,24 @@ use crate::{
         },
         emptypod::{cache_get_standard_empty_pod_circuit_data, EmptyPod},
         error::Result,
-        mainpod::{self, pad_statement},
+        mainpod::{self, pad_statement, SignedBy},
         primitives::{
             ec::{
                 bits::{BigUInt320Target, CircuitBuilderBits},
-                curve::{CircuitBuilderElliptic, Point, WitnessWriteCurve, GROUP_ORDER},
-                schnorr::SecretKey,
+                curve::{
+                    CircuitBuilderElliptic, Point, PointTarget, WitnessWriteCurve, GROUP_ORDER,
+                },
+                schnorr::{CircuitBuilderSchnorr, SecretKey, SignatureTarget, WitnessWriteSchnorr},
             },
             merkletree::{
                 verify_merkle_proof_circuit, verify_merkle_state_transition_circuit,
                 MerkleClaimAndProof, MerkleClaimAndProofTarget, MerkleTreeOp,
                 MerkleTreeStateTransitionProof, MerkleTreeStateTransitionProofTarget,
             },
+            signature::{verify_signature_circuit, SignatureVerifyTarget},
         },
         recursion::{InnerCircuit, VerifiedProofTarget},
+        signer,
         // signedpod::SignedPod,
     },
     measure_gates_begin, measure_gates_end,
@@ -203,15 +207,17 @@ enum OperationAuxTableTag {
     None = 0,
     MerkleProof = 1,
     PublicKeyOf = 2,
-    MerkleTreeStateTransitionProof = 3,
-    CustomPredVerify = 4,
+    SignedBy = 3,
+    MerkleTreeStateTransitionProof = 4,
+    CustomPredVerify = 5,
 }
 
 // TODO: Add SignedBy
 fn max_operation_aux_entry_len(params: &Params) -> usize {
     [
         (params.max_merkle_proofs_containers > 0).then(|| MerkleClaimTarget::size(params)),
-        (params.max_public_key_of > 0).then(|| KeyPairTarget::size(params)),
+        (params.max_public_key_of > 0).then(|| PubKeySecKeyTarget::size(params)),
+        (params.max_signed_by > 0).then(|| MsgPubKeyTarget::size(params)),
         (params.max_merkle_tree_state_transition_proofs_containers > 0)
             .then(|| MerkleTreeStateTransitionClaimTarget::size(params)),
         (params.max_custom_predicate_verifications > 0)
@@ -224,28 +230,48 @@ fn max_operation_aux_entry_len(params: &Params) -> usize {
 }
 
 #[derive(Copy, Clone)]
-struct KeyPairTarget {
-    pk_hash: HashOutTarget,
-    sk_hash: HashOutTarget,
-}
+struct HashPairTarget(HashOutTarget, HashOutTarget);
 
-impl Flattenable for KeyPairTarget {
+impl Flattenable for HashPairTarget {
     fn flatten(&self) -> Vec<Target> {
-        self.pk_hash
-            .elements
-            .into_iter()
-            .chain(self.sk_hash.elements)
-            .collect()
+        self.0.elements.into_iter().chain(self.1.elements).collect()
     }
     fn from_flattened(params: &Params, vs: &[Target]) -> Self {
         assert_eq!(vs.len(), Self::size(params));
-        Self {
-            pk_hash: HashOutTarget::try_from(&vs[..4]).expect("len = 4"),
-            sk_hash: HashOutTarget::try_from(&vs[4..]).expect("len = 4"),
-        }
+        Self(
+            HashOutTarget::try_from(&vs[..4]).expect("len = 4"),
+            HashOutTarget::try_from(&vs[4..]).expect("len = 4"),
+        )
     }
     fn size(_params: &Params) -> usize {
         8
+    }
+}
+
+type PubKeySecKeyTarget = HashPairTarget; // (public_key, secret_key)
+type MsgPubKeyTarget = HashPairTarget; // (message, public_key)
+
+#[derive(Clone, Serialize, Deserialize)]
+struct SignedByTarget {
+    msg: ValueTarget,
+    pk: PointTarget,
+    sig: SignatureTarget,
+}
+
+impl SignedByTarget {
+    pub fn set_targets(&self, pw: &mut PartialWitness<F>, signed_by: &SignedBy) -> Result<()> {
+        self.msg.set_targets(pw, &Value::from(signed_by.msg))?;
+        pw.set_point_target(&self.pk, &signed_by.pk)?;
+        pw.set_signature_target(&self.sig, &signed_by.sig)?;
+        Ok(())
+    }
+
+    pub fn new_virtual(builder: &mut CircuitBuilder) -> Self {
+        Self {
+            msg: builder.add_virtual_value(),
+            pk: builder.add_virtual_point_target(),
+            sig: builder.add_virtual_schnorr_signature_target(),
+        }
     }
 }
 
@@ -254,6 +280,7 @@ fn build_operation_aux_table_circuit(
     builder: &mut CircuitBuilder,
     merkle_proofs: &[MerkleClaimAndProofTarget],
     public_key_of_sks: &[BigUInt320Target],
+    signed_bys: &[SignedByTarget],
     merkle_tree_state_transition_proofs: &[MerkleTreeStateTransitionProofTarget],
     custom_predicate_verifications: &[CustomPredicateVerifyEntryTarget],
     custom_predicate_table: &[HashOutTarget],
@@ -298,9 +325,42 @@ fn build_operation_aux_table_circuit(
             pk.x.components.into_iter().chain(pk.u.components).collect(),
         );
 
-        let entry = KeyPairTarget { pk_hash, sk_hash };
+        let entry: PubKeySecKeyTarget = HashPairTarget(pk_hash, sk_hash);
 
         table.push(builder, OperationAuxTableTag::PublicKeyOf as u32, &entry);
+        measure_gates_end!(builder, measure);
+    }
+
+    // SignedBy: verify the Schnorr signature of a message with a public key
+    for signed_by in signed_bys {
+        let measure = measure_gates_begin!(builder, "SignedBy");
+
+        let signature_verify = SignatureVerifyTarget {
+            enabled: builder._true(),
+            pk: signed_by.pk.clone(),
+            msg: signed_by.msg.clone(),
+            sig: signed_by.sig.clone(),
+        };
+        verify_signature_circuit(builder, &signature_verify);
+
+        // TODO: Add a function to hash the public key
+        let pk_hash = builder.hash_n_to_hash_no_pad::<PoseidonHash>(
+            signed_by
+                .pk
+                .x
+                .components
+                .into_iter()
+                .chain(signed_by.pk.u.components)
+                .collect(),
+        );
+        let entry: MsgPubKeyTarget = HashPairTarget(
+            HashOutTarget {
+                elements: signed_by.msg.elements.clone(),
+            },
+            pk_hash,
+        );
+
+        table.push(builder, OperationAuxTableTag::SignedBy as u32, &entry);
         measure_gates_end!(builder, measure);
     }
 
@@ -437,6 +497,16 @@ fn verify_operation_circuit(
         }
         if params.max_public_key_of > 0 {
             op_checks.push(verify_public_key_of_circuit(
+                params,
+                builder,
+                st,
+                &op.op_type,
+                &resolved_aux,
+                &cache,
+            ));
+        }
+        if params.max_signed_by > 0 {
+            op_checks.push(verify_signed_by_circuit(
                 params,
                 builder,
                 st,
@@ -997,23 +1067,17 @@ fn verify_public_key_of_circuit(
     cache: &StatementCache,
 ) -> BoolTarget {
     let measure = measure_gates_begin!(builder, "OpPublicKeyOf");
-    let (aux_tag_ok, resolved_key_pair) =
-        aux.as_type::<KeyPairTarget>(builder, OperationAuxTableTag::PublicKeyOf as u32);
+    let (aux_tag_ok, resolved_pk_sk) =
+        aux.as_type::<PubKeySecKeyTarget>(builder, OperationAuxTableTag::PublicKeyOf as u32);
 
     let op_code_ok = op_type.has_native(builder, NativeOperation::PublicKeyOf);
     let (arg_types_ok, [arg1_value, arg2_value]) = cache.first_n_args_as_values();
     // inputting public_key, secret_key
-    let public_key_hash = arg1_value;
-    let secret_key_hash = arg2_value;
+    let pk_hash = arg1_value;
+    let sk_hash = arg2_value;
 
-    let skey_hash_ok = builder.is_equal_slice(
-        &secret_key_hash.elements,
-        &resolved_key_pair.sk_hash.elements,
-    );
-    let pkey_hash_ok = builder.is_equal_slice(
-        &public_key_hash.elements,
-        &resolved_key_pair.pk_hash.elements,
-    );
+    let pk_ok = builder.is_equal_slice(&pk_hash.elements, &resolved_pk_sk.0.elements);
+    let sk_ok = builder.is_equal_slice(&sk_hash.elements, &resolved_pk_sk.1.elements);
 
     let arg1_expected = cache.equations[0].lhs.clone();
     let arg2_expected = cache.equations[1].lhs.clone();
@@ -1025,14 +1089,43 @@ fn verify_public_key_of_circuit(
     );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
-    let ok = builder.all([
-        op_code_ok,
-        aux_tag_ok,
-        arg_types_ok,
-        pkey_hash_ok,
-        skey_hash_ok,
-        st_ok,
-    ]);
+    let ok = builder.all([op_code_ok, aux_tag_ok, arg_types_ok, pk_ok, sk_ok, st_ok]);
+    measure_gates_end!(builder, measure);
+    ok
+}
+
+fn verify_signed_by_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    st: &StatementTarget,
+    op_type: &OperationTypeTarget,
+    aux: &TableEntryTarget,
+    cache: &StatementCache,
+) -> BoolTarget {
+    let measure = measure_gates_begin!(builder, "OpSignedBy");
+    let (aux_tag_ok, resolved_msg_pk) =
+        aux.as_type::<MsgPubKeyTarget>(builder, OperationAuxTableTag::SignedBy as u32);
+
+    let op_code_ok = op_type.has_native(builder, NativeOperation::SignedBy);
+    let (arg_types_ok, [arg1_value, arg2_value]) = cache.first_n_args_as_values();
+    // inputting msg, pub_key
+    let msg = arg1_value;
+    let pk_hash = arg2_value;
+
+    let msg_ok = builder.is_equal_slice(&msg.elements, &resolved_msg_pk.0.elements);
+    let pk_ok = builder.is_equal_slice(&pk_hash.elements, &resolved_msg_pk.1.elements);
+
+    let arg1_expected = cache.equations[0].lhs.clone();
+    let arg2_expected = cache.equations[1].lhs.clone();
+    let expected_statement = StatementTarget::new_native(
+        builder,
+        params,
+        NativePredicate::SignedBy,
+        &[arg1_expected, arg2_expected],
+    );
+    let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+
+    let ok = builder.all([op_code_ok, aux_tag_ok, arg_types_ok, msg_ok, pk_ok, st_ok]);
     measure_gates_end!(builder, measure);
     ok
 }
@@ -1660,6 +1753,7 @@ fn verify_main_pod_circuit(
         builder,
         &main_pod.merkle_proofs,
         &main_pod.public_key_of_sks,
+        &main_pod.signed_bys,
         &main_pod.merkle_tree_state_transition_proofs,
         &main_pod.custom_predicate_verifications,
         &custom_predicate_table,
@@ -1727,6 +1821,7 @@ pub struct MainPodVerifyTarget {
     operations: Vec<OperationTarget>,
     merkle_proofs: Vec<MerkleClaimAndProofTarget>,
     public_key_of_sks: Vec<BigUInt320Target>,
+    signed_bys: Vec<SignedByTarget>,
     merkle_tree_state_transition_proofs: Vec<MerkleTreeStateTransitionProofTarget>,
     custom_predicate_batches: Vec<CustomPredicateBatchTarget>,
     custom_predicate_verifications: Vec<CustomPredicateVerifyEntryTarget>,
@@ -1764,6 +1859,9 @@ impl MainPodVerifyTarget {
             public_key_of_sks: (0..params.max_public_key_of)
                 .map(|_| builder.add_virtual_biguint320_target())
                 .collect(),
+            signed_bys: (0..params.max_signed_by)
+                .map(|_| SignedByTarget::new_virtual(builder))
+                .collect(),
             merkle_tree_state_transition_proofs: (0..params
                 .max_merkle_tree_state_transition_proofs_containers)
                 .map(|_| {
@@ -1795,13 +1893,14 @@ pub struct MainPodVerifyInput {
     // field containing the `vd_mt_proofs` aside from the `vds_set`, because
     // inide the MainPodVerifyTarget circuit, since it is the InnerCircuit for
     // the RecursiveCircuit, we don't have access to the used verifier_datas.
-    pub vd_mt_proofs: Vec<MerkleClaimAndProof>,
+    pub vd_mt_proofs: Vec<Option<MerkleClaimAndProof>>,
     // pub signed_pods: Vec<SignedPod>,
     pub recursive_pods_pub_self_statements: Vec<Vec<Statement>>,
     pub statements: Vec<mainpod::Statement>,
     pub operations: Vec<mainpod::Operation>,
     pub merkle_proofs: Vec<MerkleClaimAndProof>,
     pub public_key_of_sks: Vec<SecretKey>,
+    pub signed_bys: Vec<SignedBy>,
     pub merkle_tree_state_transition_proofs: Vec<MerkleTreeStateTransitionProof>,
     pub custom_predicate_batches: Vec<Arc<CustomPredicateBatch>>,
     pub custom_predicate_verifications: Vec<CustomPredicateVerification>,
@@ -1852,33 +1951,22 @@ impl InnerCircuit for MainPodVerifyTarget {
         let vds_root = input.vds_set.root();
         pw.set_target_arr(&self.vds_root.elements, &vds_root.0)?;
 
+        // For introduction pods and padding pods we don't check inclusion of their vk in the set
+        // because their vk already appears in the intro statement.
+        let dummy_mt_proof = MerkleClaimAndProof {
+            root: input.vds_set.root(),
+            ..MerkleClaimAndProof::empty()
+        };
         for (i, vd_mt_proof) in input.vd_mt_proofs.iter().enumerate() {
-            self.vd_mt_proofs[i].set_targets(pw, true, vd_mt_proof)?;
+            if let Some(vd_mt_proof) = vd_mt_proof {
+                self.vd_mt_proofs[i].set_targets(pw, true, vd_mt_proof)?; // main
+            } else {
+                self.vd_mt_proofs[i].set_targets(pw, false, &dummy_mt_proof)?; // intro
+            }
         }
-        // the rest of vd_mt_proofs set them to the empty_pod vd_mt_proof
-        let vd_emptypod_mt_proof =
-            input
-                .vds_set
-                .get_vds_proofs(&[cache_get_standard_empty_pod_circuit_data()
-                    .1
-                    .verifier_only
-                    .clone()])?;
-        let vd_emptypod_mt_proof = vd_emptypod_mt_proof[0].clone();
         for i in input.vd_mt_proofs.len()..self.vd_mt_proofs.len() {
-            self.vd_mt_proofs[i].set_targets(pw, true, &vd_emptypod_mt_proof)?;
+            self.vd_mt_proofs[i].set_targets(pw, false, &dummy_mt_proof)?;
         }
-
-        // assert!(input.signed_pods.len() <= self.params.max_input_signed_pods);
-        // for (i, signed_pod) in input.signed_pods.iter().enumerate() {
-        //     self.signed_pods[i].set_targets(pw, signed_pod)?;
-        // }
-        // // Padding
-        // if input.signed_pods.len() != self.params.max_input_signed_pods {
-        //     let dummy = SignedPod::dummy();
-        //     for i in input.signed_pods.len()..self.params.max_input_signed_pods {
-        //         self.signed_pods[i].set_targets(pw, &dummy)?;
-        //     }
-        // }
 
         assert!(
             input.recursive_pods_pub_self_statements.len() <= self.params.max_input_recursive_pods
@@ -1931,6 +2019,16 @@ impl InnerCircuit for MainPodVerifyTarget {
         let pad_sk = BigUint::ZERO;
         for i in input.public_key_of_sks.len()..self.params.max_public_key_of {
             pw.set_biguint320_target(&self.public_key_of_sks[i], &pad_sk)?;
+        }
+
+        assert!(input.signed_bys.len() <= self.params.max_signed_by);
+        for (i, signed_by) in input.signed_bys.iter().enumerate() {
+            self.signed_bys[i].set_targets(pw, signed_by)?;
+        }
+        // Padding
+        let pad_signed_by = SignedBy::dummy();
+        for i in input.signed_bys.len()..self.params.max_signed_by {
+            self.signed_bys[i].set_targets(pw, &pad_signed_by)?;
         }
 
         assert!(
@@ -2025,19 +2123,53 @@ mod tests {
         },
     };
 
+    #[derive(Default)]
+    struct Aux {
+        merkle_proofs: Vec<MerkleClaimAndProof>,
+        secret_keys: Vec<SecretKey>,
+        signed_bys: Vec<SignedBy>,
+        merkle_tree_state_transition_proofs: Vec<MerkleTreeStateTransitionProof>,
+    }
+
+    impl Aux {
+        fn merkle_proof(v: MerkleClaimAndProof) -> Self {
+            Self {
+                merkle_proofs: vec![v],
+                ..Default::default()
+            }
+        }
+        fn secret_key(v: SecretKey) -> Self {
+            Self {
+                secret_keys: vec![v],
+                ..Default::default()
+            }
+        }
+        fn signed_by(v: SignedBy) -> Self {
+            Self {
+                signed_bys: vec![v],
+                ..Default::default()
+            }
+        }
+        fn merkle_tree_state_transition_proof(v: MerkleTreeStateTransitionProof) -> Self {
+            Self {
+                merkle_tree_state_transition_proofs: vec![v],
+                ..Default::default()
+            }
+        }
+    }
+
     fn operation_verify(
         st: mainpod::Statement,
         op: mainpod::Operation,
         prev_statements: Vec<mainpod::Statement>,
-        merkle_proofs: Vec<MerkleClaimAndProof>,
-        secret_keys: Vec<SecretKey>,
-        merkle_tree_state_transition_proofs: Vec<MerkleTreeStateTransitionProof>,
+        aux: Aux,
     ) -> Result<()> {
         let params = Params {
-            max_merkle_proofs_containers: merkle_proofs.len(),
-            max_public_key_of: secret_keys.len(),
-            max_signed_by: 0, // TODO
-            max_merkle_tree_state_transition_proofs_containers: merkle_tree_state_transition_proofs
+            max_merkle_proofs_containers: aux.merkle_proofs.len(),
+            max_public_key_of: aux.secret_keys.len(),
+            max_signed_by: aux.signed_bys.len(),
+            max_merkle_tree_state_transition_proofs_containers: aux
+                .merkle_tree_state_transition_proofs
                 .len(),
             max_custom_predicate_verifications: 0,
             max_custom_predicate_batches: 0,
@@ -2053,34 +2185,43 @@ mod tests {
             .map(|_| builder.add_virtual_statement(&params))
             .collect();
 
-        let merkle_proofs_target: Vec<_> = merkle_proofs
+        let merkle_proofs_target: Vec<_> = aux
+            .merkle_proofs
             .iter()
             .map(|_| {
                 MerkleClaimAndProofTarget::new_virtual(params.max_depth_mt_containers, &mut builder)
             })
             .collect();
 
-        let secret_keys_target: Vec<_> = secret_keys
+        let secret_keys_target: Vec<_> = aux
+            .secret_keys
             .iter()
             .map(|sk| builder.constant_biguint320(&sk.0))
             .collect();
 
-        let merkle_tree_state_transition_proofs_target: Vec<_> =
-            merkle_tree_state_transition_proofs
-                .iter()
-                .map(|_| {
-                    MerkleTreeStateTransitionProofTarget::new_virtual(
-                        params.max_depth_mt_containers,
-                        &mut builder,
-                    )
-                })
-                .collect();
+        let signed_by_targets: Vec<_> = aux
+            .signed_bys
+            .iter()
+            .map(|_| SignedByTarget::new_virtual(&mut builder))
+            .collect();
+
+        let merkle_tree_state_transition_proofs_target: Vec<_> = aux
+            .merkle_tree_state_transition_proofs
+            .iter()
+            .map(|_| {
+                MerkleTreeStateTransitionProofTarget::new_virtual(
+                    params.max_depth_mt_containers,
+                    &mut builder,
+                )
+            })
+            .collect();
 
         let aux_table = build_operation_aux_table_circuit(
             &params,
             &mut builder,
             &merkle_proofs_target,
             &secret_keys_target,
+            &signed_by_targets,
             &merkle_tree_state_transition_proofs_target,
             &[],
             &[],
@@ -2104,15 +2245,18 @@ mod tests {
         for (prev_st_target, prev_st) in prev_statements_target.iter().zip(prev_statements.iter()) {
             prev_st_target.set_targets(&mut pw, &params, prev_st)?;
         }
+        for (signed_by_target, signed_by) in signed_by_targets.iter().zip(aux.signed_bys.iter()) {
+            signed_by_target.set_targets(&mut pw, signed_by)?
+        }
         for (merkle_proof_target, merkle_proof) in
-            merkle_proofs_target.iter().zip(merkle_proofs.iter())
+            merkle_proofs_target.iter().zip(aux.merkle_proofs.iter())
         {
             merkle_proof_target.set_targets(&mut pw, true, merkle_proof)?
         }
         for (merkle_tree_state_transition_proof_target, merkle_tree_state_transition_proof) in
             merkle_tree_state_transition_proofs_target
                 .iter()
-                .zip(merkle_tree_state_transition_proofs.iter())
+                .zip(aux.merkle_tree_state_transition_proofs.iter())
         {
             merkle_tree_state_transition_proof_target.set_targets(
                 &mut pw,
@@ -2129,213 +2273,134 @@ mod tests {
         Ok(())
     }
 
-    // #[test]
-    // fn test_lt_lteq_verify_failures() {
-    //     let st1: mainpod::Statement =
-    //         Statement::equal(AnchoredKey::from((SELF, "hello")), Value::from(55)).into();
-    //     let st2: mainpod::Statement = Statement::equal(
-    //         AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
-    //         Value::from(56),
-    //     )
-    //     .into();
-    //     let st3: mainpod::Statement = Statement::equal(
-    //         AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
-    //         Value::from(RawValue([
-    //             GoldilocksField::NEG_ONE,
-    //             GoldilocksField::ZERO,
-    //             GoldilocksField::ZERO,
-    //             GoldilocksField::ZERO,
-    //         ])),
-    //     )
-    //     .into();
-    //     let st4: mainpod::Statement = Statement::equal(
-    //         AnchoredKey::from((PodId(RawValue::from(74).into()), "mundo")),
-    //         Value::from(-55),
-    //     )
-    //     .into();
-    //     let st5: mainpod::Statement = Statement::equal(
-    //         AnchoredKey::from((PodId(RawValue::from(70).into()), "que")),
-    //         Value::from(-56),
-    //     )
-    //     .into();
+    #[test]
+    fn test_lt_lteq_verify_failures() {
+        let invalid_int = RawValue([
+            GoldilocksField::NEG_ONE,
+            GoldilocksField::ZERO,
+            GoldilocksField::ZERO,
+            GoldilocksField::ZERO,
+        ]);
 
-    //     let prev_statements = [st1, st2, st3, st4, st5];
+        let prev_statements = [Statement::None.into()];
 
-    //     [
-    //         // 56 < 55, 55 < 55, 56 <= 55, -55 < -55, -55 < -56, -55 <= -56 should fail to verify
-    //         (
-    //             mainpod::Operation(
-    //                 OperationType::Native(NativeOperation::LtFromEntries),
-    //                 vec![OperationArg::Index(1), OperationArg::Index(0)],
-    //                 OperationAux::None,
-    //             ),
-    //             Statement::lt(
-    //                 AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
-    //                 AnchoredKey::from((SELF, "hello")),
-    //             )
-    //             .into(),
-    //         ),
-    //         (
-    //             mainpod::Operation(
-    //                 OperationType::Native(NativeOperation::LtFromEntries),
-    //                 vec![OperationArg::Index(0), OperationArg::Index(0)],
-    //                 OperationAux::None,
-    //             ),
-    //             Statement::lt(
-    //                 AnchoredKey::from((SELF, "hello")),
-    //                 AnchoredKey::from((SELF, "hello")),
-    //             )
-    //             .into(),
-    //         ),
-    //         (
-    //             mainpod::Operation(
-    //                 OperationType::Native(NativeOperation::LtEqFromEntries),
-    //                 vec![OperationArg::Index(1), OperationArg::Index(0)],
-    //                 OperationAux::None,
-    //             ),
-    //             Statement::lt_eq(
-    //                 AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
-    //                 AnchoredKey::from((SELF, "hello")),
-    //             )
-    //             .into(),
-    //         ),
-    //         (
-    //             mainpod::Operation(
-    //                 OperationType::Native(NativeOperation::LtFromEntries),
-    //                 vec![OperationArg::Index(3), OperationArg::Index(3)],
-    //                 OperationAux::None,
-    //             ),
-    //             Statement::lt(
-    //                 AnchoredKey::from((PodId(RawValue::from(74).into()), "mundo")),
-    //                 AnchoredKey::from((PodId(RawValue::from(74).into()), "mundo")),
-    //             )
-    //             .into(),
-    //         ),
-    //         (
-    //             mainpod::Operation(
-    //                 OperationType::Native(NativeOperation::LtFromEntries),
-    //                 vec![OperationArg::Index(3), OperationArg::Index(4)],
-    //                 OperationAux::None,
-    //             ),
-    //             Statement::lt(
-    //                 AnchoredKey::from((PodId(RawValue::from(74).into()), "mundo")),
-    //                 AnchoredKey::from((PodId(RawValue::from(70).into()), "que")),
-    //             )
-    //             .into(),
-    //         ),
-    //         (
-    //             mainpod::Operation(
-    //                 OperationType::Native(NativeOperation::LtEqFromEntries),
-    //                 vec![OperationArg::Index(3), OperationArg::Index(4)],
-    //                 OperationAux::None,
-    //             ),
-    //             Statement::lt_eq(
-    //                 AnchoredKey::from((PodId(RawValue::from(74).into()), "mundo")),
-    //                 AnchoredKey::from((PodId(RawValue::from(70).into()), "que")),
-    //             )
-    //             .into(),
-    //         ),
-    //         // 56 < p-1 and p-1 <= p-1 should fail to verify, where p
-    //         // is the Goldilocks prime and 'p-1' occupies a single
-    //         // limb.
-    //         (
-    //             mainpod::Operation(
-    //                 OperationType::Native(NativeOperation::LtFromEntries),
-    //                 vec![OperationArg::Index(1), OperationArg::Index(2)],
-    //                 OperationAux::None,
-    //             ),
-    //             Statement::lt(
-    //                 AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
-    //                 AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
-    //             )
-    //             .into(),
-    //         ),
-    //         (
-    //             mainpod::Operation(
-    //                 OperationType::Native(NativeOperation::LtEqFromEntries),
-    //                 vec![OperationArg::Index(2), OperationArg::Index(2)],
-    //                 OperationAux::None,
-    //             ),
-    //             Statement::lt_eq(
-    //                 AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
-    //                 AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
-    //             )
-    //             .into(),
-    //         ),
-    //     ]
-    //     .into_iter()
-    //     .for_each(|(op, st)| {
-    //         let check = std::panic::catch_unwind(|| {
-    //             operation_verify(st, op, prev_statements.to_vec(), vec![], vec![], vec![])
-    //         });
-    //         match check {
-    //             Err(e) => {
-    //                 let err_string = e.downcast_ref::<String>().unwrap();
-    //                 if !err_string.contains("Integer too large to fit") {
-    //                     panic!("Test failed with an unexpected error: {}", err_string);
-    //                 }
-    //             }
-    //             Ok(Err(_)) => {}
-    //             _ => panic!("Test passed, yet it should have failed!"),
-    //         }
-    //     });
-    // }
+        [
+            // 56 < 55, 55 < 55, 56 <= 55, -55 < -55, -55 < -56, -55 <= -56 should fail to verify
+            (
+                mainpod::Operation(
+                    OperationType::Native(NativeOperation::LtFromEntries),
+                    vec![OperationArg::Index(0), OperationArg::Index(0)],
+                    OperationAux::None,
+                ),
+                Statement::lt(56, 55).into(),
+            ),
+            (
+                mainpod::Operation(
+                    OperationType::Native(NativeOperation::LtFromEntries),
+                    vec![OperationArg::Index(0), OperationArg::Index(0)],
+                    OperationAux::None,
+                ),
+                Statement::lt(55, 55).into(),
+            ),
+            (
+                mainpod::Operation(
+                    OperationType::Native(NativeOperation::LtEqFromEntries),
+                    vec![OperationArg::Index(0), OperationArg::Index(0)],
+                    OperationAux::None,
+                ),
+                Statement::lt_eq(56, 55).into(),
+            ),
+            (
+                mainpod::Operation(
+                    OperationType::Native(NativeOperation::LtFromEntries),
+                    vec![OperationArg::Index(0), OperationArg::Index(0)],
+                    OperationAux::None,
+                ),
+                Statement::lt(-55, -55).into(),
+            ),
+            (
+                mainpod::Operation(
+                    OperationType::Native(NativeOperation::LtFromEntries),
+                    vec![OperationArg::Index(0), OperationArg::Index(0)],
+                    OperationAux::None,
+                ),
+                Statement::lt(-55, -56).into(),
+            ),
+            (
+                mainpod::Operation(
+                    OperationType::Native(NativeOperation::LtEqFromEntries),
+                    vec![OperationArg::Index(0), OperationArg::Index(0)],
+                    OperationAux::None,
+                ),
+                Statement::lt_eq(-55, -56).into(),
+            ),
+            // 56 < p-1 and p-1 <= p-1 should fail to verify, where p
+            // is the Goldilocks prime and 'p-1' occupies a single
+            // limb.
+            (
+                mainpod::Operation(
+                    OperationType::Native(NativeOperation::LtFromEntries),
+                    vec![OperationArg::Index(0), OperationArg::Index(0)],
+                    OperationAux::None,
+                ),
+                Statement::lt(56, invalid_int).into(),
+            ),
+            (
+                mainpod::Operation(
+                    OperationType::Native(NativeOperation::LtEqFromEntries),
+                    vec![OperationArg::Index(0), OperationArg::Index(0)],
+                    OperationAux::None,
+                ),
+                Statement::lt_eq(invalid_int, invalid_int).into(),
+            ),
+        ]
+        .into_iter()
+        .for_each(|(op, st)| {
+            println!("{}", st);
+            let check = std::panic::catch_unwind(|| {
+                operation_verify(st, op, prev_statements.to_vec(), Aux::default())
+            });
+            match check {
+                Err(e) => {
+                    let err_string = e.downcast_ref::<String>().unwrap();
+                    if !err_string.contains("Integer too large to fit") {
+                        panic!("Test failed with an unexpected error: {}", err_string);
+                    }
+                }
+                Ok(Err(_)) => {}
+                _ => panic!("Test passed, yet it should have failed!"),
+            }
+        });
+    }
 
-    // #[test]
-    // fn test_eq_neq_verify_failures() {
-    //     let st1: mainpod::Statement =
-    //         Statement::equal(AnchoredKey::from((SELF, "hello")), Value::from(55)).into();
-    //     let st2: mainpod::Statement = Statement::equal(
-    //         AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
-    //         Value::from(56),
-    //     )
-    //     .into();
-    //     let st3: mainpod::Statement = Statement::equal(
-    //         AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
-    //         Value::from(RawValue([
-    //             GoldilocksField::NEG_ONE,
-    //             GoldilocksField::ZERO,
-    //             GoldilocksField::ZERO,
-    //             GoldilocksField::ZERO,
-    //         ])),
-    //     )
-    //     .into();
-    //     let prev_statements = [st1, st2, st3];
+    #[test]
+    fn test_eq_neq_verify_failures() {
+        let prev_statements = [Statement::None.into()];
 
-    //     [
-    //         // 56 == 55, 55 != 55 should fail to verify
-    //         (
-    //             mainpod::Operation(
-    //                 OperationType::Native(NativeOperation::EqualFromEntries),
-    //                 vec![OperationArg::Index(1), OperationArg::Index(0)],
-    //                 OperationAux::None,
-    //             ),
-    //             Statement::equal(
-    //                 AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
-    //                 AnchoredKey::from((SELF, "hello")),
-    //             )
-    //             .into(),
-    //         ),
-    //         (
-    //             mainpod::Operation(
-    //                 OperationType::Native(NativeOperation::NotEqualFromEntries),
-    //                 vec![OperationArg::Index(0), OperationArg::Index(0)],
-    //                 OperationAux::None,
-    //             ),
-    //             Statement::not_equal(
-    //                 AnchoredKey::from((SELF, "hello")),
-    //                 AnchoredKey::from((SELF, "hello")),
-    //             )
-    //             .into(),
-    //         ),
-    //     ]
-    //     .into_iter()
-    //     .for_each(|(op, st)| {
-    //         assert!(
-    //             operation_verify(st, op, prev_statements.to_vec(), vec![], vec![], vec![]).is_err()
-    //         )
-    //     });
-    // }
+        [
+            // 56 == 55, 55 != 55 should fail to verify
+            (
+                mainpod::Operation(
+                    OperationType::Native(NativeOperation::EqualFromEntries),
+                    vec![OperationArg::Index(0), OperationArg::Index(0)],
+                    OperationAux::None,
+                ),
+                Statement::equal(56, 55).into(),
+            ),
+            (
+                mainpod::Operation(
+                    OperationType::Native(NativeOperation::NotEqualFromEntries),
+                    vec![OperationArg::Index(0), OperationArg::Index(0)],
+                    OperationAux::None,
+                ),
+                Statement::not_equal(55, 55).into(),
+            ),
+        ]
+        .into_iter()
+        .for_each(|(op, st)| {
+            assert!(operation_verify(st, op, prev_statements.to_vec(), Aux::default()).is_err())
+        });
+    }
 
     #[test]
     fn test_operation_verify_none() -> Result<()> {
@@ -2346,7 +2411,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![Statement::None.into()];
-        operation_verify(st, op, prev_statements, vec![], vec![], vec![])
+        operation_verify(st, op, prev_statements, Aux::default())
     }
 
     // TODO: Delete
@@ -2377,7 +2442,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![Statement::None.into()];
-        operation_verify(st, op, prev_statements, vec![], vec![], vec![])
+        operation_verify(st, op, prev_statements, Aux::default())
     }
 
     #[test]
@@ -2397,7 +2462,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2];
-        operation_verify(st, op, prev_statements, vec![], vec![], vec![])
+        operation_verify(st, op, prev_statements, Aux::default())
     }
 
     #[test]
@@ -2417,7 +2482,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2];
-        operation_verify(st, op, prev_statements, vec![], vec![], vec![])
+        operation_verify(st, op, prev_statements, Aux::default())
     }
 
     #[test]
@@ -2437,7 +2502,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2.clone()];
-        operation_verify(st, op, prev_statements, vec![], vec![], vec![])?;
+        operation_verify(st, op, prev_statements, Aux::default())?;
 
         // Also check negative < negative
         let dict3 = dict!(32, {"hola" => -56})?;
@@ -2455,7 +2520,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st3.clone(), st4];
-        operation_verify(st, op, prev_statements, vec![], vec![], vec![])?;
+        operation_verify(st, op, prev_statements, Aux::default())?;
 
         // Also check negative < positive
         let st: mainpod::Statement = Statement::lt(
@@ -2469,7 +2534,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st3, st2];
-        operation_verify(st, op, prev_statements, vec![], vec![], vec![])
+        operation_verify(st, op, prev_statements, Aux::default())
     }
 
     #[test]
@@ -2493,7 +2558,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2.clone()];
-        operation_verify(st, op, prev_statements, vec![], vec![], vec![])?;
+        operation_verify(st, op, prev_statements, Aux::default())?;
 
         // Also check negative <= negative
         let st3: mainpod::Statement = Statement::contains(local.clone(), "n_56", -56).into();
@@ -2509,7 +2574,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st3.clone(), st4];
-        operation_verify(st, op, prev_statements, vec![], vec![], vec![])?;
+        operation_verify(st, op, prev_statements, Aux::default())?;
 
         // Also check negative <= positive
         let st: mainpod::Statement = Statement::lt_eq(
@@ -2523,7 +2588,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st3, st2];
-        operation_verify(st, op, prev_statements.clone(), vec![], vec![], vec![])?;
+        operation_verify(st, op, prev_statements.clone(), Aux::default())?;
 
         // Also check equality, both positive and negative.
         let st: mainpod::Statement = Statement::lt_eq(
@@ -2536,7 +2601,7 @@ mod tests {
             vec![OperationArg::Index(0), OperationArg::Index(0)],
             OperationAux::None,
         );
-        operation_verify(st, op, prev_statements.clone(), vec![], vec![], vec![])?;
+        operation_verify(st, op, prev_statements.clone(), Aux::default())?;
         let st: mainpod::Statement = Statement::lt_eq(
             AnchoredKey::from((&local, "n56")),
             AnchoredKey::from((&local, "n56")),
@@ -2547,7 +2612,7 @@ mod tests {
             vec![OperationArg::Index(1), OperationArg::Index(1)],
             OperationAux::None,
         );
-        operation_verify(st, op, prev_statements, vec![], vec![], vec![])
+        operation_verify(st, op, prev_statements, Aux::default())
     }
 
     #[test]
@@ -2590,7 +2655,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2, st3];
-        operation_verify(st, op, prev_statements, vec![], vec![], vec![])
+        operation_verify(st, op, prev_statements, Aux::default())
     }
 
     #[test]
@@ -2628,7 +2693,7 @@ mod tests {
                     OperationAux::None,
                 );
                 let prev_statements = vec![st1, st2, st3];
-                operation_verify(st, op, prev_statements, vec![], vec![], vec![])
+                operation_verify(st, op, prev_statements, Aux::default())
             })
     }
 
@@ -2668,7 +2733,7 @@ mod tests {
                     OperationAux::None,
                 );
                 let prev_statements = vec![st1, st2, st3];
-                operation_verify(st, op, prev_statements, vec![], vec![], vec![])
+                operation_verify(st, op, prev_statements, Aux::default())
             })
     }
 
@@ -2703,65 +2768,42 @@ mod tests {
                 OperationAux::None,
             );
             let prev_statements = vec![st1, st2, st3];
-            operation_verify(st, op, prev_statements, vec![], vec![], vec![])
+            operation_verify(st, op, prev_statements, Aux::default())
         })
     }
 
-    // #[test]
-    // fn test_operation_verify_maxof_failures() {
-    //     [(5, 3, 4), (5, 5, 8), (3, 4, 5)]
-    //         .into_iter()
-    //         .for_each(|(max, a, b)| {
-    //             let st1: mainpod::Statement = Statement::equal(
-    //                 AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
-    //                 max,
-    //             )
-    //             .into();
+    #[test]
+    fn test_operation_verify_maxof_failures() {
+        [(5, 3, 4), (5, 5, 8), (3, 4, 5)]
+            .into_iter()
+            .for_each(|(max, a, b)| {
+                let st: mainpod::Statement = Statement::max_of(max, a, b).into();
+                let op = mainpod::Operation(
+                    OperationType::Native(NativeOperation::MaxOf),
+                    vec![
+                        OperationArg::Index(0),
+                        OperationArg::Index(0),
+                        OperationArg::Index(0),
+                    ],
+                    OperationAux::None,
+                );
+                let prev_statements = [Statement::None.into()];
 
-    //             let st2: mainpod::Statement = Statement::equal(
-    //                 AnchoredKey::from((PodId(RawValue::from(128).into()), "mundo")),
-    //                 a,
-    //             )
-    //             .into();
-
-    //             let st3: mainpod::Statement = Statement::equal(
-    //                 AnchoredKey::from((PodId(RawValue::from(256).into()), "!")),
-    //                 b,
-    //             )
-    //             .into();
-
-    //             let st: mainpod::Statement = Statement::max_of(
-    //                 AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
-    //                 AnchoredKey::from((PodId(RawValue::from(128).into()), "mundo")),
-    //                 AnchoredKey::from((PodId(RawValue::from(256).into()), "!")),
-    //             )
-    //             .into();
-    //             let op = mainpod::Operation(
-    //                 OperationType::Native(NativeOperation::MaxOf),
-    //                 vec![
-    //                     OperationArg::Index(0),
-    //                     OperationArg::Index(1),
-    //                     OperationArg::Index(2),
-    //                 ],
-    //                 OperationAux::None,
-    //             );
-    //             let prev_statements = [st1, st2, st3];
-
-    //             let check = std::panic::catch_unwind(|| {
-    //                 operation_verify(st, op, prev_statements.to_vec(), vec![], vec![], vec![])
-    //             });
-    //             match check {
-    //                 Err(e) => {
-    //                     let err_string = e.downcast_ref::<String>().unwrap();
-    //                     if !err_string.contains("Integer too large to fit") {
-    //                         panic!("Test failed with an unexpected error: {}", err_string);
-    //                     }
-    //                 }
-    //                 Ok(Err(_)) => {}
-    //                 _ => panic!("Test passed, yet it should have failed!"),
-    //             }
-    //         })
-    // }
+                let check = std::panic::catch_unwind(|| {
+                    operation_verify(st, op, prev_statements.to_vec(), Aux::default())
+                });
+                match check {
+                    Err(e) => {
+                        let err_string = e.downcast_ref::<String>().unwrap();
+                        if !err_string.contains("Integer too large to fit") {
+                            panic!("Test failed with an unexpected error: {}", err_string);
+                        }
+                    }
+                    Ok(Err(_)) => {}
+                    _ => panic!("Test passed, yet it should have failed!"),
+                }
+            })
+    }
 
     #[test]
     fn test_operation_verify_lt_to_neq() -> Result<()> {
@@ -2785,7 +2827,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1];
-        operation_verify(st, op, prev_statements, vec![], vec![], vec![])
+        operation_verify(st, op, prev_statements, Aux::default())
     }
 
     #[test]
@@ -2816,7 +2858,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![st1, st2];
-        operation_verify(st, op, prev_statements, vec![], vec![], vec![])
+        operation_verify(st, op, prev_statements, Aux::default())
     }
 
     #[test]
@@ -2854,9 +2896,9 @@ mod tests {
             OperationAux::MerkleProofIndex(0),
         );
 
-        let merkle_proofs = vec![MerkleClaimAndProof::new(root, key.raw(), None, no_key_pf)];
+        let merkle_proof = MerkleClaimAndProof::new(root, key.raw(), None, no_key_pf);
         let prev_statements = vec![root_st, key_st];
-        operation_verify(st, op, prev_statements, merkle_proofs, vec![], vec![])
+        operation_verify(st, op, prev_statements, Aux::merkle_proof(merkle_proof))
     }
 
     #[test]
@@ -2902,14 +2944,9 @@ mod tests {
             OperationAux::MerkleProofIndex(0),
         );
 
-        let merkle_proofs = vec![MerkleClaimAndProof::new(
-            root,
-            key.raw(),
-            Some(value),
-            key_pf,
-        )];
+        let merkle_proof = MerkleClaimAndProof::new(root, key.raw(), Some(value), key_pf);
         let prev_statements = vec![root_st, key_st, value_st];
-        operation_verify(st, op, prev_statements, merkle_proofs, vec![], vec![])
+        operation_verify(st, op, prev_statements, Aux::merkle_proof(merkle_proof))
     }
 
     #[test]
@@ -2936,16 +2973,9 @@ mod tests {
             OperationAux::MerkleTreeStateTransitionProofIndex(0),
         );
 
-        let merkle_tree_state_transition_proofs = vec![state_transition_proof];
+        let aux = Aux::merkle_tree_state_transition_proof(state_transition_proof);
         let prev_statements = vec![Statement::None.into()];
-        operation_verify(
-            st,
-            op,
-            prev_statements,
-            vec![],
-            vec![],
-            merkle_tree_state_transition_proofs,
-        )
+        operation_verify(st, op, prev_statements, aux)
     }
 
     #[test]
@@ -2975,16 +3005,9 @@ mod tests {
             OperationAux::MerkleTreeStateTransitionProofIndex(0),
         );
 
-        let merkle_tree_state_transition_proofs = vec![state_transition_proof];
+        let aux = Aux::merkle_tree_state_transition_proof(state_transition_proof);
         let prev_statements = vec![Statement::None.into()];
-        operation_verify(
-            st,
-            op,
-            prev_statements,
-            vec![],
-            vec![],
-            merkle_tree_state_transition_proofs,
-        )
+        operation_verify(st, op, prev_statements, aux)
     }
 
     #[test]
@@ -3012,16 +3035,9 @@ mod tests {
             OperationAux::MerkleTreeStateTransitionProofIndex(0),
         );
 
-        let merkle_tree_state_transition_proofs = vec![state_transition_proof];
+        let aux = Aux::merkle_tree_state_transition_proof(state_transition_proof);
         let prev_statements = vec![Statement::None.into()];
-        operation_verify(
-            st,
-            op,
-            prev_statements,
-            vec![],
-            vec![],
-            merkle_tree_state_transition_proofs,
-        )
+        operation_verify(st, op, prev_statements, aux)
     }
 
     #[test]
@@ -3043,7 +3059,7 @@ mod tests {
                 OperationAux::PublicKeyOfIndex(0),
             );
             let prev_statements = vec![Statement::None.into()];
-            operation_verify(st, op, prev_statements, vec![], vec![secret_key], vec![])
+            operation_verify(st, op, prev_statements, Aux::secret_key(secret_key))
         })
     }
 
@@ -3060,9 +3076,7 @@ mod tests {
             OperationAux::PublicKeyOfIndex(0),
         );
         let prev_statements = vec![Statement::None.into()];
-        assert!(
-            operation_verify(st, op, prev_statements, vec![], vec![secret_key], vec![]).is_err()
-        )
+        assert!(operation_verify(st, op, prev_statements, Aux::secret_key(secret_key)).is_err())
     }
 
     #[test]
@@ -3078,9 +3092,7 @@ mod tests {
             OperationAux::None,
         );
         let prev_statements = vec![Statement::None.into()];
-        assert!(
-            operation_verify(st, op, prev_statements, vec![], vec![secret_key], vec![]).is_err()
-        )
+        assert!(operation_verify(st, op, prev_statements, Aux::secret_key(secret_key)).is_err())
     }
 
     #[test]
@@ -3095,15 +3107,8 @@ mod tests {
             OperationAux::PublicKeyOfIndex(0),
         );
         let prev_statements = vec![Statement::None.into()];
-        assert!(operation_verify(
-            st,
-            op,
-            prev_statements,
-            vec![],
-            vec![SecretKey(BigUint::from(123u32))],
-            vec![]
-        )
-        .is_err())
+        let aux = Aux::secret_key(SecretKey(BigUint::from(123u32)));
+        assert!(operation_verify(st, op, prev_statements, aux,).is_err())
     }
 
     #[test]
@@ -3119,9 +3124,30 @@ mod tests {
             OperationAux::PublicKeyOfIndex(0),
         );
         let prev_statements = vec![Statement::None.into()];
-        assert!(
-            operation_verify(st, op, prev_statements, vec![], vec![secret_key], vec![]).is_err()
-        )
+        assert!(operation_verify(st, op, prev_statements, Aux::secret_key(secret_key)).is_err())
+    }
+
+    #[test]
+    fn test_operation_verify_signedby_ok() -> Result<()> {
+        let sk = SecretKey(BigUint::from_u32(0xbadcafe).unwrap());
+        let pk = sk.public_key();
+        let msg = RawValue([F(1), F(2), F(3), F(4)]);
+        let nonce = BigUint::from_u32(123).unwrap();
+        let sig = signer::Signer(sk).sign_with_nonce(nonce, msg);
+        let signed_by = SignedBy {
+            msg: msg.clone(),
+            pk: pk.clone(),
+            sig: sig.clone(),
+        };
+
+        let st: mainpod::Statement = Statement::signed_by(msg, pk.clone()).into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::SignedBy),
+            vec![OperationArg::Index(0), OperationArg::Index(0)],
+            OperationAux::SignedByIndex(0),
+        );
+        let prev_statements = vec![Statement::None.into()];
+        operation_verify(st, op, prev_statements, Aux::signed_by(signed_by))
     }
 
     fn helper_statement_arg_from_template(

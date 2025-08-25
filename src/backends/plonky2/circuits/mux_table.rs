@@ -96,7 +96,6 @@ impl MuxTableTarget {
     }
 
     pub fn get(&self, builder: &mut CircuitBuilder, index: &IndexTarget) -> TableEntryTarget {
-        dbg!("get");
         let measure = measure_gates_begin!(builder, "GetTaggedTblEntry");
         let entry_hash = builder.vec_ref(&self.params, &self.hashed_tagged_entries, index);
         // TMP: DBG
