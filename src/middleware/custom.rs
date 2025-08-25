@@ -33,7 +33,7 @@ impl fmt::Display for Wildcard {
 
 impl ToFields for Wildcard {
     fn to_fields(&self, _params: &Params) -> Vec<F> {
-        vec![F::from_canonical_u64(self.index as u64 + 1)]
+        vec![F::from_canonical_u64(self.index as u64)]
     }
 }
 

@@ -96,8 +96,11 @@ impl MuxTableTarget {
     }
 
     pub fn get(&self, builder: &mut CircuitBuilder, index: &IndexTarget) -> TableEntryTarget {
+        dbg!("get");
         let measure = measure_gates_begin!(builder, "GetTaggedTblEntry");
         let entry_hash = builder.vec_ref(&self.params, &self.hashed_tagged_entries, index);
+        // TMP: DBG
+        // let entry_hash = self.hashed_tagged_entries[0].clone();
 
         let mut rev_resolved_tagged_flattened =
             builder.add_virtual_targets(1 + self.max_flattened_entry_len);

@@ -69,6 +69,7 @@ impl ToFields for OperationType {
     }
 }
 
+// TODO: Shift values to remove gaps
 #[derive(Clone, Copy, Debug, PartialEq, Eq, std::hash::Hash, Serialize, Deserialize)]
 pub enum NativeOperation {
     None = 0,

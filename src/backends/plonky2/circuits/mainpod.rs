@@ -108,14 +108,25 @@ impl StatementCache {
             let pred_is_none = op_args[i].has_native_type(builder, params, NativePredicate::None);
             let arg_is_value = builder.statement_arg_is_value(&st.args[i]);
             let is_literal = builder.and(pred_is_none, arg_is_value);
-            let pred_is_eq = op_args[i].has_native_type(builder, params, NativePredicate::Equal);
-            let ref_is_value = builder.statement_arg_is_value(&op_args[i].args[1]);
-            let is_reference = builder.and(pred_is_eq, ref_is_value);
+            let pred_is_contains =
+                op_args[i].has_native_type(builder, params, NativePredicate::Contains);
+            let ref_is_value_arg: [_; 3] =
+                array::from_fn(|j| builder.statement_arg_is_value(&op_args[i].args[j]));
+            let ref_is_value = builder.and(ref_is_value_arg[0], ref_is_value_arg[1]);
+            let ref_is_value = builder.and(ref_is_value, ref_is_value_arg[2]);
+
+            let is_reference = builder.and(pred_is_contains, ref_is_value);
             let valid = builder.or(is_literal, is_reference);
             let rhs_literal = st.args[i].as_value();
-            let rhs_reference = op_args[i].args[1].as_value();
+            let rhs_reference = op_args[i].args[2].as_value();
             let rhs = builder.select_value(pred_is_none, rhs_literal, rhs_reference);
-            let lhs = builder.select_statement_arg(pred_is_none, &st.args[i], &op_args[i].args[0]);
+            let lhs_literal = &st.args[i];
+            let lhs_reference = StatementArgTarget::anchored_key(
+                builder,
+                &op_args[i].args[0].as_value(),
+                &op_args[i].args[1].as_value(),
+            );
+            let lhs = builder.select_statement_arg(pred_is_none, lhs_literal, &lhs_reference);
             StatementArgCache { rhs, lhs, valid }
         });
         let mut first_n_equations_valid = [equations[0].valid; MAX_VALUE_ARGS];
@@ -157,7 +168,7 @@ fn verify_operation_public_statement_circuit(
     st: &StatementTarget,
     op: &OperationTarget,
     prev_statements: &[StatementTarget],
-    input_statements_offset: usize,
+    // input_statements_offset: usize,
 ) -> Result<()> {
     let measure = measure_gates_begin!(builder, "OpVerify");
 
@@ -170,14 +181,14 @@ fn verify_operation_public_statement_circuit(
 
     let op_checks = vec![
         verify_none_circuit(params, builder, st, &op.op_type),
-        verify_new_entry_circuit(
-            params,
-            builder,
-            st,
-            &op.op_type,
-            prev_statements,
-            input_statements_offset,
-        ),
+        // verify_new_entry_circuit(
+        //     params,
+        //     builder,
+        //     st,
+        //     &op.op_type,
+        //     prev_statements,
+        //     input_statements_offset,
+        // ),
         verify_copy_circuit(builder, st, &op.op_type, &cache.op_args),
     ];
 
@@ -196,6 +207,7 @@ enum OperationAuxTableTag {
     CustomPredVerify = 4,
 }
 
+// TODO: Add SignedBy
 fn max_operation_aux_entry_len(params: &Params) -> usize {
     [
         (params.max_merkle_proofs_containers > 0).then(|| MerkleClaimTarget::size(params)),
@@ -350,7 +362,7 @@ fn verify_operation_circuit(
     st: &StatementTarget,
     op: &OperationTarget,
     prev_statements: &[StatementTarget],
-    input_statements_offset: usize,
+    // input_statements_offset: usize,
     aux_table: &MuxTableTarget,
 ) -> Result<()> {
     let measure = measure_gates_begin!(builder, "OpVerify");
@@ -378,14 +390,14 @@ fn verify_operation_circuit(
     let mut op_checks = Vec::new();
     op_checks.extend_from_slice(&[
         verify_none_circuit(params, builder, st, &op.op_type),
-        verify_new_entry_circuit(
-            params,
-            builder,
-            st,
-            &op.op_type,
-            prev_statements,
-            input_statements_offset,
-        ),
+        // verify_new_entry_circuit(
+        //     params,
+        //     builder,
+        //     st,
+        //     &op.op_type,
+        //     prev_statements,
+        //     input_statements_offset,
+        // ),
     ]);
     // Skip these if there are no resolved op args
     if !cache.op_args.is_empty() {
@@ -1198,37 +1210,38 @@ fn verify_none_circuit(
     ok
 }
 
-fn verify_new_entry_circuit(
-    params: &Params,
-    builder: &mut CircuitBuilder,
-    st: &StatementTarget,
-    op_type: &OperationTypeTarget,
-    prev_statements: &[StatementTarget],
-    input_statements_offset: usize,
-) -> BoolTarget {
-    todo!()
-    // let measure = measure_gates_begin!(builder, "OpNewEntry");
-    // let op_code_ok = op_type.has_native(builder, NativeOperation::NewEntry);
-    // let st_code_ok = st.has_native_type(builder, params, NativePredicate::Equal);
+// DELETED, now we use `contains` to open dictionary entries to be used as anchored keys
+// fn verify_new_entry_circuit(
+//     params: &Params,
+//     builder: &mut CircuitBuilder,
+//     st: &StatementTarget,
+//     op_type: &OperationTypeTarget,
+//     prev_statements: &[StatementTarget],
+//     input_statements_offset: usize,
+// ) -> BoolTarget {
+//     todo!()
+// let measure = measure_gates_begin!(builder, "OpNewEntry");
+// let op_code_ok = op_type.has_native(builder, NativeOperation::NewEntry);
+// let st_code_ok = st.has_native_type(builder, params, NativePredicate::Equal);
 
-    // let expected_arg_prefix = builder.constants(
-    //     &StatementArg::Key(AnchoredKey::from((SELF, ""))).to_fields(params)[..VALUE_SIZE],
-    // );
-    // let arg_prefix_ok =
-    //     builder.is_equal_slice(&st.args[0].elements[..VALUE_SIZE], &expected_arg_prefix);
+// let expected_arg_prefix = builder.constants(
+//     &StatementArg::Key(AnchoredKey::from((SELF, ""))).to_fields(params)[..VALUE_SIZE],
+// );
+// let arg_prefix_ok =
+//     builder.is_equal_slice(&st.args[0].elements[..VALUE_SIZE], &expected_arg_prefix);
 
-    // let input_statements = &prev_statements[input_statements_offset..];
-    // let individual_dupe_checks = input_statements
-    //     .iter()
-    //     .map(|ps| builder.is_equal_slice(&st.args[0].elements, &ps.args[0].elements))
-    //     .collect::<Vec<_>>();
-    // let dupe_check = builder.any(individual_dupe_checks);
-    // let no_dupes_ok = builder.not(dupe_check);
+// let input_statements = &prev_statements[input_statements_offset..];
+// let individual_dupe_checks = input_statements
+//     .iter()
+//     .map(|ps| builder.is_equal_slice(&st.args[0].elements, &ps.args[0].elements))
+//     .collect::<Vec<_>>();
+// let dupe_check = builder.any(individual_dupe_checks);
+// let no_dupes_ok = builder.not(dupe_check);
 
-    // let ok = builder.all([op_code_ok, st_code_ok, arg_prefix_ok, no_dupes_ok]);
-    // measure_gates_end!(builder, measure);
-    // ok
-}
+// let ok = builder.all([op_code_ok, st_code_ok, arg_prefix_ok, no_dupes_ok]);
+// measure_gates_end!(builder, measure);
+// ok
+// }
 
 fn verify_lt_to_neq_circuit(
     params: &Params,
@@ -1304,7 +1317,6 @@ fn make_statement_arg_from_template_circuit(
     // optimization: the wildcard indices have an offset of +1.  This allows us to set a fixed
     // SELF in args[0] to resolve SelfOrWildcard::SELF encoded as a wildcard at index 0.
     // let value_self = ValueTarget::from_slice(&builder.constants(&SELF.0 .0));
-    // TODO: Remove the +1 offset
 
     // If the index is not used, use a 0 instead to still pass the range constraints from
     // vec_ref
@@ -1684,7 +1696,7 @@ fn verify_main_pod_circuit(
                 st,
                 op,
                 prev_statements,
-                input_statements_offset,
+                // input_statements_offset,
                 &aux_table,
             )?;
         } else {
@@ -1694,7 +1706,7 @@ fn verify_main_pod_circuit(
                 st,
                 op,
                 prev_statements,
-                input_statements_offset,
+                // input_statements_offset,
             )?;
         }
     }
@@ -1983,8 +1995,6 @@ impl InnerCircuit for MainPodVerifyTarget {
     }
 }
 
-// TODO: Uncomment
-/*
 #[cfg(test)]
 mod tests {
     use std::{iter, ops::Not};
@@ -2007,10 +2017,11 @@ mod tests {
                 merkletree::{MerkleClaimAndProof, MerkleTree, MerkleTreeStateTransitionProof},
             },
         },
+        dict,
         frontend::{self, literal, CustomPredicateBatchBuilder, StatementTmplBuilder},
         middleware::{
-            hash_str, hash_values, Hash, Key, OperationType, PodId, Predicate, RawValue,
-            StatementTmpl, StatementTmplArg, TypedValue, Wildcard,
+            hash_str, hash_values, Hash, Key, OperationType, Predicate, RawValue, StatementTmpl,
+            StatementTmplArg, TypedValue, Wildcard,
         },
     };
 
@@ -2023,10 +2034,13 @@ mod tests {
         merkle_tree_state_transition_proofs: Vec<MerkleTreeStateTransitionProof>,
     ) -> Result<()> {
         let params = Params {
-            max_custom_predicate_batches: 0,
-            max_custom_predicate_verifications: 0,
             max_merkle_proofs_containers: merkle_proofs.len(),
             max_public_key_of: secret_keys.len(),
+            max_signed_by: 0, // TODO
+            max_merkle_tree_state_transition_proofs_containers: merkle_tree_state_transition_proofs
+                .len(),
+            max_custom_predicate_verifications: 0,
+            max_custom_predicate_batches: 0,
             ..Default::default()
         };
 
@@ -2080,7 +2094,7 @@ mod tests {
             &st_target,
             &op_target,
             &prev_statements_target,
-            0,
+            // 0,
             &aux_table,
         )?;
 
@@ -2115,213 +2129,213 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_lt_lteq_verify_failures() {
-        let st1: mainpod::Statement =
-            Statement::equal(AnchoredKey::from((SELF, "hello")), Value::from(55)).into();
-        let st2: mainpod::Statement = Statement::equal(
-            AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
-            Value::from(56),
-        )
-        .into();
-        let st3: mainpod::Statement = Statement::equal(
-            AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
-            Value::from(RawValue([
-                GoldilocksField::NEG_ONE,
-                GoldilocksField::ZERO,
-                GoldilocksField::ZERO,
-                GoldilocksField::ZERO,
-            ])),
-        )
-        .into();
-        let st4: mainpod::Statement = Statement::equal(
-            AnchoredKey::from((PodId(RawValue::from(74).into()), "mundo")),
-            Value::from(-55),
-        )
-        .into();
-        let st5: mainpod::Statement = Statement::equal(
-            AnchoredKey::from((PodId(RawValue::from(70).into()), "que")),
-            Value::from(-56),
-        )
-        .into();
+    // #[test]
+    // fn test_lt_lteq_verify_failures() {
+    //     let st1: mainpod::Statement =
+    //         Statement::equal(AnchoredKey::from((SELF, "hello")), Value::from(55)).into();
+    //     let st2: mainpod::Statement = Statement::equal(
+    //         AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
+    //         Value::from(56),
+    //     )
+    //     .into();
+    //     let st3: mainpod::Statement = Statement::equal(
+    //         AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
+    //         Value::from(RawValue([
+    //             GoldilocksField::NEG_ONE,
+    //             GoldilocksField::ZERO,
+    //             GoldilocksField::ZERO,
+    //             GoldilocksField::ZERO,
+    //         ])),
+    //     )
+    //     .into();
+    //     let st4: mainpod::Statement = Statement::equal(
+    //         AnchoredKey::from((PodId(RawValue::from(74).into()), "mundo")),
+    //         Value::from(-55),
+    //     )
+    //     .into();
+    //     let st5: mainpod::Statement = Statement::equal(
+    //         AnchoredKey::from((PodId(RawValue::from(70).into()), "que")),
+    //         Value::from(-56),
+    //     )
+    //     .into();
 
-        let prev_statements = [st1, st2, st3, st4, st5];
+    //     let prev_statements = [st1, st2, st3, st4, st5];
 
-        [
-            // 56 < 55, 55 < 55, 56 <= 55, -55 < -55, -55 < -56, -55 <= -56 should fail to verify
-            (
-                mainpod::Operation(
-                    OperationType::Native(NativeOperation::LtFromEntries),
-                    vec![OperationArg::Index(1), OperationArg::Index(0)],
-                    OperationAux::None,
-                ),
-                Statement::lt(
-                    AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
-                    AnchoredKey::from((SELF, "hello")),
-                )
-                .into(),
-            ),
-            (
-                mainpod::Operation(
-                    OperationType::Native(NativeOperation::LtFromEntries),
-                    vec![OperationArg::Index(0), OperationArg::Index(0)],
-                    OperationAux::None,
-                ),
-                Statement::lt(
-                    AnchoredKey::from((SELF, "hello")),
-                    AnchoredKey::from((SELF, "hello")),
-                )
-                .into(),
-            ),
-            (
-                mainpod::Operation(
-                    OperationType::Native(NativeOperation::LtEqFromEntries),
-                    vec![OperationArg::Index(1), OperationArg::Index(0)],
-                    OperationAux::None,
-                ),
-                Statement::lt_eq(
-                    AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
-                    AnchoredKey::from((SELF, "hello")),
-                )
-                .into(),
-            ),
-            (
-                mainpod::Operation(
-                    OperationType::Native(NativeOperation::LtFromEntries),
-                    vec![OperationArg::Index(3), OperationArg::Index(3)],
-                    OperationAux::None,
-                ),
-                Statement::lt(
-                    AnchoredKey::from((PodId(RawValue::from(74).into()), "mundo")),
-                    AnchoredKey::from((PodId(RawValue::from(74).into()), "mundo")),
-                )
-                .into(),
-            ),
-            (
-                mainpod::Operation(
-                    OperationType::Native(NativeOperation::LtFromEntries),
-                    vec![OperationArg::Index(3), OperationArg::Index(4)],
-                    OperationAux::None,
-                ),
-                Statement::lt(
-                    AnchoredKey::from((PodId(RawValue::from(74).into()), "mundo")),
-                    AnchoredKey::from((PodId(RawValue::from(70).into()), "que")),
-                )
-                .into(),
-            ),
-            (
-                mainpod::Operation(
-                    OperationType::Native(NativeOperation::LtEqFromEntries),
-                    vec![OperationArg::Index(3), OperationArg::Index(4)],
-                    OperationAux::None,
-                ),
-                Statement::lt_eq(
-                    AnchoredKey::from((PodId(RawValue::from(74).into()), "mundo")),
-                    AnchoredKey::from((PodId(RawValue::from(70).into()), "que")),
-                )
-                .into(),
-            ),
-            // 56 < p-1 and p-1 <= p-1 should fail to verify, where p
-            // is the Goldilocks prime and 'p-1' occupies a single
-            // limb.
-            (
-                mainpod::Operation(
-                    OperationType::Native(NativeOperation::LtFromEntries),
-                    vec![OperationArg::Index(1), OperationArg::Index(2)],
-                    OperationAux::None,
-                ),
-                Statement::lt(
-                    AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
-                    AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
-                )
-                .into(),
-            ),
-            (
-                mainpod::Operation(
-                    OperationType::Native(NativeOperation::LtEqFromEntries),
-                    vec![OperationArg::Index(2), OperationArg::Index(2)],
-                    OperationAux::None,
-                ),
-                Statement::lt_eq(
-                    AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
-                    AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
-                )
-                .into(),
-            ),
-        ]
-        .into_iter()
-        .for_each(|(op, st)| {
-            let check = std::panic::catch_unwind(|| {
-                operation_verify(st, op, prev_statements.to_vec(), vec![], vec![], vec![])
-            });
-            match check {
-                Err(e) => {
-                    let err_string = e.downcast_ref::<String>().unwrap();
-                    if !err_string.contains("Integer too large to fit") {
-                        panic!("Test failed with an unexpected error: {}", err_string);
-                    }
-                }
-                Ok(Err(_)) => {}
-                _ => panic!("Test passed, yet it should have failed!"),
-            }
-        });
-    }
+    //     [
+    //         // 56 < 55, 55 < 55, 56 <= 55, -55 < -55, -55 < -56, -55 <= -56 should fail to verify
+    //         (
+    //             mainpod::Operation(
+    //                 OperationType::Native(NativeOperation::LtFromEntries),
+    //                 vec![OperationArg::Index(1), OperationArg::Index(0)],
+    //                 OperationAux::None,
+    //             ),
+    //             Statement::lt(
+    //                 AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
+    //                 AnchoredKey::from((SELF, "hello")),
+    //             )
+    //             .into(),
+    //         ),
+    //         (
+    //             mainpod::Operation(
+    //                 OperationType::Native(NativeOperation::LtFromEntries),
+    //                 vec![OperationArg::Index(0), OperationArg::Index(0)],
+    //                 OperationAux::None,
+    //             ),
+    //             Statement::lt(
+    //                 AnchoredKey::from((SELF, "hello")),
+    //                 AnchoredKey::from((SELF, "hello")),
+    //             )
+    //             .into(),
+    //         ),
+    //         (
+    //             mainpod::Operation(
+    //                 OperationType::Native(NativeOperation::LtEqFromEntries),
+    //                 vec![OperationArg::Index(1), OperationArg::Index(0)],
+    //                 OperationAux::None,
+    //             ),
+    //             Statement::lt_eq(
+    //                 AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
+    //                 AnchoredKey::from((SELF, "hello")),
+    //             )
+    //             .into(),
+    //         ),
+    //         (
+    //             mainpod::Operation(
+    //                 OperationType::Native(NativeOperation::LtFromEntries),
+    //                 vec![OperationArg::Index(3), OperationArg::Index(3)],
+    //                 OperationAux::None,
+    //             ),
+    //             Statement::lt(
+    //                 AnchoredKey::from((PodId(RawValue::from(74).into()), "mundo")),
+    //                 AnchoredKey::from((PodId(RawValue::from(74).into()), "mundo")),
+    //             )
+    //             .into(),
+    //         ),
+    //         (
+    //             mainpod::Operation(
+    //                 OperationType::Native(NativeOperation::LtFromEntries),
+    //                 vec![OperationArg::Index(3), OperationArg::Index(4)],
+    //                 OperationAux::None,
+    //             ),
+    //             Statement::lt(
+    //                 AnchoredKey::from((PodId(RawValue::from(74).into()), "mundo")),
+    //                 AnchoredKey::from((PodId(RawValue::from(70).into()), "que")),
+    //             )
+    //             .into(),
+    //         ),
+    //         (
+    //             mainpod::Operation(
+    //                 OperationType::Native(NativeOperation::LtEqFromEntries),
+    //                 vec![OperationArg::Index(3), OperationArg::Index(4)],
+    //                 OperationAux::None,
+    //             ),
+    //             Statement::lt_eq(
+    //                 AnchoredKey::from((PodId(RawValue::from(74).into()), "mundo")),
+    //                 AnchoredKey::from((PodId(RawValue::from(70).into()), "que")),
+    //             )
+    //             .into(),
+    //         ),
+    //         // 56 < p-1 and p-1 <= p-1 should fail to verify, where p
+    //         // is the Goldilocks prime and 'p-1' occupies a single
+    //         // limb.
+    //         (
+    //             mainpod::Operation(
+    //                 OperationType::Native(NativeOperation::LtFromEntries),
+    //                 vec![OperationArg::Index(1), OperationArg::Index(2)],
+    //                 OperationAux::None,
+    //             ),
+    //             Statement::lt(
+    //                 AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
+    //                 AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
+    //             )
+    //             .into(),
+    //         ),
+    //         (
+    //             mainpod::Operation(
+    //                 OperationType::Native(NativeOperation::LtEqFromEntries),
+    //                 vec![OperationArg::Index(2), OperationArg::Index(2)],
+    //                 OperationAux::None,
+    //             ),
+    //             Statement::lt_eq(
+    //                 AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
+    //                 AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
+    //             )
+    //             .into(),
+    //         ),
+    //     ]
+    //     .into_iter()
+    //     .for_each(|(op, st)| {
+    //         let check = std::panic::catch_unwind(|| {
+    //             operation_verify(st, op, prev_statements.to_vec(), vec![], vec![], vec![])
+    //         });
+    //         match check {
+    //             Err(e) => {
+    //                 let err_string = e.downcast_ref::<String>().unwrap();
+    //                 if !err_string.contains("Integer too large to fit") {
+    //                     panic!("Test failed with an unexpected error: {}", err_string);
+    //                 }
+    //             }
+    //             Ok(Err(_)) => {}
+    //             _ => panic!("Test passed, yet it should have failed!"),
+    //         }
+    //     });
+    // }
 
-    #[test]
-    fn test_eq_neq_verify_failures() {
-        let st1: mainpod::Statement =
-            Statement::equal(AnchoredKey::from((SELF, "hello")), Value::from(55)).into();
-        let st2: mainpod::Statement = Statement::equal(
-            AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
-            Value::from(56),
-        )
-        .into();
-        let st3: mainpod::Statement = Statement::equal(
-            AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
-            Value::from(RawValue([
-                GoldilocksField::NEG_ONE,
-                GoldilocksField::ZERO,
-                GoldilocksField::ZERO,
-                GoldilocksField::ZERO,
-            ])),
-        )
-        .into();
-        let prev_statements = [st1, st2, st3];
+    // #[test]
+    // fn test_eq_neq_verify_failures() {
+    //     let st1: mainpod::Statement =
+    //         Statement::equal(AnchoredKey::from((SELF, "hello")), Value::from(55)).into();
+    //     let st2: mainpod::Statement = Statement::equal(
+    //         AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
+    //         Value::from(56),
+    //     )
+    //     .into();
+    //     let st3: mainpod::Statement = Statement::equal(
+    //         AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
+    //         Value::from(RawValue([
+    //             GoldilocksField::NEG_ONE,
+    //             GoldilocksField::ZERO,
+    //             GoldilocksField::ZERO,
+    //             GoldilocksField::ZERO,
+    //         ])),
+    //     )
+    //     .into();
+    //     let prev_statements = [st1, st2, st3];
 
-        [
-            // 56 == 55, 55 != 55 should fail to verify
-            (
-                mainpod::Operation(
-                    OperationType::Native(NativeOperation::EqualFromEntries),
-                    vec![OperationArg::Index(1), OperationArg::Index(0)],
-                    OperationAux::None,
-                ),
-                Statement::equal(
-                    AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
-                    AnchoredKey::from((SELF, "hello")),
-                )
-                .into(),
-            ),
-            (
-                mainpod::Operation(
-                    OperationType::Native(NativeOperation::NotEqualFromEntries),
-                    vec![OperationArg::Index(0), OperationArg::Index(0)],
-                    OperationAux::None,
-                ),
-                Statement::not_equal(
-                    AnchoredKey::from((SELF, "hello")),
-                    AnchoredKey::from((SELF, "hello")),
-                )
-                .into(),
-            ),
-        ]
-        .into_iter()
-        .for_each(|(op, st)| {
-            assert!(
-                operation_verify(st, op, prev_statements.to_vec(), vec![], vec![], vec![]).is_err()
-            )
-        });
-    }
+    //     [
+    //         // 56 == 55, 55 != 55 should fail to verify
+    //         (
+    //             mainpod::Operation(
+    //                 OperationType::Native(NativeOperation::EqualFromEntries),
+    //                 vec![OperationArg::Index(1), OperationArg::Index(0)],
+    //                 OperationAux::None,
+    //             ),
+    //             Statement::equal(
+    //                 AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
+    //                 AnchoredKey::from((SELF, "hello")),
+    //             )
+    //             .into(),
+    //         ),
+    //         (
+    //             mainpod::Operation(
+    //                 OperationType::Native(NativeOperation::NotEqualFromEntries),
+    //                 vec![OperationArg::Index(0), OperationArg::Index(0)],
+    //                 OperationAux::None,
+    //             ),
+    //             Statement::not_equal(
+    //                 AnchoredKey::from((SELF, "hello")),
+    //                 AnchoredKey::from((SELF, "hello")),
+    //             )
+    //             .into(),
+    //         ),
+    //     ]
+    //     .into_iter()
+    //     .for_each(|(op, st)| {
+    //         assert!(
+    //             operation_verify(st, op, prev_statements.to_vec(), vec![], vec![], vec![]).is_err()
+    //         )
+    //     });
+    // }
 
     #[test]
     fn test_operation_verify_none() -> Result<()> {
@@ -2335,23 +2349,24 @@ mod tests {
         operation_verify(st, op, prev_statements, vec![], vec![], vec![])
     }
 
-    #[test]
-    fn test_operation_verify_newentry() -> Result<()> {
-        let st1: mainpod::Statement =
-            Statement::equal(AnchoredKey::from((SELF, "hello")), Value::from(55)).into();
-        let st2: mainpod::Statement = Statement::equal(
-            AnchoredKey::from((PodId(RawValue::from(75).into()), "hello")),
-            Value::from(55),
-        )
-        .into();
-        let prev_statements = vec![st2];
-        let op = mainpod::Operation(
-            OperationType::Native(NativeOperation::NewEntry),
-            vec![],
-            OperationAux::None,
-        );
-        operation_verify(st1, op, prev_statements, vec![], vec![], vec![])
-    }
+    // TODO: Delete
+    // #[test]
+    // fn test_operation_verify_newentry() -> Result<()> {
+    //     let st1: mainpod::Statement =
+    //         Statement::equal(AnchoredKey::from((SELF, "hello")), Value::from(55)).into();
+    //     let st2: mainpod::Statement = Statement::equal(
+    //         AnchoredKey::from((PodId(RawValue::from(75).into()), "hello")),
+    //         Value::from(55),
+    //     )
+    //     .into();
+    //     let prev_statements = vec![st2];
+    //     let op = mainpod::Operation(
+    //         OperationType::Native(NativeOperation::NewEntry),
+    //         vec![],
+    //         OperationAux::None,
+    //     );
+    //     operation_verify(st1, op, prev_statements, vec![], vec![], vec![])
+    // }
 
     #[test]
     fn test_operation_verify_copy() -> Result<()> {
@@ -2367,16 +2382,13 @@ mod tests {
 
     #[test]
     fn test_operation_verify_eq() -> Result<()> {
-        let st1: mainpod::Statement =
-            Statement::equal(AnchoredKey::from((SELF, "hello")), Value::from(55)).into();
-        let st2: mainpod::Statement = Statement::equal(
-            AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
-            Value::from(55),
-        )
-        .into();
+        let dict1 = dict!(32, {"hello" => 55})?;
+        let dict2 = dict!(32, {"world" => 55})?;
+        let st1: mainpod::Statement = Statement::contains(dict1.clone(), "hello", 55).into();
+        let st2: mainpod::Statement = Statement::contains(dict2.clone(), "world", 55).into();
         let st: mainpod::Statement = Statement::equal(
-            AnchoredKey::from((SELF, "hello")),
-            AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
+            AnchoredKey::from((&dict1, "hello")),
+            AnchoredKey::from((&dict2, "world")),
         )
         .into();
         let op = mainpod::Operation(
@@ -2390,16 +2402,13 @@ mod tests {
 
     #[test]
     fn test_operation_verify_neq() -> Result<()> {
-        let st1: mainpod::Statement =
-            Statement::equal(AnchoredKey::from((SELF, "hello")), Value::from(55)).into();
-        let st2: mainpod::Statement = Statement::equal(
-            AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
-            Value::from(58),
-        )
-        .into();
+        let dict1 = dict!(32, {"hello" => 55})?;
+        let dict2 = dict!(32, {"world" => 75})?;
+        let st1: mainpod::Statement = Statement::contains(dict1.clone(), "hello", 55).into();
+        let st2: mainpod::Statement = Statement::contains(dict2.clone(), "world", 75).into();
         let st: mainpod::Statement = Statement::not_equal(
-            AnchoredKey::from((SELF, "hello")),
-            AnchoredKey::from((PodId(RawValue::from(75).into()), "world")),
+            AnchoredKey::from((&dict1, "hello")),
+            AnchoredKey::from((&dict2, "world")),
         )
         .into();
         let op = mainpod::Operation(
@@ -2413,16 +2422,13 @@ mod tests {
 
     #[test]
     fn test_operation_verify_lt() -> Result<()> {
-        let st1: mainpod::Statement =
-            Statement::equal(AnchoredKey::from((SELF, "hello")), Value::from(55)).into();
-        let st2: mainpod::Statement = Statement::equal(
-            AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
-            Value::from(56),
-        )
-        .into();
+        let dict1 = dict!(32, {"hello" => 55})?;
+        let dict2 = dict!(32, {"hello" => 56})?;
+        let st1: mainpod::Statement = Statement::contains(dict1.clone(), "hello", 55).into();
+        let st2: mainpod::Statement = Statement::contains(dict2.clone(), "hello", 56).into();
         let st: mainpod::Statement = Statement::lt(
-            AnchoredKey::from((SELF, "hello")),
-            AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
+            AnchoredKey::from((&dict1, "hello")),
+            AnchoredKey::from((&dict2, "hello")),
         )
         .into();
         let op = mainpod::Operation(
@@ -2434,19 +2440,13 @@ mod tests {
         operation_verify(st, op, prev_statements, vec![], vec![], vec![])?;
 
         // Also check negative < negative
-        let st3: mainpod::Statement = Statement::equal(
-            AnchoredKey::from((PodId(RawValue::from(89).into()), "hola")),
-            Value::from(-56),
-        )
-        .into();
-        let st4: mainpod::Statement = Statement::equal(
-            AnchoredKey::from((PodId(RawValue::from(84).into()), "mundo")),
-            Value::from(-55),
-        )
-        .into();
+        let dict3 = dict!(32, {"hola" => -56})?;
+        let dict4 = dict!(32, {"mundo" => -55})?;
+        let st3: mainpod::Statement = Statement::contains(dict3.clone(), "hola", -56).into();
+        let st4: mainpod::Statement = Statement::contains(dict4.clone(), "mundo", -55).into();
         let st: mainpod::Statement = Statement::lt(
-            AnchoredKey::from((PodId(RawValue::from(89).into()), "hola")),
-            AnchoredKey::from((PodId(RawValue::from(84).into()), "mundo")),
+            AnchoredKey::from((&dict3, "hola")),
+            AnchoredKey::from((&dict4, "mundo")),
         )
         .into();
         let op = mainpod::Operation(
@@ -2459,8 +2459,8 @@ mod tests {
 
         // Also check negative < positive
         let st: mainpod::Statement = Statement::lt(
-            AnchoredKey::from((PodId(RawValue::from(89).into()), "hola")),
-            AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
+            AnchoredKey::from((&dict3, "hola")),
+            AnchoredKey::from((&dict2, "hello")),
         )
         .into();
         let op = mainpod::Operation(
@@ -2474,16 +2474,17 @@ mod tests {
 
     #[test]
     fn test_operation_verify_lteq() -> Result<()> {
-        let st1: mainpod::Statement =
-            Statement::equal(AnchoredKey::from((SELF, "hello")), Value::from(55)).into();
-        let st2: mainpod::Statement = Statement::equal(
-            AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
-            Value::from(56),
-        )
-        .into();
+        let local = dict!(32, {
+            "n55" => 55,
+            "n56" => 56,
+            "n_56" => -56,
+            "n_55" => -55,
+        })?;
+        let st1: mainpod::Statement = Statement::contains(local.clone(), "n55", 55).into();
+        let st2: mainpod::Statement = Statement::contains(local.clone(), "n56", 56).into();
         let st: mainpod::Statement = Statement::lt_eq(
-            AnchoredKey::from((SELF, "hello")),
-            AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
+            AnchoredKey::from((&local, "n55")),
+            AnchoredKey::from((&local, "n56")),
         )
         .into();
         let op = mainpod::Operation(
@@ -2495,19 +2496,11 @@ mod tests {
         operation_verify(st, op, prev_statements, vec![], vec![], vec![])?;
 
         // Also check negative <= negative
-        let st3: mainpod::Statement = Statement::equal(
-            AnchoredKey::from((PodId(RawValue::from(89).into()), "hola")),
-            Value::from(-56),
-        )
-        .into();
-        let st4: mainpod::Statement = Statement::equal(
-            AnchoredKey::from((PodId(RawValue::from(84).into()), "mundo")),
-            Value::from(-55),
-        )
-        .into();
+        let st3: mainpod::Statement = Statement::contains(local.clone(), "n_56", -56).into();
+        let st4: mainpod::Statement = Statement::contains(local.clone(), "n_55", -55).into();
         let st: mainpod::Statement = Statement::lt_eq(
-            AnchoredKey::from((PodId(RawValue::from(89).into()), "hola")),
-            AnchoredKey::from((PodId(RawValue::from(84).into()), "mundo")),
+            AnchoredKey::from((&local, "n_56")),
+            AnchoredKey::from((&local, "n_55")),
         )
         .into();
         let op = mainpod::Operation(
@@ -2520,8 +2513,8 @@ mod tests {
 
         // Also check negative <= positive
         let st: mainpod::Statement = Statement::lt_eq(
-            AnchoredKey::from((PodId(RawValue::from(89).into()), "hola")),
-            AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
+            AnchoredKey::from((&local, "n_56")),
+            AnchoredKey::from((&local, "n56")),
         )
         .into();
         let op = mainpod::Operation(
@@ -2534,8 +2527,8 @@ mod tests {
 
         // Also check equality, both positive and negative.
         let st: mainpod::Statement = Statement::lt_eq(
-            AnchoredKey::from((PodId(RawValue::from(89).into()), "hola")),
-            AnchoredKey::from((PodId(RawValue::from(89).into()), "hola")),
+            AnchoredKey::from((&local, "n_56")),
+            AnchoredKey::from((&local, "n_56")),
         )
         .into();
         let op = mainpod::Operation(
@@ -2545,8 +2538,8 @@ mod tests {
         );
         operation_verify(st, op, prev_statements.clone(), vec![], vec![], vec![])?;
         let st: mainpod::Statement = Statement::lt_eq(
-            AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
-            AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
+            AnchoredKey::from((&local, "n56")),
+            AnchoredKey::from((&local, "n56")),
         )
         .into();
         let op = mainpod::Operation(
@@ -2571,26 +2564,20 @@ mod tests {
         let v1 = hash_values(&input_values);
         let [v2, v3] = input_values;
 
-        let st1: mainpod::Statement = Statement::equal(
-            AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
-            Value::from(v1),
-        )
-        .into();
-        let st2: mainpod::Statement = Statement::equal(
-            AnchoredKey::from((PodId(RawValue::from(128).into()), "mundo")),
-            v2,
-        )
-        .into();
-        let st3: mainpod::Statement = Statement::equal(
-            AnchoredKey::from((PodId(RawValue::from(256).into()), "!")),
-            v3,
-        )
-        .into();
+        let local = dict!(32, {
+            "hola" => v1.clone(),
+            "mundo" => v2.clone(),
+            "!" => v3.clone(),
+        })?;
+
+        let st1: mainpod::Statement = Statement::contains(local.clone(), "hola", v1).into();
+        let st2: mainpod::Statement = Statement::contains(local.clone(), "mundo", v2).into();
+        let st3: mainpod::Statement = Statement::contains(local.clone(), "!", v3).into();
 
         let st: mainpod::Statement = Statement::hash_of(
-            AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
-            AnchoredKey::from((PodId(RawValue::from(128).into()), "mundo")),
-            AnchoredKey::from((PodId(RawValue::from(256).into()), "!")),
+            AnchoredKey::from((&local, "hola")),
+            AnchoredKey::from((&local, "mundo")),
+            AnchoredKey::from((&local, "!")),
         )
         .into();
         let op = mainpod::Operation(
@@ -2615,28 +2602,20 @@ mod tests {
                 overflow.not().then_some((a, b, sum))
             })
             .try_for_each(|(a, b, sum)| {
-                let st1: mainpod::Statement = Statement::equal(
-                    AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
-                    sum,
-                )
-                .into();
+                let local = dict!(32, {
+                    "sum" => sum,
+                    "a" => a,
+                    "b" => b,
+                })?;
 
-                let st2: mainpod::Statement = Statement::equal(
-                    AnchoredKey::from((PodId(RawValue::from(128).into()), "mundo")),
-                    a,
-                )
-                .into();
-
-                let st3: mainpod::Statement = Statement::equal(
-                    AnchoredKey::from((PodId(RawValue::from(256).into()), "!")),
-                    b,
-                )
-                .into();
+                let st1: mainpod::Statement = Statement::contains(local.clone(), "sum", sum).into();
+                let st2: mainpod::Statement = Statement::contains(local.clone(), "a", a).into();
+                let st3: mainpod::Statement = Statement::contains(local.clone(), "b", b).into();
 
                 let st: mainpod::Statement = Statement::sum_of(
-                    AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
-                    AnchoredKey::from((PodId(RawValue::from(128).into()), "mundo")),
-                    AnchoredKey::from((PodId(RawValue::from(256).into()), "!")),
+                    AnchoredKey::from((&local, "sum")),
+                    AnchoredKey::from((&local, "a")),
+                    AnchoredKey::from((&local, "b")),
                 )
                 .into();
                 let op = mainpod::Operation(
@@ -2662,28 +2641,21 @@ mod tests {
                 overflow.not().then_some((a, b, prod))
             })
             .try_for_each(|(a, b, prod)| {
-                let st1: mainpod::Statement = Statement::equal(
-                    AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
-                    prod,
-                )
-                .into();
+                let local = dict!(32, {
+                    "prod" => prod,
+                    "a" => a,
+                    "b" => b,
+                })?;
 
-                let st2: mainpod::Statement = Statement::equal(
-                    AnchoredKey::from((PodId(RawValue::from(128).into()), "mundo")),
-                    a,
-                )
-                .into();
-
-                let st3: mainpod::Statement = Statement::equal(
-                    AnchoredKey::from((PodId(RawValue::from(256).into()), "!")),
-                    b,
-                )
-                .into();
+                let st1: mainpod::Statement =
+                    Statement::contains(local.clone(), "prod", prod).into();
+                let st2: mainpod::Statement = Statement::contains(local.clone(), "a", a).into();
+                let st3: mainpod::Statement = Statement::contains(local.clone(), "b", b).into();
 
                 let st: mainpod::Statement = Statement::product_of(
-                    AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
-                    AnchoredKey::from((PodId(RawValue::from(128).into()), "mundo")),
-                    AnchoredKey::from((PodId(RawValue::from(256).into()), "!")),
+                    AnchoredKey::from((&local, "prod")),
+                    AnchoredKey::from((&local, "a")),
+                    AnchoredKey::from((&local, "b")),
                 )
                 .into();
                 let op = mainpod::Operation(
@@ -2704,30 +2676,23 @@ mod tests {
     fn test_operation_verify_maxof() -> Result<()> {
         I64_TEST_PAIRS.into_iter().try_for_each(|(a, b)| {
             let max = i64::max(a, b);
-            let st1: mainpod::Statement = Statement::equal(
-                AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
-                max,
-            )
-            .into();
+            let local = dict!(32, {
+                "max" => max,
+                "a" => a,
+                "b" => b,
+            })?;
 
-            let st2: mainpod::Statement = Statement::equal(
-                AnchoredKey::from((PodId(RawValue::from(128).into()), "mundo")),
-                a,
-            )
-            .into();
-
-            let st3: mainpod::Statement = Statement::equal(
-                AnchoredKey::from((PodId(RawValue::from(256).into()), "!")),
-                b,
-            )
-            .into();
+            let st1: mainpod::Statement = Statement::contains(local.clone(), "max", max).into();
+            let st2: mainpod::Statement = Statement::contains(local.clone(), "a", a).into();
+            let st3: mainpod::Statement = Statement::contains(local.clone(), "b", b).into();
 
             let st: mainpod::Statement = Statement::max_of(
-                AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
-                AnchoredKey::from((PodId(RawValue::from(128).into()), "mundo")),
-                AnchoredKey::from((PodId(RawValue::from(256).into()), "!")),
+                AnchoredKey::from((&local, "max")),
+                AnchoredKey::from((&local, "a")),
+                AnchoredKey::from((&local, "b")),
             )
             .into();
+
             let op = mainpod::Operation(
                 OperationType::Native(NativeOperation::MaxOf),
                 vec![
@@ -2742,72 +2707,76 @@ mod tests {
         })
     }
 
-    #[test]
-    fn test_operation_verify_maxof_failures() {
-        [(5, 3, 4), (5, 5, 8), (3, 4, 5)]
-            .into_iter()
-            .for_each(|(max, a, b)| {
-                let st1: mainpod::Statement = Statement::equal(
-                    AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
-                    max,
-                )
-                .into();
+    // #[test]
+    // fn test_operation_verify_maxof_failures() {
+    //     [(5, 3, 4), (5, 5, 8), (3, 4, 5)]
+    //         .into_iter()
+    //         .for_each(|(max, a, b)| {
+    //             let st1: mainpod::Statement = Statement::equal(
+    //                 AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
+    //                 max,
+    //             )
+    //             .into();
 
-                let st2: mainpod::Statement = Statement::equal(
-                    AnchoredKey::from((PodId(RawValue::from(128).into()), "mundo")),
-                    a,
-                )
-                .into();
+    //             let st2: mainpod::Statement = Statement::equal(
+    //                 AnchoredKey::from((PodId(RawValue::from(128).into()), "mundo")),
+    //                 a,
+    //             )
+    //             .into();
 
-                let st3: mainpod::Statement = Statement::equal(
-                    AnchoredKey::from((PodId(RawValue::from(256).into()), "!")),
-                    b,
-                )
-                .into();
+    //             let st3: mainpod::Statement = Statement::equal(
+    //                 AnchoredKey::from((PodId(RawValue::from(256).into()), "!")),
+    //                 b,
+    //             )
+    //             .into();
 
-                let st: mainpod::Statement = Statement::max_of(
-                    AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
-                    AnchoredKey::from((PodId(RawValue::from(128).into()), "mundo")),
-                    AnchoredKey::from((PodId(RawValue::from(256).into()), "!")),
-                )
-                .into();
-                let op = mainpod::Operation(
-                    OperationType::Native(NativeOperation::MaxOf),
-                    vec![
-                        OperationArg::Index(0),
-                        OperationArg::Index(1),
-                        OperationArg::Index(2),
-                    ],
-                    OperationAux::None,
-                );
-                let prev_statements = [st1, st2, st3];
+    //             let st: mainpod::Statement = Statement::max_of(
+    //                 AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
+    //                 AnchoredKey::from((PodId(RawValue::from(128).into()), "mundo")),
+    //                 AnchoredKey::from((PodId(RawValue::from(256).into()), "!")),
+    //             )
+    //             .into();
+    //             let op = mainpod::Operation(
+    //                 OperationType::Native(NativeOperation::MaxOf),
+    //                 vec![
+    //                     OperationArg::Index(0),
+    //                     OperationArg::Index(1),
+    //                     OperationArg::Index(2),
+    //                 ],
+    //                 OperationAux::None,
+    //             );
+    //             let prev_statements = [st1, st2, st3];
 
-                let check = std::panic::catch_unwind(|| {
-                    operation_verify(st, op, prev_statements.to_vec(), vec![], vec![], vec![])
-                });
-                match check {
-                    Err(e) => {
-                        let err_string = e.downcast_ref::<String>().unwrap();
-                        if !err_string.contains("Integer too large to fit") {
-                            panic!("Test failed with an unexpected error: {}", err_string);
-                        }
-                    }
-                    Ok(Err(_)) => {}
-                    _ => panic!("Test passed, yet it should have failed!"),
-                }
-            })
-    }
+    //             let check = std::panic::catch_unwind(|| {
+    //                 operation_verify(st, op, prev_statements.to_vec(), vec![], vec![], vec![])
+    //             });
+    //             match check {
+    //                 Err(e) => {
+    //                     let err_string = e.downcast_ref::<String>().unwrap();
+    //                     if !err_string.contains("Integer too large to fit") {
+    //                         panic!("Test failed with an unexpected error: {}", err_string);
+    //                     }
+    //                 }
+    //                 Ok(Err(_)) => {}
+    //                 _ => panic!("Test passed, yet it should have failed!"),
+    //             }
+    //         })
+    // }
 
     #[test]
     fn test_operation_verify_lt_to_neq() -> Result<()> {
+        let local = dict!(32,{
+            "a" => 10,
+            "b" => 20,
+        })?;
         let st: mainpod::Statement = Statement::not_equal(
-            AnchoredKey::from((SELF, "hello")),
-            AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
+            AnchoredKey::from((&local, "a")),
+            AnchoredKey::from((&local, "b")),
         )
         .into();
         let st1: mainpod::Statement = Statement::lt(
-            AnchoredKey::from((SELF, "hello")),
-            AnchoredKey::from((PodId(RawValue::from(88).into()), "hello")),
+            AnchoredKey::from((&local, "a")),
+            AnchoredKey::from((&local, "b")),
         )
         .into();
         let op = mainpod::Operation(
@@ -2821,19 +2790,24 @@ mod tests {
 
     #[test]
     fn test_operation_verify_transitive_eq() -> Result<()> {
+        let local = dict!(32,{
+            "a" => 10,
+            "b" => 10,
+            "c" => 10,
+        })?;
         let st: mainpod::Statement = Statement::equal(
-            AnchoredKey::from((SELF, "hello")),
-            AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
+            AnchoredKey::from((&local, "a")),
+            AnchoredKey::from((&local, "c")),
         )
         .into();
         let st1: mainpod::Statement = Statement::equal(
-            AnchoredKey::from((SELF, "hello")),
-            AnchoredKey::from((PodId(RawValue::from(89).into()), "world")),
+            AnchoredKey::from((&local, "a")),
+            AnchoredKey::from((&local, "b")),
         )
         .into();
         let st2: mainpod::Statement = Statement::equal(
-            AnchoredKey::from((PodId(RawValue::from(89).into()), "world")),
-            AnchoredKey::from((PodId(RawValue::from(88).into()), "hola")),
+            AnchoredKey::from((&local, "b")),
+            AnchoredKey::from((&local, "c")),
         )
         .into();
         let op = mainpod::Operation(
@@ -2858,16 +2832,21 @@ mod tests {
         .collect();
         let mt = MerkleTree::new(params.max_depth_mt_containers, &kvs)?;
 
-        let root = Value::from(mt.root());
-        let root_ak = AnchoredKey::from((PodId(RawValue::from(88).into()), "merkle root"));
+        let root = mt.root();
+        let key = Value::from(5);
+        let local = dict!(32,{
+            "merkle_root" => root,
+            "key" => key.clone(),
+        })?;
+        let root_ak = AnchoredKey::from((&local, "merkle_root"));
+        let key_ak = AnchoredKey::from((&local, "key"));
 
-        let key = 5.into();
-        let key_ak = AnchoredKey::from((PodId(RawValue::from(88).into()), "key"));
+        let no_key_pf = mt.prove_nonexistence(&key.raw())?;
 
-        let no_key_pf = mt.prove_nonexistence(&key)?;
-
-        let root_st: mainpod::Statement = Statement::equal(root_ak.clone(), root.clone()).into();
-        let key_st: mainpod::Statement = Statement::equal(key_ak.clone(), key).into();
+        let root_st: mainpod::Statement =
+            Statement::contains(local.clone(), "merkle_root", root).into();
+        let key_st: mainpod::Statement =
+            Statement::contains(local.clone(), "key", key.clone()).into();
         let st: mainpod::Statement = Statement::not_contains(root_ak, key_ak).into();
         let op = mainpod::Operation(
             OperationType::Native(NativeOperation::NotContainsFromEntries),
@@ -2875,12 +2854,7 @@ mod tests {
             OperationAux::MerkleProofIndex(0),
         );
 
-        let merkle_proofs = vec![MerkleClaimAndProof::new(
-            Hash::from(root.raw()),
-            key,
-            None,
-            no_key_pf,
-        )];
+        let merkle_proofs = vec![MerkleClaimAndProof::new(root, key.raw(), None, no_key_pf)];
         let prev_statements = vec![root_st, key_st];
         operation_verify(st, op, prev_statements, merkle_proofs, vec![], vec![])
     }
@@ -2898,18 +2872,24 @@ mod tests {
         .collect();
         let mt = MerkleTree::new(params.max_depth_mt_containers, &kvs)?;
 
-        let root = Value::from(mt.root());
-        let root_ak = AnchoredKey::from((PodId(RawValue::from(88).into()), "merkle root"));
+        let root = mt.root();
+        let key = Value::from(175);
+        let (value, key_pf) = mt.prove(&key.raw())?;
+        let local = dict!(32,{
+            "merkle_root" => root,
+            "key" => key.clone(),
+            "value" => value,
+        })?;
+        let root_ak = AnchoredKey::from((&local, "merkle_root"));
+        let key_ak = AnchoredKey::from((&local, "key"));
+        let value_ak = AnchoredKey::from((&local, "value"));
 
-        let key = 175.into();
-        let key_ak = AnchoredKey::from((PodId(RawValue::from(70).into()), "key"));
-
-        let (value, key_pf) = mt.prove(&key)?;
-        let value_ak = AnchoredKey::from((PodId(RawValue::from(72).into()), "value"));
-
-        let root_st: mainpod::Statement = Statement::equal(root_ak.clone(), root.clone()).into();
-        let key_st: mainpod::Statement = Statement::equal(key_ak.clone(), key).into();
-        let value_st: mainpod::Statement = Statement::equal(value_ak.clone(), value).into();
+        let root_st: mainpod::Statement =
+            Statement::contains(local.clone(), "merkle_root", root).into();
+        let key_st: mainpod::Statement =
+            Statement::contains(local.clone(), "key", key.clone()).into();
+        let value_st: mainpod::Statement =
+            Statement::contains(local.clone(), "value", value.clone()).into();
 
         let st: mainpod::Statement = Statement::contains(root_ak, key_ak, value_ak).into();
         let op = mainpod::Operation(
@@ -2923,8 +2903,8 @@ mod tests {
         );
 
         let merkle_proofs = vec![MerkleClaimAndProof::new(
-            Hash::from(root.raw()),
-            key,
+            root,
+            key.raw(),
             Some(value),
             key_pf,
         )];
@@ -2938,42 +2918,26 @@ mod tests {
 
         let mut tree = MerkleTree::new(params.max_depth_mt_containers, &[].into())?;
 
-        let key = 175.into();
-        let key_ak = AnchoredKey::from((PodId(RawValue::from(70).into()), "key"));
+        let key = Value::from(175);
+        let value = Value::from(0);
+        let state_transition_proof = tree.insert(&key.raw(), &value.raw())?;
+        let old_root = state_transition_proof.old_root;
+        let new_root = state_transition_proof.new_root;
 
-        let value = 0.into();
-        let value_ak = AnchoredKey::from((PodId(RawValue::from(72).into()), "value"));
-
-        let state_transition_proof = tree.insert(&key, &value)?;
-
-        let old_root = Value::from(state_transition_proof.old_root);
-        let old_root_ak = AnchoredKey::from((PodId(RawValue::from(73).into()), "old_root"));
-
-        let new_root = Value::from(state_transition_proof.new_root);
-        let new_root_ak = AnchoredKey::from((PodId(RawValue::from(74).into()), "new_root"));
-
-        let new_root_st: mainpod::Statement =
-            Statement::equal(new_root_ak.clone(), new_root.clone()).into();
-        let old_root_st: mainpod::Statement =
-            Statement::equal(old_root_ak.clone(), old_root.clone()).into();
-        let key_st: mainpod::Statement = Statement::equal(key_ak.clone(), key).into();
-        let value_st: mainpod::Statement = Statement::equal(value_ak.clone(), value).into();
-
-        let st: mainpod::Statement =
-            Statement::insert(new_root_ak, old_root_ak, key_ak, value_ak).into();
+        let st: mainpod::Statement = Statement::insert(new_root, old_root, key, value).into();
         let op = mainpod::Operation(
             OperationType::Native(NativeOperation::ContainerInsertFromEntries),
             vec![
                 OperationArg::Index(0),
-                OperationArg::Index(1),
-                OperationArg::Index(2),
-                OperationArg::Index(3),
+                OperationArg::Index(0),
+                OperationArg::Index(0),
+                OperationArg::Index(0),
             ],
             OperationAux::MerkleTreeStateTransitionProofIndex(0),
         );
 
         let merkle_tree_state_transition_proofs = vec![state_transition_proof];
-        let prev_statements = vec![new_root_st, old_root_st, key_st, value_st];
+        let prev_statements = vec![Statement::None.into()];
         operation_verify(
             st,
             op,
@@ -2993,42 +2957,26 @@ mod tests {
             &[(175.into(), 55.into())].into(),
         )?;
 
-        let key = 175.into();
-        let key_ak = AnchoredKey::from((PodId(RawValue::from(70).into()), "key"));
+        let key = Value::from(175);
+        let value = Value::from(0);
+        let state_transition_proof = tree.update(&key.raw(), &value.raw())?;
+        let old_root = state_transition_proof.old_root;
+        let new_root = state_transition_proof.new_root;
 
-        let value = 0.into();
-        let value_ak = AnchoredKey::from((PodId(RawValue::from(72).into()), "value"));
-
-        let state_transition_proof = tree.update(&key, &value)?;
-
-        let old_root = Value::from(state_transition_proof.old_root);
-        let old_root_ak = AnchoredKey::from((PodId(RawValue::from(73).into()), "old_root"));
-
-        let new_root = Value::from(state_transition_proof.new_root);
-        let new_root_ak = AnchoredKey::from((PodId(RawValue::from(74).into()), "new_root"));
-
-        let new_root_st: mainpod::Statement =
-            Statement::equal(new_root_ak.clone(), new_root.clone()).into();
-        let old_root_st: mainpod::Statement =
-            Statement::equal(old_root_ak.clone(), old_root.clone()).into();
-        let key_st: mainpod::Statement = Statement::equal(key_ak.clone(), key).into();
-        let value_st: mainpod::Statement = Statement::equal(value_ak.clone(), value).into();
-
-        let st: mainpod::Statement =
-            Statement::update(new_root_ak, old_root_ak, key_ak, value_ak).into();
+        let st: mainpod::Statement = Statement::update(new_root, old_root, key, value).into();
         let op = mainpod::Operation(
             OperationType::Native(NativeOperation::ContainerUpdateFromEntries),
             vec![
                 OperationArg::Index(0),
-                OperationArg::Index(1),
-                OperationArg::Index(2),
-                OperationArg::Index(3),
+                OperationArg::Index(0),
+                OperationArg::Index(0),
+                OperationArg::Index(0),
             ],
             OperationAux::MerkleTreeStateTransitionProofIndex(0),
         );
 
         let merkle_tree_state_transition_proofs = vec![state_transition_proof];
-        let prev_statements = vec![new_root_st, old_root_st, key_st, value_st];
+        let prev_statements = vec![Statement::None.into()];
         operation_verify(
             st,
             op,
@@ -3048,36 +2996,24 @@ mod tests {
             &[(175.into(), 55.into())].into(),
         )?;
 
-        let key = 175.into();
-        let key_ak = AnchoredKey::from((PodId(RawValue::from(70).into()), "key"));
+        let key = Value::from(175);
+        let state_transition_proof = tree.delete(&key.raw())?;
+        let old_root = state_transition_proof.old_root;
+        let new_root = state_transition_proof.new_root;
 
-        let state_transition_proof = tree.delete(&key)?;
-
-        let old_root = Value::from(state_transition_proof.old_root);
-        let old_root_ak = AnchoredKey::from((PodId(RawValue::from(73).into()), "old_root"));
-
-        let new_root = Value::from(state_transition_proof.new_root);
-        let new_root_ak = AnchoredKey::from((PodId(RawValue::from(74).into()), "new_root"));
-
-        let new_root_st: mainpod::Statement =
-            Statement::equal(new_root_ak.clone(), new_root.clone()).into();
-        let old_root_st: mainpod::Statement =
-            Statement::equal(old_root_ak.clone(), old_root.clone()).into();
-        let key_st: mainpod::Statement = Statement::equal(key_ak.clone(), key).into();
-
-        let st: mainpod::Statement = Statement::delete(new_root_ak, old_root_ak, key_ak).into();
+        let st: mainpod::Statement = Statement::delete(new_root, old_root, key).into();
         let op = mainpod::Operation(
             OperationType::Native(NativeOperation::ContainerDeleteFromEntries),
             vec![
                 OperationArg::Index(0),
-                OperationArg::Index(1),
-                OperationArg::Index(2),
+                OperationArg::Index(0),
+                OperationArg::Index(0),
             ],
             OperationAux::MerkleTreeStateTransitionProofIndex(0),
         );
 
         let merkle_tree_state_transition_proofs = vec![state_transition_proof];
-        let prev_statements = vec![new_root_st, old_root_st, key_st];
+        let prev_statements = vec![Statement::None.into()];
         operation_verify(
             st,
             op,
@@ -3098,22 +3034,15 @@ mod tests {
         .into_iter()
         .try_for_each(|secret_key| {
             let public_key = secret_key.public_key();
-            let public_key_value = Value::from(TypedValue::from(public_key));
-            let secret_key_value = Value::from(TypedValue::from(secret_key.clone()));
-            let public_key_ak = AnchoredKey::from((PodId(RawValue::from(88).into()), "public key"));
-            let secret_key_ak = AnchoredKey::from((PodId(RawValue::from(70).into()), "secret key"));
-            let public_key_st: mainpod::Statement =
-                Statement::equal(public_key_ak.clone(), public_key_value.clone()).into();
-            let secret_key_st: mainpod::Statement =
-                Statement::equal(secret_key_ak.clone(), secret_key_value.clone()).into();
+
             let st: mainpod::Statement =
-                Statement::public_key_of(public_key_ak, secret_key_ak).into();
+                Statement::public_key_of(public_key, secret_key.clone()).into();
             let op = mainpod::Operation(
                 OperationType::Native(NativeOperation::PublicKeyOf),
-                vec![OperationArg::Index(0), OperationArg::Index(1)],
+                vec![OperationArg::Index(0), OperationArg::Index(0)],
                 OperationAux::PublicKeyOfIndex(0),
             );
-            let prev_statements = vec![public_key_st, secret_key_st];
+            let prev_statements = vec![Statement::None.into()];
             operation_verify(st, op, prev_statements, vec![], vec![secret_key], vec![])
         })
     }
@@ -3122,21 +3051,15 @@ mod tests {
     fn test_operation_verify_publickeyof_failure_wrong_key() {
         let secret_key = SecretKey(BigUint::one());
         let public_key = SecretKey(BigUint::ZERO).public_key();
-        let public_key_value = Value::from(TypedValue::from(public_key));
-        let secret_key_value = Value::from(TypedValue::from(secret_key.clone()));
-        let public_key_ak = AnchoredKey::from((PodId(RawValue::from(88).into()), "public key"));
-        let secret_key_ak = AnchoredKey::from((PodId(RawValue::from(70).into()), "secret key"));
-        let public_key_st: mainpod::Statement =
-            Statement::equal(public_key_ak.clone(), public_key_value.clone()).into();
-        let secret_key_st: mainpod::Statement =
-            Statement::equal(secret_key_ak.clone(), secret_key_value.clone()).into();
-        let st: mainpod::Statement = Statement::public_key_of(public_key_ak, secret_key_ak).into();
+
+        let st: mainpod::Statement =
+            Statement::public_key_of(public_key, secret_key.clone()).into();
         let op = mainpod::Operation(
             OperationType::Native(NativeOperation::PublicKeyOf),
-            vec![OperationArg::Index(0), OperationArg::Index(1)],
+            vec![OperationArg::Index(0), OperationArg::Index(0)],
             OperationAux::PublicKeyOfIndex(0),
         );
-        let prev_statements = vec![public_key_st, secret_key_st];
+        let prev_statements = vec![Statement::None.into()];
         assert!(
             operation_verify(st, op, prev_statements, vec![], vec![secret_key], vec![]).is_err()
         )
@@ -3146,21 +3069,15 @@ mod tests {
     fn test_operation_verify_publickeyof_failure_pk_type() {
         let secret_key = SecretKey(BigUint::one());
         let public_key = 123i64;
-        let public_key_value = Value::from(TypedValue::from(public_key));
-        let secret_key_value = Value::from(TypedValue::from(secret_key.clone()));
-        let public_key_ak = AnchoredKey::from((PodId(RawValue::from(88).into()), "public key"));
-        let secret_key_ak = AnchoredKey::from((PodId(RawValue::from(70).into()), "secret key"));
-        let public_key_st: mainpod::Statement =
-            Statement::equal(public_key_ak.clone(), public_key_value.clone()).into();
-        let secret_key_st: mainpod::Statement =
-            Statement::equal(secret_key_ak.clone(), secret_key_value.clone()).into();
-        let st: mainpod::Statement = Statement::public_key_of(public_key_ak, secret_key_ak).into();
+
+        let st: mainpod::Statement =
+            Statement::public_key_of(public_key, secret_key.clone()).into();
         let op = mainpod::Operation(
             OperationType::Native(NativeOperation::PublicKeyOf),
-            vec![OperationArg::Index(0), OperationArg::Index(1)],
+            vec![OperationArg::Index(0), OperationArg::Index(0)],
             OperationAux::None,
         );
-        let prev_statements = vec![public_key_st, secret_key_st];
+        let prev_statements = vec![Statement::None.into()];
         assert!(
             operation_verify(st, op, prev_statements, vec![], vec![secret_key], vec![]).is_err()
         )
@@ -3170,21 +3087,14 @@ mod tests {
     fn test_operation_verify_publickeyof_failure_sk_type() {
         let secret_key = 123i64;
         let public_key = SecretKey(BigUint::from(123u32)).public_key();
-        let public_key_value = Value::from(TypedValue::from(public_key));
-        let secret_key_value = Value::from(TypedValue::from(secret_key));
-        let public_key_ak = AnchoredKey::from((PodId(RawValue::from(88).into()), "public key"));
-        let secret_key_ak = AnchoredKey::from((PodId(RawValue::from(70).into()), "secret key"));
-        let public_key_st: mainpod::Statement =
-            Statement::equal(public_key_ak.clone(), public_key_value.clone()).into();
-        let secret_key_st: mainpod::Statement =
-            Statement::equal(secret_key_ak.clone(), secret_key_value.clone()).into();
-        let st: mainpod::Statement = Statement::public_key_of(public_key_ak, secret_key_ak).into();
+
+        let st: mainpod::Statement = Statement::public_key_of(public_key, secret_key).into();
         let op = mainpod::Operation(
             OperationType::Native(NativeOperation::PublicKeyOf),
-            vec![OperationArg::Index(0), OperationArg::Index(1)],
+            vec![OperationArg::Index(0), OperationArg::Index(0)],
             OperationAux::PublicKeyOfIndex(0),
         );
-        let prev_statements = vec![public_key_st, secret_key_st];
+        let prev_statements = vec![Statement::None.into()];
         assert!(operation_verify(
             st,
             op,
@@ -3200,21 +3110,15 @@ mod tests {
     fn test_operation_verify_publickeyof_failure_sk_size() {
         let secret_key = SecretKey(&*GROUP_ORDER - BigUint::ZERO);
         let public_key = secret_key.public_key();
-        let public_key_value = Value::from(TypedValue::from(public_key));
-        let secret_key_value = Value::from(TypedValue::from(secret_key.clone()));
-        let public_key_ak = AnchoredKey::from((PodId(RawValue::from(88).into()), "public key"));
-        let secret_key_ak = AnchoredKey::from((PodId(RawValue::from(70).into()), "secret key"));
-        let public_key_st: mainpod::Statement =
-            Statement::equal(public_key_ak.clone(), public_key_value.clone()).into();
-        let secret_key_st: mainpod::Statement =
-            Statement::equal(secret_key_ak.clone(), secret_key_value.clone()).into();
-        let st: mainpod::Statement = Statement::public_key_of(public_key_ak, secret_key_ak).into();
+
+        let st: mainpod::Statement =
+            Statement::public_key_of(public_key, secret_key.clone()).into();
         let op = mainpod::Operation(
             OperationType::Native(NativeOperation::PublicKeyOf),
-            vec![OperationArg::Index(0), OperationArg::Index(1)],
+            vec![OperationArg::Index(0), OperationArg::Index(0)],
             OperationAux::PublicKeyOfIndex(0),
         );
-        let prev_statements = vec![public_key_st, secret_key_st];
+        let prev_statements = vec![Statement::None.into()];
         assert!(
             operation_verify(st, op, prev_statements, vec![], vec![secret_key], vec![]).is_err()
         )
@@ -3263,7 +3167,7 @@ mod tests {
     fn test_statement_arg_from_template() -> Result<()> {
         let params = Params::default();
 
-        let pod_id = PodId(hash_str("pod_id"));
+        let dict = Hash([F(6), F(7), F(8), F(9)]);
 
         // case: None
         let st_tmpl_arg = StatementTmplArg::None;
@@ -3280,8 +3184,8 @@ mod tests {
         // case: AnchoredKey(id_wildcard, key_literal)
         let st_tmpl_arg =
             StatementTmplArg::AnchoredKey(Wildcard::new("a".to_string(), 1), Key::from("foo"));
-        let args = vec![Value::from(1), Value::from(pod_id), Value::from(3)];
-        let expected_st_arg = StatementArg::Key(AnchoredKey::new(pod_id, Key::from("foo")));
+        let args = vec![Value::from(1), Value::from(dict), Value::from(3)];
+        let expected_st_arg = StatementArg::Key(AnchoredKey::new(dict, Key::from("foo")));
         helper_statement_arg_from_template(&params, st_tmpl_arg, args, expected_st_arg)?;
 
         // case: WildcardLiteral(wildcard)
@@ -3336,7 +3240,7 @@ mod tests {
     fn test_statement_from_template() -> Result<()> {
         let params = Params::default();
 
-        let pod_id = PodId(hash_str("pod_id"));
+        let dict = Hash([F(6), F(7), F(8), F(9)]);
 
         let st_tmpl = StatementTmpl {
             pred: Predicate::Native(NativePredicate::Equal),
@@ -3345,9 +3249,9 @@ mod tests {
                 StatementTmplArg::Literal(Value::from("value")),
             ],
         };
-        let args = vec![Value::from(1), Value::from(pod_id.0), Value::from(3)];
+        let args = vec![Value::from(1), Value::from(dict), Value::from(3)];
         let expected_st = Statement::equal(
-            AnchoredKey::new(pod_id, Key::from("key")),
+            AnchoredKey::new(dict, Key::from("key")),
             Value::from("value"),
         );
         helper_statement_from_template(&params, st_tmpl, args, expected_st)?;
@@ -3431,21 +3335,15 @@ mod tests {
         let _ = builder.predicate_or("pred_or", &["id"], &["secret"], &[stb0, stb1])?;
         let batch = builder.finish();
 
-        let pod_id = PodId(hash_str("pod_id"));
+        let dict = Hash([F(6), F(7), F(8), F(9)]);
 
         // AND
         let custom_predicate = CustomPredicateRef::new(batch.clone(), 0);
         let op_args = vec![
-            Statement::equal(
-                AnchoredKey::new(pod_id, Key::from("score")),
-                Value::from(42),
-            ),
-            Statement::equal(
-                AnchoredKey::new(pod_id, Key::from("key")),
-                Value::from(1234),
-            ),
+            Statement::equal(AnchoredKey::new(dict, Key::from("score")), Value::from(42)),
+            Statement::equal(AnchoredKey::new(dict, Key::from("key")), Value::from(1234)),
         ];
-        let args = vec![Value::from(pod_id), Value::from(1234)];
+        let args = vec![Value::from(dict), Value::from(1234)];
         let expected_st = Statement::Custom(
             custom_predicate.clone(),
             vec![args[0].clone(), Value::from(0)],
@@ -3463,13 +3361,10 @@ mod tests {
         // OR (1)
         let custom_predicate = CustomPredicateRef::new(batch.clone(), 1);
         let op_args = vec![
-            Statement::equal(
-                AnchoredKey::new(pod_id, Key::from("score")),
-                Value::from(42),
-            ),
+            Statement::equal(AnchoredKey::new(dict, Key::from("score")), Value::from(42)),
             Statement::None,
         ];
-        let args = vec![Value::from(pod_id), Value::from(0)];
+        let args = vec![Value::from(dict), Value::from(0)];
         let expected_st = Statement::Custom(
             custom_predicate.clone(),
             vec![args[0].clone(), Value::from(0)],
@@ -3488,12 +3383,9 @@ mod tests {
         let custom_predicate = CustomPredicateRef::new(batch.clone(), 1);
         let op_args = vec![
             Statement::None,
-            Statement::equal(
-                AnchoredKey::new(pod_id, Key::from("key")),
-                Value::from(1234),
-            ),
+            Statement::equal(AnchoredKey::new(dict, Key::from("key")), Value::from(1234)),
         ];
-        let args = vec![Value::from(pod_id), Value::from(1234)];
+        let args = vec![Value::from(dict), Value::from(1234)];
         let expected_st = Statement::Custom(
             custom_predicate.clone(),
             vec![args[0].clone(), Value::from(0)],
@@ -3539,22 +3431,19 @@ mod tests {
         let _ = builder.predicate_or("pred_or", &["id"], &["secret_id"], &[stb0, stb1])?;
         let batch = builder.finish();
 
-        let pod_id = PodId(hash_str("pod_id"));
-        let secret_pod_id = PodId(hash_str("secret_pod_id"));
+        let dict = Hash([F(1), F(2), F(3), F(4)]);
+        let secret_dict = Hash([F(6), F(7), F(8), F(9)]);
 
         // AND (0) Sanity check with correct values
         let custom_predicate = CustomPredicateRef::new(batch.clone(), 0);
         let op_args = vec![
+            Statement::equal(AnchoredKey::new(dict, Key::from("score")), Value::from(42)),
             Statement::equal(
-                AnchoredKey::new(pod_id, Key::from("score")),
-                Value::from(42),
-            ),
-            Statement::equal(
-                AnchoredKey::new(secret_pod_id, Key::from("key")),
-                AnchoredKey::new(pod_id, Key::from("score")),
+                AnchoredKey::new(secret_dict, Key::from("key")),
+                AnchoredKey::new(dict, Key::from("score")),
             ),
         ];
-        let args = vec![Value::from(pod_id), Value::from(secret_pod_id)];
+        let args = vec![Value::from(dict), Value::from(secret_dict)];
         let expected_st = Statement::Custom(
             custom_predicate.clone(),
             vec![args[0].clone(), Value::from(0)],
@@ -3569,19 +3458,16 @@ mod tests {
         )
         .unwrap();
 
-        // AND (1) Different pod_id for same wildcard
+        // AND (1) Different dict for same wildcard
         let custom_predicate = CustomPredicateRef::new(batch.clone(), 0);
         let op_args = vec![
+            Statement::equal(AnchoredKey::new(dict, Key::from("score")), Value::from(42)),
             Statement::equal(
-                AnchoredKey::new(pod_id, Key::from("score")),
-                Value::from(42),
-            ),
-            Statement::equal(
-                AnchoredKey::new(secret_pod_id, Key::from("key")),
-                AnchoredKey::new(PodId(hash_str("BAD")), Key::from("score")),
+                AnchoredKey::new(secret_dict, Key::from("key")),
+                AnchoredKey::new(Hash([F(0), F(5), F(1), F(6)]), Key::from("score")),
             ),
         ];
-        let args = vec![Value::from(pod_id), Value::from(secret_pod_id)];
+        let args = vec![Value::from(dict), Value::from(secret_dict)];
 
         assert!(helper_custom_operation_verify_gadget(
             &params,
@@ -3595,13 +3481,13 @@ mod tests {
         // AND (2) key doesn't match template
         let custom_predicate = CustomPredicateRef::new(batch.clone(), 0);
         let op_args = vec![
-            Statement::equal(AnchoredKey::new(pod_id, Key::from("BAD")), Value::from(42)),
+            Statement::equal(AnchoredKey::new(dict, Key::from("BAD")), Value::from(42)),
             Statement::equal(
-                AnchoredKey::new(secret_pod_id, Key::from("key")),
-                AnchoredKey::new(pod_id, Key::from("score")),
+                AnchoredKey::new(secret_dict, Key::from("key")),
+                AnchoredKey::new(dict, Key::from("score")),
             ),
         ];
-        let args = vec![Value::from(pod_id), Value::from(secret_pod_id)];
+        let args = vec![Value::from(dict), Value::from(secret_dict)];
 
         assert!(helper_custom_operation_verify_gadget(
             &params,
@@ -3616,15 +3502,15 @@ mod tests {
         let custom_predicate = CustomPredicateRef::new(batch.clone(), 0);
         let op_args = vec![
             Statement::equal(
-                AnchoredKey::new(pod_id, Key::from("score")),
+                AnchoredKey::new(dict, Key::from("score")),
                 Value::from(0xbad),
             ),
             Statement::equal(
-                AnchoredKey::new(secret_pod_id, Key::from("key")),
-                AnchoredKey::new(pod_id, Key::from("score")),
+                AnchoredKey::new(secret_dict, Key::from("key")),
+                AnchoredKey::new(dict, Key::from("score")),
             ),
         ];
-        let args = vec![Value::from(pod_id), Value::from(secret_pod_id)];
+        let args = vec![Value::from(dict), Value::from(secret_dict)];
 
         assert!(helper_custom_operation_verify_gadget(
             &params,
@@ -3638,16 +3524,13 @@ mod tests {
         // AND (4) predicate doesn't match template
         let custom_predicate = CustomPredicateRef::new(batch.clone(), 0);
         let op_args = vec![
-            Statement::equal(
-                AnchoredKey::new(pod_id, Key::from("score")),
-                Value::from(42),
-            ),
+            Statement::equal(AnchoredKey::new(dict, Key::from("score")), Value::from(42)),
             Statement::not_equal(
-                AnchoredKey::new(secret_pod_id, Key::from("key")),
-                AnchoredKey::new(pod_id, Key::from("score")),
+                AnchoredKey::new(secret_dict, Key::from("key")),
+                AnchoredKey::new(dict, Key::from("score")),
             ),
         ];
-        let args = vec![Value::from(pod_id), Value::from(secret_pod_id)];
+        let args = vec![Value::from(dict), Value::from(secret_dict)];
 
         assert!(helper_custom_operation_verify_gadget(
             &params,
@@ -3661,7 +3544,7 @@ mod tests {
         // OR (1) Two Nones
         let custom_predicate = CustomPredicateRef::new(batch.clone(), 1);
         let op_args = vec![Statement::None, Statement::None];
-        let args = vec![Value::from(pod_id), Value::from(0)];
+        let args = vec![Value::from(dict), Value::from(0)];
 
         assert!(helper_custom_operation_verify_gadget(
             &params,
@@ -3714,7 +3597,7 @@ mod tests {
     }
 
     #[test]
-    fn test_calculate_id() -> frontend::Result<()> {
+    fn test_calculate_sts_hash() -> frontend::Result<()> {
         // Case with no public public statements
         let params = Params {
             max_public_statements: 0,
@@ -3724,18 +3607,19 @@ mod tests {
 
         helper_calculate_sts_hash(&params, &[]).unwrap();
 
-        // Case with number of statements for the id equal to number of public statements
+        // Case with number of statements for the sts_hash equal to number of public statements
         let params = Params {
             max_public_statements: 2,
             num_public_statements_hash: 2,
             ..Default::default()
         };
 
+        let dict = Hash([F(1), F(2), F(3), F(4)]);
         let statements = [
-            Statement::equal(AnchoredKey::from((SELF, "foo")), Value::from(42)),
+            Statement::equal(AnchoredKey::from((dict, "foo")), Value::from(42)),
             Statement::equal(
-                AnchoredKey::from((SELF, "bar")),
-                AnchoredKey::from((SELF, "baz")),
+                AnchoredKey::from((dict, "bar")),
+                AnchoredKey::from((dict, "baz")),
             ),
         ]
         .into_iter()
@@ -3745,23 +3629,23 @@ mod tests {
 
         helper_calculate_sts_hash(&params, &statements).unwrap();
 
-        // Case with more  statements for the id than the number of public statements
+        // Case with more  statements for the sts_hash than the number of public statements
         let params = Params {
             max_public_statements: 4,
             num_public_statements_hash: 6,
             ..Default::default()
         };
 
-        let pod_id = PodId(hash_str("pod_id"));
+        let dict2 = Hash([F(5), F(6), F(7), F(8)]);
         let statements = [
-            Statement::equal(AnchoredKey::from((SELF, "foo")), Value::from(42)),
+            Statement::equal(AnchoredKey::from((dict, "foo")), Value::from(42)),
             Statement::equal(
-                AnchoredKey::from((SELF, "bar")),
-                AnchoredKey::from((SELF, "baz")),
+                AnchoredKey::from((dict, "bar")),
+                AnchoredKey::from((dict, "baz")),
             ),
             Statement::lt(
-                AnchoredKey::from((pod_id, "one")),
-                AnchoredKey::from((pod_id, "two")),
+                AnchoredKey::from((dict2, "one")),
+                AnchoredKey::from((dict2, "two")),
             ),
         ]
         .into_iter()
@@ -3774,4 +3658,3 @@ mod tests {
         Ok(())
     }
 }
-*/

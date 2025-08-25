@@ -111,10 +111,10 @@ impl StatementArgTarget {
 
     pub fn anchored_key(
         _builder: &mut CircuitBuilder,
-        pod_id: &ValueTarget,
+        dict: &ValueTarget,
         key: &ValueTarget,
     ) -> Self {
-        Self::new(*pod_id, *key)
+        Self::new(*dict, *key)
     }
 
     pub fn wildcard_literal(builder: &mut CircuitBuilder, value: &ValueTarget) -> Self {
@@ -1642,8 +1642,6 @@ impl SimpleGenerator<F, D> for LtMaskGenerator {
     }
 }
 
-// TODO: Uncomment
-/*
 #[cfg(test)]
 pub(crate) mod tests {
     use anyhow::anyhow;
@@ -1880,4 +1878,3 @@ pub(crate) mod tests {
         Ok(())
     }
 }
-*/

@@ -1033,6 +1033,7 @@ impl Eq for Box<dyn Pod> {}
 // impl Clone for Box<dyn Pod>
 dyn_clone::clone_trait_object!(Pod);
 
+// TODO: Unify with Pod trait
 /// Trait for pods that are generated with a plonky2 circuit and that can be verified by a
 /// recursive MainPod circuit.  A Pod implementing this trait does not necesarilly come from
 /// recursion: for example an introduction Pod in general is not recursive.

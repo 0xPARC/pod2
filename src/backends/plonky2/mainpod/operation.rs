@@ -49,10 +49,10 @@ impl OperationAux {
         Self::table_offset_merkle_proof(params) + params.max_merkle_proofs_containers
     }
     fn table_offset_signed_by(params: &Params) -> usize {
-        Self::table_offset_public_key_of(params) + params.max_signed_by
+        Self::table_offset_public_key_of(params) + params.max_public_key_of
     }
     fn table_offset_merkle_tree_state_transition_proof(params: &Params) -> usize {
-        Self::table_offset_signed_by(params) + params.max_public_key_of
+        Self::table_offset_signed_by(params) + params.max_signed_by
     }
     fn table_offset_custom_pred_verify(params: &Params) -> usize {
         Self::table_offset_merkle_tree_state_transition_proof(params)
