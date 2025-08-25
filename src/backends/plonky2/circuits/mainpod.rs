@@ -1890,10 +1890,11 @@ pub struct CustomPredicateVerification {
 
 pub struct MainPodVerifyInput {
     pub vds_set: VDSet,
-    // field containing the `vd_mt_proofs` aside from the `vds_set`, because
-    // inide the MainPodVerifyTarget circuit, since it is the InnerCircuit for
-    // the RecursiveCircuit, we don't have access to the used verifier_datas.
-    pub vd_mt_proofs: Vec<Option<MerkleClaimAndProof>>,
+    /// field containing the `vd_mt_proofs` aside from the `vds_set`, because
+    /// inside the MainPodVerifyTarget circuit, since it is the InnerCircuit for
+    /// the RecursiveCircuit, we don't have access to the used verifier_datas.
+    /// The bool is used as `enabled` and will be false for intro pods.
+    pub vd_mt_proofs: Vec<(bool, MerkleClaimAndProof)>,
     // pub signed_pods: Vec<SignedPod>,
     pub recursive_pods_pub_self_statements: Vec<Vec<Statement>>,
     pub statements: Vec<mainpod::Statement>,
@@ -1951,26 +1952,15 @@ impl InnerCircuit for MainPodVerifyTarget {
         let vds_root = input.vds_set.root();
         pw.set_target_arr(&self.vds_root.elements, &vds_root.0)?;
 
-        // For introduction pods and padding pods we don't check inclusion of their vk in the set
-        // because their vk already appears in the intro statement.
-        let dummy_mt_proof = MerkleClaimAndProof {
-            root: input.vds_set.root(),
-            ..MerkleClaimAndProof::empty()
-        };
-        for (i, vd_mt_proof) in input.vd_mt_proofs.iter().enumerate() {
-            if let Some(vd_mt_proof) = vd_mt_proof {
-                self.vd_mt_proofs[i].set_targets(pw, true, vd_mt_proof)?; // main
-            } else {
-                self.vd_mt_proofs[i].set_targets(pw, false, &dummy_mt_proof)?; // intro
-            }
-        }
-        for i in input.vd_mt_proofs.len()..self.vd_mt_proofs.len() {
-            self.vd_mt_proofs[i].set_targets(pw, false, &dummy_mt_proof)?;
-        }
-
-        assert!(
-            input.recursive_pods_pub_self_statements.len() <= self.params.max_input_recursive_pods
+        assert_eq!(
+            input.vd_mt_proofs.len(),
+            input.recursive_pods_pub_self_statements.len()
         );
+        let input_pods_len = input.vd_mt_proofs.len();
+        assert!(input_pods_len <= self.params.max_input_recursive_pods);
+        for (i, (enable, vd_mt_proof)) in input.vd_mt_proofs.iter().enumerate() {
+            self.vd_mt_proofs[i].set_targets(pw, *enable, vd_mt_proof)?;
+        }
         for (i, pod_pub_statements) in input.recursive_pods_pub_self_statements.iter().enumerate() {
             set_targets_input_pods_self_statements(
                 pw,
@@ -1980,12 +1970,17 @@ impl InnerCircuit for MainPodVerifyTarget {
             )?;
         }
         // Padding
-        if input.recursive_pods_pub_self_statements.len() != self.params.max_input_recursive_pods {
+        if input_pods_len != self.params.max_input_recursive_pods {
             let empty_pod = EmptyPod::new_boxed(&self.params, input.vds_set.clone());
             let empty_pod_statements = empty_pod.pub_statements();
-            for i in
-                input.recursive_pods_pub_self_statements.len()..self.params.max_input_recursive_pods
-            {
+            let empty_mt_proof = MerkleClaimAndProof {
+                root: input.vds_set.root(),
+                value: empty_pod._verifier_data_hash().into(),
+                ..MerkleClaimAndProof::empty()
+            };
+
+            for i in input_pods_len..self.params.max_input_recursive_pods {
+                self.vd_mt_proofs[i].set_targets(pw, false, &empty_mt_proof)?;
                 set_targets_input_pods_self_statements(
                     pw,
                     &self.params,

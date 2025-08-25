@@ -593,9 +593,18 @@ impl PodProver for Prover {
         let mut vd_mt_proofs = Vec::with_capacity(inputs.recursive_pods.len());
         for (pod, vd) in inputs.recursive_pods.iter().zip(&verifier_datas) {
             vd_mt_proofs.push(if pod.is_main() {
-                Some(vd_set.get_vds_proof(&vd)?)
+                (true, vd_set.get_vds_proof(&vd)?)
             } else {
-                None
+                // For intro pods we don't verify inclusion of their vk into the vd set, so we
+                // generate a dummy mt proof with expected root and value to pass some constraints
+                (
+                    false,
+                    MerkleClaimAndProof {
+                        root: vd_set.root(),
+                        value: RawValue(hash_verifier_data(&pod.verifier_data()).elements),
+                        ..MerkleClaimAndProof::empty()
+                    },
+                )
             });
         }
 
