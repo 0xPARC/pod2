@@ -1644,7 +1644,7 @@ fn verify_main_pod_circuit(
 
         //
         // Verify that all main input pod proofs use verifier data from the public input VD
-        // array. This requires merkle proofs.  introduciton pods are not checked here because
+        // array. This requires merkle proofs.  introduction pods are not checked here because
         // their verifier_data_hash appears in their introduction statement.
         //
 
