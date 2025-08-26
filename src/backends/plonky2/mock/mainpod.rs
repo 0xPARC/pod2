@@ -48,7 +48,7 @@ pub struct MockMainPod {
     sts_hash: Hash,
     vd_set: VDSet,
     // input_signed_pods: Vec<Box<dyn Pod>>,
-    input_recursive_pods: Vec<Box<dyn Pod>>,
+    input_pods: Vec<Box<dyn Pod>>,
     // All statements (inherited + newly introduced by this pod)
     statements: Vec<Statement>,
     operations: Vec<Operation>,
@@ -68,7 +68,7 @@ impl fmt::Display for MockMainPod {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "MockMainPod ({}):", self.sts_hash)?;
         // let offset_input_signed_pods = Self::offset_input_signed_pods();
-        let offset_input_recursive_pods = self.offset_input_recursive_pods();
+        let offset_input_pods = self.offset_input_pods();
         let offset_input_statements = self.offset_input_statements();
         let offset_public_statements = self.offset_public_statements();
         for (i, st) in self.statements.iter().enumerate() {
@@ -87,14 +87,13 @@ impl fmt::Display for MockMainPod {
             //     )?;
             // }
             if self.params.max_input_pods > 0
-                && (i >= offset_input_recursive_pods)
+                && (i >= offset_input_pods)
                 && (i < offset_input_statements)
-                && (i - offset_input_recursive_pods)
+                && (i - offset_input_pods)
                     .is_multiple_of(self.params.max_input_pods_public_statements)
             {
-                let index = (i - offset_input_recursive_pods)
-                    / self.params.max_input_pods_public_statements;
-                let pod = &self.input_recursive_pods[index];
+                let index = (i - offset_input_pods) / self.params.max_input_pods_public_statements;
+                let pod = &self.input_pods[index];
                 let id = pod.id();
                 let pod_type = pod.pod_type();
                 writeln!(
@@ -153,7 +152,7 @@ struct Data {
     merkle_tree_state_transition_proofs: Vec<MerkleTreeStateTransitionProof>,
     signatures: Vec<SignedBy>,
     // input_signed_pods: Vec<(usize, Hash, serde_json::Value)>,
-    input_recursive_pods: Vec<(usize, Params, Hash, VDSet, serde_json::Value)>,
+    input_pods: Vec<(usize, Params, Hash, VDSet, serde_json::Value)>,
 }
 
 /// Inputs are sorted as:
@@ -165,11 +164,11 @@ impl MockMainPod {
     // fn offset_input_signed_pods() -> usize {
     //     1
     // }
-    fn offset_input_recursive_pods(&self) -> usize {
+    fn offset_input_pods(&self) -> usize {
         1
     }
     fn offset_input_statements(&self) -> usize {
-        self.offset_input_recursive_pods()
+        self.offset_input_pods()
             + self.params.max_input_pods * self.params.max_input_pods_public_statements
     }
     fn offset_public_statements(&self) -> usize {
@@ -209,7 +208,7 @@ impl MockMainPod {
         //     .take(params.max_input_signed_pods)
         //     .collect();
         let pad_pod = MockEmptyPod::new_boxed(params, inputs.vd_set.clone());
-        let input_recursive_pods: Vec<Box<dyn Pod>> = inputs
+        let input_pods: Vec<Box<dyn Pod>> = inputs
             .pods
             .iter()
             .map(|p| dyn_clone::clone_box(*p))
@@ -221,7 +220,7 @@ impl MockMainPod {
             sts_hash,
             vd_set: inputs.vd_set,
             // input_signed_pods,
-            input_recursive_pods,
+            input_pods,
             public_statements,
             statements,
             operations,
@@ -249,7 +248,7 @@ impl Pod for MockMainPod {
         // for pod in &self.input_signed_pods {
         //     pod.verify()?;
         // }
-        for pod in &self.input_recursive_pods {
+        for pod in &self.input_pods {
             pod.verify()?;
             if pod.vd_set().root() != self.vd_set.root() {
                 return Err(Error::custom(format!(
@@ -379,8 +378,8 @@ impl Pod for MockMainPod {
         //     .iter()
         //     .map(|p| (p.pod_type().0, p.id(), p.serialize_data()))
         //     .collect();
-        let input_recursive_pods = self
-            .input_recursive_pods
+        let input_pods = self
+            .input_pods
             .iter()
             .map(|p| {
                 (
@@ -402,7 +401,7 @@ impl Pod for MockMainPod {
                 .clone(),
             signatures: self.signatures.clone(),
             // input_signed_pods,
-            input_recursive_pods,
+            input_pods,
         })
         .expect("serialization to json")
     }
@@ -422,14 +421,14 @@ impl Pod for MockMainPod {
             merkle_proofs,
             merkle_tree_state_transition_proofs,
             signatures,
-            input_recursive_pods,
+            input_pods,
         } = serde_json::from_value(data)?;
         dbg!(public_statements.len());
         // let input_signed_pods = input_signed_pods
         //     .into_iter()
         //     .map(|(pod_type, id, data)| deserialize_signed_pod(pod_type, id, data))
         //     .collect::<Result<Vec<_>>>()?;
-        let input_recursive_pods = input_recursive_pods
+        let input_pods = input_pods
             .into_iter()
             .map(|(pod_type, params, id, vd_set, data)| {
                 deserialize_pod(pod_type, params, id, vd_set, data)
@@ -440,7 +439,7 @@ impl Pod for MockMainPod {
             sts_hash: id,
             vd_set,
             // input_signed_pods,
-            input_recursive_pods,
+            input_pods,
             public_statements,
             operations,
             statements,

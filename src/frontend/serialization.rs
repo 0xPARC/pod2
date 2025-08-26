@@ -267,38 +267,30 @@ mod tests {
         Ok(kyc_pod)
     }
 
-    // fn build_plonky2_zukyc_pod() -> Result<MainPod> {
-    //     let params = middleware::Params {
-    //         // Currently the circuit uses random access that only supports vectors of length 64.
-    //         // With max_input_main_pods=3 we need random access to a vector of length 73.
-    //         max_input_recursive_pods: 1,
-    //         ..Default::default()
-    //     };
-    //     let mut vds = DEFAULT_VD_LIST.clone();
-    //     vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
-    //     let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
+    fn build_plonky2_zukyc_pod() -> Result<MainPod> {
+        let params = middleware::Params {
+            // Currently the circuit uses random access that only supports vectors of length 64.
+            // With max_input_main_pods=3 we need random access to a vector of length 73.
+            max_input_pods: 1,
+            ..Default::default()
+        };
+        let mut vds = DEFAULT_VD_LIST.clone();
+        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
 
-    //     let (gov_id_builder, pay_stub_builder, sanction_list_builder) =
-    //         zu_kyc_sign_dict_builders(&params);
-    //     let signer = Signer(SecretKey(1u32.into()));
-    //     let gov_id_pod = gov_id_builder.sign(&signer)?;
-    //     let signer = Signer(SecretKey(2u32.into()));
-    //     let pay_stub_pod = pay_stub_builder.sign(&signer)?;
-    //     let signer = Signer(SecretKey(3u32.into()));
-    //     let sanction_list_pod = sanction_list_builder.sign(&signer)?;
-    //     let kyc_builder = zu_kyc_pod_builder(
-    //         &params,
-    //         &vd_set,
-    //         &gov_id_pod,
-    //         &pay_stub_pod,
-    //         &sanction_list_pod,
-    //     )?;
+        let (gov_id_builder, pay_stub_builder) = zu_kyc_sign_dict_builders(&params);
+        let signer = Signer(SecretKey(1u32.into()));
+        let gov_id_pod = gov_id_builder.sign(&signer)?;
+        let signer = Signer(SecretKey(2u32.into()));
+        let pay_stub_pod = pay_stub_builder.sign(&signer)?;
+        let _signer = Signer(SecretKey(3u32.into()));
+        let kyc_builder = zu_kyc_pod_builder(&params, &vd_set, &gov_id_pod, &pay_stub_pod)?;
 
-    //     let prover = Prover {};
-    //     let kyc_pod = kyc_builder.prove(&prover, &params)?;
+        let prover = Prover {};
+        let kyc_pod = kyc_builder.prove(&prover)?;
 
-    //     Ok(kyc_pod)
-    // }
+        Ok(kyc_pod)
+    }
 
     #[test]
     fn test_mock_main_pod_serialization() -> Result<()> {
@@ -314,18 +306,18 @@ mod tests {
         Ok(())
     }
 
-    // #[test]
-    // fn test_plonky2_main_pod_serialization() -> Result<()> {
-    //     let kyc_pod = build_plonky2_zukyc_pod()?;
-    //     let serialized = serde_json::to_string_pretty(&kyc_pod).unwrap();
-    //     let deserialized: MainPod = serde_json::from_str(&serialized).unwrap();
+    #[test]
+    fn test_plonky2_main_pod_serialization() -> Result<()> {
+        let kyc_pod = build_plonky2_zukyc_pod()?;
+        let serialized = serde_json::to_string_pretty(&kyc_pod).unwrap();
+        let deserialized: MainPod = serde_json::from_str(&serialized).unwrap();
 
-    //     assert_eq!(kyc_pod.public_statements, deserialized.public_statements);
-    //     assert_eq!(kyc_pod.pod.id(), deserialized.pod.id());
-    //     assert_eq!(kyc_pod.pod.verify()?, deserialized.pod.verify()?);
+        assert_eq!(kyc_pod.public_statements, deserialized.public_statements);
+        assert_eq!(kyc_pod.pod.id(), deserialized.pod.id());
+        assert_eq!(kyc_pod.pod.verify()?, deserialized.pod.verify()?);
 
-    //     Ok(())
-    // }
+        Ok(())
+    }
 
     fn build_ethdos_pod() -> Result<MainPod> {
         let params = Params {

@@ -530,7 +530,7 @@ impl MainPodProver for Prover {
             ..inputs
         };
 
-        let recursive_pods_pub_self_statements = inputs
+        let input_pods_pub_self_statements = inputs
             .pods
             .iter()
             .map(|pod| {
@@ -611,7 +611,7 @@ impl MainPodProver for Prover {
             vds_set: inputs.vd_set.clone(),
             vd_mt_proofs,
             // signed_pods: signed_pods_input,
-            recursive_pods_pub_self_statements,
+            input_pods_pub_self_statements,
             statements: statements[statements.len() - params.max_statements..].to_vec(),
             operations,
             merkle_proofs,

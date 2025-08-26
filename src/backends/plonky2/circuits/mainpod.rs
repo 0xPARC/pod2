@@ -1896,7 +1896,7 @@ pub struct MainPodVerifyInput {
     /// The bool is used as `enabled` and will be false for intro pods.
     pub vd_mt_proofs: Vec<(bool, MerkleClaimAndProof)>,
     // pub signed_pods: Vec<SignedPod>,
-    pub recursive_pods_pub_self_statements: Vec<Vec<Statement>>,
+    pub input_pods_pub_self_statements: Vec<Vec<Statement>>,
     pub statements: Vec<mainpod::Statement>,
     pub operations: Vec<mainpod::Operation>,
     pub merkle_proofs: Vec<MerkleClaimAndProof>,
@@ -1954,14 +1954,14 @@ impl InnerCircuit for MainPodVerifyTarget {
 
         assert_eq!(
             input.vd_mt_proofs.len(),
-            input.recursive_pods_pub_self_statements.len()
+            input.input_pods_pub_self_statements.len()
         );
         let input_pods_len = input.vd_mt_proofs.len();
         assert!(input_pods_len <= self.params.max_input_pods);
         for (i, (enable, vd_mt_proof)) in input.vd_mt_proofs.iter().enumerate() {
             self.vd_mt_proofs[i].set_targets(pw, *enable, vd_mt_proof)?;
         }
-        for (i, pod_pub_statements) in input.recursive_pods_pub_self_statements.iter().enumerate() {
+        for (i, pod_pub_statements) in input.input_pods_pub_self_statements.iter().enumerate() {
             set_targets_input_pods_self_statements(
                 pw,
                 &self.params,

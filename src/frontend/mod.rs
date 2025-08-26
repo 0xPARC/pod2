@@ -135,14 +135,16 @@ pub struct MainPodBuilder {
     pub vd_set: VDSet,
     // pub input_signed_pods: Vec<SignedDict>,
     // TODO: Rename to `input_pods`
-    pub input_recursive_pods: Vec<MainPod>,
+    pub input_pods: Vec<MainPod>,
     pub statements: Vec<Statement>,
     pub operations: Vec<Operation>,
     pub public_statements: Vec<Statement>,
     // Internal state
     /// Counter for constants created from literals
+    // TODO: Remove
     const_cnt: usize,
     /// Map from (public, Value) to Key of already created literals via Equal statements.
+    // TODO: Remove
     literals: HashMap<(bool, Value), Key>,
     // TODO: track contains ops with literals added explicitly as well.
     dict_contains: Vec<(Value, Value)>, // (root, key)
@@ -156,7 +158,7 @@ impl fmt::Display for MainPodBuilder {
         //     writeln!(f, "    - {}", in_pod.id())?;
         // }
         writeln!(f, "  input_main_pods:")?;
-        for in_pod in &self.input_recursive_pods {
+        for in_pod in &self.input_pods {
             writeln!(f, "    - {}", in_pod.id())?;
         }
         writeln!(f, "  statements:")?;
@@ -175,7 +177,7 @@ impl MainPodBuilder {
             params: params.clone(),
             vd_set: vd_set.clone(),
             // input_signed_pods: Vec::new(),
-            input_recursive_pods: Vec::new(),
+            input_pods: Vec::new(),
             statements: Vec::new(),
             operations: Vec::new(),
             public_statements: Vec::new(),
@@ -188,7 +190,7 @@ impl MainPodBuilder {
     //     self.input_signed_pods.push(pod.clone());
     // }
     pub fn add_recursive_pod(&mut self, pod: MainPod) {
-        self.input_recursive_pods.push(pod);
+        self.input_pods.push(pod);
     }
     pub fn insert(&mut self, public: bool, st_op: (Statement, Operation)) -> Result<()> {
         // TODO: Do error handling instead of panic
@@ -699,11 +701,7 @@ impl MainPodBuilder {
             //     .iter()
             //     .map(|p| p.pod.as_ref())
             //     .collect_vec(),
-            pods: &self
-                .input_recursive_pods
-                .iter()
-                .map(|p| p.pod.as_ref())
-                .collect_vec(),
+            pods: &self.input_pods.iter().map(|p| p.pod.as_ref()).collect_vec(),
             statements: &statements,
             operations: &operations,
             public_statements: &public_statements,

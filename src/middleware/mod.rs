@@ -1061,7 +1061,6 @@ pub trait Signer {
 #[derive(Debug)]
 pub struct MainPodInputs<'a> {
     // pub signed_pods: &'a [&'a dyn Pod],
-    // TODO: Rename to just "pods"
     pub pods: &'a [&'a dyn Pod],
     pub statements: &'a [Statement],
     pub operations: &'a [Operation],
