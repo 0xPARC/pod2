@@ -54,8 +54,8 @@ pub fn zu_kyc_pod_builder(
         Value::from(Set::new(params.max_depth_mt_containers, sanctions_values).unwrap());
 
     let mut kyc = MainPodBuilder::new(params, vd_set);
-    kyc.pub_op(Operation::dict_signed_by(&gov_id))?;
-    kyc.pub_op(Operation::dict_signed_by(&pay_stub))?;
+    kyc.pub_op(Operation::dict_signed_by(gov_id))?;
+    kyc.pub_op(Operation::dict_signed_by(pay_stub))?;
 
     kyc.pub_op(Operation::set_not_contains(
         sanction_set,
@@ -141,9 +141,9 @@ impl EthDosHelper {
         assert_eq!(self.src, src_attestation.public_key);
 
         let mut pod = MainPodBuilder::new(&self.params, &self.vd_set);
-        pod.pub_op(Operation::dict_signed_by(&src_attestation))?;
+        pod.pub_op(Operation::dict_signed_by(src_attestation))?;
 
-        let src_eq_src = pod.priv_op(Operation::eq(self.src.clone(), self.src.clone()))?;
+        let src_eq_src = pod.priv_op(Operation::eq(self.src, self.src))?;
         let distance_eq_zero = pod.priv_op(Operation::eq(0, 0))?;
         let eth_dos_src_to_src_base = pod.priv_op(Operation::custom(
             self.eth_dos_base.clone(),
@@ -230,7 +230,7 @@ impl EthDosHelper {
 
 pub fn good_boy_sign_pod_builder(params: &Params, user: &PublicKey, age: i64) -> SignedDictBuilder {
     let mut good_boy = SignedDictBuilder::new(params);
-    good_boy.insert("user", user.clone());
+    good_boy.insert("user", *user);
     good_boy.insert("age", age);
 
     good_boy
@@ -238,7 +238,7 @@ pub fn good_boy_sign_pod_builder(params: &Params, user: &PublicKey, age: i64) ->
 
 pub fn friend_sign_pod_builder(params: &Params, friend: &PublicKey) -> SignedDictBuilder {
     let mut friend_pod = SignedDictBuilder::new(params);
-    friend_pod.insert("friend", friend.clone());
+    friend_pod.insert("friend", *friend);
 
     friend_pod
 }
@@ -261,10 +261,10 @@ pub fn great_boy_pod_builder(
 
     let mut great_boy = MainPodBuilder::new(params, vd_set);
     for good_boy_signed_dict in good_boy_signed_dicts {
-        great_boy.pub_op(Operation::dict_signed_by(&good_boy_signed_dict))?;
+        great_boy.pub_op(Operation::dict_signed_by(good_boy_signed_dict))?;
     }
     for friend_signed_dict in friend_signed_dicts {
-        great_boy.pub_op(Operation::dict_signed_by(&friend_signed_dict))?;
+        great_boy.pub_op(Operation::dict_signed_by(friend_signed_dict))?;
     }
 
     for good_boy_idx in 0..2 {
@@ -288,7 +288,7 @@ pub fn great_boy_pod_builder(
         // Each good boy is receivers' friend
         great_boy.pub_op(Operation::eq(
             (friend_signed_dicts[good_boy_idx], "friend"),
-            receiver.clone(),
+            *receiver,
         ))?;
     }
     // The two good boys are different
@@ -397,7 +397,7 @@ pub fn tickets_pod_builder(
     let blacklisted_email_set_value = Value::from(TypedValue::Set(blacklisted_emails.clone()));
     // Create a main pod referencing this signed pod with some statements
     let mut builder = MainPodBuilder::new(params, vd_set);
-    builder.pub_op(Operation::dict_signed_by(&signed_dict))?;
+    builder.pub_op(Operation::dict_signed_by(signed_dict))?;
     builder.pub_op(Operation::eq((signed_dict, "eventId"), expected_event_id))?;
     builder.pub_op(Operation::eq((signed_dict, "isConsumed"), expect_consumed))?;
     builder.pub_op(Operation::eq((signed_dict, "isRevoked"), false))?;

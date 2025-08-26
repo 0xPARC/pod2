@@ -586,19 +586,17 @@ impl MainPodBuilder {
     /// open the dictionary.
     fn add_entries_contains(&mut self, op: &Operation) -> Result<()> {
         for arg in &op.1 {
-            match arg {
-                OperationArg::Statement(Statement::Contains(
-                    ValueRef::Literal(dict),
-                    ValueRef::Literal(key),
-                    ValueRef::Literal(v),
-                )) => {
-                    let root_key = (dict.clone(), key.clone());
-                    if !self.dict_contains.contains(&root_key) {
-                        self.dict_contains.push(root_key);
-                        self.priv_op(Operation::dict_contains(dict, key, v))?;
-                    }
+            if let OperationArg::Statement(Statement::Contains(
+                ValueRef::Literal(dict),
+                ValueRef::Literal(key),
+                ValueRef::Literal(v),
+            )) = arg
+            {
+                let root_key = (dict.clone(), key.clone());
+                if !self.dict_contains.contains(&root_key) {
+                    self.dict_contains.push(root_key);
+                    self.priv_op(Operation::dict_contains(dict, key, v))?;
                 }
-                _ => {}
             }
         }
         Ok(())
@@ -1294,7 +1292,7 @@ pub mod tests {
 
         // Try to build with wrong type in 2nd arg
         builder = MainPodBuilder::new(&params, vd_set);
-        let sk = Value::from(pk);
+        let sk = pk;
         let int2 = Value::from(123);
         assert!(builder
             .pub_op(Operation(

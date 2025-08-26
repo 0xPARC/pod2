@@ -33,7 +33,7 @@ impl OperationArg {
                 ValueRef::Literal(root),
                 ValueRef::Literal(key),
                 ValueRef::Literal(v),
-            )) => root_key_to_ak(root, key).and_then(|ak| Some((ValueRef::Key(ak), v))),
+            )) => root_key_to_ak(root, key).map(|ak| (ValueRef::Key(ak), v)),
             _ => None,
         }
     }

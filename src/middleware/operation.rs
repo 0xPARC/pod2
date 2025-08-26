@@ -816,7 +816,7 @@ mod tests {
                 pf,
             );
             // Form output statement
-            let st = Statement::Contains(root.clone().into(), k.clone().into(), v.clone().into());
+            let st = Statement::Contains(root.into(), (*k).into(), (*v).into());
 
             // Check op against output statement
             op.check(&params, &st).and_then(|ind| {
@@ -836,7 +836,7 @@ mod tests {
             let pf = mt.prove_nonexistence(&k.into())?;
 
             let op = Operation::NotContainsFromEntries(Statement::None, Statement::None, pf);
-            let st = Statement::NotContains(root.clone().into(), k.clone().into());
+            let st = Statement::NotContains(root.into(), k.into());
 
             op.check(&params, &st).and_then(|ind| {
                 if ind {
@@ -879,10 +879,10 @@ mod tests {
                 );
                 // Form output statement
                 let st = Statement::ContainerInsert(
-                    new_root.clone().into(),
-                    old_root.clone().into(),
-                    k.clone().into(),
-                    v.clone().into(),
+                    new_root.into(),
+                    old_root.into(),
+                    k.into(),
+                    v.into(),
                 );
 
                 // Check op against output statement
@@ -916,10 +916,10 @@ mod tests {
                 );
                 // Form output statement
                 let st = Statement::ContainerUpdate(
-                    new_root.clone().into(),
-                    old_root.clone().into(),
-                    k.clone().into(),
-                    v.clone().into(),
+                    new_root.into(),
+                    old_root.into(),
+                    k.into(),
+                    v.into(),
                 );
 
                 // Check op against output statement
@@ -951,11 +951,7 @@ mod tests {
                     mtp,
                 );
                 // Form output statement
-                let st = Statement::ContainerDelete(
-                    new_root.clone().into(),
-                    old_root.clone().into(),
-                    k.clone().into(),
-                );
+                let st = Statement::ContainerDelete(new_root.into(), old_root.into(), k.into());
 
                 // Check op against output statement
                 op.check(&params, &st).and_then(|ind| {
@@ -1001,7 +997,7 @@ mod tests {
             let op = Operation::PublicKeyOf(Statement::None, Statement::None);
 
             // Form output statement
-            let st = Statement::PublicKeyOf(pk.clone().into(), sk.clone().into());
+            let st = Statement::PublicKeyOf((*pk).into(), sk.clone().into());
 
             // Check
             op.check(&params, &st).map(|is_good| {
@@ -1023,7 +1019,7 @@ mod tests {
 
         // Bad op and statement with bad first args
         let op = Operation::PublicKeyOf(Statement::None, Statement::None);
-        let st = Statement::PublicKeyOf(fixed_pk.clone().into(), fixed_pk.clone().into());
+        let st = Statement::PublicKeyOf(fixed_pk.into(), fixed_pk.into());
 
         // Check
         assert!(op.check(&params, &st).is_err());

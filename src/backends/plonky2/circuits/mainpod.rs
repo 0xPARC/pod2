@@ -264,6 +264,7 @@ impl SignedByTarget {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_operation_aux_table_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
@@ -327,7 +328,7 @@ fn build_operation_aux_table_circuit(
         let signature_verify = SignatureVerifyTarget {
             enabled: builder._true(),
             pk: signed_by.pk.clone(),
-            msg: signed_by.msg.clone(),
+            msg: signed_by.msg,
             sig: signed_by.sig.clone(),
         };
         verify_signature_circuit(builder, &signature_verify);
@@ -344,7 +345,7 @@ fn build_operation_aux_table_circuit(
         );
         let entry: MsgPubKeyTarget = HashPairTarget(
             HashOutTarget {
-                elements: signed_by.msg.elements.clone(),
+                elements: signed_by.msg.elements,
             },
             pk_hash,
         );
@@ -1362,7 +1363,7 @@ fn make_statement_arg_from_template_circuit(
     let first_index = ak_id_wc_index;
     let is_first_index_valid = builder.or(is_ak, is_wc_literal);
     let first_index = builder.select(is_first_index_valid, first_index, zero);
-    let resolved_ak_id = builder.vec_ref_small(params, &args, first_index);
+    let resolved_ak_id = builder.vec_ref_small(params, args, first_index);
     let resolved_wc = resolved_ak_id;
 
     // If the index is not used, use a 0 instead to still pass the range constraints from
@@ -1370,7 +1371,7 @@ fn make_statement_arg_from_template_circuit(
     let second_index = ak_key_wc_index;
     let is_second_index_valid = builder.and(is_ak, is_ak_key_wc);
     let second_index = builder.select(is_second_index_valid, second_index, zero);
-    let resolved_ak_key = builder.vec_ref_small(params, &args, second_index);
+    let resolved_ak_key = builder.vec_ref_small(params, args, second_index);
 
     let ak_key = ak_key_lit; // is_ak_key_lit
     let ak_key = builder.select_flattenable(params, is_ak_key_wc, &resolved_ak_key, &ak_key);
@@ -2519,7 +2520,7 @@ mod tests {
         let [v2, v3] = input_values;
 
         let local = dict!(32, {
-            "hola" => v1.clone(),
+            "hola" => v1,
             "mundo" => v2.clone(),
             "!" => v3.clone(),
         })?;
@@ -2820,7 +2821,7 @@ mod tests {
         let key_st: mainpod::Statement =
             Statement::contains(local.clone(), "key", key.clone()).into();
         let value_st: mainpod::Statement =
-            Statement::contains(local.clone(), "value", value.clone()).into();
+            Statement::contains(local.clone(), "value", value).into();
 
         let st: mainpod::Statement = Statement::contains(root_ak, key_ak, value_ak).into();
         let op = mainpod::Operation(
@@ -3024,12 +3025,12 @@ mod tests {
         let nonce = BigUint::from_u32(123).unwrap();
         let sig = signer::Signer(sk).sign_with_nonce(nonce, msg);
         let signed_by = SignedBy {
-            msg: msg.clone(),
-            pk: pk.clone(),
+            msg,
+            pk,
             sig: sig.clone(),
         };
 
-        let st: mainpod::Statement = Statement::signed_by(msg, pk.clone()).into();
+        let st: mainpod::Statement = Statement::signed_by(msg, pk).into();
         let op = mainpod::Operation(
             OperationType::Native(NativeOperation::SignedBy),
             vec![OperationArg::Index(0), OperationArg::Index(0)],

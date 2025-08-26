@@ -17,7 +17,7 @@ use pod2::{
     },
     frontend::{MainPodBuilder, Operation, SignedDictBuilder},
     lang::parse,
-    middleware::{MainPodProver, Params, VDSet, Value},
+    middleware::{MainPodProver, Params, VDSet},
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

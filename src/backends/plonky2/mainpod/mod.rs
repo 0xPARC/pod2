@@ -543,7 +543,7 @@ impl MainPodProver for Prover {
         let mut vd_mt_proofs = Vec::with_capacity(inputs.pods.len());
         for (pod, vd) in inputs.pods.iter().zip(&verifier_datas) {
             vd_mt_proofs.push(if pod.is_main() {
-                (true, inputs.vd_set.get_vds_proof(&vd)?)
+                (true, inputs.vd_set.get_vds_proof(vd)?)
             } else {
                 // For intro pods we don't verify inclusion of their vk into the vd set, so we
                 // generate a dummy mt proof with expected root and value to pass some constraints
