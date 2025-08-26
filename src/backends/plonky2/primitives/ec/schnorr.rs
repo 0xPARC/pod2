@@ -29,10 +29,7 @@ use crate::{
         deserialize_bytes,
         primitives::ec::{
             bits::{BigUInt320Target, CircuitBuilderBits},
-            curve::{
-                CircuitBuilderSignature, PointTarget, WitnessWriteCurve,
-                GROUP_ORDER,
-            },
+            curve::{CircuitBuilderSignature, PointTarget, WitnessWriteCurve, GROUP_ORDER},
         },
         serialize_bytes, Error,
     },
