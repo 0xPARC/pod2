@@ -7,10 +7,7 @@ use hex::ToHex;
 use itertools::Itertools;
 use strum_macros::FromRepr;
 mod basetypes;
-use std::{
-    cmp::{Ordering, PartialEq, PartialOrd},
-    hash,
-};
+use std::{cmp::PartialEq, hash};
 
 use containers::{Array, Dictionary, Set};
 use schemars::JsonSchema;
@@ -254,7 +251,7 @@ impl fmt::Display for TypedValue {
             }
             TypedValue::Set(s) => {
                 write!(f, "#[")?;
-                let values: Vec<_> = s.set().iter().sorted().collect();
+                let values: Vec<_> = s.set().iter().sorted_by_key(|k| k.raw()).collect();
                 for (i, v) in values.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
@@ -460,18 +457,6 @@ impl PartialEq for Value {
 }
 
 impl Eq for Value {}
-
-impl PartialOrd for Value {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Value {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.raw.cmp(&other.raw)
-    }
-}
 
 impl hash::Hash for Value {
     fn hash<H: hash::Hasher>(&self, state: &mut H) {

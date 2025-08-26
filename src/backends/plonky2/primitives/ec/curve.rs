@@ -9,6 +9,7 @@ use std::{
     sync::LazyLock,
 };
 
+use itertools::zip_eq;
 use num::{bigint::BigUint, Num, One};
 use num_bigint::RandBigInt;
 use plonky2::{
@@ -19,7 +20,11 @@ use plonky2::{
         types::{Field, Field64, PrimeField},
     },
     hash::poseidon::PoseidonHash,
-    iop::{generator::SimpleGenerator, target::{BoolTarget,Target}, witness::WitnessWrite},
+    iop::{
+        generator::SimpleGenerator,
+        target::{BoolTarget, Target},
+        witness::WitnessWrite,
+    },
     plonk::circuit_builder::CircuitBuilder,
     util::serialization::{Read, Write},
 };
@@ -31,7 +36,7 @@ use crate::backends::plonky2::{
     primitives::ec::{
         bits::BigUInt320Target,
         field::{get_nnf_target, CircuitBuilderNNF, OEFTarget},
-        gates::{curve::{ECAddHomogOffset,ECAddXu}, generic::SimpleGate},
+        gates::curve::{ECAddHomogOffsetGate, ECAddXuGate},
     },
     Error,
 };
@@ -294,21 +299,15 @@ pub(super) fn add_homog<const D: usize, F: ECFieldExt<D>>(x1: F, u1: F, x2: F, u
     [x, z, u, t]
 }
 
-pub(super) fn add_xu<const D: usize, F: ECFieldExt<D> + std::ops::Div<Output = F>>(x1: F, u1: F, x2: F, u2: F) -> [F; 2] {
-    let t1 = x1 * x2;
-    let t3 = u1 * u2;
-    let t5 = x1 + x2;
-    let t6 = u1 + u2;
-    let t7 = t1.add_field_gen(Point::B1);
-    let t9 = t3 * (t5.mul_field_gen(2 * Point::B1_U32) + t7.double());
-    let t10 = t3.double().add_scalar(GoldilocksField::ONE) * (t5 + t7);
-    let x = (t10 - t7).mul_field_gen(Point::B1_U32);
-    let z = t7 - t9;
-    let u = t6 * (-t1).add_field_gen(Point::B1);
-    let t = t7 + t9;
-    let x1 = x / z;
-    let u1 = u / t;
-    [x1, u1]
+/// Adds two elliptic curve points in affine coordinates.
+pub(super) fn add_xu<const D: usize, F: ECFieldExt<D> + std::ops::Div<Output = F>>(
+    x1: F,
+    u1: F,
+    x2: F,
+    u2: F,
+) -> [F; 2] {
+    let [x, z, u, t] = add_homog(x1, u1, x2, u2);
+    [x / z, u / t]
 }
 
 // See CircuitBuilderEllptic::add_point for an explanation of why we need this function.
@@ -347,7 +346,7 @@ static GROUP_ORDER_HALF_ROUND_UP: LazyLock<BigUint> =
 
 impl Point {
     const B1_U32: u32 = 263;
-    const B1: GoldilocksField = GoldilocksField(Self::B1_U32 as u64);
+    pub(crate) const B1: GoldilocksField = GoldilocksField(Self::B1_U32 as u64);
 
     pub fn b() -> ECField {
         ECField::from_basefield_array([
@@ -561,28 +560,24 @@ where
     }
 }
 
-
-pub trait CircuitBuilderEllipticNew {
-    fn linear_combination_points_new(
+pub trait CircuitBuilderSignature {
+    /// Computes `a*g + b*p`, where `g` is the generator of the curve.
+    fn linear_combination_point_gen(
         &mut self,
-        p1_scalar: &[BoolTarget; 320],
-        p2_scalar: &[BoolTarget; 320],
-        p1: &PointTarget,
-        p2: &PointTarget,
+        a: &[BoolTarget; 320],
+        b: &[BoolTarget; 320],
+        p: &PointTarget,
     ) -> PointTarget;
 }
 
-impl CircuitBuilderEllipticNew for CircuitBuilder<GoldilocksField, 2> {
-
-    fn linear_combination_points_new(
+impl CircuitBuilderSignature for CircuitBuilder<GoldilocksField, 2> {
+    fn linear_combination_point_gen(
         &mut self,
-        p1_scalar: &[BoolTarget; 320],
-        p2_scalar: &[BoolTarget; 320],
-        _p1: &PointTarget, // g
-        p2: &PointTarget, // y
+        a: &[BoolTarget; 320],
+        b: &[BoolTarget; 320],
+        p: &PointTarget,
     ) -> PointTarget {
-
-        let y = p2;
+        let y = p;
         let zero = self.identity_point();
         let zero_target = self.zero();
 
@@ -591,31 +586,31 @@ impl CircuitBuilderEllipticNew for CircuitBuilder<GoldilocksField, 2> {
 
         let mut all_rows = [0usize; 107];
         for x in 0..107 {
-            let (row, _slot) = self.find_slot(ECAddXu::new_from_config(), &[], &[]);
+            let (row, _slot) = self.find_slot(ECAddXuGate::new_from_config(), &[], &[]);
             all_rows[x] = row;
 
             // prepare to apply gate
             let mut inputs = Vec::with_capacity(30);
 
-            // scalar bits for p1 (g)
+            // scalar bits for g
             if x == 0 {
                 inputs.push(zero_target);
             } else {
-                inputs.push(p1_scalar[320 - 3*x].target);
+                inputs.push(a[320 - 3 * x].target);
             }
-            inputs.push(p1_scalar[319 - 3*x].target);
-            inputs.push(p1_scalar[318 - 3*x].target);
+            inputs.push(a[319 - 3 * x].target);
+            inputs.push(a[318 - 3 * x].target);
             inputs.push(arb_target);
             inputs.push(arb_target);
 
-            // scalar bits for p2 (y)
+            // scalar bits for p (y)
             if x == 0 {
                 inputs.push(zero_target);
             } else {
-                inputs.push(p2_scalar[320 - 3*x].target);
+                inputs.push(b[320 - 3 * x].target);
             }
-            inputs.push(p2_scalar[319 - 3*x].target);
-            inputs.push(p2_scalar[318 - 3*x].target);
+            inputs.push(b[319 - 3 * x].target);
+            inputs.push(b[318 - 3 * x].target);
             inputs.push(arb_target);
             inputs.push(arb_target);
 
@@ -628,33 +623,34 @@ impl CircuitBuilderEllipticNew for CircuitBuilder<GoldilocksField, 2> {
             inputs.extend_from_slice(&ans.u.components);
 
             // apply gate
-            let outputs = ECAddXu::apply(self, &inputs, row);
+            let outputs = ECAddXuGate::apply(self, &inputs, row);
             let x = FieldTarget::new(outputs[15..20].try_into().unwrap());
             let u = FieldTarget::new(outputs[20..25].try_into().unwrap());
             ans = PointTarget {
-                x: x,
-                u: u,
+                x,
+                u,
                 checked_on_curve: true,
-                checked_in_subgroup: p2.checked_in_subgroup,
+                checked_in_subgroup: p.checked_in_subgroup,
             };
 
-            for col in 0..30 {
-                self.connect (inputs[col], Target::wire(row, col));
+            for (col, input) in inputs.iter().enumerate().take(30) {
+                self.connect(*input, Target::wire(row, col));
             }
         }
 
         // copy accumulator from one row to the next
         for x in 0..106 {
             for y in 20..30 {
-                self.connect (Target::wire(all_rows[x], y+25), Target::wire(all_rows[x+1], y))
+                self.connect(
+                    Target::wire(all_rows[x], y + 25),
+                    Target::wire(all_rows[x + 1], y),
+                )
             }
         }
 
         ans
     }
 }
-
-
 
 pub trait CircuitBuilderElliptic {
     fn add_virtual_point_target_unsafe(&mut self) -> PointTarget;
@@ -718,7 +714,19 @@ impl CircuitBuilderElliptic for CircuitBuilder<GoldilocksField, 2> {
         inputs.extend_from_slice(&p1.u.components);
         inputs.extend_from_slice(&p2.x.components);
         inputs.extend_from_slice(&p2.u.components);
-        let outputs = ECAddHomogOffset::apply(self, &inputs);
+        let gate = ECAddHomogOffsetGate::new_from_config(&self.config);
+        let (gate, i) = self.find_slot(gate, &[], &[]);
+        let wires_a0 = ECAddHomogOffsetGate::wires_ith_addend_0(i)
+            .map(|i| Target::wire(gate, i))
+            .collect::<Vec<_>>();
+        let wires_a1 = ECAddHomogOffsetGate::wires_ith_addend_1(i)
+            .map(|i| Target::wire(gate, i))
+            .collect::<Vec<_>>();
+        let outputs = ECAddHomogOffsetGate::wires_ith_output(i)
+            .map(|i| Target::wire(gate, i))
+            .collect::<Vec<_>>();
+        zip_eq(inputs, [wires_a0, wires_a1].concat()).for_each(|(i, w)| self.connect(i, w));
+
         // plonky2 expects all gate constraints to be satisfied by the zero vector.
         // So our elliptic curve addition gate computes [x,z-b,u,t-b], and we have to add the b here.
         let [x, z, u, t] =
@@ -856,7 +864,6 @@ pub trait WitnessWriteCurve: WitnessWrite<GoldilocksField> {
         Ok(())
     }
 }
-
 
 impl<W: WitnessWrite<GoldilocksField>> WitnessWriteCurve for W {}
 

@@ -4,7 +4,7 @@ use crate::{
     frontend::{MainPod, SignedPod},
     middleware::{
         AnchoredKey, CustomPredicateRef, NativeOperation, OperationAux, OperationType, Statement,
-        Value, ValueRef,
+        TypedValue, Value, ValueRef,
     },
 };
 
@@ -32,6 +32,13 @@ impl OperationArg {
             Self::Statement(Statement::Equal(k, ValueRef::Literal(v))) => Some((k.clone(), v)),
             _ => None,
         }
+    }
+
+    pub(crate) fn int_value_and_ref(&self) -> Option<(ValueRef, i64)> {
+        self.value_and_ref().and_then(|(r, v)| match v.typed() {
+            &TypedValue::Int(i) => Some((r, i)),
+            _ => None,
+        })
     }
 }
 
