@@ -30,7 +30,6 @@ use crate::{
             },
             hash::{hash_from_state_circuit, precompute_hash_state},
             mux_table::{MuxTableTarget, TableEntryTarget},
-            // signedpod::{verify_signed_pod_circuit, SignedPodVerifyTarget},
         },
         emptypod::EmptyPod,
         error::Result,
@@ -51,7 +50,6 @@ use crate::{
             signature::{verify_signature_circuit, SignatureVerifyTarget},
         },
         recursion::{InnerCircuit, VerifiedProofTarget},
-        // signedpod::SignedPod,
     },
     measure_gates_begin, measure_gates_end,
     middleware::{

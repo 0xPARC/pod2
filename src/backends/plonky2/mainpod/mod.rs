@@ -16,15 +16,16 @@ use crate::{
         cache::{self, CacheEntry},
         cache_get_standard_rec_main_pod_common_circuit_data,
         circuits::mainpod::{CustomPredicateVerification, MainPodVerifyInput, MainPodVerifyTarget},
-        deserialize_proof,
-        deserialize_verifier_only,
+        deserialize_proof, deserialize_verifier_only,
         emptypod::EmptyPod,
         error::{Error, Result},
         hash_common_data,
         mock::emptypod::MockEmptyPod,
         primitives::{
-            ec::curve::Point as PublicKey,
-            ec::schnorr::{SecretKey, Signature},
+            ec::{
+                curve::Point as PublicKey,
+                schnorr::{SecretKey, Signature},
+            },
             merkletree::{MerkleClaimAndProof, MerkleTreeStateTransitionProof},
         },
         recursion::{
@@ -33,9 +34,7 @@ use crate::{
         serialization::{
             CircuitDataSerializer, CommonCircuitDataSerializer, VerifierCircuitDataSerializer,
         },
-        serialize_proof,
-        serialize_verifier_only,
-        // signedpod::SignedPod,
+        serialize_proof, serialize_verifier_only,
     },
     middleware::{
         self, resolve_wildcard_values, value_from_op, CustomPredicateBatch,

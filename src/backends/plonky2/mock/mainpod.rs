@@ -39,7 +39,6 @@ pub struct MockMainPod {
     params: Params,
     sts_hash: Hash,
     vd_set: VDSet,
-    // input_signed_pods: Vec<Box<dyn Pod>>,
     input_pods: Vec<Box<dyn Pod>>,
     // All statements (inherited + newly introduced by this pod)
     statements: Vec<Statement>,
@@ -59,7 +58,6 @@ impl Eq for MockMainPod {}
 impl fmt::Display for MockMainPod {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "MockMainPod ({}):", self.sts_hash)?;
-        // let offset_input_signed_pods = Self::offset_input_signed_pods();
         let offset_input_pods = self.offset_input_pods();
         let offset_input_statements = self.offset_input_statements();
         let offset_public_statements = self.offset_public_statements();
@@ -133,14 +131,10 @@ struct Data {
 }
 
 /// Inputs are sorted as:
-/// - SignedPods
-/// - MainPods
+/// - Pods
 /// - private Statements
 /// - public Statements
 impl MockMainPod {
-    // fn offset_input_signed_pods() -> usize {
-    //     1
-    // }
     fn offset_input_pods(&self) -> usize {
         1
     }
@@ -188,7 +182,6 @@ impl MockMainPod {
             params: params.clone(),
             sts_hash,
             vd_set: inputs.vd_set,
-            // input_signed_pods,
             input_pods,
             public_statements,
             statements,
@@ -317,7 +310,6 @@ impl Pod for MockMainPod {
                 .merkle_tree_state_transition_proofs_containers
                 .clone(),
             signatures: self.signatures.clone(),
-            // input_signed_pods,
             input_pods,
         })
         .expect("serialization to json")

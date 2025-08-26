@@ -122,7 +122,6 @@ impl SignedDict {
 pub struct MainPodBuilder {
     pub params: Params,
     pub vd_set: VDSet,
-    // pub input_signed_pods: Vec<SignedDict>,
     // TODO: Rename to `input_pods`
     pub input_pods: Vec<MainPod>,
     pub statements: Vec<Statement>,
@@ -621,8 +620,6 @@ impl MainPodBuilder {
     pub fn prove(&self, prover: &dyn MainPodProver) -> Result<MainPod> {
         let compiler = MainPodCompiler::new(&self.params);
         let inputs = MainPodCompilerInputs {
-            // signed_pods: &self.input_signed_pods,
-            // main_pods: &self.input_main_pods,
             statements: &self.statements,
             operations: &self.operations,
             public_statements: &self.public_statements,

@@ -426,11 +426,11 @@ pub fn tickets_pod_builder(
 pub fn tickets_pod_full_flow(params: &Params, vd_set: &VDSet) -> Result<MainPodBuilder> {
     let builder = tickets_sign_pod_builder(params);
 
-    let signed_pod = builder.sign(&Signer(SecretKey(1u32.into()))).unwrap();
+    let signed_dict = builder.sign(&Signer(SecretKey(1u32.into()))).unwrap();
     tickets_pod_builder(
         params,
         vd_set,
-        &signed_pod,
+        &signed_dict,
         123,
         true,
         &Set::new(params.max_depth_mt_containers, HashSet::new())?,

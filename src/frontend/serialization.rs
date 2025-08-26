@@ -307,7 +307,7 @@ mod tests {
 
     #[test]
     // This tests that we can generate JSON Schemas for the MainPod and
-    // SignedPod types, and that we can validate Signed and Main Pods
+    // SignedDict types, and that we can validate Signed and Main Pods
     // against the schemas. Since both Mock and Plonky2 PODs have the same
     // public interface, we can assume that the schema works for both.
     fn test_schema() {
@@ -315,20 +315,20 @@ mod tests {
         let signeddict_schema = schema_for!(SignedDict);
 
         let kyc_pod = build_mock_zukyc_pod().unwrap();
-        let signed_pod = signed_dict_builder()
+        let signed_dict = signed_dict_builder()
             .sign(&Signer(SecretKey(1u32.into())))
             .unwrap();
         let ethdos_pod = build_ethdos_pod().unwrap();
         let mainpod_schema_value = serde_json::to_value(&mainpod_schema).unwrap();
-        let signedpod_schema_value = serde_json::to_value(&signeddict_schema).unwrap();
+        let signed_dict_schema_value = serde_json::to_value(&signeddict_schema).unwrap();
 
         let kyc_pod_value = serde_json::to_value(&kyc_pod).unwrap();
         let mainpod_valid = jsonschema::validate(&mainpod_schema_value, &kyc_pod_value);
         assert!(mainpod_valid.is_ok(), "{:#?}", mainpod_valid);
 
-        let signed_pod_value = serde_json::to_value(&signed_pod).unwrap();
-        let signedpod_valid = jsonschema::validate(&signedpod_schema_value, &signed_pod_value);
-        assert!(signedpod_valid.is_ok(), "{:#?}", signedpod_valid);
+        let signed_dict_value = serde_json::to_value(&signed_dict).unwrap();
+        let signed_dict_valid = jsonschema::validate(&signed_dict_schema_value, &signed_dict_value);
+        assert!(signed_dict_valid.is_ok(), "{:#?}", signed_dict_valid);
 
         let ethdos_pod_value = serde_json::to_value(&ethdos_pod).unwrap();
         let ethdos_pod_valid = jsonschema::validate(&mainpod_schema_value, &ethdos_pod_value);
