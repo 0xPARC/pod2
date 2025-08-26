@@ -223,7 +223,7 @@ fn resolve_wildcard(args: &[&str], priv_args: &[&str], s: &str) -> Result<Wildca
         .enumerate()
         .find_map(|(i, name)| (s == *name).then_some(Wildcard::new(s.to_string(), i)))
         .ok_or(Error::custom(format!(
-            "Wildcard {} not amongst args {:?}",
+            "Wildcard \"{}\" not amongst args {:?}",
             s,
             [args.to_vec(), priv_args.to_vec()].concat()
         )))

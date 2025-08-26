@@ -325,7 +325,7 @@ pub fn great_boy_pod_builder(
 pub fn great_boy_pod_full_flow() -> Result<MainPodBuilder> {
     let params = Params {
         max_signed_by: 6,
-        max_input_recursive_pods: 0,
+        max_input_pods: 0,
         max_statements: 100,
         max_public_statements: 50,
         num_public_statements_hash: 50,

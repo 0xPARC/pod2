@@ -10,8 +10,8 @@ pub use serialization::SerializedMainPod;
 
 use crate::middleware::{
     self, check_custom_pred, check_st_tmpl, containers::Dictionary, hash_op, hash_str, max_op,
-    prod_op, sum_op, AnchoredKey, Hash, Key, MainPodInputs, NativeOperation, OperationAux,
-    OperationType, Params, PodProver, PublicKey, RawValue, Signature, Signer, Statement,
+    prod_op, sum_op, AnchoredKey, Hash, Key, MainPodInputs, MainPodProver, NativeOperation,
+    OperationAux, OperationType, Params, PublicKey, RawValue, Signature, Signer, Statement,
     StatementArg, VDSet, Value, ValueRef,
 };
 
@@ -144,6 +144,7 @@ pub struct MainPodBuilder {
     const_cnt: usize,
     /// Map from (public, Value) to Key of already created literals via Equal statements.
     literals: HashMap<(bool, Value), Key>,
+    // TODO: track contains ops with literals added explicitly as well.
     dict_contains: Vec<(Value, Value)>, // (root, key)
 }
 
@@ -680,7 +681,7 @@ impl MainPodBuilder {
         self.public_statements.push(st.clone());
     }
 
-    pub fn prove(&self, prover: &dyn PodProver) -> Result<MainPod> {
+    pub fn prove(&self, prover: &dyn MainPodProver) -> Result<MainPod> {
         let compiler = MainPodCompiler::new(&self.params);
         let inputs = MainPodCompilerInputs {
             // signed_pods: &self.input_signed_pods,
@@ -698,7 +699,7 @@ impl MainPodBuilder {
             //     .iter()
             //     .map(|p| p.pod.as_ref())
             //     .collect_vec(),
-            recursive_pods: &self
+            pods: &self
                 .input_recursive_pods
                 .iter()
                 .map(|p| p.pod.as_ref())
@@ -763,7 +764,7 @@ impl MainPodBuilder {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(try_from = "SerializedMainPod", into = "SerializedMainPod")]
 pub struct MainPod {
-    pub pod: Box<dyn middleware::RecursivePod>,
+    pub pod: Box<dyn middleware::Pod>,
     pub public_statements: Vec<Statement>,
     pub params: Params,
 }

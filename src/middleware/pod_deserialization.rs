@@ -3,14 +3,14 @@ use std::{
     sync::{LazyLock, Mutex},
 };
 
-use crate::middleware::{BackendError, Hash, Params, Pod, PodType, RecursivePod, Result, VDSet};
+use crate::middleware::{BackendError, Hash, Params, Pod, PodType, Result, VDSet};
 
 type DeserializeFn = fn(
     params: Params,
     data: serde_json::Value,
     vd_set: VDSet,
     id: Hash,
-) -> Result<Box<dyn RecursivePod>, BackendError>;
+) -> Result<Box<dyn Pod>, BackendError>;
 
 static DESERIALIZERS: LazyLock<Mutex<HashMap<usize, DeserializeFn>>> =
     LazyLock::new(backend::deserializers_default);
@@ -28,7 +28,7 @@ pub fn deserialize_pod(
     id: Hash,
     vd_set: VDSet,
     data: serde_json::Value,
-) -> Result<Box<dyn RecursivePod>, BackendError> {
+) -> Result<Box<dyn Pod>, BackendError> {
     let deserialize_fn: DeserializeFn =
         *DESERIALIZERS
             .lock()

@@ -49,7 +49,7 @@ pub fn cache_get_standard_rec_main_pod_common_circuit_data(
             let circuit_data = timed!(
                 "recursive MainPod circuit_data",
                 RecursiveCircuit::<MainPodVerifyTarget>::target_and_circuit_data(
-                    params.max_input_recursive_pods,
+                    params.max_input_pods,
                     NUM_PUBLIC_INPUTS,
                     params
                 )

@@ -803,7 +803,7 @@ impl fmt::Display for PodType {
 #[serde(rename_all = "camelCase")]
 pub struct Params {
     // pub max_input_signed_pods: usize,
-    pub max_input_recursive_pods: usize,
+    pub max_input_pods: usize,
     pub max_input_pods_public_statements: usize,
     pub max_statements: usize,
     // TODO: Delete
@@ -851,7 +851,7 @@ impl Default for Params {
     fn default() -> Self {
         Self {
             // max_input_signed_pods: 3,
-            max_input_recursive_pods: 2,
+            max_input_pods: 2,
             max_input_pods_public_statements: 10,
             max_statements: 40,
             max_signed_pod_values: 8,
@@ -910,8 +910,7 @@ impl Params {
     /// Total size of the statement table including None, input statements from signed pods and
     /// input recursive pods and new statements (public & private)
     pub fn statement_table_size(&self) -> usize {
-        1 + self.max_input_recursive_pods * self.max_input_pods_public_statements
-            + self.max_statements
+        1 + self.max_input_pods * self.max_input_pods_public_statements + self.max_statements
     }
 
     /// Parameters that define how the id is calculated
@@ -970,6 +969,10 @@ impl<T: Any + Eq> EqualsAny for T {
     }
 }
 
+/// Trait for pods that are generated with a plonky2 circuit and that can be verified by a
+/// recursive MainPod circuit (with the exception of mock types).  A Pod implementing this trait
+/// does not necesarilly come from recursion: for example an introduction Pod in general is not
+/// recursive.
 pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
     fn params(&self) -> &Params;
     fn verify(&self) -> Result<(), BackendError>;
@@ -982,13 +985,6 @@ pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
     fn is_main(&self) -> bool {
         false
     }
-    fn _verifier_data(&self) -> VerifierOnlyCircuitData {
-        todo!()
-    }
-    fn _verifier_data_hash(&self) -> Hash {
-        // TODO
-        EMPTY_HASH
-    }
     // TODO: Remove
     fn id(&self) -> Hash;
     // TODO: String instead of &str
@@ -1000,7 +996,7 @@ pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
     /// Normalized statements, where self-referencing arguments use the pod id instead of SELF in
     /// the anchored key.
     fn pub_statements(&self) -> Vec<Statement> {
-        let verifier_data_hash = self._verifier_data_hash();
+        let verifier_data_hash = self.verifier_data_hash();
         self.pub_self_statements()
             .into_iter()
             .map(|statement| normalize_statement(&statement, verifier_data_hash))
@@ -1009,6 +1005,16 @@ pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
     /// Return this Pods data serialized into a json value.  This serialization can skip `params,
     /// id, vds_root`
     fn serialize_data(&self) -> serde_json::Value;
+
+    /// Returns the deserialized Pod.
+    fn deserialize_data(
+        params: Params,
+        data: serde_json::Value,
+        vd_set: VDSet,
+        id: Hash,
+    ) -> Result<Box<dyn Pod>, BackendError>
+    where
+        Self: Sized;
 
     // TODO: Remove?
     /// Extract key-values from ValueOf public statements
@@ -1025,6 +1031,16 @@ pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
     fn equals(&self, other: &dyn Pod) -> bool {
         self.equals_any(other as &dyn Any)
     }
+
+    fn verifier_data(&self) -> VerifierOnlyCircuitData;
+    fn verifier_data_hash(&self) -> Hash {
+        Hash(hash_verifier_data(&self.verifier_data()).elements)
+    }
+    /// Return a hash of the CommonCircuitData that uniquely identifies the circuit
+    /// configuration and list of custom gates.
+    fn common_hash(&self) -> String;
+    fn proof(&self) -> Proof;
+    fn vd_set(&self) -> &VDSet;
 }
 impl PartialEq for Box<dyn Pod> {
     fn eq(&self, other: &Self) -> bool {
@@ -1037,39 +1053,6 @@ impl Eq for Box<dyn Pod> {}
 // impl Clone for Box<dyn Pod>
 dyn_clone::clone_trait_object!(Pod);
 
-// TODO: Unify with Pod trait
-/// Trait for pods that are generated with a plonky2 circuit and that can be verified by a
-/// recursive MainPod circuit.  A Pod implementing this trait does not necesarilly come from
-/// recursion: for example an introduction Pod in general is not recursive.
-pub trait RecursivePod: Pod {
-    fn verifier_data(&self) -> VerifierOnlyCircuitData;
-    /// Return a hash of the CommonCircuitData that uniquely identifies the circuit
-    /// configuration and list of custom gates.
-    fn common_hash(&self) -> String;
-    fn proof(&self) -> Proof;
-    fn vd_set(&self) -> &VDSet;
-
-    /// Returns the deserialized RecursivePod.
-    fn deserialize_data(
-        params: Params,
-        data: serde_json::Value,
-        vd_set: VDSet,
-        id: Hash,
-    ) -> Result<Box<dyn RecursivePod>, BackendError>
-    where
-        Self: Sized;
-}
-impl PartialEq for Box<dyn RecursivePod> {
-    fn eq(&self, other: &Self) -> bool {
-        self.equals(&**other)
-    }
-}
-
-impl Eq for Box<dyn RecursivePod> {}
-
-// impl Clone for Box<dyn RecursivePod>
-dyn_clone::clone_trait_object!(RecursivePod);
-
 pub trait Signer {
     fn sign(&self, msg: RawValue) -> Signature;
     fn public_key(&self) -> PublicKey;
@@ -1079,7 +1062,7 @@ pub trait Signer {
 pub struct MainPodInputs<'a> {
     // pub signed_pods: &'a [&'a dyn Pod],
     // TODO: Rename to just "pods"
-    pub recursive_pods: &'a [&'a dyn RecursivePod],
+    pub pods: &'a [&'a dyn Pod],
     pub statements: &'a [Statement],
     pub operations: &'a [Operation],
     /// Statements that need to be made public (they can come from input pods or input
@@ -1089,14 +1072,13 @@ pub struct MainPodInputs<'a> {
     pub vd_set: VDSet,
 }
 
-// TODO: Rename to MainPodProver
-pub trait PodProver {
+pub trait MainPodProver {
     fn prove(
         &self,
         params: &Params,
         vd_set: &VDSet,
         inputs: MainPodInputs,
-    ) -> Result<Box<dyn RecursivePod>, BackendError>;
+    ) -> Result<Box<dyn Pod>, BackendError>;
 }
 
 pub trait ToFields {

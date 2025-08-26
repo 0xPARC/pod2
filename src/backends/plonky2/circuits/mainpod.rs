@@ -57,8 +57,8 @@ use crate::{
     measure_gates_begin, measure_gates_end,
     middleware::{
         AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, NativeOperation,
-        NativePredicate, Params, PredicatePrefix, Statement, StatementArg, ToFields, Value,
-        ValueRef, F, HASH_SIZE, VALUE_SIZE,
+        NativePredicate, Params, PredicatePrefix, RawValue, Statement, StatementArg, ToFields,
+        Value, ValueRef, F, HASH_SIZE, VALUE_SIZE,
     },
 };
 //
@@ -1652,7 +1652,7 @@ fn verify_main_pod_circuit(
     verified_proofs: &[VerifiedProofTarget],
 ) -> Result<HashOutTarget> {
     let params = &main_pod.params;
-    assert_eq!(params.max_input_recursive_pods, verified_proofs.len());
+    assert_eq!(params.max_input_pods, verified_proofs.len());
 
     let measure = measure_gates_begin!(builder, "MainPodVerify");
     // 1a. Verify all input signed pods
@@ -1832,13 +1832,13 @@ impl MainPodVerifyTarget {
         MainPodVerifyTarget {
             params: params.clone(),
             vds_root: builder.add_virtual_hash(),
-            vd_mt_proofs: (0..params.max_input_recursive_pods)
+            vd_mt_proofs: (0..params.max_input_pods)
                 .map(|_| MerkleClaimAndProofTarget::new_virtual(params.max_depth_mt_vds, builder))
                 .collect(),
             // signed_pods: (0..params.max_input_signed_pods)
             //     .map(|_| SignedPodVerifyTarget::new_virtual(params, builder))
             //     .collect(),
-            input_pods_self_statements: (0..params.max_input_recursive_pods)
+            input_pods_self_statements: (0..params.max_input_pods)
                 .map(|_| {
                     (0..params.max_input_pods_public_statements)
                         .map(|_| builder.add_virtual_statement(params))
@@ -1957,7 +1957,7 @@ impl InnerCircuit for MainPodVerifyTarget {
             input.recursive_pods_pub_self_statements.len()
         );
         let input_pods_len = input.vd_mt_proofs.len();
-        assert!(input_pods_len <= self.params.max_input_recursive_pods);
+        assert!(input_pods_len <= self.params.max_input_pods);
         for (i, (enable, vd_mt_proof)) in input.vd_mt_proofs.iter().enumerate() {
             self.vd_mt_proofs[i].set_targets(pw, *enable, vd_mt_proof)?;
         }
@@ -1970,16 +1970,16 @@ impl InnerCircuit for MainPodVerifyTarget {
             )?;
         }
         // Padding
-        if input_pods_len != self.params.max_input_recursive_pods {
+        if input_pods_len != self.params.max_input_pods {
             let empty_pod = EmptyPod::new_boxed(&self.params, input.vds_set.clone());
             let empty_pod_statements = empty_pod.pub_statements();
             let empty_mt_proof = MerkleClaimAndProof {
                 root: input.vds_set.root(),
-                value: empty_pod._verifier_data_hash().into(),
+                value: RawValue::from(empty_pod.verifier_data_hash()),
                 ..MerkleClaimAndProof::empty()
             };
 
-            for i in input_pods_len..self.params.max_input_recursive_pods {
+            for i in input_pods_len..self.params.max_input_pods {
                 self.vd_mt_proofs[i].set_targets(pw, false, &empty_mt_proof)?;
                 set_targets_input_pods_self_statements(
                     pw,

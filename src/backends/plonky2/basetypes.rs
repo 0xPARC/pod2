@@ -37,12 +37,14 @@ pub type CircuitBuilder = circuit_builder::CircuitBuilder<F, D>;
 pub type Proof = proof::Proof<F, C, D>;
 pub type ProofWithPublicInputs = proof::ProofWithPublicInputs<F, C, D>;
 pub type HashOut = hash_types::HashOut<F>;
-
 use std::{collections::HashMap, sync::LazyLock};
 
-pub use crate::backends::plonky2::primitives::ec::{
-    curve::Point as PublicKey,
-    schnorr::{SecretKey, Signature},
+pub use crate::backends::plonky2::{
+    primitives::ec::{
+        curve::Point as PublicKey,
+        schnorr::{SecretKey, Signature},
+    },
+    recursion::circuit::hash_verifier_data,
 };
 use crate::{
     backends::plonky2::{

@@ -7,8 +7,8 @@ use crate::{
         mainpod::{self, calculate_sts_hash},
     },
     middleware::{
-        AnchoredKey, Hash, IntroPredicateRef, Params, Pod, PodType, RecursivePod, Statement, VDSet,
-        Value, EMPTY_HASH,
+        AnchoredKey, Hash, IntroPredicateRef, Params, Pod, PodType, Statement, VDSet, Value,
+        EMPTY_HASH,
     },
 };
 
@@ -38,7 +38,7 @@ fn empty_statement() -> Statement {
 // }
 
 impl MockEmptyPod {
-    pub fn new_boxed(params: &Params, vd_set: VDSet) -> Box<dyn RecursivePod> {
+    pub fn new_boxed(params: &Params, vd_set: VDSet) -> Box<dyn Pod> {
         let statements = [mainpod::Statement::from(empty_statement())];
         let sts_hash = calculate_sts_hash(&statements, params);
         Box::new(Self {
@@ -75,12 +75,6 @@ impl Pod for MockEmptyPod {
         vec![empty_statement()]
     }
 
-    fn serialize_data(&self) -> serde_json::Value {
-        serde_json::Value::Null
-    }
-}
-
-impl RecursivePod for MockEmptyPod {
     fn verifier_data(&self) -> VerifierOnlyCircuitData {
         panic!("MockEmptyPod can't be verified in a recursive MainPod circuit");
     }
@@ -93,12 +87,15 @@ impl RecursivePod for MockEmptyPod {
     fn vd_set(&self) -> &VDSet {
         &self.vd_set
     }
+    fn serialize_data(&self) -> serde_json::Value {
+        serde_json::Value::Null
+    }
     fn deserialize_data(
         params: Params,
         _data: serde_json::Value,
         vd_set: VDSet,
         id: Hash,
-    ) -> Result<Box<dyn RecursivePod>> {
+    ) -> Result<Box<dyn Pod>> {
         Ok(Box::new(Self {
             params,
             sts_hash: id,

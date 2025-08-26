@@ -29,8 +29,8 @@ use crate::{
     },
     cache::{self, CacheEntry},
     middleware::{
-        self, Hash, IntroPredicateRef, Params, Pod, PodType, RecursivePod, Statement, ToFields,
-        VDSet, VerifierOnlyCircuitData, EMPTY_HASH, F, HASH_SIZE,
+        self, Hash, IntroPredicateRef, Params, Pod, PodType, Statement, ToFields, VDSet,
+        VerifierOnlyCircuitData, EMPTY_HASH, F, HASH_SIZE,
     },
     timed,
 };
@@ -146,7 +146,7 @@ impl EmptyPod {
             proof: proof.proof,
         })
     }
-    pub fn new_boxed(params: &Params, vd_set: VDSet) -> Box<dyn RecursivePod> {
+    pub fn new_boxed(params: &Params, vd_set: VDSet) -> Box<dyn Pod> {
         let default_params = Params::default();
         assert_eq!(default_params.id_params(), params.id_params());
 
@@ -209,17 +209,6 @@ impl Pod for EmptyPod {
         vec![empty_statement()]
     }
 
-    fn serialize_data(&self) -> serde_json::Value {
-        serde_json::to_value(Data {
-            proof: serialize_proof(&self.proof),
-            verifier_only: serialize_verifier_only(&self.verifier_only),
-            common_hash: self.common_hash.clone(),
-        })
-        .expect("serialization to json")
-    }
-}
-
-impl RecursivePod for EmptyPod {
     fn verifier_data(&self) -> VerifierOnlyCircuitData {
         self.verifier_only.0.clone()
     }
@@ -232,12 +221,21 @@ impl RecursivePod for EmptyPod {
     fn vd_set(&self) -> &VDSet {
         &self.vd_set
     }
+
+    fn serialize_data(&self) -> serde_json::Value {
+        serde_json::to_value(Data {
+            proof: serialize_proof(&self.proof),
+            verifier_only: serialize_verifier_only(&self.verifier_only),
+            common_hash: self.common_hash.clone(),
+        })
+        .expect("serialization to json")
+    }
     fn deserialize_data(
         params: Params,
         data: serde_json::Value,
         vd_set: VDSet,
         sts_hash: Hash,
-    ) -> Result<Box<dyn RecursivePod>> {
+    ) -> Result<Box<dyn Pod>> {
         let data: Data = serde_json::from_value(data)?;
         let common_circuit_data = cache_get_standard_rec_main_pod_common_circuit_data();
         let proof = deserialize_proof(&common_circuit_data, &data.proof)?;

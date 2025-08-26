@@ -23,21 +23,21 @@ use crate::{
         // signedpod::SignedPod,
     },
     middleware::{
-        self, deserialize_pod, hash_str, AnchoredKey, Hash, MainPodInputs, NativeOperation,
-        NativePredicate, OperationType, Params, Pod, PodProver, Predicate, RecursivePod,
-        StatementArg, VDSet, Value,
+        self, deserialize_pod, hash_str, AnchoredKey, Hash, MainPodInputs, MainPodProver,
+        NativeOperation, NativePredicate, OperationType, Params, Pod, Predicate, StatementArg,
+        VDSet, Value,
     },
 };
 
 pub struct MockProver {}
 
-impl PodProver for MockProver {
+impl MainPodProver for MockProver {
     fn prove(
         &self,
         params: &Params,
         _vd_set: &VDSet,
         inputs: MainPodInputs,
-    ) -> Result<Box<dyn RecursivePod>> {
+    ) -> Result<Box<dyn Pod>> {
         Ok(Box::new(MockMainPod::new(params, inputs)?))
     }
 }
@@ -48,7 +48,7 @@ pub struct MockMainPod {
     sts_hash: Hash,
     vd_set: VDSet,
     // input_signed_pods: Vec<Box<dyn Pod>>,
-    input_recursive_pods: Vec<Box<dyn RecursivePod>>,
+    input_recursive_pods: Vec<Box<dyn Pod>>,
     // All statements (inherited + newly introduced by this pod)
     statements: Vec<Statement>,
     operations: Vec<Operation>,
@@ -86,7 +86,7 @@ impl fmt::Display for MockMainPod {
             //         index, id, pod_type
             //     )?;
             // }
-            if self.params.max_input_recursive_pods > 0
+            if self.params.max_input_pods > 0
                 && (i >= offset_input_recursive_pods)
                 && (i < offset_input_statements)
                 && (i - offset_input_recursive_pods)
@@ -170,7 +170,7 @@ impl MockMainPod {
     }
     fn offset_input_statements(&self) -> usize {
         self.offset_input_recursive_pods()
-            + self.params.max_input_recursive_pods * self.params.max_input_pods_public_statements
+            + self.params.max_input_pods * self.params.max_input_pods_public_statements
     }
     fn offset_public_statements(&self) -> usize {
         self.offset_input_statements() + self.params.max_priv_statements()
@@ -209,12 +209,12 @@ impl MockMainPod {
         //     .take(params.max_input_signed_pods)
         //     .collect();
         let pad_pod = MockEmptyPod::new_boxed(params, inputs.vd_set.clone());
-        let input_recursive_pods: Vec<Box<dyn RecursivePod>> = inputs
-            .recursive_pods
+        let input_recursive_pods: Vec<Box<dyn Pod>> = inputs
+            .pods
             .iter()
             .map(|p| dyn_clone::clone_box(*p))
             .chain(iter::repeat_with(|| pad_pod.clone()))
-            .take(params.max_input_recursive_pods)
+            .take(params.max_input_pods)
             .collect();
         Ok(Self {
             params: params.clone(),
@@ -360,6 +360,19 @@ impl Pod for MockMainPod {
             .collect()
     }
 
+    fn verifier_data(&self) -> VerifierOnlyCircuitData {
+        panic!("MockMainPod can't be verified in a recursive MainPod circuit");
+    }
+    fn common_hash(&self) -> String {
+        panic!("MockMainPod can't be verified in a recursive MainPod circuit");
+    }
+    fn proof(&self) -> Proof {
+        panic!("MockMainPod can't be verified in a recursive MainPod circuit");
+    }
+    fn vd_set(&self) -> &VDSet {
+        &self.vd_set
+    }
+
     fn serialize_data(&self) -> serde_json::Value {
         // let input_signed_pods = self
         //     .input_signed_pods
@@ -379,7 +392,6 @@ impl Pod for MockMainPod {
                 )
             })
             .collect();
-        dbg!(self.public_statements.len());
         serde_json::to_value(Data {
             public_statements: self.public_statements.clone(),
             operations: self.operations.clone(),
@@ -394,21 +406,6 @@ impl Pod for MockMainPod {
         })
         .expect("serialization to json")
     }
-}
-
-impl RecursivePod for MockMainPod {
-    fn verifier_data(&self) -> VerifierOnlyCircuitData {
-        panic!("MockMainPod can't be verified in a recursive MainPod circuit");
-    }
-    fn common_hash(&self) -> String {
-        panic!("MockMainPod can't be verified in a recursive MainPod circuit");
-    }
-    fn proof(&self) -> Proof {
-        panic!("MockMainPod can't be verified in a recursive MainPod circuit");
-    }
-    fn vd_set(&self) -> &VDSet {
-        &self.vd_set
-    }
     // MockMainPods include some internal private state which is necessary
     // for verification. In non-mock Pods, this state will not be necessary,
     // as the public statements can be verified using a ZK proof.
@@ -417,7 +414,7 @@ impl RecursivePod for MockMainPod {
         data: serde_json::Value,
         vd_set: VDSet,
         id: Hash,
-    ) -> Result<Box<dyn RecursivePod>> {
+    ) -> Result<Box<dyn Pod>> {
         let Data {
             public_statements,
             operations,
@@ -454,20 +451,19 @@ impl RecursivePod for MockMainPod {
     }
 }
 
-// TODO: Uncomment
-/*
 #[cfg(test)]
 pub mod tests {
     use std::any::Any;
 
     use super::*;
     use crate::{
-        backends::plonky2::{primitives::ec::schnorr::SecretKey, signedpod::Signer},
+        backends::plonky2::{primitives::ec::schnorr::SecretKey, signer::Signer},
         examples::{
             great_boy_pod_full_flow, tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_pod_request,
             zu_kyc_sign_dict_builders, MOCK_VD_SET,
         },
         frontend, middleware,
+        middleware::Signer as _,
     };
 
     #[test]
@@ -475,10 +471,10 @@ pub mod tests {
         let params = middleware::Params::default();
         let vd_set = &*MOCK_VD_SET;
         let (gov_id_builder, pay_stub_builder) = zu_kyc_sign_dict_builders(&params);
-        let signer = Signer(SecretKey(1u32.into()));
-        let gov_id_pod = gov_id_builder.sign(&signer)?;
-        let signer = Signer(SecretKey(2u32.into()));
-        let pay_stub_pod = pay_stub_builder.sign(&signer)?;
+        let gov_id_signer = Signer(SecretKey(1u32.into()));
+        let gov_id_pod = gov_id_builder.sign(&gov_id_signer)?;
+        let pay_stub_signer = Signer(SecretKey(2u32.into()));
+        let pay_stub_pod = pay_stub_builder.sign(&pay_stub_signer)?;
         let kyc_builder = zu_kyc_pod_builder(&params, vd_set, &gov_id_pod, &pay_stub_pod)?;
 
         let prover = MockProver {};
@@ -492,8 +488,8 @@ pub mod tests {
         pod.verify()?;
 
         let request = zu_kyc_pod_request(
-            gov_id_pod.get("_signer").unwrap(),
-            pay_stub_pod.get("_signer").unwrap(),
+            &Value::from(gov_id_signer.public_key()),
+            &Value::from(pay_stub_signer.public_key()),
         )?;
         assert!(request.exact_match_pod(&*pod).is_ok());
 
@@ -533,4 +529,3 @@ pub mod tests {
         Ok(())
     }
 }
-*/
