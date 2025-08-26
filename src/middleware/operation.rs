@@ -802,7 +802,7 @@ mod tests {
             signer::Signer,
         },
         middleware::{
-            hash_value, AnchoredKey, Error, Hash, Key, Operation, Params, Result, Signer as _,
+            hash_value, Error, Operation, Params, Result, Signer as _,
             Statement, Value,
         },
     };

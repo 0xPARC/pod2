@@ -5,7 +5,7 @@ use hex::ToHex;
 use crate::{
     frontend::{PodRequest, Result},
     lang::parse,
-    middleware::{CustomPredicateBatch, Params, Value},
+    middleware::{CustomPredicateBatch, Params},
 };
 
 // macro_rules! render {

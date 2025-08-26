@@ -454,8 +454,8 @@ mod tests {
     use crate::{
         dict,
         middleware::{
-            containers::Dictionary, AnchoredKey, CustomPredicate, CustomPredicateBatch,
-            CustomPredicateRef, Key, NativePredicate, Operation, Params, PodType, Predicate,
+            AnchoredKey, CustomPredicate, CustomPredicateBatch,
+            CustomPredicateRef, Key, NativePredicate, Operation, Params, Predicate,
             Statement, StatementTmpl, StatementTmplArg,
         },
     };

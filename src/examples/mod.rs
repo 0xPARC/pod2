@@ -14,8 +14,8 @@ use crate::{
     },
     lang::parse,
     middleware::{
-        self, containers::Set, hash_values, CustomPredicateRef, Params, PodType, Predicate,
-        PublicKey, Signer as _, Statement, StatementArg, TypedValue, VDSet, Value,
+        self, containers::Set, hash_values, CustomPredicateRef, Params, Predicate, PublicKey,
+        Signer as _, Statement, StatementArg, TypedValue, VDSet, Value,
     },
 };
 
@@ -122,7 +122,6 @@ pub fn attest_eth_friend(
 pub struct EthDosHelper {
     params: Params,
     vd_set: VDSet,
-    mock: bool,
     eth_friend: CustomPredicateRef,
     eth_dos_base: CustomPredicateRef,
     eth_dos_ind: CustomPredicateRef,
@@ -131,7 +130,7 @@ pub struct EthDosHelper {
 }
 
 impl EthDosHelper {
-    pub fn new(params: &Params, vd_set: &VDSet, mock: bool, src: PublicKey) -> Result<Self> {
+    pub fn new(params: &Params, vd_set: &VDSet, src: PublicKey) -> Result<Self> {
         let eth_dos_batch = eth_dos_batch(params)?;
         let eth_friend = eth_dos_batch.predicate_ref_by_name("eth_friend").unwrap();
         let eth_dos_base = eth_dos_batch.predicate_ref_by_name("eth_dos_base").unwrap();
@@ -140,7 +139,6 @@ impl EthDosHelper {
         Ok(Self {
             params: params.clone(),
             vd_set: vd_set.clone(),
-            mock,
             eth_friend,
             eth_dos_base,
             eth_dos_ind,

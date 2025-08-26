@@ -1074,7 +1074,7 @@ pub mod tests {
         let alice_attestation = attest_eth_friend(&params, &alice, bob.public_key());
         let bob_attestation = attest_eth_friend(&params, &bob, charlie.public_key());
 
-        let helper = EthDosHelper::new(&params, vd_set, false, alice.public_key())?;
+        let helper = EthDosHelper::new(&params, vd_set, alice.public_key())?;
         let prover = Prover {};
         let dist_1 = helper.dist_1(&alice_attestation)?.prove(&prover)?;
         crate::measure_gates_print!();

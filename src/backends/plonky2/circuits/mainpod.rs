@@ -2116,8 +2116,8 @@ mod tests {
         dict,
         frontend::{self, literal, CustomPredicateBatchBuilder, StatementTmplBuilder},
         middleware::{
-            hash_str, hash_values, AnchoredKey, Hash, Key, OperationType, Predicate, RawValue,
-            StatementArg, StatementTmpl, StatementTmplArg, TypedValue, Wildcard,
+            hash_values, AnchoredKey, Hash, Key, OperationType, Predicate, RawValue,
+            StatementArg, StatementTmpl, StatementTmplArg, Wildcard,
         },
     };
 

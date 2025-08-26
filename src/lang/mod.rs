@@ -32,8 +32,8 @@ mod tests {
         backends::plonky2::primitives::ec::schnorr::SecretKey,
         lang::error::ProcessorError,
         middleware::{
-            hash_str, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Hash, Key,
-            NativePredicate, Params, PodType, Predicate, RawValue, StatementTmpl, StatementTmplArg,
+            CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key,
+            NativePredicate, Params, Predicate, RawValue, StatementTmpl, StatementTmplArg,
             Value, Wildcard,
         },
     };
