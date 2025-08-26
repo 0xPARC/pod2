@@ -184,14 +184,6 @@ fn verify_operation_public_statement_circuit(
 
     let op_checks = vec![
         verify_none_circuit(params, builder, st, &op.op_type),
-        // verify_new_entry_circuit(
-        //     params,
-        //     builder,
-        //     st,
-        //     &op.op_type,
-        //     prev_statements,
-        //     input_statements_offset,
-        // ),
         verify_copy_circuit(builder, st, &op.op_type, &cache.op_args),
     ];
 
@@ -447,17 +439,7 @@ fn verify_operation_circuit(
     // restricted to the op of type X, where the returned target is `false` if the input targets
     // lie outside of the domain.
     let mut op_checks = Vec::new();
-    op_checks.extend_from_slice(&[
-        verify_none_circuit(params, builder, st, &op.op_type),
-        // verify_new_entry_circuit(
-        //     params,
-        //     builder,
-        //     st,
-        //     &op.op_type,
-        //     prev_statements,
-        //     input_statements_offset,
-        // ),
-    ]);
+    op_checks.extend_from_slice(&[verify_none_circuit(params, builder, st, &op.op_type)]);
     // Skip these if there are no resolved op args
     if !cache.op_args.is_empty() {
         op_checks.extend_from_slice(&[
@@ -1302,39 +1284,6 @@ fn verify_none_circuit(
     ok
 }
 
-// DELETED, now we use `contains` to open dictionary entries to be used as anchored keys
-// fn verify_new_entry_circuit(
-//     params: &Params,
-//     builder: &mut CircuitBuilder,
-//     st: &StatementTarget,
-//     op_type: &OperationTypeTarget,
-//     prev_statements: &[StatementTarget],
-//     input_statements_offset: usize,
-// ) -> BoolTarget {
-//     todo!()
-// let measure = measure_gates_begin!(builder, "OpNewEntry");
-// let op_code_ok = op_type.has_native(builder, NativeOperation::NewEntry);
-// let st_code_ok = st.has_native_type(builder, params, NativePredicate::Equal);
-
-// let expected_arg_prefix = builder.constants(
-//     &StatementArg::Key(AnchoredKey::from((SELF, ""))).to_fields(params)[..VALUE_SIZE],
-// );
-// let arg_prefix_ok =
-//     builder.is_equal_slice(&st.args[0].elements[..VALUE_SIZE], &expected_arg_prefix);
-
-// let input_statements = &prev_statements[input_statements_offset..];
-// let individual_dupe_checks = input_statements
-//     .iter()
-//     .map(|ps| builder.is_equal_slice(&st.args[0].elements, &ps.args[0].elements))
-//     .collect::<Vec<_>>();
-// let dupe_check = builder.any(individual_dupe_checks);
-// let no_dupes_ok = builder.not(dupe_check);
-
-// let ok = builder.all([op_code_ok, st_code_ok, arg_prefix_ok, no_dupes_ok]);
-// measure_gates_end!(builder, measure);
-// ok
-// }
-
 fn verify_lt_to_neq_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
@@ -1654,11 +1603,6 @@ fn verify_main_pod_circuit(
     assert_eq!(params.max_input_pods, verified_proofs.len());
 
     let measure = measure_gates_begin!(builder, "MainPodVerify");
-    // 1a. Verify all input signed pods
-    // for signed_pod in &main_pod.signed_pods {
-    //     verify_signed_pod_circuit(builder, signed_pod)?;
-    //     builder.assert_one(signed_pod.signature.enabled.target);
-    // }
 
     // Build the statement array
     let mut statements = Vec::new();
@@ -1666,15 +1610,8 @@ fn verify_main_pod_circuit(
     // predicate statements
     let st_none = StatementTarget::new_native(builder, params, NativePredicate::None, &[]);
     statements.push(st_none);
-    // for signed_pod in &main_pod.signed_pods {
-    //     statements.extend_from_slice(signed_pod.pub_statements(builder, false).as_slice());
-    // }
-    // debug_assert_eq!(
-    //     statements.len(),
-    //     1 + params.max_input_signed_pods * params.max_signed_pod_values
-    // );
 
-    // 1b. Verify all input recursive pods
+    // 1a. Verify all input recursive pods
     for (verified_proof, vd_mt_proof, input_pod_self_statements) in izip!(
         verified_proofs,
         &main_pod.vd_mt_proofs,
@@ -1763,24 +1700,6 @@ fn verify_main_pod_circuit(
     // 2. Calculate the Pod Id from the public statements
     let sts_hash = calculate_statements_hash_circuit(params, builder, pub_statements);
 
-    // 4. Verify type
-    // let type_statement = &pub_statements[0];
-    // TODO: Store this hash in a global static with lazy init so that we don't have to
-    // compute it every time.
-    // let expected_type_statement = StatementTarget::from_flattened(
-    //     params,
-    //     &builder.constants(
-    //         &Statement::equal(
-    //             ValueRef::Key(AnchoredKey::from((SELF, KEY_TYPE))),
-    //             ValueRef::Literal(Value::from(PodType::Main)),
-    //         )
-    //         .to_fields(params),
-    //     ),
-    // );
-    // builder.connect_flattenable(type_statement, &expected_type_statement);
-
-    // 3. check that all `input_statements` of type `ValueOf` with origin=SELF have unique keys
-    // (no duplicates).  We do this in the verification of NewEntry operation.
     // 5. Verify input statements
     for (i, (st, op)) in izip!(&main_pod.input_statements, &main_pod.operations).enumerate() {
         let prev_statements = &statements[..input_statements_offset + i];
@@ -1815,7 +1734,6 @@ pub struct MainPodVerifyTarget {
     params: Params,
     vds_root: HashOutTarget,
     vd_mt_proofs: Vec<MerkleClaimAndProofTarget>,
-    // signed_pods: Vec<SignedPodVerifyTarget>,
     input_pods_self_statements: Vec<Vec<StatementTarget>>,
     // The KEY_TYPE statement must be the first public one
     input_statements: Vec<StatementTarget>,
@@ -1836,9 +1754,6 @@ impl MainPodVerifyTarget {
             vd_mt_proofs: (0..params.max_input_pods)
                 .map(|_| MerkleClaimAndProofTarget::new_virtual(params.max_depth_mt_vds, builder))
                 .collect(),
-            // signed_pods: (0..params.max_input_signed_pods)
-            //     .map(|_| SignedPodVerifyTarget::new_virtual(params, builder))
-            //     .collect(),
             input_pods_self_statements: (0..params.max_input_pods)
                 .map(|_| {
                     (0..params.max_input_pods_public_statements)
@@ -1896,7 +1811,6 @@ pub struct MainPodVerifyInput {
     /// the RecursiveCircuit, we don't have access to the used verifier_datas.
     /// The bool is used as `enabled` and will be false for intro pods.
     pub vd_mt_proofs: Vec<(bool, MerkleClaimAndProof)>,
-    // pub signed_pods: Vec<SignedPod>,
     pub input_pods_pub_self_statements: Vec<Vec<Statement>>,
     pub statements: Vec<mainpod::Statement>,
     pub operations: Vec<mainpod::Operation>,
@@ -2116,8 +2030,8 @@ mod tests {
         dict,
         frontend::{self, literal, CustomPredicateBatchBuilder, StatementTmplBuilder},
         middleware::{
-            hash_values, AnchoredKey, Hash, Key, OperationType, Predicate, RawValue,
-            StatementArg, StatementTmpl, StatementTmplArg, Wildcard,
+            hash_values, AnchoredKey, Hash, Key, OperationType, Predicate, RawValue, StatementArg,
+            StatementTmpl, StatementTmplArg, Wildcard,
         },
     };
 
@@ -2224,8 +2138,6 @@ mod tests {
             &[],
             &[],
         )?;
-        // let max_aux_entry_len = max_operation_aux_entry_len(&params);
-        // let aux = builder.add_virtual_targets(1 + max_aux_entry_len);
 
         verify_operation_circuit(
             &params,
@@ -2411,25 +2323,6 @@ mod tests {
         let prev_statements = vec![Statement::None.into()];
         operation_verify(st, op, prev_statements, Aux::default())
     }
-
-    // TODO: Delete
-    // #[test]
-    // fn test_operation_verify_newentry() -> Result<()> {
-    //     let st1: mainpod::Statement =
-    //         Statement::equal(AnchoredKey::from((SELF, "hello")), Value::from(55)).into();
-    //     let st2: mainpod::Statement = Statement::equal(
-    //         AnchoredKey::from((PodId(RawValue::from(75).into()), "hello")),
-    //         Value::from(55),
-    //     )
-    //     .into();
-    //     let prev_statements = vec![st2];
-    //     let op = mainpod::Operation(
-    //         OperationType::Native(NativeOperation::NewEntry),
-    //         vec![],
-    //         OperationAux::None,
-    //     );
-    //     operation_verify(st1, op, prev_statements, vec![], vec![], vec![])
-    // }
 
     #[test]
     fn test_operation_verify_copy() -> Result<()> {

@@ -3,9 +3,8 @@ use std::fmt;
 use crate::{
     frontend::SignedDict,
     middleware::{
-        containers::Dictionary, root_key_to_ak, CustomPredicateRef,
-        NativeOperation, OperationAux, OperationType, Signature, Statement, TypedValue, Value,
-        ValueRef,
+        containers::Dictionary, root_key_to_ak, CustomPredicateRef, NativeOperation, OperationAux,
+        OperationType, Signature, Statement, TypedValue, Value, ValueRef,
     },
 };
 
@@ -86,17 +85,6 @@ impl From<(&SignedDict, &str)> for OperationArg {
         OperationArg::from((&signed_dict.dict, key))
     }
 }
-
-// TODO:
-// impl From<(&MainPod, &str)> for OperationArg {
-//     fn from((pod, key): (&MainPod, &str)) -> Self {
-//         // TODO: TryFrom.
-//         let value = pod
-//             .get(key)
-//             .unwrap_or_else(|| panic!("Key {} is not present in POD: {}", key, pod));
-//         Self::Statement(Statement::equal(AnchoredKey::from((pod.id(), key)), value))
-//     }
-// }
 
 impl From<Statement> for OperationArg {
     fn from(s: Statement) -> Self {
@@ -196,13 +184,6 @@ macro_rules! op_impl_st {
 }
 
 impl Operation {
-    // pub fn new_entry(a1: impl Into<String>, a2: impl Into<Value>) -> Self {
-    //     Self(
-    //         OperationType::Native(NativeOperation::NewEntry),
-    //         vec![OperationArg::Entry(a1.into(), a2.into())],
-    //         OperationAux::None,
-    //     )
-    // }
     op_impl_oa!(eq, EqualFromEntries, 2);
     op_impl_oa!(ne, NotEqualFromEntries, 2);
     op_impl_oa!(gt_eq, GtEqFromEntries, 2);

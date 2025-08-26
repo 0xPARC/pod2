@@ -54,8 +54,6 @@ pub fn zu_kyc_pod_builder(
         Value::from(Set::new(params.max_depth_mt_containers, sanctions_values).unwrap());
 
     let mut kyc = MainPodBuilder::new(params, vd_set);
-    // kyc.add_signed_pod(gov_id);
-    // kyc.add_signed_pod(pay_stub);
     kyc.pub_op(Operation::dict_signed_by(&gov_id))?;
     kyc.pub_op(Operation::dict_signed_by(&pay_stub))?;
 
@@ -69,14 +67,6 @@ pub fn zu_kyc_pod_builder(
         (pay_stub, "socialSecurityNumber"),
     ))?;
     kyc.pub_op(Operation::eq((pay_stub, "startDate"), now_minus_1y))?;
-    // kyc.pub_op(Operation::eq(
-    //     (gov_id, "_signer"),
-    //     gov_id.get("_signer").unwrap(),
-    // ))?;
-    // kyc.pub_op(Operation::eq(
-    //     (pay_stub, "_signer"),
-    //     pay_stub.get("_signer").unwrap(),
-    // ))?;
 
     Ok(kyc)
 }
@@ -278,17 +268,7 @@ pub fn great_boy_pod_builder(
     }
 
     for good_boy_idx in 0..2 {
-        // Type check
-        // great_boy.pub_op(Operation::eq(
-        //     (friend_pods[good_boy_idx], KEY_TYPE),
-        //     PodType::Signed as i64,
-        // ))?;
         for issuer_idx in 0..2 {
-            // Type check
-            // great_boy.pub_op(Operation::eq(
-            //     (good_boy_pods[good_boy_idx * 2 + issuer_idx], KEY_TYPE),
-            //     PodType::Signed as i64,
-            // ))?;
             // Each good boy POD comes from a valid issuer
             great_boy.pub_op(Operation::set_contains(
                 good_boy_issuers,
@@ -398,7 +378,7 @@ pub fn tickets_sign_pod_builder(params: &Params) -> SignedDictBuilder {
     builder.insert("eventId", 123);
     builder.insert("productId", 456);
     // Removed temporarily to make the example fit in 8 entries.
-    //builder.insert("attendeeName", "John Doe");
+    // builder.insert("attendeeName", "John Doe");
     builder.insert("attendeeEmail", "john.doe@example.com");
     builder.insert("attendeePublicKey", TICKET_OWNER_SECRET_KEY.public_key());
     builder.insert("isConsumed", true);

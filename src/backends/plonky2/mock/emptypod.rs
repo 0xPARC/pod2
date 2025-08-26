@@ -27,13 +27,6 @@ fn empty_statement() -> Statement {
     )
 }
 
-// fn type_statement() -> Statement {
-//     Statement::equal(
-//         AnchoredKey::from((SELF, KEY_TYPE)),
-//         Value::from(PodType::Empty),
-//     )
-// }
-
 impl MockEmptyPod {
     pub fn new_boxed(params: &Params, vd_set: VDSet) -> Box<dyn Pod> {
         let statements = [mainpod::Statement::from(empty_statement())];

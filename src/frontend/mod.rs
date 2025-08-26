@@ -91,17 +91,6 @@ impl fmt::Display for SignedDict {
 }
 
 impl SignedDict {
-    // pub fn new(pod: Box<dyn middleware::Pod>) -> Self {
-    //     let kvs = pod
-    //         .kvs()
-    //         .into_iter()
-    //         .map(|(AnchoredKey { key, .. }, v)| (key, v))
-    //         .collect();
-    //     Self { pod, kvs }
-    // }
-    // pub fn id(&self) -> PodId {
-    //     self.pod.id()
-    // }
     pub fn verify(&self) -> Result<()> {
         self.signature
             .verify(self.public_key, RawValue::from(self.dict.commitment()))
@@ -147,10 +136,6 @@ pub struct MainPodBuilder {
 impl fmt::Display for MainPodBuilder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "MainPod:")?;
-        // writeln!(f, "  input_signed_pods:")?;
-        // for in_pod in &self.input_signed_pods {
-        //     writeln!(f, "    - {}", in_pod.id())?;
-        // }
         writeln!(f, "  input_main_pods:")?;
         for in_pod in &self.input_pods {
             writeln!(f, "    - {}", in_pod.id())?;
@@ -170,7 +155,6 @@ impl MainPodBuilder {
         Self {
             params: params.clone(),
             vd_set: vd_set.clone(),
-            // input_signed_pods: Vec::new(),
             input_pods: Vec::new(),
             statements: Vec::new(),
             operations: Vec::new(),
@@ -178,9 +162,6 @@ impl MainPodBuilder {
             dict_contains: Vec::new(),
         }
     }
-    // pub fn add_signed_pod(&mut self, pod: &SignedDict) {
-    //     self.input_signed_pods.push(pod.clone());
-    // }
     pub fn add_pod(&mut self, pod: MainPod) {
         self.input_pods.push(pod);
     }
@@ -398,9 +379,6 @@ impl MainPodBuilder {
                 let native_arg_error = move || Error::op_invalid_args(format!("{o:?}"));
                 match (o, &op.1.as_slice(), &op.2) {
                     (None, &[], _) => Statement::None,
-                    // (NewEntry, &[OperationArg::Entry(k, v)]) => {
-                    //     Statement::equal(AnchoredKey::from((SELF, k.as_str())), v.clone())
-                    // }
                     (EqualFromEntries, &[a1, a2], _) => {
                         let (r1, v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;
@@ -636,41 +614,6 @@ impl MainPodBuilder {
         Ok(self.statements[self.statements.len() - 1].clone())
     }
 
-    // /// Convenience method for introducing public constants.
-    // pub fn pub_literal(&mut self, v: impl Into<Value>) -> Result<Statement> {
-    //     self.literal(true, v.into())
-    // }
-
-    // /// Convenience method for introducing private constants.
-    // pub fn priv_literal(&mut self, v: impl Into<Value>) -> Result<Statement> {
-    //     self.literal(false, v.into())
-    // }
-
-    // TODO: Remove because we have literals in the args now
-    // fn literal(&mut self, public: bool, value: Value) -> Result<Statement> {
-    //     todo!()
-    //     // let public_value = (public, value);
-    //     // if let Some(key) = self.literals.get(&public_value) {
-    //     //     Ok(Statement::equal(
-    //     //         AnchoredKey::new(SELF, key.clone()),
-    //     //         public_value.1,
-    //     //     ))
-    //     // } else {
-    //     //     let key = format!("c{}", self.const_cnt);
-    //     //     self.literals
-    //     //         .insert(public_value.clone(), Key::new(key.clone()));
-    //     //     self.const_cnt += 1;
-    //     //     self.op(
-    //     //         public,
-    //     //         Operation(
-    //     //             OperationType::Native(NativeOperation::NewEntry),
-    //     //             vec![OperationArg::Entry(key.clone(), public_value.1)],
-    //     //             OperationAux::None,
-    //     //         ),
-    //     //     )
-    //     // }
-    // }
-
     pub fn reveal(&mut self, st: &Statement) {
         self.public_statements.push(st.clone());
     }
@@ -688,60 +631,13 @@ impl MainPodBuilder {
         let (statements, operations, public_statements) = compiler.compile(inputs, &self.params)?;
 
         let inputs = MainPodInputs {
-            // signed_pods: &self
-            //     .input_signed_pods
-            //     .iter()
-            //     .map(|p| p.pod.as_ref())
-            //     .collect_vec(),
             pods: &self.input_pods.iter().map(|p| p.pod.as_ref()).collect_vec(),
             statements: &statements,
             operations: &operations,
             public_statements: &public_statements,
             vd_set: self.vd_set.clone(),
         };
-        let pod = prover.prove(&self.params, &self.vd_set, inputs)?;
-
-        // Gather public statements, making sure to inject the type
-        // information specified by the backend.
-        // let pod_id = pod.id();
-        // let type_key_hash = hash_str(KEY_TYPE);
-        // let type_statement = pod
-        //    .pub_statements()
-        //    .into_iter()
-        //    .find_map(|s| match s.as_entry() {
-        //        Some((AnchoredKey { root: id, key }, _))
-        //            if id == &pod_id && key.hash() == type_key_hash =>
-        //        {
-        //            Some(s)
-        //        }
-        //        _ => None,
-        //    })
-        //    .ok_or(Error::custom(format!(
-        //        // TODO use a specific Error
-        //        "Missing POD type information in POD: {:?}",
-        //        pod
-        //    )))?;
-        // Replace instances of `SELF` with the POD ID for consistency
-        // with `pub_statements` method.
-        // let public_statements = self
-        //     .public_statements
-        //     .clone()
-        //     .into_iter()
-        //     .map(|s| {
-        //         let s_type = s.predicate();
-        //         let s_args = s
-        //             .args()
-        //             .into_iter()
-        //             // .map(|arg| match arg {
-        //             //     StatementArg::Key(AnchoredKey { root: id, key }) if id == SELF => {
-        //             //         StatementArg::Key(AnchoredKey::new(pod_id, key))
-        //             //     }
-        //             //     _ => arg,
-        //             // })
-        //             .collect();
-        //         Statement::from_args(s_type, s_args).expect("valid arguments")
-        //     })
-        //     .collect();
+        let pod = prover.prove(&self.params, inputs)?;
 
         Ok(MainPod {
             pod,
@@ -798,8 +694,6 @@ impl MainPod {
 }
 
 struct MainPodCompilerInputs<'a> {
-    // pub signed_pods: &'a [Box<dyn middleware::SignedPod>],
-    // pub main_pods: &'a [Box<dyn middleware::MainPod>],
     pub statements: &'a [Statement],
     pub operations: &'a [Operation],
     pub public_statements: &'a [Statement],
@@ -877,8 +771,6 @@ impl MainPodCompiler {
         Vec<Statement>, // public statements
     )> {
         let MainPodCompilerInputs {
-            // signed_pods: _,
-            // main_pods: _,
             statements,
             operations,
             public_statements,
@@ -901,18 +793,13 @@ pub mod tests {
             mock::mainpod::MockProver, primitives::ec::schnorr::SecretKey, signer::Signer,
         },
         dict,
-        // examples::{
-        //     attest_eth_friend, custom::eth_dos_request, great_boy_pod_full_flow,
-        //     tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_pod_request,
-        //     zu_kyc_sign_dict_builders, EthDosHelper, MOCK_VD_SET,
-        // },
         examples::{
             attest_eth_friend, custom::eth_dos_request, great_boy_pod_full_flow,
             tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_pod_request,
             zu_kyc_sign_dict_builders, EthDosHelper, MOCK_VD_SET,
         },
         middleware::{
-            containers::{Array, Dictionary, Set},
+            containers::{Array, Set},
             Signer as _, Value,
         },
     };
@@ -924,28 +811,6 @@ pub mod tests {
             .for_each(|(fes, s)| assert_eq!(fes, s));
         Ok(())
     }
-
-    // TODO: Delete
-    // Check that frontend key-values agree with those embedded in a
-    // SignedPod.
-    // fn check_kvs(pod: &SignedDict) -> Result<()> {
-    //     let kvs = pod.kvs.clone().into_iter().collect::<HashMap<_, _>>();
-    //     let embedded_kvs = pod
-    //         .pod
-    //         .kvs()
-    //         .into_iter()
-    //         .map(|(middleware::AnchoredKey { key, .. }, v)| (key, v))
-    //         .collect::<HashMap<_, _>>();
-
-    //     if kvs == embedded_kvs {
-    //         Ok(())
-    //     } else {
-    //         Err(Error::custom(format!(
-    //             "KVs {:?} do not agree with those embedded in the POD: {:?}",
-    //             kvs, embedded_kvs
-    //         )))
-    //     }
-    // }
 
     #[test]
     fn test_front_zu_kyc() -> Result<()> {
@@ -1083,11 +948,6 @@ pub mod tests {
             .pub_op(Operation::dict_signed_by(&signed_dict))
             .unwrap();
 
-        //let op_val1 = Operation{
-        //    OperationType::Native(NativeOperation::CopyStatement),
-        //    signed_pod.
-        //}
-
         let op_eq1 = Operation(
             OperationType::Native(NativeOperation::EqualFromEntries),
             vec![
@@ -1154,13 +1014,11 @@ pub mod tests {
         let vd_set = &*MOCK_VD_SET;
         let mut builder = SignedDictBuilder::new(&params);
 
-        let mut my_dict_kvs: HashMap<Key, Value> = HashMap::new();
-        my_dict_kvs.insert(Key::from("a"), Value::from(1));
-        my_dict_kvs.insert(Key::from("b"), Value::from(2));
-        my_dict_kvs.insert(Key::from("c"), Value::from(3));
-        //        let my_dict_as_mt = MerkleTree::new(5, &my_dict_kvs).unwrap();
-        //        let dict = Dictionary { mt: my_dict_as_mt };
-        let dict = Dictionary::new(params.max_depth_mt_containers, my_dict_kvs)?;
+        let dict = dict!(params.max_depth_mt_containers, {
+            "a" => 1,
+            "b" => 2,
+            "c" => 3,
+        })?;
         let dict_root = Value::from(dict.clone());
         builder.insert("dict", dict_root);
 
@@ -1453,34 +1311,6 @@ pub mod tests {
 
         Ok(())
     }
-
-    // TODO: Delete, we no longer have NewEntry
-    // #[should_panic]
-    // #[test]
-    // fn test_reject_duplicate_new_entry() {
-    //     // try to insert the same key multiple times
-    //     // right now this is not caught when you build the pod,
-    //     // but it is caught on verify
-    //     env_logger::init();
-
-    //     let params = Params::default();
-    //     let vd_set = &*MOCK_VD_SET;
-    //     let mut builder = MainPodBuilder::new(&params, vd_set);
-    //     let st = Statement::equal(AnchoredKey::from((SELF, "a")), Value::from(3));
-    //     let op_new_entry = Operation(
-    //         OperationType::Native(NativeOperation::NewEntry),
-    //         vec![],
-    //         OperationAux::None,
-    //     );
-    //     builder.insert(false, (st, op_new_entry.clone())).unwrap();
-
-    //     let st = Statement::equal(AnchoredKey::from((SELF, "a")), Value::from(28));
-    //     builder.insert(false, (st, op_new_entry.clone())).unwrap();
-
-    //     let prover = MockProver {};
-    //     let pod = builder.prove(&prover).unwrap();
-    //     pod.pod.verify().unwrap();
-    // }
 
     #[should_panic]
     #[test]

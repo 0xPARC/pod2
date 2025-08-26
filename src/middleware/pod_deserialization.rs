@@ -42,14 +42,6 @@ pub fn deserialize_pod(
     deserialize_fn(params, data, vd_set, id)
 }
 
-// pub fn deserialize_signed_pod(
-//     pod_type: usize,
-//     id: PodId,
-//     data: serde_json::Value,
-// ) -> Result<Box<dyn Pod>, BackendError> {
-//     backend::deserialize_signed_pod(pod_type, id, data)
-// }
-
 #[cfg(feature = "backend_plonky2")]
 mod backend {
     use super::*;
@@ -57,7 +49,6 @@ mod backend {
         emptypod::EmptyPod,
         mainpod::MainPod,
         mock::{emptypod::MockEmptyPod, mainpod::MockMainPod},
-        // signedpod::SignedPod,
     };
 
     pub(super) fn deserializers_default() -> Mutex<HashMap<usize, DeserializeFn>> {
@@ -68,19 +59,4 @@ mod backend {
         map.insert(PodType::MockMain as usize, MockMainPod::deserialize_data);
         Mutex::new(map)
     }
-
-    // pub(super) fn deserialize_signed_pod(
-    //     pod_type: usize,
-    //     id: PodId,
-    //     data: serde_json::Value,
-    // ) -> Result<Box<dyn Pod>, BackendError> {
-    //     if pod_type == PodType::Signed as usize {
-    //         SignedPod::deserialize(id, data)
-    //     } else {
-    //         Err(BackendError::custom(format!(
-    //             "unexpected pod_type={} for deserialize_signed_pod",
-    //             pod_type
-    //         )))
-    //     }
-    // }
 }

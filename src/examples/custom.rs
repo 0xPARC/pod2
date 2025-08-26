@@ -8,17 +8,6 @@ use crate::{
     middleware::{CustomPredicateBatch, Params},
 };
 
-// macro_rules! render {
-//     ($tmpl: expr, $($arg:tt)*) => {{
-//         format!(
-//             $tmpl,
-//             KEY_TYPE = Value::from(KEY_TYPE),
-//             KEY_SIGNER = Value::from(KEY_SIGNER),
-//             $($arg)*
-//         )
-//     }};
-// }
-
 /// Instantiates an ETHDos batch
 pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
     let input = r#"

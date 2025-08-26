@@ -7,28 +7,6 @@ use crate::{
     middleware::{deserialize_pod, Hash, Params, Statement, VDSet},
 };
 
-// #[derive(Serialize, Deserialize, JsonSchema)]
-// pub enum SignedPodType {
-//     Signed,
-//     MockSigned,
-// }
-
-// #[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, PartialEq)]
-// #[serde(rename_all = "camelCase")]
-// #[schemars(rename = "SignedDict")]
-// pub struct SerializedSignedDict {
-//     pod_type: (usize, String),
-//     id: PodId,
-//     entries: HashMap<Key, Value>,
-//     data: serde_json::Value,
-// }
-//
-// impl SerializedSignedDict {
-//     pub fn id(&self) -> PodId {
-//         self.id
-//     }
-// }
-
 #[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[schemars(rename = "MainPod")]
@@ -46,29 +24,6 @@ impl SerializedMainPod {
         self.id
     }
 }
-
-// impl From<SignedDict> for SerializedSignedDict {
-//     fn from(pod: SignedDict) -> Self {
-//         let (pod_type, pod_type_name_str) = pod.pod.pod_type();
-//         let data = pod.pod.serialize_data();
-//         SerializedSignedDict {
-//             pod_type: (pod_type, pod_type_name_str.to_string()),
-//             id: pod.id(),
-//             entries: pod.kvs().clone(),
-//             data,
-//         }
-//     }
-// }
-//
-// impl TryFrom<SerializedSignedDict> for SignedDict {
-//     type Error = Error;
-//
-//     fn try_from(serialized: SerializedSignedDict) -> Result<Self, Self::Error> {
-//         let pod = deserialize_signed_pod(serialized.pod_type.0, serialized.id, serialized.data)?;
-//         let kvs = pod.kvs().into_iter().map(|(ak, v)| (ak.key, v)).collect();
-//         Ok(Self { pod, kvs })
-//     }
-// }
 
 impl From<MainPod> for SerializedMainPod {
     fn from(pod: MainPod) -> Self {
@@ -184,8 +139,7 @@ mod tests {
         }
     }
 
-    // TODO: Rename to signed_dict_builder
-    fn signed_pod_builder() -> SignedDictBuilder {
+    fn signed_dict_builder() -> SignedDictBuilder {
         let params = &Params::default();
         let mut builder = SignedDictBuilder::new(params);
         builder.insert("name", "test");
@@ -232,7 +186,7 @@ mod tests {
 
     #[test]
     fn test_signed_dict_serialization() {
-        let builder = signed_pod_builder();
+        let builder = signed_dict_builder();
         let signer = Signer(SecretKey(1u32.into()));
         let signed_dict = builder.sign(&signer).unwrap();
 
@@ -361,7 +315,7 @@ mod tests {
         let signeddict_schema = schema_for!(SignedDict);
 
         let kyc_pod = build_mock_zukyc_pod().unwrap();
-        let signed_pod = signed_pod_builder()
+        let signed_pod = signed_dict_builder()
             .sign(&Signer(SecretKey(1u32.into())))
             .unwrap();
         let ethdos_pod = build_ethdos_pod().unwrap();

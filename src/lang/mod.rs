@@ -32,9 +32,8 @@ mod tests {
         backends::plonky2::primitives::ec::schnorr::SecretKey,
         lang::error::ProcessorError,
         middleware::{
-            CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key,
-            NativePredicate, Params, Predicate, RawValue, StatementTmpl, StatementTmplArg,
-            Value, Wildcard,
+            CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key, NativePredicate,
+            Params, Predicate, RawValue, StatementTmpl, StatementTmplArg, Value, Wildcard,
         },
     };
 
@@ -484,7 +483,6 @@ mod tests {
         let params = Params {
             max_input_pods: 3,
             max_statements: 31,
-            max_signed_pod_values: 8,
             max_public_statements: 10,
             max_statement_args: 6,
             max_operation_args: 5,

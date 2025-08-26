@@ -120,12 +120,6 @@ impl From<SecretKey> for TypedValue {
     }
 }
 
-// impl From<Hash> for TypedValue {
-//     fn from(id: Hash) -> Self {
-//         TypedValue::PodId(id)
-//     }
-// }
-
 impl From<Set> for TypedValue {
     fn from(s: Set) -> Self {
         TypedValue::Set(s)
@@ -149,12 +143,6 @@ impl From<RawValue> for TypedValue {
         TypedValue::Raw(v)
     }
 }
-
-// impl From<PodType> for TypedValue {
-//     fn from(t: PodType) -> Self {
-//         TypedValue::from(t as i64)
-//     }
-// }
 
 impl TryFrom<&TypedValue> for i64 {
     type Error = Error;
@@ -186,20 +174,6 @@ impl TryFrom<&TypedValue> for Key {
         Ok(Key::new(String::try_from(tv)?))
     }
 }
-
-// impl TryFrom<&TypedValue> for Hash {
-//     type Error = Error;
-//     fn try_from(v: &TypedValue) -> Result<Self> {
-//         match v {
-//             TypedValue::PodId(id) => Ok(*id),
-//             TypedValue::Raw(v) => Ok(Hash(Hash(v.0))),
-//             _ => Err(Error::custom(format!(
-//                 "Value {} cannot be converted to a PodId.",
-//                 v
-//             ))),
-//         }
-//     }
-// }
 
 impl TryFrom<&TypedValue> for PublicKey {
     type Error = Error;
@@ -246,17 +220,15 @@ impl fmt::Display for TypedValue {
                 write!(f, "]")
             }
             TypedValue::Dictionary(d) => {
-                // TODO: Revert
-                write!(f, "dict:{}", d.commitment())
-                // write!(f, "{{ ")?;
-                // let kvs: Vec<_> = d.kvs().iter().sorted_by_key(|(k, _)| k.name()).collect();
-                // for (i, (k, v)) in kvs.iter().enumerate() {
-                //     if i > 0 {
-                //         write!(f, ", ")?;
-                //     }
-                //     write!(f, "{}: {}", k, v)?;
-                // }
-                // write!(f, " }}")
+                write!(f, "{{ ")?;
+                let kvs: Vec<_> = d.kvs().iter().sorted_by_key(|(k, _)| k.name()).collect();
+                for (i, (k, v)) in kvs.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}: {}", k, v)?;
+                }
+                write!(f, " }}")
             }
             TypedValue::Set(s) => {
                 write!(f, "#[")?;
@@ -271,13 +243,6 @@ impl fmt::Display for TypedValue {
             }
             TypedValue::PublicKey(p) => write!(f, "PublicKey({})", p),
             TypedValue::SecretKey(p) => write!(f, "SecretKey({})", p),
-            // TypedValue::PodId(p) => {
-            //     if *p == SELF {
-            //         write!(f, "SELF")
-            //     } else {
-            //         write!(f, "0x{}", p.0.encode_hex::<String>())
-            //     }
-            // }
             TypedValue::Raw(r) => {
                 write!(f, "Raw(0x{})", r.encode_hex::<String>())
             }
@@ -297,7 +262,6 @@ impl From<&TypedValue> for RawValue {
             TypedValue::Raw(v) => *v,
             TypedValue::PublicKey(p) => RawValue::from(hash_fields(&p.as_fields())),
             TypedValue::SecretKey(sk) => RawValue::from(hash_fields(&sk.to_limbs())),
-            // TypedValue::PodId(id) => RawValue::from(id.0),
         }
     }
 }
@@ -594,26 +558,6 @@ where
     }
 }
 
-// impl fmt::Display for Hash {
-//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         if *self == SELF {
-//             write!(f, "self")
-//         } else if self.0 == EMPTY_HASH {
-//             write!(f, "null")
-//         } else if f.alternate() {
-//             write!(f, "{:#}", self.0)
-//         } else {
-//             write!(f, "{}", self.0)
-//         }
-//     }
-// }
-//
-// impl From<&Value> for Hash {
-//     fn from(v: &Value) -> Self {
-//         Self(v.raw.0)
-//     }
-// }
-
 #[derive(Clone, Debug, Eq)]
 pub struct Key {
     name: String,
@@ -768,15 +712,6 @@ where
     }
 }
 
-// #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
-// pub struct Hash(pub Hash);
-//
-// impl ToFields for Hash {
-//     fn to_fields(&self, params: &Params) -> Vec<F> {
-//         self.0.to_fields(params)
-//     }
-// }
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, FromRepr, Serialize, Deserialize, JsonSchema)]
 pub enum PodType {
     // Signed = 1,
@@ -802,12 +737,9 @@ impl fmt::Display for PodType {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Hash)]
 #[serde(rename_all = "camelCase")]
 pub struct Params {
-    // pub max_input_signed_pods: usize,
     pub max_input_pods: usize,
     pub max_input_pods_public_statements: usize,
     pub max_statements: usize,
-    // TODO: Delete
-    pub max_signed_pod_values: usize,
     pub max_public_statements: usize,
     pub max_operation_args: usize,
     // max number of custom predicates batches that a MainPod can use
@@ -850,11 +782,9 @@ pub struct Params {
 impl Default for Params {
     fn default() -> Self {
         Self {
-            // max_input_signed_pods: 3,
             max_input_pods: 2,
             max_input_pods_public_statements: 10,
             max_statements: 40,
-            max_signed_pod_values: 8,
             max_public_statements: 10,
             num_public_statements_hash: 16,
             max_statement_args: 5,
@@ -1069,17 +999,11 @@ pub struct MainPodInputs<'a> {
     /// Statements that need to be made public (they can come from input pods or input
     /// statements)
     pub public_statements: &'a [Statement],
-    // TODO: REMOVE THIS
     pub vd_set: VDSet,
 }
 
 pub trait MainPodProver {
-    fn prove(
-        &self,
-        params: &Params,
-        vd_set: &VDSet,
-        inputs: MainPodInputs,
-    ) -> Result<Box<dyn Pod>, BackendError>;
+    fn prove(&self, params: &Params, inputs: MainPodInputs) -> Result<Box<dyn Pod>, BackendError>;
 }
 
 pub trait ToFields {

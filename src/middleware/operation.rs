@@ -69,29 +69,27 @@ impl ToFields for OperationType {
     }
 }
 
-// TODO: Shift values to remove gaps
 #[derive(Clone, Copy, Debug, PartialEq, Eq, std::hash::Hash, Serialize, Deserialize)]
 pub enum NativeOperation {
     None = 0,
-    // NewEntry = 1,
-    CopyStatement = 2,
-    EqualFromEntries = 3,
-    NotEqualFromEntries = 4,
-    LtEqFromEntries = 5,
-    LtFromEntries = 6,
-    TransitiveEqualFromStatements = 7,
-    LtToNotEqual = 8,
-    ContainsFromEntries = 9,
-    NotContainsFromEntries = 10,
-    SumOf = 11,
-    ProductOf = 12,
-    MaxOf = 13,
-    HashOf = 14,
-    PublicKeyOf = 15,
-    SignedBy = 16,
-    ContainerInsertFromEntries = 17,
-    ContainerUpdateFromEntries = 18,
-    ContainerDeleteFromEntries = 19,
+    CopyStatement = 1,
+    EqualFromEntries = 2,
+    NotEqualFromEntries = 3,
+    LtEqFromEntries = 4,
+    LtFromEntries = 5,
+    TransitiveEqualFromStatements = 6,
+    LtToNotEqual = 7,
+    ContainsFromEntries = 8,
+    NotContainsFromEntries = 9,
+    SumOf = 10,
+    ProductOf = 11,
+    MaxOf = 12,
+    HashOf = 13,
+    PublicKeyOf = 14,
+    SignedBy = 15,
+    ContainerInsertFromEntries = 16,
+    ContainerUpdateFromEntries = 17,
+    ContainerDeleteFromEntries = 18,
 
     // Syntactic sugar operations.  These operations are not supported by the backend.  The
     // frontend compiler is responsible of translating these operations into the operations above.
@@ -131,7 +129,6 @@ impl OperationType {
         match self {
             OperationType::Native(native_op) => match native_op {
                 NativeOperation::None => Some(Predicate::Native(NativePredicate::None)),
-                // NativeOperation::NewEntry => Some(Predicate::Native(NativePredicate::Equal)),
                 NativeOperation::CopyStatement => None,
                 NativeOperation::EqualFromEntries => {
                     Some(Predicate::Native(NativePredicate::Equal))
@@ -179,7 +176,6 @@ impl OperationType {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Operation {
     None,
-    // NewEntry,
     CopyStatement(Statement),
     EqualFromEntries(Statement, Statement),
     NotEqualFromEntries(Statement, Statement),
@@ -249,7 +245,6 @@ impl Operation {
         use NativeOperation::*;
         match self {
             Self::None => OT::Native(None),
-            // Self::NewEntry => OT::Native(NewEntry),
             Self::CopyStatement(_) => OT::Native(CopyStatement),
             Self::EqualFromEntries(_, _) => OT::Native(EqualFromEntries),
             Self::NotEqualFromEntries(_, _) => OT::Native(NotEqualFromEntries),
@@ -279,7 +274,6 @@ impl Operation {
     pub fn args(&self) -> Vec<Statement> {
         match self.clone() {
             Self::None => vec![],
-            // Self::NewEntry => vec![],
             Self::CopyStatement(s) => vec![s],
             Self::EqualFromEntries(s1, s2) => vec![s1, s2],
             Self::NotEqualFromEntries(s1, s2) => vec![s1, s2],
@@ -318,7 +312,6 @@ impl Operation {
         Ok(match op_code {
             OperationType::Native(o) => match (o, &args, aux.clone()) {
                 (NO::None, &[], OA::None) => Self::None,
-                // (NO::NewEntry, &[], OA::None) => Self::NewEntry,
                 (NO::CopyStatement, &[s], OA::None) => Self::CopyStatement(s.clone()),
                 (NO::EqualFromEntries, &[s1, s2], OA::None) => {
                     Self::EqualFromEntries(s1.clone(), s2.clone())
@@ -440,9 +433,6 @@ impl Operation {
         };
         let b = match (self, output_statement) {
             (Self::None, None) => true,
-            // (Self::NewEntry, Equal(ValueRef::Key(AnchoredKey { root: pod_id, .. }), _)) => {
-            //     pod_id == &SELF
-            // }
             (Self::CopyStatement(s1), s2) => s1 == s2,
             (Self::EqualFromEntries(s1, s2), Equal(v3, v4)) => val(v3, s1)? == val(v4, s2)?,
             (Self::NotEqualFromEntries(s1, s2), NotEqual(v3, v4)) => val(v3, s1)? != val(v4, s2)?,
@@ -801,10 +791,7 @@ mod tests {
             },
             signer::Signer,
         },
-        middleware::{
-            hash_value, Error, Operation, Params, Result, Signer as _,
-            Statement, Value,
-        },
+        middleware::{hash_value, Error, Operation, Params, Result, Signer as _, Statement, Value},
     };
 
     #[test]

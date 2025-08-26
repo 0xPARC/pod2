@@ -342,26 +342,7 @@ pub(crate) fn layout_statements(
     // predicate statements
     statements.push(middleware::Statement::None.into());
 
-    // Input signed pods region
-    // let dummy_signed_pod_box: Box<dyn Pod> = Box::new(SignedPod::dummy());
-    // let dummy_signed_pod = dummy_signed_pod_box.as_ref();
-    // assert!(inputs.signed_pods.len() <= params.max_input_signed_pods);
-    // for i in 0..params.max_input_signed_pods {
-    //     let pod = inputs.signed_pods.get(i).unwrap_or(&dummy_signed_pod);
-    //     let sts = pod.pub_statements();
-    //     assert!(sts.len() <= params.max_signed_pod_values);
-    //     for j in 0..params.max_signed_pod_values {
-    //         let mut st = sts
-    //             .get(j)
-    //             .unwrap_or(&middleware::Statement::None)
-    //             .clone()
-    //             .into();
-    //         pad_statement(params, &mut st);
-    //         statements.push(st);
-    //     }
-    // }
-
-    // Input main pods region
+    // Input pods region
     let empty_pod_box: Box<dyn Pod> = if mock || inputs.pods.len() == params.max_input_pods {
         // We mocking or we don't need padding so we skip creating an EmptyPod
         MockEmptyPod::new_boxed(params, inputs.vd_set.clone())
@@ -405,19 +386,6 @@ pub(crate) fn layout_statements(
 
     // Public statements
     assert!(inputs.public_statements.len() < params.max_public_statements);
-    // let pod_type = if mock {
-    //     PodType::MockMain
-    // } else {
-    //     PodType::Main
-    // };
-    // let mut type_st = middleware::Statement::Equal(
-    //     AnchoredKey::from((SELF, KEY_TYPE)).into(),
-    //     middleware::Value::from(pod_type).into(),
-    // )
-    // .into();
-    // pad_statement(params, &mut type_st);
-    // statements.push(type_st);
-
     for i in 0..params.max_public_statements {
         let mut st = inputs
             .public_statements
@@ -495,23 +463,7 @@ pub(crate) fn process_public_statements_operations(
 pub struct Prover {}
 
 impl MainPodProver for Prover {
-    fn prove(
-        &self,
-        params: &Params,
-        vd_set: &VDSet,
-        inputs: MainPodInputs,
-    ) -> Result<Box<dyn Pod>> {
-        // let signed_pods_input: Vec<SignedPod> = inputs
-        //     .signed_pods
-        //     .iter()
-        //     .map(|p| {
-        //         let p = (*p as &dyn Any)
-        //             .downcast_ref::<SignedPod>()
-        //             .expect("type SignedPod");
-        //         p.clone()
-        //     })
-        //     .collect_vec();
-
+    fn prove(&self, params: &Params, inputs: MainPodInputs) -> Result<Box<dyn Pod>> {
         // Pad input recursive pods with empty pods if necessary
         let empty_pod = if inputs.pods.len() == params.max_input_pods {
             // We don't need padding so we skip creating an EmptyPod
@@ -592,14 +544,14 @@ impl MainPodProver for Prover {
         let mut vd_mt_proofs = Vec::with_capacity(inputs.pods.len());
         for (pod, vd) in inputs.pods.iter().zip(&verifier_datas) {
             vd_mt_proofs.push(if pod.is_main() {
-                (true, vd_set.get_vds_proof(&vd)?)
+                (true, inputs.vd_set.get_vds_proof(&vd)?)
             } else {
                 // For intro pods we don't verify inclusion of their vk into the vd set, so we
                 // generate a dummy mt proof with expected root and value to pass some constraints
                 (
                     false,
                     MerkleClaimAndProof {
-                        root: vd_set.root(),
+                        root: inputs.vd_set.root(),
                         value: RawValue::from(pod.verifier_data_hash()),
                         ..MerkleClaimAndProof::empty()
                     },
@@ -610,7 +562,6 @@ impl MainPodProver for Prover {
         let input = MainPodVerifyInput {
             vds_set: inputs.vd_set.clone(),
             vd_mt_proofs,
-            // signed_pods: signed_pods_input,
             input_pods_pub_self_statements,
             statements: statements[statements.len() - params.max_statements..].to_vec(),
             operations,
@@ -926,8 +877,7 @@ pub mod tests {
     fn test_mini_0() {
         let params = middleware::Params {
             max_signed_by: 1,
-            max_input_pods: 1, // TODO: Failing
-            max_signed_pod_values: 6,
+            max_input_pods: 1,
             max_statements: 8,
             max_public_statements: 4,
             max_input_pods_public_statements: 10,
@@ -982,7 +932,6 @@ pub mod tests {
         let params = middleware::Params {
             max_signed_by: 0,
             max_input_pods: 0,
-            max_signed_pod_values: 0,
             max_statements: 2,
             max_public_statements: 1,
             max_input_pods_public_statements: 0,
@@ -1021,7 +970,6 @@ pub mod tests {
             max_input_pods: 0,
             max_input_pods_public_statements: 2,
             max_statements: 5,
-            max_signed_pod_values: 2,
             max_public_statements: 2,
             num_public_statements_hash: 4,
             max_statement_args: 4,
