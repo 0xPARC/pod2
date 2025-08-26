@@ -1,7 +1,7 @@
 use std::{array, iter, sync::Arc};
 
 use itertools::{izip, zip_eq, Itertools};
-use num::{BigUint, FromPrimitive, One, Signed};
+use num::{BigUint, One};
 use plonky2::{
     field::types::Field,
     hash::{
@@ -32,7 +32,7 @@ use crate::{
             mux_table::{MuxTableTarget, TableEntryTarget},
             // signedpod::{verify_signed_pod_circuit, SignedPodVerifyTarget},
         },
-        emptypod::{cache_get_standard_empty_pod_circuit_data, EmptyPod},
+        emptypod::EmptyPod,
         error::Result,
         mainpod::{self, pad_statement, SignedBy},
         primitives::{
@@ -51,14 +51,13 @@ use crate::{
             signature::{verify_signature_circuit, SignatureVerifyTarget},
         },
         recursion::{InnerCircuit, VerifiedProofTarget},
-        signer,
         // signedpod::SignedPod,
     },
     measure_gates_begin, measure_gates_end,
     middleware::{
-        AnchoredKey, CustomPredicate, CustomPredicateBatch, CustomPredicateRef, NativeOperation,
-        NativePredicate, Params, PredicatePrefix, RawValue, Statement, StatementArg, ToFields,
-        Value, ValueRef, F, HASH_SIZE, VALUE_SIZE,
+        CustomPredicate, CustomPredicateBatch, CustomPredicateRef, NativeOperation,
+        NativePredicate, Params, PredicatePrefix, RawValue, Statement, ToFields, Value, F,
+        HASH_SIZE,
     },
 };
 //
@@ -2094,6 +2093,7 @@ impl InnerCircuit for MainPodVerifyTarget {
 mod tests {
     use std::{iter, ops::Not};
 
+    use num::FromPrimitive;
     use plonky2::{
         field::{goldilocks_field::GoldilocksField, types::Field},
         hash::hash_types::HashOut,
@@ -2111,12 +2111,13 @@ mod tests {
                 ec::schnorr::SecretKey,
                 merkletree::{MerkleClaimAndProof, MerkleTree, MerkleTreeStateTransitionProof},
             },
+            signer,
         },
         dict,
         frontend::{self, literal, CustomPredicateBatchBuilder, StatementTmplBuilder},
         middleware::{
-            hash_str, hash_values, Hash, Key, OperationType, Predicate, RawValue, StatementTmpl,
-            StatementTmplArg, TypedValue, Wildcard,
+            hash_str, hash_values, AnchoredKey, Hash, Key, OperationType, Predicate, RawValue,
+            StatementArg, StatementTmpl, StatementTmplArg, TypedValue, Wildcard,
         },
     };
 

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 pub use serialization::SerializedMainPod;
 
 use crate::middleware::{
-    self, check_custom_pred, check_st_tmpl, containers::Dictionary, hash_op, hash_str, max_op,
+    self, check_custom_pred, check_st_tmpl, containers::Dictionary, hash_op, max_op,
     prod_op, sum_op, AnchoredKey, Hash, Key, MainPodInputs, MainPodProver, NativeOperation,
     OperationAux, OperationType, Params, PublicKey, RawValue, Signature, Signer, Statement,
     StatementArg, VDSet, Value, ValueRef,

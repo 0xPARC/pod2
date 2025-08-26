@@ -7,7 +7,7 @@ use crate::{
         mainpod::{self, calculate_statements_hash},
     },
     middleware::{
-        AnchoredKey, Hash, IntroPredicateRef, Params, Pod, PodType, Statement, VDSet, Value,
+        Hash, IntroPredicateRef, Params, Pod, PodType, Statement, VDSet,
         EMPTY_HASH,
     },
 };

@@ -1,10 +1,10 @@
 pub mod operation;
 use crate::middleware::PodType;
 pub mod statement;
-use std::{any::Any, iter, sync::Arc};
+use std::{iter, sync::Arc};
 
 use itertools::Itertools;
-use num_bigint::{BigUint, RandBigInt};
+use num_bigint::BigUint;
 pub use operation::*;
 use plonky2::{hash::poseidon::PoseidonHash, plonk::config::Hasher};
 use serde::{Deserialize, Serialize};
@@ -38,9 +38,9 @@ use crate::{
         // signedpod::SignedPod,
     },
     middleware::{
-        self, resolve_wildcard_values, value_from_op, AnchoredKey, CustomPredicateBatch,
+        self, resolve_wildcard_values, value_from_op, CustomPredicateBatch,
         Error as MiddlewareError, Hash, MainPodInputs, MainPodProver, NativeOperation,
-        OperationType, Params, Pod, RawValue, StatementArg, ToFields, VDSet, Value,
+        OperationType, Params, Pod, RawValue, StatementArg, ToFields, VDSet,
     },
     timed,
 };
@@ -854,7 +854,7 @@ impl Pod for MainPod {
 
 #[cfg(test)]
 pub mod tests {
-    use std::collections::HashSet;
+    use std::{any::Any, collections::HashSet};
 
     use num::{BigUint, One};
 

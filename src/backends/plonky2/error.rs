@@ -1,6 +1,6 @@
 use std::{backtrace::Backtrace, fmt::Debug};
 
-use crate::middleware::{Hash, Value};
+use crate::middleware::Hash;
 
 pub type Result<T, E = Error> = core::result::Result<T, E>;
 

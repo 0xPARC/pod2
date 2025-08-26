@@ -1,12 +1,10 @@
-use std::collections::HashMap;
-
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::Error;
 use crate::{
-    frontend::{MainPod, SignedDict},
-    middleware::{deserialize_pod, Hash, Key, Params, Statement, VDSet, Value},
+    frontend::MainPod,
+    middleware::{deserialize_pod, Hash, Params, Statement, VDSet},
 };
 
 // #[derive(Serialize, Deserialize, JsonSchema)]
@@ -126,7 +124,7 @@ mod tests {
             attest_eth_friend, zu_kyc_pod_builder, zu_kyc_sign_dict_builders, EthDosHelper,
             MOCK_VD_SET,
         },
-        frontend::{Result, SignedDictBuilder},
+        frontend::{Result, SignedDict, SignedDictBuilder},
         middleware::{
             self,
             containers::{Array, Dictionary, Set},

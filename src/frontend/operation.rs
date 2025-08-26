@@ -1,9 +1,9 @@
 use std::fmt;
 
 use crate::{
-    frontend::{MainPod, SignedDict},
+    frontend::SignedDict,
     middleware::{
-        containers::Dictionary, root_key_to_ak, AnchoredKey, CustomPredicateRef, Hash, Key,
+        containers::Dictionary, root_key_to_ak, CustomPredicateRef,
         NativeOperation, OperationAux, OperationType, Signature, Statement, TypedValue, Value,
         ValueRef,
     },

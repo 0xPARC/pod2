@@ -48,7 +48,6 @@ pub use crate::backends::plonky2::{
 };
 use crate::{
     backends::plonky2::{
-        emptypod::cache_get_standard_empty_pod_verifier_circuit_data,
         mainpod::cache_get_rec_main_pod_verifier_circuit_data,
         primitives::merkletree::MerkleClaimAndProof,
     },

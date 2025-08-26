@@ -4,7 +4,6 @@
 
 use std::{fmt, iter};
 
-use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
 use crate::{backends::plonky2::mainpod::extract_signatures, middleware::PodType};
@@ -23,11 +22,7 @@ use crate::{
         recursion::hash_verifier_data,
         // signedpod::SignedPod,
     },
-    middleware::{
-        self, deserialize_pod, hash_str, AnchoredKey, Hash, MainPodInputs, MainPodProver,
-        NativeOperation, NativePredicate, OperationType, Params, Pod, Predicate, StatementArg,
-        VDSet, Value,
-    },
+    middleware::{self, deserialize_pod, Hash, MainPodInputs, MainPodProver, Params, Pod, VDSet},
 };
 
 pub struct MockProver {}
@@ -463,7 +458,7 @@ pub mod tests {
             zu_kyc_sign_dict_builders, MOCK_VD_SET,
         },
         frontend, middleware,
-        middleware::Signer as _,
+        middleware::{Signer as _, Value},
     };
 
     #[test]

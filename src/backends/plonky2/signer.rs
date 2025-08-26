@@ -1,24 +1,14 @@
-use std::{collections::HashMap, sync::LazyLock};
 
-use itertools::Itertools;
 use num_bigint::{BigUint, RandBigInt};
 use rand::rngs::OsRng;
-use serde::{Deserialize, Serialize};
 
 use crate::{
-    backends::plonky2::{
-        error::{Error, Result},
-        primitives::{
-            ec::{
+    backends::plonky2::primitives::ec::{
                 curve::{Point as PublicKey, GROUP_ORDER},
                 schnorr::{SecretKey, Signature},
             },
-            merkletree::MerkleTree,
-        },
-    },
     middleware::{
-        self, containers::Dictionary, AnchoredKey, Hash, Key, Params, Pod, RawValue, Statement,
-        Value,
+        self, RawValue,
     },
     timed,
 };
