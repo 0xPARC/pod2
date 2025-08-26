@@ -460,7 +460,6 @@ fn estimate_gates_after_zk(degree_bits: usize) -> usize {
 }
 
 // how many blinding gates are in this zk circuit
-#[cfg(feature = "zk")]
 fn blinding_gates(degree_bits: usize) -> usize {
     // Table data obtained using `test_measure_zk_recursion`, and printing
     // `regular_poly_openings + 2 * z_openings` at method `blind` of the file
@@ -546,23 +545,28 @@ pub fn pad_circuit(builder: &mut CircuitBuilder<F, D>, common_data: &CommonCircu
     assert_eq!(common_data.num_public_inputs, builder.num_public_inputs());
 
     let degree = common_data.degree();
+    // in the zk case, account for the blinding gates, to avoid
+    // padding to them too, because then plonky2's in the builder.build()
+    // phase would add new blinding gates on top of the ones that we already
+    // accounted for in the `common_data_for_recursion`, increasing (w.h.p.)
+    // the degree of the circuit.
+    let num_blinding_gates = if common_data.config.zero_knowledge {
+        blinding_gates(log2_ceil(degree))
+    } else {
+        0
+    };
     // Need to account for public input hashing, a `PublicInputGate` and MAX_CONSTANT_GATES
     // `ConstantGate`. NOTE: the builder doesn't have any public method to see how many constants
     // have been registered, so we can't know exactly how many `ConstantGates` will be required.
     // We hope that no more than MAX_CONSTANT_GATES*2 constants are used :pray:.  Maybe we should
     // make a PR to plonky2 to expose this?
-    #[allow(unused_mut)]
-    let mut num_gates = degree - common_data.num_public_inputs.div_ceil(8) - 1 - MAX_CONSTANT_GATES;
-    #[cfg(feature = "zk")]
-    {
-        // in the zk config case, account for the blinding gates, to avoid
-        // padding to them too, because then plonky2's in the builder.build()
-        // phase would add new blinding gates on top of the ones that we already
-        // accounted for in the `common_data_for_recursion`, increasing (w.h.p.)
-        // the degree of the circuit.
-        num_gates -= blinding_gates(log2_ceil(degree));
-    }
-
+    let degree_adjustment =
+        common_data.num_public_inputs.div_ceil(8) + 1 + MAX_CONSTANT_GATES + num_blinding_gates;
+    assert!(
+        degree_adjustment <= degree,
+        "calculated a negative padding target: {degree} - {degree_adjustment}"
+    );
+    let num_gates = degree - degree_adjustment;
     assert!(
         builder.num_gates() < num_gates,
         "builder has more gates ({}) than the padding target ({})",
