@@ -22,7 +22,9 @@ use crate::{
         recursion::hash_verifier_data,
         // signedpod::SignedPod,
     },
-    middleware::{self, deserialize_pod, Hash, MainPodInputs, MainPodProver, Params, Pod, VDSet},
+    middleware::{
+        self, deserialize_pod, Hash, MainPodInputs, MainPodProver, Params, Pod, VDSet, EMPTY_HASH,
+    },
 };
 
 pub struct MockProver {}
@@ -355,6 +357,9 @@ impl Pod for MockMainPod {
             .collect()
     }
 
+    fn verifier_data_hash(&self) -> Hash {
+        EMPTY_HASH
+    }
     fn verifier_data(&self) -> VerifierOnlyCircuitData {
         panic!("MockMainPod can't be verified in a recursive MainPod circuit");
     }

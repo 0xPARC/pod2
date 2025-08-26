@@ -1,12 +1,11 @@
-/*
 #![allow(clippy::uninlined_format_args)] // TODO: Remove this in another PR
-//! Simple example of building a signed pod and verifying it
+//! Simple example of building a signed dict and verifying it
 //!
-//! Run: `cargo run --release --example signed_pod`
+//! Run: `cargo run --release --example signed_dict`
 use std::collections::HashSet;
 
 use pod2::{
-    backends::plonky2::{primitives::ec::schnorr::SecretKey, signedpod::Signer},
+    backends::plonky2::{primitives::ec::schnorr::SecretKey, signer::Signer},
     frontend::SignedDictBuilder,
     middleware::{containers::Set, Params, Value},
 };
@@ -14,14 +13,14 @@ use pod2::{
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let params = Params::default();
 
-    // Create a schnorr key pair to sign the pod
+    // Create a schnorr key pair to sign the dict
     let sk = SecretKey::new_rand();
     let pk = sk.public_key();
     println!("Public key: {}\n", pk);
 
     let signer = Signer(sk);
 
-    // Build the signed pod
+    // Build the signed dict
     let mut builder = SignedDictBuilder::new(&params);
     // The values can be String, i64, bool, Array, Set, Dictionary, ...
     builder.insert("name", "Alice");
@@ -36,13 +35,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Set::new(params.max_merkle_proofs_containers, friends_set)?,
     );
 
-    // Sign the pod and verify it
-    let pod = builder.sign(&signer)?;
-    pod.verify()?;
+    // Sign the dict and verify it
+    let signed_dict = builder.sign(&signer)?;
+    signed_dict.verify()?;
 
-    println!("{}", pod);
+    println!("{}", signed_dict);
 
     Ok(())
 }
-*/
-fn main() {}

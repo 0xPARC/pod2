@@ -181,7 +181,7 @@ impl MainPodBuilder {
     // pub fn add_signed_pod(&mut self, pod: &SignedDict) {
     //     self.input_signed_pods.push(pod.clone());
     // }
-    pub fn add_recursive_pod(&mut self, pod: MainPod) {
+    pub fn add_pod(&mut self, pod: MainPod) {
         self.input_pods.push(pod);
     }
     pub fn insert(&mut self, public: bool, st_op: (Statement, Operation)) -> Result<()> {

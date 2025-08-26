@@ -1,9 +1,0 @@
-SignedBy(good_boy_dict_0, good_boy_0)
-SignedBy(good_boy_dict_1, good_boy_1)
-SignedBy(good_boy_dict_2, good_boy_2)
-SignedBy(good_boy_dict_3, good_boy_3)
-
-SignedBy(friend_dict_0, friend_0)
-SignedBy(friend_dict_1, friend_2)
-
-SetContains(good_boy_issuers, good_boy_0)

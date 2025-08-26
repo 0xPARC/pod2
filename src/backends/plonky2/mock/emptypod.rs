@@ -6,10 +6,7 @@ use crate::{
         error::{Error, Result},
         mainpod::{self, calculate_statements_hash},
     },
-    middleware::{
-        Hash, IntroPredicateRef, Params, Pod, PodType, Statement, VDSet,
-        EMPTY_HASH,
-    },
+    middleware::{Hash, IntroPredicateRef, Params, Pod, PodType, Statement, VDSet, EMPTY_HASH},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -75,6 +72,9 @@ impl Pod for MockEmptyPod {
         vec![empty_statement()]
     }
 
+    fn verifier_data_hash(&self) -> Hash {
+        EMPTY_HASH
+    }
     fn verifier_data(&self) -> VerifierOnlyCircuitData {
         panic!("MockEmptyPod can't be verified in a recursive MainPod circuit");
     }
