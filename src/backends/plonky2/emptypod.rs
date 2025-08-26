@@ -15,12 +15,12 @@ use crate::{
         cache_get_standard_rec_main_pod_common_circuit_data,
         circuits::{
             common::{Flattenable, StatementTarget},
-            mainpod::{calculate_sts_hash_circuit, PI_OFFSET_STS_HASH},
+            mainpod::{calculate_statements_hash_circuit, PI_OFFSET_STATEMENTS_HASH},
         },
         deserialize_proof, deserialize_verifier_only,
         error::{Error, Result},
         hash_common_data,
-        mainpod::{self, calculate_sts_hash},
+        mainpod::{self, calculate_statements_hash},
         recursion::pad_circuit,
         serialization::{
             CircuitDataSerializer, VerifierCircuitDataSerializer, VerifierOnlyCircuitDataSerializer,
@@ -71,7 +71,7 @@ fn verify_empty_pod_circuit(
         params,
         &builder.constants(&empty_statement().to_fields(params)),
     );
-    let sts_hash = calculate_sts_hash_circuit(params, builder, &[empty_statement]);
+    let sts_hash = calculate_statements_hash_circuit(params, builder, &[empty_statement]);
     builder.register_public_inputs(&sts_hash.elements);
     builder.register_public_inputs(&empty_pod.vds_root.elements);
 }
@@ -133,7 +133,8 @@ impl EmptyPod {
         empty_pod_verify_target.set_targets(&mut pw, vd_set.root())?;
         let proof = timed!("EmptyPod prove", data.prove(pw)?);
         let sts_hash = {
-            let v = &proof.public_inputs[PI_OFFSET_STS_HASH..PI_OFFSET_STS_HASH + HASH_SIZE];
+            let v = &proof.public_inputs
+                [PI_OFFSET_STATEMENTS_HASH..PI_OFFSET_STATEMENTS_HASH + HASH_SIZE];
             Hash([v[0], v[1], v[2], v[3]])
         };
         let common_hash = hash_common_data(&data.common).expect("hash ok");
@@ -177,9 +178,9 @@ impl Pod for EmptyPod {
             .into_iter()
             .map(mainpod::Statement::from)
             .collect_vec();
-        let sts_hash = calculate_sts_hash(&statements, &self.params);
+        let sts_hash = calculate_statements_hash(&statements, &self.params);
         if sts_hash != self.sts_hash {
-            return Err(Error::sts_hash_not_equal(self.sts_hash, sts_hash));
+            return Err(Error::statements_hash_not_equal(self.sts_hash, sts_hash));
         }
 
         let public_inputs = sts_hash
@@ -198,7 +199,7 @@ impl Pod for EmptyPod {
             .map_err(|e| Error::plonky2_proof_fail("EmptyPod", e))
     }
 
-    fn id(&self) -> Hash {
+    fn statements_hash(&self) -> Hash {
         self.sts_hash
     }
     fn pod_type(&self) -> (usize, &'static str) {

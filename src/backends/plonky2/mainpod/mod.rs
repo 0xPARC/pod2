@@ -51,7 +51,7 @@ use crate::{
 /// `max_public_statements` only pay for `max_public_statements` by starting the poseidon state
 /// with a precomputed constant corresponding to the front-padding part:
 /// `id = hash(serialize(reverse(statements || none-statements)))`
-pub fn calculate_sts_hash(statements: &[Statement], params: &Params) -> middleware::Hash {
+pub fn calculate_statements_hash(statements: &[Statement], params: &Params) -> middleware::Hash {
     assert!(statements.len() <= params.num_public_statements_hash);
     assert!(params.max_public_statements <= params.num_public_statements_hash);
 
@@ -568,7 +568,7 @@ impl MainPodProver for Prover {
         let operations = process_public_statements_operations(params, &statements, operations)?;
 
         // get the id out of the public statements
-        let sts_hash = calculate_sts_hash(&public_statements, params);
+        let sts_hash = calculate_statements_hash(&public_statements, params);
 
         let common_hash: String = cache_get_rec_main_pod_common_hash(params).clone();
         let proofs = inputs
@@ -579,7 +579,7 @@ impl MainPodProver for Prover {
                 assert_eq!(inputs.vd_set.root(), pod.vd_set().root());
                 ProofWithPublicInputs {
                     proof: pod.proof(),
-                    public_inputs: [pod.id().0, inputs.vd_set.root().0].concat(),
+                    public_inputs: [pod.statements_hash().0, inputs.vd_set.root().0].concat(),
                 }
             })
             .collect_vec();
@@ -760,9 +760,9 @@ impl Pod for MainPod {
             )));
         }
         // 2. get the id out of the public statements
-        let sts_hash = calculate_sts_hash(&self.public_statements, &self.params);
+        let sts_hash = calculate_statements_hash(&self.public_statements, &self.params);
         if sts_hash != self.sts_hash {
-            return Err(Error::sts_hash_not_equal(self.sts_hash, sts_hash));
+            return Err(Error::statements_hash_not_equal(self.sts_hash, sts_hash));
         }
 
         // 7. verifier_data_hash is in the VDSet
@@ -793,7 +793,7 @@ impl Pod for MainPod {
             .map_err(|e| Error::plonky2_proof_fail("MainPod", e))
     }
 
-    fn id(&self) -> Hash {
+    fn statements_hash(&self) -> Hash {
         self.sts_hash
     }
     fn pod_type(&self) -> (usize, &'static str) {

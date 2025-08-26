@@ -300,7 +300,10 @@ mod tests {
         let deserialized: MainPod = serde_json::from_str(&serialized).unwrap();
 
         assert_eq!(kyc_pod.public_statements, deserialized.public_statements);
-        assert_eq!(kyc_pod.pod.id(), deserialized.pod.id());
+        assert_eq!(
+            kyc_pod.pod.statements_hash(),
+            deserialized.pod.statements_hash()
+        );
         assert_eq!(kyc_pod.pod.verify()?, deserialized.pod.verify()?);
 
         Ok(())
@@ -313,7 +316,10 @@ mod tests {
         let deserialized: MainPod = serde_json::from_str(&serialized).unwrap();
 
         assert_eq!(kyc_pod.public_statements, deserialized.public_statements);
-        assert_eq!(kyc_pod.pod.id(), deserialized.pod.id());
+        assert_eq!(
+            kyc_pod.pod.statements_hash(),
+            deserialized.pod.statements_hash()
+        );
         assert_eq!(kyc_pod.pod.verify()?, deserialized.pod.verify()?);
 
         Ok(())

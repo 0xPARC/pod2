@@ -140,12 +140,6 @@ pub struct MainPodBuilder {
     pub operations: Vec<Operation>,
     pub public_statements: Vec<Statement>,
     // Internal state
-    /// Counter for constants created from literals
-    // TODO: Remove
-    const_cnt: usize,
-    /// Map from (public, Value) to Key of already created literals via Equal statements.
-    // TODO: Remove
-    literals: HashMap<(bool, Value), Key>,
     // TODO: track contains ops with literals added explicitly as well.
     dict_contains: Vec<(Value, Value)>, // (root, key)
 }
@@ -181,8 +175,6 @@ impl MainPodBuilder {
             statements: Vec::new(),
             operations: Vec::new(),
             public_statements: Vec::new(),
-            const_cnt: 0,
-            literals: HashMap::new(),
             dict_contains: Vec::new(),
         }
     }
@@ -769,7 +761,7 @@ pub struct MainPod {
 
 impl fmt::Display for MainPod {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "MainPod: {}", self.pod.id())?;
+        writeln!(f, "MainPod: {}", self.pod.statements_hash())?;
         writeln!(f, "  valid?  {}", self.pod.verify().is_ok())?;
         writeln!(f, "  statements:")?;
         for st in &self.pod.pub_statements() {
@@ -785,7 +777,7 @@ impl fmt::Display for MainPod {
 
 impl MainPod {
     pub fn id(&self) -> Hash {
-        self.pod.id()
+        self.pod.statements_hash()
     }
 
     /// Returns the value of a Equal statement with self id that defines key if it exists.

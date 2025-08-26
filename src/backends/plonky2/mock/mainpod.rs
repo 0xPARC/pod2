@@ -13,9 +13,10 @@ use crate::{
         basetypes::{Proof, VerifierOnlyCircuitData},
         error::{Error, Result},
         mainpod::{
-            calculate_sts_hash, extract_merkle_proofs, extract_merkle_tree_state_transition_proofs,
-            layout_statements, process_private_statements_operations,
-            process_public_statements_operations, Operation, OperationAux, SignedBy, Statement,
+            calculate_statements_hash, extract_merkle_proofs,
+            extract_merkle_tree_state_transition_proofs, layout_statements,
+            process_private_statements_operations, process_public_statements_operations, Operation,
+            OperationAux, SignedBy, Statement,
         },
         mock::emptypod::MockEmptyPod,
         primitives::merkletree::{MerkleClaimAndProof, MerkleTreeStateTransitionProof},
@@ -94,7 +95,7 @@ impl fmt::Display for MockMainPod {
             {
                 let index = (i - offset_input_pods) / self.params.max_input_pods_public_statements;
                 let pod = &self.input_pods[index];
-                let id = pod.id();
+                let id = pod.statements_hash();
                 let pod_type = pod.pod_type();
                 writeln!(
                     f,
@@ -197,7 +198,7 @@ impl MockMainPod {
         let operations = process_public_statements_operations(params, &statements, operations)?;
 
         // get the id out of the public statements
-        let sts_hash = calculate_sts_hash(&public_statements, params);
+        let sts_hash = calculate_statements_hash(&public_statements, params);
 
         // let pad_signed_pod: Box<dyn Pod> = Box::new(SignedPod::dummy());
         // let input_signed_pods: Vec<Box<dyn Pod>> = inputs
@@ -345,7 +346,7 @@ impl Pod for MockMainPod {
         Ok(())
     }
 
-    fn id(&self) -> Hash {
+    fn statements_hash(&self) -> Hash {
         self.sts_hash
     }
     fn pod_type(&self) -> (usize, &'static str) {
@@ -385,7 +386,7 @@ impl Pod for MockMainPod {
                 (
                     p.pod_type().0,
                     p.params().clone(),
-                    p.id(),
+                    p.statements_hash(),
                     p.vd_set().clone(),
                     p.serialize_data(),
                 )

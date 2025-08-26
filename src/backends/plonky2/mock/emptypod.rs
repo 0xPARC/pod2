@@ -4,7 +4,7 @@ use crate::{
     backends::plonky2::{
         basetypes::{Proof, VerifierOnlyCircuitData},
         error::{Error, Result},
-        mainpod::{self, calculate_sts_hash},
+        mainpod::{self, calculate_statements_hash},
     },
     middleware::{
         AnchoredKey, Hash, IntroPredicateRef, Params, Pod, PodType, Statement, VDSet, Value,
@@ -40,7 +40,7 @@ fn empty_statement() -> Statement {
 impl MockEmptyPod {
     pub fn new_boxed(params: &Params, vd_set: VDSet) -> Box<dyn Pod> {
         let statements = [mainpod::Statement::from(empty_statement())];
-        let sts_hash = calculate_sts_hash(&statements, params);
+        let sts_hash = calculate_statements_hash(&statements, params);
         Box::new(Self {
             params: params.clone(),
             sts_hash,
@@ -59,13 +59,13 @@ impl Pod for MockEmptyPod {
             .into_iter()
             .map(mainpod::Statement::from)
             .collect_vec();
-        let sts_hash = calculate_sts_hash(&statements, &self.params);
+        let sts_hash = calculate_statements_hash(&statements, &self.params);
         if sts_hash != self.sts_hash {
-            return Err(Error::sts_hash_not_equal(self.sts_hash, sts_hash));
+            return Err(Error::statements_hash_not_equal(self.sts_hash, sts_hash));
         }
         Ok(())
     }
-    fn id(&self) -> Hash {
+    fn statements_hash(&self) -> Hash {
         self.sts_hash
     }
     fn pod_type(&self) -> (usize, &'static str) {

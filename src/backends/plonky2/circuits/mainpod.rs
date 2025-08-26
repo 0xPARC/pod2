@@ -66,7 +66,7 @@ use crate::{
 //
 
 /// Offset in public inputs where we store the statements hash
-pub const PI_OFFSET_STS_HASH: usize = 0;
+pub const PI_OFFSET_STATEMENTS_HASH: usize = 0;
 /// Offset in public inputs where we store the verified data array root
 pub const PI_OFFSET_VDSROOT: usize = 4;
 
@@ -1558,7 +1558,7 @@ fn normalize_statement_circuit(
 /// The statements hash is calculated with front-padded none-statements and then the input
 /// statements reversed.  The part of the hash from the front-padded none-statements is
 /// precomputed.
-pub fn calculate_sts_hash_circuit(
+pub fn calculate_statements_hash_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
     // These statements will be padded to reach `num_statements`
@@ -1687,7 +1687,8 @@ fn verify_main_pod_circuit(
         // Verify sts_hash from the statements
         //
         let expected_sts_hash = HashOutTarget::try_from(
-            &verified_proof.public_inputs[PI_OFFSET_STS_HASH..PI_OFFSET_STS_HASH + HASH_SIZE],
+            &verified_proof.public_inputs
+                [PI_OFFSET_STATEMENTS_HASH..PI_OFFSET_STATEMENTS_HASH + HASH_SIZE],
         )
         .expect("4 elements");
 
@@ -1702,7 +1703,8 @@ fn verify_main_pod_circuit(
             );
             statements.push(normalized_st);
         }
-        let sts_hash = calculate_sts_hash_circuit(params, builder, input_pod_self_statements);
+        let sts_hash =
+            calculate_statements_hash_circuit(params, builder, input_pod_self_statements);
         builder.connect_hashes(expected_sts_hash, sts_hash);
 
         //
@@ -1760,10 +1762,10 @@ fn verify_main_pod_circuit(
     )?;
 
     // 2. Calculate the Pod Id from the public statements
-    let sts_hash = calculate_sts_hash_circuit(params, builder, pub_statements);
+    let sts_hash = calculate_statements_hash_circuit(params, builder, pub_statements);
 
     // 4. Verify type
-    let type_statement = &pub_statements[0];
+    // let type_statement = &pub_statements[0];
     // TODO: Store this hash in a global static with lazy init so that we don't have to
     // compute it every time.
     // let expected_type_statement = StatementTarget::from_flattened(
@@ -2104,7 +2106,7 @@ mod tests {
         backends::plonky2::{
             basetypes::C,
             circuits::common::tests::I64_TEST_PAIRS,
-            mainpod::{calculate_sts_hash, OperationArg, OperationAux},
+            mainpod::{calculate_statements_hash, OperationArg, OperationAux},
             primitives::{
                 ec::schnorr::SecretKey,
                 merkletree::{MerkleClaimAndProof, MerkleTree, MerkleTreeStateTransitionProof},
@@ -3579,14 +3581,15 @@ mod tests {
         Ok(())
     }
 
-    fn helper_calculate_sts_hash(params: &Params, statements: &[Statement]) -> Result<()> {
+    fn helper_calculate_statements_hash(params: &Params, statements: &[Statement]) -> Result<()> {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::new(config);
 
         let statements_target = (0..params.max_public_statements)
             .map(|_| builder.add_virtual_statement(params))
             .collect_vec();
-        let sts_hash_target = calculate_sts_hash_circuit(params, &mut builder, &statements_target);
+        let sts_hash_target =
+            calculate_statements_hash_circuit(params, &mut builder, &statements_target);
 
         let mut pw = PartialWitness::<F>::new();
 
@@ -3603,7 +3606,7 @@ mod tests {
             st_target.set_targets(&mut pw, params, st)?;
         }
         // Expected Output
-        let expected_sts_hash = calculate_sts_hash(&statements, params);
+        let expected_sts_hash = calculate_statements_hash(&statements, params);
         pw.set_hash_target(
             sts_hash_target,
             HashOut {
@@ -3626,7 +3629,7 @@ mod tests {
             ..Default::default()
         };
 
-        helper_calculate_sts_hash(&params, &[]).unwrap();
+        helper_calculate_statements_hash(&params, &[]).unwrap();
 
         // Case with number of statements for the sts_hash equal to number of public statements
         let params = Params {
@@ -3648,7 +3651,7 @@ mod tests {
         .take(params.max_public_statements)
         .collect_vec();
 
-        helper_calculate_sts_hash(&params, &statements).unwrap();
+        helper_calculate_statements_hash(&params, &statements).unwrap();
 
         // Case with more  statements for the sts_hash than the number of public statements
         let params = Params {
@@ -3674,7 +3677,7 @@ mod tests {
         .take(params.max_public_statements)
         .collect_vec();
 
-        helper_calculate_sts_hash(&params, &statements).unwrap();
+        helper_calculate_statements_hash(&params, &statements).unwrap();
 
         Ok(())
     }

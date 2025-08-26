@@ -985,8 +985,10 @@ pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
     fn is_main(&self) -> bool {
         false
     }
-    // TODO: Remove
-    fn id(&self) -> Hash;
+    /// Hash of the public statements.  This can be used to identify a Pod.  Different pods can
+    /// have the same `statements_hash` if they expose the same public statements even if they
+    /// arrive to them through different private inputs.
+    fn statements_hash(&self) -> Hash;
     // TODO: String instead of &str
     /// Return a uuid of the pod type and its name.  The name is only used as metadata.
     fn pod_type(&self) -> (usize, &'static str);
