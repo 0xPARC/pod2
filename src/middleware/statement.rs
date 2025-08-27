@@ -487,7 +487,7 @@ impl ToFields for StatementArg {
     /// Encoding:
     /// - None => [0, 0, 0, 0, 0, 0, 0, 0]
     /// - Literal(v) => [[v], 0, 0, 0, 0]
-    /// - Key(pod_id, key) => [[pod_id], [key]]
+    /// - Key(root, key) => [[root], [key]]
     /// - WildcardLiteral(v) => [[v], 0, 0, 0, 0]
     fn to_fields(&self, params: &Params) -> Vec<F> {
         // NOTE for @ax0: I removed the old comment because may `to_fields` implementations do

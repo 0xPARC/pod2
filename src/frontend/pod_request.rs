@@ -128,8 +128,8 @@ impl PodRequest {
                 }
 
                 // Try to bind wildcard to the POD ID
-                let pod_id_value = Value::from(stmt_key.root);
-                self.try_bind_wildcard(&wildcard.name, pod_id_value, current_bindings, new_bindings)
+                let root_value = Value::from(stmt_key.root);
+                self.try_bind_wildcard(&wildcard.name, root_value, current_bindings, new_bindings)
             }
 
             // Other combinations don't match

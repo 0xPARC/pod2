@@ -44,12 +44,12 @@ use crate::{
     timed,
 };
 
-/// Hash a list of public statements to derive the PodId.  To make circuits with different number
-/// of `max_public_statements compatible we pad the statements up to `num_public_statements_id`.
-/// As an optimization we front pad with none-statements so that circuits with a small
-/// `max_public_statements` only pay for `max_public_statements` by starting the poseidon state
-/// with a precomputed constant corresponding to the front-padding part:
-/// `id = hash(serialize(reverse(statements || none-statements)))`
+/// Hash a list of public statements to derive the Statements hash.  To make circuits with
+/// different number of `max_public_statements compatible we pad the statements up to
+/// `num_public_statements_id`. As an optimization we front pad with none-statements so that
+/// circuits with a small `max_public_statements` only pay for `max_public_statements` by starting
+/// the poseidon state with a precomputed constant corresponding to the front-padding part: `id =
+/// hash(serialize(reverse(statements || none-statements)))`
 pub fn calculate_statements_hash(statements: &[Statement], params: &Params) -> middleware::Hash {
     assert!(statements.len() <= params.num_public_statements_hash);
     assert!(params.max_public_statements <= params.num_public_statements_hash);

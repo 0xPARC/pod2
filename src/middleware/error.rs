@@ -90,14 +90,14 @@ impl Error {
         new!(InvalidWildcardAssignment(wildcard, value, prev_value))
     }
     pub(crate) fn mismatched_anchored_key_in_statement_tmpl_arg(
-        pod_id_wildcard: Wildcard,
-        pod_id: Hash,
+        root_wildcard: Wildcard,
+        root: Hash,
         key_tmpl: Key,
         key: Key,
     ) -> Self {
         new!(MismatchedAnchoredKeyInStatementTmplArg(
-            pod_id_wildcard,
-            pod_id,
+            root_wildcard,
+            root,
             key_tmpl,
             key
         ))

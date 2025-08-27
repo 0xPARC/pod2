@@ -866,7 +866,6 @@ mod tests {
         /*
             REQUEST(
                 Equal(?A["pk"], PublicKey(3t9fNuU194n7mSJPRdeaJRMqw6ZQCUddzvECWNe1k2b1rdBezXpJxF))
-                Equal(?B["pod_id"], 0x735b31d3aad0f5b66002ffe1dc7d2eaa0ee9c59c09b641e8261530c5f3a02f29)
                 Equal(?C["raw"], Raw(0x0000000000000000000000000000000000000000000000000000000000000001))
                 Equal(?D["string"], "hello")
                 Equal(?E["int"], 123)

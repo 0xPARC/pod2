@@ -588,15 +588,15 @@ pub fn check_st_tmpl(
         (StatementTmplArg::None, StatementArg::None) => Ok(()),
         (StatementTmplArg::Literal(lhs), StatementArg::Literal(rhs)) if lhs == rhs => Ok(()),
         (
-            StatementTmplArg::AnchoredKey(pod_id_wc, key_tmpl),
-            StatementArg::Key(AnchoredKey { root: pod_id, key }),
+            StatementTmplArg::AnchoredKey(root_wc, key_tmpl),
+            StatementArg::Key(AnchoredKey { root, key }),
         ) => {
-            let pod_id_ok = check_or_set(Value::from(*pod_id), pod_id_wc, wildcard_map);
-            pod_id_ok.and_then(|_| {
+            let root_ok = check_or_set(Value::from(*root), root_wc, wildcard_map);
+            root_ok.and_then(|_| {
                 (key_tmpl == key).then_some(()).ok_or(
                     Error::mismatched_anchored_key_in_statement_tmpl_arg(
-                        pod_id_wc.clone(),
-                        *pod_id,
+                        root_wc.clone(),
+                        *root,
                         key_tmpl.clone(),
                         key.clone(),
                     ),

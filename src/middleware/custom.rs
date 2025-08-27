@@ -110,8 +110,8 @@ impl fmt::Display for StatementTmplArg {
         match self {
             Self::None => write!(f, "none"),
             Self::Literal(v) => v.fmt(f),
-            Self::AnchoredKey(pod_id, key) => {
-                pod_id.fmt(f)?;
+            Self::AnchoredKey(root, key) => {
+                root.fmt(f)?;
                 write!(f, "[")?;
                 key.fmt(f)?;
                 write!(f, "]")

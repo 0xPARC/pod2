@@ -329,17 +329,17 @@ fn pest_pair_to_builder_arg(
         }
         Rule::anchored_key => {
             let mut inner_ak_pairs = arg_content_pair.clone().into_inner();
-            let pod_id_pair = inner_ak_pairs.next().unwrap();
-            let pod_id_wc_str = pod_id_pair.as_str().strip_prefix("?").unwrap();
+            let root_pair = inner_ak_pairs.next().unwrap();
+            let root_wc_str = root_pair.as_str().strip_prefix("?").unwrap();
 
             if let StatementContext::CustomPredicate {
                 argument_names,
                 pred_name,
             } = context
             {
-                if !argument_names.contains(pod_id_wc_str) {
+                if !argument_names.contains(root_wc_str) {
                     return Err(ProcessorError::UndefinedWildcard {
-                        name: pod_id_wc_str.to_string(),
+                        name: root_wc_str.to_string(),
                         pred_name: pred_name.to_string(),
                         span: Some(get_span(arg_content_pair)),
                     });
@@ -348,7 +348,7 @@ fn pest_pair_to_builder_arg(
 
             let key_part_pair = inner_ak_pairs.next().unwrap();
             let key_str = parse_pest_string_literal(&key_part_pair)?;
-            Ok(BuilderArg::Key(pod_id_wc_str.to_string(), key_str))
+            Ok(BuilderArg::Key(root_wc_str.to_string(), key_str))
         }
         _ => unreachable!("Unexpected rule: {:?}", arg_content_pair.as_rule()),
     }
@@ -679,8 +679,8 @@ fn process_statement_template(
         for arg in &builder_args {
             match arg {
                 BuilderArg::WildcardLiteral(name) => temp_stmt_wildcard_names.push(name.clone()),
-                BuilderArg::Key(pod_id_wc_str, _key_str) => {
-                    temp_stmt_wildcard_names.push(pod_id_wc_str.clone());
+                BuilderArg::Key(root_wc_str, _key_str) => {
+                    temp_stmt_wildcard_names.push(root_wc_str.clone());
                 }
                 _ => {}
             }
@@ -960,10 +960,10 @@ fn resolve_request_statement_builder(
     for builder_arg in stb.args {
         let mw_arg = match builder_arg {
             BuilderArg::Literal(v) => StatementTmplArg::Literal(v),
-            BuilderArg::Key(pod_id_wc_str, key_str) => {
-                let pod_id_wc = resolve_wildcard(ordered_request_wildcard_names, &pod_id_wc_str)?;
+            BuilderArg::Key(root_wc_str, key_str) => {
+                let root_wc = resolve_wildcard(ordered_request_wildcard_names, &root_wc_str)?;
                 let key = Key::from(key_str);
-                StatementTmplArg::AnchoredKey(pod_id_wc, key)
+                StatementTmplArg::AnchoredKey(root_wc, key)
             }
             BuilderArg::WildcardLiteral(wc_name) => {
                 let wc = resolve_wildcard(ordered_request_wildcard_names, &wc_name)?;

@@ -181,8 +181,8 @@ impl CustomPredicateBatchBuilder {
                     .map(|a| {
                         Ok::<_, Error>(match a {
                             BuilderArg::Literal(v) => StatementTmplArg::Literal(v.clone()),
-                            BuilderArg::Key(pod_id_wc, key_str) => StatementTmplArg::AnchoredKey(
-                                resolve_wildcard(args, priv_args, pod_id_wc)?,
+                            BuilderArg::Key(root_wc, key_str) => StatementTmplArg::AnchoredKey(
+                                resolve_wildcard(args, priv_args, root_wc)?,
                                 Key::from(key_str),
                             ),
                             BuilderArg::WildcardLiteral(v) => {
