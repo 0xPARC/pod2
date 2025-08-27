@@ -338,7 +338,7 @@ impl Pod for MockMainPod {
         params: Params,
         data: serde_json::Value,
         vd_set: VDSet,
-        id: Hash,
+        sts_hash: Hash,
     ) -> Result<Self> {
         let Data {
             public_statements,
@@ -351,13 +351,13 @@ impl Pod for MockMainPod {
         } = serde_json::from_value(data)?;
         let input_pods = input_pods
             .into_iter()
-            .map(|(pod_type, params, id, vd_set, data)| {
-                deserialize_pod(pod_type, params, id, vd_set, data)
+            .map(|(pod_type, params, sts_hash, vd_set, data)| {
+                deserialize_pod(pod_type, params, sts_hash, vd_set, data)
             })
             .collect::<Result<Vec<_>>>()?;
         Ok(Self {
             params,
-            sts_hash: id,
+            sts_hash,
             vd_set,
             input_pods,
             public_statements,

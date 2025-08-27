@@ -784,7 +784,7 @@ impl Pod for MainPod {
         params: Params,
         data: serde_json::Value,
         vd_set: VDSet,
-        id: Hash,
+        sts_hash: Hash,
     ) -> Result<Self> {
         let data: Data = serde_json::from_value(data)?;
         let common = cache_get_rec_main_pod_common_circuit_data(&params);
@@ -792,7 +792,7 @@ impl Pod for MainPod {
         let verifier_only = deserialize_verifier_only(&data.verifier_only)?;
         Ok(Self {
             params,
-            sts_hash: id,
+            sts_hash,
             verifier_only,
             common_hash: data.common_hash,
             vd_set,

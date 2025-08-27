@@ -136,7 +136,7 @@ impl fmt::Display for MainPodBuilder {
         writeln!(f, "MainPod:")?;
         writeln!(f, "  input_main_pods:")?;
         for in_pod in &self.input_pods {
-            writeln!(f, "    - {}", in_pod.id())?;
+            writeln!(f, "    - {}", in_pod.statements_hash())?;
         }
         writeln!(f, "  statements:")?;
         for (st, op) in self.statements.iter().zip_eq(self.operations.iter()) {
@@ -662,24 +662,8 @@ impl fmt::Display for MainPod {
 }
 
 impl MainPod {
-    pub fn id(&self) -> Hash {
+    pub fn statements_hash(&self) -> Hash {
         self.pod.statements_hash()
-    }
-
-    /// Returns the value of a Equal statement with self id that defines key if it exists.
-    pub fn get(&self, key: impl Into<Key>) -> Option<Value> {
-        let key: Key = key.into();
-        self.public_statements
-            .iter()
-            .find_map(|st| match st {
-                Statement::Equal(ValueRef::Key(ak), ValueRef::Literal(value))
-                    if ak.root == self.id() && ak.key.hash() == key.hash() =>
-                {
-                    Some(value)
-                }
-                _ => None,
-            })
-            .cloned()
     }
 }
 
