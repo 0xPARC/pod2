@@ -13,15 +13,15 @@ use crate::{
 pub struct SerializedMainPod {
     params: Params,
     pod_type: (usize, String),
-    id: Hash,
+    sts_hash: Hash,
     vd_set: VDSet,
     public_statements: Vec<Statement>,
     data: serde_json::Value,
 }
 
 impl SerializedMainPod {
-    pub fn id(&self) -> Hash {
-        self.id
+    pub fn statements_hash(&self) -> Hash {
+        self.sts_hash
     }
 }
 
@@ -31,7 +31,7 @@ impl From<MainPod> for SerializedMainPod {
         let data = pod.pod.serialize_data();
         SerializedMainPod {
             pod_type: (pod_type, pod_type_name_str.to_string()),
-            id: pod.id(),
+            sts_hash: pod.statements_hash(),
             vd_set: pod.pod.vd_set().clone(),
             params: pod.params.clone(),
             public_statements: pod.pod.pub_statements(),
@@ -47,7 +47,7 @@ impl TryFrom<SerializedMainPod> for MainPod {
         let pod = deserialize_pod(
             serialized.pod_type.0,
             serialized.params.clone(),
-            serialized.id,
+            serialized.sts_hash,
             serialized.vd_set,
             serialized.data,
         )?;

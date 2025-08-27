@@ -9,7 +9,7 @@ type DeserializeFn = fn(
     params: Params,
     data: serde_json::Value,
     vd_set: VDSet,
-    id: Hash,
+    sts_hash: Hash,
 ) -> Result<Box<dyn Pod>, BackendError>;
 
 static DESERIALIZERS: LazyLock<Mutex<HashMap<usize, DeserializeFn>>> =
@@ -25,7 +25,7 @@ pub fn register_pod_deserializer(pod_type: usize, deserialize_fn: DeserializeFn)
 pub fn deserialize_pod(
     pod_type: usize,
     params: Params,
-    id: Hash,
+    sts_hash: Hash,
     vd_set: VDSet,
     data: serde_json::Value,
 ) -> Result<Box<dyn Pod>, BackendError> {
@@ -39,7 +39,7 @@ pub fn deserialize_pod(
                 pod_type
             )))?;
 
-    deserialize_fn(params, data, vd_set, id)
+    deserialize_fn(params, data, vd_set, sts_hash)
 }
 
 #[cfg(feature = "backend_plonky2")]
@@ -56,9 +56,11 @@ mod backend {
             params: Params,
             data: serde_json::Value,
             vd_set: VDSet,
-            id: Hash,
+            sts_hash: Hash,
         ) -> Result<Box<dyn Pod>, BackendError> {
-            Ok(Box::new(P::deserialize_data(params, data, vd_set, id)?))
+            Ok(Box::new(P::deserialize_data(
+                params, data, vd_set, sts_hash,
+            )?))
         }
 
         let mut map: HashMap<usize, DeserializeFn> = HashMap::new();
