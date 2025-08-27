@@ -88,12 +88,12 @@ impl Pod for MockEmptyPod {
         _data: serde_json::Value,
         vd_set: VDSet,
         id: Hash,
-    ) -> Result<Box<dyn Pod>> {
-        Ok(Box::new(Self {
+    ) -> Result<Self> {
+        Ok(Self {
             params,
             sts_hash: id,
             vd_set,
-        }))
+        })
     }
 }
 

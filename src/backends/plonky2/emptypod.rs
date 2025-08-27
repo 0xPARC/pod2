@@ -236,19 +236,19 @@ impl Pod for EmptyPod {
         data: serde_json::Value,
         vd_set: VDSet,
         sts_hash: Hash,
-    ) -> Result<Box<dyn Pod>> {
+    ) -> Result<Self> {
         let data: Data = serde_json::from_value(data)?;
         let common_circuit_data = cache_get_standard_rec_main_pod_common_circuit_data();
         let proof = deserialize_proof(&common_circuit_data, &data.proof)?;
         let verifier_only = deserialize_verifier_only(&data.verifier_only)?;
-        Ok(Box::new(Self {
+        Ok(Self {
             params,
             sts_hash,
             verifier_only: VerifierOnlyCircuitDataSerializer(verifier_only),
             common_hash: data.common_hash,
             vd_set,
             proof,
-        }))
+        })
     }
 }
 

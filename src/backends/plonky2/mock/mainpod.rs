@@ -336,7 +336,7 @@ impl Pod for MockMainPod {
         data: serde_json::Value,
         vd_set: VDSet,
         id: Hash,
-    ) -> Result<Box<dyn Pod>> {
+    ) -> Result<Self> {
         let Data {
             public_statements,
             operations,
@@ -352,7 +352,7 @@ impl Pod for MockMainPod {
                 deserialize_pod(pod_type, params, id, vd_set, data)
             })
             .collect::<Result<Vec<_>>>()?;
-        Ok(Box::new(Self {
+        Ok(Self {
             params,
             sts_hash: id,
             vd_set,
@@ -363,7 +363,7 @@ impl Pod for MockMainPod {
             merkle_proofs_containers: merkle_proofs,
             merkle_tree_state_transition_proofs_containers: merkle_tree_state_transition_proofs,
             signatures,
-        }))
+        })
     }
 }
 

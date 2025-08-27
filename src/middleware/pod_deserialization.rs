@@ -52,11 +52,23 @@ mod backend {
     };
 
     pub(super) fn deserializers_default() -> Mutex<HashMap<usize, DeserializeFn>> {
+        fn deserialize_data<P: Pod>(
+            params: Params,
+            data: serde_json::Value,
+            vd_set: VDSet,
+            id: Hash,
+        ) -> Result<Box<dyn Pod>, BackendError> {
+            Ok(Box::new(P::deserialize_data(params, data, vd_set, id)?))
+        }
+
         let mut map: HashMap<usize, DeserializeFn> = HashMap::new();
-        map.insert(PodType::Empty as usize, EmptyPod::deserialize_data);
-        map.insert(PodType::Main as usize, MainPod::deserialize_data);
-        map.insert(PodType::MockEmpty as usize, MockEmptyPod::deserialize_data);
-        map.insert(PodType::MockMain as usize, MockMainPod::deserialize_data);
+        map.insert(PodType::Empty as usize, deserialize_data::<EmptyPod>);
+        map.insert(PodType::Main as usize, deserialize_data::<MainPod>);
+        map.insert(
+            PodType::MockEmpty as usize,
+            deserialize_data::<MockEmptyPod>,
+        );
+        map.insert(PodType::MockMain as usize, deserialize_data::<MockMainPod>);
         Mutex::new(map)
     }
 }

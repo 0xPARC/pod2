@@ -785,12 +785,12 @@ impl Pod for MainPod {
         data: serde_json::Value,
         vd_set: VDSet,
         id: Hash,
-    ) -> Result<Box<dyn Pod>> {
+    ) -> Result<Self> {
         let data: Data = serde_json::from_value(data)?;
         let common = cache_get_rec_main_pod_common_circuit_data(&params);
         let proof = deserialize_proof(&common, &data.proof)?;
         let verifier_only = deserialize_verifier_only(&data.verifier_only)?;
-        Ok(Box::new(Self {
+        Ok(Self {
             params,
             sts_hash: id,
             verifier_only,
@@ -798,7 +798,7 @@ impl Pod for MainPod {
             vd_set,
             proof,
             public_statements: data.public_statements,
-        }))
+        })
     }
 }
 
