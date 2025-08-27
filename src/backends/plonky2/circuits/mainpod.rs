@@ -2136,7 +2136,6 @@ mod tests {
             &st_target,
             &op_target,
             &prev_statements_target,
-            // 0,
             &aux_table,
         )?;
 
@@ -2257,7 +2256,6 @@ mod tests {
         ]
         .into_iter()
         .for_each(|(op, st)| {
-            println!("{}", st);
             let check = std::panic::catch_unwind(|| {
                 operation_verify(st, op, prev_statements.to_vec(), Aux::default())
             });
