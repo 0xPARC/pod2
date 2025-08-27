@@ -169,7 +169,6 @@ fn verify_operation_public_statement_circuit(
     st: &StatementTarget,
     op: &OperationTarget,
     prev_statements: &[StatementTarget],
-    // input_statements_offset: usize,
 ) -> Result<()> {
     let measure = measure_gates_begin!(builder, "OpVerify");
 
@@ -201,7 +200,6 @@ enum OperationAuxTableTag {
     CustomPredVerify = 5,
 }
 
-// TODO: Add SignedBy
 fn max_operation_aux_entry_len(params: &Params) -> usize {
     [
         (params.max_merkle_proofs_containers > 0).then(|| MerkleClaimTarget::size(params)),
@@ -412,7 +410,6 @@ fn verify_operation_circuit(
     st: &StatementTarget,
     op: &OperationTarget,
     prev_statements: &[StatementTarget],
-    // input_statements_offset: usize,
     aux_table: &MuxTableTarget,
 ) -> Result<()> {
     let measure = measure_gates_begin!(builder, "OpVerify");
@@ -1354,9 +1351,6 @@ fn make_statement_arg_from_template_circuit(
     // optimization: ak_id_wc_index and wc_index use the same signals, so we only need to do one
     // random access to resolve both of them
     assert_eq!(ak_id_wc_index, wc_index);
-    // optimization: the wildcard indices have an offset of +1.  This allows us to set a fixed
-    // SELF in args[0] to resolve SelfOrWildcard::SELF encoded as a wildcard at index 0.
-    // let value_self = ValueTarget::from_slice(&builder.constants(&SELF.0 .0));
 
     // If the index is not used, use a 0 instead to still pass the range constraints from
     // vec_ref
@@ -1627,6 +1621,8 @@ fn verify_main_pod_circuit(
         )
         .expect("4 elements");
 
+        // NOTE: We use an EmptyPod for padding input pod slots.  The EmptyPod is an introduction
+        // pod that declares a statement with no arguments.
         let is_intro = input_pod_self_statements[0].predicate.is_intro(builder);
 
         // Introduction pods can only have Introduction or None statements
@@ -1714,24 +1710,9 @@ fn verify_main_pod_circuit(
     for (i, (st, op)) in izip!(&main_pod.input_statements, &main_pod.operations).enumerate() {
         let prev_statements = &statements[..input_statements_offset + i];
         if i < public_statements_offset {
-            verify_operation_circuit(
-                params,
-                builder,
-                st,
-                op,
-                prev_statements,
-                // input_statements_offset,
-                &aux_table,
-            )?;
+            verify_operation_circuit(params, builder, st, op, prev_statements, &aux_table)?;
         } else {
-            verify_operation_public_statement_circuit(
-                params,
-                builder,
-                st,
-                op,
-                prev_statements,
-                // input_statements_offset,
-            )?;
+            verify_operation_public_statement_circuit(params, builder, st, op, prev_statements)?;
         }
     }
 

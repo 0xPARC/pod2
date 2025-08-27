@@ -20,7 +20,7 @@ mod operation;
 mod pod_deserialization;
 pub mod serialization;
 mod statement;
-use std::{any::Any, collections::HashMap, fmt};
+use std::{any::Any, fmt};
 
 pub use basetypes::*;
 pub use custom::*;
@@ -34,8 +34,6 @@ pub use statement::*;
 use crate::backends::plonky2::primitives::merkletree::{
     MerkleProof, MerkleTreeStateTransitionProof,
 };
-
-// pub const SELF: Hash = Hash(SELF_ID_HASH);
 
 // TODO: Move all value-related types to to `value.rs`
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
@@ -64,7 +62,6 @@ pub enum TypedValue {
     PublicKey(PublicKey),
     // Schnorr secret key variant (scalar)
     SecretKey(SecretKey),
-    // PodId(Hash),
     // UNTAGGED TYPES:
     #[serde(untagged)]
     Set(Set),
@@ -714,7 +711,6 @@ where
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, FromRepr, Serialize, Deserialize, JsonSchema)]
 pub enum PodType {
-    // Signed = 1,
     Main = 1,
     Empty = 2,
     MockMain = 101,
@@ -726,7 +722,6 @@ impl fmt::Display for PodType {
         match self {
             PodType::MockMain => write!(f, "MockMain"),
             PodType::MockEmpty => write!(f, "MockEmpty"),
-            // PodType::Signed => write!(f, "Signed"),
             PodType::Main => write!(f, "Main"),
             PodType::Empty => write!(f, "Empty"),
         }
@@ -947,18 +942,6 @@ pub trait Pod: fmt::Debug + DynClone + Sync + Send + Any + EqualsAny {
     ) -> Result<Box<dyn Pod>, BackendError>
     where
         Self: Sized;
-
-    // TODO: Remove?
-    /// Extract key-values from ValueOf public statements
-    fn kvs(&self) -> HashMap<AnchoredKey, Value> {
-        self.pub_statements()
-            .into_iter()
-            .filter_map(|st| match st {
-                Statement::Equal(ValueRef::Key(ak), ValueRef::Literal(v)) => Some((ak, v)),
-                _ => None,
-            })
-            .collect()
-    }
 
     fn equals(&self, other: &dyn Pod) -> bool {
         self.equals_any(other as &dyn Any)

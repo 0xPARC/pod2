@@ -56,6 +56,9 @@ use crate::{
 
 pub static DEFAULT_VD_LIST: LazyLock<Vec<VerifierOnlyCircuitData>> = LazyLock::new(|| {
     let params = Params::default();
+    // NOTE: We only include the recursive MainPod with default parameters here.  We don't need to
+    // include the verifying key of the EmptyPod because it's an Introduction pod and its verifying
+    // key appears in its statement in a self-describing way.
     vec![cache_get_rec_main_pod_verifier_circuit_data(&params)
         .verifier_only
         .clone()]

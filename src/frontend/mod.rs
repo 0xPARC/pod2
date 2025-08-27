@@ -122,7 +122,6 @@ impl SignedDict {
 pub struct MainPodBuilder {
     pub params: Params,
     pub vd_set: VDSet,
-    // TODO: Rename to `input_pods`
     pub input_pods: Vec<MainPod>,
     pub statements: Vec<Statement>,
     pub operations: Vec<Operation>,
@@ -657,10 +656,6 @@ impl fmt::Display for MainPod {
         writeln!(f, "  statements:")?;
         for st in &self.pod.pub_statements() {
             writeln!(f, "    - {}", st)?;
-        }
-        writeln!(f, "  kvs:")?;
-        for (k, v) in &self.pod.kvs() {
-            writeln!(f, "    - {}: {}", k, v)?;
         }
         Ok(())
     }
@@ -1275,6 +1270,20 @@ pub mod tests {
 
         // Try to build with wrong type in 1st arg
         let mut builder = MainPodBuilder::new(&params, vd_set);
+        let int2 = Value::from(123);
+        let sk = Value::from(sk);
+        assert!(builder
+            .pub_op(Operation(
+                // OperationType
+                OperationType::Native(NativeOperation::PublicKeyOf),
+                // Vec<OperationArg>
+                vec![OperationArg::Literal(int2), OperationArg::Literal(sk),],
+                OperationAux::None,
+            ))
+            .is_err());
+
+        // Try to build with wrong type in 2nd arg
+        let mut builder = MainPodBuilder::new(&params, vd_set);
         let pk = Value::from(pk);
         let int1 = Value::from(123);
         assert!(builder
@@ -1286,20 +1295,6 @@ pub mod tests {
                     OperationArg::Literal(pk.clone()),
                     OperationArg::Literal(int1),
                 ],
-                OperationAux::None,
-            ))
-            .is_err());
-
-        // Try to build with wrong type in 2nd arg
-        builder = MainPodBuilder::new(&params, vd_set);
-        let sk = pk;
-        let int2 = Value::from(123);
-        assert!(builder
-            .pub_op(Operation(
-                // OperationType
-                OperationType::Native(NativeOperation::PublicKeyOf),
-                // Vec<OperationArg>
-                vec![OperationArg::Literal(int2), OperationArg::Literal(sk),],
                 OperationAux::None,
             ))
             .is_err());

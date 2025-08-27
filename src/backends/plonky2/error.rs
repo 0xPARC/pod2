@@ -8,14 +8,8 @@ pub type Result<T, E = Error> = core::result::Result<T, E>;
 pub enum InnerError {
     #[error("Statements hash does not match, expected {0}, found {1}")]
     StsHashNotEqual(Hash, Hash),
-    // #[error("type does not match, expected {0}, found {1}")]
-    // TypeNotEqual(PodType, Value),
-    // #[error("signer public key does not match, expected {0}, found {1}")]
-    // SignerNotEqual(Value, Value),
 
     // POD related
-    #[error("invalid POD ID")]
-    PodIdInvalid,
     #[error("verification failed: POD does not have type statement")]
     NotTypeStatement,
     #[error("repeated ValueOf")]
@@ -85,16 +79,7 @@ impl Error {
     pub fn not_type_statement() -> Self {
         new!(NotTypeStatement)
     }
-    pub fn pod_id_invalid() -> Self {
-        new!(PodIdInvalid)
-    }
     pub fn statements_hash_not_equal(expected: Hash, found: Hash) -> Self {
         new!(StsHashNotEqual(expected, found))
     }
-    // pub fn type_not_equal(expected: PodType, found: Value) -> Self {
-    //     new!(TypeNotEqual(expected, found))
-    // }
-    // pub(crate) fn signer_not_equal(expected: Value, found: Value) -> Self {
-    //     new!(SignerNotEqual(expected, found))
-    // }
 }
