@@ -1628,6 +1628,17 @@ fn verify_main_pod_circuit(
         .expect("4 elements");
 
         let is_intro = input_pod_self_statements[0].predicate.is_intro(builder);
+
+        // Introduction pods can only have Introduction or None statements
+        let mut intro_ok = is_intro;
+        for self_st in &input_pod_self_statements[1..] {
+            let st_is_intro = self_st.predicate.is_intro(builder);
+            let st_is_none = self_st.has_native_type(builder, params, NativePredicate::None);
+            let st_is_intro_or_none = builder.or(st_is_intro, st_is_none);
+            intro_ok = builder.and(intro_ok, st_is_intro_or_none);
+        }
+        builder.connect(is_intro.target, intro_ok.target);
+
         let is_main = builder.not(is_intro);
         for self_st in input_pod_self_statements {
             let normalized_st = normalize_statement_circuit(

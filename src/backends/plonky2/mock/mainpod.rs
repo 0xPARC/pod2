@@ -228,6 +228,20 @@ impl Pod for MockMainPod {
                     )));
                 }
             }
+            // Introduction pods can only have Introduction or None statements
+            if !pod.is_main() {
+                for self_st in pod.pub_self_statements() {
+                    match self_st {
+                        middleware::Statement::None | middleware::Statement::Intro(_, _) => {}
+                        _ => {
+                            return Err(Error::custom(format!(
+                                "Introduction Pod has a non-introduction statement: {}",
+                                self_st,
+                            )))
+                        }
+                    }
+                }
+            }
         }
 
         let input_statement_offset = self.offset_input_statements();
