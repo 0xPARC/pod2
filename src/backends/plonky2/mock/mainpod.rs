@@ -204,6 +204,9 @@ impl Pod for MockMainPod {
     fn is_mock(&self) -> bool {
         true
     }
+    fn is_main(&self) -> bool {
+        true
+    }
 
     fn verify(&self) -> Result<()> {
         for pod in &self.input_pods {
