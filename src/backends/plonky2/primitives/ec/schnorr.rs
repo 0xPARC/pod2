@@ -150,14 +150,6 @@ impl SignatureTarget {
         let u_arr = r.u.components;
         let inputs = u_arr.into_iter().chain(msg.elements).collect::<Vec<_>>();
         let e_hash = hash_array_circuit(builder, &inputs);
-
-        match e_hash[0] {
-            Target::Wire(wire) => println!("e_hash[0]: row {}, col {}", wire.row, wire.column),
-            Target::VirtualTarget { index } => {
-                println!("e_hash[0]: virtual target with index {}", index)
-            }
-        }
-
         let e = builder.field_elements_to_biguint(&e_hash);
 
         builder.is_equal_slice(&self.e.limbs, &e.limbs)

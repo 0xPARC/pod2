@@ -639,11 +639,13 @@ impl CircuitBuilderSignature for CircuitBuilder<GoldilocksField, 2> {
         }
 
         // copy accumulator from one row to the next
+        let (in_offset, acc_in_offset) = (0, 20);
+        let (out_offset, acc_out_offset) = (30, 15);
         for x in 0..106 {
-            for y in 20..30 {
+            for y in 0..10 {
                 self.connect(
-                    Target::wire(all_rows[x], y + 25),
-                    Target::wire(all_rows[x + 1], y),
+                    Target::wire(all_rows[x], out_offset + acc_out_offset + y),
+                    Target::wire(all_rows[x + 1], in_offset + acc_in_offset + y),
                 )
             }
         }
