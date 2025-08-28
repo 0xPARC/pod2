@@ -27,9 +27,10 @@ use crate::backends::plonky2::{
         curve::PointSquareRootGenerator,
         field::QuotientGeneratorOEF,
         gates::{
-            curve::ECAddHomogOffset,
-            field::NNFMulSimple,
-            generic::{GateAdapter, RecursiveGateAdapter, RecursiveGenerator},
+            curve::{
+                ECAddHomogOffsetGate, ECAddHomogOffsetGenerator, ECAddXuGate, ECAddXuGenerator,
+            },
+            field::{NNFMulGate, NNFMulGenerator},
         },
     },
 };
@@ -56,10 +57,9 @@ impl GateSerializer<F, D> for Pod2GateSerializer {
         ReducingExtensionGate<D>,
         ReducingGate<D>,
         // pod2 custom gates
-        GateAdapter::<NNFMulSimple<5, QuinticExtension<F>>>,
-        RecursiveGateAdapter::<D, NNFMulSimple<5, QuinticExtension<F>>>,
-        GateAdapter::<ECAddHomogOffset>,
-        RecursiveGateAdapter::<D, ECAddHomogOffset>,
+        NNFMulGate::<D, 5, QuinticExtension<F>>,
+        ECAddXuGate,
+        ECAddHomogOffsetGate,
         ComparisonGate::<F, D>
     }
 }
@@ -127,10 +127,9 @@ impl WitnessGeneratorSerializer<F, D> for Pod2GeneratorSerializer {
         QuotientGeneratorOEF<5, QuinticExtension<F>>,
         PointSquareRootGenerator,
         ConditionalZeroGenerator<F, D>,
-        RecursiveGenerator<D, NNFMulSimple<5, QuinticExtension<F>>>,
-        RecursiveGenerator<1, NNFMulSimple<5, QuinticExtension<F>>>,
-        RecursiveGenerator<D, ECAddHomogOffset>,
-        RecursiveGenerator<1, ECAddHomogOffset>,
+        NNFMulGenerator::<D, 5, QuinticExtension<F>>,
+        ECAddXuGenerator,
+        ECAddHomogOffsetGenerator,
         ComparisonGenerator<F, D>,
         TableGetGenerator
     }

@@ -30,7 +30,7 @@ use crate::{
         deserialize_bytes,
         primitives::ec::{
             bits::{BigUInt320Target, CircuitBuilderBits},
-            curve::{CircuitBuilderElliptic, PointTarget, WitnessWriteCurve, GROUP_ORDER},
+            curve::{CircuitBuilderSignature, PointTarget, WitnessWriteCurve, GROUP_ORDER},
         },
         serialize_bytes, Error,
     },
@@ -155,14 +155,14 @@ impl SignatureTarget {
         msg: HashOutTarget,
         public_key: &PointTarget,
     ) -> BoolTarget {
-        let g = builder.constant_point(Point::generator());
         let sig1_bits = self.s.bits;
         let sig2_bits = self.e.bits;
-        let r = builder.linear_combination_points(&sig1_bits, &sig2_bits, &g, public_key);
+        let r = builder.linear_combination_point_gen(&sig1_bits, &sig2_bits, public_key);
         let u_arr = r.u.components;
         let inputs = u_arr.into_iter().chain(msg.elements).collect::<Vec<_>>();
         let e_hash = hash_array_circuit(builder, &inputs);
         let e = builder.field_elements_to_biguint(&e_hash);
+
         builder.is_equal_slice(&self.e.limbs, &e.limbs)
     }
 }
@@ -405,22 +405,38 @@ mod test {
 
     #[test]
     fn test_verify_signature_circuit() -> Result<(), anyhow::Error> {
-        let (public_key, msg, sig) = gen_signed_message();
+        let (public_key, msg, sig) = gen_signed_message(); // gets signed message
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::<GoldilocksField, 2>::new(config);
+
         let key_t = builder.add_virtual_point_target();
         let msg_t = builder.add_virtual_hash();
         let sig_t = SignatureTarget::add_virtual_target(&mut builder);
+
         let verified = sig_t.verify(&mut builder, msg_t, &key_t);
+
         builder.assert_one(verified.target);
         let mut pw = PartialWitness::new();
         pw.set_point_target(&key_t, &public_key)?;
         pw.set_hash_target(msg_t, msg.0.into())?;
         pw.set_biguint320_target(&sig_t.s, &sig.s)?;
         pw.set_biguint320_target(&sig_t.e, &sig.e)?;
+
+        println!("Building circuit...");
+        let start = std::time::Instant::now();
         let data = builder.build::<PoseidonGoldilocksConfig>();
+        println!("Circuit built in {:?}", start.elapsed());
+
+        println!("Generating proof...");
+        let start = std::time::Instant::now();
         let proof = data.prove(pw)?;
+        println!("Proof generated in {:?}", start.elapsed());
+
+        println!("Verifying proof...");
+        let start = std::time::Instant::now();
         data.verify(proof)?;
+        println!("Proof verified in {:?}", start.elapsed());
+
         Ok(())
     }
 

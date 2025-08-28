@@ -1,4 +1,4 @@
-use std::{array, marker::PhantomData};
+use std::marker::PhantomData;
 
 use num::BigUint;
 use plonky2::{
@@ -19,10 +19,7 @@ use serde::{Deserialize, Serialize};
 
 //use super::gates::field::NNFMulGate;
 use crate::{
-    backends::plonky2::{
-        basetypes::D,
-        primitives::ec::gates::{field::NNFMulSimple, generic::SimpleGate},
-    },
+    backends::plonky2::{basetypes::D, primitives::ec::gates::field::NNFMulGate},
     middleware::F,
 };
 
@@ -219,11 +216,33 @@ impl<const DEG: usize, NNF: OEF<DEG> + FieldExtension<DEG, BaseField = F>>
         OEFTarget::new(std::array::from_fn(|i| sub_targets[i]))
     }
     fn nnf_mul(&mut self, x: &OEFTarget<DEG, NNF>, y: &OEFTarget<DEG, NNF>) -> OEFTarget<DEG, NNF> {
-        let mut inputs = Vec::with_capacity(10);
-        inputs.extend_from_slice(&x.components);
-        inputs.extend_from_slice(&y.components);
-        let outputs = NNFMulSimple::<DEG, NNF>::apply(self, &inputs);
-        OEFTarget::new(array::from_fn(|i| outputs[i]))
+        let gate = NNFMulGate::<D, DEG, NNF>::new_from_config(&self.config);
+        let (gate, i) = self.find_slot(gate, &[], &[]);
+        let wires_m0: OEFTarget<DEG, NNF> = OEFTarget::new(
+            NNFMulGate::<D, DEG, NNF>::wires_ith_multiplicand_0(i)
+                .map(|i| Target::wire(gate, i))
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap(),
+        );
+        let wires_m1: OEFTarget<DEG, NNF> = OEFTarget::new(
+            NNFMulGate::<D, DEG, NNF>::wires_ith_multiplicand_1(i)
+                .map(|i| Target::wire(gate, i))
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap(),
+        );
+        let output: OEFTarget<DEG, NNF> = OEFTarget::new(
+            NNFMulGate::<D, DEG, NNF>::wires_ith_output(i)
+                .map(|i| Target::wire(gate, i))
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap(),
+        );
+        self.nnf_connect(&wires_m0, x);
+        self.nnf_connect(&wires_m1, y);
+
+        output
     }
     fn nnf_div(&mut self, x: &OEFTarget<DEG, NNF>, y: &OEFTarget<DEG, NNF>) -> OEFTarget<DEG, NNF> {
         let one = self.nnf_one();
