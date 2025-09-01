@@ -23,11 +23,11 @@ The reason is everything the circuit needs to verify that the statement is true.
 Example:
 
 ```
-STATEMENT1 = Equals(oldpod["name"], otherpod["field"])
+STATEMENT1 = Equals(olddict["name"], otherdict["field"])
 
-STATEMENT2 = Equals(otherpod["field"], newpod["result"])
+STATEMENT2 = Equals(otherdict["field"], newdict["result"])
 
-STATEMENT3 = Equals(oldpod["name"], newpod["result"])
+STATEMENT3 = Equals(olddict["name"], newdict["result"])
 ```
 
 The reasons in human-readable simplified format:
@@ -56,7 +56,7 @@ then
 Equals(a, c)
 ```
 
-First, we need to decompose all the anchored keys as (key, origin) pairs.  This is the frontend description of the deduction rule.
+First, we need to decompose all the anchored keys as (dict, key) pairs.  This is the frontend description of the deduction rule.
 ```
 IF
 Equals(a_or[a_key], b_or[b_key)
@@ -86,18 +86,18 @@ Equals( ?1[?2], ?5[?6] )
 ```
 - Say what the wildcards are
 ```
-?1 -- oldpod
+?1 -- olddict
 ?2 -- "name"
-?3 -- otherpod
+?3 -- otherdict
 ...
 ```
 - Substitute the wildcards into the deduction rule
 ```
 IF
-Equals( oldpod["name"], ... ) ...
-Equals( otherpod["value"])
+Equals( olddict["name"], ... ) ...
+Equals( otherdict["value"])
 THEN
-Equals( oldpod["name"] newpod[...] )
+Equals( olddict["name"] newdict[...] )
 ...
 ```
 - Say where to find the previous statements (indices in the list), and check that they are above this one.
@@ -111,20 +111,17 @@ Statement2
 
 ## Decomposing anchored keys
 
-Sometimes a deduction rule requires different anchored keys to come from the same POD.  Here's an example from Ethdos.
+Sometimes a deduction rule requires different anchored keys to come from the same dictionary.  Here's an example from Ethdos.
 
-The wildcard system handles this very naturally, since origin ID and key are two separate wildcards.
+The wildcard system handles this very naturally, since the dict of the anchored key can use its own wildcard.
 
 ```
 eth_friend(src_or, src_key, dst_or, dst_key) = and<
-    // there is an attestation pod that's a SIGNATURE POD
-    ValueOf(?attestation_pod["type"], SIGNATURE)     
-    
-    // the attestation pod is signed by (src_or, src_key)
-    Equal(?attestation_pod["signer"], ?src_or[?src_key])  
+    // the attestation dict is signed by (src_or, src_key)
+    SignedBy(?attestation_dict, ?src_or[?src_key])
 
     // that same attestation pod has an "attestation"
-    Equal(?attestation_pod["attestation"], ?dst_or[?dst_key])
+    Equal(?attestation_dict["attestation"], ?dst_or[?dst_key])
 >
 ```
 
@@ -132,9 +129,7 @@ In terms of anchored keys, it would be a little more complicated. five anchored 
 ```
 AK1 = src
 AK2 = dst
-AK3 = attestation_pod["type"]
-AK4 = attestation_pod["signer"]
-AK5 = attestation_pod["attestation"]
+AK3 = attestation_dict["attestation"]
 ```
 
 and we need to force AK3, AK4, AK5 to come from the same origin.
@@ -143,11 +138,8 @@ WILDCARD matching takes care of it.
 
 ```
 eth_friend(?1, ?2, ?3, ?4) = and<
-    // there is an attestation pod that's a SIGNATURE POD
-    ValueOf(?5["type"], SIGNATURE)     
-    
-    // the attestation pod is signed by ?src_or[?src_key]
-    Equal(?5["signer"], ?1[?2])  
+    // the attestation dict is signed by (src_or, src_key)
+    SignedBy(?5, ?1[?2])
 
     // that same attestation pod has an "attestation"
     Equal(?5["attestation"], ?3[?4])

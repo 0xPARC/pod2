@@ -1,4 +1,0 @@
-# POD types
-
-- SignedPod
-- MainPod

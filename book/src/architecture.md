@@ -5,7 +5,7 @@ This document explains the architecture of the current implementation.
 The main logic of the POD2 implementation is divided into three modules:
 - frontend
     - compiles user-friendly pod declarations into intermediate representations to be consumed by the backend
-    - internally connects to the backend to get pods built (signed / proved).
+    - internally connects to the backend to get pods built (proved).
     - presents pods to the user
 - middleware
     - defines the intermediate representation of Statements, Operations and interfaces of PODs
