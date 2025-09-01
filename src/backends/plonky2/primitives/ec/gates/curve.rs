@@ -77,6 +77,29 @@ impl ECAddHomogOffsetGate {
     pub(crate) const fn wires_ith_output(i: usize) -> Range<usize> {
         40 * i + 20..40 * (i + 1)
     }
+
+    pub fn apply<const D: usize>(
+        builder: &mut CircuitBuilder<F, D>,
+        targets: &[Target],
+        row: usize,
+        op_num: usize,
+    ) -> Vec<Target>
+    where
+        F: Extendable<D>,
+    {
+        let wires_a0 = Self::wires_ith_addend_0(op_num)
+            .map(|i| Target::wire(row, i))
+            .collect::<Vec<_>>();
+        let wires_a1 = Self::wires_ith_addend_1(op_num)
+            .map(|i| Target::wire(row, i))
+            .collect::<Vec<_>>();
+        let outputs = Self::wires_ith_output(op_num)
+            .map(|i| Target::wire(row, i))
+            .collect::<Vec<_>>();
+        zip_eq(targets, [wires_a0, wires_a1].concat()).for_each(|(i, w)| builder.connect(*i, w));
+
+        outputs
+    }
 }
 
 impl Gate<F, D> for ECAddHomogOffsetGate {
@@ -280,7 +303,7 @@ where
     }
 
     fn id(&self) -> String {
-        format!("Generator<{},{}>", D, "ECAddXuGenerator")
+        "ECAddXuGenerator".into()
     }
 
     fn dependencies(&self) -> Vec<Target> {
@@ -338,56 +361,26 @@ where
         // Double and add three times.
         // Write points from right to left so that the result of the fifth add
         // lies on a routable wire and thus can be copied to the next row.
+        (0..3).try_for_each(|i| {
+            // Double, write to wires [125-30*i..135-30*i]
+            [p_x, p_u] = add_xu::<1, QuinticExtension<GoldilocksField>>(p_x, p_u, p_x, p_u);
+            write_quintic(125 - 30 * i, &p_x)?;
+            write_quintic(130 - 30 * i, &p_u)?;
 
-        // Double, write to wires [125..135]
-        [p_x, p_u] = add_xu::<1, QuinticExtension<GoldilocksField>>(p_x, p_u, p_x, p_u);
-        write_quintic(125, &p_x)?;
-        write_quintic(130, &p_u)?;
+            // Possibly add g, depending on selector. Write to wires  [115-30*i..125-30*i]
+            if selectors_g[i] == GoldilocksField::ONE {
+                [p_x, p_u] = add_xu::<1, QuinticExtension<GoldilocksField>>(p_x, p_u, g_x, g_u);
+            }
+            write_quintic(115 - 30 * i, &p_x)?;
+            write_quintic(120 - 30 * i, &p_u)?;
 
-        // Possibly add g, depending on selector. Write to wires  [115..125]
-        if selectors_g[0] == GoldilocksField::ONE {
-            [p_x, p_u] = add_xu::<1, QuinticExtension<GoldilocksField>>(p_x, p_u, g_x, g_u);
-        }
-        write_quintic(115, &p_x)?;
-        write_quintic(120, &p_u)?;
-
-        // Possibly add y, depending on selector. Write to wires  [105..115]
-        if selectors_y[0] == GoldilocksField::ONE {
-            [p_x, p_u] = add_xu::<1, QuinticExtension<GoldilocksField>>(p_x, p_u, y_x, y_u);
-        }
-        write_quintic(105, &p_x)?;
-        write_quintic(110, &p_u)?;
-
-        // Repeat, total of three times.
-        [p_x, p_u] = add_xu::<1, QuinticExtension<GoldilocksField>>(p_x, p_u, p_x, p_u);
-        write_quintic(95, &p_x)?;
-        write_quintic(100, &p_u)?;
-        if selectors_g[1] == GoldilocksField::ONE {
-            [p_x, p_u] = add_xu::<1, QuinticExtension<GoldilocksField>>(p_x, p_u, g_x, g_u);
-        }
-        write_quintic(85, &p_x)?;
-        write_quintic(90, &p_u)?;
-        if selectors_y[1] == GoldilocksField::ONE {
-            [p_x, p_u] = add_xu::<1, QuinticExtension<GoldilocksField>>(p_x, p_u, y_x, y_u);
-        }
-        write_quintic(75, &p_x)?;
-        write_quintic(80, &p_u)?;
-
-        [p_x, p_u] = add_xu::<1, QuinticExtension<GoldilocksField>>(p_x, p_u, p_x, p_u);
-        write_quintic(65, &p_x)?;
-        write_quintic(70, &p_u)?;
-        if selectors_g[2] == GoldilocksField::ONE {
-            [p_x, p_u] = add_xu::<1, QuinticExtension<GoldilocksField>>(p_x, p_u, g_x, g_u);
-        }
-        write_quintic(55, &p_x)?;
-        write_quintic(60, &p_u)?;
-        if selectors_y[2] == GoldilocksField::ONE {
-            [p_x, p_u] = add_xu::<1, QuinticExtension<GoldilocksField>>(p_x, p_u, y_x, y_u);
-        }
-        write_quintic(45, &p_x)?;
-        write_quintic(50, &p_u)?;
-
-        Ok(())
+            // Possibly add y, depending on selector. Write to wires  [105-30*i..115-30*i]
+            if selectors_y[i] == GoldilocksField::ONE {
+                [p_x, p_u] = add_xu::<1, QuinticExtension<GoldilocksField>>(p_x, p_u, y_x, y_u);
+            }
+            write_quintic(105 - 30 * i, &p_x)?;
+            write_quintic(110 - 30 * i, &p_u)
+        })
     }
 }
 
@@ -419,7 +412,9 @@ impl ECAddXuGate {
         for (i, &t) in targets.iter().enumerate() {
             builder.connect(t, Target::wire(row, i));
         }
-        (0..105).map(|i| Target::wire(row, 30 + i)).collect()
+        (0..Self::OUTPUTS_PER_OP)
+            .map(|i| Target::wire(row, Self::INPUTS_PER_OP + i))
+            .collect()
     }
 
     pub fn new_from_config() -> Self {
@@ -624,13 +619,8 @@ where
                                          j: usize,
                                          selector_index: usize,
                                          add_y: bool| {
-            let zero = builder.zero_extension();
-
             let one = builder.one_extension();
-            let one_full = [one, zero, zero, zero, zero];
-
             let sel = vars.local_wires[selector_index];
-            let sel_full = [sel, zero, zero, zero, zero];
 
             let x1 = array::from_fn(|k| vars.local_wires[i + k]);
             let u1 = array::from_fn(|k| vars.local_wires[i + 5 + k]);
@@ -651,11 +641,11 @@ where
             let x3 = array::from_fn(|k| vars.local_wires[j + k]);
             let u3 = array::from_fn(|k| vars.local_wires[j + 5 + k]);
 
-            let sel_one_diff = nnf_ext_target_sub::<D, 5, Nnf>(builder, &sel_full, &one_full);
+            let sel_minus_one = builder.sub_extension(sel, one);
             let first_constraints = {
                 let term1 = nnf_mul_ext::<D, 5, Nnf>(builder, &x3, &z);
-                let term2 = nnf_mul_ext::<D, 5, Nnf>(builder, &sel_full, &x);
-                let term3_1 = nnf_mul_ext::<D, 5, Nnf>(builder, &sel_one_diff, &x1);
+                let term2 = array::from_fn(|i| builder.mul_extension(sel, x[i]));
+                let term3_1 = array::from_fn(|i| builder.mul_extension(sel_minus_one, x1[i]));
                 let term3 = nnf_mul_ext::<D, 5, Nnf>(builder, &term3_1, &z);
                 let partial_sum = nnf_ext_target_sub::<D, 5, Nnf>(builder, &term1, &term2);
                 nnf_ext_target_add::<D, 5, Nnf>(builder, &partial_sum, &term3)
@@ -663,8 +653,8 @@ where
 
             let second_constraints = {
                 let term1 = nnf_mul_ext::<D, 5, Nnf>(builder, &u3, &t);
-                let term2 = nnf_mul_ext::<D, 5, Nnf>(builder, &sel_full, &u);
-                let term3_1 = nnf_mul_ext::<D, 5, Nnf>(builder, &sel_one_diff, &u1);
+                let term2 = array::from_fn(|i| builder.mul_extension(sel, u[i]));
+                let term3_1 = array::from_fn(|i| builder.mul_extension(sel_minus_one, u1[i]));
                 let term3 = nnf_mul_ext::<D, 5, Nnf>(builder, &term3_1, &t);
                 let partial_sum = nnf_ext_target_sub::<D, 5, Nnf>(builder, &term1, &term2);
                 nnf_ext_target_add::<D, 5, Nnf>(builder, &partial_sum, &term3)

@@ -9,7 +9,6 @@ use std::{
     sync::LazyLock,
 };
 
-use itertools::zip_eq;
 use num::{bigint::BigUint, Num, One};
 use num_bigint::RandBigInt;
 use plonky2::{
@@ -716,18 +715,10 @@ impl CircuitBuilderElliptic for CircuitBuilder<GoldilocksField, 2> {
         inputs.extend_from_slice(&p1.u.components);
         inputs.extend_from_slice(&p2.x.components);
         inputs.extend_from_slice(&p2.u.components);
+
         let gate = ECAddHomogOffsetGate::new_from_config(&self.config);
-        let (gate, i) = self.find_slot(gate, &[], &[]);
-        let wires_a0 = ECAddHomogOffsetGate::wires_ith_addend_0(i)
-            .map(|i| Target::wire(gate, i))
-            .collect::<Vec<_>>();
-        let wires_a1 = ECAddHomogOffsetGate::wires_ith_addend_1(i)
-            .map(|i| Target::wire(gate, i))
-            .collect::<Vec<_>>();
-        let outputs = ECAddHomogOffsetGate::wires_ith_output(i)
-            .map(|i| Target::wire(gate, i))
-            .collect::<Vec<_>>();
-        zip_eq(inputs, [wires_a0, wires_a1].concat()).for_each(|(i, w)| self.connect(i, w));
+        let (row, op_num) = self.find_slot(gate, &[], &[]);
+        let outputs = ECAddHomogOffsetGate::apply(self, &inputs, row, op_num);
 
         // plonky2 expects all gate constraints to be satisfied by the zero vector.
         // So our elliptic curve addition gate computes [x,z-b,u,t-b], and we have to add the b here.
