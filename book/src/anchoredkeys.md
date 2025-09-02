@@ -8,8 +8,8 @@ type Key = String
 
 Statements can use anchored keys or literal values as arguments.  Since our
 system uses constructive logic, if a statement that uses an anchored key in
-some of its arguments is proved, it means that at a valid merkle proof of the
-value behind it exist and was used at some point  to construct a `Contains`
+some of its arguments is proved, it means that a valid Merkle proof of the
+value behind it exists and was used at some point to construct a `Contains`
 statement that introduced that anchored key.
 
 For example:
