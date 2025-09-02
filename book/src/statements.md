@@ -30,8 +30,8 @@ The following table summarises the natively-supported statements, where we write
 | 3    | `NotEqual`    | `ak1`, `ak2`        | `value_of(ak1) != value_of(ak2)`                                  |
 | 4    | `LtEq`        | `ak1`, `ak2`        | `value_of(ak1) <= value_of(ak2)`                                  |
 | 5    | `Lt`          | `ak1`, `ak2`        | `value_of(ak1) < value_of(ak2)`                                   |
-| 6    | `Contains`    | `ak1`, `ak2`, `ak3` | `(key_of(ak2), value_of(ak3)) ∈ value_of(ak1)` (Merkle inclusion) |
-| 7    | `NotContains` | `ak1`, `ak2`        | `(key_of(ak2), _) ∉ value_of(ak1)` (Merkle exclusion) |
+| 6    | `Contains`    | `ak1`, `ak2`, `ak3` | `(value_of(ak2), value_of(ak3)) ∈ value_of(ak1)` (Merkle inclusion) |
+| 7    | `NotContains` | `ak1`, `ak2`        | `(value_of(ak2), _) ∉ value_of(ak1)` (Merkle exclusion) |
 | 8    | `SumOf`       | `ak1`, `ak2`, `ak3` | `value_of(ak1) = value_of(ak2) + value_of(ak3)`                   |
 | 9    | `ProductOf`   | `ak1`, `ak2`, `ak3` | `value_of(ak1) = value_of(ak2) * value_of(ak3)`                   |
 | 10   | `MaxOf`       | `ak1`, `ak2`, `ak3` | `value_of(ak1) = max(value_of(ak2), value_of(ak3))`               |
