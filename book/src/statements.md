@@ -38,9 +38,9 @@ The following table summarises the natively-supported statements, where we write
 | 11   | `HashOf`      | `ak1`, `ak2`, `ak3` | `value_of(ak1) = hash(value_of(ak2), value_of(ak3))`              |
 | 12   | `PublicKeyOf` | `ak1`, `ak2`        | `value_of(ak1) = derive_public_key(value_of(ak2))`                |
 | 13   | `SignedBy`    | `ak1`, `ak2`        | `value_of(ak1)` is signed by  `value_of(ak2)`                     |
-| 14   | `ContainerInsert` | `ak1`, `ak2`, `ak3`, `ak4` | `(key_of(ak3), _) ∉ value_of(ak2) ∧ value_of(ak1) = value_of(ak2) ∪ (key_of(ak3), value_of(ak4))` (Merkle insert) |
-| 15   | `ContainerUpdate` | `ak1`, `ak2`, `ak3`, `ak4` | `(key_of(ak3), v) ∈ value_of(ak2) ∧ value_of(ak1) = (value_of(ak2) - p(key_of(ak3), v)) ∪ (key_of(ak3), value_of(ak4))` (Merkle update) |
-| 16   | `ContainerDelete` | `ak1`, `ak2`, `ak3`        | `(key_of(ak3), v) ∈ value_of(ak2) ∧ value_of(ak1) = value_of(ak2) - p(key_of(ak3), v)` (Merkle delete) |
+| 14   | `ContainerInsert` | `ak1`, `ak2`, `ak3`, `ak4` | `(value_of(ak3), _) ∉ value_of(ak2) ∧ value_of(ak1) = value_of(ak2) ∪ {(value_of(ak3), value_of(ak4))}` (Merkle insert) |
+| 15   | `ContainerUpdate` | `ak1`, `ak2`, `ak3`, `ak4` | `(value_of(ak3), v) ∈ value_of(ak2) ∧ value_of(ak1) = (value_of(ak2) - {(value_of(ak3), v)}) ∪ {(value_of(ak3), value_of(ak4))}` (Merkle update) |
+| 16   | `ContainerDelete` | `ak1`, `ak2`, `ak3`        | `(value_of(ak3), v) ∈ value_of(ak2) ∧ value_of(ak1) = value_of(ak2) - {(value_of(ak3), v)}` (Merkle delete) |
 
 ### Frontend statements
 
