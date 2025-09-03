@@ -862,6 +862,7 @@ pub mod tests {
     #[ignore]
     #[test]
     fn test_measure_main_pod() -> frontend::Result<()> {
+        env_logger::init();
         let params = Params::default();
         println!("{:#?}", params);
         let vd_set = VDSet::new(params.max_depth_mt_vds, &[]).unwrap();

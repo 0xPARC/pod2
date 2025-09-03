@@ -785,7 +785,7 @@ impl Default for Params {
             max_statement_args: 5,
             max_operation_args: 5,
             max_custom_predicate_batches: 4,
-            max_custom_predicate_verifications: 5,
+            max_custom_predicate_verifications: 8,
             max_custom_predicate_arity: 5,
             max_custom_predicate_wildcards: 8,
             max_custom_batch_size: 4,
