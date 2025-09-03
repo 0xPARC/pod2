@@ -24,7 +24,7 @@ use plonky2::{
 };
 
 use crate::backends::plonky2::{
-    basetypes::{D, F},
+    basetypes::F,
     primitives::ec::{
         curve::{add_homog, add_homog_offset, add_xu, ECFieldExt, Point},
         gates::field::{nnf_mul_ext, QuinticTensor},
@@ -81,12 +81,12 @@ impl ECAddHomogOffsetGate {
     pub fn apply<const D: usize>(
         builder: &mut CircuitBuilder<F, D>,
         targets: &[Target],
-        row: usize,
-        op_num: usize,
     ) -> Vec<Target>
     where
         F: Extendable<D>,
     {
+        let gate = ECAddHomogOffsetGate::new_from_config(&builder.config);
+        let (row, op_num) = builder.find_slot(gate, &[], &[]);
         let wires_a0 = Self::wires_ith_addend_0(op_num)
             .map(|i| Target::wire(row, i))
             .collect::<Vec<_>>();
@@ -102,7 +102,10 @@ impl ECAddHomogOffsetGate {
     }
 }
 
-impl Gate<F, D> for ECAddHomogOffsetGate {
+impl<const D: usize> Gate<F, D> for ECAddHomogOffsetGate
+where
+    F: Extendable<D>,
+{
     fn id(&self) -> String {
         format!("{self:?}")
     }
@@ -213,7 +216,10 @@ pub struct ECAddHomogOffsetGenerator {
     i: usize,
 }
 
-impl SimpleGenerator<F, D> for ECAddHomogOffsetGenerator {
+impl<const D: usize> SimpleGenerator<F, D> for ECAddHomogOffsetGenerator
+where
+    F: Extendable<D>,
+{
     fn id(&self) -> String {
         "ECAddHomogOffsetGenerator".to_string()
     }
@@ -278,9 +284,9 @@ pub struct ECAddXuGenerator {
     row: usize,
 }
 
-impl<const D: usize> SimpleGenerator<GoldilocksField, D> for ECAddXuGenerator
+impl<const D: usize> SimpleGenerator<F, D> for ECAddXuGenerator
 where
-    GoldilocksField: plonky2::field::extension::Extendable<D>,
+    F: Extendable<D>,
 {
     fn serialize(
         &self,
@@ -307,7 +313,7 @@ where
     }
 
     fn dependencies(&self) -> Vec<Target> {
-        (0..30).map(|i| Target::wire(self.row, i)).collect()
+        (0..26).map(|i| Target::wire(self.row, i)).collect()
     }
 
     fn run_once(
@@ -322,7 +328,7 @@ where
             .map(|&target| witness.get_target(target))
             .collect();
 
-        let selectors_y: Vec<GoldilocksField> = deps[5..8]
+        let selectors_y: Vec<GoldilocksField> = deps[3..6]
             .iter() // binary selectors for y
             .map(|&target| witness.get_target(target))
             .collect();
@@ -342,11 +348,11 @@ where
 
         let g_x = g.x;
         let g_u = g.u;
-        let y_x = extract_quintic(10);
-        let y_u = extract_quintic(15);
+        let y_x = extract_quintic(6);
+        let y_u = extract_quintic(11);
 
-        let mut p_x = extract_quintic(20);
-        let mut p_u = extract_quintic(25);
+        let mut p_x = extract_quintic(16);
+        let mut p_u = extract_quintic(21);
 
         let mut write_quintic =
             |start_wire: usize, value: &QuinticExtension<GoldilocksField>| -> anyhow::Result<()> {
@@ -364,22 +370,22 @@ where
         (0..3).try_for_each(|i| {
             // Double, write to wires [125-30*i..135-30*i]
             [p_x, p_u] = add_xu::<1, QuinticExtension<GoldilocksField>>(p_x, p_u, p_x, p_u);
-            write_quintic(125 - 30 * i, &p_x)?;
-            write_quintic(130 - 30 * i, &p_u)?;
+            write_quintic(121 - 30 * i, &p_x)?;
+            write_quintic(126 - 30 * i, &p_u)?;
 
             // Possibly add g, depending on selector. Write to wires  [115-30*i..125-30*i]
             if selectors_g[i] == GoldilocksField::ONE {
                 [p_x, p_u] = add_xu::<1, QuinticExtension<GoldilocksField>>(p_x, p_u, g_x, g_u);
             }
-            write_quintic(115 - 30 * i, &p_x)?;
-            write_quintic(120 - 30 * i, &p_u)?;
+            write_quintic(111 - 30 * i, &p_x)?;
+            write_quintic(116 - 30 * i, &p_u)?;
 
             // Possibly add y, depending on selector. Write to wires  [105-30*i..115-30*i]
             if selectors_y[i] == GoldilocksField::ONE {
                 [p_x, p_u] = add_xu::<1, QuinticExtension<GoldilocksField>>(p_x, p_u, y_x, y_u);
             }
-            write_quintic(105 - 30 * i, &p_x)?;
-            write_quintic(110 - 30 * i, &p_u)
+            write_quintic(101 - 30 * i, &p_x)?;
+            write_quintic(106 - 30 * i, &p_u)
         })
     }
 }
@@ -388,40 +394,39 @@ where
 /// double-and-add algorithm loop applied to the curve generator and a
 /// given point.
 #[derive(Clone)]
-pub struct ECAddXuGate {
-    pub max_ops: usize,
-    pub recursive_max_wires: usize,
-}
+pub struct ECAddXuGate;
 
 impl ECAddXuGate {
-    const INPUTS_PER_OP: usize = 30;
+    const INPUTS_PER_OP: usize = 26;
     const OUTPUTS_PER_OP: usize = 105;
     const WIRES_PER_OP: usize = Self::INPUTS_PER_OP + Self::OUTPUTS_PER_OP;
     const DEGREE: usize = 6;
     const ID: &'static str = "ECAddXuGate";
 
     pub fn apply<const D: usize>(
-        builder: &mut CircuitBuilder<GoldilocksField, D>,
+        builder: &mut CircuitBuilder<F, D>,
         targets: &[Target],
-        row: usize,
     ) -> Vec<Target>
     where
-        GoldilocksField: Extendable<D>,
+        F: Extendable<D>,
     {
         assert!(targets.len() == Self::INPUTS_PER_OP);
+        let (row, _) = builder.find_slot(ECAddXuGate::new(), &[], &[]);
         for (i, &t) in targets.iter().enumerate() {
             builder.connect(t, Target::wire(row, i));
         }
-        (0..Self::OUTPUTS_PER_OP)
-            .map(|i| Target::wire(row, Self::INPUTS_PER_OP + i))
+
+        /// Offset of the result of applying all double-and-adds in
+        /// output.
+        const FINAL_RESULT_OFFSET: usize = 15;
+
+        (0..10)
+            .map(|i| Target::wire(row, Self::INPUTS_PER_OP + FINAL_RESULT_OFFSET + i))
             .collect()
     }
 
-    pub fn new_from_config() -> Self {
-        Self {
-            max_ops: 1,
-            recursive_max_wires: 80,
-        }
+    pub fn new() -> Self {
+        Self
     }
 
     pub fn add_numerator_denominator<const D: usize>(
@@ -457,9 +462,9 @@ impl ECAddXuGate {
     }
 }
 
-impl<const D: usize> Gate<GoldilocksField, D> for ECAddXuGate
+impl<const D: usize> Gate<F, D> for ECAddXuGate
 where
-    GoldilocksField: plonky2::field::extension::Extendable<D>,
+    F: Extendable<D>,
 {
     fn id(&self) -> String {
         Self::ID.to_string()
@@ -467,24 +472,20 @@ where
 
     fn serialize(
         &self,
-        dst: &mut Vec<u8>,
+        _dst: &mut Vec<u8>,
         _common_data: &CommonCircuitData<GoldilocksField, D>,
     ) -> IoResult<()> {
-        dst.write_usize(self.max_ops)
+        Ok(())
     }
 
     fn deserialize(
-        src: &mut Buffer<'_>,
+        _src: &mut Buffer<'_>,
         _common_data: &CommonCircuitData<GoldilocksField, D>,
     ) -> IoResult<Self>
     where
         Self: Sized,
     {
-        let max_ops = src.read_usize()?;
-        Ok(Self {
-            max_ops,
-            recursive_max_wires: 80,
-        })
+        Ok(Self)
     }
 
     fn eval_unfiltered(
@@ -529,8 +530,8 @@ where
             let (x2, u2);
             if add_y {
                 // (using hardcoded location of y)
-                x2 = QuinticTensor::from_base(vars.local_wires[10..15].try_into().unwrap());
-                u2 = QuinticTensor::from_base(vars.local_wires[15..20].try_into().unwrap());
+                x2 = QuinticTensor::from_base(vars.local_wires[6..11].try_into().unwrap());
+                u2 = QuinticTensor::from_base(vars.local_wires[11..16].try_into().unwrap());
             } else {
                 let mut base_array: [GoldilocksField; 5] = g.x.to_basefield_array();
                 x2 = QuinticTensor::from_base(base_array.map(Into::into));
@@ -559,17 +560,17 @@ where
             new_constraints
         };
 
-        constraints.extend(double_constraint(20, 125));
-        constraints.extend(select_and_add_constraint(125, 115, 0, false));
-        constraints.extend(select_and_add_constraint(115, 105, 5, true));
+        constraints.extend(double_constraint(16, 121));
+        constraints.extend(select_and_add_constraint(121, 111, 0, false));
+        constraints.extend(select_and_add_constraint(111, 101, 3, true));
 
-        constraints.extend(double_constraint(105, 95));
-        constraints.extend(select_and_add_constraint(95, 85, 1, false));
-        constraints.extend(select_and_add_constraint(85, 75, 6, true));
+        constraints.extend(double_constraint(101, 91));
+        constraints.extend(select_and_add_constraint(91, 81, 1, false));
+        constraints.extend(select_and_add_constraint(81, 71, 4, true));
 
-        constraints.extend(double_constraint(75, 65));
-        constraints.extend(select_and_add_constraint(65, 55, 2, false));
-        constraints.extend(select_and_add_constraint(55, 45, 7, true));
+        constraints.extend(double_constraint(71, 61));
+        constraints.extend(select_and_add_constraint(61, 51, 2, false));
+        constraints.extend(select_and_add_constraint(51, 41, 5, true));
 
         constraints
     }
@@ -628,8 +629,8 @@ where
             let (x2, u2) = if add_y {
                 // (using hardcoded location of y)
                 (
-                    array::from_fn(|k| vars.local_wires[10 + k]),
-                    array::from_fn(|k| vars.local_wires[15 + k]),
+                    array::from_fn(|k| vars.local_wires[6 + k]),
+                    array::from_fn(|k| vars.local_wires[11 + k]),
                 )
             } else {
                 (g_x_ext_target, g_u_ext_target)
@@ -665,17 +666,17 @@ where
             new_constraints
         };
 
-        constraints.extend(double_constraint(builder, 20, 125));
-        constraints.extend(select_and_add_constraint(builder, 125, 115, 0, false));
-        constraints.extend(select_and_add_constraint(builder, 115, 105, 5, true));
+        constraints.extend(double_constraint(builder, 16, 121));
+        constraints.extend(select_and_add_constraint(builder, 121, 111, 0, false));
+        constraints.extend(select_and_add_constraint(builder, 111, 101, 3, true));
 
-        constraints.extend(double_constraint(builder, 105, 95));
-        constraints.extend(select_and_add_constraint(builder, 95, 85, 1, false));
-        constraints.extend(select_and_add_constraint(builder, 85, 75, 6, true));
+        constraints.extend(double_constraint(builder, 101, 91));
+        constraints.extend(select_and_add_constraint(builder, 91, 81, 1, false));
+        constraints.extend(select_and_add_constraint(builder, 81, 71, 4, true));
 
-        constraints.extend(double_constraint(builder, 75, 65));
-        constraints.extend(select_and_add_constraint(builder, 65, 55, 2, false));
-        constraints.extend(select_and_add_constraint(builder, 55, 45, 7, true));
+        constraints.extend(double_constraint(builder, 71, 61));
+        constraints.extend(select_and_add_constraint(builder, 61, 51, 2, false));
+        constraints.extend(select_and_add_constraint(builder, 51, 41, 5, true));
 
         constraints
     }
@@ -689,7 +690,7 @@ where
     }
 
     fn num_wires(&self) -> usize {
-        self.max_ops * Self::WIRES_PER_OP
+        Self::WIRES_PER_OP
     }
 
     fn degree(&self) -> usize {
@@ -697,7 +698,7 @@ where
     }
 
     fn num_ops(&self) -> usize {
-        self.max_ops
+        1
     }
 
     fn num_constants(&self) -> usize {
@@ -705,7 +706,7 @@ where
     }
 
     fn num_constraints(&self) -> usize {
-        self.max_ops * 90
+        90
     }
 }
 
@@ -904,7 +905,7 @@ mod test {
 
     #[test]
     fn test_ec_add_xu_gate() -> Result<(), anyhow::Error> {
-        let gate = ECAddXuGate::new_from_config();
+        let gate = ECAddXuGate::new();
 
         test_eval_fns::<_, PoseidonGoldilocksConfig, _, 2>(gate)
     }
@@ -920,7 +921,7 @@ mod test {
 
     #[test]
     fn test_ec_add_xu_gate_low_degree() -> Result<(), anyhow::Error> {
-        let gate = ECAddXuGate::new_from_config();
+        let gate = ECAddXuGate::new();
 
         test_low_degree::<_, _, 2>(gate);
         Ok(())

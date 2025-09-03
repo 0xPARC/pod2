@@ -21,7 +21,7 @@ use plonky2::{
     hash::poseidon::PoseidonHash,
     iop::{
         generator::SimpleGenerator,
-        target::{BoolTarget, Target},
+        target::BoolTarget,
         witness::WitnessWrite,
     },
     plonk::circuit_builder::CircuitBuilder,
@@ -581,15 +581,10 @@ impl CircuitBuilderSignature for CircuitBuilder<GoldilocksField, 2> {
         let zero_target = self.zero();
 
         let mut ans = zero.clone(); // accumulator
-        let arb_target = self.zero();
 
-        let mut all_rows = [0usize; 107];
         for x in 0..107 {
-            let (row, _slot) = self.find_slot(ECAddXuGate::new_from_config(), &[], &[]);
-            all_rows[x] = row;
-
             // prepare to apply gate
-            let mut inputs = Vec::with_capacity(30);
+            let mut inputs = Vec::with_capacity(26);
 
             // scalar bits for g
             if x == 0 {
@@ -599,8 +594,6 @@ impl CircuitBuilderSignature for CircuitBuilder<GoldilocksField, 2> {
             }
             inputs.push(a[319 - 3 * x].target);
             inputs.push(a[318 - 3 * x].target);
-            inputs.push(arb_target);
-            inputs.push(arb_target);
 
             // scalar bits for p (y)
             if x == 0 {
@@ -610,8 +603,6 @@ impl CircuitBuilderSignature for CircuitBuilder<GoldilocksField, 2> {
             }
             inputs.push(b[319 - 3 * x].target);
             inputs.push(b[318 - 3 * x].target);
-            inputs.push(arb_target);
-            inputs.push(arb_target);
 
             // y point
             inputs.extend_from_slice(&y.x.components);
@@ -622,31 +613,15 @@ impl CircuitBuilderSignature for CircuitBuilder<GoldilocksField, 2> {
             inputs.extend_from_slice(&ans.u.components);
 
             // apply gate
-            let outputs = ECAddXuGate::apply(self, &inputs, row);
-            let x = FieldTarget::new(outputs[15..20].try_into().unwrap());
-            let u = FieldTarget::new(outputs[20..25].try_into().unwrap());
+            let outputs = ECAddXuGate::apply(self, &inputs);
+            let x = FieldTarget::new(array::from_fn(|i| outputs[i]));
+            let u = FieldTarget::new(array::from_fn(|i| outputs[5 + i]));
             ans = PointTarget {
                 x,
                 u,
                 checked_on_curve: true,
                 checked_in_subgroup: p.checked_in_subgroup,
             };
-
-            for (col, input) in inputs.iter().enumerate().take(30) {
-                self.connect(*input, Target::wire(row, col));
-            }
-        }
-
-        // copy accumulator from one row to the next
-        let (in_offset, acc_in_offset) = (0, 20);
-        let (out_offset, acc_out_offset) = (30, 15);
-        for x in 0..106 {
-            for y in 0..10 {
-                self.connect(
-                    Target::wire(all_rows[x], out_offset + acc_out_offset + y),
-                    Target::wire(all_rows[x + 1], in_offset + acc_in_offset + y),
-                )
-            }
         }
 
         ans
@@ -716,9 +691,7 @@ impl CircuitBuilderElliptic for CircuitBuilder<GoldilocksField, 2> {
         inputs.extend_from_slice(&p2.x.components);
         inputs.extend_from_slice(&p2.u.components);
 
-        let gate = ECAddHomogOffsetGate::new_from_config(&self.config);
-        let (row, op_num) = self.find_slot(gate, &[], &[]);
-        let outputs = ECAddHomogOffsetGate::apply(self, &inputs, row, op_num);
+        let outputs = ECAddHomogOffsetGate::apply(self, &inputs);
 
         // plonky2 expects all gate constraints to be satisfied by the zero vector.
         // So our elliptic curve addition gate computes [x,z-b,u,t-b], and we have to add the b here.
