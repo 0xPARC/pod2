@@ -835,6 +835,29 @@ pub mod tests {
     }
 
     #[test]
+    fn test_empty() -> frontend::Result<()> {
+        let params = Default::default();
+        println!("{:#?}", params);
+        let mut vds = DEFAULT_VD_LIST.clone();
+        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
+
+        let (gov_id_builder, pay_stub_builder) = zu_kyc_sign_pod_builders(&params);
+        let signer = Signer(SecretKey(BigUint::one()));
+        let gov_id_pod = gov_id_builder.sign(&signer)?;
+        let signer = Signer(SecretKey(2u64.into()));
+        let pay_stub_pod = pay_stub_builder.sign(&signer)?;
+        let kyc_builder = zu_kyc_pod_builder(&params, &vd_set, &gov_id_pod, &pay_stub_pod)?;
+
+        let prover = Prover {};
+        let kyc_pod = kyc_builder.prove(&prover)?;
+        crate::measure_gates_print!();
+        let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
+
+        Ok(pod.verify()?)
+    }
+
+    #[test]
     fn test_main_tickets() -> frontend::Result<()> {
         let params = Params::default();
 
