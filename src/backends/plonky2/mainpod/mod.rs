@@ -862,26 +862,7 @@ pub mod tests {
     #[ignore]
     #[test]
     fn test_measure_main_pod() -> frontend::Result<()> {
-        let params = Params {
-            max_input_pods: 2,
-            max_input_pods_public_statements: 4,
-            max_statements: 60,
-            max_public_statements: 4,
-            num_public_statements_hash: 8,
-            max_statement_args: 5,
-            max_operation_args: 5,
-            max_custom_predicate_batches: 4,
-            max_custom_predicate_verifications: 5,
-            max_custom_predicate_arity: 5,
-            max_custom_predicate_wildcards: 8,
-            max_custom_batch_size: 4,
-            max_merkle_proofs_containers: 24,
-            max_merkle_tree_state_transition_proofs_containers: 6,
-            max_depth_mt_containers: 32,
-            max_depth_mt_vds: 6, // up to 64 (2^6) different pod circuits
-            max_public_key_of: 2,
-            max_signed_by: 4,
-        };
+        let params = Params::default();
         println!("{:#?}", params);
         let vd_set = VDSet::new(params.max_depth_mt_vds, &[]).unwrap();
 

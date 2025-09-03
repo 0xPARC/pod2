@@ -779,7 +779,7 @@ impl Default for Params {
         Self {
             max_input_pods: 2,
             max_input_pods_public_statements: 4,
-            max_statements: 50,
+            max_statements: 44,
             max_public_statements: 4,
             num_public_statements_hash: 8,
             max_statement_args: 5,

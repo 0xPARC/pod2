@@ -435,7 +435,7 @@ fn estimate_verif_num_gates(degree_bits: usize) -> usize {
     {
         // Formula obtained via linear regression using
         // `test_measure_zk_recursion` results with `standard_recursion_zk_config`.
-        num_gates = 244 * degree_bits + 1127;
+        num_gates = 243 * degree_bits + 1522;
     }
     #[cfg(not(feature = "zk"))]
     {
@@ -1010,6 +1010,7 @@ mod tests {
         }
     }
 
+    // `cargo test --release --no-default-features --features=backend_plonky2,mem_cache,zk,metrics test_measure_zk_recursion -- --nocapture --ignored`
     #[ignore]
     #[test]
     fn test_measure_zk_recursion() {
