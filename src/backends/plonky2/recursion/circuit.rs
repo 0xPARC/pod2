@@ -441,7 +441,7 @@ fn estimate_verif_num_gates(degree_bits: usize) -> usize {
     {
         // Formula obtained via linear regression using `test_measure_recursion`
         // results with `standard_recursion_config`.
-        num_gates = 236 * degree_bits + 1171;
+        num_gates = 236 * degree_bits + 1580;
     }
     // Add 2% for error because the results are not a clean line
     num_gates * 102 / 100
@@ -961,6 +961,7 @@ mod tests {
         Ok(())
     }
 
+    // `cargo test --release --no-default-features --features=backend_plonky2,mem_cache,zk,metrics test_measure_recursion -- --nocapture --ignored`
     #[ignore]
     #[test]
     fn test_measure_recursion() {
