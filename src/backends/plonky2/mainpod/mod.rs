@@ -859,27 +859,40 @@ pub mod tests {
         Ok(pod.verify()?)
     }
 
+    #[ignore]
     #[test]
-    fn test_empty() -> frontend::Result<()> {
-        let params = Default::default();
+    fn test_measure_main_pod() -> frontend::Result<()> {
+        let params = Params {
+            max_input_pods: 2,
+            max_input_pods_public_statements: 4,
+            max_statements: 60,
+            max_public_statements: 4,
+            num_public_statements_hash: 8,
+            max_statement_args: 5,
+            max_operation_args: 5,
+            max_custom_predicate_batches: 4,
+            max_custom_predicate_verifications: 5,
+            max_custom_predicate_arity: 5,
+            max_custom_predicate_wildcards: 8,
+            max_custom_batch_size: 4,
+            max_merkle_proofs_containers: 24,
+            max_merkle_tree_state_transition_proofs_containers: 6,
+            max_depth_mt_containers: 32,
+            max_depth_mt_vds: 6, // up to 64 (2^6) different pod circuits
+            max_public_key_of: 2,
+            max_signed_by: 4,
+        };
         println!("{:#?}", params);
-        let mut vds = DEFAULT_VD_LIST.clone();
-        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
-        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
+        let vd_set = VDSet::new(params.max_depth_mt_vds, &[]).unwrap();
 
-        let (gov_id_builder, pay_stub_builder) = zu_kyc_sign_pod_builders(&params);
-        let signer = Signer(SecretKey(BigUint::one()));
-        let gov_id_pod = gov_id_builder.sign(&signer)?;
-        let signer = Signer(SecretKey(2u64.into()));
-        let pay_stub_pod = pay_stub_builder.sign(&signer)?;
-        let kyc_builder = zu_kyc_pod_builder(&params, &vd_set, &gov_id_pod, &pay_stub_pod)?;
-
+        // Calculate rec common first to avoid duplicate metrics in `pod_builder.prove`
+        let _rec_common_circuit_data = cache_get_standard_rec_main_pod_common_circuit_data();
+        let pod_builder = MainPodBuilder::new(&params, &vd_set);
         let prover = Prover {};
-        let kyc_pod = kyc_builder.prove(&prover)?;
+        crate::measure_gates_reset!();
+        let _pod = pod_builder.prove(&prover)?;
         crate::measure_gates_print!();
-        let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
-
-        Ok(pod.verify()?)
+        Ok(())
     }
 
     #[test]

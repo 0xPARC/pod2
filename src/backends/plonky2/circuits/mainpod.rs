@@ -1561,6 +1561,7 @@ fn build_custom_predicate_table_circuit(
     let mut custom_predicate_table =
         Vec::with_capacity(params.max_custom_predicate_batches * params.max_custom_batch_size);
     for cpb in custom_predicate_batches {
+        let measure_cpb = measure_gates_begin!(builder, "CustomPredBatch");
         let id = cpb.id(builder); // constrain the id
         for (index, cp) in cpb.predicates.iter().enumerate() {
             let statements = cp
@@ -1582,6 +1583,7 @@ fn build_custom_predicate_table_circuit(
             let in_query_hash = entry.hash(builder);
             custom_predicate_table.push(in_query_hash);
         }
+        measure_gates_end!(builder, measure_cpb);
     }
     measure_gates_end!(builder, measure);
     Ok(custom_predicate_table)

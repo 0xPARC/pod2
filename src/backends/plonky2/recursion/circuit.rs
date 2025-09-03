@@ -523,6 +523,11 @@ pub fn common_data_for_recursion<I: InnerCircuit>(
         }
 
         if total_num_gates < (1 << degree_bits) {
+            println!(
+                "DBG degree_bits = {}, free_gates = {}",
+                degree_bits,
+                (1 << degree_bits) - total_num_gates
+            );
             break;
         }
         degree_bits = log2_ceil(total_num_gates);
