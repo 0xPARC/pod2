@@ -368,24 +368,24 @@ where
         // Write points from right to left so that the result of the fifth add
         // lies on a routable wire and thus can be copied to the next row.
         (0..3).try_for_each(|i| {
-            // Double, write to wires [125-30*i..135-30*i]
+            // Double, write to wires [106-30*i..116-30*i]
             [p_x, p_u] = add_xu::<1, QuinticExtension<GoldilocksField>>(p_x, p_u, p_x, p_u);
-            write_quintic(121 - 30 * i, &p_x)?;
-            write_quintic(126 - 30 * i, &p_u)?;
+            write_quintic(106 - 30 * i, &p_x)?;
+            write_quintic(111 - 30 * i, &p_u)?;
 
-            // Possibly add g, depending on selector. Write to wires  [115-30*i..125-30*i]
+            // Possibly add g, depending on selector. Write to wires  [96-30*i..106-30*i]
             if selectors_g[i] == GoldilocksField::ONE {
                 [p_x, p_u] = add_xu::<1, QuinticExtension<GoldilocksField>>(p_x, p_u, g_x, g_u);
             }
-            write_quintic(111 - 30 * i, &p_x)?;
-            write_quintic(116 - 30 * i, &p_u)?;
+            write_quintic(96 - 30 * i, &p_x)?;
+            write_quintic(101 - 30 * i, &p_u)?;
 
-            // Possibly add y, depending on selector. Write to wires  [105-30*i..115-30*i]
+            // Possibly add y, depending on selector. Write to wires  [86-30*i..96-30*i]
             if selectors_y[i] == GoldilocksField::ONE {
                 [p_x, p_u] = add_xu::<1, QuinticExtension<GoldilocksField>>(p_x, p_u, y_x, y_u);
             }
-            write_quintic(101 - 30 * i, &p_x)?;
-            write_quintic(106 - 30 * i, &p_u)
+            write_quintic(86 - 30 * i, &p_x)?;
+            write_quintic(91 - 30 * i, &p_u)
         })
     }
 }
@@ -398,7 +398,7 @@ pub struct ECAddXuGate;
 
 impl ECAddXuGate {
     const INPUTS_PER_OP: usize = 26;
-    const OUTPUTS_PER_OP: usize = 105;
+    const OUTPUTS_PER_OP: usize = 90;
     const WIRES_PER_OP: usize = Self::INPUTS_PER_OP + Self::OUTPUTS_PER_OP;
     const DEGREE: usize = 6;
     const ID: &'static str = "ECAddXuGate";
@@ -416,12 +416,8 @@ impl ECAddXuGate {
             builder.connect(t, Target::wire(row, i));
         }
 
-        /// Offset of the result of applying all double-and-adds in
-        /// output.
-        const FINAL_RESULT_OFFSET: usize = 15;
-
         (0..10)
-            .map(|i| Target::wire(row, Self::INPUTS_PER_OP + FINAL_RESULT_OFFSET + i))
+            .map(|i| Target::wire(row, Self::INPUTS_PER_OP + i))
             .collect()
     }
 
@@ -560,17 +556,17 @@ where
             new_constraints
         };
 
-        constraints.extend(double_constraint(16, 121));
-        constraints.extend(select_and_add_constraint(121, 111, 0, false));
-        constraints.extend(select_and_add_constraint(111, 101, 3, true));
+        constraints.extend(double_constraint(16, 106));
+        constraints.extend(select_and_add_constraint(106, 96, 0, false));
+        constraints.extend(select_and_add_constraint(96, 86, 3, true));
 
-        constraints.extend(double_constraint(101, 91));
-        constraints.extend(select_and_add_constraint(91, 81, 1, false));
-        constraints.extend(select_and_add_constraint(81, 71, 4, true));
+        constraints.extend(double_constraint(86, 76));
+        constraints.extend(select_and_add_constraint(76, 66, 1, false));
+        constraints.extend(select_and_add_constraint(66, 56, 4, true));
 
-        constraints.extend(double_constraint(71, 61));
-        constraints.extend(select_and_add_constraint(61, 51, 2, false));
-        constraints.extend(select_and_add_constraint(51, 41, 5, true));
+        constraints.extend(double_constraint(56, 46));
+        constraints.extend(select_and_add_constraint(46, 36, 2, false));
+        constraints.extend(select_and_add_constraint(36, 26, 5, true));
 
         constraints
     }
@@ -666,17 +662,17 @@ where
             new_constraints
         };
 
-        constraints.extend(double_constraint(builder, 16, 121));
-        constraints.extend(select_and_add_constraint(builder, 121, 111, 0, false));
-        constraints.extend(select_and_add_constraint(builder, 111, 101, 3, true));
+        constraints.extend(double_constraint(builder, 16, 106));
+        constraints.extend(select_and_add_constraint(builder, 106, 96, 0, false));
+        constraints.extend(select_and_add_constraint(builder, 96, 86, 3, true));
 
-        constraints.extend(double_constraint(builder, 101, 91));
-        constraints.extend(select_and_add_constraint(builder, 91, 81, 1, false));
-        constraints.extend(select_and_add_constraint(builder, 81, 71, 4, true));
+        constraints.extend(double_constraint(builder, 86, 76));
+        constraints.extend(select_and_add_constraint(builder, 76, 66, 1, false));
+        constraints.extend(select_and_add_constraint(builder, 66, 56, 4, true));
 
-        constraints.extend(double_constraint(builder, 71, 61));
-        constraints.extend(select_and_add_constraint(builder, 61, 51, 2, false));
-        constraints.extend(select_and_add_constraint(builder, 51, 41, 5, true));
+        constraints.extend(double_constraint(builder, 56, 46));
+        constraints.extend(select_and_add_constraint(builder, 46, 36, 2, false));
+        constraints.extend(select_and_add_constraint(builder, 36, 26, 5, true));
 
         constraints
     }
