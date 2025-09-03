@@ -8,26 +8,26 @@ use num::BigUint;
 pub static MOCK_VD_SET: LazyLock<VDSet> = LazyLock::new(|| VDSet::new(6, &[]).unwrap());
 
 use crate::{
-    backends::plonky2::{primitives::ec::schnorr::SecretKey, signedpod::Signer},
+    backends::plonky2::{primitives::ec::schnorr::SecretKey, signer::Signer},
     frontend::{
-        MainPod, MainPodBuilder, Operation, PodRequest, Result, SignedPod, SignedPodBuilder,
+        MainPod, MainPodBuilder, Operation, PodRequest, Result, SignedDict, SignedDictBuilder,
     },
     lang::parse,
     middleware::{
-        containers::Set, hash_values, CustomPredicateRef, Params, PodSigner, PodType, Predicate,
-        Statement, StatementArg, TypedValue, VDSet, Value, KEY_SIGNER, KEY_TYPE,
+        self, containers::Set, hash_values, CustomPredicateRef, Params, Predicate, PublicKey,
+        Signer as _, Statement, StatementArg, TypedValue, VDSet, Value,
     },
 };
 
 // ZuKYC
 
-pub fn zu_kyc_sign_pod_builders(params: &Params) -> (SignedPodBuilder, SignedPodBuilder) {
-    let mut gov_id = SignedPodBuilder::new(params);
+pub fn zu_kyc_sign_dict_builders(params: &Params) -> (SignedDictBuilder, SignedDictBuilder) {
+    let mut gov_id = SignedDictBuilder::new(params);
     gov_id.insert("idNumber", "4242424242");
     gov_id.insert("dateOfBirth", 1169909384);
     gov_id.insert("socialSecurityNumber", "G2121210");
 
-    let mut pay_stub = SignedPodBuilder::new(params);
+    let mut pay_stub = SignedDictBuilder::new(params);
     pay_stub.insert("socialSecurityNumber", "G2121210");
     pay_stub.insert("startDate", 1706367566);
 
@@ -41,8 +41,8 @@ pub const ZU_KYC_SANCTION_LIST: &[&str] = &["A343434340"];
 pub fn zu_kyc_pod_builder(
     params: &Params,
     vd_set: &VDSet,
-    gov_id: &SignedPod,
-    pay_stub: &SignedPod,
+    gov_id: &SignedDict,
+    pay_stub: &SignedDict,
 ) -> Result<MainPodBuilder> {
     let now_minus_18y = ZU_KYC_NOW_MINUS_18Y;
     let now_minus_1y = ZU_KYC_NOW_MINUS_1Y;
@@ -54,8 +54,9 @@ pub fn zu_kyc_pod_builder(
         Value::from(Set::new(params.max_depth_mt_containers, sanctions_values).unwrap());
 
     let mut kyc = MainPodBuilder::new(params, vd_set);
-    kyc.add_signed_pod(gov_id);
-    kyc.add_signed_pod(pay_stub);
+    kyc.pub_op(Operation::dict_signed_by(gov_id))?;
+    kyc.pub_op(Operation::dict_signed_by(pay_stub))?;
+
     kyc.pub_op(Operation::set_not_contains(
         sanction_set,
         (gov_id, "idNumber"),
@@ -66,14 +67,6 @@ pub fn zu_kyc_pod_builder(
         (pay_stub, "socialSecurityNumber"),
     ))?;
     kyc.pub_op(Operation::eq((pay_stub, "startDate"), now_minus_1y))?;
-    kyc.pub_op(Operation::eq(
-        (gov_id, "_signer"),
-        gov_id.get("_signer").unwrap(),
-    ))?;
-    kyc.pub_op(Operation::eq(
-        (pay_stub, "_signer"),
-        pay_stub.get("_signer").unwrap(),
-    ))?;
 
     Ok(kyc)
 }
@@ -93,8 +86,8 @@ pub fn zu_kyc_pod_request(gov_signer: &Value, pay_signer: &Value) -> Result<PodR
         Lt(?gov["dateOfBirth"], {ZU_KYC_NOW_MINUS_18Y})
         Equal(?pay["startDate"], {ZU_KYC_NOW_MINUS_1Y})
         Equal(?gov["socialSecurityNumber"], ?pay["socialSecurityNumber"])
-        Equal(?gov["_signer"], {gov_signer})
-        Equal(?pay["_signer"], {pay_signer})
+        SignedBy(?gov, {gov_signer})
+        SignedBy(?pay, {pay_signer})
         // TODO: Ownership check and watermarking
         // Depends partly on https://github.com/0xPARC/pod2/issues/351
     )
@@ -106,8 +99,12 @@ pub fn zu_kyc_pod_request(gov_signer: &Value, pay_signer: &Value) -> Result<PodR
 
 // ETHDoS
 
-pub fn attest_eth_friend(params: &Params, src: &impl PodSigner, dst: Value) -> SignedPod {
-    let mut attestation = SignedPodBuilder::new(params);
+pub fn attest_eth_friend(
+    params: &Params,
+    src: &impl middleware::Signer,
+    dst: PublicKey,
+) -> SignedDict {
+    let mut attestation = SignedDictBuilder::new(params);
     attestation.insert("attestation", dst);
     attestation.sign(src).unwrap()
 }
@@ -115,16 +112,15 @@ pub fn attest_eth_friend(params: &Params, src: &impl PodSigner, dst: Value) -> S
 pub struct EthDosHelper {
     params: Params,
     vd_set: VDSet,
-    mock: bool,
     eth_friend: CustomPredicateRef,
     eth_dos_base: CustomPredicateRef,
     eth_dos_ind: CustomPredicateRef,
     eth_dos: CustomPredicateRef,
-    src: Value,
+    src: PublicKey,
 }
 
 impl EthDosHelper {
-    pub fn new(params: &Params, vd_set: &VDSet, mock: bool, src: Value) -> Result<Self> {
+    pub fn new(params: &Params, vd_set: &VDSet, src: PublicKey) -> Result<Self> {
         let eth_dos_batch = eth_dos_batch(params)?;
         let eth_friend = eth_dos_batch.predicate_ref_by_name("eth_friend").unwrap();
         let eth_dos_base = eth_dos_batch.predicate_ref_by_name("eth_dos_base").unwrap();
@@ -133,7 +129,6 @@ impl EthDosHelper {
         Ok(Self {
             params: params.clone(),
             vd_set: vd_set.clone(),
-            mock,
             eth_friend,
             eth_dos_base,
             eth_dos_ind,
@@ -142,16 +137,13 @@ impl EthDosHelper {
         })
     }
 
-    pub fn dist_1(&self, src_attestation: &SignedPod) -> Result<MainPodBuilder> {
-        assert_eq!(
-            &self.src,
-            src_attestation.get(KEY_SIGNER).expect("get KEY_SIGNER")
-        );
+    pub fn dist_1(&self, src_attestation: &SignedDict) -> Result<MainPodBuilder> {
+        assert_eq!(self.src, src_attestation.public_key);
 
         let mut pod = MainPodBuilder::new(&self.params, &self.vd_set);
-        pod.add_signed_pod(src_attestation);
+        pod.pub_op(Operation::dict_signed_by(src_attestation))?;
 
-        let src_eq_src = pod.priv_op(Operation::eq(self.src.clone(), self.src.clone()))?;
+        let src_eq_src = pod.priv_op(Operation::eq(self.src, self.src))?;
         let distance_eq_zero = pod.priv_op(Operation::eq(0, 0))?;
         let eth_dos_src_to_src_base = pod.priv_op(Operation::custom(
             self.eth_dos_base.clone(),
@@ -171,20 +163,10 @@ impl EthDosHelper {
     pub fn dist_n_plus_1(
         &self,
         eth_dos_src_to_int_pod: &MainPod,
-        int_attestation: &SignedPod, // int signs dst
+        int_attestation: &SignedDict, // int signs dst
     ) -> Result<MainPodBuilder> {
-        assert_eq!(
-            Value::from(if self.mock {
-                PodType::MockMain
-            } else {
-                PodType::Main
-            }),
-            eth_dos_src_to_int_pod.get(KEY_TYPE).expect("get KEY_TYPE")
-        );
-
         let mut pod = MainPodBuilder::new(&self.params, &self.vd_set);
-        pod.add_signed_pod(int_attestation);
-        pod.add_recursive_pod(eth_dos_src_to_int_pod.clone());
+        pod.add_pod(eth_dos_src_to_int_pod.clone());
 
         let eth_dos_int_to_dst = eth_dos_src_to_int_pod
             .pod
@@ -200,10 +182,7 @@ impl EthDosHelper {
                 _ => panic!("expected StatementArg::Literal"),
             })
         };
-        assert_eq!(
-            &int,
-            int_attestation.get(KEY_SIGNER).expect("get KEY_SIGNER")
-        );
+        assert_eq!(int, Value::from(int_attestation.public_key));
 
         let n_i64 = if let TypedValue::Int(x) = n.typed() {
             *x
@@ -221,25 +200,15 @@ impl EthDosHelper {
         &self,
         pod: &mut MainPodBuilder,
         eth_dos_int_to_dst: Statement,
-        int_attestation: &SignedPod,
+        int_attestation: &SignedDict,
         n: i64,
     ) -> Result<()> {
-        assert_eq!(
-            &Value::from(PodType::Signed),
-            int_attestation.get(KEY_TYPE).expect("get KEY_TYPE")
-        );
-
         // eth_friend statement
-        let attestation_is_signed_pod = int_attestation.get_statement(KEY_TYPE).unwrap();
-        let attestation_signed_by_int = int_attestation.get_statement(KEY_SIGNER).unwrap();
+        let attestation_signed_by_int = pod.priv_op(Operation::dict_signed_by(int_attestation))?;
         let int_attests_to_dst = int_attestation.get_statement("attestation").unwrap();
         let ethfriends_int_dst = pod.priv_op(Operation::custom(
             self.eth_friend.clone(),
-            [
-                attestation_is_signed_pod,
-                attestation_signed_by_int,
-                int_attests_to_dst,
-            ],
+            [attestation_signed_by_int, int_attests_to_dst],
         ))?;
 
         // distance = n + 1
@@ -259,17 +228,17 @@ impl EthDosHelper {
 
 // GreatBoy
 
-pub fn good_boy_sign_pod_builder(params: &Params, user: &Value, age: i64) -> SignedPodBuilder {
-    let mut good_boy = SignedPodBuilder::new(params);
-    good_boy.insert("user", user.clone());
+pub fn good_boy_sign_pod_builder(params: &Params, user: &PublicKey, age: i64) -> SignedDictBuilder {
+    let mut good_boy = SignedDictBuilder::new(params);
+    good_boy.insert("user", *user);
     good_boy.insert("age", age);
 
     good_boy
 }
 
-pub fn friend_sign_pod_builder(params: &Params, friend: &Value) -> SignedPodBuilder {
-    let mut friend_pod = SignedPodBuilder::new(params);
-    friend_pod.insert("friend", friend.clone());
+pub fn friend_sign_pod_builder(params: &Params, friend: &PublicKey) -> SignedDictBuilder {
+    let mut friend_pod = SignedDictBuilder::new(params);
+    friend_pod.insert("friend", *friend);
 
     friend_pod
 }
@@ -277,10 +246,10 @@ pub fn friend_sign_pod_builder(params: &Params, friend: &Value) -> SignedPodBuil
 pub fn great_boy_pod_builder(
     params: &Params,
     vd_set: &VDSet,
-    good_boy_pods: [&SignedPod; 4],
-    friend_pods: [&SignedPod; 2],
+    good_boy_signed_dicts: [&SignedDict; 4],
+    friend_signed_dicts: [&SignedDict; 2],
     good_boy_issuers: &Value,
-    receiver: &Value,
+    receiver: &PublicKey,
 ) -> Result<MainPodBuilder> {
     // Attestment chain (issuer -> good boy -> great boy):
     // issuer 0 -> good_boy_pods[0] => good boy 0
@@ -291,51 +260,41 @@ pub fn great_boy_pod_builder(
     // good boy 1 -> friend_pods[1] => receiver
 
     let mut great_boy = MainPodBuilder::new(params, vd_set);
-    for good_boy_pod in good_boy_pods {
-        great_boy.add_signed_pod(good_boy_pod);
+    for good_boy_signed_dict in good_boy_signed_dicts {
+        great_boy.pub_op(Operation::dict_signed_by(good_boy_signed_dict))?;
     }
-    for friend_pod in friend_pods {
-        great_boy.add_signed_pod(friend_pod);
+    for friend_signed_dict in friend_signed_dicts {
+        great_boy.pub_op(Operation::dict_signed_by(friend_signed_dict))?;
     }
 
     for good_boy_idx in 0..2 {
-        // Type check
-        great_boy.pub_op(Operation::eq(
-            (friend_pods[good_boy_idx], KEY_TYPE),
-            PodType::Signed as i64,
-        ))?;
         for issuer_idx in 0..2 {
-            // Type check
-            great_boy.pub_op(Operation::eq(
-                (good_boy_pods[good_boy_idx * 2 + issuer_idx], KEY_TYPE),
-                PodType::Signed as i64,
-            ))?;
             // Each good boy POD comes from a valid issuer
             great_boy.pub_op(Operation::set_contains(
                 good_boy_issuers,
-                (good_boy_pods[good_boy_idx * 2 + issuer_idx], KEY_SIGNER),
+                good_boy_signed_dicts[good_boy_idx * 2 + issuer_idx].public_key,
             ))?;
             // Each good boy has 2 good boy pods
             great_boy.pub_op(Operation::eq(
-                (good_boy_pods[good_boy_idx * 2 + issuer_idx], "user"),
-                (friend_pods[good_boy_idx], KEY_SIGNER),
+                (good_boy_signed_dicts[good_boy_idx * 2 + issuer_idx], "user"),
+                friend_signed_dicts[good_boy_idx].public_key,
             ))?;
         }
         // The good boy PODs from each good boy have different issuers
         great_boy.pub_op(Operation::ne(
-            (good_boy_pods[good_boy_idx * 2], KEY_SIGNER),
-            (good_boy_pods[good_boy_idx * 2 + 1], KEY_SIGNER),
+            good_boy_signed_dicts[good_boy_idx * 2].public_key,
+            good_boy_signed_dicts[good_boy_idx * 2 + 1].public_key,
         ))?;
         // Each good boy is receivers' friend
         great_boy.pub_op(Operation::eq(
-            (friend_pods[good_boy_idx], "friend"),
-            receiver.clone(),
+            (friend_signed_dicts[good_boy_idx], "friend"),
+            *receiver,
         ))?;
     }
     // The two good boys are different
     great_boy.pub_op(Operation::ne(
-        (friend_pods[0], KEY_SIGNER),
-        (friend_pods[1], KEY_SIGNER),
+        friend_signed_dicts[0].public_key,
+        friend_signed_dicts[1].public_key,
     ))?;
 
     Ok(great_boy)
@@ -343,11 +302,11 @@ pub fn great_boy_pod_builder(
 
 pub fn great_boy_pod_full_flow() -> Result<MainPodBuilder> {
     let params = Params {
-        max_input_signed_pods: 6,
-        max_input_recursive_pods: 0,
+        max_signed_by: 6,
+        max_input_pods: 0,
         max_statements: 100,
         max_public_statements: 50,
-        num_public_statements_id: 50,
+        num_public_statements_hash: 50,
         ..Default::default()
     };
     let vd_set = &*MOCK_VD_SET;
@@ -413,13 +372,13 @@ pub fn great_boy_pod_full_flow() -> Result<MainPodBuilder> {
 
 pub const TICKET_OWNER_SECRET_KEY: SecretKey = SecretKey(BigUint::ZERO);
 
-pub fn tickets_sign_pod_builder(params: &Params) -> SignedPodBuilder {
+pub fn tickets_sign_pod_builder(params: &Params) -> SignedDictBuilder {
     // Create a signed pod with all atomic types (string, int, bool)
-    let mut builder = SignedPodBuilder::new(params);
+    let mut builder = SignedDictBuilder::new(params);
     builder.insert("eventId", 123);
     builder.insert("productId", 456);
     // Removed temporarily to make the example fit in 8 entries.
-    //builder.insert("attendeeName", "John Doe");
+    // builder.insert("attendeeName", "John Doe");
     builder.insert("attendeeEmail", "john.doe@example.com");
     builder.insert("attendeePublicKey", TICKET_OWNER_SECRET_KEY.public_key());
     builder.insert("isConsumed", true);
@@ -430,7 +389,7 @@ pub fn tickets_sign_pod_builder(params: &Params) -> SignedPodBuilder {
 pub fn tickets_pod_builder(
     params: &Params,
     vd_set: &VDSet,
-    signed_pod: &SignedPod,
+    signed_dict: &SignedDict,
     expected_event_id: i64,
     expect_consumed: bool,
     blacklisted_emails: &Set,
@@ -438,28 +397,28 @@ pub fn tickets_pod_builder(
     let blacklisted_email_set_value = Value::from(TypedValue::Set(blacklisted_emails.clone()));
     // Create a main pod referencing this signed pod with some statements
     let mut builder = MainPodBuilder::new(params, vd_set);
-    builder.add_signed_pod(signed_pod);
-    builder.pub_op(Operation::eq((signed_pod, "eventId"), expected_event_id))?;
-    builder.pub_op(Operation::eq((signed_pod, "isConsumed"), expect_consumed))?;
-    builder.pub_op(Operation::eq((signed_pod, "isRevoked"), false))?;
+    builder.pub_op(Operation::dict_signed_by(signed_dict))?;
+    builder.pub_op(Operation::eq((signed_dict, "eventId"), expected_event_id))?;
+    builder.pub_op(Operation::eq((signed_dict, "isConsumed"), expect_consumed))?;
+    builder.pub_op(Operation::eq((signed_dict, "isRevoked"), false))?;
     builder.pub_op(Operation::dict_not_contains(
         blacklisted_email_set_value,
-        (signed_pod, "attendeeEmail"),
+        (signed_dict, "attendeeEmail"),
     ))?;
 
     // This isn't the most fool-proof way to prove ownership (it requires
     // verifier to check pod ID on an anchored key to confirm statement wasn't
     // copied), but it's the simplest.
-    let st_sk = builder.priv_literal(TICKET_OWNER_SECRET_KEY)?;
+    let sk = TICKET_OWNER_SECRET_KEY;
     builder.pub_op(Operation::public_key_of(
-        (signed_pod, "attendeePublicKey"),
-        st_sk.clone(),
+        (signed_dict, "attendeePublicKey"),
+        sk.clone(),
     ))?;
 
     // Nullifier calculation is public, but based on the private sk.
     let external_nullifier = "external nullifier";
     let nullifier = hash_values(&[TICKET_OWNER_SECRET_KEY.into(), external_nullifier.into()]);
-    builder.pub_op(Operation::hash_of(nullifier, st_sk, external_nullifier))?;
+    builder.pub_op(Operation::hash_of(nullifier, sk, external_nullifier))?;
 
     Ok(builder)
 }
@@ -467,11 +426,11 @@ pub fn tickets_pod_builder(
 pub fn tickets_pod_full_flow(params: &Params, vd_set: &VDSet) -> Result<MainPodBuilder> {
     let builder = tickets_sign_pod_builder(params);
 
-    let signed_pod = builder.sign(&Signer(SecretKey(1u32.into()))).unwrap();
+    let signed_dict = builder.sign(&Signer(SecretKey(1u32.into()))).unwrap();
     tickets_pod_builder(
         params,
         vd_set,
-        &signed_pod,
+        &signed_dict,
         123,
         true,
         &Set::new(params.max_depth_mt_containers, HashSet::new())?,

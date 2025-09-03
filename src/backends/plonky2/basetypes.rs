@@ -37,12 +37,17 @@ pub type CircuitBuilder = circuit_builder::CircuitBuilder<F, D>;
 pub type Proof = proof::Proof<F, C, D>;
 pub type ProofWithPublicInputs = proof::ProofWithPublicInputs<F, C, D>;
 pub type HashOut = hash_types::HashOut<F>;
-
 use std::{collections::HashMap, sync::LazyLock};
 
+pub use crate::backends::plonky2::{
+    primitives::ec::{
+        curve::Point as PublicKey,
+        schnorr::{SecretKey, Signature},
+    },
+    recursion::circuit::hash_verifier_data,
+};
 use crate::{
     backends::plonky2::{
-        emptypod::cache_get_standard_empty_pod_verifier_circuit_data,
         mainpod::cache_get_rec_main_pod_verifier_circuit_data,
         primitives::merkletree::MerkleClaimAndProof,
     },
@@ -51,14 +56,12 @@ use crate::{
 
 pub static DEFAULT_VD_LIST: LazyLock<Vec<VerifierOnlyCircuitData>> = LazyLock::new(|| {
     let params = Params::default();
-    vec![
-        cache_get_rec_main_pod_verifier_circuit_data(&params)
-            .verifier_only
-            .clone(),
-        cache_get_standard_empty_pod_verifier_circuit_data()
-            .verifier_only
-            .clone(),
-    ]
+    // NOTE: We only include the recursive MainPod with default parameters here.  We don't need to
+    // include the verifying key of the EmptyPod because it's an Introduction pod and its verifying
+    // key appears in its statement in a self-describing way.
+    vec![cache_get_rec_main_pod_verifier_circuit_data(&params)
+        .verifier_only
+        .clone()]
 });
 
 pub static DEFAULT_VD_SET: LazyLock<VDSet> = LazyLock::new(|| {
@@ -144,23 +147,16 @@ impl VDSet {
         self.root
     }
     /// returns the vector of merkle proofs corresponding to the given verifier_datas
-    pub fn get_vds_proofs(
-        &self,
-        vds: &[VerifierOnlyCircuitData],
-    ) -> Result<Vec<MerkleClaimAndProof>> {
-        let mut proofs: Vec<MerkleClaimAndProof> = vec![];
-        for vd in vds {
-            let verifier_data_hash =
-                crate::backends::plonky2::recursion::circuit::hash_verifier_data(vd);
-            let p = self
-                .proofs_map
-                .get(&Hash(verifier_data_hash.elements))
-                .ok_or(crate::middleware::Error::custom(
-                    "verifier_data not found in VDSet".to_string(),
-                ))?;
-            proofs.push(p.clone());
-        }
-        Ok(proofs)
+    pub fn get_vds_proof(&self, vd: &VerifierOnlyCircuitData) -> Result<MerkleClaimAndProof> {
+        let verifier_data_hash =
+            crate::backends::plonky2::recursion::circuit::hash_verifier_data(vd);
+        Ok(self
+            .proofs_map
+            .get(&Hash(verifier_data_hash.elements))
+            .ok_or(crate::middleware::Error::custom(
+                "verifier_data not found in VDSet".to_string(),
+            ))?
+            .clone())
     }
     /// Returns true if the `verifier_data_hash` is in the set
     pub fn contains(&self, verifier_data_hash: HashOut) -> bool {

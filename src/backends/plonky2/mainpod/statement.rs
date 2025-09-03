@@ -74,6 +74,7 @@ impl TryFrom<Statement> for middleware::Statement {
                     S::HashOf(a1.try_into()?, a2.try_into()?, a3.try_into()?)
                 }
                 (NP::PublicKeyOf, &[a1, a2]) => S::PublicKeyOf(a1.try_into()?, a2.try_into()?),
+                (NP::SignedBy, &[a1, a2]) => S::SignedBy(a1.try_into()?, a2.try_into()?),
                 (NP::ContainerInsert, &[a1, a2, a3, a4]) => S::ContainerInsert(
                     a1.try_into()?,
                     a2.try_into()?,
@@ -105,6 +106,17 @@ impl TryFrom<Statement> for middleware::Statement {
                     .collect();
                 S::Custom(cpr, vs)
             }
+            Predicate::Intro(ir) => {
+                let vs: Vec<Value> = proper_args
+                    .into_iter()
+                    .filter_map(|arg| match arg {
+                        SA::None => None,
+                        SA::Literal(v) => Some(v),
+                        _ => unreachable!(),
+                    })
+                    .collect();
+                S::Intro(ir, vs)
+            }
             Predicate::BatchSelf(_) => {
                 unreachable!()
             }
@@ -121,6 +133,10 @@ impl From<middleware::Statement> for Statement {
             ),
             middleware::Predicate::Custom(cpr) => Statement(
                 middleware::Predicate::Custom(cpr),
+                s.args().into_iter().collect(),
+            ),
+            middleware::Predicate::Intro(ir) => Statement(
+                middleware::Predicate::Intro(ir),
                 s.args().into_iter().collect(),
             ),
             middleware::Predicate::BatchSelf(_) => unreachable!(),

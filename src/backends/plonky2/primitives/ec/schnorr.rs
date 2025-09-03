@@ -20,6 +20,7 @@ use plonky2::{
     plonk::circuit_builder::CircuitBuilder,
 };
 use rand::rngs::OsRng;
+use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::curve::Point;
@@ -41,6 +42,16 @@ use crate::{
 pub struct Signature {
     pub s: BigUint,
     pub e: BigUint,
+}
+
+impl JsonSchema for Signature {
+    fn schema_name() -> String {
+        "Signature".to_string()
+    }
+
+    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        <String>::json_schema(gen)
+    }
 }
 
 impl Signature {

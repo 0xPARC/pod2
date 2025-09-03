@@ -64,6 +64,9 @@ impl StatementTmpl {
             Predicate::Custom(custom_ref) => {
                 write!(w, "{}", custom_ref.predicate().name)?;
             }
+            Predicate::Intro(intro_ref) => {
+                write!(w, "{}", intro_ref.name)?;
+            }
             Predicate::BatchSelf(index) => {
                 if let Some(batch) = batch_context {
                     if let Some(predicate) = batch.predicates.get(*index) {
@@ -521,16 +524,6 @@ mod tests {
             Value::from(sk.clone()).to_podlang_string()
         );
         assert_round_trip(&input);
-    }
-
-    #[test]
-    fn test_round_trip_self() {
-        let input = r#"
-            self_test(Pod) = AND(
-                Equal(?Pod["self"], SELF)
-            )
-        "#;
-        assert_round_trip(input);
     }
 
     #[test]

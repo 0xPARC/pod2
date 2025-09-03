@@ -117,7 +117,7 @@ mod tests {
         // Use anchored rule for failure cases
         assert_fails(
             Rule::test_literal_raw,
-            "0x0000000000000000000000000000000000000000000000000000000000000000)",
+            "0x0000000000000000000000000000000000000000000000000000000000000000",
         ); // Missing Raw() wrapper
         assert_fails(Rule::test_literal_raw, "Raw(0xabc)"); // Fails (string is too short)
         assert_fails(Rule::test_literal_raw, "Raw(0x)"); // Fails (needs at least one pair)
@@ -125,22 +125,6 @@ mod tests {
             Rule::test_literal_raw,
             &format!("Raw(0x{})", "a".repeat(66)),
         ); // Fails (string is too long)
-
-        // PodId (essentially identical to Raw but without the wrapper)
-        assert_parses(
-            Rule::literal_pod_id,
-            "0x0000000000000000000000000000000000000000000000000000000000000000",
-        );
-        assert_parses(
-            Rule::literal_pod_id,
-            "0xabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd",
-        );
-        let long_valid_pod_id = format!("0x{}", "a".repeat(64));
-        assert_parses(Rule::literal_pod_id, &long_valid_pod_id);
-
-        assert_fails(Rule::test_literal_pod_id, "0xabc"); // Fails (string is too short)
-        assert_fails(Rule::test_literal_pod_id, "0x"); // Fails (needs at least one pair)
-        assert_fails(Rule::test_literal_pod_id, &format!("0x{}", "a".repeat(66))); // Fails (string is too long)
 
         // String
         assert_parses(Rule::literal_string, "\"hello\"");
@@ -163,7 +147,7 @@ mod tests {
         assert_parses(Rule::literal_set, "#[1, 2, 3]");
         assert_parses(
             Rule::literal_set,
-            "#[ \"a\", 0x0000000000000000000000000000000000000000000000000000000000000000 ]",
+            "#[ \"a\", Raw(0x0000000000000000000000000000000000000000000000000000000000000000) ]",
         );
 
         // Dict
@@ -172,7 +156,7 @@ mod tests {
         assert_parses(Rule::literal_dict, "{ \"nested\": { \"key\": 1 } }");
         assert_parses(
             Rule::literal_dict,
-            "{ \"raw_val\": 0x0000000000000000000000000000000000000000000000000000000000000000 } ",
+            "{ \"raw_val\": Raw(0x0000000000000000000000000000000000000000000000000000000000000000) } ",
         );
         assert_fails(Rule::literal_dict, "{ name: \"Alice\" }"); // Key must be string literal with quotes
     }

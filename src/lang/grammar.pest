@@ -15,8 +15,6 @@ identifier = @{ !("private") ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")*
 
 private_kw = { "private:" }
 
-self_keyword = @{ "SELF" }
-
 // Define wildcard names (start with '?')
 wildcard = @{ "?" ~ identifier }
 
@@ -66,10 +64,8 @@ literal_value = {
     literal_array |
     literal_bool |
     literal_raw |
-    literal_pod_id |
     literal_string |
-    literal_int |
-    self_keyword
+    literal_int
 }
 
 // Primitive literal types
@@ -81,7 +77,6 @@ literal_bool = @{ "true" | "false" }
 hash_hex = @{ "0x" ~ (ASCII_HEX_DIGIT ~ ASCII_HEX_DIGIT){32} }
 
 literal_raw = { "Raw" ~ "(" ~ hash_hex ~ ")" }
-literal_pod_id = { hash_hex }
 
 // String literal parsing based on https://pest.rs/book/examples/json.html
 literal_string = ${ "\"" ~ inner ~ "\"" } // Compound atomic string rule
@@ -114,7 +109,6 @@ test_wildcard = { SOI ~ wildcard ~ EOI }
 test_literal_int = { SOI ~ literal_int ~ EOI }
 test_hash_hex = { SOI ~ hash_hex ~ EOI } 
 test_literal_raw = { SOI ~ literal_raw ~ EOI }
-test_literal_pod_id = { SOI ~ literal_pod_id ~ EOI }
 test_literal_value = { SOI ~ literal_value ~ EOI }
 test_statement = { SOI ~ statement ~ EOI }
 test_custom_predicate_def = { SOI ~ custom_predicate_def ~ EOI } 

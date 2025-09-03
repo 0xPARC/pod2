@@ -58,8 +58,8 @@ An example with keys, that expresses the same semantic meaning:
 ```
 ValueOf(local_varname, "local_ssn")
 ValueOf(remote_varname, "ssn")
-ValueOf(gov_id_pod_id, 0x4030)
-ValueFromPodKey(local_varname, gov_id_pod_id, remote_varname)
+ValueOf(gov_id_root, 0x4030)
+ValueFromPodKey(local_varname, gov_id_root, remote_varname)
 ```
 
 ## Summary of additional statements in this spec

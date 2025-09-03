@@ -1,10 +1,10 @@
 use std::fmt;
 
 use crate::{
-    frontend::{MainPod, SignedPod},
+    frontend::SignedDict,
     middleware::{
-        AnchoredKey, CustomPredicateRef, NativeOperation, OperationAux, OperationType, Statement,
-        TypedValue, Value, ValueRef,
+        containers::Dictionary, root_key_to_ak, CustomPredicateRef, NativeOperation, OperationAux,
+        OperationType, Signature, Statement, TypedValue, Value, ValueRef,
     },
 };
 
@@ -16,12 +16,12 @@ pub enum OperationArg {
 }
 
 impl OperationArg {
-    /// Extracts the value underlying literal and `ValueOf` statement
+    /// Extracts the value underlying literal and `Contains` statement
     /// operation args.
     pub(crate) fn value(&self) -> Option<&Value> {
         match self {
             Self::Literal(v) => Some(v),
-            Self::Statement(Statement::Equal(_, ValueRef::Literal(v))) => Some(v),
+            Self::Statement(Statement::Contains(_, _, ValueRef::Literal(v))) => Some(v),
             _ => None,
         }
     }
@@ -29,7 +29,11 @@ impl OperationArg {
     pub(crate) fn value_and_ref(&self) -> Option<(ValueRef, &Value)> {
         match self {
             Self::Literal(v) => Some((ValueRef::Literal(v.clone()), v)),
-            Self::Statement(Statement::Equal(k, ValueRef::Literal(v))) => Some((k.clone(), v)),
+            Self::Statement(Statement::Contains(
+                ValueRef::Literal(root),
+                ValueRef::Literal(key),
+                ValueRef::Literal(v),
+            )) => root_key_to_ak(root, key).map(|ak| (ValueRef::Key(ak), v)),
             _ => None,
         }
     }
@@ -64,27 +68,21 @@ impl From<&Value> for OperationArg {
     }
 }
 
-impl From<(&SignedPod, &str)> for OperationArg {
-    fn from((pod, key): (&SignedPod, &str)) -> Self {
-        // TODO: TryFrom.
-        let value = pod
-            .kvs()
-            .get(&key.into())
-            .cloned()
-            .unwrap_or_else(|| panic!("Key {} is not present in POD: {}", key, pod));
-        Self::Statement(Statement::Equal(
-            AnchoredKey::from((pod.id(), key)).into(),
+impl From<(&Dictionary, &str)> for OperationArg {
+    fn from((dict, key): (&Dictionary, &str)) -> Self {
+        // TODO: Use TryFrom
+        let value = dict.get(&key.into()).cloned().unwrap();
+        Self::Statement(Statement::Contains(
+            dict.clone().into(),
+            key.into(),
             value.into(),
         ))
     }
 }
-impl From<(&MainPod, &str)> for OperationArg {
-    fn from((pod, key): (&MainPod, &str)) -> Self {
-        // TODO: TryFrom.
-        let value = pod
-            .get(key)
-            .unwrap_or_else(|| panic!("Key {} is not present in POD: {}", key, pod));
-        Self::Statement(Statement::equal(AnchoredKey::from((pod.id(), key)), value))
+
+impl From<(&SignedDict, &str)> for OperationArg {
+    fn from((signed_dict, key): (&SignedDict, &str)) -> Self {
+        OperationArg::from((&signed_dict.dict, key))
     }
 }
 
@@ -186,13 +184,6 @@ macro_rules! op_impl_st {
 }
 
 impl Operation {
-    pub fn new_entry(a1: impl Into<String>, a2: impl Into<Value>) -> Self {
-        Self(
-            OperationType::Native(NativeOperation::NewEntry),
-            vec![OperationArg::Entry(a1.into(), a2.into())],
-            OperationAux::None,
-        )
-    }
     op_impl_oa!(eq, EqualFromEntries, 2);
     op_impl_oa!(ne, NotEqualFromEntries, 2);
     op_impl_oa!(gt_eq, GtEqFromEntries, 2);
@@ -229,4 +220,22 @@ impl Operation {
     op_impl_oa!(set_insert, SetInsertFromEntries, 3);
     op_impl_oa!(set_delete, SetDeleteFromEntries, 3);
     op_impl_oa!(array_update, ArrayUpdateFromEntries, 4);
+    pub fn signed_by(
+        msg: impl Into<OperationArg>,
+        pk: impl Into<OperationArg>,
+        sig: Signature,
+    ) -> Self {
+        Self(
+            OperationType::Native(NativeOperation::SignedBy),
+            vec![msg.into(), pk.into()],
+            OperationAux::Signature(sig),
+        )
+    }
+    pub fn dict_signed_by(signed_dict: &SignedDict) -> Self {
+        Self::signed_by(
+            Value::from(signed_dict.dict.clone()),
+            Value::from(signed_dict.public_key),
+            signed_dict.signature.clone(),
+        )
+    }
 }

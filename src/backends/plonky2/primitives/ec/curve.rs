@@ -24,6 +24,7 @@ use plonky2::{
     util::serialization::{Read, Write},
 };
 use rand::rngs::OsRng;
+use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::backends::plonky2::{
@@ -100,6 +101,16 @@ fn ec_field_from_bytes(b: &[u8]) -> Result<ECField, Error> {
 pub struct Point {
     pub x: ECField,
     pub u: ECField,
+}
+
+impl JsonSchema for Point {
+    fn schema_name() -> String {
+        "Point".to_string()
+    }
+
+    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        <String>::json_schema(gen)
+    }
 }
 
 impl fmt::Display for Point {

@@ -3,7 +3,7 @@
 use std::{backtrace::Backtrace, fmt::Debug};
 
 use crate::middleware::{
-    CustomPredicate, Key, Operation, PodId, Predicate, Statement, StatementArg, StatementTmplArg,
+    CustomPredicate, Hash, Key, Operation, Predicate, Statement, StatementArg, StatementTmplArg,
     Value, Wildcard,
 };
 
@@ -24,7 +24,7 @@ pub enum MiddlewareInnerError {
     #[error("{0} should be assigned the value {1} but has previously been assigned {2}")]
     InvalidWildcardAssignment(Wildcard, Value, Value),
     #[error("{0} matches POD ID {1}, yet the template key {2} does not match {3}")]
-    MismatchedAnchoredKeyInStatementTmplArg(Wildcard, PodId, Key, Key),
+    MismatchedAnchoredKeyInStatementTmplArg(Wildcard, Hash, Key, Key),
     #[error("{0} does not match against {1}")]
     MismatchedStatementTmplArg(StatementTmplArg, StatementArg),
     #[error("Expected a statement of type {0}, got {1}")]
@@ -90,14 +90,14 @@ impl Error {
         new!(InvalidWildcardAssignment(wildcard, value, prev_value))
     }
     pub(crate) fn mismatched_anchored_key_in_statement_tmpl_arg(
-        pod_id_wildcard: Wildcard,
-        pod_id: PodId,
+        root_wildcard: Wildcard,
+        root: Hash,
         key_tmpl: Key,
         key: Key,
     ) -> Self {
         new!(MismatchedAnchoredKeyInStatementTmplArg(
-            pod_id_wildcard,
-            pod_id,
+            root_wildcard,
+            root,
             key_tmpl,
             key
         ))

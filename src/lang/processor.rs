@@ -43,6 +43,7 @@ pub fn native_predicate_from_string(s: &str) -> Option<NativePredicate> {
         "MaxOf" => Some(NativePredicate::MaxOf),
         "HashOf" => Some(NativePredicate::HashOf),
         "PublicKeyOf" => Some(NativePredicate::PublicKeyOf),
+        "SignedBy" => Some(NativePredicate::SignedBy),
         "DictContains" => Some(NativePredicate::DictContains),
         "DictNotContains" => Some(NativePredicate::DictNotContains),
         "ArrayContains" => Some(NativePredicate::ArrayContains),
@@ -328,17 +329,17 @@ fn pest_pair_to_builder_arg(
         }
         Rule::anchored_key => {
             let mut inner_ak_pairs = arg_content_pair.clone().into_inner();
-            let pod_id_pair = inner_ak_pairs.next().unwrap();
-            let pod_id_wc_str = pod_id_pair.as_str().strip_prefix("?").unwrap();
+            let root_pair = inner_ak_pairs.next().unwrap();
+            let root_wc_str = root_pair.as_str().strip_prefix("?").unwrap();
 
             if let StatementContext::CustomPredicate {
                 argument_names,
                 pred_name,
             } = context
             {
-                if !argument_names.contains(pod_id_wc_str) {
+                if !argument_names.contains(root_wc_str) {
                     return Err(ProcessorError::UndefinedWildcard {
-                        name: pod_id_wc_str.to_string(),
+                        name: root_wc_str.to_string(),
                         pred_name: pred_name.to_string(),
                         span: Some(get_span(arg_content_pair)),
                     });
@@ -347,10 +348,42 @@ fn pest_pair_to_builder_arg(
 
             let key_part_pair = inner_ak_pairs.next().unwrap();
             let key_str = parse_pest_string_literal(&key_part_pair)?;
-            Ok(BuilderArg::Key(pod_id_wc_str.to_string(), key_str))
+            Ok(BuilderArg::Key(root_wc_str.to_string(), key_str))
         }
         _ => unreachable!("Unexpected rule: {:?}", arg_content_pair.as_rule()),
     }
+}
+
+fn validate_dyn_len_predicate(
+    stmt_name_str: &str,
+    args: &[BuilderArg],
+    expected_arity: usize,
+    stmt_span: (usize, usize),
+    stmt_name_span: (usize, usize),
+) -> Result<(), ProcessorError> {
+    if args.len() != expected_arity {
+        return Err(ProcessorError::ArgumentCountMismatch {
+            predicate: stmt_name_str.to_string(),
+            expected: expected_arity,
+            found: args.len(),
+            span: Some(stmt_name_span),
+        });
+    }
+    for (idx, arg) in args.iter().enumerate() {
+        if !matches!(arg, BuilderArg::WildcardLiteral(_) | BuilderArg::Literal(_)) {
+            return Err(ProcessorError::TypeError {
+                expected: "Wildcard or Literal".to_string(),
+                found: format!("{:?}", arg),
+                item: format!(
+                    "argument {} of custom predicate call '{}'",
+                    idx + 1,
+                    stmt_name_str
+                ),
+                span: Some(stmt_span),
+            });
+        }
+    }
+    Ok(())
 }
 
 fn validate_and_build_statement_template(
@@ -374,7 +407,8 @@ fn validate_and_build_statement_template(
                 | NativePredicate::DictNotContains
                 | NativePredicate::SetNotContains
                 | NativePredicate::NotContains
-                | NativePredicate::PublicKeyOf => 2,
+                | NativePredicate::PublicKeyOf
+                | NativePredicate::SignedBy => 2,
                 NativePredicate::Contains
                 | NativePredicate::ArrayContains
                 | NativePredicate::DictContains
@@ -405,28 +439,23 @@ fn validate_and_build_statement_template(
         }
         Predicate::Custom(custom_ref) => {
             let expected_arity = custom_ref.predicate().args_len;
-            if args.len() != expected_arity {
-                return Err(ProcessorError::ArgumentCountMismatch {
-                    predicate: stmt_name_str.to_string(),
-                    expected: expected_arity,
-                    found: args.len(),
-                    span: Some(stmt_name_span),
-                });
-            }
-            for (idx, arg) in args.iter().enumerate() {
-                if !matches!(arg, BuilderArg::WildcardLiteral(_) | BuilderArg::Literal(_)) {
-                    return Err(ProcessorError::TypeError {
-                        expected: "Wildcard or Literal".to_string(),
-                        found: format!("{:?}", arg),
-                        item: format!(
-                            "argument {} of custom predicate call '{}'",
-                            idx + 1,
-                            stmt_name_str
-                        ),
-                        span: Some(stmt_span),
-                    });
-                }
-            }
+            validate_dyn_len_predicate(
+                stmt_name_str,
+                &args,
+                expected_arity,
+                stmt_span,
+                stmt_name_span,
+            )?;
+        }
+        Predicate::Intro(intro_ref) => {
+            let expected_arity = intro_ref.args_len;
+            validate_dyn_len_predicate(
+                stmt_name_str,
+                &args,
+                expected_arity,
+                stmt_span,
+                stmt_name_span,
+            )?;
         }
         Predicate::BatchSelf(_) => {
             let (_original_pred_idx, expected_arity_val) = processing_ctx
@@ -650,8 +679,8 @@ fn process_statement_template(
         for arg in &builder_args {
             match arg {
                 BuilderArg::WildcardLiteral(name) => temp_stmt_wildcard_names.push(name.clone()),
-                BuilderArg::Key(pod_id_wc_str, _key_str) => {
-                    temp_stmt_wildcard_names.push(pod_id_wc_str.clone());
+                BuilderArg::Key(root_wc_str, _key_str) => {
+                    temp_stmt_wildcard_names.push(root_wc_str.clone());
                 }
                 _ => {}
             }
@@ -742,14 +771,6 @@ fn process_literal_value(
                 })
                 .map(Value::from)
         }
-        Rule::literal_pod_id => {
-            let hex_str_no_prefix = inner_lit
-                .as_str()
-                .strip_prefix("0x")
-                .unwrap_or(inner_lit.as_str());
-            let pod_id = parse_hex_str_to_pod_id(hex_str_no_prefix)?;
-            Ok(Value::from(pod_id))
-        }
         Rule::literal_public_key => {
             let pk_str_pair = inner_lit.into_inner().next().unwrap();
             let pk_b58 = pk_str_pair.as_str();
@@ -826,7 +847,6 @@ fn process_literal_value(
             })?;
             Ok(Value::from(secret_key))
         }
-        Rule::self_keyword => Ok(Value::from(middleware::SELF)),
         _ => unreachable!("Unexpected rule: {:?}", inner_lit.as_rule()),
     }
 }
@@ -912,11 +932,6 @@ fn parse_hex_str_to_raw_value(hex_str: &str) -> Result<middleware::RawValue, Pro
     Ok(middleware::RawValue(v))
 }
 
-fn parse_hex_str_to_pod_id(hex_str: &str) -> Result<middleware::PodId, ProcessorError> {
-    let raw = parse_hex_str_to_raw_value(hex_str)?;
-    Ok(middleware::PodId(raw.into()))
-}
-
 // Helper to resolve a wildcard name string to an indexed middleware::Wildcard
 // based on an ordered list of names from the current scope (e.g., request or predicate def).
 fn resolve_wildcard(
@@ -945,10 +960,10 @@ fn resolve_request_statement_builder(
     for builder_arg in stb.args {
         let mw_arg = match builder_arg {
             BuilderArg::Literal(v) => StatementTmplArg::Literal(v),
-            BuilderArg::Key(pod_id_wc_str, key_str) => {
-                let pod_id_wc = resolve_wildcard(ordered_request_wildcard_names, &pod_id_wc_str)?;
+            BuilderArg::Key(root_wc_str, key_str) => {
+                let root_wc = resolve_wildcard(ordered_request_wildcard_names, &root_wc_str)?;
                 let key = Key::from(key_str);
-                StatementTmplArg::AnchoredKey(pod_id_wc, key)
+                StatementTmplArg::AnchoredKey(root_wc, key)
             }
             BuilderArg::WildcardLiteral(wc_name) => {
                 let wc = resolve_wildcard(ordered_request_wildcard_names, &wc_name)?;
