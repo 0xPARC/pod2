@@ -384,7 +384,7 @@ pub(crate) fn layout_statements(
     }
 
     // Public statements
-    assert!(inputs.public_statements.len() < params.max_public_statements);
+    assert!(inputs.public_statements.len() <= params.max_public_statements);
     for i in 0..params.max_public_statements {
         let mut st = inputs
             .public_statements

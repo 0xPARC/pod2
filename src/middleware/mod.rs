@@ -778,9 +778,9 @@ impl Default for Params {
     fn default() -> Self {
         Self {
             max_input_pods: 2,
-            max_input_pods_public_statements: 4,
-            max_statements: 44,
-            max_public_statements: 4,
+            max_input_pods_public_statements: 8,
+            max_statements: 48,
+            max_public_statements: 8,
             num_public_statements_hash: 8,
             max_statement_args: 5,
             max_operation_args: 5,
@@ -789,7 +789,7 @@ impl Default for Params {
             max_custom_predicate_arity: 5,
             max_custom_predicate_wildcards: 8,
             max_custom_batch_size: 4,
-            max_merkle_proofs_containers: 24,
+            max_merkle_proofs_containers: 20,
             max_merkle_tree_state_transition_proofs_containers: 6,
             max_depth_mt_containers: 32,
             max_depth_mt_vds: 6, // up to 64 (2^6) different pod circuits
