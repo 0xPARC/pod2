@@ -1506,7 +1506,7 @@ pub fn calculate_statements_hash_circuit(
     statements: &[StatementTarget],
 ) -> HashOutTarget {
     assert!(statements.len() <= params.num_public_statements_hash);
-    let measure = measure_gates_begin!(builder, "CalculateId");
+    let measure = measure_gates_begin!(builder, "CalculateStsHash");
     let statements_rev_flattened = statements.iter().rev().flat_map(|s| s.flatten());
     let mut none_st = mainpod::Statement::from(Statement::None);
     pad_statement(params, &mut none_st);

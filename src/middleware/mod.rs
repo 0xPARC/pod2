@@ -781,7 +781,7 @@ impl Default for Params {
             max_input_pods_public_statements: 8,
             max_statements: 48,
             max_public_statements: 8,
-            num_public_statements_hash: 8,
+            num_public_statements_hash: 16,
             max_statement_args: 5,
             max_operation_args: 5,
             max_custom_predicate_batches: 4,

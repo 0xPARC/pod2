@@ -859,6 +859,7 @@ pub mod tests {
         Ok(pod.verify()?)
     }
 
+    // `RUST_LOG=pod2::backends=debug cargo test --release --no-default-features --features=backend_plonky2,mem_cache,zk,metrics test_measure_main_pod -- --nocapture --ignored`
     #[ignore]
     #[test]
     fn test_measure_main_pod() -> frontend::Result<()> {
