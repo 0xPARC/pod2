@@ -19,11 +19,7 @@ use plonky2::{
         types::{Field, Field64, PrimeField},
     },
     hash::poseidon::PoseidonHash,
-    iop::{
-        generator::SimpleGenerator,
-        target::BoolTarget,
-        witness::WitnessWrite,
-    },
+    iop::{generator::SimpleGenerator, target::BoolTarget, witness::WitnessWrite},
     plonk::circuit_builder::CircuitBuilder,
     util::serialization::{Read, Write},
 };
