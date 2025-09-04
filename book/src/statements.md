@@ -30,13 +30,17 @@ The following table summarises the natively-supported statements, where we write
 | 3    | `NotEqual`    | `ak1`, `ak2`        | `value_of(ak1) != value_of(ak2)`                                  |
 | 4    | `LtEq`        | `ak1`, `ak2`        | `value_of(ak1) <= value_of(ak2)`                                  |
 | 5    | `Lt`          | `ak1`, `ak2`        | `value_of(ak1) < value_of(ak2)`                                   |
-| 6    | `Contains`    | `ak1`, `ak2`        | `(key_of(ak2), value_of(ak2)) ∈ value_of(ak1)` (Merkle inclusion) |
-| 7    | `NotContains` | `ak1`, `ak2`        | `(key_of(ak2), value_of(ak2)) ∉ value_of(ak1)` (Merkle exclusion) |
+| 6    | `Contains`    | `ak1`, `ak2`, `ak3` | `(value_of(ak2), value_of(ak3)) ∈ value_of(ak1)` (Merkle inclusion) |
+| 7    | `NotContains` | `ak1`, `ak2`        | `(value_of(ak2), _) ∉ value_of(ak1)` (Merkle exclusion) |
 | 8    | `SumOf`       | `ak1`, `ak2`, `ak3` | `value_of(ak1) = value_of(ak2) + value_of(ak3)`                   |
 | 9    | `ProductOf`   | `ak1`, `ak2`, `ak3` | `value_of(ak1) = value_of(ak2) * value_of(ak3)`                   |
 | 10   | `MaxOf`       | `ak1`, `ak2`, `ak3` | `value_of(ak1) = max(value_of(ak2), value_of(ak3))`               |
 | 11   | `HashOf`      | `ak1`, `ak2`, `ak3` | `value_of(ak1) = hash(value_of(ak2), value_of(ak3))`              |
 | 12   | `PublicKeyOf` | `ak1`, `ak2`        | `value_of(ak1) = derive_public_key(value_of(ak2))`                |
+| 13   | `SignedBy`    | `ak1`, `ak2`        | `value_of(ak1)` is signed by  `value_of(ak2)`                     |
+| 14   | `ContainerInsert` | `ak1`, `ak2`, `ak3`, `ak4` | `(value_of(ak3), _) ∉ value_of(ak2) ∧ value_of(ak1) = value_of(ak2) ∪ {(value_of(ak3), value_of(ak4))}` (Merkle insert) |
+| 15   | `ContainerUpdate` | `ak1`, `ak2`, `ak3`, `ak4` | `(value_of(ak3), v) ∈ value_of(ak2) ∧ value_of(ak1) = (value_of(ak2) - {(value_of(ak3), v)}) ∪ {(value_of(ak3), value_of(ak4))}` (Merkle update) |
+| 16   | `ContainerDelete` | `ak1`, `ak2`, `ak3`        | `(value_of(ak3), v) ∈ value_of(ak2) ∧ value_of(ak1) = value_of(ak2) - {(value_of(ak3), v)}` (Merkle delete) |
 
 ### Frontend statements
 
@@ -51,21 +55,21 @@ The frontend also exposes the following syntactic sugar predicates.  These predi
 | 1004 | ArrayContains | `ArrayContains(root, idx, val) -> Contains(root, idx, val)` |
 | 1005 | GtEq | `GtEq(a, b) -> LtEq(b, a)`|
 | 1006 | Gt | `Gt(a, b) -> Lt(b, a)` |
+| 1009 | DictInsert | `DictInsert(new_root, old_root, key, val) -> ContainerInsert(new_root, old_root, key, val)` |
+| 1010 | DictUpdate | `DictUpdate(new_root, old_root, key, val) -> ContainerUpdate(new_root, old_root, key, val)` |
+| 1011 | DictDelete | `DictDelete(new_root, old_root, key) -> ContainerDelete(new_root, old_root, key)` |
+| 1012 | SetInsert | `SetInsert(new_root, old_root, val) -> ContainerInsert(new_root, old_root, val, val)` |
+| 1013 | SetDelete | `SetDelete(new_root, old_root, val) -> ContainerDelete(new_root, old_root, val)` |
+| 1014 | ArrayUpdate | `ArrayUpdate(new_root, old_root, idx, val) -> ContainerUpdate(new_root, old_root, idx, val)` |
 
-
-In the future, we may also reserve statement IDs for "precompiles" such as:
-```
-EcdsaPrivToPubOf(A["pubkey"], B["privkey"]),
-```
-as well as for low-level operations on Merkle trees and compound types.
-<font color="red">NOTE</font> Merkle trees and compound types explained in a separate markdown file `./merklestatements.md` which is no longer part of these docs, but saved in the github repo in case we need to restore it in the future.
 
 ### Built-in statements for entries of any type
 
-A ```ValueOf``` statement asserts that an entry has a certain value.
+A ```DictContains``` statement asserts that an entry has a certain value.
 ```
-ValueOf(A["name"], "Arthur") 
+DictContains(A, "name", "Arthur")
 ```
+Implies that the entry `A["name"]` exists with the value `"Arthur"`.
 
 An ```Equal``` statement asserts that two entries have the same value.  (Technical note: The circuit only proves equality of field elements; no type checking is performed.  For strings or Merkle roots, collision-resistance of the hash gives a cryptographic guarantee of equality.  However, note both Arrays and Sets are implemented as dictionaries in the backend; the backend cannot type-check, so it is possible to prove an equality between an Array or Set and a Dictionary.)
 ```
@@ -87,7 +91,7 @@ Gt(A["price"], B["balance"])
 
 The statements ```Lt```, ```GEq```, ```Leq``` are defined analogously.
 
-```SumOf(x, y, z)``` asserts that ```x```, ```y```, ```z``` are entries of type ```Integer```, and [^fillsum]
+```SumOf(x, y, z)``` asserts that ```x```, ```y```, ```z``` are entries of type ```Integer```, and ```x = y + z```
 
 ```ProductOf``` and ```MaxOf``` are defined analogously.
 
@@ -103,5 +107,3 @@ ecdsa_priv_to_pub_of(A["pubkey"], B["privkey"])
 
 
 [^builtin]: <font color="red">TODO</font> List of built-in statements is not yet complete.
-
-[^fillsum]: <font color="red">TODO</font> Does sum mean x+y = z or x = y+z?

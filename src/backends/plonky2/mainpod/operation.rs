@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     backends::plonky2::{
         error::{Error, Result},
-        mainpod::Statement,
+        mainpod::{SignedBy, Statement},
         primitives::merkletree::{MerkleClaimAndProof, MerkleTreeStateTransitionProof},
     },
     middleware::{self, OperationType, Params},
@@ -35,6 +35,7 @@ pub enum OperationAux {
     None,
     MerkleProofIndex(usize),
     PublicKeyOfIndex(usize),
+    SignedByIndex(usize),
     MerkleTreeStateTransitionProofIndex(usize),
     CustomPredVerifyIndex(usize),
 }
@@ -47,8 +48,11 @@ impl OperationAux {
     fn table_offset_public_key_of(params: &Params) -> usize {
         Self::table_offset_merkle_proof(params) + params.max_merkle_proofs_containers
     }
-    fn table_offset_merkle_tree_state_transition_proof(params: &Params) -> usize {
+    fn table_offset_signed_by(params: &Params) -> usize {
         Self::table_offset_public_key_of(params) + params.max_public_key_of
+    }
+    fn table_offset_merkle_tree_state_transition_proof(params: &Params) -> usize {
+        Self::table_offset_signed_by(params) + params.max_signed_by
     }
     fn table_offset_custom_pred_verify(params: &Params) -> usize {
         Self::table_offset_merkle_tree_state_transition_proof(params)
@@ -57,6 +61,7 @@ impl OperationAux {
     pub(crate) fn table_size(params: &Params) -> usize {
         1 + params.max_merkle_proofs_containers
             + params.max_public_key_of
+            + params.max_signed_by
             + params.max_merkle_tree_state_transition_proofs_containers
             + params.max_custom_predicate_verifications
     }
@@ -65,6 +70,7 @@ impl OperationAux {
             Self::None => 0,
             Self::MerkleProofIndex(i) => Self::table_offset_merkle_proof(params) + *i,
             Self::PublicKeyOfIndex(i) => Self::table_offset_public_key_of(params) + *i,
+            Self::SignedByIndex(i) => Self::table_offset_signed_by(params) + *i,
             Self::MerkleTreeStateTransitionProofIndex(i) => {
                 Self::table_offset_merkle_tree_state_transition_proof(params) + *i
             }
@@ -89,6 +95,7 @@ impl Operation {
     pub fn deref(
         &self,
         statements: &[Statement],
+        signatures: &[SignedBy],
         merkle_proofs: &[MerkleClaimAndProof],
         merkle_tree_state_transition_proofs: &[MerkleTreeStateTransitionProof],
     ) -> Result<crate::middleware::Operation> {
@@ -125,6 +132,13 @@ impl Operation {
                         .clone(),
                 )
             }
+            OperationAux::SignedByIndex(i) => crate::middleware::OperationAux::Signature(
+                signatures
+                    .get(i)
+                    .ok_or(Error::custom(format!("Missing SignedBy data index {}", i)))?
+                    .sig
+                    .clone(),
+            ),
             OperationAux::PublicKeyOfIndex(_) => crate::middleware::OperationAux::None,
         };
         Ok(middleware::Operation::op(
@@ -154,6 +168,7 @@ impl fmt::Display for Operation {
             OperationAux::MerkleProofIndex(i) => write!(f, " merkle_proof_{:02}", i)?,
             OperationAux::CustomPredVerifyIndex(i) => write!(f, " custom_pred_verify_{:02}", i)?,
             OperationAux::PublicKeyOfIndex(i) => write!(f, " public_key_of_{:02}", i)?,
+            OperationAux::SignedByIndex(i) => write!(f, " signed_by_{:02}", i)?,
             OperationAux::MerkleTreeStateTransitionProofIndex(i) => {
                 write!(f, " merkle_tree_state_transition_proof_{:02}", i)?
             }

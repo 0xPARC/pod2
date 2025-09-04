@@ -19,9 +19,7 @@
     - [Defining custom predicates](./custompred.md)
     - [Custom statement example](./customexample.md)
     - [How to hash a custom statement](./customhash.md)
-- [POD types](./podtypes.md)
-  - [SignedPOD](./signedpod.md)
-  - [MainPOD](./mainpod.md)
+- [MainPOD](./mainpod.md)
 - [Introduction PODs](./introductionpods.md)
 - [Examples](./examples.md)
 

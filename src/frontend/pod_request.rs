@@ -128,8 +128,8 @@ impl PodRequest {
                 }
 
                 // Try to bind wildcard to the POD ID
-                let pod_id_value = Value::from(stmt_key.pod_id);
-                self.try_bind_wildcard(&wildcard.name, pod_id_value, current_bindings, new_bindings)
+                let root_value = Value::from(stmt_key.root);
+                self.try_bind_wildcard(&wildcard.name, root_value, current_bindings, new_bindings)
             }
 
             // Other combinations don't match
@@ -176,12 +176,14 @@ impl Display for PodRequest {
 mod tests {
     use crate::{
         backends::plonky2::{
-            mock::mainpod::MockProver, primitives::ec::schnorr::SecretKey, signedpod::Signer,
+            mock::mainpod::MockProver, primitives::ec::schnorr::SecretKey, signer::Signer,
         },
-        examples::{zu_kyc_pod_builder, zu_kyc_pod_request, zu_kyc_sign_pod_builders, MOCK_VD_SET},
+        examples::{
+            zu_kyc_pod_builder, zu_kyc_pod_request, zu_kyc_sign_dict_builders, MOCK_VD_SET,
+        },
         frontend::{MainPodBuilder, Operation},
         lang::parse,
-        middleware::Params,
+        middleware::{Params, Value},
     };
 
     #[test]
@@ -189,7 +191,7 @@ mod tests {
         let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
 
-        let (gov_id, pay_stub) = zu_kyc_sign_pod_builders(&params);
+        let (gov_id, pay_stub) = zu_kyc_sign_dict_builders(&params);
         let gov_id = gov_id.sign(&Signer(SecretKey(1u32.into()))).unwrap();
         let pay_stub = pay_stub.sign(&Signer(SecretKey(2u32.into()))).unwrap();
         let builder = zu_kyc_pod_builder(&Params::default(), vd_set, &gov_id, &pay_stub).unwrap();
@@ -198,8 +200,8 @@ mod tests {
 
         // This request matches the POD
         let request = zu_kyc_pod_request(
-            gov_id.get("_signer").unwrap(),
-            pay_stub.get("_signer").unwrap(),
+            &Value::from(gov_id.public_key),
+            &Value::from(pay_stub.public_key),
         )
         .unwrap();
         assert!(request.exact_match_pod(&*kyc.pod).is_ok());

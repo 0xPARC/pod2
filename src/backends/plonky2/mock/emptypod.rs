@@ -4,35 +4,36 @@ use crate::{
     backends::plonky2::{
         basetypes::{Proof, VerifierOnlyCircuitData},
         error::{Error, Result},
-        mainpod::{self, calculate_id},
+        mainpod::{self, calculate_statements_hash},
     },
-    middleware::{
-        AnchoredKey, Params, Pod, PodId, PodType, RecursivePod, Statement, VDSet, Value, KEY_TYPE,
-        SELF,
-    },
+    middleware::{Hash, IntroPredicateRef, Params, Pod, PodType, Statement, VDSet, EMPTY_HASH},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MockEmptyPod {
     params: Params,
-    id: PodId,
+    sts_hash: Hash,
     vd_set: VDSet,
 }
 
-fn type_statement() -> Statement {
-    Statement::equal(
-        AnchoredKey::from((SELF, KEY_TYPE)),
-        Value::from(PodType::Empty),
+fn empty_statement() -> Statement {
+    Statement::Intro(
+        IntroPredicateRef {
+            name: "mock_empty".to_string(),
+            args_len: 0,
+            verifier_data_hash: EMPTY_HASH,
+        },
+        vec![],
     )
 }
 
 impl MockEmptyPod {
-    pub fn new_boxed(params: &Params, vd_set: VDSet) -> Box<dyn RecursivePod> {
-        let statements = [mainpod::Statement::from(type_statement())];
-        let id = PodId(calculate_id(&statements, params));
+    pub fn new_boxed(params: &Params, vd_set: VDSet) -> Box<dyn Pod> {
+        let statements = [mainpod::Statement::from(empty_statement())];
+        let sts_hash = calculate_statements_hash(&statements, params);
         Box::new(Self {
             params: params.clone(),
-            id,
+            sts_hash,
             vd_set,
         })
     }
@@ -48,28 +49,25 @@ impl Pod for MockEmptyPod {
             .into_iter()
             .map(mainpod::Statement::from)
             .collect_vec();
-        let id = PodId(calculate_id(&statements, &self.params));
-        if id != self.id {
-            return Err(Error::id_not_equal(self.id, id));
+        let sts_hash = calculate_statements_hash(&statements, &self.params);
+        if sts_hash != self.sts_hash {
+            return Err(Error::statements_hash_not_equal(self.sts_hash, sts_hash));
         }
         Ok(())
     }
-    fn id(&self) -> PodId {
-        self.id
+    fn statements_hash(&self) -> Hash {
+        self.sts_hash
     }
     fn pod_type(&self) -> (usize, &'static str) {
         (PodType::MockEmpty as usize, "MockEmpty")
     }
     fn pub_self_statements(&self) -> Vec<Statement> {
-        vec![type_statement()]
+        vec![empty_statement()]
     }
 
-    fn serialize_data(&self) -> serde_json::Value {
-        serde_json::Value::Null
+    fn verifier_data_hash(&self) -> Hash {
+        EMPTY_HASH
     }
-}
-
-impl RecursivePod for MockEmptyPod {
     fn verifier_data(&self) -> VerifierOnlyCircuitData {
         panic!("MockEmptyPod can't be verified in a recursive MainPod circuit");
     }
@@ -82,13 +80,20 @@ impl RecursivePod for MockEmptyPod {
     fn vd_set(&self) -> &VDSet {
         &self.vd_set
     }
+    fn serialize_data(&self) -> serde_json::Value {
+        serde_json::Value::Null
+    }
     fn deserialize_data(
         params: Params,
         _data: serde_json::Value,
         vd_set: VDSet,
-        id: PodId,
-    ) -> Result<Box<dyn RecursivePod>> {
-        Ok(Box::new(Self { params, id, vd_set }))
+        sts_hash: Hash,
+    ) -> Result<Self> {
+        Ok(Self {
+            params,
+            sts_hash,
+            vd_set,
+        })
     }
 }
 

@@ -8,14 +8,14 @@ use crate::{
     backends::plonky2::primitives::{
         ec::{
             curve::{Point as PublicKey, GROUP_ORDER},
-            schnorr::SecretKey,
+            schnorr::{SecretKey, Signature},
         },
         merkletree::{MerkleProof, MerkleTree, MerkleTreeOp, MerkleTreeStateTransitionProof},
     },
     middleware::{
-        hash_values, AnchoredKey, CustomPredicate, CustomPredicateRef, Error, NativePredicate,
-        Params, Predicate, Result, Statement, StatementArg, StatementTmpl, StatementTmplArg,
-        ToFields, TypedValue, Value, ValueRef, Wildcard, F, SELF,
+        hash_values, AnchoredKey, CustomPredicate, CustomPredicateRef, Error, Hash, Key,
+        NativePredicate, Params, Predicate, Result, Statement, StatementArg, StatementTmpl,
+        StatementTmplArg, ToFields, TypedValue, Value, ValueRef, Wildcard, F,
     },
 };
 
@@ -30,6 +30,7 @@ pub enum OperationAux {
     None,
     MerkleProof(MerkleProof),
     MerkleTreeStateTransitionProof(MerkleTreeStateTransitionProof),
+    Signature(Signature),
 }
 
 impl fmt::Display for OperationAux {
@@ -41,6 +42,7 @@ impl fmt::Display for OperationAux {
             Self::MerkleTreeStateTransitionProof(pf) => {
                 write!(f, "merkle_tree_state_transition_proof({:?})", pf)?
             }
+            Self::Signature(sig) => write!(f, "signature({:?})", sig)?,
         }
         Ok(())
     }
@@ -67,24 +69,24 @@ impl ToFields for OperationType {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, std::hash::Hash, Serialize, Deserialize)]
 pub enum NativeOperation {
     None = 0,
-    NewEntry = 1,
-    CopyStatement = 2,
-    EqualFromEntries = 3,
-    NotEqualFromEntries = 4,
-    LtEqFromEntries = 5,
-    LtFromEntries = 6,
-    TransitiveEqualFromStatements = 7,
-    LtToNotEqual = 8,
-    ContainsFromEntries = 9,
-    NotContainsFromEntries = 10,
-    SumOf = 11,
-    ProductOf = 12,
-    MaxOf = 13,
-    HashOf = 14,
-    PublicKeyOf = 15,
+    CopyStatement = 1,
+    EqualFromEntries = 2,
+    NotEqualFromEntries = 3,
+    LtEqFromEntries = 4,
+    LtFromEntries = 5,
+    TransitiveEqualFromStatements = 6,
+    LtToNotEqual = 7,
+    ContainsFromEntries = 8,
+    NotContainsFromEntries = 9,
+    SumOf = 10,
+    ProductOf = 11,
+    MaxOf = 12,
+    HashOf = 13,
+    PublicKeyOf = 14,
+    SignedBy = 15,
     ContainerInsertFromEntries = 16,
     ContainerUpdateFromEntries = 17,
     ContainerDeleteFromEntries = 18,
@@ -127,7 +129,6 @@ impl OperationType {
         match self {
             OperationType::Native(native_op) => match native_op {
                 NativeOperation::None => Some(Predicate::Native(NativePredicate::None)),
-                NativeOperation::NewEntry => Some(Predicate::Native(NativePredicate::Equal)),
                 NativeOperation::CopyStatement => None,
                 NativeOperation::EqualFromEntries => {
                     Some(Predicate::Native(NativePredicate::Equal))
@@ -154,6 +155,7 @@ impl OperationType {
                 NativeOperation::PublicKeyOf => {
                     Some(Predicate::Native(NativePredicate::PublicKeyOf))
                 }
+                NativeOperation::SignedBy => Some(Predicate::Native(NativePredicate::SignedBy)),
                 NativeOperation::ContainerInsertFromEntries => {
                     Some(Predicate::Native(NativePredicate::ContainerInsert))
                 }
@@ -174,7 +176,6 @@ impl OperationType {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Operation {
     None,
-    NewEntry,
     CopyStatement(Statement),
     EqualFromEntries(Statement, Statement),
     NotEqualFromEntries(Statement, Statement),
@@ -198,6 +199,7 @@ pub enum Operation {
     MaxOf(Statement, Statement, Statement),
     HashOf(Statement, Statement, Statement),
     PublicKeyOf(Statement, Statement),
+    SignedBy(Statement, Statement, Signature),
     ContainerInsertFromEntries(
         /* new_root */ Statement,
         /* old_root */ Statement,
@@ -243,7 +245,6 @@ impl Operation {
         use NativeOperation::*;
         match self {
             Self::None => OT::Native(None),
-            Self::NewEntry => OT::Native(NewEntry),
             Self::CopyStatement(_) => OT::Native(CopyStatement),
             Self::EqualFromEntries(_, _) => OT::Native(EqualFromEntries),
             Self::NotEqualFromEntries(_, _) => OT::Native(NotEqualFromEntries),
@@ -258,6 +259,7 @@ impl Operation {
             Self::MaxOf(_, _, _) => OT::Native(MaxOf),
             Self::HashOf(_, _, _) => OT::Native(HashOf),
             Self::PublicKeyOf(_, _) => OT::Native(PublicKeyOf),
+            Self::SignedBy(_, _, _) => OT::Native(SignedBy),
             Self::ContainerInsertFromEntries(_, _, _, _, _) => {
                 OT::Native(ContainerInsertFromEntries)
             }
@@ -272,7 +274,6 @@ impl Operation {
     pub fn args(&self) -> Vec<Statement> {
         match self.clone() {
             Self::None => vec![],
-            Self::NewEntry => vec![],
             Self::CopyStatement(s) => vec![s],
             Self::EqualFromEntries(s1, s2) => vec![s1, s2],
             Self::NotEqualFromEntries(s1, s2) => vec![s1, s2],
@@ -287,6 +288,7 @@ impl Operation {
             Self::MaxOf(s1, s2, s3) => vec![s1, s2, s3],
             Self::HashOf(s1, s2, s3) => vec![s1, s2, s3],
             Self::PublicKeyOf(s1, s2) => vec![s1, s2],
+            Self::SignedBy(s1, s2, _sig) => vec![s1, s2],
             Self::ContainerInsertFromEntries(s1, s2, s3, s4, _pf) => vec![s1, s2, s3, s4],
             Self::ContainerUpdateFromEntries(s1, s2, s3, s4, _pf) => vec![s1, s2, s3, s4],
             Self::ContainerDeleteFromEntries(s1, s2, s3, _pf) => vec![s1, s2, s3],
@@ -310,7 +312,6 @@ impl Operation {
         Ok(match op_code {
             OperationType::Native(o) => match (o, &args, aux.clone()) {
                 (NO::None, &[], OA::None) => Self::None,
-                (NO::NewEntry, &[], OA::None) => Self::NewEntry,
                 (NO::CopyStatement, &[s], OA::None) => Self::CopyStatement(s.clone()),
                 (NO::EqualFromEntries, &[s1, s2], OA::None) => {
                     Self::EqualFromEntries(s1.clone(), s2.clone())
@@ -343,6 +344,9 @@ impl Operation {
                     Self::HashOf(s1.clone(), s2.clone(), s3.clone())
                 }
                 (NO::PublicKeyOf, &[s1, s2], OA::None) => Self::PublicKeyOf(s1.clone(), s2.clone()),
+                (NO::SignedBy, &[s1, s2], OA::Signature(sig)) => {
+                    Self::SignedBy(s1.clone(), s2.clone(), sig)
+                }
                 (
                     NO::ContainerInsertFromEntries,
                     &[s1, s2, s3, s4],
@@ -410,6 +414,11 @@ impl Operation {
         Ok(sk.0 < *GROUP_ORDER && pk == sk.public_key())
     }
 
+    pub(crate) fn check_signed_by(msg: &Value, pk: &Value, sig: &Signature) -> Result<bool> {
+        let pk: PublicKey = pk.typed().try_into()?;
+        Ok(sig.verify(pk, msg.raw()))
+    }
+
     /// Checks the given operation against a statement.
     pub fn check(&self, params: &Params, output_statement: &Statement) -> Result<bool> {
         use Statement::*;
@@ -424,9 +433,6 @@ impl Operation {
         };
         let b = match (self, output_statement) {
             (Self::None, None) => true,
-            (Self::NewEntry, Equal(ValueRef::Key(AnchoredKey { pod_id, .. }), _)) => {
-                pod_id == &SELF
-            }
             (Self::CopyStatement(s1), s2) => s1 == s2,
             (Self::EqualFromEntries(s1, s2), Equal(v3, v4)) => val(v3, s1)? == val(v4, s2)?,
             (Self::NotEqualFromEntries(s1, s2), NotEqual(v3, v4)) => val(v3, s1)? != val(v4, s2)?,
@@ -478,6 +484,9 @@ impl Operation {
             }
             (Self::PublicKeyOf(s1, s2), PublicKeyOf(v3, v4)) => {
                 Self::check_public_key(&val(v3, s1)?, &val(v4, s2)?)?
+            }
+            (Self::SignedBy(msg_s, pk_s, sig), SignedBy(msg_v, pk_v)) => {
+                Self::check_signed_by(&val(msg_v, msg_s)?, &val(pk_v, pk_s)?, sig)?
             }
             (
                 Self::ContainerInsertFromEntries(new_root_s, old_root_s, key_s, val_s, pf),
@@ -579,15 +588,15 @@ pub fn check_st_tmpl(
         (StatementTmplArg::None, StatementArg::None) => Ok(()),
         (StatementTmplArg::Literal(lhs), StatementArg::Literal(rhs)) if lhs == rhs => Ok(()),
         (
-            StatementTmplArg::AnchoredKey(pod_id_wc, key_tmpl),
-            StatementArg::Key(AnchoredKey { pod_id, key }),
+            StatementTmplArg::AnchoredKey(root_wc, key_tmpl),
+            StatementArg::Key(AnchoredKey { root, key }),
         ) => {
-            let pod_id_ok = check_or_set(Value::from(*pod_id), pod_id_wc, wildcard_map);
-            pod_id_ok.and_then(|_| {
+            let root_ok = check_or_set(Value::from(*root), root_wc, wildcard_map);
+            root_ok.and_then(|_| {
                 (key_tmpl == key).then_some(()).ok_or(
                     Error::mismatched_anchored_key_in_statement_tmpl_arg(
-                        pod_id_wc.clone(),
-                        *pod_id,
+                        root_wc.clone(),
+                        *root,
                         key_tmpl.clone(),
                         key.clone(),
                     ),
@@ -742,14 +751,28 @@ impl fmt::Display for Operation {
     }
 }
 
+pub(crate) fn root_key_to_ak(root: &Value, key: &Value) -> Option<AnchoredKey> {
+    let root_hash = Hash::from(root.raw());
+    Key::try_from(key.typed())
+        .map(|key| AnchoredKey::new(root_hash, key))
+        .ok()
+}
+
 /// Returns the value associated with `output_ref`.
 /// If `output_ref` is a concrete value, returns that value.
-/// Otherwise, `output_ref` was constructed using an `Equal` statement, and `input_st`
+/// Otherwise, `output_ref` was constructed using a `Contains` statement, and `input_st`
 /// must be that statement.
 pub(crate) fn value_from_op(input_st: &Statement, output_ref: &ValueRef) -> Option<Value> {
     match (input_st, output_ref) {
         (Statement::None, ValueRef::Literal(v)) => Some(v.clone()),
-        (Statement::Equal(r1, ValueRef::Literal(v)), r2) if r1 == r2 => Some(v.clone()),
+        (
+            Statement::Contains(
+                ValueRef::Literal(root),
+                ValueRef::Literal(key),
+                ValueRef::Literal(v),
+            ),
+            ValueRef::Key(out_ak),
+        ) => root_key_to_ak(root, key).and_then(|ak| (*out_ak == ak).then(|| v.clone())),
         _ => None,
     }
 }
@@ -761,45 +784,39 @@ mod tests {
     use num::BigUint;
 
     use crate::{
-        backends::plonky2::primitives::{
-            ec::{curve::GROUP_ORDER, schnorr::SecretKey},
-            merkletree::MerkleTree,
+        backends::plonky2::{
+            primitives::{
+                ec::{curve::GROUP_ORDER, schnorr::SecretKey},
+                merkletree::MerkleTree,
+            },
+            signer::Signer,
         },
-        middleware::{
-            hash_value, AnchoredKey, Error, Key, Operation, Params, PodId, Result, Statement,
-        },
+        middleware::{hash_value, Error, Operation, Params, Result, Signer as _, Statement, Value},
     };
 
     #[test]
     fn check_container_ops() -> Result<()> {
         let params = Params::default();
-        let pod_id = PodId::default();
-        let root_ak = AnchoredKey::new(pod_id, Key::new("root".into()));
-        let key_ak = AnchoredKey::new(pod_id, Key::new("key".into()));
-        let val_ak = AnchoredKey::new(pod_id, Key::new("value".into()));
-
         // Form Merkle tree
         let kvs = (0..10)
             .map(|i| (hash_value(&i.into()).into(), i.into()))
             .collect::<HashMap<_, _>>();
         let mt = MerkleTree::new(params.max_depth_mt_containers, &kvs)?;
-        let root_s = Statement::Equal(root_ak.clone().into(), mt.root().into());
+        let root = mt.root();
 
         // Check existence proofs
         kvs.iter().try_for_each(|(k, v)| {
-            // Form op args
-            let key_s = Statement::Equal(key_ak.clone().into(), (*k).into());
-            let value_s = Statement::Equal(val_ak.clone().into(), (*v).into());
             let (_, pf) = mt.prove(k)?;
 
             // Form op
-            let op = Operation::ContainsFromEntries(root_s.clone(), key_s, value_s, pf);
-            // Form output statement
-            let st = Statement::Contains(
-                root_ak.clone().into(),
-                key_ak.clone().into(),
-                val_ak.clone().into(),
+            let op = Operation::ContainsFromEntries(
+                Statement::None,
+                Statement::None,
+                Statement::None,
+                pf,
             );
+            // Form output statement
+            let st = Statement::Contains(root.into(), (*k).into(), (*v).into());
 
             // Check op against output statement
             op.check(&params, &st).and_then(|ind| {
@@ -816,11 +833,10 @@ mod tests {
 
         // Check non-existence proofs similarly
         (50..60).try_for_each(|k| {
-            let key_s = Statement::Equal(key_ak.clone().into(), k.into());
             let pf = mt.prove_nonexistence(&k.into())?;
 
-            let op = Operation::NotContainsFromEntries(root_s.clone(), key_s, pf);
-            let st = Statement::NotContains(root_ak.clone().into(), key_ak.clone().into());
+            let op = Operation::NotContainsFromEntries(Statement::None, Statement::None, pf);
+            let st = Statement::NotContains(root.into(), k.into());
 
             op.check(&params, &st).and_then(|ind| {
                 if ind {
@@ -838,11 +854,6 @@ mod tests {
     #[test]
     fn check_container_update_ops() -> Result<()> {
         let params = Params::default();
-        let pod_id = PodId::default();
-        let new_root_ak = AnchoredKey::new(pod_id, Key::new("new_root".into()));
-        let old_root_ak = AnchoredKey::new(pod_id, Key::new("new_root".into()));
-        let key_ak = AnchoredKey::new(pod_id, Key::new("key".into()));
-        let val_ak = AnchoredKey::new(pod_id, Key::new("value".into()));
 
         // Form Merkle tree
         let kvs = (0..10)
@@ -854,23 +865,24 @@ mod tests {
         (11..20)
             .map(|i| (hash_value(&i.into()).into(), i.into()))
             .try_for_each(|(k, v)| {
-                let old_root_s = Statement::Equal(old_root_ak.clone().into(), mt.root().into());
+                let old_root = mt.root();
                 let mtp = mt.insert(&k, &v)?;
-                // Form op args
-                let new_root_s = Statement::Equal(new_root_ak.clone().into(), mt.root().into());
-                let key_s = Statement::Equal(key_ak.clone().into(), k.into());
-                let value_s = Statement::Equal(val_ak.clone().into(), v.into());
+                let new_root = mt.root();
 
                 // Form op
                 let op = Operation::ContainerInsertFromEntries(
-                    new_root_s, old_root_s, key_s, value_s, mtp,
+                    Statement::None,
+                    Statement::None,
+                    Statement::None,
+                    Statement::None,
+                    mtp,
                 );
                 // Form output statement
                 let st = Statement::ContainerInsert(
-                    new_root_ak.clone().into(),
-                    old_root_ak.clone().into(),
-                    key_ak.clone().into(),
-                    val_ak.clone().into(),
+                    new_root.into(),
+                    old_root.into(),
+                    k.into(),
+                    v.into(),
                 );
 
                 // Check op against output statement
@@ -890,23 +902,24 @@ mod tests {
         (11..20)
             .map(|i| (hash_value(&i.into()).into(), (i + 1).into()))
             .try_for_each(|(k, v)| {
-                let old_root_s = Statement::Equal(old_root_ak.clone().into(), mt.root().into());
+                let old_root = mt.root();
                 let mtp = mt.update(&k, &v)?;
-                // Form op args
-                let new_root_s = Statement::Equal(new_root_ak.clone().into(), mt.root().into());
-                let key_s = Statement::Equal(key_ak.clone().into(), k.into());
-                let value_s = Statement::Equal(val_ak.clone().into(), v.into());
+                let new_root = mt.root();
 
                 // Form op
                 let op = Operation::ContainerUpdateFromEntries(
-                    new_root_s, old_root_s, key_s, value_s, mtp,
+                    Statement::None,
+                    Statement::None,
+                    Statement::None,
+                    Statement::None,
+                    mtp,
                 );
                 // Form output statement
                 let st = Statement::ContainerUpdate(
-                    new_root_ak.clone().into(),
-                    old_root_ak.clone().into(),
-                    key_ak.clone().into(),
-                    val_ak.clone().into(),
+                    new_root.into(),
+                    old_root.into(),
+                    k.into(),
+                    v.into(),
                 );
 
                 // Check op against output statement
@@ -926,20 +939,19 @@ mod tests {
         (11..20)
             .map(|i| hash_value(&i.into()).into())
             .try_for_each(|k| {
-                let old_root_s = Statement::Equal(old_root_ak.clone().into(), mt.root().into());
+                let old_root = mt.root();
                 let mtp = mt.delete(&k)?;
-                // Form op args
-                let new_root_s = Statement::Equal(new_root_ak.clone().into(), mt.root().into());
-                let key_s = Statement::Equal(key_ak.clone().into(), k.into());
+                let new_root = mt.root();
 
                 // Form op
-                let op = Operation::ContainerDeleteFromEntries(new_root_s, old_root_s, key_s, mtp);
-                // Form output statement
-                let st = Statement::ContainerDelete(
-                    new_root_ak.clone().into(),
-                    old_root_ak.clone().into(),
-                    key_ak.clone().into(),
+                let op = Operation::ContainerDeleteFromEntries(
+                    Statement::None,
+                    Statement::None,
+                    Statement::None,
+                    mtp,
                 );
+                // Form output statement
+                let st = Statement::ContainerDelete(new_root.into(), old_root.into(), k.into());
 
                 // Check op against output statement
                 op.check(&params, &st).and_then(|ind| {
@@ -979,20 +991,13 @@ mod tests {
         ];
 
         let params = Params::default();
-        let pod_id = PodId::default();
-        let pk_ak = AnchoredKey::new(pod_id, Key::new("pubkey".into()));
-        let sk_ak = AnchoredKey::new(pod_id, Key::new("secret".into()));
 
         test_cases.iter().try_for_each(|(pk, sk, expect_good)| {
-            // Form op args
-            let pk_s = Statement::Equal(pk_ak.clone().into(), (*pk).into());
-            let sk_s = Statement::Equal(sk_ak.clone().into(), sk.clone().into());
-
             // Form op
-            let op = Operation::PublicKeyOf(pk_s.clone(), sk_s.clone());
+            let op = Operation::PublicKeyOf(Statement::None, Statement::None);
 
             // Form output statement
-            let st = Statement::PublicKeyOf(pk_ak.clone().into(), sk_ak.clone().into());
+            let st = Statement::PublicKeyOf((*pk).into(), sk.clone().into());
 
             // Check
             op.check(&params, &st).map(|is_good| {
@@ -1011,27 +1016,36 @@ mod tests {
         let fixed_pk = fixed_sk.public_key();
 
         let params = Params::default();
-        let pod_id = PodId::default();
-        let pk_ak = AnchoredKey::new(pod_id, Key::new("pubkey".into()));
-        let sk_ak = AnchoredKey::new(pod_id, Key::new("secret".into()));
-
-        // Form op args
-        let pk_s = Statement::Equal(pk_ak.clone().into(), fixed_pk.into());
-        let sk_s = Statement::Equal(sk_ak.clone().into(), fixed_sk.clone().into());
 
         // Bad op and statement with bad first args
-        let op = Operation::PublicKeyOf(pk_s.clone(), pk_s.clone());
-        let st = Statement::PublicKeyOf(pk_ak.clone().into(), pk_ak.clone().into());
+        let op = Operation::PublicKeyOf(Statement::None, Statement::None);
+        let st = Statement::PublicKeyOf(fixed_pk.into(), fixed_pk.into());
 
         // Check
         assert!(op.check(&params, &st).is_err());
 
         // Bad op and statement with bad second args
-        let op = Operation::PublicKeyOf(sk_s.clone(), sk_s.clone());
-        let st = Statement::PublicKeyOf(sk_ak.clone().into(), sk_ak.clone().into());
+        let op = Operation::PublicKeyOf(Statement::None, Statement::None);
+        let st = Statement::PublicKeyOf(fixed_sk.clone().into(), fixed_sk.clone().into());
 
         // Check
         assert!(op.check(&params, &st).is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn check_signed_by_op() -> Result<()> {
+        let params = Params::default();
+
+        let sk = SecretKey(BigUint::from(0x1234567890abcdefu64));
+        let pk = sk.public_key();
+        let msg = Value::from("hello");
+        let sig = Signer(sk).sign(msg.raw());
+
+        let op = Operation::SignedBy(Statement::None, Statement::None, sig);
+        let st = Statement::SignedBy(msg.into(), pk.into());
+        op.check(&params, &st)?;
 
         Ok(())
     }
