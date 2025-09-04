@@ -1,7 +1,4 @@
-use std::{
-    collections::HashMap,
-    str::FromStr,
-};
+use std::{collections::HashMap, str::FromStr};
 
 use base64::{prelude::BASE64_STANDARD, Engine};
 use serde::{
@@ -16,7 +13,8 @@ use serde::{
     ser::{
         SerializeMap, SerializeSeq, SerializeStruct, SerializeStructVariant, SerializeTuple,
         SerializeTupleStruct, SerializeTupleVariant,
-    }, Serialize, Serializer,
+    },
+    Serialize, Serializer,
 };
 
 use super::{Key, Value};
@@ -26,6 +24,7 @@ use crate::{
         primitives::ec::{curve::Point, schnorr::SecretKey},
         serialize_bytes,
     },
+    frontend::SignedDict,
     middleware::{
         containers::{Array, Dictionary},
         field_array_to_string,
@@ -198,11 +197,10 @@ impl Serializer for ValueSerializer {
     where
         T: ?Sized + Serialize,
     {
-        println!("nt struct {name}");
         match name {
             "RawValue" => self.state = ValueSerializerState::RawValue,
-            "Point" => self.state = ValueSerializerState::Point,
-            "SecretKey" => self.state = ValueSerializerState::SecretKey,
+            "pod2::Point" => self.state = ValueSerializerState::Point,
+            "pod2::SecretKey" => self.state = ValueSerializerState::SecretKey,
             _ => (),
         }
         value.serialize(self)
@@ -470,6 +468,54 @@ impl<'a, 'de, E: serde::de::Error> IntoDeserializer<'de, E> for &'a Key {
     }
 }
 
+impl<'a, 'de> IntoDeserializer<'de, serde::de::value::Error> for &'a Dictionary {
+    type Deserializer = Self;
+    fn into_deserializer(self) -> Self::Deserializer {
+        self
+    }
+}
+
+impl<'a, 'de> IntoDeserializer<'de, serde::de::value::Error> for &'a SignedDict {
+    type Deserializer = &'a Dictionary;
+    fn into_deserializer(self) -> Self::Deserializer {
+        &self.dict
+    }
+}
+
+impl<'de> serde::Deserializer<'de> for &Dictionary {
+    type Error = serde::de::value::Error;
+
+    fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        visitor.visit_map(MapDeserializer::new(self.kvs().iter()))
+    }
+
+    fn deserialize_enum<V>(
+        self,
+        _name: &'static str,
+        _variants: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        visitor.visit_enum(MapAccessDeserializer::new(MapDeserializer::new(
+            self.kvs().iter(),
+        )))
+    }
+
+    fn deserialize_ignored_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        visitor.visit_unit()
+    }
+
+    forward_to_deserialize_any! { bool i8 i16 i32 i64 f32 f64 u8 u16 u32 u64 char str bytes byte_buf string option unit unit_struct seq tuple_struct tuple map newtype_struct struct identifier }
+}
+
 impl<'de> serde::Deserializer<'de> for &TypedValue {
     type Error = serde::de::value::Error;
 
@@ -486,17 +532,14 @@ impl<'de> serde::Deserializer<'de> for &TypedValue {
             TypedValue::Array(a) => visitor.visit_seq(SeqDeserializer::new(a.array().iter())),
             TypedValue::Set(s) => visitor.visit_seq(SeqDeserializer::new(s.set().iter())),
             TypedValue::String(s) => visitor.visit_str(s),
-            TypedValue::PodId(i) => {
-                visitor.visit_seq(SeqDeserializer::new(i.0 .0.iter().map(|x| x.0)))
-            }
-            TypedValue::Dictionary(d) => visitor.visit_map(MapDeserializer::new(d.kvs().iter())),
+            TypedValue::Dictionary(d) => d.deserialize_any(visitor),
         }
     }
 
     fn deserialize_enum<V>(
         self,
-        _name: &'static str,
-        _variants: &'static [&'static str],
+        name: &'static str,
+        variants: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
@@ -511,9 +554,7 @@ impl<'de> serde::Deserializer<'de> for &TypedValue {
                     self.deserialize_any(visitor)
                 }
             }
-            TypedValue::Dictionary(d) => visitor.visit_enum(MapAccessDeserializer::new(
-                MapDeserializer::new(d.kvs().iter()),
-            )),
+            TypedValue::Dictionary(d) => d.deserialize_enum(name, variants, visitor),
             _ => self.deserialize_any(visitor),
         }
     }
@@ -727,7 +768,6 @@ mod test {
     fn test_roundtrip<T: Serialize + DeserializeOwned + Eq + std::fmt::Debug>(t: T) {
         let depth = Params::default().max_depth_mt_containers;
         let val = t.serialize(ValueSerializer::new(depth)).unwrap();
-        println!("{val:?}");
         let out: T = Deserialize::deserialize(val.typed()).unwrap();
         assert_eq!(t, out);
     }
@@ -739,8 +779,6 @@ mod test {
         let depth = Params::default().max_depth_mt_containers;
         let ser = t.serialize(ValueSerializer::new(depth)).unwrap();
         let val = Value::from(TypedValue::from(t));
-        println!("{}", serde_json::to_string(&ser).unwrap());
-        println!("{}", serde_json::to_string(&val).unwrap());
         assert_eq!(ser, val);
     }
 
