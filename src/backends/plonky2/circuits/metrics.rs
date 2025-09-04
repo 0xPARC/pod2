@@ -54,11 +54,23 @@ impl Metrics {
     pub fn print(&self) {
         println!("Gate count:");
         let mut count = HashMap::new();
+        let mut list = Vec::new();
         for (name, num_gates) in &self.gates {
-            let n = count.entry(name).or_insert(0);
+            let (n, gates) = count.entry(name).or_insert((0, 0));
+            if *n == 0 {
+                list.push(name);
+            }
             *n += 1;
-            println!("- {} [{}]: {}", name, *n, num_gates);
+            *gates += num_gates;
         }
+        for name in list.iter().rev() {
+            let (n, total_gates) = count.get(name).expect("key inserted in previous loop");
+            let avg_gates: f64 = (*total_gates as f64) / (*n as f64);
+            println!("- {}: {} x {:.01} = {}", name, n, avg_gates, total_gates);
+        }
+    }
+    pub fn reset(&mut self) {
+        *self = Self::default()
     }
 }
 
@@ -79,6 +91,15 @@ pub mod measure_macros {
             use $crate::backends::plonky2::circuits::metrics::METRICS;
             let mut metrics = METRICS.lock().unwrap();
             metrics.end($builder, $measure);
+        }};
+    }
+
+    #[macro_export]
+    macro_rules! measure_gates_reset {
+        () => {{
+            use $crate::backends::plonky2::circuits::metrics::METRICS;
+            let mut metrics = METRICS.lock().unwrap();
+            metrics.reset();
         }};
     }
 
@@ -106,6 +127,11 @@ pub mod measure_macros {
         ($builder:expr, $measure:expr) => {
             let _ = $measure;
         };
+    }
+
+    #[macro_export]
+    macro_rules! measure_gates_reset {
+        () => {};
     }
 
     #[macro_export]
