@@ -34,7 +34,7 @@ The following table summarizes "syntactic sugar" operations.  These operations a
 | Code | Identifier            | Args and desugaring              | 
 |------|-----------------------|---------------------|
 | 1001 | DictContainsFromEntries | `DictContainsFromEntries(dict_st, key_st, value_st, proof_st) -> ContainsFromEntries(dict_st, key_st, value_st, proof_st)` |
-| 1002 | DictNotContainsFromEntries | `DictNotContainsFromEntries(dict_st, key_st, value_st, proof_st) -> NotContainsFromEntries(dict_st, key_st, value_st, proof_st)` |
+| 1002 | DictNotContainsFromEntries | `DictNotContainsFromEntries(dict_st, key_st, proof_st) -> NotContainsFromEntries(dict_st, key_st, proof_st)` |
 | 1003 | SetContainsFromEntries | `SetContainsFromEntries(set_st, value_st, proof_st) -> ContainsFromEntries(set_st, value_st, value_st, proof_st)` |
 | 1004 | SetNotContainsFromEntries | `SetNotContainsFromEntries(set_st, value_st, proof_st) -> NotContainsFromEntries(set_st, value_st, value_st, proof_st)` |
 | 1005 | ArrayContainsFromEntries | `ArrayContainsFromEntries(array_st, index_st, value_st, proof_st) -> ContainsFromEntries(array_st, index_st, value_st, proof_st)` |

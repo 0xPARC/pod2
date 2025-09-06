@@ -49,7 +49,7 @@ The frontend also exposes the following syntactic sugar predicates.  These predi
 | Code | Identifier    | Args and desugaring                | 
 |------|---------------|---------------------|
 | 1000 | DictContains | `DictContains(root, key, val) -> Contains(root, key, val)` |
-| 1001 | DictNotContains | `DictNotContains(root, key, val) -> NotContains(root, key, val)` |
+| 1001 | DictNotContains | `DictNotContains(root, key) -> NotContains(root, key)` |
 | 1002 | SetContains | `SetContains(root, val) -> Contains(root, val, val)` |
 | 1003 | SetNotContains | `SetNotContains(root, val) -> Contains(root, val, val)` |
 | 1004 | ArrayContains | `ArrayContains(root, idx, val) -> Contains(root, idx, val)` |
