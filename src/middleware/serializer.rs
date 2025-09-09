@@ -1,4 +1,7 @@
-use std::{collections::HashMap, str::FromStr};
+use std::{
+    collections::{HashMap, HashSet},
+    str::FromStr,
+};
 
 use base64::{prelude::BASE64_STANDARD, Engine};
 use serde::{
@@ -26,7 +29,7 @@ use crate::{
     },
     frontend::SignedDict,
     middleware::{
-        containers::{Array, Dictionary},
+        containers::{Array, Dictionary, Set},
         field_array_to_string,
         serialization::deserialize_value_tuple,
         RawValue, TypedValue,
@@ -173,7 +176,7 @@ impl Serializer for ValueSerializer {
     }
 
     fn serialize_unit(self) -> Result<Self::Ok, Self::Error> {
-        SerializeTuple::end(self.serialize_tuple(0)?)
+        Ok(Value::from(false))
     }
 
     fn serialize_unit_struct(self, _name: &'static str) -> Result<Self::Ok, Self::Error> {
@@ -198,7 +201,7 @@ impl Serializer for ValueSerializer {
         T: ?Sized + Serialize,
     {
         match name {
-            "RawValue" => self.state = ValueSerializerState::RawValue,
+            "pod2::RawValue" => self.state = ValueSerializerState::RawValue,
             "pod2::Point" => self.state = ValueSerializerState::Point,
             "pod2::SecretKey" => self.state = ValueSerializerState::SecretKey,
             _ => (),
@@ -228,11 +231,17 @@ impl Serializer for ValueSerializer {
     where
         T: ?Sized + Serialize,
     {
-        self.serialize_newtype_variant("Option", 0, "Some", value)
+        let value_serialized = value.serialize(self)?;
+        let mut hash_set = HashSet::new();
+        hash_set.insert(value_serialized);
+        let set = Set::new(self.container_depth, hash_set).map_err(serde::ser::Error::custom)?;
+        Ok(Value::from(set))
     }
 
     fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
-        self.serialize_unit_variant("Option", 1, "None")
+        let set =
+            Set::new(self.container_depth, HashSet::new()).map_err(serde::ser::Error::custom)?;
+        Ok(Value::from(set))
     }
 
     fn serialize_tuple_struct(
@@ -575,20 +584,10 @@ impl<'de> serde::Deserializer<'de> for &TypedValue {
         V: serde::de::Visitor<'de>,
     {
         match self {
-            TypedValue::String(s) => {
-                if s == "None" {
-                    visitor.visit_none()
-                } else {
-                    self.deserialize_any(visitor)
-                }
-            }
-            TypedValue::Dictionary(d) => {
-                if let Ok(v) = d.get(&Key::from("Some")) {
-                    visitor.visit_some(v.typed())
-                } else {
-                    self.deserialize_any(visitor)
-                }
-            }
+            TypedValue::Set(s) if s.set().len() <= 1 => match s.set().iter().next() {
+                Some(x) => visitor.visit_some(x.typed()),
+                None => visitor.visit_none(),
+            },
             _ => self.deserialize_any(visitor),
         }
     }
@@ -597,10 +596,7 @@ impl<'de> serde::Deserializer<'de> for &TypedValue {
     where
         V: serde::de::Visitor<'de>,
     {
-        match self {
-            TypedValue::Array(a) if a.array().is_empty() => visitor.visit_unit(),
-            _ => self.deserialize_any(visitor),
-        }
+        visitor.visit_unit()
     }
 
     fn deserialize_bytes<V>(self, visitor: V) -> Result<V::Value, Self::Error>
@@ -671,6 +667,8 @@ impl<'de> serde::Deserializer<'de> for &TypedValue {
 #[cfg(test)]
 mod test {
 
+    use std::collections::HashMap;
+
     use serde::{
         de::{DeserializeOwned, Visitor},
         Deserialize, Serialize,
@@ -681,22 +679,22 @@ mod test {
         middleware::{serializer::ValueSerializer, Params, RawValue, TypedValue, Value},
     };
 
-    #[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
+    #[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone)]
     enum Method {
         Search,
         Mine,
     }
 
-    #[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
+    #[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone)]
     struct Inner {
         ch: char,
         b: bool,
     }
 
-    #[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
+    #[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone)]
     struct Tuple(u8, u32);
 
-    #[derive(PartialEq, Eq, Debug)]
+    #[derive(PartialEq, Eq, Debug, Clone)]
     struct Bytes(Vec<u8>);
 
     struct BytesVisitor;
@@ -734,7 +732,7 @@ mod test {
         }
     }
 
-    #[derive(Serialize, Deserialize, Debug)]
+    #[derive(Serialize, Deserialize, Debug, Clone)]
     struct Float(f32);
 
     impl PartialEq for Float {
@@ -745,9 +743,15 @@ mod test {
 
     impl Eq for Float {}
 
-    #[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
-    struct FrogDesc {
-        frog_id: i64,
+    #[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone)]
+    enum Fancy {
+        B(i64, i64),
+        C { x: i64, y: Vec<i64> },
+    }
+
+    #[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone)]
+    struct ComplicatedStruct {
+        id: i64,
         name: String,
         seed_range: Vec<(Method, RawValue)>,
         option1: Option<i64>,
@@ -763,6 +767,7 @@ mod test {
         float: Float,
         inf: Float,
         nan: Float,
+        map: HashMap<String, i64>,
     }
 
     fn test_roundtrip<T: Serialize + DeserializeOwned + Eq + std::fmt::Debug>(t: T) {
@@ -772,7 +777,19 @@ mod test {
         assert_eq!(t, out);
     }
 
-    fn test_preserved<T: Serialize + Eq + std::fmt::Debug>(t: T)
+    fn test_roundtrip_dict<T: Serialize + DeserializeOwned + Eq + std::fmt::Debug>(t: T) {
+        let depth = Params::default().max_depth_mt_containers;
+        let val = t.serialize(ValueSerializer::new(depth)).unwrap();
+        match val.typed() {
+            TypedValue::Dictionary(d) => {
+                let out: T = Deserialize::deserialize(d).unwrap();
+                assert_eq!(t, out);
+            }
+            _ => panic!("Expected value to be serialized to a dict"),
+        }
+    }
+
+    fn test_preserved_ser<T: Serialize>(t: T)
     where
         TypedValue: From<T>,
     {
@@ -782,22 +799,39 @@ mod test {
         assert_eq!(ser, val);
     }
 
-    #[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
-    enum Fancy {
-        B(i64, i64),
-        C { x: i64, y: Vec<i64> },
+    fn test_preserved_de<T: DeserializeOwned + Eq + Clone + std::fmt::Debug>(t: T)
+    where
+        TypedValue: From<T>,
+    {
+        let de = T::deserialize(&TypedValue::from(t.clone())).unwrap();
+        assert_eq!(de, t);
+    }
+
+    fn test_preserved<T: Serialize + DeserializeOwned + Eq + Clone + std::fmt::Debug>(t: T)
+    where
+        TypedValue: From<T>,
+    {
+        test_preserved_ser(t.clone());
+        test_preserved_de(t);
+    }
+
+    fn a_hash_map() -> HashMap<String, i64> {
+        let mut map = HashMap::new();
+        map.insert("a".to_string(), 1);
+        map.insert("b".to_string(), 2);
+        map
     }
 
     #[test]
-    fn test_frog_desc() {
+    fn test_complicated_struct() {
         let seed_range = vec![
             (Method::Search, RawValue::default()),
             (Method::Mine, RawValue::default()),
         ];
         let sk = SecretKey::new_rand();
         let pk = sk.public_key();
-        let desc = FrogDesc {
-            frog_id: 1,
+        let desc = ComplicatedStruct {
+            id: 1,
             name: "a frog".to_string(),
             seed_range,
             option1: Some(2),
@@ -819,8 +853,20 @@ mod test {
             float: Float(3.0),
             inf: Float(f32::NEG_INFINITY),
             nan: Float(f32::NAN),
+            map: a_hash_map(),
         };
-        test_roundtrip(desc);
+        test_roundtrip(desc.clone());
+        test_roundtrip_dict(desc);
+    }
+
+    #[test]
+    fn test_dict_deserialization() {
+        test_roundtrip_dict(Fancy::B(0, 1));
+        test_roundtrip_dict(Fancy::C {
+            x: 1,
+            y: vec![2, 3],
+        });
+        test_roundtrip_dict(a_hash_map());
     }
 
     #[test]
