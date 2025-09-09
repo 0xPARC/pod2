@@ -14,8 +14,8 @@ use serde::{
     },
     forward_to_deserialize_any,
     ser::{
-        SerializeMap, SerializeSeq, SerializeStruct, SerializeStructVariant, SerializeTuple,
-        SerializeTupleStruct, SerializeTupleVariant,
+        Impossible, SerializeMap, SerializeSeq, SerializeStruct, SerializeStructVariant,
+        SerializeTuple, SerializeTupleStruct, SerializeTupleVariant,
     },
     Serialize, Serializer,
 };
@@ -50,23 +50,34 @@ pub struct ValueSerializer {
     state: ValueSerializerState,
 }
 
+#[derive(Clone, Copy)]
+pub struct DictionarySerializer {
+    container_depth: usize,
+}
+
 pub struct ValueSerializeSeq {
     data: Vec<Value>,
     container_depth: usize,
 }
 
-pub struct ValueSerializeTupleVariant {
+pub struct ValueSerializeTupleVariant(DictionarySerializeTupleVariant);
+
+pub struct ValueSerializeMap(DictionarySerializeMap);
+
+pub struct ValueSerializeStructVariant(DictionarySerializeStructVariant);
+
+pub struct DictionarySerializeTupleVariant {
     name: &'static str,
     inner: ValueSerializeSeq,
 }
 
-pub struct ValueSerializeMap {
+pub struct DictionarySerializeMap {
     kvs: HashMap<Key, Value>,
     next_key: Option<Key>,
     container_depth: usize,
 }
 
-pub struct ValueSerializeStructVariant {
+pub struct DictionarySerializeStructVariant {
     name: &'static str,
     inner: ValueSerializeMap,
 }
@@ -75,6 +86,25 @@ impl ValueSerializer {
     pub fn new(container_depth: usize) -> Self {
         Self {
             container_depth,
+            state: ValueSerializerState::Default,
+        }
+    }
+
+    fn dictionary_serializer(self) -> DictionarySerializer {
+        DictionarySerializer {
+            container_depth: self.container_depth,
+        }
+    }
+}
+
+impl DictionarySerializer {
+    pub fn new(container_depth: usize) -> Self {
+        Self { container_depth }
+    }
+
+    fn value_serializer(self) -> ValueSerializer {
+        ValueSerializer {
+            container_depth: self.container_depth,
             state: ValueSerializerState::Default,
         }
     }
@@ -211,20 +241,17 @@ impl Serializer for ValueSerializer {
 
     fn serialize_newtype_variant<T>(
         self,
-        _name: &'static str,
-        _variant_index: u32,
+        name: &'static str,
+        variant_index: u32,
         variant: &'static str,
         value: &T,
     ) -> Result<Self::Ok, Self::Error>
     where
         T: ?Sized + Serialize,
     {
-        let ser_value = value.serialize(self)?;
-        let mut map = HashMap::new();
-        map.insert(Key::from(variant), ser_value);
-        Ok(Value::from(
-            Dictionary::new(self.container_depth, map).map_err(serde::ser::Error::custom)?,
-        ))
+        self.dictionary_serializer()
+            .serialize_newtype_variant(name, variant_index, variant, value)
+            .map(Value::from)
     }
 
     fn serialize_some<T>(self, value: &T) -> Result<Self::Ok, Self::Error>
@@ -254,26 +281,20 @@ impl Serializer for ValueSerializer {
 
     fn serialize_tuple_variant(
         self,
-        _name: &'static str,
-        _variant_index: u32,
+        name: &'static str,
+        variant_index: u32,
         variant: &'static str,
-        _len: usize,
+        len: usize,
     ) -> Result<Self::SerializeTupleVariant, Self::Error> {
-        Ok(ValueSerializeTupleVariant {
-            name: variant,
-            inner: ValueSerializeSeq {
-                data: Vec::new(),
-                container_depth: self.container_depth,
-            },
-        })
+        self.dictionary_serializer()
+            .serialize_tuple_variant(name, variant_index, variant, len)
+            .map(ValueSerializeTupleVariant)
     }
 
-    fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
-        Ok(ValueSerializeMap {
-            kvs: HashMap::new(),
-            container_depth: self.container_depth,
-            next_key: None,
-        })
+    fn serialize_map(self, len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
+        self.dictionary_serializer()
+            .serialize_map(len)
+            .map(ValueSerializeMap)
     }
 
     fn serialize_struct(
@@ -286,15 +307,14 @@ impl Serializer for ValueSerializer {
 
     fn serialize_struct_variant(
         self,
-        _name: &'static str,
-        _variant_index: u32,
+        name: &'static str,
+        variant_index: u32,
         variant: &'static str,
         len: usize,
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
-        Ok(ValueSerializeStructVariant {
-            name: variant,
-            inner: self.serialize_map(Some(len))?,
-        })
+        self.dictionary_serializer()
+            .serialize_struct_variant(name, variant_index, variant, len)
+            .map(ValueSerializeStructVariant)
     }
 }
 
@@ -359,6 +379,261 @@ impl SerializeTupleVariant for ValueSerializeTupleVariant {
     where
         T: ?Sized + Serialize,
     {
+        self.0.serialize_field(value)
+    }
+
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        SerializeTupleVariant::end(self.0).map(Value::from)
+    }
+}
+
+impl SerializeMap for ValueSerializeMap {
+    type Ok = <ValueSerializer as Serializer>::Ok;
+    type Error = <ValueSerializer as Serializer>::Error;
+
+    fn serialize_key<T>(&mut self, key: &T) -> Result<(), Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        self.0.serialize_key(key)
+    }
+
+    fn serialize_value<T>(&mut self, value: &T) -> Result<(), Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        self.0.serialize_value(value)
+    }
+
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        SerializeMap::end(self.0).map(Value::from)
+    }
+}
+
+impl SerializeStruct for ValueSerializeMap {
+    type Ok = <ValueSerializer as Serializer>::Ok;
+    type Error = <ValueSerializer as Serializer>::Error;
+
+    fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        SerializeMap::serialize_entry(self, key, value)
+    }
+
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        SerializeMap::end(self)
+    }
+}
+
+impl SerializeStructVariant for ValueSerializeStructVariant {
+    type Ok = <ValueSerializer as Serializer>::Ok;
+    type Error = <ValueSerializer as Serializer>::Error;
+
+    fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        self.0.serialize_field(key, value)
+    }
+
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        SerializeStructVariant::end(self.0).map(Value::from)
+    }
+}
+
+impl Serializer for DictionarySerializer {
+    type Ok = Dictionary;
+    type Error = serde::de::value::Error;
+    type SerializeSeq = Impossible<Self::Ok, Self::Error>;
+    type SerializeTuple = Impossible<Self::Ok, Self::Error>;
+    type SerializeTupleStruct = Impossible<Self::Ok, Self::Error>;
+    type SerializeTupleVariant = DictionarySerializeTupleVariant;
+    type SerializeMap = DictionarySerializeMap;
+    type SerializeStruct = DictionarySerializeMap;
+    type SerializeStructVariant = DictionarySerializeStructVariant;
+
+    fn serialize_bool(self, _v: bool) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a map"))
+    }
+
+    fn serialize_i8(self, _v: i8) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a map"))
+    }
+
+    fn serialize_i16(self, _v: i16) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a map"))
+    }
+
+    fn serialize_i32(self, _v: i32) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a map"))
+    }
+
+    fn serialize_i64(self, _v: i64) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a map"))
+    }
+
+    fn serialize_u8(self, _v: u8) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a map"))
+    }
+
+    fn serialize_u16(self, _v: u16) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a map"))
+    }
+
+    fn serialize_u32(self, _v: u32) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a map"))
+    }
+
+    fn serialize_u64(self, _v: u64) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a map"))
+    }
+
+    fn serialize_f32(self, _v: f32) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a map"))
+    }
+
+    fn serialize_f64(self, _v: f64) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a map"))
+    }
+
+    fn serialize_char(self, _v: char) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a map"))
+    }
+
+    fn serialize_str(self, _v: &str) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a map"))
+    }
+
+    fn serialize_bytes(self, _v: &[u8]) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a map"))
+    }
+
+    fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a map"))
+    }
+
+    fn serialize_some<T>(self, _value: &T) -> Result<Self::Ok, Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        Err(serde::ser::Error::custom("expected a map"))
+    }
+
+    fn serialize_unit(self) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a map"))
+    }
+
+    fn serialize_unit_struct(self, _name: &'static str) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a map"))
+    }
+
+    fn serialize_unit_variant(
+        self,
+        _name: &'static str,
+        _variant_index: u32,
+        _variant: &'static str,
+    ) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a map"))
+    }
+
+    fn serialize_newtype_struct<T>(
+        self,
+        _name: &'static str,
+        value: &T,
+    ) -> Result<Self::Ok, Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        value.serialize(self)
+    }
+
+    fn serialize_newtype_variant<T>(
+        self,
+        _name: &'static str,
+        _variant_index: u32,
+        variant: &'static str,
+        value: &T,
+    ) -> Result<Self::Ok, Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        let ser_value = value.serialize(self.value_serializer())?;
+        let mut map = HashMap::new();
+        map.insert(Key::from(variant), ser_value);
+        Dictionary::new(self.container_depth, map).map_err(serde::ser::Error::custom)
+    }
+
+    fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
+        Err(serde::ser::Error::custom("expected a map"))
+    }
+
+    fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple, Self::Error> {
+        Err(serde::ser::Error::custom("expected a map"))
+    }
+
+    fn serialize_tuple_struct(
+        self,
+        _name: &'static str,
+        _len: usize,
+    ) -> Result<Self::SerializeTupleStruct, Self::Error> {
+        Err(serde::ser::Error::custom("expected a map"))
+    }
+
+    fn serialize_tuple_variant(
+        self,
+        _name: &'static str,
+        _variant_index: u32,
+        variant: &'static str,
+        _len: usize,
+    ) -> Result<Self::SerializeTupleVariant, Self::Error> {
+        Ok(DictionarySerializeTupleVariant {
+            name: variant,
+            inner: ValueSerializeSeq {
+                data: Vec::new(),
+                container_depth: self.container_depth,
+            },
+        })
+    }
+
+    fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
+        Ok(DictionarySerializeMap {
+            kvs: HashMap::new(),
+            container_depth: self.container_depth,
+            next_key: None,
+        })
+    }
+
+    fn serialize_struct(
+        self,
+        _name: &'static str,
+        len: usize,
+    ) -> Result<Self::SerializeStruct, Self::Error> {
+        self.serialize_map(Some(len))
+    }
+
+    fn serialize_struct_variant(
+        self,
+        _name: &'static str,
+        _variant_index: u32,
+        variant: &'static str,
+        len: usize,
+    ) -> Result<Self::SerializeStructVariant, Self::Error> {
+        Ok(DictionarySerializeStructVariant {
+            name: variant,
+            inner: ValueSerializeMap(self.serialize_map(Some(len))?),
+        })
+    }
+}
+
+impl SerializeTupleVariant for DictionarySerializeTupleVariant {
+    type Ok = <DictionarySerializer as Serializer>::Ok;
+    type Error = <DictionarySerializer as Serializer>::Error;
+
+    fn serialize_field<T>(&mut self, value: &T) -> Result<(), Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
         SerializeSeq::serialize_element(&mut self.inner, value)
     }
 
@@ -368,13 +643,13 @@ impl SerializeTupleVariant for ValueSerializeTupleVariant {
         let mut map = HashMap::new();
         map.insert(Key::new(self.name.to_string()), arr);
         let dict = Dictionary::new(max_depth, map).map_err(serde::de::Error::custom)?;
-        Ok(Value::from(dict))
+        Ok(dict)
     }
 }
 
-impl SerializeMap for ValueSerializeMap {
-    type Ok = <ValueSerializer as Serializer>::Ok;
-    type Error = <ValueSerializer as Serializer>::Error;
+impl SerializeMap for DictionarySerializeMap {
+    type Ok = <DictionarySerializer as Serializer>::Ok;
+    type Error = <DictionarySerializer as Serializer>::Error;
 
     fn serialize_key<T>(&mut self, key: &T) -> Result<(), Self::Error>
     where
@@ -415,13 +690,13 @@ impl SerializeMap for ValueSerializeMap {
     fn end(self) -> Result<Self::Ok, Self::Error> {
         let dict =
             Dictionary::new(self.container_depth, self.kvs).map_err(serde::ser::Error::custom)?;
-        Ok(Value::from(dict))
+        Ok(dict)
     }
 }
 
-impl SerializeStruct for ValueSerializeMap {
-    type Ok = <ValueSerializer as Serializer>::Ok;
-    type Error = <ValueSerializer as Serializer>::Error;
+impl SerializeStruct for DictionarySerializeMap {
+    type Ok = <DictionarySerializer as Serializer>::Ok;
+    type Error = <DictionarySerializer as Serializer>::Error;
 
     fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>
     where
@@ -435,9 +710,9 @@ impl SerializeStruct for ValueSerializeMap {
     }
 }
 
-impl SerializeStructVariant for ValueSerializeStructVariant {
-    type Ok = <ValueSerializer as Serializer>::Ok;
-    type Error = <ValueSerializer as Serializer>::Error;
+impl SerializeStructVariant for DictionarySerializeStructVariant {
+    type Ok = <DictionarySerializer as Serializer>::Ok;
+    type Error = <DictionarySerializer as Serializer>::Error;
 
     fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>
     where
@@ -447,12 +722,12 @@ impl SerializeStructVariant for ValueSerializeStructVariant {
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        let depth = self.inner.container_depth;
+        let depth = self.inner.0.container_depth;
         let value = SerializeMap::end(self.inner)?;
         let mut kvs = HashMap::new();
         kvs.insert(Key::new(self.name.to_string()), value);
         let dict = Dictionary::new(depth, kvs).map_err(serde::ser::Error::custom)?;
-        Ok(Value::from(dict))
+        Ok(dict)
     }
 }
 
@@ -676,7 +951,10 @@ mod test {
 
     use crate::{
         backends::plonky2::primitives::ec::{curve::Point, schnorr::SecretKey},
-        middleware::{serializer::ValueSerializer, Params, RawValue, TypedValue, Value},
+        middleware::{
+            serializer::{DictionarySerializer, ValueSerializer},
+            Params, RawValue, TypedValue, Value,
+        },
     };
 
     #[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone)]
@@ -779,14 +1057,25 @@ mod test {
 
     fn test_roundtrip_dict<T: Serialize + DeserializeOwned + Eq + std::fmt::Debug>(t: T) {
         let depth = Params::default().max_depth_mt_containers;
+        let dict = t.serialize(DictionarySerializer::new(depth)).unwrap();
+        let out: T = Deserialize::deserialize(&dict).unwrap();
+        assert_eq!(t, out);
+    }
+
+    fn test_dict_consistency<T: Serialize>(t: T) {
+        let depth = Params::default().max_depth_mt_containers;
         let val = t.serialize(ValueSerializer::new(depth)).unwrap();
-        match val.typed() {
-            TypedValue::Dictionary(d) => {
-                let out: T = Deserialize::deserialize(d).unwrap();
-                assert_eq!(t, out);
-            }
-            _ => panic!("Expected value to be serialized to a dict"),
-        }
+        let dict = t.serialize(DictionarySerializer::new(depth)).unwrap();
+        assert_eq!(val, Value::from(dict));
+    }
+
+    fn test_dict_consistency_and_roundtrip<
+        T: Serialize + DeserializeOwned + Eq + Clone + std::fmt::Debug,
+    >(
+        t: T,
+    ) {
+        test_dict_consistency(t.clone());
+        test_roundtrip_dict(t)
     }
 
     fn test_preserved_ser<T: Serialize>(t: T)
@@ -856,17 +1145,17 @@ mod test {
             map: a_hash_map(),
         };
         test_roundtrip(desc.clone());
-        test_roundtrip_dict(desc);
+        test_dict_consistency_and_roundtrip(desc);
     }
 
     #[test]
-    fn test_dict_deserialization() {
-        test_roundtrip_dict(Fancy::B(0, 1));
-        test_roundtrip_dict(Fancy::C {
+    fn test_dict_serialization() {
+        test_dict_consistency_and_roundtrip(Fancy::B(0, 1));
+        test_dict_consistency_and_roundtrip(Fancy::C {
             x: 1,
             y: vec![2, 3],
         });
-        test_roundtrip_dict(a_hash_map());
+        test_dict_consistency_and_roundtrip(a_hash_map());
     }
 
     #[test]
