@@ -384,7 +384,7 @@ pub(crate) fn layout_statements(
     }
 
     // Public statements
-    assert!(inputs.public_statements.len() < params.max_public_statements);
+    assert!(inputs.public_statements.len() <= params.max_public_statements);
     for i in 0..params.max_public_statements {
         let mut st = inputs
             .public_statements
@@ -857,6 +857,25 @@ pub mod tests {
         let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
 
         Ok(pod.verify()?)
+    }
+
+    // `RUST_LOG=pod2::backends=debug cargo test --release --no-default-features --features=backend_plonky2,mem_cache,zk,metrics test_measure_main_pod -- --nocapture --ignored`
+    #[ignore]
+    #[test]
+    fn test_measure_main_pod() -> frontend::Result<()> {
+        env_logger::init();
+        let params = Params::default();
+        println!("{:#?}", params);
+        let vd_set = VDSet::new(params.max_depth_mt_vds, &[]).unwrap();
+
+        // Calculate rec common first to avoid duplicate metrics in `pod_builder.prove`
+        let _rec_common_circuit_data = cache_get_standard_rec_main_pod_common_circuit_data();
+        let pod_builder = MainPodBuilder::new(&params, &vd_set);
+        let prover = Prover {};
+        crate::measure_gates_reset!();
+        let _pod = pod_builder.prove(&prover)?;
+        crate::measure_gates_print!();
+        Ok(())
     }
 
     #[test]

@@ -435,13 +435,13 @@ fn estimate_verif_num_gates(degree_bits: usize) -> usize {
     {
         // Formula obtained via linear regression using
         // `test_measure_zk_recursion` results with `standard_recursion_zk_config`.
-        num_gates = 244 * degree_bits + 1127;
+        num_gates = 243 * degree_bits + 1522;
     }
     #[cfg(not(feature = "zk"))]
     {
         // Formula obtained via linear regression using `test_measure_recursion`
         // results with `standard_recursion_config`.
-        num_gates = 236 * degree_bits + 1171;
+        num_gates = 236 * degree_bits + 1580;
     }
     // Add 2% for error because the results are not a clean line
     num_gates * 102 / 100
@@ -523,6 +523,11 @@ pub fn common_data_for_recursion<I: InnerCircuit>(
         }
 
         if total_num_gates < (1 << degree_bits) {
+            log::debug!(
+                "degree_bits = {}, free_gates = {}",
+                degree_bits,
+                (1 << degree_bits) - total_num_gates
+            );
             break;
         }
         degree_bits = log2_ceil(total_num_gates);
@@ -956,6 +961,7 @@ mod tests {
         Ok(())
     }
 
+    // `cargo test --release --no-default-features --features=backend_plonky2,mem_cache,zk,metrics test_measure_recursion -- --nocapture --ignored`
     #[ignore]
     #[test]
     fn test_measure_recursion() {
@@ -1005,6 +1011,7 @@ mod tests {
         }
     }
 
+    // `cargo test --release --no-default-features --features=backend_plonky2,mem_cache,zk,metrics test_measure_zk_recursion -- --nocapture --ignored`
     #[ignore]
     #[test]
     fn test_measure_zk_recursion() {
