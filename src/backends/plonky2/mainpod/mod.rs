@@ -823,6 +823,7 @@ pub mod tests {
         frontend::{
             self, literal, CustomPredicateBatchBuilder, MainPodBuilder, StatementTmplBuilder as STB,
         },
+        lang::parse,
         middleware::{
             self, containers::Set, CustomPredicateRef, NativePredicate as NP, Signer as _,
             DEFAULT_VD_LIST, DEFAULT_VD_SET,
@@ -1153,5 +1154,41 @@ pub mod tests {
         let prover = Prover {};
         builder.prove(&prover)?;
         Ok(())
+    }
+
+    #[test]
+    fn test_undetermined_values() {
+        let params = Default::default();
+        let batch = parse(
+            r#"
+            two_equal(x,y,z) = OR(
+                Equal(?x,?y)
+                Equal(?y,?z)
+                Equal(?x,?z)
+            )
+            "#,
+            &params,
+            &[],
+        )
+        .unwrap()
+        .custom_batch;
+        let mut builder = MainPodBuilder::new(&params, &DEFAULT_VD_SET);
+        let cpr = CustomPredicateRef { batch, index: 0 };
+        let eq_st = builder.priv_op(frontend::Operation::eq(1, 1)).unwrap();
+        let op = frontend::Operation::custom(
+            cpr.clone(),
+            [
+                eq_st,
+                middleware::Statement::None,
+                middleware::Statement::None,
+            ],
+        );
+        let st = middleware::Statement::Custom(
+            cpr,
+            [1, 1, 2].into_iter().map(middleware::Value::from).collect(),
+        );
+        builder.insert(true, (st, op)).unwrap();
+        let prover = Prover {};
+        builder.prove(&prover).unwrap();
     }
 }
