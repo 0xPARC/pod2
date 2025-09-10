@@ -1,5 +1,6 @@
 use std::{fmt, iter};
 
+use itertools::Itertools;
 use log::error;
 use plonky2::field::types::Field;
 use serde::{Deserialize, Serialize};
@@ -614,6 +615,46 @@ pub fn check_st_tmpl(
 }
 
 pub fn fill_wildcard_values(
+    pred: &CustomPredicate,
+    args: &[Statement],
+    wildcard_map: &mut [Option<Value>],
+) -> Result<()> {
+    for (st_tmpl, st) in pred.statements.iter().zip(args) {
+        let st_args = st.args();
+        st_tmpl
+            .args
+            .iter()
+            .zip(&st_args)
+            .try_for_each(|(st_tmpl_arg, st_arg)| {
+                check_st_tmpl(st_tmpl_arg, st_arg, wildcard_map)
+            })?;
+    }
+    Ok(())
+}
+
+pub fn wildcard_values_from_op_st(
+    params: &Params,
+    pred: &CustomPredicate,
+    op_args: &[Statement],
+    st_args: &[Value],
+) -> Result<Vec<Value>> {
+    let mut wildcard_map = st_args
+        .iter()
+        .map(|v| Some(v.clone()))
+        .chain(core::iter::repeat(None))
+        .take(params.max_custom_predicate_wildcards)
+        .collect_vec();
+    fill_wildcard_values(pred, op_args, &mut wildcard_map)?;
+    // NOTE: We set unresolved wildcard slots with an empty value.  They can be unresolved because
+    // they are beyond the number of used wildcards in this custom predicate, or they could be
+    // private arguments that are unused in a particular disjunction.
+    Ok(wildcard_map
+        .into_iter()
+        .map(|opt| opt.unwrap_or(Value::from(0)))
+        .collect())
+}
+
+pub fn wildcard_values_from_op(
     params: &Params,
     pred: &CustomPredicate,
     args: &[Statement],
@@ -623,32 +664,8 @@ pub fn fill_wildcard_values(
     // NOTE: We assume the statements have the same order as defined in the custom predicate.  For
     // disjunctions we expect Statement::None for the unused statements.
     let mut wildcard_map = vec![None; params.max_custom_predicate_wildcards];
-    for (st_tmpl, st) in pred.statements.iter().zip(args) {
-        let st_args = st.args();
-        st_tmpl
-            .args
-            .iter()
-            .zip(&st_args)
-            .try_for_each(|(st_tmpl_arg, st_arg)| {
-                check_st_tmpl(st_tmpl_arg, st_arg, &mut wildcard_map)
-            })?;
-    }
+    fill_wildcard_values(pred, args, &mut wildcard_map)?;
     Ok(wildcard_map)
-}
-
-pub fn resolve_wildcard_values(
-    params: &Params,
-    pred: &CustomPredicate,
-    args: &[Statement],
-) -> Result<Vec<Value>> {
-    let wildcard_map = fill_wildcard_values(params, pred, args)?;
-    // NOTE: We set unresolved wildcard slots with an empty value.  They can be unresolved because
-    // they are beyond the number of used wildcards in this custom predicate, or they could be
-    // private arguments that are unused in a particular disjunction.
-    Ok(wildcard_map
-        .into_iter()
-        .map(|opt| opt.unwrap_or(Value::from(0)))
-        .collect())
 }
 
 fn check_custom_pred_argument(
@@ -725,7 +742,7 @@ pub(crate) fn check_custom_pred(
         ));
     }
 
-    let wildcard_map = fill_wildcard_values(params, pred, args)?;
+    let wildcard_map = wildcard_values_from_op(params, pred, args)?;
 
     // Check that the resolved wildcards match the statement arguments.
     for (arg_index, (s_arg, opt_wc_value)) in s_args.iter().zip(wildcard_map.iter()).enumerate() {
