@@ -1,13 +1,15 @@
 // Grammar for the "Podlang" language. Used for describing POD2 Custom
 // Predicates and Proof Requests.
 
-// Silent rules (`_`) are automatically handled by Pest between other rules.
+// Note: Silent rules (`_`) generate no tokens.  WHITESPACE and COMMENT are
+// special names known to Pest.  If defined they are implicitly allowed between
+// any others rules.
+
 // WHITESPACE matches one or more spaces, tabs, or newlines.
 WHITESPACE = _{ (" " | "\t" | NEWLINE)+ }
 
-// COMMENT matches '//' followed by any characters until the end of the line.
-// Also silent.
-COMMENT = _{ "//" ~ (!NEWLINE ~ ANY)* }
+// COMMENT matches a line comment (//...\n) or block comment (/*...*/).
+COMMENT = _{ ("//" ~ (!NEWLINE ~ ANY)* | "/*" ~ (!"*/" ~ ANY)* ~ "*/" ) }
 
 // Define rules for identifiers (predicate names, variable names without '?')
 // Must start with alpha or _, followed by alpha, numeric, or _
