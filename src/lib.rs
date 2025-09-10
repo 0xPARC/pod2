@@ -5,7 +5,7 @@
 #![feature(mapped_lock_guards)]
 
 pub mod backends;
-mod cache;
+pub mod cache;
 pub mod frontend;
 pub mod lang;
 pub mod middleware;
