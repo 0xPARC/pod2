@@ -42,7 +42,7 @@ type ECField = QuinticExtension<GoldilocksField>;
 /// Computes sqrt in ECField as sqrt(x) = sqrt(x^r)/x^((r-1)/2) with r
 /// = 1 + p + ... + p^4, where the numerator involves a sqrt in
 /// GoldilocksField, cf.
-/// https://github.com/pornin/ecgfp5/blob/ce059c6d1e1662db437aecbf3db6bb67fe63c716/rust/src/field.rs#L1041
+/// <https://github.com/pornin/ecgfp5/blob/ce059c6d1e1662db437aecbf3db6bb67fe63c716/rust/src/field.rs#L1041>
 pub fn ec_field_sqrt(x: &ECField) -> Option<ECField> {
     // Compute x^r.
     let x_to_the_r = (0..5)

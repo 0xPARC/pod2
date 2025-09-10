@@ -1,5 +1,5 @@
 //! Module that implements the MerkleTree specified at
-//! https://0xparc.github.io/pod2/merkletree.html .
+//! <https://0xparc.github.io/pod2/merkletree.html> .
 use std::{collections::HashMap, fmt, iter::IntoIterator};
 
 use itertools::zip_eq;
@@ -14,7 +14,7 @@ pub mod error;
 pub use error::{TreeError, TreeResult};
 
 /// Implements the MerkleTree specified at
-/// https://0xparc.github.io/pod2/merkletree.html
+/// <https://0xparc.github.io/pod2/merkletree.html>
 #[derive(Clone, Debug)]
 pub struct MerkleTree {
     max_depth: usize,
