@@ -11,7 +11,7 @@ COMMENT = _{ "//" ~ (!NEWLINE ~ ANY)* }
 
 // Define rules for identifiers (predicate names, variable names without '?')
 // Must start with alpha or _, followed by alpha, numeric, or _
-identifier = @{ !("private") ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+identifier = @{ !("private" | "null") ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
 private_kw = { "private:" }
 
@@ -65,12 +65,14 @@ literal_value = {
     literal_bool |
     literal_raw |
     literal_string |
-    literal_int
+    literal_int |
+    literal_null
 }
 
 // Primitive literal types
 literal_int = @{ "-"? ~ ASCII_DIGIT+ }
 literal_bool = @{ "true" | "false" }
+literal_null = @{ "null" }
 
 // hash_hex: 0x followed by exactly 32 PAIRS of hex digits (64 hex characters)
 // representing a 32-byte value in big-endian order

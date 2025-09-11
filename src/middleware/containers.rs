@@ -51,6 +51,11 @@ impl Dictionary {
             kvs,
         })
     }
+
+    pub fn new_empty(max_depth: usize) -> Self {
+        Self::new(max_depth, HashMap::new()).unwrap()
+    }
+
     pub fn commitment(&self) -> Hash {
         self.mt.root()
     }
