@@ -28,7 +28,7 @@ impl<T> Deref for CacheEntry<T> {
 /// Get the artifact named `name` from the memory cache.  If it doesn't exist, it will be built by
 /// calling `build_fn` and stored.
 /// The artifact is indexed by `params: P`.
-pub(crate) fn get<T: Serialize + DeserializeOwned + Sync + 'static, P: Serialize>(
+pub fn get<T: Serialize + DeserializeOwned + Sync + 'static, P: Serialize>(
     name: &str,
     params: &P,
     build_fn: fn(&P) -> T,
