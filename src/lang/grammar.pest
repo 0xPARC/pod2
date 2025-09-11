@@ -18,7 +18,7 @@ private_kw = { "private:" }
 reserved_wildcard_name = { "true" | "false" }
 
 // Define wildcard names (optionally start with '?')
-wildcard = @{ "?"? ~ (!reserved_wildcard_name ~ identifier) }
+wildcard = @{ !reserved_wildcard_name ~ identifier }
 
 arg_section = {
     public_arg_list ~ ("," ~ private_kw ~ private_arg_list)?
