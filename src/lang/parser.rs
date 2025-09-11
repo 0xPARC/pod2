@@ -54,12 +54,17 @@ mod tests {
         assert_parses(Rule::document, " ");
         assert_parses(Rule::document, "\n\n");
         assert_parses(Rule::document, "// comment only");
+        assert_parses(Rule::document, "/* comment only */");
     }
 
     #[test]
     fn test_parse_comment() {
         assert_parses(Rule::document, "// This is a comment\n");
         assert_parses(Rule::document, " // Indented comment");
+        assert_parses(Rule::document, "/* This is a comment*/\n");
+        assert_fails(Rule::document, "/* Wrong closing characters/*\n");
+        assert_parses(Rule::literal_array, "[1// No nested comments /*\n, 2]");
+        assert_parses(Rule::literal_array, "[1/* No nested comments //*/, 2]\n");
     }
 
     #[test]
@@ -79,6 +84,7 @@ mod tests {
         assert_parses(Rule::identifier, "X1");
         assert_fails(Rule::test_identifier, ""); // Use test rule
         assert_fails(Rule::test_identifier, "invalid-char"); // Use test rule
+        assert_fails(Rule::test_identifier, "?noMoreQuestionMarks"); // Use test rule
         assert_fails(Rule::test_identifier, "123noStartingDigits"); // Use test rule
         assert_fails(Rule::test_identifier, "true"); // Use test rule
         assert_fails(Rule::test_identifier, "false"); // Use test rule
@@ -87,8 +93,13 @@ mod tests {
     #[test]
     fn test_parse_anchored_key() {
         assert_parses(Rule::anchored_key, "PodVar[\"literal_key\"]");
+        assert_parses(Rule::anchored_key, "PodVar.literal_key");
         assert_fails(Rule::anchored_key, "PodVar[invalid_key]"); // Key must be literal string
+        assert_fails(Rule::anchored_key, "PodVar.123"); // Key must be valid identifier
         assert_fails(Rule::anchored_key, "PodVar[]"); // Key cannot be empty
+        assert_fails(Rule::anchored_key, "PodVar."); // Key cannot be empty
+        assert_fails(Rule::anchored_key, "?PodVar[\"key\"]"); // No more question marks on wildcards
+        assert_fails(Rule::anchored_key, "?PodVar.key"); // No more question marks on wildcards
     }
 
     #[test]
@@ -234,7 +245,7 @@ mod tests {
                 ValueOf(ConstVal["min_age"], 18)
                 Gt(UserPod["age"], ConstVal["min_age"])
                 // User must not be banned
-                NotContains(_BANNED_USERS["list"], UserPod["userId"])
+                NotContains(_BANNED_USERS.list, UserPod.userId)
             )
 
             REQUEST(
