@@ -356,7 +356,14 @@ fn pest_pair_to_builder_arg(
             }
 
             let key_part_pair = inner_ak_pairs.next().unwrap();
-            let key_str = parse_pest_string_literal(&key_part_pair)?;
+            let key_str = match key_part_pair.as_rule() {
+                Rule::literal_string => parse_pest_string_literal(&key_part_pair)?,
+                Rule::identifier => key_part_pair.as_str().to_string(),
+                _ => unreachable!(
+                    "unknown key type in anchored key: {:?}",
+                    key_part_pair.as_rule()
+                ),
+            };
             Ok(BuilderArg::Key(root_wc_str.to_string(), key_str))
         }
         _ => unreachable!("Unexpected rule: {:?}", arg_content_pair.as_rule()),
@@ -1065,7 +1072,7 @@ mod processor_tests {
 
     #[test]
     fn test_fp_only_request() -> Result<(), ProcessorError> {
-        let input = "REQUEST( Equal(?A[\"k\"],?B[\"k\"]) )"; // Escaped quotes
+        let input = "REQUEST( Equal(?A[\"k\"],?B.k) )"; // Escaped quotes
         let pairs = get_document_content_pairs(input)?;
         let params = Params::default();
         let mut ctx = ProcessingContext::new(&params);
@@ -1082,7 +1089,7 @@ mod processor_tests {
 
     #[test]
     fn test_fp_simple_predicate() -> Result<(), ProcessorError> {
-        let input = "my_pred(A, B) = AND( Equal(?A[\"k\"],?B[\"k\"]) )"; // Escaped quotes
+        let input = "my_pred(A, B) = AND( Equal(?A[\"k\"],?B.k) )"; // Escaped quotes
         let pairs = get_document_content_pairs(input)?;
         let params = Params::default();
         let mut ctx = ProcessingContext::new(&params);
@@ -1104,7 +1111,7 @@ mod processor_tests {
     #[test]
     fn test_fp_multiple_predicates() -> Result<(), ProcessorError> {
         let input = r#"
-            pred1(X) = AND( Equal(?X["k"],?X["k"]) )
+            pred1(X) = AND( Equal(?X["k"],?X.k) )
             pred2(Y, Z) = OR( Equal(?Y["v"], 123) )
         "#;
         let pairs = get_document_content_pairs(input)?;
@@ -1253,7 +1260,7 @@ mod processor_tests {
         // Native predicate names are case-sensitive
         let input = r#"
         REQUEST(
-          EQUAL(?A["b"], ?C["d"])
+          EQUAL(?A["b"], ?C.d)
         )
     "#;
         let pairs = get_document_content_pairs(input)?;

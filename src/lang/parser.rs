@@ -84,11 +84,16 @@ mod tests {
 
     #[test]
     fn test_parse_anchored_key() {
-        assert_parses(Rule::anchored_key, "?PodVar[\"literal_key\"]");
+        assert_parses(Rule::anchored_key, "?PodVar[\"literal key\"]");
+        assert_parses(Rule::anchored_key, "?PodVar.literal_key");
         assert_fails(Rule::anchored_key, "PodVar[\"key\"]"); // Needs wildcard for pod
-        assert_fails(Rule::anchored_key, "?PodVar[invalid_key]"); // Key must be literal string or wildcard
+        assert_fails(Rule::anchored_key, "PodVar.key"); // Needs wildcard for pod
+        assert_fails(Rule::anchored_key, "?PodVar[invalid_key]"); // Key must be literal string
+        assert_fails(Rule::anchored_key, "?PodVar.123"); // Key must be valid identifier
         assert_fails(Rule::anchored_key, "?PodVar[]"); // Key cannot be empty
+        assert_fails(Rule::anchored_key, "?PodVar."); // Key cannot be empty
         assert_fails(Rule::anchored_key, "?PodVar[?key]"); // Key cannot be wildcard
+        assert_fails(Rule::anchored_key, "?PodVar.?key"); // Key cannot be wildcard
     }
 
     #[test]
@@ -209,7 +214,7 @@ mod tests {
                 ValueOf(?ConstVal["min_age"], 18)
                 Gt(?UserPod["age"], ?ConstVal["min_age"])
                 // User must not be banned
-                NotContains(?_BANNED_USERS["list"], ?UserPod["userId"])
+                NotContains(?_BANNED_USERS.list, ?UserPod.userId)
             )
 
             REQUEST(

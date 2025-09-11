@@ -82,10 +82,10 @@ pub fn zu_kyc_pod_request(gov_signer: &Value, pay_signer: &Value) -> Result<PodR
     let input = format!(
         r#"
     REQUEST(
-        SetNotContains({sanction_set}, ?gov["idNumber"])
-        Lt(?gov["dateOfBirth"], {ZU_KYC_NOW_MINUS_18Y})
-        Equal(?pay["startDate"], {ZU_KYC_NOW_MINUS_1Y})
-        Equal(?gov["socialSecurityNumber"], ?pay["socialSecurityNumber"])
+        SetNotContains({sanction_set}, ?gov.idNumber)
+        Lt(?gov.dateOfBirth, {ZU_KYC_NOW_MINUS_18Y})
+        Equal(?pay.startDate, {ZU_KYC_NOW_MINUS_1Y})
+        Equal(?gov.socialSecurityNumber, ?pay.socialSecurityNumber)
         SignedBy(?gov, {gov_signer})
         SignedBy(?pay, {pay_signer})
         // TODO: Ownership check and watermarking

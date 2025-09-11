@@ -59,7 +59,7 @@ Equals(a, c)
 First, we need to decompose all the anchored keys as (dict, key) pairs.  This is the frontend description of the deduction rule.
 ```
 IF
-Equals(a_or[a_key], b_or[b_key)
+Equals(a_or[a_key], b_or[b_key])
 AND
 Equals(b_or[b_key], c_or[c_key])
 THEN
