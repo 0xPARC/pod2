@@ -54,12 +54,17 @@ mod tests {
         assert_parses(Rule::document, " ");
         assert_parses(Rule::document, "\n\n");
         assert_parses(Rule::document, "// comment only");
+        assert_parses(Rule::document, "/* comment only */");
     }
 
     #[test]
     fn test_parse_comment() {
         assert_parses(Rule::document, "// This is a comment\n");
         assert_parses(Rule::document, " // Indented comment");
+        assert_parses(Rule::document, "/* This is a comment*/\n");
+        assert_fails(Rule::document, "/* Wrong closing characters/*\n");
+        assert_parses(Rule::literal_array, "[1// No nested comments /*\n, 2]");
+        assert_parses(Rule::literal_array, "[1/* No nested comments //*/, 2]\n");
     }
 
     #[test]
