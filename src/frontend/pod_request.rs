@@ -240,8 +240,8 @@ mod tests {
         let request = parse(
             r#"
         REQUEST(
-            SumOf(?a, ?b, ?c)
-            Equal(?a, 10)
+            SumOf(a, b, c)
+            Equal(a, 10)
         )
         "#,
             &params,

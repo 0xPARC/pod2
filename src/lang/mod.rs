@@ -62,7 +62,7 @@ mod tests {
     fn test_e2e_simple_predicate() -> Result<(), LangError> {
         let input = r#"
             is_equal(PodA, PodB) = AND(
-                Equal(?PodA["the_key"], ?PodB["the_key"])
+                Equal(PodA["the_key"], PodB["the_key"])
             )
         "#;
 
@@ -80,8 +80,8 @@ mod tests {
         let expected_statements = vec![StatementTmpl {
             pred: Predicate::Native(NativePredicate::Equal),
             args: vec![
-                sta_ak(("PodA", 0), "the_key"), // ?PodA["the_key"] -> Wildcard(0), Key("the_key")
-                sta_ak(("PodB", 1), "the_key"), // ?PodB["the_key"] -> Wildcard(1), Key("the_key")
+                sta_ak(("PodA", 0), "the_key"), // PodA["the_key"] -> Wildcard(0), Key("the_key")
+                sta_ak(("PodB", 1), "the_key"), // PodB["the_key"] -> Wildcard(1), Key("the_key")
             ],
         }];
         let expected_predicate = CustomPredicate::and(
@@ -106,8 +106,8 @@ mod tests {
     fn test_e2e_simple_request() -> Result<(), LangError> {
         let input = r#"
             REQUEST(
-                Equal(?ConstPod["my_val"], Raw(0x0000000000000000000000000000000000000000000000000000000000000001))
-                Lt(?GovPod["dob"], ?ConstPod["my_val"])
+                Equal(ConstPod["my_val"], Raw(0x0000000000000000000000000000000000000000000000000000000000000001))
+                Lt(GovPod["dob"], ConstPod["my_val"])
             )
         "#;
 
@@ -124,15 +124,15 @@ mod tests {
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
-                    sta_ak(("ConstPod", 0), "my_val"), // ?ConstPod["my_val"] -> Wildcard(0), Key("my_val")
+                    sta_ak(("ConstPod", 0), "my_val"), // ConstPod["my_val"] -> Wildcard(0), Key("my_val")
                     sta_lit(RawValue::from(1)),
                 ],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Lt),
                 args: vec![
-                    sta_ak(("GovPod", 1), "dob"), // ?GovPod["dob"] -> Wildcard(1), Key("dob")
-                    sta_ak(("ConstPod", 0), "my_val"), // ?ConstPod["my_val"] -> Wildcard(0), Key("my_val")
+                    sta_ak(("GovPod", 1), "dob"), // GovPod["dob"] -> Wildcard(1), Key("dob")
+                    sta_ak(("ConstPod", 0), "my_val"), // ConstPod["my_val"] -> Wildcard(0), Key("my_val")
                 ],
             },
         ];
@@ -146,8 +146,8 @@ mod tests {
     fn test_e2e_predicate_with_private_var() -> Result<(), LangError> {
         let input = r#"
             uses_private(A, private: Temp) = AND(
-                Equal(?A["input_key"], ?Temp["const_key"])
-                Equal(?Temp["const_key"], "some_value")
+                Equal(A["input_key"], Temp["const_key"])
+                Equal(Temp["const_key"], "some_value")
             )
         "#;
 
@@ -166,14 +166,14 @@ mod tests {
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
-                    sta_ak(("A", 0), "input_key"), // ?A["input_key"] -> Wildcard(0), Key("input_key")
-                    sta_ak(("Temp", 1), "const_key"), // ?Temp["const_key"] -> Wildcard(1), Key("const_key")
+                    sta_ak(("A", 0), "input_key"), // A["input_key"] -> Wildcard(0), Key("input_key")
+                    sta_ak(("Temp", 1), "const_key"), // Temp["const_key"] -> Wildcard(1), Key("const_key")
                 ],
             },
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
-                    sta_ak(("Temp", 1), "const_key"), // ?Temp["const_key"] -> Wildcard(1), Key("const_key")
+                    sta_ak(("Temp", 1), "const_key"), // Temp["const_key"] -> Wildcard(1), Key("const_key")
                     sta_lit("some_value"),            // Literal("some_value")
                 ],
             },
@@ -200,11 +200,11 @@ mod tests {
     fn test_e2e_request_with_custom_call() -> Result<(), LangError> {
         let input = r#"
             my_pred(X, Y) = AND(
-                Equal(?X["val"], ?Y["val"])
+                Equal(X["val"], Y["val"])
             )
 
             REQUEST(
-                my_pred(?Pod1, ?Pod2)
+                my_pred(Pod1, Pod2)
             )
         "#;
 
@@ -222,8 +222,8 @@ mod tests {
         let expected_pred_statements = vec![StatementTmpl {
             pred: Predicate::Native(NativePredicate::Equal),
             args: vec![
-                sta_ak(("X", 0), "val"), // ?X["val"] -> Wildcard(0), Key("val")
-                sta_ak(("Y", 1), "val"), // ?Y["val"] -> Wildcard(1), Key("val")
+                sta_ak(("X", 0), "val"), // X["val"] -> Wildcard(0), Key("val")
+                sta_ak(("Y", 1), "val"), // Y["val"] -> Wildcard(1), Key("val")
             ],
         }];
         let expected_predicate = CustomPredicate::and(
@@ -259,15 +259,15 @@ mod tests {
     #[test]
     fn test_e2e_request_with_various_args() -> Result<(), LangError> {
         let input = r#"
-            some_pred(A, B, C) = AND( Equal(?A["foo"], ?B["bar"]) )
+            some_pred(A, B, C) = AND( Equal(A["foo"], B["bar"]) )
 
             REQUEST(
                 some_pred(
-                    ?Var1,                  // Wildcard
+                    Var1,                  // Wildcard
                     12345,                  // Int Literal
                     "hello_string"         // String Literal (Removed invalid AK args)
                 )
-                Equal(?AnotherPod["another_key"], ?Var1["some_field"])
+                Equal(AnotherPod["another_key"], Var1["some_field"])
             )
         "#;
 
@@ -280,15 +280,15 @@ mod tests {
         assert!(!request_templates.is_empty());
 
         // Expected Wildcard Indices in Request Scope:
-        // ?Var1 -> 0
-        // ?AnotherPod -> 1
+        // Var1 -> 0
+        // AnotherPod -> 1
 
         // Expected structure
         let expected_templates = vec![
             StatementTmpl {
                 pred: Predicate::Custom(CustomPredicateRef::new(batch_result, 0)), // Refers to some_pred
                 args: vec![
-                    StatementTmplArg::Wildcard(wc("Var1", 0)),        // ?Var1
+                    StatementTmplArg::Wildcard(wc("Var1", 0)),        // Var1
                     StatementTmplArg::Literal(Value::from(12345i64)), // 12345
                     StatementTmplArg::Literal(Value::from("hello_string")), // "hello_string"
                 ],
@@ -296,9 +296,9 @@ mod tests {
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
-                    // ?AnotherPod["another_key"] -> Wildcard(1), Key("another_key")
+                    // AnotherPod["another_key"] -> Wildcard(1), Key("another_key")
                     sta_ak(("AnotherPod", 1), "another_key"),
-                    // ?Var1["some_field"] -> Wildcard(0), Key("some_field")
+                    // Var1["some_field"] -> Wildcard(0), Key("some_field")
                     sta_ak(("Var1", 0), "some_field"),
                 ],
             },
@@ -313,11 +313,11 @@ mod tests {
     fn test_e2e_syntactic_sugar_predicates() -> Result<(), LangError> {
         let input = r#"
             REQUEST(
-                GtEq(?A["foo"], ?B["bar"])
-                Gt(?C["baz"], ?D["qux"])
-                DictContains(?A["foo"], ?B["bar"], ?C["baz"])
-                DictNotContains(?A["foo"], ?B["bar"])
-                ArrayContains(?A["foo"], ?B["bar"], ?C["baz"])
+                GtEq(A["foo"], B["bar"])
+                Gt(C["baz"], D["qux"])
+                DictContains(A["foo"], B["bar"], C["baz"])
+                DictNotContains(A["foo"], B["bar"])
+                ArrayContains(A["foo"], B["bar"], C["baz"])
             )
         "#;
 
@@ -370,12 +370,12 @@ mod tests {
         let input = r#"
             REQUEST(
                 // Order matters for comparison with the hardcoded templates
-                SetNotContains(?sanctions["sanctionList"], ?gov["idNumber"])
-                Lt(?gov["dateOfBirth"], ?SELF_HOLDER_18Y["const_18y"])
-                Equal(?pay["startDate"], ?SELF_HOLDER_1Y["const_1y"])
-                Equal(?gov["socialSecurityNumber"], ?pay["socialSecurityNumber"])
-                Equal(?SELF_HOLDER_18Y["const_18y"], 1169909388)
-                Equal(?SELF_HOLDER_1Y["const_1y"], 1706367566)
+                SetNotContains(sanctions["sanctionList"], gov["idNumber"])
+                Lt(gov["dateOfBirth"], SELF_HOLDER_18Y["const_18y"])
+                Equal(pay["startDate"], SELF_HOLDER_1Y["const_1y"])
+                Equal(gov["socialSecurityNumber"], pay["socialSecurityNumber"])
+                Equal(SELF_HOLDER_18Y["const_18y"], 1169909388)
+                Equal(SELF_HOLDER_1Y["const_1y"], 1706367566)
             )
         "#;
 
@@ -406,7 +406,7 @@ mod tests {
 
         // Define the request templates using wildcards for constants
         let expected_templates = vec![
-            // 1. NotContains(?sanctions["sanctionList"], ?gov["idNumber"])
+            // 1. NotContains(sanctions["sanctionList"], gov["idNumber"])
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::NotContains),
                 args: vec![
@@ -417,7 +417,7 @@ mod tests {
                     sta_ak((wc_gov.name.as_str(), wc_gov.index), id_num_key),
                 ],
             },
-            // 2. Lt(?gov["dateOfBirth"], ?SELF_HOLDER_18Y["const_18y"])
+            // 2. Lt(gov["dateOfBirth"], SELF_HOLDER_18Y["const_18y"])
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Lt),
                 args: vec![
@@ -428,7 +428,7 @@ mod tests {
                     ),
                 ],
             },
-            // 3. Equal(?pay["startDate"], ?SELF_HOLDER_1Y["const_1y"])
+            // 3. Equal(pay["startDate"], SELF_HOLDER_1Y["const_1y"])
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
@@ -436,7 +436,7 @@ mod tests {
                     sta_ak((wc_self_1y.name.as_str(), wc_self_1y.index), const_1y_key),
                 ],
             },
-            // 4. Equal(?gov["socialSecurityNumber"], ?pay["socialSecurityNumber"])
+            // 4. Equal(gov["socialSecurityNumber"], pay["socialSecurityNumber"])
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
@@ -444,7 +444,7 @@ mod tests {
                     sta_ak((wc_pay.name.as_str(), wc_pay.index), ssn_key),
                 ],
             },
-            // 5. Equal(?SELF_HOLDER_18Y["const_18y"], 1169909388)
+            // 5. Equal(SELF_HOLDER_18Y["const_18y"], 1169909388)
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
@@ -455,7 +455,7 @@ mod tests {
                     sta_lit(now_minus_18y_val.clone()),
                 ],
             },
-            // 6. Equal(?SELF_HOLDER_1Y["const_1y"], 1706367566)
+            // 6. Equal(SELF_HOLDER_1Y["const_1y"], 1706367566)
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
                 args: vec![
@@ -494,24 +494,24 @@ mod tests {
 
         let input = r#"
             eth_friend(src, dst, private: attestation_dict) = AND(
-                SignedBy(?attestation_dict, ?src)
-                Equal(?attestation_dict["attestation"], ?dst)
+                SignedBy(attestation_dict, src)
+                Equal(attestation_dict["attestation"], dst)
             )
 
             eth_dos_distance_base(src, dst, distance) = AND(
-                Equal(?src, ?dst)
-                Equal(?distance, 0)
+                Equal(src, dst)
+                Equal(distance, 0)
             )
 
             eth_dos_distance_ind(src, dst, distance, private: shorter_distance, intermed) = AND(
-                eth_dos_distance(?src, ?dst, ?distance)
-                SumOf(?distance, ?shorter_distance, 1)
-                eth_friend(?intermed, ?dst)
+                eth_dos_distance(src, dst, distance)
+                SumOf(distance, shorter_distance, 1)
+                eth_friend(intermed, dst)
             )
 
             eth_dos_distance(src, dst, distance) = OR(
-                eth_dos_distance_base(?src, ?dst, ?distance)
-                eth_dos_distance_ind(?src, ?dst, ?distance)
+                eth_dos_distance_base(src, dst, distance)
+                eth_dos_distance_ind(src, dst, distance)
             )
         "#;
 
@@ -668,8 +668,8 @@ mod tests {
         let imported_pred_stmts = vec![StatementTmpl {
             pred: Predicate::Native(NativePredicate::Equal),
             args: vec![
-                sta_ak(("A", 0), "foo"), // ?A["foo"]
-                sta_ak(("B", 1), "bar"), // ?B["bar"]
+                sta_ak(("A", 0), "foo"), // A["foo"]
+                sta_ak(("B", 1), "bar"), // B["bar"]
             ],
         }];
         let imported_predicate = CustomPredicate::and(
@@ -690,7 +690,7 @@ mod tests {
             use imported_pred from 0x{}
 
             REQUEST(
-                imported_pred(?Pod1, ?Pod2)
+                imported_pred(Pod1, Pod2)
             )
         "#,
             batch_id_str
@@ -741,8 +741,8 @@ mod tests {
             use pred_one, _, pred_three from 0x{}
 
             REQUEST(
-                pred_one(?Pod1)
-                pred_three(?Pod2)
+                pred_one(Pod1)
+                pred_three(Pod2)
             )
         "#,
             batch_id_str
@@ -799,7 +799,7 @@ mod tests {
             use imported_eq from 0x{}
 
             wrapper_pred(X, Y) = AND(
-                imported_eq(?X, ?Y)
+                imported_eq(X, Y)
             )
         "#,
             batch_id_str
@@ -848,12 +848,12 @@ mod tests {
         let input = format!(
             r#"
             REQUEST(
-                Equal(?A["pk"], {})
-                Equal(?B["raw"], {})
-                Equal(?C["string"], {})
-                Equal(?D["int"], {})
-                Equal(?E["bool"], {})
-                Equal(?F["sk"], {})
+                Equal(A["pk"], {})
+                Equal(B["raw"], {})
+                Equal(C["string"], {})
+                Equal(D["int"], {})
+                Equal(E["bool"], {})
+                Equal(F["sk"], {})
             )
         "#,
             Value::from(pk).to_podlang_string(),
@@ -865,13 +865,13 @@ mod tests {
         );
         /*
             REQUEST(
-                Equal(?A["pk"], PublicKey(3t9fNuU194n7mSJPRdeaJRMqw6ZQCUddzvECWNe1k2b1rdBezXpJxF))
-                Equal(?C["raw"], Raw(0x0000000000000000000000000000000000000000000000000000000000000001))
-                Equal(?D["string"], "hello")
-                Equal(?E["int"], 123)
-                Equal(?F["bool"], true)
-                Equal(?G["sk"], SecretKey(random_secret_key_base_64))
-                Equal(?H["self"], SELF)
+                Equal(A["pk"], PublicKey(3t9fNuU194n7mSJPRdeaJRMqw6ZQCUddzvECWNe1k2b1rdBezXpJxF))
+                Equal(C["raw"], Raw(0x0000000000000000000000000000000000000000000000000000000000000001))
+                Equal(D["string"], "hello")
+                Equal(E["int"], 123)
+                Equal(F["bool"], true)
+                Equal(G["sk"], SecretKey(random_secret_key_base_64))
+                Equal(H["self"], SELF)
             )
         */
 
@@ -947,8 +947,8 @@ mod tests {
 
         let input = r#"
             identity_verified(username, private: identity_dict) = AND(
-                Equal(?identity_dict["username"], ?username)
-                Equal(?identity_dict["user_public_key"], ?user_public_key)
+                Equal(identity_dict["username"], username)
+                Equal(identity_dict["user_public_key"], user_public_key)
             )
         "#
         .to_string();

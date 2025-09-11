@@ -21,8 +21,8 @@ pub enum BuilderArg {
 }
 
 /// When defining a `BuilderArg`, it can be done from 3 different inputs:
-///  i. (&str, &str): this is to define a origin-key pair, ie. ?attestation_pod["attestation"])
-/// ii. &str: this is to define a Value wildcard, ie. ?distance
+///  i. (&str, &str): this is to define a origin-key pair, ie. attestation_pod["attestation"])
+/// ii. &str: this is to define a Value wildcard, ie. distance
 ///
 /// case i.
 impl From<(&str, &str)> for BuilderArg {

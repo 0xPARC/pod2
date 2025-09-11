@@ -11,17 +11,17 @@ The syntax of a custom operation is best explained with an example.
 Original example with anchored keys, origins, and keys.
 | Args | Condition            | Output                      |
 |------------|-----------------------------------------|----|
-| signed_dict: Dict, <br> signer: PublicKey, <br> good_boy_issuers: AnchoredKey::MerkleRoot, <br> receiver: AnchoredKey | SignedBy(?signed_dict, ?signer), <br> Contains(?good_boy_issuers, ?signer), <br> Equals(?signed_dict["friend"], ?receiver) | GoodBoy(?receiver, ?good_boy_issuers) |
+| signed_dict: Dict, <br> signer: PublicKey, <br> good_boy_issuers: AnchoredKey::MerkleRoot, <br> receiver: AnchoredKey | SignedBy(signed_dict, signer), <br> Contains(good_boy_issuers, signer), <br> Equals(signed_dict["friend"], receiver) | GoodBoy(receiver, good_boy_issuers) |
 
 Compiled example with only origins and keys.
 | Args | Condition            | Output                      |
 |------------|-----------------------------------------|----|
-| signed_dict: Dict, <br> signer: PublicKey, <br> good_boy_issuers_origin: Origin, <br> good_boy_issuers_key: Key::MerkleRoot, <br> receiver_origin: Origin, <br> receiver_key: Key | SignedBy(?signed_dict, ?signer), <br> Contains(?good_boy_issuers_origin[?good_boy_issuers_key], ?signer), <br> Equals(?signed_dict["friend"], ?receiver_origin[?receiver_key]) | GoodBoy(?receiver_origin[?receiver_key]), ?good_boy_issuers_origin[?good_boy_issuers_key]) |
+| signed_dict: Dict, <br> signer: PublicKey, <br> good_boy_issuers_origin: Origin, <br> good_boy_issuers_key: Key::MerkleRoot, <br> receiver_origin: Origin, <br> receiver_key: Key | SignedBy(signed_dict, signer), <br> Contains(good_boy_issuers_origin[good_boy_issuers_key], signer), <br> Equals(signed_dict["friend"], receiver_origin[receiver_key]) | GoodBoy(receiver_origin[receiver_key]), good_boy_issuers_origin[good_boy_issuers_key]) |
 
 A custom operation accepts as input a number of statements (the `Condition`); 
 each statement has a number of arguments, which may be constants or anchored keys; and an [anchored key](./anchoredkeys.md) in turn can optionally be decomposed as a pair of a Dict and a Key.
 
-In the "original example" above, the anchored keys `good_boy_issuers` and `receiver` are not broken down, but `?signed_dict["friend"]` is.  The purpose of breaking it down, in this case, is to use an entry of a dictionary that has been signed.
+In the "original example" above, the anchored keys `good_boy_issuers` and `receiver` are not broken down, but `signed_dict["friend"]` is.  The purpose of breaking it down, in this case, is to use an entry of a dictionary that has been signed.
 
 In the "compiled example", all the anchored keys have been broken down into dictionaries and keys.
 

@@ -3,24 +3,24 @@
 
 ```
 eth_dos_distance(src_or, src_key, dst_or, dst_key, distance_or, distance_key) = OR( 
-    eth_dos_distance_ind_0(?src_or, ?src_key, ?dst_or, ?dst_key, ?distance_or, ?distance_key),
-    eth_dos_distance_base(?src_or, ?src_key, ?dst_or, ?dst_key, ?distance_or, ?distance_key)
+    eth_dos_distance_ind_0(src_or, src_key, dst_or, dst_key, distance_or, distance_key),
+    eth_dos_distance_base(src_or, src_key, dst_or, dst_key, distance_or, distance_key)
 ) 
 
 eth_dos_distance_base(src_or, src_key, dst_or, dst_key, distance_or, distance_key) = AND(
-    Equal(?src_or[?src_key], ?dst_or[?dst_key]),
-    ValueOf(?distance_or[?distance_key], 0)
+    Equal(src_or[src_key], dst_or[dst_key]),
+    ValueOf(distance_or[distance_key], 0)
 ) 
 
 eth_dos_distance_ind_0(src_or, src_key, dst_or, dst_key, distance_or, distance_key, private: intermed_or, intermed_key, shorter_distance_or, shorter_distance_key, one_or, one_key) = AND(
-    eth_dos_distance(?src_or, ?src_key, ?intermed_or, ?intermed_key, ?shorter_distance_or, ?shorter_distance_key)
+    eth_dos_distance(src_or, src_key, intermed_or, intermed_key, shorter_distance_or, shorter_distance_key)
 
     // distance == shorter_distance + 1
-    ValueOf(?one_or[?one_key], 1)
-    SumOf(?distance_or[?distance_key], ?shorter_distance_or[?shorter_distance_key], ?one_or[?one_key])
+    ValueOf(one_or[one_key], 1)
+    SumOf(distance_or[distance_key], shorter_distance_or[shorter_distance_key], one_or[one_key])
 
     // intermed is a friend of dst
-    eth_friend(?intermed_or, ?intermed_key, ?dst_or, ?dst_key)
+    eth_friend(intermed_or, intermed_key, dst_or, dst_key)
 )
 ```
 

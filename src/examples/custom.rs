@@ -12,24 +12,24 @@ use crate::{
 pub fn eth_dos_batch(params: &Params) -> Result<Arc<CustomPredicateBatch>> {
     let input = r#"
         eth_friend(src, dst, private: attestation) = AND(
-            SignedBy(?attestation, ?src)
-            Contains(?attestation, "attestation", ?dst)
+            SignedBy(attestation, src)
+            Contains(attestation, "attestation", dst)
         )
 
         eth_dos_base(src, dst, distance) = AND(
-            Equal(?src, ?dst)
-            Equal(?distance, 0)
+            Equal(src, dst)
+            Equal(distance, 0)
         )
 
         eth_dos_ind(src, dst, distance, private: shorter_distance, intermed) = AND(
-            eth_dos(?src, ?intermed, ?shorter_distance)
-            SumOf(?distance, ?shorter_distance, 1)
-            eth_friend(?intermed, ?dst)
+            eth_dos(src, intermed, shorter_distance)
+            SumOf(distance, shorter_distance, 1)
+            eth_friend(intermed, dst)
         )
 
         eth_dos(src, dst, distance) = OR(
-            eth_dos_base(?src, ?dst, ?distance)
-            eth_dos_ind(?src, ?dst, ?distance)
+            eth_dos_base(src, dst, distance)
+            eth_dos_ind(src, dst, distance)
         )
         "#;
     let batch = parse(input, params, &[]).expect("lang parse").custom_batch;
@@ -47,7 +47,7 @@ pub fn eth_dos_request() -> Result<PodRequest> {
         r#"
         use _, _, _, eth_dos from 0x{batch_id}
         REQUEST(
-            eth_dos(?src, ?dst, ?distance)
+            eth_dos(src, dst, distance)
         )
         "#,
     );

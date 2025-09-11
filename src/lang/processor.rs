@@ -1065,7 +1065,7 @@ mod processor_tests {
 
     #[test]
     fn test_fp_only_request() -> Result<(), ProcessorError> {
-        let input = "REQUEST( Equal(?A[\"k\"],?B[\"k\"]) )"; // Escaped quotes
+        let input = "REQUEST( Equal(A[\"k\"],B[\"k\"]) )"; // Escaped quotes
         let pairs = get_document_content_pairs(input)?;
         let params = Params::default();
         let mut ctx = ProcessingContext::new(&params);
@@ -1082,7 +1082,7 @@ mod processor_tests {
 
     #[test]
     fn test_fp_simple_predicate() -> Result<(), ProcessorError> {
-        let input = "my_pred(A, B) = AND( Equal(?A[\"k\"],?B[\"k\"]) )"; // Escaped quotes
+        let input = "my_pred(A, B) = AND( Equal(A[\"k\"],B[\"k\"]) )"; // Escaped quotes
         let pairs = get_document_content_pairs(input)?;
         let params = Params::default();
         let mut ctx = ProcessingContext::new(&params);
@@ -1104,8 +1104,8 @@ mod processor_tests {
     #[test]
     fn test_fp_multiple_predicates() -> Result<(), ProcessorError> {
         let input = r#"
-            pred1(X) = AND( Equal(?X["k"],?X["k"]) )
-            pred2(Y, Z) = OR( Equal(?Y["v"], 123) )
+            pred1(X) = AND( Equal(X["k"],X["k"]) )
+            pred2(Y, Z) = OR( Equal(Y["v"], 123) )
         "#;
         let pairs = get_document_content_pairs(input)?;
         let params = Params::default();
@@ -1196,7 +1196,7 @@ mod processor_tests {
     fn test_fp_mixed_content() -> Result<(), ProcessorError> {
         let input = r#"
             pred_one(X) = AND(None())
-            REQUEST( pred_one(?A) )
+            REQUEST( pred_one(A) )
             pred_two(Y, Z) = OR(None())
         "#;
         let pairs = get_document_content_pairs(input)?;
@@ -1224,7 +1224,7 @@ mod processor_tests {
             .as_ref()
             .unwrap()
             .as_str()
-            .contains("pred_one(?A)"));
+            .contains("pred_one(A)"));
 
         Ok(())
     }
@@ -1234,7 +1234,7 @@ mod processor_tests {
         // Undefined predicates will be flagged as an error on the second pass
         let input = r#"
             REQUEST(
-              pred_one(?A)
+              pred_one(A)
             )
         "#;
         let pairs = get_document_content_pairs(input)?;
@@ -1253,7 +1253,7 @@ mod processor_tests {
         // Native predicate names are case-sensitive
         let input = r#"
         REQUEST(
-          EQUAL(?A["b"], ?C["d"])
+          EQUAL(A["b"], C["d"])
         )
     "#;
         let pairs = get_document_content_pairs(input)?;

@@ -118,10 +118,10 @@ The wildcard system handles this very naturally, since the dict of the anchored 
 ```
 eth_friend(src_or, src_key, dst_or, dst_key) = and<
     // the attestation dict is signed by (src_or, src_key)
-    SignedBy(?attestation_dict, ?src_or[?src_key])
+    SignedBy(attestation_dict, src_or[src_key])
 
     // that same attestation pod has an "attestation"
-    Equal(?attestation_dict["attestation"], ?dst_or[?dst_key])
+    Equal(attestation_dict["attestation"], dst_or[dst_key])
 >
 ```
 
