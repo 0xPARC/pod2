@@ -319,7 +319,7 @@ fn pest_pair_to_builder_arg(
             let value = process_literal_value(params, arg_content_pair)?;
             Ok(BuilderArg::Literal(value))
         }
-        Rule::wildcard => {
+        Rule::identifier => {
             let wc_str = arg_content_pair.as_str();
             if let StatementContext::CustomPredicate {
                 argument_names,

@@ -74,14 +74,14 @@ mod tests {
 
     #[test]
     fn test_parse_wildcard() {
-        assert_parses(Rule::wildcard, "Var");
-        assert_parses(Rule::wildcard, "_Internal");
-        assert_parses(Rule::wildcard, "X1");
-        assert_fails(Rule::test_wildcard, ""); // Use test rule
-        assert_fails(Rule::test_wildcard, "invalid-char"); // Use test rule
-        assert_fails(Rule::test_wildcard, "123noStartingDigits"); // Use test rule
-        assert_fails(Rule::test_wildcard, "true"); // Use test rule
-        assert_fails(Rule::test_wildcard, "false"); // Use test rule
+        assert_parses(Rule::identifier, "Var");
+        assert_parses(Rule::identifier, "_Internal");
+        assert_parses(Rule::identifier, "X1");
+        assert_fails(Rule::test_identifier, ""); // Use test rule
+        assert_fails(Rule::test_identifier, "invalid-char"); // Use test rule
+        assert_fails(Rule::test_identifier, "123noStartingDigits"); // Use test rule
+        assert_fails(Rule::test_identifier, "true"); // Use test rule
+        assert_fails(Rule::test_identifier, "false"); // Use test rule
     }
 
     #[test]
@@ -110,14 +110,10 @@ mod tests {
         }
 
         // Ensure different types of args parse in the right priority order.
-        assert_inner(&Rule::wildcard, "someVar");
-        //        assert_inner(&Rule::wildcard, "?someVar");
+        assert_inner(&Rule::identifier, "someVar");
         assert_inner(&Rule::anchored_key, "someVar[\"key\"]");
-        //        assert_inner(&Rule::anchored_key, "?someVar[\"key\"]");
         assert_inner(&Rule::literal_value, "true");
-        //        assert_fails(Rule::wildcard, "?true");
         assert_inner(&Rule::literal_value, "PublicKey(abc)");
-        //        assert_fails(Rule::test_statement_arg, "?PublicKey(abc)");
     }
 
     #[test]

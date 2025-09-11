@@ -9,16 +9,13 @@ WHITESPACE = _{ (" " | "\t" | NEWLINE)+ }
 // Also silent.
 COMMENT = _{ "//" ~ (!NEWLINE ~ ANY)* }
 
-// Define rules for identifiers (predicate names, variable names without '?')
+reserved_identifier = { "private" | "true" | "false" }
+
+// Define rules for identifiers (predicate names, wildcard names)
 // Must start with alpha or _, followed by alpha, numeric, or _
-identifier = @{ !("private") ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+identifier = @{ !reserved_identifier ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
 private_kw = { "private:" }
-
-reserved_wildcard_name = { "true" | "false" }
-
-// Define wildcard names (optionally start with '?')
-wildcard = @{ !reserved_wildcard_name ~ identifier }
 
 arg_section = {
     public_arg_list ~ ("," ~ private_kw ~ private_arg_list)?
@@ -49,13 +46,13 @@ custom_predicate_def = {
 
 statement_list = { statement+ }
 
-statement_arg = { literal_value | anchored_key | wildcard }
+statement_arg = { literal_value | anchored_key | identifier }
 statement_arg_list = { statement_arg ~ ("," ~ statement_arg)* }
 
 statement = { identifier ~ "(" ~ statement_arg_list? ~ ")" }
 
 // Anchored Key: Var["key_literal"]
-anchored_key = { wildcard ~ "[" ~ literal_string ~ "]" }
+anchored_key = { identifier ~ "[" ~ literal_string ~ "]" }
 
 // Literal Values (ordered to avoid ambiguity, e.g., string before int)
 literal_value = {
@@ -107,7 +104,6 @@ dict_pair = { literal_string ~ ":" ~ literal_value }
 
 // --- Rules for testing full input matching ---
 test_identifier = { SOI ~ identifier ~ EOI }
-test_wildcard = { SOI ~ wildcard ~ EOI }
 test_literal_int = { SOI ~ literal_int ~ EOI }
 test_hash_hex = { SOI ~ hash_hex ~ EOI } 
 test_literal_raw = { SOI ~ literal_raw ~ EOI }
