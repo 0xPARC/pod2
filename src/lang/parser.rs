@@ -32,9 +32,9 @@ pub fn parse_podlang(input: &str) -> Result<Pairs<'_, Rule>, ParseError> {
 mod tests {
     use super::*;
 
-    fn assert_parses(rule: Rule, input: &str) {
+    fn assert_parses(rule: Rule, input: &str) -> Pairs<'_, Rule> {
         match PodlangParser::parse(rule, input) {
-            Ok(_) => (), // Successfully parsed
+            Ok(pairs) => pairs, // Successfully parsed
             Err(e) => panic!("Failed to parse input:\n{}\nError: {}", input, e),
         }
     }
@@ -74,21 +74,60 @@ mod tests {
 
     #[test]
     fn test_parse_wildcard() {
+        assert_parses(Rule::wildcard, "Var");
         assert_parses(Rule::wildcard, "?Var");
+        assert_parses(Rule::wildcard, "_Internal");
         assert_parses(Rule::wildcard, "?_Internal");
+        assert_parses(Rule::wildcard, "X1");
         assert_parses(Rule::wildcard, "?X1");
-        assert_fails(Rule::test_wildcard, "NotAVar"); // Use test rule
+        assert_fails(Rule::test_wildcard, ""); // Use test rule
         assert_fails(Rule::test_wildcard, "?"); // Use test rule
+        assert_fails(Rule::test_wildcard, "invalid-char"); // Use test rule
         assert_fails(Rule::test_wildcard, "?invalid-char"); // Use test rule
+        assert_fails(Rule::test_wildcard, "123noStartingDigits"); // Use test rule
+        assert_fails(Rule::test_wildcard, "?123noStartingDigits"); // Use test rule
+        assert_fails(Rule::test_wildcard, "true"); // Use test rule
+        assert_fails(Rule::test_wildcard, "?true"); // Use test rule
+        assert_fails(Rule::test_wildcard, "false"); // Use test rule
+        assert_fails(Rule::test_wildcard, "?false"); // Use test rule
     }
 
     #[test]
     fn test_parse_anchored_key() {
         assert_parses(Rule::anchored_key, "?PodVar[\"literal_key\"]");
-        assert_fails(Rule::anchored_key, "PodVar[\"key\"]"); // Needs wildcard for pod
+        assert_parses(Rule::anchored_key, "PodVar[\"literal_key\"]");
         assert_fails(Rule::anchored_key, "?PodVar[invalid_key]"); // Key must be literal string or wildcard
         assert_fails(Rule::anchored_key, "?PodVar[]"); // Key cannot be empty
         assert_fails(Rule::anchored_key, "?PodVar[?key]"); // Key cannot be wildcard
+    }
+
+    #[test]
+    fn test_parse_arg_ambiguity() {
+        fn assert_inner(rule: &Rule, input: &str) {
+            assert_eq!(
+                assert_parses(Rule::test_statement_arg, input)
+                    .next()
+                    .unwrap()
+                    .into_inner()
+                    .next()
+                    .unwrap()
+                    .into_inner()
+                    .next()
+                    .unwrap()
+                    .as_rule(),
+                *rule
+            );
+        }
+
+        // Ensure different types of args parse in the right priority order.
+        assert_inner(&Rule::wildcard, "someVar");
+        assert_inner(&Rule::wildcard, "?someVar");
+        assert_inner(&Rule::anchored_key, "someVar[\"key\"]");
+        assert_inner(&Rule::anchored_key, "?someVar[\"key\"]");
+        assert_inner(&Rule::literal_value, "true");
+        assert_fails(Rule::wildcard, "?true");
+        assert_inner(&Rule::literal_value, "PublicKey(abc)");
+        assert_fails(Rule::test_statement_arg, "?PublicKey(abc)");
     }
 
     #[test]
