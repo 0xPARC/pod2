@@ -870,7 +870,7 @@ pub mod tests {
     fn test_main_dict_updates() -> frontend::Result<()> {
         let params = &middleware::Params::default();
         let mut vds = DEFAULT_VD_LIST.clone();
-        vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
+        vds.push(rec_main_pod_circuit_data(params).1.verifier_only.clone());
         let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
         let signer = Signer(SecretKey(1u32.into()));
 
@@ -932,7 +932,7 @@ pub mod tests {
             )
         "#;
 
-        let request1 = parse(&podlang_input1, params, &[])?.request;
+        let request1 = parse(podlang_input1, params, &[])?.request;
         assert!(request1.exact_match_pod(&*pod).is_ok());
 
         // Try the same again but use the null literal instead of {}, since
@@ -947,7 +947,7 @@ pub mod tests {
             )
         "#;
 
-        let request2 = parse(&podlang_input2, params, &[])?.request;
+        let request2 = parse(podlang_input2, params, &[])?.request;
         assert!(request2.exact_match_pod(&*pod).is_ok());
 
         Ok(())

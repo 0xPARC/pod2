@@ -516,7 +516,7 @@ pub mod tests {
         )
         "#;
 
-        let request1 = parse(&podlang_input1, params, &[])?.request;
+        let request1 = parse(podlang_input1, params, &[])?.request;
         assert!(request1.exact_match_pod(&*pod).is_ok());
 
         // Try the same again but use the null literal instead of {}, since
@@ -531,7 +531,7 @@ pub mod tests {
         )
         "#;
 
-        let request2 = parse(&podlang_input2, params, &[])?.request;
+        let request2 = parse(podlang_input2, params, &[])?.request;
         assert!(request2.exact_match_pod(&*pod).is_ok());
 
         Ok(())
