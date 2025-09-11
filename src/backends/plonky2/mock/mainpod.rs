@@ -372,7 +372,7 @@ impl Pod for MockMainPod {
 
 #[cfg(test)]
 pub mod tests {
-    use std::any::Any;
+    use std::{any::Any, collections::HashMap};
 
     use super::*;
     use crate::{
@@ -381,8 +381,9 @@ pub mod tests {
             great_boy_pod_full_flow, tickets_pod_full_flow, zu_kyc_pod_builder, zu_kyc_pod_request,
             zu_kyc_sign_dict_builders, MOCK_VD_SET,
         },
-        frontend, middleware,
-        middleware::{Signer as _, Value},
+        frontend::{self, MainPodBuilder, SignedDictBuilder},
+        lang::parse,
+        middleware::{self, containers::Dictionary, Signer as _, Value},
     };
 
     #[test]
@@ -444,6 +445,94 @@ pub mod tests {
 
         println!("{}", pod);
         pod.verify()?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_mock_main_dict_updates() -> frontend::Result<()> {
+        let params = &middleware::Params::default();
+        let vd_set = &*MOCK_VD_SET;
+        let signer = Signer(SecretKey(1u32.into()));
+
+        let empty_dict = Dictionary::new_empty(params.max_depth_mt_containers);
+        assert_eq!(empty_dict.commitment(), EMPTY_HASH);
+
+        let mut hash_map: HashMap<middleware::Key, Value> = HashMap::new();
+        hash_map.insert(middleware::Key::from("i"), Value::from(123456));
+        let int_dict = Dictionary::new(params.max_depth_mt_containers, hash_map)?;
+
+        let mut before_dict_builder = SignedDictBuilder::new(params);
+        before_dict_builder.insert("a", "A");
+        before_dict_builder.insert("i", 123456);
+        let before_dict = before_dict_builder.sign(&signer)?;
+
+        let mut after_dict_builder = SignedDictBuilder::new(params);
+        after_dict_builder.insert("a", "B");
+        after_dict_builder.insert("i", 123456);
+        let after_dict = after_dict_builder.sign(&signer)?;
+
+        let mut pod_builder = MainPodBuilder::new(params, vd_set);
+        pod_builder.pub_op(frontend::Operation::dict_signed_by(&before_dict))?;
+        pod_builder.pub_op(frontend::Operation::dict_signed_by(&after_dict))?;
+        pod_builder.pub_op(frontend::Operation::dict_insert(
+            int_dict.clone(),
+            empty_dict,
+            "i",
+            123456,
+        ))?;
+        pod_builder.pub_op(frontend::Operation::dict_insert(
+            before_dict.dict.clone(),
+            int_dict.clone(),
+            "a",
+            "A",
+        ))?;
+        pod_builder.pub_op(frontend::Operation::dict_update(
+            after_dict.dict.clone(),
+            before_dict.dict.clone(),
+            "a",
+            "B",
+        ))?;
+
+        let prover = MockProver {};
+        let proven = pod_builder.prove(&prover)?;
+        let pod = (proven.pod as Box<dyn Any>)
+            .downcast::<MockMainPod>()
+            .unwrap();
+
+        println!("{:#}", pod);
+
+        pod.verify()?;
+
+        // The exact_match_pod() search doesn't know about syntactic sugar
+        // statements, so we need to use Container* not Dict*.
+        let podlang_input1 = r#"
+        REQUEST(
+            SignedBy(?before, ?signer)
+            SignedBy(?after, ?signer)
+            ContainerInsert(?int_only, {}, "i", 123456)
+            ContainerInsert(?before, ?int_only, "a", "A") 
+            ContainerUpdate(?after, ?before, "a", "B")
+        )
+        "#;
+
+        let request1 = parse(podlang_input1, params, &[])?.request;
+        assert!(request1.exact_match_pod(&*pod).is_ok());
+
+        // Try the same again but use the null literal instead of {}, since
+        // they're intended to be equivalent (equating to EMPTY_HASH)
+        let podlang_input2 = r#"
+        REQUEST(
+            SignedBy(?before, ?signer)
+            SignedBy(?after, ?signer)
+            ContainerInsert(?int_only, null, "i", 123456)
+            ContainerInsert(?before, ?int_only, "a", "A") 
+            ContainerUpdate(?after, ?before, "a", "B")
+        )
+        "#;
+
+        let request2 = parse(podlang_input2, params, &[])?.request;
+        assert!(request2.exact_match_pod(&*pod).is_ok());
 
         Ok(())
     }

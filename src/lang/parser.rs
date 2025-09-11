@@ -108,9 +108,17 @@ mod tests {
         assert_parses(Rule::literal_int, "-45");
         assert_parses(Rule::literal_int, "0");
         assert_fails(Rule::test_literal_int, "1.23"); // Use test_literal_int rule
-                                                      // Bool
+
+        // Bool
         assert_parses(Rule::literal_bool, "true");
+        assert_fails(Rule::literal_null, "TRUE");
         assert_parses(Rule::literal_bool, "false");
+        assert_fails(Rule::literal_null, "FALSE");
+
+        // Null
+        assert_parses(Rule::literal_null, "null");
+        assert_fails(Rule::literal_null, "NULL");
+        assert_fails(Rule::literal_null, "0");
 
         // Raw - Require 64 hex digits (32 bytes, equal to 4 * 64-bit field elements)
         assert_parses(

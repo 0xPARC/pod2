@@ -804,7 +804,10 @@ impl Pod for MainPod {
 
 #[cfg(test)]
 pub mod tests {
-    use std::{any::Any, collections::HashSet};
+    use std::{
+        any::Any,
+        collections::{HashMap, HashSet},
+    };
 
     use num::{BigUint, One};
 
@@ -821,11 +824,15 @@ pub mod tests {
             zu_kyc_sign_dict_builders, EthDosHelper,
         },
         frontend::{
-            self, literal, CustomPredicateBatchBuilder, MainPodBuilder, StatementTmplBuilder as STB,
+            self, literal, CustomPredicateBatchBuilder, MainPodBuilder, SignedDictBuilder,
+            StatementTmplBuilder as STB,
         },
+        lang::parse,
         middleware::{
-            self, containers::Set, CustomPredicateRef, NativePredicate as NP, Signer as _,
-            DEFAULT_VD_LIST, DEFAULT_VD_SET,
+            self,
+            containers::{Dictionary, Set},
+            CustomPredicateRef, NativePredicate as NP, Signer as _, Value, DEFAULT_VD_LIST,
+            DEFAULT_VD_SET, EMPTY_HASH,
         },
     };
 
@@ -857,6 +864,93 @@ pub mod tests {
         let pod = (kyc_pod.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
 
         Ok(pod.verify()?)
+    }
+
+    #[test]
+    fn test_main_dict_updates() -> frontend::Result<()> {
+        let params = &middleware::Params::default();
+        let mut vds = DEFAULT_VD_LIST.clone();
+        vds.push(rec_main_pod_circuit_data(params).1.verifier_only.clone());
+        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
+        let signer = Signer(SecretKey(1u32.into()));
+
+        let empty_dict = Dictionary::new_empty(params.max_depth_mt_containers);
+        assert_eq!(empty_dict.commitment(), EMPTY_HASH);
+
+        let mut hash_map: HashMap<middleware::Key, Value> = HashMap::new();
+        hash_map.insert(middleware::Key::from("i"), Value::from(123456));
+        let int_dict = Dictionary::new(params.max_depth_mt_containers, hash_map)?;
+
+        let mut before_dict_builder = SignedDictBuilder::new(params);
+        before_dict_builder.insert("a", "A");
+        before_dict_builder.insert("i", 123456);
+        let before_dict = before_dict_builder.sign(&signer)?;
+
+        let mut after_dict_builder = SignedDictBuilder::new(params);
+        after_dict_builder.insert("a", "B");
+        after_dict_builder.insert("i", 123456);
+        let after_dict = after_dict_builder.sign(&signer)?;
+
+        let mut pod_builder = MainPodBuilder::new(params, &vd_set);
+        pod_builder.pub_op(frontend::Operation::dict_signed_by(&before_dict))?;
+        pod_builder.pub_op(frontend::Operation::dict_signed_by(&after_dict))?;
+        pod_builder.pub_op(frontend::Operation::dict_insert(
+            int_dict.clone(),
+            empty_dict,
+            "i",
+            123456,
+        ))?;
+        pod_builder.pub_op(frontend::Operation::dict_insert(
+            before_dict.dict.clone(),
+            int_dict.clone(),
+            "a",
+            "A",
+        ))?;
+        pod_builder.pub_op(frontend::Operation::dict_update(
+            after_dict.dict.clone(),
+            before_dict.dict.clone(),
+            "a",
+            "B",
+        ))?;
+
+        let prover = Prover {};
+        let proven = pod_builder.prove(&prover)?;
+        crate::measure_gates_print!();
+        let pod = (proven.pod as Box<dyn Any>).downcast::<MainPod>().unwrap();
+
+        pod.verify()?;
+
+        // The exact_match_pod() search doesn't know about syntactic sugar
+        // statements, so we need to use Container* not Dict*.
+        let podlang_input1 = r#"
+            REQUEST(
+                SignedBy(?before, ?signer)
+                SignedBy(?after, ?signer)
+                ContainerInsert(?int_only, {}, "i", 123456)
+                ContainerInsert(?before, ?int_only, "a", "A")
+                ContainerUpdate(?after, ?before, "a", "B")
+            )
+        "#;
+
+        let request1 = parse(podlang_input1, params, &[])?.request;
+        assert!(request1.exact_match_pod(&*pod).is_ok());
+
+        // Try the same again but use the null literal instead of {}, since
+        // they're intended to be equivalent (equating to EMPTY_HASH)
+        let podlang_input2 = r#"
+            REQUEST(
+                SignedBy(?before, ?signer)
+                SignedBy(?after, ?signer)
+                ContainerInsert(?int_only, null, "i", 123456)
+                ContainerInsert(?before, ?int_only, "a", "A")
+                ContainerUpdate(?after, ?before, "a", "B")
+            )
+        "#;
+
+        let request2 = parse(podlang_input2, params, &[])?.request;
+        assert!(request2.exact_match_pod(&*pod).is_ok());
+
+        Ok(())
     }
 
     // `RUST_LOG=pod2::backends=debug cargo test --release --no-default-features --features=backend_plonky2,mem_cache,zk,metrics test_measure_main_pod -- --nocapture --ignored`

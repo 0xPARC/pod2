@@ -16,7 +16,7 @@ use crate::{
     lang::parser::Rule,
     middleware::{
         self, CustomPredicateBatch, CustomPredicateRef, Key, NativePredicate, Params, Predicate,
-        StatementTmpl, StatementTmplArg, Value, Wildcard, F, VALUE_SIZE,
+        StatementTmpl, StatementTmplArg, Value, Wildcard, EMPTY_VALUE, F, VALUE_SIZE,
     },
 };
 
@@ -759,6 +759,7 @@ fn process_literal_value(
             let val = inner_lit.as_str().parse::<bool>().unwrap();
             Ok(Value::from(val))
         }
+        Rule::literal_null => Ok(Value::from(EMPTY_VALUE)),
         Rule::literal_raw => {
             let full_literal_str = inner_lit.clone().into_inner().next().unwrap();
             let hex_str_no_prefix = full_literal_str
@@ -1262,7 +1263,7 @@ mod processor_tests {
         REQUEST(
           EQUAL(?A["b"], ?C.d)
         )
-    "#;
+        "#;
         let pairs = get_document_content_pairs(input)?;
         let params = Params::default();
         let mut ctx = ProcessingContext::new(&params);
