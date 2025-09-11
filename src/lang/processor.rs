@@ -320,8 +320,7 @@ fn pest_pair_to_builder_arg(
             Ok(BuilderArg::Literal(value))
         }
         Rule::wildcard => {
-            let raw_wc = arg_content_pair.as_str();
-            let wc_str = raw_wc.strip_prefix("?").unwrap_or(raw_wc);
+            let wc_str = arg_content_pair.as_str();
             if let StatementContext::CustomPredicate {
                 argument_names,
                 pred_name,
@@ -340,8 +339,7 @@ fn pest_pair_to_builder_arg(
         Rule::anchored_key => {
             let mut inner_ak_pairs = arg_content_pair.clone().into_inner();
             let root_pair = inner_ak_pairs.next().unwrap();
-            let raw_root_wc = root_pair.as_str();
-            let root_wc_str = raw_root_wc.strip_prefix("?").unwrap_or(raw_root_wc);
+            let root_wc_str = root_pair.as_str();
 
             if let StatementContext::CustomPredicate {
                 argument_names,

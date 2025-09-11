@@ -75,32 +75,20 @@ mod tests {
     #[test]
     fn test_parse_wildcard() {
         assert_parses(Rule::wildcard, "Var");
-        //        assert_parses(Rule::wildcard, "?Var");
         assert_parses(Rule::wildcard, "_Internal");
-        //        assert_parses(Rule::wildcard, "?_Internal");
         assert_parses(Rule::wildcard, "X1");
-        //        assert_parses(Rule::wildcard, "?X1");
         assert_fails(Rule::test_wildcard, ""); // Use test rule
-                                               //        assert_fails(Rule::test_wildcard, "?"); // Use test rule
         assert_fails(Rule::test_wildcard, "invalid-char"); // Use test rule
-                                                           //        assert_fails(Rule::test_wildcard, "?invalid-char"); // Use test rule
         assert_fails(Rule::test_wildcard, "123noStartingDigits"); // Use test rule
-                                                                  //        assert_fails(Rule::test_wildcard, "?123noStartingDigits"); // Use test rule
         assert_fails(Rule::test_wildcard, "true"); // Use test rule
-                                                   //        assert_fails(Rule::test_wildcard, "?true"); // Use test rule
         assert_fails(Rule::test_wildcard, "false"); // Use test rule
-                                                    //        assert_fails(Rule::test_wildcard, "?false"); // Use test rule
     }
 
     #[test]
     fn test_parse_anchored_key() {
-        //        assert_parses(Rule::anchored_key, "?PodVar[\"literal_key\"]");
         assert_parses(Rule::anchored_key, "PodVar[\"literal_key\"]");
         assert_fails(Rule::anchored_key, "PodVar[invalid_key]"); // Key must be literal string
-                                                                 //        assert_fails(Rule::anchored_key, "?PodVar[invalid_key]"); // Key must be literal string
         assert_fails(Rule::anchored_key, "PodVar[]"); // Key cannot be empty
-                                                      //        assert_fails(Rule::anchored_key, "?PodVar[]"); // Key cannot be empty
-                                                      //        assert_fails(Rule::anchored_key, "?PodVar[?key]"); // Key cannot be wildcard
     }
 
     #[test]
