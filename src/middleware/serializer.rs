@@ -4,6 +4,7 @@ use std::{
 };
 
 use base64::{prelude::BASE64_STANDARD, Engine};
+use paste::paste;
 use serde::{
     de::{
         value::{
@@ -51,6 +52,9 @@ pub struct ValueSerializer {
 }
 
 #[derive(Clone, Copy)]
+struct OptionValueSerializer(ValueSerializer);
+
+#[derive(Clone, Copy)]
 pub struct DictionarySerializer {
     container_depth: usize,
 }
@@ -82,6 +86,11 @@ pub struct DictionarySerializeStructVariant {
     inner: ValueSerializeMap,
 }
 
+struct OptionValueSerializeSeq(ValueSerializeSeq);
+struct OptionValueSerializeMap(ValueSerializeMap);
+struct OptionValueSerializeStructVariant(ValueSerializeStructVariant);
+struct OptionValueSerializeTupleVariant(ValueSerializeTupleVariant);
+
 impl ValueSerializer {
     pub fn new(container_depth: usize) -> Self {
         Self {
@@ -93,6 +102,15 @@ impl ValueSerializer {
     fn dictionary_serializer(self) -> DictionarySerializer {
         DictionarySerializer {
             container_depth: self.container_depth,
+        }
+    }
+
+    fn update_state_newtype(&mut self, name: &'static str) {
+        match name {
+            "pod2::RawValue" => self.state = ValueSerializerState::RawValue,
+            "pod2::Point" => self.state = ValueSerializerState::Point,
+            "pod2::SecretKey" => self.state = ValueSerializerState::SecretKey,
+            _ => (),
         }
     }
 }
@@ -230,12 +248,7 @@ impl Serializer for ValueSerializer {
     where
         T: ?Sized + Serialize,
     {
-        match name {
-            "pod2::RawValue" => self.state = ValueSerializerState::RawValue,
-            "pod2::Point" => self.state = ValueSerializerState::Point,
-            "pod2::SecretKey" => self.state = ValueSerializerState::SecretKey,
-            _ => (),
-        }
+        self.update_state_newtype(name);
         value.serialize(self)
     }
 
@@ -418,11 +431,11 @@ impl SerializeStruct for ValueSerializeMap {
     where
         T: ?Sized + Serialize,
     {
-        SerializeMap::serialize_entry(self, key, value)
+        SerializeStruct::serialize_field(&mut self.0, key, value)
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        SerializeMap::end(self)
+        SerializeStruct::end(self.0).map(Value::from)
     }
 }
 
@@ -442,6 +455,33 @@ impl SerializeStructVariant for ValueSerializeStructVariant {
     }
 }
 
+macro_rules! serialize_type {
+    ( bytes ) => {
+        &[u8]
+    };
+    ( str ) => {
+        &str
+    };
+    ( unit_struct ) => {
+        &'static str
+    };
+    ( $name: ident ) => {
+        $name
+    };
+}
+
+macro_rules! map_expected {
+    ( $($item: ident )* ) => {
+        $(
+            paste! {
+                fn [<serialize_ $item>](self, _: serialize_type!($item)) -> Result<Self::Ok, Self::Error> {
+                    Err(serde::ser::Error::custom("expected a map"))
+                }
+            }
+        )*
+    }
+}
+
 impl Serializer for DictionarySerializer {
     type Ok = Dictionary;
     type Error = serde::de::value::Error;
@@ -453,61 +493,7 @@ impl Serializer for DictionarySerializer {
     type SerializeStruct = DictionarySerializeMap;
     type SerializeStructVariant = DictionarySerializeStructVariant;
 
-    fn serialize_bool(self, _v: bool) -> Result<Self::Ok, Self::Error> {
-        Err(serde::ser::Error::custom("expected a map"))
-    }
-
-    fn serialize_i8(self, _v: i8) -> Result<Self::Ok, Self::Error> {
-        Err(serde::ser::Error::custom("expected a map"))
-    }
-
-    fn serialize_i16(self, _v: i16) -> Result<Self::Ok, Self::Error> {
-        Err(serde::ser::Error::custom("expected a map"))
-    }
-
-    fn serialize_i32(self, _v: i32) -> Result<Self::Ok, Self::Error> {
-        Err(serde::ser::Error::custom("expected a map"))
-    }
-
-    fn serialize_i64(self, _v: i64) -> Result<Self::Ok, Self::Error> {
-        Err(serde::ser::Error::custom("expected a map"))
-    }
-
-    fn serialize_u8(self, _v: u8) -> Result<Self::Ok, Self::Error> {
-        Err(serde::ser::Error::custom("expected a map"))
-    }
-
-    fn serialize_u16(self, _v: u16) -> Result<Self::Ok, Self::Error> {
-        Err(serde::ser::Error::custom("expected a map"))
-    }
-
-    fn serialize_u32(self, _v: u32) -> Result<Self::Ok, Self::Error> {
-        Err(serde::ser::Error::custom("expected a map"))
-    }
-
-    fn serialize_u64(self, _v: u64) -> Result<Self::Ok, Self::Error> {
-        Err(serde::ser::Error::custom("expected a map"))
-    }
-
-    fn serialize_f32(self, _v: f32) -> Result<Self::Ok, Self::Error> {
-        Err(serde::ser::Error::custom("expected a map"))
-    }
-
-    fn serialize_f64(self, _v: f64) -> Result<Self::Ok, Self::Error> {
-        Err(serde::ser::Error::custom("expected a map"))
-    }
-
-    fn serialize_char(self, _v: char) -> Result<Self::Ok, Self::Error> {
-        Err(serde::ser::Error::custom("expected a map"))
-    }
-
-    fn serialize_str(self, _v: &str) -> Result<Self::Ok, Self::Error> {
-        Err(serde::ser::Error::custom("expected a map"))
-    }
-
-    fn serialize_bytes(self, _v: &[u8]) -> Result<Self::Ok, Self::Error> {
-        Err(serde::ser::Error::custom("expected a map"))
-    }
+    map_expected!(bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 bytes str char unit_struct);
 
     fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
         Err(serde::ser::Error::custom("expected a map"))
@@ -521,10 +507,6 @@ impl Serializer for DictionarySerializer {
     }
 
     fn serialize_unit(self) -> Result<Self::Ok, Self::Error> {
-        Err(serde::ser::Error::custom("expected a map"))
-    }
-
-    fn serialize_unit_struct(self, _name: &'static str) -> Result<Self::Ok, Self::Error> {
         Err(serde::ser::Error::custom("expected a map"))
     }
 
@@ -647,11 +629,8 @@ impl SerializeTupleVariant for DictionarySerializeTupleVariant {
     }
 }
 
-impl SerializeMap for DictionarySerializeMap {
-    type Ok = <DictionarySerializer as Serializer>::Ok;
-    type Error = <DictionarySerializer as Serializer>::Error;
-
-    fn serialize_key<T>(&mut self, key: &T) -> Result<(), Self::Error>
+impl DictionarySerializeMap {
+    fn convert_key<T>(&self, key: &T) -> Result<Key, <DictionarySerializer as Serializer>::Error>
     where
         T: ?Sized + Serialize,
     {
@@ -660,14 +639,26 @@ impl SerializeMap for DictionarySerializeMap {
             state: ValueSerializerState::Default,
         })?;
         if let TypedValue::String(s) = key_ser.typed() {
-            self.next_key = Some(Key::new(s.clone()));
-            Ok(())
+            Ok(Key::new(s.clone()))
         } else {
             Err(serde::de::Error::invalid_value(
                 Unexpected::Other("non-string key in map"),
                 &"string",
             ))
         }
+    }
+}
+
+impl SerializeMap for DictionarySerializeMap {
+    type Ok = <DictionarySerializer as Serializer>::Ok;
+    type Error = <DictionarySerializer as Serializer>::Error;
+
+    fn serialize_key<T>(&mut self, key: &T) -> Result<(), Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        self.next_key = Some(self.convert_key(key)?);
+        Ok(())
     }
 
     fn serialize_value<T>(&mut self, value: &T) -> Result<(), Self::Error>
@@ -702,7 +693,16 @@ impl SerializeStruct for DictionarySerializeMap {
     where
         T: ?Sized + Serialize,
     {
-        SerializeMap::serialize_entry(self, key, value)
+        //SerializeMap::serialize_entry(self, key, value)
+        let opt_ser = value.serialize(OptionValueSerializer(ValueSerializer {
+            container_depth: self.container_depth,
+            state: ValueSerializerState::Default,
+        }))?;
+        if let Some(val_ser) = opt_ser {
+            let key = self.convert_key(key)?;
+            self.kvs.insert(key, val_ser);
+        }
+        Ok(())
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
@@ -728,6 +728,264 @@ impl SerializeStructVariant for DictionarySerializeStructVariant {
         kvs.insert(Key::new(self.name.to_string()), value);
         let dict = Dictionary::new(depth, kvs).map_err(serde::ser::Error::custom)?;
         Ok(dict)
+    }
+}
+
+macro_rules! option_serializer_forward {
+    ( $($item: ident )* ) => {
+        $(
+            paste! {
+                fn [<serialize_ $item>](self, v: serialize_type!($item)) -> Result<Self::Ok, Self::Error> {
+                    self.0.[<serialize_ $item>](v).map(Some)
+                }
+            }
+        )*
+    }
+}
+
+impl Serializer for OptionValueSerializer {
+    type Ok = Option<Value>;
+    type Error = <ValueSerializer as Serializer>::Error;
+    type SerializeSeq = OptionValueSerializeSeq;
+    type SerializeTuple = OptionValueSerializeSeq;
+    type SerializeTupleStruct = OptionValueSerializeSeq;
+    type SerializeMap = OptionValueSerializeMap;
+    type SerializeStruct = OptionValueSerializeMap;
+    type SerializeTupleVariant = OptionValueSerializeTupleVariant;
+    type SerializeStructVariant = OptionValueSerializeStructVariant;
+
+    option_serializer_forward!(bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char bytes str);
+
+    fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
+        Ok(None)
+    }
+
+    fn serialize_some<T>(self, value: &T) -> Result<Self::Ok, Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        value.serialize(self.0).map(Some)
+    }
+
+    fn serialize_unit(self) -> Result<Self::Ok, Self::Error> {
+        self.0.serialize_unit().map(Some)
+    }
+
+    fn serialize_unit_struct(self, name: &'static str) -> Result<Self::Ok, Self::Error> {
+        self.0.serialize_unit_struct(name).map(Some)
+    }
+
+    fn serialize_unit_variant(
+        self,
+        name: &'static str,
+        variant_index: u32,
+        variant: &'static str,
+    ) -> Result<Self::Ok, Self::Error> {
+        self.0
+            .serialize_unit_variant(name, variant_index, variant)
+            .map(Some)
+    }
+
+    fn serialize_newtype_struct<T>(
+        mut self,
+        name: &'static str,
+        value: &T,
+    ) -> Result<Self::Ok, Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        self.0.update_state_newtype(name);
+        value.serialize(self)
+    }
+
+    fn serialize_newtype_variant<T>(
+        self,
+        name: &'static str,
+        variant_index: u32,
+        variant: &'static str,
+        value: &T,
+    ) -> Result<Self::Ok, Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        self.0
+            .serialize_newtype_variant(name, variant_index, variant, value)
+            .map(Some)
+    }
+
+    fn serialize_seq(self, len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
+        self.0.serialize_seq(len).map(OptionValueSerializeSeq)
+    }
+
+    fn serialize_tuple(self, len: usize) -> Result<Self::SerializeTuple, Self::Error> {
+        self.0.serialize_tuple(len).map(OptionValueSerializeSeq)
+    }
+
+    fn serialize_tuple_struct(
+        self,
+        name: &'static str,
+        len: usize,
+    ) -> Result<Self::SerializeTupleStruct, Self::Error> {
+        self.0
+            .serialize_tuple_struct(name, len)
+            .map(OptionValueSerializeSeq)
+    }
+
+    fn serialize_tuple_variant(
+        self,
+        name: &'static str,
+        variant_index: u32,
+        variant: &'static str,
+        len: usize,
+    ) -> Result<Self::SerializeTupleVariant, Self::Error> {
+        self.0
+            .serialize_tuple_variant(name, variant_index, variant, len)
+            .map(OptionValueSerializeTupleVariant)
+    }
+
+    fn serialize_struct(
+        self,
+        name: &'static str,
+        len: usize,
+    ) -> Result<Self::SerializeStruct, Self::Error> {
+        self.0
+            .serialize_struct(name, len)
+            .map(OptionValueSerializeMap)
+    }
+
+    fn serialize_map(self, len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
+        self.0.serialize_map(len).map(OptionValueSerializeMap)
+    }
+
+    fn serialize_struct_variant(
+        self,
+        name: &'static str,
+        variant_index: u32,
+        variant: &'static str,
+        len: usize,
+    ) -> Result<Self::SerializeStructVariant, Self::Error> {
+        self.0
+            .serialize_struct_variant(name, variant_index, variant, len)
+            .map(OptionValueSerializeStructVariant)
+    }
+}
+
+impl SerializeSeq for OptionValueSerializeSeq {
+    type Ok = <OptionValueSerializer as Serializer>::Ok;
+    type Error = <OptionValueSerializer as Serializer>::Error;
+
+    fn serialize_element<T>(&mut self, value: &T) -> Result<(), Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        SerializeSeq::serialize_element(&mut self.0, value)
+    }
+
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        SerializeSeq::end(self.0).map(Some)
+    }
+}
+
+impl SerializeTuple for OptionValueSerializeSeq {
+    type Ok = <OptionValueSerializer as Serializer>::Ok;
+    type Error = <OptionValueSerializer as Serializer>::Error;
+
+    fn serialize_element<T>(&mut self, value: &T) -> Result<(), Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        SerializeTuple::serialize_element(&mut self.0, value)
+    }
+
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        SerializeTuple::end(self.0).map(Some)
+    }
+}
+
+impl SerializeTupleStruct for OptionValueSerializeSeq {
+    type Ok = <OptionValueSerializer as Serializer>::Ok;
+    type Error = <OptionValueSerializer as Serializer>::Error;
+
+    fn serialize_field<T>(&mut self, value: &T) -> Result<(), Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        self.0.serialize_field(value)
+    }
+
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        SerializeTupleStruct::end(self.0).map(Some)
+    }
+}
+
+impl SerializeMap for OptionValueSerializeMap {
+    type Ok = <OptionValueSerializer as Serializer>::Ok;
+    type Error = <OptionValueSerializer as Serializer>::Error;
+
+    fn serialize_key<T>(&mut self, key: &T) -> Result<(), Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        self.0.serialize_key(key)
+    }
+
+    fn serialize_value<T>(&mut self, value: &T) -> Result<(), Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        self.0.serialize_value(value)
+    }
+
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        SerializeMap::end(self.0).map(Some)
+    }
+}
+
+impl SerializeStruct for OptionValueSerializeMap {
+    type Ok = <OptionValueSerializer as Serializer>::Ok;
+    type Error = <OptionValueSerializer as Serializer>::Error;
+
+    fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        self.0.serialize_field(key, value)
+    }
+
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        SerializeStruct::end(self.0).map(Some)
+    }
+}
+
+impl SerializeStructVariant for OptionValueSerializeStructVariant {
+    type Ok = <OptionValueSerializer as Serializer>::Ok;
+    type Error = <OptionValueSerializer as Serializer>::Error;
+
+    fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        self.0.serialize_field(key, value)
+    }
+
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        self.0.end().map(Some)
+    }
+}
+
+impl SerializeTupleVariant for OptionValueSerializeTupleVariant {
+    type Ok = <OptionValueSerializer as Serializer>::Ok;
+    type Error = <OptionValueSerializer as Serializer>::Error;
+
+    fn serialize_field<T>(&mut self, value: &T) -> Result<(), Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        self.0.serialize_field(value)
+    }
+
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        self.0.end().map(Some)
     }
 }
 
@@ -797,7 +1055,21 @@ impl<'de> serde::Deserializer<'de> for &Dictionary {
         visitor.visit_unit()
     }
 
-    forward_to_deserialize_any! { bool i8 i16 i32 i64 f32 f64 u8 u16 u32 u64 char str bytes byte_buf string option unit unit_struct seq tuple_struct tuple map newtype_struct struct identifier }
+    fn deserialize_struct<V>(
+        self,
+        _name: &'static str,
+        _fields: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        visitor.visit_map(MapDeserializer::new(
+            self.kvs().iter().map(|(k, v)| (k, StructField(v.typed()))),
+        ))
+    }
+
+    forward_to_deserialize_any! { bool i8 i16 i32 i64 f32 f64 u8 u16 u32 u64 char str bytes byte_buf string option unit unit_struct seq tuple_struct tuple map newtype_struct identifier }
 }
 
 impl<'de> serde::Deserializer<'de> for &TypedValue {
@@ -936,7 +1208,124 @@ impl<'de> serde::Deserializer<'de> for &TypedValue {
         }
     }
 
-    forward_to_deserialize_any! { bool i8 i16 i32 i64 u8 u16 u32 u64 char str string unit_struct seq tuple_struct tuple map struct identifier ignored_any }
+    fn deserialize_struct<V>(
+        self,
+        name: &'static str,
+        fields: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        match self {
+            TypedValue::Dictionary(d) => d.deserialize_struct(name, fields, visitor),
+            _ => self.deserialize_any(visitor),
+        }
+    }
+
+    forward_to_deserialize_any! { bool i8 i16 i32 i64 u8 u16 u32 u64 char str string unit_struct seq tuple_struct tuple map identifier ignored_any }
+}
+
+struct StructField<'a>(&'a TypedValue);
+
+impl<'a, 'de> IntoDeserializer<'de, serde::de::value::Error> for StructField<'a> {
+    type Deserializer = Self;
+    fn into_deserializer(self) -> Self::Deserializer {
+        self
+    }
+}
+
+macro_rules! deserialize_forward {
+    ( $($item: ident )* ) => {
+        $(
+            paste! {
+                fn [<deserialize_ $item>]<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+                where
+                    V: serde::de::Visitor<'de>,
+                {
+                    self.0.[<deserialize_ $item>](visitor)
+                }
+            }
+        )*
+    }
+}
+
+impl<'de> serde::Deserializer<'de> for StructField<'_> {
+    type Error = serde::de::value::Error;
+
+    deserialize_forward!(any bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 str char string bytes byte_buf unit seq ignored_any map identifier);
+
+    fn deserialize_unit_struct<V>(
+        self,
+        name: &'static str,
+        visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.0.deserialize_unit_struct(name, visitor)
+    }
+
+    fn deserialize_newtype_struct<V>(
+        self,
+        name: &'static str,
+        visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.0.deserialize_newtype_struct(name, visitor)
+    }
+
+    fn deserialize_tuple<V>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.0.deserialize_tuple(len, visitor)
+    }
+
+    fn deserialize_struct<V>(
+        self,
+        name: &'static str,
+        fields: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.0.deserialize_struct(name, fields, visitor)
+    }
+
+    fn deserialize_tuple_struct<V>(
+        self,
+        name: &'static str,
+        len: usize,
+        visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.0.deserialize_tuple_struct(name, len, visitor)
+    }
+
+    fn deserialize_enum<V>(
+        self,
+        name: &'static str,
+        variants: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.0.deserialize_enum(name, variants, visitor)
+    }
+
+    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        visitor.visit_some(self.0)
+    }
 }
 
 #[cfg(test)]
@@ -1034,6 +1423,10 @@ mod test {
         seed_range: Vec<(Method, RawValue)>,
         option1: Option<i64>,
         option2: Option<i64>,
+        vec_opt: Vec<Option<i64>>,
+        optopt1: Option<Option<i64>>,
+        optopt2: Option<Option<i64>>,
+        optopt3: Option<Option<i64>>,
         unit: (),
         sk: SecretKey,
         pk: Point,
@@ -1125,6 +1518,10 @@ mod test {
             seed_range,
             option1: Some(2),
             option2: None,
+            optopt1: Some(Some(4)),
+            optopt2: Some(None),
+            optopt3: None,
+            vec_opt: vec![Some(3), None],
             unit: (),
             sk,
             pk,
