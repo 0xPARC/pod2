@@ -97,7 +97,7 @@ fn ec_field_from_bytes(b: &[u8]) -> Result<ECField, Error> {
     Ok(QuinticExtension(array::from_fn(|i| fields[i])))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Point {
     pub x: ECField,
     pub u: ECField,
