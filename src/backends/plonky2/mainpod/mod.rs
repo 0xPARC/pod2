@@ -1,9 +1,9 @@
 pub mod operation;
-use crate::middleware::PodType;
+use crate::middleware::{wildcard_values_from_op_st, PodType};
 pub mod statement;
 use std::{iter, sync::Arc};
 
-use itertools::Itertools;
+use itertools::{zip_eq, Itertools};
 use num_bigint::BigUint;
 pub use operation::*;
 use plonky2::{hash::poseidon::PoseidonHash, plonk::config::Hasher};
@@ -37,9 +37,9 @@ use crate::{
         serialize_proof, serialize_verifier_only,
     },
     middleware::{
-        self, resolve_wildcard_values, value_from_op, CustomPredicateBatch,
-        Error as MiddlewareError, Hash, MainPodInputs, MainPodProver, NativeOperation,
-        OperationType, Params, Pod, RawValue, StatementArg, ToFields, VDSet,
+        self, value_from_op, CustomPredicateBatch, Error as MiddlewareError, Hash, MainPodInputs,
+        MainPodProver, NativeOperation, OperationType, Params, Pod, RawValue, StatementArg,
+        ToFields, VDSet,
     },
     timed,
 };
@@ -97,28 +97,35 @@ pub(crate) fn extract_custom_predicate_verifications(
     params: &Params,
     aux_list: &mut [OperationAux],
     operations: &[middleware::Operation],
+    statements: &[middleware::Statement],
     custom_predicate_batches: &[Arc<CustomPredicateBatch>],
 ) -> Result<Vec<CustomPredicateVerification>> {
     let mut table = Vec::new();
-    for (i, op) in operations.iter().enumerate() {
+    for (i, (op, st)) in zip_eq(operations.iter(), statements.iter()).enumerate() {
         if let middleware::Operation::Custom(cpr, sts) = op {
-            let wildcard_values =
-                resolve_wildcard_values(params, cpr.predicate(), sts).expect("resolved wildcards");
-            let sts = sts.iter().map(|s| Statement::from(s.clone())).collect();
-            let batch_index = custom_predicate_batches
-                .iter()
-                .enumerate()
-                .find_map(|(i, cpb)| (cpb.id() == cpr.batch.id()).then_some(i))
-                .expect("find the custom predicate from the extracted unique list");
-            let custom_predicate_table_index =
-                batch_index * params.max_custom_batch_size + cpr.index;
-            aux_list[i] = OperationAux::CustomPredVerifyIndex(table.len());
-            table.push(CustomPredicateVerification {
-                custom_predicate_table_index,
-                custom_predicate: cpr.clone(),
-                args: wildcard_values,
-                op_args: sts,
-            });
+            if let middleware::Statement::Custom(st_cpr, st_args) = st {
+                assert_eq!(cpr, st_cpr);
+                let wildcard_values =
+                    wildcard_values_from_op_st(params, cpr.predicate(), sts, st_args)
+                        .expect("resolved wildcards");
+                let sts = sts.iter().map(|s| Statement::from(s.clone())).collect();
+                let batch_index = custom_predicate_batches
+                    .iter()
+                    .enumerate()
+                    .find_map(|(i, cpb)| (cpb.id() == cpr.batch.id()).then_some(i))
+                    .expect("find the custom predicate from the extracted unique list");
+                let custom_predicate_table_index =
+                    batch_index * params.max_custom_batch_size + cpr.index;
+                aux_list[i] = OperationAux::CustomPredVerifyIndex(table.len());
+                table.push(CustomPredicateVerification {
+                    custom_predicate_table_index,
+                    custom_predicate: cpr.clone(),
+                    args: wildcard_values,
+                    op_args: sts,
+                });
+            } else {
+                panic!("Custom operation paired with non-custom statement");
+            }
         }
     }
 
@@ -499,6 +506,7 @@ impl MainPodProver for Prover {
             params,
             &mut aux_list,
             inputs.operations,
+            inputs.statements,
             &custom_predicate_batches,
         )?;
         let public_key_of_sks =
@@ -823,6 +831,7 @@ pub mod tests {
         frontend::{
             self, literal, CustomPredicateBatchBuilder, MainPodBuilder, StatementTmplBuilder as STB,
         },
+        lang::parse,
         middleware::{
             self, containers::Set, CustomPredicateRef, NativePredicate as NP, Signer as _,
             DEFAULT_VD_LIST, DEFAULT_VD_SET,
@@ -1153,5 +1162,41 @@ pub mod tests {
         let prover = Prover {};
         builder.prove(&prover)?;
         Ok(())
+    }
+
+    #[test]
+    fn test_undetermined_values() {
+        let params = Default::default();
+        let batch = parse(
+            r#"
+            two_equal(x,y,z) = OR(
+                Equal(?x,?y)
+                Equal(?y,?z)
+                Equal(?x,?z)
+            )
+            "#,
+            &params,
+            &[],
+        )
+        .unwrap()
+        .custom_batch;
+        let mut builder = MainPodBuilder::new(&params, &DEFAULT_VD_SET);
+        let cpr = CustomPredicateRef { batch, index: 0 };
+        let eq_st = builder.priv_op(frontend::Operation::eq(1, 1)).unwrap();
+        let op = frontend::Operation::custom(
+            cpr.clone(),
+            [
+                eq_st,
+                middleware::Statement::None,
+                middleware::Statement::None,
+            ],
+        );
+        let st = middleware::Statement::Custom(
+            cpr,
+            [1, 1, 2].into_iter().map(middleware::Value::from).collect(),
+        );
+        builder.insert(true, (st, op)).unwrap();
+        let prover = Prover {};
+        builder.prove(&prover).unwrap();
     }
 }
