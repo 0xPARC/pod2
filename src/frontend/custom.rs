@@ -98,6 +98,35 @@ impl StatementTmplBuilder {
                     args: new_args,
                 }
             }
+            Predicate::Native(NativePredicate::DictInsert) => StatementTmplBuilder {
+                predicate: Predicate::Native(NativePredicate::ContainerInsert),
+                args: self.args,
+            },
+            Predicate::Native(NativePredicate::SetInsert) => {
+                let mut new_args = self.args.clone();
+                new_args.push(self.args[2].clone());
+                StatementTmplBuilder {
+                    predicate: Predicate::Native(NativePredicate::ContainerInsert),
+                    args: new_args,
+                }
+            }
+            Predicate::Native(NativePredicate::DictUpdate)
+            | Predicate::Native(NativePredicate::ArrayUpdate) => StatementTmplBuilder {
+                predicate: Predicate::Native(NativePredicate::ContainerUpdate),
+                args: self.args,
+            },
+            Predicate::Native(NativePredicate::DictDelete) => StatementTmplBuilder {
+                predicate: Predicate::Native(NativePredicate::ContainerDelete),
+                args: self.args,
+            },
+            Predicate::Native(NativePredicate::SetDelete) => {
+                let mut new_args = self.args.clone();
+                new_args.push(self.args[2].clone());
+                StatementTmplBuilder {
+                    predicate: Predicate::Native(NativePredicate::ContainerDelete),
+                    args: new_args,
+                }
+            }
             _ => self,
         }
     }
