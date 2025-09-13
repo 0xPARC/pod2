@@ -2,6 +2,7 @@
 #![allow(clippy::uninlined_format_args)] // TODO: Remove this in another PR
 #![allow(clippy::manual_repeat_n)] // TODO: Remove this in another PR
 #![allow(clippy::large_enum_variant)] // TODO: Remove this in another PR
+#![feature(macro_metavar_expr_concat)]
 #![feature(mapped_lock_guards)]
 
 pub mod backends;

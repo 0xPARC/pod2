@@ -4,7 +4,6 @@ use std::{
 };
 
 use base64::{prelude::BASE64_STANDARD, Engine};
-use paste::paste;
 use serde::{
     de::{
         value::{
@@ -473,10 +472,8 @@ macro_rules! serialize_type {
 macro_rules! map_expected {
     ( $($item: ident )* ) => {
         $(
-            paste! {
-                fn [<serialize_ $item>](self, _: serialize_type!($item)) -> Result<Self::Ok, Self::Error> {
-                    Err(serde::ser::Error::custom("expected a map"))
-                }
+            fn ${concat(serialize_, $item)}(self, _: serialize_type!($item)) -> Result<Self::Ok, Self::Error> {
+                Err(serde::ser::Error::custom("expected a map"))
             }
         )*
     }
@@ -734,10 +731,8 @@ impl SerializeStructVariant for DictionarySerializeStructVariant {
 macro_rules! option_serializer_forward {
     ( $($item: ident )* ) => {
         $(
-            paste! {
-                fn [<serialize_ $item>](self, v: serialize_type!($item)) -> Result<Self::Ok, Self::Error> {
-                    self.0.[<serialize_ $item>](v).map(Some)
-                }
+            fn ${concat(serialize_, $item)}(self, v: serialize_type!($item)) -> Result<Self::Ok, Self::Error> {
+                self.0.${concat(serialize_, $item)}(v).map(Some)
             }
         )*
     }
@@ -1238,13 +1233,11 @@ impl<'a, 'de> IntoDeserializer<'de, serde::de::value::Error> for StructField<'a>
 macro_rules! deserialize_forward {
     ( $($item: ident )* ) => {
         $(
-            paste! {
-                fn [<deserialize_ $item>]<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-                where
-                    V: serde::de::Visitor<'de>,
-                {
-                    self.0.[<deserialize_ $item>](visitor)
-                }
+            fn ${concat(deserialize_, $item)}<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+            where
+                V: serde::de::Visitor<'de>,
+            {
+                self.0.${concat(deserialize_, $item)}(visitor)
             }
         )*
     }
