@@ -1170,9 +1170,9 @@ pub mod tests {
         let batch = parse(
             r#"
             two_equal(x,y,z) = OR(
-                Equal(?x,?y)
-                Equal(?y,?z)
-                Equal(?x,?z)
+                Equal(x,y)
+                Equal(y,z)
+                Equal(x,z)
             )
             "#,
             &params,
