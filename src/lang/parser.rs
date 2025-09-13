@@ -32,9 +32,9 @@ pub fn parse_podlang(input: &str) -> Result<Pairs<'_, Rule>, ParseError> {
 mod tests {
     use super::*;
 
-    fn assert_parses(rule: Rule, input: &str) {
+    fn assert_parses(rule: Rule, input: &str) -> Pairs<'_, Rule> {
         match PodlangParser::parse(rule, input) {
-            Ok(_) => (), // Successfully parsed
+            Ok(pairs) => pairs, // Successfully parsed
             Err(e) => panic!("Failed to parse input:\n{}\nError: {}", input, e),
         }
     }
@@ -54,12 +54,17 @@ mod tests {
         assert_parses(Rule::document, " ");
         assert_parses(Rule::document, "\n\n");
         assert_parses(Rule::document, "// comment only");
+        assert_parses(Rule::document, "/* comment only */");
     }
 
     #[test]
     fn test_parse_comment() {
         assert_parses(Rule::document, "// This is a comment\n");
         assert_parses(Rule::document, " // Indented comment");
+        assert_parses(Rule::document, "/* This is a comment*/\n");
+        assert_fails(Rule::document, "/* Wrong closing characters/*\n");
+        assert_parses(Rule::literal_array, "[1// No nested comments /*\n, 2]");
+        assert_parses(Rule::literal_array, "[1/* No nested comments //*/, 2]\n");
     }
 
     #[test]
@@ -74,21 +79,52 @@ mod tests {
 
     #[test]
     fn test_parse_wildcard() {
-        assert_parses(Rule::wildcard, "?Var");
-        assert_parses(Rule::wildcard, "?_Internal");
-        assert_parses(Rule::wildcard, "?X1");
-        assert_fails(Rule::test_wildcard, "NotAVar"); // Use test rule
-        assert_fails(Rule::test_wildcard, "?"); // Use test rule
-        assert_fails(Rule::test_wildcard, "?invalid-char"); // Use test rule
+        assert_parses(Rule::identifier, "Var");
+        assert_parses(Rule::identifier, "_Internal");
+        assert_parses(Rule::identifier, "X1");
+        assert_fails(Rule::test_identifier, ""); // Use test rule
+        assert_fails(Rule::test_identifier, "invalid-char"); // Use test rule
+        assert_fails(Rule::test_identifier, "?noMoreQuestionMarks"); // Use test rule
+        assert_fails(Rule::test_identifier, "123noStartingDigits"); // Use test rule
+        assert_fails(Rule::test_identifier, "true"); // Use test rule
+        assert_fails(Rule::test_identifier, "false"); // Use test rule
     }
 
     #[test]
     fn test_parse_anchored_key() {
-        assert_parses(Rule::anchored_key, "?PodVar[\"literal_key\"]");
-        assert_fails(Rule::anchored_key, "PodVar[\"key\"]"); // Needs wildcard for pod
-        assert_fails(Rule::anchored_key, "?PodVar[invalid_key]"); // Key must be literal string or wildcard
-        assert_fails(Rule::anchored_key, "?PodVar[]"); // Key cannot be empty
-        assert_fails(Rule::anchored_key, "?PodVar[?key]"); // Key cannot be wildcard
+        assert_parses(Rule::anchored_key, "PodVar[\"literal_key\"]");
+        assert_parses(Rule::anchored_key, "PodVar.literal_key");
+        assert_fails(Rule::anchored_key, "PodVar[invalid_key]"); // Key must be literal string
+        assert_fails(Rule::anchored_key, "PodVar.123"); // Key must be valid identifier
+        assert_fails(Rule::anchored_key, "PodVar[]"); // Key cannot be empty
+        assert_fails(Rule::anchored_key, "PodVar."); // Key cannot be empty
+        assert_fails(Rule::anchored_key, "?PodVar[\"key\"]"); // No more question marks on wildcards
+        assert_fails(Rule::anchored_key, "?PodVar.key"); // No more question marks on wildcards
+    }
+
+    #[test]
+    fn test_parse_arg_ambiguity() {
+        fn assert_inner(rule: &Rule, input: &str) {
+            assert_eq!(
+                assert_parses(Rule::test_statement_arg, input)
+                    .next()
+                    .unwrap()
+                    .into_inner()
+                    .next()
+                    .unwrap()
+                    .into_inner()
+                    .next()
+                    .unwrap()
+                    .as_rule(),
+                *rule
+            );
+        }
+
+        // Ensure different types of args parse in the right priority order.
+        assert_inner(&Rule::identifier, "someVar");
+        assert_inner(&Rule::anchored_key, "someVar[\"key\"]");
+        assert_inner(&Rule::literal_value, "true");
+        assert_inner(&Rule::literal_value, "PublicKey(abc)");
     }
 
     #[test]
@@ -169,10 +205,10 @@ mod tests {
             // Trimmed leading/trailing whitespace
             r#"REQUEST(
                 // Check equality
-                Equal(?gov["socialSecurityNumber"], ?pay["socialSecurityNumber"])
+                Equal(gov["socialSecurityNumber"], pay["socialSecurityNumber"])
                 // Check age > 18
-                ValueOf(?const_holder["const_18y"], 1169909388)
-                Lt(?gov["dateOfBirth"], ?const_holder["const_18y"])
+                ValueOf(const_holder["const_18y"], 1169909388)
+                Lt(gov["dateOfBirth"], const_holder["const_18y"])
             )"#,
         );
     }
@@ -183,14 +219,14 @@ mod tests {
             Rule::test_custom_predicate_def,
             // Trimmed leading/trailing whitespace
             r#"my_pred(A, B) = AND(
-                Equal(?A["foo"], ?B["bar"])
+                Equal(A["foo"], B["bar"])
             )"#,
         );
         assert_parses(
             Rule::test_custom_predicate_def,
             // Trimmed leading/trailing whitespace
             r#"pred_with_private(X, private: TempKey) = OR(
-                Equal(?X["key"], 1234)
+                Equal(X["key"], 1234)
             )"#,
         );
         assert_fails(
@@ -206,15 +242,15 @@ mod tests {
             r#"// File defining one predicate and one request
             is_valid_user(UserPod, private: ConstVal) = AND(
                 // User age must be > 18 (using a constant value)
-                ValueOf(?ConstVal["min_age"], 18)
-                Gt(?UserPod["age"], ?ConstVal["min_age"])
+                ValueOf(ConstVal["min_age"], 18)
+                Gt(UserPod["age"], ConstVal["min_age"])
                 // User must not be banned
-                NotContains(?_BANNED_USERS["list"], ?UserPod["userId"])
+                NotContains(_BANNED_USERS.list, UserPod.userId)
             )
 
             REQUEST(
-                is_valid_user(?SomeUser)
-                Equal(?SomeUser["country"], ?Other["country"])
+                is_valid_user(SomeUser)
+                Equal(SomeUser["country"], Other["country"])
             )"#,
         );
     }

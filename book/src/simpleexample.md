@@ -59,7 +59,7 @@ Equals(a, c)
 First, we need to decompose all the anchored keys as (dict, key) pairs.  This is the frontend description of the deduction rule.
 ```
 IF
-Equals(a_or[a_key], b_or[b_key)
+Equals(a_or[a_key], b_or[b_key])
 AND
 Equals(b_or[b_key], c_or[c_key])
 THEN
@@ -118,10 +118,10 @@ The wildcard system handles this very naturally, since the dict of the anchored 
 ```
 eth_friend(src_or, src_key, dst_or, dst_key) = and<
     // the attestation dict is signed by (src_or, src_key)
-    SignedBy(?attestation_dict, ?src_or[?src_key])
+    SignedBy(attestation_dict, src_or[src_key])
 
     // that same attestation pod has an "attestation"
-    Equal(?attestation_dict["attestation"], ?dst_or[?dst_key])
+    Equal(attestation_dict["attestation"], dst_or[dst_key])
 >
 ```
 

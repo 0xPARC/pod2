@@ -989,6 +989,6 @@ pub trait MainPodProver {
 }
 
 pub trait ToFields {
-    /// returns Vec<F> representation of the type
+    /// returns `Vec<F>` representation of the type
     fn to_fields(&self, params: &Params) -> Vec<F>;
 }

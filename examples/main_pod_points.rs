@@ -72,17 +72,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let input = format!(
         r#"
         points(player, level, points, private: points_dict) = AND(
-            SignedBy(?points_dict, PublicKey({game_pk}))
-            Contains(?points_dict, "player", ?player)
-            Contains(?points_dict, "level", ?level)
-            Contains(?points_dict, "points", ?points)
+            SignedBy(points_dict, PublicKey({game_pk}))
+            Contains(points_dict, "player", player)
+            Contains(points_dict, "level", level)
+            Contains(points_dict, "points", points)
         )
 
         over_9000(player, private: points_lvl_1, points_lvl_2, points_total) = AND(
-            points(?player, 1, ?points_lvl_1)
-            points(?player, 2, ?points_lvl_2)
-            SumOf(?points_total, ?points_lvl_1, ?points_lvl_2)
-            Gt(?points_total, 9000)
+            points(player, 1, points_lvl_1)
+            points(player, 2, points_lvl_2)
+            SumOf(points_total, points_lvl_1, points_lvl_2)
+            Gt(points_total, 9000)
         )
     "#,
         game_pk = game_pk,

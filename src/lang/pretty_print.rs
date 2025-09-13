@@ -227,7 +227,7 @@ mod tests {
     fn test_simple_predicate_pretty_print() {
         let params = Params::default();
 
-        // Create a simple predicate: is_equal(PodA, PodB) = AND(Equal(?PodA["key"], ?PodB["key"]))
+        // Create a simple predicate: is_equal(PodA, PodB) = AND(Equal(PodA["key"], PodB["key"]))
         let statements = vec![StatementTmpl {
             pred: Predicate::Native(NativePredicate::Equal),
             args: vec![
@@ -254,7 +254,7 @@ mod tests {
         let pretty_printed = predicate.to_podlang_string();
 
         let expected = r#"is_equal(PodA, PodB) = AND(
-    Equal(?PodA["key"], ?PodB["key"])
+    Equal(PodA["key"], PodB["key"])
 )"#;
         assert_eq!(pretty_printed, expected);
     }
@@ -263,7 +263,7 @@ mod tests {
     fn test_predicate_with_private_args() {
         let params = Params::default();
 
-        // Create: uses_private(A, private: Temp) = AND(Equal(?A["input"], ?Temp["const"]))
+        // Create: uses_private(A, private: Temp) = AND(Equal(A["input"], Temp["const"]))
         let statements = vec![StatementTmpl {
             pred: Predicate::Native(NativePredicate::Equal),
             args: vec![
@@ -290,7 +290,7 @@ mod tests {
         let pretty_printed = predicate.to_podlang_string();
 
         let expected = r#"uses_private(A, private: Temp) = AND(
-    Equal(?A["input"], ?Temp["const"])
+    Equal(A["input"], Temp["const"])
 )"#;
         assert_eq!(pretty_printed, expected);
     }
@@ -299,7 +299,7 @@ mod tests {
     fn test_statement_with_literal_args() {
         let params = Params::default();
 
-        // Create: check_value(Pod) = AND(Equal(?Pod["field"], 42))
+        // Create: check_value(Pod) = AND(Equal(Pod["field"], 42))
         let statements = vec![StatementTmpl {
             pred: Predicate::Native(NativePredicate::Equal),
             args: vec![
@@ -323,7 +323,7 @@ mod tests {
         let pretty_printed = predicate.to_podlang_string();
 
         let expected = r#"check_value(Pod) = AND(
-    Equal(?Pod["field"], 42)
+    Equal(Pod["field"], 42)
 )"#;
         assert_eq!(pretty_printed, expected);
     }
@@ -332,7 +332,7 @@ mod tests {
     fn test_or_predicate() {
         let params = Params::default();
 
-        // Create: either_or(A, B) = OR(Equal(?A["x"], 1), Equal(?B["y"], 2))
+        // Create: either_or(A, B) = OR(Equal(A["x"], 1), Equal(B["y"], 2))
         let statements = vec![
             StatementTmpl {
                 pred: Predicate::Native(NativePredicate::Equal),
@@ -368,8 +368,8 @@ mod tests {
         let pretty_printed = predicate.to_podlang_string();
 
         let expected = r#"either_or(A, B) = OR(
-    Equal(?A["x"], 1)
-    Equal(?B["y"], 2)
+    Equal(A["x"], 1)
+    Equal(B["y"], 2)
 )"#;
         assert_eq!(pretty_printed, expected);
     }
@@ -402,7 +402,7 @@ mod tests {
     fn test_round_trip_simple_predicate() {
         let input = r#"
             simple_equal(PodA, PodB) = AND(
-                Equal(?PodA["key"], ?PodB["key"])
+                Equal(PodA["key"], PodB["key"])
             )
         "#;
         assert_round_trip(input);
@@ -412,8 +412,8 @@ mod tests {
     fn test_round_trip_predicate_with_private_args() {
         let input = r#"
             uses_private(A, private: Temp) = AND(
-                Equal(?A["input_key"], ?Temp["const_key"])
-                Equal(?Temp["const_key"], "some_value")
+                Equal(A["input_key"], Temp["const_key"])
+                Equal(Temp["const_key"], "some_value")
             )
         "#;
         assert_round_trip(input);
@@ -423,8 +423,8 @@ mod tests {
     fn test_round_trip_or_predicate() {
         let input = r#"
             either_condition(X, Y) = OR(
-                Equal(?X["status"], "active")
-                Equal(?Y["type"], 1)
+                Equal(X["status"], "active")
+                Equal(Y["type"], 1)
             )
         "#;
         assert_round_trip(input);
@@ -434,12 +434,12 @@ mod tests {
     fn test_round_trip_multiple_predicates() {
         let input = r#"
             pred_one(A) = AND(
-                Equal(?A["field"], 42)
+                Equal(A["field"], 42)
             )
 
             pred_two(B, C) = AND(
-                Equal(?B["value"], ?C["value"])
-                NotEqual(?B["id"], ?C["id"])
+                Equal(B["value"], C["value"])
+                NotEqual(B["id"], C["id"])
             )
         "#;
         assert_round_trip(input);
@@ -449,10 +449,10 @@ mod tests {
     fn test_round_trip_various_literals() {
         let input = r#"
             literal_test(Pod) = AND(
-                Equal(?Pod["int_field"], 123)
-                Equal(?Pod["string_field"], "hello world")
-                Equal(?Pod["bool_field"], true)
-                NotEqual(?Pod["other_bool"], false)
+                Equal(Pod["int_field"], 123)
+                Equal(Pod["string_field"], "hello world")
+                Equal(Pod["bool_field"], true)
+                NotEqual(Pod["other_bool"], false)
             )
         "#;
         assert_round_trip(input);
@@ -462,11 +462,11 @@ mod tests {
     fn test_round_trip_complex_predicate() {
         let input = r#"
             complex_predicate(User, Document, private: Verifier, Timestamp) = AND(
-                Equal(?User["active"], true)
-                Equal(?Document["owner"], ?User["id"])
-                Equal(?Verifier["type"], 1)
-                Lt(?Timestamp["created"], ?Timestamp["expires"])
-                NotContains(?Document["blocked_users"], ?User["id"])
+                Equal(User["active"], true)
+                Equal(Document["owner"], User["id"])
+                Equal(Verifier["type"], 1)
+                Lt(Timestamp["created"], Timestamp["expires"])
+                NotContains(Document["blocked_users"], User["id"])
             )
         "#;
         assert_round_trip(input);
@@ -476,10 +476,10 @@ mod tests {
     fn test_round_trip_with_sum_and_hash_operations() {
         let input = r#"
             math_operations(A, B, C) = AND(
-                SumOf(?A["value"], ?B["value"], ?C["total"])
-                ProductOf(?A["factor"], ?B["factor"], ?C["product"])
-                MaxOf(?A["score"], ?B["score"], ?C["max_score"])
-                HashOf(?A["data"], ?B["salt"], ?C["hash"])
+                SumOf(A["value"], B["value"], C["total"])
+                ProductOf(A["factor"], B["factor"], C["product"])
+                MaxOf(A["score"], B["score"], C["max_score"])
+                HashOf(A["data"], B["salt"], C["hash"])
             )
         "#;
         assert_round_trip(input);
@@ -489,13 +489,13 @@ mod tests {
     fn test_round_trip_nested_custom_calls() {
         let input = r#"
             base_check(Pod) = AND(
-                Equal(?Pod["status"], "valid")
+                Equal(Pod["status"], "valid")
             )
 
             derived_check(PodA, PodB) = AND(
-                base_check(?PodA)
-                base_check(?PodB)
-                NotEqual(?PodA["id"], ?PodB["id"])
+                base_check(PodA)
+                base_check(PodB)
+                NotEqual(PodA["id"], PodB["id"])
             )
         "#;
         assert_round_trip(input);
@@ -505,8 +505,8 @@ mod tests {
     fn test_round_trip_container_operations() {
         let input = r#"
             container_checks(List, Item, Dict, Key, Value) = AND(
-                Contains(?List, ?Item, ?Value)
-                NotContains(?Dict, ?Key)
+                Contains(List, Item, Value)
+                NotContains(Dict, Key)
             )
         "#;
         assert_round_trip(input);
@@ -518,7 +518,7 @@ mod tests {
         let input = format!(
             r#"
             secret_key_test(Pod) = AND(
-                Equal(?Pod["sk"], {})
+                Equal(Pod["sk"], {})
             )
             "#,
             Value::from(sk.clone()).to_podlang_string()
@@ -530,13 +530,13 @@ mod tests {
     fn test_pretty_print_demonstration() {
         let input = r#"
             base_check(Pod) = AND(
-                Equal(?Pod["status"], "valid")
+                Equal(Pod["status"], "valid")
             )
 
             derived_check(PodA, PodB) = AND(
-                base_check(?PodA)
-                base_check(?PodB)
-                NotEqual(?PodA["id"], ?PodB["id"])
+                base_check(PodA)
+                base_check(PodB)
+                NotEqual(PodA["id"], PodB["id"])
             )
         "#;
 
@@ -603,7 +603,7 @@ mod tests {
             let input = format!(
                 r#"
                 test_pred(Pod) = AND(
-                    Equal(?Pod["field"], "{}")
+                    Equal(Pod["field"], "{}")
                 )
                 "#,
                 // Manually escape for the input - this simulates what would be in actual Podlang source
