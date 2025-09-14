@@ -1,7 +1,7 @@
 //! The middleware includes the type definitions and the traits used to connect the frontend and
 //! the backend.
 
-use std::sync::Arc;
+use std::{hash::BuildHasher, sync::Arc};
 
 use hex::ToHex;
 use itertools::Itertools;
@@ -141,13 +141,17 @@ impl From<RawValue> for TypedValue {
     }
 }
 
+fn value_is_not<T>(value: &TypedValue, expected: &str) -> Result<T> {
+    Err(Error::custom(format!("Value {value} not {expected}")))
+}
+
 impl TryFrom<&TypedValue> for i64 {
     type Error = Error;
     fn try_from(v: &TypedValue) -> std::result::Result<Self, Self::Error> {
         if let TypedValue::Int(n) = v {
             Ok(*n)
         } else {
-            Err(Error::custom("Value not an int".to_string()))
+            value_is_not(v, "an int")
         }
     }
 }
@@ -157,10 +161,7 @@ impl TryFrom<&TypedValue> for String {
     fn try_from(tv: &TypedValue) -> Result<Self> {
         match tv {
             TypedValue::String(s) => Ok(s.clone()),
-            _ => Err(Error::custom(format!(
-                "Value {} cannot be converted to a string.",
-                tv
-            ))),
+            _ => value_is_not(tv, "a string"),
         }
     }
 }
@@ -178,7 +179,7 @@ impl TryFrom<&TypedValue> for PublicKey {
         if let TypedValue::PublicKey(pk) = v {
             Ok(*pk)
         } else {
-            Err(Error::custom("Value not a public key".to_string()))
+            value_is_not(v, "a public key")
         }
     }
 }
@@ -189,8 +190,146 @@ impl TryFrom<&TypedValue> for SecretKey {
         if let TypedValue::SecretKey(sk) = v {
             Ok(sk.clone())
         } else {
-            Err(Error::custom("Value not a secret key".to_string()))
+            value_is_not(v, "a secret key")
         }
+    }
+}
+
+impl TryFrom<&TypedValue> for Array {
+    type Error = Error;
+    fn try_from(value: &TypedValue) -> std::result::Result<Self, Self::Error> {
+        match value {
+            TypedValue::Array(a) => Ok(a.clone()),
+            _ => value_is_not(value, "an array"),
+        }
+    }
+}
+
+impl TryFrom<&TypedValue> for Set {
+    type Error = Error;
+    fn try_from(value: &TypedValue) -> std::result::Result<Self, Self::Error> {
+        match value {
+            TypedValue::Set(s) => Ok(s.clone()),
+            _ => value_is_not(value, "a set"),
+        }
+    }
+}
+
+impl TryFrom<&TypedValue> for Dictionary {
+    type Error = Error;
+    fn try_from(value: &TypedValue) -> std::result::Result<Self, Self::Error> {
+        match value {
+            TypedValue::Dictionary(d) => Ok(d.clone()),
+            _ => value_is_not(value, "a dictionary"),
+        }
+    }
+}
+
+impl From<&TypedValue> for Value {
+    fn from(value: &TypedValue) -> Self {
+        Value::from(value.clone())
+    }
+}
+
+impl<T> TryFrom<&TypedValue> for Vec<T>
+where
+    T: for<'a> TryFrom<&'a TypedValue>,
+    for<'a> Error: From<<T as TryFrom<&'a TypedValue>>::Error>,
+{
+    type Error = Error;
+    fn try_from(value: &TypedValue) -> std::result::Result<Self, Self::Error> {
+        match value {
+            TypedValue::Array(a) => a
+                .array()
+                .iter()
+                .map(|x| T::try_from(x.typed()).map_err(Error::from))
+                .collect(),
+            _ => value_is_not(value, "an array"),
+        }
+    }
+}
+
+fn try_from_set<C, T>(v: &TypedValue) -> Result<C>
+where
+    C: FromIterator<T>,
+    T: for<'a> TryFrom<&'a TypedValue>,
+    for<'a> Error: From<<T as TryFrom<&'a TypedValue>>::Error>,
+{
+    match v {
+        TypedValue::Set(s) => s
+            .set()
+            .iter()
+            .map(|x| T::try_from(x.typed()).map_err(Error::from))
+            .collect(),
+        _ => value_is_not(v, "a set"),
+    }
+}
+
+impl<T, S> TryFrom<&TypedValue> for std::collections::HashSet<T, S>
+where
+    T: Eq + std::hash::Hash + for<'a> TryFrom<&'a TypedValue>,
+    for<'a> Error: From<<T as TryFrom<&'a TypedValue>>::Error>,
+    S: BuildHasher + Default,
+{
+    type Error = Error;
+    fn try_from(value: &TypedValue) -> std::result::Result<Self, Self::Error> {
+        try_from_set(value)
+    }
+}
+
+impl<T> TryFrom<&TypedValue> for std::collections::BTreeSet<T>
+where
+    T: Ord + for<'a> TryFrom<&'a TypedValue>,
+    for<'a> Error: From<<T as TryFrom<&'a TypedValue>>::Error>,
+{
+    type Error = Error;
+    fn try_from(value: &TypedValue) -> std::result::Result<Self, Self::Error> {
+        try_from_set(value)
+    }
+}
+
+fn try_from_dict<C, K, V>(v: &TypedValue) -> Result<C>
+where
+    C: FromIterator<(K, V)>,
+    K: TryFrom<String>,
+    V: for<'a> TryFrom<&'a TypedValue>,
+    Error: From<<K as TryFrom<String>>::Error>,
+    for<'a> Error: From<<V as TryFrom<&'a TypedValue>>::Error>,
+{
+    match v {
+        TypedValue::Dictionary(d) => d
+            .kvs()
+            .iter()
+            .map(|(k, v)| Ok((K::try_from(k.name.clone())?, V::try_from(v.typed())?)))
+            .collect(),
+        _ => value_is_not(v, "a dictionary"),
+    }
+}
+
+impl<K, V, S> TryFrom<&TypedValue> for std::collections::HashMap<K, V, S>
+where
+    K: Eq + std::hash::Hash + TryFrom<String>,
+    V: for<'a> TryFrom<&'a TypedValue>,
+    Error: From<<K as TryFrom<String>>::Error>,
+    for<'a> Error: From<<V as TryFrom<&'a TypedValue>>::Error>,
+    S: BuildHasher + Default,
+{
+    type Error = Error;
+    fn try_from(value: &TypedValue) -> std::result::Result<Self, Self::Error> {
+        try_from_dict(value)
+    }
+}
+
+impl<K, V> TryFrom<&TypedValue> for std::collections::BTreeMap<K, V>
+where
+    K: Ord + TryFrom<String>,
+    V: for<'a> TryFrom<&'a TypedValue>,
+    Error: From<<K as TryFrom<String>>::Error>,
+    for<'a> Error: From<<V as TryFrom<&'a TypedValue>>::Error>,
+{
+    type Error = Error;
+    fn try_from(value: &TypedValue) -> std::result::Result<Self, Self::Error> {
+        try_from_dict(value)
     }
 }
 

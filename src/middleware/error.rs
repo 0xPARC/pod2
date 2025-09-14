@@ -1,6 +1,6 @@
 //! middleware errors
 
-use std::{backtrace::Backtrace, fmt::Debug};
+use std::{backtrace::Backtrace, convert::Infallible, fmt::Debug};
 
 use crate::middleware::{
     CustomPredicate, Hash, Key, Operation, Predicate, Statement, StatementArg, StatementTmplArg,
@@ -54,6 +54,12 @@ pub enum Error {
 impl Debug for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(self, f)
+    }
+}
+
+impl From<Infallible> for Error {
+    fn from(value: Infallible) -> Self {
+        match value {}
     }
 }
 
@@ -124,7 +130,7 @@ impl Error {
     pub(crate) fn unsatisfied_custom_predicate_disjunction(pred: CustomPredicate) -> Self {
         new!(UnsatisfiedCustomPredicateDisjunction(pred))
     }
-    pub(crate) fn custom(s: String) -> Self {
+    pub fn custom(s: String) -> Self {
         new!(Custom(s))
     }
 }
