@@ -14,6 +14,7 @@ use containers::{Array, Dictionary, Set};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 pub mod containers;
+pub mod convert;
 mod custom;
 mod error;
 mod operation;
@@ -31,8 +32,9 @@ pub use pod_deserialization::*;
 use serialization::*;
 pub use statement::*;
 
-use crate::backends::plonky2::primitives::merkletree::{
-    MerkleProof, MerkleTreeStateTransitionProof,
+use crate::{
+    backends::plonky2::primitives::merkletree::{MerkleProof, MerkleTreeStateTransitionProof},
+    middleware::convert::{try_from_array, try_from_dict, try_from_set},
 };
 
 // TODO: Move all value-related types to to `value.rs`
@@ -238,30 +240,7 @@ where
 {
     type Error = Error;
     fn try_from(value: &TypedValue) -> std::result::Result<Self, Self::Error> {
-        match value {
-            TypedValue::Array(a) => a
-                .array()
-                .iter()
-                .map(|x| T::try_from(x.typed()).map_err(Error::from))
-                .collect(),
-            _ => value_is_not(value, "an array"),
-        }
-    }
-}
-
-fn try_from_set<C, T>(v: &TypedValue) -> Result<C>
-where
-    C: FromIterator<T>,
-    T: for<'a> TryFrom<&'a TypedValue>,
-    for<'a> Error: From<<T as TryFrom<&'a TypedValue>>::Error>,
-{
-    match v {
-        TypedValue::Set(s) => s
-            .set()
-            .iter()
-            .map(|x| T::try_from(x.typed()).map_err(Error::from))
-            .collect(),
-        _ => value_is_not(v, "a set"),
+        try_from_array(value)
     }
 }
 
@@ -285,24 +264,6 @@ where
     type Error = Error;
     fn try_from(value: &TypedValue) -> std::result::Result<Self, Self::Error> {
         try_from_set(value)
-    }
-}
-
-fn try_from_dict<C, K, V>(v: &TypedValue) -> Result<C>
-where
-    C: FromIterator<(K, V)>,
-    K: TryFrom<String>,
-    V: for<'a> TryFrom<&'a TypedValue>,
-    Error: From<<K as TryFrom<String>>::Error>,
-    for<'a> Error: From<<V as TryFrom<&'a TypedValue>>::Error>,
-{
-    match v {
-        TypedValue::Dictionary(d) => d
-            .kvs()
-            .iter()
-            .map(|(k, v)| Ok((K::try_from(k.name.clone())?, V::try_from(v.typed())?)))
-            .collect(),
-        _ => value_is_not(v, "a dictionary"),
     }
 }
 
