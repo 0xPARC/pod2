@@ -36,12 +36,50 @@ use crate::{
     },
 };
 
+/// Indicates that `value` should be serialized to a `Set` rather than
+/// an `Array`.
+///
+/// Serde regards both arrays and sets as "sequences", so the serializer
+/// cannot distinguish between the two.  By default, [`ValueSerializer`] will
+/// serialize sequences to an `Array`.  This function hints to the serializer
+/// that it should serialize `value` as a `Set` instead.  If `value` is not a sequence,
+/// then the hint has no effect.
+/// ```
+/// use pod2::middleware::{Key, TypedValue,
+///     serializer::{DictionarySerializer, serialize_seq_as_set}};
+/// use std::collections::HashSet;
+/// use serde::Serialize;
+///
+/// #[derive(Serialize)]
+/// struct ExampleStruct {
+///     arr: HashSet<i64>,
+///     #[serde(serialize_with = "serialize_seq_as_set")]
+///     set: HashSet<i64>
+/// }
+///
+/// let set: HashSet<i64> = [2].into_iter().collect();
+/// let ex = ExampleStruct {
+///     arr: set.clone(),
+///     set
+/// };
+/// let d = ex.serialize(DictionarySerializer::new(6)).unwrap();
+/// assert!(matches!(d.get(&Key::from("arr")).unwrap().typed(), TypedValue::Array(_)));
+/// assert!(matches!(d.get(&Key::from("set")).unwrap().typed(), TypedValue::Set(_)));
+/// ```
+pub fn serialize_seq_as_set<T: Serialize + ?Sized, S: Serializer>(
+    value: &T,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.serialize_newtype_struct("pod2::AsSet", value)
+}
+
 #[derive(Clone, Copy)]
 enum ValueSerializerState {
     Default,
     RawValue,
     Point,
     SecretKey,
+    AsSet,
 }
 
 #[derive(Clone, Copy)]
@@ -58,8 +96,13 @@ pub struct DictionarySerializer {
     container_depth: usize,
 }
 
+enum SeqData {
+    Array(Vec<Value>),
+    Set(HashSet<Value>),
+}
+
 pub struct ValueSerializeSeq {
-    data: Vec<Value>,
+    data: SeqData,
     container_depth: usize,
 }
 
@@ -109,6 +152,7 @@ impl ValueSerializer {
             "pod2::RawValue" => self.state = ValueSerializerState::RawValue,
             "pod2::Point" => self.state = ValueSerializerState::Point,
             "pod2::SecretKey" => self.state = ValueSerializerState::SecretKey,
+            "pod2::AsSet" => self.state = ValueSerializerState::AsSet,
             _ => (),
         }
     }
@@ -213,7 +257,10 @@ impl Serializer for ValueSerializer {
 
     fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
         Ok(ValueSerializeSeq {
-            data: Vec::new(),
+            data: match self.state {
+                ValueSerializerState::AsSet => SeqData::Set(HashSet::new()),
+                _ => SeqData::Array(vec![]),
+            },
             container_depth: self.container_depth,
         })
     }
@@ -338,16 +385,30 @@ impl SerializeSeq for ValueSerializeSeq {
     where
         T: ?Sized + Serialize,
     {
-        self.data.push(value.serialize(ValueSerializer {
+        let val = value.serialize(ValueSerializer {
             container_depth: self.container_depth,
             state: ValueSerializerState::Default,
-        })?);
+        })?;
+        match &mut self.data {
+            SeqData::Set(s) => {
+                s.insert(val);
+            }
+            SeqData::Array(a) => a.push(val),
+        }
         Ok(())
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        let arr = Array::new(self.container_depth, self.data).map_err(serde::de::Error::custom)?;
-        Ok(Value::from(arr))
+        match self.data {
+            SeqData::Set(s) => {
+                let set = Set::new(self.container_depth, s).map_err(serde::de::Error::custom)?;
+                Ok(Value::from(set))
+            }
+            SeqData::Array(a) => {
+                let arr = Array::new(self.container_depth, a).map_err(serde::de::Error::custom)?;
+                Ok(Value::from(arr))
+            }
+        }
     }
 }
 
@@ -569,7 +630,7 @@ impl Serializer for DictionarySerializer {
         Ok(DictionarySerializeTupleVariant {
             name: variant,
             inner: ValueSerializeSeq {
-                data: Vec::new(),
+                data: SeqData::Array(Vec::new()),
                 container_depth: self.container_depth,
             },
         })
@@ -1324,7 +1385,7 @@ impl<'de> serde::Deserializer<'de> for StructField<'_> {
 #[cfg(test)]
 mod test {
 
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     use serde::{
         de::{DeserializeOwned, Visitor},
@@ -1334,7 +1395,7 @@ mod test {
     use crate::{
         backends::plonky2::primitives::ec::{curve::Point, schnorr::SecretKey},
         middleware::{
-            serializer::{DictionarySerializer, ValueSerializer},
+            serializer::{serialize_seq_as_set, DictionarySerializer, ValueSerializer},
             Params, RawValue, TypedValue, Value,
         },
     };
@@ -1432,6 +1493,8 @@ mod test {
         inf: Float,
         nan: Float,
         map: HashMap<String, i64>,
+        #[serde(serialize_with = "serialize_seq_as_set")]
+        set: HashSet<i64>,
     }
 
     fn test_roundtrip<T: Serialize + DeserializeOwned + Eq + std::fmt::Debug>(t: T) {
@@ -1497,6 +1560,10 @@ mod test {
         map
     }
 
+    fn a_hash_set() -> HashSet<i64> {
+        [2, 3].into_iter().collect()
+    }
+
     #[test]
     fn test_complicated_struct() {
         let seed_range = vec![
@@ -1533,6 +1600,7 @@ mod test {
             inf: Float(f32::NEG_INFINITY),
             nan: Float(f32::NAN),
             map: a_hash_map(),
+            set: a_hash_set(),
         };
         test_roundtrip(desc.clone());
         test_dict_consistency_and_roundtrip(desc);

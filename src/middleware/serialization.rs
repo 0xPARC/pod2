@@ -141,5 +141,5 @@ where
 {
     let mut sorted_values: Vec<&Value> = value.iter().collect();
     sorted_values.sort_by_key(|v| v.raw());
-    serializer.serialize_newtype_struct("Set", &sorted_values)
+    serializer.serialize_newtype_struct("pod2::Set", &sorted_values)
 }
