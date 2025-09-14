@@ -1,8 +1,10 @@
+use std::collections::{HashMap, HashSet};
+
 use crate::{
     backends::plonky2::primitives::ec::{curve::Point, schnorr::SecretKey},
     middleware::{
         containers::{Array, Dictionary, Set},
-        value_is_not, Error, Params, RawValue, Result, TypedValue, Value,
+        value_is_not, Error, Key, Params, RawValue, Result, TypedValue, Value,
     },
 };
 
@@ -73,6 +75,33 @@ where
     Ok(Value::from(arr))
 }
 
+pub fn try_into_set<C>(c: C, params: &Params) -> Result<Value, Error>
+where
+    C: IntoIterator,
+    C::Item: TryIntoValue,
+    Error: From<<C::Item as TryIntoValue>::Error>,
+{
+    let r: Result<HashSet<Value>, <C::Item as TryIntoValue>::Error> =
+        c.into_iter().map(|x| x.try_into_value(params)).collect();
+    let set = Set::new(params.max_depth_mt_containers, r?)?;
+    Ok(Value::from(set))
+}
+
+pub fn try_into_dict<C, K, V>(c: C, params: &Params) -> Result<Value, Error>
+where
+    C: IntoIterator<Item = (K, V)>,
+    K: Into<String>,
+    V: TryIntoValue,
+    Error: From<V::Error>,
+{
+    let r: Result<HashMap<Key, Value>, V::Error> = c
+        .into_iter()
+        .map(|(k, v)| Ok((Key::from(k.into()), v.try_into_value(params)?)))
+        .collect();
+    let dict = Dictionary::new(params.max_depth_mt_containers, r?)?;
+    Ok(Value::from(dict))
+}
+
 #[macro_export]
 macro_rules! try_into_using_value_from {
     ($t: ty) => {
@@ -106,5 +135,51 @@ where
     type Error = Error;
     fn try_into_value(self, params: &Params) -> std::result::Result<Value, Self::Error> {
         try_into_array(self, params)
+    }
+}
+
+impl<T> TryIntoValue for HashSet<T>
+where
+    T: TryIntoValue,
+    Error: From<T::Error>,
+{
+    type Error = Error;
+    fn try_into_value(self, params: &Params) -> std::result::Result<Value, Self::Error> {
+        try_into_set(self, params)
+    }
+}
+
+impl<T> TryIntoValue for std::collections::BTreeSet<T>
+where
+    T: TryIntoValue,
+    Error: From<T::Error>,
+{
+    type Error = Error;
+    fn try_into_value(self, params: &Params) -> std::result::Result<Value, Self::Error> {
+        try_into_set(self, params)
+    }
+}
+
+impl<K, V> TryIntoValue for HashMap<K, V>
+where
+    String: From<K>,
+    V: TryIntoValue,
+    Error: From<V::Error>,
+{
+    type Error = Error;
+    fn try_into_value(self, params: &Params) -> std::result::Result<Value, Self::Error> {
+        try_into_dict(self, params)
+    }
+}
+
+impl<K, V> TryIntoValue for std::collections::BTreeMap<K, V>
+where
+    String: From<K>,
+    V: TryIntoValue,
+    Error: From<V::Error>,
+{
+    type Error = Error;
+    fn try_into_value(self, params: &Params) -> std::result::Result<Value, Self::Error> {
+        try_into_dict(self, params)
     }
 }
