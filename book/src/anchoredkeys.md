@@ -12,10 +12,13 @@ some of its arguments is proved, it means that a valid Merkle proof of the
 value behind it exists and was used at some point to construct a `Contains`
 statement that introduced that anchored key.
 
+In PODLang, anchored key indexing can use subscript syntax `foo["bar"]` which
+allows any string key, or dot syntax `foo.bar` if the key is a valid identifier.
+
 For example:
 ```
 0: None
-1: Contains(foo, bar, 42) <- ContainsFromEntries 0 0 0 mt_proof
-2: Lt(foo[bar], 100) <- LtFromEntries 1 0
-3: NotEqual(foo[bar], 100) <- LtToNotEqual 2
+1: Contains(foo, "bar", 42) <- ContainsFromEntries 0 0 0 mt_proof
+2: Lt(foo["bar"], 100) <- LtFromEntries 1 0
+3: NotEqual(foo.bar, 100) <- LtToNotEqual 2
 ```

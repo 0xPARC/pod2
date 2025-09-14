@@ -24,9 +24,9 @@ impl Wildcard {
 impl fmt::Display for Wildcard {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if f.alternate() {
-            write!(f, "?{}:{}", self.index, self.name)
+            write!(f, "{}:{}", self.index, self.name)
         } else {
-            write!(f, "?{}", self.name)
+            write!(f, "{}", self.name)
         }
     }
 }

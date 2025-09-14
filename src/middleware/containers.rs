@@ -1,5 +1,5 @@
 //! This file implements the types defined at
-//! https://0xparc.github.io/pod2/values.html#dictionary-array-set .
+//! <https://0xparc.github.io/pod2/values.html#dictionary-array-set> .
 
 use std::collections::{HashMap, HashSet};
 

@@ -50,8 +50,8 @@ impl fmt::Display for OperationAux {
 
 impl ToFields for OperationType {
     /// Encoding:
-    /// - Native(native_op) => [1, [native_op], 0, 0, 0, 0]
-    /// - Custom(batch, index) => [3, [batch.id], index]
+    /// - Native(native_op) => `[1, [native_op], 0, 0, 0, 0]`
+    /// - Custom(batch, index) => `[3, [batch.id], index]`
     fn to_fields(&self, params: &Params) -> Vec<F> {
         let mut fields: Vec<F> = match self {
             Self::Native(p) => iter::once(F::from_canonical_u64(1))
