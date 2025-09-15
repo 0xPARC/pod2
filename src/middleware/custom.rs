@@ -404,6 +404,14 @@ impl CustomPredicateBatch {
         Arc::new(cpb)
     }
 
+    pub fn new_opaque(name: String, id: Hash) -> Arc<Self> {
+        Arc::new(Self {
+            id,
+            name,
+            predicates: vec![],
+        })
+    }
+
     /// Cryptographic identifier for the batch.
     fn calculate_id(&self, params: &Params) -> Hash {
         // NOTE: This implementation just hashes the concatenation of all the custom predicates,
