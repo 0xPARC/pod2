@@ -71,7 +71,7 @@ where
 {
     let r: Result<Vec<Value>, <C::Item as PodTryInto<Value>>::Error> =
         c.into_iter().map(|x| x.pod_try_into(params)).collect();
-    Ok(Array::new(params.max_depth_mt_containers, r?)?)
+    Array::new(params.max_depth_mt_containers, r?)
 }
 
 pub fn try_into_array_value<C>(c: C, params: &Params) -> Result<Value, Error>
@@ -91,7 +91,7 @@ where
 {
     let r: Result<HashSet<Value>, <C::Item as PodTryInto<Value>>::Error> =
         c.into_iter().map(|x| x.pod_try_into(params)).collect();
-    Ok(Set::new(params.max_depth_mt_containers, r?)?)
+    Set::new(params.max_depth_mt_containers, r?)
 }
 
 pub fn try_into_set_value<C>(c: C, params: &Params) -> Result<Value, Error>
@@ -114,7 +114,7 @@ where
         .into_iter()
         .map(|(k, v)| Ok((Key::from(k.into()), v.pod_try_into(params)?)))
         .collect();
-    Ok(Dictionary::new(params.max_depth_mt_containers, r?)?)
+    Dictionary::new(params.max_depth_mt_containers, r?)
 }
 
 pub fn try_into_dict_value<C, K, V>(c: C, params: &Params) -> Result<Value, Error>

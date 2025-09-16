@@ -200,8 +200,15 @@ impl TryFrom<&TypedValue> for SecretKey {
 impl TryFrom<&TypedValue> for Array {
     type Error = Error;
     fn try_from(value: &TypedValue) -> std::result::Result<Self, Self::Error> {
+        <&Array>::try_from(value).cloned()
+    }
+}
+
+impl<'a> TryFrom<&'a TypedValue> for &'a Array {
+    type Error = Error;
+    fn try_from(value: &'a TypedValue) -> std::result::Result<Self, Self::Error> {
         match value {
-            TypedValue::Array(a) => Ok(a.clone()),
+            TypedValue::Array(a) => Ok(a),
             _ => value_is_not(value, "an array"),
         }
     }
@@ -217,13 +224,20 @@ impl TryFrom<&TypedValue> for Set {
     }
 }
 
+impl<'a> TryFrom<&'a TypedValue> for &'a Dictionary {
+    type Error = Error;
+    fn try_from(value: &'a TypedValue) -> std::result::Result<Self, Self::Error> {
+        match value {
+            TypedValue::Dictionary(d) => Ok(d),
+            _ => value_is_not(value, "a dictionary"),
+        }
+    }
+}
+
 impl TryFrom<&TypedValue> for Dictionary {
     type Error = Error;
     fn try_from(value: &TypedValue) -> std::result::Result<Self, Self::Error> {
-        match value {
-            TypedValue::Dictionary(d) => Ok(d.clone()),
-            _ => value_is_not(value, "a dictionary"),
-        }
+        <&Dictionary>::try_from(value).cloned()
     }
 }
 
