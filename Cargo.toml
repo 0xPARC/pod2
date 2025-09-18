@@ -20,8 +20,8 @@ env_logger = "0.11"
 lazy_static = "1.5.0"
 thiserror = { version = "2.0.12" }
 # enabled by features:
-plonky2 = { git = "https://github.com/0xPARC/plonky2.git", rev = "767a098d89b8d50d8aacfdce0c0a7222e8760d37", optional = true }
-plonky2_u32 = { git = "https://github.com/ax0/plonky2-u32", rev = "c1cc9384c1ac6bfb61e035bf71c94095fa69599f" }
+plonky2 = { git = "https://github.com/0xPARC/plonky2.git", rev = "109d517d09c210ae4c2cee381d3e3fbc04aa3812", optional = true }
+plonky2_u32 = { git = "https://github.com/ax0/plonky2-u32", rev = "cb8e2d9681eb06d069157edbb5ec1d05038611c4" }
 serde = "1.0.219"
 serde_json = "1.0.140"
 base64 = "0.22.1"
