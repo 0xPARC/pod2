@@ -2,7 +2,7 @@
 //! from the feature-enabled backend.
 //!
 //! This is done in order to avoid inconsistencies where a type or parameter is defined in the
-//! middleware to have certain carachteristic and later in the backend it gets used differently.
+//! middleware to have certain characteristic and later in the backend it gets used differently.
 //! The idea is that those types and parameters (eg. lengths) have a single source of truth in the
 //! code; and in the case of the "base types" this is determined by the backend being used under
 //! the hood, not by a choice of the middleware parameters.
