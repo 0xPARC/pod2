@@ -119,14 +119,10 @@ impl StatementTmplBuilder {
                 predicate: Predicate::Native(NativePredicate::ContainerDelete),
                 args: self.args,
             },
-            Predicate::Native(NativePredicate::SetDelete) => {
-                let mut new_args = self.args.clone();
-                new_args.push(self.args[2].clone());
-                StatementTmplBuilder {
-                    predicate: Predicate::Native(NativePredicate::ContainerDelete),
-                    args: new_args,
-                }
-            }
+            Predicate::Native(NativePredicate::SetDelete) => StatementTmplBuilder {
+                predicate: Predicate::Native(NativePredicate::ContainerDelete),
+                args: self.args,
+            },
             _ => self,
         }
     }
