@@ -148,7 +148,6 @@ impl MockMainPod {
 
     pub fn new(params: &Params, inputs: MainPodInputs) -> Result<Self> {
         let (statements, public_statements) = layout_statements(params, true, &inputs)?;
-        dbg!(public_statements.len());
         let mut aux_list = vec![OperationAux::None; params.max_priv_statements()];
         // Extract Merkle proofs and pad.
         let merkle_proofs =
