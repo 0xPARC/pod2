@@ -34,6 +34,7 @@ mod tests {
         middleware::{
             CustomPredicate, CustomPredicateBatch, CustomPredicateRef, Key, NativePredicate,
             Params, Predicate, RawValue, StatementTmpl, StatementTmplArg, Value, Wildcard,
+            EMPTY_HASH,
         },
     };
 
@@ -840,16 +841,15 @@ mod tests {
     fn test_e2e_intro_import_parsing() -> Result<(), LangError> {
         let params = Params::default();
 
-        let intro_hash = "0x".to_string() + &"a".repeat(64);
+        let intro_hash = EMPTY_HASH.encode_hex::<String>();
         let input = format!(
             r#"
-            use intro IntroStmt(a1, a2) from {}
+            use intro empty() from 0x{intro_hash}
 
             REQUEST(
-                IntroStmt(X, Y)
+                empty()
             )
         "#,
-            intro_hash
         );
 
         let processed = parse(&input, &params, &[])?;
@@ -857,11 +857,14 @@ mod tests {
         assert_eq!(request_templates.len(), 1);
 
         if let Predicate::Intro(intro_ref) = &request_templates[0].pred {
-            assert_eq!(intro_ref.name, "IntroStmt");
-            assert_eq!(intro_ref.args_len, 2);
+            assert_eq!(intro_ref.name, "empty");
+            assert_eq!(intro_ref.args_len, 0);
+            assert_eq!(intro_ref.verifier_data_hash, EMPTY_HASH);
         } else {
             panic!("Expected Intro predicate");
         }
+
+        assert!(request_templates[0].args.is_empty());
 
         Ok(())
     }
