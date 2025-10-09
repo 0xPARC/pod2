@@ -45,7 +45,7 @@ pub fn eth_dos_request() -> Result<PodRequest> {
     let batch_id = batch.id().encode_hex::<String>();
     let input = format!(
         r#"
-        use _, _, _, eth_dos from 0x{batch_id}
+        use batch _, _, _, eth_dos from 0x{batch_id}
         REQUEST(
             eth_dos(src, dst, distance)
         )

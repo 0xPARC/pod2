@@ -15,8 +15,9 @@ use crate::{
     frontend::{BuilderArg, CustomPredicateBatchBuilder, PodRequest, StatementTmplBuilder},
     lang::parser::Rule,
     middleware::{
-        self, CustomPredicateBatch, CustomPredicateRef, Key, NativePredicate, Params, Predicate,
-        StatementTmpl, StatementTmplArg, Value, Wildcard, F, VALUE_SIZE,
+        self, CustomPredicateBatch, CustomPredicateRef, Hash, IntroPredicateRef, Key,
+        NativePredicate, Params, Predicate, StatementTmpl, StatementTmplArg, Value, Wildcard, F,
+        VALUE_SIZE,
     },
 };
 
@@ -74,6 +75,8 @@ struct ProcessingContext<'a> {
     params: &'a Params,
     /// Maps imported predicate names to their full reference (batch and index)
     imported_predicates: HashMap<String, CustomPredicateRef>,
+    /// Maps imported intro predicate names to their intro refs
+    imported_intro_predicates: HashMap<String, IntroPredicateRef>,
     /// Maps predicate names to their batch index and public argument count (from Pass 1)
     custom_predicate_signatures: HashMap<String, (usize, usize)>,
     /// Stores the original Pest pairs for custom predicate definitions for Pass 2
@@ -87,6 +90,7 @@ impl<'a> ProcessingContext<'a> {
         ProcessingContext {
             params,
             imported_predicates: HashMap::new(),
+            imported_intro_predicates: HashMap::new(),
             custom_predicate_signatures: HashMap::new(),
             custom_predicate_pairs: Vec::new(),
             request_pair: None,
@@ -139,8 +143,11 @@ fn first_pass<'a>(
 
     for pair in document_pairs {
         match pair.as_rule() {
-            Rule::use_statement => {
-                process_use_statement(&pair, ctx, available_batches)?;
+            Rule::use_batch_statement => {
+                process_use_batch_statement(&pair, ctx, available_batches)?;
+            }
+            Rule::use_intro_statement => {
+                process_use_intro_statement(&pair, ctx)?;
             }
             Rule::custom_predicate_def => {
                 let pred_name_pair = pair
@@ -152,6 +159,7 @@ fn first_pass<'a>(
 
                 if defined_custom_names.contains(&pred_name)
                     || ctx.imported_predicates.contains_key(&pred_name)
+                    || ctx.imported_intro_predicates.contains_key(&pred_name)
                 {
                     return Err(ProcessorError::DuplicateDefinition {
                         name: pred_name,
@@ -205,7 +213,7 @@ fn count_public_args(pred_def_pair: &Pair<Rule>) -> Result<usize, ProcessorError
         .count())
 }
 
-fn process_use_statement(
+fn process_use_batch_statement(
     use_pair: &Pair<Rule>,
     ctx: &mut ProcessingContext,
     available_batches: &[Arc<CustomPredicateBatch>],
@@ -268,6 +276,61 @@ fn process_use_statement(
         let custom_pred_ref = CustomPredicateRef::new(target_batch.clone(), i);
         ctx.imported_predicates.insert(name, custom_pred_ref);
     }
+
+    Ok(())
+}
+
+fn process_use_intro_statement(
+    use_pair: &Pair<Rule>,
+    ctx: &mut ProcessingContext,
+) -> Result<(), ProcessorError> {
+    let mut inner = use_pair.clone().into_inner();
+
+    // Structure: identifier, '(', optional arg list, ')', 'from', batch_ref
+    let name_pair = inner.find(|p| p.as_rule() == Rule::identifier).unwrap();
+    let pred_name = name_pair.as_str().to_string();
+
+    if ctx.imported_predicates.contains_key(&pred_name)
+        || ctx.imported_intro_predicates.contains_key(&pred_name)
+        || ctx.custom_predicate_signatures.contains_key(&pred_name)
+    {
+        return Err(ProcessorError::DuplicateImportName {
+            name: pred_name,
+            span: Some(get_span(&name_pair)),
+        });
+    }
+
+    let args_len = inner
+        .clone()
+        .find(|p| p.as_rule() == Rule::use_intro_arg_list)
+        .map(|arg_list| {
+            arg_list
+                .into_inner()
+                .filter(|p| p.as_rule() == Rule::identifier)
+                .count()
+        })
+        .unwrap_or(0);
+
+    let batch_ref_pair = inner.find(|p| p.as_rule() == Rule::batch_ref).unwrap();
+    let hash_hex_pair = batch_ref_pair.into_inner().next().unwrap();
+    let hash_str_full = hash_hex_pair.as_str();
+    let hex_no_prefix = hash_str_full.strip_prefix("0x").unwrap_or(hash_str_full);
+    let raw_val = parse_hex_str_to_raw_value(hex_no_prefix).map_err(|_| {
+        ProcessorError::InvalidLiteralFormat {
+            kind: "intro verifier hash".to_string(),
+            value: hash_str_full.to_string(),
+            span: Some(get_span(&hash_hex_pair)),
+        }
+    })?;
+    let verifier_hash: Hash = Hash::from(raw_val);
+
+    let intro_ref = IntroPredicateRef {
+        name: pred_name.clone(),
+        args_len,
+        verifier_data_hash: verifier_hash,
+    };
+
+    ctx.imported_intro_predicates.insert(pred_name, intro_ref);
 
     Ok(())
 }
@@ -714,6 +777,8 @@ fn process_statement_template(
         Predicate::Native(native_pred)
     } else if let Some(custom_ref) = processing_ctx.imported_predicates.get(stmt_name_str) {
         Predicate::Custom(custom_ref.clone())
+    } else if let Some(intro_ref) = processing_ctx.imported_intro_predicates.get(stmt_name_str) {
+        Predicate::Intro(intro_ref.clone())
     } else if let Some((pred_index, _expected_arity)) = processing_ctx
         .custom_predicate_signatures
         .get(stmt_name_str)
@@ -1145,6 +1210,7 @@ mod processor_tests {
             let mut ctx = ProcessingContext {
                 params: &params,
                 imported_predicates: HashMap::new(),
+                imported_intro_predicates: HashMap::new(),
                 custom_predicate_signatures: HashMap::new(),
                 custom_predicate_pairs: Vec::new(),
                 request_pair: None,
