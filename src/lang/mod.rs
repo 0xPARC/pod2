@@ -1,4 +1,6 @@
 pub mod error;
+pub mod frontend_ast;
+pub mod frontend_ast_validate;
 pub mod parser;
 pub mod pretty_print;
 pub mod processor;
