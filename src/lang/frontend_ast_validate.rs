@@ -305,18 +305,16 @@ impl Validator {
                 kind: PredicateKind::IntroImported {
                     name: intro_name.clone(),
                     args_len: args.len(),
-                    verifier_data_hash: {
-                        let hex_str = &batch_ref.hash.value;
-                        let hex_no_prefix = hex_str.strip_prefix("0x").unwrap_or(hex_str);
-                        Hash::from_hex(hex_no_prefix)
-                    }
-                    .map_err(|_| ValidationError::InvalidHash {
-                        hash: batch_ref.hash.value.clone(),
-                        span: batch_ref.span,
-                    })?,
+                    // Grammar guarantees 0x prefix and correct length; slice off 0x directly
+                    verifier_data_hash: Hash::from_hex(&batch_ref.hash.value[2..]).map_err(
+                        |_| ValidationError::InvalidHash {
+                            hash: batch_ref.hash.value.clone(),
+                            span: batch_ref.span,
+                        },
+                    )?,
                 },
-                arity: 0,
-                public_arity: 0,
+                arity: args.len(),
+                public_arity: args.len(),
                 source_span: use_stmt.span,
             },
         );
@@ -488,11 +486,22 @@ impl Validator {
             });
         };
 
-        // Check arity
-        if stmt.args.len() != pred_info.arity {
+        // Check arity: in predicate bodies use total arity; in REQUEST use public arity
+        let expected_arity = if wildcard_context.is_some() {
+            pred_info.arity
+        } else {
+            match pred_info.kind {
+                PredicateKind::Custom { .. }
+                | PredicateKind::BatchImported { .. }
+                | PredicateKind::IntroImported { .. } => pred_info.public_arity,
+                PredicateKind::Native(_) => pred_info.arity,
+            }
+        };
+
+        if stmt.args.len() != expected_arity {
             return Err(ValidationError::ArgumentCountMismatch {
                 predicate: pred_name.clone(),
-                expected: pred_info.arity,
+                expected: expected_arity,
                 found: stmt.args.len(),
                 span: stmt.span,
             });
