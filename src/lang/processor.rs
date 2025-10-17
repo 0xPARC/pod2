@@ -266,7 +266,10 @@ fn process_use_batch_statement(
 
         let name = import_name_pair.as_str().to_string();
 
-        if ctx.imported_predicates.contains_key(&name) {
+        if ctx.imported_predicates.contains_key(&name)
+            || ctx.imported_intro_predicates.contains_key(&name)
+            || ctx.custom_predicate_signatures.contains_key(&name)
+        {
             return Err(ProcessorError::DuplicateImportName {
                 name,
                 span: Some(get_span(&import_name_pair)),

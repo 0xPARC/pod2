@@ -28,8 +28,6 @@ private_arg_list = { identifier ~ ("," ~ identifier)* }
 
 document = { SOI ~ (use_batch_statement | use_intro_statement | custom_predicate_def | request_def)* ~ EOI }
 
-use_statement = { use_batch_statement | use_intro_statement }
-
 use_batch_statement = { "use" ~ "batch" ~ use_predicate_list ~ "from" ~ batch_ref }
 use_predicate_list = { import_name ~ ("," ~ import_name)* }
 import_name = { identifier | "_" }
