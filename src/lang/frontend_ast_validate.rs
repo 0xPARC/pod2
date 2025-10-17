@@ -3,13 +3,14 @@
 //! This module provides semantic validation for parsed AST documents,
 //! including name resolution, arity checking, and wildcard validation.
 
-use std::collections::HashMap;
-use std::sync::Arc;
-use hex::ToHex;
+use std::{collections::HashMap, sync::Arc};
 
-use crate::lang::frontend_ast::*;
-use crate::lang::processor::native_predicate_from_string;
-use crate::middleware::{CustomPredicateBatch, NativePredicate};
+use hex::{FromHex, ToHex};
+
+use crate::{
+    lang::{frontend_ast::*, processor::native_predicate_from_string},
+    middleware::{CustomPredicateBatch, Hash, NativePredicate},
+};
 
 /// A validated AST document with symbol table and diagnostics
 #[derive(Debug, Clone)]
@@ -59,8 +60,18 @@ pub struct PredicateInfo {
 #[derive(Debug, Clone)]
 pub enum PredicateKind {
     Native(NativePredicate),
-    Custom { index: usize },
-    Imported { batch: Arc<CustomPredicateBatch>, index: usize },
+    Custom {
+        index: usize,
+    },
+    BatchImported {
+        batch: Arc<CustomPredicateBatch>,
+        index: usize,
+    },
+    IntroImported {
+        name: String,
+        args_len: usize,
+        verifier_data_hash: Hash,
+    },
 }
 
 /// Wildcard scope for a custom predicate
@@ -94,6 +105,9 @@ pub enum DiagnosticLevel {
 /// Validation error
 #[derive(Debug, thiserror::Error)]
 pub enum ValidationError {
+    #[error("Invalid hash: {hash}")]
+    InvalidHash { hash: String, span: Option<Span> },
+
     #[error("Duplicate predicate definition: {name}")]
     DuplicatePredicate {
         name: String,
@@ -102,10 +116,7 @@ pub enum ValidationError {
     },
 
     #[error("Duplicate import name: {name}")]
-    DuplicateImport {
-        name: String,
-        span: Option<Span>,
-    },
+    DuplicateImport { name: String, span: Option<Span> },
 
     #[error("Import arity mismatch: expected {expected} predicates, found {found}")]
     ImportArityMismatch {
@@ -115,16 +126,10 @@ pub enum ValidationError {
     },
 
     #[error("Batch not found: {id}")]
-    BatchNotFound {
-        id: String,
-        span: Option<Span>,
-    },
+    BatchNotFound { id: String, span: Option<Span> },
 
     #[error("Undefined predicate: {name}")]
-    UndefinedPredicate {
-        name: String,
-        span: Option<Span>,
-    },
+    UndefinedPredicate { name: String, span: Option<Span> },
 
     #[error("Undefined wildcard: {name} in predicate {pred_name}")]
     UndefinedWildcard {
@@ -148,16 +153,10 @@ pub enum ValidationError {
     },
 
     #[error("Duplicate wildcard in predicate arguments: {name}")]
-    DuplicateWildcard {
-        name: String,
-        span: Option<Span>,
-    },
+    DuplicateWildcard { name: String, span: Option<Span> },
 
     #[error("Empty statement list in {context}")]
-    EmptyStatementList {
-        context: String,
-        span: Option<Span>,
-    },
+    EmptyStatementList { context: String, span: Option<Span> },
 }
 
 /// Validate an AST document
@@ -215,8 +214,11 @@ impl<'a> Validator<'a> {
     fn build_symbol_table(&mut self, document: &Document) -> Result<(), ValidationError> {
         // First process imports
         for item in &document.items {
-            if let DocumentItem::UseStatement(use_stmt) = item {
-                self.process_use_statement(use_stmt)?;
+            if let DocumentItem::UseBatchStatement(use_stmt) = item {
+                self.process_use_batch_statement(use_stmt)?;
+            }
+            if let DocumentItem::UseIntroStatement(use_stmt) = item {
+                self.process_use_intro_statement(use_stmt)?;
             }
         }
 
@@ -230,14 +232,19 @@ impl<'a> Validator<'a> {
         Ok(())
     }
 
-    fn process_use_statement(&mut self, use_stmt: &UseStatement) -> Result<(), ValidationError> {
+    fn process_use_batch_statement(
+        &mut self,
+        use_stmt: &UseBatchStatement,
+    ) -> Result<(), ValidationError> {
         let batch_id = &use_stmt.batch_ref.hash.value;
-        
-        let batch = self.available_batches.get(batch_id)
-            .ok_or_else(|| ValidationError::BatchNotFound {
-                id: batch_id.clone(),
-                span: use_stmt.batch_ref.hash.span,
-            })?;
+
+        let batch =
+            self.available_batches
+                .get(batch_id)
+                .ok_or_else(|| ValidationError::BatchNotFound {
+                    id: batch_id.clone(),
+                    span: use_stmt.batch_ref.hash.span,
+                })?;
 
         if use_stmt.imports.len() != batch.predicates().len() {
             return Err(ValidationError::ImportArityMismatch {
@@ -260,23 +267,68 @@ impl<'a> Validator<'a> {
                 // CustomPredicate has args_len (public args) and wildcard_names (total args)
                 let total_arity = pred.wildcard_names.len();
                 let public_arity = pred.args_len;
-                
-                self.symbols.predicates.insert(name.clone(), PredicateInfo {
-                    kind: PredicateKind::Imported {
-                        batch: batch.clone(),
-                        index: i,
+
+                self.symbols.predicates.insert(
+                    name.clone(),
+                    PredicateInfo {
+                        kind: PredicateKind::BatchImported {
+                            batch: batch.clone(),
+                            index: i,
+                        },
+                        arity: total_arity,
+                        public_arity,
+                        source_span: use_stmt.span,
                     },
-                    arity: total_arity,
-                    public_arity,
-                    source_span: use_stmt.span,
-                });
+                );
             }
         }
 
         Ok(())
     }
 
-    fn process_custom_predicate_def(&mut self, pred_def: &CustomPredicateDef) -> Result<(), ValidationError> {
+    fn process_use_intro_statement(
+        &mut self,
+        use_stmt: &UseIntroStatement,
+    ) -> Result<(), ValidationError> {
+        let intro_name = &use_stmt.name.name;
+        let args = &use_stmt.args;
+        let batch_ref = &use_stmt.batch_ref;
+
+        if self.symbols.predicates.contains_key(intro_name) {
+            return Err(ValidationError::DuplicateImport {
+                name: intro_name.clone(),
+                span: use_stmt.span,
+            });
+        }
+
+        self.symbols.predicates.insert(
+            intro_name.clone(),
+            PredicateInfo {
+                kind: PredicateKind::IntroImported {
+                    name: intro_name.clone(),
+                    args_len: args.len(),
+                    verifier_data_hash: {
+                        let hex_str = &batch_ref.hash.value;
+                        let hex_no_prefix = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+                        Hash::from_hex(hex_no_prefix)
+                    }
+                    .map_err(|_| ValidationError::InvalidHash {
+                        hash: batch_ref.hash.value.clone(),
+                        span: batch_ref.span,
+                    })?,
+                },
+                arity: 0,
+                public_arity: 0,
+                source_span: use_stmt.span,
+            },
+        );
+        Ok(())
+    }
+
+    fn process_custom_predicate_def(
+        &mut self,
+        pred_def: &CustomPredicateDef,
+    ) -> Result<(), ValidationError> {
         let name = &pred_def.name.name;
 
         if self.symbols.predicates.contains_key(name) {
@@ -308,11 +360,14 @@ impl<'a> Validator<'a> {
                     span: arg.span,
                 });
             }
-            wildcards.insert(arg.name.clone(), WildcardInfo {
-                index: wildcard_index,
-                is_public: true,
-                source_span: arg.span,
-            });
+            wildcards.insert(
+                arg.name.clone(),
+                WildcardInfo {
+                    index: wildcard_index,
+                    is_public: true,
+                    source_span: arg.span,
+                },
+            );
             wildcard_index += 1;
         }
 
@@ -326,27 +381,35 @@ impl<'a> Validator<'a> {
                         span: arg.span,
                     });
                 }
-                wildcards.insert(arg.name.clone(), WildcardInfo {
-                    index: wildcard_index,
-                    is_public: false,
-                    source_span: arg.span,
-                });
+                wildcards.insert(
+                    arg.name.clone(),
+                    WildcardInfo {
+                        index: wildcard_index,
+                        is_public: false,
+                        source_span: arg.span,
+                    },
+                );
                 wildcard_index += 1;
                 private_count += 1;
             }
         }
 
         // Add to symbol table
-        self.symbols.predicates.insert(name.clone(), PredicateInfo {
-            kind: PredicateKind::Custom { 
-                index: self.custom_predicate_count,
+        self.symbols.predicates.insert(
+            name.clone(),
+            PredicateInfo {
+                kind: PredicateKind::Custom {
+                    index: self.custom_predicate_count,
+                },
+                arity: pred_def.args.public_args.len() + private_count,
+                public_arity: pred_def.args.public_args.len(),
+                source_span: pred_def.name.span,
             },
-            arity: pred_def.args.public_args.len() + private_count,
-            public_arity: pred_def.args.public_args.len(),
-            source_span: pred_def.name.span,
-        });
+        );
 
-        self.symbols.wildcard_scopes.insert(name.clone(), WildcardScope { wildcards });
+        self.symbols
+            .wildcard_scopes
+            .insert(name.clone(), WildcardScope { wildcards });
         self.custom_predicate_count += 1;
 
         Ok(())
@@ -367,11 +430,17 @@ impl<'a> Validator<'a> {
         Ok(())
     }
 
-    fn validate_custom_predicate_statements(&self, pred_def: &CustomPredicateDef) -> Result<(), ValidationError> {
+    fn validate_custom_predicate_statements(
+        &self,
+        pred_def: &CustomPredicateDef,
+    ) -> Result<(), ValidationError> {
         let pred_name = pred_def.name.name.clone();
-        
+
         for stmt in &pred_def.statements {
-            let wildcard_scope = self.symbols.wildcard_scopes.get(&pred_name)
+            let wildcard_scope = self
+                .symbols
+                .wildcard_scopes
+                .get(&pred_name)
                 .expect("Wildcard scope should exist after pass 1");
             self.validate_statement(stmt, Some((&pred_name, wildcard_scope)))?;
         }
@@ -444,7 +513,10 @@ impl<'a> Validator<'a> {
         wildcard_context: Option<(&str, &WildcardScope)>,
     ) -> Result<(), ValidationError> {
         // For custom predicates, only wildcards and literals are allowed
-        if matches!(pred_info.kind, PredicateKind::Custom { .. } | PredicateKind::Imported { .. }) {
+        if matches!(
+            pred_info.kind,
+            PredicateKind::Custom { .. } | PredicateKind::BatchImported { .. }
+        ) {
             for arg in &stmt.args {
                 match arg {
                     StatementArg::AnchoredKey(_) => {
@@ -507,9 +579,8 @@ impl<'a> Validator<'a> {
             None | False => 0,
             Equal | NotEqual | Gt | GtEq | Lt | LtEq | SignedBy | PublicKeyOf | HashOf => 2,
             SumOf | ProductOf | MaxOf | Contains | NotContains => 3,
-            ContainerInsert | ContainerUpdate | ContainerDelete 
-            | DictContains | DictNotContains | ArrayContains 
-            | SetContains | SetNotContains => 3,
+            ContainerInsert | ContainerUpdate | ContainerDelete | DictContains
+            | DictNotContains | ArrayContains | SetContains | SetNotContains => 3,
             DictInsert | DictUpdate | DictDelete | SetInsert | SetDelete | ArrayUpdate => 3,
         }
     }
@@ -518,11 +589,15 @@ impl<'a> Validator<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lang::parser::parse_podlang;
-    use crate::lang::frontend_ast::parse::parse_document;
-    use crate::middleware::{CustomPredicate, Params};
+    use crate::{
+        lang::{frontend_ast::parse::parse_document, parser::parse_podlang},
+        middleware::{CustomPredicate, Params, EMPTY_HASH},
+    };
 
-    fn parse_and_validate(input: &str, batches: &[Arc<CustomPredicateBatch>]) -> Result<ValidatedAST, ValidationError> {
+    fn parse_and_validate(
+        input: &str,
+        batches: &[Arc<CustomPredicateBatch>],
+    ) -> Result<ValidatedAST, ValidationError> {
         let parsed = parse_podlang(input).expect("Failed to parse");
         let document = parse_document(parsed.into_iter().next().unwrap());
         validate(document, batches)
@@ -552,7 +627,7 @@ mod tests {
         "#;
         let result = parse_and_validate(input, &[]);
         assert!(result.is_ok());
-        
+
         let validated = result.unwrap();
         assert!(validated.symbols.predicates.contains_key("my_pred"));
         assert!(validated.symbols.wildcard_scopes.contains_key("my_pred"));
@@ -564,7 +639,10 @@ mod tests {
             UndefinedPred(A, B)
         )"#;
         let result = parse_and_validate(input, &[]);
-        assert!(matches!(result, Err(ValidationError::UndefinedPredicate { .. })));
+        assert!(matches!(
+            result,
+            Err(ValidationError::UndefinedPredicate { .. })
+        ));
     }
 
     #[test]
@@ -575,7 +653,9 @@ mod tests {
             )
         "#;
         let result = parse_and_validate(input, &[]);
-        assert!(matches!(result, Err(ValidationError::UndefinedWildcard { name, .. }) if name == "B"));
+        assert!(
+            matches!(result, Err(ValidationError::UndefinedWildcard { name, .. }) if name == "B")
+        );
     }
 
     #[test]
@@ -584,7 +664,10 @@ mod tests {
             Equal(A, B, C)
         )"#;
         let result = parse_and_validate(input, &[]);
-        assert!(matches!(result, Err(ValidationError::ArgumentCountMismatch { .. })));
+        assert!(matches!(
+            result,
+            Err(ValidationError::ArgumentCountMismatch { .. })
+        ));
     }
 
     #[test]
@@ -594,7 +677,10 @@ mod tests {
             my_pred(B) = AND (Equal(B["y"], 2))
         "#;
         let result = parse_and_validate(input, &[]);
-        assert!(matches!(result, Err(ValidationError::DuplicatePredicate { .. })));
+        assert!(matches!(
+            result,
+            Err(ValidationError::DuplicatePredicate { .. })
+        ));
     }
 
     #[test]
@@ -603,7 +689,10 @@ mod tests {
             my_pred(A, A) = AND (Equal(A["x"], 1))
         "#;
         let result = parse_and_validate(input, &[]);
-        assert!(matches!(result, Err(ValidationError::DuplicateWildcard { .. })));
+        assert!(matches!(
+            result,
+            Err(ValidationError::DuplicateWildcard { .. })
+        ));
     }
 
     #[test]
@@ -618,7 +707,10 @@ mod tests {
             )
         "#;
         let result = parse_and_validate(input, &[]);
-        assert!(matches!(result, Err(ValidationError::InvalidArgumentType { .. })));
+        assert!(matches!(
+            result,
+            Err(ValidationError::InvalidArgumentType { .. })
+        ));
     }
 
     #[test]
@@ -646,7 +738,7 @@ mod tests {
         "#;
         let result = parse_and_validate(input, &[]);
         assert!(result.is_ok());
-        
+
         let validated = result.unwrap();
         let pred_info = &validated.symbols.predicates["my_pred"];
         assert_eq!(pred_info.arity, 3);
@@ -656,27 +748,36 @@ mod tests {
     #[test]
     fn test_empty_statement_list() {
         // Create a custom predicate with empty statements to test validation
-        let document = Document { 
+        let document = Document {
             items: vec![DocumentItem::CustomPredicateDef(CustomPredicateDef {
-                name: Identifier { name: "my_pred".to_string(), span: None },
+                name: Identifier {
+                    name: "my_pred".to_string(),
+                    span: None,
+                },
                 args: ArgSection {
-                    public_args: vec![Identifier { name: "A".to_string(), span: None }],
+                    public_args: vec![Identifier {
+                        name: "A".to_string(),
+                        span: None,
+                    }],
                     private_args: None,
                     span: None,
                 },
                 conjunction_type: ConjunctionType::And,
                 statements: vec![], // Empty statements
                 span: None,
-            })]
+            })],
         };
         let result = validate(document, &[]);
-        assert!(matches!(result, Err(ValidationError::EmptyStatementList { .. })));
+        assert!(matches!(
+            result,
+            Err(ValidationError::EmptyStatementList { .. })
+        ));
     }
 
     #[test]
     fn test_use_statement() {
         let params = Params::default();
-        
+
         // Create a batch to import
         let pred = CustomPredicate::and(
             &params,
@@ -684,28 +785,32 @@ mod tests {
             vec![],
             2,
             vec!["X".to_string(), "Y".to_string()],
-        ).unwrap();
-        
-        let batch = CustomPredicateBatch::new(
-            &params,
-            "TestBatch".to_string(),
-            vec![pred],
-        );
-        
+        )
+        .unwrap();
+
+        let batch = CustomPredicateBatch::new(&params, "TestBatch".to_string(), vec![pred]);
+
         let batch_id = batch.id().encode_hex::<String>();
-        let input = format!(r#"
-            use imported_pred from 0x{}
-            
+        let input = format!(
+            r#"
+            use batch imported_pred from 0x{}
+            use intro intro_pred() from 0x{}
+
             REQUEST(
                 imported_pred(A, B)
+                intro_pred()
             )
-        "#, batch_id);
-        
+        "#,
+            batch_id,
+            EMPTY_HASH.encode_hex::<String>()
+        );
+
         let result = parse_and_validate(&input, &[batch]);
         assert!(result.is_ok());
-        
+
         let validated = result.unwrap();
         assert!(validated.symbols.predicates.contains_key("imported_pred"));
+        assert!(validated.symbols.predicates.contains_key("intro_pred"));
     }
 
     #[test]

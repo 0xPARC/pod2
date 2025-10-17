@@ -14,19 +14,28 @@ pub struct Document {
 /// Top-level items that can appear in a document
 #[derive(Debug, Clone, PartialEq)]
 pub enum DocumentItem {
-    UseStatement(UseStatement),
+    UseBatchStatement(UseBatchStatement),
+    UseIntroStatement(UseIntroStatement),
     CustomPredicateDef(CustomPredicateDef),
     RequestDef(RequestDef),
 }
 
-/// Import statement: `use pred1, pred2, _ from 0x...`
+/// Import statement: `use batch pred1, pred2, _ from 0x...`
 #[derive(Debug, Clone, PartialEq)]
-pub struct UseStatement {
+pub struct UseBatchStatement {
     pub imports: Vec<ImportName>,
     pub batch_ref: BatchRef,
     pub span: Option<Span>,
 }
 
+/// Intro statement: `use intro pred() from 0x...`
+#[derive(Debug, Clone, PartialEq)]
+pub struct UseIntroStatement {
+    pub name: Identifier,
+    pub args: Vec<Identifier>,
+    pub batch_ref: BatchRef,
+    pub span: Option<Span>,
+}
 /// Individual import name (identifier or unused "_")
 #[derive(Debug, Clone, PartialEq)]
 pub enum ImportName {
@@ -229,16 +238,17 @@ impl fmt::Display for Document {
 impl fmt::Display for DocumentItem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            DocumentItem::UseStatement(u) => write!(f, "{}", u),
+            DocumentItem::UseBatchStatement(u) => write!(f, "{}", u),
+            DocumentItem::UseIntroStatement(u) => write!(f, "{}", u),
             DocumentItem::CustomPredicateDef(c) => write!(f, "{}", c),
             DocumentItem::RequestDef(r) => write!(f, "{}", r),
         }
     }
 }
 
-impl fmt::Display for UseStatement {
+impl fmt::Display for UseBatchStatement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "use ")?;
+        write!(f, "use batch ")?;
         for (i, import) in self.imports.iter().enumerate() {
             if i > 0 {
                 write!(f, ", ")?;
@@ -246,6 +256,19 @@ impl fmt::Display for UseStatement {
             write!(f, "{}", import)?;
         }
         write!(f, " from {}", self.batch_ref)
+    }
+}
+
+impl fmt::Display for UseIntroStatement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "use intro {}(", self.name)?;
+        for (i, arg) in self.args.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", arg)?;
+        }
+        write!(f, ") from {}", self.batch_ref)
     }
 }
 
@@ -476,8 +499,15 @@ pub mod parse {
 
         for inner_pair in pair.into_inner() {
             match inner_pair.as_rule() {
-                Rule::use_statement => {
-                    items.push(DocumentItem::UseStatement(parse_use_statement(inner_pair)));
+                Rule::use_batch_statement => {
+                    items.push(DocumentItem::UseBatchStatement(parse_use_batch_statement(
+                        inner_pair,
+                    )));
+                }
+                Rule::use_intro_statement => {
+                    items.push(DocumentItem::UseIntroStatement(parse_use_intro_statement(
+                        inner_pair,
+                    )));
                 }
                 Rule::custom_predicate_def => {
                     items.push(DocumentItem::CustomPredicateDef(
@@ -495,8 +525,8 @@ pub mod parse {
         Document { items }
     }
 
-    fn parse_use_statement(pair: Pair<Rule>) -> UseStatement {
-        assert_eq!(pair.as_rule(), Rule::use_statement);
+    fn parse_use_batch_statement(pair: Pair<Rule>) -> UseBatchStatement {
+        assert_eq!(pair.as_rule(), Rule::use_batch_statement);
         let span = get_span(&pair);
         let mut inner = pair.into_inner();
 
@@ -511,9 +541,46 @@ pub mod parse {
             .map(parse_import_name)
             .collect();
 
-        UseStatement {
+        UseBatchStatement {
             imports,
             batch_ref: parse_batch_ref(batch_ref_pair),
+            span: Some(span),
+        }
+    }
+
+    fn parse_use_intro_statement(pair: Pair<Rule>) -> UseIntroStatement {
+        assert_eq!(pair.as_rule(), Rule::use_intro_statement);
+        let span = get_span(&pair);
+        let inner = pair.into_inner();
+
+        let name = parse_identifier(
+            inner
+                .clone()
+                .find(|p| p.as_rule() == Rule::identifier)
+                .unwrap(),
+        );
+
+        let args: Vec<Identifier> = inner
+            .clone()
+            .find(|p| p.as_rule() == Rule::use_intro_arg_list)
+            .map(|arg_list| {
+                arg_list
+                    .into_inner()
+                    .filter(|p| p.as_rule() == Rule::identifier)
+                    .map(parse_identifier)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let batch_ref_pair = inner
+            .clone()
+            .find(|p| p.as_rule() == Rule::batch_ref)
+            .unwrap();
+        let batch_ref = parse_batch_ref(batch_ref_pair);
+        UseIntroStatement {
+            name,
+            args,
+            batch_ref,
             span: Some(span),
         }
     }
@@ -904,7 +971,6 @@ mod tests {
         let document_pair = parsed.into_iter().next().expect("No document pair");
         let mut ast = parse::parse_document(document_pair);
         let output = ast.to_string();
-
         // Parse the output to verify it's still valid
         let reparsed = parse_podlang(&output).expect("Failed to parse pretty-printed output");
         let redocument_pair = reparsed
@@ -924,8 +990,14 @@ mod tests {
     fn clear_spans(doc: &mut Document) {
         for item in &mut doc.items {
             match item {
-                DocumentItem::UseStatement(u) => {
+                DocumentItem::UseBatchStatement(u) => {
                     u.span = None;
+                    u.batch_ref.span = None;
+                    u.batch_ref.hash.span = None;
+                }
+                DocumentItem::UseIntroStatement(u) => {
+                    u.span = None;
+                    u.name.span = None;
                     u.batch_ref.span = None;
                     u.batch_ref.hash.span = None;
                 }
@@ -1041,8 +1113,14 @@ mod tests {
     }
 
     #[test]
-    fn test_use_statement() {
-        let input = r#"use pred1, pred2, _ from 0x0000000000000000000000000000000000000000000000000000000000000000"#;
+    fn test_use_batch_statement() {
+        let input = r#"use batch pred1, pred2, _ from 0x0000000000000000000000000000000000000000000000000000000000000000"#;
+        test_roundtrip(input);
+    }
+
+    #[test]
+    fn test_use_intro_statement() {
+        let input = r#"use intro pred1() from 0x0000000000000000000000000000000000000000000000000000000000000000"#;
         test_roundtrip(input);
     }
 
@@ -1083,7 +1161,7 @@ mod tests {
 
     #[test]
     fn test_complete_document() {
-        let input = r#"use imported_pred from 0xabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd
+        let input = r#"use batch imported_pred from 0xabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd
 
 is_valid(User, private: Config) = AND (
     Equal(User["age"], Config["min_age"])
