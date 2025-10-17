@@ -168,15 +168,14 @@ pub fn validate(
     validator.validate(document)
 }
 
-struct Validator<'a> {
+struct Validator {
     available_batches: HashMap<String, Arc<CustomPredicateBatch>>,
     symbols: SymbolTable,
     diagnostics: Vec<Diagnostic>,
     custom_predicate_count: usize,
-    _phantom: std::marker::PhantomData<&'a ()>,
 }
 
-impl<'a> Validator<'a> {
+impl Validator {
     fn new(batches: &[Arc<CustomPredicateBatch>]) -> Self {
         let mut available_batches = HashMap::new();
         for batch in batches {
@@ -193,7 +192,6 @@ impl<'a> Validator<'a> {
             },
             diagnostics: Vec::new(),
             custom_predicate_count: 0,
-            _phantom: std::marker::PhantomData,
         }
     }
 
