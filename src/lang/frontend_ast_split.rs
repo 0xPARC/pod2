@@ -1,0 +1,802 @@
+//! Predicate splitting for frontend AST
+//!
+//! This module implements automatic predicate splitting when predicates exceed
+//! middleware constraints. Uses a chain-based bucket-filling approach with
+//! optimal constraint reordering to minimize wildcard promotion overhead.
+
+use std::collections::{HashMap, HashSet};
+
+use crate::{lang::frontend_ast::*, middleware::Params};
+
+/// Errors that can occur during predicate splitting
+#[derive(Debug, thiserror::Error)]
+pub enum SplittingError {
+    #[error("Too many public arguments in predicate '{predicate}': {count} exceeds max of {max_allowed}. {message}")]
+    TooManyPublicArgs {
+        predicate: String,
+        count: usize,
+        max_allowed: usize,
+        message: String,
+    },
+
+    #[error("Too many total arguments in predicate '{predicate}': {count} exceeds max of {max_allowed}. {message}")]
+    TooManyTotalArgs {
+        predicate: String,
+        count: usize,
+        max_allowed: usize,
+        message: String,
+    },
+
+    #[error("Too many total arguments in chain link {link_index}: {total_count} exceeds max of {max_allowed}")]
+    TooManyTotalArgsInChainLink {
+        link_index: usize,
+        total_count: usize,
+        max_allowed: usize,
+    },
+
+    #[error("Too many public arguments at split boundary in predicate '{predicate}': {count} exceeds max of {max_allowed}")]
+    TooManyPublicArgsAtSplit {
+        predicate: String,
+        count: usize,
+        max_allowed: usize,
+    },
+
+    #[error("Too many predicates in chain for '{predicate}': {count} exceeds batch limit of {max_allowed}")]
+    TooManyPredicatesInChain {
+        predicate: String,
+        count: usize,
+        max_allowed: usize,
+    },
+}
+
+/// A link in the predicate chain
+#[derive(Debug, Clone)]
+pub struct ChainLink {
+    /// Statements in this link
+    pub statements: Vec<StatementTmpl>,
+    /// Public arguments coming into this link
+    pub public_args_in: Vec<String>,
+    /// Private arguments used only in this link
+    pub private_args: Vec<String>,
+    /// Public arguments promoted to pass to next link (empty if last link)
+    pub public_args_out: Vec<String>,
+}
+
+/// Wildcard usage information
+#[derive(Debug, Clone)]
+struct WildcardUsage {
+    _wildcard_name: String,
+    /// Indices of constraints using this wildcard
+    used_in_constraints: HashSet<usize>,
+}
+
+/// Early validation: Check if predicate is fundamentally splittable
+pub fn validate_predicate_is_splittable(
+    pred: &CustomPredicateDef,
+    params: &Params,
+) -> Result<(), SplittingError> {
+    let public_args = pred.args.public_args.len();
+    let total_args = public_args + pred.args.private_args.as_ref().map_or(0, |v| v.len());
+
+    // Check: public args must fit in operation arg limit
+    if public_args > params.max_statement_args {
+        return Err(SplittingError::TooManyPublicArgs {
+            predicate: pred.name.name.clone(),
+            count: public_args,
+            max_allowed: params.max_statement_args,
+            message: "Public arguments exceed max operation args - cannot call this predicate"
+                .to_string(),
+        });
+    }
+
+    // Check: total args must fit in wildcard limit
+    if total_args > params.max_custom_predicate_wildcards {
+        return Err(SplittingError::TooManyTotalArgs {
+            predicate: pred.name.name.clone(),
+            count: total_args,
+            max_allowed: params.max_custom_predicate_wildcards,
+            message: "Total arguments exceed max wildcard limit - cannot represent this predicate"
+                .to_string(),
+        });
+    }
+
+    Ok(())
+}
+
+/// Split a predicate into a chain if it exceeds statement limit
+pub fn split_predicate_if_needed(
+    pred: CustomPredicateDef,
+    params: &Params,
+) -> Result<Vec<CustomPredicateDef>, SplittingError> {
+    // Early validation
+    validate_predicate_is_splittable(&pred, params)?;
+
+    // If within limits, no splitting needed
+    if pred.statements.len() <= params.max_custom_predicate_arity {
+        return Ok(vec![pred]);
+    }
+
+    // Need to split - execute the splitting algorithm
+    let chain = split_into_chain(pred, params)?;
+
+    Ok(chain)
+}
+
+/// Phase 1: Analyze wildcard usage in statements
+fn analyze_wildcards(statements: &[StatementTmpl]) -> HashMap<String, WildcardUsage> {
+    let mut usage: HashMap<String, WildcardUsage> = HashMap::new();
+
+    for (idx, stmt) in statements.iter().enumerate() {
+        let wildcards = collect_wildcards_from_statement(stmt);
+
+        for wildcard in wildcards {
+            usage
+                .entry(wildcard.clone())
+                .or_insert_with(|| WildcardUsage {
+                    _wildcard_name: wildcard.clone(),
+                    used_in_constraints: HashSet::new(),
+                })
+                .used_in_constraints
+                .insert(idx);
+        }
+    }
+
+    usage
+}
+
+/// Collect all wildcard names from a statement
+fn collect_wildcards_from_statement(stmt: &StatementTmpl) -> HashSet<String> {
+    let mut wildcards = HashSet::new();
+
+    for arg in &stmt.args {
+        match arg {
+            StatementArg::Identifier(id) => {
+                wildcards.insert(id.name.clone());
+            }
+            StatementArg::AnchoredKey(ak) => {
+                wildcards.insert(ak.root.name.clone());
+            }
+            StatementArg::Literal(_) => {}
+        }
+    }
+
+    wildcards
+}
+
+/// Phase 2: Order constraints optimally to minimize liveness at boundaries
+fn order_constraints_optimally(
+    statements: Vec<StatementTmpl>,
+    _usage: &HashMap<String, WildcardUsage>,
+    params: &Params,
+) -> Vec<StatementTmpl> {
+    // If no splitting needed, preserve original order
+    if statements.len() <= params.max_custom_predicate_arity {
+        return statements;
+    }
+
+    let mut ordered = Vec::new();
+    let mut remaining: HashSet<usize> = (0..statements.len()).collect();
+    let mut active_wildcards: HashSet<String> = HashSet::new();
+
+    while !remaining.is_empty() {
+        let best_idx = find_best_next_statement(
+            &statements,
+            &remaining,
+            &active_wildcards,
+            ordered.len(),
+            params,
+        );
+
+        remaining.remove(&best_idx);
+        let stmt = &statements[best_idx];
+        ordered.push(stmt.clone());
+
+        // Update active wildcards
+        let stmt_wildcards = collect_wildcards_from_statement(stmt);
+        active_wildcards.extend(stmt_wildcards);
+
+        // Remove wildcards no longer needed by remaining statements
+        let needed_later: HashSet<_> = remaining
+            .iter()
+            .flat_map(|&i| collect_wildcards_from_statement(&statements[i]))
+            .collect();
+        active_wildcards.retain(|w| needed_later.contains(w));
+    }
+
+    ordered
+}
+
+/// Find the best next statement to add based on scoring heuristic
+fn find_best_next_statement(
+    statements: &[StatementTmpl],
+    remaining: &HashSet<usize>,
+    active_wildcards: &HashSet<String>,
+    ordered_count: usize,
+    params: &Params,
+) -> usize {
+    // Calculate distance to next split point
+    let bucket_size = params.max_custom_predicate_arity - 1; // Reserve slot for chain call
+    let distance_to_split = bucket_size - (ordered_count % bucket_size);
+    let approaching_split = distance_to_split <= 2;
+
+    remaining
+        .iter()
+        .max_by_key(|&&idx| {
+            score_statement(
+                &statements[idx],
+                active_wildcards,
+                statements,
+                remaining,
+                approaching_split,
+            )
+        })
+        .copied()
+        .unwrap()
+}
+
+/// Score a statement based on how well it minimizes liveness
+fn score_statement(
+    stmt: &StatementTmpl,
+    active_wildcards: &HashSet<String>,
+    statements: &[StatementTmpl],
+    remaining: &HashSet<usize>,
+    approaching_split: bool,
+) -> i32 {
+    let stmt_wildcards = collect_wildcards_from_statement(stmt);
+
+    // 1. How many active wildcards does this reuse?
+    let reuse_count = stmt_wildcards.intersection(active_wildcards).count();
+
+    // 2. How many new wildcards does this introduce?
+    let new_wildcard_count = stmt_wildcards.difference(active_wildcards).count();
+
+    // 3. After adding this statement, what would be active?
+    let mut projected_active = active_wildcards.clone();
+    projected_active.extend(stmt_wildcards.clone());
+
+    // 4. Which wildcards are still needed by other remaining statements?
+    let needed_later: HashSet<String> = remaining
+        .iter()
+        .flat_map(|&i| collect_wildcards_from_statement(&statements[i]))
+        .collect();
+
+    // 5. Wildcards we can close = active now but not needed later
+    projected_active.retain(|w| needed_later.contains(w));
+    let still_active_count = projected_active.len();
+
+    // Base score calculation
+    // - Prefer statements that reuse active wildcards (don't introduce new liveness)
+    // - Penalize introducing new wildcards (increases liveness)
+    // - Penalize keeping many wildcards active (higher liveness)
+    let base_score = (reuse_count * 3) as i32
+        - (new_wildcard_count * 4) as i32
+        - (still_active_count * 2) as i32;
+
+    // Look-ahead bonus: when approaching split, heavily favor closing wildcards
+    if approaching_split {
+        let closes_count = active_wildcards.len() + new_wildcard_count - still_active_count;
+        base_score + (closes_count * 10) as i32
+    } else {
+        base_score
+    }
+}
+
+/// Calculate which wildcards are live at a split boundary
+fn calculate_live_wildcards(
+    before_split: &[StatementTmpl],
+    after_split: &[StatementTmpl],
+) -> HashSet<String> {
+    let before: HashSet<_> = before_split
+        .iter()
+        .flat_map(collect_wildcards_from_statement)
+        .collect();
+
+    let after: HashSet<_> = after_split
+        .iter()
+        .flat_map(collect_wildcards_from_statement)
+        .collect();
+
+    // Live = in both sets (crosses boundary)
+    before.intersection(&after).cloned().collect()
+}
+
+/// Phase 3: Split into chain using bucket-filling approach
+fn split_into_chain(
+    pred: CustomPredicateDef,
+    params: &Params,
+) -> Result<Vec<CustomPredicateDef>, SplittingError> {
+    let original_name = pred.name.name.clone();
+    let conjunction = pred.conjunction_type;
+
+    // Phase 1: Analyze wildcards
+    let usage = analyze_wildcards(&pred.statements);
+
+    // Phase 2: Order optimally
+    let ordered_statements = order_constraints_optimally(pred.statements, &usage, params);
+
+    // Get original public args
+    let original_public_args: Vec<String> = pred
+        .args
+        .public_args
+        .iter()
+        .map(|id| id.name.clone())
+        .collect();
+
+    // Build chain links
+    let mut chain_links = Vec::new();
+    let mut pos = 0;
+    let mut incoming_public = original_public_args.clone();
+
+    while pos < ordered_statements.len() {
+        let remaining = ordered_statements.len() - pos;
+        let is_last = remaining <= params.max_custom_predicate_arity;
+
+        let bucket_size = if is_last {
+            remaining // Last predicate uses all remaining
+        } else {
+            params.max_custom_predicate_arity - 1 // Reserve slot for chain call
+        };
+
+        let end = pos + bucket_size;
+
+        // Calculate liveness at this split boundary
+        let live_at_boundary = if is_last {
+            HashSet::new()
+        } else {
+            calculate_live_wildcards(&ordered_statements[pos..end], &ordered_statements[end..])
+        };
+
+        // Check: Can we fit promoted wildcards in public args?
+        // Need to account for possible overlap between incoming_public and live_at_boundary
+        let incoming_set: HashSet<_> = incoming_public.iter().cloned().collect();
+        let new_promotions: Vec<_> = live_at_boundary
+            .iter()
+            .filter(|w| !incoming_set.contains(*w))
+            .collect();
+        let total_public = incoming_public.len() + new_promotions.len();
+        if total_public > params.max_statement_args {
+            return Err(SplittingError::TooManyPublicArgsAtSplit {
+                predicate: original_name.clone(),
+                count: total_public,
+                max_allowed: params.max_statement_args,
+            });
+        }
+
+        // Calculate private args (used in this segment but not incoming and not outgoing)
+        let segment_wildcards: HashSet<_> = ordered_statements[pos..end]
+            .iter()
+            .flat_map(collect_wildcards_from_statement)
+            .collect();
+
+        let mut private_args: Vec<String> = segment_wildcards
+            .difference(&incoming_set)
+            .filter(|w| !live_at_boundary.contains(*w))
+            .cloned()
+            .collect();
+        private_args.sort(); // Deterministic ordering
+
+        // Check: Total args constraint (incoming + new promotions + private)
+        let total_args = incoming_public.len() + new_promotions.len() + private_args.len();
+        if total_args > params.max_custom_predicate_wildcards {
+            return Err(SplittingError::TooManyTotalArgsInChainLink {
+                link_index: chain_links.len(),
+                total_count: total_args,
+                max_allowed: params.max_custom_predicate_wildcards,
+            });
+        }
+
+        let mut public_args_out: Vec<String> = live_at_boundary.iter().cloned().collect();
+        public_args_out.sort(); // Deterministic ordering
+
+        chain_links.push(ChainLink {
+            statements: ordered_statements[pos..end].to_vec(),
+            public_args_in: incoming_public.clone(),
+            private_args,
+            public_args_out: public_args_out.clone(),
+        });
+
+        pos = end;
+
+        // Next link's incoming public args = current incoming + newly promoted live wildcards
+        // Only add wildcards that aren't already in incoming_public to avoid duplicates
+        for wildcard in public_args_out {
+            if !incoming_set.contains(&wildcard) {
+                incoming_public.push(wildcard);
+            }
+        }
+    }
+
+    // Phase 4: Generate synthetic predicates
+    let chain_predicates =
+        generate_chain_predicates(&original_name, chain_links, conjunction, params)?;
+
+    // Phase 5: Validation
+    validate_chain(&chain_predicates, &original_name, params)?;
+
+    Ok(chain_predicates)
+}
+
+/// Phase 4: Generate synthetic predicates from chain links
+fn generate_chain_predicates(
+    original_name: &str,
+    chain_links: Vec<ChainLink>,
+    conjunction: ConjunctionType,
+    _params: &Params,
+) -> Result<Vec<CustomPredicateDef>, SplittingError> {
+    let mut predicates = Vec::new();
+
+    for (i, link) in chain_links.iter().enumerate() {
+        let pred_name = if i == 0 {
+            Identifier {
+                name: original_name.to_string(),
+                span: None,
+            }
+        } else {
+            Identifier {
+                name: format!("{}_{}", original_name, i),
+                span: None,
+            }
+        };
+
+        let is_last = i == chain_links.len() - 1;
+        let mut statements = link.statements.clone();
+
+        // Add chain call if not last
+        if !is_last {
+            let next_pred_name = Identifier {
+                name: format!("{}_{}", original_name, i + 1),
+                span: None,
+            };
+
+            // Create arguments for chain call: all public args (incoming + promoted)
+            let mut chain_call_args = Vec::new();
+            for arg_name in &link.public_args_in {
+                chain_call_args.push(StatementArg::Identifier(Identifier {
+                    name: arg_name.clone(),
+                    span: None,
+                }));
+            }
+            for arg_name in &link.public_args_out {
+                chain_call_args.push(StatementArg::Identifier(Identifier {
+                    name: arg_name.clone(),
+                    span: None,
+                }));
+            }
+
+            let chain_call = StatementTmpl {
+                predicate: next_pred_name,
+                args: chain_call_args,
+                span: None,
+            };
+
+            statements.push(chain_call);
+        }
+
+        // Build public args (incoming)
+        let public_args: Vec<Identifier> = link
+            .public_args_in
+            .iter()
+            .map(|name| Identifier {
+                name: name.clone(),
+                span: None,
+            })
+            .collect();
+
+        // Build private args (private + promoted for next)
+        let mut private_arg_names = link.private_args.clone();
+        if !is_last {
+            private_arg_names.extend(link.public_args_out.clone());
+        }
+
+        let private_args = if private_arg_names.is_empty() {
+            None
+        } else {
+            Some(
+                private_arg_names
+                    .into_iter()
+                    .map(|name| Identifier { name, span: None })
+                    .collect(),
+            )
+        };
+
+        predicates.push(CustomPredicateDef {
+            name: pred_name,
+            args: ArgSection {
+                public_args,
+                private_args,
+                span: None,
+            },
+            conjunction_type: conjunction,
+            statements,
+            span: None,
+        });
+    }
+
+    Ok(predicates)
+}
+
+/// Phase 5: Validate the generated chain
+fn validate_chain(
+    chain: &[CustomPredicateDef],
+    original_name: &str,
+    params: &Params,
+) -> Result<(), SplittingError> {
+    if chain.len() > params.max_custom_batch_size {
+        return Err(SplittingError::TooManyPredicatesInChain {
+            predicate: original_name.to_string(),
+            count: chain.len(),
+            max_allowed: params.max_custom_batch_size,
+        });
+    }
+
+    for pred in chain {
+        // Each predicate should have ≤ max_statements
+        assert!(pred.statements.len() <= params.max_custom_predicate_arity);
+
+        // Public args should fit
+        assert!(pred.args.public_args.len() <= params.max_statement_args);
+
+        // Total args should fit
+        let total =
+            pred.args.public_args.len() + pred.args.private_args.as_ref().map_or(0, |v| v.len());
+        assert!(total <= params.max_custom_predicate_wildcards);
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lang::{frontend_ast::parse::parse_document, parser::parse_podlang};
+
+    fn parse_predicate(input: &str) -> CustomPredicateDef {
+        let parsed = parse_podlang(input).expect("Failed to parse");
+        let document = parse_document(parsed.into_iter().next().unwrap());
+
+        for item in document.items {
+            if let DocumentItem::CustomPredicateDef(pred) = item {
+                return pred;
+            }
+        }
+
+        panic!("No custom predicate found");
+    }
+
+    #[test]
+    fn test_validate_splittable() {
+        let input = r#"
+            my_pred(A, B) = AND (
+                Equal(A, B)
+            )
+        "#;
+
+        let pred = parse_predicate(input);
+        let params = Params::default();
+
+        assert!(validate_predicate_is_splittable(&pred, &params).is_ok());
+    }
+
+    #[test]
+    fn test_validate_too_many_public_args() {
+        let input = r#"
+            my_pred(A, B, C, D, E, F) = AND (
+                Equal(A, B)
+            )
+        "#;
+
+        let pred = parse_predicate(input);
+        let params = Params::default(); // max_statement_args = 5
+
+        let result = validate_predicate_is_splittable(&pred, &params);
+        assert!(matches!(
+            result,
+            Err(SplittingError::TooManyPublicArgs { .. })
+        ));
+    }
+
+    #[test]
+    fn test_no_split_needed() {
+        let input = r#"
+            my_pred(A, B) = AND (
+                Equal(A["x"], B["y"])
+                Equal(A["z"], 1)
+            )
+        "#;
+
+        let pred = parse_predicate(input);
+        let params = Params::default();
+
+        let result = split_predicate_if_needed(pred, &params);
+        assert!(result.is_ok());
+
+        let chain = result.unwrap();
+        assert_eq!(chain.len(), 1); // No split needed
+    }
+
+    #[test]
+    fn test_simple_split() {
+        let input = r#"
+            my_pred(A) = AND (
+                Equal(A["a"], 1)
+                Equal(A["b"], 2)
+                Equal(A["c"], 3)
+                Equal(A["d"], 4)
+                Equal(A["e"], 5)
+                Equal(A["f"], 6)
+            )
+        "#;
+
+        let pred = parse_predicate(input);
+        let params = Params::default(); // max_custom_predicate_arity = 5
+
+        let result = split_predicate_if_needed(pred, &params);
+        assert!(result.is_ok());
+
+        let chain = result.unwrap();
+        assert_eq!(chain.len(), 2); // Should split into 2 predicates
+
+        // First predicate: 4 statements + chain call = 5
+        assert_eq!(chain[0].statements.len(), 5);
+
+        // Second predicate: 2 remaining statements
+        assert_eq!(chain[1].statements.len(), 2);
+    }
+
+    #[test]
+    fn test_split_with_private_wildcards() {
+        let input = r#"
+            complex(A, B, private: T1, T2) = AND (
+                Equal(T1["x"], A["y"])
+                Equal(T1["z"], 100)
+                Equal(T2["a"], T1["x"])
+                HashOf(T2["b"], B)
+                Equal(A["result"], T2["a"])
+                Equal(B["final"], T2["b"])
+            )
+        "#;
+
+        let pred = parse_predicate(input);
+        let params = Params::default(); // max_custom_predicate_arity = 5
+
+        let result = split_predicate_if_needed(pred, &params);
+        assert!(result.is_ok());
+
+        let chain = result.unwrap();
+        assert_eq!(chain.len(), 2); // Should split into 2 predicates
+
+        // First predicate should have wildcards that cross boundary promoted
+        // Check that chain call is present
+        let last_stmt = &chain[0].statements.last().unwrap();
+        assert_eq!(last_stmt.predicate.name, "complex_1");
+    }
+
+    #[test]
+    fn test_split_into_three_predicates() {
+        let input = r#"
+            large_pred(A) = AND (
+                Equal(A["a"], 1)
+                Equal(A["b"], 2)
+                Equal(A["c"], 3)
+                Equal(A["d"], 4)
+                Equal(A["e"], 5)
+                Equal(A["f"], 6)
+                Equal(A["g"], 7)
+                Equal(A["h"], 8)
+                Equal(A["i"], 9)
+                Equal(A["j"], 10)
+                Equal(A["k"], 11)
+            )
+        "#;
+
+        let pred = parse_predicate(input);
+        let params = Params::default(); // max_custom_predicate_arity = 5
+
+        let result = split_predicate_if_needed(pred, &params);
+        assert!(result.is_ok());
+
+        let chain = result.unwrap();
+        assert_eq!(chain.len(), 3); // Should split into 3 predicates
+
+        // First: 4 + chain call = 5
+        assert_eq!(chain[0].statements.len(), 5);
+        // Second: 4 + chain call = 5
+        assert_eq!(chain[1].statements.len(), 5);
+        // Third: 3 remaining
+        assert_eq!(chain[2].statements.len(), 3);
+    }
+
+    #[test]
+    fn test_no_duplicate_promoted_wildcards() {
+        // Test that a wildcard used across multiple chain boundaries
+        // doesn't get duplicated in incoming_public
+        let input = r#"
+            reuse_pred(A, private: T) = AND (
+                Equal(T["x"], A["start"])
+                Equal(T["y"], 1)
+                Equal(T["z"], 2)
+                Equal(T["w"], 3)
+                Equal(A["mid"], T["x"])
+                Equal(T["a"], 4)
+                Equal(T["b"], 5)
+                Equal(T["c"], 6)
+                Equal(A["end"], T["x"])
+            )
+        "#;
+
+        let pred = parse_predicate(input);
+        let params = Params::default();
+
+        let result = split_predicate_if_needed(pred, &params);
+        assert!(result.is_ok());
+
+        let chain = result.unwrap();
+        // Should split into 2 predicates
+        // T is used in first segment and crosses to second, then used again in second
+        assert_eq!(chain.len(), 2);
+
+        // Check that second predicate's public args don't have duplicates
+        let second_pred_public_count = chain[1].args.public_args.len();
+        let second_pred_public_names: Vec<_> = chain[1]
+            .args
+            .public_args
+            .iter()
+            .map(|id| &id.name)
+            .collect();
+        let unique_count = second_pred_public_names
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+
+        assert_eq!(
+            second_pred_public_count, unique_count,
+            "Public args should not contain duplicates"
+        );
+    }
+
+    #[test]
+    fn test_greedy_ordering_reduces_liveness() {
+        // Test that greedy ordering clusters related wildcards together
+        // This predicate would have high liveness with naive ordering,
+        // but greedy should group T1 statements together, then T2, etc.
+        let input = r#"
+            clustered(A, B, private: T1, T2, T3) = AND (
+                Equal(T1["x"], 1)
+                Equal(T2["y"], 2)
+                Equal(T3["z"], 3)
+                Equal(T1["a"], 4)
+                Equal(T2["b"], 5)
+                Equal(T3["c"], 6)
+                Equal(T1["d"], A["result"])
+                Equal(T2["e"], B["value"])
+            )
+        "#;
+
+        let pred = parse_predicate(input);
+        let params = Params::default();
+
+        let result = split_predicate_if_needed(pred, &params);
+        assert!(result.is_ok());
+
+        let chain = result.unwrap();
+        // Should split into 2 predicates
+        assert_eq!(chain.len(), 2);
+
+        // With good ordering, we should minimize wildcards crossing the boundary
+        // The first predicate should try to complete some wildcards before splitting
+        let second_pred = &chain[1];
+
+        // Second predicate's public args should be reasonable (not all 3 private wildcards)
+        // With naive ordering all 3 might be live; with greedy hopefully fewer
+        let second_pred_public_count = second_pred.args.public_args.len();
+
+        // We started with A, B (2 public args)
+        // In worst case, all 3 private wildcards cross boundary → 5 total
+        // With greedy, we hope for better (e.g., only 1-2 cross → 3-4 total)
+        assert!(
+            second_pred_public_count <= 4,
+            "Greedy ordering should minimize promotions, got {} public args",
+            second_pred_public_count
+        );
+    }
+}
