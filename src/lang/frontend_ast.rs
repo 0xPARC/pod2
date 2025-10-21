@@ -982,18 +982,18 @@ mod tests {
         let output = ast.to_string();
         // Parse the output to verify it's still valid
         let reparsed = parse_podlang(&output).expect("Failed to parse pretty-printed output");
-        let redocument_pair = reparsed
+        let reparsed_document_pair = reparsed
             .into_iter()
             .next()
             .expect("No document pair in reparse");
-        let mut reast = parse::parse_document(redocument_pair);
+        let mut reparsed_ast = parse::parse_document(reparsed_document_pair);
 
         // Clear spans for comparison (they'll be different after pretty-printing)
         clear_spans(&mut ast);
-        clear_spans(&mut reast);
+        clear_spans(&mut reparsed_ast);
 
         // Compare the ASTs (they should be structurally equivalent)
-        assert_eq!(ast, reast, "AST mismatch for input:\n{}", input);
+        assert_eq!(ast, reparsed_ast, "AST mismatch for input:\n{}", input);
     }
 
     fn clear_spans(doc: &mut Document) {

@@ -1,7 +1,9 @@
 use thiserror::Error;
 
 use crate::{
-    frontend, lang::{frontend_ast::Span, parser::ParseError}, middleware
+    frontend,
+    lang::{frontend_ast::Span, parser::ParseError},
+    middleware,
 };
 
 #[derive(Error, Debug)]
