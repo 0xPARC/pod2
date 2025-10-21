@@ -2,11 +2,8 @@ use crate::middleware::NativePredicate;
 
 pub fn native_predicate_from_string(s: &str) -> Option<NativePredicate> {
     match s {
-        // TODO: update any code that still uses ValueOf to use Equal instead
-        "ValueOf" => Some(NativePredicate::Equal),
         "Equal" => Some(NativePredicate::Equal),
         "NotEqual" => Some(NativePredicate::NotEqual),
-        // Syntactic sugar for Gt/GtEq is handled at a later stage
         "Gt" => Some(NativePredicate::Gt),
         "GtEq" => Some(NativePredicate::GtEq),
         "Lt" => Some(NativePredicate::Lt),

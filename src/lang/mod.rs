@@ -6,7 +6,6 @@ pub mod frontend_ast_validate;
 pub mod parser;
 pub mod pretty_print;
 mod utils;
-//pub mod processor;
 
 use std::sync::Arc;
 
@@ -14,15 +13,11 @@ pub use error::LangError;
 pub use parser::{parse_podlang, Pairs, ParseError, Rule};
 pub use pretty_print::PrettyPrint;
 
-//pub use processor::process_pest_tree;
-//use processor::PodlangOutput;
 use crate::{
     frontend::PodRequest,
     middleware::{CustomPredicateBatch, Params},
 };
 
-/// Compatibility wrapper for the old processor output format
-/// This maintains backward compatibility with existing tests while using the new frontend
 #[derive(Debug, Clone, PartialEq)]
 pub struct PodlangOutput {
     pub custom_batch: Arc<CustomPredicateBatch>,
@@ -35,7 +30,6 @@ pub fn parse(
     available_batches: &[Arc<CustomPredicateBatch>],
 ) -> Result<PodlangOutput, LangError> {
     let pairs = parse_podlang(input)?;
-    // parse_document expects a single Pair, not Pairs - extract the document pair
     let document_pair = pairs
         .into_iter()
         .next()
@@ -44,7 +38,6 @@ pub fn parse(
     let validated = frontend_ast_validate::validate(document, available_batches)?;
     let lowered = frontend_ast_lower::lower(validated, params, "PodlangBatch".to_string())?;
 
-    // Convert LoweredOutput to PodlangOutput for backward compatibility
     let custom_batch = lowered.batch.unwrap_or_else(|| {
         // If no batch, create an empty one
         CustomPredicateBatch::new(params, "PodlangBatch".to_string(), vec![])

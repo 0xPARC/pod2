@@ -14,6 +14,7 @@ use hex::FromHex;
 use crate::middleware::NativePredicate;
 use crate::{
     backends::plonky2::{deserialize_bytes, primitives::ec::curve::Point},
+    frontend::{BuilderArg, CustomPredicateBatchBuilder, StatementTmplBuilder},
     lang::{
         frontend_ast::*,
         frontend_ast_split,
@@ -21,9 +22,9 @@ use crate::{
         utils::native_predicate_from_string,
     },
     middleware::{
-        self, containers, CustomPredicate, CustomPredicateBatch, IntroPredicateRef, Params,
-        Predicate, RawValue, SecretKey, StatementTmpl as MWStatementTmpl,
-        StatementTmplArg as MWStatementTmplArg, Wildcard,
+        self, containers, CustomPredicateBatch, IntroPredicateRef, Params, Predicate, RawValue,
+        SecretKey, StatementTmpl as MWStatementTmpl, StatementTmplArg as MWStatementTmplArg,
+        Wildcard,
     },
 };
 
@@ -114,18 +115,15 @@ impl<'a> Lowerer<'a> {
                 .insert(pred.name.name.clone(), idx);
         }
 
-        // Create middleware custom predicates
-        let mut middleware_predicates = Vec::new();
+        // Create custom predicate batch using builder
+        let mut cpb_builder =
+            CustomPredicateBatchBuilder::new(self.params.clone(), batch_name.clone());
+
         for pred_def in &custom_predicates {
-            let mw_pred = self.lower_custom_predicate(pred_def)?;
-            middleware_predicates.push(mw_pred);
+            self.lower_custom_predicate(pred_def, &mut cpb_builder)?;
         }
 
-        // Create batch
-        let batch =
-            CustomPredicateBatch::new(self.params, batch_name.clone(), middleware_predicates);
-
-        Ok(Some(batch))
+        Ok(Some(cpb_builder.finish()))
     }
 
     fn lower_request(
@@ -147,26 +145,73 @@ impl<'a> Lowerer<'a> {
         // Build wildcard map from all wildcards used in the request statements
         let wildcard_map = self.build_request_wildcard_map(request_def);
 
-        // Lower each statement in the request
-        let mut request_templates = Vec::new();
+        // Lower each statement to a builder first
+        let mut statement_builders = Vec::new();
         for stmt in &request_def.statements {
-            let mut mw_stmt = self.lower_statement_tmpl_frontend(stmt, &wildcard_map)?;
+            let stmt_builder = self.lower_statement_to_builder(stmt)?;
+            statement_builders.push(stmt_builder);
+        }
 
-            // Convert BatchSelf references to Custom references
-            // In a REQUEST context, we need to use Custom refs, not BatchSelf
-            if let Some(batch_ref) = batch {
-                if let Predicate::BatchSelf(index) = &mw_stmt.pred {
-                    mw_stmt.pred = Predicate::Custom(middleware::CustomPredicateRef::new(
-                        batch_ref.clone(),
-                        *index,
-                    ));
-                }
-            }
-
+        // Resolve builders to middleware statement templates
+        let mut request_templates = Vec::new();
+        for stmt_builder in statement_builders {
+            let mw_stmt =
+                self.resolve_request_statement_builder(stmt_builder, &wildcard_map, batch)?;
             request_templates.push(mw_stmt);
         }
 
         Ok(Some(crate::frontend::PodRequest::new(request_templates)))
+    }
+
+    fn resolve_request_statement_builder(
+        &self,
+        stmt_builder: StatementTmplBuilder,
+        wildcard_map: &HashMap<String, usize>,
+        batch: Option<&Arc<CustomPredicateBatch>>,
+    ) -> Result<MWStatementTmpl, LoweringError> {
+        // First desugar the builder
+        let desugared = stmt_builder.desugar();
+
+        // Convert BatchSelf predicate to Custom if we have a batch
+        let mut predicate = desugared.predicate;
+        if let Some(batch_ref) = batch {
+            if let Predicate::BatchSelf(index) = predicate {
+                predicate = Predicate::Custom(middleware::CustomPredicateRef::new(
+                    batch_ref.clone(),
+                    index,
+                ));
+            }
+        }
+
+        // Convert BuilderArgs to StatementTmplArgs
+        let mut mw_args = Vec::new();
+        for builder_arg in desugared.args {
+            let mw_arg = match builder_arg {
+                BuilderArg::Literal(value) => MWStatementTmplArg::Literal(value),
+                BuilderArg::WildcardLiteral(name) => {
+                    let index = wildcard_map
+                        .get(&name)
+                        .ok_or_else(|| LoweringError::PredicateNotFound { name: name.clone() })?;
+                    MWStatementTmplArg::Wildcard(Wildcard::new(name, *index))
+                }
+                BuilderArg::Key(root_name, key_str) => {
+                    let root_index = wildcard_map.get(&root_name).ok_or_else(|| {
+                        LoweringError::PredicateNotFound {
+                            name: root_name.clone(),
+                        }
+                    })?;
+                    let wildcard = Wildcard::new(root_name, *root_index);
+                    let key = middleware::Key::from(key_str.as_str());
+                    MWStatementTmplArg::AnchoredKey(wildcard, key)
+                }
+            };
+            mw_args.push(mw_arg);
+        }
+
+        Ok(MWStatementTmpl {
+            pred: predicate,
+            args: mw_args,
+        })
     }
 
     fn build_request_wildcard_map(&self, request_def: &RequestDef) -> HashMap<String, usize> {
@@ -235,74 +280,80 @@ impl<'a> Lowerer<'a> {
     fn lower_custom_predicate(
         &self,
         pred_def: &CustomPredicateDef,
-    ) -> Result<CustomPredicate, LoweringError> {
+        cpb_builder: &mut CustomPredicateBatchBuilder,
+    ) -> Result<(), LoweringError> {
         let name = pred_def.name.name.clone();
 
         // Note: Constraint checking is handled by the splitting phase
         // Predicates passed here should already be within limits
 
-        // Build wildcard mapping
-        let mut wildcard_map = HashMap::new();
-        let mut wildcard_names = Vec::new();
-        let mut index = 0;
+        // Collect public and private argument names
+        let mut public_arg_names = Vec::new();
+        let mut private_arg_names = Vec::new();
 
         for arg in &pred_def.args.public_args {
-            wildcard_map.insert(arg.name.clone(), index);
-            wildcard_names.push(arg.name.clone());
-            index += 1;
+            public_arg_names.push(arg.name.clone());
         }
 
         if let Some(private_args) = &pred_def.args.private_args {
             for arg in private_args {
-                wildcard_map.insert(arg.name.clone(), index);
-                wildcard_names.push(arg.name.clone());
-                index += 1;
+                private_arg_names.push(arg.name.clone());
             }
         }
 
-        // Lower statements
-        let mut middleware_statements = Vec::new();
+        // Lower statements to builders
+        let mut statement_builders = Vec::new();
         for stmt in &pred_def.statements {
-            let mw_stmt = self.lower_statement_tmpl_frontend(stmt, &wildcard_map)?;
-            middleware_statements.push(mw_stmt);
+            let stmt_builder = self.lower_statement_to_builder(stmt)?;
+            statement_builders.push(stmt_builder);
         }
 
-        // Create custom predicate
-        let args_len = pred_def.args.public_args.len();
+        // Convert to &str slices for builder API
+        let public_args_str: Vec<&str> = public_arg_names.iter().map(|s| s.as_str()).collect();
+        let private_args_str: Vec<&str> = private_arg_names.iter().map(|s| s.as_str()).collect();
+
+        // Add predicate to batch using builder
         let conjunction = pred_def.conjunction_type == ConjunctionType::And;
 
-        let custom_pred = if conjunction {
-            CustomPredicate::and(
-                self.params,
-                name,
-                middleware_statements,
-                args_len,
-                wildcard_names,
-            )?
+        if conjunction {
+            cpb_builder
+                .predicate_and(
+                    &name,
+                    &public_args_str,
+                    &private_args_str,
+                    &statement_builders,
+                )
+                .map_err(|e| match e {
+                    crate::frontend::Error::Middleware(mw_err) => LoweringError::Middleware(mw_err),
+                    _ => LoweringError::InvalidArgumentType,
+                })?;
         } else {
-            CustomPredicate::or(
-                self.params,
-                name,
-                middleware_statements,
-                args_len,
-                wildcard_names,
-            )?
-        };
+            cpb_builder
+                .predicate_or(
+                    &name,
+                    &public_args_str,
+                    &private_args_str,
+                    &statement_builders,
+                )
+                .map_err(|e| match e {
+                    crate::frontend::Error::Middleware(mw_err) => LoweringError::Middleware(mw_err),
+                    _ => LoweringError::InvalidArgumentType,
+                })?;
+        }
 
-        Ok(custom_pred)
+        Ok(())
     }
 
-    fn lower_statement_tmpl_frontend(
+    fn lower_statement_to_builder(
         &self,
         stmt: &StatementTmpl,
-        wildcard_map: &HashMap<String, usize>,
-    ) -> Result<MWStatementTmpl, LoweringError> {
+    ) -> Result<StatementTmplBuilder, LoweringError> {
         // Get predicate
         let pred_name = &stmt.predicate.name;
         let symbols = self.validated.symbols();
 
         // Check for native predicates first
-        let mut predicate = if let Some(native) = native_predicate_from_string(pred_name) {
+        let predicate = if let Some(native) = native_predicate_from_string(pred_name) {
             Predicate::Native(native)
         } else if let Some(&index) = self.batch_predicate_index.get(pred_name) {
             // References to other predicates in the same batch (including split chains)
@@ -338,81 +389,36 @@ impl<'a> Lowerer<'a> {
             });
         }
 
-        // Lower arguments
-        let mut mw_args = Vec::new();
+        // Convert AST args to BuilderArgs
+        let mut builder = StatementTmplBuilder::new(predicate);
         for arg in &stmt.args {
-            let mw_arg = self.lower_statement_arg_frontend(arg, wildcard_map)?;
-            mw_args.push(mw_arg);
+            let builder_arg = self.lower_statement_arg_to_builder(arg)?;
+            builder = builder.arg(builder_arg);
         }
 
-        // Desugar syntactic sugar predicates
-        if let Predicate::Native(ref mut np) = predicate {
-            match np {
-                // GtEq/Gt -> LtEq/Lt with reversed args
-                middleware::NativePredicate::GtEq => {
-                    *np = middleware::NativePredicate::LtEq;
-                    mw_args.reverse();
-                }
-                middleware::NativePredicate::Gt => {
-                    *np = middleware::NativePredicate::Lt;
-                    mw_args.reverse();
-                }
-                // Container predicates -> Contains/NotContains
-                middleware::NativePredicate::DictContains
-                | middleware::NativePredicate::ArrayContains
-                | middleware::NativePredicate::SetContains => {
-                    *np = middleware::NativePredicate::Contains;
-                }
-                middleware::NativePredicate::DictNotContains
-                | middleware::NativePredicate::SetNotContains => {
-                    *np = middleware::NativePredicate::NotContains;
-                }
-                _ => {}
-            }
-        }
-
-        Ok(MWStatementTmpl {
-            pred: predicate,
-            args: mw_args,
-        })
+        // Return builder without calling .desugar() - that will happen later
+        Ok(builder)
     }
 
-    fn lower_statement_arg_frontend(
+    fn lower_statement_arg_to_builder(
         &self,
         arg: &StatementArg,
-        wildcard_map: &HashMap<String, usize>,
-    ) -> Result<MWStatementTmplArg, LoweringError> {
+    ) -> Result<BuilderArg, LoweringError> {
         match arg {
             StatementArg::Literal(lit) => {
                 let value = self.lower_literal(lit)?;
-                Ok(MWStatementTmplArg::Literal(value))
+                Ok(BuilderArg::Literal(value))
             }
             StatementArg::Identifier(id) => {
-                let index =
-                    wildcard_map
-                        .get(&id.name)
-                        .ok_or_else(|| LoweringError::PredicateNotFound {
-                            name: id.name.clone(),
-                        })?;
-                Ok(MWStatementTmplArg::Wildcard(Wildcard::new(
-                    id.name.clone(),
-                    *index,
-                )))
+                // For builder, we just need the wildcard name
+                Ok(BuilderArg::WildcardLiteral(id.name.clone()))
             }
             StatementArg::AnchoredKey(ak) => {
-                let root_index = wildcard_map.get(&ak.root.name).ok_or_else(|| {
-                    LoweringError::PredicateNotFound {
-                        name: ak.root.name.clone(),
-                    }
-                })?;
-                let wildcard = Wildcard::new(ak.root.name.clone(), *root_index);
-
-                let key = match &ak.key {
-                    AnchoredKeyPath::Bracket(s) => middleware::Key::from(s.value.as_str()),
-                    AnchoredKeyPath::Dot(id) => middleware::Key::from(id.name.as_str()),
+                let key_str = match &ak.key {
+                    AnchoredKeyPath::Bracket(s) => s.value.clone(),
+                    AnchoredKeyPath::Dot(id) => id.name.clone(),
                 };
-
-                Ok(MWStatementTmplArg::AnchoredKey(wildcard, key))
+                Ok(BuilderArg::Key(ak.root.name.clone(), key_str))
             }
         }
     }
