@@ -93,7 +93,7 @@ impl<'a> Lowerer<'a> {
         batch_name: String,
     ) -> Result<Option<Arc<CustomPredicateBatch>>, LoweringError> {
         // Extract and split custom predicates from document
-        let custom_predicates = self.extract_and_split_predicates()?;
+        let (custom_predicates, original_count) = self.extract_and_split_predicates()?;
 
         // If no custom predicates, return None
         if custom_predicates.is_empty() {
@@ -106,6 +106,7 @@ impl<'a> Lowerer<'a> {
                 batch_name: batch_name.clone(),
                 count: custom_predicates.len(),
                 max: self.params.max_custom_batch_size,
+                original_count,
             });
         }
 
@@ -256,7 +257,9 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn extract_and_split_predicates(&self) -> Result<Vec<CustomPredicateDef>, LoweringError> {
+    fn extract_and_split_predicates(
+        &self,
+    ) -> Result<(Vec<CustomPredicateDef>, usize), LoweringError> {
         let doc = self.validated.document();
         let predicates: Vec<CustomPredicateDef> = doc
             .items
@@ -267,6 +270,8 @@ impl<'a> Lowerer<'a> {
             })
             .collect();
 
+        let original_count = predicates.len();
+
         // Apply splitting to each predicate as needed
         let mut split_predicates = Vec::new();
         for pred in predicates {
@@ -274,7 +279,7 @@ impl<'a> Lowerer<'a> {
             split_predicates.extend(chain);
         }
 
-        Ok(split_predicates)
+        Ok((split_predicates, original_count))
     }
 
     fn lower_custom_predicate(
@@ -683,5 +688,111 @@ mod tests {
             stmt.pred,
             Predicate::Native(NativePredicate::Contains)
         ));
+    }
+
+    #[test]
+    fn test_error_message_with_splitting() {
+        // Create a document with predicates that will exceed the batch limit after splitting
+        // We'll create 2 predicates with 4 statements each (max arity = 5)
+        // Each will NOT split individually, but together they exceed a small batch limit
+        let input = r#"
+            pred1(A) = AND (
+                Equal(A["a"], 1)
+                Equal(A["b"], 2)
+            )
+            pred2(B) = AND (
+                Equal(B["c"], 3)
+                Equal(B["d"], 4)
+            )
+        "#;
+
+        // Use very restrictive params to force the error
+        let params = Params {
+            max_custom_batch_size: 1,
+            ..Default::default()
+        };
+
+        let result = parse_validate_and_lower(input, &params);
+
+        // Should fail with TooManyPredicates error
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+
+        if let LoweringError::TooManyPredicates {
+            count,
+            max,
+            original_count,
+            ..
+        } = err
+        {
+            assert_eq!(count, 2); // 2 predicates after splitting (no splitting occurred)
+            assert_eq!(max, 1);
+            assert_eq!(original_count, 2); // Started with 2 predicates
+
+            // Error message should NOT mention splitting since no splitting occurred
+            let err_msg = format!("{}", err);
+            assert!(!err_msg.contains("before automatic splitting"));
+        } else {
+            panic!("Expected TooManyPredicates error, got: {:?}", err);
+        }
+    }
+
+    #[test]
+    fn test_error_message_after_splitting() {
+        // Create TWO predicates that will EACH split into 2 predicates
+        // This tests the case where splitting causes the batch to be too large
+        // but no individual predicate chain exceeds the limit
+        let input = r#"
+            pred1(A) = AND (
+                Equal(A["a"], 1)
+                Equal(A["b"], 2)
+                Equal(A["c"], 3)
+                Equal(A["d"], 4)
+                Equal(A["e"], 5)
+                Equal(A["f"], 6)
+            )
+            pred2(B) = AND (
+                Equal(B["a"], 1)
+                Equal(B["b"], 2)
+                Equal(B["c"], 3)
+                Equal(B["d"], 4)
+                Equal(B["e"], 5)
+                Equal(B["f"], 6)
+            )
+        "#;
+
+        // Use params where each predicate splits into 2, but total of 4 exceeds batch limit
+        let params = Params {
+            // Allow 3 predicates in batch
+            // Default max_custom_predicate_arity is 5, so each will split into 2 predicates
+            // Total: 2 original predicates -> 4 after splitting (exceeds limit of 3)
+            max_custom_batch_size: 3,
+            ..Default::default()
+        };
+
+        let result = parse_validate_and_lower(input, &params);
+
+        // Should fail with TooManyPredicates error
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+
+        if let LoweringError::TooManyPredicates {
+            count,
+            max,
+            original_count,
+            ..
+        } = err
+        {
+            assert_eq!(count, 4); // 4 predicates after splitting (2 from each)
+            assert_eq!(max, 3);
+            assert_eq!(original_count, 2); // Started with 2 predicates
+
+            // Error message SHOULD mention splitting since splitting occurred
+            let err_msg = format!("{}", err);
+            assert!(err_msg.contains("before automatic splitting"));
+            assert!(err_msg.contains("started with 2 predicates"));
+        } else {
+            panic!("Expected TooManyPredicates error, got: {:?}", err);
+        }
     }
 }

@@ -90,11 +90,12 @@ pub enum ValidationError {
 /// Lowering errors from frontend AST lowering to middleware
 #[derive(Debug, thiserror::Error)]
 pub enum LoweringError {
-    #[error("Too many custom predicates: {count} exceeds limit of {max} (batch: {batch_name})")]
+    #[error("Too many custom predicates in batch '{batch_name}': {count} exceeds limit of {max}{}", if *.original_count != *.count { format!(" (started with {} predicates before automatic splitting)", original_count) } else { String::new() })]
     TooManyPredicates {
         batch_name: String,
         count: usize,
         max: usize,
+        original_count: usize,
     },
 
     #[error("Too many statements in predicate '{predicate}': {count} exceeds limit of {max}")]
