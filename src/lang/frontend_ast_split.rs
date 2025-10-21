@@ -1,53 +1,25 @@
 //! Predicate splitting for frontend AST
 //!
 //! This module implements automatic predicate splitting when predicates exceed
-//! middleware constraints. Uses a chain-based bucket-filling approach with
-//! optimal constraint reordering to minimize wildcard promotion overhead.
+//! middleware constraints.
+//!
+//! When splitting a predicate, we try to group statements that use the same
+//! wildcards together. However, if a private wildcard must be used across a
+//! split boundary, it must be promoted to a public argument in the latter
+//! predicate, to ensure that it is bound to the same value in both predicates.
+//!
+//! A wildcard is "live" at a split boundary if it is used in a statement on both
+//! sides of the boundary. We want to minimize the number of live wildcards at
+//! split boundaries, to minimize the number of promotions required.
+//!
+//! We use a greedy algorithm to order the statements in a predicate to minimize
+//! the number of live wildcards at split boundaries.
 
 use std::collections::{HashMap, HashSet};
 
+// SplittingError is now defined in error.rs
+pub use crate::lang::error::SplittingError;
 use crate::{lang::frontend_ast::*, middleware::Params};
-
-/// Errors that can occur during predicate splitting
-#[derive(Debug, thiserror::Error)]
-pub enum SplittingError {
-    #[error("Too many public arguments in predicate '{predicate}': {count} exceeds max of {max_allowed}. {message}")]
-    TooManyPublicArgs {
-        predicate: String,
-        count: usize,
-        max_allowed: usize,
-        message: String,
-    },
-
-    #[error("Too many total arguments in predicate '{predicate}': {count} exceeds max of {max_allowed}. {message}")]
-    TooManyTotalArgs {
-        predicate: String,
-        count: usize,
-        max_allowed: usize,
-        message: String,
-    },
-
-    #[error("Too many total arguments in chain link {link_index}: {total_count} exceeds max of {max_allowed}")]
-    TooManyTotalArgsInChainLink {
-        link_index: usize,
-        total_count: usize,
-        max_allowed: usize,
-    },
-
-    #[error("Too many public arguments at split boundary in predicate '{predicate}': {count} exceeds max of {max_allowed}")]
-    TooManyPublicArgsAtSplit {
-        predicate: String,
-        count: usize,
-        max_allowed: usize,
-    },
-
-    #[error("Too many predicates in chain for '{predicate}': {count} exceeds batch limit of {max_allowed}")]
-    TooManyPredicatesInChain {
-        predicate: String,
-        count: usize,
-        max_allowed: usize,
-    },
-}
 
 /// A link in the predicate chain
 #[derive(Debug, Clone)]
@@ -122,7 +94,6 @@ pub fn split_predicate_if_needed(
     Ok(chain)
 }
 
-/// Phase 1: Analyze wildcard usage in statements
 fn analyze_wildcards(statements: &[StatementTmpl]) -> HashMap<String, WildcardUsage> {
     let mut usage: HashMap<String, WildcardUsage> = HashMap::new();
 
@@ -163,7 +134,7 @@ fn collect_wildcards_from_statement(stmt: &StatementTmpl) -> HashSet<String> {
     wildcards
 }
 
-/// Phase 2: Order constraints optimally to minimize liveness at boundaries
+/// Order constraints optimally to minimize liveness at boundaries
 fn order_constraints_optimally(
     statements: Vec<StatementTmpl>,
     _usage: &HashMap<String, WildcardUsage>,
@@ -244,23 +215,23 @@ fn score_statement(
 ) -> i32 {
     let stmt_wildcards = collect_wildcards_from_statement(stmt);
 
-    // 1. How many active wildcards does this reuse?
+    // How many active wildcards does this reuse?
     let reuse_count = stmt_wildcards.intersection(active_wildcards).count();
 
-    // 2. How many new wildcards does this introduce?
+    // How many new wildcards does this introduce?
     let new_wildcard_count = stmt_wildcards.difference(active_wildcards).count();
 
-    // 3. After adding this statement, what would be active?
+    // After adding this statement, what would be active?
     let mut projected_active = active_wildcards.clone();
     projected_active.extend(stmt_wildcards.clone());
 
-    // 4. Which wildcards are still needed by other remaining statements?
+    // Which wildcards are still needed by other remaining statements?
     let needed_later: HashSet<String> = remaining
         .iter()
         .flat_map(|&i| collect_wildcards_from_statement(&statements[i]))
         .collect();
 
-    // 5. Wildcards we can close = active now but not needed later
+    // Wildcards we can close = active now but not needed later
     projected_active.retain(|w| needed_later.contains(w));
     let still_active_count = projected_active.len();
 
@@ -300,7 +271,7 @@ fn calculate_live_wildcards(
     before.intersection(&after).cloned().collect()
 }
 
-/// Phase 3: Split into chain using bucket-filling approach
+/// Split into chain using bucket-filling approach
 fn split_into_chain(
     pred: CustomPredicateDef,
     params: &Params,
@@ -308,13 +279,10 @@ fn split_into_chain(
     let original_name = pred.name.name.clone();
     let conjunction = pred.conjunction_type;
 
-    // Phase 1: Analyze wildcards
     let usage = analyze_wildcards(&pred.statements);
 
-    // Phase 2: Order optimally
     let ordered_statements = order_constraints_optimally(pred.statements, &usage, params);
 
-    // Get original public args
     let original_public_args: Vec<String> = pred
         .args
         .public_args
@@ -322,7 +290,6 @@ fn split_into_chain(
         .map(|id| id.name.clone())
         .collect();
 
-    // Build chain links
     let mut chain_links = Vec::new();
     let mut pos = 0;
     let mut incoming_public = original_public_args.clone();
@@ -406,11 +373,9 @@ fn split_into_chain(
         }
     }
 
-    // Phase 4: Generate synthetic predicates
     let chain_predicates =
         generate_chain_predicates(&original_name, chain_links, conjunction, params)?;
 
-    // Phase 5: Validation
     validate_chain(&chain_predicates, &original_name, params)?;
 
     Ok(chain_predicates)
@@ -756,9 +721,27 @@ mod tests {
 
     #[test]
     fn test_greedy_ordering_reduces_liveness() {
-        // Test that greedy ordering clusters related wildcards together
-        // This predicate would have high liveness with naive ordering,
-        // but greedy should group T1 statements together, then T2, etc.
+        // This test verifies that our greedy ordering algorithm reduces wildcard liveness
+        // by clustering statements that use the same wildcards together.
+        //
+        // The predicate has 8 statements using 3 private wildcards (T1, T2, T3):
+        // - T1 used in statements 1, 4, 7
+        // - T2 used in statements 2, 5, 8
+        // - T3 used in statements 3, 6
+        //
+        // NAIVE ORDERING (original order):
+        // Would interleave T1, T2, T3 usage throughout the predicate.
+        // When splitting at statement limit (5 statements per predicate):
+        //   Predicate 1: statements 1-5 (introduces T1, T2, T3 - none complete)
+        //   Predicate 2: statements 6-8 (all 3 wildcards still live)
+        // Result: 2 public args (A, B) + 3 promoted wildcards = 5 total in predicate 2
+        //
+        // GREEDY ORDERING (our algorithm):
+        // Clusters statements by wildcard to minimize liveness:
+        // Groups T1 statements together, then T2, then T3
+        //   Predicate 1: completes some wildcards before the split point
+        //   Predicate 2: fewer wildcards need to cross the boundary
+        // Result: 2 public args (A, B) + 1-2 promoted wildcards = 3-4 total in predicate 2
         let input = r#"
             clustered(A, B, private: T1, T2, T3) = AND (
                 Equal(T1["x"], 1)
@@ -779,23 +762,18 @@ mod tests {
         assert!(result.is_ok());
 
         let chain = result.unwrap();
-        // Should split into 2 predicates
-        assert_eq!(chain.len(), 2);
+        assert_eq!(chain.len(), 2, "Predicate should split into 2 links");
 
-        // With good ordering, we should minimize wildcards crossing the boundary
-        // The first predicate should try to complete some wildcards before splitting
         let second_pred = &chain[1];
-
-        // Second predicate's public args should be reasonable (not all 3 private wildcards)
-        // With naive ordering all 3 might be live; with greedy hopefully fewer
         let second_pred_public_count = second_pred.args.public_args.len();
 
-        // We started with A, B (2 public args)
-        // In worst case, all 3 private wildcards cross boundary → 5 total
-        // With greedy, we hope for better (e.g., only 1-2 cross → 3-4 total)
+        // Verify greedy ordering achieves better results than naive ordering would
+        // Started with 2 public args (A, B)
+        // Naive would have: 2 + 3 promoted = 5 public args in second predicate
+        // Greedy achieves: 2 + 1-2 promoted = 3-4 public args in second predicate
         assert!(
             second_pred_public_count <= 4,
-            "Greedy ordering should minimize promotions, got {} public args",
+            "Greedy ordering should reduce promotions to ≤4 public args, but got {}",
             second_pred_public_count
         );
     }

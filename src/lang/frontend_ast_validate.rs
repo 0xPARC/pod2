@@ -8,7 +8,7 @@ use std::{collections::HashMap, sync::Arc};
 use hex::{FromHex, ToHex};
 
 use crate::{
-    lang::{frontend_ast::*, processor::native_predicate_from_string},
+    lang::{frontend_ast::*, utils::native_predicate_from_string},
     middleware::{CustomPredicateBatch, Hash, NativePredicate},
 };
 
@@ -102,62 +102,7 @@ pub enum DiagnosticLevel {
     Info,
 }
 
-/// Validation error
-#[derive(Debug, thiserror::Error)]
-pub enum ValidationError {
-    #[error("Invalid hash: {hash}")]
-    InvalidHash { hash: String, span: Option<Span> },
-
-    #[error("Duplicate predicate definition: {name}")]
-    DuplicatePredicate {
-        name: String,
-        first_span: Option<Span>,
-        second_span: Option<Span>,
-    },
-
-    #[error("Duplicate import name: {name}")]
-    DuplicateImport { name: String, span: Option<Span> },
-
-    #[error("Import arity mismatch: expected {expected} predicates, found {found}")]
-    ImportArityMismatch {
-        expected: usize,
-        found: usize,
-        span: Option<Span>,
-    },
-
-    #[error("Batch not found: {id}")]
-    BatchNotFound { id: String, span: Option<Span> },
-
-    #[error("Undefined predicate: {name}")]
-    UndefinedPredicate { name: String, span: Option<Span> },
-
-    #[error("Undefined wildcard: {name} in predicate {pred_name}")]
-    UndefinedWildcard {
-        name: String,
-        pred_name: String,
-        span: Option<Span>,
-    },
-
-    #[error("Argument count mismatch for {predicate}: expected {expected}, found {found}")]
-    ArgumentCountMismatch {
-        predicate: String,
-        expected: usize,
-        found: usize,
-        span: Option<Span>,
-    },
-
-    #[error("Invalid argument type for {predicate}: anchored keys not allowed")]
-    InvalidArgumentType {
-        predicate: String,
-        span: Option<Span>,
-    },
-
-    #[error("Duplicate wildcard in predicate arguments: {name}")]
-    DuplicateWildcard { name: String, span: Option<Span> },
-
-    #[error("Empty statement list in {context}")]
-    EmptyStatementList { context: String, span: Option<Span> },
-}
+pub use crate::lang::error::ValidationError;
 
 /// Validate an AST document
 pub fn validate(
@@ -224,6 +169,20 @@ impl Validator {
         for item in &document.items {
             if let DocumentItem::CustomPredicateDef(pred_def) = item {
                 self.process_custom_predicate_def(pred_def)?;
+            }
+        }
+
+        // Check for multiple REQUEST definitions (only one allowed)
+        let mut first_request_span = None;
+        for item in &document.items {
+            if let DocumentItem::RequestDef(req) = item {
+                if let Some(first_span) = first_request_span {
+                    return Err(ValidationError::MultipleRequestDefinitions {
+                        first_span: Some(first_span),
+                        second_span: req.span,
+                    });
+                }
+                first_request_span = req.span;
             }
         }
 
@@ -486,16 +445,14 @@ impl Validator {
             });
         };
 
-        // Check arity: in predicate bodies use total arity; in REQUEST use public arity
-        let expected_arity = if wildcard_context.is_some() {
-            pred_info.arity
-        } else {
-            match pred_info.kind {
-                PredicateKind::Custom { .. }
-                | PredicateKind::BatchImported { .. }
-                | PredicateKind::IntroImported { .. } => pred_info.public_arity,
-                PredicateKind::Native(_) => pred_info.arity,
-            }
+        // Check arity:
+        // - For native predicates: always use total arity
+        // - For custom predicates: always use public_arity (private args are not passed at call sites)
+        let expected_arity = match pred_info.kind {
+            PredicateKind::Custom { .. }
+            | PredicateKind::BatchImported { .. }
+            | PredicateKind::IntroImported { .. } => pred_info.public_arity,
+            PredicateKind::Native(_) => pred_info.arity,
         };
 
         if stmt.args.len() != expected_arity {
@@ -584,10 +541,10 @@ impl Validator {
         use NativePredicate::*;
         match native {
             None | False => 0,
-            Equal | NotEqual | Gt | GtEq | Lt | LtEq | SignedBy | PublicKeyOf | HashOf => 2,
-            SumOf | ProductOf | MaxOf | Contains | NotContains => 3,
-            ContainerInsert | ContainerUpdate | ContainerDelete | DictContains
-            | DictNotContains | ArrayContains | SetContains | SetNotContains => 3,
+            Equal | NotEqual | Gt | GtEq | Lt | LtEq | SignedBy | PublicKeyOf | DictNotContains
+            | SetContains | SetNotContains | NotContains => 2,
+            SumOf | ProductOf | MaxOf | HashOf | Contains | DictContains | ArrayContains => 3,
+            ContainerInsert | ContainerUpdate | ContainerDelete => 3,
             DictInsert | DictUpdate | DictDelete | SetInsert | SetDelete | ArrayUpdate => 3,
         }
     }
@@ -782,6 +739,19 @@ mod tests {
     }
 
     #[test]
+    fn test_multiple_request_definitions() {
+        let input = r#"
+            REQUEST(Equal(A["x"], 1))
+            REQUEST(Equal(B["y"], 2))
+        "#;
+        let result = parse_and_validate(input, &[]);
+        assert!(matches!(
+            result,
+            Err(ValidationError::MultipleRequestDefinitions { .. })
+        ));
+    }
+
+    #[test]
     fn test_use_statement() {
         let params = Params::default();
 
@@ -825,7 +795,7 @@ mod tests {
         let input = r#"REQUEST(
             GtEq(A["x"], B["y"])
             DictContains(D, K, V)
-            SetNotContains(S, E, F)
+            SetNotContains(S, E)
         )"#;
         let result = parse_and_validate(input, &[]);
         assert!(result.is_ok());

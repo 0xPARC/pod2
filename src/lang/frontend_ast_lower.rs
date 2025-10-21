@@ -3,7 +3,10 @@
 //! This module converts validated frontend AST to middleware data structures.
 //! Currently implements basic 1:1 conversion without automatic predicate splitting.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use hex::FromHex;
 
@@ -15,7 +18,7 @@ use crate::{
         frontend_ast::*,
         frontend_ast_split,
         frontend_ast_validate::{PredicateKind, ValidatedAST},
-        processor::native_predicate_from_string,
+        utils::native_predicate_from_string,
     },
     middleware::{
         self, containers, CustomPredicate, CustomPredicateBatch, IntroPredicateRef, Params,
@@ -24,65 +27,30 @@ use crate::{
     },
 };
 
-/// Result of lowering: a batch of custom predicates
+/// Result of lowering: optional custom predicate batch and optional request
+///
+/// A Podlang file can contain:
+/// - Just custom predicates (batch: Some, request: None)
+/// - Just a request (batch: None, request: Some)
+/// - Both (batch: Some, request: Some)
+/// - Neither (batch: None, request: None) - just imports
 #[derive(Debug, Clone)]
-pub struct LoweredBatch {
-    pub name: String,
-    pub batch: Arc<CustomPredicateBatch>,
+pub struct LoweredOutput {
+    pub batch: Option<Arc<CustomPredicateBatch>>,
+    pub request: Option<crate::frontend::PodRequest>,
 }
 
-/// Errors that can occur during lowering
-#[derive(Debug, thiserror::Error)]
-pub enum LoweringError {
-    #[error("Too many custom predicates: {count} exceeds limit of {max} (batch: {batch_name})")]
-    TooManyPredicates {
-        batch_name: String,
-        count: usize,
-        max: usize,
-    },
-
-    #[error("Too many statements in predicate '{predicate}': {count} exceeds limit of {max}")]
-    TooManyStatements {
-        predicate: String,
-        count: usize,
-        max: usize,
-    },
-
-    #[error("Too many wildcards in predicate '{predicate}': {count} exceeds limit of {max}")]
-    TooManyWildcards {
-        predicate: String,
-        count: usize,
-        max: usize,
-    },
-
-    #[error("Too many arguments in statement template: {count} exceeds limit of {max}")]
-    TooManyStatementArgs { count: usize, max: usize },
-
-    #[error("Predicate '{name}' not found in symbol table")]
-    PredicateNotFound { name: String },
-
-    #[error("Invalid argument type in statement template")]
-    InvalidArgumentType,
-
-    #[error("Middleware error: {0}")]
-    Middleware(#[from] middleware::Error),
-
-    #[error("Splitting error: {0}")]
-    Splitting(#[from] frontend_ast_split::SplittingError),
-
-    #[error("Cannot lower document with validation errors")]
-    ValidationErrors,
-
-    #[error("No custom predicates to lower")]
-    NoCustomPredicates,
-}
+pub use crate::lang::error::LoweringError;
 
 /// Lower a validated AST to middleware structures
+///
+/// Returns both the custom predicate batch (if any) and the request (if any).
+/// At least one will be Some if the document contains custom predicates or a request.
 pub fn lower(
     validated: ValidatedAST,
     params: &Params,
     batch_name: String,
-) -> Result<LoweredBatch, LoweringError> {
+) -> Result<LoweredOutput, LoweringError> {
     if !validated.diagnostics().is_empty() {
         // For now, treat any diagnostics as errors
         // In future we could allow warnings
@@ -109,9 +77,27 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn lower(mut self, batch_name: String) -> Result<LoweredBatch, LoweringError> {
+    fn lower(mut self, batch_name: String) -> Result<LoweredOutput, LoweringError> {
+        // Lower custom predicates (if any)
+        let batch = self.lower_batch(batch_name)?;
+
+        // Lower request (if any) - pass batch so BatchSelf refs can be converted to Custom refs
+        let request = self.lower_request(batch.as_ref())?;
+
+        Ok(LoweredOutput { batch, request })
+    }
+
+    fn lower_batch(
+        &mut self,
+        batch_name: String,
+    ) -> Result<Option<Arc<CustomPredicateBatch>>, LoweringError> {
         // Extract and split custom predicates from document
         let custom_predicates = self.extract_and_split_predicates()?;
+
+        // If no custom predicates, return None
+        if custom_predicates.is_empty() {
+            return Ok(None);
+        }
 
         // Check batch size constraint
         if custom_predicates.len() > self.params.max_custom_batch_size {
@@ -139,10 +125,90 @@ impl<'a> Lowerer<'a> {
         let batch =
             CustomPredicateBatch::new(self.params, batch_name.clone(), middleware_predicates);
 
-        Ok(LoweredBatch {
-            name: batch_name,
-            batch,
-        })
+        Ok(Some(batch))
+    }
+
+    fn lower_request(
+        &self,
+        batch: Option<&Arc<CustomPredicateBatch>>,
+    ) -> Result<Option<crate::frontend::PodRequest>, LoweringError> {
+        let doc = self.validated.document();
+
+        // Find request definition (if any)
+        let request_def = doc.items.iter().find_map(|item| match item {
+            DocumentItem::RequestDef(req) => Some(req),
+            _ => None,
+        });
+
+        let Some(request_def) = request_def else {
+            return Ok(None);
+        };
+
+        // Build wildcard map from all wildcards used in the request statements
+        let wildcard_map = self.build_request_wildcard_map(request_def);
+
+        // Lower each statement in the request
+        let mut request_templates = Vec::new();
+        for stmt in &request_def.statements {
+            let mut mw_stmt = self.lower_statement_tmpl_frontend(stmt, &wildcard_map)?;
+
+            // Convert BatchSelf references to Custom references
+            // In a REQUEST context, we need to use Custom refs, not BatchSelf
+            if let Some(batch_ref) = batch {
+                if let Predicate::BatchSelf(index) = &mw_stmt.pred {
+                    mw_stmt.pred = Predicate::Custom(middleware::CustomPredicateRef::new(
+                        batch_ref.clone(),
+                        *index,
+                    ));
+                }
+            }
+
+            request_templates.push(mw_stmt);
+        }
+
+        Ok(Some(crate::frontend::PodRequest::new(request_templates)))
+    }
+
+    fn build_request_wildcard_map(&self, request_def: &RequestDef) -> HashMap<String, usize> {
+        // Collect all unique wildcards from all statements
+        let mut wildcard_names = Vec::new();
+        let mut seen = HashSet::new();
+
+        for stmt in &request_def.statements {
+            self.collect_statement_wildcards(stmt, &mut wildcard_names, &mut seen);
+        }
+
+        // Build map from name to index
+        wildcard_names
+            .into_iter()
+            .enumerate()
+            .map(|(idx, name)| (name, idx))
+            .collect()
+    }
+
+    fn collect_statement_wildcards(
+        &self,
+        stmt: &StatementTmpl,
+        names: &mut Vec<String>,
+        seen: &mut HashSet<String>,
+    ) {
+        for arg in &stmt.args {
+            match arg {
+                StatementArg::Identifier(id) => {
+                    if !seen.contains(&id.name) {
+                        seen.insert(id.name.clone());
+                        names.push(id.name.clone());
+                    }
+                }
+                StatementArg::AnchoredKey(ak) => {
+                    if !seen.contains(&ak.root.name) {
+                        seen.insert(ak.root.name.clone());
+                        names.push(ak.root.name.clone());
+                    }
+                }
+                StatementArg::Literal(_) => {}
+            }
+        }
     }
 
     fn extract_and_split_predicates(&self) -> Result<Vec<CustomPredicateDef>, LoweringError> {
@@ -155,10 +221,6 @@ impl<'a> Lowerer<'a> {
                 _ => None,
             })
             .collect();
-
-        if predicates.is_empty() {
-            return Err(LoweringError::NoCustomPredicates);
-        }
 
         // Apply splitting to each predicate as needed
         let mut split_predicates = Vec::new();
@@ -176,7 +238,7 @@ impl<'a> Lowerer<'a> {
     ) -> Result<CustomPredicate, LoweringError> {
         let name = pred_def.name.name.clone();
 
-        // Note: Constraint checking is now handled by the splitting phase
+        // Note: Constraint checking is handled by the splitting phase
         // Predicates passed here should already be within limits
 
         // Build wildcard mapping
@@ -240,8 +302,7 @@ impl<'a> Lowerer<'a> {
         let symbols = self.validated.symbols();
 
         // Check for native predicates first
-        let predicate = if let Some(native) = native_predicate_from_string(pred_name) {
-            // Syntactic sugar predicates are allowed - desugaring is a separate step
+        let mut predicate = if let Some(native) = native_predicate_from_string(pred_name) {
             Predicate::Native(native)
         } else if let Some(&index) = self.batch_predicate_index.get(pred_name) {
             // References to other predicates in the same batch (including split chains)
@@ -282,6 +343,32 @@ impl<'a> Lowerer<'a> {
         for arg in &stmt.args {
             let mw_arg = self.lower_statement_arg_frontend(arg, wildcard_map)?;
             mw_args.push(mw_arg);
+        }
+
+        // Desugar syntactic sugar predicates
+        if let Predicate::Native(ref mut np) = predicate {
+            match np {
+                // GtEq/Gt -> LtEq/Lt with reversed args
+                middleware::NativePredicate::GtEq => {
+                    *np = middleware::NativePredicate::LtEq;
+                    mw_args.reverse();
+                }
+                middleware::NativePredicate::Gt => {
+                    *np = middleware::NativePredicate::Lt;
+                    mw_args.reverse();
+                }
+                // Container predicates -> Contains/NotContains
+                middleware::NativePredicate::DictContains
+                | middleware::NativePredicate::ArrayContains
+                | middleware::NativePredicate::SetContains => {
+                    *np = middleware::NativePredicate::Contains;
+                }
+                middleware::NativePredicate::DictNotContains
+                | middleware::NativePredicate::SetNotContains => {
+                    *np = middleware::NativePredicate::NotContains;
+                }
+                _ => {}
+            }
         }
 
         Ok(MWStatementTmpl {
@@ -405,11 +492,16 @@ mod tests {
     fn parse_validate_and_lower(
         input: &str,
         params: &Params,
-    ) -> Result<LoweredBatch, LoweringError> {
+    ) -> Result<LoweredOutput, LoweringError> {
         let parsed = parse_podlang(input).expect("Failed to parse");
         let document = parse_document(parsed.into_iter().next().unwrap());
         let validated = validate(document, &[]).expect("Failed to validate");
         lower(validated, params, "test_batch".to_string())
+    }
+
+    // Helper to get the batch from the output (expecting it to exist)
+    fn expect_batch(output: &LoweredOutput) -> &Arc<CustomPredicateBatch> {
+        output.batch.as_ref().expect("Expected batch to be present")
     }
 
     #[test]
@@ -428,9 +520,9 @@ mod tests {
         assert!(result.is_ok());
 
         let lowered = result.unwrap();
-        assert_eq!(lowered.batch.predicates().len(), 1);
+        assert_eq!(expect_batch(&lowered).predicates().len(), 1);
 
-        let pred = &lowered.batch.predicates()[0];
+        let pred = &expect_batch(&lowered).predicates()[0];
         assert_eq!(pred.name, "my_pred");
         assert_eq!(pred.args_len(), 2);
         assert_eq!(pred.wildcard_names().len(), 2);
@@ -451,7 +543,7 @@ mod tests {
         assert!(result.is_ok());
 
         let lowered = result.unwrap();
-        let pred = &lowered.batch.predicates()[0];
+        let pred = &expect_batch(&lowered).predicates()[0];
         assert_eq!(pred.args_len(), 1); // Only A is public
         assert_eq!(pred.wildcard_names().len(), 3); // A, B, C total
     }
@@ -470,7 +562,7 @@ mod tests {
         assert!(result.is_ok());
 
         let lowered = result.unwrap();
-        let pred = &lowered.batch.predicates()[0];
+        let pred = &expect_batch(&lowered).predicates()[0];
         assert!(pred.is_disjunction());
     }
 
@@ -496,13 +588,13 @@ mod tests {
 
         let lowered = result.unwrap();
         // Should be automatically split into 2 predicates (my_pred and my_pred_1)
-        assert_eq!(lowered.batch.predicates().len(), 2);
+        assert_eq!(expect_batch(&lowered).predicates().len(), 2);
 
         // First predicate should have 5 statements (4 + chain call)
-        assert_eq!(lowered.batch.predicates()[0].statements().len(), 5);
+        assert_eq!(expect_batch(&lowered).predicates()[0].statements().len(), 5);
 
         // Second predicate should have 2 statements
-        assert_eq!(lowered.batch.predicates()[1].statements().len(), 2);
+        assert_eq!(expect_batch(&lowered).predicates()[1].statements().len(), 2);
     }
 
     #[test]
@@ -522,7 +614,7 @@ mod tests {
         assert!(result.is_ok());
 
         let lowered = result.unwrap();
-        assert_eq!(lowered.batch.predicates().len(), 2);
+        assert_eq!(expect_batch(&lowered).predicates().len(), 2);
     }
 
     #[test]
@@ -542,7 +634,7 @@ mod tests {
         assert!(result.is_ok());
 
         let lowered = result.unwrap();
-        let pred2 = &lowered.batch.predicates()[1];
+        let pred2 = &expect_batch(&lowered).predicates()[1];
         let stmt = &pred2.statements()[0];
 
         // Should be BatchSelf(0) referring to pred1
@@ -565,7 +657,7 @@ mod tests {
     }
 
     #[test]
-    fn test_syntactic_sugar_allowed() {
+    fn test_syntactic_sugar_desugaring() {
         let input = r#"
             my_pred(D) = AND (
                 DictContains(D, "key", "value")
@@ -574,17 +666,16 @@ mod tests {
 
         let params = Params::default();
         let result = parse_validate_and_lower(input, &params);
-        // Syntactic sugar is now allowed - desugaring is a separate step
         assert!(result.is_ok());
 
         let lowered = result.unwrap();
-        let pred = &lowered.batch.predicates()[0];
+        let pred = &expect_batch(&lowered).predicates()[0];
         let stmt = &pred.statements()[0];
 
-        // Should preserve the DictContains predicate
+        // Should desugar to the Contains predicate
         assert!(matches!(
             stmt.pred,
-            Predicate::Native(NativePredicate::DictContains)
+            Predicate::Native(NativePredicate::Contains)
         ));
     }
 }

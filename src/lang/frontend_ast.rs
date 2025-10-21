@@ -106,6 +106,15 @@ pub struct AnchoredKey {
     pub span: Option<Span>,
 }
 
+impl AnchoredKey {
+    pub fn key_str(&self) -> &str {
+        match &self.key {
+            AnchoredKeyPath::Bracket(ls) => &ls.value,
+            AnchoredKeyPath::Dot(id) => &id.name,
+        }
+    }
+}
+
 /// Key path in an anchored key
 #[derive(Debug, Clone, PartialEq)]
 pub enum AnchoredKeyPath {
