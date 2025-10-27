@@ -1,7 +1,11 @@
 //! The frontend includes the user-level abstractions and user-friendly types to define and work
 //! with Pods.
 
-use std::{collections::HashMap, convert::From, fmt};
+use std::{
+    collections::{HashMap, HashSet},
+    convert::From,
+    fmt,
+};
 
 use itertools::Itertools;
 use schemars::JsonSchema;
@@ -375,6 +379,12 @@ impl MainPodBuilder {
         wildcard_values: Vec<(usize, Value)>,
         op: Operation,
     ) -> Result<Statement> {
+        // Check for duplicate wildcard value assignments
+        let mut uniq = HashSet::new();
+        if !wildcard_values.iter().all(|(index, _)| uniq.insert(*index)) {
+            return Err(Error::custom("duplicate wildcard value assignments"));
+        }
+
         use NativeOperation::*;
         let st = match op.0 {
             OperationType::Native(o) => {
