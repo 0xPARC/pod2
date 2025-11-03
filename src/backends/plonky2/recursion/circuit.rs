@@ -586,7 +586,7 @@ pub fn pad_circuit(builder: &mut CircuitBuilder<F, D>, common_data: &CommonCircu
     }
 }
 
-fn hash_verifier_data_gadget(
+pub fn hash_verifier_data_gadget(
     builder: &mut CircuitBuilder<F, D>,
     verifier_data: &VerifierCircuitTarget,
 ) -> HashOutTarget {
