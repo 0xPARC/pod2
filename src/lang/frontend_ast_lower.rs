@@ -238,19 +238,19 @@ impl<'a> Lowerer<'a> {
     ) {
         for arg in &stmt.args {
             match arg {
-                StatementArg::Identifier(id) => {
+                StatementTmplArg::Wildcard(id) => {
                     if !seen.contains(&id.name) {
                         seen.insert(id.name.clone());
                         names.push(id.name.clone());
                     }
                 }
-                StatementArg::AnchoredKey(ak) => {
+                StatementTmplArg::AnchoredKey(ak) => {
                     if !seen.contains(&ak.root.name) {
                         seen.insert(ak.root.name.clone());
                         names.push(ak.root.name.clone());
                     }
                 }
-                StatementArg::Literal(_) => {}
+                StatementTmplArg::Literal(_) => {}
             }
         }
     }
@@ -405,18 +405,18 @@ impl<'a> Lowerer<'a> {
 
     fn lower_statement_arg_to_builder(
         &self,
-        arg: &StatementArg,
+        arg: &StatementTmplArg,
     ) -> Result<BuilderArg, LoweringError> {
         match arg {
-            StatementArg::Literal(lit) => {
+            StatementTmplArg::Literal(lit) => {
                 let value = self.lower_literal(lit)?;
                 Ok(BuilderArg::Literal(value))
             }
-            StatementArg::Identifier(id) => {
+            StatementTmplArg::Wildcard(id) => {
                 // For builder, we just need the wildcard name
                 Ok(BuilderArg::WildcardLiteral(id.name.clone()))
             }
-            StatementArg::AnchoredKey(ak) => {
+            StatementTmplArg::AnchoredKey(ak) => {
                 let key_str = match &ak.key {
                     AnchoredKeyPath::Bracket(s) => s.value.clone(),
                     AnchoredKeyPath::Dot(id) => id.name.clone(),
@@ -432,9 +432,9 @@ impl<'a> Lowerer<'a> {
             LiteralValue::Bool(b) => middleware::Value::from(b.value),
             LiteralValue::String(s) => middleware::Value::from(s.value.clone()),
             LiteralValue::Raw(r) => {
-                // Parse hex string to RawValue (little-endian)
-                let hex_str = &r.hash.value[2..]; // Skip "0x"
-                let raw_value = Self::parse_hex_str_to_raw_value(hex_str)?;
+                // Parse hex bytes to RawValue
+                let hex_string = hex::encode(r.hash.bytes);
+                let raw_value = Self::parse_hex_str_to_raw_value(&hex_string)?;
                 middleware::Value::from(raw_value)
             }
             LiteralValue::PublicKey(pk) => {

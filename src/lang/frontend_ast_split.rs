@@ -121,13 +121,13 @@ fn collect_wildcards_from_statement(stmt: &StatementTmpl) -> HashSet<String> {
 
     for arg in &stmt.args {
         match arg {
-            StatementArg::Identifier(id) => {
+            StatementTmplArg::Wildcard(id) => {
                 wildcards.insert(id.name.clone());
             }
-            StatementArg::AnchoredKey(ak) => {
+            StatementTmplArg::AnchoredKey(ak) => {
                 wildcards.insert(ak.root.name.clone());
             }
-            StatementArg::Literal(_) => {}
+            StatementTmplArg::Literal(_) => {}
         }
     }
 
@@ -416,13 +416,13 @@ fn generate_chain_predicates(
             // Create arguments for chain call: all public args (incoming + promoted)
             let mut chain_call_args = Vec::new();
             for arg_name in &link.public_args_in {
-                chain_call_args.push(StatementArg::Identifier(Identifier {
+                chain_call_args.push(StatementTmplArg::Wildcard(Identifier {
                     name: arg_name.clone(),
                     span: None,
                 }));
             }
             for arg_name in &link.public_args_out {
-                chain_call_args.push(StatementArg::Identifier(Identifier {
+                chain_call_args.push(StatementTmplArg::Wildcard(Identifier {
                     name: arg_name.clone(),
                     span: None,
                 }));

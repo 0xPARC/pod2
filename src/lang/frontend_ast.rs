@@ -5,6 +5,8 @@
 
 use std::fmt;
 
+use hex::FromHex;
+
 /// The root document containing all top-level declarations
 #[derive(Debug, Clone, PartialEq)]
 pub struct Document {
@@ -86,15 +88,15 @@ pub enum ConjunctionType {
 #[derive(Debug, Clone, PartialEq)]
 pub struct StatementTmpl {
     pub predicate: Identifier,
-    pub args: Vec<StatementArg>,
+    pub args: Vec<StatementTmplArg>,
     pub span: Option<Span>,
 }
 
 /// Arguments that can be passed to statements
 #[derive(Debug, Clone, PartialEq)]
-pub enum StatementArg {
+pub enum StatementTmplArg {
     Literal(LiteralValue),
-    Identifier(Identifier),
+    Wildcard(Identifier),
     AnchoredKey(AnchoredKey),
 }
 
@@ -130,9 +132,9 @@ pub struct Identifier {
 }
 
 /// Hash value in hex format (0x...)
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HashHex {
-    pub value: String, // Includes the 0x prefix
+    pub bytes: [u8; 32], // 32-byte hash value (without 0x prefix)
     pub span: Option<Span>,
 }
 
@@ -154,7 +156,6 @@ pub enum LiteralValue {
 #[derive(Debug, Clone, PartialEq)]
 pub struct LiteralInt {
     pub value: i64,
-    pub raw: String, // Original string representation
     pub span: Option<Span>,
 }
 
@@ -169,7 +170,6 @@ pub struct LiteralBool {
 #[derive(Debug, Clone, PartialEq)]
 pub struct LiteralString {
     pub value: String, // Unescaped value
-    pub raw: String,   // Raw string including quotes and escapes
     pub span: Option<Span>,
 }
 
@@ -224,7 +224,7 @@ pub struct DictPair {
 }
 
 /// Source location information for error reporting and formatting
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
@@ -298,7 +298,11 @@ impl fmt::Display for BatchRef {
 
 impl fmt::Display for HashHex {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.value)
+        write!(f, "0x")?;
+        for byte in &self.bytes {
+            write!(f, "{:02x}", byte)?;
+        }
+        Ok(())
     }
 }
 
@@ -306,7 +310,7 @@ impl fmt::Display for CustomPredicateDef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(
             f,
-            "{}({}) = {} (",
+            "{}({}) = {}(",
             self.name, self.args, self.conjunction_type
         )?;
         for stmt in &self.statements {
@@ -372,12 +376,12 @@ impl fmt::Display for StatementTmpl {
     }
 }
 
-impl fmt::Display for StatementArg {
+impl fmt::Display for StatementTmplArg {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            StatementArg::Literal(lit) => write!(f, "{}", lit),
-            StatementArg::Identifier(id) => write!(f, "{}", id),
-            StatementArg::AnchoredKey(ak) => write!(f, "{}", ak),
+            StatementTmplArg::Literal(lit) => write!(f, "{}", lit),
+            StatementTmplArg::Wildcard(id) => write!(f, "{}", id),
+            StatementTmplArg::AnchoredKey(ak) => write!(f, "{}", ak),
         }
     }
 }
@@ -415,7 +419,7 @@ impl fmt::Display for LiteralValue {
 
 impl fmt::Display for LiteralInt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.raw)
+        write!(f, "{}", self.value)
     }
 }
 
@@ -427,7 +431,20 @@ impl fmt::Display for LiteralBool {
 
 impl fmt::Display for LiteralString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.raw)
+        write!(f, "\"")?;
+        for ch in self.value.chars() {
+            match ch {
+                '"' => write!(f, "\\\"")?,
+                '\\' => write!(f, "\\\\")?,
+                '\n' => write!(f, "\\n")?,
+                '\r' => write!(f, "\\r")?,
+                '\t' => write!(f, "\\t")?,
+                '\u{0008}' => write!(f, "\\b")?,
+                '\u{000C}' => write!(f, "\\f")?,
+                _ => write!(f, "{}", ch)?,
+            }
+        }
+        write!(f, "\"")
     }
 }
 
@@ -491,6 +508,25 @@ impl fmt::Display for LiteralDict {
 impl fmt::Display for DictPair {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}: {}", self.key, self.value)
+    }
+}
+
+// Conversion from frontend AST HashHex to middleware Hash
+impl TryFrom<&HashHex> for crate::middleware::Hash {
+    type Error = hex::FromHexError;
+
+    fn try_from(hash_hex: &HashHex) -> Result<Self, Self::Error> {
+        // Convert [u8; 32] to hex string and parse via middleware's FromHex
+        let hex_string = hex::encode(hash_hex.bytes);
+        crate::middleware::Hash::from_hex(hex_string)
+    }
+}
+
+impl TryFrom<HashHex> for crate::middleware::Hash {
+    type Error = hex::FromHexError;
+
+    fn try_from(hash_hex: HashHex) -> Result<Self, Self::Error> {
+        (&hash_hex).try_into()
     }
 }
 
@@ -616,9 +652,24 @@ pub mod parse {
 
     fn parse_hash_hex(pair: Pair<Rule>) -> HashHex {
         assert_eq!(pair.as_rule(), Rule::hash_hex);
+        let span = get_span(&pair);
+        let hex_str = pair.as_str();
+
+        // Grammar guarantees "0x" prefix and exactly 64 hex chars
+        assert!(hex_str.starts_with("0x"));
+        let hex_without_prefix = &hex_str[2..];
+
+        // Parse hex string to bytes
+        let mut bytes = [0u8; 32];
+        for i in 0..32 {
+            let byte_str = &hex_without_prefix[i*2..i*2+2];
+            bytes[i] = u8::from_str_radix(byte_str, 16)
+                .expect("Grammar should guarantee valid hex");
+        }
+
         HashHex {
-            value: pair.as_str().to_string(),
-            span: Some(get_span(&pair)),
+            bytes,
+            span: Some(span),
         }
     }
 
@@ -743,14 +794,14 @@ pub mod parse {
         }
     }
 
-    fn parse_statement_arg(pair: Pair<Rule>) -> StatementArg {
+    fn parse_statement_arg(pair: Pair<Rule>) -> StatementTmplArg {
         assert_eq!(pair.as_rule(), Rule::statement_arg);
         let inner = pair.into_inner().next().unwrap();
 
         match inner.as_rule() {
-            Rule::literal_value => StatementArg::Literal(parse_literal_value(inner)),
-            Rule::identifier => StatementArg::Identifier(parse_identifier(inner)),
-            Rule::anchored_key => StatementArg::AnchoredKey(parse_anchored_key(inner)),
+            Rule::literal_value => StatementTmplArg::Literal(parse_literal_value(inner)),
+            Rule::identifier => StatementTmplArg::Wildcard(parse_identifier(inner)),
+            Rule::anchored_key => StatementTmplArg::AnchoredKey(parse_anchored_key(inner)),
             _ => unreachable!("Unexpected statement arg rule: {:?}", inner.as_rule()),
         }
     }
@@ -804,11 +855,9 @@ pub mod parse {
 
     fn parse_literal_int(pair: Pair<Rule>) -> LiteralInt {
         assert_eq!(pair.as_rule(), Rule::literal_int);
-        let raw = pair.as_str().to_string();
-        let value = raw.parse().unwrap();
+        let value = pair.as_str().parse().unwrap();
         LiteralInt {
             value,
-            raw,
             span: Some(get_span(&pair)),
         }
     }
@@ -823,7 +872,7 @@ pub mod parse {
 
     fn parse_literal_string(pair: Pair<Rule>) -> LiteralString {
         assert_eq!(pair.as_rule(), Rule::literal_string);
-        let raw = pair.as_str().to_string();
+        let span = get_span(&pair);
 
         // Extract the unescaped value from between quotes
         let inner = pair.into_inner().next().unwrap();
@@ -831,8 +880,7 @@ pub mod parse {
 
         LiteralString {
             value,
-            raw,
-            span: None, // We've consumed the pair
+            span: Some(span),
         }
     }
 
@@ -1041,9 +1089,9 @@ mod tests {
         stmt.predicate.span = None;
         for arg in &mut stmt.args {
             match arg {
-                StatementArg::Literal(lit) => clear_literal_spans(lit),
-                StatementArg::Identifier(id) => id.span = None,
-                StatementArg::AnchoredKey(ak) => {
+                StatementTmplArg::Literal(lit) => clear_literal_spans(lit),
+                StatementTmplArg::Wildcard(id) => id.span = None,
+                StatementTmplArg::AnchoredKey(ak) => {
                     ak.span = None;
                     ak.root.span = None;
                     match &mut ak.key {
@@ -1205,16 +1253,16 @@ REQUEST(
 
         // Check that the AST correctly unescaped the strings
         if let DocumentItem::RequestDef(req) = &ast.items[0] {
-            if let StatementArg::Literal(LiteralValue::String(s)) = &req.statements[0].args[1] {
+            if let StatementTmplArg::Literal(LiteralValue::String(s)) = &req.statements[0].args[1] {
                 assert_eq!(s.value, "line1\nline2");
             }
-            if let StatementArg::Literal(LiteralValue::String(s)) = &req.statements[1].args[1] {
+            if let StatementTmplArg::Literal(LiteralValue::String(s)) = &req.statements[1].args[1] {
                 assert_eq!(s.value, "say \"hello\"");
             }
-            if let StatementArg::Literal(LiteralValue::String(s)) = &req.statements[2].args[1] {
+            if let StatementTmplArg::Literal(LiteralValue::String(s)) = &req.statements[2].args[1] {
                 assert_eq!(s.value, "path\\to\\file");
             }
-            if let StatementArg::Literal(LiteralValue::String(s)) = &req.statements[3].args[1] {
+            if let StatementTmplArg::Literal(LiteralValue::String(s)) = &req.statements[3].args[1] {
                 assert_eq!(s.value, "col1\tcol2");
             }
         }

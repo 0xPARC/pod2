@@ -193,11 +193,11 @@ impl Validator {
         &mut self,
         use_stmt: &UseBatchStatement,
     ) -> Result<(), ValidationError> {
-        let batch_id = &use_stmt.batch_ref.hash.value;
+        let batch_id = format!("0x{}", hex::encode(use_stmt.batch_ref.hash.bytes));
 
         let batch =
             self.available_batches
-                .get(batch_id)
+                .get(&batch_id)
                 .ok_or_else(|| ValidationError::BatchNotFound {
                     id: batch_id.clone(),
                     span: use_stmt.batch_ref.hash.span,
@@ -264,10 +264,10 @@ impl Validator {
                 kind: PredicateKind::IntroImported {
                     name: intro_name.clone(),
                     args_len: args.len(),
-                    // Grammar guarantees 0x prefix and correct length; slice off 0x directly
-                    verifier_data_hash: Hash::from_hex(&batch_ref.hash.value[2..]).map_err(
+                    // Convert bytes directly to Hash using from_hex
+                    verifier_data_hash: Hash::from_hex(hex::encode(batch_ref.hash.bytes)).map_err(
                         |_| ValidationError::InvalidHash {
-                            hash: batch_ref.hash.value.clone(),
+                            hash: format!("0x{}", hex::encode(batch_ref.hash.bytes)),
                             span: batch_ref.span,
                         },
                     )?,
@@ -483,13 +483,13 @@ impl Validator {
         ) {
             for arg in &stmt.args {
                 match arg {
-                    StatementArg::AnchoredKey(_) => {
+                    StatementTmplArg::AnchoredKey(_) => {
                         return Err(ValidationError::InvalidArgumentType {
                             predicate: stmt.predicate.name.clone(),
                             span: stmt.span,
                         });
                     }
-                    StatementArg::Identifier(id) => {
+                    StatementTmplArg::Wildcard(id) => {
                         if let Some((pred_name, scope)) = wildcard_context {
                             if !scope.wildcards.contains_key(&id.name) {
                                 return Err(ValidationError::UndefinedWildcard {
@@ -500,14 +500,14 @@ impl Validator {
                             }
                         }
                     }
-                    StatementArg::Literal(_) => {}
+                    StatementTmplArg::Literal(_) => {}
                 }
             }
         } else {
             // Native predicates can have anchored keys
             for arg in &stmt.args {
                 match arg {
-                    StatementArg::Identifier(id) => {
+                    StatementTmplArg::Wildcard(id) => {
                         if let Some((pred_name, scope)) = wildcard_context {
                             if !scope.wildcards.contains_key(&id.name) {
                                 return Err(ValidationError::UndefinedWildcard {
@@ -518,7 +518,7 @@ impl Validator {
                             }
                         }
                     }
-                    StatementArg::AnchoredKey(ak) => {
+                    StatementTmplArg::AnchoredKey(ak) => {
                         if let Some((pred_name, scope)) = wildcard_context {
                             if !scope.wildcards.contains_key(&ak.root.name) {
                                 return Err(ValidationError::UndefinedWildcard {
@@ -529,7 +529,7 @@ impl Validator {
                             }
                         }
                     }
-                    StatementArg::Literal(_) => {}
+                    StatementTmplArg::Literal(_) => {}
                 }
             }
         }
