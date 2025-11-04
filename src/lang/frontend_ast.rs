@@ -7,6 +7,8 @@ use std::fmt;
 
 use hex::FromHex;
 
+use crate::backends::plonky2::primitives::ec::{curve::Point, schnorr::SecretKey};
+
 /// The root document containing all top-level declarations
 #[derive(Debug, Clone, PartialEq)]
 pub struct Document {
@@ -190,14 +192,14 @@ pub struct LiteralRaw {
 /// Public key literal: PublicKey(base58string)
 #[derive(Debug, Clone, PartialEq)]
 pub struct LiteralPublicKey {
-    pub base58: String,
+    pub point: Point,
     pub span: Option<Span>,
 }
 
 /// Secret key literal: SecretKey(base64string)
 #[derive(Debug, Clone, PartialEq)]
 pub struct LiteralSecretKey {
-    pub base64: String,
+    pub secret_key: SecretKey,
     pub span: Option<Span>,
 }
 
@@ -469,13 +471,13 @@ impl fmt::Display for LiteralRaw {
 
 impl fmt::Display for LiteralPublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "PublicKey({})", self.base58)
+        write!(f, "PublicKey({})", self.point)
     }
 }
 
 impl fmt::Display for LiteralSecretKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SecretKey({})", self.base64)
+        write!(f, "SecretKey({})", self.secret_key)
     }
 }
 
@@ -551,7 +553,7 @@ pub mod parse {
     use crate::lang::parser::Rule;
 
     /// Convert a Pest document pair to an AST Document
-    pub fn parse_document(pair: Pair<Rule>) -> Document {
+    pub fn parse_document(pair: Pair<Rule>) -> Result<Document, crate::lang::parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::document);
         let mut items = Vec::new();
 
@@ -569,18 +571,18 @@ pub mod parse {
                 }
                 Rule::custom_predicate_def => {
                     items.push(DocumentItem::CustomPredicateDef(
-                        parse_custom_predicate_def(inner_pair),
+                        parse_custom_predicate_def(inner_pair)?,
                     ));
                 }
                 Rule::request_def => {
-                    items.push(DocumentItem::RequestDef(parse_request_def(inner_pair)));
+                    items.push(DocumentItem::RequestDef(parse_request_def(inner_pair)?));
                 }
                 Rule::EOI => {}
                 _ => unreachable!("Unexpected rule in document: {:?}", inner_pair.as_rule()),
             }
         }
 
-        Document { items }
+        Ok(Document { items })
     }
 
     fn parse_use_batch_statement(pair: Pair<Rule>) -> UseBatchStatement {
@@ -676,7 +678,7 @@ pub mod parse {
         }
     }
 
-    fn parse_custom_predicate_def(pair: Pair<Rule>) -> CustomPredicateDef {
+    fn parse_custom_predicate_def(pair: Pair<Rule>) -> Result<CustomPredicateDef, crate::lang::parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::custom_predicate_def);
         let span = get_span(&pair);
         let mut inner = pair.into_inner();
@@ -690,15 +692,15 @@ pub mod parse {
             .into_inner()
             .filter(|p| p.as_rule() == Rule::statement)
             .map(parse_statement)
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
 
-        CustomPredicateDef {
+        Ok(CustomPredicateDef {
             name,
             args,
             conjunction_type,
             statements,
             span: Some(span),
-        }
+        })
     }
 
     fn parse_arg_section(pair: Pair<Rule>) -> ArgSection {
@@ -745,7 +747,7 @@ pub mod parse {
         }
     }
 
-    fn parse_request_def(pair: Pair<Rule>) -> RequestDef {
+    fn parse_request_def(pair: Pair<Rule>) -> Result<RequestDef, crate::lang::parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::request_def);
         let span = get_span(&pair);
         let mut statements = Vec::new();
@@ -756,17 +758,17 @@ pub mod parse {
                     .into_inner()
                     .filter(|p| p.as_rule() == Rule::statement)
                     .map(parse_statement)
-                    .collect();
+                    .collect::<Result<Vec<_>, _>>()?;
             }
         }
 
-        RequestDef {
+        Ok(RequestDef {
             statements,
             span: Some(span),
-        }
+        })
     }
 
-    fn parse_statement(pair: Pair<Rule>) -> StatementTmpl {
+    fn parse_statement(pair: Pair<Rule>) -> Result<StatementTmpl, crate::lang::parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::statement);
         let span = get_span(&pair);
         let mut inner = pair.into_inner();
@@ -780,25 +782,25 @@ pub mod parse {
                     .into_inner()
                     .filter(|p| p.as_rule() == Rule::statement_arg)
                     .map(parse_statement_arg)
-                    .collect();
+                    .collect::<Result<Vec<_>, _>>()?;
             }
         }
 
-        StatementTmpl {
+        Ok(StatementTmpl {
             predicate,
             args,
             span: Some(span),
-        }
+        })
     }
 
-    fn parse_statement_arg(pair: Pair<Rule>) -> StatementTmplArg {
+    fn parse_statement_arg(pair: Pair<Rule>) -> Result<StatementTmplArg, crate::lang::parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::statement_arg);
         let inner = pair.into_inner().next().unwrap();
 
         match inner.as_rule() {
-            Rule::literal_value => StatementTmplArg::Literal(parse_literal_value(inner)),
-            Rule::identifier => StatementTmplArg::Wildcard(parse_identifier(inner)),
-            Rule::anchored_key => StatementTmplArg::AnchoredKey(parse_anchored_key(inner)),
+            Rule::literal_value => Ok(StatementTmplArg::Literal(parse_literal_value(inner)?)),
+            Rule::identifier => Ok(StatementTmplArg::Wildcard(parse_identifier(inner))),
+            Rule::anchored_key => Ok(StatementTmplArg::AnchoredKey(parse_anchored_key(inner))),
             _ => unreachable!("Unexpected statement arg rule: {:?}", inner.as_rule()),
         }
     }
@@ -832,20 +834,20 @@ pub mod parse {
         }
     }
 
-    fn parse_literal_value(pair: Pair<Rule>) -> LiteralValue {
+    fn parse_literal_value(pair: Pair<Rule>) -> Result<LiteralValue, crate::lang::parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::literal_value);
         let inner = pair.into_inner().next().unwrap();
 
         match inner.as_rule() {
-            Rule::literal_int => LiteralValue::Int(parse_literal_int(inner)),
-            Rule::literal_bool => LiteralValue::Bool(parse_literal_bool(inner)),
-            Rule::literal_string => LiteralValue::String(parse_literal_string(inner)),
-            Rule::literal_raw => LiteralValue::Raw(parse_literal_raw(inner)),
-            Rule::literal_public_key => LiteralValue::PublicKey(parse_literal_public_key(inner)),
-            Rule::literal_secret_key => LiteralValue::SecretKey(parse_literal_secret_key(inner)),
-            Rule::literal_array => LiteralValue::Array(parse_literal_array(inner)),
-            Rule::literal_set => LiteralValue::Set(parse_literal_set(inner)),
-            Rule::literal_dict => LiteralValue::Dict(parse_literal_dict(inner)),
+            Rule::literal_int => Ok(LiteralValue::Int(parse_literal_int(inner))),
+            Rule::literal_bool => Ok(LiteralValue::Bool(parse_literal_bool(inner))),
+            Rule::literal_string => Ok(LiteralValue::String(parse_literal_string(inner))),
+            Rule::literal_raw => Ok(LiteralValue::Raw(parse_literal_raw(inner))),
+            Rule::literal_public_key => Ok(LiteralValue::PublicKey(parse_literal_public_key(inner)?)),
+            Rule::literal_secret_key => Ok(LiteralValue::SecretKey(parse_literal_secret_key(inner)?)),
+            Rule::literal_array => Ok(LiteralValue::Array(parse_literal_array(inner)?)),
+            Rule::literal_set => Ok(LiteralValue::Set(parse_literal_set(inner)?)),
+            Rule::literal_dict => Ok(LiteralValue::Dict(parse_literal_dict(inner)?)),
             _ => unreachable!("Unexpected literal value rule: {:?}", inner.as_rule()),
         }
     }
@@ -891,79 +893,91 @@ pub mod parse {
         }
     }
 
-    fn parse_literal_public_key(pair: Pair<Rule>) -> LiteralPublicKey {
+    fn parse_literal_public_key(pair: Pair<Rule>) -> Result<LiteralPublicKey, crate::lang::parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::literal_public_key);
         let span = get_span(&pair);
         let base58_pair = pair.into_inner().next().unwrap();
-        LiteralPublicKey {
-            base58: base58_pair.as_str().to_string(),
+        let base58_str = base58_pair.as_str();
+        let point = base58_str
+            .parse()
+            .map_err(|e| crate::lang::parser::ParseError::InvalidPublicKey(
+                format!("{}: {}", base58_str, e)
+            ))?;
+        Ok(LiteralPublicKey {
+            point,
             span: Some(span),
-        }
+        })
     }
 
-    fn parse_literal_secret_key(pair: Pair<Rule>) -> LiteralSecretKey {
+    fn parse_literal_secret_key(pair: Pair<Rule>) -> Result<LiteralSecretKey, crate::lang::parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::literal_secret_key);
         let span = get_span(&pair);
         let base64_pair = pair.into_inner().next().unwrap();
-        LiteralSecretKey {
-            base64: base64_pair.as_str().to_string(),
+        let base64_str = base64_pair.as_str();
+        let secret_key = base64_str
+            .parse()
+            .map_err(|e| crate::lang::parser::ParseError::InvalidSecretKey(
+                format!("{}: {}", base64_str, e)
+            ))?;
+        Ok(LiteralSecretKey {
+            secret_key,
             span: Some(span),
-        }
+        })
     }
 
-    fn parse_literal_array(pair: Pair<Rule>) -> LiteralArray {
+    fn parse_literal_array(pair: Pair<Rule>) -> Result<LiteralArray, crate::lang::parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::literal_array);
         let span = get_span(&pair);
-        let elements = pair
+        let elements: Result<Vec<_>, _> = pair
             .into_inner()
             .filter(|p| p.as_rule() == Rule::literal_value)
             .map(parse_literal_value)
             .collect();
-        LiteralArray {
-            elements,
+        Ok(LiteralArray {
+            elements: elements?,
             span: Some(span),
-        }
+        })
     }
 
-    fn parse_literal_set(pair: Pair<Rule>) -> LiteralSet {
+    fn parse_literal_set(pair: Pair<Rule>) -> Result<LiteralSet, crate::lang::parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::literal_set);
         let span = get_span(&pair);
-        let elements = pair
+        let elements: Result<Vec<_>, _> = pair
             .into_inner()
             .filter(|p| p.as_rule() == Rule::literal_value)
             .map(parse_literal_value)
             .collect();
-        LiteralSet {
-            elements,
+        Ok(LiteralSet {
+            elements: elements?,
             span: Some(span),
-        }
+        })
     }
 
-    fn parse_literal_dict(pair: Pair<Rule>) -> LiteralDict {
+    fn parse_literal_dict(pair: Pair<Rule>) -> Result<LiteralDict, crate::lang::parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::literal_dict);
         let span = get_span(&pair);
-        let pairs = pair
+        let pairs: Result<Vec<_>, _> = pair
             .into_inner()
             .filter(|p| p.as_rule() == Rule::dict_pair)
             .map(parse_dict_pair)
             .collect();
-        LiteralDict {
-            pairs,
+        Ok(LiteralDict {
+            pairs: pairs?,
             span: Some(span),
-        }
+        })
     }
 
-    fn parse_dict_pair(pair: Pair<Rule>) -> DictPair {
+    fn parse_dict_pair(pair: Pair<Rule>) -> Result<DictPair, crate::lang::parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::dict_pair);
         let span = get_span(&pair);
         let mut inner = pair.into_inner();
         let key = parse_literal_string(inner.next().unwrap());
-        let value = parse_literal_value(inner.next().unwrap());
-        DictPair {
+        let value = parse_literal_value(inner.next().unwrap())?;
+        Ok(DictPair {
             key,
             value,
             span: Some(span),
-        }
+        })
     }
 
     fn get_span(pair: &Pair<Rule>) -> Span {
@@ -1023,7 +1037,7 @@ mod tests {
     fn test_roundtrip(input: &str) {
         let parsed = parse_podlang(input).expect("Failed to parse input");
         let document_pair = parsed.into_iter().next().expect("No document pair");
-        let mut ast = parse::parse_document(document_pair);
+        let mut ast = parse::parse_document(document_pair).expect("Failed to parse");
         let output = ast.to_string();
         // Parse the output to verify it's still valid
         let reparsed = parse_podlang(&output).expect("Failed to parse pretty-printed output");
@@ -1031,7 +1045,7 @@ mod tests {
             .into_iter()
             .next()
             .expect("No document pair in reparse");
-        let mut reparsed_ast = parse::parse_document(reparsed_document_pair);
+        let mut reparsed_ast = parse::parse_document(reparsed_document_pair).expect("Failed to parse");
 
         // Clear spans for comparison (they'll be different after pretty-printing)
         clear_spans(&mut ast);
@@ -1178,17 +1192,21 @@ mod tests {
 
     #[test]
     fn test_literals() {
-        let input = r#"REQUEST(
+        // Generate valid PublicKey and SecretKey for the test
+        let sk = SecretKey::new_rand();
+        let pk = sk.public_key();
+
+        let input = format!(r#"REQUEST(
     Equal(A["int"], 42)
     Equal(B["neg"], -100)
     Equal(C["bool"], true)
     Equal(D["bool2"], false)
     Equal(E["string"], "hello world")
     Equal(F["raw"], Raw(0x0000000000000000000000000000000000000000000000000000000000000001))
-    Equal(G["pk"], PublicKey(base58string))
-    Equal(H["sk"], SecretKey(base64string==))
-)"#;
-        test_roundtrip(input);
+    Equal(G["pk"], PublicKey({}))
+    Equal(H["sk"], SecretKey({}))
+)"#, pk, sk);
+        test_roundtrip(&input);
     }
 
     #[test]
@@ -1244,7 +1262,7 @@ REQUEST(
 
         let parsed = parse_podlang(input).expect("Failed to parse input");
         let document_pair = parsed.into_iter().next().expect("No document pair");
-        let ast = parse::parse_document(document_pair);
+        let ast = parse::parse_document(document_pair).expect("Failed to parse");
 
         // Check that the AST correctly unescaped the strings
         if let DocumentItem::RequestDef(req) = &ast.items[0] {
@@ -1275,7 +1293,7 @@ REQUEST(
 
         let parsed = parse_podlang(input).expect("Failed to parse input");
         let document_pair = parsed.into_iter().next().expect("No document pair");
-        let ast = parse::parse_document(document_pair);
+        let ast = parse::parse_document(document_pair).expect("Failed to parse");
 
         assert_eq!(ast.items.len(), 2);
 

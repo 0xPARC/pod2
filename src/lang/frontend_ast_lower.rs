@@ -12,7 +12,6 @@ use std::{
 use hex::FromHex;
 
 use crate::{
-    backends::plonky2::{deserialize_bytes, primitives::ec::curve::Point},
     frontend::{BuilderArg, CustomPredicateBatchBuilder, StatementTmplBuilder},
     lang::{
         frontend_ast::*,
@@ -21,7 +20,7 @@ use crate::{
     },
     middleware::{
         self, containers, CustomPredicateBatch, IntroPredicateRef, NativePredicate, Params,
-        Predicate, RawValue, SecretKey, StatementTmpl as MWStatementTmpl,
+        Predicate, RawValue, StatementTmpl as MWStatementTmpl,
         StatementTmplArg as MWStatementTmplArg, Wildcard,
     },
 };
@@ -438,20 +437,12 @@ impl<'a> Lowerer<'a> {
                 middleware::Value::from(raw_value)
             }
             LiteralValue::PublicKey(pk) => {
-                // Parse base58 to Point
-                let point: Point = pk
-                    .base58
-                    .parse()
-                    .map_err(|_| LoweringError::InvalidArgumentType)?;
-                middleware::Value::from(point)
+                // Point is already parsed in the AST
+                middleware::Value::from(pk.point)
             }
             LiteralValue::SecretKey(sk) => {
-                // Parse base64 to SecretKey
-                let bytes = deserialize_bytes(&sk.base64)
-                    .map_err(|_| LoweringError::InvalidArgumentType)?;
-                let secret_key = SecretKey::from_bytes(&bytes)
-                    .map_err(|_| LoweringError::InvalidArgumentType)?;
-                middleware::Value::from(secret_key)
+                // SecretKey is already parsed in the AST
+                middleware::Value::from(sk.secret_key.clone())
             }
             LiteralValue::Array(a) => {
                 let elements: Result<Vec<_>, _> =
@@ -503,7 +494,7 @@ mod tests {
         params: &Params,
     ) -> Result<LoweredOutput, LoweringError> {
         let parsed = parse_podlang(input).expect("Failed to parse");
-        let document = parse_document(parsed.into_iter().next().unwrap());
+        let document = parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse");
         let validated = validate(document, &[]).expect("Failed to validate");
         lower(validated, params, "test_batch".to_string())
     }

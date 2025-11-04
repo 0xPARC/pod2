@@ -33,7 +33,7 @@ pub fn parse(
         .into_iter()
         .next()
         .expect("parse_podlang should always return at least one pair for a valid document");
-    let document = frontend_ast::parse::parse_document(document_pair);
+    let document = frontend_ast::parse::parse_document(document_pair)?;
     let validated = frontend_ast_validate::validate(document, available_batches)?;
     let lowered = frontend_ast_lower::lower(validated, params, "PodlangBatch".to_string())?;
 

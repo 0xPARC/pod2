@@ -14,6 +14,12 @@ pub type Pairs<'a, R> = PestPairs<'a, R>;
 pub enum ParseError {
     #[error("Pest parsing error: {0}")]
     Pest(Box<pest::error::Error<Rule>>),
+
+    #[error("Invalid public key: {0}")]
+    InvalidPublicKey(String),
+
+    #[error("Invalid secret key: {0}")]
+    InvalidSecretKey(String),
 }
 
 impl From<pest::error::Error<Rule>> for ParseError {

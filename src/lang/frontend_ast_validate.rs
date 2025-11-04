@@ -561,7 +561,7 @@ mod tests {
         batches: &[Arc<CustomPredicateBatch>],
     ) -> Result<ValidatedAST, ValidationError> {
         let parsed = parse_podlang(input).expect("Failed to parse");
-        let document = parse_document(parsed.into_iter().next().unwrap());
+        let document = parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse");
         validate(document, batches)
     }
 

@@ -517,7 +517,7 @@ mod tests {
 
     fn parse_predicate(input: &str) -> CustomPredicateDef {
         let parsed = parse_podlang(input).expect("Failed to parse");
-        let document = parse_document(parsed.into_iter().next().unwrap());
+        let document = parse_document(parsed.into_iter().next().unwrap()).expect("Failed to parse");
 
         for item in document.items {
             if let DocumentItem::CustomPredicateDef(pred) = item {
