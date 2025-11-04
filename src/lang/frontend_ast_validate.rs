@@ -193,15 +193,14 @@ impl Validator {
         &mut self,
         use_stmt: &UseBatchStatement,
     ) -> Result<(), ValidationError> {
-        let batch_id = format!("0x{}", hex::encode(use_stmt.batch_ref.hash.bytes));
+        let batch_id = format!("0x{}", hex::encode(use_stmt.batch_ref.bytes));
 
-        let batch =
-            self.available_batches
-                .get(&batch_id)
-                .ok_or_else(|| ValidationError::BatchNotFound {
-                    id: batch_id.clone(),
-                    span: use_stmt.batch_ref.hash.span,
-                })?;
+        let batch = self.available_batches.get(&batch_id).ok_or_else(|| {
+            ValidationError::BatchNotFound {
+                id: batch_id.clone(),
+                span: use_stmt.batch_ref.span,
+            }
+        })?;
 
         if use_stmt.imports.len() != batch.predicates().len() {
             return Err(ValidationError::ImportArityMismatch {
@@ -249,7 +248,7 @@ impl Validator {
     ) -> Result<(), ValidationError> {
         let intro_name = &use_stmt.name.name;
         let args = &use_stmt.args;
-        let batch_ref = &use_stmt.batch_ref;
+        let intro_predicate_ref = &use_stmt.intro_hash;
 
         if self.symbols.predicates.contains_key(intro_name) {
             return Err(ValidationError::DuplicateImport {
@@ -265,12 +264,11 @@ impl Validator {
                     name: intro_name.clone(),
                     args_len: args.len(),
                     // Convert bytes directly to Hash using from_hex
-                    verifier_data_hash: Hash::from_hex(hex::encode(batch_ref.hash.bytes)).map_err(
-                        |_| ValidationError::InvalidHash {
-                            hash: format!("0x{}", hex::encode(batch_ref.hash.bytes)),
-                            span: batch_ref.span,
-                        },
-                    )?,
+                    verifier_data_hash: Hash::from_hex(hex::encode(intro_predicate_ref.bytes))
+                        .map_err(|_| ValidationError::InvalidHash {
+                            hash: format!("0x{}", hex::encode(intro_predicate_ref.bytes)),
+                            span: intro_predicate_ref.span,
+                        })?,
                 },
                 arity: args.len(),
                 public_arity: args.len(),

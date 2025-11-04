@@ -33,8 +33,9 @@ use_predicate_list = { import_name ~ ("," ~ import_name)* }
 import_name = { identifier | "_" }
 batch_ref = { hash_hex }
 
-use_intro_statement = { "use" ~ "intro" ~ identifier ~ "(" ~ use_intro_arg_list? ~ ")" ~ "from" ~ batch_ref }
+use_intro_statement = { "use" ~ "intro" ~ identifier ~ "(" ~ use_intro_arg_list? ~ ")" ~ "from" ~ intro_predicate_ref }
 use_intro_arg_list = { identifier ~ ("," ~ identifier)* }
+intro_predicate_ref = { hash_hex }
 
 request_def = { "REQUEST" ~ "(" ~ statement_list? ~ ")" } 
 

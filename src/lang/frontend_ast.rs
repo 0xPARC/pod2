@@ -26,7 +26,7 @@ pub enum DocumentItem {
 #[derive(Debug, Clone, PartialEq)]
 pub struct UseBatchStatement {
     pub imports: Vec<ImportName>,
-    pub batch_ref: BatchRef,
+    pub batch_ref: HashHex,
     pub span: Option<Span>,
 }
 
@@ -35,7 +35,7 @@ pub struct UseBatchStatement {
 pub struct UseIntroStatement {
     pub name: Identifier,
     pub args: Vec<Identifier>,
-    pub batch_ref: BatchRef,
+    pub intro_hash: HashHex,
     pub span: Option<Span>,
 }
 /// Individual import name (identifier or unused "_")
@@ -48,6 +48,13 @@ pub enum ImportName {
 /// Batch reference (hash)
 #[derive(Debug, Clone, PartialEq)]
 pub struct BatchRef {
+    pub hash: HashHex,
+    pub span: Option<Span>,
+}
+
+/// Intro predicate reference (hash)
+#[derive(Debug, Clone, PartialEq)]
+pub struct IntroPredicateRef {
     pub hash: HashHex,
     pub span: Option<Span>,
 }
@@ -277,7 +284,7 @@ impl fmt::Display for UseIntroStatement {
             }
             write!(f, "{}", arg)?;
         }
-        write!(f, ") from {}", self.batch_ref)
+        write!(f, ") from {}", self.intro_hash)
     }
 }
 
@@ -291,6 +298,12 @@ impl fmt::Display for ImportName {
 }
 
 impl fmt::Display for BatchRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.hash)
+    }
+}
+
+impl fmt::Display for IntroPredicateRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.hash)
     }
@@ -588,7 +601,7 @@ pub mod parse {
 
         UseBatchStatement {
             imports,
-            batch_ref: parse_batch_ref(batch_ref_pair),
+            batch_ref: parse_hash_hex(batch_ref_pair.into_inner().next().unwrap()),
             span: Some(span),
         }
     }
@@ -617,15 +630,15 @@ pub mod parse {
             })
             .unwrap_or_default();
 
-        let batch_ref_pair = inner
+        let intro_predicate_ref_pair = inner
             .clone()
-            .find(|p| p.as_rule() == Rule::batch_ref)
+            .find(|p| p.as_rule() == Rule::intro_predicate_ref)
             .unwrap();
-        let batch_ref = parse_batch_ref(batch_ref_pair);
+
         UseIntroStatement {
             name,
             args,
-            batch_ref,
+            intro_hash: parse_hash_hex(intro_predicate_ref_pair.into_inner().next().unwrap()),
             span: Some(span),
         }
     }
@@ -637,16 +650,6 @@ pub mod parse {
             ImportName::Unused
         } else {
             ImportName::Named(s.to_string())
-        }
-    }
-
-    fn parse_batch_ref(pair: Pair<Rule>) -> BatchRef {
-        assert_eq!(pair.as_rule(), Rule::batch_ref);
-        let span = get_span(&pair);
-        let hash_pair = pair.into_inner().next().unwrap();
-        BatchRef {
-            hash: parse_hash_hex(hash_pair),
-            span: Some(span),
         }
     }
 
@@ -662,9 +665,9 @@ pub mod parse {
         // Parse hex string to bytes
         let mut bytes = [0u8; 32];
         for i in 0..32 {
-            let byte_str = &hex_without_prefix[i*2..i*2+2];
-            bytes[i] = u8::from_str_radix(byte_str, 16)
-                .expect("Grammar should guarantee valid hex");
+            let byte_str = &hex_without_prefix[i * 2..i * 2 + 2];
+            bytes[i] =
+                u8::from_str_radix(byte_str, 16).expect("Grammar should guarantee valid hex");
         }
 
         HashHex {
@@ -703,21 +706,15 @@ pub mod parse {
         let span = get_span(&pair);
         let mut public_args = Vec::new();
         let mut private_args = None;
-        let mut is_private = false;
 
         for inner_pair in pair.into_inner() {
             match inner_pair.as_rule() {
                 Rule::public_arg_list => {
-                    if !is_private {
-                        public_args = inner_pair
-                            .into_inner()
-                            .filter(|p| p.as_rule() == Rule::identifier)
-                            .map(parse_identifier)
-                            .collect();
-                    }
-                }
-                Rule::private_kw => {
-                    is_private = true;
+                    public_args = inner_pair
+                        .into_inner()
+                        .filter(|p| p.as_rule() == Rule::identifier)
+                        .map(parse_identifier)
+                        .collect();
                 }
                 Rule::private_arg_list => {
                     private_args = Some(
@@ -1050,13 +1047,11 @@ mod tests {
                 DocumentItem::UseBatchStatement(u) => {
                     u.span = None;
                     u.batch_ref.span = None;
-                    u.batch_ref.hash.span = None;
                 }
                 DocumentItem::UseIntroStatement(u) => {
                     u.span = None;
                     u.name.span = None;
-                    u.batch_ref.span = None;
-                    u.batch_ref.hash.span = None;
+                    u.intro_hash.span = None;
                 }
                 DocumentItem::CustomPredicateDef(c) => {
                     c.span = None;
