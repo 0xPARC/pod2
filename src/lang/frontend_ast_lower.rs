@@ -369,11 +369,10 @@ impl<'a> Lowerer<'a> {
                 }
                 PredicateKind::IntroImported {
                     name,
-                    args_len,
                     verifier_data_hash,
                 } => Predicate::Intro(IntroPredicateRef {
                     name: name.clone(),
-                    args_len: *args_len,
+                    args_len: info.public_arity,
                     verifier_data_hash: *verifier_data_hash,
                 }),
             }

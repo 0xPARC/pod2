@@ -52,6 +52,42 @@ pub enum NativePredicate {
     ArrayUpdate = 1014,
 }
 
+impl NativePredicate {
+    pub fn arity(&self) -> usize {
+        match self {
+            NativePredicate::None | NativePredicate::False => 0,
+            NativePredicate::Equal
+            | NativePredicate::NotEqual
+            | NativePredicate::Lt
+            | NativePredicate::Gt
+            | NativePredicate::GtEq
+            | NativePredicate::LtEq
+            | NativePredicate::NotContains
+            | NativePredicate::SetNotContains
+            | NativePredicate::DictNotContains
+            | NativePredicate::PublicKeyOf
+            | NativePredicate::SignedBy
+            | NativePredicate::SetContains => 2,
+            NativePredicate::Contains
+            | NativePredicate::DictContains
+            | NativePredicate::ArrayContains
+            | NativePredicate::SumOf
+            | NativePredicate::ProductOf
+            | NativePredicate::MaxOf
+            | NativePredicate::HashOf
+            | NativePredicate::SetInsert
+            | NativePredicate::SetDelete => 3,
+            NativePredicate::DictInsert
+            | NativePredicate::DictUpdate
+            | NativePredicate::DictDelete
+            | NativePredicate::ArrayUpdate
+            | NativePredicate::ContainerInsert
+            | NativePredicate::ContainerUpdate
+            | NativePredicate::ContainerDelete => 4,
+        }
+    }
+}
+
 impl Display for NativePredicate {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {

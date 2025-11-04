@@ -69,7 +69,6 @@ pub enum PredicateKind {
     },
     IntroImported {
         name: String,
-        args_len: usize,
         verifier_data_hash: Hash,
     },
 }
@@ -262,7 +261,6 @@ impl Validator {
             PredicateInfo {
                 kind: PredicateKind::IntroImported {
                     name: intro_name.clone(),
-                    args_len: args.len(),
                     // Convert bytes directly to Hash using from_hex
                     verifier_data_hash: Hash::from_hex(hex::encode(intro_predicate_ref.bytes))
                         .map_err(|_| ValidationError::InvalidHash {
@@ -429,8 +427,8 @@ impl Validator {
             // Native predicate
             PredicateInfo {
                 kind: PredicateKind::Native(native),
-                arity: self.get_native_arity(native),
-                public_arity: self.get_native_arity(native),
+                arity: native.arity(),
+                public_arity: native.arity(),
                 source_span: None,
             }
         } else if let Some(info) = self.symbols.predicates.get(pred_name) {
@@ -443,15 +441,7 @@ impl Validator {
             });
         };
 
-        // Check arity:
-        // - For native predicates: always use total arity
-        // - For custom predicates: always use public_arity (private args are not passed at call sites)
-        let expected_arity = match pred_info.kind {
-            PredicateKind::Custom { .. }
-            | PredicateKind::BatchImported { .. }
-            | PredicateKind::IntroImported { .. } => pred_info.public_arity,
-            PredicateKind::Native(_) => pred_info.arity,
-        };
+        let expected_arity = pred_info.public_arity;
 
         if stmt.args.len() != expected_arity {
             return Err(ValidationError::ArgumentCountMismatch {
@@ -533,18 +523,6 @@ impl Validator {
         }
 
         Ok(())
-    }
-
-    fn get_native_arity(&self, native: NativePredicate) -> usize {
-        use NativePredicate::*;
-        match native {
-            None | False => 0,
-            Equal | NotEqual | Gt | GtEq | Lt | LtEq | SignedBy | PublicKeyOf | DictNotContains
-            | SetContains | SetNotContains | NotContains => 2,
-            SumOf | ProductOf | MaxOf | HashOf | Contains | DictContains | ArrayContains => 3,
-            ContainerInsert | ContainerUpdate | ContainerDelete => 3,
-            DictInsert | DictUpdate | DictDelete | SetInsert | SetDelete | ArrayUpdate => 3,
-        }
     }
 }
 
