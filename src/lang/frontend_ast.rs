@@ -678,7 +678,9 @@ pub mod parse {
         }
     }
 
-    fn parse_custom_predicate_def(pair: Pair<Rule>) -> Result<CustomPredicateDef, crate::lang::parser::ParseError> {
+    fn parse_custom_predicate_def(
+        pair: Pair<Rule>,
+    ) -> Result<CustomPredicateDef, crate::lang::parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::custom_predicate_def);
         let span = get_span(&pair);
         let mut inner = pair.into_inner();
@@ -793,19 +795,23 @@ pub mod parse {
         })
     }
 
-    fn parse_statement_arg(pair: Pair<Rule>) -> Result<StatementTmplArg, crate::lang::parser::ParseError> {
+    fn parse_statement_arg(
+        pair: Pair<Rule>,
+    ) -> Result<StatementTmplArg, crate::lang::parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::statement_arg);
         let inner = pair.into_inner().next().unwrap();
 
         match inner.as_rule() {
             Rule::literal_value => Ok(StatementTmplArg::Literal(parse_literal_value(inner)?)),
             Rule::identifier => Ok(StatementTmplArg::Wildcard(parse_identifier(inner))),
-            Rule::anchored_key => Ok(StatementTmplArg::AnchoredKey(parse_anchored_key(inner))),
+            Rule::anchored_key => Ok(StatementTmplArg::AnchoredKey(parse_anchored_key(inner)?)),
             _ => unreachable!("Unexpected statement arg rule: {:?}", inner.as_rule()),
         }
     }
 
-    fn parse_anchored_key(pair: Pair<Rule>) -> AnchoredKey {
+    fn parse_anchored_key(
+        pair: Pair<Rule>,
+    ) -> Result<AnchoredKey, crate::lang::parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::anchored_key);
         let span = get_span(&pair);
         let mut inner = pair.into_inner();
@@ -814,16 +820,16 @@ pub mod parse {
         let key_part = inner.next().unwrap();
 
         let key = match key_part.as_rule() {
-            Rule::literal_string => AnchoredKeyPath::Bracket(parse_literal_string(key_part)),
+            Rule::literal_string => AnchoredKeyPath::Bracket(parse_literal_string(key_part)?),
             Rule::identifier => AnchoredKeyPath::Dot(parse_identifier(key_part)),
             _ => unreachable!("Unexpected anchored key part: {:?}", key_part.as_rule()),
         };
 
-        AnchoredKey {
+        Ok(AnchoredKey {
             root,
             key,
             span: Some(span),
-        }
+        })
     }
 
     fn parse_identifier(pair: Pair<Rule>) -> Identifier {
@@ -834,17 +840,23 @@ pub mod parse {
         }
     }
 
-    fn parse_literal_value(pair: Pair<Rule>) -> Result<LiteralValue, crate::lang::parser::ParseError> {
+    fn parse_literal_value(
+        pair: Pair<Rule>,
+    ) -> Result<LiteralValue, crate::lang::parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::literal_value);
         let inner = pair.into_inner().next().unwrap();
 
         match inner.as_rule() {
             Rule::literal_int => Ok(LiteralValue::Int(parse_literal_int(inner))),
             Rule::literal_bool => Ok(LiteralValue::Bool(parse_literal_bool(inner))),
-            Rule::literal_string => Ok(LiteralValue::String(parse_literal_string(inner))),
+            Rule::literal_string => Ok(LiteralValue::String(parse_literal_string(inner)?)),
             Rule::literal_raw => Ok(LiteralValue::Raw(parse_literal_raw(inner))),
-            Rule::literal_public_key => Ok(LiteralValue::PublicKey(parse_literal_public_key(inner)?)),
-            Rule::literal_secret_key => Ok(LiteralValue::SecretKey(parse_literal_secret_key(inner)?)),
+            Rule::literal_public_key => {
+                Ok(LiteralValue::PublicKey(parse_literal_public_key(inner)?))
+            }
+            Rule::literal_secret_key => {
+                Ok(LiteralValue::SecretKey(parse_literal_secret_key(inner)?))
+            }
             Rule::literal_array => Ok(LiteralValue::Array(parse_literal_array(inner)?)),
             Rule::literal_set => Ok(LiteralValue::Set(parse_literal_set(inner)?)),
             Rule::literal_dict => Ok(LiteralValue::Dict(parse_literal_dict(inner)?)),
@@ -869,18 +881,20 @@ pub mod parse {
         }
     }
 
-    fn parse_literal_string(pair: Pair<Rule>) -> LiteralString {
+    fn parse_literal_string(
+        pair: Pair<Rule>,
+    ) -> Result<LiteralString, crate::lang::parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::literal_string);
         let span = get_span(&pair);
 
         // Extract the unescaped value from between quotes
         let inner = pair.into_inner().next().unwrap();
-        let value = unescape_string(inner.as_str());
+        let value = unescape_string(inner.as_str())?;
 
-        LiteralString {
+        Ok(LiteralString {
             value,
             span: Some(span),
-        }
+        })
     }
 
     fn parse_literal_raw(pair: Pair<Rule>) -> LiteralRaw {
@@ -893,39 +907,41 @@ pub mod parse {
         }
     }
 
-    fn parse_literal_public_key(pair: Pair<Rule>) -> Result<LiteralPublicKey, crate::lang::parser::ParseError> {
+    fn parse_literal_public_key(
+        pair: Pair<Rule>,
+    ) -> Result<LiteralPublicKey, crate::lang::parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::literal_public_key);
         let span = get_span(&pair);
         let base58_pair = pair.into_inner().next().unwrap();
         let base58_str = base58_pair.as_str();
-        let point = base58_str
-            .parse()
-            .map_err(|e| crate::lang::parser::ParseError::InvalidPublicKey(
-                format!("{}: {}", base58_str, e)
-            ))?;
+        let point = base58_str.parse().map_err(|e| {
+            crate::lang::parser::ParseError::InvalidPublicKey(format!("{}: {}", base58_str, e))
+        })?;
         Ok(LiteralPublicKey {
             point,
             span: Some(span),
         })
     }
 
-    fn parse_literal_secret_key(pair: Pair<Rule>) -> Result<LiteralSecretKey, crate::lang::parser::ParseError> {
+    fn parse_literal_secret_key(
+        pair: Pair<Rule>,
+    ) -> Result<LiteralSecretKey, crate::lang::parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::literal_secret_key);
         let span = get_span(&pair);
         let base64_pair = pair.into_inner().next().unwrap();
         let base64_str = base64_pair.as_str();
-        let secret_key = base64_str
-            .parse()
-            .map_err(|e| crate::lang::parser::ParseError::InvalidSecretKey(
-                format!("{}: {}", base64_str, e)
-            ))?;
+        let secret_key = base64_str.parse().map_err(|e| {
+            crate::lang::parser::ParseError::InvalidSecretKey(format!("{}: {}", base64_str, e))
+        })?;
         Ok(LiteralSecretKey {
             secret_key,
             span: Some(span),
         })
     }
 
-    fn parse_literal_array(pair: Pair<Rule>) -> Result<LiteralArray, crate::lang::parser::ParseError> {
+    fn parse_literal_array(
+        pair: Pair<Rule>,
+    ) -> Result<LiteralArray, crate::lang::parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::literal_array);
         let span = get_span(&pair);
         let elements: Result<Vec<_>, _> = pair
@@ -953,7 +969,9 @@ pub mod parse {
         })
     }
 
-    fn parse_literal_dict(pair: Pair<Rule>) -> Result<LiteralDict, crate::lang::parser::ParseError> {
+    fn parse_literal_dict(
+        pair: Pair<Rule>,
+    ) -> Result<LiteralDict, crate::lang::parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::literal_dict);
         let span = get_span(&pair);
         let pairs: Result<Vec<_>, _> = pair
@@ -971,7 +989,7 @@ pub mod parse {
         assert_eq!(pair.as_rule(), Rule::dict_pair);
         let span = get_span(&pair);
         let mut inner = pair.into_inner();
-        let key = parse_literal_string(inner.next().unwrap());
+        let key = parse_literal_string(inner.next().unwrap())?;
         let value = parse_literal_value(inner.next().unwrap())?;
         Ok(DictPair {
             key,
@@ -988,35 +1006,45 @@ pub mod parse {
         }
     }
 
-    fn unescape_string(s: &str) -> String {
+    fn unescape_string(s: &str) -> Result<String, crate::lang::parser::ParseError> {
         let mut result = String::new();
-        let mut chars = s.chars();
+        let mut chars = s.chars().peekable();
 
         while let Some(ch) = chars.next() {
             if ch == '\\' {
-                if let Some(next) = chars.next() {
-                    match next {
-                        '"' => result.push('"'),
-                        '\\' => result.push('\\'),
-                        '/' => result.push('/'),
-                        'b' => result.push('\u{0008}'),
-                        'f' => result.push('\u{000C}'),
-                        'n' => result.push('\n'),
-                        'r' => result.push('\r'),
-                        't' => result.push('\t'),
-                        'u' => {
-                            // Parse Unicode escape
-                            let hex: String = chars.by_ref().take(4).collect();
-                            if let Ok(code) = u32::from_str_radix(&hex, 16) {
-                                if let Some(unicode_char) = char::from_u32(code) {
-                                    result.push(unicode_char);
-                                }
-                            }
-                        }
-                        _ => {
-                            result.push('\\');
-                            result.push(next);
-                        }
+                match chars.next() {
+                    Some('"') => result.push('"'),
+                    Some('\\') => result.push('\\'),
+                    Some('/') => result.push('/'),
+                    Some('b') => result.push('\u{0008}'),
+                    Some('f') => result.push('\u{000C}'),
+                    Some('n') => result.push('\n'),
+                    Some('r') => result.push('\r'),
+                    Some('t') => result.push('\t'),
+                    Some('u') => {
+                        // Grammar guarantees exactly 4 hex digits after \u
+                        // We only need to check if the codepoint is valid unicode
+                        let hex: String = chars.by_ref().take(4).collect();
+                        let code = u32::from_str_radix(&hex, 16)
+                            .expect("Grammar should guarantee valid hex digits");
+                        let unicode_char = char::from_u32(code).ok_or_else(|| {
+                            crate::lang::parser::ParseError::InvalidEscapeSequence(format!(
+                                "\\u{}: invalid unicode codepoint",
+                                hex
+                            ))
+                        })?;
+                        result.push(unicode_char);
+                    }
+                    Some(other) => {
+                        // Grammar should prevent this, but handle gracefully
+                        unreachable!(
+                            "Grammar should only allow specific escape sequences, got: \\{}",
+                            other
+                        );
+                    }
+                    None => {
+                        // Grammar should prevent this
+                        unreachable!("Grammar should not allow backslash at end of string");
                     }
                 }
             } else {
@@ -1024,7 +1052,7 @@ pub mod parse {
             }
         }
 
-        result
+        Ok(result)
     }
 }
 
@@ -1045,7 +1073,8 @@ mod tests {
             .into_iter()
             .next()
             .expect("No document pair in reparse");
-        let mut reparsed_ast = parse::parse_document(reparsed_document_pair).expect("Failed to parse");
+        let mut reparsed_ast =
+            parse::parse_document(reparsed_document_pair).expect("Failed to parse");
 
         // Clear spans for comparison (they'll be different after pretty-printing)
         clear_spans(&mut ast);
@@ -1196,7 +1225,8 @@ mod tests {
         let sk = SecretKey::new_rand();
         let pk = sk.public_key();
 
-        let input = format!(r#"REQUEST(
+        let input = format!(
+            r#"REQUEST(
     Equal(A["int"], 42)
     Equal(B["neg"], -100)
     Equal(C["bool"], true)
@@ -1205,7 +1235,9 @@ mod tests {
     Equal(F["raw"], Raw(0x0000000000000000000000000000000000000000000000000000000000000001))
     Equal(G["pk"], PublicKey({}))
     Equal(H["sk"], SecretKey({}))
-)"#, pk, sk);
+)"#,
+            pk, sk
+        );
         test_roundtrip(&input);
     }
 
@@ -1319,5 +1351,18 @@ REQUEST(
         } else {
             panic!("Expected RequestDef");
         }
+    }
+
+    #[test]
+    fn test_invalid_escape_sequences() {
+        // Test invalid unicode codepoint - surrogate pair range
+        let input = r#"REQUEST(Equal(A["key"], "test\uD800"))"#;
+        let parsed = crate::lang::parser::parse_podlang(input).expect("Grammar should accept this");
+        let result = parse::parse_document(parsed.into_iter().next().unwrap());
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            crate::lang::parser::ParseError::InvalidEscapeSequence(_)
+        ));
     }
 }

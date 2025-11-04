@@ -20,6 +20,9 @@ pub enum ParseError {
 
     #[error("Invalid secret key: {0}")]
     InvalidSecretKey(String),
+
+    #[error("Invalid escape sequence in string: {0}")]
+    InvalidEscapeSequence(String),
 }
 
 impl From<pest::error::Error<Rule>> for ParseError {
