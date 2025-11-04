@@ -9,8 +9,6 @@ use std::{
     sync::Arc,
 };
 
-use hex::{FromHex, ToHex};
-
 use crate::{
     frontend::{BuilderArg, CustomPredicateBatchBuilder, StatementTmplBuilder},
     lang::{
@@ -20,8 +18,8 @@ use crate::{
     },
     middleware::{
         self, containers, CustomPredicateBatch, IntroPredicateRef, NativePredicate, Params,
-        Predicate, RawValue, StatementTmpl as MWStatementTmpl,
-        StatementTmplArg as MWStatementTmplArg, Wildcard,
+        Predicate, StatementTmpl as MWStatementTmpl, StatementTmplArg as MWStatementTmplArg,
+        Wildcard,
     },
 };
 
@@ -187,17 +185,13 @@ impl<'a> Lowerer<'a> {
             let mw_arg = match builder_arg {
                 BuilderArg::Literal(value) => MWStatementTmplArg::Literal(value),
                 BuilderArg::WildcardLiteral(name) => {
-                    let index = wildcard_map
-                        .get(&name)
-                        .ok_or_else(|| LoweringError::PredicateNotFound { name: name.clone() })?;
+                    let index = wildcard_map.get(&name).expect("Wildcard not found");
                     MWStatementTmplArg::Wildcard(Wildcard::new(name, *index))
                 }
                 BuilderArg::Key(root_name, key_str) => {
-                    let root_index = wildcard_map.get(&root_name).ok_or_else(|| {
-                        LoweringError::PredicateNotFound {
-                            name: root_name.clone(),
-                        }
-                    })?;
+                    let root_index = wildcard_map
+                        .get(&root_name)
+                        .expect("Root wildcard not found");
                     let wildcard = Wildcard::new(root_name, *root_index);
                     let key = middleware::Key::from(key_str.as_str());
                     MWStatementTmplArg::AnchoredKey(wildcard, key)
@@ -317,31 +311,18 @@ impl<'a> Lowerer<'a> {
         // Add predicate to batch using builder
         let conjunction = pred_def.conjunction_type == ConjunctionType::And;
 
-        if conjunction {
-            cpb_builder
-                .predicate_and(
-                    &name,
-                    &public_args_str,
-                    &private_args_str,
-                    &statement_builders,
-                )
-                .map_err(|e| match e {
-                    crate::frontend::Error::Middleware(mw_err) => LoweringError::Middleware(mw_err),
-                    _ => LoweringError::InvalidArgumentType,
-                })?;
-        } else {
-            cpb_builder
-                .predicate_or(
-                    &name,
-                    &public_args_str,
-                    &private_args_str,
-                    &statement_builders,
-                )
-                .map_err(|e| match e {
-                    crate::frontend::Error::Middleware(mw_err) => LoweringError::Middleware(mw_err),
-                    _ => LoweringError::InvalidArgumentType,
-                })?;
-        }
+        cpb_builder
+            .predicate(
+                &name,
+                conjunction,
+                &public_args_str,
+                &private_args_str,
+                &statement_builders,
+            )
+            .map_err(|e| match e {
+                crate::frontend::Error::Middleware(mw_err) => LoweringError::Middleware(mw_err),
+                _ => LoweringError::InvalidArgumentType,
+            })?;
 
         Ok(())
     }

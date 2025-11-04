@@ -165,7 +165,7 @@ impl CustomPredicateBatchBuilder {
 
     /// creates the custom predicate from the given input, adds it to the
     /// self.predicates, and returns the index of the created predicate
-    fn predicate(
+    pub fn predicate(
         &mut self,
         name: &str,
         conjunction: bool,
