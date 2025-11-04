@@ -5,7 +5,6 @@ pub mod frontend_ast_split;
 pub mod frontend_ast_validate;
 pub mod parser;
 pub mod pretty_print;
-mod utils;
 
 use std::sync::Arc;
 

@@ -3,12 +3,12 @@
 //! This module provides semantic validation for parsed AST documents,
 //! including name resolution, arity checking, and wildcard validation.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, str::FromStr, sync::Arc};
 
 use hex::{FromHex, ToHex};
 
 use crate::{
-    lang::{frontend_ast::*, utils::native_predicate_from_string},
+    lang::frontend_ast::*,
     middleware::{CustomPredicateBatch, Hash, NativePredicate},
 };
 
@@ -427,7 +427,7 @@ impl Validator {
         let pred_name = &stmt.predicate.name;
 
         // Check if predicate exists
-        let pred_info = if let Some(native) = native_predicate_from_string(pred_name) {
+        let pred_info = if let Ok(native) = NativePredicate::from_str(pred_name) {
             // Native predicate
             PredicateInfo {
                 kind: PredicateKind::Native(native),

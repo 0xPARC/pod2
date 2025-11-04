@@ -1,6 +1,7 @@
 use std::{
     fmt::{self, Display},
     iter,
+    str::FromStr,
 };
 
 use plonky2::field::types::Field;
@@ -92,6 +93,45 @@ impl Display for NativePredicate {
 impl ToFields for NativePredicate {
     fn to_fields(&self, _params: &Params) -> Vec<F> {
         vec![F::from_canonical_u64(*self as u64)]
+    }
+}
+
+impl FromStr for NativePredicate {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "Equal" => Ok(NativePredicate::Equal),
+            "NotEqual" => Ok(NativePredicate::NotEqual),
+            "Gt" => Ok(NativePredicate::Gt),
+            "GtEq" => Ok(NativePredicate::GtEq),
+            "Lt" => Ok(NativePredicate::Lt),
+            "LtEq" => Ok(NativePredicate::LtEq),
+            "Contains" => Ok(NativePredicate::Contains),
+            "NotContains" => Ok(NativePredicate::NotContains),
+            "SumOf" => Ok(NativePredicate::SumOf),
+            "ProductOf" => Ok(NativePredicate::ProductOf),
+            "MaxOf" => Ok(NativePredicate::MaxOf),
+            "HashOf" => Ok(NativePredicate::HashOf),
+            "PublicKeyOf" => Ok(NativePredicate::PublicKeyOf),
+            "SignedBy" => Ok(NativePredicate::SignedBy),
+            "ContainerInsert" => Ok(NativePredicate::ContainerInsert),
+            "ContainerUpdate" => Ok(NativePredicate::ContainerUpdate),
+            "ContainerDelete" => Ok(NativePredicate::ContainerDelete),
+            "DictContains" => Ok(NativePredicate::DictContains),
+            "DictNotContains" => Ok(NativePredicate::DictNotContains),
+            "ArrayContains" => Ok(NativePredicate::ArrayContains),
+            "SetContains" => Ok(NativePredicate::SetContains),
+            "SetNotContains" => Ok(NativePredicate::SetNotContains),
+            "DictInsert" => Ok(NativePredicate::DictInsert),
+            "DictUpdate" => Ok(NativePredicate::DictUpdate),
+            "DictDelete" => Ok(NativePredicate::DictDelete),
+            "SetInsert" => Ok(NativePredicate::SetInsert),
+            "SetDelete" => Ok(NativePredicate::SetDelete),
+            "ArrayUpdate" => Ok(NativePredicate::ArrayUpdate),
+            "None" => Ok(NativePredicate::None),
+            "False" => Ok(NativePredicate::False),
+            _ => Err(Error::custom(format!("Invalid native predicate: {}", s))),
+        }
     }
 }
 

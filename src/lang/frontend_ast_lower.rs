@@ -5,13 +5,12 @@
 
 use std::{
     collections::{HashMap, HashSet},
+    str::FromStr,
     sync::Arc,
 };
 
 use hex::FromHex;
 
-#[cfg(test)]
-use crate::middleware::NativePredicate;
 use crate::{
     backends::plonky2::{deserialize_bytes, primitives::ec::curve::Point},
     frontend::{BuilderArg, CustomPredicateBatchBuilder, StatementTmplBuilder},
@@ -19,12 +18,11 @@ use crate::{
         frontend_ast::*,
         frontend_ast_split,
         frontend_ast_validate::{PredicateKind, ValidatedAST},
-        utils::native_predicate_from_string,
     },
     middleware::{
-        self, containers, CustomPredicateBatch, IntroPredicateRef, Params, Predicate, RawValue,
-        SecretKey, StatementTmpl as MWStatementTmpl, StatementTmplArg as MWStatementTmplArg,
-        Wildcard,
+        self, containers, CustomPredicateBatch, IntroPredicateRef, NativePredicate, Params,
+        Predicate, RawValue, SecretKey, StatementTmpl as MWStatementTmpl,
+        StatementTmplArg as MWStatementTmplArg, Wildcard,
     },
 };
 
@@ -358,7 +356,7 @@ impl<'a> Lowerer<'a> {
         let symbols = self.validated.symbols();
 
         // Check for native predicates first
-        let predicate = if let Some(native) = native_predicate_from_string(pred_name) {
+        let predicate = if let Ok(native) = NativePredicate::from_str(pred_name) {
             Predicate::Native(native)
         } else if let Some(&index) = self.batch_predicate_index.get(pred_name) {
             // References to other predicates in the same batch (including split chains)
