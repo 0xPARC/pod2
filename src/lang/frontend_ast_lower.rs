@@ -9,7 +9,7 @@ use std::{
     sync::Arc,
 };
 
-use hex::FromHex;
+use hex::{FromHex, ToHex};
 
 use crate::{
     frontend::{BuilderArg, CustomPredicateBatchBuilder, StatementTmplBuilder},
@@ -377,9 +377,7 @@ impl<'a> Lowerer<'a> {
                 }),
             }
         } else {
-            return Err(LoweringError::PredicateNotFound {
-                name: pred_name.clone(),
-            });
+            unreachable!("Predicate {} not found", pred_name);
         };
 
         // Check args count
@@ -429,20 +427,9 @@ impl<'a> Lowerer<'a> {
             LiteralValue::Int(i) => middleware::Value::from(i.value),
             LiteralValue::Bool(b) => middleware::Value::from(b.value),
             LiteralValue::String(s) => middleware::Value::from(s.value.clone()),
-            LiteralValue::Raw(r) => {
-                // Parse hex bytes to RawValue
-                let hex_string = hex::encode(r.hash.bytes);
-                let raw_value = Self::parse_hex_str_to_raw_value(&hex_string)?;
-                middleware::Value::from(raw_value)
-            }
-            LiteralValue::PublicKey(pk) => {
-                // Point is already parsed in the AST
-                middleware::Value::from(pk.point)
-            }
-            LiteralValue::SecretKey(sk) => {
-                // SecretKey is already parsed in the AST
-                middleware::Value::from(sk.secret_key.clone())
-            }
+            LiteralValue::Raw(r) => middleware::Value::from(r.hash.hash),
+            LiteralValue::PublicKey(pk) => middleware::Value::from(pk.point),
+            LiteralValue::SecretKey(sk) => middleware::Value::from(sk.secret_key.clone()),
             LiteralValue::Array(a) => {
                 let elements: Result<Vec<_>, _> =
                     a.elements.iter().map(|e| self.lower_literal(e)).collect();
@@ -473,11 +460,6 @@ impl<'a> Lowerer<'a> {
             }
         };
         Ok(value)
-    }
-
-    // Helper: Parse big-endian hex string to little-endian RawValue
-    fn parse_hex_str_to_raw_value(hex_str: &str) -> Result<RawValue, LoweringError> {
-        RawValue::from_hex(hex_str).map_err(|_err| LoweringError::InvalidArgumentType)
     }
 }
 

@@ -5,7 +5,7 @@
 
 use std::fmt;
 
-use hex::FromHex;
+use hex::{FromHex, ToHex};
 
 use crate::backends::plonky2::primitives::ec::{curve::Point, schnorr::SecretKey};
 
@@ -141,9 +141,9 @@ pub struct Identifier {
 }
 
 /// Hash value in hex format (0x...)
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct HashHex {
-    pub bytes: [u8; 32], // 32-byte hash value (without 0x prefix)
+    pub hash: crate::middleware::Hash,
     pub span: Option<Span>,
 }
 
@@ -313,11 +313,7 @@ impl fmt::Display for IntroPredicateRef {
 
 impl fmt::Display for HashHex {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "0x")?;
-        for byte in &self.bytes {
-            write!(f, "{:02x}", byte)?;
-        }
-        Ok(())
+        write!(f, "0x{}", self.hash.encode_hex::<String>())
     }
 }
 
@@ -526,24 +522,6 @@ impl fmt::Display for DictPair {
     }
 }
 
-// Conversion from frontend AST HashHex to middleware Hash
-impl TryFrom<&HashHex> for crate::middleware::Hash {
-    type Error = hex::FromHexError;
-
-    fn try_from(hash_hex: &HashHex) -> Result<Self, Self::Error> {
-        // Convert [u8; 32] to hex string and parse via middleware's FromHex
-        let hex_string = hex::encode(hash_hex.bytes);
-        crate::middleware::Hash::from_hex(hex_string)
-    }
-}
-
-impl TryFrom<HashHex> for crate::middleware::Hash {
-    type Error = hex::FromHexError;
-
-    fn try_from(hash_hex: HashHex) -> Result<Self, Self::Error> {
-        (&hash_hex).try_into()
-    }
-}
 
 // Parser module for converting Pest pairs to AST
 pub mod parse {
@@ -664,16 +642,12 @@ pub mod parse {
         assert!(hex_str.starts_with("0x"));
         let hex_without_prefix = &hex_str[2..];
 
-        // Parse hex string to bytes
-        let mut bytes = [0u8; 32];
-        for i in 0..32 {
-            let byte_str = &hex_without_prefix[i * 2..i * 2 + 2];
-            bytes[i] =
-                u8::from_str_radix(byte_str, 16).expect("Grammar should guarantee valid hex");
-        }
+        // Parse hex string directly to middleware::Hash
+        let hash = crate::middleware::Hash::from_hex(hex_without_prefix)
+            .expect("Grammar should guarantee valid hex");
 
         HashHex {
-            bytes,
+            hash,
             span: Some(span),
         }
     }

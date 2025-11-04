@@ -5,7 +5,7 @@
 
 use std::{collections::HashMap, str::FromStr, sync::Arc};
 
-use hex::{FromHex, ToHex};
+use hex::ToHex;
 
 use crate::{
     lang::frontend_ast::*,
@@ -192,7 +192,7 @@ impl Validator {
         &mut self,
         use_stmt: &UseBatchStatement,
     ) -> Result<(), ValidationError> {
-        let batch_id = format!("0x{}", hex::encode(use_stmt.batch_ref.bytes));
+        let batch_id = format!("0x{}", use_stmt.batch_ref.hash.encode_hex::<String>());
 
         let batch = self.available_batches.get(&batch_id).ok_or_else(|| {
             ValidationError::BatchNotFound {
@@ -261,12 +261,8 @@ impl Validator {
             PredicateInfo {
                 kind: PredicateKind::IntroImported {
                     name: intro_name.clone(),
-                    // Convert bytes directly to Hash using from_hex
-                    verifier_data_hash: Hash::from_hex(hex::encode(intro_predicate_ref.bytes))
-                        .map_err(|_| ValidationError::InvalidHash {
-                            hash: format!("0x{}", hex::encode(intro_predicate_ref.bytes)),
-                            span: intro_predicate_ref.span,
-                        })?,
+                    // Hash is already parsed in the AST
+                    verifier_data_hash: intro_predicate_ref.hash,
                 },
                 arity: args.len(),
                 public_arity: args.len(),
