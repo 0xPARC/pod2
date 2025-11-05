@@ -224,12 +224,8 @@ fn find_best_next_statement(
                 remaining,
                 approaching_split,
             );
-            let tie_breakers = compute_tie_breakers(
-                &statements[idx],
-                active_wildcards,
-                statements,
-                remaining,
-            );
+            let tie_breakers =
+                compute_tie_breakers(&statements[idx], active_wildcards, statements, remaining);
             (primary_score, tie_breakers)
         })
         .copied()
@@ -423,7 +419,8 @@ fn split_into_chain(
                 total_public,
             };
 
-            let suggestion = generate_refactor_suggestion(&new_promotions, &ordered_statements, pos, end);
+            let suggestion =
+                generate_refactor_suggestion(&new_promotions, &ordered_statements, pos, end);
 
             return Err(SplittingError::TooManyPublicArgsAtSplit {
                 predicate: original_name.clone(),
@@ -975,7 +972,10 @@ mod tests {
         assert!(suggestion_text.contains("statements 0-7"));
         assert!(suggestion_text.contains("grouping all 'T' operations together"));
 
-        eprintln!("\n=== Example ReduceWildcardSpan Suggestion ===\n{}\n", suggestion_text);
+        eprintln!(
+            "\n=== Example ReduceWildcardSpan Suggestion ===\n{}\n",
+            suggestion_text
+        );
     }
 
     #[test]
@@ -994,6 +994,9 @@ mod tests {
         assert!(suggestion_text.contains("T1, T2, T3"));
         assert!(suggestion_text.contains("used across multiple segments"));
 
-        eprintln!("\n=== Example GroupWildcardUsages Suggestion ===\n{}\n", suggestion_text);
+        eprintln!(
+            "\n=== Example GroupWildcardUsages Suggestion ===\n{}\n",
+            suggestion_text
+        );
     }
 }
