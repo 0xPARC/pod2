@@ -37,9 +37,8 @@ pub struct ChainLink {
 /// Wildcard usage information
 #[derive(Debug, Clone)]
 struct WildcardUsage {
-    _wildcard_name: String,
-    /// Indices of constraints using this wildcard
-    used_in_constraints: HashSet<usize>,
+    /// Indices of statements using this wildcard
+    used_in_statements: HashSet<usize>,
 }
 
 /// Early validation: Check if predicate is fundamentally splittable
@@ -48,7 +47,6 @@ pub fn validate_predicate_is_splittable(
     params: &Params,
 ) -> Result<(), SplittingError> {
     let public_args = pred.args.public_args.len();
-    let total_args = public_args + pred.args.private_args.as_ref().map_or(0, |v| v.len());
 
     // Check: public args must fit in operation arg limit
     if public_args > params.max_statement_args {
@@ -57,17 +55,6 @@ pub fn validate_predicate_is_splittable(
             count: public_args,
             max_allowed: params.max_statement_args,
             message: "Public arguments exceed max operation args - cannot call this predicate"
-                .to_string(),
-        });
-    }
-
-    // Check: total args must fit in wildcard limit
-    if total_args > params.max_custom_predicate_wildcards {
-        return Err(SplittingError::TooManyTotalArgs {
-            predicate: pred.name.name.clone(),
-            count: total_args,
-            max_allowed: params.max_custom_predicate_wildcards,
-            message: "Total arguments exceed max wildcard limit - cannot represent this predicate"
                 .to_string(),
         });
     }
@@ -104,10 +91,9 @@ fn analyze_wildcards(statements: &[StatementTmpl]) -> HashMap<String, WildcardUs
             usage
                 .entry(wildcard.clone())
                 .or_insert_with(|| WildcardUsage {
-                    _wildcard_name: wildcard.clone(),
-                    used_in_constraints: HashSet::new(),
+                    used_in_statements: HashSet::new(),
                 })
-                .used_in_constraints
+                .used_in_statements
                 .insert(idx);
         }
     }
@@ -177,6 +163,44 @@ fn order_constraints_optimally(
     ordered
 }
 
+/// Compute tie-breaker metrics for deterministic ordering when scores are equal
+/// Returns (simplicity, public_closure, negative_fanout) tuple for use in max_by_key
+fn compute_tie_breakers(
+    stmt: &StatementTmpl,
+    active_wildcards: &HashSet<String>,
+    statements: &[StatementTmpl],
+    remaining: &HashSet<usize>,
+) -> (usize, usize, i32) {
+    let stmt_wildcards = collect_wildcards_from_statement(stmt);
+
+    // Metric 1: Simplicity - prefer statements with fewer wildcards
+    let simplicity = usize::MAX - stmt_wildcards.len();
+
+    // Metric 2: Public closure - prefer statements that close active wildcards
+    // (wildcards that won't be needed by any remaining statements)
+    let needed_later: HashSet<String> = remaining
+        .iter()
+        .flat_map(|&i| collect_wildcards_from_statement(&statements[i]))
+        .collect();
+
+    let closes_count = stmt_wildcards
+        .intersection(active_wildcards)
+        .filter(|w| !needed_later.contains(*w))
+        .count();
+
+    // Metric 3: Fanout - prefer statements with lower future usage
+    // (number of remaining statements that use any wildcard from this statement)
+    let fanout = remaining
+        .iter()
+        .filter(|&&i| {
+            let other_wildcards = collect_wildcards_from_statement(&statements[i]);
+            !stmt_wildcards.is_disjoint(&other_wildcards)
+        })
+        .count();
+
+    (simplicity, closes_count, -(fanout as i32))
+}
+
 /// Find the best next statement to add based on scoring heuristic
 fn find_best_next_statement(
     statements: &[StatementTmpl],
@@ -193,13 +217,20 @@ fn find_best_next_statement(
     remaining
         .iter()
         .max_by_key(|&&idx| {
-            score_statement(
+            let primary_score = score_statement(
                 &statements[idx],
                 active_wildcards,
                 statements,
                 remaining,
                 approaching_split,
-            )
+            );
+            let tie_breakers = compute_tie_breakers(
+                &statements[idx],
+                active_wildcards,
+                statements,
+                remaining,
+            );
+            (primary_score, tie_breakers)
         })
         .copied()
         .unwrap()
@@ -271,6 +302,67 @@ fn calculate_live_wildcards(
     before.intersection(&after).cloned().collect()
 }
 
+/// Generate a refactor suggestion for wildcards crossing a boundary
+fn generate_refactor_suggestion(
+    crossing_wildcards: &[String],
+    ordered_statements: &[StatementTmpl],
+    _pos: usize,
+    _end: usize,
+) -> Option<crate::lang::error::RefactorSuggestion> {
+    use crate::lang::error::RefactorSuggestion;
+
+    if crossing_wildcards.is_empty() {
+        return None;
+    }
+
+    // Analyze the span of each crossing wildcard
+    let mut wildcard_spans: Vec<(String, usize, usize, usize)> = Vec::new();
+
+    for wildcard in crossing_wildcards {
+        let mut first_use = None;
+        let mut last_use = None;
+
+        for (i, stmt) in ordered_statements.iter().enumerate() {
+            let wildcards = collect_wildcards_from_statement(stmt);
+            if wildcards.contains(wildcard) {
+                if first_use.is_none() {
+                    first_use = Some(i);
+                }
+                last_use = Some(i);
+            }
+        }
+
+        if let (Some(first), Some(last)) = (first_use, last_use) {
+            let span = last - first;
+            wildcard_spans.push((wildcard.clone(), first, last, span));
+        }
+    }
+
+    // Sort by span (largest first)
+    wildcard_spans.sort_by(|a, b| b.3.cmp(&a.3));
+
+    if let Some((wildcard, first, last, span)) = wildcard_spans.first() {
+        // If a single wildcard has a large span, suggest reducing it
+        if *span > 3 {
+            return Some(RefactorSuggestion::ReduceWildcardSpan {
+                wildcard: wildcard.clone(),
+                first_use: *first,
+                last_use: *last,
+                span: *span,
+            });
+        }
+    }
+
+    // If multiple wildcards cross the boundary, suggest grouping
+    if crossing_wildcards.len() > 1 {
+        return Some(RefactorSuggestion::GroupWildcardUsages {
+            wildcards: crossing_wildcards.to_vec(),
+        });
+    }
+
+    None
+}
+
 /// Split into chain using bucket-filling approach
 fn split_into_chain(
     pred: CustomPredicateDef,
@@ -319,13 +411,25 @@ fn split_into_chain(
         let new_promotions: Vec<_> = live_at_boundary
             .iter()
             .filter(|w| !incoming_set.contains(*w))
+            .cloned()
             .collect();
         let total_public = incoming_public.len() + new_promotions.len();
         if total_public > params.max_statement_args {
+            let context = crate::lang::error::SplitContext {
+                split_index: chain_links.len(),
+                statement_range: (pos, end),
+                incoming_public: incoming_public.clone(),
+                crossing_wildcards: new_promotions.clone(),
+                total_public,
+            };
+
+            let suggestion = generate_refactor_suggestion(&new_promotions, &ordered_statements, pos, end);
+
             return Err(SplittingError::TooManyPublicArgsAtSplit {
                 predicate: original_name.clone(),
-                count: total_public,
+                context,
                 max_allowed: params.max_statement_args,
+                suggestion,
             });
         }
 
@@ -343,10 +447,15 @@ fn split_into_chain(
         private_args.sort(); // Deterministic ordering
 
         // Check: Total args constraint (incoming + new promotions + private)
-        let total_args = incoming_public.len() + new_promotions.len() + private_args.len();
+        let public_count = incoming_public.len() + new_promotions.len();
+        let private_count = private_args.len();
+        let total_args = public_count + private_count;
         if total_args > params.max_custom_predicate_wildcards {
             return Err(SplittingError::TooManyTotalArgsInChainLink {
+                predicate: original_name.clone(),
                 link_index: chain_links.len(),
+                public_count,
+                private_count,
                 total_count: total_args,
                 max_allowed: params.max_custom_predicate_wildcards,
             });
@@ -776,5 +885,115 @@ mod tests {
             "Greedy ordering should reduce promotions to ≤4 public args, but got {}",
             second_pred_public_count
         );
+    }
+
+    #[test]
+    fn test_error_message_formatting() {
+        // Test that error messages format correctly with detailed context
+        // We'll manually construct the error to test the formatting
+        use crate::lang::error::{RefactorSuggestion, SplitContext};
+
+        let context = SplitContext {
+            split_index: 0,
+            statement_range: (0, 4),
+            incoming_public: vec!["A".to_string(), "B".to_string(), "C".to_string()],
+            crossing_wildcards: vec!["T1".to_string(), "T2".to_string(), "T3".to_string()],
+            total_public: 6,
+        };
+
+        let suggestion = Some(RefactorSuggestion::GroupWildcardUsages {
+            wildcards: vec!["T1".to_string(), "T2".to_string(), "T3".to_string()],
+        });
+
+        let error = SplittingError::TooManyPublicArgsAtSplit {
+            predicate: "test_pred".to_string(),
+            context,
+            max_allowed: 5,
+            suggestion,
+        };
+
+        let error_msg = format!("{}", error);
+
+        // Verify the error message contains all the key information
+        assert!(error_msg.contains("test_pred"));
+        assert!(error_msg.contains("split boundary 0"));
+        assert!(error_msg.contains("3 incoming public"));
+        assert!(error_msg.contains("3 crossing wildcards"));
+        assert!(error_msg.contains("= 6 total"));
+        assert!(error_msg.contains("exceeds max of 5"));
+        assert!(error_msg.contains("Statements 0-4"));
+        assert!(error_msg.contains("Incoming public args: A, B, C"));
+        assert!(error_msg.contains("Wildcards crossing this boundary: T1, T2, T3"));
+        assert!(error_msg.contains("Suggestion:"));
+        assert!(error_msg.contains("Group operations for wildcards"));
+
+        eprintln!("\n=== Example Error Message ===\n{}\n", error_msg);
+    }
+
+    #[test]
+    fn test_error_too_many_total_args_formatting() {
+        // Test the TooManyTotalArgsInChainLink error message formatting
+        let error = SplittingError::TooManyTotalArgsInChainLink {
+            predicate: "huge_pred".to_string(),
+            link_index: 1,
+            public_count: 5,
+            private_count: 6,
+            total_count: 11,
+            max_allowed: 10,
+        };
+
+        let error_msg = format!("{}", error);
+
+        // Verify the error message includes breakdown
+        assert!(error_msg.contains("huge_pred"));
+        assert!(error_msg.contains("chain link 1"));
+        assert!(error_msg.contains("5 public"));
+        assert!(error_msg.contains("6 private"));
+        assert!(error_msg.contains("= 11 total"));
+        assert!(error_msg.contains("exceeds max of 10"));
+
+        eprintln!("\n=== Example TooManyTotalArgs Error ===\n{}\n", error_msg);
+    }
+
+    #[test]
+    fn test_refactor_suggestion_reduce_wildcard_span() {
+        // Test the "reduce wildcard span" suggestion formatting
+        use crate::lang::error::RefactorSuggestion;
+
+        let suggestion = RefactorSuggestion::ReduceWildcardSpan {
+            wildcard: "T".to_string(),
+            first_use: 0,
+            last_use: 7,
+            span: 7,
+        };
+
+        let suggestion_text = suggestion.format();
+
+        // Verify the suggestion formats correctly
+        assert!(suggestion_text.contains("'T'"));
+        assert!(suggestion_text.contains("used across 7 statements"));
+        assert!(suggestion_text.contains("statements 0-7"));
+        assert!(suggestion_text.contains("grouping all 'T' operations together"));
+
+        eprintln!("\n=== Example ReduceWildcardSpan Suggestion ===\n{}\n", suggestion_text);
+    }
+
+    #[test]
+    fn test_refactor_suggestion_group_wildcards() {
+        // Test the "group wildcard usages" suggestion formatting
+        use crate::lang::error::RefactorSuggestion;
+
+        let suggestion = RefactorSuggestion::GroupWildcardUsages {
+            wildcards: vec!["T1".to_string(), "T2".to_string(), "T3".to_string()],
+        };
+
+        let suggestion_text = suggestion.format();
+
+        // Verify the suggestion formats correctly
+        assert!(suggestion_text.contains("Group operations for wildcards"));
+        assert!(suggestion_text.contains("T1, T2, T3"));
+        assert!(suggestion_text.contains("used across multiple segments"));
+
+        eprintln!("\n=== Example GroupWildcardUsages Suggestion ===\n{}\n", suggestion_text);
     }
 }

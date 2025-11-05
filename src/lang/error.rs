@@ -131,6 +131,110 @@ pub enum LoweringError {
     ValidationErrors,
 }
 
+/// Context information for split boundary failures
+#[derive(Debug, Clone)]
+pub struct SplitContext {
+    /// Index of the split boundary (0-based)
+    pub split_index: usize,
+    /// Range of statement indices in the segment before the split
+    pub statement_range: (usize, usize),
+    /// Public arguments coming into this segment
+    pub incoming_public: Vec<String>,
+    /// Wildcards that cross this boundary (need to be promoted)
+    pub crossing_wildcards: Vec<String>,
+    /// Total public arguments needed (incoming + crossing)
+    pub total_public: usize,
+}
+
+/// Suggestions for refactoring predicates that fail to split
+#[derive(Debug, Clone)]
+pub enum RefactorSuggestion {
+    /// A wildcard is used across too many statements
+    ReduceWildcardSpan {
+        wildcard: String,
+        first_use: usize,
+        last_use: usize,
+        span: usize,
+    },
+    /// Multiple wildcards should be grouped together
+    GroupWildcardUsages { wildcards: Vec<String> },
+}
+
+impl RefactorSuggestion {
+    pub fn format(&self) -> String {
+        match self {
+            RefactorSuggestion::ReduceWildcardSpan {
+                wildcard,
+                first_use,
+                last_use,
+                span,
+            } => {
+                format!(
+                    "Wildcard '{}'  is used across {} statements (statements {}-{}).\n\
+                     Consider grouping all '{}' operations together, or split the wildcard\n\
+                     into separate early/late variables.",
+                    wildcard, span, first_use, last_use, wildcard
+                )
+            }
+            RefactorSuggestion::GroupWildcardUsages { wildcards } => {
+                format!(
+                    "Group operations for wildcards: {}\n\
+                     These wildcards are used across multiple segments. Try to complete\n\
+                     all operations for each wildcard before moving to the next.",
+                    wildcards.join(", ")
+                )
+            }
+        }
+    }
+}
+
+/// Formats a detailed error message for TooManyPublicArgsAtSplit
+fn format_public_args_at_split_error(
+    predicate: &str,
+    context: &SplitContext,
+    max_allowed: usize,
+    suggestion: &Option<RefactorSuggestion>,
+) -> String {
+    let mut msg = format!(
+        "Too many public arguments at split boundary {} in predicate '{}':\n",
+        context.split_index, predicate
+    );
+
+    msg.push_str(&format!(
+        "  {} incoming public + {} crossing wildcards = {} total (exceeds max of {})\n",
+        context.incoming_public.len(),
+        context.crossing_wildcards.len(),
+        context.total_public,
+        max_allowed
+    ));
+
+    msg.push_str(&format!(
+        "  Statements {}-{} in this segment\n",
+        context.statement_range.0, context.statement_range.1
+    ));
+
+    if !context.incoming_public.is_empty() {
+        msg.push_str(&format!(
+            "  Incoming public args: {}\n",
+            context.incoming_public.join(", ")
+        ));
+    }
+
+    if !context.crossing_wildcards.is_empty() {
+        msg.push_str(&format!(
+            "  Wildcards crossing this boundary: {}\n",
+            context.crossing_wildcards.join(", ")
+        ));
+    }
+
+    if let Some(suggestion) = suggestion {
+        msg.push_str("\nSuggestion:\n");
+        msg.push_str(&suggestion.format());
+    }
+
+    msg
+}
+
 /// Splitting errors from predicate splitting
 #[derive(Debug, thiserror::Error)]
 pub enum SplittingError {
@@ -150,18 +254,22 @@ pub enum SplittingError {
         message: String,
     },
 
-    #[error("Too many total arguments in chain link {link_index}: {total_count} exceeds max of {max_allowed}")]
+    #[error("Too many total arguments in chain link {link_index} of predicate '{predicate}': {public_count} public + {private_count} private = {total_count} total (exceeds max of {max_allowed})")]
     TooManyTotalArgsInChainLink {
+        predicate: String,
         link_index: usize,
+        public_count: usize,
+        private_count: usize,
         total_count: usize,
         max_allowed: usize,
     },
 
-    #[error("Too many public arguments at split boundary in predicate '{predicate}': {count} exceeds max of {max_allowed}")]
+    #[error("{}", format_public_args_at_split_error(.predicate, .context, *.max_allowed, .suggestion))]
     TooManyPublicArgsAtSplit {
         predicate: String,
-        count: usize,
+        context: SplitContext,
         max_allowed: usize,
+        suggestion: Option<RefactorSuggestion>,
     },
 
     #[error("Too many predicates in chain for '{predicate}': {count} exceeds batch limit of {max_allowed}")]
