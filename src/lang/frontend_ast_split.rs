@@ -424,9 +424,9 @@ fn split_into_chain(
 
             return Err(SplittingError::TooManyPublicArgsAtSplit {
                 predicate: original_name.clone(),
-                context,
+                context: Box::new(context),
                 max_allowed: params.max_statement_args,
-                suggestion,
+                suggestion: suggestion.map(Box::new),
             });
         }
 
@@ -904,9 +904,9 @@ mod tests {
 
         let error = SplittingError::TooManyPublicArgsAtSplit {
             predicate: "test_pred".to_string(),
-            context,
+            context: Box::new(context),
             max_allowed: 5,
-            suggestion,
+            suggestion: suggestion.map(Box::new),
         };
 
         let error_msg = format!("{}", error);

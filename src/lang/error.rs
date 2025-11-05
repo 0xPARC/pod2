@@ -193,7 +193,7 @@ fn format_public_args_at_split_error(
     predicate: &str,
     context: &SplitContext,
     max_allowed: usize,
-    suggestion: &Option<RefactorSuggestion>,
+    suggestion: &Option<Box<RefactorSuggestion>>,
 ) -> String {
     let mut msg = format!(
         "Too many public arguments at split boundary {} in predicate '{}':\n",
@@ -267,9 +267,9 @@ pub enum SplittingError {
     #[error("{}", format_public_args_at_split_error(.predicate, .context, *.max_allowed, .suggestion))]
     TooManyPublicArgsAtSplit {
         predicate: String,
-        context: SplitContext,
+        context: Box<SplitContext>,
         max_allowed: usize,
-        suggestion: Option<RefactorSuggestion>,
+        suggestion: Option<Box<RefactorSuggestion>>,
     },
 
     #[error("Too many predicates in chain for '{predicate}': {count} exceeds batch limit of {max_allowed}")]
