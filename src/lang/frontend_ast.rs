@@ -522,7 +522,6 @@ impl fmt::Display for DictPair {
     }
 }
 
-
 // Parser module for converting Pest pairs to AST
 pub mod parse {
     use pest::iterators::Pair;
