@@ -12,6 +12,9 @@ pub type Pairs<'a, R> = PestPairs<'a, R>;
 
 #[derive(thiserror::Error, Debug)]
 pub enum ParseError {
+    #[error("Invalid integer: {0}")]
+    InvalidInt(String),
+
     #[error("Pest parsing error: {0}")]
     Pest(Box<pest::error::Error<Rule>>),
 

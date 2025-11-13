@@ -527,10 +527,10 @@ pub mod parse {
     use pest::iterators::Pair;
 
     use super::*;
-    use crate::lang::parser::Rule;
+    use crate::lang::parser::{self, Rule};
 
     /// Convert a Pest document pair to an AST Document
-    pub fn parse_document(pair: Pair<Rule>) -> Result<Document, crate::lang::parser::ParseError> {
+    pub fn parse_document(pair: Pair<Rule>) -> Result<Document, parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::document);
         let mut items = Vec::new();
 
@@ -653,7 +653,7 @@ pub mod parse {
 
     fn parse_custom_predicate_def(
         pair: Pair<Rule>,
-    ) -> Result<CustomPredicateDef, crate::lang::parser::ParseError> {
+    ) -> Result<CustomPredicateDef, parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::custom_predicate_def);
         let span = get_span(&pair);
         let mut inner = pair.into_inner();
@@ -722,7 +722,7 @@ pub mod parse {
         }
     }
 
-    fn parse_request_def(pair: Pair<Rule>) -> Result<RequestDef, crate::lang::parser::ParseError> {
+    fn parse_request_def(pair: Pair<Rule>) -> Result<RequestDef, parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::request_def);
         let span = get_span(&pair);
         let mut statements = Vec::new();
@@ -743,7 +743,7 @@ pub mod parse {
         })
     }
 
-    fn parse_statement(pair: Pair<Rule>) -> Result<StatementTmpl, crate::lang::parser::ParseError> {
+    fn parse_statement(pair: Pair<Rule>) -> Result<StatementTmpl, parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::statement);
         let span = get_span(&pair);
         let mut inner = pair.into_inner();
@@ -768,9 +768,7 @@ pub mod parse {
         })
     }
 
-    fn parse_statement_arg(
-        pair: Pair<Rule>,
-    ) -> Result<StatementTmplArg, crate::lang::parser::ParseError> {
+    fn parse_statement_arg(pair: Pair<Rule>) -> Result<StatementTmplArg, parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::statement_arg);
         let inner = pair.into_inner().next().unwrap();
 
@@ -782,9 +780,7 @@ pub mod parse {
         }
     }
 
-    fn parse_anchored_key(
-        pair: Pair<Rule>,
-    ) -> Result<AnchoredKey, crate::lang::parser::ParseError> {
+    fn parse_anchored_key(pair: Pair<Rule>) -> Result<AnchoredKey, parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::anchored_key);
         let span = get_span(&pair);
         let mut inner = pair.into_inner();
@@ -813,14 +809,12 @@ pub mod parse {
         }
     }
 
-    fn parse_literal_value(
-        pair: Pair<Rule>,
-    ) -> Result<LiteralValue, crate::lang::parser::ParseError> {
+    fn parse_literal_value(pair: Pair<Rule>) -> Result<LiteralValue, parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::literal_value);
         let inner = pair.into_inner().next().unwrap();
 
         match inner.as_rule() {
-            Rule::literal_int => Ok(LiteralValue::Int(parse_literal_int(inner))),
+            Rule::literal_int => Ok(LiteralValue::Int(parse_literal_int(inner)?)),
             Rule::literal_bool => Ok(LiteralValue::Bool(parse_literal_bool(inner))),
             Rule::literal_string => Ok(LiteralValue::String(parse_literal_string(inner)?)),
             Rule::literal_raw => Ok(LiteralValue::Raw(parse_literal_raw(inner))),
@@ -837,13 +831,16 @@ pub mod parse {
         }
     }
 
-    fn parse_literal_int(pair: Pair<Rule>) -> LiteralInt {
+    fn parse_literal_int(pair: Pair<Rule>) -> Result<LiteralInt, parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::literal_int);
-        let value = pair.as_str().parse().unwrap();
-        LiteralInt {
+        let value = pair
+            .as_str()
+            .parse()
+            .map_err(|e| parser::ParseError::InvalidInt(format!("{}: {}", pair.as_str(), e)))?;
+        Ok(LiteralInt {
             value,
             span: Some(get_span(&pair)),
-        }
+        })
     }
 
     fn parse_literal_bool(pair: Pair<Rule>) -> LiteralBool {
@@ -854,9 +851,7 @@ pub mod parse {
         }
     }
 
-    fn parse_literal_string(
-        pair: Pair<Rule>,
-    ) -> Result<LiteralString, crate::lang::parser::ParseError> {
+    fn parse_literal_string(pair: Pair<Rule>) -> Result<LiteralString, parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::literal_string);
         let span = get_span(&pair);
 
@@ -880,41 +875,35 @@ pub mod parse {
         }
     }
 
-    fn parse_literal_public_key(
-        pair: Pair<Rule>,
-    ) -> Result<LiteralPublicKey, crate::lang::parser::ParseError> {
+    fn parse_literal_public_key(pair: Pair<Rule>) -> Result<LiteralPublicKey, parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::literal_public_key);
         let span = get_span(&pair);
         let base58_pair = pair.into_inner().next().unwrap();
         let base58_str = base58_pair.as_str();
-        let point = base58_str.parse().map_err(|e| {
-            crate::lang::parser::ParseError::InvalidPublicKey(format!("{}: {}", base58_str, e))
-        })?;
+        let point = base58_str
+            .parse()
+            .map_err(|e| parser::ParseError::InvalidPublicKey(format!("{}: {}", base58_str, e)))?;
         Ok(LiteralPublicKey {
             point,
             span: Some(span),
         })
     }
 
-    fn parse_literal_secret_key(
-        pair: Pair<Rule>,
-    ) -> Result<LiteralSecretKey, crate::lang::parser::ParseError> {
+    fn parse_literal_secret_key(pair: Pair<Rule>) -> Result<LiteralSecretKey, parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::literal_secret_key);
         let span = get_span(&pair);
         let base64_pair = pair.into_inner().next().unwrap();
         let base64_str = base64_pair.as_str();
-        let secret_key = base64_str.parse().map_err(|e| {
-            crate::lang::parser::ParseError::InvalidSecretKey(format!("{}: {}", base64_str, e))
-        })?;
+        let secret_key = base64_str
+            .parse()
+            .map_err(|e| parser::ParseError::InvalidSecretKey(format!("{}: {}", base64_str, e)))?;
         Ok(LiteralSecretKey {
             secret_key,
             span: Some(span),
         })
     }
 
-    fn parse_literal_array(
-        pair: Pair<Rule>,
-    ) -> Result<LiteralArray, crate::lang::parser::ParseError> {
+    fn parse_literal_array(pair: Pair<Rule>) -> Result<LiteralArray, parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::literal_array);
         let span = get_span(&pair);
         let elements: Result<Vec<_>, _> = pair
@@ -928,7 +917,7 @@ pub mod parse {
         })
     }
 
-    fn parse_literal_set(pair: Pair<Rule>) -> Result<LiteralSet, crate::lang::parser::ParseError> {
+    fn parse_literal_set(pair: Pair<Rule>) -> Result<LiteralSet, parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::literal_set);
         let span = get_span(&pair);
         let elements: Result<Vec<_>, _> = pair
@@ -942,9 +931,7 @@ pub mod parse {
         })
     }
 
-    fn parse_literal_dict(
-        pair: Pair<Rule>,
-    ) -> Result<LiteralDict, crate::lang::parser::ParseError> {
+    fn parse_literal_dict(pair: Pair<Rule>) -> Result<LiteralDict, parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::literal_dict);
         let span = get_span(&pair);
         let pairs: Result<Vec<_>, _> = pair
@@ -958,7 +945,7 @@ pub mod parse {
         })
     }
 
-    fn parse_dict_pair(pair: Pair<Rule>) -> Result<DictPair, crate::lang::parser::ParseError> {
+    fn parse_dict_pair(pair: Pair<Rule>) -> Result<DictPair, parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::dict_pair);
         let span = get_span(&pair);
         let mut inner = pair.into_inner();
@@ -979,7 +966,7 @@ pub mod parse {
         }
     }
 
-    fn unescape_string(s: &str) -> Result<String, crate::lang::parser::ParseError> {
+    fn unescape_string(s: &str) -> Result<String, parser::ParseError> {
         let mut result = String::new();
         let mut chars = s.chars().peekable();
 
@@ -1001,7 +988,7 @@ pub mod parse {
                         let code = u32::from_str_radix(&hex, 16)
                             .expect("Grammar should guarantee valid hex digits");
                         let unicode_char = char::from_u32(code).ok_or_else(|| {
-                            crate::lang::parser::ParseError::InvalidEscapeSequence(format!(
+                            parser::ParseError::InvalidEscapeSequence(format!(
                                 "\\u{}: invalid unicode codepoint",
                                 hex
                             ))
