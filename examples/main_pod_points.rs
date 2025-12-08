@@ -148,8 +148,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Build a pod to prove the statement `over_9000("Alice")`
     let mut builder = MainPodBuilder::new(&params, vd_set);
-    builder.add_pod(pod_alice_lvl_1_points);
-    builder.add_pod(pod_alice_lvl_2_points);
+    builder.add_pod(pod_alice_lvl_1_points)?;
+    builder.add_pod(pod_alice_lvl_2_points)?;
     let st_points_total = builder.priv_op(Operation::sum_of(3512 + 5771, 3512, 5771))?;
     let st_gt_9000 = builder.priv_op(Operation::gt(3512 + 5771, 9000))?;
     let _st_over_9000 = builder.pub_op(Operation::custom(

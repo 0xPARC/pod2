@@ -166,7 +166,7 @@ impl EthDosHelper {
         int_attestation: &SignedDict, // int signs dst
     ) -> Result<MainPodBuilder> {
         let mut pod = MainPodBuilder::new(&self.params, &self.vd_set);
-        pod.add_pod(eth_dos_src_to_int_pod.clone());
+        pod.add_pod(eth_dos_src_to_int_pod.clone())?;
 
         let eth_dos_int_to_dst = eth_dos_src_to_int_pod
             .pod

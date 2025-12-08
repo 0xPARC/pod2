@@ -164,8 +164,15 @@ impl MainPodBuilder {
             dict_contains: Vec::new(),
         }
     }
-    pub fn add_pod(&mut self, pod: MainPod) {
+    pub fn add_pod(&mut self, pod: MainPod) -> Result<()> {
         self.input_pods.push(pod);
+        match self.input_pods.len() > self.params.max_input_pods {
+            true => Err(Error::too_many_input_pods(
+                self.input_pods.len(),
+                self.params.max_input_pods,
+            )),
+            _ => Ok(()),
+        }
     }
     pub fn insert(&mut self, public: bool, st_op: (Statement, Operation)) -> Result<()> {
         // TODO: Do error handling instead of panic

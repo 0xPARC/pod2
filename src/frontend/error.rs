@@ -35,6 +35,8 @@ pub enum InnerError {
     PodlangParse(String),
     #[error("POD Request validation error: {0}")]
     PodRequestValidation(String),
+    #[error("Too many input PODs provided: {0} were provided, but the maximum is {1}")]
+    TooManyInputPods(usize, usize),
     #[error("Too many public statements provided: {0} were provided, but the maximum is {1}")]
     TooManyPublicStatements(usize, usize),
     #[error("Too many statements provided: {0} were provided, but the maximum is {1}")]
@@ -107,6 +109,9 @@ impl Error {
     }
     pub(crate) fn pod_request_validation(e: String) -> Self {
         new!(PodRequestValidation(e))
+    }
+    pub(crate) fn too_many_input_pods(found: usize, max: usize) -> Self {
+        new!(TooManyInputPods(found, max))
     }
     pub(crate) fn too_many_public_statements(found: usize, max: usize) -> Self {
         new!(TooManyPublicStatements(found, max))
