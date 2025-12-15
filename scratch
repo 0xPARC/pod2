@@ -1,0 +1,78 @@
+# Ahmad branch
+- verifier for zk 2^14: 1 x 4964.0 = 4964
+- verifier for zk 2^15: 1 x 5174.0 = 5174
+- verifier for zk 2^16: 1 x 5382.0 = 5382
+- verifier for zk 2^17: 1 x 5584.0 = 5584
+- verifier for zk 2^18: 1 x 5976.0 = 5976
+
+# Main
+- verifier for zk 2^14 [1]: 4574
+- verifier for zk 2^15 [1]: 4784
+- verifier for zk 2^15 [2]: 4784
+- verifier for zk 2^16 [1]: 4993
+- verifier for zk 2^17 [1]: 5195
+- verifier for zk 2^18 [1]: 5587
+
+
+
+- verifier for 2^19: 1 x 6157.0 = 6157
+- verifier for 2^18: 1 x 5920.0 = 5920
+- verifier for 2^17: 1 x 5528.0 = 5528
+- verifier for 2^16: 1 x 5326.0 = 5326
+- verifier for 2^15: 1 x 5118.0 = 5118
+- verifier for 2^14: 1 x 4908.0 = 4908
+- verifier for 2^13: 1 x 4527.0 = 4527
+- verifier for 2^12: 1 x 4353.0 = 4353
+- verifier for 2^11: 1 x 4173.0 = 4173
+- verifier for 2^10: 1 x 3991.0 = 3991
+- verifier for 2^9: 1 x 3641.0 = 3641
+- verifier for 2^8: 1 x 3495.0 = 3495
+- verifier for 2^7: 1 x 3343.0 = 3343
+
+Gate count:
+- RecCircuit: 1 x 51011.0 = 51011
+- RecCircuit/MainPodVerify: 1 x 39993.0 = 39993
+- RecCircuit/MainPodVerify/OpVerify: 48 x 592.8 = 28453
+- RecCircuit/MainPodVerify/OpVerify/OpCustom: 40 x 84.8 = 3392
+- RecCircuit/MainPodVerify/OpVerify/MerkleDeleteOp: 40 x 15.7 = 628
+- RecCircuit/MainPodVerify/OpVerify/MerkleUpdateOp: 40 x 16.8 = 672
+- RecCircuit/MainPodVerify/OpVerify/MerkleInsertOp: 40 x 17.9 = 716
+- RecCircuit/MainPodVerify/OpVerify/OpSignedBy: 40 x 14.4 = 576
+- RecCircuit/MainPodVerify/OpVerify/OpPublicKeyOf: 40 x 14.7 = 588
+- RecCircuit/MainPodVerify/OpVerify/OpNotContainsFromEntries: 40 x 14.5 = 580
+- RecCircuit/MainPodVerify/OpVerify/OpContainsFromEntries: 40 x 16.2 = 648
+- RecCircuit/MainPodVerify/OpVerify/OpMaxOf: 40 x 19.9 = 798
+- RecCircuit/MainPodVerify/OpVerify/OpProductOf: 40 x 41.0 = 1638
+- RecCircuit/MainPodVerify/OpVerify/OpSumOf: 40 x 21.1 = 842
+- RecCircuit/MainPodVerify/OpVerify/OpHashOf: 40 x 15.4 = 616
+- RecCircuit/MainPodVerify/OpVerify/OpLtToNeq: 40 x 13.7 = 548
+- RecCircuit/MainPodVerify/OpVerify/OpTransitiveEq: 40 x 17.7 = 708
+- RecCircuit/MainPodVerify/OpVerify/OpLtLteqFromEntries: 40 x 25.1 = 1004
+- RecCircuit/MainPodVerify/OpVerify/OpEqNeqFromEntries: 40 x 18.1 = 726
+- RecCircuit/MainPodVerify/OpVerify/OpCopy: 48 x 14.4 = 692
+- RecCircuit/MainPodVerify/OpVerify/OpNone: 48 x 11.9 = 572
+- RecCircuit/MainPodVerify/OpVerify/GetTaggedTblEntry: 40 x 41.0 = 1640
+- RecCircuit/MainPodVerify/OpVerify/ResolveOpArgs: 48 x 224.9 = 10793
+- RecCircuit/MainPodVerify/CalculateId: 1 x 46.0 = 46
+- RecCircuit/MainPodVerify/BuildOpAuxTbl: 1 x 10189.0 = 10189
+- RecCircuit/MainPodVerify/BuildOpAuxTbl/CustomPredVerify: 8 x 250.0 = 2000
+- RecCircuit/MainPodVerify/BuildOpAuxTbl/CustomPredVerify/HashTaggedTblEntry: 8 x 36.0 = 288
+- RecCircuit/MainPodVerify/BuildOpAuxTbl/CustomPredVerify/CustomOpVerify: 8 x 180.0 = 1440
+- RecCircuit/MainPodVerify/BuildOpAuxTbl/CustomPredVerify/CustomOpVerify/StArgFromTmpl: 40 x 21.8 = 870
+- RecCircuit/MainPodVerify/BuildOpAuxTbl/MerkleProofStateTransition_32: 6 x 407.3 = 2444
+- RecCircuit/MainPodVerify/BuildOpAuxTbl/MerkleProofStateTransition_32/MerkleProofExist_32: 6 x 140.5 = 843
+- RecCircuit/MainPodVerify/BuildOpAuxTbl/MerkleProofStateTransition_32/MerkleProof_32: 6 x 142.2 = 853
+- RecCircuit/MainPodVerify/BuildOpAuxTbl/SignedBy: 4 x 187.2 = 749
+- RecCircuit/MainPodVerify/BuildOpAuxTbl/SignedBy/HashTaggedTblEntry: 4 x 2.0 = 8
+- RecCircuit/MainPodVerify/BuildOpAuxTbl/SignedBy/SignatureVerify: 4 x 183.2 = 733
+- RecCircuit/MainPodVerify/BuildOpAuxTbl/PublicKeyOf: 2 x 1049.5 = 2099
+- RecCircuit/MainPodVerify/BuildOpAuxTbl/PublicKeyOf/HashTaggedTblEntry: 2 x 2.0 = 4
+- RecCircuit/MainPodVerify/BuildOpAuxTbl/MerkleProof_32: 20 x 141.9 = 2838
+- RecCircuit/MainPodVerify/BuildOpAuxTbl/HashTaggedTblEntry: 27 x 2.2 = 59
+- RecCircuit/MainPodVerify/BuildCustomPredTbl: 1 x 1112.0 = 1112
+- RecCircuit/MainPodVerify/BuildCustomPredTbl/CustomPredBatch: 4 x 278.0 = 1112
+- RecCircuit/MainPodVerify/VerifyInPod: 2 x 96.5 = 193
+- RecCircuit/MainPodVerify/VerifyInPod/MerkleProof_6: 2 x 32.5 = 65
+- RecCircuit/MainPodVerify/VerifyInPod/CalculateId: 2 x 46.0 = 92
+- RecCircuit/VerifyProof: 2 x 5442.5 = 10885
+- CalculateId: 1 x 6.0 = 6
