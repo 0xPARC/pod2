@@ -96,7 +96,7 @@ mod tests {
             (TypedValue::Bool(true), "true"),
             (
                 TypedValue::Array(Array::new(vec!["foo".into(), false.into()])),
-                "{\"max_depth\":32,\"array\":[\"foo\",false]}",
+                "{\"array\":[\"foo\",false]}",
             ),
             (
                 TypedValue::Dictionary(
@@ -115,11 +115,11 @@ mod tests {
                         (("🥳".into()), "party time!".into()),
                     ]))
                 ),
-                "{\"max_depth\":32,\"kvs\":{\"\":\"baz\",\"\\u0000\":\"\",\"    hi\":false,\"!@£$%^&&*()\":\"\",\"foo\":{\"Int\":\"123\"},\"🥳\":\"party time!\"}}",
+                "{\"kvs\":{\"\":\"baz\",\"\\u0000\":\"\",\"    hi\":false,\"!@£$%^&&*()\":\"\",\"foo\":{\"Int\":\"123\"},\"🥳\":\"party time!\"}}",
             ),
             (
                 TypedValue::Set(Set::new(HashSet::from(["foo".into(), "bar".into()]))),
-                "{\"max_depth\":32,\"set\":[\"bar\",\"foo\"]}",
+                "{\"set\":[\"bar\",\"foo\"]}",
             ),
         ];
 
