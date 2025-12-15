@@ -22,7 +22,6 @@ pub struct Dictionary {
     #[serde(skip)]
     #[schemars(skip)]
     mt: MerkleTree,
-    max_depth: usize,
     #[serde(serialize_with = "ordered_map")]
     kvs: HashMap<Key, Value>,
 }
@@ -40,15 +39,11 @@ macro_rules! dict {
 }
 
 impl Dictionary {
-    /// max_depth determines the depth of the underlying MerkleTree, allowing to
-    /// store 2^max_depth elements in the Dictionary
     pub fn new(kvs: HashMap<Key, Value>) -> Result<Self> {
-        let max_depth: usize = 256;
         let kvs_raw: HashMap<RawValue, RawValue> =
             kvs.iter().map(|(k, v)| (k.raw(), v.raw())).collect();
         Ok(Self {
             mt: MerkleTree::new(&kvs_raw)?,
-            max_depth,
             kvs,
         })
     }
@@ -120,9 +115,6 @@ impl Dictionary {
     pub fn kvs(&self) -> &HashMap<Key, Value> {
         &self.kvs
     }
-    pub fn max_depth(&self) -> usize {
-        self.max_depth
-    }
 }
 
 impl PartialEq for Dictionary {
@@ -155,16 +147,12 @@ pub struct Set {
     #[serde(skip)]
     #[schemars(skip)]
     mt: MerkleTree,
-    max_depth: usize,
     #[serde(serialize_with = "ordered_set")]
     set: HashSet<Value>,
 }
 
 impl Set {
-    /// max_depth determines the depth of the underlying MerkleTree, allowing to
-    /// store 2^max_depth elements in the Array
     pub fn new(set: HashSet<Value>) -> Result<Self> {
-        let max_depth: usize = 256;
         let kvs_raw: HashMap<RawValue, RawValue> = set
             .iter()
             .map(|e| {
@@ -174,7 +162,6 @@ impl Set {
             .collect();
         Ok(Self {
             mt: MerkleTree::new(&kvs_raw)?,
-            max_depth,
             set,
         })
     }
@@ -228,9 +215,6 @@ impl Set {
     pub fn set(&self) -> &HashSet<Value> {
         &self.set
     }
-    pub fn max_depth(&self) -> usize {
-        self.max_depth
-    }
 }
 
 impl PartialEq for Set {
@@ -264,15 +248,11 @@ pub struct Array {
     #[serde(skip)]
     #[schemars(skip)]
     mt: MerkleTree,
-    max_depth: usize,
     array: Vec<Value>,
 }
 
 impl Array {
-    /// max_depth determines the depth of the underlying MerkleTree, allowing to
-    /// store 2^max_depth elements in the Array
     pub fn new(array: Vec<Value>) -> Result<Self> {
-        let max_depth: usize = 256;
         let kvs_raw: HashMap<RawValue, RawValue> = array
             .iter()
             .enumerate()
@@ -281,7 +261,6 @@ impl Array {
 
         Ok(Self {
             mt: MerkleTree::new(&kvs_raw)?,
-            max_depth,
             array,
         })
     }
@@ -326,9 +305,6 @@ impl Array {
     }
     pub fn array(&self) -> &[Value] {
         &self.array
-    }
-    pub fn max_depth(&self) -> usize {
-        self.max_depth
     }
 }
 
