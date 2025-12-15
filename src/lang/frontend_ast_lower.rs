@@ -372,7 +372,7 @@ impl<'a> Lowerer<'a> {
         // Convert AST args to BuilderArgs
         let mut builder = StatementTmplBuilder::new(predicate);
         for arg in &stmt.args {
-            let builder_arg = self.lower_statement_arg_to_builder(arg)?;
+            let builder_arg = Self::lower_statement_arg_to_builder(arg)?;
             builder = builder.arg(builder_arg);
         }
 
@@ -380,13 +380,10 @@ impl<'a> Lowerer<'a> {
         Ok(builder)
     }
 
-    fn lower_statement_arg_to_builder(
-        &self,
-        arg: &StatementTmplArg,
-    ) -> Result<BuilderArg, LoweringError> {
+    fn lower_statement_arg_to_builder(arg: &StatementTmplArg) -> Result<BuilderArg, LoweringError> {
         match arg {
             StatementTmplArg::Literal(lit) => {
-                let value = self.lower_literal(lit)?;
+                let value = Self::lower_literal(lit)?;
                 Ok(BuilderArg::Literal(value))
             }
             StatementTmplArg::Wildcard(id) => {
@@ -403,7 +400,7 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn lower_literal(&self, lit: &LiteralValue) -> Result<middleware::Value, LoweringError> {
+    fn lower_literal(lit: &LiteralValue) -> Result<middleware::Value, LoweringError> {
         let value = match lit {
             LiteralValue::Int(i) => middleware::Value::from(i.value),
             LiteralValue::Bool(b) => middleware::Value::from(b.value),
@@ -413,13 +410,13 @@ impl<'a> Lowerer<'a> {
             LiteralValue::SecretKey(sk) => middleware::Value::from(sk.secret_key.clone()),
             LiteralValue::Array(a) => {
                 let elements: Result<Vec<_>, _> =
-                    a.elements.iter().map(|e| self.lower_literal(e)).collect();
+                    a.elements.iter().map(Self::lower_literal).collect();
                 let array = containers::Array::new(elements?);
                 middleware::Value::from(array)
             }
             LiteralValue::Set(s) => {
                 let elements: Result<Vec<_>, _> =
-                    s.elements.iter().map(|e| self.lower_literal(e)).collect();
+                    s.elements.iter().map(Self::lower_literal).collect();
                 let set_values: std::collections::HashSet<_> = elements?.into_iter().collect();
                 let set = containers::Set::new(set_values);
                 middleware::Value::from(set)
@@ -430,7 +427,7 @@ impl<'a> Lowerer<'a> {
                     .iter()
                     .map(|pair| {
                         let key = middleware::Key::from(pair.key.value.as_str());
-                        let value = self.lower_literal(&pair.value)?;
+                        let value = Self::lower_literal(&pair.value)?;
                         Ok((key, value))
                     })
                     .collect();
