@@ -769,7 +769,7 @@ pub mod tests {
             );
         }
 
-        let tree = MerkleTree::new(max_depth, &kvs)?;
+        let tree = MerkleTree::new(&kvs)?;
 
         let (key, value, proof) = if existence {
             let key = RawValue::from(hash_value(&RawValue::from(5)));
@@ -826,7 +826,7 @@ pub mod tests {
             );
         }
 
-        let tree = MerkleTree::new(max_depth, &kvs)?;
+        let tree = MerkleTree::new(&kvs)?;
 
         let key = RawValue::from(hash_value(&RawValue::from(5)));
         let (value, proof) = tree.prove(&key)?;
@@ -877,7 +877,7 @@ pub mod tests {
         kvs.insert(RawValue::from(13), RawValue::from(1013));
 
         let max_depth = 5;
-        let tree = MerkleTree::new(max_depth, &kvs)?;
+        let tree = MerkleTree::new(&kvs)?;
         // existence
         test_merkletree_edgecase_opt(max_depth, &tree, RawValue::from(5))?;
         // non-existence case i) expected leaf does not exist
@@ -939,7 +939,7 @@ pub mod tests {
             kvs.insert(RawValue::from(i), RawValue::from(i));
         }
         let max_depth = 16;
-        let tree = MerkleTree::new(max_depth, &kvs)?;
+        let tree = MerkleTree::new(&kvs)?;
 
         let key = RawValue::from(3);
         let (value, proof) = tree.prove(&key)?;
@@ -947,7 +947,7 @@ pub mod tests {
         // build another tree with an extra key-value, so that it has a
         // different root
         kvs.insert(RawValue::from(100), RawValue::from(100));
-        let tree2 = MerkleTree::new(max_depth, &kvs)?;
+        let tree2 = MerkleTree::new(&kvs)?;
 
         MerkleTree::verify(max_depth, tree.root(), &proof, &key, &value)?;
         assert_eq!(
@@ -1034,7 +1034,7 @@ pub mod tests {
         for i in 0..8 {
             kvs.insert(RawValue::from(i), RawValue::from(1000 + i));
         }
-        let mut tree = MerkleTree::new(max_depth, &kvs)?;
+        let mut tree = MerkleTree::new(&kvs)?;
 
         // key=37 shares path with key=5, till the level 6, needing 2 extra
         // 'empty' nodes between the original position of key=5 with the new
@@ -1093,7 +1093,7 @@ pub mod tests {
         for i in 0..8 {
             kvs.insert(RawValue::from(i), RawValue::from(1000 + i));
         }
-        let mut tree = MerkleTree::new(max_depth, &kvs)?;
+        let mut tree = MerkleTree::new(&kvs)?;
 
         let old_root = tree.root();
         let key = RawValue::from(4294967295); // 0xffffffff
@@ -1157,7 +1157,7 @@ pub mod tests {
         for i in 0..8 {
             kvs.insert(RawValue::from(i), RawValue::from(1000 + i));
         }
-        let mut tree = MerkleTree::new(max_depth, &kvs)?;
+        let mut tree = MerkleTree::new(&kvs)?;
 
         // key=37 shares path with key=5, till the level 6, needing 2 extra
         // 'empty' nodes between the original position of key=5 with the new
@@ -1220,7 +1220,7 @@ pub mod tests {
         for i in 0..8 {
             kvs.insert(RawValue::from(i), RawValue::from(1000 + i));
         }
-        let mut tree = MerkleTree::new(max_depth, &kvs)?;
+        let mut tree = MerkleTree::new(&kvs)?;
 
         let key = RawValue::from(37);
         let value = RawValue::from(1037);

@@ -1104,8 +1104,8 @@ pub mod tests {
 
         let mut pod_builder = MainPodBuilder::new(&params, &vd_set);
 
-        let dict = dict!(32, {"score" => 42})?;
-        let secret_dict = dict!(32, {"key" => 42})?;
+        let dict = dict!({"score" => 42})?;
+        let secret_dict = dict!({"key" => 42})?;
         let st0 = pod_builder.priv_op(frontend::Operation::dict_contains(
             dict.clone(),
             "score",
@@ -1136,7 +1136,7 @@ pub mod tests {
         let params = Params::default();
         let mut builder = MainPodBuilder::new(&params, &DEFAULT_VD_SET);
         let set: HashSet<_> = [1, 2, 3].into_iter().map(|n| n.into()).collect();
-        let set = Set::new(params.max_depth_mt_containers, set).unwrap();
+        let set = Set::new(set).unwrap();
         builder.pub_op(frontend::Operation::set_contains(set, 1))?;
 
         let prover = Prover {};

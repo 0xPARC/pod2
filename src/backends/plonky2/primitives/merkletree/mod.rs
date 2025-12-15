@@ -23,7 +23,8 @@ pub struct MerkleTree {
 
 impl MerkleTree {
     /// builds a new `MerkleTree` where the leaves contain the given key-values
-    pub fn new(max_depth: usize, kvs: &HashMap<RawValue, RawValue>) -> TreeResult<Self> {
+    pub fn new(kvs: &HashMap<RawValue, RawValue>) -> TreeResult<Self> {
+        let max_depth: usize = 256;
         // Start with an empty node as root.
         let mut root = Node::None;
 
@@ -1047,7 +1048,7 @@ pub mod tests {
         let value = RawValue::from(1013);
         kvs.insert(key, value);
 
-        let tree = MerkleTree::new(max_depth, &kvs)?;
+        let tree = MerkleTree::new(&kvs)?;
         // when printing the tree, it should print the same tree as in
         // https://0xparc.github.io/pod2/merkletree.html#example-2
         println!("{}", tree);
@@ -1119,7 +1120,7 @@ pub mod tests {
             kvs.insert(RawValue::from(i), RawValue::from(1000 + i));
         }
 
-        let mut tree = MerkleTree::new(max_depth, &kvs)?;
+        let mut tree = MerkleTree::new(&kvs)?;
         let old_root = tree.root();
 
         // key=37 shares path with key=5, till the level 6, needing 2 extra

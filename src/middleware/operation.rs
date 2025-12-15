@@ -815,7 +815,7 @@ mod tests {
         let kvs = (0..10)
             .map(|i| (hash_value(&i.into()).into(), i.into()))
             .collect::<HashMap<_, _>>();
-        let mt = MerkleTree::new(params.max_depth_mt_containers, &kvs)?;
+        let mt = MerkleTree::new(&kvs)?;
         let root = mt.root();
 
         // Check existence proofs
@@ -873,7 +873,7 @@ mod tests {
         let kvs = (0..10)
             .map(|i| (hash_value(&i.into()).into(), i.into()))
             .collect::<HashMap<_, _>>();
-        let mut mt = MerkleTree::new(params.max_depth_mt_containers, &kvs)?;
+        let mut mt = MerkleTree::new(&kvs)?;
 
         // Check insertion proofs
         (11..20)

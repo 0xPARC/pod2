@@ -50,8 +50,7 @@ pub fn zu_kyc_pod_builder(
         .iter()
         .map(|s| Value::from(*s))
         .collect();
-    let sanction_set =
-        Value::from(Set::new(params.max_depth_mt_containers, sanctions_values).unwrap());
+    let sanction_set = Value::from(Set::new(sanctions_values).unwrap());
 
     let mut kyc = MainPodBuilder::new(params, vd_set);
     kyc.pub_op(Operation::dict_signed_by(gov_id))?;
@@ -72,13 +71,11 @@ pub fn zu_kyc_pod_builder(
 }
 
 pub fn zu_kyc_pod_request(gov_signer: &Value, pay_signer: &Value) -> Result<PodRequest> {
-    let params = Params::default();
     let sanctions_values: HashSet<Value> = ZU_KYC_SANCTION_LIST
         .iter()
         .map(|s| Value::from(*s))
         .collect();
-    let sanction_set =
-        Value::from(Set::new(params.max_depth_mt_containers, sanctions_values).unwrap());
+    let sanction_set = Value::from(Set::new(sanctions_values).unwrap());
     let input = format!(
         r#"
     REQUEST(
@@ -347,7 +344,6 @@ pub fn great_boy_pod_full_flow() -> Result<MainPodBuilder> {
     alice_friend_pods.push(friend.sign(&charlie_signer).unwrap());
 
     let good_boy_issuers = Value::from(Set::new(
-        params.max_depth_mt_containers,
         good_boy_issuers.into_iter().map(Value::from).collect(),
     )?);
 
@@ -433,6 +429,6 @@ pub fn tickets_pod_full_flow(params: &Params, vd_set: &VDSet) -> Result<MainPodB
         &signed_dict,
         123,
         true,
-        &Set::new(params.max_depth_mt_containers, HashSet::new())?,
+        &Set::new(HashSet::new())?,
     )
 }

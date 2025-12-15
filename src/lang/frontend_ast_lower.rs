@@ -414,14 +414,14 @@ impl<'a> Lowerer<'a> {
             LiteralValue::Array(a) => {
                 let elements: Result<Vec<_>, _> =
                     a.elements.iter().map(|e| self.lower_literal(e)).collect();
-                let array = containers::Array::new(self.params.max_depth_mt_containers, elements?)?;
+                let array = containers::Array::new(elements?)?;
                 middleware::Value::from(array)
             }
             LiteralValue::Set(s) => {
                 let elements: Result<Vec<_>, _> =
                     s.elements.iter().map(|e| self.lower_literal(e)).collect();
                 let set_values: std::collections::HashSet<_> = elements?.into_iter().collect();
-                let set = containers::Set::new(self.params.max_depth_mt_containers, set_values)?;
+                let set = containers::Set::new(set_values)?;
                 middleware::Value::from(set)
             }
             LiteralValue::Dict(d) => {
@@ -435,8 +435,7 @@ impl<'a> Lowerer<'a> {
                     })
                     .collect();
                 let dict_map: std::collections::HashMap<_, _> = pairs?.into_iter().collect();
-                let dict =
-                    containers::Dictionary::new(self.params.max_depth_mt_containers, dict_map)?;
+                let dict = containers::Dictionary::new(dict_map)?;
                 middleware::Value::from(dict)
             }
         };

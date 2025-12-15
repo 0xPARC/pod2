@@ -89,19 +89,18 @@ mod tests {
 
     #[test]
     fn test_value_serialization() {
-        let params = &Params::default();
         // Pairs of values and their expected serialized representations
         let values = vec![
             (TypedValue::String("hello".to_string()), "\"hello\""),
             (TypedValue::Int(42), "{\"Int\":\"42\"}"),
             (TypedValue::Bool(true), "true"),
             (
-                TypedValue::Array(Array::new(params.max_depth_mt_containers, vec!["foo".into(), false.into()]).unwrap()),
+                TypedValue::Array(Array::new(vec!["foo".into(), false.into()]).unwrap()),
                 "{\"max_depth\":32,\"array\":[\"foo\",false]}",
             ),
             (
                 TypedValue::Dictionary(
-                    Dictionary::new(params.max_depth_mt_containers, HashMap::from([
+                    Dictionary::new(HashMap::from([
                         // The set of valid keys is equal to the set of valid JSON keys
                         ("foo".into(), 123.into()),
                         // Empty strings are valid JSON keys
@@ -120,7 +119,7 @@ mod tests {
                 "{\"max_depth\":32,\"kvs\":{\"\":\"baz\",\"\\u0000\":\"\",\"    hi\":false,\"!@£$%^&&*()\":\"\",\"foo\":{\"Int\":\"123\"},\"🥳\":\"party time!\"}}",
             ),
             (
-                TypedValue::Set(Set::new(params.max_depth_mt_containers, HashSet::from(["foo".into(), "bar".into()])).unwrap()),
+                TypedValue::Set(Set::new(HashSet::from(["foo".into(), "bar".into()])).unwrap()),
                 "{\"max_depth\":32,\"set\":[\"bar\",\"foo\"]}",
             ),
         ];
@@ -147,38 +146,24 @@ mod tests {
         builder.insert("very_large_int", 1152921504606846976);
         builder.insert(
             "a_dict_containing_one_key",
-            Dictionary::new(
-                params.max_depth_mt_containers,
-                HashMap::from([
-                    ("foo".into(), 123.into()),
-                    (
-                        "an_array_containing_three_ints".into(),
-                        Array::new(
-                            params.max_depth_mt_containers,
-                            vec![1.into(), 2.into(), 3.into()],
-                        )
+            Dictionary::new(HashMap::from([
+                ("foo".into(), 123.into()),
+                (
+                    "an_array_containing_three_ints".into(),
+                    Array::new(vec![1.into(), 2.into(), 3.into()])
                         .unwrap()
                         .into(),
-                    ),
-                    (
-                        "a_set_containing_two_strings".into(),
-                        Set::new(
-                            params.max_depth_mt_containers,
-                            HashSet::from([
-                                Array::new(
-                                    params.max_depth_mt_containers,
-                                    vec!["foo".into(), "bar".into()],
-                                )
-                                .unwrap()
-                                .into(),
-                                "baz".into(),
-                            ]),
-                        )
-                        .unwrap()
-                        .into(),
-                    ),
-                ]),
-            )
+                ),
+                (
+                    "a_set_containing_two_strings".into(),
+                    Set::new(HashSet::from([
+                        Array::new(vec!["foo".into(), "bar".into()]).unwrap().into(),
+                        "baz".into(),
+                    ]))
+                    .unwrap()
+                    .into(),
+                ),
+            ]))
             .unwrap(),
         );
         builder

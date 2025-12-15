@@ -103,10 +103,7 @@ impl VDSet {
         // verifier_datas gets the same VDSet root
         vds_hashes.sort();
 
-        let array = Array::new(
-            tree_depth,
-            vds_hashes.iter().map(|vd| Value::from(*vd)).collect(),
-        )?;
+        let array = Array::new(vds_hashes.iter().map(|vd| Value::from(*vd)).collect())?;
 
         let root = array.commitment();
         let mut proofs_map = HashMap::<Hash, MerkleClaimAndProof>::new();

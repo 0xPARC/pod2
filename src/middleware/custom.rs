@@ -524,10 +524,10 @@ mod tests {
             )?],
         );
 
-        let d0 = dict!(32, {
+        let d0 = dict!({
             "a" => 10,
         })?;
-        let d1 = dict!(32, {
+        let d1 = dict!({
             "b" => 15,
             "c" => 17,
         })?;

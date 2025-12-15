@@ -29,24 +29,25 @@ pub struct Dictionary {
 
 #[macro_export]
 macro_rules! dict {
-    ($max_depth:expr, { $($key:expr => $val:expr),* , }) => (
-        $crate::dict!($max_depth, { $($key => $val),* })
+    ({ $($key:expr => $val:expr),* , }) => (
+        $crate::dict!({ $($key => $val),* })
     );
-    ($max_depth:expr, { $($key:expr => $val:expr),* }) => ({
+    ({ $($key:expr => $val:expr),* }) => ({
         let mut map = ::std::collections::HashMap::new();
         $( map.insert($crate::middleware::Key::from($key), $crate::middleware::Value::from($val)); )*
-        $crate::middleware::containers::Dictionary::new($max_depth, map)
+        $crate::middleware::containers::Dictionary::new( map)
     });
 }
 
 impl Dictionary {
     /// max_depth determines the depth of the underlying MerkleTree, allowing to
     /// store 2^max_depth elements in the Dictionary
-    pub fn new(max_depth: usize, kvs: HashMap<Key, Value>) -> Result<Self> {
+    pub fn new(kvs: HashMap<Key, Value>) -> Result<Self> {
+        let max_depth: usize = 256;
         let kvs_raw: HashMap<RawValue, RawValue> =
             kvs.iter().map(|(k, v)| (k.raw(), v.raw())).collect();
         Ok(Self {
-            mt: MerkleTree::new(max_depth, &kvs_raw)?,
+            mt: MerkleTree::new(&kvs_raw)?,
             max_depth,
             kvs,
         })
@@ -140,10 +141,9 @@ impl<'de> Deserialize<'de> for Dictionary {
         struct Aux {
             #[serde(serialize_with = "ordered_map")]
             kvs: HashMap<Key, Value>,
-            max_depth: usize,
         }
         let aux = Aux::deserialize(deserializer)?;
-        Dictionary::new(aux.max_depth, aux.kvs).map_err(serde::de::Error::custom)
+        Dictionary::new(aux.kvs).map_err(serde::de::Error::custom)
     }
 }
 
@@ -163,7 +163,8 @@ pub struct Set {
 impl Set {
     /// max_depth determines the depth of the underlying MerkleTree, allowing to
     /// store 2^max_depth elements in the Array
-    pub fn new(max_depth: usize, set: HashSet<Value>) -> Result<Self> {
+    pub fn new(set: HashSet<Value>) -> Result<Self> {
+        let max_depth: usize = 256;
         let kvs_raw: HashMap<RawValue, RawValue> = set
             .iter()
             .map(|e| {
@@ -172,7 +173,7 @@ impl Set {
             })
             .collect();
         Ok(Self {
-            mt: MerkleTree::new(max_depth, &kvs_raw)?,
+            mt: MerkleTree::new(&kvs_raw)?,
             max_depth,
             set,
         })
@@ -248,10 +249,9 @@ impl<'de> Deserialize<'de> for Set {
         struct Aux {
             #[serde(serialize_with = "ordered_set")]
             set: HashSet<Value>,
-            max_depth: usize,
         }
         let aux = Aux::deserialize(deserializer)?;
-        Set::new(aux.max_depth, aux.set).map_err(serde::de::Error::custom)
+        Set::new(aux.set).map_err(serde::de::Error::custom)
     }
 }
 
@@ -271,7 +271,8 @@ pub struct Array {
 impl Array {
     /// max_depth determines the depth of the underlying MerkleTree, allowing to
     /// store 2^max_depth elements in the Array
-    pub fn new(max_depth: usize, array: Vec<Value>) -> Result<Self> {
+    pub fn new(array: Vec<Value>) -> Result<Self> {
+        let max_depth: usize = 256;
         let kvs_raw: HashMap<RawValue, RawValue> = array
             .iter()
             .enumerate()
@@ -279,7 +280,7 @@ impl Array {
             .collect();
 
         Ok(Self {
-            mt: MerkleTree::new(max_depth, &kvs_raw)?,
+            mt: MerkleTree::new(&kvs_raw)?,
             max_depth,
             array,
         })
@@ -346,9 +347,8 @@ impl<'de> Deserialize<'de> for Array {
         #[derive(Deserialize, JsonSchema)]
         struct Aux {
             array: Vec<Value>,
-            max_depth: usize,
         }
         let aux = Aux::deserialize(deserializer)?;
-        Array::new(aux.max_depth, aux.array).map_err(serde::de::Error::custom)
+        Array::new(aux.array).map_err(serde::de::Error::custom)
     }
 }
