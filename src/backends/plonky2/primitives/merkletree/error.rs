@@ -20,6 +20,8 @@ pub enum TreeInnerError {
     InvalidStateTransitionProogArg(String),
     #[error("state transition proof does not verify, reason: {0}")]
     StateTransitionProofFail(String),
+    #[error("circuit max_depth {0} is smaller than proof depth {1}")]
+    CircuitDepthTooSmall(usize, usize),
 }
 
 #[derive(thiserror::Error)]
@@ -75,5 +77,8 @@ impl TreeError {
     }
     pub(crate) fn state_transition_fail(reason: String) -> Self {
         new!(StateTransitionProofFail(reason))
+    }
+    pub(crate) fn circuit_depth_too_small(circuit_depth: usize, proof_depth: usize) -> Self {
+        new!(CircuitDepthTooSmall(circuit_depth, proof_depth))
     }
 }

@@ -29,9 +29,9 @@ use crate::{
     backends::plonky2::{
         basetypes::D,
         circuits::common::{CircuitBuilderPod, ValueTarget},
-        error::Result,
+        error::{Error, Result},
         primitives::merkletree::{
-            MerkleClaimAndProof, MerkleTreeOp, MerkleTreeStateTransitionProof,
+            MerkleClaimAndProof, MerkleTreeOp, MerkleTreeStateTransitionProof, TreeError,
         },
     },
     measure_gates_begin, measure_gates_end,
@@ -159,6 +159,13 @@ impl MerkleClaimAndProofTarget {
         enabled: bool,
         mp: &MerkleClaimAndProof,
     ) -> Result<()> {
+        if mp.proof.siblings.len() > self.max_depth {
+            return Err(Error::Tree(TreeError::circuit_depth_too_small(
+                self.max_depth,
+                mp.proof.siblings.len(),
+            )));
+        }
+
         pw.set_bool_target(self.enabled, enabled)?;
         pw.set_hash_target(self.root, HashOut::from_vec(mp.root.0.to_vec()))?;
         pw.set_target_arr(&self.key.elements, &mp.key.0)?;
@@ -166,7 +173,6 @@ impl MerkleClaimAndProofTarget {
         pw.set_bool_target(self.existence, mp.proof.existence)?;
 
         // pad siblings with zeros to length max_depth
-        assert!(mp.proof.siblings.len() <= self.max_depth);
         for (i, sibling) in mp
             .proof
             .siblings
@@ -265,6 +271,12 @@ impl MerkleProofExistenceTarget {
         mp: &MerkleClaimAndProof,
     ) -> Result<()> {
         assert!(mp.proof.existence); // sanity check
+        if mp.proof.siblings.len() > self.max_depth {
+            return Err(Error::Tree(TreeError::circuit_depth_too_small(
+                self.max_depth,
+                mp.proof.siblings.len(),
+            )));
+        }
 
         pw.set_bool_target(self.enabled, enabled)?;
         pw.set_hash_target(self.root, HashOut::from_vec(mp.root.0.to_vec()))?;
@@ -272,7 +284,6 @@ impl MerkleProofExistenceTarget {
         pw.set_target_arr(&self.value.elements, &mp.value.0)?;
 
         // pad siblings with zeros to length max_depth
-        assert!(mp.proof.siblings.len() <= self.max_depth);
         for (i, sibling) in mp
             .proof
             .siblings
@@ -610,6 +621,14 @@ impl MerkleTreeStateTransitionProofTarget {
         enabled: bool,
         mp: &MerkleTreeStateTransitionProof,
     ) -> Result<()> {
+        let new_siblings = mp.siblings.clone();
+        if new_siblings.len() > self.max_depth {
+            return Err(Error::Tree(TreeError::circuit_depth_too_small(
+                self.max_depth,
+                new_siblings.len(),
+            )));
+        }
+
         pw.set_bool_target(self.enabled, enabled)?;
         pw.set_target(self.op, F::from_canonical_u8(mp.op as u8))?;
 
@@ -633,9 +652,6 @@ impl MerkleTreeStateTransitionProofTarget {
         pw.set_target_arr(&self.op_key.elements, &mp.op_key.0)?;
         pw.set_target_arr(&self.op_value.elements, &mp.op_value.0)?;
 
-        let new_siblings = mp.siblings.clone();
-
-        assert!(new_siblings.len() <= self.max_depth);
         for (i, sibling) in new_siblings
             .iter()
             .chain(iter::repeat(&EMPTY_HASH))
