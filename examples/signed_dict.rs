@@ -30,10 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .into_iter()
         .map(Value::from)
         .collect();
-    builder.insert(
-        "friends",
-        Set::new(params.max_merkle_proofs_containers, friends_set)?,
-    );
+    builder.insert("friends", Set::new(friends_set));
 
     // Sign the dict and verify it
     let signed_dict = builder.sign(&signer)?;

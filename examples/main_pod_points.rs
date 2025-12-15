@@ -35,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mock_prover = MockProver {};
     let real_prover = Prover {};
     let (vd_set, prover): (_, &dyn MainPodProver) = if mock {
-        (&VDSet::new(8, &[])?, &mock_prover)
+        (&VDSet::new(&[]), &mock_prover)
     } else {
         println!("Prebuilding circuits to calculate vd_set...");
         let vd_set = &*DEFAULT_VD_SET;
