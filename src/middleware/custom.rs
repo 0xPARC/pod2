@@ -526,11 +526,11 @@ mod tests {
 
         let d0 = dict!({
             "a" => 10,
-        })?;
+        });
         let d1 = dict!({
             "b" => 15,
             "c" => 17,
-        })?;
+        });
         let custom_statement = Statement::Custom(
             CustomPredicateRef::new(cust_pred_batch.clone(), 0),
             vec![Value::from(d0.clone())],

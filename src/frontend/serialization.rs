@@ -95,7 +95,7 @@ mod tests {
             (TypedValue::Int(42), "{\"Int\":\"42\"}"),
             (TypedValue::Bool(true), "true"),
             (
-                TypedValue::Array(Array::new(vec!["foo".into(), false.into()]).unwrap()),
+                TypedValue::Array(Array::new(vec!["foo".into(), false.into()])),
                 "{\"max_depth\":32,\"array\":[\"foo\",false]}",
             ),
             (
@@ -114,12 +114,11 @@ mod tests {
                         // Keys can contain emojis
                         (("🥳".into()), "party time!".into()),
                     ]))
-                    .unwrap(),
                 ),
                 "{\"max_depth\":32,\"kvs\":{\"\":\"baz\",\"\\u0000\":\"\",\"    hi\":false,\"!@£$%^&&*()\":\"\",\"foo\":{\"Int\":\"123\"},\"🥳\":\"party time!\"}}",
             ),
             (
-                TypedValue::Set(Set::new(HashSet::from(["foo".into(), "bar".into()])).unwrap()),
+                TypedValue::Set(Set::new(HashSet::from(["foo".into(), "bar".into()]))),
                 "{\"max_depth\":32,\"set\":[\"bar\",\"foo\"]}",
             ),
         ];
@@ -150,21 +149,17 @@ mod tests {
                 ("foo".into(), 123.into()),
                 (
                     "an_array_containing_three_ints".into(),
-                    Array::new(vec![1.into(), 2.into(), 3.into()])
-                        .unwrap()
-                        .into(),
+                    Array::new(vec![1.into(), 2.into(), 3.into()]).into(),
                 ),
                 (
                     "a_set_containing_two_strings".into(),
                     Set::new(HashSet::from([
-                        Array::new(vec!["foo".into(), "bar".into()]).unwrap().into(),
+                        Array::new(vec!["foo".into(), "bar".into()]).into(),
                         "baz".into(),
                     ]))
-                    .unwrap()
                     .into(),
                 ),
-            ]))
-            .unwrap(),
+            ])),
         );
         builder
     }
@@ -213,7 +208,7 @@ mod tests {
         };
         let mut vds = DEFAULT_VD_LIST.clone();
         vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
-        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
+        let vd_set = VDSet::new(&vds);
 
         let (gov_id_builder, pay_stub_builder) = zu_kyc_sign_dict_builders(&params);
         let signer = Signer(SecretKey(1u32.into()));

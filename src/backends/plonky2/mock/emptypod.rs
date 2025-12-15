@@ -105,7 +105,7 @@ pub mod tests {
     fn test_mock_empty_pod() {
         let params = Params::default();
 
-        let empty_pod = MockEmptyPod::new_boxed(&params, VDSet::new(8, &[]).unwrap());
+        let empty_pod = MockEmptyPod::new_boxed(&params, VDSet::new(&[]));
         empty_pod.verify().unwrap();
     }
 }

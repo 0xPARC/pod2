@@ -59,7 +59,7 @@ impl SignedDictBuilder {
 
     pub fn sign<S: Signer>(&self, signer: &S) -> Result<SignedDict> {
         // Sign committed KV store.
-        let dict = Dictionary::new(self.kvs.clone())?;
+        let dict = Dictionary::new(self.kvs.clone());
         // NOTE: This is the same way that `TypedValue::Dictionary` computes the `RawValue`
         let msg_raw = RawValue::from(dict.commitment());
         let signature = signer.sign(msg_raw);
@@ -1030,7 +1030,7 @@ pub mod tests {
             "a" => 1,
             "b" => 2,
             "c" => 3,
-        })?;
+        });
         let dict_root = Value::from(dict.clone());
         builder.insert("dict", dict_root);
 
@@ -1042,7 +1042,7 @@ pub mod tests {
             .pub_op(Operation::dict_signed_by(&signed_dict))
             .unwrap();
         let st0 = signed_dict.get_statement("dict").unwrap();
-        let local = dict!({"key" => "a"})?;
+        let local = dict!({"key" => "a"});
         let st1 = builder
             .op(true, vec![], Operation::dict_contains(local, "key", "a"))
             .unwrap();
@@ -1115,7 +1115,7 @@ pub mod tests {
         let vd_set = &*MOCK_VD_SET;
         let mut builder = MainPodBuilder::new(&params, vd_set);
 
-        let empty_set = Set::new([].into())?;
+        let empty_set = Set::new([].into());
 
         let mut set1 = empty_set.clone();
         set1.insert(&1.into())?;
@@ -1163,7 +1163,7 @@ pub mod tests {
         let vd_set = &*MOCK_VD_SET;
         let mut builder = MainPodBuilder::new(&params, vd_set);
 
-        let array1 = Array::new([1.into()].into())?;
+        let array1 = Array::new([1.into()].into());
 
         let mut array2 = array1.clone();
         array2.update(0, &5.into())?;
@@ -1217,7 +1217,7 @@ pub mod tests {
             "owner",
             Value::from(pk),
         ))?;
-        let local = dict!({ "known_secret" => sk.clone() })?;
+        let local = dict!({ "known_secret" => sk.clone() });
         let st1 = builder.priv_op(Operation::dict_contains(
             local,
             "known_secret",
@@ -1262,7 +1262,7 @@ pub mod tests {
             .pub_op(Operation::dict_signed_by(&signed_dict))
             .unwrap();
         let st0 = signed_dict.get_statement("owner").unwrap();
-        let local = dict!({"known_secret" => SecretKey(BigUint::from(123u32))})?;
+        let local = dict!({"known_secret" => SecretKey(BigUint::from(123u32))});
         let st1 = builder
             .op(
                 true,
@@ -1333,7 +1333,7 @@ pub mod tests {
         let params = Params::default();
         let vd_set = &*MOCK_VD_SET;
         let mut builder = MainPodBuilder::new(&params, vd_set);
-        let local = dict!({"a" => 3, "b" => 27}).unwrap();
+        let local = dict!({"a" => 3, "b" => 27});
         let value_of_a = Statement::contains(local.clone(), "a", 3);
         let value_of_b = Statement::contains(local.clone(), "b", 27);
 

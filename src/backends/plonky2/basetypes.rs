@@ -65,9 +65,8 @@ pub static DEFAULT_VD_LIST: LazyLock<Vec<VerifierOnlyCircuitData>> = LazyLock::n
 });
 
 pub static DEFAULT_VD_SET: LazyLock<VDSet> = LazyLock::new(|| {
-    let params = Params::default();
     let vds = &*DEFAULT_VD_LIST;
-    VDSet::new(params.max_depth_mt_vds, vds).unwrap()
+    VDSet::new(vds)
 });
 
 /// VDSet is the set of the allowed verifier_data hashes. When proving a
@@ -84,32 +83,29 @@ pub struct VDSet {
     #[serde(skip)]
     #[schemars(skip)]
     proofs_map: HashMap<Hash, MerkleClaimAndProof>,
-    tree_depth: usize,
     vds_hashes: Vec<Hash>,
 }
 
 impl PartialEq for VDSet {
     fn eq(&self, other: &Self) -> bool {
-        self.root == other.root
-            && self.tree_depth == other.tree_depth
-            && self.vds_hashes == other.vds_hashes
+        self.root == other.root && self.vds_hashes == other.vds_hashes
     }
 }
 impl Eq for VDSet {}
 
 impl VDSet {
-    fn new_from_vds_hashes(tree_depth: usize, mut vds_hashes: Vec<Hash>) -> Result<Self> {
+    fn new_from_vds_hashes(mut vds_hashes: Vec<Hash>) -> Self {
         // before using the hash values, sort them, so that each set of
         // verifier_datas gets the same VDSet root
         vds_hashes.sort();
 
-        let array = Array::new(vds_hashes.iter().map(|vd| Value::from(*vd)).collect())?;
+        let array = Array::new(vds_hashes.iter().map(|vd| Value::from(*vd)).collect());
 
         let root = array.commitment();
         let mut proofs_map = HashMap::<Hash, MerkleClaimAndProof>::new();
 
         for (i, vd) in vds_hashes.iter().enumerate() {
-            let (value, proof) = array.prove(i)?;
+            let (value, proof) = array.prove(i).expect("exists");
             let p = MerkleClaimAndProof {
                 root,
                 key: RawValue::from(i as i64),
@@ -118,15 +114,14 @@ impl VDSet {
             };
             proofs_map.insert(*vd, p);
         }
-        Ok(Self {
+        Self {
             root,
             proofs_map,
-            tree_depth,
             vds_hashes,
-        })
+        }
     }
     /// builds the verifier_datas tree, and returns the root and the proofs
-    pub fn new(tree_depth: usize, vds: &[VerifierOnlyCircuitData]) -> Result<Self> {
+    pub fn new(vds: &[VerifierOnlyCircuitData]) -> Self {
         // compute the verifier_data's hashes
         let vds_hashes: Vec<HashOut> = vds
             .iter()
@@ -138,7 +133,7 @@ impl VDSet {
             .map(|h| Hash(h.elements))
             .collect::<Vec<_>>();
 
-        Self::new_from_vds_hashes(tree_depth, vds_hashes)
+        Self::new_from_vds_hashes(vds_hashes)
     }
     pub fn root(&self) -> Hash {
         self.root
@@ -169,10 +164,9 @@ impl<'de> Deserialize<'de> for VDSet {
     {
         #[derive(Deserialize)]
         struct Aux {
-            tree_depth: usize,
             vds_hashes: Vec<Hash>,
         }
         let aux = Aux::deserialize(deserializer)?;
-        VDSet::new_from_vds_hashes(aux.tree_depth, aux.vds_hashes).map_err(serde::de::Error::custom)
+        Ok(VDSet::new_from_vds_hashes(aux.vds_hashes))
     }
 }

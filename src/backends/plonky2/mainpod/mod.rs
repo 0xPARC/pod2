@@ -851,7 +851,7 @@ pub mod tests {
         println!("{:#?}", params);
         let mut vds = DEFAULT_VD_LIST.clone();
         vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
-        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
+        let vd_set = VDSet::new(&vds);
 
         let (gov_id_builder, pay_stub_builder) = zu_kyc_sign_dict_builders(&params);
         let signer = Signer(SecretKey(BigUint::one()));
@@ -875,7 +875,7 @@ pub mod tests {
         env_logger::init();
         let params = Params::default();
         println!("{:#?}", params);
-        let vd_set = VDSet::new(params.max_depth_mt_vds, &[]).unwrap();
+        let vd_set = VDSet::new(&[]);
 
         // Calculate rec common first to avoid duplicate metrics in `pod_builder.prove`
         let _rec_common_circuit_data = cache_get_standard_rec_main_pod_common_circuit_data();
@@ -912,7 +912,7 @@ pub mod tests {
         };
         let mut vds = DEFAULT_VD_LIST.clone();
         vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
-        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
+        let vd_set = VDSet::new(&vds);
 
         let mut gov_id_builder = frontend::SignedDictBuilder::new(&params);
         gov_id_builder.insert("idNumber", "4242424242");
@@ -970,7 +970,7 @@ pub mod tests {
         };
         let mut vds = DEFAULT_VD_LIST.clone();
         vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
-        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
+        let vd_set = VDSet::new(&vds);
 
         let builder = frontend::MainPodBuilder::new(&params, &vd_set);
         println!("{}", builder);
@@ -1014,7 +1014,7 @@ pub mod tests {
         };
         let mut vds = DEFAULT_VD_LIST.clone();
         vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
-        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
+        let vd_set = VDSet::new(&vds);
 
         let pod_builder = frontend::MainPodBuilder::new(&params, &vd_set);
 
@@ -1080,7 +1080,7 @@ pub mod tests {
         println!("{:#?}", params);
         let mut vds = DEFAULT_VD_LIST.clone();
         vds.push(rec_main_pod_circuit_data(&params).1.verifier_only.clone());
-        let vd_set = VDSet::new(params.max_depth_mt_vds, &vds).unwrap();
+        let vd_set = VDSet::new(&vds);
 
         let mut cpb_builder = CustomPredicateBatchBuilder::new(params.clone(), "cpb".into());
         let stb0 = STB::new(NP::Contains)
@@ -1104,8 +1104,8 @@ pub mod tests {
 
         let mut pod_builder = MainPodBuilder::new(&params, &vd_set);
 
-        let dict = dict!({"score" => 42})?;
-        let secret_dict = dict!({"key" => 42})?;
+        let dict = dict!({"score" => 42});
+        let secret_dict = dict!({"key" => 42});
         let st0 = pod_builder.priv_op(frontend::Operation::dict_contains(
             dict.clone(),
             "score",
@@ -1136,7 +1136,7 @@ pub mod tests {
         let params = Params::default();
         let mut builder = MainPodBuilder::new(&params, &DEFAULT_VD_SET);
         let set: HashSet<_> = [1, 2, 3].into_iter().map(|n| n.into()).collect();
-        let set = Set::new(set).unwrap();
+        let set = Set::new(set);
         builder.pub_op(frontend::Operation::set_contains(set, 1))?;
 
         let prover = Prover {};

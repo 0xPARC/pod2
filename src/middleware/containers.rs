@@ -39,13 +39,13 @@ macro_rules! dict {
 }
 
 impl Dictionary {
-    pub fn new(kvs: HashMap<Key, Value>) -> Result<Self> {
+    pub fn new(kvs: HashMap<Key, Value>) -> Self {
         let kvs_raw: HashMap<RawValue, RawValue> =
             kvs.iter().map(|(k, v)| (k.raw(), v.raw())).collect();
-        Ok(Self {
-            mt: MerkleTree::new(&kvs_raw)?,
+        Self {
+            mt: MerkleTree::new(&kvs_raw),
             kvs,
-        })
+        }
     }
     pub fn commitment(&self) -> Hash {
         self.mt.root()
@@ -135,7 +135,7 @@ impl<'de> Deserialize<'de> for Dictionary {
             kvs: HashMap<Key, Value>,
         }
         let aux = Aux::deserialize(deserializer)?;
-        Dictionary::new(aux.kvs).map_err(serde::de::Error::custom)
+        Ok(Dictionary::new(aux.kvs))
     }
 }
 
@@ -152,7 +152,7 @@ pub struct Set {
 }
 
 impl Set {
-    pub fn new(set: HashSet<Value>) -> Result<Self> {
+    pub fn new(set: HashSet<Value>) -> Self {
         let kvs_raw: HashMap<RawValue, RawValue> = set
             .iter()
             .map(|e| {
@@ -160,10 +160,10 @@ impl Set {
                 (rv, rv)
             })
             .collect();
-        Ok(Self {
-            mt: MerkleTree::new(&kvs_raw)?,
+        Self {
+            mt: MerkleTree::new(&kvs_raw),
             set,
-        })
+        }
     }
     pub fn commitment(&self) -> Hash {
         self.mt.root()
@@ -235,7 +235,7 @@ impl<'de> Deserialize<'de> for Set {
             set: HashSet<Value>,
         }
         let aux = Aux::deserialize(deserializer)?;
-        Set::new(aux.set).map_err(serde::de::Error::custom)
+        Ok(Set::new(aux.set))
     }
 }
 
@@ -252,17 +252,17 @@ pub struct Array {
 }
 
 impl Array {
-    pub fn new(array: Vec<Value>) -> Result<Self> {
+    pub fn new(array: Vec<Value>) -> Self {
         let kvs_raw: HashMap<RawValue, RawValue> = array
             .iter()
             .enumerate()
             .map(|(i, e)| (RawValue::from(i as i64), e.raw()))
             .collect();
 
-        Ok(Self {
-            mt: MerkleTree::new(&kvs_raw)?,
+        Self {
+            mt: MerkleTree::new(&kvs_raw),
             array,
-        })
+        }
     }
     pub fn commitment(&self) -> Hash {
         self.mt.root()
@@ -325,6 +325,6 @@ impl<'de> Deserialize<'de> for Array {
             array: Vec<Value>,
         }
         let aux = Aux::deserialize(deserializer)?;
-        Array::new(aux.array).map_err(serde::de::Error::custom)
+        Ok(Array::new(aux.array))
     }
 }
