@@ -914,7 +914,7 @@ impl Leaf {
 /// returns the path of the given key
 pub(crate) fn keypath(k: RawValue) -> Vec<bool> {
     let bytes = k.to_bytes();
-    debug_assert_eq!(MAX_DEPTH, bytes.len());
+    debug_assert_eq!(MAX_DEPTH, bytes.len() * 8);
     (0..MAX_DEPTH)
         .map(|n| bytes[n / 8] & (1 << (n % 8)) != 0)
         .collect()
