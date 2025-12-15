@@ -149,21 +149,30 @@ eth_friend(?1, ?2, ?3, ?4) = and<
 ## Another perspective
 When working with statements and operations, it might be useful to see them from another perspective:
 
-- A *statement* can be seen as the *constraints* of a traditional zk-circuit.
+- A *statement* can be seen as the *constraints* of a traditional zk-circuit,
+  which can be true or false.
+- A *predicate* is a relation formula, which when filled with values becomes a
+  *statement*.
 - An *operation* comprises the deduction rules, which are rules used to deduce
   new statements from previous statements or used to construct new statements
   from values.
 
-
 $$
-statement \cong predicate \cong constraints\\
+predicate \cong circuit/relation to be fulfilled\\
+statement \cong constraints filled with the witness\\
 operations \cong deduction~rules
 $$
 
 
+For example,
+- `Equal` for integers is a predicate.
+- `5 Equal 5` is a statement (true)
+- `5 Equal 4` is a statement (false)
+
+
 
 <div style="display:flex;margin-left:-60px;">
-<div style="padding:10px;max-width:50%;">
+<div style="padding:10px;max-width:50%; border-right:1px solid #ccc;">
     
 So, for example, for the given predicate:
 
@@ -181,9 +190,11 @@ IsWood(item, private: ingreds,inputs,key)=AND(
 We can view it as:
 
 The *statement* `IsWood(item)` is `true` if and only if:<br>
- $\exists$ `ingreds`, `inputs`, `key`
+ $\exists$ `item`, `ingreds`, `inputs`, `key`
  such that the following statements hold:
-     `ItemDef`, `Equal`, `DictContains`.
+ - `ItemDef(0x1234, ingreds, inputs, key)`
+ - `Equal(inputs, {})`
+ - `DictContains(ingreds, "blueprint", "wood")`
 
 </div>
 </div>
