@@ -683,7 +683,7 @@ pub mod tests {
             let mut pw = PartialWitness::<F>::new();
 
             let key = RawValue::from(hash_value(&RawValue::from(i)));
-            let expected_path = keypath(max_depth, key)?;
+            let expected_path = keypath(key);
 
             // small circuit logic to check
             // expected_path_targ==keypath_target(key_targ)
@@ -783,9 +783,9 @@ pub mod tests {
         assert_eq!(proof.existence, existence);
 
         if existence {
-            MerkleTree::verify(max_depth, tree.root(), &proof, &key, &value)?;
+            MerkleTree::verify(tree.root(), &proof, &key, &value)?;
         } else {
-            MerkleTree::verify_nonexistence(max_depth, tree.root(), &proof, &key)?;
+            MerkleTree::verify_nonexistence(tree.root(), &proof, &key)?;
         }
 
         // circuit
@@ -833,7 +833,7 @@ pub mod tests {
         assert_eq!(value, RawValue::from(5));
         assert!(proof.existence);
 
-        MerkleTree::verify(max_depth, tree.root(), &proof, &key, &value)?;
+        MerkleTree::verify(tree.root(), &proof, &key, &value)?;
 
         // circuit
         let config = CircuitConfig::standard_recursion_config();
@@ -906,9 +906,9 @@ pub mod tests {
 
         // verify the proof (non circuit)
         if proof.existence {
-            MerkleTree::verify(max_depth, tree.root(), &proof, &key, &value)?;
+            MerkleTree::verify(tree.root(), &proof, &key, &value)?;
         } else {
-            MerkleTree::verify_nonexistence(max_depth, tree.root(), &proof, &key)?;
+            MerkleTree::verify_nonexistence(tree.root(), &proof, &key)?;
         }
 
         // circuit
@@ -949,9 +949,9 @@ pub mod tests {
         kvs.insert(RawValue::from(100), RawValue::from(100));
         let tree2 = MerkleTree::new(&kvs);
 
-        MerkleTree::verify(max_depth, tree.root(), &proof, &key, &value)?;
+        MerkleTree::verify(tree.root(), &proof, &key, &value)?;
         assert_eq!(
-            MerkleTree::verify(max_depth, tree2.root(), &proof, &key, &value)
+            MerkleTree::verify(tree2.root(), &proof, &key, &value)
                 .unwrap_err()
                 .inner()
                 .unwrap()
@@ -1002,10 +1002,10 @@ pub mod tests {
     ) -> Result<()> {
         // sanity check, run the out-circuit proof verification
         if expect_pass {
-            MerkleTree::verify_state_transition(max_depth, state_transition_proof)?;
+            MerkleTree::verify_state_transition(state_transition_proof)?;
         } else {
             // expect out-circuit verification to fail
-            let _ = MerkleTree::verify_state_transition(max_depth, state_transition_proof).is_err();
+            let _ = MerkleTree::verify_state_transition(state_transition_proof).is_err();
         }
 
         let config = CircuitConfig::standard_recursion_config();
@@ -1200,7 +1200,6 @@ pub mod tests {
             other_leaf: None,
         };
         let altered_root = altered_proof.compute_root_from_leaf(
-            max_depth,
             &state_transition_proof.op_key,
             Some(state_transition_proof.op_value),
         )?;

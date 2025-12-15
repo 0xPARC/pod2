@@ -78,38 +78,16 @@ impl Dictionary {
         self.kvs.remove(key);
         Ok(mtp)
     }
-    pub fn verify(
-        max_depth: usize,
-        root: Hash,
-        proof: &MerkleProof,
-        key: &Key,
-        value: &Value,
-    ) -> Result<()> {
+    pub fn verify(root: Hash, proof: &MerkleProof, key: &Key, value: &Value) -> Result<()> {
         let key = key.raw();
-        Ok(MerkleTree::verify(
-            max_depth,
-            root,
-            proof,
-            &key,
-            &value.raw(),
-        )?)
+        Ok(MerkleTree::verify(root, proof, &key, &value.raw())?)
     }
-    pub fn verify_nonexistence(
-        max_depth: usize,
-        root: Hash,
-        proof: &MerkleProof,
-        key: &Key,
-    ) -> Result<()> {
+    pub fn verify_nonexistence(root: Hash, proof: &MerkleProof, key: &Key) -> Result<()> {
         let key = key.raw();
-        Ok(MerkleTree::verify_nonexistence(
-            max_depth, root, proof, &key,
-        )?)
+        Ok(MerkleTree::verify_nonexistence(root, proof, &key)?)
     }
-    pub fn verify_state_transition(
-        max_depth: usize,
-        proof: &MerkleTreeStateTransitionProof,
-    ) -> Result<()> {
-        MerkleTree::verify_state_transition(max_depth, proof).map_err(|e| e.into())
+    pub fn verify_state_transition(proof: &MerkleTreeStateTransitionProof) -> Result<()> {
+        MerkleTree::verify_state_transition(proof).map_err(|e| e.into())
     }
     // TODO: Rename to dict to be consistent maybe?
     pub fn kvs(&self) -> &HashMap<Key, Value> {
@@ -191,26 +169,16 @@ impl Set {
         self.set.remove(value);
         Ok(mtp)
     }
-    pub fn verify(max_depth: usize, root: Hash, proof: &MerkleProof, value: &Value) -> Result<()> {
+    pub fn verify(root: Hash, proof: &MerkleProof, value: &Value) -> Result<()> {
         let rv = value.raw();
-        Ok(MerkleTree::verify(max_depth, root, proof, &rv, &rv)?)
+        Ok(MerkleTree::verify(root, proof, &rv, &rv)?)
     }
-    pub fn verify_nonexistence(
-        max_depth: usize,
-        root: Hash,
-        proof: &MerkleProof,
-        value: &Value,
-    ) -> Result<()> {
+    pub fn verify_nonexistence(root: Hash, proof: &MerkleProof, value: &Value) -> Result<()> {
         let rv = value.raw();
-        Ok(MerkleTree::verify_nonexistence(
-            max_depth, root, proof, &rv,
-        )?)
+        Ok(MerkleTree::verify_nonexistence(root, proof, &rv)?)
     }
-    pub fn verify_state_transition(
-        max_depth: usize,
-        proof: &MerkleTreeStateTransitionProof,
-    ) -> Result<()> {
-        MerkleTree::verify_state_transition(max_depth, proof).map_err(|e| e.into())
+    pub fn verify_state_transition(proof: &MerkleTreeStateTransitionProof) -> Result<()> {
+        MerkleTree::verify_state_transition(proof).map_err(|e| e.into())
     }
     pub fn set(&self) -> &HashSet<Value> {
         &self.set
@@ -282,26 +250,16 @@ impl Array {
         self.array[i] = value.clone();
         Ok(mtp)
     }
-    pub fn verify(
-        max_depth: usize,
-        root: Hash,
-        proof: &MerkleProof,
-        i: usize,
-        value: &Value,
-    ) -> Result<()> {
+    pub fn verify(root: Hash, proof: &MerkleProof, i: usize, value: &Value) -> Result<()> {
         Ok(MerkleTree::verify(
-            max_depth,
             root,
             proof,
             &RawValue::from(i as i64),
             &value.raw(),
         )?)
     }
-    pub fn verify_state_transition(
-        max_depth: usize,
-        proof: &MerkleTreeStateTransitionProof,
-    ) -> Result<()> {
-        MerkleTree::verify_state_transition(max_depth, proof).map_err(|e| e.into())
+    pub fn verify_state_transition(proof: &MerkleTreeStateTransitionProof) -> Result<()> {
+        MerkleTree::verify_state_transition(proof).map_err(|e| e.into())
     }
     pub fn array(&self) -> &[Value] {
         &self.array

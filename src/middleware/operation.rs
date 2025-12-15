@@ -446,24 +446,13 @@ impl Operation {
                 let root = val(root_v, root_s)?;
                 let key = val(key_v, key_s)?;
                 let value = val(val_v, val_s)?;
-                MerkleTree::verify(
-                    params.max_depth_mt_containers,
-                    root.raw().into(),
-                    pf,
-                    &key.raw(),
-                    &value.raw(),
-                )?;
+                MerkleTree::verify(root.raw().into(), pf, &key.raw(), &value.raw())?;
                 true
             }
             (Self::NotContainsFromEntries(root_s, key_s, pf), NotContains(root_v, key_v)) => {
                 let root = val(root_v, root_s)?;
                 let key = val(key_v, key_s)?;
-                MerkleTree::verify_nonexistence(
-                    params.max_depth_mt_containers,
-                    root.raw().into(),
-                    pf,
-                    &key.raw(),
-                )?;
+                MerkleTree::verify_nonexistence(root.raw().into(), pf, &key.raw())?;
                 true
             }
             (
@@ -507,7 +496,7 @@ impl Operation {
                     "The provided Merkle tree state transition proof does not match the claim."
                         .into(),
                 ))?;
-                MerkleTree::verify_state_transition(params.max_depth_mt_containers, pf)?;
+                MerkleTree::verify_state_transition(pf)?;
                 true
             }
             (
@@ -528,7 +517,7 @@ impl Operation {
                     "The provided Merkle tree state transition proof does not match the claim."
                         .into(),
                 ))?;
-                MerkleTree::verify_state_transition(params.max_depth_mt_containers, pf)?;
+                MerkleTree::verify_state_transition(pf)?;
                 true
             }
             (
@@ -547,7 +536,7 @@ impl Operation {
                     "The provided Merkle tree state transition proof does not match the claim."
                         .into(),
                 ))?;
-                MerkleTree::verify_state_transition(params.max_depth_mt_containers, pf)?;
+                MerkleTree::verify_state_transition(pf)?;
                 true
             }
             (Self::Custom(CustomPredicateRef { batch, index }, args), Custom(cpr, s_args))

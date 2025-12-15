@@ -20,8 +20,6 @@ pub enum TreeInnerError {
     InvalidStateTransitionProogArg(String),
     #[error("state transition proof does not verify, reason: {0}")]
     StateTransitionProofFail(String),
-    #[error("key too short (key length: {0}) for the max_depth: {1}")]
-    TooShortKey(usize, usize),
 }
 
 #[derive(thiserror::Error)]
@@ -77,8 +75,5 @@ impl TreeError {
     }
     pub(crate) fn state_transition_fail(reason: String) -> Self {
         new!(StateTransitionProofFail(reason))
-    }
-    pub(crate) fn too_short_key(depth: usize, max_depth: usize) -> Self {
-        new!(TooShortKey(depth, max_depth))
     }
 }
