@@ -145,3 +145,45 @@ eth_friend(?1, ?2, ?3, ?4) = and<
     Equal(?5["attestation"], ?3[?4])
 >
 ```
+
+## Another perspective
+When working with statements and operations, it might be useful to see them from another perspective:
+
+- A *statement* can be seen as the *constraints* of a traditional zk-circuit.
+- An *operation* comprises the deduction rules, which are rules used to deduce
+  new statements from previous statements or used to construct new statements
+  from values.
+
+
+$$
+statement \cong predicate \cong constraints\\
+operations \cong deduction~rules
+$$
+
+
+
+<div style="display:flex;margin-left:-60px;">
+<div style="padding:10px;max-width:50%;">
+    
+So, for example, for the given predicate:
+
+```
+IsWood(item, private: ingreds,inputs,key)=AND(
+    ItemDef(item, ingreds, inputs, key)
+    Equal(inputs, {{}})
+    DictContains(ingreds, "blueprint", "wood")
+}
+```
+
+</div>
+<div style="padding:10px;max-width:45%;">
+    
+We can view it as:
+
+The *statement* `IsWood(item)` is `true` if and only if:<br>
+ $\exists$ `ingreds`, `inputs`, `key`
+ such that the following statements hold:
+     `ItemDef`, `Equal`, `DictContains`.
+
+</div>
+</div>

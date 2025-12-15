@@ -1,11 +1,16 @@
 # Signature
 
 
-Current signature scheme used is proof-based signatures using Plonky2 proofs, following [https://eprint.iacr.org/2024/1553](https://eprint.iacr.org/2024/1553) and [https://jdodinh.io/assets/files/m-thesis.pdf](https://jdodinh.io/assets/files/m-thesis.pdf). This comes from [Polygon Miden's RPO STARK-based](https://github.com/0xPolygonMiden/crypto/blob/d2a67396053fded90ec72690404c8c7728b98e4e/src/dsa/rpo_stark/signature/mod.rs#L129) signatures.
-
-In future iterations we may replace it by other signature schemes (either elliptic curve based scheme on a Golilocks-prime friendly curve, or a lattice based scheme).
+For POD2 signatures, we use [Schnorr](https://en.wikipedia.org/wiki/Schnorr_signature) signature over the [EcGFp5 curve](https://eprint.iacr.org/2022/274).
 
 
+## Older version
+
+The previously used signature scheme was proof-based signatures using Plonky2 proofs, following [https://eprint.iacr.org/2024/1553](https://eprint.iacr.org/2024/1553) and [https://jdodinh.io/assets/files/m-thesis.pdf](https://jdodinh.io/assets/files/m-thesis.pdf). This came from [Polygon Miden's RPO STARK-based](https://github.com/0xPolygonMiden/crypto/blob/d2a67396053fded90ec72690404c8c7728b98e4e/src/dsa/rpo_stark/signature/mod.rs#L129) signatures.
+
+This was replaced by the elliptic curve Schnorr signature presented above, keeping the description here in case it were useful in the future.
+
+The scheme was as follows:
 
 ### generate_params()
 $pp$: plonky2 circuit prover params<br>
@@ -36,6 +41,6 @@ $pk \stackrel{!}{=} H(sk)$<br>
 $s \stackrel{!}{=} H(pk, m)$
 
 
-<br><br>
+<br>
 
 [^1]: The [2024/1553 paper](https://eprint.iacr.org/2024/1553) uses $pk:=H(sk||0^4)$ to have as input (to the hash) 8 field elements, to be able to reuse the same instance of the RPO hash as the one they use later in the signature (where it hashes 8 field elements).

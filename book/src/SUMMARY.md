@@ -14,7 +14,7 @@
 - [Deductions](./deductions.md)
   - [Statements](./statements.md)
   - [Operations](./operations.md)
-    - [Simple example](./simpleexample.md)
+  - [Simple example](./simpleexample.md)
   - [Custom statements and custom operations](./custom.md)
     - [Defining custom predicates](./custompred.md)
     - [Custom statement example](./customexample.md)
