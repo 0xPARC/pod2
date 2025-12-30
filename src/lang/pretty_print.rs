@@ -384,15 +384,17 @@ mod tests {
             parse(input, &params, available_batches).expect("Initial parsing should succeed");
 
         // Step 2: Pretty-print the parsed batch
-        let pretty_printed = parsed_result.custom_batch.to_podlang_string();
+        let batch = parsed_result.first_batch().expect("Expected batch");
+        let pretty_printed = batch.to_podlang_string();
 
         // Step 3: Parse the pretty-printed result
         let reparsed_result =
             parse(&pretty_printed, &params, available_batches).expect("Reparsing should succeed");
+        let reparsed_batch = reparsed_result.first_batch().expect("Expected batch");
 
         // Step 4: Verify the ASTs are equivalent
         assert_eq!(
-            parsed_result.custom_batch.predicates, reparsed_result.custom_batch.predicates,
+            batch.predicates, reparsed_batch.predicates,
             "Original AST should match reparsed AST.\nOriginal input:\n{}\nPretty-printed:\n{}\n",
             input, pretty_printed
         );
@@ -542,18 +544,17 @@ mod tests {
 
         let params = Params::default();
         let parsed_result = parse(input, &params, &[]).expect("Parsing should succeed");
+        let batch = parsed_result.first_batch().expect("Expected batch");
 
-        let pretty_printed = parsed_result.custom_batch.to_podlang_string();
+        let pretty_printed = batch.to_podlang_string();
 
         println!("Original input:\n{}", input);
         println!("\nPretty-printed output:\n{}", pretty_printed);
 
         let reparsed = parse(&pretty_printed, &params, &[]).expect("Reparsing should succeed");
+        let reparsed_batch = reparsed.first_batch().expect("Expected batch");
 
-        assert_eq!(
-            parsed_result.custom_batch.predicates,
-            reparsed.custom_batch.predicates
-        );
+        assert_eq!(batch.predicates, reparsed_batch.predicates);
     }
 
     #[test]
@@ -616,14 +617,16 @@ mod tests {
 
             let params = Params::default();
             let parsed_result = parse(&input, &params, &[]).expect("Should parse successfully");
+            let batch = parsed_result.first_batch().expect("Expected batch");
 
-            let pretty_printed = parsed_result.custom_batch.to_podlang_string();
+            let pretty_printed = batch.to_podlang_string();
 
             let reparsed_result =
                 parse(&pretty_printed, &params, &[]).expect("Should reparse successfully");
+            let reparsed_batch = reparsed_result.first_batch().expect("Expected batch");
 
             assert_eq!(
-                parsed_result.custom_batch.predicates, reparsed_result.custom_batch.predicates,
+                batch.predicates, reparsed_batch.predicates,
                 "Round-trip failed for string: {:?}\nPretty-printed: {}",
                 test_string, pretty_printed
             );

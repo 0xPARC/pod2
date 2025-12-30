@@ -88,7 +88,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         game_pk = game_pk,
     );
     println!("# custom predicate batch:{}", input);
-    let batch = parse(&input, &params, &[])?.custom_batch;
+    let batch = parse(&input, &params, &[])?
+        .first_batch()
+        .expect("Expected batch")
+        .clone();
     let points_pred = batch.predicate_ref_by_name("points").unwrap();
     let over_9000_pred = batch.predicate_ref_by_name("over_9000").unwrap();
 

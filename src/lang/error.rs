@@ -22,6 +22,9 @@ pub enum LangError {
 
     #[error("Lowering error: {0}")]
     Lowering(Box<LoweringError>),
+
+    #[error("Batching error: {0}")]
+    Batching(Box<BatchingError>),
 }
 
 /// Validation errors from frontend AST validation
@@ -90,14 +93,6 @@ pub enum ValidationError {
 /// Lowering errors from frontend AST lowering to middleware
 #[derive(Debug, thiserror::Error)]
 pub enum LoweringError {
-    #[error("Too many custom predicates in batch '{batch_name}': {count} exceeds limit of {max}{}", if *.original_count != *.count { format!(" (started with {} predicates before automatic splitting)", original_count) } else { String::new() })]
-    TooManyPredicates {
-        batch_name: String,
-        count: usize,
-        max: usize,
-        original_count: usize,
-    },
-
     #[error("Too many statements in predicate '{predicate}': {count} exceeds limit of {max}")]
     TooManyStatements {
         predicate: String,
@@ -126,6 +121,9 @@ pub enum LoweringError {
 
     #[error("Splitting error: {0}")]
     Splitting(#[from] SplittingError),
+
+    #[error("Batching error: {0}")]
+    Batching(#[from] BatchingError),
 
     #[error("Cannot lower document with validation errors")]
     ValidationErrors,
@@ -235,6 +233,21 @@ fn format_public_args_at_split_error(
     msg
 }
 
+/// Batching errors from multi-batch packing
+#[derive(Debug, thiserror::Error)]
+pub enum BatchingError {
+    #[error("Forward cross-batch reference: predicate '{caller}' (batch {caller_batch}) calls '{callee}' (batch {callee_batch}). Move '{callee}' earlier or '{caller}' later.")]
+    ForwardCrossBatchReference {
+        caller: String,
+        caller_batch: usize,
+        callee: String,
+        callee_batch: usize,
+    },
+
+    #[error("Internal batching error: {message}")]
+    Internal { message: String },
+}
+
 /// Splitting errors from predicate splitting
 #[derive(Debug, thiserror::Error)]
 pub enum SplittingError {
@@ -271,13 +284,6 @@ pub enum SplittingError {
         max_allowed: usize,
         suggestion: Option<Box<RefactorSuggestion>>,
     },
-
-    #[error("Too many predicates in chain for '{predicate}': {count} exceeds batch limit of {max_allowed}")]
-    TooManyPredicatesInChain {
-        predicate: String,
-        count: usize,
-        max_allowed: usize,
-    },
 }
 
 impl From<ParseError> for LangError {
@@ -301,5 +307,11 @@ impl From<ValidationError> for LangError {
 impl From<LoweringError> for LangError {
     fn from(err: LoweringError) -> Self {
         LangError::Lowering(Box::new(err))
+    }
+}
+
+impl From<BatchingError> for LangError {
+    fn from(err: BatchingError) -> Self {
+        LangError::Batching(Box::new(err))
     }
 }

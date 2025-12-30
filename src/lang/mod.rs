@@ -1,5 +1,6 @@
 pub mod error;
 pub mod frontend_ast;
+pub mod frontend_ast_batch;
 pub mod frontend_ast_lower;
 pub mod frontend_ast_split;
 pub mod frontend_ast_validate;
@@ -9,6 +10,7 @@ pub mod pretty_print;
 use std::sync::Arc;
 
 pub use error::LangError;
+pub use frontend_ast_batch::PredicateBatches;
 pub use parser::{parse_podlang, Pairs, ParseError, Rule};
 pub use pretty_print::PrettyPrint;
 
@@ -17,10 +19,17 @@ use crate::{
     middleware::{CustomPredicateBatch, Params},
 };
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct PodlangOutput {
-    pub custom_batch: Arc<CustomPredicateBatch>,
+    pub custom_batches: PredicateBatches,
     pub request: PodRequest,
+}
+
+impl PodlangOutput {
+    /// Get the first batch, if any (for backwards compatibility)
+    pub fn first_batch(&self) -> Option<&Arc<CustomPredicateBatch>> {
+        self.custom_batches.first_batch()
+    }
 }
 
 pub fn parse(
@@ -37,10 +46,7 @@ pub fn parse(
     let validated = frontend_ast_validate::validate(document, available_batches)?;
     let lowered = frontend_ast_lower::lower(validated, params, "PodlangBatch".to_string())?;
 
-    let custom_batch = lowered.batch.unwrap_or_else(|| {
-        // If no batch, create an empty one
-        CustomPredicateBatch::new(params, "PodlangBatch".to_string(), vec![])
-    });
+    let custom_batches = lowered.batches.unwrap_or_default();
 
     let request = lowered.request.unwrap_or_else(|| {
         // If no request, create an empty one
@@ -48,7 +54,7 @@ pub fn parse(
     });
 
     Ok(PodlangOutput {
-        custom_batch,
+        custom_batches,
         request,
     })
 }
@@ -89,6 +95,11 @@ mod tests {
         names.iter().map(|s| s.to_string()).collect()
     }
 
+    // Helper to get the first batch from the output
+    fn first_batch(output: &super::PodlangOutput) -> &Arc<CustomPredicateBatch> {
+        output.first_batch().expect("Expected at least one batch")
+    }
+
     #[test]
     fn test_e2e_simple_predicate() -> Result<(), LangError> {
         let input = r#"
@@ -99,13 +110,11 @@ mod tests {
 
         let params = Params::default();
         let processed = parse(input, &params, &[])?;
-        let batch_result = processed.custom_batch;
+        let batch_result = first_batch(&processed);
         let request_result = processed.request.templates();
 
         assert_eq!(request_result.len(), 0);
         assert_eq!(batch_result.predicates.len(), 1);
-
-        let batch = batch_result;
 
         // Expected structure
         let expected_statements = vec![StatementTmpl {
@@ -128,7 +137,7 @@ mod tests {
             vec![expected_predicate],
         );
 
-        assert_eq!(batch, expected_batch);
+        assert_eq!(*batch_result, expected_batch);
 
         Ok(())
     }
@@ -144,10 +153,9 @@ mod tests {
 
         let params = Params::default();
         let processed = parse(input, &params, &[])?;
-        let batch_result = processed.custom_batch;
         let request_templates = processed.request.templates();
 
-        assert_eq!(batch_result.predicates.len(), 0);
+        assert!(processed.custom_batches.is_empty());
         assert!(!request_templates.is_empty());
 
         // Expected structure
@@ -184,13 +192,11 @@ mod tests {
 
         let params = Params::default();
         let processed = parse(input, &params, &[])?;
-        let batch_result = processed.custom_batch;
+        let batch_result = first_batch(&processed);
         let request_result = processed.request.templates();
 
         assert_eq!(request_result.len(), 0);
         assert_eq!(batch_result.predicates.len(), 1);
-
-        let batch = batch_result;
 
         // Expected structure: Public args: A (index 0). Private args: Temp (index 1)
         let expected_statements = vec![
@@ -222,7 +228,7 @@ mod tests {
             vec![expected_predicate],
         );
 
-        assert_eq!(batch, expected_batch);
+        assert_eq!(*batch_result, expected_batch);
 
         Ok(())
     }
@@ -241,13 +247,11 @@ mod tests {
 
         let params = Params::default();
         let processed = parse(input, &params, &[])?;
-        let batch_result = processed.custom_batch;
+        let batch_result = first_batch(&processed);
         let request_templates = processed.request.templates();
 
         assert_eq!(batch_result.predicates.len(), 1);
         assert!(!request_templates.is_empty());
-
-        let batch = batch_result;
 
         // Expected Batch structure
         let expected_pred_statements = vec![StatementTmpl {
@@ -270,12 +274,12 @@ mod tests {
             vec![expected_predicate],
         );
 
-        assert_eq!(batch, expected_batch);
+        assert_eq!(*batch_result, expected_batch);
 
         // Expected Request structure
         // Pod1 -> Wildcard 0, Pod2 -> Wildcard 1
         let expected_request_templates = vec![StatementTmpl {
-            pred: Predicate::Custom(CustomPredicateRef::new(expected_batch, 0)),
+            pred: Predicate::Custom(CustomPredicateRef::new(batch_result.clone(), 0)),
             args: vec![
                 StatementTmplArg::Wildcard(wc("Pod1", 0)),
                 StatementTmplArg::Wildcard(wc("Pod2", 1)),
@@ -304,7 +308,7 @@ mod tests {
 
         let params = Params::default();
         let processed = parse(input, &params, &[])?;
-        let batch_result = processed.custom_batch;
+        let batch_result = first_batch(&processed);
         let request_templates = processed.request.templates();
 
         assert_eq!(batch_result.predicates.len(), 1); // some_pred is defined
@@ -317,7 +321,7 @@ mod tests {
         // Expected structure
         let expected_templates = vec![
             StatementTmpl {
-                pred: Predicate::Custom(CustomPredicateRef::new(batch_result, 0)), // Refers to some_pred
+                pred: Predicate::Custom(CustomPredicateRef::new(batch_result.clone(), 0)), // Refers to some_pred
                 args: vec![
                     StatementTmplArg::Wildcard(wc("Var1", 0)),        // Var1
                     StatementTmplArg::Literal(Value::from(12345i64)), // 12345
@@ -354,10 +358,9 @@ mod tests {
 
         let params = Params::default();
         let processed = parse(input, &params, &[])?;
-        let batch_result = processed.custom_batch;
         let request_templates = processed.request.templates();
 
-        assert_eq!(batch_result.predicates.len(), 0);
+        assert!(processed.custom_batches.is_empty());
         assert!(!request_templates.is_empty());
 
         let expected_templates = vec![
@@ -502,7 +505,7 @@ mod tests {
         );
 
         assert!(
-            processed.custom_batch.predicates.is_empty(),
+            processed.custom_batches.is_empty(),
             "Expected no custom predicates for a REQUEST only input"
         );
 
@@ -553,7 +556,7 @@ mod tests {
             "Expected no request templates"
         );
         assert_eq!(
-            processed.custom_batch.predicates.len(),
+            first_batch(&processed).predicates.len(),
             4,
             "Expected 4 custom predicates"
         );
@@ -684,7 +687,8 @@ mod tests {
         );
 
         assert_eq!(
-            processed.custom_batch, expected_batch,
+            *first_batch(&processed),
+            expected_batch,
             "Processed ETHDoS predicates do not match expected structure"
         );
 
@@ -732,7 +736,7 @@ mod tests {
         let request_templates = processed.request.templates();
 
         assert!(
-            processed.custom_batch.predicates.is_empty(),
+            processed.custom_batches.is_empty(),
             "No custom predicates should be defined in the main input"
         );
         assert_eq!(request_templates.len(), 1, "Expected one request template");
@@ -844,13 +848,13 @@ mod tests {
             "No request should be defined"
         );
         assert_eq!(
-            processed.custom_batch.predicates.len(),
+            first_batch(&processed).predicates.len(),
             1,
             "Expected one custom predicate to be defined"
         );
 
         // 4. Check the resulting predicate definition
-        let defined_pred = &processed.custom_batch.predicates[0];
+        let defined_pred = &first_batch(&processed).predicates[0];
         assert_eq!(defined_pred.name, "wrapper_pred");
         assert_eq!(defined_pred.statements.len(), 1);
 

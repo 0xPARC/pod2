@@ -479,10 +479,15 @@ fn split_into_chain(
         }
     }
 
-    let chain_predicates =
+    let mut chain_predicates =
         generate_chain_predicates(&original_name, chain_links, conjunction, params)?;
 
     validate_chain(&chain_predicates, &original_name, params)?;
+
+    // Reverse so continuations come before callers in declaration order.
+    // This ensures that when batched, continuations are in earlier batches
+    // and can be referenced by their callers.
+    chain_predicates.reverse();
 
     Ok(chain_predicates)
 }
@@ -587,19 +592,14 @@ fn generate_chain_predicates(
 }
 
 /// Phase 5: Validate the generated chain
+///
+/// Note: We no longer check chain length against max_custom_batch_size since
+/// chains can now span multiple batches thanks to multi-batch support.
 fn validate_chain(
     chain: &[CustomPredicateDef],
-    original_name: &str,
+    _original_name: &str,
     params: &Params,
 ) -> Result<(), SplittingError> {
-    if chain.len() > params.max_custom_batch_size {
-        return Err(SplittingError::TooManyPredicatesInChain {
-            predicate: original_name.to_string(),
-            count: chain.len(),
-            max_allowed: params.max_custom_batch_size,
-        });
-    }
-
     for pred in chain {
         // Each predicate should have ≤ max_statements
         assert!(pred.statements.len() <= params.max_custom_predicate_arity);
@@ -707,11 +707,14 @@ mod tests {
         let chain = result.unwrap();
         assert_eq!(chain.len(), 2); // Should split into 2 predicates
 
-        // First predicate: 4 statements + chain call = 5
-        assert_eq!(chain[0].statements.len(), 5);
+        // Chain is reversed: continuation comes first, original comes last
+        // Last predicate (index 1): original name, 4 statements + chain call = 5
+        assert_eq!(chain[1].statements.len(), 5);
+        assert_eq!(chain[1].name.name, "my_pred");
 
-        // Second predicate: 2 remaining statements
-        assert_eq!(chain[1].statements.len(), 2);
+        // First predicate (index 0): continuation, 2 remaining statements
+        assert_eq!(chain[0].statements.len(), 2);
+        assert_eq!(chain[0].name.name, "my_pred_1");
     }
 
     #[test]
@@ -736,9 +739,11 @@ mod tests {
         let chain = result.unwrap();
         assert_eq!(chain.len(), 2); // Should split into 2 predicates
 
-        // First predicate should have wildcards that cross boundary promoted
-        // Check that chain call is present
-        let last_stmt = &chain[0].statements.last().unwrap();
+        // Chain is reversed: continuation first, original last
+        // Original predicate should have chain call as last statement
+        let original = &chain[1];
+        assert_eq!(original.name.name, "complex");
+        let last_stmt = original.statements.last().unwrap();
         assert_eq!(last_stmt.predicate.name, "complex_1");
     }
 
@@ -769,12 +774,16 @@ mod tests {
         let chain = result.unwrap();
         assert_eq!(chain.len(), 3); // Should split into 3 predicates
 
-        // First: 4 + chain call = 5
-        assert_eq!(chain[0].statements.len(), 5);
-        // Second: 4 + chain call = 5
+        // Chain is reversed: [_2, _1, original]
+        // chain[0]: large_pred_2 (3 remaining statements)
+        assert_eq!(chain[0].statements.len(), 3);
+        assert_eq!(chain[0].name.name, "large_pred_2");
+        // chain[1]: large_pred_1 (4 + chain call = 5)
         assert_eq!(chain[1].statements.len(), 5);
-        // Third: 3 remaining
-        assert_eq!(chain[2].statements.len(), 3);
+        assert_eq!(chain[1].name.name, "large_pred_1");
+        // chain[2]: large_pred (4 + chain call = 5)
+        assert_eq!(chain[2].statements.len(), 5);
+        assert_eq!(chain[2].name.name, "large_pred");
     }
 
     #[test]
