@@ -1390,7 +1390,11 @@ pub mod tests {
             Equal(b, 5)
         )
         "#;
-        let batch = parse(input, &params, &[]).unwrap().custom_batch;
+        let batch = parse(input, &params, &[])
+            .unwrap()
+            .first_batch()
+            .unwrap()
+            .clone();
         let pred_test = batch.predicate_ref_by_name("Test").unwrap();
 
         // Try to build with wrong type in 1st arg
