@@ -71,6 +71,12 @@ impl From<crate::lang::LangError> for Error {
     }
 }
 
+impl From<crate::lang::MultiOperationError> for Error {
+    fn from(value: crate::lang::MultiOperationError) -> Self {
+        Error::custom(value.to_string())
+    }
+}
+
 impl Debug for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(self, f)

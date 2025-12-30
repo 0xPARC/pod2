@@ -16,13 +16,49 @@
 use std::{collections::HashMap, str::FromStr, sync::Arc};
 
 use crate::{
-    frontend::{BuilderArg, CustomPredicateBatchBuilder, StatementTmplBuilder},
+    frontend::{
+        BuilderArg, CustomPredicateBatchBuilder, Operation, OperationArg, StatementTmplBuilder,
+    },
     lang::{
         error::BatchingError,
         frontend_ast::{AnchoredKeyPath, ConjunctionType, CustomPredicateDef, StatementTmplArg},
+        frontend_ast_split::{SplitChainInfo, SplitResult},
     },
-    middleware::{CustomPredicateBatch, CustomPredicateRef, NativePredicate, Params, Predicate},
+    middleware::{
+        CustomPredicateBatch, CustomPredicateRef, NativePredicate, Params, Predicate, Statement,
+    },
 };
+
+/// A single step in a multi-operation sequence for split predicates
+#[derive(Debug, Clone)]
+struct OperationStep {
+    /// The operation to perform
+    operation: Operation,
+    /// Whether this step's result should be public
+    public: bool,
+}
+
+/// Errors that can occur when building multi-operations
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum MultiOperationError {
+    #[error("Predicate not found: {0}")]
+    PredicateNotFound(String),
+
+    #[error("Chain piece not found: {0}")]
+    ChainPieceNotFound(String),
+
+    #[error(
+        "Wrong statement count for predicate '{predicate}': expected {expected}, got {actual}"
+    )]
+    WrongStatementCount {
+        predicate: String,
+        expected: usize,
+        actual: usize,
+    },
+
+    #[error("No operation steps to apply")]
+    NoSteps,
+}
 
 /// Container for multiple predicate batches
 #[derive(Debug, Clone)]
@@ -30,6 +66,9 @@ pub struct PredicateBatches {
     batches: Vec<Arc<CustomPredicateBatch>>,
     /// Maps predicate name to (batch_index, predicate_index_within_batch)
     predicate_index: HashMap<String, (usize, usize)>,
+    /// Split chain metadata for predicates that were split
+    /// Maps original predicate name to its chain info
+    split_chains: HashMap<String, SplitChainInfo>,
 }
 
 impl Default for PredicateBatches {
@@ -43,7 +82,13 @@ impl PredicateBatches {
         Self {
             batches: Vec::new(),
             predicate_index: HashMap::new(),
+            split_chains: HashMap::new(),
         }
+    }
+
+    /// Get split chain info for a predicate (if it was split)
+    pub fn split_chain(&self, name: &str) -> Option<&SplitChainInfo> {
+        self.split_chains.get(name)
     }
 
     /// Get a reference to a predicate by name
@@ -77,6 +122,171 @@ impl PredicateBatches {
     pub fn total_predicate_count(&self) -> usize {
         self.batches.iter().map(|b| b.predicates().len()).sum()
     }
+
+    /// Build operation steps for a predicate (internal helper)
+    ///
+    /// For non-split predicates, returns a single operation.
+    /// For split predicates, returns the chain of operations in execution order
+    /// (innermost first), with chain link placeholders.
+    fn build_steps(
+        &self,
+        predicate_name: &str,
+        statements: Vec<Statement>,
+        public: bool,
+    ) -> Result<Vec<OperationStep>, MultiOperationError> {
+        // Check if this predicate was split
+        let chain_info = match self.split_chains.get(predicate_name) {
+            Some(info) => info,
+            None => {
+                // Not split - single operation with all statements
+                let pred_ref = self.predicate_ref_by_name(predicate_name).ok_or_else(|| {
+                    MultiOperationError::PredicateNotFound(predicate_name.to_string())
+                })?;
+
+                return Ok(vec![OperationStep {
+                    operation: Operation::custom(pred_ref, statements),
+                    public,
+                }]);
+            }
+        };
+
+        // Validate statement count
+        if statements.len() != chain_info.total_real_statements {
+            return Err(MultiOperationError::WrongStatementCount {
+                predicate: predicate_name.to_string(),
+                expected: chain_info.total_real_statements,
+                actual: statements.len(),
+            });
+        }
+
+        // Reorder statements from original order to split order
+        // reorder_map[original_idx] = split_idx
+        // So we need to place statements[i] at position reorder_map[i]
+        let mut reordered = vec![Statement::None; statements.len()];
+        for (original_idx, stmt) in statements.into_iter().enumerate() {
+            let split_idx = chain_info.reorder_map[original_idx];
+            reordered[split_idx] = stmt;
+        }
+
+        // Build operations for each piece in execution order (innermost first)
+        //
+        // chain_pieces are in execution order: [continuation_N, ..., continuation_1, main]
+        // But in split order, statements are laid out: [main's stmts, cont_1's stmts, ..., cont_N's stmts]
+        // So we need to compute offsets from the END for the first pieces.
+        //
+        // Example with 6 statements, max_arity 5:
+        //   split order: [stmt0, stmt1, stmt2, stmt3, stmt4, stmt5]
+        //   chain_pieces[0] (large_pred_1): takes stmt5 (the last 1)
+        //   chain_pieces[1] (large_pred): takes stmt0-4 (the first 5)
+        //
+        // We compute offsets by going through pieces in reverse order (matching split order).
+
+        let num_pieces = chain_info.chain_pieces.len();
+
+        // Compute the starting offset for each piece by iterating in reverse
+        // (reverse of chain_pieces = same order as split layout)
+        let mut piece_offsets = vec![0usize; num_pieces];
+        let mut offset = 0;
+        for i in (0..num_pieces).rev() {
+            piece_offsets[i] = offset;
+            offset += chain_info.chain_pieces[i].real_statement_count;
+        }
+
+        let mut steps = Vec::new();
+        for (piece_idx, piece) in chain_info.chain_pieces.iter().enumerate() {
+            let is_final = piece_idx == num_pieces - 1;
+
+            // Get predicate ref for this piece
+            let piece_ref = self
+                .predicate_ref_by_name(&piece.name)
+                .ok_or_else(|| MultiOperationError::ChainPieceNotFound(piece.name.clone()))?;
+
+            // Slice the reordered statements for this piece
+            let start = piece_offsets[piece_idx];
+            let end = start + piece.real_statement_count;
+            let piece_statements: Vec<Statement> = reordered[start..end].to_vec();
+
+            // Build the operation
+            // For non-final pieces, we'll add a placeholder that will be replaced
+            // with the previous step's result when applied
+            let mut args = piece_statements;
+            if piece.has_chain_call {
+                // Add placeholder for chain link - will be replaced by apply_multi_operation
+                args.push(Statement::None);
+            }
+
+            steps.push(OperationStep {
+                operation: Operation::custom(piece_ref, args),
+                public: public && is_final, // Only final piece is public
+            });
+        }
+
+        Ok(steps)
+    }
+
+    /// Apply a predicate, automatically handling split chains
+    ///
+    /// This method builds operations for a predicate and applies them using the provided
+    /// closure. For non-split predicates, it performs a single operation.
+    /// For split predicates, it wires up the chain automatically.
+    ///
+    /// # Arguments
+    /// * `name` - Name of the predicate to apply
+    /// * `statements` - User statements in **original declaration order**
+    /// * `public` - Whether the final result should be public
+    /// * `apply_op` - Closure that applies a single operation: `(public, operation) -> Result<Statement>`
+    ///
+    /// # Returns
+    /// The final statement handle from applying all operations
+    ///
+    /// # Example
+    /// ```ignore
+    /// let result = batches.apply_predicate(
+    ///     "my_pred",
+    ///     statements,
+    ///     true,
+    ///     |public, op| if public { builder.pub_op(op) } else { builder.priv_op(op) }
+    /// )?;
+    /// ```
+    pub fn apply_predicate<F, E>(
+        &self,
+        name: &str,
+        statements: Vec<Statement>,
+        public: bool,
+        mut apply_op: F,
+    ) -> Result<Statement, E>
+    where
+        F: FnMut(bool, Operation) -> Result<Statement, E>,
+        E: From<MultiOperationError>,
+    {
+        let steps = self.build_steps(name, statements, public)?;
+
+        if steps.is_empty() {
+            return Err(MultiOperationError::NoSteps.into());
+        }
+
+        let mut prev_result: Option<Statement> = None;
+
+        for step in steps {
+            let op = if let Some(prev) = prev_result {
+                // Replace the last Statement::None arg with the previous result
+                let mut args = step.operation.1;
+                if let Some(last) = args.last_mut() {
+                    if matches!(last, OperationArg::Statement(Statement::None)) {
+                        *last = OperationArg::Statement(prev);
+                    }
+                }
+                Operation(step.operation.0, args, step.operation.2)
+            } else {
+                step.operation
+            };
+
+            prev_result = Some(apply_op(step.public, op)?);
+        }
+
+        // Safe to unwrap because we checked steps.is_empty() above
+        Ok(prev_result.unwrap())
+    }
 }
 
 /// Assignment of a predicate to a batch
@@ -99,8 +309,8 @@ pub struct ImportedPredicateInfo {
 
 /// Pack predicates into multiple batches
 ///
-/// Takes a list of predicates (already split if needed) and packs them into
-/// batches, handling cross-batch references correctly.
+/// Takes a list of split results (containing predicates and optional chain info)
+/// and packs them into batches, handling cross-batch references correctly.
 ///
 /// Predicates are assigned to batches in declaration order. Within a batch,
 /// predicates can reference each other freely via BatchSelf. Cross-batch
@@ -110,11 +320,24 @@ pub struct ImportedPredicateInfo {
 /// `imported_predicates` maps predicate names to their imported batch info,
 /// allowing predicates to call imported predicates from other batches.
 pub fn batch_predicates(
-    predicates: Vec<CustomPredicateDef>,
+    split_results: Vec<SplitResult>,
     params: &Params,
     base_batch_name: &str,
     imported_predicates: &HashMap<String, ImportedPredicateInfo>,
 ) -> Result<PredicateBatches, BatchingError> {
+    // Extract predicates and collect split chains
+    let mut predicates = Vec::new();
+    let mut split_chains = HashMap::new();
+
+    for result in split_results {
+        // Collect chain info if present
+        if let Some(chain_info) = result.chain_info {
+            split_chains.insert(chain_info.original_name.clone(), chain_info);
+        }
+        // Flatten predicates
+        predicates.extend(result.predicates);
+    }
+
     if predicates.is_empty() {
         return Ok(PredicateBatches::new());
     }
@@ -176,6 +399,7 @@ pub fn batch_predicates(
     Ok(PredicateBatches {
         batches,
         predicate_index,
+        split_chains,
     })
 }
 
@@ -406,6 +630,17 @@ mod tests {
             .collect()
     }
 
+    /// Helper: wrap predicates into SplitResult (without actually splitting)
+    fn preds_to_split_results(predicates: Vec<CustomPredicateDef>) -> Vec<SplitResult> {
+        predicates
+            .into_iter()
+            .map(|pred| SplitResult {
+                predicates: vec![pred],
+                chain_info: None,
+            })
+            .collect()
+    }
+
     #[test]
     fn test_single_predicate_single_batch() {
         let input = r#"
@@ -417,7 +652,12 @@ mod tests {
         let predicates = parse_predicates(input);
         let params = Params::default();
 
-        let result = batch_predicates(predicates, &params, "TestBatch", &HashMap::new());
+        let result = batch_predicates(
+            preds_to_split_results(predicates),
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+        );
         assert!(result.is_ok());
 
         let batches = result.unwrap();
@@ -436,7 +676,12 @@ mod tests {
         let predicates = parse_predicates(input);
         let params = Params::default(); // max_custom_batch_size = 4
 
-        let result = batch_predicates(predicates, &params, "TestBatch", &HashMap::new());
+        let result = batch_predicates(
+            preds_to_split_results(predicates),
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+        );
         assert!(result.is_ok());
 
         let batches = result.unwrap();
@@ -457,7 +702,12 @@ mod tests {
         let predicates = parse_predicates(input);
         let params = Params::default(); // max_custom_batch_size = 4
 
-        let result = batch_predicates(predicates, &params, "TestBatch", &HashMap::new());
+        let result = batch_predicates(
+            preds_to_split_results(predicates),
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+        );
         assert!(result.is_ok());
 
         let batches = result.unwrap();
@@ -482,7 +732,12 @@ mod tests {
         let predicates = parse_predicates(input);
         let params = Params::default();
 
-        let result = batch_predicates(predicates, &params, "TestBatch", &HashMap::new());
+        let result = batch_predicates(
+            preds_to_split_results(predicates),
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+        );
         assert!(result.is_ok());
 
         let batches = result.unwrap();
@@ -506,7 +761,12 @@ mod tests {
         let predicates = parse_predicates(input);
         let params = Params::default();
 
-        let result = batch_predicates(predicates, &params, "TestBatch", &HashMap::new());
+        let result = batch_predicates(
+            preds_to_split_results(predicates),
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+        );
         assert!(result.is_ok());
 
         let batches = result.unwrap();
@@ -542,7 +802,12 @@ mod tests {
         let predicates = parse_predicates(input);
         let params = Params::default(); // max_custom_batch_size = 4
 
-        let result = batch_predicates(predicates, &params, "TestBatch", &HashMap::new());
+        let result = batch_predicates(
+            preds_to_split_results(predicates),
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+        );
         assert!(result.is_ok());
 
         let batches = result.unwrap();
@@ -585,30 +850,40 @@ mod tests {
         let params = Params::default();
 
         // Split the large predicate
-        let mut all_predicates = Vec::new();
+        let mut all_split_results = Vec::new();
         for pred in predicates {
-            let chain = split_predicate_if_needed(pred, &params).expect("Split failed");
-            all_predicates.extend(chain);
+            let result = split_predicate_if_needed(pred, &params).expect("Split failed");
+            all_split_results.push(result);
         }
 
-        // We should have: pred1, pred2, pred3, large_pred, large_pred_1
-        // That's 5 predicates, which spans 2 batches
-        assert_eq!(all_predicates.len(), 5);
+        // Count total predicates across all split results
+        let total_preds: usize = all_split_results.iter().map(|r| r.predicates.len()).sum();
 
-        let result = batch_predicates(all_predicates, &params, "TestBatch", &HashMap::new());
+        // We should have: pred1, pred2, pred3, large_pred_1 (continuation), large_pred
+        // That's 5 predicates, which spans 2 batches
+        assert_eq!(total_preds, 5);
+
+        let result = batch_predicates(all_split_results, &params, "TestBatch", &HashMap::new());
         assert!(result.is_ok());
 
         let batches = result.unwrap();
         assert_eq!(batches.batch_count(), 2);
         assert_eq!(batches.total_predicate_count(), 5);
+
+        // Verify chain info was captured
+        let chain_info = batches.split_chain("large_pred");
+        assert!(chain_info.is_some());
+        let info = chain_info.unwrap();
+        assert_eq!(info.original_name, "large_pred");
+        assert_eq!(info.total_real_statements, 6);
     }
 
     #[test]
     fn test_empty_input() {
-        let predicates: Vec<CustomPredicateDef> = vec![];
+        let split_results: Vec<SplitResult> = vec![];
         let params = Params::default();
 
-        let result = batch_predicates(predicates, &params, "TestBatch", &HashMap::new());
+        let result = batch_predicates(split_results, &params, "TestBatch", &HashMap::new());
         assert!(result.is_ok());
 
         let batches = result.unwrap();
@@ -626,11 +901,336 @@ mod tests {
         let predicates = parse_predicates(input);
         let params = Params::default();
 
-        let batches = batch_predicates(predicates, &params, "TestBatch", &HashMap::new()).unwrap();
+        let batches = batch_predicates(
+            preds_to_split_results(predicates),
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+        )
+        .unwrap();
 
         // Should be able to look up both predicates
         assert!(batches.predicate_ref_by_name("pred1").is_some());
         assert!(batches.predicate_ref_by_name("pred2").is_some());
         assert!(batches.predicate_ref_by_name("nonexistent").is_none());
+    }
+
+    // ============================================================
+    // Tests for apply_predicate
+    // ============================================================
+
+    /// Helper: create a unique Statement for testing
+    /// Uses Equal with distinct literal values to create distinguishable statements
+    fn test_statement(id: usize) -> Statement {
+        use crate::middleware::ValueRef;
+        Statement::Equal(
+            ValueRef::Literal((id as i64).into()),
+            ValueRef::Literal((id as i64).into()),
+        )
+    }
+
+    #[test]
+    fn test_apply_predicate_non_split() {
+        // A simple predicate that doesn't need splitting
+        let input = r#"
+            my_pred(A, B) = AND(
+                Equal(A["x"], B["y"])
+            )
+        "#;
+
+        let predicates = parse_predicates(input);
+        let params = Params::default();
+
+        let batches = batch_predicates(
+            preds_to_split_results(predicates),
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+        )
+        .unwrap();
+
+        // Create fake statements
+        let statements = vec![Statement::None, Statement::None];
+
+        // Track operations applied
+        let mut operations_applied: Vec<(bool, usize)> = Vec::new();
+        let mut stmt_counter = 0;
+
+        let result: Result<Statement, MultiOperationError> =
+            batches.apply_predicate("my_pred", statements, true, |public, op| {
+                operations_applied.push((public, op.1.len()));
+                stmt_counter += 1;
+                Ok(test_statement(stmt_counter))
+            });
+
+        assert!(result.is_ok());
+        // Should be exactly one operation
+        assert_eq!(operations_applied.len(), 1);
+        // Should be public
+        assert!(operations_applied[0].0);
+        // Should have 2 arguments
+        assert_eq!(operations_applied[0].1, 2);
+    }
+
+    #[test]
+    fn test_apply_predicate_2_piece_split() {
+        // A predicate that will split into 2 pieces
+        let input = r#"
+            large_pred(A) = AND(
+                Equal(A["a"], 1)
+                Equal(A["b"], 2)
+                Equal(A["c"], 3)
+                Equal(A["d"], 4)
+                Equal(A["e"], 5)
+                Equal(A["f"], 6)
+            )
+        "#;
+
+        let predicates = parse_predicates(input);
+        let params = Params::default();
+
+        // Split the predicate
+        let mut split_results = Vec::new();
+        for pred in predicates {
+            let result = split_predicate_if_needed(pred, &params).expect("Split failed");
+            split_results.push(result);
+        }
+
+        // Should split into 2 pieces
+        assert_eq!(split_results.len(), 1);
+        assert_eq!(split_results[0].predicates.len(), 2);
+        assert!(split_results[0].chain_info.is_some());
+
+        let batches = batch_predicates(split_results, &params, "TestBatch", &HashMap::new())
+            .expect("Batch failed");
+
+        // Verify chain info
+        let chain_info = batches.split_chain("large_pred").unwrap();
+        assert_eq!(chain_info.chain_pieces.len(), 2);
+        assert_eq!(chain_info.total_real_statements, 6);
+
+        // Create fake statements (6 for the 6 Equal statements)
+        let statements: Vec<Statement> = (0..6).map(test_statement).collect();
+
+        // Track operations
+        let mut operations_applied: Vec<(bool, usize)> = Vec::new();
+        let mut stmt_counter = 100;
+
+        let result: Result<Statement, MultiOperationError> =
+            batches.apply_predicate("large_pred", statements, true, |public, op| {
+                operations_applied.push((public, op.1.len()));
+                stmt_counter += 1;
+                Ok(test_statement(stmt_counter))
+            });
+
+        assert!(result.is_ok());
+        // Should be exactly 2 operations (innermost continuation first, then main)
+        assert_eq!(operations_applied.len(), 2);
+        // First operation (continuation) should be private
+        assert!(!operations_applied[0].0);
+        // Second operation (main) should be public
+        assert!(operations_applied[1].0);
+    }
+
+    #[test]
+    fn test_apply_predicate_3_piece_split() {
+        // A predicate that will split into 3 pieces (needs more statements)
+        let input = r#"
+            very_large_pred(A) = AND(
+                Equal(A["a"], 1)
+                Equal(A["b"], 2)
+                Equal(A["c"], 3)
+                Equal(A["d"], 4)
+                Equal(A["e"], 5)
+                Equal(A["f"], 6)
+                Equal(A["g"], 7)
+                Equal(A["h"], 8)
+                Equal(A["i"], 9)
+                Equal(A["j"], 10)
+            )
+        "#;
+
+        let predicates = parse_predicates(input);
+        let params = Params::default();
+
+        // Split the predicate
+        let mut split_results = Vec::new();
+        for pred in predicates {
+            let result = split_predicate_if_needed(pred, &params).expect("Split failed");
+            split_results.push(result);
+        }
+
+        // Should split into 3 pieces
+        assert_eq!(split_results.len(), 1);
+        assert_eq!(split_results[0].predicates.len(), 3);
+        assert!(split_results[0].chain_info.is_some());
+
+        let batches = batch_predicates(split_results, &params, "TestBatch", &HashMap::new())
+            .expect("Batch failed");
+
+        // Verify chain info
+        let chain_info = batches.split_chain("very_large_pred").unwrap();
+        assert_eq!(chain_info.chain_pieces.len(), 3);
+        assert_eq!(chain_info.total_real_statements, 10);
+
+        // Create fake statements (10 for the 10 Equal statements)
+        let statements: Vec<Statement> = (0..10).map(test_statement).collect();
+
+        // Track operations
+        let mut operations_applied: Vec<(bool, usize)> = Vec::new();
+        let mut stmt_counter = 100;
+
+        let result: Result<Statement, MultiOperationError> =
+            batches.apply_predicate("very_large_pred", statements, true, |public, op| {
+                operations_applied.push((public, op.1.len()));
+                stmt_counter += 1;
+                Ok(test_statement(stmt_counter))
+            });
+
+        assert!(result.is_ok());
+        // Should be exactly 3 operations
+        assert_eq!(operations_applied.len(), 3);
+        // First two operations (continuations) should be private
+        assert!(!operations_applied[0].0);
+        assert!(!operations_applied[1].0);
+        // Final operation (main) should be public
+        assert!(operations_applied[2].0);
+    }
+
+    #[test]
+    fn test_apply_predicate_wrong_statement_count() {
+        // A predicate that will split
+        let input = r#"
+            large_pred(A) = AND(
+                Equal(A["a"], 1)
+                Equal(A["b"], 2)
+                Equal(A["c"], 3)
+                Equal(A["d"], 4)
+                Equal(A["e"], 5)
+                Equal(A["f"], 6)
+            )
+        "#;
+
+        let predicates = parse_predicates(input);
+        let params = Params::default();
+
+        // Split the predicate
+        let mut split_results = Vec::new();
+        for pred in predicates {
+            let result = split_predicate_if_needed(pred, &params).expect("Split failed");
+            split_results.push(result);
+        }
+
+        let batches = batch_predicates(split_results, &params, "TestBatch", &HashMap::new())
+            .expect("Batch failed");
+
+        // Try with wrong number of statements (3 instead of 6)
+        let statements: Vec<Statement> = (0..3).map(test_statement).collect();
+
+        let result: Result<Statement, MultiOperationError> =
+            batches.apply_predicate("large_pred", statements, true, |_, _| {
+                Ok(test_statement(999))
+            });
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        match err {
+            MultiOperationError::WrongStatementCount {
+                predicate,
+                expected,
+                actual,
+            } => {
+                assert_eq!(predicate, "large_pred");
+                assert_eq!(expected, 6);
+                assert_eq!(actual, 3);
+            }
+            _ => panic!("Expected WrongStatementCount error, got {:?}", err),
+        }
+    }
+
+    #[test]
+    fn test_apply_predicate_not_found() {
+        let input = r#"
+            my_pred(A) = AND(Equal(A["x"], 1))
+        "#;
+
+        let predicates = parse_predicates(input);
+        let params = Params::default();
+
+        let batches = batch_predicates(
+            preds_to_split_results(predicates),
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+        )
+        .unwrap();
+
+        let result: Result<Statement, MultiOperationError> =
+            batches.apply_predicate("nonexistent", vec![], true, |_, _| Ok(test_statement(999)));
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            MultiOperationError::PredicateNotFound(name) => {
+                assert_eq!(name, "nonexistent");
+            }
+            e => panic!("Expected PredicateNotFound error, got {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_apply_predicate_chain_wiring() {
+        // Test that chain links are properly wired (previous result replaces Statement::None)
+        let input = r#"
+            large_pred(A) = AND(
+                Equal(A["a"], 1)
+                Equal(A["b"], 2)
+                Equal(A["c"], 3)
+                Equal(A["d"], 4)
+                Equal(A["e"], 5)
+                Equal(A["f"], 6)
+            )
+        "#;
+
+        let predicates = parse_predicates(input);
+        let params = Params::default();
+
+        let mut split_results = Vec::new();
+        for pred in predicates {
+            let result = split_predicate_if_needed(pred, &params).expect("Split failed");
+            split_results.push(result);
+        }
+
+        let batches = batch_predicates(split_results, &params, "TestBatch", &HashMap::new())
+            .expect("Batch failed");
+
+        let statements: Vec<Statement> = (0..6).map(test_statement).collect();
+
+        // Track whether the second operation has the first result as its last arg
+        let mut last_args_of_ops: Vec<Option<Statement>> = Vec::new();
+        let mut stmt_counter = 100;
+
+        let result: Result<Statement, MultiOperationError> =
+            batches.apply_predicate("large_pred", statements, true, |_, op| {
+                // Check the last argument
+                let last_arg = op.1.last().map(|arg| {
+                    if let OperationArg::Statement(s) = arg {
+                        s.clone()
+                    } else {
+                        Statement::None
+                    }
+                });
+                last_args_of_ops.push(last_arg);
+                stmt_counter += 1;
+                Ok(test_statement(stmt_counter))
+            });
+
+        assert!(result.is_ok());
+        assert_eq!(last_args_of_ops.len(), 2);
+
+        // First operation's last arg should NOT be the result of previous (no previous)
+        // It might be Statement::None if no chain call, or a regular arg
+
+        // Second operation's last arg SHOULD be test_statement(101) - the result from first op
+        assert_eq!(last_args_of_ops[1], Some(test_statement(101)));
     }
 }

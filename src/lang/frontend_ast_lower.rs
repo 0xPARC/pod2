@@ -272,7 +272,9 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn extract_and_split_predicates(&self) -> Result<Vec<CustomPredicateDef>, LoweringError> {
+    fn extract_and_split_predicates(
+        &self,
+    ) -> Result<Vec<frontend_ast_split::SplitResult>, LoweringError> {
         let doc = self.validated.document();
         let predicates: Vec<CustomPredicateDef> = doc
             .items
@@ -284,13 +286,13 @@ impl<'a> Lowerer<'a> {
             .collect();
 
         // Apply splitting to each predicate as needed
-        let mut split_predicates = Vec::new();
+        let mut split_results = Vec::new();
         for pred in predicates {
-            let chain = frontend_ast_split::split_predicate_if_needed(pred, self.params)?;
-            split_predicates.extend(chain);
+            let result = frontend_ast_split::split_predicate_if_needed(pred, self.params)?;
+            split_results.push(result);
         }
 
-        Ok(split_predicates)
+        Ok(split_results)
     }
 
     fn lower_statement_arg_to_builder(arg: &StatementTmplArg) -> Result<BuilderArg, LoweringError> {
