@@ -10,7 +10,8 @@ pub mod pretty_print;
 use std::sync::Arc;
 
 pub use error::LangError;
-pub use frontend_ast_batch::PredicateBatches;
+pub use frontend_ast_batch::{MultiOperationError, PredicateBatches};
+pub use frontend_ast_split::{SplitChainInfo, SplitChainPiece, SplitResult};
 pub use parser::{parse_podlang, Pairs, ParseError, Rule};
 pub use pretty_print::PrettyPrint;
 
