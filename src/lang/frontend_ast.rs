@@ -87,18 +87,92 @@ pub struct ArgSection {
 }
 
 /// Conjunction type for custom predicates
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConjunctionType {
     And,
     Or,
 }
 
-/// Statement template: predicate call with arguments
+/// The kind of statement template - either a predicate call or an inline conjunction
+#[derive(Debug, Clone, PartialEq)]
+pub enum StatementTmplKind {
+    /// Regular predicate call: pred_name(arg1, arg2, ...)
+    Call {
+        predicate: Identifier,
+        args: Vec<StatementTmplArg>,
+    },
+    /// Inline conjunction: AND(...) or OR(...) containing nested statements
+    InlineConjunction {
+        conjunction_type: ConjunctionType,
+        statements: Vec<StatementTmpl>,
+    },
+}
+
+/// Statement template: either a predicate call or an inline conjunction
 #[derive(Debug, Clone, PartialEq)]
 pub struct StatementTmpl {
-    pub predicate: Identifier,
-    pub args: Vec<StatementTmplArg>,
+    pub kind: StatementTmplKind,
     pub span: Option<Span>,
+}
+
+impl StatementTmpl {
+    /// Create a new predicate call statement
+    pub fn call(predicate: Identifier, args: Vec<StatementTmplArg>, span: Option<Span>) -> Self {
+        Self {
+            kind: StatementTmplKind::Call { predicate, args },
+            span,
+        }
+    }
+
+    /// Create a new inline conjunction statement
+    pub fn inline_conjunction(
+        conjunction_type: ConjunctionType,
+        statements: Vec<StatementTmpl>,
+        span: Option<Span>,
+    ) -> Self {
+        Self {
+            kind: StatementTmplKind::InlineConjunction {
+                conjunction_type,
+                statements,
+            },
+            span,
+        }
+    }
+
+    /// Returns true if this is a predicate call (not an inline conjunction)
+    pub fn is_call(&self) -> bool {
+        matches!(self.kind, StatementTmplKind::Call { .. })
+    }
+
+    /// Returns the predicate identifier if this is a call, None if inline conjunction
+    pub fn predicate(&self) -> Option<&Identifier> {
+        match &self.kind {
+            StatementTmplKind::Call { predicate, .. } => Some(predicate),
+            StatementTmplKind::InlineConjunction { .. } => None,
+        }
+    }
+
+    /// Returns the arguments if this is a call, None if inline conjunction
+    pub fn args(&self) -> Option<&[StatementTmplArg]> {
+        match &self.kind {
+            StatementTmplKind::Call { args, .. } => Some(args),
+            StatementTmplKind::InlineConjunction { .. } => None,
+        }
+    }
+
+    /// Extract the Call variant's predicate and args.
+    /// Panics if this is an InlineConjunction (which should have been lifted before this point).
+    pub fn expect_call(&self) -> (&Identifier, &[StatementTmplArg]) {
+        match &self.kind {
+            StatementTmplKind::Call { predicate, args } => (predicate, args),
+            StatementTmplKind::InlineConjunction { .. } => {
+                panic!(
+                    "Expected StatementTmpl::Call but found InlineConjunction. \
+                     Inline conjunctions should be lifted to anonymous predicates before this point."
+                )
+            }
+        }
+    }
 }
 
 /// Arguments that can be passed to statements
@@ -376,14 +450,28 @@ impl fmt::Display for RequestDef {
 
 impl fmt::Display for StatementTmpl {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}(", self.predicate)?;
-        for (i, arg) in self.args.iter().enumerate() {
-            if i > 0 {
-                write!(f, ", ")?;
+        match &self.kind {
+            StatementTmplKind::Call { predicate, args } => {
+                write!(f, "{}(", predicate)?;
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", arg)?;
+                }
+                write!(f, ")")
             }
-            write!(f, "{}", arg)?;
+            StatementTmplKind::InlineConjunction {
+                conjunction_type,
+                statements,
+            } => {
+                writeln!(f, "{}(", conjunction_type)?;
+                for stmt in statements {
+                    writeln!(f, "    {}", stmt)?;
+                }
+                write!(f, ")")
+            }
         }
-        write!(f, ")")
     }
 }
 
@@ -746,6 +834,40 @@ pub mod parse {
     fn parse_statement(pair: Pair<Rule>) -> Result<StatementTmpl, parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::statement);
         let span = get_span(&pair);
+        let inner = pair.into_inner().next().unwrap();
+
+        match inner.as_rule() {
+            Rule::inline_conjunction => parse_inline_conjunction(inner, span),
+            Rule::predicate_call => parse_predicate_call(inner, span),
+            _ => unreachable!("Unexpected statement rule: {:?}", inner.as_rule()),
+        }
+    }
+
+    fn parse_inline_conjunction(
+        pair: Pair<Rule>,
+        span: Span,
+    ) -> Result<StatementTmpl, parser::ParseError> {
+        assert_eq!(pair.as_rule(), Rule::inline_conjunction);
+        let mut inner = pair.into_inner();
+
+        let conjunction_type = parse_conjunction_type(inner.next().unwrap());
+        let statements = inner
+            .filter(|p| p.as_rule() == Rule::statement)
+            .map(parse_statement)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(StatementTmpl::inline_conjunction(
+            conjunction_type,
+            statements,
+            Some(span),
+        ))
+    }
+
+    fn parse_predicate_call(
+        pair: Pair<Rule>,
+        span: Span,
+    ) -> Result<StatementTmpl, parser::ParseError> {
+        assert_eq!(pair.as_rule(), Rule::predicate_call);
         let mut inner = pair.into_inner();
 
         let predicate = parse_identifier(inner.next().unwrap());
@@ -761,11 +883,7 @@ pub mod parse {
             }
         }
 
-        Ok(StatementTmpl {
-            predicate,
-            args,
-            span: Some(span),
-        })
+        Ok(StatementTmpl::call(predicate, args, Some(span)))
     }
 
     fn parse_statement_arg(pair: Pair<Rule>) -> Result<StatementTmplArg, parser::ParseError> {
@@ -1084,18 +1202,27 @@ mod tests {
 
     fn clear_statement_spans(stmt: &mut StatementTmpl) {
         stmt.span = None;
-        stmt.predicate.span = None;
-        for arg in &mut stmt.args {
-            match arg {
-                StatementTmplArg::Literal(lit) => clear_literal_spans(lit),
-                StatementTmplArg::Wildcard(id) => id.span = None,
-                StatementTmplArg::AnchoredKey(ak) => {
-                    ak.span = None;
-                    ak.root.span = None;
-                    match &mut ak.key {
-                        AnchoredKeyPath::Bracket(s) => s.span = None,
-                        AnchoredKeyPath::Dot(id) => id.span = None,
+        match &mut stmt.kind {
+            StatementTmplKind::Call { predicate, args } => {
+                predicate.span = None;
+                for arg in args {
+                    match arg {
+                        StatementTmplArg::Literal(lit) => clear_literal_spans(lit),
+                        StatementTmplArg::Wildcard(id) => id.span = None,
+                        StatementTmplArg::AnchoredKey(ak) => {
+                            ak.span = None;
+                            ak.root.span = None;
+                            match &mut ak.key {
+                                AnchoredKeyPath::Bracket(s) => s.span = None,
+                                AnchoredKeyPath::Dot(id) => id.span = None,
+                            }
+                        }
                     }
+                }
+            }
+            StatementTmplKind::InlineConjunction { statements, .. } => {
+                for inner_stmt in statements {
+                    clear_statement_spans(inner_stmt);
                 }
             }
         }
@@ -1258,16 +1385,20 @@ REQUEST(
 
         // Check that the AST correctly unescaped the strings
         if let DocumentItem::RequestDef(req) = &ast.items[0] {
-            if let StatementTmplArg::Literal(LiteralValue::String(s)) = &req.statements[0].args[1] {
+            let args0 = req.statements[0].args().unwrap();
+            if let StatementTmplArg::Literal(LiteralValue::String(s)) = &args0[1] {
                 assert_eq!(s.value, "line1\nline2");
             }
-            if let StatementTmplArg::Literal(LiteralValue::String(s)) = &req.statements[1].args[1] {
+            let args1 = req.statements[1].args().unwrap();
+            if let StatementTmplArg::Literal(LiteralValue::String(s)) = &args1[1] {
                 assert_eq!(s.value, "say \"hello\"");
             }
-            if let StatementTmplArg::Literal(LiteralValue::String(s)) = &req.statements[2].args[1] {
+            let args2 = req.statements[2].args().unwrap();
+            if let StatementTmplArg::Literal(LiteralValue::String(s)) = &args2[1] {
                 assert_eq!(s.value, "path\\to\\file");
             }
-            if let StatementTmplArg::Literal(LiteralValue::String(s)) = &req.statements[3].args[1] {
+            let args3 = req.statements[3].args().unwrap();
+            if let StatementTmplArg::Literal(LiteralValue::String(s)) = &args3[1] {
                 assert_eq!(s.value, "col1\tcol2");
             }
         }
@@ -1306,8 +1437,8 @@ REQUEST(
         // Check request structure
         if let DocumentItem::RequestDef(req) = &ast.items[1] {
             assert_eq!(req.statements.len(), 1);
-            assert_eq!(req.statements[0].predicate.name, "my_pred");
-            assert_eq!(req.statements[0].args.len(), 2);
+            assert_eq!(req.statements[0].predicate().unwrap().name, "my_pred");
+            assert_eq!(req.statements[0].args().unwrap().len(), 2);
         } else {
             panic!("Expected RequestDef");
         }

@@ -416,61 +416,81 @@ impl Validator {
         stmt: &StatementTmpl,
         wildcard_context: Option<(&str, &WildcardScope)>,
     ) -> Result<(), ValidationError> {
-        let pred_name = &stmt.predicate.name;
+        use crate::lang::frontend_ast::StatementTmplKind;
 
-        // Check if predicate exists
-        let pred_info = if let Ok(native) = NativePredicate::from_str(pred_name) {
-            // Native predicate
-            PredicateInfo {
-                kind: PredicateKind::Native(native),
-                arity: native.arity(),
-                public_arity: native.arity(),
-                source_span: None,
+        match &stmt.kind {
+            StatementTmplKind::Call { predicate, args } => {
+                let pred_name = &predicate.name;
+
+                // Check if predicate exists
+                let pred_info = if let Ok(native) = NativePredicate::from_str(pred_name) {
+                    // Native predicate
+                    PredicateInfo {
+                        kind: PredicateKind::Native(native),
+                        arity: native.arity(),
+                        public_arity: native.arity(),
+                        source_span: None,
+                    }
+                } else if let Some(info) = self.symbols.predicates.get(pred_name) {
+                    // Custom or imported predicate
+                    info.clone()
+                } else {
+                    return Err(ValidationError::UndefinedPredicate {
+                        name: pred_name.clone(),
+                        span: predicate.span,
+                    });
+                };
+
+                let expected_arity = pred_info.public_arity;
+
+                if args.len() != expected_arity {
+                    return Err(ValidationError::ArgumentCountMismatch {
+                        predicate: pred_name.clone(),
+                        expected: expected_arity,
+                        found: args.len(),
+                        span: stmt.span,
+                    });
+                }
+
+                // Validate arguments
+                self.validate_statement_args_inner(
+                    args,
+                    pred_name,
+                    &pred_info,
+                    wildcard_context,
+                    stmt.span,
+                )?;
             }
-        } else if let Some(info) = self.symbols.predicates.get(pred_name) {
-            // Custom or imported predicate
-            info.clone()
-        } else {
-            return Err(ValidationError::UndefinedPredicate {
-                name: pred_name.clone(),
-                span: stmt.predicate.span,
-            });
-        };
-
-        let expected_arity = pred_info.public_arity;
-
-        if stmt.args.len() != expected_arity {
-            return Err(ValidationError::ArgumentCountMismatch {
-                predicate: pred_name.clone(),
-                expected: expected_arity,
-                found: stmt.args.len(),
-                span: stmt.span,
-            });
+            StatementTmplKind::InlineConjunction { statements, .. } => {
+                // Recursively validate nested statements
+                for inner_stmt in statements {
+                    self.validate_statement(inner_stmt, wildcard_context)?;
+                }
+            }
         }
-
-        // Validate arguments
-        self.validate_statement_args(stmt, &pred_info, wildcard_context)?;
 
         Ok(())
     }
 
-    fn validate_statement_args(
+    fn validate_statement_args_inner(
         &self,
-        stmt: &StatementTmpl,
+        args: &[StatementTmplArg],
+        callee_pred_name: &str,
         pred_info: &PredicateInfo,
         wildcard_context: Option<(&str, &WildcardScope)>,
+        stmt_span: Option<Span>,
     ) -> Result<(), ValidationError> {
         // For custom predicates, only wildcards and literals are allowed
         if matches!(
             pred_info.kind,
             PredicateKind::Custom { .. } | PredicateKind::BatchImported { .. }
         ) {
-            for arg in &stmt.args {
+            for arg in args {
                 match arg {
                     StatementTmplArg::AnchoredKey(_) => {
                         return Err(ValidationError::InvalidArgumentType {
-                            predicate: stmt.predicate.name.clone(),
-                            span: stmt.span,
+                            predicate: callee_pred_name.to_string(),
+                            span: stmt_span,
                         });
                     }
                     StatementTmplArg::Wildcard(id) => {
@@ -489,7 +509,7 @@ impl Validator {
             }
         } else {
             // Native predicates can have anchored keys
-            for arg in &stmt.args {
+            for arg in args {
                 match arg {
                     StatementTmplArg::Wildcard(id) => {
                         if let Some((pred_name, scope)) = wildcard_context {

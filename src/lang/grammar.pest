@@ -55,7 +55,15 @@ statement_list = { statement+ }
 statement_arg = { literal_value | anchored_key | identifier }
 statement_arg_list = { statement_arg ~ ("," ~ statement_arg)* }
 
-statement = { identifier ~ "(" ~ statement_arg_list? ~ ")" }
+// A statement can be either an inline conjunction (AND/OR nested block) or a predicate call
+statement = { inline_conjunction | predicate_call }
+
+// Inline conjunction: AND(...) or OR(...) appearing where a statement would
+// Allows arbitrary nesting of conjunctions
+inline_conjunction = { conjunction_type ~ "(" ~ statement+ ~ ")" }
+
+// Regular predicate call: pred_name(arg1, arg2, ...)
+predicate_call = { identifier ~ "(" ~ statement_arg_list? ~ ")" }
 
 // Anchored Key: Var["key_literal"] or Var.key_identifier
 anchored_key = {

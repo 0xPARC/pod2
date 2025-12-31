@@ -78,10 +78,10 @@ impl<'a> Lowerer<'a> {
 
     fn lower_batches(&self, batch_name: String) -> Result<Option<PredicateBatches>, LoweringError> {
         // Extract and split custom predicates from document
-        let custom_predicates = self.extract_and_split_predicates()?;
+        let (split_results, predicate_structures) = self.extract_and_split_predicates()?;
 
         // If no custom predicates, return None
-        if custom_predicates.is_empty() {
+        if split_results.is_empty() {
             return Ok(None);
         }
 
@@ -90,10 +90,11 @@ impl<'a> Lowerer<'a> {
 
         // Use the new batching module to pack predicates into batches
         let batches = frontend_ast_batch::batch_predicates(
-            custom_predicates,
+            split_results,
             self.params,
             &batch_name,
             &imported_predicates,
+            predicate_structures,
         )?;
 
         Ok(Some(batches))
@@ -155,7 +156,8 @@ impl<'a> Lowerer<'a> {
         wildcard_map: &HashMap<String, usize>,
         batches: Option<&PredicateBatches>,
     ) -> Result<MWStatementTmpl, LoweringError> {
-        let pred_name = &stmt.predicate.name;
+        let (predicate_id, args) = stmt.expect_call();
+        let pred_name = &predicate_id.name;
         let symbols = self.validated.symbols();
 
         // Resolve predicate - for request statements, local custom predicates
@@ -197,7 +199,7 @@ impl<'a> Lowerer<'a> {
 
         // Create a builder with the resolved predicate and desugar
         let mut builder = StatementTmplBuilder::new(predicate);
-        for arg in &stmt.args {
+        for arg in args {
             let builder_arg = Self::lower_statement_arg_to_builder(arg)?;
             builder = builder.arg(builder_arg);
         }
@@ -253,7 +255,8 @@ impl<'a> Lowerer<'a> {
         names: &mut Vec<String>,
         seen: &mut HashSet<String>,
     ) {
-        for arg in &stmt.args {
+        let (_, args) = stmt.expect_call();
+        for arg in args {
             match arg {
                 StatementTmplArg::Wildcard(id) => {
                     if !seen.contains(&id.name) {
@@ -274,7 +277,15 @@ impl<'a> Lowerer<'a> {
 
     fn extract_and_split_predicates(
         &self,
-    ) -> Result<Vec<frontend_ast_split::SplitResult>, LoweringError> {
+    ) -> Result<
+        (
+            Vec<frontend_ast_split::SplitResult>,
+            std::collections::HashMap<String, super::frontend_ast_lift::PredicateStructure>,
+        ),
+        LoweringError,
+    > {
+        use super::frontend_ast_lift::AnonPredicateLifter;
+
         let doc = self.validated.document();
         let predicates: Vec<CustomPredicateDef> = doc
             .items
@@ -285,14 +296,18 @@ impl<'a> Lowerer<'a> {
             })
             .collect();
 
+        // Lift inline conjunctions to anonymous predicates
+        // This transforms nested AND/OR blocks into separate predicates
+        let lift_result = AnonPredicateLifter::lift_predicates(predicates);
+
         // Apply splitting to each predicate as needed
         let mut split_results = Vec::new();
-        for pred in predicates {
+        for pred in lift_result.predicates {
             let result = frontend_ast_split::split_predicate_if_needed(pred, self.params)?;
             split_results.push(result);
         }
 
-        Ok(split_results)
+        Ok((split_results, lift_result.structures))
     }
 
     fn lower_statement_arg_to_builder(arg: &StatementTmplArg) -> Result<BuilderArg, LoweringError> {

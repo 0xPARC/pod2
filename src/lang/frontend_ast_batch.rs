@@ -58,6 +58,68 @@ pub enum MultiOperationError {
 
     #[error("No operation steps to apply")]
     NoSteps,
+
+    #[error("Input structure doesn't match predicate structure at position {position}")]
+    StructureMismatch { position: usize },
+
+    #[error("OR branch {branch} out of bounds (predicate has {total} branches)")]
+    OrBranchOutOfBounds { branch: usize, total: usize },
+
+    #[error("Expected Statement input but got nested input")]
+    ExpectedStatement,
+
+    #[error("Expected nested input (And/Or) but got Statement")]
+    ExpectedNested,
+}
+
+// ============================================================
+// PredicateInput: Tree-structured input for nested predicates
+// ============================================================
+
+/// Tree-structured input for applying predicates with nested conjunctions.
+///
+/// This allows users to provide inputs that mirror the structure of predicates
+/// with inline AND/OR blocks. The structure is then flattened to the appropriate
+/// sequence of operations when applied.
+///
+/// # Example
+/// ```ignore
+/// // For predicate: my_pred(A) = AND(OR(Equal(A["x"], 1), Equal(A["x"], 2)), Equal(A["y"], 3))
+/// let input = and([
+///     or(0, stmt(st_x_eq_1)),  // choosing branch 0 of OR
+///     stmt(st_y_eq_3),
+/// ]);
+/// batches.apply_predicate_tree("my_pred", input, true, |public, op| ...)?;
+/// ```
+#[derive(Debug, Clone)]
+pub enum PredicateInput {
+    /// A concrete statement (for native predicates)
+    Statement(Statement),
+    /// An AND block - all children must be provided
+    And(Vec<PredicateInput>),
+    /// An OR block - provide chosen branch index and its input
+    Or {
+        branch: usize,
+        input: Box<PredicateInput>,
+    },
+}
+
+/// Create a PredicateInput from a Statement
+pub fn stmt(s: Statement) -> PredicateInput {
+    PredicateInput::Statement(s)
+}
+
+/// Create an AND PredicateInput from a list of inputs
+pub fn and(inputs: impl IntoIterator<Item = PredicateInput>) -> PredicateInput {
+    PredicateInput::And(inputs.into_iter().collect())
+}
+
+/// Create an OR PredicateInput with a chosen branch
+pub fn or(branch: usize, input: PredicateInput) -> PredicateInput {
+    PredicateInput::Or {
+        branch,
+        input: Box::new(input),
+    }
 }
 
 /// Container for multiple predicate batches
@@ -69,6 +131,9 @@ pub struct PredicateBatches {
     /// Split chain metadata for predicates that were split
     /// Maps original predicate name to its chain info
     split_chains: HashMap<String, SplitChainInfo>,
+    /// Nesting structure metadata for predicates with inline conjunctions
+    /// Maps predicate name to its nesting structure
+    predicate_structures: HashMap<String, super::frontend_ast_lift::PredicateStructure>,
 }
 
 impl Default for PredicateBatches {
@@ -83,6 +148,7 @@ impl PredicateBatches {
             batches: Vec::new(),
             predicate_index: HashMap::new(),
             split_chains: HashMap::new(),
+            predicate_structures: HashMap::new(),
         }
     }
 
@@ -287,6 +353,262 @@ impl PredicateBatches {
         // Safe to unwrap because we checked steps.is_empty() above
         Ok(prev_result.unwrap())
     }
+
+    /// Get predicate structure (if it has nested conjunctions)
+    pub fn predicate_structure(
+        &self,
+        name: &str,
+    ) -> Option<&super::frontend_ast_lift::PredicateStructure> {
+        self.predicate_structures.get(name)
+    }
+
+    /// Apply a predicate with tree-structured input.
+    ///
+    /// This method handles predicates that have nested inline conjunctions (AND/OR blocks).
+    /// The `input` parameter should mirror the original structure of the predicate definition.
+    ///
+    /// For predicates without nested conjunctions, you can use [`apply_predicate`] instead,
+    /// which takes a flat `Vec<Statement>`.
+    ///
+    /// # Arguments
+    /// * `name` - Name of the predicate to apply
+    /// * `input` - Tree-structured input matching the predicate's nesting structure
+    /// * `public` - Whether the final result should be public
+    /// * `apply_op` - Closure that applies a single operation: `(public, operation) -> Result<Statement>`
+    ///
+    /// # Example
+    /// ```ignore
+    /// // For predicate: my_pred(A) = AND(OR(Equal(A["x"], 1), Equal(A["x"], 2)), Equal(A["y"], 3))
+    /// let result = batches.apply_predicate_tree(
+    ///     "my_pred",
+    ///     and([
+    ///         or(0, stmt(st_x_eq_1)),  // choosing branch 0 of OR
+    ///         stmt(st_y_eq_3),
+    ///     ]),
+    ///     true,
+    ///     |public, op| if public { builder.pub_op(op) } else { builder.priv_op(op) }
+    /// )?;
+    /// ```
+    pub fn apply_predicate_tree<F, E>(
+        &self,
+        name: &str,
+        input: PredicateInput,
+        public: bool,
+        mut apply_op: F,
+    ) -> Result<Statement, E>
+    where
+        F: FnMut(bool, Operation) -> Result<Statement, E>,
+        E: From<MultiOperationError>,
+    {
+        // Check if this predicate has nested structure
+        let structure = match self.predicate_structures.get(name) {
+            Some(s) => s,
+            None => {
+                // No nested structure - convert input to flat Vec<Statement> and use regular apply
+                let statements = Self::flatten_input_to_vec(input)?;
+                return self.apply_predicate(name, statements, public, apply_op);
+            }
+        };
+
+        // Recursively flatten the tree input, applying nested predicates depth-first
+        let statements = self.flatten_tree_input(input, &structure.statements, &mut apply_op)?;
+
+        // Apply the main predicate with the flattened statements
+        self.apply_predicate(name, statements, public, apply_op)
+    }
+
+    /// Convert a PredicateInput to a flat Vec<Statement> (for flat predicates)
+    fn flatten_input_to_vec(input: PredicateInput) -> Result<Vec<Statement>, MultiOperationError> {
+        match input {
+            PredicateInput::Statement(s) => Ok(vec![s]),
+            PredicateInput::And(inputs) => {
+                let mut result = Vec::new();
+                for i in inputs {
+                    result.extend(Self::flatten_input_to_vec(i)?);
+                }
+                Ok(result)
+            }
+            PredicateInput::Or { input, .. } => {
+                // For OR, just recurse into the chosen branch
+                Self::flatten_input_to_vec(*input)
+            }
+        }
+    }
+
+    /// Recursively flatten tree input, applying nested predicates depth-first
+    #[allow(clippy::redundant_closure)]
+    fn flatten_tree_input<F, E>(
+        &self,
+        input: PredicateInput,
+        structure: &[super::frontend_ast_lift::StatementStructure],
+        apply_op: &mut F,
+    ) -> Result<Vec<Statement>, E>
+    where
+        F: FnMut(bool, Operation) -> Result<Statement, E>,
+        E: From<MultiOperationError>,
+    {
+        use super::frontend_ast_lift::StatementStructure;
+
+        // Extract children from input based on input type
+        let input_children = match input {
+            PredicateInput::And(children) => children,
+            PredicateInput::Statement(s) => {
+                // Single statement input - structure should have exactly one Native entry
+                if structure.len() != 1 {
+                    return Err(MultiOperationError::StructureMismatch { position: 0 }.into());
+                }
+                match &structure[0] {
+                    StatementStructure::Native => return Ok(vec![s]),
+                    StatementStructure::Nested { .. } => {
+                        return Err(MultiOperationError::ExpectedNested.into());
+                    }
+                }
+            }
+            PredicateInput::Or { branch, input } => {
+                // OR input - the structure should be a single Nested with OR type
+                // Recurse with the chosen branch's structure
+                if structure.len() != 1 {
+                    return Err(MultiOperationError::StructureMismatch { position: 0 }.into());
+                }
+                match &structure[0] {
+                    StatementStructure::Nested {
+                        anon_name,
+                        conjunction_type,
+                        children,
+                    } => {
+                        if *conjunction_type != super::frontend_ast::ConjunctionType::Or {
+                            return Err(
+                                MultiOperationError::StructureMismatch { position: 0 }.into()
+                            );
+                        }
+                        if branch >= children.len() {
+                            return Err(MultiOperationError::OrBranchOutOfBounds {
+                                branch,
+                                total: children.len(),
+                            }
+                            .into());
+                        }
+                        // Recursively flatten the chosen branch
+                        let nested_statements =
+                            self.flatten_tree_input(*input, &[children[branch].clone()], apply_op)?;
+                        // Apply the OR predicate with the flattened statements and chosen branch
+                        let result = self.apply_predicate(
+                            anon_name,
+                            nested_statements,
+                            false, // nested predicates are private
+                            |p, op| apply_op(p, op),
+                        )?;
+                        return Ok(vec![result]);
+                    }
+                    StatementStructure::Native => {
+                        return Err(MultiOperationError::ExpectedNested.into());
+                    }
+                }
+            }
+        };
+
+        // Check that input and structure have same length
+        if input_children.len() != structure.len() {
+            return Err(MultiOperationError::StructureMismatch { position: 0 }.into());
+        }
+
+        let mut result = Vec::new();
+
+        for (idx, (child_input, child_structure)) in
+            input_children.into_iter().zip(structure.iter()).enumerate()
+        {
+            match child_structure {
+                StatementStructure::Native => {
+                    // Native predicate - extract statement directly
+                    match child_input {
+                        PredicateInput::Statement(s) => result.push(s),
+                        _ => {
+                            return Err(
+                                MultiOperationError::StructureMismatch { position: idx }.into()
+                            );
+                        }
+                    }
+                }
+                StatementStructure::Nested {
+                    anon_name,
+                    conjunction_type,
+                    children,
+                } => {
+                    // Nested predicate - recursively process and apply
+                    match (child_input, conjunction_type) {
+                        (
+                            PredicateInput::And(nested_inputs),
+                            super::frontend_ast::ConjunctionType::And,
+                        ) => {
+                            // Recurse into AND children
+                            let nested_statements = self.flatten_tree_input(
+                                PredicateInput::And(nested_inputs),
+                                children,
+                                apply_op,
+                            )?;
+                            // Apply the nested AND predicate
+                            let nested_result = self.apply_predicate(
+                                anon_name,
+                                nested_statements,
+                                false, // nested predicates are private
+                                |p, op| apply_op(p, op),
+                            )?;
+                            result.push(nested_result);
+                        }
+                        (
+                            PredicateInput::Or { branch, input },
+                            super::frontend_ast::ConjunctionType::Or,
+                        ) => {
+                            if branch >= children.len() {
+                                return Err(MultiOperationError::OrBranchOutOfBounds {
+                                    branch,
+                                    total: children.len(),
+                                }
+                                .into());
+                            }
+                            // Recursively flatten the chosen branch
+                            let nested_statements = self.flatten_tree_input(
+                                *input,
+                                &[children[branch].clone()],
+                                apply_op,
+                            )?;
+                            // Apply the OR predicate
+                            let nested_result = self.apply_predicate(
+                                anon_name,
+                                nested_statements,
+                                false, // nested predicates are private
+                                |p, op| apply_op(p, op),
+                            )?;
+                            result.push(nested_result);
+                        }
+                        (PredicateInput::Statement(s), _) => {
+                            // Single statement for a nested structure - might be a leaf in a deeply nested tree
+                            // We need to flatten with the nested children
+                            let nested_statements = self.flatten_tree_input(
+                                PredicateInput::Statement(s),
+                                children,
+                                apply_op,
+                            )?;
+                            let nested_result = self.apply_predicate(
+                                anon_name,
+                                nested_statements,
+                                false,
+                                |p, op| apply_op(p, op),
+                            )?;
+                            result.push(nested_result);
+                        }
+                        _ => {
+                            return Err(
+                                MultiOperationError::StructureMismatch { position: idx }.into()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(result)
+    }
 }
 
 /// Assignment of a predicate to a batch
@@ -319,11 +641,15 @@ pub struct ImportedPredicateInfo {
 ///
 /// `imported_predicates` maps predicate names to their imported batch info,
 /// allowing predicates to call imported predicates from other batches.
+///
+/// `predicate_structures` contains nesting structure metadata for predicates
+/// with inline conjunctions, used by `apply_predicate_tree`.
 pub fn batch_predicates(
     split_results: Vec<SplitResult>,
     params: &Params,
     base_batch_name: &str,
     imported_predicates: &HashMap<String, ImportedPredicateInfo>,
+    predicate_structures: HashMap<String, super::frontend_ast_lift::PredicateStructure>,
 ) -> Result<PredicateBatches, BatchingError> {
     // Extract predicates and collect split chains
     let mut predicates = Vec::new();
@@ -400,6 +726,7 @@ pub fn batch_predicates(
         batches,
         predicate_index,
         split_chains,
+        predicate_structures,
     })
 }
 
@@ -503,7 +830,8 @@ fn build_statement_with_resolved_refs(
     existing_batches: &[Arc<CustomPredicateBatch>],
     imported_predicates: &HashMap<String, ImportedPredicateInfo>,
 ) -> Result<StatementTmplBuilder, BatchingError> {
-    let callee_name = &stmt.predicate.name;
+    let (predicate_id, args) = stmt.expect_call();
+    let callee_name = &predicate_id.name;
 
     // Resolve the predicate
     let predicate = if let Ok(native) = NativePredicate::from_str(callee_name) {
@@ -542,7 +870,7 @@ fn build_statement_with_resolved_refs(
     // Build the statement template
     let mut builder = StatementTmplBuilder::new(predicate);
 
-    for arg in &stmt.args {
+    for arg in args {
         let builder_arg = match arg {
             StatementTmplArg::Literal(lit) => {
                 let value = lower_literal(lit)?;
@@ -657,6 +985,7 @@ mod tests {
             &params,
             "TestBatch",
             &HashMap::new(),
+            HashMap::new(),
         );
         assert!(result.is_ok());
 
@@ -681,6 +1010,7 @@ mod tests {
             &params,
             "TestBatch",
             &HashMap::new(),
+            HashMap::new(),
         );
         assert!(result.is_ok());
 
@@ -707,6 +1037,7 @@ mod tests {
             &params,
             "TestBatch",
             &HashMap::new(),
+            HashMap::new(),
         );
         assert!(result.is_ok());
 
@@ -737,6 +1068,7 @@ mod tests {
             &params,
             "TestBatch",
             &HashMap::new(),
+            HashMap::new(),
         );
         assert!(result.is_ok());
 
@@ -766,6 +1098,7 @@ mod tests {
             &params,
             "TestBatch",
             &HashMap::new(),
+            HashMap::new(),
         );
         assert!(result.is_ok());
 
@@ -807,6 +1140,7 @@ mod tests {
             &params,
             "TestBatch",
             &HashMap::new(),
+            HashMap::new(),
         );
         assert!(result.is_ok());
 
@@ -863,7 +1197,13 @@ mod tests {
         // That's 5 predicates, which spans 2 batches
         assert_eq!(total_preds, 5);
 
-        let result = batch_predicates(all_split_results, &params, "TestBatch", &HashMap::new());
+        let result = batch_predicates(
+            all_split_results,
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+            HashMap::new(),
+        );
         assert!(result.is_ok());
 
         let batches = result.unwrap();
@@ -883,7 +1223,13 @@ mod tests {
         let split_results: Vec<SplitResult> = vec![];
         let params = Params::default();
 
-        let result = batch_predicates(split_results, &params, "TestBatch", &HashMap::new());
+        let result = batch_predicates(
+            split_results,
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+            HashMap::new(),
+        );
         assert!(result.is_ok());
 
         let batches = result.unwrap();
@@ -906,6 +1252,7 @@ mod tests {
             &params,
             "TestBatch",
             &HashMap::new(),
+            HashMap::new(),
         )
         .unwrap();
 
@@ -946,6 +1293,7 @@ mod tests {
             &params,
             "TestBatch",
             &HashMap::new(),
+            HashMap::new(),
         )
         .unwrap();
 
@@ -1001,8 +1349,14 @@ mod tests {
         assert_eq!(split_results[0].predicates.len(), 2);
         assert!(split_results[0].chain_info.is_some());
 
-        let batches = batch_predicates(split_results, &params, "TestBatch", &HashMap::new())
-            .expect("Batch failed");
+        let batches = batch_predicates(
+            split_results,
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+            HashMap::new(),
+        )
+        .expect("Batch failed");
 
         // Verify chain info
         let chain_info = batches.split_chain("large_pred").unwrap();
@@ -1065,8 +1419,14 @@ mod tests {
         assert_eq!(split_results[0].predicates.len(), 3);
         assert!(split_results[0].chain_info.is_some());
 
-        let batches = batch_predicates(split_results, &params, "TestBatch", &HashMap::new())
-            .expect("Batch failed");
+        let batches = batch_predicates(
+            split_results,
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+            HashMap::new(),
+        )
+        .expect("Batch failed");
 
         // Verify chain info
         let chain_info = batches.split_chain("very_large_pred").unwrap();
@@ -1121,8 +1481,14 @@ mod tests {
             split_results.push(result);
         }
 
-        let batches = batch_predicates(split_results, &params, "TestBatch", &HashMap::new())
-            .expect("Batch failed");
+        let batches = batch_predicates(
+            split_results,
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+            HashMap::new(),
+        )
+        .expect("Batch failed");
 
         // Try with wrong number of statements (3 instead of 6)
         let statements: Vec<Statement> = (0..3).map(test_statement).collect();
@@ -1162,6 +1528,7 @@ mod tests {
             &params,
             "TestBatch",
             &HashMap::new(),
+            HashMap::new(),
         )
         .unwrap();
 
@@ -1200,8 +1567,14 @@ mod tests {
             split_results.push(result);
         }
 
-        let batches = batch_predicates(split_results, &params, "TestBatch", &HashMap::new())
-            .expect("Batch failed");
+        let batches = batch_predicates(
+            split_results,
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+            HashMap::new(),
+        )
+        .expect("Batch failed");
 
         let statements: Vec<Statement> = (0..6).map(test_statement).collect();
 
@@ -1232,5 +1605,325 @@ mod tests {
 
         // Second operation's last arg SHOULD be test_statement(101) - the result from first op
         assert_eq!(last_args_of_ops[1], Some(test_statement(101)));
+    }
+
+    // ============================================================
+    // Tests for apply_predicate_tree
+    // ============================================================
+
+    use super::{and, or, stmt};
+    use crate::{lang::frontend_ast_lift::AnonPredicateLifter, middleware::OperationType};
+
+    /// Helper: parse predicates and apply lifting to get structure metadata
+    fn parse_and_lift_predicates(
+        input: &str,
+    ) -> (
+        Vec<SplitResult>,
+        HashMap<String, crate::lang::frontend_ast_lift::PredicateStructure>,
+    ) {
+        let params = Params::default();
+        let predicates = parse_predicates(input);
+
+        // Apply lifting to extract structure metadata
+        let lift_result = AnonPredicateLifter::lift_predicates(predicates);
+
+        // Split each predicate
+        let mut split_results = Vec::new();
+        for pred in lift_result.predicates {
+            let result = split_predicate_if_needed(pred, &params).expect("Split failed");
+            split_results.push(result);
+        }
+
+        (split_results, lift_result.structures)
+    }
+
+    #[test]
+    fn test_apply_predicate_tree_flat_predicate() {
+        // A flat predicate (no nesting) should work with apply_predicate_tree
+        let input = r#"
+            simple_pred(A, B) = AND(
+                Equal(A["x"], B["y"])
+            )
+        "#;
+
+        let (split_results, structures) = parse_and_lift_predicates(input);
+        let params = Params::default();
+
+        let batches = batch_predicates(
+            split_results,
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+            structures,
+        )
+        .expect("Batch failed");
+
+        // Flat predicate has no structure metadata
+        assert!(batches.predicate_structure("simple_pred").is_none());
+
+        // Using apply_predicate_tree with flat input should work
+        let input = and([stmt(test_statement(1))]);
+
+        let mut ops_applied = 0;
+        let result: Result<Statement, MultiOperationError> =
+            batches.apply_predicate_tree("simple_pred", input, true, |_public, _op| {
+                ops_applied += 1;
+                Ok(test_statement(100))
+            });
+
+        assert!(result.is_ok());
+        assert_eq!(ops_applied, 1);
+    }
+
+    #[test]
+    fn test_apply_predicate_tree_simple_nested() {
+        // A predicate with a simple nested AND
+        // my_pred(A, B) = AND(AND(Equal(A["x"], 1)), Equal(A["y"], B))
+        let input = r#"
+            my_pred(A, B) = AND(
+                AND(
+                    Equal(A["x"], 1)
+                )
+                Equal(A["y"], B)
+            )
+        "#;
+
+        let (split_results, structures) = parse_and_lift_predicates(input);
+        let params = Params::default();
+
+        let batches = batch_predicates(
+            split_results,
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+            structures,
+        )
+        .expect("Batch failed");
+
+        // Should have structure metadata for my_pred
+        assert!(batches.predicate_structure("my_pred").is_some());
+
+        // Build tree-structured input:
+        // AND([AND([stmt]), stmt])
+        let tree_input = and([
+            and([stmt(test_statement(1))]), // matches inner AND
+            stmt(test_statement(2)),        // matches outer native Equal
+        ]);
+
+        let mut op_names: Vec<String> = Vec::new();
+        let result: Result<Statement, MultiOperationError> =
+            batches.apply_predicate_tree("my_pred", tree_input, true, |_public, op| {
+                // Track which predicate is being applied
+                if let OperationType::Custom(pred_ref) = &op.0 {
+                    let idx = pred_ref.index;
+                    let name = &batches.batches()[0].predicates()[idx].name;
+                    op_names.push(name.clone());
+                }
+                Ok(test_statement(100 + op_names.len()))
+            });
+
+        assert!(result.is_ok());
+        // Should apply 2 operations: the inner anon pred first, then my_pred
+        assert_eq!(op_names.len(), 2);
+        assert_eq!(op_names[0], "my_pred$anon_0"); // inner AND
+        assert_eq!(op_names[1], "my_pred"); // outer
+    }
+
+    #[test]
+    fn test_apply_predicate_tree_or_branch_selection() {
+        // A predicate with OR - user selects which branch
+        // check_or(A) = AND(OR(Equal(A["x"], 1), Equal(A["x"], 2)), Equal(A["y"], 3))
+        let input = r#"
+            check_or(A) = AND(
+                OR(
+                    Equal(A["x"], 1)
+                    Equal(A["x"], 2)
+                )
+                Equal(A["y"], 3)
+            )
+        "#;
+
+        let (split_results, structures) = parse_and_lift_predicates(input);
+        let params = Params::default();
+
+        let batches = batch_predicates(
+            split_results,
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+            structures,
+        )
+        .expect("Batch failed");
+
+        // Build input selecting branch 0 of OR
+        let tree_input_branch0 = and([
+            or(0, stmt(test_statement(1))), // select first branch of OR
+            stmt(test_statement(3)),        // Equal(A["y"], 3)
+        ]);
+
+        let mut op_count = 0;
+        let result: Result<Statement, MultiOperationError> =
+            batches.apply_predicate_tree("check_or", tree_input_branch0, true, |_public, _op| {
+                op_count += 1;
+                Ok(test_statement(100 + op_count))
+            });
+
+        assert!(result.is_ok());
+        // Should apply 2 ops: OR predicate, then check_or
+        assert_eq!(op_count, 2);
+
+        // Build input selecting branch 1 of OR
+        let tree_input_branch1 = and([
+            or(1, stmt(test_statement(2))), // select second branch of OR
+            stmt(test_statement(3)),        // Equal(A["y"], 3)
+        ]);
+
+        let mut op_count2 = 0;
+        let result2: Result<Statement, MultiOperationError> =
+            batches.apply_predicate_tree("check_or", tree_input_branch1, true, |_public, _op| {
+                op_count2 += 1;
+                Ok(test_statement(200 + op_count2))
+            });
+
+        assert!(result2.is_ok());
+        assert_eq!(op_count2, 2);
+    }
+
+    #[test]
+    fn test_apply_predicate_tree_or_branch_out_of_bounds() {
+        // Test error when selecting an invalid OR branch
+        let input = r#"
+            check_or(A) = AND(
+                OR(
+                    Equal(A["x"], 1)
+                    Equal(A["x"], 2)
+                )
+            )
+        "#;
+
+        let (split_results, structures) = parse_and_lift_predicates(input);
+        let params = Params::default();
+
+        let batches = batch_predicates(
+            split_results,
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+            structures,
+        )
+        .expect("Batch failed");
+
+        // Try to select branch 5 (out of bounds - only 2 branches exist)
+        let tree_input = and([or(5, stmt(test_statement(1)))]);
+
+        let result: Result<Statement, MultiOperationError> =
+            batches.apply_predicate_tree("check_or", tree_input, true, |_public, _op| {
+                Ok(test_statement(100))
+            });
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            MultiOperationError::OrBranchOutOfBounds { branch, total } => {
+                assert_eq!(branch, 5);
+                assert_eq!(total, 2);
+            }
+            e => panic!("Expected OrBranchOutOfBounds error, got {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_apply_predicate_tree_deeply_nested() {
+        // A deeply nested predicate: AND(OR(AND(...), ...), ...)
+        let input = r#"
+            deep(A) = AND(
+                OR(
+                    AND(
+                        Equal(A["x"], 1)
+                    )
+                    Equal(A["y"], 2)
+                )
+            )
+        "#;
+
+        let (split_results, structures) = parse_and_lift_predicates(input);
+        let params = Params::default();
+
+        let batches = batch_predicates(
+            split_results,
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+            structures,
+        )
+        .expect("Batch failed");
+
+        // Select branch 0 of OR (the nested AND)
+        let tree_input = and([or(0, and([stmt(test_statement(1))]))]);
+
+        let mut ops_applied = Vec::new();
+        let result: Result<Statement, MultiOperationError> =
+            batches.apply_predicate_tree("deep", tree_input, true, |public, op| {
+                let pred_idx = if let OperationType::Custom(pred_ref) = &op.0 {
+                    Some(pred_ref.index)
+                } else {
+                    None
+                };
+                ops_applied.push((public, pred_idx));
+                Ok(test_statement(100 + ops_applied.len()))
+            });
+
+        assert!(result.is_ok());
+        // Should apply 3 ops: innermost AND, OR, then deep
+        assert_eq!(ops_applied.len(), 3);
+        // All intermediate predicates should be private (false)
+        assert!(!ops_applied[0].0); // inner AND - private
+        assert!(!ops_applied[1].0); // OR - private
+        assert!(ops_applied[2].0); // deep - public (final)
+    }
+
+    #[test]
+    fn test_apply_predicate_tree_structure_mismatch() {
+        // Test error when input structure doesn't match predicate structure
+        // Using a nested AND with multiple children so stmt can't be used in its place
+        let input = r#"
+            my_pred(A, B) = AND(
+                AND(
+                    Equal(A["x"], 1)
+                    Equal(A["z"], 3)
+                )
+                Equal(A["y"], B)
+            )
+        "#;
+
+        let (split_results, structures) = parse_and_lift_predicates(input);
+        let params = Params::default();
+
+        let batches = batch_predicates(
+            split_results,
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+            structures,
+        )
+        .expect("Batch failed");
+
+        // Wrong structure: passing 3 stmts at top level, but structure expects and([...], stmt)
+        let wrong_input = and([
+            stmt(test_statement(1)), // should be and([stmt, stmt])
+            stmt(test_statement(2)),
+            stmt(test_statement(3)),
+        ]);
+
+        let result: Result<Statement, MultiOperationError> =
+            batches.apply_predicate_tree("my_pred", wrong_input, true, |_public, _op| {
+                Ok(test_statement(100))
+            });
+
+        assert!(result.is_err());
+        // Should get a structure mismatch error
+        match result.unwrap_err() {
+            MultiOperationError::StructureMismatch { .. } => {}
+            e => panic!("Expected StructureMismatch error, got {:?}", e),
+        }
     }
 }
