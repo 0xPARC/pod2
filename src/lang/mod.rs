@@ -1,6 +1,7 @@
 pub mod error;
 pub mod frontend_ast;
 pub mod frontend_ast_batch;
+pub mod frontend_ast_lift;
 pub mod frontend_ast_lower;
 pub mod frontend_ast_split;
 pub mod frontend_ast_validate;
@@ -11,6 +12,7 @@ use std::sync::Arc;
 
 pub use error::LangError;
 pub use frontend_ast_batch::{MultiOperationError, PredicateBatches};
+pub use frontend_ast_lift::AnonPredicateLifter;
 pub use frontend_ast_split::{SplitChainInfo, SplitChainPiece, SplitResult};
 pub use parser::{parse_podlang, Pairs, ParseError, Rule};
 pub use pretty_print::PrettyPrint;
@@ -1039,5 +1041,243 @@ mod tests {
             },
             e => panic!("Expected LangError::Validation, but got {:?}", e),
         }
+    }
+
+    // ============================================================
+    // End-to-end tests for inline conjunctions (anonymous predicates)
+    // ============================================================
+
+    #[test]
+    fn test_e2e_simple_inline_and() -> Result<(), LangError> {
+        // Simple nested AND should generate an anonymous predicate
+        let input = r#"
+            my_pred(A, B) = AND(
+                AND(
+                    Equal(A["foo"], 123)
+                )
+                Equal(A["bar"], B)
+            )
+        "#;
+
+        let params = Params::default();
+        let processed = parse(input, &params, &[])?;
+        let batch = first_batch(&processed);
+
+        // Should generate 2 predicates: anon first, then original
+        assert_eq!(batch.predicates.len(), 2);
+        assert_eq!(batch.predicates[0].name, "my_pred$anon_0");
+        assert_eq!(batch.predicates[1].name, "my_pred");
+
+        // Anonymous predicate has only A (the only wildcard it uses)
+        assert_eq!(batch.predicates[0].wildcard_names(), &["A"]);
+        assert_eq!(batch.predicates[0].args_len(), 1);
+
+        // Original predicate has A and B
+        assert_eq!(batch.predicates[1].wildcard_names(), &["A", "B"]);
+        assert_eq!(batch.predicates[1].args_len(), 2);
+
+        // Original predicate's first statement should call the anonymous predicate
+        let stmt = &batch.predicates[1].statements()[0];
+        assert_eq!(stmt.pred, Predicate::BatchSelf(0));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_e2e_inline_or_in_and() -> Result<(), LangError> {
+        // OR inside AND - tests mixed conjunction types
+        let input = r#"
+            check_or(A) = AND(
+                OR(
+                    Equal(A["x"], 1)
+                    Equal(A["x"], 2)
+                )
+            )
+        "#;
+
+        let params = Params::default();
+        let processed = parse(input, &params, &[])?;
+        let batch = first_batch(&processed);
+
+        // Should generate 2 predicates
+        assert_eq!(batch.predicates.len(), 2);
+        assert_eq!(batch.predicates[0].name, "check_or$anon_0");
+        assert_eq!(batch.predicates[1].name, "check_or");
+
+        // Anonymous predicate should be OR type (is_conjunction=false)
+        assert!(!batch.predicates[0].is_conjunction());
+        // Original predicate should be AND type (is_conjunction=true)
+        assert!(batch.predicates[1].is_conjunction());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_e2e_deeply_nested_conjunctions() -> Result<(), LangError> {
+        // AND inside OR inside AND - 3 levels of nesting
+        let input = r#"
+            deep(A) = AND(
+                OR(
+                    AND(
+                        Equal(A["x"], 1)
+                    )
+                    Equal(A["y"], 2)
+                )
+            )
+        "#;
+
+        let params = Params::default();
+        let processed = parse(input, &params, &[])?;
+        let batch = first_batch(&processed);
+
+        // Should generate 3 predicates: innermost AND, middle OR, outer AND
+        assert_eq!(batch.predicates.len(), 3);
+        // Inner AND is lifted first during DFS
+        assert_eq!(batch.predicates[0].name, "deep$anon_0$anon_1");
+        assert_eq!(batch.predicates[1].name, "deep$anon_0");
+        assert_eq!(batch.predicates[2].name, "deep");
+
+        // Innermost is AND (is_conjunction=true)
+        assert!(batch.predicates[0].is_conjunction());
+        // Middle is OR (is_conjunction=false)
+        assert!(!batch.predicates[1].is_conjunction());
+        // Outermost is AND (is_conjunction=true)
+        assert!(batch.predicates[2].is_conjunction());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_e2e_inline_uses_parent_private_wildcard() -> Result<(), LangError> {
+        // Inline conjunction uses B which is private in parent
+        let input = r#"
+            my_pred(A, private: B) = AND(
+                AND(
+                    Equal(A["foo"], B["bar"])
+                )
+                Equal(A["x"], 1)
+            )
+        "#;
+
+        let params = Params::default();
+        let processed = parse(input, &params, &[])?;
+        let batch = first_batch(&processed);
+
+        assert_eq!(batch.predicates.len(), 2);
+
+        // Anonymous predicate should have both A and B as PUBLIC args
+        // (even though B was private in parent - it becomes public in anon pred)
+        let anon_pred = &batch.predicates[0];
+        assert_eq!(anon_pred.name, "my_pred$anon_0");
+        assert_eq!(anon_pred.wildcard_names(), &["A", "B"]);
+        assert_eq!(anon_pred.args_len(), 2); // Both are public in anon pred
+
+        // Original predicate still has B as private
+        let orig_pred = &batch.predicates[1];
+        assert_eq!(orig_pred.wildcard_names(), &["A", "B"]);
+        assert_eq!(orig_pred.args_len(), 1); // Only A is public
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_e2e_inline_arg_subset() -> Result<(), LangError> {
+        // Inline conjunction only uses A, not B or C
+        let input = r#"
+            my_pred(A, B, C) = AND(
+                AND(
+                    Equal(A["foo"], 123)
+                )
+                Equal(B["bar"], C)
+            )
+        "#;
+
+        let params = Params::default();
+        let processed = parse(input, &params, &[])?;
+        let batch = first_batch(&processed);
+
+        assert_eq!(batch.predicates.len(), 2);
+
+        // Anonymous predicate should only have A (the only wildcard it uses)
+        let anon_pred = &batch.predicates[0];
+        assert_eq!(anon_pred.wildcard_names(), &["A"]);
+        assert_eq!(anon_pred.args_len(), 1);
+
+        // Original has all three
+        let orig_pred = &batch.predicates[1];
+        assert_eq!(orig_pred.wildcard_names(), &["A", "B", "C"]);
+
+        // The call to anon pred should only pass A
+        let call_stmt = &orig_pred.statements()[0];
+        assert_eq!(call_stmt.pred, Predicate::BatchSelf(0));
+        assert_eq!(call_stmt.args.len(), 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_e2e_multiple_inline_conjunctions() -> Result<(), LangError> {
+        // Two inline conjunctions at the same level
+        let input = r#"
+            multi(A, B) = AND(
+                AND(
+                    Equal(A["x"], 1)
+                )
+                AND(
+                    Equal(B["y"], 2)
+                )
+            )
+        "#;
+
+        let params = Params::default();
+        let processed = parse(input, &params, &[])?;
+        let batch = first_batch(&processed);
+
+        // Should generate 3 predicates: two anon preds + original
+        assert_eq!(batch.predicates.len(), 3);
+        assert_eq!(batch.predicates[0].name, "multi$anon_0");
+        assert_eq!(batch.predicates[1].name, "multi$anon_1");
+        assert_eq!(batch.predicates[2].name, "multi");
+
+        // First anon uses A, second uses B
+        assert_eq!(batch.predicates[0].wildcard_names(), &["A"]);
+        assert_eq!(batch.predicates[1].wildcard_names(), &["B"]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_e2e_inline_with_request() -> Result<(), LangError> {
+        // Predicate with inline conjunction used in REQUEST
+        let input = r#"
+            check_nested(A) = AND(
+                AND(
+                    Equal(A["status"], "active")
+                )
+                Equal(A["type"], "user")
+            )
+
+            REQUEST(
+                check_nested(MyPod)
+            )
+        "#;
+
+        let params = Params::default();
+        let processed = parse(input, &params, &[])?;
+        let batch = first_batch(&processed);
+        let request = processed.request.templates();
+
+        // Should have 2 predicates in batch
+        assert_eq!(batch.predicates.len(), 2);
+
+        // Request should call the original predicate (index 1)
+        assert_eq!(request.len(), 1);
+        let custom_pred_ref = match &request[0].pred {
+            Predicate::Custom(r) => r,
+            _ => panic!("Expected Custom predicate"),
+        };
+        assert_eq!(custom_pred_ref.index, 1);
+
+        Ok(())
     }
 }
