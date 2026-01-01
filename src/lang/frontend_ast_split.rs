@@ -145,7 +145,8 @@ fn analyze_wildcards(statements: &[StatementTmpl]) -> HashMap<String, WildcardUs
 fn collect_wildcards_from_statement(stmt: &StatementTmpl) -> HashSet<String> {
     let mut wildcards = HashSet::new();
 
-    for arg in &stmt.args {
+    let (_, args) = stmt.expect_call();
+    for arg in args {
         match arg {
             StatementTmplArg::Wildcard(id) => {
                 wildcards.insert(id.name.clone());
@@ -629,11 +630,7 @@ fn generate_chain_predicates(
                 })
                 .collect();
 
-            let chain_call = StatementTmpl {
-                predicate: next_pred_name,
-                args: chain_call_args,
-                span: None,
-            };
+            let chain_call = StatementTmpl::call(next_pred_name, chain_call_args, None);
 
             statements.push(chain_call);
         }
@@ -848,7 +845,7 @@ mod tests {
         let original = &chain[1];
         assert_eq!(original.name.name, "complex");
         let last_stmt = original.statements.last().unwrap();
-        assert_eq!(last_stmt.predicate.name, "complex_1");
+        assert_eq!(last_stmt.predicate().unwrap().name, "complex_1");
     }
 
     #[test]

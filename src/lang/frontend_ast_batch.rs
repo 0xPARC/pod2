@@ -503,7 +503,8 @@ fn build_statement_with_resolved_refs(
     existing_batches: &[Arc<CustomPredicateBatch>],
     imported_predicates: &HashMap<String, ImportedPredicateInfo>,
 ) -> Result<StatementTmplBuilder, BatchingError> {
-    let callee_name = &stmt.predicate.name;
+    let (predicate_id, args) = stmt.expect_call();
+    let callee_name = &predicate_id.name;
 
     // Resolve the predicate
     let predicate = if let Ok(native) = NativePredicate::from_str(callee_name) {
@@ -542,7 +543,7 @@ fn build_statement_with_resolved_refs(
     // Build the statement template
     let mut builder = StatementTmplBuilder::new(predicate);
 
-    for arg in &stmt.args {
+    for arg in args {
         let builder_arg = match arg {
             StatementTmplArg::Literal(lit) => {
                 let value = lower_literal(lit)?;
@@ -863,7 +864,12 @@ mod tests {
         // That's 5 predicates, which spans 2 batches
         assert_eq!(total_preds, 5);
 
-        let result = batch_predicates(all_split_results, &params, "TestBatch", &HashMap::new());
+        let result = batch_predicates(
+            all_split_results,
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+        );
         assert!(result.is_ok());
 
         let batches = result.unwrap();
@@ -883,7 +889,12 @@ mod tests {
         let split_results: Vec<SplitResult> = vec![];
         let params = Params::default();
 
-        let result = batch_predicates(split_results, &params, "TestBatch", &HashMap::new());
+        let result = batch_predicates(
+            split_results,
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+        );
         assert!(result.is_ok());
 
         let batches = result.unwrap();
@@ -1001,8 +1012,13 @@ mod tests {
         assert_eq!(split_results[0].predicates.len(), 2);
         assert!(split_results[0].chain_info.is_some());
 
-        let batches = batch_predicates(split_results, &params, "TestBatch", &HashMap::new())
-            .expect("Batch failed");
+        let batches = batch_predicates(
+            split_results,
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+        )
+        .expect("Batch failed");
 
         // Verify chain info
         let chain_info = batches.split_chain("large_pred").unwrap();
@@ -1065,8 +1081,13 @@ mod tests {
         assert_eq!(split_results[0].predicates.len(), 3);
         assert!(split_results[0].chain_info.is_some());
 
-        let batches = batch_predicates(split_results, &params, "TestBatch", &HashMap::new())
-            .expect("Batch failed");
+        let batches = batch_predicates(
+            split_results,
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+        )
+        .expect("Batch failed");
 
         // Verify chain info
         let chain_info = batches.split_chain("very_large_pred").unwrap();
@@ -1121,8 +1142,13 @@ mod tests {
             split_results.push(result);
         }
 
-        let batches = batch_predicates(split_results, &params, "TestBatch", &HashMap::new())
-            .expect("Batch failed");
+        let batches = batch_predicates(
+            split_results,
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+        )
+        .expect("Batch failed");
 
         // Try with wrong number of statements (3 instead of 6)
         let statements: Vec<Statement> = (0..3).map(test_statement).collect();
@@ -1200,8 +1226,13 @@ mod tests {
             split_results.push(result);
         }
 
-        let batches = batch_predicates(split_results, &params, "TestBatch", &HashMap::new())
-            .expect("Batch failed");
+        let batches = batch_predicates(
+            split_results,
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+        )
+        .expect("Batch failed");
 
         let statements: Vec<Statement> = (0..6).map(test_statement).collect();
 
