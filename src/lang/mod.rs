@@ -11,7 +11,9 @@ pub mod pretty_print;
 use std::sync::Arc;
 
 pub use error::LangError;
-pub use frontend_ast_batch::{MultiOperationError, PredicateBatches};
+pub use frontend_ast_batch::{
+    and, or, stmt, MultiOperationError, PredicateBatches, PredicateInput,
+};
 pub use frontend_ast_lift::AnonPredicateLifter;
 pub use frontend_ast_split::{SplitChainInfo, SplitChainPiece, SplitResult};
 pub use parser::{parse_podlang, Pairs, ParseError, Rule};

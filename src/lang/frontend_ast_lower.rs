@@ -78,7 +78,7 @@ impl<'a> Lowerer<'a> {
 
     fn lower_batches(&self, batch_name: String) -> Result<Option<PredicateBatches>, LoweringError> {
         // Extract and split custom predicates from document
-        let split_results = self.extract_and_split_predicates()?;
+        let (split_results, predicate_structures) = self.extract_and_split_predicates()?;
 
         // If no custom predicates, return None
         if split_results.is_empty() {
@@ -94,6 +94,7 @@ impl<'a> Lowerer<'a> {
             self.params,
             &batch_name,
             &imported_predicates,
+            predicate_structures,
         )?;
 
         Ok(Some(batches))
@@ -276,7 +277,13 @@ impl<'a> Lowerer<'a> {
 
     fn extract_and_split_predicates(
         &self,
-    ) -> Result<Vec<frontend_ast_split::SplitResult>, LoweringError> {
+    ) -> Result<
+        (
+            Vec<frontend_ast_split::SplitResult>,
+            std::collections::HashMap<String, super::frontend_ast_lift::PredicateStructure>,
+        ),
+        LoweringError,
+    > {
         use super::frontend_ast_lift::AnonPredicateLifter;
 
         let doc = self.validated.document();
@@ -291,16 +298,16 @@ impl<'a> Lowerer<'a> {
 
         // Lift inline conjunctions to anonymous predicates
         // This transforms nested AND/OR blocks into separate predicates
-        let lifted_predicates = AnonPredicateLifter::lift_predicates(predicates);
+        let lift_result = AnonPredicateLifter::lift_predicates(predicates);
 
         // Apply splitting to each predicate as needed
         let mut split_results = Vec::new();
-        for pred in lifted_predicates {
+        for pred in lift_result.predicates {
             let result = frontend_ast_split::split_predicate_if_needed(pred, self.params)?;
             split_results.push(result);
         }
 
-        Ok(split_results)
+        Ok((split_results, lift_result.structures))
     }
 
     fn lower_statement_arg_to_builder(arg: &StatementTmplArg) -> Result<BuilderArg, LoweringError> {
