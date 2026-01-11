@@ -3,7 +3,7 @@
 //! This module provides cost analysis for multi-POD packing. Each operation
 //! consumes various resources that have per-POD limits.
 
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
 use crate::{
     frontend::Operation,
@@ -11,7 +11,7 @@ use crate::{
 };
 
 /// Unique identifier for a custom predicate batch.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CustomBatchId(pub Hash);
 
 impl From<&CustomPredicateBatch> for CustomBatchId {
@@ -47,7 +47,7 @@ pub struct StatementCost {
 
     /// Custom predicate batches used (for batch cardinality constraint).
     /// Limit: `params.max_custom_predicate_batches` distinct batches per POD.
-    pub custom_batch_ids: HashSet<CustomBatchId>,
+    pub custom_batch_ids: BTreeSet<CustomBatchId>,
 }
 
 impl StatementCost {
@@ -131,7 +131,7 @@ pub struct AggregateCost {
     pub custom_pred_verifications: usize,
     pub signed_by: usize,
     pub public_key_of: usize,
-    pub custom_batch_ids: HashSet<CustomBatchId>,
+    pub custom_batch_ids: BTreeSet<CustomBatchId>,
 }
 
 impl AggregateCost {

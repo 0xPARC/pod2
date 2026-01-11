@@ -4,7 +4,7 @@
 //! that automatically handles cases where statements exceed per-POD limits by
 //! splitting across multiple PODs.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 
 use crate::{
     frontend::{MainPod, MainPodBuilder, Operation, OperationArg},
@@ -113,7 +113,7 @@ pub struct MultiPodBuilder {
     /// Operations that produce each statement.
     operations: Vec<Operation>,
     /// Indices of statements that should be public in output PODs.
-    output_public_indices: HashSet<usize>,
+    output_public_indices: BTreeSet<usize>,
     /// Cached solution from the solver.
     cached_solution: Option<MultiPodSolution>,
 }
@@ -133,7 +133,7 @@ impl MultiPodBuilder {
             input_pods: Vec::new(),
             statements: Vec::new(),
             operations: Vec::new(),
-            output_public_indices: HashSet::new(),
+            output_public_indices: BTreeSet::new(),
             cached_solution: None,
         }
     }
@@ -308,7 +308,7 @@ impl MultiPodBuilder {
 
         // Add earlier generated PODs that provide statements to this POD
         let statements_in_this_pod: &Vec<usize> = &solution.pod_statements[pod_idx];
-        let mut needed_earlier_pods: HashSet<usize> = HashSet::new();
+        let mut needed_earlier_pods: BTreeSet<usize> = BTreeSet::new();
 
         // Find which earlier PODs we need
         let external_pod_statements = self.build_external_statement_map();
@@ -351,7 +351,7 @@ impl MultiPodBuilder {
 
         // Add statements in dependency order
         let topo_order = deps.topological_order();
-        let statements_set: HashSet<usize> = statements_in_this_pod.iter().copied().collect();
+        let statements_set: BTreeSet<usize> = statements_in_this_pod.iter().copied().collect();
         let public_set = &solution.pod_public_statements[pod_idx];
 
         // Track which statements have been added to this builder

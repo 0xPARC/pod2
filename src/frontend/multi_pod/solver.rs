@@ -6,7 +6,7 @@
 // MILP constraint building uses explicit index loops for clarity
 #![allow(clippy::needless_range_loop)]
 
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
 use good_lp::{
     constraint, default_solver, variable, Expression, ProblemVariables, Solution, SolverModel,
@@ -36,13 +36,13 @@ pub struct MultiPodSolution {
     pub pod_statements: Vec<Vec<usize>>,
 
     /// For each POD, which statement indices are public in it.
-    pub pod_public_statements: Vec<HashSet<usize>>,
+    pub pod_public_statements: Vec<BTreeSet<usize>>,
 
     /// Order to prove PODs (respects dependencies - earlier PODs first).
     pub prove_order: Vec<usize>,
 
     /// Which PODs are "output" PODs (contain user-requested public statements).
-    pub output_pod_indices: HashSet<usize>,
+    pub output_pod_indices: BTreeSet<usize>,
 }
 
 /// Input to the MILP solver.
@@ -57,7 +57,7 @@ pub struct SolverInput<'a> {
     pub deps: &'a DependencyGraph,
 
     /// Indices of statements that must be public in output PODs.
-    pub output_public_indices: &'a HashSet<usize>,
+    pub output_public_indices: &'a BTreeSet<usize>,
 
     /// Parameters defining per-POD limits.
     pub params: &'a Params,
@@ -76,7 +76,7 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
             pod_statements: vec![],
             pod_public_statements: vec![],
             prove_order: vec![],
-            output_pod_indices: HashSet::new(),
+            output_pod_indices: BTreeSet::new(),
         });
     }
 
@@ -106,12 +106,12 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
     // Upper bound: add slack but cap at configured max_pods
     let max_pods = (min_pods * 2).max(2).min(n).min(input.max_pods);
 
-    // Collect all custom batch IDs used
+    // Collect all custom batch IDs used (BTreeSet for deterministic ordering)
     let all_batches: Vec<CustomBatchId> = input
         .costs
         .iter()
         .flat_map(|c| c.custom_batch_ids.iter().cloned())
-        .collect::<HashSet<_>>()
+        .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
 
@@ -343,7 +343,7 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
 
     let mut statement_to_pods: Vec<Vec<usize>> = vec![vec![]; n];
     let mut pod_statements: Vec<Vec<usize>> = vec![vec![]; pod_count];
-    let mut pod_public_statements: Vec<HashSet<usize>> = vec![HashSet::new(); pod_count];
+    let mut pod_public_statements: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); pod_count];
 
     for s in 0..n {
         for p in 0..pod_count {
@@ -358,7 +358,7 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
     }
 
     // Determine output PODs (those containing user-requested public statements)
-    let mut output_pod_indices = HashSet::new();
+    let mut output_pod_indices = BTreeSet::new();
     for &s in input.output_public_indices {
         for p in 0..pod_count {
             if solution.value(public[s][p]) > 0.5 {
@@ -409,7 +409,7 @@ mod tests {
 
         let costs: Vec<StatementCost> = (0..5).map(|_| StatementCost::default()).collect();
         let deps = make_simple_deps(5);
-        let output_public = HashSet::from([0, 1]);
+        let output_public = BTreeSet::from([0, 1]);
 
         let input = SolverInput {
             num_statements: 5,
@@ -440,7 +440,7 @@ mod tests {
 
         let costs: Vec<StatementCost> = (0..6).map(|_| StatementCost::default()).collect();
         let deps = make_simple_deps(6);
-        let output_public = HashSet::new();
+        let output_public = BTreeSet::new();
 
         let input = SolverInput {
             num_statements: 6,
@@ -462,7 +462,7 @@ mod tests {
         let params = Params::default();
         let costs: Vec<StatementCost> = vec![];
         let deps = make_simple_deps(0);
-        let output_public = HashSet::new();
+        let output_public = BTreeSet::new();
 
         let input = SolverInput {
             num_statements: 0,
