@@ -268,7 +268,7 @@ impl MultiPodBuilder {
     /// This first solves if not already solved, then builds and proves
     /// all necessary PODs in dependency order.
     pub fn prove(&mut self, prover: &dyn MainPodProver) -> Result<MultiPodResult> {
-        // Ensure we have a solution
+        // Ensure we have a solution (can't use returned reference due to later &mut self borrows)
         self.solve()?;
         let solution = self.cached_solution.as_ref().unwrap();
 
@@ -417,12 +417,9 @@ impl MultiPodBuilder {
             let is_public = public_set.contains(&stmt_idx);
             let op = self.operations[stmt_idx].clone();
 
-            let stmt = if is_public {
-                builder.pub_op(op)
-            } else {
-                builder.priv_op(op)
-            }
-            .map_err(|e| Error::Frontend(e.to_string()))?;
+            let stmt = builder
+                .op(is_public, vec![], op)
+                .map_err(|e| Error::Frontend(e.to_string()))?;
 
             added_statements.insert(stmt_idx, stmt);
         }
