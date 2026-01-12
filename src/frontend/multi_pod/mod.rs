@@ -200,10 +200,17 @@ impl MultiPodBuilder {
     }
 
     /// Mark a statement as public in output.
-    pub fn reveal(&mut self, stmt: &Statement) {
+    ///
+    /// Returns an error if the statement was not found in the builder.
+    pub fn reveal(&mut self, stmt: &Statement) -> Result<()> {
         if let Some(idx) = self.statements.iter().position(|s| s == stmt) {
             self.output_public_indices.insert(idx);
             self.cached_solution = None;
+            Ok(())
+        } else {
+            Err(Error::Frontend(
+                "reveal() called with statement not found in builder".to_string(),
+            ))
         }
     }
 
