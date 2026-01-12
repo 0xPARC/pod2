@@ -148,7 +148,7 @@ impl DependencyGraph {
         }
 
         // If result doesn't contain all nodes, there's a cycle (shouldn't happen)
-        debug_assert_eq!(result.len(), n, "Dependency graph has a cycle!");
+        assert_eq!(result.len(), n, "Dependency graph has a cycle!");
 
         result
     }
