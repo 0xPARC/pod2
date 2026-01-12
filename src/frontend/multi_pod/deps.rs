@@ -73,13 +73,21 @@ impl DependencyGraph {
 
                     // Check if this is an internal statement (created earlier in this builder)
                     if let Some(&dep_idx) = statement_to_index.get(dep_stmt) {
+                        // Internal dependencies must always be from earlier statements
+                        assert!(
+                            dep_idx <= idx,
+                            "Statement at index {} depends on future statement at index {}",
+                            idx,
+                            dep_idx
+                        );
+
                         if dep_idx < idx {
                             // The statement was created by an earlier operation
                             deps.push(StatementSource::Internal(dep_idx));
                             dependents.entry(dep_idx).or_default().push(idx);
                             continue;
                         }
-                        // If dep_idx >= idx, this operation produces or will produce this statement.
+                        // If dep_idx == idx, this operation produces this statement.
                         // For CopyStatement, output == input, so we need to check external PODs.
                     }
 
