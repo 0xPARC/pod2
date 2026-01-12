@@ -86,8 +86,14 @@ impl DependencyGraph {
                     // Check if this is from an external POD
                     if let Some(&pod_hash) = external_pod_statements.get(dep_stmt) {
                         deps.push(StatementSource::External(pod_hash));
+                    } else {
+                        // Statement arguments should either be internal (created earlier)
+                        // or from external PODs. If neither, something is wrong.
+                        unreachable!(
+                            "Statement argument not found in internal statements or external PODs: {:?}",
+                            dep_stmt
+                        );
                     }
-                    // Otherwise it might be a literal statement or unknown
                 }
             }
 
