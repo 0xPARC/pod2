@@ -107,8 +107,11 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
         )));
     }
 
-    // Upper bound: add slack but cap at configured max_pods
-    let max_pods = (min_pods * 2).max(2).min(n).min(input.max_pods);
+    // Upper bound: give solver room to explore (100% slack), but cap at:
+    // - n: can't need more PODs than statements
+    // - input.max_pods: user-configured limit
+    // Note: min_pods >= 1, so min_pods * 2 >= 2
+    let max_pods = (min_pods * 2).min(n).min(input.max_pods);
 
     // Collect all custom batch IDs used (BTreeSet for deterministic ordering)
     let all_batches: Vec<CustomBatchId> = input

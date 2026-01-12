@@ -201,7 +201,7 @@ pub fn estimate_pod_count(operations: &[Operation], params: &Params) -> usize {
     // Add a fudge factor for dependency overhead and public statement constraints
     let lower_bound = aggregate.lower_bound_pods(params);
     // Heuristic: add ~20% overhead for dependencies
-    lower_bound + (lower_bound / 5).max(0)
+    lower_bound + lower_bound / 5
 }
 
 #[cfg(test)]
