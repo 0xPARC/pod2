@@ -165,12 +165,21 @@ impl MultiPodBuilder {
         let unlimited_params = Params {
             max_statements: usize::MAX / 2,
             max_public_statements: usize::MAX / 2,
+            max_input_pods: usize::MAX / 2,
+            max_input_pods_public_statements: usize::MAX / 2,
             ..self.params.clone()
         };
 
         // Create a temporary MainPodBuilder to compute the statement
         // This reuses the existing statement computation logic
         let mut temp_builder = MainPodBuilder::new(&unlimited_params, &self.vd_set);
+
+        // Add external input PODs (needed for operations that reference their statements)
+        for input_pod in &self.input_pods {
+            temp_builder
+                .add_pod(input_pod.clone())
+                .map_err(|e| Error::Frontend(e.to_string()))?;
+        }
 
         // Add existing statements as context (for dependency resolution)
         // We need to recreate the builder state to get correct statement computation
@@ -301,37 +310,49 @@ impl MultiPodBuilder {
     ) -> Result<MainPod> {
         let mut builder = MainPodBuilder::new(&self.params, &self.vd_set);
 
-        // Add external input PODs
-        for input_pod in &self.input_pods {
-            builder.add_pod(input_pod.clone())?;
-        }
-
-        // Add earlier generated PODs that provide statements to this POD
-        let statements_in_this_pod: &Vec<usize> = &solution.pod_statements[pod_idx];
-        let mut needed_earlier_pods: BTreeSet<usize> = BTreeSet::new();
-
-        // Find which earlier PODs we need
+        // Build dependency graph first to determine which input PODs we need
         let external_pod_statements = self.build_external_statement_map();
         let deps =
             DependencyGraph::build(&self.statements, &self.operations, &external_pod_statements);
 
+        let statements_in_this_pod: &Vec<usize> = &solution.pod_statements[pod_idx];
+        let mut needed_external_pods: BTreeSet<usize> = BTreeSet::new();
+        let mut needed_earlier_pods: BTreeSet<usize> = BTreeSet::new();
+
+        // Find which external and earlier PODs we need based on dependencies
         for &stmt_idx in statements_in_this_pod {
             for dep in &deps.statement_deps[stmt_idx].depends_on {
-                if let StatementSource::Internal(dep_idx) = dep {
-                    // Check if dependency is in an earlier POD
-                    for earlier_pod_idx in 0..pod_idx {
-                        if solution.pod_statements[earlier_pod_idx].contains(dep_idx)
-                            && solution.pod_public_statements[earlier_pod_idx].contains(dep_idx)
-                        {
-                            needed_earlier_pods.insert(earlier_pod_idx);
-                            break;
+                match dep {
+                    StatementSource::Internal(dep_idx) => {
+                        // Check if dependency is in an earlier generated POD
+                        for earlier_pod_idx in 0..pod_idx {
+                            if solution.pod_statements[earlier_pod_idx].contains(dep_idx)
+                                && solution.pod_public_statements[earlier_pod_idx].contains(dep_idx)
+                            {
+                                needed_earlier_pods.insert(earlier_pod_idx);
+                                break;
+                            }
+                        }
+                    }
+                    StatementSource::External(pod_hash) => {
+                        // Find which external POD has this hash
+                        for (idx, input_pod) in self.input_pods.iter().enumerate() {
+                            if input_pod.statements_hash() == *pod_hash {
+                                needed_external_pods.insert(idx);
+                                break;
+                            }
                         }
                     }
                 }
             }
         }
 
-        // Add needed earlier PODs
+        // Add only the external input PODs that are needed
+        for &ext_idx in &needed_external_pods {
+            builder.add_pod(self.input_pods[ext_idx].clone())?;
+        }
+
+        // Add needed earlier generated PODs
         for &earlier_idx in &needed_earlier_pods {
             builder.add_pod(earlier_pods[earlier_idx].clone())?;
         }
@@ -773,5 +794,90 @@ mod tests {
             "Error message should suggest increasing Options::max_pods: {}",
             err_msg
         );
+    }
+
+    #[test]
+    fn test_external_pods_only_added_where_needed() -> Result<()> {
+        // Verifies that external input PODs are only added to generated PODs
+        // that actually need them based on statement dependencies.
+        //
+        // Setup:
+        // - Two external PODs: ext_A and ext_B, each with a public statement
+        // - max_input_pods = 1 (each generated POD can only have 1 input POD)
+        // - Operations split across 2 generated PODs:
+        //   - POD 0 copies from ext_B only
+        //   - POD 1 copies from ext_A only
+        //
+        // With max_input_pods = 1, this only works if each generated POD
+        // includes only the external POD it actually depends on.
+
+        let params = Params {
+            max_statements: 4,        // Small limit to force 2 PODs
+            max_public_statements: 2, // max_priv_statements = 4 - 2 = 2
+            max_input_pods: 1,        // Only 1 input POD allowed per generated POD
+            max_input_pods_public_statements: 4,
+            ..Params::default()
+        };
+        let vd_set = &*MOCK_VD_SET;
+
+        // Create external POD A with a public statement
+        let prover = MockProver {};
+        let mut builder_a = MainPodBuilder::new(&params, vd_set);
+        builder_a.pub_op(FrontendOp::eq(100, 100))?;
+        let ext_pod_a = builder_a.prove(&prover)?;
+
+        // Create external POD B with a public statement
+        let mut builder_b = MainPodBuilder::new(&params, vd_set);
+        builder_b.pub_op(FrontendOp::eq(200, 200))?;
+        let ext_pod_b = builder_b.prove(&prover)?;
+
+        // Get the actual statements from the proved PODs
+        let stmt_a = ext_pod_a
+            .pod
+            .pub_statements()
+            .into_iter()
+            .find(|s| !s.is_none())
+            .expect("ext_pod_a should have a public statement");
+        let stmt_b = ext_pod_b
+            .pod
+            .pub_statements()
+            .into_iter()
+            .find(|s| !s.is_none())
+            .expect("ext_pod_b should have a public statement");
+
+        // Create MultiPodBuilder and add both external PODs
+        let mut multi_builder = MultiPodBuilder::new(&params, vd_set);
+        multi_builder.add_pod(ext_pod_a.clone());
+        multi_builder.add_pod(ext_pod_b.clone());
+
+        // Add operations that reference statements from different external PODs.
+        // The solver will split these across multiple generated PODs.
+        multi_builder.pub_op(FrontendOp::copy(stmt_a))?;
+        multi_builder.pub_op(FrontendOp::eq(101, 101))?;
+        multi_builder.pub_op(FrontendOp::copy(stmt_b))?;
+        multi_builder.pub_op(FrontendOp::eq(201, 201))?;
+
+        // With 4 public statements and max_public_statements = 2, we need 2 PODs.
+        // Each POD should only include the external POD it depends on.
+
+        let solution = multi_builder.solve()?;
+        assert!(
+            solution.pod_count >= 2,
+            "Expected at least 2 PODs, got {}",
+            solution.pod_count
+        );
+
+        // This should succeed if external PODs are correctly filtered
+        // Currently it will fail because all external PODs are added to all generated PODs
+        let result = multi_builder.prove(&prover)?;
+
+        // Verify all PODs
+        for (i, pod) in result.pods.iter().enumerate() {
+            pod.pod
+                .verify()
+                .map_err(|e| Error::Frontend(format!("POD {} verification failed: {}", i, e)))?;
+        }
+
+        Ok(())
     }
 }

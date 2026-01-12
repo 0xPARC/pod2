@@ -71,15 +71,20 @@ impl DependencyGraph {
                         continue;
                     }
 
-                    // Check if this is an internal statement
+                    // Check if this is an internal statement (created earlier in this builder)
                     if let Some(&dep_idx) = statement_to_index.get(dep_stmt) {
                         if dep_idx < idx {
+                            // The statement was created by an earlier operation
                             deps.push(StatementSource::Internal(dep_idx));
                             dependents.entry(dep_idx).or_default().push(idx);
+                            continue;
                         }
+                        // If dep_idx >= idx, this operation produces or will produce this statement.
+                        // For CopyStatement, output == input, so we need to check external PODs.
                     }
+
                     // Check if this is from an external POD
-                    else if let Some(&pod_hash) = external_pod_statements.get(dep_stmt) {
+                    if let Some(&pod_hash) = external_pod_statements.get(dep_stmt) {
                         deps.push(StatementSource::External(pod_hash));
                     }
                     // Otherwise it might be a literal statement or unknown
