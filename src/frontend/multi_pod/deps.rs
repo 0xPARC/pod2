@@ -3,7 +3,7 @@
 //! This module analyzes dependencies between statements to determine
 //! which statements must be proved before others.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use crate::{
     frontend::{Operation, OperationArg},
@@ -129,11 +129,11 @@ impl DependencyGraph {
             }
         }
 
-        // Start with nodes that have no dependencies
-        let mut queue: Vec<usize> = (0..n).filter(|&i| in_degree[i] == 0).collect();
+        // Start with nodes that have no dependencies (use FIFO to preserve original order)
+        let mut queue: VecDeque<usize> = (0..n).filter(|&i| in_degree[i] == 0).collect();
         let mut result = Vec::with_capacity(n);
 
-        while let Some(node) = queue.pop() {
+        while let Some(node) = queue.pop_front() {
             result.push(node);
 
             // Decrease in_degree for all dependents
@@ -141,7 +141,7 @@ impl DependencyGraph {
                 for &dependent in deps {
                     in_degree[dependent] -= 1;
                     if in_degree[dependent] == 0 {
-                        queue.push(dependent);
+                        queue.push_back(dependent);
                     }
                 }
             }
