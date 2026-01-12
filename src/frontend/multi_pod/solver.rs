@@ -67,6 +67,10 @@ pub struct SolverInput<'a> {
 }
 
 /// Solve the MILP problem to find optimal POD packing.
+///
+/// Uses an incremental approach: tries solving with min_pods first,
+/// then increments until a solution is found or target_pods is exceeded.
+/// This is efficient for the common case where min_pods is sufficient.
 pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
     let n = input.num_statements;
     if n == 0 {
@@ -107,12 +111,6 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
         )));
     }
 
-    // Upper bound: give solver room to explore (100% slack), but cap at:
-    // - n: can't need more PODs than statements
-    // - input.max_pods: user-configured limit
-    // Note: min_pods >= 1, so min_pods * 2 >= 2
-    let max_pods = (min_pods * 2).min(n).min(input.max_pods);
-
     // Collect all custom batch IDs used (BTreeSet for deterministic ordering)
     let all_batches: Vec<CustomBatchId> = input
         .costs
@@ -122,13 +120,37 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
         .into_iter()
         .collect();
 
+    // Incremental approach: try solving with increasing POD counts
+    // Start with min_pods and increment until we find a feasible solution
+    for target_pods in min_pods..=input.max_pods {
+        if let Some(solution) = try_solve_with_pods(input, n, target_pods, &all_batches)? {
+            return Ok(solution);
+        }
+        // Infeasible with target_pods, try more
+    }
+
+    // Should not reach here if min_pods <= target_pods, but just in case
+    Err(super::Error::Solver(format!(
+        "No feasible solution found with up to {} PODs",
+        input.max_pods
+    )))
+}
+
+/// Try to solve with exactly `target_pods` PODs.
+/// Returns `Ok(Some(solution))` if feasible, `Ok(None)` if infeasible.
+fn try_solve_with_pods(
+    input: &SolverInput,
+    n: usize,
+    target_pods: usize,
+    all_batches: &[CustomBatchId],
+) -> Result<Option<MultiPodSolution>> {
     // Create variables
     let mut vars = ProblemVariables::new();
 
     // prove[s][p] - statement s is proved in POD p
     let prove: Vec<Vec<Variable>> = (0..n)
         .map(|_| {
-            (0..max_pods)
+            (0..target_pods)
                 .map(|_| vars.add(variable().binary()))
                 .collect()
         })
@@ -137,21 +159,21 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
     // public[s][p] - statement s is public in POD p
     let public: Vec<Vec<Variable>> = (0..n)
         .map(|_| {
-            (0..max_pods)
+            (0..target_pods)
                 .map(|_| vars.add(variable().binary()))
                 .collect()
         })
         .collect();
 
     // pod_used[p] - POD p is used
-    let pod_used: Vec<Variable> = (0..max_pods)
+    let pod_used: Vec<Variable> = (0..target_pods)
         .map(|_| vars.add(variable().binary()))
         .collect();
 
     // batch_used[b][p] - custom batch b is used in POD p
     let batch_used: Vec<Vec<Variable>> = (0..all_batches.len())
         .map(|_| {
-            (0..max_pods)
+            (0..target_pods)
                 .map(|_| vars.add(variable().binary()))
                 .collect()
         })
@@ -159,7 +181,7 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
 
     // uses_input[p][pp] - POD p uses POD pp as an input (pp < p)
     // We only create variables for pp < p
-    let uses_input: Vec<Vec<Variable>> = (0..max_pods)
+    let uses_input: Vec<Vec<Variable>> = (0..target_pods)
         .map(|p| (0..p).map(|_| vars.add(variable().binary())).collect())
         .collect();
 
@@ -189,14 +211,14 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
 
     // Constraint 3: Public implies proved
     for s in 0..n {
-        for p in 0..max_pods {
+        for p in 0..target_pods {
             model = model.with(constraint!(public[s][p] <= prove[s][p]));
         }
     }
 
     // Constraint 4: Pod existence - if any statement is proved in p, p is used
     for s in 0..n {
-        for p in 0..max_pods {
+        for p in 0..target_pods {
             model = model.with(constraint!(prove[s][p] <= pod_used[p]));
         }
     }
@@ -208,7 +230,7 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
     for s in 0..n {
         for dep in &input.deps.statement_deps[s].depends_on {
             if let StatementSource::Internal(d) = dep {
-                for p in 0..max_pods {
+                for p in 0..target_pods {
                     // prove[s][p] <= prove[d][p] + sum_{p' < p} public[d][p']
                     let mut rhs: Expression = prove[*d][p].into();
                     for pp in 0..p {
@@ -221,7 +243,7 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
     }
 
     // Constraint 6: Resource limits per POD
-    for p in 0..max_pods {
+    for p in 0..target_pods {
         // 6a: Total statement count (all statements are proved in private slots,
         // public statements are then copied to public slots)
         let stmt_sum: Expression = (0..n).map(|s| prove[s][p]).sum();
@@ -283,7 +305,7 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
     // Constraint 7: Batch cardinality
     // batch_used[b][p] >= prove[s][p] for all s that use batch b
     for (b, batch_id) in all_batches.iter().enumerate() {
-        for p in 0..max_pods {
+        for p in 0..target_pods {
             for s in 0..n {
                 if input.costs[s].custom_batch_ids.contains(batch_id) {
                     model = model.with(constraint!(batch_used[b][p] >= prove[s][p]));
@@ -295,7 +317,7 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
     // batch_used[b][p] <= sum of prove[s][p] for all s using batch b
     // (ensures batch_used is 0 if no statements use it)
     for (b, batch_id) in all_batches.iter().enumerate() {
-        for p in 0..max_pods {
+        for p in 0..target_pods {
             let sum: Expression = (0..n)
                 .filter(|&s| input.costs[s].custom_batch_ids.contains(batch_id))
                 .map(|s| prove[s][p])
@@ -305,7 +327,7 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
     }
 
     // Batch count per POD
-    for p in 0..max_pods {
+    for p in 0..target_pods {
         let batch_sum: Expression = (0..all_batches.len()).map(|b| batch_used[b][p]).sum();
         model = model.with(constraint!(
             batch_sum <= (input.params.max_custom_predicate_batches as f64) * pod_used[p]
@@ -317,7 +339,7 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
     for s in 0..n {
         for dep in &input.deps.statement_deps[s].depends_on {
             if let StatementSource::Internal(d) = dep {
-                for p in 1..max_pods {
+                for p in 1..target_pods {
                     for pp in 0..p {
                         // If s is proved in p and d is public in pp, then uses_input[p][pp] = 1
                         model = model.with(constraint!(
@@ -330,7 +352,7 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
     }
 
     // Sum of uses_input for each POD <= max_input_pods
-    for p in 1..max_pods {
+    for p in 1..target_pods {
         let input_sum: Expression = (0..p).map(|pp| uses_input[p][pp]).sum();
         model = model.with(constraint!(
             input_sum <= (input.params.max_input_pods as f64) * pod_used[p]
@@ -339,18 +361,22 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
 
     // Constraint 9: Symmetry breaking - use PODs in order
     // pod_used[p] >= pod_used[p+1]
-    for p in 0..max_pods - 1 {
+    for p in 0..target_pods - 1 {
         model = model.with(constraint!(pod_used[p] >= pod_used[p + 1]));
     }
 
     // Solve
-    let solution = model
-        .solve()
-        .map_err(|e| super::Error::Solver(format!("{:?}", e)))?;
+    let solution = match model.solve() {
+        Ok(sol) => sol,
+        Err(_) => {
+            // Infeasible with this number of PODs, try more
+            return Ok(None);
+        }
+    };
 
     // Extract solution
     let mut pod_count = 0;
-    for p in 0..max_pods {
+    for p in 0..target_pods {
         if solution.value(pod_used[p]) > 0.5 {
             pod_count = p + 1;
         }
@@ -382,14 +408,14 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
     // Prove order is just 0..pod_count due to topological ordering constraint
     let prove_order: Vec<usize> = (0..pod_count).collect();
 
-    Ok(MultiPodSolution {
+    Ok(Some(MultiPodSolution {
         pod_count,
         statement_to_pods,
         pod_statements,
         pod_public_statements,
         prove_order,
         output_pod_indices,
-    })
+    }))
 }
 
 #[cfg(test)]
