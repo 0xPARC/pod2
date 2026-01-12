@@ -502,13 +502,14 @@ mod tests {
     fn test_estimate_vs_solve() -> Result<()> {
         let params = Params {
             max_statements: 10,
+            max_public_statements: 5, // Enough for all 5 public statements
             ..Params::default()
         };
         let vd_set = &*MOCK_VD_SET;
 
         let mut builder = MultiPodBuilder::new(&params, vd_set);
 
-        // Add a few operations
+        // Add a few public operations (all must fit in single output POD)
         for i in 0..5 {
             builder.pub_op(FrontendOp::eq(i, i))?;
         }
@@ -526,7 +527,8 @@ mod tests {
 
     #[test]
     fn test_multi_pod_overflow() -> Result<()> {
-        // Use small limits to force multiple PODs
+        // Test overflow via private statements (public statements must fit in one POD)
+        // max_priv_statements = 6 - 2 = 4, so 6 private statements need 2 PODs
         let params = Params {
             max_statements: 6,
             max_public_statements: 2,
@@ -538,16 +540,20 @@ mod tests {
 
         let mut builder = MultiPodBuilder::new(&params, vd_set);
 
-        // Add 6 simple operations - should require at least 3 PODs due to public statement limit
+        // Add 6 private statements - should require at least 2 PODs
         for i in 0..6i64 {
-            builder.pub_op(FrontendOp::eq(i, i))?;
+            builder.priv_op(FrontendOp::eq(i, i))?;
         }
+
+        // Add 2 public statements (within the single-output-POD limit)
+        builder.pub_op(FrontendOp::eq(100, 100))?;
+        builder.pub_op(FrontendOp::eq(101, 101))?;
 
         // Solve and check
         let pod_count = {
             let solution = builder.solve()?;
             println!(
-                "Solution: {} PODs needed for 6 statements",
+                "Solution: {} PODs needed for 8 statements",
                 solution.pod_count
             );
             println!("Statement assignments:");
@@ -555,10 +561,10 @@ mod tests {
                 println!("  POD {}: statements {:?}", pod_idx, stmts);
                 println!("    public: {:?}", solution.pod_public_statements[pod_idx]);
             }
-            // Should need at least 3 PODs (6 public statements / 2 per POD = 3)
+            // Should need at least 2 PODs
             assert!(
-                solution.pod_count >= 3,
-                "Expected at least 3 PODs, got {}",
+                solution.pod_count >= 2,
+                "Expected at least 2 PODs, got {}",
                 solution.pod_count
             );
             solution.pod_count
@@ -582,7 +588,9 @@ mod tests {
 
     #[test]
     fn test_dependencies_across_pods() -> Result<()> {
-        // Test that dependencies work correctly across POD boundaries
+        // Test that private statements can overflow across PODs while
+        // public statements stay in the output POD.
+        // max_priv_statements = 8 - 3 = 5, so 6 private statements need 2 PODs
         let params = Params {
             max_statements: 8,
             max_public_statements: 3,
@@ -594,10 +602,15 @@ mod tests {
 
         let mut builder = MultiPodBuilder::new(&params, vd_set);
 
-        // Add multiple equality checks
+        // Add 6 private statements - should require 2 PODs
         for i in 0..6i64 {
-            builder.pub_op(FrontendOp::eq(i, i))?;
+            builder.priv_op(FrontendOp::eq(i, i))?;
         }
+
+        // Add 3 public statements (within the single-output-POD limit)
+        builder.pub_op(FrontendOp::eq(100, 100))?;
+        builder.pub_op(FrontendOp::eq(101, 101))?;
+        builder.pub_op(FrontendOp::eq(102, 102))?;
 
         // Solve
         let pod_count = {
@@ -629,14 +642,12 @@ mod tests {
 
     #[test]
     fn test_cross_pod_copy() -> Result<()> {
-        // Test that a statement in POD 0 can be copied to POD 1 for use as a dependency.
-        // We create statement A (public) and statement B that depends on A.
-        // With tight limits, they should end up in different PODs, requiring a copy.
+        // Test that private statements can overflow across multiple PODs.
+        // max_priv_statements = 10 - 2 = 8
+        // With 10 private statements, we need 2 PODs (10/8 = 2)
         let params = Params {
             max_statements: 10,
             max_public_statements: 2,
-            // Only 1 statement can fit per POD in terms of private slots
-            // max_priv_statements = 10 - 2 = 8, but we'll use public statement limit to force split
             max_input_pods: 2,
             max_input_pods_public_statements: 4,
             ..Params::default()
@@ -645,29 +656,26 @@ mod tests {
 
         let mut builder = MultiPodBuilder::new(&params, vd_set);
 
-        // Add 4 public statements - with max_public_statements=2, this forces at least 2 PODs
-        for i in 0..4i64 {
-            builder.pub_op(FrontendOp::eq(i, i))?;
+        // Add 10 private statements - forces 2 PODs
+        for i in 0..10i64 {
+            builder.priv_op(FrontendOp::eq(i, i))?;
         }
 
+        // Add 2 public statements (within single output POD limit)
+        builder.pub_op(FrontendOp::eq(100, 100))?;
+        builder.pub_op(FrontendOp::eq(101, 101))?;
+
         // Extract solution info before prove() borrows builder
-        let (pod_count, total_public) = {
+        let pod_count = {
             let solution = builder.solve()?;
-            let total: usize = solution.pod_public_statements.iter().map(|s| s.len()).sum();
-            (solution.pod_count, total)
+            solution.pod_count
         };
 
-        // Should need at least 2 PODs (4 public / 2 per POD = 2)
+        // Should need at least 2 PODs (10 private / 8 per POD = 2)
         assert!(
             pod_count >= 2,
             "Expected at least 2 PODs, got {}",
             pod_count
-        );
-
-        // Verify that public statements are distributed across PODs
-        assert_eq!(
-            total_public, 4,
-            "All 4 statements should be public somewhere"
         );
 
         // Prove and verify
@@ -689,6 +697,7 @@ mod tests {
         // Test that the solver chooses to re-prove a statement when using it as
         // an input would exceed max_input_pods.
         // With max_input_pods = 0, any cross-POD dependency must be re-proved.
+        // max_priv_statements = 4 - 2 = 2
         let params = Params {
             max_statements: 4,
             max_public_statements: 2,
@@ -700,14 +709,18 @@ mod tests {
 
         let mut builder = MultiPodBuilder::new(&params, vd_set);
 
-        // Add 4 public statements - forces multiple PODs due to max_priv_statements = 2
+        // Add 4 private statements - forces 2 PODs (4/2 = 2)
         for i in 0..4i64 {
-            builder.pub_op(FrontendOp::eq(i, i))?;
+            builder.priv_op(FrontendOp::eq(i, i))?;
         }
+
+        // Add 2 public statements (within single output POD limit)
+        builder.pub_op(FrontendOp::eq(100, 100))?;
+        builder.pub_op(FrontendOp::eq(101, 101))?;
 
         let solution = builder.solve()?;
 
-        // With max_priv_statements = 2 and 4 statements, need at least 2 PODs
+        // With max_priv_statements = 2 and 6 statements total, need at least 2 PODs
         assert!(
             solution.pod_count >= 2,
             "Expected at least 2 PODs, got {}",
@@ -716,7 +729,6 @@ mod tests {
 
         // Since max_input_pods = 0, PODs cannot reference each other.
         // Each POD must independently prove its statements.
-        // Verify that each POD can stand alone (no cross-POD dependencies required).
 
         // Prove and verify
         let prover = MockProver {};
@@ -804,15 +816,13 @@ mod tests {
         // Setup:
         // - Two external PODs: ext_A and ext_B, each with a public statement
         // - max_input_pods = 1 (each generated POD can only have 1 input POD)
-        // - Operations split across 2 generated PODs:
-        //   - POD 0 copies from ext_B only
-        //   - POD 1 copies from ext_A only
+        // - Private statements that copy from different external PODs force overflow
         //
         // With max_input_pods = 1, this only works if each generated POD
         // includes only the external POD it actually depends on.
 
         let params = Params {
-            max_statements: 4,        // Small limit to force 2 PODs
+            max_statements: 4,        // Small limit
             max_public_statements: 2, // max_priv_statements = 4 - 2 = 2
             max_input_pods: 1,        // Only 1 input POD allowed per generated POD
             max_input_pods_public_statements: 4,
@@ -850,14 +860,18 @@ mod tests {
         multi_builder.add_pod(ext_pod_a.clone());
         multi_builder.add_pod(ext_pod_b.clone());
 
-        // Add operations that reference statements from different external PODs.
-        // The solver will split these across multiple generated PODs.
-        multi_builder.pub_op(FrontendOp::copy(stmt_a))?;
-        multi_builder.pub_op(FrontendOp::eq(101, 101))?;
-        multi_builder.pub_op(FrontendOp::copy(stmt_b))?;
-        multi_builder.pub_op(FrontendOp::eq(201, 201))?;
+        // Add private operations that reference different external PODs.
+        // These will force multiple PODs due to private statement limits.
+        multi_builder.priv_op(FrontendOp::copy(stmt_a))?;
+        multi_builder.priv_op(FrontendOp::eq(101, 101))?;
+        multi_builder.priv_op(FrontendOp::copy(stmt_b))?;
+        multi_builder.priv_op(FrontendOp::eq(201, 201))?;
 
-        // With 4 public statements and max_public_statements = 2, we need 2 PODs.
+        // Add 2 public statements (within single output POD limit)
+        multi_builder.pub_op(FrontendOp::eq(300, 300))?;
+        multi_builder.pub_op(FrontendOp::eq(301, 301))?;
+
+        // With 6 statements and max_priv_statements = 2, we need multiple PODs.
         // Each POD should only include the external POD it depends on.
 
         let solution = multi_builder.solve()?;
@@ -867,8 +881,6 @@ mod tests {
             solution.pod_count
         );
 
-        // This should succeed if external PODs are correctly filtered
-        // Currently it will fail because all external PODs are added to all generated PODs
         let result = multi_builder.prove(&prover)?;
 
         // Verify all PODs
@@ -877,6 +889,99 @@ mod tests {
                 .verify()
                 .map_err(|e| Error::Frontend(format!("POD {} verification failed: {}", i, e)))?;
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_private_statement_not_leaked_to_output_pod() -> Result<()> {
+        // Verifies that private statements do not appear in the output POD's public slots.
+        // The solver now enforces that only user-requested public statements can be
+        // public in POD 0 (the output POD).
+
+        let params = Params {
+            max_statements: 4,
+            max_public_statements: 2,
+            ..Params::default()
+        };
+        let vd_set = &*MOCK_VD_SET;
+
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
+
+        // Add private statements (indices 0, 1, 2) - should NOT appear in output POD public slots
+        builder.priv_op(FrontendOp::eq(100, 100))?;
+        builder.priv_op(FrontendOp::eq(101, 101))?;
+        builder.priv_op(FrontendOp::eq(102, 102))?;
+
+        // Add public statements (indices 3, 4) - these SHOULD appear in output POD public slots
+        builder.pub_op(FrontendOp::eq(200, 200))?;
+        builder.pub_op(FrontendOp::eq(201, 201))?;
+
+        let solution = builder.solve()?;
+
+        // POD 0 should be the only output POD
+        assert_eq!(
+            solution.output_pod_indices,
+            BTreeSet::from([0]),
+            "POD 0 should be the only output POD"
+        );
+
+        // Check that POD 0's public statements are exactly the user-requested public statements
+        let pod0_public = &solution.pod_public_statements[0];
+        assert!(
+            pod0_public.contains(&3),
+            "Public statement 3 should be public in POD 0"
+        );
+        assert!(
+            pod0_public.contains(&4),
+            "Public statement 4 should be public in POD 0"
+        );
+
+        // Private statements should NOT be public in POD 0
+        assert!(
+            !pod0_public.contains(&0),
+            "Private statement 0 should NOT be public in POD 0"
+        );
+        assert!(
+            !pod0_public.contains(&1),
+            "Private statement 1 should NOT be public in POD 0"
+        );
+        assert!(
+            !pod0_public.contains(&2),
+            "Private statement 2 should NOT be public in POD 0"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_too_many_public_statements_error() -> Result<()> {
+        // Verifies that requesting more public statements than max_public_statements
+        // results in a clear error (since all public statements must fit in one output POD).
+
+        let params = Params {
+            max_statements: 10,
+            max_public_statements: 2,
+            ..Params::default()
+        };
+        let vd_set = &*MOCK_VD_SET;
+
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
+
+        // Add 3 public statements, but max is 2
+        builder.pub_op(FrontendOp::eq(1, 1))?;
+        builder.pub_op(FrontendOp::eq(2, 2))?;
+        builder.pub_op(FrontendOp::eq(3, 3))?;
+
+        let result = builder.solve();
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Too many public statements"),
+            "Expected 'Too many public statements' error, got: {}",
+            err_msg
+        );
 
         Ok(())
     }

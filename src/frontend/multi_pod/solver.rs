@@ -80,19 +80,23 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
         });
     }
 
+    // Check that all output-public statements can fit in a single POD
+    // This simplifies the privacy model: POD 0 is the only output POD.
+    let num_output_public = input.output_public_indices.len();
+    if num_output_public > input.params.max_public_statements {
+        return Err(super::Error::Solver(format!(
+            "Too many public statements requested: {} requested, but max_public_statements is {}. \
+             All public statements must fit in a single output POD.",
+            num_output_public, input.params.max_public_statements
+        )));
+    }
+
     // Lower bound on number of PODs needed
-    // Consider both statement and public statement limits
     // Note: max_priv_statements is the limit on total unique statements per POD
     // (public statements are copies from private slots)
     let max_stmts_per_pod = input.params.max_priv_statements();
     let min_pods_by_statements = n.div_ceil(max_stmts_per_pod);
-    let num_output_public = input.output_public_indices.len();
-    let min_pods_by_public = if num_output_public > 0 && input.params.max_public_statements > 0 {
-        num_output_public.div_ceil(input.params.max_public_statements)
-    } else {
-        1
-    };
-    let min_pods = min_pods_by_statements.max(min_pods_by_public);
+    let min_pods = min_pods_by_statements.max(1);
 
     // Check if the problem exceeds the configured max_pods limit
     if min_pods > input.max_pods {
@@ -166,10 +170,18 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
         model = model.with(constraint!(sum >= 1));
     }
 
-    // Constraint 2: Output-public statements must be public in at least one POD
+    // Constraint 2: Output-public statements must be public in POD 0 (the output POD)
+    // This ensures there's exactly one output POD, simplifying privacy guarantees.
     for &s in input.output_public_indices {
-        let sum: Expression = public[s].iter().sum();
-        model = model.with(constraint!(sum >= 1));
+        model = model.with(constraint!(public[s][0] == 1));
+    }
+
+    // Constraint 2b: Non-output-public statements cannot be public in POD 0
+    // This prevents private statements from leaking to the output POD's public slots.
+    for s in 0..n {
+        if !input.output_public_indices.contains(&s) {
+            model = model.with(constraint!(public[s][0] == 0));
+        }
     }
 
     // Constraint 3: Public implies proved
@@ -357,15 +369,12 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
         }
     }
 
-    // Determine output PODs (those containing user-requested public statements)
-    let mut output_pod_indices = BTreeSet::new();
-    for &s in input.output_public_indices {
-        for p in 0..pod_count {
-            if solution.value(public[s][p]) > 0.5 {
-                output_pod_indices.insert(p);
-            }
-        }
-    }
+    // POD 0 is the output POD (contains all user-requested public statements)
+    let output_pod_indices = if input.output_public_indices.is_empty() {
+        BTreeSet::new()
+    } else {
+        BTreeSet::from([0])
+    };
 
     // Prove order is just 0..pod_count due to topological ordering constraint
     let prove_order: Vec<usize> = (0..pod_count).collect();
