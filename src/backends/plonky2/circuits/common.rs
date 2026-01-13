@@ -137,17 +137,49 @@ impl StatementArgTarget {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct StatementTarget {
-    pub pred_hash: HashOutTarget,
+    // If the pred is Some, then the `pred_hash` is constrained to be the `hash(pred)`.
+    pred: Option<PredicateTarget>,
+    pred_hash: HashOutTarget,
     pub args: Vec<StatementArgTarget>,
 }
 
 impl StatementTarget {
+    pub fn pred(&self) -> &Option<PredicateTarget> {
+        &self.pred
+    }
+    pub fn pred_hash(&self) -> &HashOutTarget {
+        &self.pred_hash
+    }
+    pub fn new_virtual(
+        builder: &mut CircuitBuilder,
+        params: &Params,
+        with_pred: bool,
+    ) -> StatementTarget {
+        let (pred, pred_hash) = if with_pred {
+            let pred = builder.add_virtual_predicate();
+            let pred_hash = pred.hash(builder);
+            (Some(pred), pred_hash)
+        } else {
+            let pred_hash = builder.add_virtual_hash();
+            (None, pred_hash)
+        };
+        StatementTarget {
+            pred,
+            pred_hash,
+            args: (0..params.max_statement_args)
+                .map(|_| builder.add_virtual_statement_arg())
+                .collect(),
+        }
+    }
     pub fn set_targets(
         &self,
         pw: &mut PartialWitness<F>,
         params: &Params,
         st: &Statement,
     ) -> Result<()> {
+        if let Some(pred) = &self.pred {
+            pred.set_targets(pw, params, &st.predicate())?;
+        }
         pw.set_hash_target(
             self.pred_hash,
             HashOut {
@@ -248,23 +280,23 @@ impl StatementWithPredTarget {
         Ok(())
     }
 
-    pub fn has_native_type(
-        &self,
-        builder: &mut CircuitBuilder,
-        params: &Params,
-        t: NativePredicate,
-    ) -> BoolTarget {
-        let expected_predicate = PredicateTarget::new_native(builder, params, t);
-        builder.is_equal_flattenable(&self.predicate, &expected_predicate)
-    }
+    // pub fn has_native_type(
+    //     &self,
+    //     builder: &mut CircuitBuilder,
+    //     params: &Params,
+    //     t: NativePredicate,
+    // ) -> BoolTarget {
+    //     let expected_predicate = PredicateTarget::new_native(builder, params, t);
+    //     builder.is_equal_flattenable(&self.predicate, &expected_predicate)
+    // }
 
-    pub fn to_statement(self, builder: &mut CircuitBuilder) -> StatementTarget {
-        let predicate_hash = self.predicate.hash(builder);
-        StatementTarget {
-            pred_hash: predicate_hash,
-            args: self.args,
-        }
-    }
+    // pub fn to_statement(self, builder: &mut CircuitBuilder) -> StatementTarget {
+    //     let predicate_hash = self.predicate.hash(builder);
+    //     StatementTarget {
+    //         pred_hash: predicate_hash,
+    //         args: self.args,
+    //     }
+    // }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -857,7 +889,7 @@ impl CustomPredicateVerifyEntryTarget {
                 .map(|_| builder.add_virtual_value())
                 .collect(),
             op_args: (0..params.max_operation_args)
-                .map(|_| builder.add_virtual_statement(params))
+                .map(|_| StatementTarget::new_virtual(builder, params, false))
                 .collect(),
         }
     }
@@ -1262,7 +1294,7 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     fn connect_values(&mut self, x: ValueTarget, y: ValueTarget);
     fn connect_slice(&mut self, xs: &[Target], ys: &[Target]);
     fn add_virtual_value(&mut self) -> ValueTarget;
-    fn add_virtual_statement(&mut self, params: &Params) -> StatementTarget;
+    // fn add_virtual_statement(&mut self, params: &Params) -> StatementTarget;
     fn add_virtual_statement_with_pred(&mut self, params: &Params) -> StatementWithPredTarget;
     fn add_virtual_statement_arg(&mut self) -> StatementArgTarget;
     fn add_virtual_predicate(&mut self) -> PredicateTarget;
@@ -1380,15 +1412,15 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
         }
     }
 
-    fn add_virtual_statement(&mut self, params: &Params) -> StatementTarget {
-        let predicate_hash = self.add_virtual_hash();
-        StatementTarget {
-            pred_hash: predicate_hash,
-            args: (0..params.max_statement_args)
-                .map(|_| self.add_virtual_statement_arg())
-                .collect(),
-        }
-    }
+    // fn add_virtual_statement(&mut self, params: &Params) -> StatementTarget {
+    //     let predicate_hash = self.add_virtual_hash();
+    //     StatementTarget {
+    //         pred_hash: predicate_hash,
+    //         args: (0..params.max_statement_args)
+    //             .map(|_| self.add_virtual_statement_arg())
+    //             .collect(),
+    //     }
+    // }
 
     fn add_virtual_statement_with_pred(&mut self, params: &Params) -> StatementWithPredTarget {
         let predicate = self.add_virtual_predicate();
