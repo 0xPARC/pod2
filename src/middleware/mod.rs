@@ -731,7 +731,7 @@ impl fmt::Display for PodType {
 /// Params: non dynamic parameters that define the circuit.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Hash)]
 #[serde(rename_all = "camelCase")]
-pub struct Params {
+pub struct Params<const VALID: bool = false> {
     pub max_input_pods: usize,
     pub max_input_pods_public_statements: usize,
     pub max_statements: usize,
@@ -774,7 +774,9 @@ pub struct Params {
     pub max_custom_batch_size: usize,
 }
 
-impl Default for Params {
+type ValidParams = Params<true>;
+
+impl Default for ValidParams {
     fn default() -> Self {
         Self {
             max_input_pods: 2,

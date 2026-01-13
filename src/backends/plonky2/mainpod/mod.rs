@@ -38,8 +38,8 @@ use crate::{
     },
     middleware::{
         self, value_from_op, CustomPredicateBatch, Error as MiddlewareError, Hash, MainPodInputs,
-        MainPodProver, NativeOperation, OperationType, Params, Pod, RawValue, StatementArg,
-        ToFields, VDSet,
+        MainPodProver, NativeOperation, OperationType, Pod, RawValue, StatementArg, ToFields,
+        VDSet, ValidParams,
     },
     timed,
 };
@@ -50,7 +50,10 @@ use crate::{
 /// circuits with a small `max_public_statements` only pay for `max_public_statements` by starting
 /// the poseidon state with a precomputed constant corresponding to the front-padding part: `id =
 /// hash(serialize(reverse(statements || none-statements)))`
-pub fn calculate_statements_hash(statements: &[Statement], params: &Params) -> middleware::Hash {
+pub fn calculate_statements_hash(
+    statements: &[Statement],
+    params: &ValidParams,
+) -> middleware::Hash {
     assert!(statements.len() <= params.num_public_statements_hash);
     assert!(params.max_public_statements <= params.num_public_statements_hash);
 
@@ -71,7 +74,7 @@ pub fn calculate_statements_hash(statements: &[Statement], params: &Params) -> m
 
 /// Extracts unique `CustomPredicateBatch`es from Custom ops.
 pub(crate) fn extract_custom_predicate_batches(
-    params: &Params,
+    params: &ValidParams,
     operations: &[middleware::Operation],
 ) -> Result<Vec<Arc<CustomPredicateBatch>>> {
     let custom_predicate_batches: Vec<_> = operations
@@ -94,7 +97,7 @@ pub(crate) fn extract_custom_predicate_batches(
 
 /// Extracts all custom predicate operations with all the data required to verify them.
 pub(crate) fn extract_custom_predicate_verifications(
-    params: &Params,
+    params: &ValidParams,
     aux_list: &mut [OperationAux],
     operations: &[middleware::Operation],
     statements: &[middleware::Statement],
@@ -141,7 +144,7 @@ pub(crate) fn extract_custom_predicate_verifications(
 
 /// Extracts Merkle proofs from Contains/NotContains ops.
 pub(crate) fn extract_merkle_proofs(
-    params: &Params,
+    params: &ValidParams,
     aux_list: &mut [OperationAux],
     operations: &[middleware::Operation],
     statements: &[middleware::Statement],
@@ -189,7 +192,7 @@ pub(crate) fn extract_merkle_proofs(
 
 /// Extracts Merkle state transition proofs from container update ops.
 pub(crate) fn extract_merkle_tree_state_transition_proofs(
-    params: &Params,
+    params: &ValidParams,
     aux_list: &mut [OperationAux],
     operations: &[middleware::Operation],
 ) -> Result<Vec<MerkleTreeStateTransitionProof>> {
@@ -215,7 +218,7 @@ pub(crate) fn extract_merkle_tree_state_transition_proofs(
 }
 
 pub(crate) fn extract_public_key_of(
-    params: &Params,
+    params: &ValidParams,
     aux_list: &mut [OperationAux],
     operations: &[middleware::Operation],
     statements: &[middleware::Statement],
@@ -268,7 +271,7 @@ impl SignedBy {
 
 /// Extracts Signatures verification data from SignedBy ops.
 pub(crate) fn extract_signatures(
-    params: &Params,
+    params: &ValidParams,
     aux_list: &mut [OperationAux],
     operations: &[middleware::Operation],
     statements: &[middleware::Statement],
@@ -326,19 +329,19 @@ fn fill_pad<T: Clone>(v: &mut Vec<T>, pad_value: T, len: usize) {
     }
 }
 
-pub fn pad_statement(params: &Params, s: &mut Statement) {
+pub fn pad_statement(params: &ValidParams, s: &mut Statement) {
     fill_pad(&mut s.1, StatementArg::None, params.max_statement_args)
 }
 
-fn pad_operation_args(params: &Params, args: &mut Vec<OperationArg>) {
+fn pad_operation_args(params: &ValidParams, args: &mut Vec<OperationArg>) {
     fill_pad(args, OperationArg::None, params.max_operation_args)
 }
 
 /// Returns the statements from the given MainPodInputs, padding to the respective max lengths
-/// defined at the given Params.  Also returns a copy of the dynamic-length public statements from
+/// defined at the given ValidParams.  Also returns a copy of the dynamic-length public statements from
 /// the list of statements.
 pub(crate) fn layout_statements(
-    params: &Params,
+    params: &ValidParams,
     mock: bool,
     inputs: &MainPodInputs,
 ) -> Result<(Vec<Statement>, Vec<Statement>)> {
@@ -411,7 +414,7 @@ pub(crate) fn layout_statements(
 }
 
 pub(crate) fn process_private_statements_operations(
-    params: &Params,
+    params: &ValidParams,
     statements: &[Statement],
     aux_list: &[OperationAux],
     input_operations: &[middleware::Operation],
@@ -440,7 +443,7 @@ pub(crate) fn process_private_statements_operations(
 /// This method assumes that the given `statements` array has been padded to
 /// `params.max_statements`.
 pub(crate) fn process_public_statements_operations(
-    params: &Params,
+    params: &ValidParams,
     statements: &[Statement],
     mut operations: Vec<Operation>,
 ) -> Result<Vec<Operation>> {
@@ -469,7 +472,7 @@ pub(crate) fn process_public_statements_operations(
 pub struct Prover {}
 
 impl MainPodProver for Prover {
-    fn prove(&self, params: &Params, inputs: MainPodInputs) -> Result<Box<dyn Pod>> {
+    fn prove(&self, params: &ValidParams, inputs: MainPodInputs) -> Result<Box<dyn Pod>> {
         // Pad input recursive pods with empty pods if necessary
         let empty_pod = if inputs.pods.len() == params.max_input_pods {
             // We don't need padding so we skip creating an EmptyPod
@@ -606,7 +609,7 @@ impl MainPodProver for Prover {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MainPod {
-    params: Params,
+    params: ValidParams,
     sts_hash: Hash,
     verifier_only: VerifierOnlyCircuitData,
     common_hash: String,
@@ -621,7 +624,7 @@ pub struct MainPod {
 }
 
 pub(crate) fn rec_main_pod_circuit_data(
-    params: &Params,
+    params: &ValidParams,
 ) -> (RecursiveCircuitTarget<MainPodVerifyTarget>, CircuitData) {
     let rec_common_circuit_data = cache_get_standard_rec_main_pod_common_circuit_data();
     timed!(
@@ -636,7 +639,7 @@ pub(crate) fn rec_main_pod_circuit_data(
 }
 
 pub(crate) fn cache_get_rec_main_pod_circuit_data(
-    params: &Params,
+    params: &ValidParams,
 ) -> CacheEntry<(
     RecursiveCircuitTarget<MainPodVerifyTarget>,
     CircuitDataSerializer,
@@ -644,7 +647,7 @@ pub(crate) fn cache_get_rec_main_pod_circuit_data(
     // TODO(Edu): I believe that the standard_rec_main_pod_circuit data is the same as this when
     // the params are Default: we're padding the circuit to itself, so we get the original one?
     // If this is true we can deduplicate this cache entry because both rec_main_pod_circuit_data
-    // and standard_rec_main_pod_circuit_data are indexed by Params.  This can be easily tested by
+    // and standard_rec_main_pod_circuit_data are indexed by ValidParams.  This can be easily tested by
     // comparing the cached artifacts on disk :)
     cache::get("rec_main_pod_circuit_data", params, |params| {
         let (target, circuit_data) = rec_main_pod_circuit_data(params);
@@ -654,7 +657,7 @@ pub(crate) fn cache_get_rec_main_pod_circuit_data(
 }
 
 pub fn cache_get_rec_main_pod_verifier_circuit_data(
-    params: &Params,
+    params: &ValidParams,
 ) -> CacheEntry<VerifierCircuitDataSerializer> {
     cache::get("rec_main_pod_verifier_circuit_data", params, |params| {
         let (_, rec_main_pod_circuit_data_padded) = &*cache_get_rec_main_pod_circuit_data(params);
@@ -666,7 +669,7 @@ pub fn cache_get_rec_main_pod_verifier_circuit_data(
 // This is a helper function to get the CommonCircuitData necessary to decode
 // a serialized proof.
 pub fn cache_get_rec_main_pod_common_circuit_data(
-    params: &Params,
+    params: &ValidParams,
 ) -> CacheEntry<CommonCircuitDataSerializer> {
     cache::get("rec_main_pod_common_circuit_data", params, |params| {
         let (_, rec_main_pod_circuit_data_padded) = &*cache_get_rec_main_pod_circuit_data(params);
@@ -675,7 +678,7 @@ pub fn cache_get_rec_main_pod_common_circuit_data(
     .expect("cache ok")
 }
 
-pub fn cache_get_rec_main_pod_common_hash(params: &Params) -> CacheEntry<String> {
+pub fn cache_get_rec_main_pod_common_hash(params: &ValidParams) -> CacheEntry<String> {
     cache::get("rec_main_pod_common_hash", params, |params| {
         let common = &*cache_get_rec_main_pod_common_circuit_data(params);
         hash_common_data(common).expect("hash ok")
@@ -696,13 +699,13 @@ impl MainPod {
         self.proof.clone()
     }
 
-    pub fn params(&self) -> &Params {
+    pub fn params(&self) -> &ValidParams {
         &self.params
     }
 }
 
 impl Pod for MainPod {
-    fn params(&self) -> &Params {
+    fn params(&self) -> &ValidParams {
         &self.params
     }
     fn is_main(&self) -> bool {
@@ -789,7 +792,7 @@ impl Pod for MainPod {
         .expect("serialization to json")
     }
     fn deserialize_data(
-        params: Params,
+        params: ValidParams,
         data: serde_json::Value,
         vd_set: VDSet,
         sts_hash: Hash,
