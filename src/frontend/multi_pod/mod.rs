@@ -116,6 +116,12 @@ pub struct MultiPodBuilder {
     output_public_indices: BTreeSet<usize>,
     /// Cached solution from the solver.
     cached_solution: Option<MultiPodSolution>,
+    /// Cached dependency graph (computed once in solve(), reused in build_single_pod()).
+    cached_deps: Option<DependencyGraph>,
+    /// Cached external POD statement map (computed once in solve(), reused in build_single_pod()).
+    cached_external_map: Option<HashMap<Statement, Hash>>,
+    /// Cached MainPodBuilder for incremental statement computation.
+    cached_builder: Option<MainPodBuilder>,
 }
 
 impl MultiPodBuilder {
@@ -135,13 +141,21 @@ impl MultiPodBuilder {
             operations: Vec::new(),
             output_public_indices: BTreeSet::new(),
             cached_solution: None,
+            cached_deps: None,
+            cached_external_map: None,
+            cached_builder: None,
         }
     }
 
     /// Add an external input POD.
     pub fn add_pod(&mut self, pod: MainPod) {
+        // Keep cached_builder in sync if it exists
+        if let Some(ref mut builder) = self.cached_builder {
+            // Won't fail - cached_builder has unlimited params
+            let _ = builder.add_pod(pod.clone());
+        }
         self.input_pods.push(pod);
-        self.cached_solution = None; // Invalidate cache
+        self.invalidate_cache();
     }
 
     /// Add a public operation (statement will be public in output).
@@ -158,38 +172,25 @@ impl MultiPodBuilder {
 
     /// Internal: Add an operation and create its statement.
     fn add_operation(&mut self, op: Operation) -> Result<Statement> {
-        self.cached_solution = None; // Invalidate cache
+        self.invalidate_cache();
 
-        // Create params with very large limits for the temp builder
-        // (we handle limits in the MILP solver, not here)
-        let unlimited_params = Params {
-            max_statements: usize::MAX / 2,
-            max_public_statements: usize::MAX / 2,
-            max_input_pods: usize::MAX / 2,
-            max_input_pods_public_statements: usize::MAX / 2,
-            ..self.params.clone()
-        };
+        // Get or create the cached builder
+        let builder = self.cached_builder.get_or_insert_with(|| {
+            let unlimited_params = Params {
+                max_statements: usize::MAX / 2,
+                max_public_statements: usize::MAX / 2,
+                max_input_pods: usize::MAX / 2,
+                max_input_pods_public_statements: usize::MAX / 2,
+                ..self.params.clone()
+            };
+            let mut b = MainPodBuilder::new(&unlimited_params, &self.vd_set);
+            for pod in &self.input_pods {
+                let _ = b.add_pod(pod.clone());
+            }
+            b
+        });
 
-        // Create a temporary MainPodBuilder to compute the statement
-        // This reuses the existing statement computation logic
-        let mut temp_builder = MainPodBuilder::new(&unlimited_params, &self.vd_set);
-
-        // Add external input PODs (needed for operations that reference their statements)
-        for input_pod in &self.input_pods {
-            temp_builder
-                .add_pod(input_pod.clone())
-                .map_err(|e| Error::Frontend(e.to_string()))?;
-        }
-
-        // Add existing statements as context (for dependency resolution)
-        // We need to recreate the builder state to get correct statement computation
-        for (stmt, prev_op) in self.statements.iter().zip(self.operations.iter()) {
-            // Use insert directly - won't hit limits with unlimited_params
-            let _ = temp_builder.insert(false, (stmt.clone(), prev_op.clone()));
-        }
-
-        // Now add the new operation
-        let stmt = temp_builder
+        let stmt = builder
             .op(false, vec![], op.clone())
             .map_err(|e| Error::Frontend(e.to_string()))?;
 
@@ -202,10 +203,13 @@ impl MultiPodBuilder {
     /// Mark a statement as public in output.
     ///
     /// Returns an error if the statement was not found in the builder.
+    /// Calling this multiple times on the same statement is idempotent.
     pub fn reveal(&mut self, stmt: &Statement) -> Result<()> {
         if let Some(idx) = self.statements.iter().position(|s| s == stmt) {
-            self.output_public_indices.insert(idx);
-            self.cached_solution = None;
+            // Only invalidate cache if this is a new reveal
+            if self.output_public_indices.insert(idx) {
+                self.invalidate_cache();
+            }
             Ok(())
         } else {
             Err(Error::Frontend(
@@ -217,6 +221,13 @@ impl MultiPodBuilder {
     /// Get the number of statements.
     pub fn num_statements(&self) -> usize {
         self.statements.len()
+    }
+
+    /// Invalidate all cached data. Called when operations or statements change.
+    fn invalidate_cache(&mut self) {
+        self.cached_solution = None;
+        self.cached_deps = None;
+        self.cached_external_map = None;
     }
 
     /// Solve the packing problem and return the solution.
@@ -235,18 +246,22 @@ impl MultiPodBuilder {
             .map(StatementCost::from_operation)
             .collect();
 
-        // Build external POD statement mapping
+        // Build external POD statement mapping (cache for reuse in build_single_pod)
         let external_pod_statements = self.build_external_statement_map();
+        self.cached_external_map = Some(external_pod_statements);
+        let external_pod_statements = self.cached_external_map.as_ref().unwrap();
 
-        // Build dependency graph
+        // Build dependency graph (cache for reuse in build_single_pod)
         let deps =
-            DependencyGraph::build(&self.statements, &self.operations, &external_pod_statements);
+            DependencyGraph::build(&self.statements, &self.operations, external_pod_statements);
+        self.cached_deps = Some(deps);
+        let deps = self.cached_deps.as_ref().unwrap();
 
         // Run solver
         let input = solver::SolverInput {
             num_statements: self.statements.len(),
             costs: &costs,
-            deps: &deps,
+            deps,
             output_public_indices: &self.output_public_indices,
             params: &self.params,
             max_pods: self.options.max_pods,
@@ -318,10 +333,11 @@ impl MultiPodBuilder {
     ) -> Result<MainPod> {
         let mut builder = MainPodBuilder::new(&self.params, &self.vd_set);
 
-        // Build dependency graph first to determine which input PODs we need
-        let external_pod_statements = self.build_external_statement_map();
-        let deps =
-            DependencyGraph::build(&self.statements, &self.operations, &external_pod_statements);
+        // Use cached dependency graph (computed in solve())
+        let deps = self
+            .cached_deps
+            .as_ref()
+            .expect("build_single_pod called before solve()");
 
         let statements_in_this_pod: &Vec<usize> = &solution.pod_statements[pod_idx];
         let mut needed_external_pods: BTreeSet<usize> = BTreeSet::new();
@@ -377,7 +393,7 @@ impl MultiPodBuilder {
                 // Only insert if not already local - or_insert preserves existing entries
                 stmt_sources
                     .entry(stmt_idx)
-                    .or_insert(StmtSource::FromPod(earlier_pod_idx));
+                    .or_insert(StmtSource::FromPod);
             }
         }
 
@@ -405,7 +421,7 @@ impl MultiPodBuilder {
                     if !added_statements.contains_key(dep_idx) {
                         // Need to copy this statement from an earlier POD
                         match stmt_sources.get(dep_idx) {
-                            Some(StmtSource::FromPod(_earlier_pod_idx)) => {
+                            Some(StmtSource::FromPod) => {
                                 // Dependency is from an earlier POD - copy it
                                 let copy_op = Operation(
                                     OperationType::Native(NativeOperation::CopyStatement),
@@ -495,7 +511,8 @@ enum StmtSource {
     /// Statement is proved locally in this POD.
     Local,
     /// Statement is copied from an earlier generated POD.
-    FromPod(usize),
+    /// (The specific POD index doesn't matter - we only need to know it's not local.)
+    FromPod,
 }
 
 #[cfg(test)]

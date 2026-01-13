@@ -11,6 +11,9 @@ use crate::{
 };
 
 /// Unique identifier for a custom predicate batch.
+///
+/// Uses the batch's cryptographic hash as identifier. Two batches with the same
+/// hash are considered identical for resource counting purposes.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CustomBatchId(pub Hash);
 
@@ -184,7 +187,7 @@ impl AggregateCost {
         ]
         .into_iter()
         .max()
-        .unwrap_or(1)
+        .unwrap() // Array is non-empty
         .max(1) // At least 1 POD
     }
 }

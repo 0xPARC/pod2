@@ -87,8 +87,8 @@ impl DependencyGraph {
                             dependents.entry(dep_idx).or_default().push(idx);
                             continue;
                         }
-                        // If dep_idx == idx, this operation produces this statement.
-                        // For CopyStatement, output == input, so we need to check external PODs.
+                        // dep_idx == idx: This operation produces this statement (e.g., CopyStatement
+                        // where output == input). Fall through to check external PODs for the source.
                     }
 
                     // Check if this is from an external POD

@@ -22,6 +22,11 @@ use crate::{
     middleware::Params,
 };
 
+/// Threshold for interpreting MILP solver's floating-point results as binary.
+/// The solver returns continuous values in [0, 1] for binary variables;
+/// values > 0.5 are interpreted as "true" (1), otherwise "false" (0).
+const SOLVER_BINARY_THRESHOLD: f64 = 0.5;
+
 /// Solution from the MILP solver.
 #[derive(Clone, Debug)]
 pub struct MultiPodSolution {
@@ -129,7 +134,7 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
         // Infeasible with target_pods, try more
     }
 
-    // Should not reach here if min_pods <= target_pods, but just in case
+    // No feasible solution found even with max_pods
     Err(super::Error::Solver(format!(
         "No feasible solution found with up to {} PODs",
         input.max_pods
@@ -223,10 +228,18 @@ fn try_solve_with_pods(
         }
     }
 
-    // Constraint 5: Dependencies
+    // Constraint 5: Dependencies (works with Constraint 8 to enforce input POD tracking)
+    //
     // If s depends on d (internal), and s is proved in p, then either:
-    // - d is proved in p, OR
-    // - d is public in some earlier POD p' < p
+    // - d is proved in p (local availability), OR
+    // - d is public in some earlier POD p' < p (cross-POD availability)
+    //
+    // This constraint ensures dependencies are AVAILABLE. It does NOT track which
+    // earlier PODs are actually used as inputs - that's handled by Constraint 8.
+    // Together:
+    // - Constraint 5 ensures the dependency CAN be satisfied
+    // - Constraint 8 ensures that when we use a statement from earlier POD pp,
+    //   we count pp as an input to pod p (for max_input_pods enforcement)
     for s in 0..n {
         for dep in &input.deps.statement_deps[s].depends_on {
             if let StatementSource::Internal(d) = dep {
@@ -303,25 +316,17 @@ fn try_solve_with_pods(
     }
 
     // Constraint 7: Batch cardinality
-    // batch_used[b][p] >= prove[s][p] for all s that use batch b
+    // batch_used[b][p] >= prove[s][p] for all s that use batch b (batch is used if any statement uses it)
+    // batch_used[b][p] <= sum of prove[s][p] for all s using batch b (batch is 0 if no statements use it)
     for (b, batch_id) in all_batches.iter().enumerate() {
         for p in 0..target_pods {
+            let mut sum: Expression = 0.into();
             for s in 0..n {
                 if input.costs[s].custom_batch_ids.contains(batch_id) {
                     model = model.with(constraint!(batch_used[b][p] >= prove[s][p]));
+                    sum += prove[s][p];
                 }
             }
-        }
-    }
-
-    // batch_used[b][p] <= sum of prove[s][p] for all s using batch b
-    // (ensures batch_used is 0 if no statements use it)
-    for (b, batch_id) in all_batches.iter().enumerate() {
-        for p in 0..target_pods {
-            let sum: Expression = (0..n)
-                .filter(|&s| input.costs[s].custom_batch_ids.contains(batch_id))
-                .map(|s| prove[s][p])
-                .sum();
             model = model.with(constraint!(batch_used[b][p] <= sum));
         }
     }
@@ -377,7 +382,7 @@ fn try_solve_with_pods(
     // Extract solution
     let mut pod_count = 0;
     for p in 0..target_pods {
-        if solution.value(pod_used[p]) > 0.5 {
+        if solution.value(pod_used[p]) > SOLVER_BINARY_THRESHOLD {
             pod_count = p + 1;
         }
     }
@@ -388,11 +393,11 @@ fn try_solve_with_pods(
 
     for s in 0..n {
         for p in 0..pod_count {
-            if solution.value(prove[s][p]) > 0.5 {
+            if solution.value(prove[s][p]) > SOLVER_BINARY_THRESHOLD {
                 statement_to_pods[s].push(p);
                 pod_statements[p].push(s);
             }
-            if solution.value(public[s][p]) > 0.5 {
+            if solution.value(public[s][p]) > SOLVER_BINARY_THRESHOLD {
                 pod_public_statements[p].insert(s);
             }
         }
