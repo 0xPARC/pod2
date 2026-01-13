@@ -280,7 +280,8 @@ impl MultiPodBuilder {
             });
         }
 
-        // Build PODs in order
+        // Build PODs in prove_order. Due to symmetry breaking constraint (pod_used[p] >= pod_used[p+1]),
+        // prove_order is always 0..pod_count, ensuring earlier PODs are built first.
         let mut pods: Vec<MainPod> = Vec::with_capacity(solution.pod_count);
 
         for pod_idx in &solution.prove_order {
@@ -364,20 +365,25 @@ impl MultiPodBuilder {
             builder.add_pod(earlier_pods[earlier_idx].clone())?;
         }
 
-        // Create a mapping from statement to its source (for copy operations)
+        // Create a mapping from statement to its source (for copy operations).
+        // A statement may be both proved locally AND available from an earlier POD.
+        // We use or_insert to prefer local sources (inserted first) over earlier PODs.
         let mut stmt_sources: HashMap<usize, StmtSource> = HashMap::new();
         for &stmt_idx in statements_in_this_pod {
             stmt_sources.insert(stmt_idx, StmtSource::Local);
         }
         for earlier_pod_idx in 0..pod_idx {
             for &stmt_idx in &solution.pod_public_statements[earlier_pod_idx] {
+                // Only insert if not already local - or_insert preserves existing entries
                 stmt_sources
                     .entry(stmt_idx)
                     .or_insert(StmtSource::FromPod(earlier_pod_idx));
             }
         }
 
-        // Add statements in dependency order
+        // Add statements in dependency order.
+        // Note: Operations are already topologically ordered from how we construct them,
+        // but the explicit sort is defensive and ensures correctness if that invariant changes.
         let topo_order = deps.topological_order();
         let statements_set: BTreeSet<usize> = statements_in_this_pod.iter().copied().collect();
         let public_set = &solution.pod_public_statements[pod_idx];
@@ -390,24 +396,47 @@ impl MultiPodBuilder {
                 continue;
             }
 
-            // First, ensure all dependencies are available (copy if needed)
+            // First, ensure all dependencies are available (copy if needed).
+            // When a dependency comes from an earlier POD, we need CopyStatement to make it
+            // available in this POD's namespace. The earlier POD is already added as an input,
+            // but CopyStatement creates a local reference that operations can use.
             for dep in &deps.statement_deps[stmt_idx].depends_on {
                 if let StatementSource::Internal(dep_idx) = dep {
                     if !added_statements.contains_key(dep_idx) {
                         // Need to copy this statement from an earlier POD
-                        if let Some(StmtSource::FromPod(_earlier_pod_idx)) =
-                            stmt_sources.get(dep_idx)
-                        {
-                            // Add a copy operation
-                            let copy_op = Operation(
-                                OperationType::Native(NativeOperation::CopyStatement),
-                                vec![OperationArg::Statement(self.statements[*dep_idx].clone())],
-                                OperationAux::None,
-                            );
-                            let copied_stmt = builder
-                                .priv_op(copy_op)
-                                .map_err(|e| Error::Frontend(e.to_string()))?;
-                            added_statements.insert(*dep_idx, copied_stmt);
+                        match stmt_sources.get(dep_idx) {
+                            Some(StmtSource::FromPod(_earlier_pod_idx)) => {
+                                // Dependency is from an earlier POD - copy it
+                                let copy_op = Operation(
+                                    OperationType::Native(NativeOperation::CopyStatement),
+                                    vec![OperationArg::Statement(
+                                        self.statements[*dep_idx].clone(),
+                                    )],
+                                    OperationAux::None,
+                                );
+                                let copied_stmt = builder
+                                    .priv_op(copy_op)
+                                    .map_err(|e| Error::Frontend(e.to_string()))?;
+                                added_statements.insert(*dep_idx, copied_stmt);
+                            }
+                            Some(StmtSource::Local) => {
+                                // Local dependency should already be added due to topological
+                                // ordering. If we reach here, there's a bug in the ordering.
+                                unreachable!(
+                                    "Local dependency at index {} should already be added \
+                                     when processing statement {} (topological order violation)",
+                                    dep_idx, stmt_idx
+                                );
+                            }
+                            None => {
+                                // Dependency not found in stmt_sources means it's neither
+                                // in this POD nor available from earlier PODs - a solver bug.
+                                unreachable!(
+                                    "Dependency at index {} not found in stmt_sources \
+                                     when processing statement {}",
+                                    dep_idx, stmt_idx
+                                );
+                            }
                         }
                     }
                 }
@@ -415,7 +444,22 @@ impl MultiPodBuilder {
 
             // Now add the actual statement
             let is_public = public_set.contains(&stmt_idx);
-            let op = self.operations[stmt_idx].clone();
+            let mut op = self.operations[stmt_idx].clone();
+
+            // Remap Statement arguments in the operation to use statements created by MainPodBuilder.
+            // The original operation references Statements from MultiPodBuilder, but MainPodBuilder
+            // needs Statements that were either created by it or come from its input PODs.
+            for arg in &mut op.1 {
+                if let OperationArg::Statement(ref orig_stmt) = arg {
+                    // Find the original statement's index in MultiPodBuilder
+                    if let Some(orig_idx) = self.statements.iter().position(|s| s == orig_stmt) {
+                        // Get the remapped statement from MainPodBuilder
+                        if let Some(remapped_stmt) = added_statements.get(&orig_idx) {
+                            *arg = OperationArg::Statement(remapped_stmt.clone());
+                        }
+                    }
+                }
+            }
 
             let stmt = builder
                 .op(is_public, vec![], op)
@@ -531,7 +575,12 @@ mod tests {
 
     #[test]
     fn test_multi_pod_overflow() -> Result<()> {
-        // Test overflow via private statements (public statements must fit in one POD)
+        // Test that the solver correctly creates multiple PODs when statement count exceeds limits.
+        //
+        // This test focuses on capacity overflow, not dependencies. Independent statements
+        // are created that have no semantic dependencies - the only reason for multiple PODs
+        // is the max_statements limit being exceeded.
+        //
         // max_priv_statements = 6 - 2 = 4, so 6 private statements need 2 PODs
         let params = Params {
             max_statements: 6,
@@ -592,12 +641,21 @@ mod tests {
 
     #[test]
     fn test_dependencies_across_pods() -> Result<()> {
-        // Test that private statements can overflow across PODs while
-        // public statements stay in the output POD.
-        // max_priv_statements = 8 - 3 = 5, so 6 private statements need 2 PODs
+        // Test that statement dependencies work correctly when statements span multiple PODs.
+        //
+        // We create a chain of operations where each depends on the previous:
+        //   s0: Lt(1, 10)           [no deps]
+        //   s1: LtToNe(s0) → Ne(1, 10) [depends on s0]
+        //   s2: Lt(2, 20)           [no deps]
+        //   s3: LtToNe(s2) → Ne(2, 20) [depends on s2]
+        //   s4: Lt(3, 30)           [no deps]
+        //   s5: LtToNe(s4) → Ne(3, 30) [depends on s4]
+        //
+        // With tight statement limits, these dependencies may span PODs,
+        // requiring the dependency system to track and copy statements correctly.
         let params = Params {
-            max_statements: 8,
-            max_public_statements: 3,
+            max_statements: 4,
+            max_public_statements: 2,
             max_input_pods: 2,
             max_input_pods_public_statements: 4,
             ..Params::default()
@@ -606,29 +664,32 @@ mod tests {
 
         let mut builder = MultiPodBuilder::new(&params, vd_set);
 
-        // Add 6 private statements - should require 2 PODs
-        for i in 0..6i64 {
-            builder.priv_op(FrontendOp::eq(i, i))?;
-        }
+        // Build dependency chains: each lt_to_ne depends on the previous lt statement
+        let lt0 = builder.priv_op(FrontendOp::lt(1, 10))?;
+        let _ne0 = builder.priv_op(FrontendOp::lt_to_ne(lt0))?; // depends on lt0
+        let lt1 = builder.priv_op(FrontendOp::lt(2, 20))?;
+        let _ne1 = builder.priv_op(FrontendOp::lt_to_ne(lt1))?; // depends on lt1
+        let lt2 = builder.priv_op(FrontendOp::lt(3, 30))?;
+        let _ne2 = builder.pub_op(FrontendOp::lt_to_ne(lt2))?; // depends on lt2, public
 
-        // Add 3 public statements (within the single-output-POD limit)
-        builder.pub_op(FrontendOp::eq(100, 100))?;
-        builder.pub_op(FrontendOp::eq(101, 101))?;
-        builder.pub_op(FrontendOp::eq(102, 102))?;
-
-        // Solve
+        // Solve and verify we get multiple PODs due to statement limit
         let pod_count = {
             let solution = builder.solve()?;
-            println!("Dependencies test: {} PODs needed", solution.pod_count);
-            println!("Statement assignments:");
+            println!("Dependencies test: {} PODs for 6 statements", solution.pod_count);
             for (pod_idx, stmts) in solution.pod_statements.iter().enumerate() {
                 println!("  POD {}: statements {:?}", pod_idx, stmts);
                 println!("    public: {:?}", solution.pod_public_statements[pod_idx]);
             }
+            // With max_statements=4 and 6 statements, we need at least 2 PODs
+            assert!(
+                solution.pod_count >= 2,
+                "Expected at least 2 PODs, got {}",
+                solution.pod_count
+            );
             solution.pod_count
         };
 
-        // Prove
+        // Prove all PODs
         let prover = MockProver {};
         let result = builder.prove(&prover)?;
 
@@ -646,11 +707,18 @@ mod tests {
 
     #[test]
     fn test_cross_pod_copy() -> Result<()> {
-        // Test that private statements can overflow across multiple PODs.
-        // max_priv_statements = 10 - 2 = 8
-        // With 10 private statements, we need 2 PODs (10/8 = 2)
+        // Test that statements requiring cross-POD copying work correctly.
+        //
+        // Scenario: Create enough statements to force multiple PODs, with dependencies
+        // that may cross POD boundaries. The key is that if a dependent operation
+        // lands in a different POD than its dependency, the system must handle
+        // copying the dependency correctly.
+        //
+        // Key insight: max_priv_statements = max_statements - max_public_statements
+        // So with max_statements=6 and max_public_statements=2, we get max_priv=4.
+        // With 8 statements and 4 per POD, we need at least 2 PODs.
         let params = Params {
-            max_statements: 10,
+            max_statements: 6, // max_priv = 6 - 2 = 4
             max_public_statements: 2,
             max_input_pods: 2,
             max_input_pods_public_statements: 4,
@@ -660,27 +728,32 @@ mod tests {
 
         let mut builder = MultiPodBuilder::new(&params, vd_set);
 
-        // Add 10 private statements - forces 2 PODs
-        for i in 0..10i64 {
-            builder.priv_op(FrontendOp::eq(i, i))?;
-        }
+        // Create dependency pairs: each lt_to_ne depends on its corresponding lt
+        // With 8 statements and max 4 per POD, we need at least 2 PODs
+        let lt0 = builder.priv_op(FrontendOp::lt(1, 100))?;
+        let _ne0 = builder.priv_op(FrontendOp::lt_to_ne(lt0))?;
+        let lt1 = builder.priv_op(FrontendOp::lt(2, 200))?;
+        let _ne1 = builder.priv_op(FrontendOp::lt_to_ne(lt1))?;
+        let lt2 = builder.priv_op(FrontendOp::lt(3, 300))?;
+        let _ne2 = builder.priv_op(FrontendOp::lt_to_ne(lt2))?;
+        let lt3 = builder.priv_op(FrontendOp::lt(4, 400))?;
+        let _ne3 = builder.pub_op(FrontendOp::lt_to_ne(lt3))?; // public
 
-        // Add 2 public statements (within single output POD limit)
-        builder.pub_op(FrontendOp::eq(100, 100))?;
-        builder.pub_op(FrontendOp::eq(101, 101))?;
-
-        // Extract solution info before prove() borrows builder
         let pod_count = {
             let solution = builder.solve()?;
+            println!("Cross-POD copy test: {} PODs", solution.pod_count);
+            for (pod_idx, stmts) in solution.pod_statements.iter().enumerate() {
+                println!("  POD {}: statements {:?}", pod_idx, stmts);
+                println!("    public: {:?}", solution.pod_public_statements[pod_idx]);
+            }
+            // With 8 statements and max_priv=4, need at least 2 PODs
+            assert!(
+                solution.pod_count >= 2,
+                "Expected at least 2 PODs, got {}",
+                solution.pod_count
+            );
             solution.pod_count
         };
-
-        // Should need at least 2 PODs (10 private / 8 per POD = 2)
-        assert!(
-            pod_count >= 2,
-            "Expected at least 2 PODs, got {}",
-            pod_count
-        );
 
         // Prove and verify
         let prover = MockProver {};

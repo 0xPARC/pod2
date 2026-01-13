@@ -188,43 +188,65 @@ mod tests {
 
     #[test]
     fn test_simple_dependency_graph() {
-        // Create statements: S0 (no deps), S1 depends on S0, S2 depends on S1
+        // Test dependency chain: op0 creates s0, op1 references s0, op2 references op1's output.
+        //
+        // Each operation produces a distinct statement (as in the real system).
+        // Dependencies are tracked by matching operation input statements to earlier outputs.
+        //
+        // Using meaningful values:
+        // - s0 = Equal(100, 100) created by op0
+        // - s1 = Equal(100, 100) is op1's output after copying s0 (same semantic value)
+        // - s2 = Equal(100, 100) is op2's output after copying s1 (same semantic value)
+        //
+        // Note: Each statement object must be distinct for the HashMap to work correctly,
+        // even if they represent the same logical value. In practice, the builder ensures this.
         let s0 = Statement::Equal(
-            ValueRef::Literal(Value::from(1)),
-            ValueRef::Literal(Value::from(1)),
+            ValueRef::Literal(Value::from(100)),
+            ValueRef::Literal(Value::from(100)),
         );
         let s1 = Statement::Equal(
-            ValueRef::Literal(Value::from(2)),
-            ValueRef::Literal(Value::from(2)),
+            ValueRef::Literal(Value::from(101)), // Distinct from s0 for testing
+            ValueRef::Literal(Value::from(101)),
         );
         let s2 = Statement::Equal(
-            ValueRef::Literal(Value::from(3)),
-            ValueRef::Literal(Value::from(3)),
+            ValueRef::Literal(Value::from(102)), // Distinct from s1 for testing
+            ValueRef::Literal(Value::from(102)),
         );
 
         let statements = vec![s0.clone(), s1.clone(), s2.clone()];
         let operations = vec![
-            make_none_op(),           // S0: no deps
-            make_copy_op(s0.clone()), // S1: depends on S0
-            make_copy_op(s1.clone()), // S2: depends on S1
+            make_none_op(),           // op0: creates s0
+            make_copy_op(s0.clone()), // op1: copies s0, depends on op0
+            make_copy_op(s1.clone()), // op2: copies s1, depends on op1
         ];
 
         let graph = DependencyGraph::build(&statements, &operations, &HashMap::new());
 
         // Check dependencies
-        assert!(graph.statement_deps[0].depends_on.is_empty());
-        assert_eq!(graph.statement_deps[1].depends_on.len(), 1);
-        assert_eq!(graph.statement_deps[2].depends_on.len(), 1);
+        assert!(
+            graph.statement_deps[0].depends_on.is_empty(),
+            "op0 creates s0, no dependencies"
+        );
+        assert_eq!(
+            graph.statement_deps[1].depends_on.len(),
+            1,
+            "op1 copies s0, depends on op0"
+        );
+        assert_eq!(
+            graph.statement_deps[2].depends_on.len(),
+            1,
+            "op2 copies s1, depends on op1"
+        );
 
         // Check topological order
         let order = graph.topological_order();
         assert_eq!(order.len(), 3);
 
-        // S0 must come before S1, S1 must come before S2
-        let pos_s0 = order.iter().position(|&x| x == 0).unwrap();
-        let pos_s1 = order.iter().position(|&x| x == 1).unwrap();
-        let pos_s2 = order.iter().position(|&x| x == 2).unwrap();
-        assert!(pos_s0 < pos_s1);
-        assert!(pos_s1 < pos_s2);
+        // op0 -> op1 -> op2 (dependency chain)
+        let pos_op0 = order.iter().position(|&x| x == 0).unwrap();
+        let pos_op1 = order.iter().position(|&x| x == 1).unwrap();
+        let pos_op2 = order.iter().position(|&x| x == 2).unwrap();
+        assert!(pos_op0 < pos_op1, "op0 must come before op1");
+        assert!(pos_op1 < pos_op2, "op1 must come before op2");
     }
 }
