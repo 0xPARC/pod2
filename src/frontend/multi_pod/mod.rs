@@ -175,6 +175,12 @@ impl MultiPodBuilder {
         self.invalidate_cache();
 
         // Get or create the cached builder
+        //
+        // NOTE: We clone input pods here because MainPodBuilder takes ownership.
+        // This could be avoided if MainPodBuilder were generic over the pod storage type:
+        //   struct MainPodBuilder<P: Borrow<MainPod> = MainPod>
+        // Then MultiPodBuilder could use MainPodBuilder<&MainPod> to borrow instead of clone,
+        // while existing code using MainPodBuilder (with the default) would be unaffected.
         let builder = self.cached_builder.get_or_insert_with(|| {
             let unlimited_params = Params {
                 max_statements: usize::MAX / 2,
