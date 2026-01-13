@@ -169,6 +169,12 @@ pub struct Hash(
     pub [F; HASH_SIZE],
 );
 
+impl From<Hash> for HashOut {
+    fn from(hash: Hash) -> HashOut {
+        HashOut { elements: hash.0 }
+    }
+}
+
 impl ToHex for Hash {
     fn encode_hex<T: std::iter::FromIterator<char>>(&self) -> T {
         self.0

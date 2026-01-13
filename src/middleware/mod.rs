@@ -809,7 +809,7 @@ impl Params {
     }
 
     pub const fn predicate_size() -> usize {
-        HASH_SIZE + 2
+        8
     }
 
     pub const fn operation_type_size() -> usize {
@@ -817,11 +817,11 @@ impl Params {
     }
 
     pub fn statement_size(&self) -> usize {
-        Self::predicate_size() + STATEMENT_ARG_F_LEN * self.max_statement_args
+        HASH_SIZE + STATEMENT_ARG_F_LEN * self.max_statement_args
     }
 
     pub const fn statement_tmpl_size(&self) -> usize {
-        Self::predicate_size() + self.max_statement_args * Self::statement_tmpl_arg_size()
+        HASH_SIZE + self.max_statement_args * Self::statement_tmpl_arg_size()
     }
 
     pub fn custom_predicate_size(&self) -> usize {

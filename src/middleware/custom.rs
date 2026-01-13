@@ -170,6 +170,7 @@ impl ToFields for StatementTmpl {
 
         let mut fields: Vec<F> = self
             .pred
+            .hash(params)
             .to_fields(params)
             .into_iter()
             .chain(self.args.iter().flat_map(|sta| sta.to_fields(params)))
@@ -388,6 +389,8 @@ impl ToFields for CustomPredicateBatch {
             .take(params.max_custom_batch_size)
             .flat_map(|p| p.to_fields(params))
             .collect();
+        // println!("DBG native: {:?}", fields);
+        // dbg!(&fields);
         fields
     }
 }

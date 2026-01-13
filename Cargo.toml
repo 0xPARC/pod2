@@ -64,5 +64,5 @@ disk_cache = ["directories", "minicbor-serde"]
 mem_cache = []
 
 # Uncomment in order to enable debug information in the release builds.  This allows getting panic backtraces with a performance similar to regular release.
-# [profile.release]
-# debug = true
+[profile.release]
+debug = true

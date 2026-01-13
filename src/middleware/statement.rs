@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 use strum_macros::FromRepr;
 
 use crate::middleware::{
-    self, AnchoredKey, CustomPredicateRef, Error, Params, Result, ToFields, Value, F, VALUE_SIZE,
+    self, hash_fields, AnchoredKey, CustomPredicateRef, Error, Params, Result, ToFields, Value, F,
+    VALUE_SIZE,
 };
 
 pub const STATEMENT_ARG_F_LEN: usize = 8;
@@ -210,15 +211,15 @@ impl From<PredicatePrefix> for F {
 impl ToFields for Predicate {
     fn to_fields(&self, params: &Params) -> Vec<F> {
         // serialize:
-        // NativePredicate(id) as (1, id, 0, 0, 0, 0) -- id: usize
-        // BatchSelf(i) as (2, i, 0, 0, 0, 0) -- i: usize
+        // NativePredicate(id) as (1, id, 0...) -- id: usize
+        // BatchSelf(i) as (2, i, 0...) -- i: usize
         // CustomPredicateRef(pb, i) as
-        // (3, [hash of pb], i) -- pb hashes to 4 field elements
-        //                      -- i: usize
+        // (3, [hash of pb], i, 0...) -- pb hashes to 4 field elements
+        //                            -- i: usize
         // IntroPredicateRef(vd_hash) as
-        // (4, [vd_hash], 0)
+        // (4, [vd_hash], 0...)
 
-        // in every case: pad to (hash_size + 2) field elements
+        // in every case: pad to `Params::predicate_size()` field elements
         let mut fields: Vec<F> = match self {
             Self::Native(p) => iter::once(F::from(PredicatePrefix::Native))
                 .chain(p.to_fields(params))
@@ -240,6 +241,12 @@ impl ToFields for Predicate {
         };
         fields.resize_with(Params::predicate_size(), || F::from_canonical_u64(0));
         fields
+    }
+}
+
+impl Predicate {
+    pub fn hash(&self, params: &Params) -> middleware::Hash {
+        hash_fields(&self.to_fields(params))
     }
 }
 
@@ -497,7 +504,8 @@ impl Statement {
 
 impl ToFields for Statement {
     fn to_fields(&self, params: &Params) -> Vec<F> {
-        let mut fields = self.predicate().to_fields(params);
+        let predicate_hash = hash_fields(&self.predicate().to_fields(params));
+        let mut fields = predicate_hash.0.to_vec();
         fields.extend(self.args().iter().flat_map(|arg| arg.to_fields(params)));
         fields.resize_with(params.statement_size(), || F::ZERO);
         fields

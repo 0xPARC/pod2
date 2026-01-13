@@ -31,7 +31,7 @@ impl Statement {
 
 impl ToFields for Statement {
     fn to_fields(&self, params: &Params) -> Vec<middleware::F> {
-        let mut fields = self.0.to_fields(params);
+        let mut fields = self.0.hash(params).to_fields(params);
         fields.extend(
             self.1
                 .iter()
