@@ -2,7 +2,7 @@
 
 use std::{array, iter};
 
-use itertools::{zip_eq, Itertools};
+use itertools::Itertools;
 use plonky2::{
     field::{
         extension::Extendable,
@@ -559,8 +559,15 @@ impl StatementWithPredTmplTarget {
         st_tmpl: &StatementTmpl,
     ) -> Result<()> {
         self.pred.set_targets(pw, params, &st_tmpl.pred)?;
-        for (arg_target, arg) in zip_eq(&self.args, &st_tmpl.args) {
-            arg_target.set_targets(pw, params, &arg)?;
+        let arg_pad = StatementTmplArg::None;
+        for (i, arg) in st_tmpl
+            .args
+            .iter()
+            .chain(iter::repeat(&arg_pad))
+            .take(params.max_statement_args)
+            .enumerate()
+        {
+            self.args[i].set_targets(pw, params, arg)?;
         }
         Ok(())
     }
@@ -608,8 +615,15 @@ impl CustomPredicateWithPredTarget {
             self.conjunction.target,
             F::from_bool(custom_pred.conjunction),
         )?;
-        for (st_target, st) in zip_eq(&self.statements, &custom_pred.statements) {
-            st_target.set_targets(pw, params, st)?;
+        let st_tmpl_pad = custom_pred.pad_statement_tmpl();
+        for (i, st_tmpl) in custom_pred
+            .statements
+            .iter()
+            .chain(iter::repeat(&st_tmpl_pad))
+            .take(params.max_custom_predicate_arity)
+            .enumerate()
+        {
+            self.statements[i].set_targets(pw, params, st_tmpl)?;
         }
         pw.set_target(self.args_len, F::from_canonical_usize(custom_pred.args_len))?;
         Ok(())
