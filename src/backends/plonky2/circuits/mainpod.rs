@@ -1415,7 +1415,7 @@ fn make_statement_from_template_circuit(
         .collect();
     measure_gates_end!(builder, measure);
     StatementTarget {
-        pred_hash: st_tmpl.pred_hash.clone(),
+        pred_hash: st_tmpl.pred_hash,
         args,
     }
 }
