@@ -1376,6 +1376,27 @@ fn make_statement_arg_from_template_circuit(
     StatementArgTarget::new(first, second)
 }
 
+fn make_predicate_from_template_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    pred_hash_or_wc: &PredicateHashOrWildcardTarget,
+    args: &[ValueTarget],
+) -> HashOutTarget {
+    let zero = builder.zero();
+    let is_pred = pred_hash_or_wc.is_pred(builder);
+    // If the index is not used, use a 0 instead to still pass the range constraints from
+    // vec_ref
+    let index = builder.select(is_pred, zero, pred_hash_or_wc.wc_index());
+    let resolved_pred_hash = HashOutTarget::from(builder.vec_ref_small(params, args, index));
+    let pred_hash = builder.select_flattenable(
+        params,
+        is_pred,
+        &pred_hash_or_wc.pred_hash(),
+        &resolved_pred_hash,
+    );
+    pred_hash
+}
+
 fn make_statement_from_template_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
@@ -1383,7 +1404,7 @@ fn make_statement_from_template_circuit(
     args: &[ValueTarget],
 ) -> StatementTarget {
     let measure = measure_gates_begin!(builder, "StArgFromTmpl");
-    let args = st_tmpl
+    let st_args = st_tmpl
         .args
         .iter()
         .map(|st_tmpl_arg| {
@@ -1391,7 +1412,11 @@ fn make_statement_from_template_circuit(
         })
         .collect();
     measure_gates_end!(builder, measure);
-    StatementTarget::new(st_tmpl.pred_hash_or_wc().pred_hash(), args)
+    let measure = measure_gates_begin!(builder, "PredFromTmpl");
+    let pred_hash =
+        make_predicate_from_template_circuit(params, builder, st_tmpl.pred_hash_or_wc(), args);
+    measure_gates_end!(builder, measure);
+    StatementTarget::new(pred_hash, st_args)
 }
 
 /// Given a custom predicate, a list of operation arguments (statements) and a list of wildcard
@@ -3143,6 +3168,21 @@ mod tests {
         };
         let args = vec![Value::from(1), Value::from(dict), Value::from(3)];
         let expected_st = Statement::equal(
+            AnchoredKey::new(dict, Key::from("key")),
+            Value::from("value"),
+        );
+        helper_statement_from_template(&params, st_tmpl, args, expected_st)?;
+
+        let st_tmpl = StatementTmpl {
+            pred: PredicateOrWildcard::Wildcard(Wildcard::new("x".to_string(), 2)),
+            args: vec![
+                StatementTmplArg::AnchoredKey(Wildcard::new("a".to_string(), 1), Key::from("key")),
+                StatementTmplArg::Literal(Value::from("value")),
+            ],
+        };
+        let pred_hash = Predicate::Native(NativePredicate::NotEqual).hash(&params);
+        let args = vec![Value::from(1), Value::from(dict), Value::from(pred_hash)];
+        let expected_st = Statement::not_equal(
             AnchoredKey::new(dict, Key::from("key")),
             Value::from("value"),
         );

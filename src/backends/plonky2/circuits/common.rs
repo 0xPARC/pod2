@@ -572,6 +572,9 @@ impl PredicateHashOrWildcardTarget {
     pub fn pred_hash(&self) -> HashOutTarget {
         HashOutTarget::from(self.data())
     }
+    pub fn wc_index(&self) -> Target {
+        self.elements[1]
+    }
     pub fn set_targets_raw(
         &self,
         pw: &mut PartialWitness<F>,
