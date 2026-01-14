@@ -470,6 +470,9 @@ impl CustomPredicateBatch {
         // but ideally we want to use the root of a merkle tree built from the custom predicates.
         let input = self.to_fields(params);
 
+        // for i in &input {
+        //     println!("{}", i);
+        // }
         hash_fields(&input)
     }
 

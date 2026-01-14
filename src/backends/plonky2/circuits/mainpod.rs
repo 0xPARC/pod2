@@ -25,8 +25,8 @@ use crate::{
                 CustomPredicateTarget, CustomPredicateVerifyEntryTarget,
                 CustomPredicateVerifyQueryTarget, Flattenable, MerkleClaimTarget,
                 MerkleTreeStateTransitionClaimTarget, OperationTarget, OperationTypeTarget,
-                PredicateTarget, StatementArgTarget, StatementTarget, StatementTmplArgTarget,
-                StatementTmplTarget, ValueTarget,
+                PredicateHashOrWildcardTarget, PredicateTarget, StatementArgTarget,
+                StatementTarget, StatementTmplArgTarget, StatementTmplTarget, ValueTarget,
             },
             hash::{hash_from_state_circuit, precompute_hash_state},
             mux_table::{MuxTableTarget, TableEntryTarget},
@@ -341,12 +341,7 @@ fn build_operation_aux_table_circuit(
                 .chain(signed_by.pk.u.components)
                 .collect(),
         );
-        let entry: MsgPubKeyTarget = HashPairTarget(
-            HashOutTarget {
-                elements: signed_by.msg.elements,
-            },
-            pk_hash,
-        );
+        let entry: MsgPubKeyTarget = HashPairTarget(HashOutTarget::from(signed_by.msg), pk_hash);
 
         table.push(builder, OperationAuxTableTag::SignedBy as u32, &entry);
         measure_gates_end!(builder, measure);
@@ -1396,7 +1391,7 @@ fn make_statement_from_template_circuit(
         })
         .collect();
     measure_gates_end!(builder, measure);
-    StatementTarget::new(st_tmpl.pred_hash().pred_hash(), args)
+    StatementTarget::new(st_tmpl.pred_hash_or_wc().pred_hash(), args)
 }
 
 /// Given a custom predicate, a list of operation arguments (statements) and a list of wildcard
@@ -1527,14 +1522,29 @@ fn normalize_st_tmpl_circuit(
     st_tmpl: &StatementTmplTarget,
     id: HashOutTarget,
 ) -> StatementTmplTarget {
-    let pred = st_tmpl.pred().expect("StatementTmpl contains predicate");
+    // If the custom predicate is self, we normalize it and then hash it.
+    let old_pred = st_tmpl.pred().expect("StatementTmpl contains predicate");
     let prefix_batch_self = builder.constant(F::from(PredicatePrefix::BatchSelf));
-    let is_batch_self = builder.is_equal(pred.elements[0], prefix_batch_self);
-    let pred_index = pred.elements[1];
-    let custom_pred = PredicateTarget::new_custom(builder, id, pred_index);
-    let pred = builder.select_flattenable(params, is_batch_self, &custom_pred, pred);
-    let pred_hash = pred.hash(builder);
-    StatementTmplTarget::new(builder, pred_hash, st_tmpl.args.clone())
+    let is_batch_self = builder.is_equal(old_pred.elements[0], prefix_batch_self);
+
+    let pred_index = old_pred.elements[1];
+    let normalized_custom_pred = PredicateTarget::new_custom(builder, id, pred_index);
+    let normalized_custom_pred_hash = normalized_custom_pred.hash(builder);
+
+    // If the template is using a predicate and it is batch self we use the freshly computed
+    // normalized predicate hash, otherwise we keep the original data.
+    let old_data = st_tmpl.pred_hash_or_wc().data();
+    let is_pred = st_tmpl.pred_hash_or_wc().is_pred(builder);
+    let is_pred_batch_self = builder.and(is_pred, is_batch_self);
+    let data = builder.select_flattenable(
+        params,
+        is_pred_batch_self,
+        &ValueTarget::from(normalized_custom_pred_hash),
+        &old_data,
+    );
+    let pred_hash_or_wc =
+        PredicateHashOrWildcardTarget::new(st_tmpl.pred_hash_or_wc().elements[0], data);
+    StatementTmplTarget::new(pred_hash_or_wc, st_tmpl.args.clone())
 }
 
 /// Build a table of [batch_id, custom_predicate_index, custom_predicate] with queryable part as
@@ -1774,7 +1784,7 @@ impl MainPodVerifyTarget {
                 .map(|_| builder.add_virtual_custom_predicate_batch(params, true))
                 .collect(),
             custom_predicate_verifications: (0..params.max_custom_predicate_verifications)
-                .map(|_| CustomPredicateVerifyEntryTarget::new_virtual(params, builder, false))
+                .map(|_| CustomPredicateVerifyEntryTarget::new_virtual(params, builder))
                 .collect(),
         }
     }
@@ -3151,7 +3161,7 @@ mod tests {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::new(config);
 
-        let custom_predicate_target = builder.add_virtual_custom_predicate_entry(params, false);
+        let custom_predicate_target = builder.add_virtual_custom_predicate_entry(params);
         let op_args_target: Vec<_> = (0..args.len())
             .map(|_| builder.add_virtual_statement(params, false))
             .collect();
