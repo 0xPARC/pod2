@@ -326,9 +326,7 @@ fn try_solve_with_pods(
                     .iter()
                     .any(|dep| matches!(dep, StatementSource::Internal(dep_d) if *dep_d == d));
                 if depends_on_d {
-                    model = model.with(constraint!(
-                        needs_copy[di][p] >= prove[s][p] - prove[d][p]
-                    ));
+                    model = model.with(constraint!(needs_copy[di][p] >= prove[s][p] - prove[d][p]));
                 }
             }
 
@@ -465,9 +463,7 @@ fn try_solve_with_pods(
         } else {
             0.into()
         };
-        let external_sum: Expression = (0..external_pods.len())
-            .map(|e| uses_external[p][e])
-            .sum();
+        let external_sum: Expression = (0..external_pods.len()).map(|e| uses_external[p][e]).sum();
         model = model.with(constraint!(
             internal_sum + external_sum <= (input.params.max_input_pods as f64) * pod_used[p]
         ));

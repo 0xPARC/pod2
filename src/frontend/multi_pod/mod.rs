@@ -397,9 +397,7 @@ impl MultiPodBuilder {
         for earlier_pod_idx in 0..pod_idx {
             for &stmt_idx in &solution.pod_public_statements[earlier_pod_idx] {
                 // Only insert if not already local - or_insert preserves existing entries
-                stmt_sources
-                    .entry(stmt_idx)
-                    .or_insert(StmtSource::FromPod);
+                stmt_sources.entry(stmt_idx).or_insert(StmtSource::FromPod);
             }
         }
 
@@ -694,7 +692,8 @@ mod tests {
 
         // Pair 3: prove score < threshold, derive score ≠ threshold
         let score_under_threshold = builder.priv_op(FrontendOp::lt(3, 300))?;
-        let _score_not_at_threshold = builder.priv_op(FrontendOp::lt_to_ne(score_under_threshold))?;
+        let _score_not_at_threshold =
+            builder.priv_op(FrontendOp::lt_to_ne(score_under_threshold))?;
 
         // Pair 4: prove level < cap, derive level ≠ cap (public output)
         let level_under_cap = builder.priv_op(FrontendOp::lt(4, 400))?;
@@ -1293,29 +1292,21 @@ mod tests {
 
         // Create 4 separate batches using podlang parser
         // Each batch has a simple predicate that checks a Contains statement
-        let batch1 = parse(
-            r#"pred1(A) = AND(Contains(A, "x", 1))"#,
-            &params,
-            &[],
-        ).expect("parse batch1").custom_batch;
+        let batch1 = parse(r#"pred1(A) = AND(Contains(A, "x", 1))"#, &params, &[])
+            .expect("parse batch1")
+            .custom_batch;
 
-        let batch2 = parse(
-            r#"pred2(A) = AND(Contains(A, "x", 2))"#,
-            &params,
-            &[],
-        ).expect("parse batch2").custom_batch;
+        let batch2 = parse(r#"pred2(A) = AND(Contains(A, "x", 2))"#, &params, &[])
+            .expect("parse batch2")
+            .custom_batch;
 
-        let batch3 = parse(
-            r#"pred3(A) = AND(Contains(A, "x", 3))"#,
-            &params,
-            &[],
-        ).expect("parse batch3").custom_batch;
+        let batch3 = parse(r#"pred3(A) = AND(Contains(A, "x", 3))"#, &params, &[])
+            .expect("parse batch3")
+            .custom_batch;
 
-        let batch4 = parse(
-            r#"pred4(A) = AND(Contains(A, "x", 4))"#,
-            &params,
-            &[],
-        ).expect("parse batch4").custom_batch;
+        let batch4 = parse(r#"pred4(A) = AND(Contains(A, "x", 4))"#, &params, &[])
+            .expect("parse batch4")
+            .custom_batch;
 
         let mut builder = MultiPodBuilder::new(&params, vd_set);
 
@@ -1373,5 +1364,4 @@ mod tests {
 
         Ok(())
     }
-
 }
