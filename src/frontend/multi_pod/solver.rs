@@ -605,8 +605,8 @@ mod tests {
 
         let solution = solve(&input).unwrap();
 
-        // 6 statements / 3 per pod = 2 PODs minimum
-        assert!(solution.pod_count >= 2);
+        // 6 statements / 3 per pod = exactly 2 PODs
+        assert_eq!(solution.pod_count, 2);
     }
 
     #[test]

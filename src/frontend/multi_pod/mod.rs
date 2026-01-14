@@ -528,8 +528,10 @@ mod tests {
         backends::plonky2::{
             mock::mainpod::MockProver, primitives::ec::schnorr::SecretKey, signer::Signer,
         },
+        dict,
         examples::MOCK_VD_SET,
         frontend::{Operation as FrontendOp, SignedDictBuilder},
+        lang::parse,
     };
 
     #[test]
@@ -571,16 +573,19 @@ mod tests {
 
     #[test]
     fn test_estimate_vs_solve() -> Result<()> {
+        // Verifies that estimate_pod_count() provides a reasonable lower bound.
         let params = Params {
             max_statements: 10,
-            max_public_statements: 5, // Enough for all 5 public statements
+            max_public_statements: 5,
+            // Derived: max_priv_statements = 10 - 5 = 5
+            // With 5 statements, we need exactly 1 POD
             ..Params::default()
         };
         let vd_set = &*MOCK_VD_SET;
 
         let mut builder = MultiPodBuilder::new(&params, vd_set);
 
-        // Add a few public operations (all must fit in single output POD)
+        // Add 5 public statements - all fit in one POD
         for i in 0..5 {
             builder.pub_op(FrontendOp::eq(i, i))?;
         }
@@ -588,26 +593,31 @@ mod tests {
         let estimate = builder.estimate_pod_count();
         let solution = builder.solve()?;
 
-        // Estimate should be >= actual (it's a lower bound + fudge factor)
-        // Actually estimate might be slightly higher due to fudge factor
-        assert!(estimate >= 1);
-        assert!(solution.pod_count >= 1);
+        // With 5 statements and capacity for 5, we need exactly 1 POD
+        assert_eq!(solution.pod_count, 1, "5 statements should fit in 1 POD");
+
+        // Estimate should be >= actual (lower bound with fudge factor)
+        assert!(
+            estimate >= solution.pod_count,
+            "Estimate {} should be >= actual {}",
+            estimate,
+            solution.pod_count
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_multi_pod_overflow() -> Result<()> {
-        // Test that the solver correctly creates multiple PODs when statement count exceeds limits.
+        // Verifies automatic splitting when statements exceed per-POD capacity.
         //
-        // This test focuses on capacity overflow, not dependencies. Independent statements
-        // are created that have no semantic dependencies - the only reason for multiple PODs
-        // is the max_statements limit being exceeded.
-        //
-        // max_priv_statements = 6 - 2 = 4, so 6 private statements need 2 PODs
+        // This test uses independent statements with no dependencies - the only
+        // reason for multiple PODs is the statement limit being exceeded.
         let params = Params {
             max_statements: 6,
             max_public_statements: 2,
+            // Derived: max_priv_statements = 6 - 2 = 4
+            // With 6 private + 2 public = 8 statements, need ceil(8/4) = 2 PODs
             max_input_pods: 2,
             max_input_pods_public_statements: 4,
             ..Params::default()
@@ -616,163 +626,21 @@ mod tests {
 
         let mut builder = MultiPodBuilder::new(&params, vd_set);
 
-        // Add 6 private statements - should require at least 2 PODs
+        // Add 6 independent private statements (no dependencies between them)
         for i in 0..6i64 {
             builder.priv_op(FrontendOp::eq(i, i))?;
         }
 
-        // Add 2 public statements (within the single-output-POD limit)
+        // Add 2 public statements for the output POD
         builder.pub_op(FrontendOp::eq(100, 100))?;
         builder.pub_op(FrontendOp::eq(101, 101))?;
 
-        // Solve and check
         let pod_count = {
             let solution = builder.solve()?;
-            println!(
-                "Solution: {} PODs needed for 8 statements",
-                solution.pod_count
-            );
-            println!("Statement assignments:");
-            for (pod_idx, stmts) in solution.pod_statements.iter().enumerate() {
-                println!("  POD {}: statements {:?}", pod_idx, stmts);
-                println!("    public: {:?}", solution.pod_public_statements[pod_idx]);
-            }
-            // Should need at least 2 PODs
+            // 8 statements / 4 per POD = 2 PODs minimum
             assert!(
                 solution.pod_count >= 2,
-                "Expected at least 2 PODs, got {}",
-                solution.pod_count
-            );
-            solution.pod_count
-        };
-
-        // Prove all PODs
-        let prover = MockProver {};
-        let result = builder.prove(&prover)?;
-
-        assert_eq!(result.pods.len(), pod_count);
-
-        // Verify all PODs
-        for (i, pod) in result.pods.iter().enumerate() {
-            pod.pod
-                .verify()
-                .map_err(|e| Error::Frontend(format!("POD {} verification failed: {}", i, e)))?;
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_dependencies_across_pods() -> Result<()> {
-        // Test that statement dependencies work correctly when statements span multiple PODs.
-        //
-        // We create a chain of operations where each depends on the previous:
-        //   s0: Lt(1, 10)           [no deps]
-        //   s1: LtToNe(s0) → Ne(1, 10) [depends on s0]
-        //   s2: Lt(2, 20)           [no deps]
-        //   s3: LtToNe(s2) → Ne(2, 20) [depends on s2]
-        //   s4: Lt(3, 30)           [no deps]
-        //   s5: LtToNe(s4) → Ne(3, 30) [depends on s4]
-        //
-        // With tight statement limits, these dependencies may span PODs,
-        // requiring the dependency system to track and copy statements correctly.
-        let params = Params {
-            max_statements: 4,
-            max_public_statements: 2,
-            max_input_pods: 2,
-            max_input_pods_public_statements: 4,
-            ..Params::default()
-        };
-        let vd_set = &*MOCK_VD_SET;
-
-        let mut builder = MultiPodBuilder::new(&params, vd_set);
-
-        // Build dependency chains: each lt_to_ne depends on the previous lt statement
-        let lt0 = builder.priv_op(FrontendOp::lt(1, 10))?;
-        let _ne0 = builder.priv_op(FrontendOp::lt_to_ne(lt0))?; // depends on lt0
-        let lt1 = builder.priv_op(FrontendOp::lt(2, 20))?;
-        let _ne1 = builder.priv_op(FrontendOp::lt_to_ne(lt1))?; // depends on lt1
-        let lt2 = builder.priv_op(FrontendOp::lt(3, 30))?;
-        let _ne2 = builder.pub_op(FrontendOp::lt_to_ne(lt2))?; // depends on lt2, public
-
-        // Solve and verify we get multiple PODs due to statement limit
-        let pod_count = {
-            let solution = builder.solve()?;
-            println!("Dependencies test: {} PODs for 6 statements", solution.pod_count);
-            for (pod_idx, stmts) in solution.pod_statements.iter().enumerate() {
-                println!("  POD {}: statements {:?}", pod_idx, stmts);
-                println!("    public: {:?}", solution.pod_public_statements[pod_idx]);
-            }
-            // With max_statements=4 and 6 statements, we need at least 2 PODs
-            assert!(
-                solution.pod_count >= 2,
-                "Expected at least 2 PODs, got {}",
-                solution.pod_count
-            );
-            solution.pod_count
-        };
-
-        // Prove all PODs
-        let prover = MockProver {};
-        let result = builder.prove(&prover)?;
-
-        assert_eq!(result.pods.len(), pod_count);
-
-        // Verify all PODs
-        for (i, pod) in result.pods.iter().enumerate() {
-            pod.pod
-                .verify()
-                .map_err(|e| Error::Frontend(format!("POD {} verification failed: {}", i, e)))?;
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_cross_pod_copy() -> Result<()> {
-        // Test that statements requiring cross-POD copying work correctly.
-        //
-        // Scenario: Create enough statements to force multiple PODs, with dependencies
-        // that may cross POD boundaries. The key is that if a dependent operation
-        // lands in a different POD than its dependency, the system must handle
-        // copying the dependency correctly.
-        //
-        // Key insight: max_priv_statements = max_statements - max_public_statements
-        // So with max_statements=6 and max_public_statements=2, we get max_priv=4.
-        // With 8 statements and 4 per POD, we need at least 2 PODs.
-        let params = Params {
-            max_statements: 6, // max_priv = 6 - 2 = 4
-            max_public_statements: 2,
-            max_input_pods: 2,
-            max_input_pods_public_statements: 4,
-            ..Params::default()
-        };
-        let vd_set = &*MOCK_VD_SET;
-
-        let mut builder = MultiPodBuilder::new(&params, vd_set);
-
-        // Create dependency pairs: each lt_to_ne depends on its corresponding lt
-        // With 8 statements and max 4 per POD, we need at least 2 PODs
-        let lt0 = builder.priv_op(FrontendOp::lt(1, 100))?;
-        let _ne0 = builder.priv_op(FrontendOp::lt_to_ne(lt0))?;
-        let lt1 = builder.priv_op(FrontendOp::lt(2, 200))?;
-        let _ne1 = builder.priv_op(FrontendOp::lt_to_ne(lt1))?;
-        let lt2 = builder.priv_op(FrontendOp::lt(3, 300))?;
-        let _ne2 = builder.priv_op(FrontendOp::lt_to_ne(lt2))?;
-        let lt3 = builder.priv_op(FrontendOp::lt(4, 400))?;
-        let _ne3 = builder.pub_op(FrontendOp::lt_to_ne(lt3))?; // public
-
-        let pod_count = {
-            let solution = builder.solve()?;
-            println!("Cross-POD copy test: {} PODs", solution.pod_count);
-            for (pod_idx, stmts) in solution.pod_statements.iter().enumerate() {
-                println!("  POD {}: statements {:?}", pod_idx, stmts);
-                println!("    public: {:?}", solution.pod_public_statements[pod_idx]);
-            }
-            // With 8 statements and max_priv=4, need at least 2 PODs
-            assert!(
-                solution.pod_count >= 2,
-                "Expected at least 2 PODs, got {}",
+                "Expected at least 2 PODs for 8 statements with max_priv=4, got {}",
                 solution.pod_count
             );
             solution.pod_count
@@ -781,8 +649,8 @@ mod tests {
         // Prove and verify
         let prover = MockProver {};
         let result = builder.prove(&prover)?;
-
         assert_eq!(result.pods.len(), pod_count);
+
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
                 .verify()
@@ -793,15 +661,81 @@ mod tests {
     }
 
     #[test]
-    fn test_reprove_when_input_pods_exhausted() -> Result<()> {
-        // Test that the solver chooses to re-prove a statement when using it as
-        // an input would exceed max_input_pods.
-        // With max_input_pods = 0, any cross-POD dependency must be re-proved.
-        // max_priv_statements = 4 - 2 = 2
+    fn test_cross_pod_dependencies() -> Result<()> {
+        // Verifies that dependencies work correctly when statements span POD boundaries.
+        //
+        // Each pair forms a dependency: lt(a, b) proves a < b, then lt_to_ne derives a ≠ b.
+        // When statements are split across PODs, the solver must:
+        // 1. Ensure dependencies are available (either proved locally or public in earlier POD)
+        // 2. Insert CopyStatements to bring dependencies into the POD that needs them
+        //
+        // Setup: 8 statements with max_priv=4 forces splitting across 2+ PODs.
+        let params = Params {
+            max_statements: 6,
+            max_public_statements: 2,
+            // Derived: max_priv_statements = 6 - 2 = 4
+            // With 8 statements, need ceil(8/4) = 2 PODs minimum
+            max_input_pods: 2,
+            max_input_pods_public_statements: 4,
+            ..Params::default()
+        };
+        let vd_set = &*MOCK_VD_SET;
+
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
+
+        // Create 4 dependency pairs - enough to force cross-POD dependencies
+        // Pair 1: prove balance < limit, derive balance ≠ limit
+        let balance_under_limit = builder.priv_op(FrontendOp::lt(1, 100))?;
+        let _balance_not_at_limit = builder.priv_op(FrontendOp::lt_to_ne(balance_under_limit))?;
+
+        // Pair 2: prove age < max, derive age ≠ max
+        let age_under_max = builder.priv_op(FrontendOp::lt(2, 200))?;
+        let _age_not_at_max = builder.priv_op(FrontendOp::lt_to_ne(age_under_max))?;
+
+        // Pair 3: prove score < threshold, derive score ≠ threshold
+        let score_under_threshold = builder.priv_op(FrontendOp::lt(3, 300))?;
+        let _score_not_at_threshold = builder.priv_op(FrontendOp::lt_to_ne(score_under_threshold))?;
+
+        // Pair 4: prove level < cap, derive level ≠ cap (public output)
+        let level_under_cap = builder.priv_op(FrontendOp::lt(4, 400))?;
+        let _level_not_at_cap = builder.pub_op(FrontendOp::lt_to_ne(level_under_cap))?;
+
+        let pod_count = {
+            let solution = builder.solve()?;
+            assert!(
+                solution.pod_count >= 2,
+                "Expected at least 2 PODs for 8 statements with max_priv=4, got {}",
+                solution.pod_count
+            );
+            solution.pod_count
+        };
+
+        // Prove and verify all PODs
+        let prover = MockProver {};
+        let result = builder.prove(&prover)?;
+        assert_eq!(result.pods.len(), pod_count);
+
+        for (i, pod) in result.pods.iter().enumerate() {
+            pod.pod
+                .verify()
+                .map_err(|e| Error::Frontend(format!("POD {} verification failed: {}", i, e)))?;
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_isolated_pods_when_no_inputs_allowed() -> Result<()> {
+        // Verifies that PODs are completely isolated when max_input_pods = 0.
+        //
+        // With no input PODs allowed, each generated POD must independently prove
+        // all statements it contains - it cannot reference earlier PODs.
+        // This is an edge case but validates the input POD constraint.
         let params = Params {
             max_statements: 4,
             max_public_statements: 2,
-            max_input_pods: 0, // No input pods allowed - forces re-proving
+            // Derived: max_priv_statements = 4 - 2 = 2
+            max_input_pods: 0, // No input pods allowed - each POD is isolated
             max_input_pods_public_statements: 0,
             ..Params::default()
         };
@@ -809,26 +743,24 @@ mod tests {
 
         let mut builder = MultiPodBuilder::new(&params, vd_set);
 
-        // Add 4 private statements - forces 2 PODs (4/2 = 2)
+        // Add 4 independent private statements (no dependencies)
+        // With max_priv=2, need 2 PODs. Since max_input_pods=0, they can't share.
         for i in 0..4i64 {
             builder.priv_op(FrontendOp::eq(i, i))?;
         }
 
-        // Add 2 public statements (within single output POD limit)
+        // Add 2 public statements for the output POD
         builder.pub_op(FrontendOp::eq(100, 100))?;
         builder.pub_op(FrontendOp::eq(101, 101))?;
 
         let solution = builder.solve()?;
 
-        // With max_priv_statements = 2 and 6 statements total, need at least 2 PODs
+        // 6 statements / 2 per POD = 3 PODs minimum
         assert!(
             solution.pod_count >= 2,
             "Expected at least 2 PODs, got {}",
             solution.pod_count
         );
-
-        // Since max_input_pods = 0, PODs cannot reference each other.
-        // Each POD must independently prove its statements.
 
         // Prove and verify
         let prover = MockProver {};
@@ -1269,6 +1201,169 @@ mod tests {
 
         // This should succeed - total inputs per POD should stay within limit
         let result = builder.prove(&prover)?;
+
+        for (i, pod) in result.pods.iter().enumerate() {
+            pod.pod
+                .verify()
+                .map_err(|e| Error::Frontend(format!("POD {} verification failed: {}", i, e)))?;
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_signed_by_limit_forces_multi_pod() -> Result<()> {
+        // Verifies that the solver respects max_signed_by per POD (C6f).
+        //
+        // Setup:
+        // - max_signed_by = 2 (small limit)
+        // - 4 SignedBy operations
+        // - Other limits high enough not to interfere
+        //
+        // Expected: Solver creates exactly 2 PODs since 4 SignedBy / 2 per POD = 2 PODs
+        let params = Params {
+            max_statements: 48,
+            max_public_statements: 8,
+            // Derived: max_priv_statements = 48 - 8 = 40 (plenty of room)
+            max_signed_by: 2, // Small limit to force splitting
+            max_input_pods: 10,
+            max_input_pods_public_statements: 20,
+            ..Params::default()
+        };
+        let vd_set = &*MOCK_VD_SET;
+
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
+
+        // Create 4 different signed dicts
+        for i in 0..4i64 {
+            let mut signed_builder = SignedDictBuilder::new(&params);
+            signed_builder.insert("id", i);
+            let signer = Signer(SecretKey((i as u32 + 1).into()));
+            let signed_dict = signed_builder.sign(&signer).unwrap();
+            builder.priv_op(FrontendOp::dict_signed_by(&signed_dict))?;
+        }
+
+        // Add one public statement for output
+        builder.pub_op(FrontendOp::eq(100, 100))?;
+
+        let pod_count = {
+            let solution = builder.solve()?;
+            // 4 SignedBy / 2 per POD = exactly 2 PODs
+            assert_eq!(
+                solution.pod_count, 2,
+                "Expected exactly 2 PODs for 4 SignedBy with max_signed_by=2, got {}",
+                solution.pod_count
+            );
+            solution.pod_count
+        };
+
+        // Prove and verify
+        let prover = MockProver {};
+        let result = builder.prove(&prover)?;
+        assert_eq!(result.pods.len(), pod_count);
+
+        for (i, pod) in result.pods.iter().enumerate() {
+            pod.pod
+                .verify()
+                .map_err(|e| Error::Frontend(format!("POD {} verification failed: {}", i, e)))?;
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_batch_cardinality_forces_multi_pod() -> Result<()> {
+        // Verifies that the solver respects max_custom_predicate_batches per POD (C7).
+        //
+        // Setup:
+        // - max_custom_predicate_batches = 2 (small limit)
+        // - 4 different batches, each with one simple predicate
+        // - 4 operations, one from each batch
+        //
+        // Expected: Solver creates exactly 2 PODs since 4 batches / 2 per POD = 2 PODs
+        let params = Params {
+            max_statements: 48,
+            max_public_statements: 8,
+            max_custom_predicate_batches: 2, // Small limit to force splitting
+            max_input_pods: 10,
+            max_input_pods_public_statements: 20,
+            ..Params::default()
+        };
+        let vd_set = &*MOCK_VD_SET;
+
+        // Create 4 separate batches using podlang parser
+        // Each batch has a simple predicate that checks a Contains statement
+        let batch1 = parse(
+            r#"pred1(A) = AND(Contains(A, "x", 1))"#,
+            &params,
+            &[],
+        ).expect("parse batch1").custom_batch;
+
+        let batch2 = parse(
+            r#"pred2(A) = AND(Contains(A, "x", 2))"#,
+            &params,
+            &[],
+        ).expect("parse batch2").custom_batch;
+
+        let batch3 = parse(
+            r#"pred3(A) = AND(Contains(A, "x", 3))"#,
+            &params,
+            &[],
+        ).expect("parse batch3").custom_batch;
+
+        let batch4 = parse(
+            r#"pred4(A) = AND(Contains(A, "x", 4))"#,
+            &params,
+            &[],
+        ).expect("parse batch4").custom_batch;
+
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
+
+        // Add operations using predicates from each batch
+        // Each custom predicate needs a Contains statement argument
+        let dict1 = dict!({"x" => 1});
+        let contains1 = builder.priv_op(FrontendOp::dict_contains(dict1, "x", 1))?;
+        builder.priv_op(FrontendOp::custom(
+            batch1.predicate_ref_by_name("pred1").unwrap(),
+            [contains1],
+        ))?;
+
+        let dict2 = dict!({"x" => 2});
+        let contains2 = builder.priv_op(FrontendOp::dict_contains(dict2, "x", 2))?;
+        builder.priv_op(FrontendOp::custom(
+            batch2.predicate_ref_by_name("pred2").unwrap(),
+            [contains2],
+        ))?;
+
+        let dict3 = dict!({"x" => 3});
+        let contains3 = builder.priv_op(FrontendOp::dict_contains(dict3, "x", 3))?;
+        builder.priv_op(FrontendOp::custom(
+            batch3.predicate_ref_by_name("pred3").unwrap(),
+            [contains3],
+        ))?;
+
+        let dict4 = dict!({"x" => 4});
+        let contains4 = builder.priv_op(FrontendOp::dict_contains(dict4, "x", 4))?;
+        builder.pub_op(FrontendOp::custom(
+            batch4.predicate_ref_by_name("pred4").unwrap(),
+            [contains4],
+        ))?;
+
+        let pod_count = {
+            let solution = builder.solve()?;
+            // 4 batches / 2 per POD = exactly 2 PODs
+            assert_eq!(
+                solution.pod_count, 2,
+                "Expected exactly 2 PODs for 4 batches with max_custom_predicate_batches=2, got {}",
+                solution.pod_count
+            );
+            solution.pod_count
+        };
+
+        // Prove and verify
+        let prover = MockProver {};
+        let result = builder.prove(&prover)?;
+        assert_eq!(result.pods.len(), pod_count);
 
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod

@@ -260,9 +260,9 @@ mod tests {
         assert_eq!(aggregate.statements, 10);
         assert_eq!(aggregate.merkle_proofs, 10);
 
-        // Should need at least 1 POD
+        // 10 statements / 48 max = 1 POD, 10 merkle proofs / 20 max = 1 POD
         let lower_bound = aggregate.lower_bound_pods(&params);
-        assert!(lower_bound >= 1);
+        assert_eq!(lower_bound, 1);
     }
 
     #[test]
