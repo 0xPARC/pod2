@@ -1479,7 +1479,7 @@ fn normalize_statement_circuit(
     let old_pred_hash = statement.pred_hash();
     let intro_pred_hash = PredicateTarget::new_intro(builder, *vd_hash).hash(builder);
     let new_pred_hash =
-        builder.select_flattenable(params, is_blank_intro, &intro_pred_hash, &old_pred_hash);
+        builder.select_flattenable(params, is_blank_intro, &intro_pred_hash, old_pred_hash);
 
     StatementTarget::new(new_pred_hash, statement.args.clone())
 }
@@ -1532,7 +1532,7 @@ fn normalize_st_tmpl_circuit(
     let is_batch_self = builder.is_equal(pred.elements[0], prefix_batch_self);
     let pred_index = pred.elements[1];
     let custom_pred = PredicateTarget::new_custom(builder, id, pred_index);
-    let pred = builder.select_flattenable(params, is_batch_self, &custom_pred, &pred);
+    let pred = builder.select_flattenable(params, is_batch_self, &custom_pred, pred);
     StatementTmplTarget::new(pred.hash(builder), st_tmpl.args.clone())
 }
 
