@@ -1085,4 +1085,198 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_external_pods_counted_in_input_limit() -> Result<()> {
+        // Verifies that external input PODs are counted toward max_input_pods.
+        //
+        // Setup:
+        // - max_input_pods = 2
+        // - 3 external PODs (A, B, C), each with a public statement
+        // - 3 public operations, each copying from a different external POD
+        //
+        // Since all 3 must be public in POD 0 (the output POD), and POD 0 would need
+        // all 3 external PODs as inputs (3 > max_input_pods), this is infeasible.
+        // The solver should correctly detect and report this.
+
+        let params = Params {
+            max_statements: 10,
+            max_public_statements: 5,
+            max_input_pods: 2, // Only 2 input PODs allowed per generated POD
+            max_input_pods_public_statements: 10,
+            ..Params::default()
+        };
+        let vd_set = &*MOCK_VD_SET;
+        let prover = MockProver {};
+
+        // Create 3 external PODs, each with a distinct public statement
+        let mut builder_a = MainPodBuilder::new(&params, vd_set);
+        builder_a.pub_op(FrontendOp::eq(100, 100))?;
+        let ext_pod_a = builder_a.prove(&prover)?;
+
+        let mut builder_b = MainPodBuilder::new(&params, vd_set);
+        builder_b.pub_op(FrontendOp::eq(200, 200))?;
+        let ext_pod_b = builder_b.prove(&prover)?;
+
+        let mut builder_c = MainPodBuilder::new(&params, vd_set);
+        builder_c.pub_op(FrontendOp::eq(300, 300))?;
+        let ext_pod_c = builder_c.prove(&prover)?;
+
+        // Get the actual statements from the proved PODs
+        let stmt_a = ext_pod_a
+            .pod
+            .pub_statements()
+            .into_iter()
+            .find(|s| !s.is_none())
+            .expect("ext_pod_a should have a public statement");
+        let stmt_b = ext_pod_b
+            .pod
+            .pub_statements()
+            .into_iter()
+            .find(|s| !s.is_none())
+            .expect("ext_pod_b should have a public statement");
+        let stmt_c = ext_pod_c
+            .pod
+            .pub_statements()
+            .into_iter()
+            .find(|s| !s.is_none())
+            .expect("ext_pod_c should have a public statement");
+
+        // Create MultiPodBuilder and add all 3 external PODs
+        let mut multi_builder = MultiPodBuilder::new(&params, vd_set);
+        multi_builder.add_pod(ext_pod_a);
+        multi_builder.add_pod(ext_pod_b);
+        multi_builder.add_pod(ext_pod_c);
+
+        // Add public operations that each depend on a different external POD
+        // All 3 must be public in POD 0, requiring 3 external inputs > max_input_pods
+        multi_builder.pub_op(FrontendOp::copy(stmt_a))?;
+        multi_builder.pub_op(FrontendOp::copy(stmt_b))?;
+        multi_builder.pub_op(FrontendOp::copy(stmt_c))?;
+
+        // Solver should correctly detect infeasibility and return an error
+        let result = multi_builder.solve();
+        assert!(
+            result.is_err(),
+            "Expected solver to report infeasibility, but got: {:?}",
+            result
+        );
+
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("No feasible solution"),
+            "Expected 'No feasible solution' error, got: {}",
+            err_msg
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_copy_statements_counted_in_statement_limit() -> Result<()> {
+        // Verifies that CopyStatements for cross-POD dependencies are counted
+        // toward the statement limit.
+        //
+        // Setup:
+        // - max_priv_statements = 2 (small limit)
+        // - Statement A with no deps (public, goes to POD 0)
+        // - Statements B, C, D all depend on A (private)
+        //
+        // Expected:
+        // - Solver should recognize that if B, C, D go to POD 1, it needs a CopyStatement for A
+        // - So POD 1 would have: CopyStatement(A) + B + C + D = 4 private statements
+        // - This exceeds max_priv_statements = 2, so solver should create more PODs
+
+        let params = Params {
+            max_statements: 4,
+            max_public_statements: 2, // max_priv_statements = 4 - 2 = 2
+            ..Params::default()
+        };
+        let vd_set = &*MOCK_VD_SET;
+
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
+
+        // Statement 0: public, no deps - will be in POD 0
+        let stmt_a = builder.pub_op(FrontendOp::lt(1, 100))?;
+
+        // Statements 1, 2, 3: private, all depend on statement 0
+        // With max_priv_statements = 2, these can't all fit in POD 0
+        // Solver must account for CopyStatement when distributing these
+        builder.priv_op(FrontendOp::lt_to_ne(stmt_a.clone()))?;
+        builder.priv_op(FrontendOp::lt_to_ne(stmt_a.clone()))?;
+        builder.priv_op(FrontendOp::lt_to_ne(stmt_a))?;
+
+        // Add another public statement for the output POD
+        builder.pub_op(FrontendOp::eq(200, 200))?;
+
+        // Solver should correctly account for CopyStatements and create enough PODs
+        let prover = MockProver {};
+        let result = builder.prove(&prover)?;
+
+        // Verify all PODs
+        for (i, pod) in result.pods.iter().enumerate() {
+            pod.pod
+                .verify()
+                .map_err(|e| Error::Frontend(format!("POD {} verification failed: {}", i, e)))?;
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_mixed_internal_and_external_pods_work_within_limit() -> Result<()> {
+        // Verifies that scenarios with both internal and external dependencies work
+        // when the total input count stays within max_input_pods.
+        //
+        // This is a sanity check that mixing internal and external POD dependencies
+        // works correctly when limits are respected.
+
+        let params = Params {
+            max_statements: 6,
+            max_public_statements: 3, // max_priv_statements = 3
+            max_input_pods: 3,        // Allow up to 3 inputs per POD
+            max_input_pods_public_statements: 10,
+            ..Params::default()
+        };
+        let vd_set = &*MOCK_VD_SET;
+        let prover = MockProver {};
+
+        // Create 1 external POD
+        let mut ext_builder = MainPodBuilder::new(&params, vd_set);
+        ext_builder.pub_op(FrontendOp::eq(9999, 9999))?;
+        let ext_pod = ext_builder.prove(&prover)?;
+
+        let stmt_ext = ext_pod
+            .pod
+            .pub_statements()
+            .into_iter()
+            .find(|s| !s.is_none())
+            .expect("ext_pod should have a public statement");
+
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
+        builder.add_pod(ext_pod);
+
+        // Output POD: public statements
+        let lt_0 = builder.pub_op(FrontendOp::lt(1, 100))?;
+        let lt_1 = builder.pub_op(FrontendOp::lt(2, 200))?;
+
+        // Statements that depend on output POD
+        builder.priv_op(FrontendOp::lt_to_ne(lt_0))?;
+        builder.priv_op(FrontendOp::lt_to_ne(lt_1))?;
+
+        // Depend on external POD
+        builder.priv_op(FrontendOp::copy(stmt_ext))?;
+
+        // This should succeed - total inputs per POD should stay within limit
+        let result = builder.prove(&prover)?;
+
+        for (i, pod) in result.pods.iter().enumerate() {
+            pod.pod
+                .verify()
+                .map_err(|e| Error::Frontend(format!("POD {} verification failed: {}", i, e)))?;
+        }
+
+        Ok(())
+    }
+
 }

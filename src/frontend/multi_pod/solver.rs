@@ -190,6 +190,64 @@ fn try_solve_with_pods(
         .map(|p| (0..p).map(|_| vars.add(variable().binary())).collect())
         .collect();
 
+    // Collect all statement indices that are internal dependencies.
+    // These are statements that other statements depend on, and may need to be copied
+    // into PODs where the dependent statement is proved but the dependency is not.
+    let internal_deps: BTreeSet<usize> = input
+        .deps
+        .statement_deps
+        .iter()
+        .flat_map(|sd| sd.depends_on.iter())
+        .filter_map(|dep| match dep {
+            StatementSource::Internal(d) => Some(*d),
+            StatementSource::External(_) => None,
+        })
+        .collect();
+
+    // needs_copy[d][p] - dependency d needs to be copied into POD p
+    // This is 1 when: (some statement s in p depends on d) AND (d is not proved in p)
+    // We only create variables for dependencies that are actually used.
+    let dep_indices: Vec<usize> = internal_deps.iter().copied().collect();
+    let needs_copy: Vec<Vec<Variable>> = (0..dep_indices.len())
+        .map(|_| {
+            (0..target_pods)
+                .map(|_| vars.add(variable().binary()))
+                .collect()
+        })
+        .collect();
+
+    // Collect all external POD hashes that statements depend on.
+    // These are user-provided input PODs referenced by statements.
+    use crate::middleware::Hash;
+    let external_pods: Vec<Hash> = input
+        .deps
+        .statement_deps
+        .iter()
+        .flat_map(|sd| sd.depends_on.iter())
+        .filter_map(|dep| match dep {
+            StatementSource::External(h) => Some(*h),
+            StatementSource::Internal(_) => None,
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+
+    // uses_external[p][e] - POD p uses external POD e as an input
+    let uses_external: Vec<Vec<Variable>> = (0..target_pods)
+        .map(|_| {
+            (0..external_pods.len())
+                .map(|_| vars.add(variable().binary()))
+                .collect()
+        })
+        .collect();
+
+    // Map from external POD hash to index in uses_external
+    let external_to_idx: std::collections::HashMap<Hash, usize> = external_pods
+        .iter()
+        .enumerate()
+        .map(|(i, h)| (*h, i))
+        .collect();
+
     // Objective: minimize number of PODs used
     let objective: Expression = pod_used.iter().sum();
     let mut model = vars.minimise(objective).using(default_solver);
@@ -255,13 +313,40 @@ fn try_solve_with_pods(
         }
     }
 
+    // Constraint 5b: needs_copy tracking for cross-POD dependencies
+    // needs_copy[d][p] = 1 when: some statement s proved in p depends on d, AND d is not proved in p.
+    // This tracks CopyStatements that will be added during build_single_pod.
+    for (di, &d) in dep_indices.iter().enumerate() {
+        for p in 0..target_pods {
+            // needs_copy[d][p] >= prove[s][p] - prove[d][p] for each s that depends on d
+            // If s is in p (prove[s][p]=1) and d is not in p (prove[d][p]=0), then needs_copy >= 1
+            for s in 0..n {
+                let depends_on_d = input.deps.statement_deps[s]
+                    .depends_on
+                    .iter()
+                    .any(|dep| matches!(dep, StatementSource::Internal(dep_d) if *dep_d == d));
+                if depends_on_d {
+                    model = model.with(constraint!(
+                        needs_copy[di][p] >= prove[s][p] - prove[d][p]
+                    ));
+                }
+            }
+
+            // needs_copy[d][p] <= 1 - prove[d][p]
+            // If d is proved locally (prove[d][p]=1), no copy needed (needs_copy <= 0)
+            model = model.with(constraint!(needs_copy[di][p] <= 1 - prove[d][p]));
+        }
+    }
+
     // Constraint 6: Resource limits per POD
     for p in 0..target_pods {
-        // 6a: Total statement count (all statements are proved in private slots,
-        // public statements are then copied to public slots)
+        // 6a: Total statement count (proved statements + CopyStatements for dependencies)
+        // All statements are proved in private slots, public statements are then copied to public slots.
+        // CopyStatements for cross-POD dependencies also consume private slots.
         let stmt_sum: Expression = (0..n).map(|s| prove[s][p]).sum();
+        let copy_sum: Expression = (0..dep_indices.len()).map(|di| needs_copy[di][p]).sum();
         model = model.with(constraint!(
-            stmt_sum <= (input.params.max_priv_statements() as f64) * pod_used[p]
+            stmt_sum + copy_sum <= (input.params.max_priv_statements() as f64) * pod_used[p]
         ));
 
         // 6b: Public statement count
@@ -339,7 +424,7 @@ fn try_solve_with_pods(
         ));
     }
 
-    // Constraint 8: Input POD limits using uses_input
+    // Constraint 8a: Internal input POD tracking using uses_input
     // uses_input[p][pp] >= prove[s][p] + public[d][pp] - 1 for each dependency (s depends on d)
     for s in 0..n {
         for dep in &input.deps.statement_deps[s].depends_on {
@@ -356,11 +441,35 @@ fn try_solve_with_pods(
         }
     }
 
-    // Sum of uses_input for each POD <= max_input_pods
-    for p in 1..target_pods {
-        let input_sum: Expression = (0..p).map(|pp| uses_input[p][pp]).sum();
+    // Constraint 8b: External input POD tracking using uses_external
+    // If statement s is proved in POD p and s depends on external POD e, then uses_external[p][e] = 1
+    for s in 0..n {
+        for dep in &input.deps.statement_deps[s].depends_on {
+            if let StatementSource::External(h) = dep {
+                if let Some(&e) = external_to_idx.get(h) {
+                    for p in 0..target_pods {
+                        // If s is proved in p, then uses_external[p][e] = 1
+                        model = model.with(constraint!(uses_external[p][e] >= prove[s][p]));
+                    }
+                }
+            }
+        }
+    }
+
+    // Total input PODs (internal + external) must not exceed max_input_pods
+    // For POD 0: only external inputs (no earlier generated PODs exist)
+    // For POD p > 0: internal inputs (earlier generated PODs) + external inputs
+    for p in 0..target_pods {
+        let internal_sum: Expression = if p > 0 {
+            (0..p).map(|pp| uses_input[p][pp]).sum()
+        } else {
+            0.into()
+        };
+        let external_sum: Expression = (0..external_pods.len())
+            .map(|e| uses_external[p][e])
+            .sum();
         model = model.with(constraint!(
-            input_sum <= (input.params.max_input_pods as f64) * pod_used[p]
+            internal_sum + external_sum <= (input.params.max_input_pods as f64) * pod_used[p]
         ));
     }
 
