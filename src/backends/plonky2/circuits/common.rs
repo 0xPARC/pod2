@@ -197,12 +197,7 @@ impl StatementTarget {
         if let Some(pred) = &self.pred {
             pred.set_targets(pw, params, &st.predicate())?;
         }
-        pw.set_hash_target(
-            self.pred_hash,
-            HashOut {
-                elements: st.predicate().hash(params).0,
-            },
-        )?;
+        pw.set_hash_target(self.pred_hash, HashOut::from(st.predicate().hash(params)))?;
         for (i, arg) in st
             .args()
             .iter()
@@ -553,12 +548,7 @@ impl StatementTmplTarget {
         if let Some(pred) = &self.pred {
             pred.set_targets(pw, params, &st_tmpl.pred)?;
         }
-        pw.set_hash_target(
-            self.pred_hash,
-            HashOut {
-                elements: st_tmpl.pred.hash(params).0,
-            },
-        )?;
+        pw.set_hash_target(self.pred_hash, HashOut::from(st_tmpl.pred.hash(params)))?;
         let arg_pad = StatementTmplArg::None;
         for (i, arg) in st_tmpl
             .args
@@ -598,10 +588,6 @@ impl CustomPredicateTarget {
             self.conjunction.target,
             F::from_bool(custom_pred.conjunction),
         )?;
-        // let st_tmpl_pad = StatementTmpl {
-        //     pred: Predicate::Native(NativePredicate::None),
-        //     args: vec![],
-        // };
         let st_tmpl_pad = custom_pred.pad_statement_tmpl();
         for (i, st_tmpl) in custom_pred
             .statements
@@ -625,8 +611,6 @@ pub struct CustomPredicateBatchTarget {
 impl CustomPredicateBatchTarget {
     pub fn id(&self, builder: &mut CircuitBuilder) -> HashOutTarget {
         let flattened: Vec<_> = self.predicates.iter().flat_map(|cp| cp.flatten()).collect();
-        // use crate::backends::plonky2::circuits::utils::DebugGenerator;
-        // builder.add_simple_generator(DebugGenerator::new(format!("flattened"), flattened.clone()));
         builder.hash_n_to_hash_no_pad::<PoseidonHash>(flattened)
     }
 
@@ -1164,7 +1148,6 @@ pub trait CircuitBuilderPod<F: RichField + Extendable<D>, const D: usize> {
     fn connect_slice(&mut self, xs: &[Target], ys: &[Target]);
     fn add_virtual_value(&mut self) -> ValueTarget;
     fn add_virtual_statement(&mut self, params: &Params, with_pred: bool) -> StatementTarget;
-    // fn add_virtual_statement_with_pred(&mut self, params: &Params) -> StatementWithPredTarget;
     fn add_virtual_statement_arg(&mut self) -> StatementArgTarget;
     fn add_virtual_predicate(&mut self) -> PredicateTarget;
     fn add_virtual_operation_type(&mut self) -> OperationTypeTarget;

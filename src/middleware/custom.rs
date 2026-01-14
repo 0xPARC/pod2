@@ -389,8 +389,6 @@ impl ToFields for CustomPredicateBatch {
             .take(params.max_custom_batch_size)
             .flat_map(|p| p.to_fields(params))
             .collect();
-        // println!("DBG native: {:?}", fields);
-        // dbg!(&fields);
         fields
     }
 }
