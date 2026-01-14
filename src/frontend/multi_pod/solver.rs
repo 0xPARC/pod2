@@ -62,7 +62,7 @@ pub struct SolverInput<'a> {
     pub deps: &'a DependencyGraph,
 
     /// Indices of statements that must be public in output PODs.
-    pub output_public_indices: &'a BTreeSet<usize>,
+    pub output_public_indices: &'a [usize],
 
     /// Parameters defining per-POD limits.
     pub params: &'a Params,
@@ -557,7 +557,7 @@ mod tests {
 
         let costs: Vec<StatementCost> = (0..5).map(|_| StatementCost::default()).collect();
         let deps = make_simple_deps(5);
-        let output_public = BTreeSet::from([0, 1]);
+        let output_public = vec![0, 1];
 
         let input = SolverInput {
             num_statements: 5,
@@ -588,7 +588,7 @@ mod tests {
 
         let costs: Vec<StatementCost> = (0..6).map(|_| StatementCost::default()).collect();
         let deps = make_simple_deps(6);
-        let output_public = BTreeSet::new();
+        let output_public: Vec<usize> = vec![];
 
         let input = SolverInput {
             num_statements: 6,
@@ -610,7 +610,7 @@ mod tests {
         let params = Params::default();
         let costs: Vec<StatementCost> = vec![];
         let deps = make_simple_deps(0);
-        let output_public = BTreeSet::new();
+        let output_public: Vec<usize> = vec![];
 
         let input = SolverInput {
             num_statements: 0,

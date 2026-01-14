@@ -113,7 +113,8 @@ pub struct MultiPodBuilder {
     /// Operations that produce each statement.
     operations: Vec<Operation>,
     /// Indices of statements that should be public in output PODs.
-    output_public_indices: BTreeSet<usize>,
+    /// Uses Vec since max_public_statements is small (≤8); indices are naturally sorted.
+    output_public_indices: Vec<usize>,
     /// Cached solution from the solver.
     cached_solution: Option<MultiPodSolution>,
     /// Cached dependency graph (computed once in solve(), reused in build_single_pod()).
@@ -139,7 +140,7 @@ impl MultiPodBuilder {
             input_pods: Vec::new(),
             statements: Vec::new(),
             operations: Vec::new(),
-            output_public_indices: BTreeSet::new(),
+            output_public_indices: Vec::new(),
             cached_solution: None,
             cached_deps: None,
             cached_external_map: None,
@@ -161,7 +162,8 @@ impl MultiPodBuilder {
     /// Add a public operation (statement will be public in output).
     pub fn pub_op(&mut self, op: Operation) -> Result<Statement> {
         let stmt = self.add_operation(op)?;
-        self.output_public_indices.insert(self.statements.len() - 1);
+        // Index is always new (just added), so push without duplicate check
+        self.output_public_indices.push(self.statements.len() - 1);
         Ok(stmt)
     }
 
@@ -213,7 +215,8 @@ impl MultiPodBuilder {
     pub fn reveal(&mut self, stmt: &Statement) -> Result<()> {
         if let Some(idx) = self.statements.iter().position(|s| s == stmt) {
             // Only invalidate cache if this is a new reveal
-            if self.output_public_indices.insert(idx) {
+            if !self.output_public_indices.contains(&idx) {
+                self.output_public_indices.push(idx);
                 self.invalidate_cache();
             }
             Ok(())
