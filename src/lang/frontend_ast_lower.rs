@@ -18,8 +18,8 @@ use crate::{
     },
     middleware::{
         self, containers, CustomPredicateBatch, IntroPredicateRef, NativePredicate, Params,
-        Predicate, StatementTmpl as MWStatementTmpl, StatementTmplArg as MWStatementTmplArg,
-        Wildcard,
+        Predicate, PredicateOrWildcard, StatementTmpl as MWStatementTmpl,
+        StatementTmplArg as MWStatementTmplArg, Wildcard,
     },
 };
 
@@ -201,7 +201,8 @@ impl<'a> Lowerer<'a> {
         }
 
         Ok(MWStatementTmpl {
-            pred: predicate,
+            // TODO: Support wildcard
+            pred: PredicateOrWildcard::Predicate(predicate),
             args: mw_args,
         })
     }

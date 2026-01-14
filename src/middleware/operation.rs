@@ -15,8 +15,9 @@ use crate::{
     },
     middleware::{
         hash_values, AnchoredKey, CustomPredicate, CustomPredicateRef, Error, Hash, Key,
-        MiddlewareInnerError, NativePredicate, Params, Predicate, Result, Statement, StatementArg,
-        StatementTmpl, StatementTmplArg, ToFields, TypedValue, Value, ValueRef, Wildcard, F,
+        MiddlewareInnerError, NativePredicate, Params, Predicate, PredicateOrWildcard, Result,
+        Statement, StatementArg, StatementTmpl, StatementTmplArg, ToFields, TypedValue, Value,
+        ValueRef, Wildcard, F,
     },
 };
 
@@ -649,11 +650,14 @@ fn check_custom_pred_argument(
     statement: &Statement,
 ) -> Result<()> {
     let template_pred = match &template.pred {
-        &Predicate::BatchSelf(i) => Predicate::Custom(CustomPredicateRef {
-            batch: custom_pred_ref.batch.clone(),
-            index: i,
-        }),
-        p => p.clone(),
+        PredicateOrWildcard::Predicate(pred) => match pred {
+            &Predicate::BatchSelf(i) => Predicate::Custom(CustomPredicateRef {
+                batch: custom_pred_ref.batch.clone(),
+                index: i,
+            }),
+            p => p.clone(),
+        },
+        _ => unimplemented!(),
     };
     if template_pred != statement.predicate() {
         return Err(Error::mismatched_statement_type(
@@ -701,11 +705,13 @@ pub(crate) fn check_custom_pred(
     for (st_tmpl, st) in pred.statements.iter().zip(args) {
         // For `or` predicates, only one statement needs to match the template.
         // The rest of the statements can be `None`.
-        if !pred.conjunction
-            && matches!(st, Statement::None)
-            && st_tmpl.pred != Predicate::Native(NativePredicate::None)
-        {
-            continue;
+        if let PredicateOrWildcard::Predicate(st_tmpl_pred) = &st_tmpl.pred {
+            if !pred.conjunction
+                && matches!(st, Statement::None)
+                && *st_tmpl_pred != Predicate::Native(NativePredicate::None)
+            {
+                continue;
+            }
         }
         check_custom_pred_argument(custom_pred_ref, st_tmpl, st)?;
         match_exists = true;

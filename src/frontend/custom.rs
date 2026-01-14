@@ -7,7 +7,7 @@ use crate::{
     frontend::{AnchoredKey, Error, Result, Statement, StatementArg},
     middleware::{
         self, hash_str, CustomPredicate, CustomPredicateBatch, Hash, Key, NativePredicate, Params,
-        Predicate, StatementTmpl, StatementTmplArg, ToFields, Value, Wildcard,
+        Predicate, PredicateOrWildcard, StatementTmpl, StatementTmplArg, ToFields, Value, Wildcard,
     },
 };
 
@@ -217,7 +217,8 @@ impl CustomPredicateBatchBuilder {
                     })
                     .collect::<Result<_>>()?;
                 Ok(StatementTmpl {
-                    pred: stb.predicate.clone(),
+                    // TODO: Support wildcard
+                    pred: PredicateOrWildcard::Predicate(stb.predicate.clone()),
                     args,
                 })
             })

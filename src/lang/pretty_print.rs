@@ -5,7 +5,8 @@ use std::fmt::Write;
 use crate::{
     frontend::PodRequest,
     middleware::{
-        CustomPredicate, CustomPredicateBatch, Predicate, StatementTmpl, StatementTmplArg, Value,
+        CustomPredicate, CustomPredicateBatch, Predicate, PredicateOrWildcard, StatementTmpl,
+        StatementTmplArg, Value,
     },
 };
 
@@ -58,25 +59,31 @@ impl StatementTmpl {
         batch_context: Option<&CustomPredicateBatch>,
     ) -> std::fmt::Result {
         match &self.pred {
-            Predicate::Native(native_pred) => {
-                write!(w, "{}", native_pred)?;
-            }
-            Predicate::Custom(custom_ref) => {
-                write!(w, "{}", custom_ref.predicate().name)?;
-            }
-            Predicate::Intro(intro_ref) => {
-                write!(w, "{}", intro_ref.name)?;
-            }
-            Predicate::BatchSelf(index) => {
-                if let Some(batch) = batch_context {
-                    if let Some(predicate) = batch.predicates.get(*index) {
-                        write!(w, "{}", predicate.name)?;
+            PredicateOrWildcard::Predicate(pred) => match pred {
+                Predicate::Native(native_pred) => {
+                    write!(w, "{}", native_pred)?;
+                }
+                Predicate::Custom(custom_ref) => {
+                    write!(w, "{}", custom_ref.predicate().name)?;
+                }
+                Predicate::Intro(intro_ref) => {
+                    write!(w, "{}", intro_ref.name)?;
+                }
+                Predicate::BatchSelf(index) => {
+                    if let Some(batch) = batch_context {
+                        if let Some(predicate) = batch.predicates.get(*index) {
+                            write!(w, "{}", predicate.name)?;
+                        } else {
+                            write!(w, "batch_self_{}", index)?;
+                        }
                     } else {
                         write!(w, "batch_self_{}", index)?;
                     }
-                } else {
-                    write!(w, "batch_self_{}", index)?;
                 }
+            },
+            PredicateOrWildcard::Wildcard(wc) => {
+                // TODO: Decide the syntax for a wildcard predicate
+                write!(w, "?{}", wc.name)?;
             }
         }
 

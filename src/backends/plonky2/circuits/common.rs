@@ -32,9 +32,9 @@ use crate::{
     },
     middleware::{
         CustomPredicate, CustomPredicateBatch, CustomPredicateRef, NativeOperation,
-        NativePredicate, OperationType, Params, Predicate, PredicatePrefix, RawValue, StatementArg,
-        StatementTmpl, StatementTmplArg, StatementTmplArgPrefix, ToFields, Value, EMPTY_VALUE, F,
-        HASH_SIZE, STATEMENT_ARG_F_LEN, VALUE_SIZE,
+        NativePredicate, OperationType, Params, Predicate, PredicateOrWildcard, PredicatePrefix,
+        RawValue, StatementArg, StatementTmpl, StatementTmplArg, StatementTmplArgPrefix, ToFields,
+        Value, EMPTY_VALUE, F, HASH_SIZE, STATEMENT_ARG_F_LEN, VALUE_SIZE,
     },
 };
 
@@ -545,10 +545,14 @@ impl StatementTmplTarget {
         params: &Params,
         st_tmpl: &StatementTmpl,
     ) -> Result<()> {
+        // TODO: Support wildcard predicate
         if let Some(pred) = &self.pred {
-            pred.set_targets(pw, params, &st_tmpl.pred)?;
+            pred.set_targets(pw, params, &st_tmpl.pred.as_pred().unwrap())?;
         }
-        pw.set_hash_target(self.pred_hash, HashOut::from(st_tmpl.pred.hash(params)))?;
+        pw.set_hash_target(
+            self.pred_hash,
+            HashOut::from(st_tmpl.pred.as_pred().unwrap().hash(params)),
+        )?;
         let arg_pad = StatementTmplArg::None;
         for (i, arg) in st_tmpl
             .args
@@ -660,15 +664,16 @@ impl CustomPredicateEntryTarget {
             .clone()
             .into_iter()
             .map(|st_tmpl| {
-                let pred = match st_tmpl.pred {
+                // TODO: Support wildcard predicate
+                let pred = match st_tmpl.pred.as_pred().unwrap() {
                     Predicate::BatchSelf(i) => Predicate::Custom(CustomPredicateRef {
                         batch: batch.clone(),
-                        index: i,
+                        index: *i,
                     }),
-                    p => p,
+                    p => p.clone(),
                 };
                 StatementTmpl {
-                    pred,
+                    pred: PredicateOrWildcard::Predicate(pred),
                     args: st_tmpl.args,
                 }
             })

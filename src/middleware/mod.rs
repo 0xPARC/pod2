@@ -820,8 +820,12 @@ impl Params {
         HASH_SIZE + STATEMENT_ARG_F_LEN * self.max_statement_args
     }
 
+    pub const fn pred_or_wc_size() -> usize {
+        1 + HASH_SIZE
+    }
+
     pub const fn statement_tmpl_size(&self) -> usize {
-        HASH_SIZE + self.max_statement_args * Self::statement_tmpl_arg_size()
+        Self::pred_or_wc_size() + self.max_statement_args * Self::statement_tmpl_arg_size()
     }
 
     pub fn custom_predicate_size(&self) -> usize {

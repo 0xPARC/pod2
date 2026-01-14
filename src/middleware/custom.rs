@@ -1,5 +1,6 @@
 use std::{fmt, iter, sync::Arc};
 
+use itertools::Itertools;
 use plonky2::field::types::Field;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -70,36 +71,28 @@ impl ToFields for StatementTmplArg {
         // WildcardLiteral(wc_index) => (3, [wc_index], 0, 0, 0,  0, 0, 0, 0)
         // In all three cases, we pad to 2 * hash_size + 1 = 9 field elements
         match self {
-            StatementTmplArg::None => {
-                let fields: Vec<F> = iter::once(F::from(StatementTmplArgPrefix::None))
-                    .chain(iter::repeat(F::ZERO))
-                    .take(Params::statement_tmpl_arg_size())
-                    .collect();
-                fields
-            }
-            StatementTmplArg::Literal(v) => {
-                let fields: Vec<F> = iter::once(F::from(StatementTmplArgPrefix::Literal))
-                    .chain(v.raw().to_fields(params))
-                    .chain(iter::repeat(F::ZERO))
-                    .take(Params::statement_tmpl_arg_size())
-                    .collect();
-                fields
-            }
+            StatementTmplArg::None => iter::once(F::from(StatementTmplArgPrefix::None))
+                .chain(iter::repeat(F::ZERO))
+                .take(Params::statement_tmpl_arg_size())
+                .collect_vec(),
+            StatementTmplArg::Literal(v) => iter::once(F::from(StatementTmplArgPrefix::Literal))
+                .chain(v.raw().to_fields(params))
+                .chain(iter::repeat(F::ZERO))
+                .take(Params::statement_tmpl_arg_size())
+                .collect_vec(),
             StatementTmplArg::AnchoredKey(wc1, kw2) => {
-                let fields: Vec<F> = iter::once(F::from(StatementTmplArgPrefix::AnchoredKey))
+                iter::once(F::from(StatementTmplArgPrefix::AnchoredKey))
                     .chain(wc1.to_fields(params))
                     .chain(iter::repeat(F::ZERO).take(VALUE_SIZE - 1))
                     .chain(kw2.to_fields(params))
-                    .collect();
-                fields
+                    .collect_vec()
             }
             StatementTmplArg::Wildcard(wc) => {
-                let fields: Vec<F> = iter::once(F::from(StatementTmplArgPrefix::WildcardLiteral))
+                iter::once(F::from(StatementTmplArgPrefix::WildcardLiteral))
                     .chain(wc.to_fields(params))
                     .chain(iter::repeat(F::ZERO))
                     .take(Params::statement_tmpl_arg_size())
-                    .collect();
-                fields
+                    .collect_vec()
             }
         }
     }
@@ -121,15 +114,78 @@ impl fmt::Display for StatementTmplArg {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub enum PredicateOrWildcard {
+    Predicate(Predicate),
+    Wildcard(Wildcard),
+}
+
+impl PredicateOrWildcard {
+    pub fn as_pred(&self) -> Option<&Predicate> {
+        match self {
+            Self::Predicate(pred) => Some(pred),
+            _ => None,
+        }
+    }
+    pub fn as_wc(&self) -> Option<&Wildcard> {
+        match self {
+            Self::Wildcard(wc) => Some(wc),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for PredicateOrWildcard {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Predicate(pred) => pred.fmt(f),
+            Self::Wildcard(wc) => {
+                write!(f, "?")?;
+                wc.fmt(f)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum PredicateOrWildcardPrefix {
+    Predicate = 0,
+    Wildcard = 1,
+}
+
+impl From<PredicateOrWildcardPrefix> for F {
+    fn from(prefix: PredicateOrWildcardPrefix) -> Self {
+        Self::from_canonical_usize(prefix as usize)
+    }
+}
+
+impl ToFields for PredicateOrWildcard {
+    fn to_fields(&self, params: &Params) -> Vec<F> {
+        // Encoding:
+        // Predicate(pred) => (0, [hash(pred)  ])
+        // Wildcard(wc)    => (1, wc_index, 0...)
+        match self {
+            Self::Predicate(pred) => iter::once(F::from(PredicateOrWildcardPrefix::Predicate))
+                .chain(pred.hash(params).to_fields(params))
+                .collect_vec(),
+            Self::Wildcard(wc) => iter::once(F::from(PredicateOrWildcardPrefix::Wildcard))
+                .chain(wc.to_fields(params))
+                .chain(iter::repeat(F::ZERO))
+                .take(Params::pred_or_wc_size())
+                .collect_vec(),
+        }
+    }
+}
+
 /// Statement Template for a Custom Predicate
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct StatementTmpl {
-    pub pred: Predicate,
+    pub pred: PredicateOrWildcard,
     pub args: Vec<StatementTmplArg>,
 }
 
 impl StatementTmpl {
-    pub fn pred(&self) -> &Predicate {
+    pub fn pred(&self) -> &PredicateOrWildcard {
         &self.pred
     }
     pub fn args(&self) -> &[StatementTmplArg] {
@@ -154,7 +210,7 @@ impl fmt::Display for StatementTmpl {
 impl ToFields for StatementTmpl {
     fn to_fields(&self, params: &Params) -> Vec<F> {
         // serialize as:
-        // predicate (6 field elements)
+        // predicate (4 field elements)
         // then the StatementTmplArgs
 
         // TODO think if this check should go into the StatementTmpl creation,
@@ -168,15 +224,13 @@ impl ToFields for StatementTmpl {
             );
         }
 
-        let mut fields: Vec<F> = self
-            .pred
-            .hash(params)
+        self.pred
             .to_fields(params)
             .into_iter()
             .chain(self.args.iter().flat_map(|sta| sta.to_fields(params)))
-            .collect();
-        fields.resize_with(params.statement_tmpl_size(), || F::from_canonical_u64(0));
-        fields
+            .chain(iter::repeat(F::ZERO))
+            .take(params.statement_tmpl_size())
+            .collect_vec()
     }
 }
 
@@ -203,7 +257,7 @@ impl CustomPredicate {
             name: "empty".to_string(),
             conjunction: false,
             statements: vec![StatementTmpl {
-                pred: Predicate::Native(NativePredicate::None),
+                pred: PredicateOrWildcard::Predicate(Predicate::Native(NativePredicate::None)),
                 args: vec![],
             }],
             args_len: 0,
@@ -276,11 +330,11 @@ impl CustomPredicate {
     }
     pub fn pad_statement_tmpl(&self) -> StatementTmpl {
         StatementTmpl {
-            pred: Predicate::Native(if self.conjunction {
+            pred: PredicateOrWildcard::Predicate(Predicate::Native(if self.conjunction {
                 NativePredicate::None
             } else {
                 NativePredicate::False
-            }),
+            })),
             args: vec![],
         }
     }
@@ -318,7 +372,7 @@ impl ToFields for CustomPredicate {
         }
 
         let pad_st = self.pad_statement_tmpl();
-        let fields: Vec<F> = iter::once(F::from_bool(self.conjunction))
+        iter::once(F::from_bool(self.conjunction))
             .chain(iter::once(F::from_canonical_usize(self.args_len)))
             .chain(
                 self.statements
@@ -327,8 +381,7 @@ impl ToFields for CustomPredicate {
                     .take(params.max_custom_predicate_arity)
                     .flat_map(|st| st.to_fields(params)),
             )
-            .collect();
-        fields
+            .collect_vec()
     }
 }
 
@@ -382,14 +435,12 @@ impl ToFields for CustomPredicateBatch {
     fn to_fields(&self, params: &Params) -> Vec<F> {
         // all the custom predicates in order
         let pad_pred = CustomPredicate::empty();
-        let fields: Vec<F> = self
-            .predicates
+        self.predicates
             .iter()
             .chain(iter::repeat(&pad_pred))
             .take(params.max_custom_batch_size)
             .flat_map(|p| p.to_fields(params))
-            .collect();
-        fields
+            .collect_vec()
     }
 }
 

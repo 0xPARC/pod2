@@ -3,7 +3,9 @@ use std::{collections::HashMap, fmt::Display};
 use crate::{
     frontend::{Error, Result},
     lang::PrettyPrint,
-    middleware::{Pod, Statement, StatementArg, StatementTmpl, StatementTmplArg, Value},
+    middleware::{
+        Pod, PredicateOrWildcard, Statement, StatementArg, StatementTmpl, StatementTmplArg, Value,
+    },
 };
 
 /// Represents a request for a POD, in terms of a set of statement templates.
@@ -76,7 +78,8 @@ impl PodRequest {
         statement: &Statement,
         current_bindings: &HashMap<String, Value>,
     ) -> Option<HashMap<String, Value>> {
-        if template.pred != statement.predicate() {
+        // TODO: Support wildcard
+        if template.pred != PredicateOrWildcard::Predicate(statement.predicate()) {
             return None;
         }
 
