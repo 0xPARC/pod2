@@ -32,9 +32,10 @@ use crate::{
     },
     middleware::{
         CustomPredicate, CustomPredicateBatch, CustomPredicateRef, NativeOperation,
-        NativePredicate, OperationType, Params, Predicate, PredicateOrWildcard, PredicatePrefix,
-        RawValue, StatementArg, StatementTmpl, StatementTmplArg, StatementTmplArgPrefix, ToFields,
-        Value, EMPTY_VALUE, F, HASH_SIZE, STATEMENT_ARG_F_LEN, VALUE_SIZE,
+        NativePredicate, OperationType, Params, Predicate, PredicateOrWildcard,
+        PredicateOrWildcardPrefix, PredicatePrefix, RawValue, StatementArg, StatementTmpl,
+        StatementTmplArg, StatementTmplArgPrefix, ToFields, Value, EMPTY_VALUE, F, HASH_SIZE,
+        STATEMENT_ARG_F_LEN, VALUE_SIZE,
     },
 };
 
@@ -525,17 +526,74 @@ impl StatementTmplArgTarget {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+pub struct PredicateHashOrWildcardTarget {
+    elements: [Target; Params::pred_hash_or_wc_size()],
+}
+
+impl PredicateHashOrWildcardTarget {
+    pub fn new_pred_hash(builder: &mut CircuitBuilder, pred_hash: HashOutTarget) -> Self {
+        let prefix = builder.constant(F::from(PredicateOrWildcardPrefix::Predicate));
+        let h = pred_hash.elements;
+        Self {
+            elements: [prefix, h[0], h[1], h[2], h[3]],
+        }
+    }
+    pub fn pred_hash(&self) -> HashOutTarget {
+        HashOutTarget {
+            elements: self.elements[1..].try_into().expect("4 elements"),
+        }
+    }
+    pub fn set_targets(
+        &self,
+        pw: &mut PartialWitness<F>,
+        params: &Params,
+        pred: &PredicateOrWildcard,
+    ) -> Result<()> {
+        match pred {
+            PredicateOrWildcard::Predicate(pred) => {
+                pw.set_target(
+                    self.elements[0],
+                    F::from(PredicateOrWildcardPrefix::Predicate),
+                )?;
+                let pred_hash = pred.hash(params);
+                pw.set_target_arr(&self.elements[1..], &pred_hash.0)?;
+            }
+            _ => unimplemented!(),
+        }
+        Ok(())
+    }
+}
+
+impl Flattenable for PredicateHashOrWildcardTarget {
+    fn flatten(&self) -> Vec<Target> {
+        self.elements.iter().cloned().collect()
+    }
+    fn from_flattened(_params: &Params, vs: &[Target]) -> Self {
+        Self {
+            elements: vs.try_into().expect("5 elements"),
+        }
+    }
+    fn size(_params: &Params) -> usize {
+        Params::pred_hash_or_wc_size()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct StatementTmplTarget {
     pred: Option<PredicateTarget>,
-    pred_hash: HashOutTarget,
+    pred_hash_or_wc: PredicateHashOrWildcardTarget,
     pub args: Vec<StatementTmplArgTarget>,
 }
 
 impl StatementTmplTarget {
-    pub fn new(pred_hash: HashOutTarget, args: Vec<StatementTmplArgTarget>) -> Self {
+    pub fn new(
+        builder: &mut CircuitBuilder,
+        pred_hash: HashOutTarget,
+        args: Vec<StatementTmplArgTarget>,
+    ) -> Self {
         Self {
             pred: None,
-            pred_hash,
+            pred_hash_or_wc: PredicateHashOrWildcardTarget::new_pred_hash(builder, pred_hash),
             args,
         }
     }
@@ -549,10 +607,8 @@ impl StatementTmplTarget {
         if let Some(pred) = &self.pred {
             pred.set_targets(pw, params, &st_tmpl.pred.as_pred().unwrap())?;
         }
-        pw.set_hash_target(
-            self.pred_hash,
-            HashOut::from(st_tmpl.pred.as_pred().unwrap().hash(params)),
-        )?;
+        self.pred_hash_or_wc
+            .set_targets(pw, params, &st_tmpl.pred)?;
         let arg_pad = StatementTmplArg::None;
         for (i, arg) in st_tmpl
             .args
@@ -568,8 +624,8 @@ impl StatementTmplTarget {
     pub fn pred(&self) -> Option<&PredicateTarget> {
         self.pred.as_ref()
     }
-    pub fn pred_hash(&self) -> &HashOutTarget {
-        &self.pred_hash
+    pub fn pred_hash(&self) -> &PredicateHashOrWildcardTarget {
+        &self.pred_hash_or_wc
     }
 }
 
@@ -1067,7 +1123,7 @@ impl Flattenable for CustomPredicateTarget {
 
 impl Flattenable for StatementTmplTarget {
     fn flatten(&self) -> Vec<Target> {
-        self.pred_hash
+        self.pred_hash_or_wc
             .flatten()
             .into_iter()
             .chain(self.args.iter().flat_map(|sta| sta.flatten()))
@@ -1076,24 +1132,27 @@ impl Flattenable for StatementTmplTarget {
 
     fn from_flattened(params: &Params, v: &[Target]) -> Self {
         assert_eq!(v.len(), Self::size(params));
-        let pred_hash_end = HASH_SIZE;
-        let pred_hash = HashOutTarget::from_flattened(params, &v[..pred_hash_end]);
+        let pred_hash_or_wc_end = Params::pred_hash_or_wc_size();
+        let pred_hash_or_wc =
+            PredicateHashOrWildcardTarget::from_flattened(params, &v[..pred_hash_or_wc_end]);
         let sta_size = Params::statement_tmpl_arg_size();
         let args = (0..params.max_statement_args)
             .map(|i| {
-                let sta_v = &v[pred_hash_end + sta_size * i..pred_hash_end + sta_size * (i + 1)];
+                let sta_v = &v
+                    [pred_hash_or_wc_end + sta_size * i..pred_hash_or_wc_end + sta_size * (i + 1)];
                 StatementTmplArgTarget::from_flattened(params, sta_v)
             })
             .collect();
         Self {
             pred: None,
-            pred_hash,
+            pred_hash_or_wc,
             args,
         }
     }
 
     fn size(params: &Params) -> usize {
-        HASH_SIZE + params.max_statement_args * StatementTmplArgTarget::size(params)
+        Params::pred_hash_or_wc_size()
+            + params.max_statement_args * StatementTmplArgTarget::size(params)
     }
 }
 
@@ -1342,7 +1401,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
         };
         StatementTmplTarget {
             pred,
-            pred_hash,
+            pred_hash_or_wc: PredicateHashOrWildcardTarget::new_pred_hash(self, pred_hash),
             args: (0..params.max_statement_args)
                 .map(|_| self.add_virtual_statement_tmpl_arg())
                 .collect(),

@@ -230,13 +230,17 @@ mod tests {
         Wildcard::new(name.to_string(), index)
     }
 
+    fn pred_lit(pred: Predicate) -> PredicateOrWildcard {
+        PredicateOrWildcard::Predicate(pred)
+    }
+
     #[test]
     fn test_simple_predicate_pretty_print() {
         let params = Params::default();
 
         // Create a simple predicate: is_equal(PodA, PodB) = AND(Equal(PodA["key"], PodB["key"]))
         let statements = vec![StatementTmpl {
-            pred: Predicate::Native(NativePredicate::Equal),
+            pred: pred_lit(Predicate::Native(NativePredicate::Equal)),
             args: vec![
                 StatementTmplArg::AnchoredKey(
                     create_test_wildcard("PodA", 0),
@@ -272,7 +276,7 @@ mod tests {
 
         // Create: uses_private(A, private: Temp) = AND(Equal(A["input"], Temp["const"]))
         let statements = vec![StatementTmpl {
-            pred: Predicate::Native(NativePredicate::Equal),
+            pred: pred_lit(Predicate::Native(NativePredicate::Equal)),
             args: vec![
                 StatementTmplArg::AnchoredKey(
                     create_test_wildcard("A", 0),
@@ -308,7 +312,7 @@ mod tests {
 
         // Create: check_value(Pod) = AND(Equal(Pod["field"], 42))
         let statements = vec![StatementTmpl {
-            pred: Predicate::Native(NativePredicate::Equal),
+            pred: pred_lit(Predicate::Native(NativePredicate::Equal)),
             args: vec![
                 StatementTmplArg::AnchoredKey(
                     create_test_wildcard("Pod", 0),
@@ -342,7 +346,7 @@ mod tests {
         // Create: either_or(A, B) = OR(Equal(A["x"], 1), Equal(B["y"], 2))
         let statements = vec![
             StatementTmpl {
-                pred: Predicate::Native(NativePredicate::Equal),
+                pred: pred_lit(Predicate::Native(NativePredicate::Equal)),
                 args: vec![
                     StatementTmplArg::AnchoredKey(
                         create_test_wildcard("A", 0),
@@ -352,7 +356,7 @@ mod tests {
                 ],
             },
             StatementTmpl {
-                pred: Predicate::Native(NativePredicate::Equal),
+                pred: pred_lit(Predicate::Native(NativePredicate::Equal)),
                 args: vec![
                     StatementTmplArg::AnchoredKey(
                         create_test_wildcard("B", 1),

@@ -320,7 +320,10 @@ mod tests {
         // Check that the desugared predicate is the same as the one in the statement template
         assert_eq!(
             desugared_gt.predicate(),
-            *batch_clone.predicates()[0].statements[0].pred()
+            *batch_clone.predicates()[0].statements[0]
+                .pred()
+                .as_pred()
+                .unwrap()
         );
 
         // Check that our custom predicate matches the statement template
@@ -367,7 +370,10 @@ mod tests {
         );
         assert_eq!(
             set_contains.predicate(),
-            *batch_clone.predicates()[0].statements[0].pred()
+            *batch_clone.predicates()[0].statements[0]
+                .pred()
+                .as_pred()
+                .unwrap()
         );
 
         let set_contains_custom_pred = CustomPredicateRef::new(batch, 0);

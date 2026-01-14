@@ -1396,7 +1396,7 @@ fn make_statement_from_template_circuit(
         })
         .collect();
     measure_gates_end!(builder, measure);
-    StatementTarget::new(*st_tmpl.pred_hash(), args)
+    StatementTarget::new(st_tmpl.pred_hash().pred_hash(), args)
 }
 
 /// Given a custom predicate, a list of operation arguments (statements) and a list of wildcard
@@ -1533,7 +1533,8 @@ fn normalize_st_tmpl_circuit(
     let pred_index = pred.elements[1];
     let custom_pred = PredicateTarget::new_custom(builder, id, pred_index);
     let pred = builder.select_flattenable(params, is_batch_self, &custom_pred, pred);
-    StatementTmplTarget::new(pred.hash(builder), st_tmpl.args.clone())
+    let pred_hash = pred.hash(builder);
+    StatementTmplTarget::new(builder, pred_hash, st_tmpl.args.clone())
 }
 
 /// Build a table of [batch_id, custom_predicate_index, custom_predicate] with queryable part as
@@ -2012,8 +2013,8 @@ mod tests {
         dict,
         frontend::{self, literal, CustomPredicateBatchBuilder, StatementTmplBuilder},
         middleware::{
-            hash_values, AnchoredKey, Hash, Key, OperationType, Predicate, RawValue, StatementArg,
-            StatementTmpl, StatementTmplArg, Wildcard,
+            hash_values, AnchoredKey, Hash, Key, OperationType, Predicate, PredicateOrWildcard,
+            RawValue, StatementArg, StatementTmpl, StatementTmplArg, Wildcard,
         },
     };
 
@@ -3124,7 +3125,7 @@ mod tests {
         let dict = Hash([F(6), F(7), F(8), F(9)]);
 
         let st_tmpl = StatementTmpl {
-            pred: Predicate::Native(NativePredicate::Equal),
+            pred: PredicateOrWildcard::Predicate(Predicate::Native(NativePredicate::Equal)),
             args: vec![
                 StatementTmplArg::AnchoredKey(Wildcard::new("a".to_string(), 1), Key::from("key")),
                 StatementTmplArg::Literal(Value::from("value")),

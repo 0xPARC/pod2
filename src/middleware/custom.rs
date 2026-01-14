@@ -171,7 +171,7 @@ impl ToFields for PredicateOrWildcard {
             Self::Wildcard(wc) => iter::once(F::from(PredicateOrWildcardPrefix::Wildcard))
                 .chain(wc.to_fields(params))
                 .chain(iter::repeat(F::ZERO))
-                .take(Params::pred_or_wc_size())
+                .take(Params::pred_hash_or_wc_size())
                 .collect_vec(),
         }
     }
@@ -521,7 +521,10 @@ mod tests {
     };
 
     fn st(p: Predicate, args: Vec<StatementTmplArg>) -> StatementTmpl {
-        StatementTmpl { pred: p, args }
+        StatementTmpl {
+            pred: PredicateOrWildcard::Predicate(p),
+            args,
+        }
     }
 
     fn key(name: &str) -> Key {

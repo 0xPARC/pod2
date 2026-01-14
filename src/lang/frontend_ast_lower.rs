@@ -597,7 +597,10 @@ mod tests {
         let stmt = &pred2.statements()[0];
 
         // Should be BatchSelf(0) referring to pred1
-        assert!(matches!(stmt.pred, Predicate::BatchSelf(0)));
+        assert!(matches!(
+            stmt.pred,
+            PredicateOrWildcard::Predicate(Predicate::BatchSelf(0))
+        ));
     }
 
     #[test]
@@ -634,7 +637,7 @@ mod tests {
         // Should desugar to the Contains predicate
         assert!(matches!(
             stmt.pred,
-            Predicate::Native(NativePredicate::Contains)
+            PredicateOrWildcard::Predicate(Predicate::Native(NativePredicate::Contains))
         ));
     }
 
