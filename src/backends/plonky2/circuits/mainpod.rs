@@ -21,13 +21,12 @@ use crate::{
         basetypes::{CircuitBuilder, VDSet},
         circuits::{
             common::{
-                CircuitBuilderPod, CustomPredicateEntryTarget, CustomPredicateTarget,
-                CustomPredicateVerifyEntryTarget, CustomPredicateVerifyQueryTarget,
-                CustomPredicateWithPredBatchTarget, Flattenable, MerkleClaimTarget,
+                CircuitBuilderPod, CustomPredicateBatchTarget, CustomPredicateEntryTarget,
+                CustomPredicateTarget, CustomPredicateVerifyEntryTarget,
+                CustomPredicateVerifyQueryTarget, Flattenable, MerkleClaimTarget,
                 MerkleTreeStateTransitionClaimTarget, OperationTarget, OperationTypeTarget,
                 PredicateTarget, StatementArgTarget, StatementTarget, StatementTmplArgTarget,
-                StatementTmplTarget, StatementWithPredTarget, StatementWithPredTmplTarget,
-                ValueTarget,
+                StatementTmplTarget, ValueTarget,
             },
             hash::{hash_from_state_circuit, precompute_hash_state},
             mux_table::{MuxTableTarget, TableEntryTarget},
@@ -94,10 +93,7 @@ impl StatementCache {
     ) -> Self {
         let op_args = if prev_statements.is_empty() {
             (0..params.max_operation_args)
-                .map(|_| {
-                    StatementWithPredTarget::new_native(builder, params, NativePredicate::None, &[])
-                        .to_statement(builder)
-                })
+                .map(|_| StatementTarget::new_native(builder, params, NativePredicate::None, &[]))
                 .collect_vec()
         } else {
             // `op.args` is a vector of arrays of length 1, so `.flatten()` is just
@@ -583,13 +579,12 @@ fn verify_contains_from_entries_circuit(
     let arg1_expected = cache.equations[0].lhs.clone();
     let arg2_expected = cache.equations[1].lhs.clone();
     let arg3_expected = cache.equations[2].lhs.clone();
-    let expected_statement = StatementWithPredTarget::new_native(
+    let expected_statement = StatementTarget::new_native(
         builder,
         params,
         NativePredicate::Contains,
         &[arg1_expected, arg2_expected, arg3_expected],
-    )
-    .to_statement(builder);
+    );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
     let ok = builder.all([op_code_ok, aux_tag_ok, arg_types_ok, merkle_proof_ok, st_ok]);
@@ -631,13 +626,12 @@ fn verify_not_contains_from_entries_circuit(
     // Check output statement
     let arg1_expected = cache.equations[0].lhs.clone();
     let arg2_expected = cache.equations[1].lhs.clone();
-    let expected_statement = StatementWithPredTarget::new_native(
+    let expected_statement = StatementTarget::new_native(
         builder,
         params,
         NativePredicate::NotContains,
         &[arg1_expected, arg2_expected],
-    )
-    .to_statement(builder);
+    );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
     let ok = builder.all([op_code_ok, aux_tag_ok, arg_types_ok, merkle_proof_ok, st_ok]);
@@ -707,13 +701,12 @@ fn verify_merkle_insert_circuit(
     let arg2_expected = cache.equations[1].lhs.clone();
     let arg3_expected = cache.equations[2].lhs.clone();
     let arg4_expected = cache.equations[3].lhs.clone();
-    let expected_statement = StatementWithPredTarget::new_native(
+    let expected_statement = StatementTarget::new_native(
         builder,
         params,
         NativePredicate::ContainerInsert,
         &[arg1_expected, arg2_expected, arg3_expected, arg4_expected],
-    )
-    .to_statement(builder);
+    );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
     let ok = builder.all([op_code_ok, aux_tag_ok, arg_types_ok, merkle_proof_ok, st_ok]);
@@ -783,13 +776,12 @@ fn verify_merkle_update_circuit(
     let arg2_expected = cache.equations[1].lhs.clone();
     let arg3_expected = cache.equations[2].lhs.clone();
     let arg4_expected = cache.equations[3].lhs.clone();
-    let expected_statement = StatementWithPredTarget::new_native(
+    let expected_statement = StatementTarget::new_native(
         builder,
         params,
         NativePredicate::ContainerUpdate,
         &[arg1_expected, arg2_expected, arg3_expected, arg4_expected],
-    )
-    .to_statement(builder);
+    );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
     let ok = builder.all([op_code_ok, aux_tag_ok, arg_types_ok, merkle_proof_ok, st_ok]);
@@ -852,13 +844,12 @@ fn verify_merkle_delete_circuit(
     let arg1_expected = cache.equations[0].lhs.clone();
     let arg2_expected = cache.equations[1].lhs.clone();
     let arg3_expected = cache.equations[2].lhs.clone();
-    let expected_statement = StatementWithPredTarget::new_native(
+    let expected_statement = StatementTarget::new_native(
         builder,
         params,
         NativePredicate::ContainerDelete,
         &[arg1_expected, arg2_expected, arg3_expected],
-    )
-    .to_statement(builder);
+    );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
     let ok = builder.all([op_code_ok, aux_tag_ok, arg_types_ok, merkle_proof_ok, st_ok]);
@@ -1031,13 +1022,12 @@ fn verify_hash_of_circuit(
     let arg1_expected = cache.equations[0].lhs.clone();
     let arg2_expected = cache.equations[1].lhs.clone();
     let arg3_expected = cache.equations[2].lhs.clone();
-    let expected_statement = StatementWithPredTarget::new_native(
+    let expected_statement = StatementTarget::new_native(
         builder,
         params,
         NativePredicate::HashOf,
         &[arg1_expected, arg2_expected, arg3_expected],
-    )
-    .to_statement(builder);
+    );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
     let ok = builder.all([op_code_ok, arg_types_ok, hash_value_ok, st_ok]);
@@ -1068,13 +1058,12 @@ fn verify_public_key_of_circuit(
 
     let arg1_expected = cache.equations[0].lhs.clone();
     let arg2_expected = cache.equations[1].lhs.clone();
-    let expected_statement = StatementWithPredTarget::new_native(
+    let expected_statement = StatementTarget::new_native(
         builder,
         params,
         NativePredicate::PublicKeyOf,
         &[arg1_expected, arg2_expected],
-    )
-    .to_statement(builder);
+    );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
     let ok = builder.all([op_code_ok, aux_tag_ok, arg_types_ok, pk_ok, sk_ok, st_ok]);
@@ -1105,13 +1094,12 @@ fn verify_signed_by_circuit(
 
     let arg1_expected = cache.equations[0].lhs.clone();
     let arg2_expected = cache.equations[1].lhs.clone();
-    let expected_statement = StatementWithPredTarget::new_native(
+    let expected_statement = StatementTarget::new_native(
         builder,
         params,
         NativePredicate::SignedBy,
         &[arg1_expected, arg2_expected],
-    )
-    .to_statement(builder);
+    );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
     let ok = builder.all([op_code_ok, aux_tag_ok, arg_types_ok, msg_ok, pk_ok, st_ok]);
@@ -1144,13 +1132,12 @@ fn verify_sum_of_circuit(
     let arg1_expected = cache.equations[0].lhs.clone();
     let arg2_expected = cache.equations[1].lhs.clone();
     let arg3_expected = cache.equations[2].lhs.clone();
-    let expected_statement = StatementWithPredTarget::new_native(
+    let expected_statement = StatementTarget::new_native(
         builder,
         params,
         NativePredicate::SumOf,
         &[arg1_expected, arg2_expected, arg3_expected],
-    )
-    .to_statement(builder);
+    );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
     let ok = builder.all([op_code_ok, arg_types_ok, sum_ok, st_ok]);
@@ -1183,13 +1170,12 @@ fn verify_product_of_circuit(
     let arg1_expected = cache.equations[0].lhs.clone();
     let arg2_expected = cache.equations[1].lhs.clone();
     let arg3_expected = cache.equations[2].lhs.clone();
-    let expected_statement = StatementWithPredTarget::new_native(
+    let expected_statement = StatementTarget::new_native(
         builder,
         params,
         NativePredicate::ProductOf,
         &[arg1_expected, arg2_expected, arg3_expected],
-    )
-    .to_statement(builder);
+    );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
     let ok = builder.all([op_code_ok, arg_types_ok, product_ok, st_ok]);
@@ -1229,13 +1215,12 @@ fn verify_max_of_circuit(
     let arg1_expected = cache.equations[0].lhs.clone();
     let arg2_expected = cache.equations[1].lhs.clone();
     let arg3_expected = cache.equations[2].lhs.clone();
-    let expected_statement = StatementWithPredTarget::new_native(
+    let expected_statement = StatementTarget::new_native(
         builder,
         params,
         NativePredicate::MaxOf,
         &[arg1_expected, arg2_expected, arg3_expected],
-    )
-    .to_statement(builder);
+    );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
     let ok = builder.all([op_code_ok, arg_types_ok, arg1_check, st_ok]);
@@ -1264,13 +1249,12 @@ fn verify_transitive_eq_circuit(
 
     let inner_args_match = builder.is_equal_slice(&arg1_rhs.elements, &arg2_lhs.elements);
 
-    let expected_statement = StatementWithPredTarget::new_native(
+    let expected_statement = StatementTarget::new_native(
         builder,
         params,
         NativePredicate::Equal,
         &[arg1_lhs.clone(), arg2_rhs.clone()],
-    )
-    .to_statement(builder);
+    );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
     let ok = builder.all([op_code_ok, arg_types_ok, inner_args_match, st_ok]);
@@ -1288,8 +1272,7 @@ fn verify_none_circuit(
     let op_code_ok = op_type.has_native(builder, NativeOperation::None);
 
     let expected_statement =
-        StatementWithPredTarget::new_native(builder, params, NativePredicate::None, &[])
-            .to_statement(builder);
+        StatementTarget::new_native(builder, params, NativePredicate::None, &[]);
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
     let ok = builder.all([op_code_ok, st_ok]);
@@ -1312,13 +1295,12 @@ fn verify_lt_to_neq_circuit(
     let arg1_expected = resolved_op_args[0].args[0].clone();
     let arg2_expected = resolved_op_args[0].args[1].clone();
 
-    let expected_statement = StatementWithPredTarget::new_native(
+    let expected_statement = StatementTarget::new_native(
         builder,
         params,
         NativePredicate::NotEqual,
         &[arg1_expected, arg2_expected],
-    )
-    .to_statement(builder);
+    );
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
     let ok = builder.all([op_code_ok, arg_type_ok, st_ok]);
@@ -1414,10 +1396,7 @@ fn make_statement_from_template_circuit(
         })
         .collect();
     measure_gates_end!(builder, measure);
-    StatementTarget {
-        pred_hash: st_tmpl.pred_hash,
-        args,
-    }
+    StatementTarget::new(*st_tmpl.pred_hash(), args)
 }
 
 /// Given a custom predicate, a list of operation arguments (statements) and a list of wildcard
@@ -1452,11 +1431,9 @@ fn make_custom_statement_circuit(
             let v = builder.select_flattenable(params, mask, arg, &arg_none);
             StatementArgTarget::wildcard_literal(builder, &v)
         })
-        .collect();
-    let statement_with_pred = StatementWithPredTarget {
-        predicate: st_predicate,
-        args: st_args,
-    };
+        .collect_vec();
+    let statement_with_pred =
+        StatementTarget::new_with_pred(builder, params, st_predicate, &st_args);
 
     // Check the operation arguments
     // From each statement template we generate an expected statement using replacing the
@@ -1488,7 +1465,7 @@ fn make_custom_statement_circuit(
 
     builder.assert_one(is_op_args_ok.target);
     measure_gates_end!(builder, measure);
-    Ok((statement_with_pred.to_statement(builder), op_type))
+    Ok((statement_with_pred, op_type))
 }
 
 /// Replace the blank verifier_data_hash slots in intro predicates by `vd_hash`
@@ -1499,15 +1476,12 @@ fn normalize_statement_circuit(
     vd_hash: &HashOutTarget,
 ) -> StatementTarget {
     let is_blank_intro = statement.pred_is_blank_intro(builder);
-    let old_pred_hash = statement.pred_hash;
+    let old_pred_hash = statement.pred_hash();
     let intro_pred_hash = PredicateTarget::new_intro(builder, *vd_hash).hash(builder);
     let new_pred_hash =
         builder.select_flattenable(params, is_blank_intro, &intro_pred_hash, &old_pred_hash);
 
-    StatementTarget {
-        pred_hash: new_pred_hash,
-        args: statement.args.clone(),
-    }
+    StatementTarget::new(new_pred_hash, statement.args.clone())
 }
 
 /// `params.num_public_statements_hash` is the total number of statements that will be hashed.
@@ -1550,18 +1524,16 @@ pub fn calculate_statements_hash_circuit(
 fn normalize_st_tmpl_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
-    st_tmpl: &StatementWithPredTmplTarget,
+    st_tmpl: &StatementTmplTarget,
     id: HashOutTarget,
 ) -> StatementTmplTarget {
+    let pred = st_tmpl.pred().expect("StatementTmpl contains predicate");
     let prefix_batch_self = builder.constant(F::from(PredicatePrefix::BatchSelf));
-    let is_batch_self = builder.is_equal(st_tmpl.pred.elements[0], prefix_batch_self);
-    let pred_index = st_tmpl.pred.elements[1];
+    let is_batch_self = builder.is_equal(pred.elements[0], prefix_batch_self);
+    let pred_index = pred.elements[1];
     let custom_pred = PredicateTarget::new_custom(builder, id, pred_index);
-    let pred = builder.select_flattenable(params, is_batch_self, &custom_pred, &st_tmpl.pred);
-    StatementTmplTarget {
-        pred_hash: pred.hash(builder),
-        args: st_tmpl.args.clone(),
-    }
+    let pred = builder.select_flattenable(params, is_batch_self, &custom_pred, &pred);
+    StatementTmplTarget::new(pred.hash(builder), st_tmpl.args.clone())
 }
 
 /// Build a table of [batch_id, custom_predicate_index, custom_predicate] with queryable part as
@@ -1570,16 +1542,15 @@ fn normalize_st_tmpl_circuit(
 fn build_custom_predicate_table_circuit(
     params: &Params,
     builder: &mut CircuitBuilder,
-    custom_predicate_batches: &[CustomPredicateWithPredBatchTarget],
+    custom_predicate_batches: &[CustomPredicateBatchTarget],
 ) -> Result<Vec<HashOutTarget>> {
     let measure = measure_gates_begin!(builder, "BuildCustomPredTbl");
     let mut custom_predicate_table =
         Vec::with_capacity(params.max_custom_predicate_batches * params.max_custom_batch_size);
-    for cpb_with_pred in custom_predicate_batches {
+    for cpb in custom_predicate_batches {
         let measure_cpb = measure_gates_begin!(builder, "CustomPredBatch");
-        let cpb = cpb_with_pred.clone().to_custom_predicate_batch(builder);
         let id = cpb.id(builder); // constrain the id
-        for (index, cp) in cpb_with_pred.predicates.iter().enumerate() {
+        for (index, cp) in cpb.predicates.iter().enumerate() {
             let statements = cp
                 .statements
                 .iter()
@@ -1621,8 +1592,7 @@ fn verify_main_pod_circuit(
     let mut statements = Vec::new();
     // Statement at index 0 is always None to be used for padding operation arguments in custom
     // predicate statements
-    let st_none = StatementWithPredTarget::new_native(builder, params, NativePredicate::None, &[])
-        .to_statement(builder);
+    let st_none = StatementTarget::new_native(builder, params, NativePredicate::None, &[]);
     statements.push(st_none);
 
     // 1a. Verify all input recursive pods
@@ -1754,7 +1724,7 @@ pub struct MainPodVerifyTarget {
     public_key_of_sks: Vec<BigUInt320Target>,
     signed_bys: Vec<SignedByTarget>,
     merkle_tree_state_transition_proofs: Vec<MerkleTreeStateTransitionProofTarget>,
-    custom_predicate_batches: Vec<CustomPredicateWithPredBatchTarget>,
+    custom_predicate_batches: Vec<CustomPredicateBatchTarget>,
     custom_predicate_verifications: Vec<CustomPredicateVerifyEntryTarget>,
 }
 
@@ -1769,12 +1739,12 @@ impl MainPodVerifyTarget {
             input_pods_self_statements: (0..params.max_input_pods)
                 .map(|_| {
                     (0..params.max_input_pods_public_statements)
-                        .map(|_| builder.add_virtual_statement(params))
+                        .map(|_| builder.add_virtual_statement(params, false))
                         .collect_vec()
                 })
                 .collect(),
             input_statements: (0..params.max_statements)
-                .map(|_| builder.add_virtual_statement(params))
+                .map(|_| builder.add_virtual_statement(params, false))
                 .collect(),
             operations: (0..params.max_statements)
                 .map(|_| builder.add_virtual_operation(params))
@@ -1800,10 +1770,10 @@ impl MainPodVerifyTarget {
                 })
                 .collect(),
             custom_predicate_batches: (0..params.max_custom_predicate_batches)
-                .map(|_| builder.add_virtual_custom_predicate_with_pred_batch(params))
+                .map(|_| builder.add_virtual_custom_predicate_batch(params, true))
                 .collect(),
             custom_predicate_verifications: (0..params.max_custom_predicate_verifications)
-                .map(|_| CustomPredicateVerifyEntryTarget::new_virtual(params, builder))
+                .map(|_| CustomPredicateVerifyEntryTarget::new_virtual(params, builder, false))
                 .collect(),
         }
     }
@@ -2103,10 +2073,10 @@ mod tests {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::new(config);
 
-        let st_target = builder.add_virtual_statement(&params);
+        let st_target = builder.add_virtual_statement(&params, false);
         let op_target = builder.add_virtual_operation(&params);
         let prev_statements_target: Vec<_> = (0..prev_statements.len())
-            .map(|_| builder.add_virtual_statement(&params))
+            .map(|_| builder.add_virtual_statement(&params, false))
             .collect();
 
         let merkle_proofs_target: Vec<_> = aux
@@ -3117,7 +3087,7 @@ mod tests {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::new(config);
 
-        let st_tmpl_target = builder.add_virtual_statement_tmpl(params);
+        let st_tmpl_target = builder.add_virtual_statement_tmpl(params, false);
         let args_target: Vec<_> = (0..args.len())
             .map(|_| builder.add_virtual_value())
             .collect();
@@ -3128,7 +3098,7 @@ mod tests {
             &args_target,
         );
         // TODO: Instead of connect, assign witness to result
-        let expected_st_target = builder.add_virtual_statement(params);
+        let expected_st_target = builder.add_virtual_statement(params, false);
         builder.connect_flattenable(&expected_st_target, &st_target);
 
         let mut pw = PartialWitness::<F>::new();
@@ -3180,9 +3150,9 @@ mod tests {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::new(config);
 
-        let custom_predicate_target = builder.add_virtual_custom_predicate_entry(params);
+        let custom_predicate_target = builder.add_virtual_custom_predicate_entry(params, false);
         let op_args_target: Vec<_> = (0..args.len())
-            .map(|_| builder.add_virtual_statement(params))
+            .map(|_| builder.add_virtual_statement(params, false))
             .collect();
         let args_target: Vec<_> = (0..args.len())
             .map(|_| builder.add_virtual_value())
@@ -3474,7 +3444,7 @@ mod tests {
         let mut builder = CircuitBuilder::new(config);
 
         let statements_target = (0..params.max_public_statements)
-            .map(|_| builder.add_virtual_statement(params))
+            .map(|_| builder.add_virtual_statement(params, false))
             .collect_vec();
         let sts_hash_target =
             calculate_statements_hash_circuit(params, &mut builder, &statements_target);
