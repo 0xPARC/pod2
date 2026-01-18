@@ -217,7 +217,7 @@ fn try_solve_with_pods(
         .deps
         .statement_deps
         .iter()
-        .flat_map(|sd| sd.depends_on.iter())
+        .flat_map(|deps| deps.iter())
         .filter_map(|dep| match dep {
             StatementSource::Internal(d) => Some(*d),
             StatementSource::External(_) => None,
@@ -243,7 +243,7 @@ fn try_solve_with_pods(
         .deps
         .statement_deps
         .iter()
-        .flat_map(|sd| sd.depends_on.iter())
+        .flat_map(|deps| deps.iter())
         .filter_map(|dep| match dep {
             StatementSource::External(h) => Some(*h),
             StatementSource::Internal(_) => None,
@@ -319,7 +319,7 @@ fn try_solve_with_pods(
     // - Constraint 8 ensures that when we use a statement from earlier POD pp,
     //   we count pp as an input to pod p (for max_input_pods enforcement)
     for s in 0..n {
-        for dep in &input.deps.statement_deps[s].depends_on {
+        for dep in &input.deps.statement_deps[s] {
             if let StatementSource::Internal(d) = dep {
                 for p in 0..target_pods {
                     // prove[s][p] <= prove[d][p] + sum_{p' < p} public[d][p']
@@ -342,7 +342,6 @@ fn try_solve_with_pods(
             // If s is in p (prove[s][p]=1) and d is not in p (prove[d][p]=0), then needs_copy >= 1
             for s in 0..n {
                 let depends_on_d = input.deps.statement_deps[s]
-                    .depends_on
                     .iter()
                     .any(|dep| matches!(dep, StatementSource::Internal(dep_d) if *dep_d == d));
                 if depends_on_d {
@@ -467,7 +466,7 @@ fn try_solve_with_pods(
     // Constraint 8a: Internal input POD tracking using uses_input
     // uses_input[p][pp] >= prove[s][p] + public[d][pp] - 1 for each dependency (s depends on d)
     for s in 0..n {
-        for dep in &input.deps.statement_deps[s].depends_on {
+        for dep in &input.deps.statement_deps[s] {
             if let StatementSource::Internal(d) = dep {
                 for p in 1..target_pods {
                     for pp in 0..p {
@@ -484,7 +483,7 @@ fn try_solve_with_pods(
     // Constraint 8b: External input POD tracking using uses_external
     // If statement s is proved in POD p and s depends on external POD e, then uses_external[p][e] = 1
     for s in 0..n {
-        for dep in &input.deps.statement_deps[s].depends_on {
+        for dep in &input.deps.statement_deps[s] {
             if let StatementSource::External(h) = dep {
                 if let Some(&e) = external_to_idx.get(h) {
                     for p in 0..target_pods {
@@ -569,20 +568,11 @@ fn try_solve_with_pods(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use super::*;
-    use crate::frontend::multi_pod::deps::StatementDeps;
 
     fn make_simple_deps(n: usize) -> DependencyGraph {
         DependencyGraph {
-            statement_deps: (0..n)
-                .map(|i| StatementDeps {
-                    index: i,
-                    depends_on: vec![],
-                })
-                .collect(),
-            dependents: HashMap::new(),
+            statement_deps: (0..n).map(|_| vec![]).collect(),
         }
     }
 

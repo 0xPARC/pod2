@@ -295,9 +295,11 @@ impl MultiPodBuilder {
         self.solve()?;
         let solution = self.cached_solution.as_ref().unwrap();
 
-        // Build PODs in prove_order. Due to symmetry breaking constraint (pod_used[p] >= pod_used[p+1]),
-        // prove_order is always 0..pod_count, ensuring earlier PODs are built first.
-        // Output POD is always at index 0, followed by intermediate PODs.
+        // Build PODs in sequential order: 0, 1, 2, ...
+        // This order is guaranteed by the solver's symmetry-breaking constraint, which
+        // ensures PODs are used in order (no gaps). Sequential building is required because
+        // later PODs may reference earlier ones via CopyStatement for cross-POD dependencies.
+        // POD 0 is always the output POD; any subsequent PODs are intermediate.
         let mut pods: Vec<MainPod> = Vec::with_capacity(solution.pod_count);
 
         for pod_idx in &solution.prove_order {
@@ -330,7 +332,7 @@ impl MultiPodBuilder {
 
         // Find which external and earlier PODs we need based on dependencies
         for &stmt_idx in statements_in_this_pod {
-            for dep in &deps.statement_deps[stmt_idx].depends_on {
+            for dep in &deps.statement_deps[stmt_idx] {
                 match dep {
                     StatementSource::Internal(dep_idx) => {
                         // Check if dependency is in an earlier generated POD
@@ -380,26 +382,21 @@ impl MultiPodBuilder {
             }
         }
 
-        // Add statements in dependency order.
-        // Note: Operations are already topologically ordered from how we construct them,
-        // but the explicit sort is defensive and ensures correctness if that invariant changes.
-        let topo_order = deps.topological_order();
-        let statements_set: BTreeSet<usize> = statements_in_this_pod.iter().copied().collect();
+        // Add statements in dependency order (ascending index order).
+        // Statements are added to the builder in dependency order: if B depends on A,
+        // A must be added before B to get its reference. So index order = dependency order.
+        let statements_sorted: BTreeSet<usize> = statements_in_this_pod.iter().copied().collect();
         let public_set = &solution.pod_public_statements[pod_idx];
 
         // Track which statements have been added to this builder
         let mut added_statements: HashMap<usize, Statement> = HashMap::new();
 
-        for &stmt_idx in &topo_order {
-            if !statements_set.contains(&stmt_idx) {
-                continue;
-            }
-
+        for &stmt_idx in &statements_sorted {
             // First, ensure all dependencies are available (copy if needed).
             // When a dependency comes from an earlier POD, we need CopyStatement to make it
             // available in this POD's namespace. The earlier POD is already added as an input,
             // but CopyStatement creates a local reference that operations can use.
-            for dep in &deps.statement_deps[stmt_idx].depends_on {
+            for dep in &deps.statement_deps[stmt_idx] {
                 if let StatementSource::Internal(dep_idx) = dep {
                     if !added_statements.contains_key(dep_idx) {
                         // Need to copy this statement from an earlier POD
