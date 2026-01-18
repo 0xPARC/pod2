@@ -85,15 +85,15 @@ pub struct SolverInput<'a> {
 /// This is efficient for the common case where min_pods is sufficient.
 pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
     let n = input.num_statements;
-    if n == 0 {
-        return Ok(MultiPodSolution {
-            pod_count: 0,
-            statement_to_pods: vec![],
-            pod_statements: vec![],
-            pod_public_statements: vec![],
-            prove_order: vec![],
-            output_pod_indices: BTreeSet::new(),
-        });
+
+    // Require at least one public statement. A POD with no public statements
+    // can't prove anything to an external verifier.
+    if input.output_public_indices.is_empty() {
+        return Err(super::Error::Solver(
+            "No public statements requested. Use pub_op() to add at least one statement \
+             that should be visible in the output POD."
+                .to_string(),
+        ));
     }
 
     // Check that all output-public statements can fit in a single POD
@@ -550,12 +550,9 @@ fn try_solve_with_pods(
         }
     }
 
-    // POD 0 is the output POD (contains all user-requested public statements)
-    let output_pod_indices = if input.output_public_indices.is_empty() {
-        BTreeSet::new()
-    } else {
-        BTreeSet::from([0])
-    };
+    // POD 0 is always the output POD (contains all user-requested public statements).
+    // We require at least one public statement, so this is always {0}.
+    let output_pod_indices = BTreeSet::from([0]);
 
     // Prove order is just 0..pod_count due to topological ordering constraint
     let prove_order: Vec<usize> = (0..pod_count).collect();
@@ -631,7 +628,8 @@ mod tests {
 
         let costs: Vec<StatementCost> = (0..6).map(|_| StatementCost::default()).collect();
         let deps = make_simple_deps(6);
-        let output_public: Vec<usize> = vec![];
+        // At least one public statement is required
+        let output_public: Vec<usize> = vec![0];
 
         let input = SolverInput {
             num_statements: 6,
@@ -650,7 +648,9 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_input() {
+    fn test_no_public_statements_error() {
+        // At least one public statement is required - otherwise the POD can't
+        // prove anything to an external verifier.
         let params = Params::default();
         let costs: Vec<StatementCost> = vec![];
         let deps = make_simple_deps(0);
@@ -666,7 +666,11 @@ mod tests {
             all_anchored_keys: &[],
         };
 
-        let solution = solve(&input).unwrap();
-        assert_eq!(solution.pod_count, 0);
+        let result = solve(&input);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("No public statements requested"));
     }
 }

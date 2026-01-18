@@ -74,26 +74,21 @@ impl Default for Options {
 /// Result of proving with MultiPodBuilder.
 #[derive(Debug)]
 pub struct MultiPodResult {
-    /// All PODs in proving order.
+    /// All PODs in proving order. The output POD is always at index 0,
+    /// followed by any intermediate/supporting PODs.
     pub pods: Vec<MainPod>,
-    /// Indices into `pods` for output PODs (containing user-requested public statements).
-    pub output_indices: Vec<usize>,
-    /// Indices into `pods` for intermediate/supporting PODs.
-    pub intermediate_indices: Vec<usize>,
 }
 
 impl MultiPodResult {
-    /// Get output PODs (containing user-requested public statements).
-    pub fn output_pods(&self) -> Vec<&MainPod> {
-        self.output_indices.iter().map(|&i| &self.pods[i]).collect()
+    /// Get the output POD (containing user-requested public statements).
+    /// This is always `pods[0]`.
+    pub fn output_pod(&self) -> &MainPod {
+        &self.pods[0]
     }
 
-    /// Get intermediate/supporting PODs.
-    pub fn intermediate_pods(&self) -> Vec<&MainPod> {
-        self.intermediate_indices
-            .iter()
-            .map(|&i| &self.pods[i])
-            .collect()
+    /// Get intermediate/supporting PODs (all PODs except the output POD).
+    pub fn intermediate_pods(&self) -> &[MainPod] {
+        &self.pods[1..]
     }
 }
 
@@ -305,16 +300,9 @@ impl MultiPodBuilder {
         self.solve()?;
         let solution = self.cached_solution.as_ref().unwrap();
 
-        if solution.pod_count == 0 {
-            return Ok(MultiPodResult {
-                pods: vec![],
-                output_indices: vec![],
-                intermediate_indices: vec![],
-            });
-        }
-
         // Build PODs in prove_order. Due to symmetry breaking constraint (pod_used[p] >= pod_used[p+1]),
         // prove_order is always 0..pod_count, ensuring earlier PODs are built first.
+        // Output POD is always at index 0, followed by intermediate PODs.
         let mut pods: Vec<MainPod> = Vec::with_capacity(solution.pod_count);
 
         for pod_idx in &solution.prove_order {
@@ -322,23 +310,7 @@ impl MultiPodBuilder {
             pods.push(pod);
         }
 
-        // Compute output and intermediate indices
-        let mut output_indices = Vec::new();
-        let mut intermediate_indices = Vec::new();
-
-        for idx in 0..pods.len() {
-            if solution.output_pod_indices.contains(&idx) {
-                output_indices.push(idx);
-            } else {
-                intermediate_indices.push(idx);
-            }
-        }
-
-        Ok(MultiPodResult {
-            pods,
-            output_indices,
-            intermediate_indices,
-        })
+        Ok(MultiPodResult { pods })
     }
 
     /// Build a single POD based on the solver solution.
@@ -569,8 +541,7 @@ mod tests {
         let result = builder.prove(&prover)?;
 
         assert_eq!(result.pods.len(), 1);
-        assert_eq!(result.output_indices.len(), 1);
-        assert!(result.intermediate_indices.is_empty());
+        assert!(result.intermediate_pods().is_empty());
 
         // Verify the POD
         result.pods[0]
@@ -852,8 +823,9 @@ mod tests {
         let options = Options { max_pods: 2 };
         let mut builder = MultiPodBuilder::new_with_options(&params, vd_set, options);
 
-        // Add 10 statements (requires 5 PODs)
-        for i in 0..10 {
+        // Add 10 statements (requires 5 PODs). First one is public (required).
+        let _ = builder.pub_op(FrontendOp::eq(0, 0));
+        for i in 1..10 {
             let _ = builder.priv_op(FrontendOp::eq(i, i));
         }
 
