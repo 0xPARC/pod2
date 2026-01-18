@@ -715,7 +715,8 @@ mod tests {
         let _age_ok = builder.priv_op(FrontendOp::gt_eq(age, 18))?;
 
         // Verify balance >= 100 (minimum balance)
-        let balance = builder.priv_op(FrontendOp::dict_contains(profile.clone(), "balance", 1000))?;
+        let balance =
+            builder.priv_op(FrontendOp::dict_contains(profile.clone(), "balance", 1000))?;
         let _balance_ok = builder.priv_op(FrontendOp::gt_eq(balance, 100))?;
 
         // Verify reputation >= 50 (trusted user)
@@ -728,7 +729,8 @@ mod tests {
         let _level_ok = builder.priv_op(FrontendOp::gt_eq(level, 3))?;
 
         // Verify credits >= 100 (has credits)
-        let credits = builder.priv_op(FrontendOp::dict_contains(profile.clone(), "credits", 150))?;
+        let credits =
+            builder.priv_op(FrontendOp::dict_contains(profile.clone(), "credits", 150))?;
         let _credits_ok = builder.priv_op(FrontendOp::gt_eq(credits, 100))?;
 
         // Verify score >= 60 (passing score) - make this one public

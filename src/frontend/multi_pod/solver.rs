@@ -364,8 +364,9 @@ fn try_solve_with_pods(
         // The total must not exceed max_priv_statements (= max_statements - max_public_statements).
         let stmt_sum: Expression = (0..n).map(|s| prove[s][p]).sum();
         let copy_sum: Expression = (0..dep_indices.len()).map(|di| needs_copy[di][p]).sum();
-        let anchored_key_sum: Expression =
-            (0..input.all_anchored_keys.len()).map(|ak| anchored_key_used[ak][p]).sum();
+        let anchored_key_sum: Expression = (0..input.all_anchored_keys.len())
+            .map(|ak| anchored_key_used[ak][p])
+            .sum();
         model = model.with(constraint!(
             stmt_sum + copy_sum + anchored_key_sum
                 <= (input.params.max_priv_statements() as f64) * pod_used[p]
