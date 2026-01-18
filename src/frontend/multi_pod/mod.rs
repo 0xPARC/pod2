@@ -17,7 +17,7 @@ mod cost;
 mod deps;
 mod solver;
 
-use cost::{estimate_pod_count, AnchoredKeyId, StatementCost};
+use cost::{AnchoredKeyId, StatementCost};
 use deps::{DependencyGraph, StatementSource};
 pub use solver::MultiPodSolution;
 
@@ -286,11 +286,6 @@ impl MultiPodBuilder {
         Ok(self.cached_solution.as_ref().unwrap())
     }
 
-    /// Get the estimated POD count (quick heuristic without full solve).
-    pub fn estimate_pod_count(&self) -> usize {
-        estimate_pod_count(&self.operations, &self.params)
-    }
-
     /// Build and prove all PODs.
     ///
     /// This first solves if not already solved, then builds and proves
@@ -548,42 +543,6 @@ mod tests {
             .pod
             .verify()
             .map_err(|e| Error::Frontend(e.to_string()))?;
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_estimate_vs_solve() -> Result<()> {
-        // Verifies that estimate_pod_count() provides a reasonable lower bound.
-        let params = Params {
-            max_statements: 10,
-            max_public_statements: 5,
-            // Derived: max_priv_statements = 10 - 5 = 5
-            // With 5 statements, we need exactly 1 POD
-            ..Params::default()
-        };
-        let vd_set = &*MOCK_VD_SET;
-
-        let mut builder = MultiPodBuilder::new(&params, vd_set);
-
-        // Add 5 public statements - all fit in one POD
-        for i in 0..5 {
-            builder.pub_op(FrontendOp::eq(i, i))?;
-        }
-
-        let estimate = builder.estimate_pod_count();
-        let solution = builder.solve()?;
-
-        // With 5 statements and capacity for 5, we need exactly 1 POD
-        assert_eq!(solution.pod_count, 1, "5 statements should fit in 1 POD");
-
-        // Estimate should be >= actual (lower bound with fudge factor)
-        assert!(
-            estimate >= solution.pod_count,
-            "Estimate {} should be >= actual {}",
-            estimate,
-            solution.pod_count
-        );
 
         Ok(())
     }

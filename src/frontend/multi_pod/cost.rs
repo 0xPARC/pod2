@@ -8,8 +8,7 @@ use std::collections::BTreeSet;
 use crate::{
     frontend::{Operation, OperationArg},
     middleware::{
-        CustomPredicateBatch, Hash, NativeOperation, OperationType, Params, RawValue, Statement,
-        ValueRef,
+        CustomPredicateBatch, Hash, NativeOperation, OperationType, RawValue, Statement, ValueRef,
     },
 };
 
@@ -186,88 +185,6 @@ impl StatementCost {
     }
 }
 
-/// Aggregate costs for multiple statements.
-#[derive(Clone, Debug, Default)]
-pub struct AggregateCost {
-    pub statements: usize,
-    pub merkle_proofs: usize,
-    pub merkle_state_transitions: usize,
-    pub custom_pred_verifications: usize,
-    pub signed_by: usize,
-    pub public_key_of: usize,
-    pub custom_batch_ids: BTreeSet<CustomBatchId>,
-}
-
-impl AggregateCost {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Add a statement's cost to the aggregate.
-    pub fn add(&mut self, cost: &StatementCost) {
-        self.statements += 1;
-        self.merkle_proofs += cost.merkle_proofs;
-        self.merkle_state_transitions += cost.merkle_state_transitions;
-        self.custom_pred_verifications += cost.custom_pred_verifications;
-        self.signed_by += cost.signed_by;
-        self.public_key_of += cost.public_key_of;
-        self.custom_batch_ids
-            .extend(cost.custom_batch_ids.iter().cloned());
-    }
-
-    /// Compute a lower bound on the number of PODs needed.
-    ///
-    /// This is a quick heuristic that can be used for branch pruning
-    /// in a logic solver without running the full MILP.
-    pub fn lower_bound_pods(&self, params: &Params) -> usize {
-        let by_statements = self.statements.div_ceil(params.max_statements);
-        let by_merkle_proofs = self
-            .merkle_proofs
-            .div_ceil(params.max_merkle_proofs_containers);
-        let by_merkle_transitions = self
-            .merkle_state_transitions
-            .div_ceil(params.max_merkle_tree_state_transition_proofs_containers);
-        let by_custom_verifications = self
-            .custom_pred_verifications
-            .div_ceil(params.max_custom_predicate_verifications);
-        let by_signed_by = self.signed_by.div_ceil(params.max_signed_by);
-        let by_public_key_of = self.public_key_of.div_ceil(params.max_public_key_of);
-        let by_batches = self
-            .custom_batch_ids
-            .len()
-            .div_ceil(params.max_custom_predicate_batches);
-
-        [
-            by_statements,
-            by_merkle_proofs,
-            by_merkle_transitions,
-            by_custom_verifications,
-            by_signed_by,
-            by_public_key_of,
-            by_batches,
-        ]
-        .into_iter()
-        .max()
-        .unwrap() // Array is non-empty
-        .max(1) // At least 1 POD
-    }
-}
-
-/// Quick estimate of POD count for a set of operations.
-///
-/// This is useful for the logic solver to estimate costs without
-/// running the full MILP solver.
-pub fn estimate_pod_count(operations: &[Operation], params: &Params) -> usize {
-    let mut aggregate = AggregateCost::new();
-    for op in operations {
-        aggregate.add(&StatementCost::from_operation(op));
-    }
-    // Add a fudge factor for dependency overhead and public statement constraints
-    let lower_bound = aggregate.lower_bound_pods(params);
-    // Heuristic: add ~20% overhead for dependencies
-    lower_bound + lower_bound / 5
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,40 +220,5 @@ mod tests {
         let pk_op = make_native_op(NativeOperation::PublicKeyOf);
         let cost = StatementCost::from_operation(&pk_op);
         assert_eq!(cost.public_key_of, 1);
-    }
-
-    #[test]
-    fn test_aggregate_cost() {
-        let params = Params::default();
-
-        let mut aggregate = AggregateCost::new();
-
-        // Add some operations
-        for _ in 0..10 {
-            aggregate.add(&StatementCost::from_operation(&make_native_op(
-                NativeOperation::ContainsFromEntries,
-            )));
-        }
-
-        assert_eq!(aggregate.statements, 10);
-        assert_eq!(aggregate.merkle_proofs, 10);
-
-        // 10 statements / 48 max = 1 POD, 10 merkle proofs / 20 max = 1 POD
-        let lower_bound = aggregate.lower_bound_pods(&params);
-        assert_eq!(lower_bound, 1);
-    }
-
-    #[test]
-    fn test_lower_bound_by_statements() {
-        let params = Params {
-            max_statements: 10,
-            ..Params::default()
-        };
-
-        let mut aggregate = AggregateCost::new();
-        aggregate.statements = 25;
-
-        // 25 statements / 10 per pod = 3 pods
-        assert_eq!(aggregate.lower_bound_pods(&params), 3);
     }
 }
