@@ -16,7 +16,7 @@ use good_lp::{
 use super::Result;
 use crate::{
     frontend::multi_pod::{
-        cost::{CustomBatchId, StatementCost},
+        cost::{AnchoredKeyId, CustomBatchId, StatementCost},
         deps::{DependencyGraph, StatementSource},
     },
     middleware::Params,
@@ -69,6 +69,13 @@ pub struct SolverInput<'a> {
 
     /// Maximum number of PODs the solver will consider.
     pub max_pods: usize,
+
+    /// All unique anchored keys referenced by any statement.
+    ///
+    /// Each unique (dict, key) pair that is used as an anchored key reference
+    /// in any operation. When a Contains statement with literal values is used
+    /// as an argument, it creates an anchored key reference.
+    pub all_anchored_keys: &'a [AnchoredKeyId],
 }
 
 /// Solve the MILP problem to find optimal POD packing.
@@ -177,6 +184,19 @@ fn try_solve_with_pods(
 
     // batch_used[b][p] - custom batch b is used in POD p
     let batch_used: Vec<Vec<Variable>> = (0..all_batches.len())
+        .map(|_| {
+            (0..target_pods)
+                .map(|_| vars.add(variable().binary()))
+                .collect()
+        })
+        .collect();
+
+    // anchored_key_used[ak][p] - anchored key ak is used in POD p
+    // When a statement references an anchored key (via a Contains statement argument),
+    // that POD must have a Contains statement for that (dict, key) pair.
+    // MainPodBuilder::add_entries_contains auto-inserts these, and we must account
+    // for them in the statement count.
+    let anchored_key_used: Vec<Vec<Variable>> = (0..input.all_anchored_keys.len())
         .map(|_| {
             (0..target_pods)
                 .map(|_| vars.add(variable().binary()))
@@ -338,13 +358,17 @@ fn try_solve_with_pods(
 
     // Constraint 6: Resource limits per POD
     for p in 0..target_pods {
-        // 6a: Total statement count (proved statements + CopyStatements for dependencies)
-        // All statements are proved in private slots, public statements are then copied to public slots.
-        // CopyStatements for cross-POD dependencies also consume private slots.
+        // 6a: Total statement count (proved statements + CopyStatements + anchored key Contains)
+        // Each proved statement uses a private slot. Public statements are proved first, then
+        // copied to public slots. CopyStatements and anchored key Contains also use private slots.
+        // The total must not exceed max_priv_statements (= max_statements - max_public_statements).
         let stmt_sum: Expression = (0..n).map(|s| prove[s][p]).sum();
         let copy_sum: Expression = (0..dep_indices.len()).map(|di| needs_copy[di][p]).sum();
+        let anchored_key_sum: Expression =
+            (0..input.all_anchored_keys.len()).map(|ak| anchored_key_used[ak][p]).sum();
         model = model.with(constraint!(
-            stmt_sum + copy_sum <= (input.params.max_priv_statements() as f64) * pod_used[p]
+            stmt_sum + copy_sum + anchored_key_sum
+                <= (input.params.max_priv_statements() as f64) * pod_used[p]
         ));
 
         // 6b: Public statement count
@@ -420,6 +444,23 @@ fn try_solve_with_pods(
         model = model.with(constraint!(
             batch_sum <= (input.params.max_custom_predicate_batches as f64) * pod_used[p]
         ));
+    }
+
+    // Constraint 7b: Anchored key tracking
+    // anchored_key_used[ak][p] >= prove[s][p] for all s that use anchored key ak
+    // anchored_key_used[ak][p] <= sum of prove[s][p] for all s using ak (0 if no statements use it)
+    // This ensures we count each unique anchored key exactly once per POD.
+    for (ak_idx, ak) in input.all_anchored_keys.iter().enumerate() {
+        for p in 0..target_pods {
+            let mut sum: Expression = 0.into();
+            for s in 0..n {
+                if input.costs[s].anchored_keys.contains(ak) {
+                    model = model.with(constraint!(anchored_key_used[ak_idx][p] >= prove[s][p]));
+                    sum += prove[s][p];
+                }
+            }
+            model = model.with(constraint!(anchored_key_used[ak_idx][p] <= sum));
+        }
     }
 
     // Constraint 8a: Internal input POD tracking using uses_input
@@ -566,6 +607,7 @@ mod tests {
             output_public_indices: &output_public,
             params: &params,
             max_pods: 20,
+            all_anchored_keys: &[],
         };
 
         let solution = solve(&input).unwrap();
@@ -597,6 +639,7 @@ mod tests {
             output_public_indices: &output_public,
             params: &params,
             max_pods: 20,
+            all_anchored_keys: &[],
         };
 
         let solution = solve(&input).unwrap();
@@ -619,6 +662,7 @@ mod tests {
             output_public_indices: &output_public,
             params: &params,
             max_pods: 20,
+            all_anchored_keys: &[],
         };
 
         let solution = solve(&input).unwrap();

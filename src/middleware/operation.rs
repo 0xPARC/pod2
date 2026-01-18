@@ -376,10 +376,6 @@ impl Operation {
                     &[s1, s2, s3],
                     OA::MerkleTreeStateTransitionProof(pf),
                 ) => Self::ContainerDeleteFromEntries(s1.clone(), s2.clone(), s3.clone(), pf),
-                (NO::LtToNotEqual, &[s], OA::None) => Self::LtToNotEqual(s.clone()),
-                (NO::TransitiveEqualFromStatements, &[s1, s2], OA::None) => {
-                    Self::TransitiveEqualFromStatements(s1.clone(), s2.clone())
-                }
                 _ => Err(Error::custom(format!(
                     "Ill-formed operation {:?} with {} arguments {:?} and aux {:?}.",
                     op_code,

@@ -6,8 +6,11 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    frontend::Operation,
-    middleware::{CustomPredicateBatch, Hash, NativeOperation, OperationType, Params},
+    frontend::{Operation, OperationArg},
+    middleware::{
+        CustomPredicateBatch, Hash, NativeOperation, OperationType, Params, RawValue, Statement,
+        ValueRef,
+    },
 };
 
 /// Unique identifier for a custom predicate batch.
@@ -20,6 +23,44 @@ pub struct CustomBatchId(pub Hash);
 impl From<&CustomPredicateBatch> for CustomBatchId {
     fn from(batch: &CustomPredicateBatch) -> Self {
         Self(batch.id())
+    }
+}
+
+/// Unique identifier for an anchored key (dict, key) pair.
+///
+/// When a Contains statement is used as an argument to operations like gt(), eq(), etc.,
+/// the value is accessed via an "anchored key" - a reference to a specific key in a
+/// specific dictionary. Each unique anchored key used in a POD requires a Contains
+/// statement to be present in that POD (auto-inserted by MainPodBuilder if needed).
+///
+/// We use the raw values of the dict and key for comparison, as they uniquely identify
+/// the anchored key regardless of the specific Value types involved.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AnchoredKeyId {
+    /// The dictionary root value (raw representation for Ord).
+    pub dict: RawValue,
+    /// The key within the dictionary (raw representation for Ord).
+    pub key: RawValue,
+}
+
+impl AnchoredKeyId {
+    /// Create a new anchored key ID from raw values.
+    pub fn new(dict: RawValue, key: RawValue) -> Self {
+        Self { dict, key }
+    }
+
+    /// Try to extract an anchored key ID from a Contains statement with all literal values.
+    pub fn from_contains_statement(stmt: &Statement) -> Option<Self> {
+        if let Statement::Contains(
+            ValueRef::Literal(dict),
+            ValueRef::Literal(key),
+            ValueRef::Literal(_value),
+        ) = stmt
+        {
+            Some(Self::new(dict.raw(), key.raw()))
+        } else {
+            None
+        }
     }
 }
 
@@ -51,6 +92,14 @@ pub struct StatementCost {
     /// Custom predicate batches used (for batch cardinality constraint).
     /// Limit: `params.max_custom_predicate_batches` distinct batches per POD.
     pub custom_batch_ids: BTreeSet<CustomBatchId>,
+
+    /// Anchored keys referenced by this operation.
+    ///
+    /// When a Contains statement with all literal values is used as an argument,
+    /// the operation references an "anchored key" (dict, key pair). Each unique
+    /// anchored key used in a POD incurs an additional Contains statement cost,
+    /// as MainPodBuilder::add_entries_contains will auto-insert it if not already present.
+    pub anchored_keys: BTreeSet<AnchoredKeyId>,
 }
 
 impl StatementCost {
@@ -118,6 +167,18 @@ impl StatementCost {
                 cost.custom_pred_verifications = 1;
                 cost.custom_batch_ids
                     .insert(CustomBatchId::from(&*cpr.batch));
+            }
+        }
+
+        // Extract anchored keys from operation arguments.
+        // Any argument that is a Contains statement with all literal values
+        // represents an anchored key reference that will require a Contains
+        // statement in the POD (auto-inserted by MainPodBuilder if needed).
+        for arg in &op.1 {
+            if let OperationArg::Statement(stmt) = arg {
+                if let Some(anchored_key) = AnchoredKeyId::from_contains_statement(stmt) {
+                    cost.anchored_keys.insert(anchored_key);
+                }
             }
         }
 

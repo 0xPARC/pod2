@@ -17,7 +17,7 @@ mod cost;
 mod deps;
 mod solver;
 
-use cost::{estimate_pod_count, StatementCost};
+use cost::{estimate_pod_count, AnchoredKeyId, StatementCost};
 use deps::{DependencyGraph, StatementSource};
 pub use solver::MultiPodSolution;
 
@@ -255,6 +255,14 @@ impl MultiPodBuilder {
             .map(StatementCost::from_operation)
             .collect();
 
+        // Collect all unique anchored keys from the costs
+        let all_anchored_keys: Vec<AnchoredKeyId> = costs
+            .iter()
+            .flat_map(|c| c.anchored_keys.iter().cloned())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+
         // Build external POD statement mapping (cache for reuse in build_single_pod)
         let external_pod_statements = self.build_external_statement_map();
         self.cached_external_map = Some(external_pod_statements);
@@ -274,6 +282,7 @@ impl MultiPodBuilder {
             output_public_indices: &self.output_public_indices,
             params: &self.params,
             max_pods: self.options.max_pods,
+            all_anchored_keys: &all_anchored_keys,
         };
 
         let solution = solver::solve(&input)?;
@@ -665,48 +674,72 @@ mod tests {
     fn test_cross_pod_dependencies() -> Result<()> {
         // Verifies that dependencies work correctly when statements span POD boundaries.
         //
-        // Each pair forms a dependency: lt(a, b) proves a < b, then lt_to_ne derives a ≠ b.
+        // Scenario: Verify properties of a user profile credential.
+        // The profile contains multiple attributes, and we verify each meets a threshold.
+        // Each verification creates a dependency chain:
+        //   dict_contains(profile, key, value) -> gt(value, threshold)
+        //
         // When statements are split across PODs, the solver must:
         // 1. Ensure dependencies are available (either proved locally or public in earlier POD)
         // 2. Insert CopyStatements to bring dependencies into the POD that needs them
         //
-        // Setup: 8 statements with max_priv=4 forces splitting across 2+ PODs.
+        // Statement count: 12 user operations (11 private + 1 public), plus 6 anchored keys.
+        // To force multiple PODs, we set max_priv_statements = 10 (< 17 effective statements).
         let params = Params {
-            max_statements: 6,
+            max_statements: 12,
             max_public_statements: 2,
-            // Derived: max_priv_statements = 6 - 2 = 4
-            // With 8 statements, need ceil(8/4) = 2 PODs minimum
+            // Derived: max_priv_statements = 12 - 2 = 10
             max_input_pods: 2,
-            max_input_pods_public_statements: 4,
+            max_input_pods_public_statements: 14,
             ..Params::default()
         };
         let vd_set = &*MOCK_VD_SET;
 
         let mut builder = MultiPodBuilder::new(&params, vd_set);
 
-        // Create 4 dependency pairs - enough to force cross-POD dependencies
-        // Pair 1: prove balance < limit, derive balance ≠ limit
-        let balance_under_limit = builder.priv_op(FrontendOp::lt(1, 100))?;
-        let _balance_not_at_limit = builder.priv_op(FrontendOp::lt_to_ne(balance_under_limit))?;
+        // User profile credential with multiple attributes
+        let profile = dict!({
+            "age" => 25,
+            "balance" => 1000,
+            "reputation" => 85,
+            "level" => 5,
+            "credits" => 150,
+            "score" => 72
+        });
 
-        // Pair 2: prove age < max, derive age ≠ max
-        let age_under_max = builder.priv_op(FrontendOp::lt(2, 200))?;
-        let _age_not_at_max = builder.priv_op(FrontendOp::lt_to_ne(age_under_max))?;
+        // Verify each attribute meets its threshold requirement
+        // Each creates a dependency: dict_contains -> gt
 
-        // Pair 3: prove score < threshold, derive score ≠ threshold
-        let score_under_threshold = builder.priv_op(FrontendOp::lt(3, 300))?;
-        let _score_not_at_threshold =
-            builder.priv_op(FrontendOp::lt_to_ne(score_under_threshold))?;
+        // Verify age >= 18 (adult)
+        let age = builder.priv_op(FrontendOp::dict_contains(profile.clone(), "age", 25))?;
+        let _age_ok = builder.priv_op(FrontendOp::gt_eq(age, 18))?;
 
-        // Pair 4: prove level < cap, derive level ≠ cap (public output)
-        let level_under_cap = builder.priv_op(FrontendOp::lt(4, 400))?;
-        let _level_not_at_cap = builder.pub_op(FrontendOp::lt_to_ne(level_under_cap))?;
+        // Verify balance >= 100 (minimum balance)
+        let balance = builder.priv_op(FrontendOp::dict_contains(profile.clone(), "balance", 1000))?;
+        let _balance_ok = builder.priv_op(FrontendOp::gt_eq(balance, 100))?;
+
+        // Verify reputation >= 50 (trusted user)
+        let reputation =
+            builder.priv_op(FrontendOp::dict_contains(profile.clone(), "reputation", 85))?;
+        let _reputation_ok = builder.priv_op(FrontendOp::gt_eq(reputation, 50))?;
+
+        // Verify level >= 3 (experienced user)
+        let level = builder.priv_op(FrontendOp::dict_contains(profile.clone(), "level", 5))?;
+        let _level_ok = builder.priv_op(FrontendOp::gt_eq(level, 3))?;
+
+        // Verify credits >= 100 (has credits)
+        let credits = builder.priv_op(FrontendOp::dict_contains(profile.clone(), "credits", 150))?;
+        let _credits_ok = builder.priv_op(FrontendOp::gt_eq(credits, 100))?;
+
+        // Verify score >= 60 (passing score) - make this one public
+        let score = builder.priv_op(FrontendOp::dict_contains(profile, "score", 72))?;
+        let _score_ok = builder.pub_op(FrontendOp::gt_eq(score, 60))?;
 
         let pod_count = {
             let solution = builder.solve()?;
             assert!(
                 solution.pod_count >= 2,
-                "Expected at least 2 PODs for 8 statements with max_priv=4, got {}",
+                "Expected at least 2 PODs for 17 effective private statements with max_priv=10, got {}",
                 solution.pod_count
             );
             solution.pod_count
@@ -1107,43 +1140,45 @@ mod tests {
     }
 
     #[test]
-    fn test_copy_statements_counted_in_statement_limit() -> Result<()> {
-        // Verifies that CopyStatements for cross-POD dependencies are counted
-        // toward the statement limit.
+    fn test_anchored_key_overhead_counted_in_statement_limit() -> Result<()> {
+        // Verifies that anchored key overhead is correctly counted toward statement limits.
+        //
+        // When a Contains statement is used as an argument to operations like gt(),
+        // it creates an "anchored key" reference. If the gt() is proved in a different
+        // POD than the original Contains, MainPodBuilder auto-inserts a local Contains
+        // statement for that anchored key. The solver must account for this overhead.
         //
         // Setup:
-        // - max_priv_statements = 2 (small limit)
-        // - Statement A with no deps (public, goes to POD 0)
-        // - Statements B, C, D all depend on A (private)
+        // - max_priv_statements = 4 (small limit)
+        // - Statement A: dict_contains (public, in POD 0)
+        // - Statement B: eq (public, in POD 0)
+        // - Statements C, D, E: gt(A, val) - each uses A as an anchored key
         //
-        // Expected:
-        // - Solver should recognize that if B, C, D go to POD 1, it needs a CopyStatement for A
-        // - So POD 1 would have: CopyStatement(A) + B + C + D = 4 private statements
-        // - This exceeds max_priv_statements = 2, so solver should create more PODs
+        // The solver must account for the anchored key Contains statements that will
+        // be auto-inserted when gt operations are proved in PODs other than POD 0.
 
         let params = Params {
-            max_statements: 4,
-            max_public_statements: 2, // max_priv_statements = 4 - 2 = 2
+            max_statements: 6,
+            max_public_statements: 2, // max_priv_statements = 6 - 2 = 4
             ..Params::default()
         };
         let vd_set = &*MOCK_VD_SET;
 
         let mut builder = MultiPodBuilder::new(&params, vd_set);
 
-        // Statement 0: public, no deps - will be in POD 0
-        let stmt_a = builder.pub_op(FrontendOp::lt(1, 100))?;
+        // Statement A: public Contains - proved in POD 0
+        let dict = dict!({"x" => 100});
+        let stmt_a = builder.pub_op(FrontendOp::dict_contains(dict, "x", 100))?;
 
-        // Statements 1, 2, 3: private, all depend on statement 0
-        // With max_priv_statements = 2, these can't all fit in POD 0
-        // Solver must account for CopyStatement when distributing these
-        builder.priv_op(FrontendOp::lt_to_ne(stmt_a.clone()))?;
-        builder.priv_op(FrontendOp::lt_to_ne(stmt_a.clone()))?;
-        builder.priv_op(FrontendOp::lt_to_ne(stmt_a))?;
-
-        // Add another public statement for the output POD
+        // Statement B: another public statement in POD 0
         builder.pub_op(FrontendOp::eq(200, 200))?;
 
-        // Solver should correctly account for CopyStatements and create enough PODs
+        // Statements C, D, E: each uses stmt_a as an anchored key
+        // When proved in a different POD, each needs a local Contains for the anchored key
+        builder.priv_op(FrontendOp::gt(stmt_a.clone(), 0))?;
+        builder.priv_op(FrontendOp::gt(stmt_a.clone(), 1))?;
+        builder.priv_op(FrontendOp::gt(stmt_a, 2))?;
+
         let prover = MockProver {};
         let result = builder.prove(&prover)?;
 
@@ -1162,12 +1197,18 @@ mod tests {
         // Verifies that scenarios with both internal and external dependencies work
         // when the total input count stays within max_input_pods.
         //
-        // This is a sanity check that mixing internal and external POD dependencies
-        // works correctly when limits are respected.
+        // Setup:
+        // - 1 external POD with a public statement
+        // - 2 public dict_contains statements (uses anchored keys)
+        // - 2 private gt statements that reference the dict_contains via anchored keys
+        // - 1 private copy of the external POD's statement
+        //
+        // This tests that mixing internal POD dependencies (from earlier generated PODs)
+        // and external POD dependencies (from user-provided input PODs) works correctly.
 
         let params = Params {
-            max_statements: 6,
-            max_public_statements: 3, // max_priv_statements = 3
+            max_statements: 10,
+            max_public_statements: 3, // max_priv_statements = 7
             max_input_pods: 3,        // Allow up to 3 inputs per POD
             max_input_pods_public_statements: 10,
             ..Params::default()
@@ -1190,13 +1231,15 @@ mod tests {
         let mut builder = MultiPodBuilder::new(&params, vd_set);
         builder.add_pod(ext_pod);
 
-        // Output POD: public statements
-        let lt_0 = builder.pub_op(FrontendOp::lt(1, 100))?;
-        let lt_1 = builder.pub_op(FrontendOp::lt(2, 200))?;
+        // Output POD: public Contains statements
+        let dict0 = dict!({"x" => 100});
+        let dict1 = dict!({"y" => 200});
+        let contains_0 = builder.pub_op(FrontendOp::dict_contains(dict0, "x", 100))?;
+        let contains_1 = builder.pub_op(FrontendOp::dict_contains(dict1, "y", 200))?;
 
         // Statements that depend on output POD
-        builder.priv_op(FrontendOp::lt_to_ne(lt_0))?;
-        builder.priv_op(FrontendOp::lt_to_ne(lt_1))?;
+        builder.priv_op(FrontendOp::gt(contains_0, 0))?;
+        builder.priv_op(FrontendOp::gt(contains_1, 0))?;
 
         // Depend on external POD
         builder.priv_op(FrontendOp::copy(stmt_ext))?;
