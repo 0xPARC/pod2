@@ -53,13 +53,16 @@ impl DependencyGraph {
         let mut statement_deps = Vec::with_capacity(statements.len());
         let mut dependents: HashMap<usize, Vec<usize>> = HashMap::new();
 
-        // Build a map from statement to its index for internal lookup
-        let statement_to_index: HashMap<&Statement, usize> = statements
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| !s.is_none())
-            .map(|(i, s)| (s, i))
-            .collect();
+        // Build a map from statement to its index for internal lookup.
+        // Use entry().or_insert() to preserve the FIRST occurrence of each statement.
+        // This is important for CopyStatement: if statements[0] = A and statements[2] = copy(A) = A,
+        // we want statement_to_index[A] = 0 (the original), not 2 (the copy).
+        let mut statement_to_index: HashMap<&Statement, usize> = HashMap::new();
+        for (i, s) in statements.iter().enumerate() {
+            if !s.is_none() {
+                statement_to_index.entry(s).or_insert(i);
+            }
+        }
 
         for (idx, op) in operations.iter().enumerate() {
             let mut deps = Vec::new();
@@ -87,8 +90,9 @@ impl DependencyGraph {
                             dependents.entry(dep_idx).or_default().push(idx);
                             continue;
                         }
-                        // dep_idx == idx: This operation produces this statement (e.g., CopyStatement
-                        // where output == input). Fall through to check external PODs for the source.
+                        // dep_idx == idx: The first occurrence of this statement is at the current index,
+                        // meaning this operation both takes and produces this statement (e.g., CopyStatement
+                        // copying from an external POD). Fall through to check external PODs for the source.
                     }
 
                     // Check if this is from an external POD
