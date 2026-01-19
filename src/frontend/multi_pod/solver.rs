@@ -45,9 +45,6 @@ pub struct MultiPodSolution {
 
     /// Order to prove PODs (respects dependencies - earlier PODs first).
     pub prove_order: Vec<usize>,
-
-    /// Which PODs are "output" PODs (contain user-requested public statements).
-    pub output_pod_indices: BTreeSet<usize>,
 }
 
 /// Input to the MILP solver.
@@ -549,10 +546,6 @@ fn try_solve_with_pods(
         }
     }
 
-    // POD 0 is always the output POD (contains all user-requested public statements).
-    // We require at least one public statement, so this is always {0}.
-    let output_pod_indices = BTreeSet::from([0]);
-
     // Prove order is just 0..pod_count due to topological ordering constraint
     let prove_order: Vec<usize> = (0..pod_count).collect();
 
@@ -562,7 +555,6 @@ fn try_solve_with_pods(
         pod_statements,
         pod_public_statements,
         prove_order,
-        output_pod_indices,
     }))
 }
 

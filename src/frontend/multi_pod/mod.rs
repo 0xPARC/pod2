@@ -916,13 +916,6 @@ mod tests {
 
         let solution = builder.solve()?;
 
-        // POD 0 should be the only output POD
-        assert_eq!(
-            solution.output_pod_indices,
-            BTreeSet::from([0]),
-            "POD 0 should be the only output POD"
-        );
-
         // Check that POD 0's public statements are exactly the user-requested public statements
         let pod0_public = &solution.pod_public_statements[0];
         assert!(
