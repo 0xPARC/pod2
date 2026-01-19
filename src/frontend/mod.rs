@@ -131,7 +131,6 @@ pub struct MainPodBuilder {
     pub operations: Vec<Operation>,
     pub public_statements: Vec<Statement>,
     // Internal state
-    // TODO: track contains ops with literals added explicitly as well.
     dict_contains: Vec<(Value, Value)>, // (root, key)
 }
 
@@ -177,6 +176,19 @@ impl MainPodBuilder {
     pub fn insert(&mut self, public: bool, st_op: (Statement, Operation)) -> Result<()> {
         // TODO: Do error handling instead of panic
         let (st, op) = st_op;
+
+        // If we're adding a Contains statement with literal arguments (an Entry), track it in
+        // `dict_contains` to avoid adding it again via `Self::add_entries_contains`.
+        if let Statement::Contains(
+            ValueRef::Literal(dict),
+            ValueRef::Literal(key),
+            ValueRef::Literal(_),
+        ) = &st
+        {
+            let root_key = (dict.clone(), key.clone());
+            self.dict_contains.push(root_key);
+        }
+
         if public {
             self.public_statements.push(st.clone());
         }
