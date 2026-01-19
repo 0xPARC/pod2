@@ -12,6 +12,7 @@ use good_lp::{
     constraint, default_solver, variable, Expression, ProblemVariables, Solution, SolverModel,
     Variable,
 };
+use itertools::Itertools;
 
 use super::Result;
 use crate::{
@@ -94,7 +95,6 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
     }
 
     // Check that all output-public statements can fit in a single POD
-    // This simplifies the privacy model: POD 0 is the only output POD.
     let num_output_public = input.output_public_indices.len();
     if num_output_public > input.params.max_public_statements {
         return Err(super::Error::Solver(format!(
@@ -120,13 +120,12 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
         )));
     }
 
-    // Collect all custom batch IDs used (BTreeSet for deterministic ordering)
+    // Collect all unique custom batch IDs used
     let all_batches: Vec<CustomBatchId> = input
         .costs
         .iter()
         .flat_map(|c| c.custom_batch_ids.iter().cloned())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
+        .unique()
         .collect();
 
     // Incremental approach: try solving with increasing POD counts
