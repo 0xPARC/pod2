@@ -146,7 +146,7 @@ impl<'a> Lowerer<'a> {
         // Lower each statement to a builder first
         let mut statement_builders = Vec::new();
         for stmt in &request_def.statements {
-            let stmt_builder = self.lower_statement_to_builder(stmt)?;
+            let stmt_builder = self.lower_statement_to_builder(stmt, &HashSet::new())?;
             statement_builders.push(stmt_builder);
         }
 
@@ -304,10 +304,16 @@ impl<'a> Lowerer<'a> {
             }
         }
 
+        let wc_names: HashSet<String> = public_arg_names
+            .iter()
+            .chain(private_arg_names.iter())
+            .cloned()
+            .collect();
+
         // Lower statements to builders
         let mut statement_builders = Vec::new();
         for stmt in &pred_def.statements {
-            let stmt_builder = self.lower_statement_to_builder(stmt)?;
+            let stmt_builder = self.lower_statement_to_builder(stmt, &wc_names)?;
             statement_builders.push(stmt_builder);
         }
 
@@ -337,19 +343,20 @@ impl<'a> Lowerer<'a> {
     fn lower_statement_to_builder(
         &self,
         stmt: &StatementTmpl,
+        wc_names: &HashSet<String>,
     ) -> Result<StatementTmplBuilder, LoweringError> {
         // Get predicate
         let pred_name = &stmt.predicate.name;
         let symbols = self.validated.symbols();
 
         // Check for native predicates first
-        let predicate = if let Ok(native) = NativePredicate::from_str(pred_name) {
-            Predicate::Native(native)
+        let pred_or_wc = if let Ok(native) = NativePredicate::from_str(pred_name) {
+            PredicateOrWildcard::Predicate(Predicate::Native(native))
         } else if let Some(&index) = self.batch_predicate_index.get(pred_name) {
             // References to other predicates in the same batch (including split chains)
-            Predicate::BatchSelf(index)
+            PredicateOrWildcard::Predicate(Predicate::BatchSelf(index))
         } else if let Some(info) = symbols.predicates.get(pred_name) {
-            match &info.kind {
+            PredicateOrWildcard::Predicate(match &info.kind {
                 PredicateKind::Native(np) => Predicate::Native(*np),
                 PredicateKind::Custom { index } => Predicate::BatchSelf(*index),
                 PredicateKind::BatchImported { batch, index } => {
@@ -363,7 +370,9 @@ impl<'a> Lowerer<'a> {
                     args_len: info.public_arity,
                     verifier_data_hash: *verifier_data_hash,
                 }),
-            }
+            })
+        } else if wc_names.contains(pred_name) {
+            PredicateOrWildcard::Wildcard(pred_name.clone())
         } else {
             unreachable!("Predicate {} not found", pred_name);
         };
@@ -377,7 +386,7 @@ impl<'a> Lowerer<'a> {
         }
 
         // Convert AST args to BuilderArgs
-        let mut builder = StatementTmplBuilder::new(predicate);
+        let mut builder = StatementTmplBuilder::new(pred_or_wc);
         for arg in &stmt.args {
             let builder_arg = Self::lower_statement_arg_to_builder(arg)?;
             builder = builder.arg(builder_arg);
@@ -647,6 +656,20 @@ mod tests {
                 NativePredicate::Contains
             ))
         ));
+    }
+
+    #[test]
+    fn test_wc_pred() {
+        let input = r#"
+            my_pred(X, DynPred) = AND (
+                Equal(X["pred"], DynPred)
+                DynPred(X)
+            )
+        "#;
+
+        let params = Params::default();
+        let result = parse_validate_and_lower(input, &params);
+        assert!(result.is_ok());
     }
 
     #[test]

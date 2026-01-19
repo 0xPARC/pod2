@@ -3,7 +3,11 @@
 //! This module provides semantic validation for parsed AST documents,
 //! including name resolution, arity checking, and wildcard validation.
 
-use std::{collections::HashMap, str::FromStr, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    str::FromStr,
+    sync::Arc,
+};
 
 use hex::ToHex;
 
@@ -411,6 +415,21 @@ impl Validator {
         Ok(())
     }
 
+    /// Validate that no wildcard name collides with a predicate name to avoid ambiguity when using
+    /// wildcard predicates.
+    fn validate_wildcard_names(&self, names: &HashSet<&String>) -> Result<(), ValidationError> {
+        for name in names {
+            if NativePredicate::from_str(name).is_ok()
+                || self.symbols.predicates.get(*name).is_some()
+            {
+                return Err(ValidationError::WildcardPredicateNameCollision {
+                    name: (*name).clone(),
+                });
+            }
+        }
+        Ok(())
+    }
+
     fn validate_statement(
         &self,
         stmt: &StatementTmpl,
@@ -418,18 +437,26 @@ impl Validator {
     ) -> Result<(), ValidationError> {
         let pred_name = &stmt.predicate.name;
 
+        let wc_names = match wildcard_context {
+            Some((_, wc_scope)) => wc_scope.wildcards.keys().collect(),
+            None => HashSet::new(),
+        };
+        self.validate_wildcard_names(&wc_names)?;
+
         // Check if predicate exists
         let pred_info = if let Ok(native) = NativePredicate::from_str(pred_name) {
             // Native predicate
-            PredicateInfo {
+            Some(PredicateInfo {
                 kind: PredicateKind::Native(native),
                 arity: native.arity(),
                 public_arity: native.arity(),
                 source_span: None,
-            }
+            })
         } else if let Some(info) = self.symbols.predicates.get(pred_name) {
             // Custom or imported predicate
-            info.clone()
+            Some(info.clone())
+        } else if wc_names.contains(pred_name) {
+            None
         } else {
             return Err(ValidationError::UndefinedPredicate {
                 name: pred_name.clone(),
@@ -437,19 +464,20 @@ impl Validator {
             });
         };
 
-        let expected_arity = pred_info.public_arity;
-
-        if stmt.args.len() != expected_arity {
-            return Err(ValidationError::ArgumentCountMismatch {
-                predicate: pred_name.clone(),
-                expected: expected_arity,
-                found: stmt.args.len(),
-                span: stmt.span,
-            });
+        if let Some(ref pred_info) = pred_info {
+            let expected_arity = pred_info.public_arity;
+            if stmt.args.len() != expected_arity {
+                return Err(ValidationError::ArgumentCountMismatch {
+                    predicate: pred_name.clone(),
+                    expected: expected_arity,
+                    found: stmt.args.len(),
+                    span: stmt.span,
+                });
+            }
         }
 
         // Validate arguments
-        self.validate_statement_args(stmt, &pred_info, wildcard_context)?;
+        self.validate_statement_args(stmt, pred_info.as_ref(), wildcard_context)?;
 
         Ok(())
     }
@@ -457,13 +485,13 @@ impl Validator {
     fn validate_statement_args(
         &self,
         stmt: &StatementTmpl,
-        pred_info: &PredicateInfo,
+        pred_info: Option<&PredicateInfo>,
         wildcard_context: Option<(&str, &WildcardScope)>,
     ) -> Result<(), ValidationError> {
         // For custom predicates, only wildcards and literals are allowed
         if matches!(
-            pred_info.kind,
-            PredicateKind::Custom { .. } | PredicateKind::BatchImported { .. }
+            pred_info.map(|i| &i.kind),
+            Some(PredicateKind::Custom { .. }) | Some(PredicateKind::BatchImported { .. })
         ) {
             for arg in &stmt.args {
                 match arg {

@@ -3255,8 +3255,12 @@ mod tests {
         use NativePredicate as NP;
         use StatementTmplBuilder as STB;
         let mut builder = CustomPredicateBatchBuilder::new(params.clone(), "batch".into());
-        let stb0 = STB::new(NP::Equal).arg(("id", "score")).arg(literal(42));
-        let stb1 = STB::new(NP::Equal).arg(("id", "key")).arg("secret");
+        let stb0 = STB::new_from_pred(NP::Equal)
+            .arg(("id", "score"))
+            .arg(literal(42));
+        let stb1 = STB::new_from_pred(NP::Equal)
+            .arg(("id", "key"))
+            .arg("secret");
         let _ = builder.predicate_and(
             "pred_and",
             &["id"],
@@ -3349,8 +3353,10 @@ mod tests {
         use NativePredicate as NP;
         use StatementTmplBuilder as STB;
         let mut builder = CustomPredicateBatchBuilder::new(params.clone(), "batch".into());
-        let stb0 = STB::new(NP::Equal).arg(("id", "score")).arg(literal(42));
-        let stb1 = STB::new(NP::Equal)
+        let stb0 = STB::new_from_pred(NP::Equal)
+            .arg(("id", "score"))
+            .arg(literal(42));
+        let stb1 = STB::new_from_pred(NP::Equal)
             .arg(("secret_id", "key"))
             .arg(("id", "score"));
         let _ = builder.predicate_and(

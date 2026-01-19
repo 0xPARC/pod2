@@ -54,7 +54,7 @@ pub struct StatementTmplBuilder {
 }
 
 impl StatementTmplBuilder {
-    pub fn new(p: impl Into<Predicate>) -> StatementTmplBuilder {
+    pub fn new_from_pred(p: impl Into<Predicate>) -> StatementTmplBuilder {
         StatementTmplBuilder {
             pred_or_wc: PredicateOrWildcard::Predicate(p.into()),
             args: Vec::new(),
@@ -63,6 +63,12 @@ impl StatementTmplBuilder {
     pub fn new_from_wc(p: impl Into<String>) -> StatementTmplBuilder {
         StatementTmplBuilder {
             pred_or_wc: PredicateOrWildcard::Wildcard(p.into()),
+            args: Vec::new(),
+        }
+    }
+    pub fn new(pred_or_wc: PredicateOrWildcard) -> StatementTmplBuilder {
+        StatementTmplBuilder {
+            pred_or_wc,
             args: Vec::new(),
         }
     }
@@ -298,7 +304,7 @@ mod tests {
         let vd_set = &*MOCK_VD_SET;
         let mut builder = CustomPredicateBatchBuilder::new(params.clone(), "gt_custom_pred".into());
 
-        let gt_stb = StatementTmplBuilder::new(NativePredicate::Gt)
+        let gt_stb = StatementTmplBuilder::new_from_pred(NativePredicate::Gt)
             .arg("s1")
             .arg("s2");
 
@@ -343,7 +349,7 @@ mod tests {
         let mut builder =
             CustomPredicateBatchBuilder::new(params.clone(), "set_contains_custom_pred".into());
 
-        let set_contains_stb = StatementTmplBuilder::new(NativePredicate::SetContains)
+        let set_contains_stb = StatementTmplBuilder::new_from_pred(NativePredicate::SetContains)
             .arg("s1")
             .arg("s2");
 
