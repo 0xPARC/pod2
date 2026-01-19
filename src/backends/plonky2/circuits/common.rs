@@ -657,7 +657,7 @@ impl StatementTmplTarget {
         st_tmpl: &StatementTmpl,
     ) -> Result<()> {
         if let Some(pred) = &self.pred {
-            match &st_tmpl.pred {
+            match &st_tmpl.pred_or_wc {
                 PredicateOrWildcard::Predicate(p) => {
                     // We store a predicate (not a wildcard) and we have it available.  In this
                     // case the hash will be calculated by constraints later on and we should not
@@ -672,7 +672,7 @@ impl StatementTmplTarget {
             }
         }
         self.pred_hash_or_wc
-            .set_targets(pw, params, &st_tmpl.pred)?;
+            .set_targets(pw, params, &st_tmpl.pred_or_wc)?;
         let arg_pad = StatementTmplArg::None;
         for (i, arg) in st_tmpl
             .args
@@ -737,8 +737,6 @@ pub struct CustomPredicateBatchTarget {
 impl CustomPredicateBatchTarget {
     pub fn id(&self, builder: &mut CircuitBuilder) -> HashOutTarget {
         let flattened: Vec<_> = self.predicates.iter().flat_map(|cp| cp.flatten()).collect();
-        // use crate::backends::plonky2::circuits::utils::DebugGenerator;
-        // builder.add_simple_generator(DebugGenerator::new(format!("flattened"), flattened.clone()));
         builder.hash_n_to_hash_no_pad::<PoseidonHash>(flattened)
     }
 
@@ -788,16 +786,17 @@ impl CustomPredicateEntryTarget {
             .clone()
             .into_iter()
             .map(|st_tmpl| {
-                // TODO: Support wildcard predicate
-                let pred = match st_tmpl.pred.as_pred().unwrap() {
-                    Predicate::BatchSelf(i) => Predicate::Custom(CustomPredicateRef {
-                        batch: batch.clone(),
-                        index: *i,
-                    }),
-                    p => p.clone(),
+                let pred_or_wc = match st_tmpl.pred_or_wc {
+                    PredicateOrWildcard::Predicate(Predicate::BatchSelf(i)) => {
+                        PredicateOrWildcard::Predicate(Predicate::Custom(CustomPredicateRef {
+                            batch: batch.clone(),
+                            index: i,
+                        }))
+                    }
+                    x => x.clone(),
                 };
                 StatementTmpl {
-                    pred: PredicateOrWildcard::Predicate(pred),
+                    pred_or_wc,
                     args: st_tmpl.args,
                 }
             })

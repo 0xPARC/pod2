@@ -649,7 +649,7 @@ fn check_custom_pred_argument(
     template: &StatementTmpl,
     statement: &Statement,
 ) -> Result<()> {
-    let template_pred = match &template.pred {
+    let template_pred = match &template.pred_or_wc {
         PredicateOrWildcard::Predicate(pred) => match pred {
             &Predicate::BatchSelf(i) => Predicate::Custom(CustomPredicateRef {
                 batch: custom_pred_ref.batch.clone(),
@@ -705,7 +705,7 @@ pub(crate) fn check_custom_pred(
     for (st_tmpl, st) in pred.statements.iter().zip(args) {
         // For `or` predicates, only one statement needs to match the template.
         // The rest of the statements can be `None`.
-        if let PredicateOrWildcard::Predicate(st_tmpl_pred) = &st_tmpl.pred {
+        if let PredicateOrWildcard::Predicate(st_tmpl_pred) = &st_tmpl.pred_or_wc {
             if !pred.conjunction
                 && matches!(st, Statement::None)
                 && *st_tmpl_pred != Predicate::Native(NativePredicate::None)

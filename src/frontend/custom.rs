@@ -218,7 +218,7 @@ impl CustomPredicateBatchBuilder {
                     .collect::<Result<_>>()?;
                 Ok(StatementTmpl {
                     // TODO: Support wildcard
-                    pred: PredicateOrWildcard::Predicate(stb.predicate.clone()),
+                    pred_or_wc: PredicateOrWildcard::Predicate(stb.predicate.clone()),
                     args,
                 })
             })
@@ -321,7 +321,7 @@ mod tests {
         assert_eq!(
             desugared_gt.predicate(),
             *batch_clone.predicates()[0].statements[0]
-                .pred()
+                .pred_or_wc()
                 .as_pred()
                 .unwrap()
         );
@@ -371,7 +371,7 @@ mod tests {
         assert_eq!(
             set_contains.predicate(),
             *batch_clone.predicates()[0].statements[0]
-                .pred()
+                .pred_or_wc()
                 .as_pred()
                 .unwrap()
         );

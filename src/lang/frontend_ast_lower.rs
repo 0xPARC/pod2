@@ -202,7 +202,7 @@ impl<'a> Lowerer<'a> {
 
         Ok(MWStatementTmpl {
             // TODO: Support wildcard
-            pred: PredicateOrWildcard::Predicate(predicate),
+            pred_or_wc: PredicateOrWildcard::Predicate(predicate),
             args: mw_args,
         })
     }
@@ -598,7 +598,7 @@ mod tests {
 
         // Should be BatchSelf(0) referring to pred1
         assert!(matches!(
-            stmt.pred,
+            stmt.pred_or_wc,
             PredicateOrWildcard::Predicate(Predicate::BatchSelf(0))
         ));
     }
@@ -636,7 +636,7 @@ mod tests {
 
         // Should desugar to the Contains predicate
         assert!(matches!(
-            stmt.pred,
+            stmt.pred_or_wc,
             PredicateOrWildcard::Predicate(Predicate::Native(NativePredicate::Contains))
         ));
     }

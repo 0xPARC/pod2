@@ -79,7 +79,7 @@ impl PodRequest {
         current_bindings: &HashMap<String, Value>,
     ) -> Option<HashMap<String, Value>> {
         // TODO: Support wildcard
-        if template.pred != PredicateOrWildcard::Predicate(statement.predicate()) {
+        if template.pred_or_wc != PredicateOrWildcard::Predicate(statement.predicate()) {
             return None;
         }
 

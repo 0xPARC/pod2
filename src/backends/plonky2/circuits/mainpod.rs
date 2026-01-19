@@ -3160,7 +3160,7 @@ mod tests {
         let dict = Hash([F(6), F(7), F(8), F(9)]);
 
         let st_tmpl = StatementTmpl {
-            pred: PredicateOrWildcard::Predicate(Predicate::Native(NativePredicate::Equal)),
+            pred_or_wc: PredicateOrWildcard::Predicate(Predicate::Native(NativePredicate::Equal)),
             args: vec![
                 StatementTmplArg::AnchoredKey(Wildcard::new("a".to_string(), 1), Key::from("key")),
                 StatementTmplArg::Literal(Value::from("value")),
@@ -3174,7 +3174,7 @@ mod tests {
         helper_statement_from_template(&params, st_tmpl, args, expected_st)?;
 
         let st_tmpl = StatementTmpl {
-            pred: PredicateOrWildcard::Wildcard(Wildcard::new("x".to_string(), 2)),
+            pred_or_wc: PredicateOrWildcard::Wildcard(Wildcard::new("x".to_string(), 2)),
             args: vec![
                 StatementTmplArg::AnchoredKey(Wildcard::new("a".to_string(), 1), Key::from("key")),
                 StatementTmplArg::Literal(Value::from("value")),

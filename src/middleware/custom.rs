@@ -180,13 +180,13 @@ impl ToFields for PredicateOrWildcard {
 /// Statement Template for a Custom Predicate
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct StatementTmpl {
-    pub pred: PredicateOrWildcard,
+    pub pred_or_wc: PredicateOrWildcard,
     pub args: Vec<StatementTmplArg>,
 }
 
 impl StatementTmpl {
-    pub fn pred(&self) -> &PredicateOrWildcard {
-        &self.pred
+    pub fn pred_or_wc(&self) -> &PredicateOrWildcard {
+        &self.pred_or_wc
     }
     pub fn args(&self) -> &[StatementTmplArg] {
         &self.args
@@ -195,7 +195,7 @@ impl StatementTmpl {
 
 impl fmt::Display for StatementTmpl {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.pred.fmt(f)?;
+        self.pred_or_wc.fmt(f)?;
         write!(f, "(")?;
         for (i, arg) in self.args.iter().enumerate() {
             if i != 0 {
@@ -224,7 +224,7 @@ impl ToFields for StatementTmpl {
             );
         }
 
-        self.pred
+        self.pred_or_wc
             .to_fields(params)
             .into_iter()
             .chain(self.args.iter().flat_map(|sta| sta.to_fields(params)))
@@ -257,7 +257,9 @@ impl CustomPredicate {
             name: "empty".to_string(),
             conjunction: false,
             statements: vec![StatementTmpl {
-                pred: PredicateOrWildcard::Predicate(Predicate::Native(NativePredicate::None)),
+                pred_or_wc: PredicateOrWildcard::Predicate(Predicate::Native(
+                    NativePredicate::None,
+                )),
                 args: vec![],
             }],
             args_len: 0,
@@ -330,7 +332,7 @@ impl CustomPredicate {
     }
     pub fn pad_statement_tmpl(&self) -> StatementTmpl {
         StatementTmpl {
-            pred: PredicateOrWildcard::Predicate(Predicate::Native(if self.conjunction {
+            pred_or_wc: PredicateOrWildcard::Predicate(Predicate::Native(if self.conjunction {
                 NativePredicate::None
             } else {
                 NativePredicate::False
@@ -403,7 +405,7 @@ impl fmt::Display for CustomPredicate {
         writeln!(f, ") = {}(", if self.conjunction { "AND" } else { "OR" })?;
         for st in &self.statements {
             write!(f, "  ")?;
-            st.pred.fmt(f)?;
+            st.pred_or_wc.fmt(f)?;
             write!(f, "(")?;
             for (i, arg) in st.args.iter().enumerate() {
                 if i != 0 {
@@ -469,10 +471,6 @@ impl CustomPredicateBatch {
         // NOTE: This implementation just hashes the concatenation of all the custom predicates,
         // but ideally we want to use the root of a merkle tree built from the custom predicates.
         let input = self.to_fields(params);
-
-        // for i in &input {
-        //     println!("{}", i);
-        // }
         hash_fields(&input)
     }
 
@@ -525,7 +523,7 @@ mod tests {
 
     fn st(p: Predicate, args: Vec<StatementTmplArg>) -> StatementTmpl {
         StatementTmpl {
-            pred: PredicateOrWildcard::Predicate(p),
+            pred_or_wc: PredicateOrWildcard::Predicate(p),
             args,
         }
     }
