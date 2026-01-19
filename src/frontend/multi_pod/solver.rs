@@ -271,34 +271,34 @@ fn try_solve_with_pods(
     // Constraint 1: Each statement must be proved at least once
     for s in 0..n {
         let sum: Expression = prove[s].iter().sum();
-        model = model.with(constraint!(sum >= 1));
+        model.add_constraint(constraint!(sum >= 1));
     }
 
     // Constraint 2: Output-public statements must be public in POD 0 (the output POD)
     // This ensures there's exactly one output POD, simplifying privacy guarantees.
     for &s in input.output_public_indices {
-        model = model.with(constraint!(public[s][0] == 1));
+        model.add_constraint(constraint!(public[s][0] == 1));
     }
 
     // Constraint 2b: Non-output-public statements cannot be public in POD 0
     // This prevents private statements from leaking to the output POD's public slots.
     for s in 0..n {
         if !input.output_public_indices.contains(&s) {
-            model = model.with(constraint!(public[s][0] == 0));
+            model.add_constraint(constraint!(public[s][0] == 0));
         }
     }
 
     // Constraint 3: Public implies proved
     for s in 0..n {
         for p in 0..target_pods {
-            model = model.with(constraint!(public[s][p] <= prove[s][p]));
+            model.add_constraint(constraint!(public[s][p] <= prove[s][p]));
         }
     }
 
     // Constraint 4: Pod existence - if any statement is proved in p, p is used
     for s in 0..n {
         for p in 0..target_pods {
-            model = model.with(constraint!(prove[s][p] <= pod_used[p]));
+            model.add_constraint(constraint!(prove[s][p] <= pod_used[p]));
         }
     }
 
@@ -323,7 +323,7 @@ fn try_solve_with_pods(
                     for pp in 0..p {
                         rhs += public[*d][pp];
                     }
-                    model = model.with(constraint!(prove[s][p] <= rhs));
+                    model.add_constraint(constraint!(prove[s][p] <= rhs));
                 }
             }
         }
@@ -341,13 +341,15 @@ fn try_solve_with_pods(
                     .iter()
                     .any(|dep| matches!(dep, StatementSource::Internal(dep_d) if *dep_d == d));
                 if depends_on_d {
-                    model = model.with(constraint!(needs_copy[di][p] >= prove[s][p] - prove[d][p]));
+                    model.add_constraint(constraint!(
+                        needs_copy[di][p] >= prove[s][p] - prove[d][p]
+                    ));
                 }
             }
 
             // needs_copy[d][p] <= 1 - prove[d][p]
             // If d is proved locally (prove[d][p]=1), no copy needed (needs_copy <= 0)
-            model = model.with(constraint!(needs_copy[di][p] <= 1 - prove[d][p]));
+            model.add_constraint(constraint!(needs_copy[di][p] <= 1 - prove[d][p]));
         }
     }
 
@@ -362,14 +364,14 @@ fn try_solve_with_pods(
         let anchored_key_sum: Expression = (0..input.all_anchored_keys.len())
             .map(|ak| anchored_key_used[ak][p])
             .sum();
-        model = model.with(constraint!(
+        model.add_constraint(constraint!(
             stmt_sum + copy_sum + anchored_key_sum
                 <= (input.params.max_priv_statements() as f64) * pod_used[p]
         ));
 
         // 6b: Public statement count
         let pub_sum: Expression = (0..n).map(|s| public[s][p]).sum();
-        model = model.with(constraint!(
+        model.add_constraint(constraint!(
             pub_sum <= (input.params.max_public_statements as f64) * pod_used[p]
         ));
 
@@ -377,7 +379,7 @@ fn try_solve_with_pods(
         let merkle_sum: Expression = (0..n)
             .map(|s| (input.costs[s].merkle_proofs as f64) * prove[s][p])
             .sum();
-        model = model.with(constraint!(
+        model.add_constraint(constraint!(
             merkle_sum <= (input.params.max_merkle_proofs_containers as f64) * pod_used[p]
         ));
 
@@ -385,7 +387,7 @@ fn try_solve_with_pods(
         let mst_sum: Expression = (0..n)
             .map(|s| (input.costs[s].merkle_state_transitions as f64) * prove[s][p])
             .sum();
-        model = model.with(constraint!(
+        model.add_constraint(constraint!(
             mst_sum
                 <= (input
                     .params
@@ -397,7 +399,7 @@ fn try_solve_with_pods(
         let cpv_sum: Expression = (0..n)
             .map(|s| (input.costs[s].custom_pred_verifications as f64) * prove[s][p])
             .sum();
-        model = model.with(constraint!(
+        model.add_constraint(constraint!(
             cpv_sum <= (input.params.max_custom_predicate_verifications as f64) * pod_used[p]
         ));
 
@@ -405,7 +407,7 @@ fn try_solve_with_pods(
         let sb_sum: Expression = (0..n)
             .map(|s| (input.costs[s].signed_by as f64) * prove[s][p])
             .sum();
-        model = model.with(constraint!(
+        model.add_constraint(constraint!(
             sb_sum <= (input.params.max_signed_by as f64) * pod_used[p]
         ));
 
@@ -413,7 +415,7 @@ fn try_solve_with_pods(
         let pko_sum: Expression = (0..n)
             .map(|s| (input.costs[s].public_key_of as f64) * prove[s][p])
             .sum();
-        model = model.with(constraint!(
+        model.add_constraint(constraint!(
             pko_sum <= (input.params.max_public_key_of as f64) * pod_used[p]
         ));
     }
@@ -426,18 +428,18 @@ fn try_solve_with_pods(
             let mut sum: Expression = 0.into();
             for s in 0..n {
                 if input.costs[s].custom_batch_ids.contains(batch_id) {
-                    model = model.with(constraint!(batch_used[b][p] >= prove[s][p]));
+                    model.add_constraint(constraint!(batch_used[b][p] >= prove[s][p]));
                     sum += prove[s][p];
                 }
             }
-            model = model.with(constraint!(batch_used[b][p] <= sum));
+            model.add_constraint(constraint!(batch_used[b][p] <= sum));
         }
     }
 
     // Batch count per POD
     for p in 0..target_pods {
         let batch_sum: Expression = (0..all_batches.len()).map(|b| batch_used[b][p]).sum();
-        model = model.with(constraint!(
+        model.add_constraint(constraint!(
             batch_sum <= (input.params.max_custom_predicate_batches as f64) * pod_used[p]
         ));
     }
@@ -451,11 +453,11 @@ fn try_solve_with_pods(
             let mut sum: Expression = 0.into();
             for s in 0..n {
                 if input.costs[s].anchored_keys.contains(ak) {
-                    model = model.with(constraint!(anchored_key_used[ak_idx][p] >= prove[s][p]));
+                    model.add_constraint(constraint!(anchored_key_used[ak_idx][p] >= prove[s][p]));
                     sum += prove[s][p];
                 }
             }
-            model = model.with(constraint!(anchored_key_used[ak_idx][p] <= sum));
+            model.add_constraint(constraint!(anchored_key_used[ak_idx][p] <= sum));
         }
     }
 
@@ -467,7 +469,7 @@ fn try_solve_with_pods(
                 for p in 1..target_pods {
                     for pp in 0..p {
                         // If s is proved in p and d is public in pp, then uses_input[p][pp] = 1
-                        model = model.with(constraint!(
+                        model.add_constraint(constraint!(
                             uses_input[p][pp] >= prove[s][p] + public[*d][pp] - 1.0
                         ));
                     }
@@ -484,7 +486,7 @@ fn try_solve_with_pods(
                 if let Some(&e) = external_to_idx.get(h) {
                     for p in 0..target_pods {
                         // If s is proved in p, then uses_external[p][e] = 1
-                        model = model.with(constraint!(uses_external[p][e] >= prove[s][p]));
+                        model.add_constraint(constraint!(uses_external[p][e] >= prove[s][p]));
                     }
                 }
             }
@@ -501,7 +503,7 @@ fn try_solve_with_pods(
             0.into()
         };
         let external_sum: Expression = (0..external_pods.len()).map(|e| uses_external[p][e]).sum();
-        model = model.with(constraint!(
+        model.add_constraint(constraint!(
             internal_sum + external_sum <= (input.params.max_input_pods as f64) * pod_used[p]
         ));
     }
@@ -509,7 +511,7 @@ fn try_solve_with_pods(
     // Constraint 9: Symmetry breaking - use PODs in order
     // pod_used[p] >= pod_used[p+1]
     for p in 0..target_pods - 1 {
-        model = model.with(constraint!(pod_used[p] >= pod_used[p + 1]));
+        model.add_constraint(constraint!(pod_used[p] >= pod_used[p + 1]));
     }
 
     // Solve
