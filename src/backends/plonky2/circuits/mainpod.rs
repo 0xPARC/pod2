@@ -1388,13 +1388,12 @@ fn make_predicate_from_template_circuit(
     // vec_ref
     let index = builder.select(is_pred, zero, pred_hash_or_wc.wc_index());
     let resolved_pred_hash = HashOutTarget::from(builder.vec_ref_small(params, args, index));
-    let pred_hash = builder.select_flattenable(
+    builder.select_flattenable(
         params,
         is_pred,
         &pred_hash_or_wc.pred_hash(),
         &resolved_pred_hash,
-    );
-    pred_hash
+    )
 }
 
 fn make_statement_from_template_circuit(
