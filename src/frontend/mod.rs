@@ -13,10 +13,10 @@ use serde::{Deserialize, Serialize};
 pub use serialization::SerializedMainPod;
 
 use crate::middleware::{
-    self, check_custom_pred, check_st_tmpl, containers::Dictionary, hash_op, max_op, prod_op,
-    sum_op, AnchoredKey, Hash, Key, MainPodInputs, MainPodProver, NativeOperation, OperationAux,
-    OperationType, Params, PublicKey, RawValue, Signature, Signer, Statement, StatementArg, VDSet,
-    Value, ValueRef,
+    self, check_custom_pred, containers::Dictionary, fill_wildcard_values, hash_op, max_op,
+    prod_op, sum_op, AnchoredKey, Hash, Key, MainPodInputs, MainPodProver, NativeOperation,
+    OperationAux, OperationType, Params, PublicKey, RawValue, Signature, Signer, Statement,
+    StatementArg, VDSet, Value, ValueRef,
 };
 
 mod custom;
@@ -596,21 +596,7 @@ impl MainPodBuilder {
                     }
                     wildcard_map[index] = Some(value);
                 }
-                for (st_tmpl, st) in pred.statements.iter().zip(args.iter()) {
-                    let st_args = st.args();
-                    for (st_tmpl_arg, st_arg) in st_tmpl.args.iter().zip(&st_args) {
-                        if let Err(st_tmpl_check_error) =
-                            check_st_tmpl(st_tmpl_arg, st_arg, &mut wildcard_map)
-                        {
-                            return Err(Error::statements_dont_match(
-                                st.clone(),
-                                st_tmpl.clone(),
-                                wildcard_map,
-                                st_tmpl_check_error,
-                            ));
-                        }
-                    }
-                }
+                fill_wildcard_values(&self.params, pred, &args, &mut wildcard_map)?;
                 let v_default = Value::from(0);
                 let st_args: Vec<_> = wildcard_map
                     .into_iter()
@@ -813,7 +799,8 @@ pub mod tests {
     use super::*;
     use crate::{
         backends::plonky2::{
-            mock::mainpod::MockProver, primitives::ec::schnorr::SecretKey, signer::Signer,
+            basetypes::DEFAULT_VD_SET, mainpod::Prover, mock::mainpod::MockProver,
+            primitives::ec::schnorr::SecretKey, signer::Signer,
         },
         dict,
         examples::{
@@ -1410,6 +1397,67 @@ pub mod tests {
 
         let prover = MockProver {};
         let pod = builder.prove(&prover).unwrap();
+        pod.pod.verify().unwrap();
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_wildcard_predicate() -> Result<()> {
+        let mock = true;
+        let params = Params::default();
+
+        let mock_prover = MockProver {};
+        let real_prover = Prover {};
+        let (vd_set, prover): (_, &dyn MainPodProver) = if mock {
+            (&VDSet::new(&[]), &mock_prover)
+        } else {
+            println!("Prebuilding circuits to calculate vd_set...");
+            let vd_set = &*DEFAULT_VD_SET;
+            println!("vd_set calculation complete");
+            (vd_set, &real_prover)
+        };
+
+        let input = r#"
+        Test(a, b, private: c) = AND(
+            Equal(a, 5)
+            b(1, 5)
+            c(6, 3)
+        )
+        "#;
+        let batch = parse(input, &params, &[]).unwrap().custom_batch;
+        let pred_test = batch.predicate_ref_by_name("Test").unwrap();
+
+        let mut builder = MainPodBuilder::new(&params, vd_set);
+        let st0 = builder.priv_op(Operation::eq(5, 5)).unwrap();
+        let st1 = builder.priv_op(Operation::lt(1, 5)).unwrap();
+        let st2 = builder.priv_op(Operation::ne(6, 3)).unwrap();
+        let _st = builder
+            .op(true, vec![], Operation::custom(pred_test, [st0, st1, st2]))
+            .unwrap();
+
+        let pod = builder.prove(prover).unwrap();
+        pod.pod.verify().unwrap();
+
+        let input = r#"
+        Test(a, b, private: c) = OR(
+            Equal(a, 5)
+            b(1, 5)
+            c(6, 3)
+        )
+        "#;
+        let batch = parse(input, &params, &[]).unwrap().custom_batch;
+        let pred_test = batch.predicate_ref_by_name("Test").unwrap();
+
+        let mut builder = MainPodBuilder::new(&params, vd_set);
+        let st0 = Statement::None;
+        let st1 = builder.priv_op(Operation::lt(1, 5)).unwrap();
+        let st2 = Statement::None;
+        let _st = builder
+            .op(true, vec![], Operation::custom(pred_test, [st0, st1, st2]))
+            .unwrap();
+
+        let pod = builder.prove(prover).unwrap();
         pod.pod.verify().unwrap();
 
         Ok(())

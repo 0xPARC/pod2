@@ -3,11 +3,25 @@
 use std::{backtrace::Backtrace, fmt::Debug};
 
 use crate::middleware::{
-    CustomPredicate, Hash, Key, Operation, Predicate, Statement, StatementArg, StatementTmplArg,
-    Value, Wildcard,
+    CustomPredicate, Hash, Key, Operation, Predicate, Statement, StatementArg, StatementTmpl,
+    StatementTmplArg, Value, Wildcard,
 };
 
 pub type Result<T, E = Error> = core::result::Result<T, E>;
+
+fn display_wc_map(wc_map: &[Option<Value>]) -> String {
+    let mut out = String::new();
+    use std::fmt::Write;
+    for (i, v) in wc_map.iter().enumerate() {
+        write!(out, "- {}: ", i).unwrap();
+        if let Some(v) = v {
+            writeln!(out, "{}", v).unwrap();
+        } else {
+            writeln!(out, "none").unwrap();
+        }
+    }
+    out
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum MiddlewareInnerError {
@@ -33,6 +47,13 @@ pub enum MiddlewareInnerError {
     MismatchedStatementWildcardPredicate(Value, Value, Predicate),
     #[error("Value {0} does not match argument {1} with index {2} in the following custom predicate:\n{3}")]
     MismatchedWildcardValueAndStatementArg(Value, Value, usize, CustomPredicate),
+    #[error("{0} doesn't match {1:#}.\nWildcard map:\n{map}\nInternal error: {3}", map=display_wc_map(.2))]
+    StatementsDontMatch(
+        Statement,
+        StatementTmpl,
+        Vec<Option<Value>>,
+        crate::middleware::Error,
+    ),
     #[error(
         "None of the statement templates of the following custom predicate have been matched:\n{0}"
     )]
@@ -131,6 +152,14 @@ impl Error {
         new!(MismatchedWildcardValueAndStatementArg(
             wc_value, st_arg, arg_index, pred
         ))
+    }
+    pub(crate) fn statements_dont_match(
+        s0: Statement,
+        s1: StatementTmpl,
+        wc_map: Vec<Option<Value>>,
+        mid_error: crate::middleware::Error,
+    ) -> Self {
+        new!(StatementsDontMatch(s0, s1, wc_map, mid_error))
     }
     pub(crate) fn unsatisfied_custom_predicate_disjunction(pred: CustomPredicate) -> Self {
         new!(UnsatisfiedCustomPredicateDisjunction(pred))
