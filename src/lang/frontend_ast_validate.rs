@@ -660,6 +660,18 @@ mod tests {
     }
 
     #[test]
+    fn test_wildcard_predicate_collision() {
+        let input = r#"
+            my_pred(A, Lt) = AND (Equal(A["x"], Lt))
+        "#;
+        let result = parse_and_validate(input, &[]);
+        assert!(matches!(
+            result,
+            Err(ValidationError::WildcardPredicateNameCollision { .. })
+        ));
+    }
+
+    #[test]
     fn test_custom_predicate_with_anchored_key() {
         let input = r#"
             my_pred(A, B) = AND (
