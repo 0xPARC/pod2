@@ -528,18 +528,20 @@ mod tests {
         };
 
         let input = r#"
+            eth_friend(src, dst, private: attestation_dict) = AND(
+                SignedBy(attestation_dict, src)
+                Equal(attestation_dict["attestation"], dst)
+            )
+
             eth_dos_distance_base(src, dst, distance) = AND(
                 Equal(src, dst)
                 Equal(distance, 0)
             )
 
-            eth_dos_distance_ind(src, dst, distance, private: shorter_distance, intermed, attestation_dict) = AND(
+            eth_dos_distance_ind(src, dst, distance, private: shorter_distance, intermed) = AND(
                 eth_dos_distance(src, dst, distance)
                 SumOf(distance, shorter_distance, 1)
-                // eth_friend(src, dst, private: attestation_dict) = AND(
-                    SignedBy(attestation_dict, src)
-                    Equal(attestation_dict["attestation"], dst)
-                // )
+                eth_friend(intermed, dst)
             )
 
             eth_dos_distance(src, dst, distance) = OR(
@@ -556,13 +558,36 @@ mod tests {
         );
         assert_eq!(
             processed.custom_batch.predicates.len(),
-            3,
-            "Expected 3 custom predicates"
+            4,
+            "Expected 4 custom predicates"
         );
 
-        // Predicate Order: base (0), ind (1), distance (2)
+        // Predicate Order: eth_friend (0), base (1), ind (2), distance (3)
 
-        // eth_dos_distance_base (Index 0)
+        // eth_friend (Index 0)
+        let expected_friend_stmts = vec![
+            StatementTmpl {
+                pred_or_wc: pred_lit(Predicate::Native(NativePredicate::SignedBy)),
+                args: vec![sta_wc_lit("attestation_dict", 2), sta_wc_lit("src", 0)],
+            },
+            StatementTmpl {
+                pred_or_wc: pred_lit(Predicate::Native(NativePredicate::Equal)),
+                args: vec![
+                    sta_ak(("attestation_dict", 2), "attestation"),
+                    sta_wc_lit("dst", 1), // Pub arg 1
+                ],
+            },
+        ];
+        let expected_friend_pred = CustomPredicate::new(
+            &params,
+            "eth_friend".to_string(),
+            true, // AND
+            expected_friend_stmts,
+            2, // public_args_len: src, dst
+            names(&["src", "dst", "attestation_dict"]),
+        )?;
+
+        // eth_dos_distance_base (Index 1)
         let expected_base_stmts = vec![
             StatementTmpl {
                 pred_or_wc: pred_lit(Predicate::Native(NativePredicate::Equal)),
@@ -582,12 +607,12 @@ mod tests {
             names(&["src", "dst", "distance"]),
         )?;
 
-        // eth_dos_distance_ind (Index 1)
+        // eth_dos_distance_ind (Index 2)
         // Public args indices: 0-2
         // Private args indices: 3-4 (shorter_distance, intermed)
         let expected_ind_stmts = vec![
             StatementTmpl {
-                pred_or_wc: pred_lit(Predicate::BatchSelf(2)), // Calls eth_dos_distance (index 2)
+                pred_or_wc: pred_lit(Predicate::BatchSelf(3)), // Calls eth_dos_distance (index 3)
                 args: vec![
                     // WildcardLiteral args
                     sta_wc_lit("src", 0),
@@ -603,16 +628,12 @@ mod tests {
                     sta_lit(1),
                 ],
             },
-            // eth_friend
             StatementTmpl {
-                pred_or_wc: pred_lit(Predicate::Native(NativePredicate::SignedBy)),
-                args: vec![sta_wc_lit("attestation_dict", 5), sta_wc_lit("src", 0)],
-            },
-            StatementTmpl {
-                pred_or_wc: pred_lit(Predicate::Native(NativePredicate::Equal)),
+                pred_or_wc: pred_lit(Predicate::BatchSelf(0)), // Calls eth_friend (index 0)
                 args: vec![
-                    sta_ak(("attestation_dict", 5), "attestation"),
-                    sta_wc_lit("dst", 1), // Pub arg 1
+                    // WildcardLiteral args
+                    sta_wc_lit("intermed", 4), // private arg
+                    sta_wc_lit("dst", 1),      // public arg
                 ],
             },
         ];
@@ -622,20 +643,13 @@ mod tests {
             true, // AND
             expected_ind_stmts,
             3, // public_args_len
-            names(&[
-                "src",
-                "dst",
-                "distance",
-                "shorter_distance",
-                "intermed",
-                "attestation_dict",
-            ]),
+            names(&["src", "dst", "distance", "shorter_distance", "intermed"]),
         )?;
 
-        // eth_dos_distance (Index 2)
+        // eth_dos_distance (Index 3)
         let expected_dist_stmts = vec![
             StatementTmpl {
-                pred_or_wc: pred_lit(Predicate::BatchSelf(0)), // Calls eth_dos_distance_base (index 0)
+                pred_or_wc: pred_lit(Predicate::BatchSelf(1)), // Calls eth_dos_distance_base (index 1)
                 args: vec![
                     // WildcardLiteral args
                     sta_wc_lit("src", 0),
@@ -644,7 +658,7 @@ mod tests {
                 ],
             },
             StatementTmpl {
-                pred_or_wc: pred_lit(Predicate::BatchSelf(1)), // Calls eth_dos_distance_ind (index 1)
+                pred_or_wc: pred_lit(Predicate::BatchSelf(2)), // Calls eth_dos_distance_ind (index 2)
                 args: vec![
                     // WildcardLiteral args
                     sta_wc_lit("src", 0),
@@ -665,7 +679,12 @@ mod tests {
         let expected_batch = CustomPredicateBatch::new(
             &params,
             "PodlangBatch".to_string(),
-            vec![expected_base_pred, expected_ind_pred, expected_dist_pred],
+            vec![
+                expected_friend_pred,
+                expected_base_pred,
+                expected_ind_pred,
+                expected_dist_pred,
+            ],
         );
 
         assert_eq!(
