@@ -113,7 +113,15 @@ mod tests {
         middleware::{NativeOperation, OperationAux, OperationType, Value, ValueRef},
     };
 
-    fn make_none_op() -> FrontendOp {
+    fn equal_stmt(n: i64) -> Statement {
+        Statement::Equal(
+            ValueRef::Literal(Value::from(n)),
+            ValueRef::Literal(Value::from(n)),
+        )
+    }
+
+    /// None operation produces Statement::None
+    fn none_op() -> FrontendOp {
         FrontendOp(
             OperationType::Native(NativeOperation::None),
             vec![],
@@ -121,7 +129,8 @@ mod tests {
         )
     }
 
-    fn make_copy_op(stmt: Statement) -> FrontendOp {
+    /// CopyStatement(s) produces s (the same statement)
+    fn copy_op(stmt: Statement) -> FrontendOp {
         FrontendOp(
             OperationType::Native(NativeOperation::CopyStatement),
             vec![OperationArg::Statement(stmt)],
@@ -130,55 +139,40 @@ mod tests {
     }
 
     #[test]
-    fn test_simple_dependency_graph() {
-        // Test dependency chain: op0 creates s0, op1 references s0, op2 references op1's output.
+    fn test_copy_creates_dependency_on_original() {
+        // CopyStatement(s) produces s. When we copy a statement, the copy
+        // depends on where that statement first appears.
         //
-        // Each operation produces a distinct statement (as in the real system).
-        // Dependencies are tracked by matching operation input statements to earlier outputs.
+        // statements[0] = s (produced by none_op - not realistic, but we need a first occurrence)
+        // statements[1] = s (produced by copy_op(s))
         //
-        // Using meaningful values:
-        // - s0 = Equal(100, 100) created by op0
-        // - s1 = Equal(100, 100) is op1's output after copying s0 (same semantic value)
-        // - s2 = Equal(100, 100) is op2's output after copying s1 (same semantic value)
-        //
-        // Note: Each statement object must be distinct for the HashMap to work correctly,
-        // even if they represent the same logical value. In practice, the builder ensures this.
-        let s0 = Statement::Equal(
-            ValueRef::Literal(Value::from(100)),
-            ValueRef::Literal(Value::from(100)),
-        );
-        let s1 = Statement::Equal(
-            ValueRef::Literal(Value::from(101)), // Distinct from s0 for testing
-            ValueRef::Literal(Value::from(101)),
-        );
-        let s2 = Statement::Equal(
-            ValueRef::Literal(Value::from(102)), // Distinct from s1 for testing
-            ValueRef::Literal(Value::from(102)),
-        );
+        // op1's argument s matches statements[0], so statement 1 depends on statement 0.
+        let s = equal_stmt(1);
 
-        let statements = vec![s0.clone(), s1.clone(), s2.clone()];
+        let statements = vec![s.clone(), s.clone()];
         let operations = vec![
-            make_none_op(),           // op0: creates s0
-            make_copy_op(s0.clone()), // op1: copies s0, depends on op0
-            make_copy_op(s1.clone()), // op2: copies s1, depends on op1
+            none_op(),  // Placeholder - in reality something else would produce s
+            copy_op(s), // Copies s, producing s. Depends on statements[0].
         ];
 
         let graph = DependencyGraph::build(&statements, &operations, &HashMap::new());
 
-        // Check dependencies
-        assert!(
-            graph.statement_deps[0].is_empty(),
-            "op0 creates s0, no dependencies"
-        );
-        assert_eq!(
-            graph.statement_deps[1].len(),
-            1,
-            "op1 copies s0, depends on op0"
-        );
-        assert_eq!(
-            graph.statement_deps[2].len(),
-            1,
-            "op2 copies s1, depends on op1"
-        );
+        assert!(graph.statement_deps[0].is_empty());
+        assert_eq!(graph.statement_deps[1], vec![StatementSource::Internal(0)]);
+    }
+
+    #[test]
+    fn test_multiple_copies_depend_on_original() {
+        // Multiple copies of the same statement all depend on where it first appears.
+        let s = equal_stmt(1);
+
+        let statements = vec![s.clone(), s.clone(), s.clone()];
+        let operations = vec![none_op(), copy_op(s.clone()), copy_op(s)];
+
+        let graph = DependencyGraph::build(&statements, &operations, &HashMap::new());
+
+        assert!(graph.statement_deps[0].is_empty());
+        assert_eq!(graph.statement_deps[1], vec![StatementSource::Internal(0)]);
+        assert_eq!(graph.statement_deps[2], vec![StatementSource::Internal(0)]);
     }
 }
