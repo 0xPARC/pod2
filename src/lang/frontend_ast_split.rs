@@ -121,7 +121,6 @@ fn collect_wildcards_from_statement(stmt: &StatementTmpl) -> HashSet<String> {
 fn order_constraints_optimally(
     statements: Vec<StatementTmpl>,
     _usage: &HashMap<String, WildcardUsage>,
-    params: &Params,
 ) -> Vec<StatementTmpl> {
     // If no splitting needed, preserve original order
     if statements.len() <= Params::max_custom_predicate_arity() {
@@ -360,7 +359,7 @@ fn split_into_chain(
 
     let usage = analyze_wildcards(&pred.statements);
 
-    let ordered_statements = order_constraints_optimally(pred.statements, &usage, params);
+    let ordered_statements = order_constraints_optimally(pred.statements, &usage);
 
     let original_public_args: Vec<String> = pred
         .args
@@ -634,9 +633,8 @@ mod tests {
         "#;
 
         let pred = parse_predicate(input);
-        let params = Params::default();
 
-        assert!(validate_predicate_is_splittable(&pred, &params).is_ok());
+        assert!(validate_predicate_is_splittable(&pred).is_ok());
     }
 
     #[test]
@@ -648,9 +646,8 @@ mod tests {
         "#;
 
         let pred = parse_predicate(input);
-        let params = Params::default(); // max_statement_args = 5
 
-        let result = validate_predicate_is_splittable(&pred, &params);
+        let result = validate_predicate_is_splittable(&pred);
         assert!(matches!(
             result,
             Err(SplittingError::TooManyPublicArgs { .. })

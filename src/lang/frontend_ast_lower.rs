@@ -675,7 +675,7 @@ mod tests {
     #[test]
     fn test_error_message_with_splitting() {
         // Create a document with predicates that will exceed the batch limit after splitting
-        // We'll create 2 predicates with 4 statements each (max arity = 5)
+        // We'll create 5 predicates with 2 statements each (max arity = 5)
         // Each will NOT split individually, but together they exceed a small batch limit
         let input = r#"
             pred1(A) = AND (
@@ -686,13 +686,21 @@ mod tests {
                 Equal(B["c"], 3)
                 Equal(B["d"], 4)
             )
+            pred3(C) = AND (
+                Equal(C["e"], 5)
+                Equal(C["f"], 6)
+            )
+            pred4(D) = AND (
+                Equal(D["g"], 7)
+                Equal(D["h"], 8)
+            )
+            pred5(E) = AND (
+                Equal(E["i"], 9)
+                Equal(E["j"], 10)
+            )
         "#;
 
-        // Use very restrictive params to force the error
-        let params = Params {
-            max_custom_batch_size: 1,
-            ..Default::default()
-        };
+        let params = Params::default();
 
         let result = parse_validate_and_lower(input, &params);
 
@@ -707,9 +715,9 @@ mod tests {
             ..
         } = err
         {
-            assert_eq!(count, 2); // 2 predicates after splitting (no splitting occurred)
-            assert_eq!(max, 1);
-            assert_eq!(original_count, 2); // Started with 2 predicates
+            assert_eq!(count, 5); // 2 predicates after splitting (no splitting occurred)
+            assert_eq!(max, 4);
+            assert_eq!(original_count, 5); // Started with 2 predicates
 
             // Error message should NOT mention splitting since no splitting occurred
             let err_msg = format!("{}", err);
@@ -721,7 +729,7 @@ mod tests {
 
     #[test]
     fn test_error_message_after_splitting() {
-        // Create TWO predicates that will EACH split into 2 predicates
+        // Create TWO predicates that will split into 2 and 3 predicates
         // This tests the case where splitting causes the batch to be too large
         // but no individual predicate chain exceeds the limit
         let input = r#"
@@ -740,17 +748,17 @@ mod tests {
                 Equal(B["d"], 4)
                 Equal(B["e"], 5)
                 Equal(B["f"], 6)
+                Equal(B["g"], 7)
+                Equal(B["h"], 8)
+                Equal(B["i"], 9)
+                Equal(B["j"], 10)
             )
         "#;
 
-        // Use params where each predicate splits into 2, but total of 4 exceeds batch limit
-        let params = Params {
-            // Allow 3 predicates in batch
-            // Default max_custom_predicate_arity is 5, so each will split into 2 predicates
-            // Total: 2 original predicates -> 4 after splitting (exceeds limit of 3)
-            max_custom_batch_size: 3,
-            ..Default::default()
-        };
+        // max_custom_batch_size is 4
+        // Default max_custom_predicate_arity is 5, so each will split into 2 predicates
+        // Total: 2 original predicates -> 5 after splitting (exceeds limit of 4)
+        let params = Params::default();
 
         let result = parse_validate_and_lower(input, &params);
 
@@ -765,8 +773,8 @@ mod tests {
             ..
         } = err
         {
-            assert_eq!(count, 4); // 4 predicates after splitting (2 from each)
-            assert_eq!(max, 3);
+            assert_eq!(count, 5); // 5 predicates after splitting (2 and 3 from each)
+            assert_eq!(max, 4);
             assert_eq!(original_count, 2); // Started with 2 predicates
 
             // Error message SHOULD mention splitting since splitting occurred

@@ -613,7 +613,6 @@ mod tests {
     fn ethdos_test() -> Result<()> {
         let params = Params {
             max_custom_predicate_wildcards: 12,
-            max_statement_args: 6,
             ..Default::default()
         };
 

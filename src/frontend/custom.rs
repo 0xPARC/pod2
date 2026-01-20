@@ -278,7 +278,6 @@ mod tests {
         use StatementTmplBuilder as STB;
 
         let params = Params {
-            max_statement_args: 6,
             max_custom_predicate_wildcards: 12,
             ..Default::default()
         };

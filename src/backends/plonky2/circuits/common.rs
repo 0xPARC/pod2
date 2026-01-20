@@ -200,12 +200,7 @@ impl StatementTarget {
         Self::new_with_pred(builder, params, pred, args)
     }
 
-    pub fn set_targets(
-        &self,
-        pw: &mut PartialWitness<F>,
-        params: &Params,
-        st: &Statement,
-    ) -> Result<()> {
+    pub fn set_targets(&self, pw: &mut PartialWitness<F>, st: &Statement) -> Result<()> {
         if let Some(pred) = &self.pred {
             pred.set_targets(pw, &st.predicate())?;
         }
@@ -242,7 +237,7 @@ pub trait Build<T> {
 }
 
 impl Build<NativePredicateTarget> for NativePredicate {
-    fn build(self, builder: &mut CircuitBuilder, params: &Params) -> NativePredicateTarget {
+    fn build(self, builder: &mut CircuitBuilder, _params: &Params) -> NativePredicateTarget {
         NativePredicateTarget::constant(builder, self)
     }
 }
@@ -623,12 +618,7 @@ impl StatementTmplTarget {
             args,
         }
     }
-    pub fn set_targets(
-        &self,
-        pw: &mut PartialWitness<F>,
-        params: &Params,
-        st_tmpl: &StatementTmpl,
-    ) -> Result<()> {
+    pub fn set_targets(&self, pw: &mut PartialWitness<F>, st_tmpl: &StatementTmpl) -> Result<()> {
         if let Some(pred) = &self.pred {
             match &st_tmpl.pred_or_wc {
                 PredicateOrWildcard::Predicate(p) => {
@@ -677,7 +667,6 @@ impl CustomPredicateTarget {
     pub fn set_targets(
         &self,
         pw: &mut PartialWitness<F>,
-        params: &Params,
         custom_pred: &CustomPredicate,
     ) -> Result<()> {
         pw.set_target(
@@ -692,7 +681,7 @@ impl CustomPredicateTarget {
             .take(Params::max_custom_predicate_arity())
             .enumerate()
         {
-            self.statements[i].set_targets(pw, params, st_tmpl)?;
+            self.statements[i].set_targets(pw, st_tmpl)?;
         }
         pw.set_target(self.args_len, F::from_canonical_usize(custom_pred.args_len))?;
         Ok(())
@@ -715,7 +704,6 @@ impl CustomPredicateBatchTarget {
     pub fn set_targets(
         &self,
         pw: &mut PartialWitness<F>,
-        params: &Params,
         custom_predicate_batch: &CustomPredicateBatch,
     ) -> Result<()> {
         let pad_predicate = CustomPredicate::empty();
@@ -726,7 +714,7 @@ impl CustomPredicateBatchTarget {
             .take(Params::max_custom_batch_size())
             .enumerate()
         {
-            self.predicates[i].set_targets(pw, params, predicate)?;
+            self.predicates[i].set_targets(pw, predicate)?;
         }
         Ok(())
     }
@@ -744,7 +732,6 @@ impl CustomPredicateEntryTarget {
     pub fn set_targets(
         &self,
         pw: &mut PartialWitness<F>,
-        params: &Params,
         predicate: &CustomPredicateRef,
     ) -> Result<()> {
         pw.set_target_arr(&self.id.elements, &predicate.batch.id().0)?;
@@ -780,7 +767,7 @@ impl CustomPredicateEntryTarget {
             args_len: predicate.args_len,
             wildcard_names: predicate.wildcard_names.clone(),
         };
-        self.predicate.set_targets(pw, params, &predicate)?;
+        self.predicate.set_targets(pw, &predicate)?;
         Ok(())
     }
 }
@@ -851,7 +838,7 @@ impl CustomPredicateVerifyEntryTarget {
             .set_targets(pw, cpv.custom_predicate_table_index)?;
         // Replace statement templates of batch-self with (id,index)
         self.custom_predicate
-            .set_targets(pw, params, &cpv.custom_predicate)?;
+            .set_targets(pw, &cpv.custom_predicate)?;
         let pad_arg = Value::from(0);
         for (arg_target, arg) in self.args.iter().zip_eq(
             cpv.args
@@ -868,7 +855,7 @@ impl CustomPredicateVerifyEntryTarget {
                 .chain(iter::repeat(&pad_op_arg))
                 .take(params.max_operation_args),
         ) {
-            op_arg_target.set_targets(pw, params, op_arg)?
+            op_arg_target.set_targets(pw, op_arg)?
         }
         Ok(())
     }
@@ -1966,7 +1953,6 @@ pub(crate) mod tests {
     }
 
     fn helper_custom_predicate_batch_target_id(
-        params: &Params,
         custom_predicate_batch: &CustomPredicateBatch,
     ) -> Result<()> {
         let config = CircuitConfig::standard_recursion_config();
@@ -1978,7 +1964,7 @@ pub(crate) mod tests {
         let id_target = custom_predicate_batch_target.id(&mut builder);
 
         let mut pw = PartialWitness::<F>::new();
-        custom_predicate_batch_target.set_targets(&mut pw, params, custom_predicate_batch)?;
+        custom_predicate_batch_target.set_targets(&mut pw, custom_predicate_batch)?;
         let id = custom_predicate_batch.id();
         pw.set_target_arr(&id_target.elements, &id.0)?;
 
@@ -2001,15 +1987,15 @@ pub(crate) mod tests {
         let mut cpb_builder = CustomPredicateBatchBuilder::new(params.clone(), "empty".into());
         _ = cpb_builder.predicate_and("empty", &[], &[], &[])?;
         let custom_predicate_batch = cpb_builder.finish();
-        helper_custom_predicate_batch_target_id(&params, &custom_predicate_batch).unwrap();
+        helper_custom_predicate_batch_target_id(&custom_predicate_batch).unwrap();
 
         // Some cases from the examples
         let custom_predicate_batch = eth_dos_batch(&params)?;
-        helper_custom_predicate_batch_target_id(&params, &custom_predicate_batch).unwrap();
+        helper_custom_predicate_batch_target_id(&custom_predicate_batch).unwrap();
 
         let custom_predicate_batch =
             CustomPredicateBatch::new(&params, "empty".to_string(), vec![CustomPredicate::empty()]);
-        helper_custom_predicate_batch_target_id(&params, &custom_predicate_batch).unwrap();
+        helper_custom_predicate_batch_target_id(&custom_predicate_batch).unwrap();
 
         Ok(())
     }
@@ -2025,7 +2011,6 @@ pub(crate) mod tests {
         let sum_target = builder.i64_add(x_target, y_target);
 
         let data = builder.build::<PoseidonGoldilocksConfig>();
-        let params = Params::default();
 
         I64_TEST_PAIRS.into_iter().try_for_each(|(x, y)| {
             let mut pw = PartialWitness::<F>::new();
@@ -2056,7 +2041,6 @@ pub(crate) mod tests {
         let prod_target = builder.i64_mul(x_target, y_target);
 
         let data = builder.build::<PoseidonGoldilocksConfig>();
-        let params = Params::default();
 
         I64_TEST_PAIRS.into_iter().try_for_each(|(x, y)| {
             println!("{}, {}", x, y);

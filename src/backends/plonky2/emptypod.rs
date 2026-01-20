@@ -69,7 +69,7 @@ fn verify_empty_pod_circuit(
 ) {
     let empty_statement =
         StatementTarget::from_flattened(params, &builder.constants(&empty_statement().to_fields()));
-    let sts_hash = calculate_statements_hash_circuit(params, builder, &[empty_statement]);
+    let sts_hash = calculate_statements_hash_circuit(builder, &[empty_statement]);
     builder.register_public_inputs(&sts_hash.elements);
     builder.register_public_inputs(&empty_pod.vds_root.elements);
 }

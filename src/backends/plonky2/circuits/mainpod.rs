@@ -434,8 +434,8 @@ fn verify_operation_circuit(
     if !cache.op_args.is_empty() {
         op_checks.extend_from_slice(&[
             verify_copy_circuit(builder, st, &op.op_type, &cache.op_args),
-            verify_eq_neq_from_entries_circuit(params, builder, st, &op.op_type, &cache),
-            verify_lt_lteq_from_entries_circuit(params, builder, st, &op.op_type, &cache),
+            verify_eq_neq_from_entries_circuit(builder, st, &op.op_type, &cache),
+            verify_lt_lteq_from_entries_circuit(builder, st, &op.op_type, &cache),
             verify_transitive_eq_circuit(params, builder, st, &op.op_type, &cache.op_args),
             verify_lt_to_neq_circuit(params, builder, st, &op.op_type, &cache.op_args),
             verify_hash_of_circuit(params, builder, st, &op.op_type, &cache),
@@ -880,7 +880,6 @@ fn verify_custom_circuit(
 /// Carries out the checks necessary for EqualFromEntries and
 /// NotEqualFromEntries.
 fn verify_eq_neq_from_entries_circuit(
-    params: &Params,
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
@@ -930,7 +929,6 @@ fn verify_eq_neq_from_entries_circuit(
 /// Carries out the checks necessary for LtFromEntries and
 /// LtEqFromEntries.
 fn verify_lt_lteq_from_entries_circuit(
-    params: &Params,
     builder: &mut CircuitBuilder,
     st: &StatementTarget,
     op_type: &OperationTypeTarget,
@@ -1507,7 +1505,6 @@ fn normalize_statement_circuit(
 /// statements reversed.  The part of the hash from the front-padded none-statements is
 /// precomputed.
 pub fn calculate_statements_hash_circuit(
-    params: &Params,
     builder: &mut CircuitBuilder,
     // These statements will be padded to reach `num_statements`
     statements: &[StatementTarget],
@@ -1670,8 +1667,7 @@ fn verify_main_pod_circuit(
             );
             statements.push(normalized_st);
         }
-        let sts_hash =
-            calculate_statements_hash_circuit(params, builder, input_pod_self_statements);
+        let sts_hash = calculate_statements_hash_circuit(builder, input_pod_self_statements);
         builder.connect_hashes(expected_sts_hash, sts_hash);
 
         //
@@ -1729,7 +1725,7 @@ fn verify_main_pod_circuit(
     )?;
 
     // 2. Calculate the Pod Id from the public statements
-    let sts_hash = calculate_statements_hash_circuit(params, builder, pub_statements);
+    let sts_hash = calculate_statements_hash_circuit(builder, pub_statements);
 
     // 5. Verify input statements
     for (i, (st, op)) in izip!(&main_pod.input_statements, &main_pod.operations).enumerate() {
@@ -1851,13 +1847,13 @@ fn set_targets_input_pods_self_statements(
     assert!(statements.len() <= Params::num_public_statements_hash());
 
     for (i, statement) in statements.iter().enumerate() {
-        statements_target[i].set_targets(pw, params, &statement.clone().into())?;
+        statements_target[i].set_targets(pw, &statement.clone().into())?;
     }
     // Padding
     let mut none_st = mainpod::Statement::from(Statement::None);
     pad_statement(&mut none_st);
     for statement_target in statements_target.iter().skip(statements.len()) {
-        statement_target.set_targets(pw, params, &none_st)?;
+        statement_target.set_targets(pw, &none_st)?;
     }
     Ok(())
 }
@@ -1923,7 +1919,7 @@ impl InnerCircuit for MainPodVerifyTarget {
 
         assert_eq!(input.statements.len(), self.params.max_statements);
         for (i, (st, op)) in zip_eq(&input.statements, &input.operations).enumerate() {
-            self.input_statements[i].set_targets(pw, &self.params, st)?;
+            self.input_statements[i].set_targets(pw, st)?;
             self.operations[i].set_targets(pw, &self.params, op)?;
         }
 
@@ -1978,7 +1974,7 @@ impl InnerCircuit for MainPodVerifyTarget {
 
         assert!(input.custom_predicate_batches.len() <= self.params.max_custom_predicate_batches);
         for (i, cpb) in input.custom_predicate_batches.iter().enumerate() {
-            self.custom_predicate_batches[i].set_targets(pw, &self.params, cpb)?;
+            self.custom_predicate_batches[i].set_targets(pw, cpb)?;
         }
         // Padding
         let pad_cpb = CustomPredicateBatch::new(
@@ -1987,7 +1983,7 @@ impl InnerCircuit for MainPodVerifyTarget {
             vec![CustomPredicate::empty()],
         );
         for i in input.custom_predicate_batches.len()..self.params.max_custom_predicate_batches {
-            self.custom_predicate_batches[i].set_targets(pw, &self.params, &pad_cpb)?;
+            self.custom_predicate_batches[i].set_targets(pw, &pad_cpb)?;
         }
 
         assert!(
@@ -2047,7 +2043,7 @@ mod tests {
         frontend::{self, literal, CustomPredicateBatchBuilder, StatementTmplBuilder},
         middleware::{
             hash_values, AnchoredKey, Hash, Key, OperationType, Predicate, PredicateOrWildcard,
-            RawValue, StatementArg, StatementTmpl, StatementTmplArg, Wildcard,
+            RawValue, StatementArg, StatementTmpl, StatementTmplArg, Wildcard, EMPTY_VALUE,
         },
     };
 
@@ -2107,10 +2103,10 @@ mod tests {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::new(config);
 
-        let st_target = builder.add_virtual_statement(&params, false);
+        let st_target = builder.add_virtual_statement(false);
         let op_target = builder.add_virtual_operation(&params);
         let prev_statements_target: Vec<_> = (0..prev_statements.len())
-            .map(|_| builder.add_virtual_statement(&params, false))
+            .map(|_| builder.add_virtual_statement(false))
             .collect();
 
         let merkle_proofs_target: Vec<_> = aux
@@ -2165,10 +2161,10 @@ mod tests {
         )?;
 
         let mut pw = PartialWitness::<F>::new();
-        st_target.set_targets(&mut pw, &params, &st)?;
+        st_target.set_targets(&mut pw, &st)?;
         op_target.set_targets(&mut pw, &params, &op)?;
         for (prev_st_target, prev_st) in prev_statements_target.iter().zip(prev_statements.iter()) {
-            prev_st_target.set_targets(&mut pw, &params, prev_st)?;
+            prev_st_target.set_targets(&mut pw, prev_st)?;
         }
         for (signed_by_target, signed_by) in signed_by_targets.iter().zip(aux.signed_bys.iter()) {
             signed_by_target.set_targets(&mut pw, signed_by)?
@@ -3064,11 +3060,11 @@ mod tests {
 
         let mut pw = PartialWitness::<F>::new();
 
-        st_tmpl_arg_target.set_targets(&mut pw, params, &st_tmpl_arg)?;
+        st_tmpl_arg_target.set_targets(&mut pw, &st_tmpl_arg)?;
         for (arg_target, arg) in args_target.iter().zip(args.iter()) {
             arg_target.set_targets(&mut pw, arg)?;
         }
-        expected_st_arg_target.set_targets(&mut pw, params, &expected_st_arg)?;
+        expected_st_arg_target.set_targets(&mut pw, &expected_st_arg)?;
 
         // generate & verify proof
         let data = builder.build::<C>();
@@ -3121,7 +3117,7 @@ mod tests {
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::new(config);
 
-        let st_tmpl_target = builder.add_virtual_statement_tmpl(params, false);
+        let st_tmpl_target = builder.add_virtual_statement_tmpl(false);
         let args_target: Vec<_> = (0..args.len())
             .map(|_| builder.add_virtual_value())
             .collect();
@@ -3132,16 +3128,16 @@ mod tests {
             &args_target,
         );
         // TODO: Instead of connect, assign witness to result
-        let expected_st_target = builder.add_virtual_statement(params, false);
+        let expected_st_target = builder.add_virtual_statement(false);
         builder.connect_flattenable(&expected_st_target, &st_target);
 
         let mut pw = PartialWitness::<F>::new();
 
-        st_tmpl_target.set_targets(&mut pw, params, &st_tmpl)?;
+        st_tmpl_target.set_targets(&mut pw, &st_tmpl)?;
         for (arg_target, arg) in args_target.iter().zip(args.iter()) {
             arg_target.set_targets(&mut pw, arg)?;
         }
-        expected_st_target.set_targets(&mut pw, params, &expected_st.into())?;
+        expected_st_target.set_targets(&mut pw, &expected_st.into())?;
 
         // generate & verify proof
         let data = builder.build::<C>();
@@ -3192,16 +3188,24 @@ mod tests {
     fn helper_custom_operation_verify_gadget(
         params: &Params,
         custom_predicate: CustomPredicateRef,
-        op_args: Vec<Statement>,
-        args: Vec<Value>,
+        mut op_args: Vec<Statement>,
+        mut args: Vec<Value>,
         expected_st: Option<Statement>,
     ) -> Result<()> {
+        // Pad
+        for _ in op_args.len()..params.max_operation_args {
+            op_args.push(Statement::None);
+        }
+        for _ in args.len()..params.max_custom_predicate_wildcards {
+            args.push(Value::from(EMPTY_VALUE));
+        }
+
         let config = CircuitConfig::standard_recursion_config();
         let mut builder = CircuitBuilder::new(config);
 
-        let custom_predicate_target = builder.add_virtual_custom_predicate_entry(params);
-        let op_args_target: Vec<_> = (0..args.len())
-            .map(|_| builder.add_virtual_statement(params, false))
+        let custom_predicate_target = builder.add_virtual_custom_predicate_entry();
+        let op_args_target: Vec<_> = (0..op_args.len())
+            .map(|_| builder.add_virtual_statement(false))
             .collect();
         let args_target: Vec<_> = (0..args.len())
             .map(|_| builder.add_virtual_value())
@@ -3217,20 +3221,20 @@ mod tests {
         let mut pw = PartialWitness::<F>::new();
 
         // Input
-        custom_predicate_target.set_targets(&mut pw, params, &custom_predicate)?;
+        custom_predicate_target.set_targets(&mut pw, &custom_predicate)?;
         for (op_arg_target, op_arg) in op_args_target.iter().zip(op_args.into_iter()) {
-            op_arg_target.set_targets(&mut pw, params, &op_arg.into())?;
+            op_arg_target.set_targets(&mut pw, &op_arg.into())?;
         }
         for (arg_target, arg) in args_target.iter().zip(args.iter()) {
             arg_target.set_targets(&mut pw, &Value::from(arg.raw()))?;
         }
         // Expected Output
         if let Some(expected_st) = expected_st {
-            st_target.set_targets(&mut pw, params, &expected_st.into())?;
+            st_target.set_targets(&mut pw, &expected_st.into())?;
         }
 
         let expected_op_type = OperationType::Custom(custom_predicate);
-        op_type_target.set_targets(&mut pw, params, &expected_op_type)?;
+        op_type_target.set_targets(&mut pw, &expected_op_type)?;
 
         // generate & verify proof
         let data = builder.build::<C>();
@@ -3241,15 +3245,7 @@ mod tests {
     // TODO: Add negative tests
     #[test]
     fn test_custom_operation_verify_gadget_positive() -> frontend::Result<()> {
-        // We set the parameters to the exact sizes we have in the test so that we don't have to
-        // pad.
-        let params = Params {
-            max_custom_predicate_arity: 2,
-            max_custom_predicate_wildcards: 2,
-            max_operation_args: 2,
-            max_statement_args: 2,
-            ..Default::default()
-        };
+        let params = Params::default();
 
         use NativePredicate as NP;
         use StatementTmplBuilder as STB;
@@ -3339,15 +3335,7 @@ mod tests {
 
     #[test]
     fn test_custom_operation_verify_gadget_negative() -> frontend::Result<()> {
-        // We set the parameters to the exact sizes we have in the test so that we don't have to
-        // pad.
-        let params = Params {
-            max_custom_predicate_arity: 2,
-            max_custom_predicate_wildcards: 2,
-            max_operation_args: 2,
-            max_statement_args: 2,
-            ..Default::default()
-        };
+        let params = Params::default();
 
         use NativePredicate as NP;
         use StatementTmplBuilder as STB;
@@ -3499,10 +3487,9 @@ mod tests {
         let mut builder = CircuitBuilder::new(config);
 
         let statements_target = (0..params.max_public_statements)
-            .map(|_| builder.add_virtual_statement(params, false))
+            .map(|_| builder.add_virtual_statement(false))
             .collect_vec();
-        let sts_hash_target =
-            calculate_statements_hash_circuit(params, &mut builder, &statements_target);
+        let sts_hash_target = calculate_statements_hash_circuit(&mut builder, &statements_target);
 
         let mut pw = PartialWitness::<F>::new();
 
@@ -3511,12 +3498,12 @@ mod tests {
             .iter()
             .map(|st| {
                 let mut st = mainpod::Statement::from(st.clone());
-                pad_statement(params, &mut st);
+                pad_statement(&mut st);
                 st
             })
             .collect_vec();
         for (st_target, st) in statements_target.iter().zip(statements.iter()) {
-            st_target.set_targets(&mut pw, params, st)?;
+            st_target.set_targets(&mut pw, st)?;
         }
         // Expected Output
         let expected_sts_hash = calculate_statements_hash(&statements, params);
@@ -3535,10 +3522,10 @@ mod tests {
 
     #[test]
     fn test_calculate_sts_hash() -> frontend::Result<()> {
+        assert_eq!(Params::num_public_statements_hash(), 16);
         // Case with no public public statements
         let params = Params {
             max_public_statements: 0,
-            num_public_statements_hash: 8,
             ..Default::default()
         };
 
@@ -3546,30 +3533,20 @@ mod tests {
 
         // Case with number of statements for the sts_hash equal to number of public statements
         let params = Params {
-            max_public_statements: 2,
-            num_public_statements_hash: 2,
+            max_public_statements: Params::num_public_statements_hash(),
             ..Default::default()
         };
 
         let dict = Hash([F(1), F(2), F(3), F(4)]);
-        let statements = [
-            Statement::equal(AnchoredKey::from((dict, "foo")), Value::from(42)),
-            Statement::equal(
-                AnchoredKey::from((dict, "bar")),
-                AnchoredKey::from((dict, "baz")),
-            ),
-        ]
-        .into_iter()
-        .chain(iter::repeat(Statement::None))
-        .take(params.max_public_statements)
-        .collect_vec();
+        let statements = (0..Params::num_public_statements_hash())
+            .map(|i| Statement::equal(AnchoredKey::from((dict, "foo")), Value::from(i as i64)))
+            .collect_vec();
 
         helper_calculate_statements_hash(&params, &statements).unwrap();
 
-        // Case with more  statements for the sts_hash than the number of public statements
+        // Case with more statements for the sts_hash than the number of public statements
         let params = Params {
             max_public_statements: 4,
-            num_public_statements_hash: 6,
             ..Default::default()
         };
 
