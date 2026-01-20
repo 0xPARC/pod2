@@ -74,6 +74,14 @@ pub struct SolverInput<'a> {
     /// in any operation. When a Contains statement with literal values is used
     /// as an argument, it creates an anchored key reference.
     pub all_anchored_keys: &'a [AnchoredKeyId],
+
+    /// For each anchored key, the statement index that produces it (if any).
+    ///
+    /// When a Contains statement with literal (dict, key, value) args is explicitly
+    /// added, it "produces" that anchored key. If the producer is in the same POD
+    /// as statements using the anchored key, no auto-insertion is needed.
+    /// `anchored_key_producers[i]` corresponds to `all_anchored_keys[i]`.
+    pub anchored_key_producers: &'a [Option<usize>],
 }
 
 /// Solve the MILP problem to find optimal POD packing.
@@ -445,19 +453,50 @@ fn try_solve_with_pods(
     }
 
     // Constraint 7b: Anchored key tracking
-    // anchored_key_used[ak][p] >= prove[s][p] for all s that use anchored key ak
-    // anchored_key_used[ak][p] <= sum of prove[s][p] for all s using ak (0 if no statements use it)
-    // This ensures we count each unique anchored key exactly once per POD.
+    //
+    // anchored_key_used[ak][p] = 1 when auto-insertion of a Contains is needed for anchored key ak in POD p.
+    // This happens when: some statement using ak is in POD p, AND the producing Contains is NOT in POD p.
+    //
+    // If a Contains statement explicitly produces ak (anchored_key_producers[ak] = Some(prod_idx)):
+    //   - Lower: anchored_key_used[ak][p] >= prove[s][p] - prove[prod_idx][p] for all s using ak
+    //   - Upper: anchored_key_used[ak][p] <= 1 - prove[prod_idx][p]
+    //   This ensures overhead is 0 when the producer is in the same POD.
+    //
+    // If no Contains produces ak (anchored_key_producers[ak] = None):
+    //   - Lower: anchored_key_used[ak][p] >= prove[s][p] for all s using ak
+    //   - Upper: anchored_key_used[ak][p] <= sum of prove[s][p] for all s using ak
+    //   Auto-insertion is always needed when any user is present.
     for (ak_idx, ak) in input.all_anchored_keys.iter().enumerate() {
+        let producer = input.anchored_key_producers[ak_idx];
+
         for p in 0..target_pods {
-            let mut sum: Expression = 0.into();
+            let mut user_sum: Expression = 0.into();
             for s in 0..n {
                 if input.costs[s].anchored_keys.contains(ak) {
-                    model.add_constraint(constraint!(anchored_key_used[ak_idx][p] >= prove[s][p]));
-                    sum += prove[s][p];
+                    if let Some(prod_idx) = producer {
+                        // Producer exists: only count overhead if producer not in this POD
+                        model.add_constraint(constraint!(
+                            anchored_key_used[ak_idx][p] >= prove[s][p] - prove[prod_idx][p]
+                        ));
+                    } else {
+                        // No producer: always need auto-insertion if user is present
+                        model.add_constraint(constraint!(
+                            anchored_key_used[ak_idx][p] >= prove[s][p]
+                        ));
+                    }
+                    user_sum += prove[s][p];
                 }
             }
-            model.add_constraint(constraint!(anchored_key_used[ak_idx][p] <= sum));
+
+            if let Some(prod_idx) = producer {
+                // If producer is in POD, no auto-insertion needed (overhead = 0)
+                model.add_constraint(constraint!(
+                    anchored_key_used[ak_idx][p] <= 1 - prove[prod_idx][p]
+                ));
+            } else {
+                // No producer: overhead is bounded by whether any user is present
+                model.add_constraint(constraint!(anchored_key_used[ak_idx][p] <= user_sum));
+            }
         }
     }
 
@@ -589,6 +628,7 @@ mod tests {
             params: &params,
             max_pods: 20,
             all_anchored_keys: &[],
+            anchored_key_producers: &[],
         };
 
         let solution = solve(&input).unwrap();
@@ -622,6 +662,7 @@ mod tests {
             params: &params,
             max_pods: 20,
             all_anchored_keys: &[],
+            anchored_key_producers: &[],
         };
 
         let solution = solve(&input).unwrap();
@@ -647,6 +688,7 @@ mod tests {
             params: &params,
             max_pods: 20,
             all_anchored_keys: &[],
+            anchored_key_producers: &[],
         };
 
         let result = solve(&input);

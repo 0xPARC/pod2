@@ -258,6 +258,22 @@ impl MultiPodBuilder {
             .into_iter()
             .collect();
 
+        // Build map from anchored key to its producing statement index (if any).
+        // A Contains statement with literal (dict, key, value) "produces" that anchored key.
+        let mut ak_to_producer: HashMap<AnchoredKeyId, usize> = HashMap::new();
+        for (stmt_idx, stmt) in self.statements.iter().enumerate() {
+            if let Some(ak) = AnchoredKeyId::from_contains_statement(stmt) {
+                // First producer wins (shouldn't have duplicates in practice)
+                ak_to_producer.entry(ak).or_insert(stmt_idx);
+            }
+        }
+
+        // Build parallel array: anchored_key_producers[i] = producer for all_anchored_keys[i]
+        let anchored_key_producers: Vec<Option<usize>> = all_anchored_keys
+            .iter()
+            .map(|ak| ak_to_producer.get(ak).copied())
+            .collect();
+
         // Build external POD statement mapping (cache for reuse in build_single_pod)
         let external_pod_statements = self.build_external_statement_map();
         self.cached_external_map = Some(external_pod_statements);
@@ -278,6 +294,7 @@ impl MultiPodBuilder {
             params: &self.params,
             max_pods: self.options.max_pods,
             all_anchored_keys: &all_anchored_keys,
+            anchored_key_producers: &anchored_key_producers,
         };
 
         let solution = solver::solve(&input)?;
@@ -1058,6 +1075,73 @@ mod tests {
             "Expected 'No feasible solution' error, got: {}",
             err_msg
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_explicit_contains_not_double_counted_as_anchored_key() -> Result<()> {
+        // Verifies that when a Contains statement is explicitly added and then used
+        // as an anchored key argument, it's not double-counted in statement limits.
+        //
+        // Background: MainPodBuilder auto-inserts Contains statements for anchored keys
+        // (dict, key pairs used as arguments to gt(), eq(), etc.). But if the Contains
+        // was already explicitly added, no auto-insertion happens (PR 456).
+        //
+        // The solver must NOT count anchored key overhead when the producing Contains
+        // statement is already in the same POD.
+        //
+        // Setup:
+        // - max_priv_statements = 4
+        // - Statement 0: dict_contains (public) - produces anchored key (dict, "x")
+        // - Statements 1, 2, 3: gt(stmt_0, val) - each references the anchored key
+        //
+        // Correct counting for single POD:
+        // - stmt_sum = 4 (statements 0-3)
+        // - anchored_key_sum = 0 (statement 0 already provides the anchored key)
+        // - Total = 4 ≤ max_priv_statements ✓
+        //
+        // Incorrect (double-counting) would give:
+        // - stmt_sum = 4 + anchored_key_sum = 1 → Total = 5 > 4 ✗
+
+        let params = Params {
+            max_statements: 5,
+            max_public_statements: 1, // max_priv_statements = 5 - 1 = 4
+            ..Params::default()
+        };
+        let vd_set = &*MOCK_VD_SET;
+
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
+
+        // Statement 0: public Contains - produces anchored key (dict, "x")
+        let dict = dict!({"x" => 100});
+        let contains_stmt = builder.pub_op(FrontendOp::dict_contains(dict, "x", 100))?;
+
+        // Statements 1, 2, 3: each uses contains_stmt as an anchored key
+        builder.priv_op(FrontendOp::gt(contains_stmt.clone(), 0))?;
+        builder.priv_op(FrontendOp::gt(contains_stmt.clone(), 1))?;
+        builder.priv_op(FrontendOp::gt(contains_stmt, 2))?;
+
+        // With correct counting, all 4 statements fit in 1 POD
+        let solution = builder.solve()?;
+        assert_eq!(
+            solution.pod_count, 1,
+            "All statements should fit in 1 POD when Contains is not double-counted. \
+             Got {} PODs, which suggests the explicit Contains is being incorrectly \
+             counted as both a statement AND an anchored key overhead.",
+            solution.pod_count
+        );
+
+        // Verify proving works
+        let prover = MockProver {};
+        let result = builder.prove(&prover)?;
+        assert_eq!(result.pods.len(), 1);
+
+        result
+            .output_pod()
+            .pod
+            .verify()
+            .map_err(|e| Error::Frontend(format!("Output POD verification failed: {}", e)))?;
 
         Ok(())
     }
