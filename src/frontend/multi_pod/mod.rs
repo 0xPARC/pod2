@@ -285,6 +285,15 @@ impl MultiPodBuilder {
         self.cached_deps = Some(deps);
         let deps = self.cached_deps.as_ref().unwrap();
 
+        // Build statement content groups for deduplication.
+        // Statements with identical content share a single slot in the POD.
+        // Group statement indices by their content.
+        let mut content_to_indices: HashMap<&Statement, Vec<usize>> = HashMap::new();
+        for (idx, stmt) in self.statements.iter().enumerate() {
+            content_to_indices.entry(stmt).or_default().push(idx);
+        }
+        let statement_content_groups: Vec<Vec<usize>> = content_to_indices.into_values().collect();
+
         // Run solver
         let input = solver::SolverInput {
             num_statements: self.statements.len(),
@@ -295,6 +304,7 @@ impl MultiPodBuilder {
             max_pods: self.options.max_pods,
             all_anchored_keys: &all_anchored_keys,
             anchored_key_producers: &anchored_key_producers,
+            statement_content_groups: &statement_content_groups,
         };
 
         let solution = solver::solve(&input)?;

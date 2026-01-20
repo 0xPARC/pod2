@@ -79,6 +79,13 @@ pub struct SolverInput<'a> {
     /// as statements using the anchored key, no auto-insertion is needed.
     /// `anchored_key_producers[i]` corresponds to `all_anchored_keys[i]`.
     pub anchored_key_producers: &'a [Option<usize>],
+
+    /// Statement content groups for deduplication.
+    ///
+    /// Each inner Vec contains statement indices that have identical content.
+    /// When multiple statements with the same content are proved in the same POD,
+    /// they only use one statement slot (the POD deduplicates identical statements).
+    pub statement_content_groups: &'a [Vec<usize>],
 }
 
 /// Solve the MILP problem to find optimal POD packing.
@@ -269,6 +276,18 @@ fn try_solve_with_pods(
         .map(|(i, h)| (*h, i))
         .collect();
 
+    // content_group_used[g][p] - content group g has at least one statement proved in POD p
+    // When multiple statements have identical content, they share a slot in the POD.
+    // This variable tracks whether at least one statement from each content group is proved.
+    let num_groups = input.statement_content_groups.len();
+    let content_group_used: Vec<Vec<Variable>> = (0..num_groups)
+        .map(|_| {
+            (0..target_pods)
+                .map(|_| vars.add(variable().binary()))
+                .collect()
+        })
+        .collect();
+
     // Objective: minimize number of PODs used
     let objective: Expression = pod_used.iter().sum();
     let mut model = vars.minimise(objective).using(default_solver);
@@ -359,18 +378,34 @@ fn try_solve_with_pods(
     }
 
     // Constraint 6: Resource limits per POD
+    //
+    // 6a-pre: Content group tracking for statement deduplication
+    // When multiple statement indices have identical content, they share a single slot in the POD.
+    // content_group_used[g][p] = 1 iff at least one statement from group g is proved in POD p.
+    for (g, group) in input.statement_content_groups.iter().enumerate() {
+        for p in 0..target_pods {
+            // Lower bound: if any statement in the group is proved, the group is used
+            for &s in group {
+                model.add_constraint(constraint!(content_group_used[g][p] >= prove[s][p]));
+            }
+            // Upper bound: if no statements in the group are proved, the group is not used
+            let group_prove_sum: Expression = group.iter().map(|&s| prove[s][p]).sum();
+            model.add_constraint(constraint!(content_group_used[g][p] <= group_prove_sum));
+        }
+    }
+
     for p in 0..target_pods {
-        // 6a: Total statement count (proved statements + CopyStatements + anchored key Contains)
-        // Each proved statement uses a private slot. Public statements are proved first, then
-        // copied to public slots. CopyStatements and anchored key Contains also use private slots.
+        // 6a: Unique statement count (unique content groups + CopyStatements + anchored key Contains)
+        // Statements with identical content share a slot, so we count content groups, not indices.
+        // CopyStatements and anchored key Contains also use statement slots.
         // The total must not exceed max_priv_statements (= max_statements - max_public_statements).
-        let stmt_sum: Expression = (0..n).map(|s| prove[s][p]).sum();
+        let unique_stmt_sum: Expression = (0..num_groups).map(|g| content_group_used[g][p]).sum();
         let copy_sum: Expression = (0..dep_indices.len()).map(|di| needs_copy[di][p]).sum();
         let anchored_key_sum: Expression = (0..input.all_anchored_keys.len())
             .map(|ak| anchored_key_used[ak][p])
             .sum();
         model.add_constraint(constraint!(
-            stmt_sum + copy_sum + anchored_key_sum
+            unique_stmt_sum + copy_sum + anchored_key_sum
                 <= (input.params.max_priv_statements() as f64) * pod_used[p]
         ));
 
@@ -498,15 +533,20 @@ fn try_solve_with_pods(
     }
 
     // Constraint 8a: Internal input POD tracking using uses_input
-    // uses_input[p][pp] >= prove[s][p] + public[d][pp] - 1 for each dependency (s depends on d)
+    // uses_input[p][pp] >= prove[s][p] + public[d][pp] - prove[d][p] - 1
+    // for each dependency (s depends on d)
+    //
+    // If s is proved in p and d is public in pp, we need pp as input UNLESS d is also
+    // proved locally in p. Subtracting prove[d][p] ensures that when d is re-proved
+    // locally (prove[d][p] = 1), the constraint becomes uses_input >= 0, which is
+    // always satisfied without forcing the input relationship.
     for s in 0..n {
         for dep in &input.deps.statement_deps[s] {
             if let StatementSource::Internal(d) = dep {
                 for p in 1..target_pods {
                     for pp in 0..p {
-                        // If s is proved in p and d is public in pp, then uses_input[p][pp] = 1
                         model.add_constraint(constraint!(
-                            uses_input[p][pp] >= prove[s][p] + public[*d][pp] - 1.0
+                            uses_input[p][pp] >= prove[s][p] + public[*d][pp] - prove[*d][p] - 1.0
                         ));
                     }
                 }
@@ -612,6 +652,8 @@ mod tests {
         let costs: Vec<StatementCost> = (0..5).map(|_| StatementCost::default()).collect();
         let deps = make_simple_deps(5);
         let output_public = vec![0, 1];
+        // Each statement is unique (its own content group)
+        let content_groups: Vec<Vec<usize>> = (0..5).map(|i| vec![i]).collect();
 
         let input = SolverInput {
             num_statements: 5,
@@ -622,6 +664,7 @@ mod tests {
             max_pods: 20,
             all_anchored_keys: &[],
             anchored_key_producers: &[],
+            statement_content_groups: &content_groups,
         };
 
         let solution = solve(&input).unwrap();
@@ -646,6 +689,8 @@ mod tests {
         let deps = make_simple_deps(6);
         // At least one public statement is required
         let output_public: Vec<usize> = vec![0];
+        // Each statement is unique (its own content group)
+        let content_groups: Vec<Vec<usize>> = (0..6).map(|i| vec![i]).collect();
 
         let input = SolverInput {
             num_statements: 6,
@@ -656,6 +701,7 @@ mod tests {
             max_pods: 20,
             all_anchored_keys: &[],
             anchored_key_producers: &[],
+            statement_content_groups: &content_groups,
         };
 
         let solution = solve(&input).unwrap();
@@ -673,6 +719,7 @@ mod tests {
         let deps = make_simple_deps(0);
         let output_public: Vec<usize> = vec![];
 
+        let content_groups: Vec<Vec<usize>> = vec![];
         let input = SolverInput {
             num_statements: 0,
             costs: &costs,
@@ -682,6 +729,7 @@ mod tests {
             max_pods: 20,
             all_anchored_keys: &[],
             anchored_key_producers: &[],
+            statement_content_groups: &content_groups,
         };
 
         let result = solve(&input);
