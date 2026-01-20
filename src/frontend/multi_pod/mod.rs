@@ -319,8 +319,8 @@ impl MultiPodBuilder {
         // POD 0 is always the output POD; any subsequent PODs are intermediate.
         let mut pods: Vec<MainPod> = Vec::with_capacity(solution.pod_count);
 
-        for pod_idx in &solution.prove_order {
-            let pod = self.build_single_pod(*pod_idx, solution, &pods, prover)?;
+        for pod_idx in 0..solution.pod_count {
+            let pod = self.build_single_pod(pod_idx, solution, &pods, prover)?;
             pods.push(pod);
         }
 
