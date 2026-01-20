@@ -119,6 +119,12 @@ impl From<SecretKey> for TypedValue {
     }
 }
 
+impl From<Predicate> for TypedValue {
+    fn from(p: Predicate) -> Self {
+        TypedValue::Predicate(p)
+    }
+}
+
 impl From<Set> for TypedValue {
     fn from(s: Set) -> Self {
         TypedValue::Set(s)
@@ -192,6 +198,17 @@ impl TryFrom<&TypedValue> for SecretKey {
             Ok(sk.clone())
         } else {
             Err(Error::custom("Value not a secret key".to_string()))
+        }
+    }
+}
+
+impl TryFrom<&TypedValue> for Predicate {
+    type Error = Error;
+    fn try_from(v: &TypedValue) -> std::result::Result<Self, Self::Error> {
+        if let TypedValue::Predicate(p) = v {
+            Ok(p.clone())
+        } else {
+            Err(Error::custom("Value not a Predicate".to_string()))
         }
     }
 }

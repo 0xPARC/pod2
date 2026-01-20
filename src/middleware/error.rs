@@ -43,7 +43,7 @@ pub enum MiddlewareInnerError {
     MismatchedStatementTmplArg(StatementTmplArg, StatementArg),
     #[error("Expected a statement of type {0}, got {1}")]
     MismatchedStatementType(Predicate, Predicate),
-    #[error("Expected a statement with hash(predicate) {0}, got {1} ({2})")]
+    #[error("Expected a statement with predicate value {0}, got {1} ({2})")]
     MismatchedStatementWildcardPredicate(Value, Value, Predicate),
     #[error("Value {0} does not match argument {1} with index {2} in the following custom predicate:\n{3}")]
     MismatchedWildcardValueAndStatementArg(Value, Value, usize, CustomPredicate),

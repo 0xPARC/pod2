@@ -674,11 +674,11 @@ fn check_custom_pred_argument(
             }
         }
         PredicateOrWildcard::Wildcard(wc) => {
-            let pred_hash = Value::from(statement.predicate().hash());
-            if wc_values[wc.index] != pred_hash {
+            let pred_value = Value::from(statement.predicate());
+            if wc_values[wc.index] != pred_value {
                 return Err(Error::mismatched_statement_wc_pred(
                     wc_values[wc.index].clone(),
-                    pred_hash,
+                    pred_value,
                     statement.predicate(),
                 ));
             }
