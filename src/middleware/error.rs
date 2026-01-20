@@ -29,6 +29,8 @@ pub enum MiddlewareInnerError {
     MismatchedStatementTmplArg(StatementTmplArg, StatementArg),
     #[error("Expected a statement of type {0}, got {1}")]
     MismatchedStatementType(Predicate, Predicate),
+    #[error("Expected a statement with hash(predicate) {0}, got {1} ({2})")]
+    MismatchedStatementWildcardPredicate(Value, Value, Predicate),
     #[error("Value {0} does not match argument {1} with index {2} in the following custom predicate:\n{3}")]
     MismatchedWildcardValueAndStatementArg(Value, Value, usize, CustomPredicate),
     #[error(
@@ -110,6 +112,15 @@ impl Error {
     }
     pub(crate) fn mismatched_statement_type(expected: Predicate, seen: Predicate) -> Self {
         new!(MismatchedStatementType(expected, seen))
+    }
+    pub(crate) fn mismatched_statement_wc_pred(
+        expected: Value,
+        seen: Value,
+        seen_pred: Predicate,
+    ) -> Self {
+        new!(MismatchedStatementWildcardPredicate(
+            expected, seen, seen_pred
+        ))
     }
     pub(crate) fn mismatched_wildcard_value_and_statement_arg(
         wc_value: Value,
