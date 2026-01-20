@@ -62,6 +62,8 @@ pub enum TypedValue {
     PublicKey(PublicKey),
     // Schnorr secret key variant (scalar)
     SecretKey(SecretKey),
+    // Predicate as a value
+    Predicate(Predicate),
     // UNTAGGED TYPES:
     #[serde(untagged)]
     Set(Set),
@@ -240,6 +242,7 @@ impl fmt::Display for TypedValue {
             }
             TypedValue::PublicKey(p) => write!(f, "PublicKey({})", p),
             TypedValue::SecretKey(p) => write!(f, "SecretKey({})", p),
+            TypedValue::Predicate(p) => write!(f, "Predicate({})", p),
             TypedValue::Raw(r) => {
                 write!(f, "Raw(0x{})", r.encode_hex::<String>())
             }
@@ -259,6 +262,7 @@ impl From<&TypedValue> for RawValue {
             TypedValue::Raw(v) => *v,
             TypedValue::PublicKey(p) => RawValue::from(hash_fields(&p.as_fields())),
             TypedValue::SecretKey(sk) => RawValue::from(hash_fields(&sk.to_limbs())),
+            TypedValue::Predicate(p) => RawValue::from(p.hash()),
         }
     }
 }
@@ -601,8 +605,8 @@ where
 }
 
 impl ToFields for Key {
-    fn to_fields(&self, params: &Params) -> Vec<F> {
-        self.hash.to_fields(params)
+    fn to_fields(&self) -> Vec<F> {
+        self.hash.to_fields()
     }
 }
 
@@ -728,6 +732,33 @@ impl fmt::Display for PodType {
     }
 }
 
+/// These base parameters need to be the same among different circuits to be compatible in their
+/// verification.  For this reason we define an instance of these parameters via `BASE_PARAMS` to
+/// be used and we don't let the user of the library choose them.
+pub struct BaseParams {
+    //
+    // The following parameters define how a pod id is calculated.
+    //
+    /// Number of public statements to hash to calculate the public inputs.  Must be equal or
+    /// greater than `max_public_statements`.
+    pub num_public_statements_hash: usize,
+    pub max_statement_args: usize,
+    //
+    // The following parameters define how a custom predicate batch id is calculated.
+    //
+    /// max number of statements that can be ANDed or ORed together
+    /// in a custom predicate
+    pub max_custom_predicate_arity: usize,
+    pub max_custom_batch_size: usize,
+}
+
+pub const BASE_PARAMS: BaseParams = BaseParams {
+    num_public_statements_hash: 16,
+    max_statement_args: 5,
+    max_custom_predicate_arity: 5,
+    max_custom_batch_size: 4,
+};
+
 /// Params: non dynamic parameters that define the circuit.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Hash)]
 #[serde(rename_all = "camelCase")]
@@ -757,21 +788,6 @@ pub struct Params {
     pub max_public_key_of: usize,
     // maximum number of signature verifications used for SignedBy operation
     pub max_signed_by: usize,
-    //
-    // The following parameters define how a pod id is calculated.  They need to be the same among
-    // different circuits to be compatible in their verification.
-    //
-    // Number of public statements to hash to calculate the public inputs.  Must be equal or
-    // greater than `max_public_statements`.
-    pub num_public_statements_hash: usize,
-    pub max_statement_args: usize,
-    //
-    // The following parameters define how a custom predicate batch id is calculated.
-    //
-    // max number of statements that can be ANDed or ORed together
-    // in a custom predicate
-    pub max_custom_predicate_arity: usize,
-    pub max_custom_batch_size: usize,
 }
 
 impl Default for Params {
@@ -781,14 +797,10 @@ impl Default for Params {
             max_input_pods_public_statements: 8,
             max_statements: 48,
             max_public_statements: 8,
-            num_public_statements_hash: 16,
-            max_statement_args: 5,
             max_operation_args: 5,
             max_custom_predicate_batches: 4,
             max_custom_predicate_verifications: 8,
-            max_custom_predicate_arity: 5,
             max_custom_predicate_wildcards: 8,
-            max_custom_batch_size: 4,
             max_merkle_proofs_containers: 20,
             max_merkle_tree_state_transition_proofs_containers: 6,
             max_depth_mt_containers: 32,
@@ -800,6 +812,22 @@ impl Default for Params {
 }
 
 impl Params {
+    // Convenient methods to get base params
+    // TODO: Make const without self
+
+    pub const fn num_public_statements_hash() -> usize {
+        BASE_PARAMS.num_public_statements_hash
+    }
+    pub const fn max_statement_args() -> usize {
+        BASE_PARAMS.max_statement_args
+    }
+    pub const fn max_custom_predicate_arity() -> usize {
+        BASE_PARAMS.max_custom_predicate_arity
+    }
+    pub const fn max_custom_batch_size() -> usize {
+        BASE_PARAMS.max_custom_batch_size
+    }
+
     pub fn max_priv_statements(&self) -> usize {
         self.max_statements - self.max_public_statements
     }
@@ -816,24 +844,25 @@ impl Params {
         HASH_SIZE + 2
     }
 
-    pub fn statement_size(&self) -> usize {
-        HASH_SIZE + STATEMENT_ARG_F_LEN * self.max_statement_args
+    pub const fn statement_size() -> usize {
+        HASH_SIZE + STATEMENT_ARG_F_LEN * BASE_PARAMS.max_statement_args
     }
 
     pub const fn pred_hash_or_wc_size() -> usize {
         1 + HASH_SIZE
     }
 
-    pub const fn statement_tmpl_size(&self) -> usize {
-        Self::pred_hash_or_wc_size() + self.max_statement_args * Self::statement_tmpl_arg_size()
+    pub const fn statement_tmpl_size() -> usize {
+        Self::pred_hash_or_wc_size()
+            + BASE_PARAMS.max_statement_args * Self::statement_tmpl_arg_size()
     }
 
-    pub fn custom_predicate_size(&self) -> usize {
-        self.max_custom_predicate_arity * self.statement_tmpl_size() + 2
+    pub const fn custom_predicate_size() -> usize {
+        BASE_PARAMS.max_custom_predicate_arity * Self::statement_tmpl_size() + 2
     }
 
-    pub fn custom_predicate_batch_size_field_elts(&self) -> usize {
-        self.max_custom_batch_size * self.custom_predicate_size()
+    pub const fn custom_predicate_batch_size_field_elts() -> usize {
+        BASE_PARAMS.max_custom_batch_size * Self::custom_predicate_size()
     }
 
     /// Total size of the statement table including None, input statements from signed pods and
@@ -842,13 +871,14 @@ impl Params {
         1 + self.max_input_pods * self.max_input_pods_public_statements + self.max_statements
     }
 
+    // TODO: Is this still needed?
     /// Parameters that define how the id is calculated
     pub fn id_params(&self) -> Vec<usize> {
         vec![
-            self.num_public_statements_hash,
-            self.max_statement_args,
-            self.max_custom_predicate_arity,
-            self.max_custom_batch_size,
+            BASE_PARAMS.num_public_statements_hash,
+            BASE_PARAMS.max_statement_args,
+            BASE_PARAMS.max_custom_predicate_arity,
+            BASE_PARAMS.max_custom_batch_size,
         ]
     }
 
@@ -859,11 +889,11 @@ impl Params {
             Self::statement_tmpl_arg_size()
         );
         println!("  Predicate: {}", Self::predicate_size());
-        println!("  Statement template: {}", self.statement_tmpl_size());
-        println!("  Custom predicate: {}", self.custom_predicate_size());
+        println!("  Statement template: {}", Self::statement_tmpl_size());
+        println!("  Custom predicate: {}", Self::custom_predicate_size());
         println!(
             "  Custom predicate batch: {}",
-            self.custom_predicate_batch_size_field_elts()
+            Self::custom_predicate_batch_size_field_elts()
         );
         println!();
     }
@@ -994,5 +1024,5 @@ pub trait MainPodProver {
 
 pub trait ToFields {
     /// returns `Vec<F>` representation of the type
-    fn to_fields(&self, params: &Params) -> Vec<F>;
+    fn to_fields(&self) -> Vec<F>;
 }

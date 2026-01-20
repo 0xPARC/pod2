@@ -67,10 +67,8 @@ fn verify_empty_pod_circuit(
     builder: &mut CircuitBuilder,
     empty_pod: &EmptyPodVerifyTarget,
 ) {
-    let empty_statement = StatementTarget::from_flattened(
-        params,
-        &builder.constants(&empty_statement().to_fields(params)),
-    );
+    let empty_statement =
+        StatementTarget::from_flattened(params, &builder.constants(&empty_statement().to_fields()));
     let sts_hash = calculate_statements_hash_circuit(params, builder, &[empty_statement]);
     builder.register_public_inputs(&sts_hash.elements);
     builder.register_public_inputs(&empty_pod.vds_root.elements);
@@ -184,7 +182,7 @@ impl Pod for EmptyPod {
         }
 
         let public_inputs = sts_hash
-            .to_fields(&self.params)
+            .to_fields()
             .iter()
             .chain(self.vd_set.root().0.iter())
             .cloned()

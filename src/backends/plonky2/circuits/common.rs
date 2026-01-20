@@ -107,7 +107,7 @@ impl StatementArgTarget {
         params: &Params,
         arg: &StatementArg,
     ) -> Result<()> {
-        Ok(pw.set_target_arr(&self.elements, &arg.to_fields(params))?)
+        Ok(pw.set_target_arr(&self.elements, &arg.to_fields())?)
     }
 
     pub fn new(first: ValueTarget, second: ValueTarget) -> Self {
@@ -190,7 +190,7 @@ impl StatementTarget {
                 .iter()
                 .cloned()
                 .chain(iter::repeat_with(|| StatementArgTarget::none(builder)))
-                .take(params.max_statement_args)
+                .take(Params::max_statement_args())
                 .collect(),
         }
     }
@@ -214,12 +214,12 @@ impl StatementTarget {
         if let Some(pred) = &self.pred {
             pred.set_targets(pw, params, &st.predicate())?;
         }
-        pw.set_hash_target(self.pred_hash, HashOut::from(st.predicate().hash(params)))?;
+        pw.set_hash_target(self.pred_hash, HashOut::from(st.predicate().hash()))?;
         for (i, arg) in st
             .args()
             .iter()
             .chain(iter::repeat(&StatementArg::None))
-            .take(params.max_statement_args)
+            .take(Params::max_statement_args())
             .enumerate()
         {
             self.args[i].set_targets(pw, params, arg)?;
@@ -242,7 +242,7 @@ impl StatementTarget {
         t: NativePredicate,
     ) -> BoolTarget {
         let expected_predicate_hash =
-            builder.constant_hash(HashOut::from(Predicate::Native(t).hash(params)));
+            builder.constant_hash(HashOut::from(Predicate::Native(t).hash()));
         builder.is_equal_flattenable(&self.pred_hash, &expected_predicate_hash)
     }
 }
@@ -307,7 +307,7 @@ impl OperationTypeTarget {
         params: &Params,
         op_type: &OperationType,
     ) -> Result<()> {
-        Ok(pw.set_target_arr(&self.elements, &op_type.to_fields(params))?)
+        Ok(pw.set_target_arr(&self.elements, &op_type.to_fields())?)
     }
 
     fn size(_params: &Params) -> usize {
@@ -359,7 +359,7 @@ impl NativePredicateTarget {
         params: &Params,
         native_predicate: NativePredicate,
     ) -> Self {
-        let id = native_predicate.to_fields(params);
+        let id = native_predicate.to_fields();
         assert_eq!(1, id.len());
         Self(builder.constant(id[0]))
     }
@@ -370,7 +370,7 @@ impl NativePredicateTarget {
         params: &Params,
         native_predicate: NativePredicate,
     ) -> Result<()> {
-        let id = native_predicate.to_fields(params);
+        let id = native_predicate.to_fields();
         assert_eq!(1, id.len());
         Ok(pw.set_target(self.0, id[0])?)
     }
@@ -437,7 +437,7 @@ impl PredicateTarget {
         params: &Params,
         predicate: &Predicate,
     ) -> Result<()> {
-        Ok(pw.set_target_arr(&self.elements, &predicate.to_fields(params))?)
+        Ok(pw.set_target_arr(&self.elements, &predicate.to_fields())?)
     }
 
     pub fn hash(&self, builder: &mut CircuitBuilder) -> HashOutTarget {
@@ -537,7 +537,7 @@ impl StatementTmplArgTarget {
         params: &Params,
         st_tmpl_arg: &StatementTmplArg,
     ) -> Result<()> {
-        Ok(pw.set_target_arr(&self.elements, &st_tmpl_arg.to_fields(params))?)
+        Ok(pw.set_target_arr(&self.elements, &st_tmpl_arg.to_fields())?)
     }
 }
 
@@ -596,7 +596,7 @@ impl PredicateHashOrWildcardTarget {
                 self.set_targets_raw(
                     pw,
                     PredicateOrWildcardPrefix::Predicate,
-                    RawValue::from(pred.hash(params)),
+                    RawValue::from(pred.hash()),
                 )?;
             }
             PredicateOrWildcard::Wildcard(wc) => {
@@ -678,7 +678,7 @@ impl StatementTmplTarget {
             .args
             .iter()
             .chain(iter::repeat(&arg_pad))
-            .take(params.max_statement_args)
+            .take(Params::max_statement_args())
             .enumerate()
         {
             self.args[i].set_targets(pw, params, arg)?;
@@ -717,7 +717,7 @@ impl CustomPredicateTarget {
             .statements
             .iter()
             .chain(iter::repeat(&st_tmpl_pad))
-            .take(params.max_custom_predicate_arity)
+            .take(Params::max_custom_predicate_arity())
             .enumerate()
         {
             self.statements[i].set_targets(pw, params, st_tmpl)?;
@@ -751,7 +751,7 @@ impl CustomPredicateBatchTarget {
             .predicates()
             .iter()
             .chain(iter::repeat(&pad_predicate))
-            .take(params.max_custom_batch_size)
+            .take(Params::max_custom_batch_size())
             .enumerate()
         {
             self.predicates[i].set_targets(pw, params, predicate)?;
@@ -854,7 +854,7 @@ pub struct CustomPredicateVerifyEntryTarget {
 impl CustomPredicateVerifyEntryTarget {
     pub fn new_virtual(params: &Params, builder: &mut CircuitBuilder) -> Self {
         let custom_predicate_table_len =
-            params.max_custom_predicate_batches * params.max_custom_batch_size;
+            params.max_custom_predicate_batches * Params::max_custom_batch_size();
         CustomPredicateVerifyEntryTarget {
             custom_predicate_table_index: IndexTarget::new_virtual(
                 custom_predicate_table_len,
@@ -1138,7 +1138,7 @@ impl Flattenable for StatementTarget {
     fn from_flattened(params: &Params, v: &[Target]) -> Self {
         assert_eq!(v.len(), Self::size(params));
         let predicate_hash = HashOutTarget::from_flattened(params, &v[..HASH_SIZE]);
-        let args = (0..params.max_statement_args)
+        let args = (0..Params::max_statement_args())
             .map(|i| StatementArgTarget {
                 elements: array::from_fn(|j| v[HASH_SIZE + i * STATEMENT_ARG_F_LEN + j]),
             })
@@ -1152,7 +1152,7 @@ impl Flattenable for StatementTarget {
     }
 
     fn size(params: &Params) -> usize {
-        HASH_SIZE + params.max_statement_args * StatementArgTarget::size(params)
+        HASH_SIZE + Params::max_statement_args() * StatementArgTarget::size(params)
     }
 }
 
@@ -1170,8 +1170,8 @@ impl Flattenable for CustomPredicateTarget {
         // this `BoolTarget` should actually safe.
         let conjunction = BoolTarget::new_unsafe(v[0]);
         let args_len = v[1];
-        let st_tmpl_size = params.statement_tmpl_size();
-        let statements = (0..params.max_custom_predicate_arity)
+        let st_tmpl_size = Params::statement_tmpl_size();
+        let statements = (0..Params::max_custom_predicate_arity())
             .map(|i| {
                 let st_v = &v[2 + st_tmpl_size * i..2 + st_tmpl_size * (i + 1)];
                 StatementTmplTarget::from_flattened(params, st_v)
@@ -1184,7 +1184,7 @@ impl Flattenable for CustomPredicateTarget {
         }
     }
     fn size(params: &Params) -> usize {
-        2 + params.max_custom_predicate_arity * StatementTmplTarget::size(params)
+        2 + Params::max_custom_predicate_arity() * StatementTmplTarget::size(params)
     }
 }
 
@@ -1203,7 +1203,7 @@ impl Flattenable for StatementTmplTarget {
         let pred_hash_or_wc =
             PredicateHashOrWildcardTarget::from_flattened(params, &v[..pred_hash_or_wc_end]);
         let sta_size = Params::statement_tmpl_arg_size();
-        let args = (0..params.max_statement_args)
+        let args = (0..Params::max_statement_args())
             .map(|i| {
                 let sta_v = &v
                     [pred_hash_or_wc_end + sta_size * i..pred_hash_or_wc_end + sta_size * (i + 1)];
@@ -1219,7 +1219,7 @@ impl Flattenable for StatementTmplTarget {
 
     fn size(params: &Params) -> usize {
         Params::pred_hash_or_wc_size()
-            + params.max_statement_args * StatementTmplArgTarget::size(params)
+            + Params::max_statement_args() * StatementTmplArgTarget::size(params)
     }
 }
 
@@ -1408,7 +1408,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
         StatementTarget {
             pred,
             pred_hash,
-            args: (0..params.max_statement_args)
+            args: (0..Params::max_statement_args())
                 .map(|_| self.add_virtual_statement_arg())
                 .collect(),
         }
@@ -1474,7 +1474,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
         StatementTmplTarget {
             pred,
             pred_hash_or_wc,
-            args: (0..params.max_statement_args)
+            args: (0..Params::max_statement_args())
                 .map(|_| self.add_virtual_statement_tmpl_arg())
                 .collect(),
         }
@@ -1486,7 +1486,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
         params: &Params,
         with_pred: bool,
     ) -> CustomPredicateTarget {
-        let statements = (0..params.max_custom_predicate_arity)
+        let statements = (0..Params::max_custom_predicate_arity())
             .map(|_| self.add_virtual_statement_tmpl(params, with_pred))
             .collect();
         CustomPredicateTarget {
@@ -1503,7 +1503,7 @@ impl CircuitBuilderPod<F, D> for CircuitBuilder {
         with_pred: bool,
     ) -> CustomPredicateBatchTarget {
         CustomPredicateBatchTarget {
-            predicates: (0..params.max_custom_batch_size)
+            predicates: (0..Params::max_custom_batch_size())
                 .map(|_| self.add_virtual_custom_predicate(params, with_pred))
                 .collect(),
         }
@@ -1998,7 +1998,7 @@ pub(crate) mod tests {
 
         for (i, cp) in custom_predicate_batch.predicates().iter().enumerate() {
             let mut builder = CircuitBuilder::<F, D>::new(config.clone());
-            let flattened = cp.to_fields(&params);
+            let flattened = cp.to_fields();
             let flatteend_target = flattened.iter().map(|v| builder.constant(*v)).collect_vec();
             let cp_target = CustomPredicateTarget::from_flattened(&params, &flatteend_target);
             // Round trip of from_flattened to flattened
@@ -2046,7 +2046,6 @@ pub(crate) mod tests {
     #[test]
     fn test_custom_predicate_batch_target_id() -> frontend::Result<()> {
         let params = Params {
-            max_statement_args: 6,
             max_custom_predicate_wildcards: 12,
             ..Default::default()
         };
@@ -2084,12 +2083,9 @@ pub(crate) mod tests {
         I64_TEST_PAIRS.into_iter().try_for_each(|(x, y)| {
             let mut pw = PartialWitness::<F>::new();
             let (sum, overflow) = x.overflowing_add(y);
-            pw.set_target_arr(&x_target.elements, &RawValue::from(x).to_fields(&params))?;
-            pw.set_target_arr(&y_target.elements, &RawValue::from(y).to_fields(&params))?;
-            pw.set_target_arr(
-                &sum_target.elements,
-                &RawValue::from(sum).to_fields(&params),
-            )?;
+            pw.set_target_arr(&x_target.elements, &RawValue::from(x).to_fields())?;
+            pw.set_target_arr(&y_target.elements, &RawValue::from(y).to_fields())?;
+            pw.set_target_arr(&sum_target.elements, &RawValue::from(sum).to_fields())?;
 
             let proof = data.prove(pw);
 
@@ -2119,12 +2115,9 @@ pub(crate) mod tests {
             println!("{}, {}", x, y);
             let mut pw = PartialWitness::<F>::new();
             let (prod, overflow) = x.overflowing_mul(y);
-            pw.set_target_arr(&x_target.elements, &RawValue::from(x).to_fields(&params))?;
-            pw.set_target_arr(&y_target.elements, &RawValue::from(y).to_fields(&params))?;
-            pw.set_target_arr(
-                &prod_target.elements,
-                &RawValue::from(prod).to_fields(&params),
-            )?;
+            pw.set_target_arr(&x_target.elements, &RawValue::from(x).to_fields())?;
+            pw.set_target_arr(&y_target.elements, &RawValue::from(y).to_fields())?;
+            pw.set_target_arr(&prod_target.elements, &RawValue::from(prod).to_fields())?;
 
             let proof = data.prove(pw);
 

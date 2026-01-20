@@ -171,19 +171,19 @@ impl CustomPredicateBatchBuilder {
         priv_args: &[&str],
         sts: &[StatementTmplBuilder],
     ) -> Result<Predicate> {
-        if self.predicates.len() >= self.params.max_custom_batch_size {
+        if self.predicates.len() >= Params::max_custom_batch_size() {
             return Err(Error::max_length(
                 "self.predicates.len".to_string(),
                 self.predicates.len(),
-                self.params.max_custom_batch_size,
+                Params::max_custom_batch_size(),
             ));
         }
 
-        if args.len() > self.params.max_statement_args {
+        if args.len() > Params::max_statement_args() {
             return Err(Error::max_length(
                 "args.len".to_string(),
                 args.len(),
-                self.params.max_statement_args,
+                Params::max_statement_args(),
             ));
         }
         if (args.len() + priv_args.len()) > self.params.max_custom_predicate_wildcards {
@@ -292,7 +292,7 @@ mod tests {
 
         let eth_dos_batch_mw: middleware::CustomPredicateBatch =
             Arc::unwrap_or_clone(eth_dos_batch);
-        let fields = eth_dos_batch_mw.to_fields(&params);
+        let fields = eth_dos_batch_mw.to_fields();
         println!("Batch b, serialized: {:?}", fields);
 
         Ok(())

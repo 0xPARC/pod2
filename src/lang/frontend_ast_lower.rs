@@ -98,11 +98,11 @@ impl<'a> Lowerer<'a> {
         }
 
         // Check batch size constraint
-        if custom_predicates.len() > self.params.max_custom_batch_size {
+        if custom_predicates.len() > Params::max_custom_batch_size() {
             return Err(LoweringError::TooManyPredicates {
                 batch_name: batch_name.clone(),
                 count: custom_predicates.len(),
-                max: self.params.max_custom_batch_size,
+                max: Params::max_custom_batch_size(),
                 original_count,
             });
         }
@@ -378,10 +378,10 @@ impl<'a> Lowerer<'a> {
         };
 
         // Check args count
-        if stmt.args.len() > self.params.max_statement_args {
+        if stmt.args.len() > Params::max_statement_args() {
             return Err(LoweringError::TooManyStatementArgs {
                 count: stmt.args.len(),
-                max: self.params.max_statement_args,
+                max: Params::max_statement_args(),
             });
         }
 

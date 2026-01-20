@@ -54,10 +54,10 @@ impl ToFields for OperationType {
     /// Encoding:
     /// - Native(native_op) => `[1, [native_op], 0, 0, 0, 0]`
     /// - Custom(batch, index) => `[3, [batch.id], index]`
-    fn to_fields(&self, params: &Params) -> Vec<F> {
+    fn to_fields(&self) -> Vec<F> {
         let mut fields: Vec<F> = match self {
             Self::Native(p) => iter::once(F::from_canonical_u64(1))
-                .chain(p.to_fields(params))
+                .chain(p.to_fields())
                 .collect(),
             Self::Custom(CustomPredicateRef { batch, index }) => {
                 iter::once(F::from_canonical_u64(3))
@@ -118,7 +118,7 @@ impl NativeOperation {
 }
 
 impl ToFields for NativeOperation {
-    fn to_fields(&self, _params: &Params) -> Vec<F> {
+    fn to_fields(&self) -> Vec<F> {
         vec![F::from_canonical_u64(*self as u64)]
     }
 }
@@ -612,7 +612,7 @@ pub fn fill_wildcard_values(
 ) -> Result<()> {
     for (st_tmpl, st) in pred.statements.iter().zip(args) {
         if let PredicateOrWildcard::Wildcard(wc) = &st_tmpl.pred_or_wc {
-            wc_check_or_set(Value::from(st.predicate().hash(params)), wc, wildcard_map)?;
+            wc_check_or_set(Value::from(st.predicate().hash()), wc, wildcard_map)?;
         }
         let st_args = st.args();
 
@@ -676,7 +676,7 @@ fn check_custom_pred_argument(
             }
         }
         PredicateOrWildcard::Wildcard(wc) => {
-            let pred_hash = Value::from(statement.predicate().hash(params));
+            let pred_hash = Value::from(statement.predicate().hash());
             if wc_values[wc.index] != pred_hash {
                 return Err(Error::mismatched_statement_wc_pred(
                     wc_values[wc.index].clone(),
@@ -761,7 +761,7 @@ pub(crate) fn check_custom_pred(
 }
 
 impl ToFields for Operation {
-    fn to_fields(&self, _params: &Params) -> Vec<F> {
+    fn to_fields(&self) -> Vec<F> {
         todo!()
     }
 }

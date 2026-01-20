@@ -104,7 +104,7 @@ impl StatementCache {
                 .collect::<Vec<_>>()
         };
         assert!(params.max_operation_args >= MAX_VALUE_ARGS);
-        assert!(params.max_statement_args >= MAX_VALUE_ARGS);
+        assert!(Params::max_statement_args() >= MAX_VALUE_ARGS);
         let equations = array::from_fn(|i| {
             let pred_is_none = op_args[i].has_native_type(builder, params, NativePredicate::None);
             let arg_is_value = builder.statement_arg_is_value(&st.args[i]);
@@ -911,7 +911,7 @@ fn verify_eq_neq_from_entries_circuit(
     let expected_st_args: Vec<_> = [arg1_expected, arg2_expected]
         .into_iter()
         .chain(std::iter::repeat_with(|| StatementArgTarget::none(builder)))
-        .take(params.max_statement_args)
+        .take(Params::max_statement_args())
         .flat_map(|arg| arg.elements)
         .collect();
 
@@ -981,7 +981,7 @@ fn verify_lt_lteq_from_entries_circuit(
     let expected_st_args: Vec<_> = [arg1_expected, arg2_expected]
         .into_iter()
         .chain(std::iter::repeat_with(|| StatementArgTarget::none(builder)))
-        .take(params.max_statement_args)
+        .take(Params::max_statement_args())
         .flat_map(|arg| arg.elements)
         .collect();
 
@@ -1442,7 +1442,7 @@ fn make_custom_statement_circuit(
     let st_predicate = PredicateTarget::new_custom(builder, batch_id, index);
     let arg_none = ValueTarget::zero(builder);
     let lt_mask = builder.lt_mask(
-        params.max_statement_args,
+        Params::max_statement_args(),
         custom_predicate.predicate.args_len,
     );
     let st_args = std::iter::zip(lt_mask, args)
@@ -1466,7 +1466,7 @@ fn make_custom_statement_circuit(
         .collect();
     // expected_sts.len() == params.max_custom_predicate_arity
     // op_args.len() == params.max_operation_args;
-    assert!(params.max_custom_predicate_arity <= params.max_operation_args);
+    assert!(Params::max_custom_predicate_arity() <= params.max_operation_args);
 
     let sts_eq: Vec<_> = expected_sts
         .iter()
@@ -1513,14 +1513,14 @@ pub fn calculate_statements_hash_circuit(
     // These statements will be padded to reach `num_statements`
     statements: &[StatementTarget],
 ) -> HashOutTarget {
-    assert!(statements.len() <= params.num_public_statements_hash);
+    assert!(statements.len() <= Params::num_public_statements_hash());
     let measure = measure_gates_begin!(builder, "CalculateStsHash");
     let statements_rev_flattened = statements.iter().rev().flat_map(|s| s.flatten());
     let mut none_st = mainpod::Statement::from(Statement::None);
     pad_statement(params, &mut none_st);
     let front_pad_elts = iter::repeat(&none_st)
-        .take(params.num_public_statements_hash - statements.len())
-        .flat_map(|s| s.to_fields(params))
+        .take(Params::num_public_statements_hash() - statements.len())
+        .flat_map(|s| s.to_fields())
         .collect_vec();
     let (perm, front_pad_elts_rem) =
         precompute_hash_state::<F, PoseidonPermutation<F>>(&front_pad_elts);
@@ -1581,7 +1581,7 @@ fn build_custom_predicate_table_circuit(
 ) -> Result<Vec<HashOutTarget>> {
     let measure = measure_gates_begin!(builder, "BuildCustomPredTbl");
     let mut custom_predicate_table =
-        Vec::with_capacity(params.max_custom_predicate_batches * params.max_custom_batch_size);
+        Vec::with_capacity(params.max_custom_predicate_batches * Params::max_custom_batch_size());
     for cpb in custom_predicate_batches {
         let measure_cpb = measure_gates_begin!(builder, "CustomPredBatch");
         let id = cpb.id(builder); // constrain the id
@@ -1849,7 +1849,7 @@ fn set_targets_input_pods_self_statements(
         statements_target.len(),
         params.max_input_pods_public_statements
     );
-    assert!(statements.len() <= params.num_public_statements_hash);
+    assert!(statements.len() <= Params::num_public_statements_hash());
 
     for (i, statement) in statements.iter().enumerate() {
         statements_target[i].set_targets(pw, params, &statement.clone().into())?;
@@ -3179,7 +3179,7 @@ mod tests {
                 StatementTmplArg::Literal(Value::from("value")),
             ],
         };
-        let pred_hash = Predicate::Native(NativePredicate::NotEqual).hash(&params);
+        let pred_hash = Predicate::Native(NativePredicate::NotEqual).hash();
         let args = vec![Value::from(1), Value::from(dict), Value::from(pred_hash)];
         let expected_st = Statement::not_equal(
             AnchoredKey::new(dict, Key::from("key")),

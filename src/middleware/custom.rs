@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::middleware::{
     hash_fields, Error, Hash, Key, NativePredicate, Params, Predicate, Result, ToFields, Value,
-    EMPTY_HASH, F, VALUE_SIZE,
+    BASE_PARAMS, EMPTY_HASH, F, VALUE_SIZE,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -33,7 +33,7 @@ impl fmt::Display for Wildcard {
 }
 
 impl ToFields for Wildcard {
-    fn to_fields(&self, _params: &Params) -> Vec<F> {
+    fn to_fields(&self) -> Vec<F> {
         vec![F::from_canonical_u64(self.index as u64)]
     }
 }
@@ -63,7 +63,7 @@ impl From<StatementTmplArgPrefix> for F {
 }
 
 impl ToFields for StatementTmplArg {
-    fn to_fields(&self, params: &Params) -> Vec<F> {
+    fn to_fields(&self) -> Vec<F> {
         // Encoding:
         // None =>                      (0,          0, 0, 0, 0,  0, 0, 0, 0)
         // Literal(v) =>                (1,        [v         ],  0, 0, 0, 0)
@@ -76,20 +76,20 @@ impl ToFields for StatementTmplArg {
                 .take(Params::statement_tmpl_arg_size())
                 .collect_vec(),
             StatementTmplArg::Literal(v) => iter::once(F::from(StatementTmplArgPrefix::Literal))
-                .chain(v.raw().to_fields(params))
+                .chain(v.raw().to_fields())
                 .chain(iter::repeat(F::ZERO))
                 .take(Params::statement_tmpl_arg_size())
                 .collect_vec(),
             StatementTmplArg::AnchoredKey(wc1, kw2) => {
                 iter::once(F::from(StatementTmplArgPrefix::AnchoredKey))
-                    .chain(wc1.to_fields(params))
+                    .chain(wc1.to_fields())
                     .chain(iter::repeat(F::ZERO).take(VALUE_SIZE - 1))
-                    .chain(kw2.to_fields(params))
+                    .chain(kw2.to_fields())
                     .collect_vec()
             }
             StatementTmplArg::Wildcard(wc) => {
                 iter::once(F::from(StatementTmplArgPrefix::WildcardLiteral))
-                    .chain(wc.to_fields(params))
+                    .chain(wc.to_fields())
                     .chain(iter::repeat(F::ZERO))
                     .take(Params::statement_tmpl_arg_size())
                     .collect_vec()
@@ -160,16 +160,16 @@ impl From<PredicateOrWildcardPrefix> for F {
 }
 
 impl ToFields for PredicateOrWildcard {
-    fn to_fields(&self, params: &Params) -> Vec<F> {
+    fn to_fields(&self) -> Vec<F> {
         // Encoding:
         // Predicate(pred) => (0, [hash(pred)  ])
         // Wildcard(wc)    => (1, wc_index, 0...)
         match self {
             Self::Predicate(pred) => iter::once(F::from(PredicateOrWildcardPrefix::Predicate))
-                .chain(pred.hash(params).to_fields(params))
+                .chain(pred.hash().to_fields())
                 .collect_vec(),
             Self::Wildcard(wc) => iter::once(F::from(PredicateOrWildcardPrefix::Wildcard))
-                .chain(wc.to_fields(params))
+                .chain(wc.to_fields())
                 .chain(iter::repeat(F::ZERO))
                 .take(Params::pred_hash_or_wc_size())
                 .collect_vec(),
@@ -208,7 +208,7 @@ impl fmt::Display for StatementTmpl {
 }
 
 impl ToFields for StatementTmpl {
-    fn to_fields(&self, params: &Params) -> Vec<F> {
+    fn to_fields(&self) -> Vec<F> {
         // serialize as:
         // predicate (4 field elements)
         // then the StatementTmplArgs
@@ -216,20 +216,20 @@ impl ToFields for StatementTmpl {
         // TODO think if this check should go into the StatementTmpl creation,
         // instead of at the `to_fields` method, where we should assume that the
         // values are already valid
-        if self.args.len() > params.max_statement_args {
+        if self.args.len() > BASE_PARAMS.max_statement_args {
             panic!(
                 "Statement template has too many arguments {} > {}",
                 self.args.len(),
-                params.max_statement_args
+                BASE_PARAMS.max_statement_args
             );
         }
 
         self.pred_or_wc
-            .to_fields(params)
+            .to_fields()
             .into_iter()
-            .chain(self.args.iter().flat_map(|sta| sta.to_fields(params)))
+            .chain(self.args.iter().flat_map(|sta| sta.to_fields()))
             .chain(iter::repeat(F::ZERO))
-            .take(params.statement_tmpl_size())
+            .take(Params::statement_tmpl_size())
             .collect_vec()
     }
 }
@@ -300,18 +300,18 @@ impl CustomPredicate {
         args_len: usize,
         wildcard_names: Vec<String>,
     ) -> Result<Self> {
-        if statements.len() > params.max_custom_predicate_arity {
+        if statements.len() > Params::max_custom_predicate_arity() {
             return Err(Error::max_length(
                 "statements.len".to_string(),
                 statements.len(),
-                params.max_custom_predicate_arity,
+                Params::max_custom_predicate_arity(),
             ));
         }
-        if args_len > params.max_statement_args {
+        if args_len > Params::max_statement_args() {
             return Err(Error::max_length(
                 "statement_args.len".to_string(),
                 args_len,
-                params.max_statement_args,
+                Params::max_statement_args(),
             ));
         }
         if wildcard_names.len() > params.max_custom_predicate_wildcards {
@@ -358,7 +358,7 @@ impl CustomPredicate {
 }
 
 impl ToFields for CustomPredicate {
-    fn to_fields(&self, params: &Params) -> Vec<F> {
+    fn to_fields(&self) -> Vec<F> {
         // serialize as:
         // conjunction (one field element)
         // args_len (one field element)
@@ -369,7 +369,7 @@ impl ToFields for CustomPredicate {
         // NOTE: this method assumes that the self.params.len() is inside the
         // expected bound, as Self should be instantiated with the constructor
         // method `new` which performs the check.
-        if self.statements.len() > params.max_custom_predicate_arity {
+        if self.statements.len() > BASE_PARAMS.max_custom_predicate_arity {
             panic!("Custom predicate depends on too many statements");
         }
 
@@ -380,8 +380,8 @@ impl ToFields for CustomPredicate {
                 self.statements
                     .iter()
                     .chain(iter::repeat(&pad_st))
-                    .take(params.max_custom_predicate_arity)
-                    .flat_map(|st| st.to_fields(params)),
+                    .take(BASE_PARAMS.max_custom_predicate_arity)
+                    .flat_map(|st| st.to_fields()),
             )
             .collect_vec()
     }
@@ -434,26 +434,26 @@ impl std::hash::Hash for CustomPredicateBatch {
 }
 
 impl ToFields for CustomPredicateBatch {
-    fn to_fields(&self, params: &Params) -> Vec<F> {
+    fn to_fields(&self) -> Vec<F> {
         // all the custom predicates in order
         let pad_pred = CustomPredicate::empty();
         self.predicates
             .iter()
             .chain(iter::repeat(&pad_pred))
-            .take(params.max_custom_batch_size)
-            .flat_map(|p| p.to_fields(params))
+            .take(BASE_PARAMS.max_custom_batch_size)
+            .flat_map(|p| p.to_fields())
             .collect_vec()
     }
 }
 
 impl CustomPredicateBatch {
-    pub fn new(params: &Params, name: String, predicates: Vec<CustomPredicate>) -> Arc<Self> {
+    pub fn new(_params: &Params, name: String, predicates: Vec<CustomPredicate>) -> Arc<Self> {
         let mut cpb = Self {
             id: EMPTY_HASH,
             name,
             predicates,
         };
-        let id = cpb.calculate_id(params);
+        let id = cpb.calculate_id();
         cpb.id = id;
         Arc::new(cpb)
     }
@@ -467,10 +467,10 @@ impl CustomPredicateBatch {
     }
 
     /// Cryptographic identifier for the batch.
-    fn calculate_id(&self, params: &Params) -> Hash {
+    fn calculate_id(&self) -> Hash {
         // NOTE: This implementation just hashes the concatenation of all the custom predicates,
         // but ideally we want to use the root of a merkle tree built from the custom predicates.
-        let input = self.to_fields(params);
+        let input = self.to_fields();
         hash_fields(&input)
     }
 

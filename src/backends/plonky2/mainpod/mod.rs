@@ -51,20 +51,20 @@ use crate::{
 /// the poseidon state with a precomputed constant corresponding to the front-padding part: `id =
 /// hash(serialize(reverse(statements || none-statements)))`
 pub fn calculate_statements_hash(statements: &[Statement], params: &Params) -> middleware::Hash {
-    assert!(statements.len() <= params.num_public_statements_hash);
-    assert!(params.max_public_statements <= params.num_public_statements_hash);
+    assert!(statements.len() <= Params::num_public_statements_hash());
+    assert!(params.max_public_statements <= Params::num_public_statements_hash());
 
     let mut none_st: Statement = middleware::Statement::None.into();
     pad_statement(params, &mut none_st);
     let statements_back_padded = statements
         .iter()
         .chain(iter::repeat(&none_st))
-        .take(params.num_public_statements_hash)
+        .take(Params::num_public_statements_hash())
         .collect_vec();
     let field_elems = statements_back_padded
         .iter()
         .rev()
-        .flat_map(|statement| statement.to_fields(params))
+        .flat_map(|statement| statement.to_fields())
         .collect::<Vec<_>>();
     Hash(PoseidonHash::hash_no_pad(&field_elems).elements)
 }
@@ -115,7 +115,7 @@ pub(crate) fn extract_custom_predicate_verifications(
                     .find_map(|(i, cpb)| (cpb.id() == cpr.batch.id()).then_some(i))
                     .expect("find the custom predicate from the extracted unique list");
                 let custom_predicate_table_index =
-                    batch_index * params.max_custom_batch_size + cpr.index;
+                    batch_index * Params::max_custom_batch_size() + cpr.index;
                 aux_list[i] = OperationAux::CustomPredVerifyIndex(table.len());
                 table.push(CustomPredicateVerification {
                     custom_predicate_table_index,
@@ -327,7 +327,7 @@ fn fill_pad<T: Clone>(v: &mut Vec<T>, pad_value: T, len: usize) {
 }
 
 pub fn pad_statement(params: &Params, s: &mut Statement) {
-    fill_pad(&mut s.1, StatementArg::None, params.max_statement_args)
+    fill_pad(&mut s.1, StatementArg::None, Params::max_statement_args())
 }
 
 fn pad_operation_args(params: &Params, args: &mut Vec<OperationArg>) {
@@ -738,7 +738,7 @@ impl Pod for MainPod {
         let rec_main_pod_verifier_circuit_data =
             &*cache_get_rec_main_pod_verifier_circuit_data(&self.params);
         let public_inputs = sts_hash
-            .to_fields(&self.params)
+            .to_fields()
             .iter()
             .chain(self.vd_set.root().0.iter())
             .cloned()
