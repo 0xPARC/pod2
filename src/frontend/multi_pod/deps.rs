@@ -74,14 +74,8 @@ impl DependencyGraph {
                             dep_idx
                         );
 
-                        if dep_idx < idx {
-                            // The statement was created by an earlier operation
-                            deps.push(StatementSource::Internal(dep_idx));
-                            continue;
-                        }
-                        // dep_idx == idx: The first occurrence of this statement is at the current index,
-                        // meaning this operation both takes and produces this statement (e.g., CopyStatement
-                        // copying from an external POD). Fall through to check external PODs for the source.
+                        deps.push(StatementSource::Internal(dep_idx));
+                        continue;
                     }
 
                     // Check if this is from an external POD
