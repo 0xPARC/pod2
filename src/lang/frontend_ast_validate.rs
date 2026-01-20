@@ -420,7 +420,7 @@ impl Validator {
     fn validate_wildcard_names(&self, names: &HashSet<&String>) -> Result<(), ValidationError> {
         for name in names {
             if NativePredicate::from_str(name).is_ok()
-                || self.symbols.predicates.get(*name).is_some()
+                || self.symbols.predicates.contains_key(*name)
             {
                 return Err(ValidationError::WildcardPredicateNameCollision {
                     name: (*name).clone(),
