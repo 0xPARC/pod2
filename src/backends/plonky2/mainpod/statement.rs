@@ -4,9 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     backends::plonky2::error::{Error, Result},
-    middleware::{
-        self, NativePredicate, Params, Predicate, StatementArg, ToFields, Value, BASE_PARAMS,
-    },
+    middleware::{self, NativePredicate, Predicate, StatementArg, ToFields, Value, BASE_PARAMS},
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

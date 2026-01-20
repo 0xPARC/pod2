@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use strum_macros::FromRepr;
 
 use crate::middleware::{
-    self, hash_fields, AnchoredKey, CustomPredicateRef, Error, Params, Result, ToFields, Value,
-    BASE_PARAMS, F, VALUE_SIZE,
+    self, hash_fields, AnchoredKey, CustomPredicateRef, Error, Params, Result, ToFields, Value, F,
+    VALUE_SIZE,
 };
 
 pub const STATEMENT_ARG_F_LEN: usize = 8;

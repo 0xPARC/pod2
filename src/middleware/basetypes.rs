@@ -49,7 +49,7 @@ use super::serialization::*;
 pub use crate::backends::plonky2::basetypes::*;
 #[cfg(feature = "backend_plonky2")]
 pub use crate::backends::plonky2::{Error as BackendError, Result as BackendResult};
-use crate::middleware::{Params, ToFields, Value, BASE_PARAMS};
+use crate::middleware::{ToFields, Value};
 
 pub const HASH_SIZE: usize = 4;
 pub const VALUE_SIZE: usize = 4;

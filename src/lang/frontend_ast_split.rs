@@ -42,10 +42,7 @@ struct WildcardUsage {
 }
 
 /// Early validation: Check if predicate is fundamentally splittable
-pub fn validate_predicate_is_splittable(
-    pred: &CustomPredicateDef,
-    params: &Params,
-) -> Result<(), SplittingError> {
+pub fn validate_predicate_is_splittable(pred: &CustomPredicateDef) -> Result<(), SplittingError> {
     let public_args = pred.args.public_args.len();
 
     // Check: public args must fit in operation arg limit
@@ -68,7 +65,7 @@ pub fn split_predicate_if_needed(
     params: &Params,
 ) -> Result<Vec<CustomPredicateDef>, SplittingError> {
     // Early validation
-    validate_predicate_is_splittable(&pred, params)?;
+    validate_predicate_is_splittable(&pred)?;
 
     // If within limits, no splitting needed
     if pred.statements.len() <= Params::max_custom_predicate_arity() {
@@ -136,13 +133,8 @@ fn order_constraints_optimally(
     let mut active_wildcards: HashSet<String> = HashSet::new();
 
     while !remaining.is_empty() {
-        let best_idx = find_best_next_statement(
-            &statements,
-            &remaining,
-            &active_wildcards,
-            ordered.len(),
-            params,
-        );
+        let best_idx =
+            find_best_next_statement(&statements, &remaining, &active_wildcards, ordered.len());
 
         remaining.remove(&best_idx);
         let stmt = &statements[best_idx];
@@ -207,7 +199,6 @@ fn find_best_next_statement(
     remaining: &HashSet<usize>,
     active_wildcards: &HashSet<String>,
     ordered_count: usize,
-    params: &Params,
 ) -> usize {
     // Calculate distance to next split point
     let bucket_size = Params::max_custom_predicate_arity() - 1; // Reserve slot for chain call

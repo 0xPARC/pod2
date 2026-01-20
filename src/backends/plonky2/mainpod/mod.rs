@@ -55,7 +55,7 @@ pub fn calculate_statements_hash(statements: &[Statement], params: &Params) -> m
     assert!(params.max_public_statements <= Params::num_public_statements_hash());
 
     let mut none_st: Statement = middleware::Statement::None.into();
-    pad_statement(params, &mut none_st);
+    pad_statement(&mut none_st);
     let statements_back_padded = statements
         .iter()
         .chain(iter::repeat(&none_st))
@@ -326,7 +326,7 @@ fn fill_pad<T: Clone>(v: &mut Vec<T>, pad_value: T, len: usize) {
     }
 }
 
-pub fn pad_statement(params: &Params, s: &mut Statement) {
+pub fn pad_statement(s: &mut Statement) {
     fill_pad(&mut s.1, StatementArg::None, Params::max_statement_args())
 }
 
@@ -367,7 +367,7 @@ pub(crate) fn layout_statements(
                 .unwrap_or(&middleware::Statement::None)
                 .clone()
                 .into();
-            pad_statement(params, &mut st);
+            pad_statement(&mut st);
             statements.push(st);
         }
     }
@@ -386,7 +386,7 @@ pub(crate) fn layout_statements(
             .unwrap_or(&middleware::Statement::None)
             .clone()
             .into();
-        pad_statement(params, &mut st);
+        pad_statement(&mut st);
         statements.push(st);
     }
 
@@ -399,7 +399,7 @@ pub(crate) fn layout_statements(
             .unwrap_or(&middleware::Statement::None)
             .clone()
             .into();
-        pad_statement(params, &mut st);
+        pad_statement(&mut st);
         statements.push(st);
     }
 

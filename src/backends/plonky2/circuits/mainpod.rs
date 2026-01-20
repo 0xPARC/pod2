@@ -106,11 +106,10 @@ impl StatementCache {
         assert!(params.max_operation_args >= MAX_VALUE_ARGS);
         assert!(Params::max_statement_args() >= MAX_VALUE_ARGS);
         let equations = array::from_fn(|i| {
-            let pred_is_none = op_args[i].has_native_type(builder, params, NativePredicate::None);
+            let pred_is_none = op_args[i].has_native_type(builder, NativePredicate::None);
             let arg_is_value = builder.statement_arg_is_value(&st.args[i]);
             let is_literal = builder.and(pred_is_none, arg_is_value);
-            let pred_is_contains =
-                op_args[i].has_native_type(builder, params, NativePredicate::Contains);
+            let pred_is_contains = op_args[i].has_native_type(builder, NativePredicate::Contains);
             let ref_is_value_arg: [_; 3] =
                 array::from_fn(|j| builder.statement_arg_is_value(&op_args[i].args[j]));
             let ref_is_value = builder.and(ref_is_value_arg[0], ref_is_value_arg[1]);
@@ -890,12 +889,12 @@ fn verify_eq_neq_from_entries_circuit(
     let measure = measure_gates_begin!(builder, "OpEqNeqFromEntries");
     let eq_op_st_code_ok = {
         let op_code_ok = op_type.has_native(builder, NativeOperation::EqualFromEntries);
-        let st_code_ok = st.has_native_type(builder, params, NativePredicate::Equal);
+        let st_code_ok = st.has_native_type(builder, NativePredicate::Equal);
         builder.and(op_code_ok, st_code_ok)
     };
     let neq_op_st_code_ok = {
         let op_code_ok = op_type.has_native(builder, NativeOperation::NotEqualFromEntries);
-        let st_code_ok = st.has_native_type(builder, params, NativePredicate::NotEqual);
+        let st_code_ok = st.has_native_type(builder, NativePredicate::NotEqual);
         builder.and(op_code_ok, st_code_ok)
     };
     let op_st_code_ok = builder.or(eq_op_st_code_ok, neq_op_st_code_ok);
@@ -943,12 +942,12 @@ fn verify_lt_lteq_from_entries_circuit(
 
     let lt_op_st_code_ok = {
         let op_code_ok = op_type.has_native(builder, NativeOperation::LtFromEntries);
-        let st_code_ok = st.has_native_type(builder, params, NativePredicate::Lt);
+        let st_code_ok = st.has_native_type(builder, NativePredicate::Lt);
         builder.and(op_code_ok, st_code_ok)
     };
     let lteq_op_st_code_ok = {
         let op_code_ok = op_type.has_native(builder, NativeOperation::LtEqFromEntries);
-        let st_code_ok = st.has_native_type(builder, params, NativePredicate::LtEq);
+        let st_code_ok = st.has_native_type(builder, NativePredicate::LtEq);
         builder.and(op_code_ok, st_code_ok)
     };
     let op_st_code_ok = builder.or(lt_op_st_code_ok, lteq_op_st_code_ok);
@@ -1233,8 +1232,8 @@ fn verify_transitive_eq_circuit(
     let measure = measure_gates_begin!(builder, "OpTransitiveEq");
     let op_code_ok = op_type.has_native(builder, NativeOperation::TransitiveEqualFromStatements);
 
-    let arg1_type_ok = resolved_op_args[0].has_native_type(builder, params, NativePredicate::Equal);
-    let arg2_type_ok = resolved_op_args[1].has_native_type(builder, params, NativePredicate::Equal);
+    let arg1_type_ok = resolved_op_args[0].has_native_type(builder, NativePredicate::Equal);
+    let arg2_type_ok = resolved_op_args[1].has_native_type(builder, NativePredicate::Equal);
     let arg_types_ok = builder.all([arg1_type_ok, arg2_type_ok]);
 
     let arg1_lhs = &resolved_op_args[0].args[0];
@@ -1285,7 +1284,7 @@ fn verify_lt_to_neq_circuit(
     let measure = measure_gates_begin!(builder, "OpLtToNeq");
     let op_code_ok = op_type.has_native(builder, NativeOperation::LtToNotEqual);
 
-    let arg_type_ok = resolved_op_args[0].has_native_type(builder, params, NativePredicate::Lt);
+    let arg_type_ok = resolved_op_args[0].has_native_type(builder, NativePredicate::Lt);
 
     let arg1_expected = resolved_op_args[0].args[0].clone();
     let arg2_expected = resolved_op_args[0].args[1].clone();
@@ -1517,7 +1516,7 @@ pub fn calculate_statements_hash_circuit(
     let measure = measure_gates_begin!(builder, "CalculateStsHash");
     let statements_rev_flattened = statements.iter().rev().flat_map(|s| s.flatten());
     let mut none_st = mainpod::Statement::from(Statement::None);
-    pad_statement(params, &mut none_st);
+    pad_statement(&mut none_st);
     let front_pad_elts = iter::repeat(&none_st)
         .take(Params::num_public_statements_hash() - statements.len())
         .flat_map(|s| s.to_fields())
@@ -1655,7 +1654,7 @@ fn verify_main_pod_circuit(
         let mut intro_ok = is_blank_intro;
         for self_st in &input_pod_self_statements[1..] {
             let st_is_intro = self_st.pred_is_blank_intro(builder);
-            let st_is_none = self_st.has_native_type(builder, params, NativePredicate::None);
+            let st_is_none = self_st.has_native_type(builder, NativePredicate::None);
             let st_is_intro_or_none = builder.or(st_is_intro, st_is_none);
             intro_ok = builder.and(intro_ok, st_is_intro_or_none);
         }
@@ -1774,12 +1773,12 @@ impl MainPodVerifyTarget {
             input_pods_self_statements: (0..params.max_input_pods)
                 .map(|_| {
                     (0..params.max_input_pods_public_statements)
-                        .map(|_| builder.add_virtual_statement(params, false))
+                        .map(|_| builder.add_virtual_statement(false))
                         .collect_vec()
                 })
                 .collect(),
             input_statements: (0..params.max_statements)
-                .map(|_| builder.add_virtual_statement(params, false))
+                .map(|_| builder.add_virtual_statement(false))
                 .collect(),
             operations: (0..params.max_statements)
                 .map(|_| builder.add_virtual_operation(params))
@@ -1805,7 +1804,7 @@ impl MainPodVerifyTarget {
                 })
                 .collect(),
             custom_predicate_batches: (0..params.max_custom_predicate_batches)
-                .map(|_| builder.add_virtual_custom_predicate_batch(params, true))
+                .map(|_| builder.add_virtual_custom_predicate_batch(true))
                 .collect(),
             custom_predicate_verifications: (0..params.max_custom_predicate_verifications)
                 .map(|_| CustomPredicateVerifyEntryTarget::new_virtual(params, builder))
@@ -1856,7 +1855,7 @@ fn set_targets_input_pods_self_statements(
     }
     // Padding
     let mut none_st = mainpod::Statement::from(Statement::None);
-    pad_statement(params, &mut none_st);
+    pad_statement(&mut none_st);
     for statement_target in statements_target.iter().skip(statements.len()) {
         statement_target.set_targets(pw, params, &none_st)?;
     }

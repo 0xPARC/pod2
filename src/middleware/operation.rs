@@ -605,7 +605,6 @@ pub fn check_st_tmpl(
 }
 
 pub fn fill_wildcard_values(
-    params: &Params,
     pred: &CustomPredicate,
     args: &[Statement],
     wildcard_map: &mut [Option<Value>],
@@ -642,7 +641,7 @@ pub fn wildcard_values_from_op_st(
         .chain(core::iter::repeat(None))
         .take(params.max_custom_predicate_wildcards)
         .collect_vec();
-    fill_wildcard_values(params, pred, op_args, &mut wildcard_map)?;
+    fill_wildcard_values(pred, op_args, &mut wildcard_map)?;
     // NOTE: We set unresolved wildcard slots with an empty value.  They can be unresolved because
     // they are beyond the number of used wildcards in this custom predicate, or they could be
     // private arguments that are unused in a particular disjunction.
@@ -653,7 +652,6 @@ pub fn wildcard_values_from_op_st(
 }
 
 fn check_custom_pred_argument(
-    params: &Params,
     custom_pred_ref: &CustomPredicateRef,
     template: &StatementTmpl,
     statement: &Statement,
@@ -748,7 +746,7 @@ pub(crate) fn check_custom_pred(
         if !pred.conjunction && matches!(st, Statement::None) {
             continue;
         }
-        check_custom_pred_argument(params, custom_pred_ref, st_tmpl, st, &wc_values)?;
+        check_custom_pred_argument(custom_pred_ref, st_tmpl, st, &wc_values)?;
         match_exists = true;
     }
 
