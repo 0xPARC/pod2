@@ -529,6 +529,8 @@ enum StmtSource {
 
 #[cfg(test)]
 mod tests {
+    use hex::ToHex;
+
     use super::*;
     use crate::{
         backends::plonky2::{
@@ -699,11 +701,39 @@ mod tests {
         // provide dependencies to the output POD.
         let solution = builder.solve()?;
 
-        // Should need at least 2 PODs for this dependency chain
+        // Expected: exactly 2 PODs
+        //   - POD 0 (intermediate): statements 0 (contains), 1 (a_out); a_out is public
+        //   - POD 1 (output): statement 2 (b_out); b_out is public
+        // The output POD copies a_out from POD 0 to satisfy b_out's dependency.
+        assert_eq!(
+            solution.pod_count, 2,
+            "Expected exactly 2 PODs for 3-statement chain with max_priv=2"
+        );
+
+        // POD 0 should contain statements 0 and 1 (contains and a_out)
         assert!(
-            solution.pod_count >= 2,
-            "Expected at least 2 PODs for dependency chain, got {}",
-            solution.pod_count
+            solution.pod_statements[0].contains(&0) && solution.pod_statements[0].contains(&1),
+            "POD 0 should contain statements 0 (contains) and 1 (a_out), got {:?}",
+            solution.pod_statements[0]
+        );
+
+        // Statement 1 (a_out) should be public in POD 0 so POD 1 can copy it
+        assert!(
+            solution.pod_public_statements[0].contains(&1),
+            "Statement 1 (a_out) should be public in POD 0"
+        );
+
+        // POD 1 (output) should contain statement 2 (b_out)
+        assert!(
+            solution.pod_statements[1].contains(&2),
+            "POD 1 should contain statement 2 (b_out), got {:?}",
+            solution.pod_statements[1]
+        );
+
+        // Statement 2 (b_out) should be public in POD 1 (it's output-public)
+        assert!(
+            solution.pod_public_statements[1].contains(&2),
+            "Statement 2 (b_out) should be public in output POD"
         );
 
         // Prove and verify all PODs
@@ -1424,6 +1454,491 @@ mod tests {
         let prover = MockProver {};
         let result = builder.prove(&prover)?;
         assert_eq!(result.pods.len(), pod_count);
+
+        for (i, pod) in result.pods.iter().enumerate() {
+            pod.pod
+                .verify()
+                .map_err(|e| Error::Frontend(format!("POD {} verification failed: {}", i, e)))?;
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_long_dependency_chain_spans_multiple_pods() -> Result<()> {
+        // Verifies that a long dependency chain correctly cascades through multiple
+        // intermediate PODs before reaching the output POD.
+        //
+        // Chain: d_out -> c_out -> b_out -> a_out -> contains (5 statements)
+        //
+        // With max_priv_statements = 2, each POD can hold at most 2 statements
+        // (including copies). Expected solution with 4 PODs:
+        //   - POD 0 (intermediate): contains, a_out (a_out public)
+        //   - POD 1 (intermediate): copy(a_out), b_out (b_out public)
+        //   - POD 2 (intermediate): copy(b_out), c_out (c_out public)
+        //   - POD 3 (output): copy(c_out), d_out
+
+        let params = Params {
+            max_statements: 4,
+            max_public_statements: 2,
+            // max_priv_statements = 2
+            max_input_pods: 4,
+            max_input_pods_public_statements: 20,
+            max_custom_predicate_verifications: 10,
+            ..Params::default()
+        };
+        let vd_set = &*MOCK_VD_SET;
+
+        // Chain of predicates: each accepts the output of the previous
+        let batch = parse(
+            r#"
+            pred_a(X) = AND(Contains(X, "k", 1))
+            pred_b(X) = AND(pred_a(X))
+            pred_c(X) = AND(pred_b(X))
+            pred_d(X) = AND(pred_c(X))
+            "#,
+            &params,
+            &[],
+        )
+        .expect("parse predicates")
+        .custom_batch;
+
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
+
+        // Build the chain: contains -> a_out -> b_out -> c_out -> d_out
+        let dict = dict!({"k" => 1});
+        let contains = builder.priv_op(FrontendOp::dict_contains(dict, "k", 1))?;
+
+        let a_out = builder.priv_op(FrontendOp::custom(
+            batch.predicate_ref_by_name("pred_a").unwrap(),
+            [contains],
+        ))?;
+
+        let b_out = builder.priv_op(FrontendOp::custom(
+            batch.predicate_ref_by_name("pred_b").unwrap(),
+            [a_out],
+        ))?;
+
+        let c_out = builder.priv_op(FrontendOp::custom(
+            batch.predicate_ref_by_name("pred_c").unwrap(),
+            [b_out],
+        ))?;
+
+        let _d_out = builder.pub_op(FrontendOp::custom(
+            batch.predicate_ref_by_name("pred_d").unwrap(),
+            [c_out],
+        ))?;
+
+        let solution = builder.solve()?;
+
+        // Expected: exactly 4 PODs for a 5-statement chain with max_priv=2
+        //   - POD 0: statements 0 (contains), 1 (a_out); a_out public
+        //   - POD 1: statement 2 (b_out); b_out public (copies a_out)
+        //   - POD 2: statement 3 (c_out); c_out public (copies b_out)
+        //   - POD 3 (output): statement 4 (d_out); d_out public (copies c_out)
+        assert_eq!(
+            solution.pod_count, 4,
+            "Expected exactly 4 PODs for 5-statement chain with max_priv=2"
+        );
+
+        // POD 0: contains(0) and a_out(1)
+        assert!(
+            solution.pod_statements[0].contains(&0) && solution.pod_statements[0].contains(&1),
+            "POD 0 should contain statements 0 and 1, got {:?}",
+            solution.pod_statements[0]
+        );
+        assert!(
+            solution.pod_public_statements[0].contains(&1),
+            "Statement 1 (a_out) should be public in POD 0"
+        );
+
+        // POD 1: b_out(2)
+        assert!(
+            solution.pod_statements[1].contains(&2),
+            "POD 1 should contain statement 2 (b_out), got {:?}",
+            solution.pod_statements[1]
+        );
+        assert!(
+            solution.pod_public_statements[1].contains(&2),
+            "Statement 2 (b_out) should be public in POD 1"
+        );
+
+        // POD 2: c_out(3)
+        assert!(
+            solution.pod_statements[2].contains(&3),
+            "POD 2 should contain statement 3 (c_out), got {:?}",
+            solution.pod_statements[2]
+        );
+        assert!(
+            solution.pod_public_statements[2].contains(&3),
+            "Statement 3 (c_out) should be public in POD 2"
+        );
+
+        // POD 3 (output): d_out(4)
+        assert!(
+            solution.pod_statements[3].contains(&4),
+            "POD 3 should contain statement 4 (d_out), got {:?}",
+            solution.pod_statements[3]
+        );
+        assert!(
+            solution.pod_public_statements[3].contains(&4),
+            "Statement 4 (d_out) should be public in output POD"
+        );
+
+        // Prove and verify all PODs
+        let prover = MockProver {};
+        let result = builder.prove(&prover)?;
+
+        for (i, pod) in result.pods.iter().enumerate() {
+            pod.pod
+                .verify()
+                .map_err(|e| Error::Frontend(format!("POD {} verification failed: {}", i, e)))?;
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_diamond_dependencies_across_pods() -> Result<()> {
+        // Verifies that diamond-shaped dependencies work across PODs.
+        //
+        // Diamond structure:
+        //           a_out (output)
+        //          /      \
+        //      b_out      c_out
+        //          \      /
+        //          contains
+        //
+        // Where a_out depends on BOTH b_out and c_out, creating a diamond.
+        // With tight limits, b_out and c_out may end up in different PODs,
+        // and the output POD must copy from both.
+        //
+        // With max_priv_statements = 3:
+        //   - POD 0: contains, b_out, c_out (b_out and c_out public) - 3 statements
+        //   - POD 1 (output): copy(b_out), copy(c_out), a_out - 3 statements
+        // Or the solver may find a different arrangement.
+
+        let params = Params {
+            max_statements: 6,
+            max_public_statements: 3,
+            // max_priv_statements = 3
+            max_input_pods: 4,
+            max_input_pods_public_statements: 20,
+            max_custom_predicate_verifications: 10,
+            ..Params::default()
+        };
+        let vd_set = &*MOCK_VD_SET;
+
+        // pred_a takes TWO custom statement arguments (b_out and c_out)
+        // pred_b and pred_c each take a Contains
+        // Note: AND clauses are newline-separated, not comma-separated
+        let batch = parse(
+            r#"
+            pred_b(X) = AND(Contains(X, "k", 1))
+            pred_c(X) = AND(Contains(X, "k", 1))
+            pred_a(X, Y) = AND(
+                pred_b(X)
+                pred_c(Y)
+            )
+            "#,
+            &params,
+            &[],
+        )
+        .expect("parse predicates")
+        .custom_batch;
+
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
+
+        // Base: single contains statement (shared by both branches conceptually,
+        // but we need separate ones for pred_b and pred_c due to predicate signatures)
+        let dict = dict!({"k" => 1});
+        let contains = builder.priv_op(FrontendOp::dict_contains(dict, "k", 1))?;
+
+        // Left branch: b_out depends on contains
+        let b_out = builder.priv_op(FrontendOp::custom(
+            batch.predicate_ref_by_name("pred_b").unwrap(),
+            [contains.clone()],
+        ))?;
+
+        // Right branch: c_out depends on contains
+        let c_out = builder.priv_op(FrontendOp::custom(
+            batch.predicate_ref_by_name("pred_c").unwrap(),
+            [contains],
+        ))?;
+
+        // Top: a_out depends on BOTH b_out and c_out
+        let _a_out = builder.pub_op(FrontendOp::custom(
+            batch.predicate_ref_by_name("pred_a").unwrap(),
+            [b_out, c_out],
+        ))?;
+
+        let solution = builder.solve()?;
+
+        // Expected: exactly 2 PODs for the diamond
+        //   - POD 0: contains(0), b_out(1), c_out(2); b_out and c_out public
+        //   - POD 1 (output): a_out(3); a_out public (copies b_out and c_out)
+        assert_eq!(
+            solution.pod_count, 2,
+            "Expected exactly 2 PODs for diamond with max_priv=3"
+        );
+
+        // POD 0 should contain statements 0, 1, 2
+        assert!(
+            solution.pod_statements[0].contains(&0)
+                && solution.pod_statements[0].contains(&1)
+                && solution.pod_statements[0].contains(&2),
+            "POD 0 should contain statements 0, 1, 2, got {:?}",
+            solution.pod_statements[0]
+        );
+
+        // Statements 1 and 2 (b_out and c_out) should be public in POD 0
+        assert!(
+            solution.pod_public_statements[0].contains(&1)
+                && solution.pod_public_statements[0].contains(&2),
+            "Statements 1 and 2 should be public in POD 0"
+        );
+
+        // POD 1 (output) should contain statement 3 (a_out)
+        assert!(
+            solution.pod_statements[1].contains(&3),
+            "POD 1 should contain statement 3 (a_out), got {:?}",
+            solution.pod_statements[1]
+        );
+
+        // Statement 3 (a_out) should be public in output POD
+        assert!(
+            solution.pod_public_statements[1].contains(&3),
+            "Statement 3 (a_out) should be public in output POD"
+        );
+
+        // Prove and verify all PODs
+        let prover = MockProver {};
+        let result = builder.prove(&prover)?;
+
+        for (i, pod) in result.pods.iter().enumerate() {
+            pod.pod
+                .verify()
+                .map_err(|e| Error::Frontend(format!("POD {} verification failed: {}", i, e)))?;
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_copy_statements_counted_in_statement_limit() -> Result<()> {
+        // Verifies that CopyStatements are correctly counted toward the statement limit.
+        //
+        // When a dependency is copied from an earlier POD, the copy uses a statement
+        // slot. This test ensures the solver accounts for this overhead.
+        //
+        // Setup: 4-statement chain with max_priv_statements = 2
+        //   contains -> a_out -> b_out -> c_out (output)
+        //
+        // If copies weren't counted, solver might try:
+        //   POD 0: contains, a_out, b_out (3 statements - too many!)
+        //   POD 1: c_out
+        //
+        // With copies counted correctly:
+        //   POD 0: contains, a_out (a_out public) - 2 statements
+        //   POD 1: copy(a_out), b_out (b_out public) - 2 statements
+        //   POD 2: copy(b_out), c_out - 2 statements
+
+        let params = Params {
+            max_statements: 4,
+            max_public_statements: 2,
+            // max_priv_statements = 2
+            max_input_pods: 4,
+            max_input_pods_public_statements: 20,
+            max_custom_predicate_verifications: 10,
+            ..Params::default()
+        };
+        let vd_set = &*MOCK_VD_SET;
+
+        let batch = parse(
+            r#"
+            pred_a(X) = AND(Contains(X, "k", 1))
+            pred_b(X) = AND(pred_a(X))
+            pred_c(X) = AND(pred_b(X))
+            "#,
+            &params,
+            &[],
+        )
+        .expect("parse predicates")
+        .custom_batch;
+
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
+
+        let dict = dict!({"k" => 1});
+        let contains = builder.priv_op(FrontendOp::dict_contains(dict, "k", 1))?;
+
+        let a_out = builder.priv_op(FrontendOp::custom(
+            batch.predicate_ref_by_name("pred_a").unwrap(),
+            [contains],
+        ))?;
+
+        let b_out = builder.priv_op(FrontendOp::custom(
+            batch.predicate_ref_by_name("pred_b").unwrap(),
+            [a_out],
+        ))?;
+
+        let _c_out = builder.pub_op(FrontendOp::custom(
+            batch.predicate_ref_by_name("pred_c").unwrap(),
+            [b_out],
+        ))?;
+
+        let solution = builder.solve()?;
+
+        // Expected: exactly 3 PODs for a 4-statement chain with max_priv=2
+        //   - POD 0: contains(0), a_out(1); a_out public
+        //   - POD 1: b_out(2); b_out public (copies a_out, so 2 total slots used)
+        //   - POD 2 (output): c_out(3); c_out public (copies b_out, so 2 total slots used)
+        assert_eq!(
+            solution.pod_count, 3,
+            "Expected exactly 3 PODs for 4-statement chain with max_priv=2"
+        );
+
+        // POD 0: contains(0), a_out(1)
+        assert!(
+            solution.pod_statements[0].contains(&0) && solution.pod_statements[0].contains(&1),
+            "POD 0 should contain statements 0 and 1, got {:?}",
+            solution.pod_statements[0]
+        );
+        assert!(
+            solution.pod_public_statements[0].contains(&1),
+            "Statement 1 (a_out) should be public in POD 0"
+        );
+
+        // POD 1: b_out(2)
+        assert!(
+            solution.pod_statements[1].contains(&2),
+            "POD 1 should contain statement 2 (b_out), got {:?}",
+            solution.pod_statements[1]
+        );
+        assert!(
+            solution.pod_public_statements[1].contains(&2),
+            "Statement 2 (b_out) should be public in POD 1"
+        );
+
+        // POD 2 (output): c_out(3)
+        assert!(
+            solution.pod_statements[2].contains(&3),
+            "POD 2 should contain statement 3 (c_out), got {:?}",
+            solution.pod_statements[2]
+        );
+        assert!(
+            solution.pod_public_statements[2].contains(&3),
+            "Statement 3 (c_out) should be public in output POD"
+        );
+
+        // Prove and verify
+        let prover = MockProver {};
+        let result = builder.prove(&prover)?;
+
+        for (i, pod) in result.pods.iter().enumerate() {
+            pod.pod
+                .verify()
+                .map_err(|e| Error::Frontend(format!("POD {} verification failed: {}", i, e)))?;
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_dependency_chain_with_batch_limit() -> Result<()> {
+        // Verifies that dependency chains work correctly when combined with
+        // batch cardinality limits.
+        //
+        // Setup: Two predicates in DIFFERENT batches, where pred_b depends on pred_a.
+        // With max_custom_predicate_batches = 1, pred_a and pred_b must be in
+        // different PODs due to the batch limit. The dependency must still be
+        // satisfied via cross-POD copying.
+
+        let params = Params {
+            max_statements: 10,
+            max_public_statements: 4,
+            max_input_pods: 4,
+            max_input_pods_public_statements: 20,
+            max_custom_predicate_batches: 1, // Only 1 batch per POD
+            max_custom_predicate_verifications: 10,
+            ..Params::default()
+        };
+        let vd_set = &*MOCK_VD_SET;
+
+        // Create two SEPARATE batches (parsed separately to get different batch IDs)
+        let batch_a = parse(r#"pred_a(X) = AND(Contains(X, "k", 1))"#, &params, &[])
+            .expect("parse batch_a")
+            .custom_batch;
+
+        // batch_b's pred_b accepts pred_a statements
+        // Must use "use batch" syntax to reference external predicates
+        let batch_a_id = batch_a.id().encode_hex::<String>();
+        let batch_b_src = format!(
+            r#"
+            use batch pred_a from 0x{batch_a_id}
+            pred_b(X) = AND(pred_a(X))
+            "#
+        );
+        let batch_b = parse(&batch_b_src, &params, std::slice::from_ref(&batch_a))
+            .expect("parse batch_b")
+            .custom_batch;
+
+        let mut builder = MultiPodBuilder::new(&params, vd_set);
+
+        // Statement 0: Contains (no batch)
+        let dict = dict!({"k" => 1});
+        let contains = builder.priv_op(FrontendOp::dict_contains(dict, "k", 1))?;
+
+        // Statement 1: pred_a (batch A)
+        let a_out = builder.priv_op(FrontendOp::custom(
+            batch_a.predicate_ref_by_name("pred_a").unwrap(),
+            [contains],
+        ))?;
+
+        // Statement 2: pred_b (batch B) - depends on a_out
+        // With max_custom_predicate_batches = 1, this MUST be in a different POD
+        let _b_out = builder.pub_op(FrontendOp::custom(
+            batch_b.predicate_ref_by_name("pred_b").unwrap(),
+            [a_out],
+        ))?;
+
+        let solution = builder.solve()?;
+
+        // Expected: exactly 2 PODs due to batch limit
+        //   - POD 0: contains(0), a_out(1) using batch_a; a_out public
+        //   - POD 1 (output): b_out(2) using batch_b; b_out public (copies a_out)
+        //
+        // Even though max_priv_statements=6 could fit all 3 statements,
+        // max_custom_predicate_batches=1 forces batch_a and batch_b into different PODs.
+        assert_eq!(
+            solution.pod_count, 2,
+            "Expected exactly 2 PODs due to batch limit (max_custom_predicate_batches=1)"
+        );
+
+        // POD 0: contains(0), a_out(1)
+        assert!(
+            solution.pod_statements[0].contains(&0) && solution.pod_statements[0].contains(&1),
+            "POD 0 should contain statements 0 and 1, got {:?}",
+            solution.pod_statements[0]
+        );
+        assert!(
+            solution.pod_public_statements[0].contains(&1),
+            "Statement 1 (a_out) should be public in POD 0"
+        );
+
+        // POD 1 (output): b_out(2)
+        assert!(
+            solution.pod_statements[1].contains(&2),
+            "POD 1 should contain statement 2 (b_out), got {:?}",
+            solution.pod_statements[1]
+        );
+        assert!(
+            solution.pod_public_statements[1].contains(&2),
+            "Statement 2 (b_out) should be public in output POD"
+        );
+
+        // Prove and verify
+        let prover = MockProver {};
+        let result = builder.prove(&prover)?;
 
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
