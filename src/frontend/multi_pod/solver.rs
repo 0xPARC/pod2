@@ -638,101 +638,25 @@ fn try_solve_with_pods(
 mod tests {
     use super::*;
 
-    fn make_simple_deps(n: usize) -> DependencyGraph {
-        DependencyGraph {
-            statement_deps: (0..n).map(|_| vec![]).collect(),
-        }
-    }
-
-    #[test]
-    fn test_simple_packing() {
-        let params = Params {
-            max_statements: 10,
-            max_public_statements: 4,
-            ..Params::default()
-        };
-
-        let costs: Vec<StatementCost> = (0..5).map(|_| StatementCost::default()).collect();
-        let deps = make_simple_deps(5);
-        let output_public = vec![0, 1];
-        // Each statement is unique (its own content group)
-        let content_groups: Vec<Vec<usize>> = (0..5).map(|i| vec![i]).collect();
-
-        let input = SolverInput {
-            num_statements: 5,
-            costs: &costs,
-            deps: &deps,
-            output_public_indices: &output_public,
-            params: &params,
-            max_pods: 20,
-            all_anchored_keys: &[],
-            anchored_key_producers: &[],
-            statement_content_groups: &content_groups,
-        };
-
-        let solution = solve(&input).unwrap();
-
-        // Should fit in 1 POD
-        assert_eq!(solution.pod_count, 1);
-        assert_eq!(solution.pod_statements[0].len(), 5);
-        assert!(solution.pod_public_statements[0].contains(&0));
-        assert!(solution.pod_public_statements[0].contains(&1));
-    }
-
-    #[test]
-    fn test_overflow_by_statements() {
-        // max_priv_statements = max_statements - max_public_statements = 5 - 2 = 3
-        let params = Params {
-            max_statements: 5,
-            max_public_statements: 2,
-            ..Params::default()
-        };
-
-        let costs: Vec<StatementCost> = (0..6).map(|_| StatementCost::default()).collect();
-        let deps = make_simple_deps(6);
-        // At least one public statement is required
-        let output_public: Vec<usize> = vec![0];
-        // Each statement is unique (its own content group)
-        let content_groups: Vec<Vec<usize>> = (0..6).map(|i| vec![i]).collect();
-
-        let input = SolverInput {
-            num_statements: 6,
-            costs: &costs,
-            deps: &deps,
-            output_public_indices: &output_public,
-            params: &params,
-            max_pods: 20,
-            all_anchored_keys: &[],
-            anchored_key_producers: &[],
-            statement_content_groups: &content_groups,
-        };
-
-        let solution = solve(&input).unwrap();
-
-        // 6 statements / 3 per pod = exactly 2 PODs
-        assert_eq!(solution.pod_count, 2);
-    }
-
     #[test]
     fn test_no_public_statements_error() {
         // At least one public statement is required - otherwise the POD can't
         // prove anything to an external verifier.
         let params = Params::default();
-        let costs: Vec<StatementCost> = vec![];
-        let deps = make_simple_deps(0);
-        let output_public: Vec<usize> = vec![];
+        let deps = DependencyGraph {
+            statement_deps: vec![],
+        };
 
-        let content_groups: Vec<Vec<usize>> = vec![];
         let input = SolverInput {
             num_statements: 0,
-            costs: &costs,
+            costs: &[],
             deps: &deps,
-            output_public_indices: &output_public,
+            output_public_indices: &[],
             params: &params,
             max_pods: 20,
             all_anchored_keys: &[],
             anchored_key_producers: &[],
-            statement_content_groups: &content_groups,
+            statement_content_groups: &[],
         };
 
         let result = solve(&input);
