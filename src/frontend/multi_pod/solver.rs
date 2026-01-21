@@ -602,11 +602,12 @@ fn try_solve_with_pods(
         }
     };
 
-    // Extract solution
+    // Extract solution: count how many PODs are used.
+    // Symmetry breaking (Constraint 9) ensures PODs are used in order with no gaps.
     let mut pod_count = 0;
     for p in 0..target_pods {
         if solution.value(pod_used[p]) > SOLVER_BINARY_THRESHOLD {
-            pod_count = p + 1;
+            pod_count += 1;
         }
     }
 
