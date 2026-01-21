@@ -298,17 +298,19 @@ fn try_solve_with_pods(
         model.add_constraint(constraint!(sum >= 1));
     }
 
-    // Constraint 2: Output-public statements must be public in POD 0 (the output POD)
-    // This ensures there's exactly one output POD, simplifying privacy guarantees.
+    // Constraint 2: Output-public statements must be public in the output POD (last POD)
+    // The output POD is at index target_pods-1, allowing it to access all earlier PODs
+    // for dependencies. This ensures exactly one output POD with deterministic location.
+    let output_pod = target_pods - 1;
     for &s in input.output_public_indices {
-        model.add_constraint(constraint!(public[s][0] == 1));
+        model.add_constraint(constraint!(public[s][output_pod] == 1));
     }
 
-    // Constraint 2b: Non-output-public statements cannot be public in POD 0
+    // Constraint 2b: Non-output-public statements cannot be public in the output POD
     // This prevents private statements from leaking to the output POD's public slots.
     for s in 0..n {
         if !input.output_public_indices.contains(&s) {
-            model.add_constraint(constraint!(public[s][0] == 0));
+            model.add_constraint(constraint!(public[s][output_pod] == 0));
         }
     }
 
@@ -569,9 +571,10 @@ fn try_solve_with_pods(
         }
     }
 
-    // Total input PODs (internal + external) must not exceed max_input_pods
-    // For POD 0: only external inputs (no earlier generated PODs exist)
-    // For POD p > 0: internal inputs (earlier generated PODs) + external inputs
+    // Constraint 8c: Total input PODs (internal + external) must not exceed max_input_pods
+    // For each POD p, the total number of inputs is:
+    // - Internal inputs: PODs pp < p that provide public statements used by p
+    // - External inputs: User-provided PODs referenced by statements in p
     for p in 0..target_pods {
         let internal_sum: Expression = if p > 0 {
             (0..p).map(|pp| uses_input[p][pp]).sum()

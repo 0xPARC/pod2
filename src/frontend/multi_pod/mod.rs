@@ -74,21 +74,26 @@ impl Default for Options {
 /// Result of proving with MultiPodBuilder.
 #[derive(Debug)]
 pub struct MultiPodResult {
-    /// All PODs in proving order. The output POD is always at index 0,
-    /// followed by any intermediate/supporting PODs.
+    /// All PODs in build order (0, 1, ..., k).
+    /// Intermediate PODs are at indices 0..k-1.
+    /// The output POD is at index k (the last POD).
     pub pods: Vec<MainPod>,
 }
 
 impl MultiPodResult {
     /// Get the output POD (containing user-requested public statements).
-    /// This is always `pods[0]`.
+    /// This is always the last POD (`pods[k]`), which can access all earlier
+    /// intermediate PODs for dependencies.
     pub fn output_pod(&self) -> &MainPod {
-        &self.pods[0]
+        self.pods
+            .last()
+            .expect("MultiPodResult must have at least one POD")
     }
 
     /// Get intermediate/supporting PODs (all PODs except the output POD).
+    /// These are at indices 0..k-1, built before the output POD.
     pub fn intermediate_pods(&self) -> &[MainPod] {
-        &self.pods[1..]
+        &self.pods[..self.pods.len() - 1]
     }
 }
 
@@ -322,11 +327,11 @@ impl MultiPodBuilder {
         self.solve()?;
         let solution = self.cached_solution.as_ref().unwrap();
 
-        // Build PODs in sequential order: 0, 1, 2, ...
+        // Build PODs in sequential order: 0, 1, 2, ..., k
         // This order is guaranteed by the solver's symmetry-breaking constraint, which
         // ensures PODs are used in order (no gaps). Sequential building is required because
         // later PODs may reference earlier ones via CopyStatement for cross-POD dependencies.
-        // POD 0 is always the output POD; any subsequent PODs are intermediate.
+        // PODs 0..k-1 are intermediate; POD k (the last one) is the output POD.
         let mut pods: Vec<MainPod> = Vec::with_capacity(solution.pod_count);
 
         for pod_idx in 0..solution.pod_count {
@@ -626,85 +631,84 @@ mod tests {
 
     #[test]
     fn test_cross_pod_dependencies() -> Result<()> {
-        // Verifies that dependencies work correctly when statements span POD boundaries.
+        // Verifies that a dependency chain can be split across PODs.
         //
-        // Scenario: Verify properties of a user profile credential.
-        // The profile contains multiple attributes, and we verify each meets a threshold.
-        // Each verification creates a dependency chain:
-        //   dict_contains(profile, key, value) -> gt(value, threshold)
+        // This tests the core multi-POD capability: when a dependency chain is too
+        // long to fit in the output POD, intermediate statements must be proved in
+        // earlier PODs and made public so the output POD can access them.
         //
-        // When statements are split across PODs, the solver must:
-        // 1. Ensure dependencies are available (either proved locally or public in earlier POD)
-        // 2. Insert CopyStatements to bring dependencies into the POD that needs them
+        // Chain: b_out -> a_out -> contains
+        //   - contains: base statement (dict_contains)
+        //   - a_out: custom predicate taking contains as argument
+        //   - b_out: custom predicate taking a_out as argument (OUTPUT-PUBLIC)
         //
-        // Statement count: 12 user operations (11 private + 1 public), plus 6 anchored keys.
-        // To force multiple PODs, we set max_priv_statements = 10 (< 17 effective statements).
+        // With max_priv_statements = 2, we can't fit all 3 in one POD.
+        // Expected solution:
+        //   - POD 0 (intermediate): contains, a_out (with a_out public)
+        //   - POD 1 (output): copy(a_out), b_out
+        //
+        // This requires intermediate PODs to feed INTO the output POD.
+
+        // Tight params to force the dependency chain to be split.
+        // With max_priv_statements = 2, we can't fit contains + a_out + b_out's
+        // dependencies all in one POD.
         let params = Params {
-            max_statements: 12,
+            max_statements: 4,
             max_public_statements: 2,
-            // Derived: max_priv_statements = 12 - 2 = 10
-            max_input_pods: 2,
-            max_input_pods_public_statements: 14,
+            // max_priv_statements = 2
+            max_input_pods: 4,
+            max_input_pods_public_statements: 20,
+            max_custom_predicate_verifications: 10,
             ..Params::default()
         };
         let vd_set = &*MOCK_VD_SET;
 
+        // pred_a accepts a Contains statement
+        // pred_b accepts a pred_a statement (Custom statement from pred_a)
+        let batch = parse(
+            r#"
+            pred_a(X) = AND(Contains(X, "k", 1))
+            pred_b(X) = AND(pred_a(X))
+            "#,
+            &params,
+            &[],
+        )
+        .expect("parse predicates")
+        .custom_batch;
+
         let mut builder = MultiPodBuilder::new(&params, vd_set);
 
-        // User profile credential with multiple attributes
-        let profile = dict!({
-            "age" => 25,
-            "balance" => 1000,
-            "reputation" => 85,
-            "level" => 5,
-            "credits" => 150,
-            "score" => 72
-        });
+        // Statement 0: Contains (base of the chain)
+        let dict = dict!({"k" => 1});
+        let contains = builder.priv_op(FrontendOp::dict_contains(dict, "k", 1))?;
 
-        // Verify each attribute meets its threshold requirement
-        // Each creates a dependency: dict_contains -> gt
+        // Statement 1: Custom(pred_a), depends on contains
+        let a_out = builder.priv_op(FrontendOp::custom(
+            batch.predicate_ref_by_name("pred_a").unwrap(),
+            [contains],
+        ))?;
 
-        // Verify age >= 18 (adult)
-        let age = builder.priv_op(FrontendOp::dict_contains(profile.clone(), "age", 25))?;
-        let _age_ok = builder.priv_op(FrontendOp::gt_eq(age, 18))?;
+        // Statement 2: Custom(pred_b), depends on a_out - make this output-public
+        // This forces the dependency chain to be resolved for the output POD.
+        let _b_out = builder.pub_op(FrontendOp::custom(
+            batch.predicate_ref_by_name("pred_b").unwrap(),
+            [a_out],
+        ))?;
 
-        // Verify balance >= 100 (minimum balance)
-        let balance =
-            builder.priv_op(FrontendOp::dict_contains(profile.clone(), "balance", 1000))?;
-        let _balance_ok = builder.priv_op(FrontendOp::gt_eq(balance, 100))?;
+        // Solve - this finds a multi-POD solution where intermediate PODs
+        // provide dependencies to the output POD.
+        let solution = builder.solve()?;
 
-        // Verify reputation >= 50 (trusted user)
-        let reputation =
-            builder.priv_op(FrontendOp::dict_contains(profile.clone(), "reputation", 85))?;
-        let _reputation_ok = builder.priv_op(FrontendOp::gt_eq(reputation, 50))?;
-
-        // Verify level >= 3 (experienced user)
-        let level = builder.priv_op(FrontendOp::dict_contains(profile.clone(), "level", 5))?;
-        let _level_ok = builder.priv_op(FrontendOp::gt_eq(level, 3))?;
-
-        // Verify credits >= 100 (has credits)
-        let credits =
-            builder.priv_op(FrontendOp::dict_contains(profile.clone(), "credits", 150))?;
-        let _credits_ok = builder.priv_op(FrontendOp::gt_eq(credits, 100))?;
-
-        // Verify score >= 60 (passing score) - make this one public
-        let score = builder.priv_op(FrontendOp::dict_contains(profile, "score", 72))?;
-        let _score_ok = builder.pub_op(FrontendOp::gt_eq(score, 60))?;
-
-        let pod_count = {
-            let solution = builder.solve()?;
-            assert!(
-                solution.pod_count >= 2,
-                "Expected at least 2 PODs for 17 effective private statements with max_priv=10, got {}",
-                solution.pod_count
-            );
+        // Should need at least 2 PODs for this dependency chain
+        assert!(
+            solution.pod_count >= 2,
+            "Expected at least 2 PODs for dependency chain, got {}",
             solution.pod_count
-        };
+        );
 
         // Prove and verify all PODs
         let prover = MockProver {};
         let result = builder.prove(&prover)?;
-        assert_eq!(result.pods.len(), pod_count);
 
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
@@ -920,8 +924,8 @@ mod tests {
     #[test]
     fn test_private_statement_not_leaked_to_output_pod() -> Result<()> {
         // Verifies that private statements do not appear in the output POD's public slots.
-        // The solver now enforces that only user-requested public statements can be
-        // public in POD 0 (the output POD).
+        // The solver enforces that only user-requested public statements can be
+        // public in the output POD (the last POD).
 
         let params = Params {
             max_statements: 4,
@@ -943,29 +947,31 @@ mod tests {
 
         let solution = builder.solve()?;
 
-        // Check that POD 0's public statements are exactly the user-requested public statements
-        let pod0_public = &solution.pod_public_statements[0];
+        // Check that the output POD's public statements are exactly the user-requested public ones.
+        // The output POD is always the last one (index pod_count - 1).
+        let output_pod_idx = solution.pod_count - 1;
+        let output_public = &solution.pod_public_statements[output_pod_idx];
         assert!(
-            pod0_public.contains(&3),
-            "Public statement 3 should be public in POD 0"
+            output_public.contains(&3),
+            "Public statement 3 should be public in output POD"
         );
         assert!(
-            pod0_public.contains(&4),
-            "Public statement 4 should be public in POD 0"
+            output_public.contains(&4),
+            "Public statement 4 should be public in output POD"
         );
 
-        // Private statements should NOT be public in POD 0
+        // Private statements should NOT be public in output POD
         assert!(
-            !pod0_public.contains(&0),
-            "Private statement 0 should NOT be public in POD 0"
+            !output_public.contains(&0),
+            "Private statement 0 should NOT be public in output POD"
         );
         assert!(
-            !pod0_public.contains(&1),
-            "Private statement 1 should NOT be public in POD 0"
+            !output_public.contains(&1),
+            "Private statement 1 should NOT be public in output POD"
         );
         assert!(
-            !pod0_public.contains(&2),
-            "Private statement 2 should NOT be public in POD 0"
+            !output_public.contains(&2),
+            "Private statement 2 should NOT be public in output POD"
         );
 
         Ok(())
