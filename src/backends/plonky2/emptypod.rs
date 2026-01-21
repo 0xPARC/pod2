@@ -124,7 +124,7 @@ fn build() -> Result<(EmptyPodVerifyTarget, CircuitData)> {
 }
 
 impl EmptyPod {
-    fn new(params: &Params, vd_set: VDSet) -> Result<EmptyPod> {
+    fn new(vd_set: VDSet) -> Result<EmptyPod> {
         let (empty_pod_verify_target, data) = &*cache_get_standard_empty_pod_circuit_data();
 
         let mut pw = PartialWitness::<F>::new();
@@ -137,7 +137,7 @@ impl EmptyPod {
         };
         let common_hash = hash_common_data(&data.common).expect("hash ok");
         Ok(EmptyPod {
-            params: params.clone(),
+            params: Params::default(),
             verifier_only: VerifierOnlyCircuitDataSerializer(data.verifier_only.clone()),
             common_hash,
             sts_hash,
@@ -145,15 +145,10 @@ impl EmptyPod {
             proof: proof.proof,
         })
     }
-    pub fn new_boxed(params: &Params, vd_set: VDSet) -> Box<dyn Pod> {
-        let default_params = Params::default();
-        assert_eq!(default_params.id_params(), params.id_params());
-
-        let empty_pod = cache::get(
-            "empty_pod",
-            &(default_params, vd_set),
-            |(params, vd_set)| Self::new(params, vd_set.clone()).expect("prove EmptyPod"),
-        )
+    pub fn new_boxed(vd_set: VDSet) -> Box<dyn Pod> {
+        let empty_pod = cache::get("empty_pod", &vd_set, |vd_set| {
+            Self::new(vd_set.clone()).expect("prove EmptyPod")
+        })
         .expect("cache ok");
         Box::new(empty_pod.clone())
     }
@@ -176,7 +171,7 @@ impl Pod for EmptyPod {
             .into_iter()
             .map(mainpod::Statement::from)
             .collect_vec();
-        let sts_hash = calculate_statements_hash(&statements, &self.params);
+        let sts_hash = calculate_statements_hash(&statements);
         if sts_hash != self.sts_hash {
             return Err(Error::statements_hash_not_equal(self.sts_hash, sts_hash));
         }
@@ -256,9 +251,7 @@ pub mod tests {
 
     #[test]
     fn test_empty_pod() {
-        let params = Params::default();
-
-        let empty_pod = EmptyPod::new_boxed(&params, VDSet::new(&[]));
+        let empty_pod = EmptyPod::new_boxed(VDSet::new(&[]));
         empty_pod.verify().unwrap();
     }
 }

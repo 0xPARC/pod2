@@ -830,7 +830,6 @@ impl Default for Params {
 
 impl Params {
     // Convenient methods to get base params
-    // TODO: Make const without self
 
     pub const fn num_public_statements_hash() -> usize {
         BASE_PARAMS.num_public_statements_hash
@@ -886,17 +885,6 @@ impl Params {
     /// input recursive pods and new statements (public & private)
     pub fn statement_table_size(&self) -> usize {
         1 + self.max_input_pods * self.max_input_pods_public_statements + self.max_statements
-    }
-
-    // TODO: Is this still needed?
-    /// Parameters that define how the id is calculated
-    pub fn id_params(&self) -> Vec<usize> {
-        vec![
-            BASE_PARAMS.num_public_statements_hash,
-            BASE_PARAMS.max_statement_args,
-            BASE_PARAMS.max_custom_predicate_arity,
-            BASE_PARAMS.max_custom_batch_size,
-        ]
     }
 
     pub fn print_serialized_sizes(&self) {

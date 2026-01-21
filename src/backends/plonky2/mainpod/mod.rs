@@ -50,9 +50,8 @@ use crate::{
 /// circuits with a small `max_public_statements` only pay for `max_public_statements` by starting
 /// the poseidon state with a precomputed constant corresponding to the front-padding part: `id =
 /// hash(serialize(reverse(statements || none-statements)))`
-pub fn calculate_statements_hash(statements: &[Statement], params: &Params) -> middleware::Hash {
+pub fn calculate_statements_hash(statements: &[Statement]) -> middleware::Hash {
     assert!(statements.len() <= Params::num_public_statements_hash());
-    assert!(params.max_public_statements <= Params::num_public_statements_hash());
 
     let mut none_st: Statement = middleware::Statement::None.into();
     pad_statement(&mut none_st);
@@ -353,7 +352,7 @@ pub(crate) fn layout_statements(
         // We mocking or we don't need padding so we skip creating an EmptyPod
         MockEmptyPod::new_boxed(params, inputs.vd_set.clone())
     } else {
-        EmptyPod::new_boxed(params, inputs.vd_set.clone())
+        EmptyPod::new_boxed(inputs.vd_set.clone())
     };
     let empty_pod = empty_pod_box.as_ref();
     assert!(inputs.pods.len() <= params.max_input_pods);
@@ -475,7 +474,7 @@ impl MainPodProver for Prover {
             // We don't need padding so we skip creating an EmptyPod
             MockEmptyPod::new_boxed(params, inputs.vd_set.clone())
         } else {
-            EmptyPod::new_boxed(params, inputs.vd_set.clone())
+            EmptyPod::new_boxed(inputs.vd_set.clone())
         };
         let inputs = MainPodInputs {
             pods: &inputs
@@ -491,10 +490,7 @@ impl MainPodProver for Prover {
         let input_pods_pub_self_statements = inputs
             .pods
             .iter()
-            .map(|pod| {
-                assert_eq!(params.id_params(), pod.params().id_params());
-                pod.pub_self_statements()
-            })
+            .map(|pod| pod.pub_self_statements())
             .collect_vec();
 
         // Aux values for backend::Operation
@@ -527,7 +523,7 @@ impl MainPodProver for Prover {
         let operations = process_public_statements_operations(params, &statements, operations)?;
 
         // get the id out of the public statements
-        let sts_hash = calculate_statements_hash(&public_statements, params);
+        let sts_hash = calculate_statements_hash(&public_statements);
 
         let common_hash: String = cache_get_rec_main_pod_common_hash(params).clone();
         let proofs = inputs
@@ -718,7 +714,7 @@ impl Pod for MainPod {
             )));
         }
         // 2. get the id out of the public statements
-        let sts_hash = calculate_statements_hash(&self.public_statements, &self.params);
+        let sts_hash = calculate_statements_hash(&self.public_statements);
         if sts_hash != self.sts_hash {
             return Err(Error::statements_hash_not_equal(self.sts_hash, sts_hash));
         }

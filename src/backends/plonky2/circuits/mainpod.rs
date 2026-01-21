@@ -1898,7 +1898,7 @@ impl InnerCircuit for MainPodVerifyTarget {
         }
         // Padding
         if input_pods_len != self.params.max_input_pods {
-            let empty_pod = EmptyPod::new_boxed(&self.params, input.vds_set.clone());
+            let empty_pod = EmptyPod::new_boxed(input.vds_set.clone());
             let empty_pod_statements = empty_pod.pub_statements();
             let empty_mt_proof = MerkleClaimAndProof {
                 root: input.vds_set.root(),
@@ -3506,7 +3506,7 @@ mod tests {
             st_target.set_targets(&mut pw, st)?;
         }
         // Expected Output
-        let expected_sts_hash = calculate_statements_hash(&statements, params);
+        let expected_sts_hash = calculate_statements_hash(&statements);
         pw.set_hash_target(
             sts_hash_target,
             HashOut {
