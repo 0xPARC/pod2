@@ -42,18 +42,15 @@ struct WildcardUsage {
 }
 
 /// Early validation: Check if predicate is fundamentally splittable
-pub fn validate_predicate_is_splittable(
-    pred: &CustomPredicateDef,
-    params: &Params,
-) -> Result<(), SplittingError> {
+pub fn validate_predicate_is_splittable(pred: &CustomPredicateDef) -> Result<(), SplittingError> {
     let public_args = pred.args.public_args.len();
 
     // Check: public args must fit in operation arg limit
-    if public_args > params.max_statement_args {
+    if public_args > Params::max_statement_args() {
         return Err(SplittingError::TooManyPublicArgs {
             predicate: pred.name.name.clone(),
             count: public_args,
-            max_allowed: params.max_statement_args,
+            max_allowed: Params::max_statement_args(),
             message: "Public arguments exceed max operation args - cannot call this predicate"
                 .to_string(),
         });
@@ -68,10 +65,10 @@ pub fn split_predicate_if_needed(
     params: &Params,
 ) -> Result<Vec<CustomPredicateDef>, SplittingError> {
     // Early validation
-    validate_predicate_is_splittable(&pred, params)?;
+    validate_predicate_is_splittable(&pred)?;
 
     // If within limits, no splitting needed
-    if pred.statements.len() <= params.max_custom_predicate_arity {
+    if pred.statements.len() <= Params::max_custom_predicate_arity() {
         return Ok(vec![pred]);
     }
 
@@ -124,10 +121,9 @@ fn collect_wildcards_from_statement(stmt: &StatementTmpl) -> HashSet<String> {
 fn order_constraints_optimally(
     statements: Vec<StatementTmpl>,
     _usage: &HashMap<String, WildcardUsage>,
-    params: &Params,
 ) -> Vec<StatementTmpl> {
     // If no splitting needed, preserve original order
-    if statements.len() <= params.max_custom_predicate_arity {
+    if statements.len() <= Params::max_custom_predicate_arity() {
         return statements;
     }
 
@@ -136,13 +132,8 @@ fn order_constraints_optimally(
     let mut active_wildcards: HashSet<String> = HashSet::new();
 
     while !remaining.is_empty() {
-        let best_idx = find_best_next_statement(
-            &statements,
-            &remaining,
-            &active_wildcards,
-            ordered.len(),
-            params,
-        );
+        let best_idx =
+            find_best_next_statement(&statements, &remaining, &active_wildcards, ordered.len());
 
         remaining.remove(&best_idx);
         let stmt = &statements[best_idx];
@@ -207,10 +198,9 @@ fn find_best_next_statement(
     remaining: &HashSet<usize>,
     active_wildcards: &HashSet<String>,
     ordered_count: usize,
-    params: &Params,
 ) -> usize {
     // Calculate distance to next split point
-    let bucket_size = params.max_custom_predicate_arity - 1; // Reserve slot for chain call
+    let bucket_size = Params::max_custom_predicate_arity() - 1; // Reserve slot for chain call
     let distance_to_split = bucket_size - (ordered_count % bucket_size);
     let approaching_split = distance_to_split <= 2;
 
@@ -369,7 +359,7 @@ fn split_into_chain(
 
     let usage = analyze_wildcards(&pred.statements);
 
-    let ordered_statements = order_constraints_optimally(pred.statements, &usage, params);
+    let ordered_statements = order_constraints_optimally(pred.statements, &usage);
 
     let original_public_args: Vec<String> = pred
         .args
@@ -384,12 +374,12 @@ fn split_into_chain(
 
     while pos < ordered_statements.len() {
         let remaining = ordered_statements.len() - pos;
-        let is_last = remaining <= params.max_custom_predicate_arity;
+        let is_last = remaining <= Params::max_custom_predicate_arity();
 
         let bucket_size = if is_last {
             remaining // Last predicate uses all remaining
         } else {
-            params.max_custom_predicate_arity - 1 // Reserve slot for chain call
+            Params::max_custom_predicate_arity() - 1 // Reserve slot for chain call
         };
 
         let end = pos + bucket_size;
@@ -410,7 +400,7 @@ fn split_into_chain(
             .cloned()
             .collect();
         let total_public = incoming_public.len() + new_promotions.len();
-        if total_public > params.max_statement_args {
+        if total_public > Params::max_statement_args() {
             let context = crate::lang::error::SplitContext {
                 split_index: chain_links.len(),
                 statement_range: (pos, end),
@@ -425,7 +415,7 @@ fn split_into_chain(
             return Err(SplittingError::TooManyPublicArgsAtSplit {
                 predicate: original_name.clone(),
                 context: Box::new(context),
-                max_allowed: params.max_statement_args,
+                max_allowed: Params::max_statement_args(),
                 suggestion: suggestion.map(Box::new),
             });
         }
@@ -592,20 +582,20 @@ fn validate_chain(
     original_name: &str,
     params: &Params,
 ) -> Result<(), SplittingError> {
-    if chain.len() > params.max_custom_batch_size {
+    if chain.len() > Params::max_custom_batch_size() {
         return Err(SplittingError::TooManyPredicatesInChain {
             predicate: original_name.to_string(),
             count: chain.len(),
-            max_allowed: params.max_custom_batch_size,
+            max_allowed: Params::max_custom_batch_size(),
         });
     }
 
     for pred in chain {
         // Each predicate should have ≤ max_statements
-        assert!(pred.statements.len() <= params.max_custom_predicate_arity);
+        assert!(pred.statements.len() <= Params::max_custom_predicate_arity());
 
         // Public args should fit
-        assert!(pred.args.public_args.len() <= params.max_statement_args);
+        assert!(pred.args.public_args.len() <= Params::max_statement_args());
 
         // Total args should fit
         let total =
@@ -643,9 +633,8 @@ mod tests {
         "#;
 
         let pred = parse_predicate(input);
-        let params = Params::default();
 
-        assert!(validate_predicate_is_splittable(&pred, &params).is_ok());
+        assert!(validate_predicate_is_splittable(&pred).is_ok());
     }
 
     #[test]
@@ -657,9 +646,8 @@ mod tests {
         "#;
 
         let pred = parse_predicate(input);
-        let params = Params::default(); // max_statement_args = 5
 
-        let result = validate_predicate_is_splittable(&pred, &params);
+        let result = validate_predicate_is_splittable(&pred);
         assert!(matches!(
             result,
             Err(SplittingError::TooManyPublicArgs { .. })

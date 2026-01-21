@@ -10,7 +10,9 @@ use std::{
 };
 
 use crate::{
-    frontend::{BuilderArg, CustomPredicateBatchBuilder, StatementTmplBuilder},
+    frontend::{
+        BuilderArg, CustomPredicateBatchBuilder, PredicateOrWildcard, StatementTmplBuilder,
+    },
     lang::{
         frontend_ast::*,
         frontend_ast_split,
@@ -18,8 +20,8 @@ use crate::{
     },
     middleware::{
         self, containers, CustomPredicateBatch, IntroPredicateRef, NativePredicate, Params,
-        Predicate, PredicateOrWildcard, StatementTmpl as MWStatementTmpl,
-        StatementTmplArg as MWStatementTmplArg, Wildcard,
+        Predicate, StatementTmpl as MWStatementTmpl, StatementTmplArg as MWStatementTmplArg,
+        Wildcard,
     },
 };
 
@@ -96,11 +98,11 @@ impl<'a> Lowerer<'a> {
         }
 
         // Check batch size constraint
-        if custom_predicates.len() > self.params.max_custom_batch_size {
+        if custom_predicates.len() > Params::max_custom_batch_size() {
             return Err(LoweringError::TooManyPredicates {
                 batch_name: batch_name.clone(),
                 count: custom_predicates.len(),
-                max: self.params.max_custom_batch_size,
+                max: Params::max_custom_batch_size(),
                 original_count,
             });
         }
@@ -144,7 +146,7 @@ impl<'a> Lowerer<'a> {
         // Lower each statement to a builder first
         let mut statement_builders = Vec::new();
         for stmt in &request_def.statements {
-            let stmt_builder = self.lower_statement_to_builder(stmt)?;
+            let stmt_builder = self.lower_statement_to_builder(stmt, &HashSet::new())?;
             statement_builders.push(stmt_builder);
         }
 
@@ -169,15 +171,20 @@ impl<'a> Lowerer<'a> {
         let desugared = stmt_builder.desugar();
 
         // Convert BatchSelf predicate to Custom if we have a batch
-        let mut predicate = desugared.predicate;
-        if let Some(batch_ref) = batch {
-            if let Predicate::BatchSelf(index) = predicate {
-                predicate = Predicate::Custom(middleware::CustomPredicateRef::new(
-                    batch_ref.clone(),
-                    index,
-                ));
+        let pred_or_wc = match desugared.pred_or_wc {
+            PredicateOrWildcard::Predicate(pred) => middleware::PredicateOrWildcard::Predicate({
+                match (batch, pred) {
+                    (Some(batch_ref), Predicate::BatchSelf(index)) => Predicate::Custom(
+                        middleware::CustomPredicateRef::new(batch_ref.clone(), index),
+                    ),
+                    (_, pred) => pred,
+                }
+            }),
+            PredicateOrWildcard::Wildcard(name) => {
+                let index = wildcard_map.get(&name).expect("Wildcard not found");
+                middleware::PredicateOrWildcard::Wildcard(Wildcard::new(name, *index))
             }
-        }
+        };
 
         // Convert BuilderArgs to StatementTmplArgs
         let mut mw_args = Vec::new();
@@ -201,8 +208,7 @@ impl<'a> Lowerer<'a> {
         }
 
         Ok(MWStatementTmpl {
-            // TODO: Support wildcard
-            pred_or_wc: PredicateOrWildcard::Predicate(predicate),
+            pred_or_wc,
             args: mw_args,
         })
     }
@@ -298,10 +304,16 @@ impl<'a> Lowerer<'a> {
             }
         }
 
+        let wc_names: HashSet<String> = public_arg_names
+            .iter()
+            .chain(private_arg_names.iter())
+            .cloned()
+            .collect();
+
         // Lower statements to builders
         let mut statement_builders = Vec::new();
         for stmt in &pred_def.statements {
-            let stmt_builder = self.lower_statement_to_builder(stmt)?;
+            let stmt_builder = self.lower_statement_to_builder(stmt, &wc_names)?;
             statement_builders.push(stmt_builder);
         }
 
@@ -331,19 +343,20 @@ impl<'a> Lowerer<'a> {
     fn lower_statement_to_builder(
         &self,
         stmt: &StatementTmpl,
+        wc_names: &HashSet<String>,
     ) -> Result<StatementTmplBuilder, LoweringError> {
         // Get predicate
         let pred_name = &stmt.predicate.name;
         let symbols = self.validated.symbols();
 
         // Check for native predicates first
-        let predicate = if let Ok(native) = NativePredicate::from_str(pred_name) {
-            Predicate::Native(native)
+        let pred_or_wc = if let Ok(native) = NativePredicate::from_str(pred_name) {
+            PredicateOrWildcard::Predicate(Predicate::Native(native))
         } else if let Some(&index) = self.batch_predicate_index.get(pred_name) {
             // References to other predicates in the same batch (including split chains)
-            Predicate::BatchSelf(index)
+            PredicateOrWildcard::Predicate(Predicate::BatchSelf(index))
         } else if let Some(info) = symbols.predicates.get(pred_name) {
-            match &info.kind {
+            PredicateOrWildcard::Predicate(match &info.kind {
                 PredicateKind::Native(np) => Predicate::Native(*np),
                 PredicateKind::Custom { index } => Predicate::BatchSelf(*index),
                 PredicateKind::BatchImported { batch, index } => {
@@ -357,21 +370,23 @@ impl<'a> Lowerer<'a> {
                     args_len: info.public_arity,
                     verifier_data_hash: *verifier_data_hash,
                 }),
-            }
+            })
+        } else if wc_names.contains(pred_name) {
+            PredicateOrWildcard::Wildcard(pred_name.clone())
         } else {
             unreachable!("Predicate {} not found", pred_name);
         };
 
         // Check args count
-        if stmt.args.len() > self.params.max_statement_args {
+        if stmt.args.len() > Params::max_statement_args() {
             return Err(LoweringError::TooManyStatementArgs {
                 count: stmt.args.len(),
-                max: self.params.max_statement_args,
+                max: Params::max_statement_args(),
             });
         }
 
         // Convert AST args to BuilderArgs
-        let mut builder = StatementTmplBuilder::new(predicate);
+        let mut builder = StatementTmplBuilder::new(pred_or_wc);
         for arg in &stmt.args {
             let builder_arg = Self::lower_statement_arg_to_builder(arg)?;
             builder = builder.arg(builder_arg);
@@ -599,7 +614,7 @@ mod tests {
         // Should be BatchSelf(0) referring to pred1
         assert!(matches!(
             stmt.pred_or_wc,
-            PredicateOrWildcard::Predicate(Predicate::BatchSelf(0))
+            middleware::PredicateOrWildcard::Predicate(Predicate::BatchSelf(0))
         ));
     }
 
@@ -637,14 +652,30 @@ mod tests {
         // Should desugar to the Contains predicate
         assert!(matches!(
             stmt.pred_or_wc,
-            PredicateOrWildcard::Predicate(Predicate::Native(NativePredicate::Contains))
+            middleware::PredicateOrWildcard::Predicate(Predicate::Native(
+                NativePredicate::Contains
+            ))
         ));
+    }
+
+    #[test]
+    fn test_wc_pred() {
+        let input = r#"
+            my_pred(X, DynPred) = AND (
+                Equal(X["pred"], DynPred)
+                DynPred(X)
+            )
+        "#;
+
+        let params = Params::default();
+        let result = parse_validate_and_lower(input, &params);
+        assert!(result.is_ok());
     }
 
     #[test]
     fn test_error_message_with_splitting() {
         // Create a document with predicates that will exceed the batch limit after splitting
-        // We'll create 2 predicates with 4 statements each (max arity = 5)
+        // We'll create 5 predicates with 2 statements each (max arity = 5)
         // Each will NOT split individually, but together they exceed a small batch limit
         let input = r#"
             pred1(A) = AND (
@@ -655,13 +686,21 @@ mod tests {
                 Equal(B["c"], 3)
                 Equal(B["d"], 4)
             )
+            pred3(C) = AND (
+                Equal(C["e"], 5)
+                Equal(C["f"], 6)
+            )
+            pred4(D) = AND (
+                Equal(D["g"], 7)
+                Equal(D["h"], 8)
+            )
+            pred5(E) = AND (
+                Equal(E["i"], 9)
+                Equal(E["j"], 10)
+            )
         "#;
 
-        // Use very restrictive params to force the error
-        let params = Params {
-            max_custom_batch_size: 1,
-            ..Default::default()
-        };
+        let params = Params::default();
 
         let result = parse_validate_and_lower(input, &params);
 
@@ -676,9 +715,9 @@ mod tests {
             ..
         } = err
         {
-            assert_eq!(count, 2); // 2 predicates after splitting (no splitting occurred)
-            assert_eq!(max, 1);
-            assert_eq!(original_count, 2); // Started with 2 predicates
+            assert_eq!(count, 5); // 2 predicates after splitting (no splitting occurred)
+            assert_eq!(max, 4);
+            assert_eq!(original_count, 5); // Started with 2 predicates
 
             // Error message should NOT mention splitting since no splitting occurred
             let err_msg = format!("{}", err);
@@ -690,7 +729,7 @@ mod tests {
 
     #[test]
     fn test_error_message_after_splitting() {
-        // Create TWO predicates that will EACH split into 2 predicates
+        // Create TWO predicates that will split into 2 and 3 predicates
         // This tests the case where splitting causes the batch to be too large
         // but no individual predicate chain exceeds the limit
         let input = r#"
@@ -709,17 +748,17 @@ mod tests {
                 Equal(B["d"], 4)
                 Equal(B["e"], 5)
                 Equal(B["f"], 6)
+                Equal(B["g"], 7)
+                Equal(B["h"], 8)
+                Equal(B["i"], 9)
+                Equal(B["j"], 10)
             )
         "#;
 
-        // Use params where each predicate splits into 2, but total of 4 exceeds batch limit
-        let params = Params {
-            // Allow 3 predicates in batch
-            // Default max_custom_predicate_arity is 5, so each will split into 2 predicates
-            // Total: 2 original predicates -> 4 after splitting (exceeds limit of 3)
-            max_custom_batch_size: 3,
-            ..Default::default()
-        };
+        // max_custom_batch_size is 4
+        // Default max_custom_predicate_arity is 5, so each will split into 2 predicates
+        // Total: 2 original predicates -> 5 after splitting (exceeds limit of 4)
+        let params = Params::default();
 
         let result = parse_validate_and_lower(input, &params);
 
@@ -734,8 +773,8 @@ mod tests {
             ..
         } = err
         {
-            assert_eq!(count, 4); // 4 predicates after splitting (2 from each)
-            assert_eq!(max, 3);
+            assert_eq!(count, 5); // 5 predicates after splitting (2 and 3 from each)
+            assert_eq!(max, 4);
             assert_eq!(original_count, 2); // Started with 2 predicates
 
             // Error message SHOULD mention splitting since splitting occurred

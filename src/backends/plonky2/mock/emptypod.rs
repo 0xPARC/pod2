@@ -30,7 +30,7 @@ fn empty_statement() -> Statement {
 impl MockEmptyPod {
     pub fn new_boxed(params: &Params, vd_set: VDSet) -> Box<dyn Pod> {
         let statements = [mainpod::Statement::from(empty_statement())];
-        let sts_hash = calculate_statements_hash(&statements, params);
+        let sts_hash = calculate_statements_hash(&statements);
         Box::new(Self {
             params: params.clone(),
             sts_hash,
@@ -49,7 +49,7 @@ impl Pod for MockEmptyPod {
             .into_iter()
             .map(mainpod::Statement::from)
             .collect_vec();
-        let sts_hash = calculate_statements_hash(&statements, &self.params);
+        let sts_hash = calculate_statements_hash(&statements);
         if sts_hash != self.sts_hash {
             return Err(Error::statements_hash_not_equal(self.sts_hash, sts_hash));
         }

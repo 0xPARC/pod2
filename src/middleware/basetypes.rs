@@ -49,7 +49,7 @@ use super::serialization::*;
 pub use crate::backends::plonky2::basetypes::*;
 #[cfg(feature = "backend_plonky2")]
 pub use crate::backends::plonky2::{Error as BackendError, Result as BackendResult};
-use crate::middleware::{Params, ToFields, Value};
+use crate::middleware::{ToFields, Value};
 
 pub const HASH_SIZE: usize = 4;
 pub const VALUE_SIZE: usize = 4;
@@ -71,7 +71,7 @@ pub struct RawValue(
 );
 
 impl ToFields for RawValue {
-    fn to_fields(&self, _params: &Params) -> Vec<F> {
+    fn to_fields(&self) -> Vec<F> {
         self.0.to_vec()
     }
 }
@@ -220,7 +220,7 @@ impl From<RawValue> for Hash {
 }
 
 impl ToFields for Hash {
-    fn to_fields(&self, _params: &Params) -> Vec<F> {
+    fn to_fields(&self) -> Vec<F> {
         self.0.to_vec()
     }
 }
