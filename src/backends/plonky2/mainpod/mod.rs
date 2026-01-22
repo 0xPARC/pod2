@@ -1199,4 +1199,23 @@ pub mod tests {
         let prover = Prover {};
         builder.prove(&prover).unwrap();
     }
+
+    #[test]
+    fn test_abs_operation() -> frontend::Result<()> {
+        let params = middleware::Params::default();
+        let vd_set = &*DEFAULT_VD_SET;
+
+        let mut builder = MainPodBuilder::new(&params, vd_set);
+
+        builder.pub_op(frontend::Operation::abs(5, 5))?;
+        builder.pub_op(frontend::Operation::abs(7, -7))?;
+        builder.pub_op(frontend::Operation::abs(0, 0))?;
+
+        let prover = MockProver {};
+        let main_pod = builder.prove(&prover)?;
+
+        main_pod.pod.verify()?;
+
+        Ok(())
+    }
 }

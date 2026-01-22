@@ -198,6 +198,7 @@ impl Operation {
     op_impl_oa!(product_of, ProductOf, 3);
     op_impl_oa!(max_of, MaxOf, 3);
     op_impl_oa!(hash_of, HashOf, 3);
+    op_impl_oa!(abs, AbsFromEntries, 2);
     /// Creates a custom operation.
     ///
     /// `args` should contain the statements that are needed to prove the

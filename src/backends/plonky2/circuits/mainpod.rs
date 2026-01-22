@@ -443,6 +443,7 @@ fn verify_operation_circuit(
             verify_sum_of_circuit(params, builder, st, &op.op_type, &cache),
             verify_product_of_circuit(params, builder, st, &op.op_type, &cache),
             verify_max_of_circuit(params, builder, st, &op.op_type, &cache),
+            verify_abs_circuit(params, builder, st, &op.op_type, &cache),
         ]);
     }
     // Skip these if there are no resolved aux entries
@@ -1219,6 +1220,41 @@ fn verify_max_of_circuit(
     let st_ok = builder.is_equal_flattenable(st, &expected_statement);
 
     let ok = builder.all([op_code_ok, arg_types_ok, arg1_check, st_ok]);
+    measure_gates_end!(builder, measure);
+    ok
+}
+
+fn verify_abs_circuit(
+    params: &Params,
+    builder: &mut CircuitBuilder,
+    st: &StatementTarget,
+    op_type: &OperationTypeTarget,
+    cache: &StatementCache,
+) -> BoolTarget {
+    let measure = measure_gates_begin!(builder, "OpAbs");
+    let value_zero = ValueTarget::zero(builder);
+
+    let op_code_ok = op_type.has_native(builder, NativeOperation::AbsFromEntries);
+
+    let (arg_types_ok, [result_value, input_value]) = cache.first_n_args_as_values();
+
+    let input = builder.select_value(op_code_ok, input_value, value_zero);
+
+    let (expected_abs, _is_negative) = builder.i64_abs(input);
+
+    let abs_ok = builder.is_equal_slice(&result_value.elements, &expected_abs.elements);
+
+    let arg1_expected = cache.equations[0].lhs.clone();
+    let arg2_expected = cache.equations[1].lhs.clone();
+    let expected_statement = StatementTarget::new_native(
+        builder,
+        params,
+        NativePredicate::Abs,
+        &[arg1_expected, arg2_expected],
+    );
+    let st_ok = builder.is_equal_flattenable(st, &expected_statement);
+
+    let ok = builder.all([op_code_ok, arg_types_ok, abs_ok, st_ok]);
     measure_gates_end!(builder, measure);
     ok
 }

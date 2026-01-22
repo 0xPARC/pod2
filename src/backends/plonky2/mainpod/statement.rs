@@ -75,6 +75,7 @@ impl TryFrom<Statement> for middleware::Statement {
                 }
                 (NP::PublicKeyOf, &[a1, a2]) => S::PublicKeyOf(a1.try_into()?, a2.try_into()?),
                 (NP::SignedBy, &[a1, a2]) => S::SignedBy(a1.try_into()?, a2.try_into()?),
+                (NP::Abs, &[a1, a2]) => S::Abs(a1.try_into()?, a2.try_into()?),
                 (NP::ContainerInsert, &[a1, a2, a3, a4]) => S::ContainerInsert(
                     a1.try_into()?,
                     a2.try_into()?,

@@ -92,6 +92,7 @@ pub enum NativeOperation {
     ContainerInsertFromEntries = 16,
     ContainerUpdateFromEntries = 17,
     ContainerDeleteFromEntries = 18,
+    AbsFromEntries = 19,
 
     // Syntactic sugar operations.  These operations are not supported by the backend.  The
     // frontend compiler is responsible of translating these operations into the operations above.
@@ -167,6 +168,7 @@ impl OperationType {
                 NativeOperation::ContainerDeleteFromEntries => {
                     Some(Predicate::Native(NativePredicate::ContainerDelete))
                 }
+                NativeOperation::AbsFromEntries => Some(Predicate::Native(NativePredicate::Abs)),
                 no => unreachable!("Unexpected syntactic sugar op {:?}", no),
             },
             OperationType::Custom(cpr) => Some(Predicate::Custom(cpr.clone())),
@@ -202,6 +204,7 @@ pub enum Operation {
     HashOf(Statement, Statement, Statement),
     PublicKeyOf(Statement, Statement),
     SignedBy(Statement, Statement, Signature),
+    AbsFromEntries(/* result */ Statement, /* input */ Statement),
     ContainerInsertFromEntries(
         /* new_root */ Statement,
         /* old_root */ Statement,
@@ -262,6 +265,7 @@ impl Operation {
             Self::HashOf(_, _, _) => OT::Native(HashOf),
             Self::PublicKeyOf(_, _) => OT::Native(PublicKeyOf),
             Self::SignedBy(_, _, _) => OT::Native(SignedBy),
+            Self::AbsFromEntries(_, _) => OT::Native(AbsFromEntries),
             Self::ContainerInsertFromEntries(_, _, _, _, _) => {
                 OT::Native(ContainerInsertFromEntries)
             }
@@ -290,6 +294,7 @@ impl Operation {
             Self::MaxOf(s1, s2, s3) => vec![s1, s2, s3],
             Self::HashOf(s1, s2, s3) => vec![s1, s2, s3],
             Self::PublicKeyOf(s1, s2) => vec![s1, s2],
+            Self::AbsFromEntries(s1, s2) => vec![s1, s2],
             Self::SignedBy(s1, s2, _sig) => vec![s1, s2],
             Self::ContainerInsertFromEntries(s1, s2, s3, s4, _pf) => vec![s1, s2, s3, s4],
             Self::ContainerUpdateFromEntries(s1, s2, s3, s4, _pf) => vec![s1, s2, s3, s4],
@@ -348,6 +353,9 @@ impl Operation {
                 (NO::PublicKeyOf, &[s1, s2], OA::None) => Self::PublicKeyOf(s1.clone(), s2.clone()),
                 (NO::SignedBy, &[s1, s2], OA::Signature(sig)) => {
                     Self::SignedBy(s1.clone(), s2.clone(), sig)
+                }
+                (NO::AbsFromEntries, &[s1, s2], OA::None) => {
+                    Self::AbsFromEntries(s1.clone(), s2.clone())
                 }
                 (
                     NO::ContainerInsertFromEntries,
