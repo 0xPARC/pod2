@@ -41,6 +41,7 @@ The following table summarises the natively-supported statements, where we write
 | 14   | `ContainerInsert` | `ak1`, `ak2`, `ak3`, `ak4` | `(value_of(ak3), _) ∉ value_of(ak2) ∧ value_of(ak1) = value_of(ak2) ∪ {(value_of(ak3), value_of(ak4))}` (Merkle insert) |
 | 15   | `ContainerUpdate` | `ak1`, `ak2`, `ak3`, `ak4` | `(value_of(ak3), v) ∈ value_of(ak2) ∧ value_of(ak1) = (value_of(ak2) - {(value_of(ak3), v)}) ∪ {(value_of(ak3), value_of(ak4))}` (Merkle update) |
 | 16   | `ContainerDelete` | `ak1`, `ak2`, `ak3`        | `(value_of(ak3), v) ∈ value_of(ak2) ∧ value_of(ak1) = value_of(ak2) - {(value_of(ak3), v)}` (Merkle delete) |
+| 17   | `Abs`         | `ak1`, `ak2`        | `value_of(ak1) = abs(value_of(ak2))`                          |
 
 ### Frontend statements
 

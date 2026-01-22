@@ -26,6 +26,7 @@ The following table summarises the natively-supported operations:
 | 16   | `ContainerInsertFromEntries` | `s1`, `s2`, `s3`, `s4`, `proof` | `s1 = Contains(ak1..., value1)`, `s2 = Contains(ak2..., value2)`, `s3 = Contains(ak3..., value3)`, `s4 = Contains(ak4..., value4)`, `merkle_insert(value1, value2, value3, value4, proof) = true`    | `ContainerInsert(ak1, ak2, ak3, ak4)` |
 | 17   | `ContainerUpdateFromEntries` | `s1`, `s2`, `s3`, `s4`, `proof` | `s1 = Contains(ak1..., value1)`, `s2 = Contains(ak2..., value2)`, `s3 = Contains(ak3..., value3)`, `s4 = Contains(ak4..., value4)`, `merkle_update(value1, value2, value3, value4, proof) = true`    | `ContainerUpdate(ak1, ak2, ak3, ak4)` |
 | 18   | `ContainerDeleteFromEntries` | `s1`, `s2`, `s3`, `proof` | `s1 = Contains(ak1..., value1)`, `s2 = Contains(ak2..., value2)`, `s3 = Contains(ak3..., value3)`, `merkle_delete(value1, value2, value3, proof) = true`    | `ContainerDelete(ak1, ak2, ak3, ak4)` |
+| 19   | `AbsFromEntries`      | `s1`, `s2`          | `s1 = Contains(ak1..., value1)`, `s2 = Contains(ak2..., value2)`, `value1 = abs(value2)`                      | `Abs(ak1, ak2)`                                                |
 
 <br><br>
 
