@@ -532,6 +532,15 @@ impl MainPodBuilder {
                             return Err(native_arg_error());
                         }
                     }
+                    (AbsFromEntries, &[a1, a2], _) => {
+                        let (r1, v1) = a1.int_value_and_ref().ok_or_else(native_arg_error)?;
+                        let (r2, v2) = a2.int_value_and_ref().ok_or_else(native_arg_error)?;
+                        if v1 == v2.abs() {
+                            Statement::Abs(r1, r2)
+                        } else {
+                            return Err(native_arg_error());
+                        }
+                    }
                     (ContainerInsertFromEntries, &[a1, a2, a3, a4], _) => {
                         let (r1, _v1) = a1.value_and_ref().ok_or_else(native_arg_error)?;
                         let (r2, _v2) = a2.value_and_ref().ok_or_else(native_arg_error)?;

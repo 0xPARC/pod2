@@ -2558,6 +2558,120 @@ mod tests {
     }
 
     #[test]
+    fn test_abs_verify_failures() {
+        let invalid_int = RawValue([
+            GoldilocksField::NEG_ONE,
+            GoldilocksField::ZERO,
+            GoldilocksField::ZERO,
+            GoldilocksField::ZERO,
+        ]);
+
+        let prev_statements = [Statement::None.into()];
+
+        [
+            (
+                mainpod::Operation(
+                    OperationType::Native(NativeOperation::AbsFromEntries),
+                    vec![OperationArg::Index(0), OperationArg::Index(0)],
+                    OperationAux::None,
+                ),
+                Statement::abs(6, 5).into(),
+            ),
+            (
+                mainpod::Operation(
+                    OperationType::Native(NativeOperation::AbsFromEntries),
+                    vec![OperationArg::Index(0), OperationArg::Index(0)],
+                    OperationAux::None,
+                ),
+                Statement::abs(5, 6).into(),
+            ),
+            (
+                mainpod::Operation(
+                    OperationType::Native(NativeOperation::AbsFromEntries),
+                    vec![OperationArg::Index(0), OperationArg::Index(0)],
+                    OperationAux::None,
+                ),
+                Statement::abs(-5, 5).into(),
+            ),
+            (
+                mainpod::Operation(
+                    OperationType::Native(NativeOperation::AbsFromEntries),
+                    vec![OperationArg::Index(0), OperationArg::Index(0)],
+                    OperationAux::None,
+                ),
+                Statement::abs(invalid_int, 5).into(),
+            ),
+        ]
+        .into_iter()
+        .for_each(|(op, st)| {
+            let check = std::panic::catch_unwind(|| {
+                operation_verify(st, op, prev_statements.to_vec(), Aux::default())
+            });
+            match check {
+                Err(e) => {
+                    let err_string = e.downcast_ref::<String>().unwrap();
+                    if !err_string.contains("Integer too large to fit") {
+                        panic!("Test failed with an unexpected error: {}", err_string);
+                    }
+                }
+                Ok(Err(_)) => {}
+                _ => panic!("Test passed, yet it should have failed!"),
+            }
+        });
+    }
+
+    #[test]
+    fn test_operation_verify_abs() -> Result<()> {
+        let local = dict!({
+            "n55" => 55,
+            "n_55" => -55,
+            "n0" => 0,
+        });
+        let st1: mainpod::Statement = Statement::contains(local.clone(), "n55", 55).into();
+        let st2: mainpod::Statement = Statement::contains(local.clone(), "n_55", -55).into();
+        let st3: mainpod::Statement = Statement::contains(local.clone(), "n0", 0).into();
+
+        let st: mainpod::Statement = Statement::abs(
+            AnchoredKey::from((&local, "n55")),
+            AnchoredKey::from((&local, "n55")),
+        )
+        .into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::AbsFromEntries),
+            vec![OperationArg::Index(0), OperationArg::Index(0)],
+            OperationAux::None,
+        );
+        let prev_statements = vec![st1.clone()];
+        operation_verify(st, op, prev_statements, Aux::default())?;
+
+        let st: mainpod::Statement = Statement::abs(
+            AnchoredKey::from((&local, "n55")),
+            AnchoredKey::from((&local, "n_55")),
+        )
+        .into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::AbsFromEntries),
+            vec![OperationArg::Index(0), OperationArg::Index(1)],
+            OperationAux::None,
+        );
+        let prev_statements = vec![st1.clone(), st2.clone()];
+        operation_verify(st, op, prev_statements, Aux::default())?;
+
+        let st: mainpod::Statement = Statement::abs(
+            AnchoredKey::from((&local, "n0")),
+            AnchoredKey::from((&local, "n0")),
+        )
+        .into();
+        let op = mainpod::Operation(
+            OperationType::Native(NativeOperation::AbsFromEntries),
+            vec![OperationArg::Index(0), OperationArg::Index(0)],
+            OperationAux::None,
+        );
+        let prev_statements = vec![st3];
+        operation_verify(st, op, prev_statements, Aux::default())
+    }
+
+    #[test]
     fn test_operation_verify_hashof() -> Result<()> {
         let input_values = [
             Value::from(RawValue([

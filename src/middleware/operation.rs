@@ -487,6 +487,9 @@ impl Operation {
             (Self::SignedBy(msg_s, pk_s, sig), SignedBy(msg_v, pk_v)) => {
                 Self::check_signed_by(&val(msg_v, msg_s)?, &val(pk_v, pk_s)?, sig)?
             }
+            (Self::AbsFromEntries(s1, s2), Abs(v3, v4)) => {
+                int_val(v3, s1)? == int_val(v4, s2)?.abs()
+            }
             (
                 Self::ContainerInsertFromEntries(new_root_s, old_root_s, key_s, val_s, pf),
                 ContainerInsert(new_root_v, old_root_v, key_v, val_v),
