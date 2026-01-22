@@ -17,8 +17,8 @@ use crate::{
         frontend_ast_validate::{PredicateKind, ValidatedAST},
     },
     middleware::{
-        self, containers, CustomPredicateBatch, IntroPredicateRef, NativePredicate, Params,
-        Predicate, PredicateOrWildcard, StatementTmpl as MWStatementTmpl,
+        self, containers, IntroPredicateRef, NativePredicate, Params, Predicate,
+        PredicateOrWildcard, StatementTmpl as MWStatementTmpl,
         StatementTmplArg as MWStatementTmplArg, Wildcard,
     },
 };
@@ -156,6 +156,14 @@ impl<'a> Lowerer<'a> {
         wildcard_map: &HashMap<String, usize>,
         batches: Option<&PredicateBatches>,
     ) -> Result<MWStatementTmpl, LoweringError> {
+        // Enforce argument count limit for request statements
+        if stmt.args.len() > self.params.max_statement_args {
+            return Err(LoweringError::TooManyStatementArgs {
+                count: stmt.args.len(),
+                max: self.params.max_statement_args,
+            });
+        }
+
         let pred_name = &stmt.predicate.name;
         let symbols = self.validated.symbols();
 

@@ -329,7 +329,10 @@ mod tests {
         // Expected structure
         let expected_templates = vec![
             StatementTmpl {
-                pred_or_wc: pred_lit(Predicate::Custom(CustomPredicateRef::new(*batch_result, 0))), // Refers to some_pred
+                pred_or_wc: pred_lit(Predicate::Custom(CustomPredicateRef::new(
+                    batch_result.clone(),
+                    0,
+                ))), // Refers to some_pred
                 args: vec![
                     StatementTmplArg::Wildcard(wc("Var1", 0)),        // Var1
                     StatementTmplArg::Literal(Value::from(12345i64)), // 12345

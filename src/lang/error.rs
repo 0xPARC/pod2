@@ -236,14 +236,6 @@ fn format_public_args_at_split_error(
 /// Batching errors from multi-batch packing
 #[derive(Debug, thiserror::Error)]
 pub enum BatchingError {
-    #[error("Forward cross-batch reference: predicate '{caller}' (batch {caller_batch}) calls '{callee}' (batch {callee_batch}). Move '{callee}' earlier or '{caller}' later.")]
-    ForwardCrossBatchReference {
-        caller: String,
-        caller_batch: usize,
-        callee: String,
-        callee_batch: usize,
-    },
-
     #[error("Internal batching error: {message}")]
     Internal { message: String },
 }

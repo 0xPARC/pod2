@@ -15,6 +15,8 @@
 
 use std::{collections::HashMap, str::FromStr, sync::Arc};
 
+use petgraph::{algo::condensation, graph::DiGraph, prelude::NodeIndex, visit::EdgeRef};
+
 use crate::{
     frontend::{
         BuilderArg, CustomPredicateBatchBuilder, Operation, OperationArg, StatementTmplBuilder,
@@ -343,7 +345,7 @@ pub fn batch_predicates(
     }
 
     // Plan batch assignments in declaration order
-    let assignments = plan_batch_assignments(&predicates, params.max_custom_batch_size);
+    let assignments = plan_batch_assignments(&predicates, params.max_custom_batch_size)?;
 
     // Build reference map: name -> (batch_idx, idx_in_batch)
     let reference_map: HashMap<String, (usize, usize)> = assignments
@@ -407,27 +409,119 @@ pub fn batch_predicates(
 fn plan_batch_assignments(
     predicates: &[CustomPredicateDef],
     max_batch_size: usize,
-) -> Vec<PredicateAssignment> {
-    let mut assignments = Vec::new();
-    let mut current_batch = 0;
-    let mut current_batch_count = 0;
-
-    for pred in predicates {
-        if current_batch_count >= max_batch_size {
-            current_batch += 1;
-            current_batch_count = 0;
-        }
-
-        assignments.push(PredicateAssignment {
-            full_name: pred.name.name.clone(),
-            batch_index: current_batch,
-            index_in_batch: current_batch_count,
-        });
-
-        current_batch_count += 1;
+) -> Result<Vec<PredicateAssignment>, BatchingError> {
+    // Map name -> original index
+    let mut name_to_index: HashMap<String, usize> = HashMap::new();
+    for (i, pred) in predicates.iter().enumerate() {
+        name_to_index.insert(pred.name.name.clone(), i);
     }
 
-    assignments
+    let n = predicates.len();
+    // Build graph with nodes 0..n and edges callee -> caller for local refs
+    let mut graph: DiGraph<usize, ()> = DiGraph::new();
+    let nodes: Vec<NodeIndex> = (0..n).map(|i| graph.add_node(i)).collect();
+    for (caller_idx, pred) in predicates.iter().enumerate() {
+        for stmt in &pred.statements {
+            if let Some(&callee_idx) = name_to_index.get(&stmt.predicate.name) {
+                graph.add_edge(nodes[callee_idx], nodes[caller_idx], ());
+            }
+        }
+    }
+
+    // Condense SCCs into DAG; each node weight is Vec<usize> of members
+    // Pass `true` to remove self-loops, ensuring acyclicity for topo sort
+    let mut condensed = condensation(graph, /*make_acyclic=*/ true);
+
+    // Verify each component fits in a batch and sort members by original index
+    for comp_members in condensed.node_weights_mut() {
+        comp_members.sort_unstable();
+        if comp_members.len() > max_batch_size {
+            return Err(BatchingError::Internal {
+                message: format!(
+                    "Mutually recursive group of size {} exceeds batch capacity {}",
+                    comp_members.len(),
+                    max_batch_size
+                ),
+            });
+        }
+    }
+
+    // Build layer-wise topological order and sort each layer by component size desc (then by key)
+    // This reduces wasted space while preserving precedence constraints.
+    let node_count = condensed.node_count();
+    let mut indeg = vec![0usize; node_count];
+    for e in condensed.edge_references() {
+        indeg[e.target().index()] += 1;
+    }
+    // Stable key per component: minimal original index inside the component
+    let mut comp_key: Vec<usize> = vec![0; node_count];
+    for ni in condensed.node_indices() {
+        let members = &condensed[ni];
+        let key = members.iter().copied().min().unwrap_or(usize::MAX);
+        comp_key[ni.index()] = key;
+    }
+
+    let mut current_layer: Vec<NodeIndex> = condensed
+        .node_indices()
+        .filter(|&ni| indeg[ni.index()] == 0)
+        .collect();
+    let mut order: Vec<NodeIndex> = Vec::with_capacity(node_count);
+    use std::cmp::Reverse;
+    while !current_layer.is_empty() {
+        // Sort by size desc, then by comp_key asc for determinism
+        current_layer.sort_by_key(|&ni| {
+            let size = condensed[ni].len();
+            (Reverse(size), comp_key[ni.index()])
+        });
+        // Append this layer
+        order.extend(current_layer.iter().copied());
+        // Build next layer
+        let mut next_layer: Vec<NodeIndex> = Vec::new();
+        for &u in &current_layer {
+            for v in condensed.neighbors(u) {
+                let idx = v.index();
+                indeg[idx] -= 1;
+                if indeg[idx] == 0 {
+                    next_layer.push(v);
+                }
+            }
+        }
+        current_layer = next_layer;
+    }
+    assert_eq!(order.len(), node_count, "condensed graph must be acyclic");
+
+    // Greedy pack components by the layer-aware order
+    let mut pred_batch: Vec<usize> = vec![0; n];
+    let mut current_batch = 0usize;
+    let mut current_count = 0usize;
+    for cid in order {
+        let comp = &condensed[cid];
+        let comp_size = comp.len();
+        if current_count + comp_size > max_batch_size {
+            current_batch += 1;
+            current_count = 0;
+        }
+        for &pi in comp {
+            pred_batch[pi] = current_batch;
+        }
+        current_count += comp_size;
+    }
+
+    // Compute index_in_batch by original order to match builder's enumeration
+    let mut per_batch_counts: HashMap<usize, usize> = HashMap::new();
+    let mut assignments = Vec::with_capacity(n);
+    for (i, pred) in predicates.iter().enumerate() {
+        let b = pred_batch[i];
+        let idx = per_batch_counts.get(&b).cloned().unwrap_or(0);
+        per_batch_counts.insert(b, idx + 1);
+        assignments.push(PredicateAssignment {
+            full_name: pred.name.name.clone(),
+            batch_index: b,
+            index_in_batch: idx,
+        });
+    }
+
+    Ok(assignments)
 }
 
 /// Build a single batch with properly resolved references
@@ -518,13 +612,11 @@ fn build_statement_with_resolved_refs(
             let batch = &existing_batches[target_batch];
             Predicate::Custom(CustomPredicateRef::new(batch.clone(), target_idx))
         } else {
-            // Forward reference to later batch - error
-            return Err(BatchingError::ForwardCrossBatchReference {
-                caller: caller_name.to_string(),
-                caller_batch: current_batch_idx,
-                callee: callee_name.to_string(),
-                callee_batch: target_batch,
-            });
+            // Forward reference to a later batch should be impossible with the dependency-aware planner
+            unreachable!(
+                "Forward cross-batch reference: '{}' (batch {}) -> '{}' (batch {})",
+                caller_name, current_batch_idx, callee_name, target_batch
+            );
         }
     } else if let Some(imported) = imported_predicates.get(callee_name) {
         // Imported predicate from another batch
@@ -611,9 +703,12 @@ fn lower_literal(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lang::{
-        frontend_ast::parse::parse_document, frontend_ast_split::split_predicate_if_needed,
-        parser::parse_podlang,
+    use crate::{
+        lang::{
+            frontend_ast::parse::parse_document, frontend_ast_split::split_predicate_if_needed,
+            parser::parse_podlang,
+        },
+        middleware::PredicateOrWildcard,
     };
 
     fn parse_predicates(input: &str) -> Vec<CustomPredicateDef> {
@@ -744,9 +839,13 @@ mod tests {
         assert_eq!(batches.batch_count(), 1);
 
         // pred2 should reference pred1 via BatchSelf
+        use crate::middleware::PredicateOrWildcard;
         let pred2 = &batches.batches()[0].predicates()[0];
         let stmt = &pred2.statements[0];
-        assert!(matches!(stmt.pred(), Predicate::BatchSelf(1))); // pred1 is at index 1
+        assert!(matches!(
+            stmt.pred_or_wc(),
+            PredicateOrWildcard::Predicate(Predicate::BatchSelf(1))
+        )); // pred1 is at index 1
     }
 
     #[test]
@@ -777,12 +876,12 @@ mod tests {
         let pred1 = &batches.batches()[0].predicates()[0];
         let pred2 = &batches.batches()[0].predicates()[1];
         assert!(matches!(
-            pred1.statements[0].pred(),
-            Predicate::BatchSelf(1)
+            pred1.statements[0].pred_or_wc(),
+            PredicateOrWildcard::Predicate(Predicate::BatchSelf(1))
         )); // calls pred2
         assert!(matches!(
-            pred2.statements[0].pred(),
-            Predicate::BatchSelf(0)
+            pred2.statements[0].pred_or_wc(),
+            PredicateOrWildcard::Predicate(Predicate::BatchSelf(0))
         )); // calls pred1
     }
 
@@ -819,8 +918,8 @@ mod tests {
         let pred5_stmt = &pred5.statements[0];
 
         // The predicate should be a Custom reference to batch 0
-        match pred5_stmt.pred() {
-            Predicate::Custom(ref_) => {
+        match pred5_stmt.pred_or_wc() {
+            PredicateOrWildcard::Predicate(Predicate::Custom(ref_)) => {
                 // Should reference batch 0, index 0 (pred1)
                 assert_eq!(ref_.batch.id(), batches.batches()[0].id());
             }
@@ -879,6 +978,40 @@ mod tests {
     }
 
     #[test]
+    fn test_forward_cross_batch_reference_avoided_by_planner() {
+        // 5 predicates where pred4 calls pred5 (forward declaration)
+        // With max_custom_batch_size = 4, naive packing would place pred5 in batch 1
+        // The dependency-aware planner should instead pack pred5 before pred4
+        // to avoid a forward cross-batch reference.
+        let input = r#"
+            pred1(A) = AND(Equal(A["x"], 1))
+            pred2(B) = AND(Equal(B["y"], 2))
+            pred3(C) = AND(Equal(C["z"], 3))
+            pred4(D) = AND(pred5(D))
+            pred5(E) = AND(Equal(E["v"], 5))
+        "#;
+
+        let predicates = parse_predicates(input);
+        let params = Params::default(); // max_custom_batch_size = 4
+
+        let batches = batch_predicates(
+            preds_to_split_results(predicates),
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+        )
+        .expect("Planner should avoid forward cross-batch reference");
+
+        // Expect two batches and the reference to point within the same batch or earlier batch.
+        assert_eq!(batches.batch_count(), 2);
+        // pred5 should be in batch 0 and pred4 in batch 1 (given stable topo + packing)
+        let pred5_ref = batches.predicate_ref_by_name("pred5").unwrap();
+        let pred4_ref = batches.predicate_ref_by_name("pred4").unwrap();
+        assert_eq!(pred5_ref.batch.id(), batches.batches()[0].id());
+        assert_eq!(pred4_ref.batch.id(), batches.batches()[1].id());
+    }
+
+    #[test]
     fn test_empty_input() {
         let split_results: Vec<SplitResult> = vec![];
         let params = Params::default();
@@ -915,9 +1048,83 @@ mod tests {
         assert!(batches.predicate_ref_by_name("nonexistent").is_none());
     }
 
-    // ============================================================
-    // Tests for apply_predicate
-    // ============================================================
+    #[test]
+    fn test_mutual_recursion_exceeds_capacity_error() {
+        // Two predicates that call each other (SCC size = 2) with max batch size 1
+        // Should error because an SCC cannot be split across batches
+        let input = r#"
+            pred1(A) = AND(pred2(A))
+            pred2(B) = AND(pred1(B))
+        "#;
+
+        let predicates = parse_predicates(input);
+        let params = Params {
+            max_custom_batch_size: 1, // force SCC > capacity
+            ..Default::default()
+        };
+
+        let result = batch_predicates(
+            preds_to_split_results(predicates),
+            &params,
+            "TestBatch",
+            &HashMap::new(),
+        );
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            BatchingError::Internal { message } => {
+                assert!(message.contains("exceeds batch capacity"));
+            }
+            e => panic!("Expected Internal batching error, got {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_split_chain_across_batches_placement() {
+        // Create a large predicate that splits into 2 pieces, plus enough predicates
+        // to force the chain to span batches; verify continuation is placed earlier batch
+        let input = r#"
+            p1(A) = AND(Equal(A["x"], 1))
+            p2(B) = AND(Equal(B["y"], 2))
+            p3(C) = AND(Equal(C["z"], 3))
+            large_pred(D) = AND(
+                Equal(D["a"], 1)
+                Equal(D["b"], 2)
+                Equal(D["c"], 3)
+                Equal(D["d"], 4)
+                Equal(D["e"], 5)
+                Equal(D["f"], 6)
+            )
+        "#;
+
+        let predicates = parse_predicates(input);
+        let params = Params::default(); // max_custom_batch_size = 4
+
+        // Split and batch
+        let mut all_split_results = Vec::new();
+        for pred in predicates {
+            let result = split_predicate_if_needed(pred, &params).expect("Split failed");
+            all_split_results.push(result);
+        }
+        let batches = batch_predicates(all_split_results, &params, "TestBatch", &HashMap::new())
+            .expect("Batch failed");
+
+        assert_eq!(batches.batch_count(), 2);
+
+        // Verify chain info
+        let chain_info = batches
+            .split_chain("large_pred")
+            .expect("Expected chain info");
+        assert_eq!(chain_info.chain_pieces.len(), 2);
+        // Expect continuation piece name to be large_pred_1 (innermost first)
+        let cont_name = &chain_info.chain_pieces[0].name;
+        assert_eq!(cont_name, "large_pred_1");
+
+        // Expect continuation in batch 0 and main in batch 1
+        let cont_ref = batches.predicate_ref_by_name("large_pred_1").unwrap();
+        let main_ref = batches.predicate_ref_by_name("large_pred").unwrap();
+        assert_eq!(cont_ref.batch.id(), batches.batches()[0].id());
+        assert_eq!(main_ref.batch.id(), batches.batches()[1].id());
+    }
 
     /// Helper: create a unique Statement for testing
     /// Uses Equal with distinct literal values to create distinguishable statements
