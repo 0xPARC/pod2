@@ -1476,19 +1476,8 @@ pub mod tests {
         // Pass statements in original declaration order
         let statements = vec![st_a, st_b, st_c, st_d, st_e, st_f];
 
-        // Use apply_predicate to automatically wire the split chain
-        let result = batches.apply_predicate_with(
-            "large_pred",
-            statements,
-            true, // public
-            |public, op| {
-                if public {
-                    builder.pub_op(op)
-                } else {
-                    builder.priv_op(op)
-                }
-            },
-        )?;
+        // Use apply_predicate (primary API) to automatically wire the split chain
+        let result = batches.apply_predicate(&mut builder, "large_pred", statements, true)?;
 
         // The result should be a valid statement
         let predicate = batches.predicate_ref_by_name("large_pred").unwrap();
