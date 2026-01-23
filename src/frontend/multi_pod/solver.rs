@@ -1,7 +1,35 @@
 //! MILP solver for multi-POD packing.
 //!
-//! This module builds and solves a Mixed Integer Linear Program to minimize
-//! the number of PODs needed to prove a set of statements.
+//! This module builds and solves a Mixed Integer Linear Program (MILP) to minimize
+//! the number of PODs needed to prove a set of statements while respecting resource
+//! limits and dependency constraints.
+//!
+//! # Constraint Overview
+//!
+//! The solver uses the following constraints (numbered for reference in code comments):
+//!
+//! - **Constraint 1 (Coverage)**: Each statement must be proved in at least one POD.
+//! - **Constraint 2 (Output POD)**: Output-public statements must be public in the last POD.
+//! - **Constraint 2b (Privacy)**: Non-output-public statements cannot be public in the output POD.
+//! - **Constraint 3 (Public ⇒ Proved)**: A statement can only be public if it's proved there.
+//! - **Constraint 4 (POD Existence)**: If any statement is proved in POD p, then p is used.
+//! - **Constraint 5 (Dependencies)**: If statement S depends on D and S is proved in POD p,
+//!   then D must be available: either proved locally in p, or public in some earlier POD.
+//! - **Constraint 5b (Copy Tracking)**: Track when dependencies need CopyStatement.
+//! - **Constraint 6 (Resource Limits)**: Per-POD limits on statements, public slots, merkle
+//!   proofs, custom predicates, batches, etc.
+//! - **Constraint 7 (Batch Cardinality)**: Limit distinct custom predicate batches per POD.
+//! - **Constraint 7b (Anchored Keys)**: Track auto-inserted Contains for anchored key references.
+//! - **Constraint 8a (Internal Inputs)**: Track which earlier PODs are used as inputs.
+//! - **Constraint 8b (External Inputs)**: Track which external PODs are used as inputs.
+//! - **Constraint 8c (Input Limit)**: Total inputs (internal + external) ≤ max_input_pods.
+//! - **Constraint 9 (Symmetry Breaking)**: PODs are used in order (0, 1, 2, ...) with no gaps.
+//!
+//! # Solution Approach
+//!
+//! The solver uses an incremental approach: it tries solving with the minimum possible
+//! number of PODs first, then increments until a feasible solution is found. This is
+//! efficient for the common case where few PODs are needed.
 
 // MILP constraint building uses explicit index loops for clarity
 #![allow(clippy::needless_range_loop)]
@@ -156,8 +184,13 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
     )))
 }
 
-/// Try to solve with exactly `target_pods` PODs.
-/// Returns `Ok(Some(solution))` if feasible, `Ok(None)` if infeasible.
+/// Try to solve the packing problem with exactly `target_pods` PODs.
+///
+/// Builds a MILP model with all constraints and attempts to solve it.
+/// Returns `Ok(Some(solution))` if a feasible assignment exists,
+/// `Ok(None)` if the problem is infeasible with this many PODs.
+///
+/// The caller (in `solve()`) handles incrementing `target_pods` when infeasible.
 fn try_solve_with_pods(
     input: &SolverInput,
     n: usize,

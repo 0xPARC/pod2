@@ -1,8 +1,51 @@
 //! Multi-POD builder for automatic statement packing.
 //!
-//! This module provides `MultiPodBuilder`, a drop-in replacement for `MainPodBuilder`
-//! that automatically handles cases where statements exceed per-POD limits by
+//! This module provides [`MultiPodBuilder`], a higher-level alternative to [`MainPodBuilder`]
+//! that automatically handles cases where statements exceed per-POD resource limits by
 //! splitting across multiple PODs.
+//!
+//! # Problem
+//!
+//! A single POD has resource limits (max statements, max custom predicate batches, etc.).
+//! When a proof requires more resources than a single POD can provide, statements must
+//! be split across multiple PODs with dependencies resolved via cross-POD copying.
+//!
+//! # Architecture
+//!
+//! The multi-POD system uses a MILP (Mixed Integer Linear Program) solver to find the
+//! optimal assignment of statements to PODs. The solver minimizes the number of PODs
+//! while respecting:
+//! - Per-POD resource limits (statements, batches, merkle proofs, etc.)
+//! - Statement dependencies (if A depends on B, B must be available when proving A)
+//! - Input POD limits (each POD can only reference a limited number of other PODs)
+//!
+//! # POD Ordering
+//!
+//! PODs are built in index order: 0, 1, 2, ..., k. The **output POD is always last**
+//! (index k), containing the user-requested public statements. Earlier PODs (0..k-1)
+//! are **intermediate PODs** that prove supporting statements.
+//!
+//! This ordering allows dependencies to flow forward: later PODs can access public
+//! statements from earlier PODs via `CopyStatement`. The output POD, being last, can
+//! access all intermediate PODs.
+//!
+//! # Usage
+//!
+//! ```ignore
+//! let mut builder = MultiPodBuilder::new(&params, &vd_set);
+//!
+//! // Add operations (similar to MainPodBuilder)
+//! let stmt_a = builder.priv_op(FrontendOp::eq(1, 1))?;
+//! let stmt_b = builder.pub_op(FrontendOp::eq(2, 2))?;  // Will be public in output
+//!
+//! // Solve and prove
+//! let result = builder.prove(&prover)?;
+//!
+//! // Access the output POD
+//! let output = result.output_pod();
+//! ```
+//!
+//! [`MainPodBuilder`]: crate::frontend::MainPodBuilder
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -99,8 +142,28 @@ impl MultiPodResult {
 
 /// Builder for creating multiple PODs when statements exceed per-POD limits.
 ///
-/// Provides a similar API to `MainPodBuilder`, but automatically splits
-/// statements across multiple PODs when limits are exceeded.
+/// # Overview
+///
+/// `MultiPodBuilder` provides a similar API to [`MainPodBuilder`], but automatically
+/// splits statements across multiple PODs when resource limits are exceeded. The
+/// workflow is:
+///
+/// 1. **Add operations**: Use [`priv_op`](Self::priv_op) and [`pub_op`](Self::pub_op)
+///    to add statements, just like `MainPodBuilder`.
+///
+/// 2. **Solve**: Call [`solve`](Self::solve) to run the MILP solver, which determines
+///    the optimal assignment of statements to PODs.
+///
+/// 3. **Prove**: Call [`prove`](Self::prove) to build and prove all PODs.
+///
+/// # POD Structure
+///
+/// The result contains PODs in build order: intermediate PODs first (indices 0..k-1),
+/// then the output POD last (index k). The output POD contains all user-requested
+/// public statements (those added via `pub_op`). Intermediate PODs make their
+/// statements public so later PODs can copy them.
+///
+/// [`MainPodBuilder`]: crate::frontend::MainPodBuilder
 #[derive(Debug)]
 pub struct MultiPodBuilder {
     params: Params,
@@ -343,6 +406,15 @@ impl MultiPodBuilder {
     }
 
     /// Build a single POD based on the solver solution.
+    ///
+    /// This function translates the solver's abstract assignment into a concrete POD by:
+    /// 1. Identifying which input PODs are needed (external + earlier generated)
+    /// 2. Adding those input PODs to a fresh `MainPodBuilder`
+    /// 3. For each statement assigned to this POD (in dependency order):
+    ///    - Copy any dependencies from earlier PODs via `CopyStatement`
+    ///    - Execute the original operation to create the statement
+    ///    - Mark as public if the solver determined it should be
+    /// 4. Prove the POD
     fn build_single_pod(
         &self,
         pod_idx: usize,
@@ -352,7 +424,6 @@ impl MultiPodBuilder {
     ) -> Result<MainPod> {
         let mut builder = MainPodBuilder::new(&self.params, &self.vd_set);
 
-        // Use cached dependency graph (computed in solve())
         let deps = self
             .cached_deps
             .as_ref()
@@ -362,7 +433,7 @@ impl MultiPodBuilder {
         let mut needed_external_pods: BTreeSet<usize> = BTreeSet::new();
         let mut needed_earlier_pods: BTreeSet<usize> = BTreeSet::new();
 
-        // Find which external and earlier PODs we need based on dependencies
+        // Step 1: Find which external and earlier PODs we need based on dependencies
         for &stmt_idx in statements_in_this_pod {
             for dep in &deps.statement_deps[stmt_idx] {
                 match dep {
@@ -390,16 +461,15 @@ impl MultiPodBuilder {
             }
         }
 
-        // Add only the external input PODs that are needed
+        // Step 2: Add input PODs to the builder
         for &ext_idx in &needed_external_pods {
             builder.add_pod(self.input_pods[ext_idx].clone())?;
         }
-
-        // Add needed earlier generated PODs
         for &earlier_idx in &needed_earlier_pods {
             builder.add_pod(earlier_pods[earlier_idx].clone())?;
         }
 
+        // Step 3: Build statement source map for determining what needs copying.
         // Create a mapping from statement to its source (for copy operations).
         // A statement may be both proved locally AND available from an earlier POD.
         // We use or_insert to prefer local sources (inserted first) over earlier PODs.
@@ -414,9 +484,9 @@ impl MultiPodBuilder {
             }
         }
 
-        // Add statements in dependency order (ascending index order).
-        // Statements are added to the builder in dependency order: if B depends on A,
-        // A must be added before B to get its reference. So index order = dependency order.
+        // Step 4: Add statements in dependency order.
+        // Statements are added in ascending index order, which matches dependency order:
+        // if B depends on A, then A has a lower index and is added first.
         let statements_sorted: BTreeSet<usize> = statements_in_this_pod.iter().copied().collect();
         let public_set = &solution.pod_public_statements[pod_idx];
 
@@ -496,7 +566,7 @@ impl MultiPodBuilder {
             added_statements.insert(stmt_idx, stmt);
         }
 
-        // Prove the POD
+        // Step 5: Prove the POD
         let pod = builder
             .prove(prover)
             .map_err(|e| Error::Frontend(e.to_string()))?;
