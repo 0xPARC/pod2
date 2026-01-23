@@ -55,7 +55,7 @@ pub struct SplitChainInfo {
     /// Total number of "real" user statements (excludes chain calls)
     pub total_real_statements: usize,
     /// Maps original statement index → reordered index
-    /// e.g., if original stmt 0 became reordered stmt 3, then reorder_map[0] = 3
+    /// e.g., if original stmt 0 became reordered stmt 3, then `reorder_map[0] = 3`
     pub reorder_map: Vec<usize>,
 }
 

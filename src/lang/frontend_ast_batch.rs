@@ -3,15 +3,14 @@
 //! This module implements packing of multiple predicates (including split chains)
 //! into multiple CustomPredicateBatches when they exceed single-batch limits.
 //!
-//! The algorithm:
-//! 1. Assign predicates to batches in declaration order (fill each before starting new)
-//! 2. Build batches in order, resolving references:
-//!    - Same batch: BatchSelf(index) - works for any intra-batch reference
-//!    - Earlier batch: Custom(CustomPredicateRef)
-//!    - Later batch: Error (forward cross-batch references not allowed)
-//!
-//! Mutual recursion within a batch is fully supported since BatchSelf references
-//! work regardless of declaration order.
+//! Packing strategy (dependency-aware):
+//! - Build a dependency graph of predicates (edges: callee → caller for local refs).
+//! - Condense strongly connected components (SCCs) to ensure mutually-recursive preds stay together.
+//! - Topologically order the SCC DAG; within each topological layer, pack larger components first
+//!   (ties broken by declaration order) to reduce wasted space.
+//! - Within a batch, intra-batch calls use `BatchSelf` and work regardless of declaration order;
+//!   cross-batch calls always point to earlier batches via `CustomPredicateRef`.
+//! - Forward cross-batch references cannot occur with this planner (they are treated as unreachable).
 
 use std::{collections::HashMap, str::FromStr, sync::Arc};
 
@@ -226,35 +225,17 @@ impl PredicateBatches {
         Ok(steps)
     }
 
-    /// Apply a predicate, automatically handling split chains
-    ///
-    /// This method builds operations for a predicate and applies them using the provided
-    /// closure. For non-split predicates, it performs a single operation.
-    /// For split predicates, it wires up the chain automatically.
-    ///
-    /// # Arguments
-    /// * `name` - Name of the predicate to apply
-    /// * `statements` - User statements in **original declaration order**
-    /// * `public` - Whether the final result should be public
-    /// * `apply_op` - Closure that applies a single operation: `(public, operation) -> Result<Statement>`
-    ///
-    /// # Returns
-    /// The final statement handle from applying all operations
-    ///
-    /// # Example
-    /// ```ignore
-    /// let result = batches.apply_predicate(
-    ///     "my_pred",
-    ///     statements,
-    ///     true,
-    ///     |public, op| if public { builder.pub_op(op) } else { builder.priv_op(op) }
-    /// )?;
-    /// ```
-    /// Apply a predicate directly into a MainPodBuilder (common case).
+    /// Apply a predicate directly into a `MainPodBuilder` (common case).
     ///
     /// For split predicates, earlier chain links are applied as private, and only the final
     /// piece is applied as public when `public` is true. For non-split predicates, the single
     /// operation is applied with the provided `public` flag.
+    ///
+    /// Arguments:
+    /// - `builder`: target builder to receive operations
+    /// - `name`: predicate name
+    /// - `statements`: user statements in original declaration order
+    /// - `public`: whether the final result should be public
     pub fn apply_predicate(
         &self,
         builder: &mut crate::frontend::MainPodBuilder,
@@ -271,7 +252,16 @@ impl PredicateBatches {
         })
     }
 
-    /// Advanced variant: apply using a custom closure. Prefer `apply_predicate` for common usage.
+    /// Advanced variant: apply using a custom closure.
+    ///
+    /// Prefer `apply_predicate` for common usage. This method allows callers to intercept each
+    /// operation (with its `public` flag) and decide how to execute it.
+    ///
+    /// Arguments:
+    /// - `name`: predicate name
+    /// - `statements`: user statements in original declaration order
+    /// - `public`: whether the final result should be public
+    /// - `apply_op`: closure `(is_public, operation) -> Result<Statement>` used to execute each step
     pub fn apply_predicate_with<F, E>(
         &self,
         name: &str,
@@ -336,10 +326,12 @@ pub struct ImportedPredicateInfo {
 /// Takes a list of split results (containing predicates and optional chain info)
 /// and packs them into batches, handling cross-batch references correctly.
 ///
-/// Predicates are assigned to batches in declaration order. Within a batch,
-/// predicates can reference each other freely via BatchSelf. Cross-batch
-/// references must point to earlier batches (forward cross-batch references
-/// are an error).
+/// Predicates are packed dependency‑aware:
+/// - Mutually recursive predicates (SCCs) are kept together.
+/// - Components are ordered topologically; within each layer, larger components are packed first
+///   (ties by declaration order) to reduce wasted space.
+/// - Within a batch, predicates can reference each other freely via `BatchSelf`; cross-batch
+///   references always point to earlier batches via `CustomPredicateRef`.
 ///
 /// `imported_predicates` maps predicate names to their imported batch info,
 /// allowing predicates to call imported predicates from other batches.

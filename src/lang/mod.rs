@@ -1,3 +1,31 @@
+//! Podlang front-end: parsing, validation, lowering, and multi-batch output.
+//!
+//! This module is the high-level entrypoint to the Podlang pipeline. It:
+//! - Parses a Podlang document (`parse_podlang`).
+//! - Validates names, imports, and well-formedness (`frontend_ast_validate`).
+//! - Lowers to middleware structures, including automatic predicate splitting and
+//!   dependency-aware packing into one or more custom predicate batches (`frontend_ast_split`,
+//!   `frontend_ast_batch`, `frontend_ast_lower`).
+//!
+//! The result is a [`PodlangOutput`], which contains:
+//! - `custom_batches`: a [`PredicateBatches`] container (possibly empty) with all custom
+//!   predicates defined in the document. Use
+//!   [`PredicateBatches::apply_predicate`](crate::lang::frontend_ast_batch::PredicateBatches::apply_predicate)
+//!   to apply a predicate into a `MainPodBuilder` (recommended primary API), or
+//!   [`apply_predicate_with`](crate::lang::frontend_ast_batch::PredicateBatches::apply_predicate_with)
+//!   for advanced control.
+//! - `request`: a `PodRequest` containing the request templates defined by a `REQUEST(...)` block
+//!   in the document (or empty if none was provided).
+//!
+//! Notes
+//! - Predicate splitting: large predicates are automatically split into a chain of smaller
+//!   predicates while preserving semantics; only the final chain result is public when applying a
+//!   predicate as public.
+//! - Multi-batch packing: predicates are packed dependency-aware; cross-batch references always
+//!   point to earlier batches and forward references cannot occur.
+//! - Backwards compatibility: `PodlangOutput::first_batch()` is provided to ease migration of code
+//!   that expects a single custom predicate batch.
+//!
 pub mod error;
 pub mod frontend_ast;
 pub mod frontend_ast_batch;
@@ -20,6 +48,11 @@ use crate::{
     middleware::{CustomPredicateBatch, Params},
 };
 
+/// Final result of processing a Podlang document.
+///
+/// - `custom_batches`: all custom predicates defined in the document, possibly spanning multiple
+///   batches. Use [`PredicateBatches`] APIs to look up predicates by name and apply them.
+/// - `request`: the request templates defined in the document (empty if not present).
 #[derive(Debug, Clone)]
 pub struct PodlangOutput {
     pub custom_batches: PredicateBatches,
@@ -27,12 +60,22 @@ pub struct PodlangOutput {
 }
 
 impl PodlangOutput {
-    /// Get the first batch, if any (for backwards compatibility)
+    /// Get the first batch, if any (for backwards compatibility).
+    ///
+    /// Prefer using `custom_batches` directly if your code expects multiple batches.
     pub fn first_batch(&self) -> Option<&Arc<CustomPredicateBatch>> {
         self.custom_batches.first_batch()
     }
 }
 
+/// Parse, validate, and lower a Podlang document into middleware structures.
+///
+/// - `input`: Podlang source.
+/// - `params`: middleware parameters limiting sizes/arity and controlling lowering behavior.
+/// - `available_batches`: external batches available for `use batch ... from 0x...` imports.
+///
+/// Returns a [`PodlangOutput`] containing custom predicate batches (if any) and a `PodRequest`
+/// (possibly empty).
 pub fn parse(
     input: &str,
     params: &Params,
