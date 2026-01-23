@@ -1477,7 +1477,7 @@ pub mod tests {
         let statements = vec![st_a, st_b, st_c, st_d, st_e, st_f];
 
         // Use apply_predicate to automatically wire the split chain
-        let result = batches.apply_predicate(
+        let result = batches.apply_predicate_with(
             "large_pred",
             statements,
             true, // public

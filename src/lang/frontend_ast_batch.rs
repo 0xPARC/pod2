@@ -250,7 +250,29 @@ impl PredicateBatches {
     ///     |public, op| if public { builder.pub_op(op) } else { builder.priv_op(op) }
     /// )?;
     /// ```
-    pub fn apply_predicate<F, E>(
+    /// Apply a predicate directly into a MainPodBuilder (common case).
+    ///
+    /// For split predicates, earlier chain links are applied as private, and only the final
+    /// piece is applied as public when `public` is true. For non-split predicates, the single
+    /// operation is applied with the provided `public` flag.
+    pub fn apply_predicate(
+        &self,
+        builder: &mut crate::frontend::MainPodBuilder,
+        name: &str,
+        statements: Vec<Statement>,
+        public: bool,
+    ) -> crate::frontend::Result<Statement> {
+        self.apply_predicate_with(name, statements, public, |is_public, op| {
+            if is_public {
+                builder.pub_op(op)
+            } else {
+                builder.priv_op(op)
+            }
+        })
+    }
+
+    /// Advanced variant: apply using a custom closure. Prefer `apply_predicate` for common usage.
+    pub fn apply_predicate_with<F, E>(
         &self,
         name: &str,
         statements: Vec<Statement>,
@@ -1070,12 +1092,10 @@ mod tests {
             &HashMap::new(),
         );
         assert!(result.is_err());
-        match result.unwrap_err() {
-            BatchingError::Internal { message } => {
-                assert!(message.contains("exceeds batch capacity"));
-            }
-            e => panic!("Expected Internal batching error, got {:?}", e),
-        }
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("exceeds batch capacity"));
     }
 
     #[test]
@@ -1164,7 +1184,7 @@ mod tests {
         let mut stmt_counter = 0;
 
         let result: Result<Statement, MultiOperationError> =
-            batches.apply_predicate("my_pred", statements, true, |public, op| {
+            batches.apply_predicate_with("my_pred", statements, true, |public, op| {
                 operations_applied.push((public, op.1.len()));
                 stmt_counter += 1;
                 Ok(test_statement(stmt_counter))
@@ -1224,7 +1244,7 @@ mod tests {
         let mut stmt_counter = 100;
 
         let result: Result<Statement, MultiOperationError> =
-            batches.apply_predicate("large_pred", statements, true, |public, op| {
+            batches.apply_predicate_with("large_pred", statements, true, |public, op| {
                 operations_applied.push((public, op.1.len()));
                 stmt_counter += 1;
                 Ok(test_statement(stmt_counter))
@@ -1288,7 +1308,7 @@ mod tests {
         let mut stmt_counter = 100;
 
         let result: Result<Statement, MultiOperationError> =
-            batches.apply_predicate("very_large_pred", statements, true, |public, op| {
+            batches.apply_predicate_with("very_large_pred", statements, true, |public, op| {
                 operations_applied.push((public, op.1.len()));
                 stmt_counter += 1;
                 Ok(test_statement(stmt_counter))
@@ -1335,7 +1355,7 @@ mod tests {
         let statements: Vec<Statement> = (0..3).map(test_statement).collect();
 
         let result: Result<Statement, MultiOperationError> =
-            batches.apply_predicate("large_pred", statements, true, |_, _| {
+            batches.apply_predicate_with("large_pred", statements, true, |_, _| {
                 Ok(test_statement(999))
             });
 
@@ -1373,7 +1393,8 @@ mod tests {
         .unwrap();
 
         let result: Result<Statement, MultiOperationError> =
-            batches.apply_predicate("nonexistent", vec![], true, |_, _| Ok(test_statement(999)));
+            batches
+                .apply_predicate_with("nonexistent", vec![], true, |_, _| Ok(test_statement(999)));
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -1417,7 +1438,7 @@ mod tests {
         let mut stmt_counter = 100;
 
         let result: Result<Statement, MultiOperationError> =
-            batches.apply_predicate("large_pred", statements, true, |_, op| {
+            batches.apply_predicate_with("large_pred", statements, true, |_, op| {
                 // Check the last argument
                 let last_arg = op.1.last().map(|arg| {
                     if let OperationArg::Statement(s) = arg {
