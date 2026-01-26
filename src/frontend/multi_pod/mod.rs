@@ -439,21 +439,40 @@ impl MultiPodBuilder {
                 match dep {
                     StatementSource::Internal(dep_idx) => {
                         // Check if dependency is in an earlier generated POD
+                        let mut found = false;
                         for earlier_pod_idx in 0..pod_idx {
                             if solution.pod_statements[earlier_pod_idx].contains(dep_idx)
                                 && solution.pod_public_statements[earlier_pod_idx].contains(dep_idx)
                             {
                                 needed_earlier_pods.insert(earlier_pod_idx);
+                                found = true;
                                 break;
                             }
+                        }
+                        // If not found in earlier PODs, it must be local to this POD
+                        if !found && !statements_in_this_pod.contains(dep_idx) {
+                            unreachable!(
+                                "Internal dependency {} for statement {} is neither local \
+                                 nor public in any earlier POD (solver bug)",
+                                dep_idx, stmt_idx
+                            );
                         }
                     }
                     StatementSource::External(pod_hash) => {
                         // Find which external POD has this hash
-                        for (idx, input_pod) in self.input_pods.iter().enumerate() {
-                            if input_pod.statements_hash() == *pod_hash {
+                        let ext_idx = self
+                            .input_pods
+                            .iter()
+                            .position(|p| p.statements_hash() == *pod_hash);
+                        match ext_idx {
+                            Some(idx) => {
                                 needed_external_pods.insert(idx);
-                                break;
+                            }
+                            None => {
+                                unreachable!(
+                                    "External dependency with hash {:?} not found in input PODs",
+                                    pod_hash
+                                );
                             }
                         }
                     }
