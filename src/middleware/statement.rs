@@ -466,9 +466,7 @@ impl Statement {
             (Native(NativePredicate::SignedBy), &[a1, a2]) => {
                 Self::SignedBy(a1.try_into()?, a2.try_into()?)
             }
-            (Native(NativePredicate::Abs), &[a1, a2]) => {
-                Self::Abs(a1.try_into()?, a2.try_into()?)
-            }
+            (Native(NativePredicate::Abs), &[a1, a2]) => Self::Abs(a1.try_into()?, a2.try_into()?),
             (Native(NativePredicate::ContainerInsert), &[a1, a2, a3, a4]) => Self::ContainerInsert(
                 a1.try_into()?,
                 a2.try_into()?,
