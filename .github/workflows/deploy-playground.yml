@@ -1,6 +1,9 @@
 name: Deploy Playground
 
 on:
+  pull_request:
+    branches: [main]
+    types: [ready_for_review, opened, synchronize, reopened]
   push:
     branches: [main]
   workflow_dispatch:
@@ -19,27 +22,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Setup Rust
         uses: actions-rs/toolchain@v1
         with:
           toolchain: nightly-2025-07-02
           target: wasm32-unknown-unknown
           override: true
-      
+
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-      
+
       - name: Build WASM
         run: wasm-pack build --target web --features wasm,backend_plonky2,mem_cache --no-default-features
-      
+
       - name: Setup Pages
         uses: actions/configure-pages@v4
-      
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: '.'
+          path: "."
 
   deploy:
     environment:
