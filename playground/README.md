@@ -20,7 +20,3 @@ python3 -m http.server 8000
 ```
 
 Then visit http://localhost:8000/playground/
-
-## Deploying
-
-The playground is a static site. Deploy `playground/` and `pkg/` folders to any static host (GitHub Pages, Netlify, Vercel, etc.).
