@@ -1,6 +1,6 @@
 # PODlang Playground
 
-A browser-based playground for writing and validating PODlang predicates.
+A browser-based playground for writing and validating PODlang predicates. A deployed version can be used here: https://0xparc.github.io/pod2/playground
 
 ## Building
 
