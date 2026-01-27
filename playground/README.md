@@ -1,40 +1,26 @@
 # PODlang Playground
 
-A web-based playground for writing and validating PODlang predicates in your browser.
+A browser-based playground for writing and validating PODlang predicates.
 
 ## Building
 
-1. Install `wasm-pack`:
+Install `wasm-pack` and build the WASM module:
+
 ```bash
-curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+npm install -g wasm-pack
+wasm-pack build --target web --features wasm,backend_plonky2,mem_cache --no-default-features
 ```
 
-2. Build the WASM module:
-```bash
-wasm-pack build --target web --features wasm --no-default-features
-```
+## Running Locally
 
-This will generate the WASM module in `pkg/`.
-
-## Running
-
-Serve the playground directory with any static file server:
+From the project root:
 
 ```bash
 python3 -m http.server 8000
 ```
 
-Then open http://localhost:8000/playground/ in your browser.
+Then visit http://localhost:8000/playground/
 
-Alternatively, use other servers:
-```bash
-npx serve playground
-```
+## Deploying
 
-## Features
-
-- Live PODlang parser validation
-- Syntax highlighting via Monaco-style interface
-- Example predicates included
-- Shows parsed predicate names on success
-- Detailed error messages on parse failure
+The playground is a static site. Deploy `playground/` and `pkg/` folders to any static host (GitHub Pages, Netlify, Vercel, etc.).
