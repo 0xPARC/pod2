@@ -53,7 +53,7 @@ pub struct SplitChainInfo {
     /// Chain pieces in execution order (innermost continuation first: [foo_2, foo_1, foo])
     pub chain_pieces: Vec<SplitChainPiece>,
     /// Total number of "real" user statements (excludes chain calls)
-    pub total_real_statements: usize,
+    pub real_statement_count: usize,
     /// Maps original statement index → reordered index
     /// e.g., if original stmt 0 became reordered stmt 3, then `reorder_map[0] = 3`
     pub reorder_map: Vec<usize>,
@@ -430,7 +430,7 @@ fn split_into_chain(
     let conjunction = pred.conjunction_type;
 
     let usage = analyze_wildcards(&pred.statements);
-    let total_real_statements = pred.statements.len();
+    let real_statement_count = pred.statements.len();
 
     let ordering_result = order_constraints_optimally(pred.statements, &usage, params);
     let ordered_statements = ordering_result.statements;
@@ -566,14 +566,14 @@ fn split_into_chain(
     let chain_info = SplitChainInfo {
         original_name: original_name.clone(),
         chain_pieces,
-        total_real_statements,
+        real_statement_count,
         reorder_map,
     };
 
     let mut chain_predicates =
         generate_chain_predicates(&original_name, chain_links, conjunction, params)?;
 
-    validate_chain(&chain_predicates, &original_name, params)?;
+    validate_chain(&chain_predicates, params)?;
 
     // Reverse so continuations come before callers in declaration order.
     // This ensures that when batched, continuations are in earlier batches
@@ -685,11 +685,7 @@ fn generate_chain_predicates(
 ///
 /// Note: We no longer check chain length against max_custom_batch_size since
 /// chains can now span multiple batches thanks to multi-batch support.
-fn validate_chain(
-    chain: &[CustomPredicateDef],
-    _original_name: &str,
-    params: &Params,
-) -> Result<(), SplittingError> {
+fn validate_chain(chain: &[CustomPredicateDef], params: &Params) -> Result<(), SplittingError> {
     for pred in chain {
         // Each predicate should have ≤ max_statements
         assert!(pred.statements.len() <= params.max_custom_predicate_arity);
@@ -811,7 +807,7 @@ mod tests {
         // Verify chain_info is present
         let chain_info = split_result.chain_info.as_ref().unwrap();
         assert_eq!(chain_info.original_name, "my_pred");
-        assert_eq!(chain_info.total_real_statements, 6);
+        assert_eq!(chain_info.real_statement_count, 6);
         assert_eq!(chain_info.chain_pieces.len(), 2);
         // Pieces are in execution order: innermost first
         assert_eq!(chain_info.chain_pieces[0].name, "my_pred_1");
@@ -892,7 +888,7 @@ mod tests {
 
         // Verify chain_info
         let chain_info = split_result.chain_info.as_ref().unwrap();
-        assert_eq!(chain_info.total_real_statements, 11);
+        assert_eq!(chain_info.real_statement_count, 11);
         assert_eq!(chain_info.chain_pieces.len(), 3);
         // Execution order: innermost first
         assert_eq!(chain_info.chain_pieces[0].name, "large_pred_2");

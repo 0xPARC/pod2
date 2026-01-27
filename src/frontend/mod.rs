@@ -1447,7 +1447,7 @@ pub mod tests {
         assert!(batches.split_chain("large_pred").is_some());
         let chain_info = batches.split_chain("large_pred").unwrap();
         assert_eq!(chain_info.chain_pieces.len(), 2);
-        assert_eq!(chain_info.total_real_statements, 6);
+        assert_eq!(chain_info.real_statement_count, 6);
 
         // Create a signed dict with the required entries
         let mut signed_builder = SignedDictBuilder::new(&params);

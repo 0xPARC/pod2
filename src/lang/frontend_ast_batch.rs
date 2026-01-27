@@ -152,10 +152,10 @@ impl PredicateBatches {
         };
 
         // Validate statement count
-        if statements.len() != chain_info.total_real_statements {
+        if statements.len() != chain_info.real_statement_count {
             return Err(MultiOperationError::WrongStatementCount {
                 predicate: predicate_name.to_string(),
-                expected: chain_info.total_real_statements,
+                expected: chain_info.real_statement_count,
                 actual: statements.len(),
             });
         }
@@ -283,13 +283,18 @@ impl PredicateBatches {
 
         for step in steps {
             let op = if let Some(prev) = prev_result {
-                // Replace the last Statement::None arg with the previous result
+                // Replace the last Statement::None arg with the previous result.
+                // By construction, all steps after the first include a chain placeholder
+                // as their last argument.
                 let mut args = step.operation.1;
-                if let Some(last) = args.last_mut() {
-                    if matches!(last, OperationArg::Statement(Statement::None)) {
-                        *last = OperationArg::Statement(prev);
-                    }
-                }
+                let last = args
+                    .last_mut()
+                    .expect("chain statement should include placeholder arg");
+                assert!(
+                    matches!(last, OperationArg::Statement(Statement::None)),
+                    "expected last arg to be a Statement::None placeholder"
+                );
+                *last = OperationArg::Statement(prev);
                 Operation(step.operation.0, args, step.operation.2)
             } else {
                 step.operation
@@ -426,9 +431,14 @@ fn plan_batch_assignments(
 ) -> Result<Vec<PredicateAssignment>, BatchingError> {
     // Map name -> original index
     let mut name_to_index: HashMap<String, usize> = HashMap::new();
-    for (i, pred) in predicates.iter().enumerate() {
-        name_to_index.insert(pred.name.name.clone(), i);
-    }
+    let index_to_name: Vec<String> = predicates
+        .iter()
+        .enumerate()
+        .map(|(i, pred)| {
+            name_to_index.insert(pred.name.name.clone(), i);
+            pred.name.name.clone()
+        })
+        .collect();
 
     let n = predicates.len();
     // Build graph with nodes 0..n and edges callee -> caller for local refs
@@ -450,11 +460,22 @@ fn plan_batch_assignments(
     for comp_members in condensed.node_weights_mut() {
         comp_members.sort_unstable();
         if comp_members.len() > max_batch_size {
+            let members = comp_members
+                .iter()
+                .map(|&i| index_to_name[i].clone())
+                .collect::<Vec<_>>()
+                .join(", ");
+            // An SCC larger than the per-batch capacity cannot be packed: all members of a
+            // mutually-recursive group must live in the same batch. Splitting reduces per‑predicate
+            // arity but does not break cycles, and the split chain for a single predicate remains
+            // acyclic (so it does not increase the SCC size). Users must refactor to break the
+            // cycle or increase `max_custom_batch_size`.
             return Err(BatchingError::Internal {
                 message: format!(
-                    "Mutually recursive group of size {} exceeds batch capacity {}",
+                    "Mutually recursive group of size {} exceeds batch capacity {}. Predicates: [{}]. \\n+                     Consider breaking the cycle or increasing max_custom_batch_size.",
                     comp_members.len(),
-                    max_batch_size
+                    max_batch_size,
+                    members
                 ),
             });
         }
@@ -471,7 +492,8 @@ fn plan_batch_assignments(
     let mut comp_key: Vec<usize> = vec![0; node_count];
     for ni in condensed.node_indices() {
         let members = &condensed[ni];
-        let key = members.iter().copied().min().unwrap_or(usize::MAX);
+        // Each condensed component (SCC) must be non-empty by construction
+        let key = members.iter().copied().min().expect("non-empty component");
         comp_key[ni.index()] = key;
     }
 
@@ -511,6 +533,9 @@ fn plan_batch_assignments(
     for cid in order {
         let comp = &condensed[cid];
         let comp_size = comp.len();
+        // If the next component doesn't fit in the remaining capacity, start a new batch.
+        // This is the normal batch boundary; precedence is preserved, and we mitigate wasted
+        // space by sorting components within each topo layer by size (desc) earlier.
         if current_count + comp_size > max_batch_size {
             current_batch += 1;
             current_count = 0;
@@ -988,7 +1013,7 @@ mod tests {
         assert!(chain_info.is_some());
         let info = chain_info.unwrap();
         assert_eq!(info.original_name, "large_pred");
-        assert_eq!(info.total_real_statements, 6);
+        assert_eq!(info.real_statement_count, 6);
     }
 
     #[test]
@@ -1226,7 +1251,7 @@ mod tests {
         // Verify chain info
         let chain_info = batches.split_chain("large_pred").unwrap();
         assert_eq!(chain_info.chain_pieces.len(), 2);
-        assert_eq!(chain_info.total_real_statements, 6);
+        assert_eq!(chain_info.real_statement_count, 6);
 
         // Create fake statements (6 for the 6 Equal statements)
         let statements: Vec<Statement> = (0..6).map(test_statement).collect();
@@ -1290,7 +1315,7 @@ mod tests {
         // Verify chain info
         let chain_info = batches.split_chain("very_large_pred").unwrap();
         assert_eq!(chain_info.chain_pieces.len(), 3);
-        assert_eq!(chain_info.total_real_statements, 10);
+        assert_eq!(chain_info.real_statement_count, 10);
 
         // Create fake statements (10 for the 10 Equal statements)
         let statements: Vec<Statement> = (0..10).map(test_statement).collect();
