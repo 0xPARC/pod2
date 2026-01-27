@@ -1,224 +1,235 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PODlang Playground</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
 
-        body {
-            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
-            background: #1e1e1e;
-            color: #d4d4d4;
-        }
+      body {
+        font-family: "Monaco", "Menlo", "Ubuntu Mono", monospace;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        background: #1e1e1e;
+        color: #d4d4d4;
+      }
 
-        header {
-            background: #252526;
-            padding: 1rem 2rem;
-            border-bottom: 1px solid #3e3e42;
-        }
+      header {
+        background: #252526;
+        padding: 1rem 2rem;
+        border-bottom: 1px solid #3e3e42;
+      }
 
-        h1 {
-            font-size: 1.5rem;
-            color: #fff;
-        }
+      h1 {
+        font-size: 1.5rem;
+        color: #fff;
+      }
 
-        .subtitle {
-            font-size: 0.875rem;
-            color: #858585;
-            margin-top: 0.25rem;
-        }
+      .subtitle {
+        font-size: 0.875rem;
+        color: #858585;
+        margin-top: 0.25rem;
+      }
 
-        .container {
-            display: flex;
-            flex: 1;
-            overflow: hidden;
-        }
+      .container {
+        display: flex;
+        flex: 1;
+        overflow: hidden;
+      }
 
-        .panel {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            border-right: 1px solid #3e3e42;
-        }
+      .panel {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        border-right: 1px solid #3e3e42;
+      }
 
-        .panel:last-child {
-            border-right: none;
-        }
+      .panel:last-child {
+        border-right: none;
+      }
 
-        .panel-header {
-            background: #2d2d30;
-            padding: 0.75rem 1rem;
-            font-size: 0.875rem;
-            color: #cccccc;
-            border-bottom: 1px solid #3e3e42;
-        }
+      .panel-header {
+        background: #2d2d30;
+        padding: 0.75rem 1rem;
+        font-size: 0.875rem;
+        color: #cccccc;
+        border-bottom: 1px solid #3e3e42;
+      }
 
-        .panel-content {
-            flex: 1;
-            overflow: auto;
-        }
+      .panel-content {
+        flex: 1;
+        overflow: auto;
+      }
 
-        textarea {
-            width: 100%;
-            height: 100%;
-            background: #1e1e1e;
-            color: #d4d4d4;
-            border: none;
-            padding: 1rem;
-            font-family: inherit;
-            font-size: 0.875rem;
-            line-height: 1.6;
-            resize: none;
-            outline: none;
-            tab-size: 4;
-        }
+      textarea {
+        width: 100%;
+        height: 100%;
+        background: #1e1e1e;
+        color: #d4d4d4;
+        border: none;
+        padding: 1rem;
+        font-family: inherit;
+        font-size: 0.875rem;
+        line-height: 1.6;
+        resize: none;
+        outline: none;
+        tab-size: 4;
+      }
 
-        #output {
-            padding: 1rem;
-            white-space: pre-wrap;
-            font-size: 0.875rem;
-            line-height: 1.6;
-        }
+      #output {
+        padding: 1rem;
+        white-space: pre-wrap;
+        font-size: 0.875rem;
+        line-height: 1.6;
+      }
 
-        .success {
-            color: #4ec9b0;
-        }
+      .success {
+        color: #4ec9b0;
+      }
 
-        .error {
-            color: #f48771;
-        }
+      .error {
+        color: #f48771;
+      }
 
-        .controls {
-            background: #252526;
-            padding: 0.75rem 1rem;
-            border-top: 1px solid #3e3e42;
-            display: flex;
-            gap: 1rem;
-            align-items: center;
-        }
+      .controls {
+        background: #252526;
+        padding: 0.75rem 1rem;
+        border-top: 1px solid #3e3e42;
+        display: flex;
+        gap: 1rem;
+        align-items: center;
+      }
 
-        button {
-            background: #0e639c;
-            color: #fff;
-            border: none;
-            padding: 0.5rem 1.5rem;
-            font-family: inherit;
-            font-size: 0.875rem;
-            cursor: pointer;
-            border-radius: 2px;
-            transition: background 0.2s;
-        }
+      button {
+        background: #0e639c;
+        color: #fff;
+        border: none;
+        padding: 0.5rem 1.5rem;
+        font-family: inherit;
+        font-size: 0.875rem;
+        cursor: pointer;
+        border-radius: 2px;
+        transition: background 0.2s;
+      }
 
-        button:hover {
-            background: #1177bb;
-        }
+      button:hover {
+        background: #1177bb;
+      }
 
-        button:disabled {
-            background: #3e3e42;
-            cursor: not-allowed;
-        }
+      button:disabled {
+        background: #3e3e42;
+        cursor: not-allowed;
+      }
 
-        .loading {
-            font-size: 0.875rem;
-            color: #858585;
-        }
+      .loading {
+        font-size: 0.875rem;
+        color: #858585;
+      }
 
-        .examples {
-            display: flex;
-            gap: 0.5rem;
-            flex: 1;
-        }
+      .examples {
+        display: flex;
+        gap: 0.5rem;
+        flex: 1;
+      }
 
-        .example-btn {
-            background: #3e3e42;
-            padding: 0.5rem 1rem;
-        }
+      .example-btn {
+        background: #3e3e42;
+        padding: 0.5rem 1rem;
+      }
 
-        .example-btn:hover {
-            background: #505050;
-        }
+      .example-btn:hover {
+        background: #505050;
+      }
     </style>
-</head>
-<body>
+  </head>
+  <body>
     <header>
-        <h1>PODlang Playground</h1>
-        <div class="subtitle">Write and validate PODlang predicates in your browser</div>
+      <h1>PODlang Playground</h1>
+      <div class="subtitle">
+        Write and validate PODlang predicates in your browser
+      </div>
     </header>
 
     <div class="container">
-        <div class="panel">
-            <div class="panel-header">Input</div>
-            <div class="panel-content">
-                <textarea id="input" placeholder="Write your PODlang code here..." spellcheck="false"></textarea>
-            </div>
+      <div class="panel">
+        <div class="panel-header">Input</div>
+        <div class="panel-content">
+          <textarea
+            id="input"
+            placeholder="Write your PODlang code here..."
+            spellcheck="false"
+          ></textarea>
         </div>
+      </div>
 
-        <div class="panel">
-            <div class="panel-header">Output</div>
-            <div class="panel-content">
-                <div id="output">Click "Parse" to validate your PODlang code...</div>
-            </div>
+      <div class="panel">
+        <div class="panel-header">Output</div>
+        <div class="panel-content">
+          <div id="output">Click "Parse" to validate your PODlang code...</div>
         </div>
+      </div>
     </div>
 
     <div class="controls">
-        <button id="parse-btn">Parse</button>
-        <div class="examples">
-            <button class="example-btn" id="example-light-switch">Light Switch Example</button>
-        </div>
-        <div class="loading" id="loading"></div>
+      <button id="parse-btn">Parse</button>
+      <div class="examples">
+        <button class="example-btn" id="example-light-switch">
+          Light Switch Example
+        </button>
+      </div>
+      <div class="loading" id="loading"></div>
     </div>
 
     <script type="module">
-        let wasm;
-        const parseBtn = document.getElementById('parse-btn');
-        const input = document.getElementById('input');
-        const output = document.getElementById('output');
-        const loading = document.getElementById('loading');
+      let wasm;
+      const parseBtn = document.getElementById("parse-btn");
+      const input = document.getElementById("input");
+      const output = document.getElementById("output");
+      const loading = document.getElementById("loading");
 
-        async function init() {
-            try {
-                loading.textContent = 'Loading WASM module...';
-                parseBtn.disabled = true;
+      async function init() {
+        try {
+          loading.textContent = "Loading WASM module...";
+          parseBtn.disabled = true;
 
-                const { default: init_wasm, validate_podlang } = await import('../pkg/pod2.js');
-                await init_wasm();
-                wasm = { validate_podlang };
+          const { default: init_wasm, validate_podlang } =
+            await import("../pkg/pod2.js");
+          await init_wasm();
+          wasm = { validate_podlang };
 
-                loading.textContent = 'Ready!';
-                parseBtn.disabled = false;
-                
-                setTimeout(() => {
-                    loading.textContent = '';
-                }, 2000);
-            } catch (err) {
-                output.textContent = `Failed to load WASM module:\n${err}\n\nMake sure you've built the WASM module first:\nwasm-pack build --target web --features wasm --no-default-features`;
-                output.className = 'error';
-                loading.textContent = 'Failed to load';
-            }
+          loading.textContent = "Ready!";
+          parseBtn.disabled = false;
+
+          setTimeout(() => {
+            loading.textContent = "";
+          }, 2000);
+        } catch (err) {
+          output.textContent = `Failed to load WASM module:\n${err}\n\nMake sure you've built the WASM module first:\nwasm-pack build --target web --features wasm --no-default-features`;
+          output.className = "error";
+          loading.textContent = "Failed to load";
         }
+      }
 
-        parseBtn.addEventListener('click', () => {
-            if (!wasm) return;
-            
-            const code = input.value;
-            const result = wasm.validate_podlang(code);
-            
-            output.textContent = result;
-            output.className = result.startsWith('✓') ? 'success' : 'error';
-        });
+      parseBtn.addEventListener("click", () => {
+        if (!wasm) return;
 
-        document.getElementById('example-light-switch').addEventListener('click', () => {
-            input.value = `LightSwitch(light_hash, private: is_on) = OR(
+        const code = input.value;
+        const result = wasm.validate_podlang(code);
+
+        output.textContent = result;
+        output.className = result.startsWith("✓") ? "success" : "error";
+      });
+
+      document
+        .getElementById("example-light-switch")
+        .addEventListener("click", () => {
+          input.value = `LightSwitch(light_hash, private: is_on) = OR(
     LightOn(light_hash, is_on)
     LightOff(light_hash, is_on)
 )
@@ -236,17 +247,20 @@ LightOff(light_hash, is_on, private: light_state) = AND(
 )`;
         });
 
-        input.addEventListener('keydown', (e) => {
-            if (e.key === 'Tab') {
-                e.preventDefault();
-                const start = input.selectionStart;
-                const end = input.selectionEnd;
-                input.value = input.value.substring(0, start) + '    ' + input.value.substring(end);
-                input.selectionStart = input.selectionEnd = start + 4;
-            }
-        });
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Tab") {
+          e.preventDefault();
+          const start = input.selectionStart;
+          const end = input.selectionEnd;
+          input.value =
+            input.value.substring(0, start) +
+            "    " +
+            input.value.substring(end);
+          input.selectionStart = input.selectionEnd = start + 4;
+        }
+      });
 
-        init();
+      init();
     </script>
-</body>
+  </body>
 </html>
