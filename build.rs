@@ -1,3 +1,6 @@
+#[cfg(all(not(feature = "disk_cache"), not(feature = "mem_cache")))]
+fn main() {}
+
 #[cfg(feature = "mem_cache")]
 fn main() {}
 
