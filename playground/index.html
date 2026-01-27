@@ -179,8 +179,8 @@
     <div class="controls">
       <button id="parse-btn">Parse</button>
       <div class="examples">
-        <button class="example-btn" id="example-light-switch">
-          Light Switch Example
+        <button class="example-btn" id="example-wood-stone">
+          Wood and Stone Example
         </button>
       </div>
       <div class="loading" id="loading"></div>
@@ -227,24 +227,30 @@
       });
 
       document
-        .getElementById("example-light-switch")
+        .getElementById("example-wood-stone")
         .addEventListener("click", () => {
-          input.value = `LightSwitch(light_hash, private: is_on) = OR(
-    LightOn(light_hash, is_on)
-    LightOff(light_hash, is_on)
+          input.value = `use intro Pow(count, input, output) from 0x3493488bc23af15ac5fabe38c3cb6c4b66adb57e3898adf201ae50cc57183f65
+
+ItemDef(item, ingredients, inputs, key, work) = AND(
+    DictContains(ingredients, "inputs", inputs)
+    DictContains(ingredients, "key", key)
+    HashOf(item, ingredients, work)
 )
 
-LightOn(light_hash, is_on, private: light_state) = AND(
-    Equal(is_on, 1)
-    DictContains(light_state, "status", "on")
-    HashOf(light_hash, light_state, "light")
+IsStone(item, private: ingredients, inputs, key, work) = AND(
+    ItemDef(item, ingredients, inputs, key, work)
+    Equal(inputs, {})
+    DictContains(ingredients, "blueprint", "stone")
+    Pow(3, ingredients, work)
 )
 
-LightOff(light_hash, is_on, private: light_state) = AND(
-    Equal(is_on, 0)
-    DictContains(light_state, "status", "off")
-    HashOf(light_hash, light_state, "light")
-)`;
+IsWood(item, private: ingredients, inputs, key, work) = AND(
+    ItemDef(item, ingredients, inputs, key, work)
+    Equal(inputs, {})
+    DictContains(ingredients, "blueprint", "wood")
+    Equal(work, {})
+)
+`;
         });
 
       input.addEventListener("keydown", (e) => {
