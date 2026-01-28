@@ -1179,7 +1179,9 @@ pub mod tests {
             &[],
         )
         .unwrap()
-        .custom_batch;
+        .first_batch()
+        .unwrap()
+        .clone();
         let mut builder = MainPodBuilder::new(&params, &DEFAULT_VD_SET);
         let cpr = CustomPredicateRef { batch, index: 0 };
         let eq_st = builder.priv_op(frontend::Operation::eq(1, 1)).unwrap();

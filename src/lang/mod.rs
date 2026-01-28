@@ -1,5 +1,34 @@
+//! Podlang front-end: parsing, validation, lowering, and multi-batch output.
+//!
+//! This module is the high-level entrypoint to the Podlang pipeline. It:
+//! - Parses a Podlang document (`parse_podlang`).
+//! - Validates names, imports, and well-formedness (`frontend_ast_validate`).
+//! - Lowers to middleware structures, including automatic predicate splitting and
+//!   dependency-aware packing into one or more custom predicate batches (`frontend_ast_split`,
+//!   `frontend_ast_batch`, `frontend_ast_lower`).
+//!
+//! The result is a [`PodlangOutput`], which contains:
+//! - `custom_batches`: a [`PredicateBatches`] container (possibly empty) with all custom
+//!   predicates defined in the document. Use
+//!   [`PredicateBatches::apply_predicate`](crate::lang::frontend_ast_batch::PredicateBatches::apply_predicate)
+//!   to apply a predicate into a `MainPodBuilder` (recommended primary API), or
+//!   [`apply_predicate_with`](crate::lang::frontend_ast_batch::PredicateBatches::apply_predicate_with)
+//!   for advanced control.
+//! - `request`: a `PodRequest` containing the request templates defined by a `REQUEST(...)` block
+//!   in the document (or empty if none was provided).
+//!
+//! Notes
+//! - Predicate splitting: large predicates are automatically split into a chain of smaller
+//!   predicates while preserving semantics; only the final chain result is public when applying a
+//!   predicate as public.
+//! - Multi-batch packing: predicates are packed dependency-aware; cross-batch references always
+//!   point to earlier batches and forward references cannot occur.
+//! - Backwards compatibility: `PodlangOutput::first_batch()` is provided to ease migration of code
+//!   that expects a single custom predicate batch.
+//!
 pub mod error;
 pub mod frontend_ast;
+pub mod frontend_ast_batch;
 pub mod frontend_ast_lower;
 pub mod frontend_ast_split;
 pub mod frontend_ast_validate;
@@ -9,6 +38,8 @@ pub mod pretty_print;
 use std::sync::Arc;
 
 pub use error::LangError;
+pub use frontend_ast_batch::{MultiOperationError, PredicateBatches};
+pub use frontend_ast_split::{SplitChainInfo, SplitChainPiece, SplitResult};
 pub use parser::{parse_podlang, Pairs, ParseError, Rule};
 pub use pretty_print::PrettyPrint;
 
@@ -17,12 +48,34 @@ use crate::{
     middleware::{CustomPredicateBatch, Params},
 };
 
-#[derive(Debug, Clone, PartialEq)]
+/// Final result of processing a Podlang document.
+///
+/// - `custom_batches`: all custom predicates defined in the document, possibly spanning multiple
+///   batches. Use [`PredicateBatches`] APIs to look up predicates by name and apply them.
+/// - `request`: the request templates defined in the document (empty if not present).
+#[derive(Debug, Clone)]
 pub struct PodlangOutput {
-    pub custom_batch: Arc<CustomPredicateBatch>,
+    pub custom_batches: PredicateBatches,
     pub request: PodRequest,
 }
 
+impl PodlangOutput {
+    /// Get the first batch, if any (for backwards compatibility).
+    ///
+    /// Prefer using `custom_batches` directly if your code expects multiple batches.
+    pub fn first_batch(&self) -> Option<&Arc<CustomPredicateBatch>> {
+        self.custom_batches.first_batch()
+    }
+}
+
+/// Parse, validate, and lower a Podlang document into middleware structures.
+///
+/// - `input`: Podlang source.
+/// - `params`: middleware parameters limiting sizes/arity and controlling lowering behavior.
+/// - `available_batches`: external batches available for `use batch ... from 0x...` imports.
+///
+/// Returns a [`PodlangOutput`] containing custom predicate batches (if any) and a `PodRequest`
+/// (possibly empty).
 pub fn parse(
     input: &str,
     params: &Params,
@@ -37,10 +90,7 @@ pub fn parse(
     let validated = frontend_ast_validate::validate(document, available_batches)?;
     let lowered = frontend_ast_lower::lower(validated, params, "PodlangBatch".to_string())?;
 
-    let custom_batch = lowered.batch.unwrap_or_else(|| {
-        // If no batch, create an empty one
-        CustomPredicateBatch::new(params, "PodlangBatch".to_string(), vec![])
-    });
+    let custom_batches = lowered.batches.unwrap_or_default();
 
     let request = lowered.request.unwrap_or_else(|| {
         // If no request, create an empty one
@@ -48,7 +98,7 @@ pub fn parse(
     });
 
     Ok(PodlangOutput {
-        custom_batch,
+        custom_batches,
         request,
     })
 }
@@ -93,6 +143,11 @@ mod tests {
         PredicateOrWildcard::Predicate(pred)
     }
 
+    // Helper to get the first batch from the output
+    fn first_batch(output: &super::PodlangOutput) -> &Arc<CustomPredicateBatch> {
+        output.first_batch().expect("Expected at least one batch")
+    }
+
     #[test]
     fn test_e2e_simple_predicate() -> Result<(), LangError> {
         let input = r#"
@@ -103,13 +158,11 @@ mod tests {
 
         let params = Params::default();
         let processed = parse(input, &params, &[])?;
-        let batch_result = processed.custom_batch;
+        let batch_result = first_batch(&processed);
         let request_result = processed.request.templates();
 
         assert_eq!(request_result.len(), 0);
         assert_eq!(batch_result.predicates.len(), 1);
-
-        let batch = batch_result;
 
         // Expected structure
         let expected_statements = vec![StatementTmpl {
@@ -132,7 +185,7 @@ mod tests {
             vec![expected_predicate],
         );
 
-        assert_eq!(batch, expected_batch);
+        assert_eq!(*batch_result, expected_batch);
 
         Ok(())
     }
@@ -148,10 +201,9 @@ mod tests {
 
         let params = Params::default();
         let processed = parse(input, &params, &[])?;
-        let batch_result = processed.custom_batch;
         let request_templates = processed.request.templates();
 
-        assert_eq!(batch_result.predicates.len(), 0);
+        assert!(processed.custom_batches.is_empty());
         assert!(!request_templates.is_empty());
 
         // Expected structure
@@ -188,13 +240,11 @@ mod tests {
 
         let params = Params::default();
         let processed = parse(input, &params, &[])?;
-        let batch_result = processed.custom_batch;
+        let batch_result = first_batch(&processed);
         let request_result = processed.request.templates();
 
         assert_eq!(request_result.len(), 0);
         assert_eq!(batch_result.predicates.len(), 1);
-
-        let batch = batch_result;
 
         // Expected structure: Public args: A (index 0). Private args: Temp (index 1)
         let expected_statements = vec![
@@ -226,7 +276,7 @@ mod tests {
             vec![expected_predicate],
         );
 
-        assert_eq!(batch, expected_batch);
+        assert_eq!(*batch_result, expected_batch);
 
         Ok(())
     }
@@ -245,13 +295,11 @@ mod tests {
 
         let params = Params::default();
         let processed = parse(input, &params, &[])?;
-        let batch_result = processed.custom_batch;
+        let batch_result = first_batch(&processed);
         let request_templates = processed.request.templates();
 
         assert_eq!(batch_result.predicates.len(), 1);
         assert!(!request_templates.is_empty());
-
-        let batch = batch_result;
 
         // Expected Batch structure
         let expected_pred_statements = vec![StatementTmpl {
@@ -274,7 +322,7 @@ mod tests {
             vec![expected_predicate],
         );
 
-        assert_eq!(batch, expected_batch);
+        assert_eq!(*batch_result, expected_batch);
 
         // Expected Request structure
         // Pod1 -> Wildcard 0, Pod2 -> Wildcard 1
@@ -311,7 +359,7 @@ mod tests {
 
         let params = Params::default();
         let processed = parse(input, &params, &[])?;
-        let batch_result = processed.custom_batch;
+        let batch_result = first_batch(&processed);
         let request_templates = processed.request.templates();
 
         assert_eq!(batch_result.predicates.len(), 1); // some_pred is defined
@@ -324,7 +372,10 @@ mod tests {
         // Expected structure
         let expected_templates = vec![
             StatementTmpl {
-                pred_or_wc: pred_lit(Predicate::Custom(CustomPredicateRef::new(batch_result, 0))), // Refers to some_pred
+                pred_or_wc: pred_lit(Predicate::Custom(CustomPredicateRef::new(
+                    batch_result.clone(),
+                    0,
+                ))), // Refers to some_pred
                 args: vec![
                     StatementTmplArg::Wildcard(wc("Var1", 0)),        // Var1
                     StatementTmplArg::Literal(Value::from(12345i64)), // 12345
@@ -361,10 +412,9 @@ mod tests {
 
         let params = Params::default();
         let processed = parse(input, &params, &[])?;
-        let batch_result = processed.custom_batch;
         let request_templates = processed.request.templates();
 
-        assert_eq!(batch_result.predicates.len(), 0);
+        assert!(processed.custom_batches.is_empty());
         assert!(!request_templates.is_empty());
 
         let expected_templates = vec![
@@ -509,7 +559,7 @@ mod tests {
         );
 
         assert!(
-            processed.custom_batch.predicates.is_empty(),
+            processed.custom_batches.is_empty(),
             "Expected no custom predicates for a REQUEST only input"
         );
 
@@ -560,7 +610,7 @@ mod tests {
             "Expected no request templates"
         );
         assert_eq!(
-            processed.custom_batch.predicates.len(),
+            first_batch(&processed).predicates.len(),
             4,
             "Expected 4 custom predicates"
         );
@@ -691,7 +741,8 @@ mod tests {
         );
 
         assert_eq!(
-            processed.custom_batch, expected_batch,
+            *first_batch(&processed),
+            expected_batch,
             "Processed ETHDoS predicates do not match expected structure"
         );
 
@@ -739,7 +790,7 @@ mod tests {
         let request_templates = processed.request.templates();
 
         assert!(
-            processed.custom_batch.predicates.is_empty(),
+            processed.custom_batches.is_empty(),
             "No custom predicates should be defined in the main input"
         );
         assert_eq!(request_templates.len(), 1, "Expected one request template");
@@ -860,13 +911,13 @@ mod tests {
             "No request should be defined"
         );
         assert_eq!(
-            processed.custom_batch.predicates.len(),
+            first_batch(&processed).predicates.len(),
             1,
             "Expected one custom predicate to be defined"
         );
 
         // 4. Check the resulting predicate definition
-        let defined_pred = &processed.custom_batch.predicates[0];
+        let defined_pred = &first_batch(&processed).predicates[0];
         assert_eq!(defined_pred.name, "wrapper_pred");
         assert_eq!(defined_pred.statements.len(), 1);
 

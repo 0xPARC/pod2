@@ -586,7 +586,7 @@ pub fn pad_circuit(builder: &mut CircuitBuilder<F, D>, common_data: &CommonCircu
     }
 }
 
-fn hash_verifier_data_gadget(
+pub fn hash_verifier_data_gadget(
     builder: &mut CircuitBuilder<F, D>,
     verifier_data: &VerifierCircuitTarget,
 ) -> HashOutTarget {
@@ -616,6 +616,37 @@ pub fn hash_verifier_data(verifier_only_data: &VerifierOnlyCircuitData<C, D>) ->
     ]
     .concat();
     PoseidonHash::hash_no_pad(&f)
+}
+
+// Build an dummy empty circuit that uses common_data and make a proof from it.
+pub fn dummy(
+    common_data: &CommonCircuitData<F, D>,
+    num_public_inputs: usize,
+) -> Result<(
+    VerifierOnlyCircuitData<C, D>,
+    ProofWithPublicInputs<F, C, D>,
+)> {
+    let config = common_data.config.clone();
+    let mut builder = CircuitBuilder::new(config.clone());
+
+    let public_inputs = (0..num_public_inputs)
+        .map(|_| {
+            let target = builder.add_virtual_target();
+            builder.register_public_input(target);
+            target
+        })
+        .collect_vec();
+    pad_circuit(&mut builder, common_data);
+
+    let circuit_data = builder.build::<C>();
+    assert_eq!(*common_data, circuit_data.common);
+
+    let mut pw = PartialWitness::<F>::new();
+    for target in &public_inputs {
+        pw.set_target(*target, F::ZERO)?;
+    }
+    let proof = circuit_data.prove(pw)?;
+    Ok((circuit_data.verifier_only, proof))
 }
 
 #[cfg(test)]
@@ -798,37 +829,6 @@ mod tests {
         data.verify(proof.clone())?;
 
         Ok(())
-    }
-
-    // Build an dummy empty circuit that uses common_data and make a proof from it.
-    fn dummy(
-        common_data: &CommonCircuitData<F, D>,
-        num_public_inputs: usize,
-    ) -> Result<(
-        VerifierOnlyCircuitData<C, D>,
-        ProofWithPublicInputs<F, C, D>,
-    )> {
-        let config = common_data.config.clone();
-        let mut builder = CircuitBuilder::new(config.clone());
-
-        let public_inputs = (0..num_public_inputs)
-            .map(|_| {
-                let target = builder.add_virtual_target();
-                builder.register_public_input(target);
-                target
-            })
-            .collect_vec();
-        pad_circuit(&mut builder, common_data);
-
-        let circuit_data = builder.build::<C>();
-        assert_eq!(*common_data, circuit_data.common);
-
-        let mut pw = PartialWitness::<F>::new();
-        for target in &public_inputs {
-            pw.set_target(*target, F::ZERO)?;
-        }
-        let proof = circuit_data.prove(pw)?;
-        Ok((circuit_data.verifier_only, proof))
     }
 
     // test that recurses with arity=2, with the following shape:
