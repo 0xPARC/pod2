@@ -23,6 +23,71 @@ use crate::{
     },
 };
 
+// ============================================================================
+// Shared lowering utilities
+// ============================================================================
+// These functions convert AST types to middleware/builder types and are used
+// by both the request lowering (in this module) and predicate batching
+// (in frontend_ast_batch).
+
+/// Lower a literal value from AST to middleware Value.
+///
+/// This is a pure conversion that cannot fail.
+pub fn lower_literal(lit: &LiteralValue) -> middleware::Value {
+    match lit {
+        LiteralValue::Int(i) => middleware::Value::from(i.value),
+        LiteralValue::Bool(b) => middleware::Value::from(b.value),
+        LiteralValue::String(s) => middleware::Value::from(s.value.clone()),
+        LiteralValue::Raw(r) => middleware::Value::from(r.hash.hash),
+        LiteralValue::PublicKey(pk) => middleware::Value::from(pk.point),
+        LiteralValue::SecretKey(sk) => middleware::Value::from(sk.secret_key.clone()),
+        LiteralValue::Array(a) => {
+            let elements: Vec<_> = a.elements.iter().map(lower_literal).collect();
+            let array = containers::Array::new(elements);
+            middleware::Value::from(array)
+        }
+        LiteralValue::Set(s) => {
+            let elements: std::collections::HashSet<_> =
+                s.elements.iter().map(lower_literal).collect();
+            let set = containers::Set::new(elements);
+            middleware::Value::from(set)
+        }
+        LiteralValue::Dict(d) => {
+            let pairs: std::collections::HashMap<_, _> = d
+                .pairs
+                .iter()
+                .map(|pair| {
+                    let key = middleware::Key::from(pair.key.value.as_str());
+                    let value = lower_literal(&pair.value);
+                    (key, value)
+                })
+                .collect();
+            let dict = containers::Dictionary::new(pairs);
+            middleware::Value::from(dict)
+        }
+    }
+}
+
+/// Lower a statement argument from AST to BuilderArg.
+///
+/// This is a pure conversion that cannot fail.
+pub fn lower_statement_arg(arg: &StatementTmplArg) -> BuilderArg {
+    match arg {
+        StatementTmplArg::Literal(lit) => {
+            let value = lower_literal(lit);
+            BuilderArg::Literal(value)
+        }
+        StatementTmplArg::Wildcard(id) => BuilderArg::WildcardLiteral(id.name.clone()),
+        StatementTmplArg::AnchoredKey(ak) => {
+            let key_str = match &ak.key {
+                AnchoredKeyPath::Bracket(s) => s.value.clone(),
+                AnchoredKeyPath::Dot(id) => id.name.clone(),
+            };
+            BuilderArg::Key(ak.root.name.clone(), key_str)
+        }
+    }
+}
+
 /// Result of lowering: optional custom predicate batches and optional request
 ///
 /// A Podlang file can contain:
@@ -207,7 +272,7 @@ impl<'a> Lowerer<'a> {
         // Create a builder with the resolved predicate and desugar
         let mut builder = StatementTmplBuilder::new(predicate);
         for arg in &stmt.args {
-            let builder_arg = Self::lower_statement_arg_to_builder(arg)?;
+            let builder_arg = lower_statement_arg(arg);
             builder = builder.arg(builder_arg);
         }
         let desugared = builder.desugar();
@@ -303,65 +368,6 @@ impl<'a> Lowerer<'a> {
         }
 
         Ok(split_results)
-    }
-
-    fn lower_statement_arg_to_builder(arg: &StatementTmplArg) -> Result<BuilderArg, LoweringError> {
-        match arg {
-            StatementTmplArg::Literal(lit) => {
-                let value = Self::lower_literal(lit)?;
-                Ok(BuilderArg::Literal(value))
-            }
-            StatementTmplArg::Wildcard(id) => {
-                // For builder, we just need the wildcard name
-                Ok(BuilderArg::WildcardLiteral(id.name.clone()))
-            }
-            StatementTmplArg::AnchoredKey(ak) => {
-                let key_str = match &ak.key {
-                    AnchoredKeyPath::Bracket(s) => s.value.clone(),
-                    AnchoredKeyPath::Dot(id) => id.name.clone(),
-                };
-                Ok(BuilderArg::Key(ak.root.name.clone(), key_str))
-            }
-        }
-    }
-
-    fn lower_literal(lit: &LiteralValue) -> Result<middleware::Value, LoweringError> {
-        let value = match lit {
-            LiteralValue::Int(i) => middleware::Value::from(i.value),
-            LiteralValue::Bool(b) => middleware::Value::from(b.value),
-            LiteralValue::String(s) => middleware::Value::from(s.value.clone()),
-            LiteralValue::Raw(r) => middleware::Value::from(r.hash.hash),
-            LiteralValue::PublicKey(pk) => middleware::Value::from(pk.point),
-            LiteralValue::SecretKey(sk) => middleware::Value::from(sk.secret_key.clone()),
-            LiteralValue::Array(a) => {
-                let elements: Result<Vec<_>, _> =
-                    a.elements.iter().map(Self::lower_literal).collect();
-                let array = containers::Array::new(elements?);
-                middleware::Value::from(array)
-            }
-            LiteralValue::Set(s) => {
-                let elements: Result<Vec<_>, _> =
-                    s.elements.iter().map(Self::lower_literal).collect();
-                let set_values: std::collections::HashSet<_> = elements?.into_iter().collect();
-                let set = containers::Set::new(set_values);
-                middleware::Value::from(set)
-            }
-            LiteralValue::Dict(d) => {
-                let pairs: Result<Vec<(middleware::Key, middleware::Value)>, LoweringError> = d
-                    .pairs
-                    .iter()
-                    .map(|pair| {
-                        let key = middleware::Key::from(pair.key.value.as_str());
-                        let value = Self::lower_literal(&pair.value)?;
-                        Ok((key, value))
-                    })
-                    .collect();
-                let dict_map: std::collections::HashMap<_, _> = pairs?.into_iter().collect();
-                let dict = containers::Dictionary::new(dict_map);
-                middleware::Value::from(dict)
-            }
-        };
-        Ok(value)
     }
 }
 

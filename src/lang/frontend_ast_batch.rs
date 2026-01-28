@@ -17,12 +17,11 @@ use std::{collections::HashMap, str::FromStr, sync::Arc};
 use petgraph::{algo::condensation, graph::DiGraph, prelude::NodeIndex, visit::EdgeRef};
 
 use crate::{
-    frontend::{
-        BuilderArg, CustomPredicateBatchBuilder, Operation, OperationArg, StatementTmplBuilder,
-    },
+    frontend::{CustomPredicateBatchBuilder, Operation, OperationArg, StatementTmplBuilder},
     lang::{
         error::BatchingError,
-        frontend_ast::{AnchoredKeyPath, ConjunctionType, CustomPredicateDef, StatementTmplArg},
+        frontend_ast::{ConjunctionType, CustomPredicateDef},
+        frontend_ast_lower::lower_statement_arg,
         frontend_ast_split::{SplitChainInfo, SplitResult},
     },
     middleware::{
@@ -674,69 +673,10 @@ fn build_statement_with_resolved_refs(
     let mut builder = StatementTmplBuilder::new(predicate);
 
     for arg in &stmt.args {
-        let builder_arg = match arg {
-            StatementTmplArg::Literal(lit) => {
-                let value = lower_literal(lit)?;
-                BuilderArg::Literal(value)
-            }
-            StatementTmplArg::Wildcard(id) => BuilderArg::WildcardLiteral(id.name.clone()),
-            StatementTmplArg::AnchoredKey(ak) => {
-                let key_str = match &ak.key {
-                    AnchoredKeyPath::Bracket(s) => s.value.clone(),
-                    AnchoredKeyPath::Dot(id) => id.name.clone(),
-                };
-                BuilderArg::Key(ak.root.name.clone(), key_str)
-            }
-        };
-        builder = builder.arg(builder_arg);
+        builder = builder.arg(lower_statement_arg(arg));
     }
 
     Ok(builder)
-}
-
-/// Lower a literal value to middleware Value
-fn lower_literal(
-    lit: &crate::lang::frontend_ast::LiteralValue,
-) -> Result<crate::middleware::Value, BatchingError> {
-    use crate::{
-        lang::frontend_ast::LiteralValue,
-        middleware::{containers, Value},
-    };
-
-    let value = match lit {
-        LiteralValue::Int(i) => Value::from(i.value),
-        LiteralValue::Bool(b) => Value::from(b.value),
-        LiteralValue::String(s) => Value::from(s.value.clone()),
-        LiteralValue::Raw(r) => Value::from(r.hash.hash),
-        LiteralValue::PublicKey(pk) => Value::from(pk.point),
-        LiteralValue::SecretKey(sk) => Value::from(sk.secret_key.clone()),
-        LiteralValue::Array(a) => {
-            let elements: Result<Vec<_>, _> = a.elements.iter().map(lower_literal).collect();
-            let array = containers::Array::new(elements?);
-            Value::from(array)
-        }
-        LiteralValue::Set(s) => {
-            let elements: Result<Vec<_>, _> = s.elements.iter().map(lower_literal).collect();
-            let set_values: std::collections::HashSet<_> = elements?.into_iter().collect();
-            let set = containers::Set::new(set_values);
-            Value::from(set)
-        }
-        LiteralValue::Dict(d) => {
-            let pairs: Result<Vec<_>, BatchingError> = d
-                .pairs
-                .iter()
-                .map(|pair| {
-                    let key = crate::middleware::Key::from(pair.key.value.as_str());
-                    let value = lower_literal(&pair.value)?;
-                    Ok((key, value))
-                })
-                .collect();
-            let dict_map: std::collections::HashMap<_, _> = pairs?.into_iter().collect();
-            let dict = containers::Dictionary::new(dict_map);
-            Value::from(dict)
-        }
-    };
-    Ok(value)
 }
 
 #[cfg(test)]
