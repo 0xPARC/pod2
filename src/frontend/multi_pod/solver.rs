@@ -171,7 +171,7 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
     // Incremental approach: try solving with increasing POD counts
     // Start with min_pods and increment until we find a feasible solution
     for target_pods in min_pods..=input.max_pods {
-        if let Some(solution) = try_solve_with_pods(input, n, target_pods, &all_batches)? {
+        if let Some(solution) = try_solve_with_pods(input, target_pods, &all_batches)? {
             return Ok(solution);
         }
         // Infeasible with target_pods, try more
@@ -193,12 +193,12 @@ pub fn solve(input: &SolverInput) -> Result<MultiPodSolution> {
 /// The caller (in `solve()`) handles incrementing `target_pods` when infeasible.
 fn try_solve_with_pods(
     input: &SolverInput,
-    n: usize,
     target_pods: usize,
     all_batches: &[CustomBatchId],
 ) -> Result<Option<MultiPodSolution>> {
     // Create variables
     let mut vars = ProblemVariables::new();
+    let n = input.num_statements;
 
     // prove[s][p] - statement s is proved in POD p
     let prove: Vec<Vec<Variable>> = (0..n)

@@ -441,9 +441,7 @@ impl MultiPodBuilder {
                         // Check if dependency is in an earlier generated POD
                         let mut found = false;
                         for earlier_pod_idx in 0..pod_idx {
-                            if solution.pod_statements[earlier_pod_idx].contains(dep_idx)
-                                && solution.pod_public_statements[earlier_pod_idx].contains(dep_idx)
-                            {
+                            if solution.pod_public_statements[earlier_pod_idx].contains(dep_idx) {
                                 needed_earlier_pods.insert(earlier_pod_idx);
                                 found = true;
                                 break;
