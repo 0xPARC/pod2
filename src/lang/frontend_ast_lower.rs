@@ -9,7 +9,7 @@ use std::{
 };
 
 use crate::{
-    frontend::{BuilderArg, StatementTmplBuilder},
+    frontend::{BuilderArg, PredicateOrWildcard, StatementTmplBuilder},
     lang::{
         frontend_ast::*,
         frontend_ast_batch::{self, PredicateBatches},
@@ -18,8 +18,7 @@ use crate::{
     },
     middleware::{
         self, containers, IntroPredicateRef, NativePredicate, Params, Predicate,
-        PredicateOrWildcard, StatementTmpl as MWStatementTmpl,
-        StatementTmplArg as MWStatementTmplArg, Wildcard,
+        StatementTmpl as MWStatementTmpl, StatementTmplArg as MWStatementTmplArg, Wildcard,
     },
 };
 
@@ -270,12 +269,29 @@ impl<'a> Lowerer<'a> {
         };
 
         // Create a builder with the resolved predicate and desugar
-        let mut builder = StatementTmplBuilder::new(predicate);
+        let mut builder =
+            StatementTmplBuilder::new(PredicateOrWildcard::Predicate(predicate.clone()));
         for arg in &stmt.args {
             let builder_arg = lower_statement_arg(arg);
             builder = builder.arg(builder_arg);
         }
         let desugared = builder.desugar();
+
+        // Convert BatchSelf predicate to Custom if we have a batch
+        // let pred_or_wc = match desugared.pred_or_wc {
+        //     PredicateOrWildcard::Predicate(pred) => middleware::PredicateOrWildcard::Predicate({
+        //         match (batch, pred) {
+        //             (Some(batch_ref), Predicate::BatchSelf(index)) => Predicate::Custom(
+        //                 middleware::CustomPredicateRef::new(batch_ref.clone(), index),
+        //             ),
+        //             (_, pred) => pred,
+        //         }
+        //     }),
+        //     PredicateOrWildcard::Wildcard(name) => {
+        //         let index = wildcard_map.get(&name).expect("Wildcard not found");
+        //         middleware::PredicateOrWildcard::Wildcard(Wildcard::new(name, *index))
+        //     }
+        // };
 
         // Convert BuilderArgs to StatementTmplArgs
         let mut mw_args = Vec::new();
@@ -299,8 +315,7 @@ impl<'a> Lowerer<'a> {
         }
 
         Ok(MWStatementTmpl {
-            // TODO: Support wildcard
-            pred_or_wc: PredicateOrWildcard::Predicate(desugared.predicate),
+            pred_or_wc: middleware::PredicateOrWildcard::Predicate(predicate),
             args: mw_args,
         })
     }
@@ -366,7 +381,6 @@ impl<'a> Lowerer<'a> {
             let result = frontend_ast_split::split_predicate_if_needed(pred, self.params)?;
             split_results.push(result);
         }
-
         Ok(split_results)
     }
 }
@@ -543,7 +557,7 @@ mod tests {
         // Should be BatchSelf(0) referring to pred1
         assert!(matches!(
             stmt.pred_or_wc,
-            PredicateOrWildcard::Predicate(Predicate::BatchSelf(0))
+            middleware::PredicateOrWildcard::Predicate(Predicate::BatchSelf(0))
         ));
     }
 
@@ -581,11 +595,26 @@ mod tests {
         // Should desugar to the Contains predicate
         assert!(matches!(
             stmt.pred_or_wc,
-            PredicateOrWildcard::Predicate(Predicate::Native(NativePredicate::Contains))
+            middleware::PredicateOrWildcard::Predicate(Predicate::Native(
+                NativePredicate::Contains
+            ))
         ));
     }
 
     #[test]
+    fn test_wc_pred() {
+        let input = r#"
+            my_pred(X, DynPred) = AND (
+                Equal(X["pred"], DynPred)
+                DynPred(X)
+            )
+        "#;
+
+        let params = Params::default();
+        let result = parse_validate_and_lower(input, &params);
+        assert!(result.is_ok());
+    }
+
     fn test_multi_batch_packing() {
         // Create more predicates than fit in a single batch
         // With max_custom_batch_size = 4, 5 predicates should span 2 batches

@@ -7,7 +7,7 @@ use crate::{
     frontend::{AnchoredKey, Error, Result, Statement, StatementArg},
     middleware::{
         self, hash_str, CustomPredicate, CustomPredicateBatch, Hash, Key, NativePredicate, Params,
-        Predicate, PredicateOrWildcard, StatementTmpl, StatementTmplArg, ToFields, Value, Wildcard,
+        Predicate, StatementTmpl, StatementTmplArg, ToFields, Value, Wildcard,
     },
 };
 
@@ -41,16 +41,34 @@ pub fn literal(v: impl Into<Value>) -> BuilderArg {
     BuilderArg::Literal(v.into())
 }
 
+#[derive(Clone, Debug)]
+pub enum PredicateOrWildcard {
+    Predicate(Predicate),
+    Wildcard(String),
+}
+
 #[derive(Clone)]
 pub struct StatementTmplBuilder {
-    pub(crate) predicate: Predicate,
+    pub(crate) pred_or_wc: PredicateOrWildcard,
     pub(crate) args: Vec<BuilderArg>,
 }
 
 impl StatementTmplBuilder {
-    pub fn new(p: impl Into<Predicate>) -> StatementTmplBuilder {
+    pub fn new_from_pred(p: impl Into<Predicate>) -> StatementTmplBuilder {
         StatementTmplBuilder {
-            predicate: p.into(),
+            pred_or_wc: PredicateOrWildcard::Predicate(p.into()),
+            args: Vec::new(),
+        }
+    }
+    pub fn new_from_wc(p: impl Into<String>) -> StatementTmplBuilder {
+        StatementTmplBuilder {
+            pred_or_wc: PredicateOrWildcard::Wildcard(p.into()),
+            args: Vec::new(),
+        }
+    }
+    pub fn new(pred_or_wc: PredicateOrWildcard) -> StatementTmplBuilder {
+        StatementTmplBuilder {
+            pred_or_wc,
             args: Vec::new(),
         }
     }
@@ -62,68 +80,48 @@ impl StatementTmplBuilder {
 
     /// Desugar the predicate to a simpler form
     /// Should mirror the logic in `MainPodBuilder::lower_op`
-    pub(crate) fn desugar(self) -> StatementTmplBuilder {
-        match self.predicate {
-            Predicate::Native(NativePredicate::Gt) => {
-                let mut stb = StatementTmplBuilder {
-                    predicate: Predicate::Native(NativePredicate::Lt),
-                    args: self.args,
-                };
-                stb.args.swap(0, 1);
-                stb
-            }
-            Predicate::Native(NativePredicate::GtEq) => {
-                let mut stb = StatementTmplBuilder {
-                    predicate: Predicate::Native(NativePredicate::LtEq),
-                    args: self.args,
-                };
-                stb.args.swap(0, 1);
-                stb
-            }
-            Predicate::Native(NativePredicate::ArrayContains)
-            | Predicate::Native(NativePredicate::DictContains) => StatementTmplBuilder {
-                predicate: Predicate::Native(NativePredicate::Contains),
-                args: self.args,
-            },
-            Predicate::Native(NativePredicate::DictNotContains)
-            | Predicate::Native(NativePredicate::SetNotContains) => StatementTmplBuilder {
-                predicate: Predicate::Native(NativePredicate::NotContains),
-                args: self.args,
-            },
-            Predicate::Native(NativePredicate::SetContains) => {
-                let mut new_args = self.args.clone();
-                new_args.push(self.args[1].clone());
-                StatementTmplBuilder {
-                    predicate: Predicate::Native(NativePredicate::Contains),
-                    args: new_args,
+    pub(crate) fn desugar(mut self) -> StatementTmplBuilder {
+        let pred = match self.pred_or_wc {
+            PredicateOrWildcard::Predicate(p) => p,
+            PredicateOrWildcard::Wildcard(_) => return self,
+        };
+        let pred = match pred {
+            Predicate::Native(nat_pred) => Predicate::Native(match nat_pred {
+                NativePredicate::Gt => {
+                    self.args.swap(0, 1);
+                    NativePredicate::Lt
                 }
-            }
-            Predicate::Native(NativePredicate::DictInsert) => StatementTmplBuilder {
-                predicate: Predicate::Native(NativePredicate::ContainerInsert),
-                args: self.args,
-            },
-            Predicate::Native(NativePredicate::SetInsert) => {
-                let mut new_args = self.args.clone();
-                new_args.push(self.args[2].clone());
-                StatementTmplBuilder {
-                    predicate: Predicate::Native(NativePredicate::ContainerInsert),
-                    args: new_args,
+                NativePredicate::GtEq => {
+                    self.args.swap(0, 1);
+                    NativePredicate::LtEq
                 }
-            }
-            Predicate::Native(NativePredicate::DictUpdate)
-            | Predicate::Native(NativePredicate::ArrayUpdate) => StatementTmplBuilder {
-                predicate: Predicate::Native(NativePredicate::ContainerUpdate),
-                args: self.args,
-            },
-            Predicate::Native(NativePredicate::DictDelete) => StatementTmplBuilder {
-                predicate: Predicate::Native(NativePredicate::ContainerDelete),
-                args: self.args,
-            },
-            Predicate::Native(NativePredicate::SetDelete) => StatementTmplBuilder {
-                predicate: Predicate::Native(NativePredicate::ContainerDelete),
-                args: self.args,
-            },
-            _ => self,
+                NativePredicate::ArrayContains | NativePredicate::DictContains => {
+                    NativePredicate::Contains
+                }
+                NativePredicate::DictNotContains | NativePredicate::SetNotContains => {
+                    NativePredicate::NotContains
+                }
+                NativePredicate::SetContains => {
+                    self.args.push(self.args[1].clone());
+                    NativePredicate::Contains
+                }
+                NativePredicate::DictInsert => NativePredicate::ContainerInsert,
+                NativePredicate::SetInsert => {
+                    self.args.push(self.args[2].clone());
+                    NativePredicate::ContainerInsert
+                }
+                NativePredicate::DictUpdate | NativePredicate::ArrayUpdate => {
+                    NativePredicate::ContainerUpdate
+                }
+                NativePredicate::DictDelete => NativePredicate::ContainerDelete,
+                NativePredicate::SetDelete => NativePredicate::ContainerDelete,
+                _ => nat_pred,
+            }),
+            _ => pred,
+        };
+        StatementTmplBuilder {
+            pred_or_wc: PredicateOrWildcard::Predicate(pred),
+            args: self.args,
         }
     }
 }
@@ -200,7 +198,7 @@ impl CustomPredicateBatchBuilder {
             .iter()
             .map(|sb| {
                 let stb = sb.clone().desugar();
-                let args = stb
+                let st_tmpl_args = stb
                     .args
                     .iter()
                     .map(|a| {
@@ -216,10 +214,17 @@ impl CustomPredicateBatchBuilder {
                         })
                     })
                     .collect::<Result<_>>()?;
+                let pred_or_wc = match stb.pred_or_wc {
+                    PredicateOrWildcard::Predicate(p) => {
+                        middleware::PredicateOrWildcard::Predicate(p)
+                    }
+                    PredicateOrWildcard::Wildcard(v) => middleware::PredicateOrWildcard::Wildcard(
+                        resolve_wildcard(args, priv_args, &v)?,
+                    ),
+                };
                 Ok(StatementTmpl {
-                    // TODO: Support wildcard
-                    pred_or_wc: PredicateOrWildcard::Predicate(stb.predicate.clone()),
-                    args,
+                    pred_or_wc,
+                    args: st_tmpl_args,
                 })
             })
             .collect::<Result<_>>()?;
@@ -299,7 +304,7 @@ mod tests {
         let vd_set = &*MOCK_VD_SET;
         let mut builder = CustomPredicateBatchBuilder::new(params.clone(), "gt_custom_pred".into());
 
-        let gt_stb = StatementTmplBuilder::new(NativePredicate::Gt)
+        let gt_stb = StatementTmplBuilder::new_from_pred(NativePredicate::Gt)
             .arg("s1")
             .arg("s2");
 
@@ -344,7 +349,7 @@ mod tests {
         let mut builder =
             CustomPredicateBatchBuilder::new(params.clone(), "set_contains_custom_pred".into());
 
-        let set_contains_stb = StatementTmplBuilder::new(NativePredicate::SetContains)
+        let set_contains_stb = StatementTmplBuilder::new_from_pred(NativePredicate::SetContains)
             .arg("s1")
             .arg("s2");
 

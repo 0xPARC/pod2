@@ -611,17 +611,21 @@ pub fn fill_wildcard_values(
     wildcard_map: &mut [Option<Value>],
 ) -> Result<()> {
     for (st_tmpl, st) in pred.statements.iter().zip(args) {
-        let st_args = st.args();
         if let PredicateOrWildcard::Wildcard(wc) = &st_tmpl.pred_or_wc {
             wc_check_or_set(Value::from(st.predicate().hash(params)), wc, wildcard_map)?;
         }
-        st_tmpl
-            .args
-            .iter()
-            .zip(&st_args)
-            .try_for_each(|(st_tmpl_arg, st_arg)| {
-                check_st_tmpl(st_tmpl_arg, st_arg, wildcard_map)
-            })?;
+        let st_args = st.args();
+
+        for (st_tmpl_arg, st_arg) in st_tmpl.args.iter().zip(&st_args) {
+            if let Err(st_tmpl_check_error) = check_st_tmpl(st_tmpl_arg, st_arg, wildcard_map) {
+                return Err(Error::statements_dont_match(
+                    st.clone(),
+                    st_tmpl.clone(),
+                    wildcard_map.to_vec(),
+                    st_tmpl_check_error,
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -741,16 +745,7 @@ pub(crate) fn check_custom_pred(
     for (st_tmpl, st) in pred.statements.iter().zip(args) {
         // For `or` predicates, only one statement needs to match the template.
         // The rest of the statements can be `None`.
-        let expected_pred_is_none = match &st_tmpl.pred_or_wc {
-            PredicateOrWildcard::Predicate(st_tmpl_pred) => {
-                *st_tmpl_pred == Predicate::Native(NativePredicate::None)
-            }
-            PredicateOrWildcard::Wildcard(wc) => {
-                wc_values[wc.index]
-                    == Value::from(Predicate::Native(NativePredicate::None).hash(params))
-            }
-        };
-        if !pred.conjunction && matches!(st, Statement::None) && !expected_pred_is_none {
+        if !pred.conjunction && matches!(st, Statement::None) {
             continue;
         }
         check_custom_pred_argument(params, custom_pred_ref, st_tmpl, st, &wc_values)?;

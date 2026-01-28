@@ -17,7 +17,10 @@ use std::{collections::HashMap, str::FromStr, sync::Arc};
 use petgraph::{algo::condensation, graph::DiGraph, prelude::NodeIndex, visit::EdgeRef};
 
 use crate::{
-    frontend::{CustomPredicateBatchBuilder, Operation, OperationArg, StatementTmplBuilder},
+    frontend::{
+        CustomPredicateBatchBuilder, Operation, OperationArg, PredicateOrWildcard,
+        StatementTmplBuilder,
+    },
     lang::{
         error::BatchingError,
         frontend_ast::{ConjunctionType, CustomPredicateDef},
@@ -663,11 +666,11 @@ fn build_statement_with_resolved_refs(
     let callee_name = &stmt.predicate.name;
 
     // Resolve the predicate
-    let predicate = if let Ok(native) = NativePredicate::from_str(callee_name) {
-        Predicate::Native(native)
+    let pred_or_wc = if let Ok(native) = NativePredicate::from_str(callee_name) {
+        PredicateOrWildcard::Predicate(Predicate::Native(native))
     } else if let Some(&(target_batch, target_idx)) = reference_map.get(callee_name) {
         // Local predicate in this document
-        if target_batch == current_batch_idx {
+        PredicateOrWildcard::Predicate(if target_batch == current_batch_idx {
             // Same batch - use BatchSelf
             Predicate::BatchSelf(target_idx)
         } else if target_batch < current_batch_idx {
@@ -680,13 +683,16 @@ fn build_statement_with_resolved_refs(
                 "Forward cross-batch reference: '{}' (batch {}) -> '{}' (batch {})",
                 caller_name, current_batch_idx, callee_name, target_batch
             );
-        }
+        })
     } else if let Some(imported) = imported_predicates.get(callee_name) {
         // Imported predicate from another batch
-        Predicate::Custom(CustomPredicateRef::new(
+        PredicateOrWildcard::Predicate(Predicate::Custom(CustomPredicateRef::new(
             imported.batch.clone(),
             imported.index,
-        ))
+        )))
+    // TODO: Support wildcard predicates
+    // } else if wc_names.contains(callee_name) {
+    //      PredicateOrWildcard::Wildcard(callee_name.clone())
     } else {
         // Unknown predicate
         return Err(BatchingError::Internal {
@@ -695,7 +701,7 @@ fn build_statement_with_resolved_refs(
     };
 
     // Build the statement template
-    let mut builder = StatementTmplBuilder::new(predicate);
+    let mut builder = StatementTmplBuilder::new(pred_or_wc);
 
     for arg in &stmt.args {
         builder = builder.arg(lower_statement_arg(arg));
