@@ -480,37 +480,60 @@ fn plan_batch_assignments(
         }
     }
 
-    // Build layer-wise topological order and sort each layer by component size desc (then by key)
-    // This reduces wasted space while preserving precedence constraints.
+    // Topological sort using a layer-wise variant of Kahn's algorithm.
+    //
+    // Standard Kahn's algorithm processes nodes one at a time from a queue. This variant
+    // instead processes entire "layers" (all nodes at the same topological depth) together,
+    // which allows sorting within each layer for better bin-packing while still respecting
+    // dependency order.
+    //
+    // Algorithm:
+    // 1. Compute in-degree for each node
+    // 2. Initialize first layer with all zero in-degree nodes (no dependencies)
+    // 3. For each layer:
+    //    a. Sort by component size (desc) for bin-packing, then by key for determinism
+    //    b. Add to output order
+    //    c. Decrement in-degree of all neighbors; those hitting zero form the next layer
+    // 4. Assert all nodes visited (would fail if graph had cycles, but condensation ensures DAG)
+
     let node_count = condensed.node_count();
+
+    // Step 1: Compute in-degrees
     let mut indeg = vec![0usize; node_count];
     for e in condensed.edge_references() {
         indeg[e.target().index()] += 1;
     }
+
     // Stable key per component: minimal original index inside the component
+    // Used as tiebreaker when sorting layers for deterministic output
     let mut comp_key: Vec<usize> = vec![0; node_count];
     for ni in condensed.node_indices() {
         let members = &condensed[ni];
-        // Each condensed component (SCC) must be non-empty by construction
         let key = members.iter().copied().min().expect("non-empty component");
         comp_key[ni.index()] = key;
     }
 
+    // Step 2: Initialize with zero in-degree nodes
     let mut current_layer: Vec<NodeIndex> = condensed
         .node_indices()
         .filter(|&ni| indeg[ni.index()] == 0)
         .collect();
+
     let mut order: Vec<NodeIndex> = Vec::with_capacity(node_count);
     use std::cmp::Reverse;
+
+    // Step 3: Process layer by layer
     while !current_layer.is_empty() {
-        // Sort by size desc, then by comp_key asc for determinism
+        // Sort by size desc (for bin-packing), then by comp_key asc (for determinism)
         current_layer.sort_by_key(|&ni| {
             let size = condensed[ni].len();
             (Reverse(size), comp_key[ni.index()])
         });
-        // Append this layer
+
+        // Add this layer to the output order
         order.extend(current_layer.iter().copied());
-        // Build next layer
+
+        // Build next layer: decrement in-degrees, collect nodes that hit zero
         let mut next_layer: Vec<NodeIndex> = Vec::new();
         for &u in &current_layer {
             for v in condensed.neighbors(u) {
@@ -523,6 +546,8 @@ fn plan_batch_assignments(
         }
         current_layer = next_layer;
     }
+
+    // Step 4: Verify all nodes were visited (cycle detection)
     assert_eq!(order.len(), node_count, "condensed graph must be acyclic");
 
     // Greedy pack components by the layer-aware order
