@@ -277,22 +277,6 @@ impl<'a> Lowerer<'a> {
         }
         let desugared = builder.desugar();
 
-        // Convert BatchSelf predicate to Custom if we have a batch
-        // let pred_or_wc = match desugared.pred_or_wc {
-        //     PredicateOrWildcard::Predicate(pred) => middleware::PredicateOrWildcard::Predicate({
-        //         match (batch, pred) {
-        //             (Some(batch_ref), Predicate::BatchSelf(index)) => Predicate::Custom(
-        //                 middleware::CustomPredicateRef::new(batch_ref.clone(), index),
-        //             ),
-        //             (_, pred) => pred,
-        //         }
-        //     }),
-        //     PredicateOrWildcard::Wildcard(name) => {
-        //         let index = wildcard_map.get(&name).expect("Wildcard not found");
-        //         middleware::PredicateOrWildcard::Wildcard(Wildcard::new(name, *index))
-        //     }
-        // };
-
         // Convert BuilderArgs to StatementTmplArgs
         let mut mw_args = Vec::new();
         for builder_arg in desugared.args {
@@ -314,6 +298,10 @@ impl<'a> Lowerer<'a> {
             mw_args.push(mw_arg);
         }
 
+        let predicate = match desugared.pred_or_wc {
+            PredicateOrWildcard::Predicate(p) => p,
+            _ => unreachable!(),
+        };
         Ok(MWStatementTmpl {
             pred_or_wc: middleware::PredicateOrWildcard::Predicate(predicate),
             args: mw_args,
@@ -611,8 +599,7 @@ mod tests {
         "#;
 
         let params = Params::default();
-        let result = parse_validate_and_lower(input, &params);
-        assert!(result.is_ok());
+        parse_validate_and_lower(input, &params).unwrap();
     }
 
     fn test_multi_batch_packing() {
