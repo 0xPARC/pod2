@@ -754,7 +754,7 @@ mod tests {
 
         // pred_a accepts a Contains statement
         // pred_b accepts a pred_a statement (Custom statement from pred_a)
-        let batch = parse(
+        let parsed = parse(
             r#"
             pred_a(X) = AND(Contains(X, "k", 1))
             pred_b(X) = AND(pred_a(X))
@@ -762,8 +762,10 @@ mod tests {
             &params,
             &[],
         )
-        .expect("parse predicates")
-        .custom_batch;
+        .expect("parse predicates");
+        let batch = parsed
+            .first_batch()
+            .expect("parse predicates should have a batch");
 
         let mut builder = MultiPodBuilder::new(&params, vd_set);
 
@@ -1478,21 +1480,29 @@ mod tests {
 
         // Create 4 separate batches using podlang parser
         // Each batch has a simple predicate that checks a Contains statement
-        let batch1 = parse(r#"pred1(A) = AND(Contains(A, "x", 1))"#, &params, &[])
-            .expect("parse batch1")
-            .custom_batch;
+        let parsed1 =
+            parse(r#"pred1(A) = AND(Contains(A, "x", 1))"#, &params, &[]).expect("parse batch1");
+        let batch1 = parsed1
+            .first_batch()
+            .expect("parse batch1 should have a batch");
 
-        let batch2 = parse(r#"pred2(A) = AND(Contains(A, "x", 2))"#, &params, &[])
-            .expect("parse batch2")
-            .custom_batch;
+        let parsed2 =
+            parse(r#"pred2(A) = AND(Contains(A, "x", 2))"#, &params, &[]).expect("parse batch2");
+        let batch2 = parsed2
+            .first_batch()
+            .expect("parse batch2 should have a batch");
 
-        let batch3 = parse(r#"pred3(A) = AND(Contains(A, "x", 3))"#, &params, &[])
-            .expect("parse batch3")
-            .custom_batch;
+        let parsed3 =
+            parse(r#"pred3(A) = AND(Contains(A, "x", 3))"#, &params, &[]).expect("parse batch3");
+        let batch3 = parsed3
+            .first_batch()
+            .expect("parse batch3 should have a batch");
 
-        let batch4 = parse(r#"pred4(A) = AND(Contains(A, "x", 4))"#, &params, &[])
-            .expect("parse batch4")
-            .custom_batch;
+        let parsed4 =
+            parse(r#"pred4(A) = AND(Contains(A, "x", 4))"#, &params, &[]).expect("parse batch4");
+        let batch4 = parsed4
+            .first_batch()
+            .expect("parse batch4 should have a batch");
 
         let mut builder = MultiPodBuilder::new(&params, vd_set);
 
@@ -1577,7 +1587,7 @@ mod tests {
         let vd_set = &*MOCK_VD_SET;
 
         // Chain of predicates: each accepts the output of the previous
-        let batch = parse(
+        let parsed = parse(
             r#"
             pred_a(X) = AND(Contains(X, "k", 1))
             pred_b(X) = AND(pred_a(X))
@@ -1587,8 +1597,10 @@ mod tests {
             &params,
             &[],
         )
-        .expect("parse predicates")
-        .custom_batch;
+        .expect("parse predicates");
+        let batch = parsed
+            .first_batch()
+            .expect("parse predicates should have a batch");
 
         let mut builder = MultiPodBuilder::new(&params, vd_set);
 
@@ -1719,7 +1731,7 @@ mod tests {
         // pred_a takes TWO custom statement arguments (b_out and c_out)
         // pred_b and pred_c each take a Contains
         // Note: AND clauses are newline-separated, not comma-separated
-        let batch = parse(
+        let parsed = parse(
             r#"
             pred_b(X) = AND(Contains(X, "k", 1))
             pred_c(X) = AND(Contains(X, "k", 1))
@@ -1731,8 +1743,10 @@ mod tests {
             &params,
             &[],
         )
-        .expect("parse predicates")
-        .custom_batch;
+        .expect("parse predicates");
+        let batch = parsed
+            .first_batch()
+            .expect("parse predicates should have a batch");
 
         let mut builder = MultiPodBuilder::new(&params, vd_set);
 
@@ -1833,9 +1847,11 @@ mod tests {
         let vd_set = &*MOCK_VD_SET;
 
         // Create two SEPARATE batches (parsed separately to get different batch IDs)
-        let batch_a = parse(r#"pred_a(X) = AND(Contains(X, "k", 1))"#, &params, &[])
-            .expect("parse batch_a")
-            .custom_batch;
+        let parsed_a =
+            parse(r#"pred_a(X) = AND(Contains(X, "k", 1))"#, &params, &[]).expect("parse batch_a");
+        let batch_a = parsed_a
+            .first_batch()
+            .expect("parse batch_a should have a batch");
 
         // batch_b's pred_b accepts pred_a statements
         // Must use "use batch" syntax to reference external predicates
@@ -1846,9 +1862,11 @@ mod tests {
             pred_b(X) = AND(pred_a(X))
             "#
         );
-        let batch_b = parse(&batch_b_src, &params, std::slice::from_ref(&batch_a))
-            .expect("parse batch_b")
-            .custom_batch;
+        let parsed_b =
+            parse(&batch_b_src, &params, std::slice::from_ref(batch_a)).expect("parse batch_b");
+        let batch_b = parsed_b
+            .first_batch()
+            .expect("parse batch_b should have a batch");
 
         let mut builder = MultiPodBuilder::new(&params, vd_set);
 
