@@ -9,9 +9,7 @@ use std::{
 };
 
 use crate::{
-    frontend::{
-        BuilderArg, CustomPredicateBatchBuilder, PredicateOrWildcard, StatementTmplBuilder,
-    },
+    frontend::{BuilderArg, PredicateOrWildcard, StatementTmplBuilder},
     lang::{
         frontend_ast::*,
         frontend_ast_batch::{self, PredicateBatches},
@@ -19,9 +17,8 @@ use crate::{
         frontend_ast_validate::{PredicateKind, ValidatedAST},
     },
     middleware::{
-        self, containers, CustomPredicateBatch, IntroPredicateRef, NativePredicate, Params,
-        Predicate, PredicateOrWildcard, StatementTmpl as MWStatementTmpl,
-        StatementTmplArg as MWStatementTmplArg, Wildcard,
+        self, containers, IntroPredicateRef, NativePredicate, Params, Predicate,
+        StatementTmpl as MWStatementTmpl, StatementTmplArg as MWStatementTmplArg, Wildcard,
     },
 };
 
@@ -272,7 +269,8 @@ impl<'a> Lowerer<'a> {
         };
 
         // Create a builder with the resolved predicate and desugar
-        let mut builder = StatementTmplBuilder::new(predicate);
+        let mut builder =
+            StatementTmplBuilder::new(PredicateOrWildcard::Predicate(predicate.clone()));
         for arg in &stmt.args {
             let builder_arg = lower_statement_arg(arg);
             builder = builder.arg(builder_arg);
@@ -280,20 +278,20 @@ impl<'a> Lowerer<'a> {
         let desugared = builder.desugar();
 
         // Convert BatchSelf predicate to Custom if we have a batch
-        let pred_or_wc = match desugared.pred_or_wc {
-            PredicateOrWildcard::Predicate(pred) => middleware::PredicateOrWildcard::Predicate({
-                match (batch, pred) {
-                    (Some(batch_ref), Predicate::BatchSelf(index)) => Predicate::Custom(
-                        middleware::CustomPredicateRef::new(batch_ref.clone(), index),
-                    ),
-                    (_, pred) => pred,
-                }
-            }),
-            PredicateOrWildcard::Wildcard(name) => {
-                let index = wildcard_map.get(&name).expect("Wildcard not found");
-                middleware::PredicateOrWildcard::Wildcard(Wildcard::new(name, *index))
-            }
-        };
+        // let pred_or_wc = match desugared.pred_or_wc {
+        //     PredicateOrWildcard::Predicate(pred) => middleware::PredicateOrWildcard::Predicate({
+        //         match (batch, pred) {
+        //             (Some(batch_ref), Predicate::BatchSelf(index)) => Predicate::Custom(
+        //                 middleware::CustomPredicateRef::new(batch_ref.clone(), index),
+        //             ),
+        //             (_, pred) => pred,
+        //         }
+        //     }),
+        //     PredicateOrWildcard::Wildcard(name) => {
+        //         let index = wildcard_map.get(&name).expect("Wildcard not found");
+        //         middleware::PredicateOrWildcard::Wildcard(Wildcard::new(name, *index))
+        //     }
+        // };
 
         // Convert BuilderArgs to StatementTmplArgs
         let mut mw_args = Vec::new();
@@ -317,7 +315,7 @@ impl<'a> Lowerer<'a> {
         }
 
         Ok(MWStatementTmpl {
-            pred_or_wc,
+            pred_or_wc: middleware::PredicateOrWildcard::Predicate(predicate),
             args: mw_args,
         })
     }
@@ -385,185 +383,6 @@ impl<'a> Lowerer<'a> {
         }
         Ok(split_results)
     }
-
-    // <<<<<<< HEAD
-    //         Ok((split_predicates, original_count))
-    //     }
-    //
-    //     fn lower_custom_predicate(
-    //         &self,
-    //         pred_def: &CustomPredicateDef,
-    //         cpb_builder: &mut CustomPredicateBatchBuilder,
-    //     ) -> Result<(), LoweringError> {
-    //         let name = pred_def.name.name.clone();
-    //
-    //         // Note: Constraint checking is handled by the splitting phase
-    //         // Predicates passed here should already be within limits
-    //
-    //         // Collect public and private argument names
-    //         let mut public_arg_names = Vec::new();
-    //         let mut private_arg_names = Vec::new();
-    //
-    //         for arg in &pred_def.args.public_args {
-    //             public_arg_names.push(arg.name.clone());
-    //         }
-    //
-    //         if let Some(private_args) = &pred_def.args.private_args {
-    //             for arg in private_args {
-    //                 private_arg_names.push(arg.name.clone());
-    //             }
-    //         }
-    //
-    //         let wc_names: HashSet<String> = public_arg_names
-    //             .iter()
-    //             .chain(private_arg_names.iter())
-    //             .cloned()
-    //             .collect();
-    //
-    //         // Lower statements to builders
-    //         let mut statement_builders = Vec::new();
-    //         for stmt in &pred_def.statements {
-    //             let stmt_builder = self.lower_statement_to_builder(stmt, &wc_names)?;
-    //             statement_builders.push(stmt_builder);
-    //         }
-    //
-    //         // Convert to &str slices for builder API
-    //         let public_args_str: Vec<&str> = public_arg_names.iter().map(|s| s.as_str()).collect();
-    //         let private_args_str: Vec<&str> = private_arg_names.iter().map(|s| s.as_str()).collect();
-    //
-    //         // Add predicate to batch using builder
-    //         let conjunction = pred_def.conjunction_type == ConjunctionType::And;
-    //
-    //         cpb_builder
-    //             .predicate(
-    //                 &name,
-    //                 conjunction,
-    //                 &public_args_str,
-    //                 &private_args_str,
-    //                 &statement_builders,
-    //             )
-    //             .map_err(|e| match e {
-    //                 crate::frontend::Error::Middleware(mw_err) => LoweringError::Middleware(mw_err),
-    //                 _ => LoweringError::InvalidArgumentType,
-    //             })?;
-    //
-    //         Ok(())
-    //     }
-    //
-    //     fn lower_statement_to_builder(
-    //         &self,
-    //         stmt: &StatementTmpl,
-    //         wc_names: &HashSet<String>,
-    //     ) -> Result<StatementTmplBuilder, LoweringError> {
-    //         // Get predicate
-    //         let pred_name = &stmt.predicate.name;
-    //         let symbols = self.validated.symbols();
-    //
-    //         // Check for native predicates first
-    //         let pred_or_wc = if let Ok(native) = NativePredicate::from_str(pred_name) {
-    //             PredicateOrWildcard::Predicate(Predicate::Native(native))
-    //         } else if let Some(&index) = self.batch_predicate_index.get(pred_name) {
-    //             // References to other predicates in the same batch (including split chains)
-    //             PredicateOrWildcard::Predicate(Predicate::BatchSelf(index))
-    //         } else if let Some(info) = symbols.predicates.get(pred_name) {
-    //             PredicateOrWildcard::Predicate(match &info.kind {
-    //                 PredicateKind::Native(np) => Predicate::Native(*np),
-    //                 PredicateKind::Custom { index } => Predicate::BatchSelf(*index),
-    //                 PredicateKind::BatchImported { batch, index } => {
-    //                     Predicate::Custom(middleware::CustomPredicateRef::new(batch.clone(), *index))
-    //                 }
-    //                 PredicateKind::IntroImported {
-    //                     name,
-    //                     verifier_data_hash,
-    //                 } => Predicate::Intro(IntroPredicateRef {
-    //                     name: name.clone(),
-    //                     args_len: info.public_arity,
-    //                     verifier_data_hash: *verifier_data_hash,
-    //                 }),
-    //             })
-    //         } else if wc_names.contains(pred_name) {
-    //             PredicateOrWildcard::Wildcard(pred_name.clone())
-    //         } else {
-    //             unreachable!("Predicate {} not found", pred_name);
-    //         };
-    //
-    //         // Check args count
-    //         if stmt.args.len() > self.params.max_statement_args {
-    //             return Err(LoweringError::TooManyStatementArgs {
-    //                 count: stmt.args.len(),
-    //                 max: self.params.max_statement_args,
-    //             });
-    //         }
-    //
-    //         // Convert AST args to BuilderArgs
-    //         let mut builder = StatementTmplBuilder::new(pred_or_wc);
-    //         for arg in &stmt.args {
-    //             let builder_arg = Self::lower_statement_arg_to_builder(arg)?;
-    //             builder = builder.arg(builder_arg);
-    //         }
-    //
-    //         // Return builder without calling .desugar() - that will happen later
-    //         Ok(builder)
-    //     }
-    //
-    //     fn lower_statement_arg_to_builder(arg: &StatementTmplArg) -> Result<BuilderArg, LoweringError> {
-    //         match arg {
-    //             StatementTmplArg::Literal(lit) => {
-    //                 let value = Self::lower_literal(lit)?;
-    //                 Ok(BuilderArg::Literal(value))
-    //             }
-    //             StatementTmplArg::Wildcard(id) => {
-    //                 // For builder, we just need the wildcard name
-    //                 Ok(BuilderArg::WildcardLiteral(id.name.clone()))
-    //             }
-    //             StatementTmplArg::AnchoredKey(ak) => {
-    //                 let key_str = match &ak.key {
-    //                     AnchoredKeyPath::Bracket(s) => s.value.clone(),
-    //                     AnchoredKeyPath::Dot(id) => id.name.clone(),
-    //                 };
-    //                 Ok(BuilderArg::Key(ak.root.name.clone(), key_str))
-    //             }
-    //         }
-    //     }
-    //
-    //     fn lower_literal(lit: &LiteralValue) -> Result<middleware::Value, LoweringError> {
-    //         let value = match lit {
-    //             LiteralValue::Int(i) => middleware::Value::from(i.value),
-    //             LiteralValue::Bool(b) => middleware::Value::from(b.value),
-    //             LiteralValue::String(s) => middleware::Value::from(s.value.clone()),
-    //             LiteralValue::Raw(r) => middleware::Value::from(r.hash.hash),
-    //             LiteralValue::PublicKey(pk) => middleware::Value::from(pk.point),
-    //             LiteralValue::SecretKey(sk) => middleware::Value::from(sk.secret_key.clone()),
-    //             LiteralValue::Array(a) => {
-    //                 let elements: Result<Vec<_>, _> =
-    //                     a.elements.iter().map(Self::lower_literal).collect();
-    //                 let array = containers::Array::new(elements?);
-    //                 middleware::Value::from(array)
-    //             }
-    //             LiteralValue::Set(s) => {
-    //                 let elements: Result<Vec<_>, _> =
-    //                     s.elements.iter().map(Self::lower_literal).collect();
-    //                 let set_values: std::collections::HashSet<_> = elements?.into_iter().collect();
-    //                 let set = containers::Set::new(set_values);
-    //                 middleware::Value::from(set)
-    //             }
-    //             LiteralValue::Dict(d) => {
-    //                 let pairs: Result<Vec<(middleware::Key, middleware::Value)>, LoweringError> = d
-    //                     .pairs
-    //                     .iter()
-    //                     .map(|pair| {
-    //                         let key = middleware::Key::from(pair.key.value.as_str());
-    //                         let value = Self::lower_literal(&pair.value)?;
-    //                         Ok((key, value))
-    //                     })
-    //                     .collect();
-    //                 let dict_map: std::collections::HashMap<_, _> = pairs?.into_iter().collect();
-    //                 let dict = containers::Dictionary::new(dict_map);
-    //                 middleware::Value::from(dict)
-    //             }
-    //         };
-    //         Ok(value)
-    // =======
 }
 
 #[cfg(test)]

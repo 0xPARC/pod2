@@ -1433,7 +1433,11 @@ pub mod tests {
             c(6, 3)
         )
         "#;
-        let batch = parse(input, &params, &[]).unwrap().custom_batch;
+        let batch = parse(input, &params, &[])
+            .unwrap()
+            .first_batch()
+            .unwrap()
+            .clone();
         let pred_test = batch.predicate_ref_by_name("Test").unwrap();
 
         let mut builder = MainPodBuilder::new(&params, vd_set);
@@ -1454,7 +1458,11 @@ pub mod tests {
             c(6, 3)
         )
         "#;
-        let batch = parse(input, &params, &[]).unwrap().custom_batch;
+        let batch = parse(input, &params, &[])
+            .unwrap()
+            .first_batch()
+            .unwrap()
+            .clone();
         let pred_test = batch.predicate_ref_by_name("Test").unwrap();
 
         let mut builder = MainPodBuilder::new(&params, vd_set);
@@ -1467,6 +1475,8 @@ pub mod tests {
 
         let pod = builder.prove(prover).unwrap();
         pod.pod.verify().unwrap();
+
+        Ok(())
     }
 
     fn test_apply_predicate_e2e() -> Result<()> {
