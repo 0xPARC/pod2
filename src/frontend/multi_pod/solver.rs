@@ -294,9 +294,11 @@ fn try_solve_with_pods(
         })
         .collect();
 
-    // Objective: minimize number of PODs used
-    let objective: Expression = pod_used.iter().sum();
-    let mut model = vars.minimise(objective).using(default_solver);
+    // No optimization objective needed - we use an incremental approach that tries
+    // min_pods first and increments until feasible. Combined with symmetry breaking
+    // (Constraint 9), this finds the minimum number of PODs without needing MILP
+    // optimization. A constant objective makes the solver find any feasible solution.
+    let mut model = vars.minimise(0_i32).using(default_solver);
 
     // Constraint 1: Each statement must be proved at least once
     for s in 0..n {
