@@ -18,19 +18,19 @@ use crate::{
         frontend_ast_validate::{PredicateKind, SymbolTable, ValidatedAST},
     },
     middleware::{
-        self, containers, CustomPredicateBatch, IntroPredicateRef, NativePredicate, Params,
-        Predicate, PredicateOrWildcard, StatementTmpl as MWStatementTmpl,
-        StatementTmplArg as MWStatementTmplArg, Wildcard,
+        containers, CustomPredicateBatch, CustomPredicateRef, IntroPredicateRef, Key,
+        NativePredicate, Params, Predicate, PredicateOrWildcard, StatementTmpl as MWStatementTmpl,
+        StatementTmplArg as MWStatementTmplArg, Value, Wildcard,
     },
 };
 
 /// Context for predicate resolution - determines how local custom predicates are resolved
 pub enum ResolutionContext<'a> {
-    /// Request context: local custom predicates resolve to CustomPredicateRef via batches
+    /// Request context: local custom predicates resolve to Intro/CustomPredicateRef via batches
     Request {
         batches: Option<&'a PredicateBatches>,
     },
-    /// Batch context: local custom predicates may resolve to BatchSelf or CustomPredicateRef
+    /// Batch context: local custom predicates may resolve to BatchSelf or Intro/CustomPredicateRef
     Batch {
         current_batch_idx: usize,
         reference_map: &'a HashMap<String, (usize, usize)>,
@@ -54,29 +54,26 @@ pub fn resolve_predicate(
         let predicate = match &info.kind {
             PredicateKind::Native(np) => Predicate::Native(*np),
 
-            PredicateKind::Custom { .. } => {
-                // Local custom predicate - resolution depends on context
-                match context {
-                    ResolutionContext::Request { batches } => {
-                        let batches = batches.as_ref()?;
-                        let pred_ref = batches.predicate_ref_by_name(pred_name)?;
-                        Predicate::Custom(pred_ref)
-                    }
-                    ResolutionContext::Batch {
-                        current_batch_idx,
-                        reference_map,
-                        existing_batches,
-                    } => resolve_local_predicate(
-                        pred_name,
-                        *current_batch_idx,
-                        reference_map,
-                        existing_batches,
-                    )?,
+            PredicateKind::Custom { .. } => match context {
+                ResolutionContext::Request { batches } => {
+                    let batches = batches.as_ref()?;
+                    let pred_ref = batches.predicate_ref_by_name(pred_name)?;
+                    Predicate::Custom(pred_ref)
                 }
-            }
+                ResolutionContext::Batch {
+                    current_batch_idx,
+                    reference_map,
+                    existing_batches,
+                } => resolve_local_predicate(
+                    pred_name,
+                    *current_batch_idx,
+                    reference_map,
+                    existing_batches,
+                )?,
+            },
 
             PredicateKind::BatchImported { batch, index } => {
-                Predicate::Custom(middleware::CustomPredicateRef::new(batch.clone(), *index))
+                Predicate::Custom(CustomPredicateRef::new(batch.clone(), *index))
             }
 
             PredicateKind::IntroImported {
@@ -124,7 +121,7 @@ fn resolve_local_predicate(
         Some(Predicate::BatchSelf(target_idx))
     } else if target_batch < current_batch_idx {
         let batch = &existing_batches[target_batch];
-        Some(Predicate::Custom(middleware::CustomPredicateRef::new(
+        Some(Predicate::Custom(CustomPredicateRef::new(
             batch.clone(),
             target_idx,
         )))
@@ -146,37 +143,37 @@ fn resolve_local_predicate(
 /// Lower a literal value from AST to middleware Value.
 ///
 /// This is a pure conversion that cannot fail.
-pub fn lower_literal(lit: &LiteralValue) -> middleware::Value {
+pub fn lower_literal(lit: &LiteralValue) -> Value {
     match lit {
-        LiteralValue::Int(i) => middleware::Value::from(i.value),
-        LiteralValue::Bool(b) => middleware::Value::from(b.value),
-        LiteralValue::String(s) => middleware::Value::from(s.value.clone()),
-        LiteralValue::Raw(r) => middleware::Value::from(r.hash.hash),
-        LiteralValue::PublicKey(pk) => middleware::Value::from(pk.point),
-        LiteralValue::SecretKey(sk) => middleware::Value::from(sk.secret_key.clone()),
+        LiteralValue::Int(i) => Value::from(i.value),
+        LiteralValue::Bool(b) => Value::from(b.value),
+        LiteralValue::String(s) => Value::from(s.value.clone()),
+        LiteralValue::Raw(r) => Value::from(r.hash.hash),
+        LiteralValue::PublicKey(pk) => Value::from(pk.point),
+        LiteralValue::SecretKey(sk) => Value::from(sk.secret_key.clone()),
         LiteralValue::Array(a) => {
             let elements: Vec<_> = a.elements.iter().map(lower_literal).collect();
             let array = containers::Array::new(elements);
-            middleware::Value::from(array)
+            Value::from(array)
         }
         LiteralValue::Set(s) => {
             let elements: std::collections::HashSet<_> =
                 s.elements.iter().map(lower_literal).collect();
             let set = containers::Set::new(elements);
-            middleware::Value::from(set)
+            Value::from(set)
         }
         LiteralValue::Dict(d) => {
-            let pairs: std::collections::HashMap<_, _> = d
+            let pairs: HashMap<_, _> = d
                 .pairs
                 .iter()
                 .map(|pair| {
-                    let key = middleware::Key::from(pair.key.value.as_str());
+                    let key = Key::from(pair.key.value.as_str());
                     let value = lower_literal(&pair.value);
                     (key, value)
                 })
                 .collect();
             let dict = containers::Dictionary::new(pairs);
-            middleware::Value::from(dict)
+            Value::from(dict)
         }
     }
 }
@@ -352,7 +349,7 @@ impl<'a> Lowerer<'a> {
                         .get(&root_name)
                         .expect("Root wildcard not found");
                     let wildcard = Wildcard::new(root_name, *root_index);
-                    let key = middleware::Key::from(key_str.as_str());
+                    let key = Key::from(key_str.as_str());
                     MWStatementTmplArg::AnchoredKey(wildcard, key)
                 }
             };
