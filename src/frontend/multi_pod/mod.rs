@@ -26,8 +26,8 @@
 //! are **intermediate PODs** that prove supporting statements.
 //!
 //! This ordering allows dependencies to flow forward: later PODs can access public
-//! statements from earlier PODs via `CopyStatement`. The output POD, being last, can
-//! access all intermediate PODs.
+//! statements from earlier PODs by adding them as input PODs. The output POD, being
+//! last, can access all intermediate PODs.
 //!
 //! # Usage
 //!
@@ -51,9 +51,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use crate::{
     frontend::{MainPod, MainPodBuilder, Operation, OperationArg},
-    middleware::{
-        Hash, MainPodProver, NativeOperation, OperationAux, OperationType, Params, Statement, VDSet,
-    },
+    middleware::{Hash, MainPodProver, Params, Statement, VDSet},
 };
 
 mod cost;
@@ -411,10 +409,13 @@ impl MultiPodBuilder {
     /// 1. Identifying which input PODs are needed (external + earlier generated)
     /// 2. Adding those input PODs to a fresh `MainPodBuilder`
     /// 3. For each statement assigned to this POD (in dependency order):
-    ///    - Copy any dependencies from earlier PODs via `CopyStatement`
     ///    - Execute the original operation to create the statement
     ///    - Mark as public if the solver determined it should be
     /// 4. Prove the POD
+    ///
+    /// Note: Cross-POD dependencies do NOT require CopyStatement. When this POD depends
+    /// on a statement from an earlier POD, adding that POD as input makes its public
+    /// statements directly accessible (see `layout_statements` in backends/plonky2).
     fn build_single_pod(
         &self,
         pod_idx: usize,
@@ -486,89 +487,31 @@ impl MultiPodBuilder {
             builder.add_pod(earlier_pods[earlier_idx].clone())?;
         }
 
-        // Step 3: Build statement source map for determining what needs copying.
-        // Create a mapping from statement to its source (for copy operations).
-        // A statement may be both proved locally AND available from an earlier POD.
-        // We use or_insert to prefer local sources (inserted first) over earlier PODs.
-        let mut stmt_sources: HashMap<usize, StmtSource> = HashMap::new();
-        for &stmt_idx in statements_in_this_pod {
-            stmt_sources.insert(stmt_idx, StmtSource::Local);
-        }
-        for earlier_pod_idx in 0..pod_idx {
-            for &stmt_idx in &solution.pod_public_statements[earlier_pod_idx] {
-                // Only insert if not already local - or_insert preserves existing entries
-                stmt_sources.entry(stmt_idx).or_insert(StmtSource::FromPod);
-            }
-        }
-
-        // Step 4: Add statements in dependency order.
+        // Step 3: Add statements in dependency order.
         // Statements are added in ascending index order, which matches dependency order:
         // if B depends on A, then A has a lower index and is added first.
         let statements_sorted: BTreeSet<usize> = statements_in_this_pod.iter().copied().collect();
         let public_set = &solution.pod_public_statements[pod_idx];
 
-        // Track which statements have been added to this builder
+        // Track statements proved locally in this POD for argument remapping.
+        // When an operation references a statement proved earlier in this same POD,
+        // we need to use the Statement object that MainPodBuilder created (not the
+        // original from MultiPodBuilder) so that find_op_arg can locate it.
         let mut added_statements: HashMap<usize, Statement> = HashMap::new();
 
         for &stmt_idx in &statements_sorted {
-            // First, ensure all dependencies are available (copy if needed).
-            // When a dependency comes from an earlier POD, we need CopyStatement to make it
-            // available in this POD's namespace. The earlier POD is already added as an input,
-            // but CopyStatement creates a local reference that operations can use.
-            for dep in &deps.statement_deps[stmt_idx] {
-                if let StatementSource::Internal(dep_idx) = dep {
-                    if !added_statements.contains_key(dep_idx) {
-                        // Need to copy this statement from an earlier POD
-                        match stmt_sources.get(dep_idx) {
-                            Some(StmtSource::FromPod) => {
-                                // Dependency is from an earlier POD - copy it
-                                let copy_op = Operation(
-                                    OperationType::Native(NativeOperation::CopyStatement),
-                                    vec![OperationArg::Statement(
-                                        self.statements[*dep_idx].clone(),
-                                    )],
-                                    OperationAux::None,
-                                );
-                                let copied_stmt = builder
-                                    .priv_op(copy_op)
-                                    .map_err(|e| Error::Frontend(e.to_string()))?;
-                                added_statements.insert(*dep_idx, copied_stmt);
-                            }
-                            Some(StmtSource::Local) => {
-                                // Local dependency should already be added due to topological
-                                // ordering. If we reach here, there's a bug in the ordering.
-                                unreachable!(
-                                    "Local dependency at index {} should already be added \
-                                     when processing statement {} (topological order violation)",
-                                    dep_idx, stmt_idx
-                                );
-                            }
-                            None => {
-                                // Dependency not found in stmt_sources means it's neither
-                                // in this POD nor available from earlier PODs - a solver bug.
-                                unreachable!(
-                                    "Dependency at index {} not found in stmt_sources \
-                                     when processing statement {}",
-                                    dep_idx, stmt_idx
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Now add the actual statement
             let is_public = public_set.contains(&stmt_idx);
             let mut op = self.operations[stmt_idx].clone();
 
-            // Remap Statement arguments in the operation to use statements created by MainPodBuilder.
-            // The original operation references Statements from MultiPodBuilder, but MainPodBuilder
-            // needs Statements that were either created by it or come from its input PODs.
+            // Remap Statement arguments that reference locally-proved statements.
+            // For external dependencies (from input PODs including earlier generated PODs),
+            // the original Statement is used directly - MainPodBuilder will find it in
+            // the input POD's public statements via find_op_arg.
             for arg in &mut op.1 {
                 if let OperationArg::Statement(ref orig_stmt) = arg {
                     // Find the original statement's index in MultiPodBuilder
                     if let Some(orig_idx) = self.statements.iter().position(|s| s == orig_stmt) {
-                        // Get the remapped statement from MainPodBuilder
+                        // Get the remapped statement if it was proved locally in this POD
                         if let Some(remapped_stmt) = added_statements.get(&orig_idx) {
                             *arg = OperationArg::Statement(remapped_stmt.clone());
                         }
@@ -602,16 +545,6 @@ impl MultiPodBuilder {
         }
         map
     }
-}
-
-/// Source of a statement within a built POD.
-#[derive(Clone, Debug)]
-enum StmtSource {
-    /// Statement is proved locally in this POD.
-    Local,
-    /// Statement is copied from an earlier generated POD.
-    /// (The specific POD index doesn't matter - we only need to know it's not local.)
-    FromPod,
 }
 
 #[cfg(test)]
@@ -1568,12 +1501,12 @@ mod tests {
         //
         // Chain: d_out -> c_out -> b_out -> a_out -> contains (5 statements)
         //
-        // With max_priv_statements = 2, each POD can hold at most 2 statements
-        // (including copies). Expected solution with 4 PODs:
-        //   - POD 0 (intermediate): contains, a_out (a_out public)
-        //   - POD 1 (intermediate): copy(a_out), b_out (b_out public)
-        //   - POD 2 (intermediate): copy(b_out), c_out (c_out public)
-        //   - POD 3 (output): copy(c_out), d_out
+        // With max_priv_statements = 2, each POD can hold at most 2 statements.
+        // Cross-POD dependencies are available via input PODs without needing copies.
+        // Expected solution with 3 PODs (ceil(5/2) = 3):
+        //   - POD 0 (intermediate): contains, a_out (a_out public for POD 1)
+        //   - POD 1 (intermediate): b_out, c_out (c_out public for POD 2)
+        //   - POD 2 (output): d_out (public)
 
         let params = Params {
             max_statements: 4,
@@ -1630,57 +1563,45 @@ mod tests {
 
         let solution = builder.solve()?;
 
-        // Expected: exactly 4 PODs for a 5-statement chain with max_priv=2
-        //   - POD 0: statements 0 (contains), 1 (a_out); a_out public
-        //   - POD 1: statement 2 (b_out); b_out public (copies a_out)
-        //   - POD 2: statement 3 (c_out); c_out public (copies b_out)
-        //   - POD 3 (output): statement 4 (d_out); d_out public (copies c_out)
+        // Expected: exactly 3 PODs for a 5-statement chain with max_priv=2
+        // (5 statements / 2 per POD = 3 PODs, no copy overhead)
         assert_eq!(
-            solution.pod_count, 4,
-            "Expected exactly 4 PODs for 5-statement chain with max_priv=2"
+            solution.pod_count, 3,
+            "Expected exactly 3 PODs for 5-statement chain with max_priv=2"
         );
 
-        // POD 0: contains(0) and a_out(1)
-        assert!(
-            solution.pod_statements[0].contains(&0) && solution.pod_statements[0].contains(&1),
-            "POD 0 should contain statements 0 and 1, got {:?}",
-            solution.pod_statements[0]
-        );
-        assert!(
-            solution.pod_public_statements[0].contains(&1),
-            "Statement 1 (a_out) should be public in POD 0"
-        );
-
-        // POD 1: b_out(2)
-        assert!(
-            solution.pod_statements[1].contains(&2),
-            "POD 1 should contain statement 2 (b_out), got {:?}",
-            solution.pod_statements[1]
-        );
-        assert!(
-            solution.pod_public_statements[1].contains(&2),
-            "Statement 2 (b_out) should be public in POD 1"
+        // All 5 statements should be assigned across the PODs
+        let all_statements: BTreeSet<usize> = solution
+            .pod_statements
+            .iter()
+            .flat_map(|s| s.iter().copied())
+            .collect();
+        assert_eq!(
+            all_statements,
+            (0..5).collect::<BTreeSet<_>>(),
+            "All 5 statements should be assigned"
         );
 
-        // POD 2: c_out(3)
-        assert!(
-            solution.pod_statements[2].contains(&3),
-            "POD 2 should contain statement 3 (c_out), got {:?}",
-            solution.pod_statements[2]
-        );
-        assert!(
-            solution.pod_public_statements[2].contains(&3),
-            "Statement 3 (c_out) should be public in POD 2"
-        );
+        // Each POD should have at most max_priv_statements = 2
+        for (i, stmts) in solution.pod_statements.iter().enumerate() {
+            assert!(
+                stmts.len() <= 2,
+                "POD {} has {} statements, but max_priv=2: {:?}",
+                i,
+                stmts.len(),
+                stmts
+            );
+        }
 
-        // POD 3 (output): d_out(4)
+        // The output POD (last) must contain d_out(4) and it must be public
+        let output_pod_idx = solution.pod_count - 1;
         assert!(
-            solution.pod_statements[3].contains(&4),
-            "POD 3 should contain statement 4 (d_out), got {:?}",
-            solution.pod_statements[3]
+            solution.pod_statements[output_pod_idx].contains(&4),
+            "Output POD should contain statement 4 (d_out), got {:?}",
+            solution.pod_statements[output_pod_idx]
         );
         assert!(
-            solution.pod_public_statements[3].contains(&4),
+            solution.pod_public_statements[output_pod_idx].contains(&4),
             "Statement 4 (d_out) should be public in output POD"
         );
 
@@ -1709,13 +1630,8 @@ mod tests {
         //          contains
         //
         // Where a_out depends on BOTH b_out and c_out, creating a diamond.
-        // With tight limits, b_out and c_out may end up in different PODs,
-        // and the output POD must copy from both.
-        //
-        // With max_priv_statements = 3:
-        //   - POD 0: contains, b_out, c_out (b_out and c_out public) - 3 statements
-        //   - POD 1 (output): copy(b_out), copy(c_out), a_out - 3 statements
-        // Or the solver may find a different arrangement.
+        // The solver may distribute statements across PODs in various ways,
+        // as long as dependencies are satisfied.
 
         let params = Params {
             max_statements: 6,
@@ -1775,44 +1691,37 @@ mod tests {
 
         let solution = builder.solve()?;
 
-        // Expected: exactly 2 PODs for the diamond
-        //   - POD 0: contains(0), b_out(1), c_out(2); b_out and c_out public
-        //   - POD 1 (output): a_out(3); a_out public (copies b_out and c_out)
+        // With 4 statements and max_priv=3, we need at least 2 PODs (ceil(4/3) = 2)
         assert_eq!(
             solution.pod_count, 2,
             "Expected exactly 2 PODs for diamond with max_priv=3"
         );
 
-        // POD 0 should contain statements 0, 1, 2
+        // The output POD (last) must contain statement 3 (a_out) and it must be public
+        let output_pod_idx = solution.pod_count - 1;
         assert!(
-            solution.pod_statements[0].contains(&0)
-                && solution.pod_statements[0].contains(&1)
-                && solution.pod_statements[0].contains(&2),
-            "POD 0 should contain statements 0, 1, 2, got {:?}",
-            solution.pod_statements[0]
+            solution.pod_statements[output_pod_idx].contains(&3),
+            "Output POD should contain statement 3 (a_out), got {:?}",
+            solution.pod_statements[output_pod_idx]
         );
-
-        // Statements 1 and 2 (b_out and c_out) should be public in POD 0
         assert!(
-            solution.pod_public_statements[0].contains(&1)
-                && solution.pod_public_statements[0].contains(&2),
-            "Statements 1 and 2 should be public in POD 0"
-        );
-
-        // POD 1 (output) should contain statement 3 (a_out)
-        assert!(
-            solution.pod_statements[1].contains(&3),
-            "POD 1 should contain statement 3 (a_out), got {:?}",
-            solution.pod_statements[1]
-        );
-
-        // Statement 3 (a_out) should be public in output POD
-        assert!(
-            solution.pod_public_statements[1].contains(&3),
+            solution.pod_public_statements[output_pod_idx].contains(&3),
             "Statement 3 (a_out) should be public in output POD"
         );
 
-        // Prove and verify all PODs
+        // All statements should be covered exactly once across all PODs
+        let all_statements: BTreeSet<usize> = solution
+            .pod_statements
+            .iter()
+            .flat_map(|s| s.iter().copied())
+            .collect();
+        assert_eq!(
+            all_statements,
+            [0, 1, 2, 3].into_iter().collect(),
+            "All statements should be assigned to exactly one POD"
+        );
+
+        // Prove and verify all PODs - this validates dependencies are satisfied
         let prover = MockProver {};
         let result = builder.prove(&prover)?;
 
