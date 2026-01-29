@@ -385,10 +385,6 @@ fn try_solve_with_pods(
         // Statements with identical content share a slot, so we count content groups, not indices.
         // Anchored key Contains statements are auto-inserted by MainPodBuilder when needed.
         // The total must not exceed max_priv_statements (= max_statements - max_public_statements).
-        //
-        // Note: Cross-POD dependencies do NOT require CopyStatement. When POD A depends on a
-        // statement from POD B, adding B as an input makes B's public statements directly
-        // accessible in A's namespace (see layout_statements in backends/plonky2/mainpod/mod.rs).
         let unique_stmt_sum: Expression = (0..num_groups).map(|g| content_group_used[g][p]).sum();
         let anchored_key_sum: Expression = (0..input.all_anchored_keys.len())
             .map(|ak| anchored_key_used[ak][p])

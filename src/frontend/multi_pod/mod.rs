@@ -150,16 +150,18 @@ impl MultiPodResult {
 ///    to add statements, just like `MainPodBuilder`.
 ///
 /// 2. **Solve**: Call [`solve`](Self::solve) to run the MILP solver, which determines
-///    the optimal assignment of statements to PODs.
+///    the optimal assignment of statements to PODs. This consumes the builder and
+///    returns a [`SolvedMultiPod`].
 ///
-/// 3. **Prove**: Call [`prove`](Self::prove) to build and prove all PODs.
+/// 3. **Prove**: Call [`prove`](SolvedMultiPod::prove) on the solved result to build
+///    and prove all PODs.
 ///
 /// # POD Structure
 ///
 /// The result contains PODs in build order: intermediate PODs first (indices 0..k-1),
 /// then the output POD last (index k). The output POD contains all user-requested
 /// public statements (those added via `pub_op`). Intermediate PODs make their
-/// statements public so later PODs can copy them.
+/// statements public so later PODs can access them.
 ///
 /// [`MainPodBuilder`]: crate::frontend::MainPodBuilder
 #[derive(Debug)]
@@ -176,227 +178,46 @@ pub struct MultiPodBuilder {
     /// Indices of statements that should be public in output PODs.
     /// Uses Vec since max_public_statements is small (≤8); indices are naturally sorted.
     output_public_indices: Vec<usize>,
-    /// Cached solution from the solver.
-    cached_solution: Option<MultiPodSolution>,
-    /// Cached dependency graph (computed once in solve(), reused in build_single_pod()).
-    cached_deps: Option<DependencyGraph>,
-    /// Cached external POD statement map (computed once in solve(), reused in build_single_pod()).
-    cached_external_map: Option<HashMap<Statement, Hash>>,
     /// Cached MainPodBuilder for incremental statement computation.
+    /// Used during add_operation to validate statements with unlimited params.
     cached_builder: Option<MainPodBuilder>,
 }
 
-impl MultiPodBuilder {
-    /// Create a new MultiPodBuilder with default options.
-    pub fn new(params: &Params, vd_set: &VDSet) -> Self {
-        Self::new_with_options(params, vd_set, Options::default())
-    }
+/// A solved multi-POD problem, ready to be proved.
+///
+/// Created by [`MultiPodBuilder::solve`]. Call [`prove`](Self::prove) to build
+/// and prove all PODs, or inspect the [`solution`](Self::solution) first.
+#[derive(Debug)]
+pub struct SolvedMultiPod {
+    params: Params,
+    vd_set: VDSet,
+    input_pods: Vec<MainPod>,
+    statements: Vec<Statement>,
+    operations: Vec<Operation>,
+    solution: MultiPodSolution,
+    deps: DependencyGraph,
+}
 
-    /// Create a new MultiPodBuilder with custom options.
-    pub fn new_with_options(params: &Params, vd_set: &VDSet, options: Options) -> Self {
-        Self {
-            params: params.clone(),
-            vd_set: vd_set.clone(),
-            options,
-            input_pods: Vec::new(),
-            statements: Vec::new(),
-            operations: Vec::new(),
-            output_public_indices: Vec::new(),
-            cached_solution: None,
-            cached_deps: None,
-            cached_external_map: None,
-            cached_builder: None,
-        }
-    }
-
-    /// Add an external input POD.
-    pub fn add_pod(&mut self, pod: MainPod) {
-        // Keep cached_builder in sync if it exists
-        if let Some(ref mut builder) = self.cached_builder {
-            // Won't fail - cached_builder has unlimited params
-            let _ = builder.add_pod(pod.clone());
-        }
-        self.input_pods.push(pod);
-        self.invalidate_cache();
-    }
-
-    /// Add a public operation (statement will be public in output).
-    pub fn pub_op(&mut self, op: Operation) -> Result<Statement> {
-        let stmt = self.add_operation(op)?;
-        // Index is always new (just added), so push without duplicate check
-        self.output_public_indices.push(self.statements.len() - 1);
-        Ok(stmt)
-    }
-
-    /// Add a private operation.
-    pub fn priv_op(&mut self, op: Operation) -> Result<Statement> {
-        self.add_operation(op)
-    }
-
-    /// Internal: Add an operation and create its statement.
-    fn add_operation(&mut self, op: Operation) -> Result<Statement> {
-        self.invalidate_cache();
-
-        // Get or create the cached builder
-        //
-        // NOTE: We clone input pods here because MainPodBuilder takes ownership.
-        // This could be avoided if MainPodBuilder were generic over the pod storage type:
-        //   struct MainPodBuilder<P: Borrow<MainPod> = MainPod>
-        // Then MultiPodBuilder could use MainPodBuilder<&MainPod> to borrow instead of clone,
-        // while existing code using MainPodBuilder (with the default) would be unaffected.
-        let builder = self.cached_builder.get_or_insert_with(|| {
-            let unlimited_params = Params {
-                max_statements: usize::MAX / 2,
-                max_public_statements: usize::MAX / 2,
-                max_input_pods: usize::MAX / 2,
-                max_input_pods_public_statements: usize::MAX / 2,
-                ..self.params.clone()
-            };
-            let mut b = MainPodBuilder::new(&unlimited_params, &self.vd_set);
-            for pod in &self.input_pods {
-                let _ = b.add_pod(pod.clone());
-            }
-            b
-        });
-
-        let stmt = builder
-            .op(false, vec![], op.clone())
-            .map_err(|e| Error::Frontend(e.to_string()))?;
-
-        self.statements.push(stmt.clone());
-        self.operations.push(op);
-
-        Ok(stmt)
-    }
-
-    /// Mark a statement as public in output.
-    ///
-    /// Returns an error if the statement was not found in the builder.
-    /// Calling this multiple times on the same statement is idempotent.
-    pub fn reveal(&mut self, stmt: &Statement) -> Result<()> {
-        if let Some(idx) = self.statements.iter().position(|s| s == stmt) {
-            // Only invalidate cache if this is a new reveal
-            if !self.output_public_indices.contains(&idx) {
-                self.output_public_indices.push(idx);
-                self.invalidate_cache();
-            }
-            Ok(())
-        } else {
-            Err(Error::Frontend(
-                "reveal() called with statement not found in builder".to_string(),
-            ))
-        }
-    }
-
-    /// Get the number of statements.
-    pub fn num_statements(&self) -> usize {
-        self.statements.len()
-    }
-
-    /// Invalidate all cached data. Called when operations or statements change.
-    fn invalidate_cache(&mut self) {
-        self.cached_solution = None;
-        self.cached_deps = None;
-        self.cached_external_map = None;
-    }
-
-    /// Solve the packing problem and return the solution.
-    ///
-    /// This runs the MILP solver to find the optimal POD assignment.
-    /// The solution is cached for subsequent calls.
-    pub fn solve(&mut self) -> Result<&MultiPodSolution> {
-        if self.cached_solution.is_some() {
-            return Ok(self.cached_solution.as_ref().unwrap());
-        }
-
-        // Compute costs for each statement
-        let costs: Vec<StatementCost> = self
-            .operations
-            .iter()
-            .map(StatementCost::from_operation)
-            .collect();
-
-        // Collect all unique anchored keys from the costs
-        let all_anchored_keys: Vec<AnchoredKeyId> = costs
-            .iter()
-            .flat_map(|c| c.anchored_keys.iter().cloned())
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect();
-
-        // Build map from anchored key to its producing statement index (if any).
-        // A Contains statement with literal (dict, key, value) "produces" that anchored key.
-        let mut ak_to_producer: HashMap<AnchoredKeyId, usize> = HashMap::new();
-        for (stmt_idx, stmt) in self.statements.iter().enumerate() {
-            if let Some(ak) = AnchoredKeyId::from_contains_statement(stmt) {
-                // First producer wins (shouldn't have duplicates in practice)
-                ak_to_producer.entry(ak).or_insert(stmt_idx);
-            }
-        }
-
-        // Build parallel array: anchored_key_producers[i] = producer for all_anchored_keys[i]
-        let anchored_key_producers: Vec<Option<usize>> = all_anchored_keys
-            .iter()
-            .map(|ak| ak_to_producer.get(ak).copied())
-            .collect();
-
-        // Build external POD statement mapping (cache for reuse in build_single_pod)
-        let external_pod_statements = self.build_external_statement_map();
-        self.cached_external_map = Some(external_pod_statements);
-        let external_pod_statements = self.cached_external_map.as_ref().unwrap();
-
-        // Build dependency graph (cache for reuse in build_single_pod)
-        let deps =
-            DependencyGraph::build(&self.statements, &self.operations, external_pod_statements);
-        self.cached_deps = Some(deps);
-        let deps = self.cached_deps.as_ref().unwrap();
-
-        // Build statement content groups for deduplication.
-        // Statements with identical content share a single slot in the POD.
-        // Group statement indices by their content.
-        let mut content_to_indices: HashMap<&Statement, Vec<usize>> = HashMap::new();
-        for (idx, stmt) in self.statements.iter().enumerate() {
-            content_to_indices.entry(stmt).or_default().push(idx);
-        }
-        let statement_content_groups: Vec<Vec<usize>> = content_to_indices.into_values().collect();
-
-        // Run solver
-        let input = solver::SolverInput {
-            num_statements: self.statements.len(),
-            costs: &costs,
-            deps,
-            output_public_indices: &self.output_public_indices,
-            params: &self.params,
-            max_pods: self.options.max_pods,
-            all_anchored_keys: &all_anchored_keys,
-            anchored_key_producers: &anchored_key_producers,
-            statement_content_groups: &statement_content_groups,
-        };
-
-        let solution = solver::solve(&input)?;
-        self.cached_solution = Some(solution);
-
-        Ok(self.cached_solution.as_ref().unwrap())
+impl SolvedMultiPod {
+    /// Get the solver's solution (POD assignments).
+    pub fn solution(&self) -> &MultiPodSolution {
+        &self.solution
     }
 
     /// Build and prove all PODs.
     ///
-    /// This first solves if not already solved, then builds and proves
-    /// all necessary PODs in dependency order.
-    pub fn prove(&mut self, prover: &dyn MainPodProver) -> Result<MultiPodResult> {
-        // Ensure we have a solution (can't use returned reference due to later &mut self borrows)
-        self.solve()?;
-        let solution = self.cached_solution.as_ref().unwrap();
+    /// Builds PODs in dependency order (0, 1, ..., k) and proves each one.
+    /// The last POD is the output POD containing user-requested public statements.
+    pub fn prove(self, prover: &dyn MainPodProver) -> Result<MultiPodResult> {
+        let solution = &self.solution;
 
         // Build PODs in sequential order: 0, 1, 2, ..., k
-        // This order is guaranteed by the solver's symmetry-breaking constraint, which
-        // ensures PODs are used in order (no gaps). Sequential building is required because
-        // later PODs may reference earlier ones via CopyStatement for cross-POD dependencies.
-        // PODs 0..k-1 are intermediate; POD k (the last one) is the output POD.
+        // This order is guaranteed by the solver's symmetry-breaking constraint.
+        // Later PODs may reference earlier ones for cross-POD dependencies.
         let mut pods: Vec<MainPod> = Vec::with_capacity(solution.pod_count);
 
         for pod_idx in 0..solution.pod_count {
-            let pod = self.build_single_pod(pod_idx, solution, &pods, prover)?;
+            let pod = self.build_single_pod(pod_idx, &pods, prover)?;
             pods.push(pod);
         }
 
@@ -412,23 +233,14 @@ impl MultiPodBuilder {
     ///    - Execute the original operation to create the statement
     ///    - Mark as public if the solver determined it should be
     /// 4. Prove the POD
-    ///
-    /// Note: Cross-POD dependencies do NOT require CopyStatement. When this POD depends
-    /// on a statement from an earlier POD, adding that POD as input makes its public
-    /// statements directly accessible (see `layout_statements` in backends/plonky2).
     fn build_single_pod(
         &self,
         pod_idx: usize,
-        solution: &MultiPodSolution,
         earlier_pods: &[MainPod],
         prover: &dyn MainPodProver,
     ) -> Result<MainPod> {
         let mut builder = MainPodBuilder::new(&self.params, &self.vd_set);
-
-        let deps = self
-            .cached_deps
-            .as_ref()
-            .expect("build_single_pod called before solve()");
+        let solution = &self.solution;
 
         let statements_in_this_pod: &Vec<usize> = &solution.pod_statements[pod_idx];
         let mut needed_external_pods: BTreeSet<usize> = BTreeSet::new();
@@ -436,7 +248,7 @@ impl MultiPodBuilder {
 
         // Step 1: Find which external and earlier PODs we need based on dependencies
         for &stmt_idx in statements_in_this_pod {
-            for dep in &deps.statement_deps[stmt_idx] {
+            for dep in &self.deps.statement_deps[stmt_idx] {
                 match dep {
                     StatementSource::Internal(dep_idx) => {
                         // Check if dependency is in an earlier generated POD
@@ -509,7 +321,7 @@ impl MultiPodBuilder {
             // the input POD's public statements via find_op_arg.
             for arg in &mut op.1 {
                 if let OperationArg::Statement(ref orig_stmt) = arg {
-                    // Find the original statement's index in MultiPodBuilder
+                    // Find the original statement's index
                     if let Some(orig_idx) = self.statements.iter().position(|s| s == orig_stmt) {
                         // Get the remapped statement if it was proved locally in this POD
                         if let Some(remapped_stmt) = added_statements.get(&orig_idx) {
@@ -526,25 +338,203 @@ impl MultiPodBuilder {
             added_statements.insert(stmt_idx, stmt);
         }
 
-        // Step 5: Prove the POD
+        // Step 4: Prove the POD
         let pod = builder
             .prove(prover)
             .map_err(|e| Error::Frontend(e.to_string()))?;
 
         Ok(pod)
     }
+}
 
-    /// Build mapping from external POD statements to their POD hash.
-    fn build_external_statement_map(&self) -> HashMap<Statement, Hash> {
-        let mut map = HashMap::new();
-        for pod in &self.input_pods {
-            let pod_hash = pod.statements_hash();
-            for stmt in pod.pod.pub_statements() {
-                map.insert(stmt, pod_hash);
+impl MultiPodBuilder {
+    /// Create a new MultiPodBuilder with default options.
+    pub fn new(params: &Params, vd_set: &VDSet) -> Self {
+        Self::new_with_options(params, vd_set, Options::default())
+    }
+
+    /// Create a new MultiPodBuilder with custom options.
+    pub fn new_with_options(params: &Params, vd_set: &VDSet, options: Options) -> Self {
+        Self {
+            params: params.clone(),
+            vd_set: vd_set.clone(),
+            options,
+            input_pods: Vec::new(),
+            statements: Vec::new(),
+            operations: Vec::new(),
+            output_public_indices: Vec::new(),
+            cached_builder: None,
+        }
+    }
+
+    /// Add an external input POD.
+    pub fn add_pod(&mut self, pod: MainPod) {
+        // Keep cached_builder in sync if it exists
+        if let Some(ref mut builder) = self.cached_builder {
+            // Won't fail - cached_builder has unlimited params
+            let _ = builder.add_pod(pod.clone());
+        }
+        self.input_pods.push(pod);
+    }
+
+    /// Add a public operation (statement will be public in output).
+    pub fn pub_op(&mut self, op: Operation) -> Result<Statement> {
+        let stmt = self.add_operation(op)?;
+        // Index is always new (just added), so push without duplicate check
+        self.output_public_indices.push(self.statements.len() - 1);
+        Ok(stmt)
+    }
+
+    /// Add a private operation.
+    pub fn priv_op(&mut self, op: Operation) -> Result<Statement> {
+        self.add_operation(op)
+    }
+
+    /// Internal: Add an operation and create its statement.
+    fn add_operation(&mut self, op: Operation) -> Result<Statement> {
+        // Get or create the cached builder
+        //
+        // NOTE: We clone input pods here because MainPodBuilder takes ownership.
+        // This could be avoided if MainPodBuilder were generic over the pod storage type:
+        //   struct MainPodBuilder<P: Borrow<MainPod> = MainPod>
+        // Then MultiPodBuilder could use MainPodBuilder<&MainPod> to borrow instead of clone,
+        // while existing code using MainPodBuilder (with the default) would be unaffected.
+        let builder = self.cached_builder.get_or_insert_with(|| {
+            let unlimited_params = Params {
+                max_statements: usize::MAX / 2,
+                max_public_statements: usize::MAX / 2,
+                max_input_pods: usize::MAX / 2,
+                max_input_pods_public_statements: usize::MAX / 2,
+                ..self.params.clone()
+            };
+            let mut b = MainPodBuilder::new(&unlimited_params, &self.vd_set);
+            for pod in &self.input_pods {
+                let _ = b.add_pod(pod.clone());
+            }
+            b
+        });
+
+        let stmt = builder
+            .op(false, vec![], op.clone())
+            .map_err(|e| Error::Frontend(e.to_string()))?;
+
+        self.statements.push(stmt.clone());
+        self.operations.push(op);
+
+        Ok(stmt)
+    }
+
+    /// Mark a statement as public in output.
+    ///
+    /// Returns an error if the statement was not found in the builder.
+    /// Calling this multiple times on the same statement is idempotent.
+    pub fn reveal(&mut self, stmt: &Statement) -> Result<()> {
+        if let Some(idx) = self.statements.iter().position(|s| s == stmt) {
+            if !self.output_public_indices.contains(&idx) {
+                self.output_public_indices.push(idx);
+            }
+            Ok(())
+        } else {
+            Err(Error::Frontend(
+                "reveal() called with statement not found in builder".to_string(),
+            ))
+        }
+    }
+
+    /// Get the number of statements.
+    pub fn num_statements(&self) -> usize {
+        self.statements.len()
+    }
+
+    /// Solve the packing problem and return a solved builder ready for proving.
+    ///
+    /// This runs the MILP solver to find the optimal POD assignment.
+    /// Consumes the builder and returns a [`SolvedMultiPod`] that can be proved.
+    pub fn solve(self) -> Result<SolvedMultiPod> {
+        // Compute costs for each statement
+        let costs: Vec<StatementCost> = self
+            .operations
+            .iter()
+            .map(StatementCost::from_operation)
+            .collect();
+
+        // Collect all unique anchored keys from the costs
+        let all_anchored_keys: Vec<AnchoredKeyId> = costs
+            .iter()
+            .flat_map(|c| c.anchored_keys.iter().cloned())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+
+        // Build map from anchored key to its producing statement index (if any).
+        // A Contains statement with literal (dict, key, value) "produces" that anchored key.
+        let mut ak_to_producer: HashMap<AnchoredKeyId, usize> = HashMap::new();
+        for (stmt_idx, stmt) in self.statements.iter().enumerate() {
+            if let Some(ak) = AnchoredKeyId::from_contains_statement(stmt) {
+                // First producer wins (shouldn't have duplicates in practice)
+                ak_to_producer.entry(ak).or_insert(stmt_idx);
             }
         }
-        map
+
+        // Build parallel array: anchored_key_producers[i] = producer for all_anchored_keys[i]
+        let anchored_key_producers: Vec<Option<usize>> = all_anchored_keys
+            .iter()
+            .map(|ak| ak_to_producer.get(ak).copied())
+            .collect();
+
+        // Build external POD statement mapping
+        let external_pod_statements = build_external_statement_map(&self.input_pods);
+
+        // Build dependency graph
+        let deps =
+            DependencyGraph::build(&self.statements, &self.operations, &external_pod_statements);
+
+        // Build statement content groups for deduplication.
+        // Statements with identical content share a single slot in the POD.
+        // Group statement indices by their content.
+        let mut content_to_indices: HashMap<&Statement, Vec<usize>> = HashMap::new();
+        for (idx, stmt) in self.statements.iter().enumerate() {
+            content_to_indices.entry(stmt).or_default().push(idx);
+        }
+        let statement_content_groups: Vec<Vec<usize>> = content_to_indices.into_values().collect();
+
+        // Run solver
+        let input = solver::SolverInput {
+            num_statements: self.statements.len(),
+            costs: &costs,
+            deps: &deps,
+            output_public_indices: &self.output_public_indices,
+            params: &self.params,
+            max_pods: self.options.max_pods,
+            all_anchored_keys: &all_anchored_keys,
+            anchored_key_producers: &anchored_key_producers,
+            statement_content_groups: &statement_content_groups,
+        };
+
+        let solution = solver::solve(&input)?;
+
+        Ok(SolvedMultiPod {
+            params: self.params,
+            vd_set: self.vd_set,
+            input_pods: self.input_pods,
+            statements: self.statements,
+            operations: self.operations,
+            solution,
+            deps,
+        })
     }
+}
+
+/// Build mapping from external POD statements to their POD hash.
+fn build_external_statement_map(input_pods: &[MainPod]) -> HashMap<Statement, Hash> {
+    let mut map = HashMap::new();
+    for pod in input_pods {
+        let pod_hash = pod.statements_hash();
+        for stmt in pod.pod.pub_statements() {
+            map.insert(stmt, pod_hash);
+        }
+    }
+    map
 }
 
 #[cfg(test)]
@@ -579,12 +569,12 @@ mod tests {
         builder.pub_op(FrontendOp::dict_signed_by(&signed_dict))?;
 
         // Solve
-        let solution = builder.solve()?;
-        assert_eq!(solution.pod_count, 1);
+        let solved = builder.solve()?;
+        assert_eq!(solved.solution().pod_count, 1);
 
         // Prove
         let prover = MockProver {};
-        let result = builder.prove(&prover)?;
+        let result = solved.prove(&prover)?;
 
         assert_eq!(result.pods.len(), 1);
         assert!(result.intermediate_pods().is_empty());
@@ -626,20 +616,19 @@ mod tests {
         builder.pub_op(FrontendOp::eq(100, 100))?;
         builder.pub_op(FrontendOp::eq(101, 101))?;
 
-        let pod_count = {
-            let solution = builder.solve()?;
-            // 8 statements / 4 per POD = 2 PODs minimum
-            assert!(
-                solution.pod_count >= 2,
-                "Expected at least 2 PODs for 8 statements with max_priv=4, got {}",
-                solution.pod_count
-            );
-            solution.pod_count
-        };
+        // Solve
+        let solved = builder.solve()?;
+        // 8 statements / 4 per POD = 2 PODs minimum
+        assert!(
+            solved.solution().pod_count >= 2,
+            "Expected at least 2 PODs for 8 statements with max_priv=4, got {}",
+            solved.solution().pod_count
+        );
+        let pod_count = solved.solution().pod_count;
 
         // Prove and verify
         let prover = MockProver {};
-        let result = builder.prove(&prover)?;
+        let result = solved.prove(&prover)?;
         assert_eq!(result.pods.len(), pod_count);
 
         for (i, pod) in result.pods.iter().enumerate() {
@@ -721,12 +710,13 @@ mod tests {
 
         // Solve - this finds a multi-POD solution where intermediate PODs
         // provide dependencies to the output POD.
-        let solution = builder.solve()?;
+        let solved = builder.solve()?;
+        let solution = solved.solution();
 
         // Expected: exactly 2 PODs
         //   - POD 0 (intermediate): statements 0 (contains), 1 (a_out); a_out is public
         //   - POD 1 (output): statement 2 (b_out); b_out is public
-        // The output POD copies a_out from POD 0 to satisfy b_out's dependency.
+        // The output POD accesses a_out from POD 0 to satisfy b_out's dependency.
         assert_eq!(
             solution.pod_count, 2,
             "Expected exactly 2 PODs for 3-statement chain with max_priv=2"
@@ -739,7 +729,7 @@ mod tests {
             solution.pod_statements[0]
         );
 
-        // Statement 1 (a_out) should be public in POD 0 so POD 1 can copy it
+        // Statement 1 (a_out) should be public in POD 0 so POD 1 can access it
         assert!(
             solution.pod_public_statements[0].contains(&1),
             "Statement 1 (a_out) should be public in POD 0"
@@ -760,7 +750,7 @@ mod tests {
 
         // Prove and verify all PODs
         let prover = MockProver {};
-        let result = builder.prove(&prover)?;
+        let result = solved.prove(&prover)?;
 
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
@@ -800,18 +790,18 @@ mod tests {
         builder.pub_op(FrontendOp::eq(100, 100))?;
         builder.pub_op(FrontendOp::eq(101, 101))?;
 
-        let solution = builder.solve()?;
+        let solved = builder.solve()?;
 
         // 6 statements / 2 per POD = 3 PODs minimum
         assert!(
-            solution.pod_count >= 2,
+            solved.solution().pod_count >= 2,
             "Expected at least 2 PODs, got {}",
-            solution.pod_count
+            solved.solution().pod_count
         );
 
         // Prove and verify
         let prover = MockProver {};
-        let result = builder.prove(&prover)?;
+        let result = solved.prove(&prover)?;
 
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
@@ -954,14 +944,14 @@ mod tests {
         // With 6 statements and max_priv_statements = 2, we need multiple PODs.
         // Each POD should only include the external POD it depends on.
 
-        let solution = multi_builder.solve()?;
+        let solved = multi_builder.solve()?;
         assert!(
-            solution.pod_count >= 2,
+            solved.solution().pod_count >= 2,
             "Expected at least 2 PODs, got {}",
-            solution.pod_count
+            solved.solution().pod_count
         );
 
-        let result = multi_builder.prove(&prover)?;
+        let result = solved.prove(&prover)?;
 
         // Verify all PODs
         for (i, pod) in result.pods.iter().enumerate() {
@@ -997,7 +987,8 @@ mod tests {
         builder.pub_op(FrontendOp::eq(200, 200))?;
         builder.pub_op(FrontendOp::eq(201, 201))?;
 
-        let solution = builder.solve()?;
+        let solved = builder.solve()?;
+        let solution = solved.solution();
 
         // Check that the output POD's public statements are exactly the user-requested public ones.
         // The output POD is always the last one (index pod_count - 1).
@@ -1191,18 +1182,19 @@ mod tests {
         builder.priv_op(FrontendOp::gt(contains_stmt, 2))?;
 
         // With correct counting, all 4 statements fit in 1 POD
-        let solution = builder.solve()?;
+        let solved = builder.solve()?;
         assert_eq!(
-            solution.pod_count, 1,
+            solved.solution().pod_count,
+            1,
             "All statements should fit in 1 POD when Contains is not double-counted. \
              Got {} PODs, which suggests the explicit Contains is being incorrectly \
              counted as both a statement AND an anchored key overhead.",
-            solution.pod_count
+            solved.solution().pod_count
         );
 
         // Verify proving works
         let prover = MockProver {};
-        let result = builder.prove(&prover)?;
+        let result = solved.prove(&prover)?;
         assert_eq!(result.pods.len(), 1);
 
         result
@@ -1255,7 +1247,7 @@ mod tests {
         builder.priv_op(FrontendOp::gt(stmt_a, 2))?;
 
         let prover = MockProver {};
-        let result = builder.prove(&prover)?;
+        let result = builder.solve()?.prove(&prover)?;
 
         // Verify all PODs
         for (i, pod) in result.pods.iter().enumerate() {
@@ -1320,7 +1312,7 @@ mod tests {
         builder.priv_op(FrontendOp::copy(stmt_ext))?;
 
         // This should succeed - total inputs per POD should stay within limit
-        let result = builder.prove(&prover)?;
+        let result = builder.solve()?.prove(&prover)?;
 
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
@@ -1366,20 +1358,19 @@ mod tests {
         // Add one public statement for output
         builder.pub_op(FrontendOp::eq(100, 100))?;
 
-        let pod_count = {
-            let solution = builder.solve()?;
-            // 4 SignedBy / 2 per POD = exactly 2 PODs
-            assert_eq!(
-                solution.pod_count, 2,
-                "Expected exactly 2 PODs for 4 SignedBy with max_signed_by=2, got {}",
-                solution.pod_count
-            );
-            solution.pod_count
-        };
+        let solved = builder.solve()?;
+        // 4 SignedBy / 2 per POD = exactly 2 PODs
+        assert_eq!(
+            solved.solution().pod_count,
+            2,
+            "Expected exactly 2 PODs for 4 SignedBy with max_signed_by=2, got {}",
+            solved.solution().pod_count
+        );
+        let pod_count = solved.solution().pod_count;
 
         // Prove and verify
         let prover = MockProver {};
-        let result = builder.prove(&prover)?;
+        let result = solved.prove(&prover)?;
         assert_eq!(result.pods.len(), pod_count);
 
         for (i, pod) in result.pods.iter().enumerate() {
@@ -1469,20 +1460,19 @@ mod tests {
             [contains4],
         ))?;
 
-        let pod_count = {
-            let solution = builder.solve()?;
-            // 4 batches / 2 per POD = exactly 2 PODs
-            assert_eq!(
-                solution.pod_count, 2,
-                "Expected exactly 2 PODs for 4 batches with max_custom_predicate_batches=2, got {}",
-                solution.pod_count
-            );
-            solution.pod_count
-        };
+        let solved = builder.solve()?;
+        // 4 batches / 2 per POD = exactly 2 PODs
+        assert_eq!(
+            solved.solution().pod_count,
+            2,
+            "Expected exactly 2 PODs for 4 batches with max_custom_predicate_batches=2, got {}",
+            solved.solution().pod_count
+        );
+        let pod_count = solved.solution().pod_count;
 
         // Prove and verify
         let prover = MockProver {};
-        let result = builder.prove(&prover)?;
+        let result = solved.prove(&prover)?;
         assert_eq!(result.pods.len(), pod_count);
 
         for (i, pod) in result.pods.iter().enumerate() {
@@ -1561,10 +1551,11 @@ mod tests {
             [c_out],
         ))?;
 
-        let solution = builder.solve()?;
+        let solved = builder.solve()?;
+        let solution = solved.solution();
 
         // Expected: exactly 3 PODs for a 5-statement chain with max_priv=2
-        // (5 statements / 2 per POD = 3 PODs, no copy overhead)
+        // (5 statements / 2 per POD = 3 PODs)
         assert_eq!(
             solution.pod_count, 3,
             "Expected exactly 3 PODs for 5-statement chain with max_priv=2"
@@ -1607,7 +1598,7 @@ mod tests {
 
         // Prove and verify all PODs
         let prover = MockProver {};
-        let result = builder.prove(&prover)?;
+        let result = solved.prove(&prover)?;
 
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
@@ -1689,7 +1680,8 @@ mod tests {
             [b_out, c_out],
         ))?;
 
-        let solution = builder.solve()?;
+        let solved = builder.solve()?;
+        let solution = solved.solution();
 
         // With 4 statements and max_priv=3, we need at least 2 PODs (ceil(4/3) = 2)
         assert_eq!(
@@ -1723,7 +1715,7 @@ mod tests {
 
         // Prove and verify all PODs - this validates dependencies are satisfied
         let prover = MockProver {};
-        let result = builder.prove(&prover)?;
+        let result = solved.prove(&prover)?;
 
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
@@ -1796,11 +1788,12 @@ mod tests {
             [a_out],
         ))?;
 
-        let solution = builder.solve()?;
+        let solved = builder.solve()?;
+        let solution = solved.solution();
 
         // Expected: exactly 2 PODs due to batch limit
         //   - POD 0: contains(0), a_out(1) using batch_a; a_out public
-        //   - POD 1 (output): b_out(2) using batch_b; b_out public (copies a_out)
+        //   - POD 1 (output): b_out(2) using batch_b; b_out public
         //
         // Even though max_priv_statements=6 could fit all 3 statements,
         // max_custom_predicate_batches=1 forces batch_a and batch_b into different PODs.
@@ -1833,7 +1826,7 @@ mod tests {
 
         // Prove and verify
         let prover = MockProver {};
-        let result = builder.prove(&prover)?;
+        let result = solved.prove(&prover)?;
 
         for (i, pod) in result.pods.iter().enumerate() {
             pod.pod
