@@ -9,7 +9,7 @@ use std::{
 };
 
 use crate::{
-    frontend::{BuilderArg, PredicateOrWildcard, StatementTmplBuilder},
+    frontend::{self, BuilderArg, StatementTmplBuilder},
     lang::{
         frontend_ast::*,
         frontend_ast_batch::{self, PredicateBatches},
@@ -228,7 +228,10 @@ impl<'a> Lowerer<'a> {
             });
         }
 
-        let pred_name = &stmt.predicate.name;
+        let pred_name = match &stmt.pred_or_wc {
+            PredicateOrWildcard::Predicate(pred) => &pred.name,
+            _ => unreachable!(),
+        };
         let symbols = self.validated.symbols();
 
         // Resolve predicate - for request statements, local custom predicates
@@ -270,7 +273,7 @@ impl<'a> Lowerer<'a> {
 
         // Create a builder with the resolved predicate and desugar
         let mut builder =
-            StatementTmplBuilder::new(PredicateOrWildcard::Predicate(predicate.clone()));
+            StatementTmplBuilder::new(frontend::PredicateOrWildcard::Predicate(predicate.clone()));
         for arg in &stmt.args {
             let builder_arg = lower_statement_arg(arg);
             builder = builder.arg(builder_arg);
@@ -299,7 +302,7 @@ impl<'a> Lowerer<'a> {
         }
 
         let predicate = match desugared.pred_or_wc {
-            PredicateOrWildcard::Predicate(p) => p,
+            frontend::PredicateOrWildcard::Predicate(p) => p,
             _ => unreachable!(),
         };
         Ok(MWStatementTmpl {
@@ -602,6 +605,7 @@ mod tests {
         parse_validate_and_lower(input, &params).unwrap();
     }
 
+    #[test]
     fn test_multi_batch_packing() {
         // Create more predicates than fit in a single batch
         // With max_custom_batch_size = 4, 5 predicates should span 2 batches

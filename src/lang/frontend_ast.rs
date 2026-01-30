@@ -3,7 +3,7 @@
 //! This module defines an intermediate AST that captures all features of the grammar
 //! and supports bidirectional conversion (parsing and pretty-printing).
 
-use std::fmt;
+use std::{collections::HashSet, fmt};
 
 use hex::{FromHex, ToHex};
 
@@ -93,10 +93,25 @@ pub enum ConjunctionType {
     Or,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum PredicateOrWildcard {
+    Predicate(Identifier),
+    Wildcard(Identifier),
+}
+
+impl PredicateOrWildcard {
+    pub(crate) fn identifier(&self) -> &Identifier {
+        match self {
+            PredicateOrWildcard::Predicate(id) => &id,
+            PredicateOrWildcard::Wildcard(id) => &id,
+        }
+    }
+}
+
 /// Statement template: predicate call with arguments
 #[derive(Debug, Clone, PartialEq)]
 pub struct StatementTmpl {
-    pub predicate: Identifier,
+    pub pred_or_wc: PredicateOrWildcard,
     pub args: Vec<StatementTmplArg>,
     pub span: Option<Span>,
 }
@@ -376,7 +391,7 @@ impl fmt::Display for RequestDef {
 
 impl fmt::Display for StatementTmpl {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}(", self.predicate)?;
+        write!(f, "{}(", self.pred_or_wc)?;
         for (i, arg) in self.args.iter().enumerate() {
             if i > 0 {
                 write!(f, ", ")?;
@@ -384,6 +399,12 @@ impl fmt::Display for StatementTmpl {
             write!(f, "{}", arg)?;
         }
         write!(f, ")")
+    }
+}
+
+impl fmt::Display for PredicateOrWildcard {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.identifier())
     }
 }
 
@@ -663,10 +684,16 @@ pub mod parse {
         let conjunction_type = parse_conjunction_type(inner.next().unwrap());
         let statement_list = inner.next().unwrap();
 
+        let wc_names: HashSet<String> = args
+            .public_args
+            .iter()
+            .chain(args.private_args.as_ref().unwrap_or(&vec![]))
+            .map(|id| id.name.clone())
+            .collect();
         let statements = statement_list
             .into_inner()
             .filter(|p| p.as_rule() == Rule::statement)
-            .map(parse_statement)
+            .map(|p| parse_statement(p, &wc_names))
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(CustomPredicateDef {
@@ -732,7 +759,7 @@ pub mod parse {
                 statements = inner_pair
                     .into_inner()
                     .filter(|p| p.as_rule() == Rule::statement)
-                    .map(parse_statement)
+                    .map(|p| parse_statement(p, &HashSet::new()))
                     .collect::<Result<Vec<_>, _>>()?;
             }
         }
@@ -743,12 +770,20 @@ pub mod parse {
         })
     }
 
-    fn parse_statement(pair: Pair<Rule>) -> Result<StatementTmpl, parser::ParseError> {
+    fn parse_statement(
+        pair: Pair<Rule>,
+        wc_names: &HashSet<String>,
+    ) -> Result<StatementTmpl, parser::ParseError> {
         assert_eq!(pair.as_rule(), Rule::statement);
         let span = get_span(&pair);
         let mut inner = pair.into_inner();
 
         let predicate = parse_identifier(inner.next().unwrap());
+        let pred_or_wc = if wc_names.contains(&predicate.name) {
+            PredicateOrWildcard::Wildcard(predicate)
+        } else {
+            PredicateOrWildcard::Predicate(predicate)
+        };
         let mut args = Vec::new();
 
         if let Some(arg_list) = inner.next() {
@@ -762,7 +797,7 @@ pub mod parse {
         }
 
         Ok(StatementTmpl {
-            predicate,
+            pred_or_wc,
             args,
             span: Some(span),
         })

@@ -435,40 +435,52 @@ impl Validator {
         stmt: &StatementTmpl,
         wildcard_context: Option<(&str, &WildcardScope)>,
     ) -> Result<(), ValidationError> {
-        let pred_name = &stmt.predicate.name;
-
         let wc_names = match wildcard_context {
             Some((_, wc_scope)) => wc_scope.wildcards.keys().collect(),
             None => HashSet::new(),
         };
         self.validate_wildcard_names(&wc_names)?;
 
-        // Check if predicate exists
-        let pred_info = if let Ok(native) = NativePredicate::from_str(pred_name) {
-            // Native predicate
-            Some(PredicateInfo {
-                kind: PredicateKind::Native(native),
-                arity: native.arity(),
-                public_arity: native.arity(),
-                source_span: None,
-            })
-        } else if let Some(info) = self.symbols.predicates.get(pred_name) {
-            // Custom or imported predicate
-            Some(info.clone())
-        } else if wc_names.contains(pred_name) {
-            None
-        } else {
-            return Err(ValidationError::UndefinedPredicate {
-                name: pred_name.clone(),
-                span: stmt.predicate.span,
-            });
+        let pred_info = match &stmt.pred_or_wc {
+            PredicateOrWildcard::Predicate(pred) => {
+                let pred_name = &pred.name;
+                // Check if predicate exists
+                if let Ok(native) = NativePredicate::from_str(pred_name) {
+                    // Native predicate
+                    Some(PredicateInfo {
+                        kind: PredicateKind::Native(native),
+                        arity: native.arity(),
+                        public_arity: native.arity(),
+                        source_span: None,
+                    })
+                } else if let Some(info) = self.symbols.predicates.get(pred_name) {
+                    // Custom or imported predicate
+                    Some(info.clone())
+                } else {
+                    return Err(ValidationError::UndefinedPredicate {
+                        name: pred_name.clone(),
+                        span: pred.span,
+                    });
+                }
+            }
+            PredicateOrWildcard::Wildcard(wc) => {
+                if wc_names.contains(&wc.name) {
+                    None
+                } else {
+                    return Err(ValidationError::UndefinedWildcard {
+                        name: wc.name.clone(),
+                        pred_name: "?".to_string(),
+                        span: wc.span,
+                    });
+                }
+            }
         };
 
         if let Some(ref pred_info) = pred_info {
             let expected_arity = pred_info.public_arity;
             if stmt.args.len() != expected_arity {
                 return Err(ValidationError::ArgumentCountMismatch {
-                    predicate: pred_name.clone(),
+                    predicate: stmt.pred_or_wc.identifier().name.clone(),
                     expected: expected_arity,
                     found: stmt.args.len(),
                     span: stmt.span,
@@ -497,7 +509,7 @@ impl Validator {
                 match arg {
                     StatementTmplArg::AnchoredKey(_) => {
                         return Err(ValidationError::InvalidArgumentType {
-                            predicate: stmt.predicate.name.clone(),
+                            predicate: stmt.pred_or_wc.identifier().name.clone(),
                             span: stmt.span,
                         });
                     }

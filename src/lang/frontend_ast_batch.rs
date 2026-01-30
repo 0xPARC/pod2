@@ -17,13 +17,10 @@ use std::{collections::HashMap, str::FromStr, sync::Arc};
 use petgraph::{algo::condensation, graph::DiGraph, prelude::NodeIndex, visit::EdgeRef};
 
 use crate::{
-    frontend::{
-        CustomPredicateBatchBuilder, Operation, OperationArg, PredicateOrWildcard,
-        StatementTmplBuilder,
-    },
+    frontend::{self, CustomPredicateBatchBuilder, Operation, OperationArg, StatementTmplBuilder},
     lang::{
         error::BatchingError,
-        frontend_ast::{ConjunctionType, CustomPredicateDef},
+        frontend_ast::{ConjunctionType, CustomPredicateDef, PredicateOrWildcard},
         frontend_ast_lower::lower_statement_arg,
         frontend_ast_split::{SplitChainInfo, SplitResult},
     },
@@ -448,7 +445,7 @@ fn plan_batch_assignments(
     let nodes: Vec<NodeIndex> = (0..n).map(|i| graph.add_node(i)).collect();
     for (caller_idx, pred) in predicates.iter().enumerate() {
         for stmt in &pred.statements {
-            if let Some(&callee_idx) = name_to_index.get(&stmt.predicate.name) {
+            if let Some(&callee_idx) = name_to_index.get(&stmt.pred_or_wc.identifier().name) {
                 graph.add_edge(nodes[callee_idx], nodes[caller_idx], ());
             }
         }
@@ -663,41 +660,45 @@ fn build_statement_with_resolved_refs(
     existing_batches: &[Arc<CustomPredicateBatch>],
     imported_predicates: &HashMap<String, ImportedPredicateInfo>,
 ) -> Result<StatementTmplBuilder, BatchingError> {
-    let callee_name = &stmt.predicate.name;
-
-    // Resolve the predicate
-    let pred_or_wc = if let Ok(native) = NativePredicate::from_str(callee_name) {
-        PredicateOrWildcard::Predicate(Predicate::Native(native))
-    } else if let Some(&(target_batch, target_idx)) = reference_map.get(callee_name) {
-        // Local predicate in this document
-        PredicateOrWildcard::Predicate(if target_batch == current_batch_idx {
-            // Same batch - use BatchSelf
-            Predicate::BatchSelf(target_idx)
-        } else if target_batch < current_batch_idx {
-            // Earlier batch - use Custom ref
-            let batch = &existing_batches[target_batch];
-            Predicate::Custom(CustomPredicateRef::new(batch.clone(), target_idx))
-        } else {
-            // Forward reference to a later batch should be impossible with the dependency-aware planner
-            unreachable!(
-                "Forward cross-batch reference: '{}' (batch {}) -> '{}' (batch {})",
-                caller_name, current_batch_idx, callee_name, target_batch
-            );
-        })
-    } else if let Some(imported) = imported_predicates.get(callee_name) {
-        // Imported predicate from another batch
-        PredicateOrWildcard::Predicate(Predicate::Custom(CustomPredicateRef::new(
-            imported.batch.clone(),
-            imported.index,
-        )))
-    // TODO: Support wildcard predicates
-    // } else if wc_names.contains(callee_name) {
-    //      PredicateOrWildcard::Wildcard(callee_name.clone())
-    } else {
-        // Unknown predicate
-        return Err(BatchingError::Internal {
-            message: format!("Unknown predicate reference: '{}'", callee_name),
-        });
+    let pred_or_wc = match &stmt.pred_or_wc {
+        PredicateOrWildcard::Predicate(pred) => {
+            let callee_name = &pred.name;
+            // Resolve the predicate
+            let pred = if let Ok(native) = NativePredicate::from_str(callee_name) {
+                Predicate::Native(native)
+            } else if let Some(&(target_batch, target_idx)) = reference_map.get(callee_name) {
+                // Local predicate in this document
+                if target_batch == current_batch_idx {
+                    // Same batch - use BatchSelf
+                    Predicate::BatchSelf(target_idx)
+                } else if target_batch < current_batch_idx {
+                    // Earlier batch - use Custom ref
+                    let batch = &existing_batches[target_batch];
+                    Predicate::Custom(CustomPredicateRef::new(batch.clone(), target_idx))
+                } else {
+                    // Forward reference to a later batch should be impossible with the dependency-aware planner
+                    unreachable!(
+                        "Forward cross-batch reference: '{}' (batch {}) -> '{}' (batch {})",
+                        caller_name, current_batch_idx, callee_name, target_batch
+                    );
+                }
+            } else if let Some(imported) = imported_predicates.get(callee_name) {
+                // Imported predicate from another batch
+                Predicate::Custom(CustomPredicateRef::new(
+                    imported.batch.clone(),
+                    imported.index,
+                ))
+            } else {
+                // Unknown predicate
+                return Err(BatchingError::Internal {
+                    message: format!("Unknown predicate reference: '{}'", callee_name),
+                });
+            };
+            frontend::PredicateOrWildcard::Predicate(pred)
+        }
+        PredicateOrWildcard::Wildcard(wc) => {
+            frontend::PredicateOrWildcard::Wildcard(wc.name.clone())
+        }
     };
 
     // Build the statement template

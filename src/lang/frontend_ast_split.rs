@@ -121,7 +121,8 @@ pub fn split_predicate_if_needed(
     })
 }
 
-fn analyze_wildcards(statements: &[StatementTmpl]) -> HashMap<String, WildcardUsage> {
+fn analyze_wildcards(pred: &CustomPredicateDef) -> HashMap<String, WildcardUsage> {
+    let statements = &pred.statements;
     let mut usage: HashMap<String, WildcardUsage> = HashMap::new();
 
     for (idx, stmt) in statements.iter().enumerate() {
@@ -145,6 +146,9 @@ fn analyze_wildcards(statements: &[StatementTmpl]) -> HashMap<String, WildcardUs
 fn collect_wildcards_from_statement(stmt: &StatementTmpl) -> HashSet<String> {
     let mut wildcards = HashSet::new();
 
+    if let PredicateOrWildcard::Wildcard(id) = &stmt.pred_or_wc {
+        wildcards.insert(id.name.clone());
+    }
     for arg in &stmt.args {
         match arg {
             StatementTmplArg::Wildcard(id) => {
@@ -171,16 +175,17 @@ struct OrderingResult {
 }
 
 fn order_constraints_optimally(
-    statements: Vec<StatementTmpl>,
+    pred: &CustomPredicateDef,
     _usage: &HashMap<String, WildcardUsage>,
     params: &Params,
 ) -> OrderingResult {
+    let statements = &pred.statements;
     let n = statements.len();
 
     // If no splitting needed, preserve original order (identity mapping)
     if n <= params.max_custom_predicate_arity {
         return OrderingResult {
-            statements,
+            statements: statements.clone(),
             reorder_map: (0..n).collect(),
         };
     }
@@ -429,10 +434,10 @@ fn split_into_chain(
     let original_name = pred.name.name.clone();
     let conjunction = pred.conjunction_type;
 
-    let usage = analyze_wildcards(&pred.statements);
+    let usage = analyze_wildcards(&pred);
     let real_statement_count = pred.statements.len();
 
-    let ordering_result = order_constraints_optimally(pred.statements, &usage, params);
+    let ordering_result = order_constraints_optimally(&pred, &usage, params);
     let ordered_statements = ordering_result.statements;
     let reorder_map = ordering_result.reorder_map;
 
@@ -630,7 +635,7 @@ fn generate_chain_predicates(
                 .collect();
 
             let chain_call = StatementTmpl {
-                predicate: next_pred_name,
+                pred_or_wc: PredicateOrWildcard::Predicate(next_pred_name),
                 args: chain_call_args,
                 span: None,
             };
