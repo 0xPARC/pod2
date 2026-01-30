@@ -1479,6 +1479,7 @@ pub mod tests {
         Ok(())
     }
 
+    #[test]
     fn test_apply_predicate_e2e() -> Result<()> {
         // End-to-end test of apply_predicate with MockProver
         // Tests a split predicate being applied through the full pipeline

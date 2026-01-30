@@ -35,6 +35,7 @@ pub enum ResolutionContext<'a> {
         current_batch_idx: usize,
         reference_map: &'a HashMap<String, (usize, usize)>,
         existing_batches: &'a [Arc<CustomPredicateBatch>],
+        custom_predicate_name: &'a str,
     },
 }
 
@@ -43,10 +44,23 @@ pub fn resolve_predicate(
     pred_name: &str,
     symbols: &SymbolTable,
     context: &ResolutionContext,
-) -> Option<Predicate> {
-    // 1. Try native predicate first
+) -> Option<PredicateOrWildcard> {
+    // 0. Try wildcard first
+    if let ResolutionContext::Batch {
+        custom_predicate_name,
+        ..
+    } = context
+    {
+        if let Some(wc_scope) = symbols.wildcard_scopes.get(*custom_predicate_name) {
+            if wc_scope.wildcards.contains_key(pred_name) {
+                return Some(PredicateOrWildcard::Wildcard(pred_name.to_string()));
+            }
+        }
+    }
+
+    // 1. Try native predicate second
     if let Ok(native) = NativePredicate::from_str(pred_name) {
-        return Some(Predicate::Native(native));
+        return Some(PredicateOrWildcard::Predicate(Predicate::Native(native)));
     }
 
     // 2. Look up in symbol table
@@ -64,6 +78,7 @@ pub fn resolve_predicate(
                     current_batch_idx,
                     reference_map,
                     existing_batches,
+                    ..
                 } => resolve_local_predicate(
                     pred_name,
                     *current_batch_idx,
@@ -85,7 +100,7 @@ pub fn resolve_predicate(
                 verifier_data_hash: *verifier_data_hash,
             }),
         };
-        return Some(predicate);
+        return Some(PredicateOrWildcard::Predicate(predicate));
     }
 
     // 3. In batch context, also check reference_map for split chain pieces
@@ -94,6 +109,7 @@ pub fn resolve_predicate(
         current_batch_idx,
         reference_map,
         existing_batches,
+        ..
     } = context
     {
         if reference_map.contains_key(pred_name) {
@@ -102,7 +118,8 @@ pub fn resolve_predicate(
                 *current_batch_idx,
                 reference_map,
                 existing_batches,
-            );
+            )
+            .map(PredicateOrWildcard::Predicate);
         }
     }
 
@@ -328,8 +345,7 @@ impl<'a> Lowerer<'a> {
         })?;
 
         // Create a builder with the resolved predicate and desugar
-        let mut builder =
-            StatementTmplBuilder::new(PredicateOrWildcard::Predicate(predicate.clone()));
+        let mut builder = StatementTmplBuilder::new(predicate.clone());
         for arg in &stmt.args {
             let builder_arg = lower_statement_arg(arg);
             builder = builder.arg(builder_arg);
@@ -661,6 +677,7 @@ mod tests {
         parse_validate_and_lower(input, &params).unwrap();
     }
 
+    #[test]
     fn test_multi_batch_packing() {
         // Create more predicates than fit in a single batch
         // With max_custom_batch_size = 4, 5 predicates should span 2 batches
@@ -766,7 +783,7 @@ mod tests {
         // Verify the second statement is an intro predicate reference
         let intro_stmt = &pred.statements()[1];
         match intro_stmt.pred_or_wc() {
-            PredicateOrWildcard::Predicate(Predicate::Intro(intro_ref)) => {
+            middleware::PredicateOrWildcard::Predicate(Predicate::Intro(intro_ref)) => {
                 assert_eq!(intro_ref.name, "external_check");
                 assert_eq!(intro_ref.args_len, 1);
                 assert_eq!(intro_ref.verifier_data_hash, EMPTY_HASH);
