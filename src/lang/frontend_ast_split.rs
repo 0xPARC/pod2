@@ -197,7 +197,7 @@ fn order_constraints_optimally(
 
     while !remaining.is_empty() {
         let best_idx = find_best_next_statement(
-            &statements,
+            statements,
             &remaining,
             &active_wildcards,
             ordered.len(),
@@ -849,7 +849,7 @@ mod tests {
         let original = &chain[1];
         assert_eq!(original.name.name, "complex");
         let last_stmt = original.statements.last().unwrap();
-        assert_eq!(last_stmt.predicate.name, "complex_1");
+        assert_eq!(last_stmt.pred_or_wc.identifier().name, "complex_1");
     }
 
     #[test]

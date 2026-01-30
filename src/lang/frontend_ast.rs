@@ -102,8 +102,8 @@ pub enum PredicateOrWildcard {
 impl PredicateOrWildcard {
     pub(crate) fn identifier(&self) -> &Identifier {
         match self {
-            PredicateOrWildcard::Predicate(id) => &id,
-            PredicateOrWildcard::Wildcard(id) => &id,
+            PredicateOrWildcard::Predicate(id) => id,
+            PredicateOrWildcard::Wildcard(id) => id,
         }
     }
 }
@@ -1119,7 +1119,10 @@ mod tests {
 
     fn clear_statement_spans(stmt: &mut StatementTmpl) {
         stmt.span = None;
-        stmt.predicate.span = None;
+        match &mut stmt.pred_or_wc {
+            PredicateOrWildcard::Predicate(id) => id.span = None,
+            PredicateOrWildcard::Wildcard(id) => id.span = None,
+        }
         for arg in &mut stmt.args {
             match arg {
                 StatementTmplArg::Literal(lit) => clear_literal_spans(lit),
@@ -1341,7 +1344,7 @@ REQUEST(
         // Check request structure
         if let DocumentItem::RequestDef(req) = &ast.items[1] {
             assert_eq!(req.statements.len(), 1);
-            assert_eq!(req.statements[0].predicate.name, "my_pred");
+            assert_eq!(req.statements[0].pred_or_wc.identifier().name, "my_pred");
             assert_eq!(req.statements[0].args.len(), 2);
         } else {
             panic!("Expected RequestDef");
