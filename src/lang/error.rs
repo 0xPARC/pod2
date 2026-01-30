@@ -88,6 +88,9 @@ pub enum ValidationError {
         first_span: Option<Span>,
         second_span: Option<Span>,
     },
+
+    #[error("Wildcard '{name}' collides with a predicate name")]
+    WildcardPredicateNameCollision { name: String },
 }
 
 /// Lowering errors from frontend AST lowering to middleware
