@@ -15,7 +15,6 @@
 //! - **Constraint 4 (POD Existence)**: If any statement is proved in POD p, then p is used.
 //! - **Constraint 5 (Dependencies)**: If statement S depends on D and S is proved in POD p,
 //!   then D must be available: either proved locally in p, or public in some earlier POD.
-//! - **Constraint 5b (Copy Tracking)**: Track when dependencies need CopyStatement.
 //! - **Constraint 6 (Resource Limits)**: Per-POD limits on statements, public slots, merkle
 //!   proofs, custom predicates, batches, etc.
 //! - **Constraint 7 (Batch Cardinality)**: Limit distinct custom predicate batches per POD.
@@ -251,32 +250,6 @@ fn try_solve_with_pods(
         .map(|p| (0..p).map(|_| vars.add(variable().binary())).collect())
         .collect();
 
-    // Collect all statement indices that are internal dependencies.
-    // These are statements that other statements depend on, and may need to be copied
-    // into PODs where the dependent statement is proved but the dependency is not.
-    let internal_deps: BTreeSet<usize> = input
-        .deps
-        .statement_deps
-        .iter()
-        .flat_map(|deps| deps.iter())
-        .filter_map(|dep| match dep {
-            StatementSource::Internal(d) => Some(*d),
-            StatementSource::External(_) => None,
-        })
-        .collect();
-
-    // needs_copy[d][p] - dependency d needs to be copied into POD p
-    // This is 1 when: (some statement s in p depends on d) AND (d is not proved in p)
-    // We only create variables for dependencies that are actually used.
-    let dep_indices: Vec<usize> = internal_deps.iter().copied().collect();
-    let needs_copy: Vec<Vec<Variable>> = (0..dep_indices.len())
-        .map(|_| {
-            (0..target_pods)
-                .map(|_| vars.add(variable().binary()))
-                .collect()
-        })
-        .collect();
-
     // Collect all external POD hashes that statements depend on.
     // These are user-provided input PODs referenced by statements.
     use crate::middleware::Hash;
@@ -321,9 +294,11 @@ fn try_solve_with_pods(
         })
         .collect();
 
-    // Objective: minimize number of PODs used
-    let objective: Expression = pod_used.iter().sum();
-    let mut model = vars.minimise(objective).using(default_solver);
+    // No optimization objective needed - we use an incremental approach that tries
+    // min_pods first and increments until feasible. Combined with symmetry breaking
+    // (Constraint 9), this finds the minimum number of PODs without needing MILP
+    // optimization. A constant objective makes the solver find any feasible solution.
+    let mut model = vars.minimise(0_i32).using(default_solver);
 
     // Constraint 1: Each statement must be proved at least once
     for s in 0..n {
@@ -388,30 +363,6 @@ fn try_solve_with_pods(
         }
     }
 
-    // Constraint 5b: needs_copy tracking for cross-POD dependencies
-    // needs_copy[d][p] = 1 when: some statement s proved in p depends on d, AND d is not proved in p.
-    // This tracks CopyStatements that will be added during build_single_pod.
-    for (di, &d) in dep_indices.iter().enumerate() {
-        for p in 0..target_pods {
-            // needs_copy[d][p] >= prove[s][p] - prove[d][p] for each s that depends on d
-            // If s is in p (prove[s][p]=1) and d is not in p (prove[d][p]=0), then needs_copy >= 1
-            for s in 0..n {
-                let depends_on_d = input.deps.statement_deps[s]
-                    .iter()
-                    .any(|dep| matches!(dep, StatementSource::Internal(dep_d) if *dep_d == d));
-                if depends_on_d {
-                    model.add_constraint(constraint!(
-                        needs_copy[di][p] >= prove[s][p] - prove[d][p]
-                    ));
-                }
-            }
-
-            // needs_copy[d][p] <= 1 - prove[d][p]
-            // If d is proved locally (prove[d][p]=1), no copy needed (needs_copy <= 0)
-            model.add_constraint(constraint!(needs_copy[di][p] <= 1 - prove[d][p]));
-        }
-    }
-
     // Constraint 6: Resource limits per POD
     //
     // 6a-pre: Content group tracking for statement deduplication
@@ -430,17 +381,16 @@ fn try_solve_with_pods(
     }
 
     for p in 0..target_pods {
-        // 6a: Unique statement count (unique content groups + CopyStatements + anchored key Contains)
+        // 6a: Unique statement count (unique content groups + anchored key Contains)
         // Statements with identical content share a slot, so we count content groups, not indices.
-        // CopyStatements and anchored key Contains also use statement slots.
+        // Anchored key Contains statements are auto-inserted by MainPodBuilder when needed.
         // The total must not exceed max_priv_statements (= max_statements - max_public_statements).
         let unique_stmt_sum: Expression = (0..num_groups).map(|g| content_group_used[g][p]).sum();
-        let copy_sum: Expression = (0..dep_indices.len()).map(|di| needs_copy[di][p]).sum();
         let anchored_key_sum: Expression = (0..input.all_anchored_keys.len())
             .map(|ak| anchored_key_used[ak][p])
             .sum();
         model.add_constraint(constraint!(
-            unique_stmt_sum + copy_sum + anchored_key_sum
+            unique_stmt_sum + anchored_key_sum
                 <= (input.params.max_priv_statements() as f64) * pod_used[p]
         ));
 
