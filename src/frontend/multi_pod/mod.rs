@@ -178,9 +178,8 @@ pub struct MultiPodBuilder {
     /// Indices of statements that should be public in output PODs.
     /// Uses Vec since max_public_statements is small (≤8); indices are naturally sorted.
     output_public_indices: Vec<usize>,
-    /// Cached MainPodBuilder for incremental statement computation.
     /// Used during add_operation to validate statements with unlimited params.
-    cached_builder: Option<MainPodBuilder>,
+    builder: MainPodBuilder,
 }
 
 /// A solved multi-POD problem, ready to be proved.
@@ -355,26 +354,33 @@ impl MultiPodBuilder {
 
     /// Create a new MultiPodBuilder with custom options.
     pub fn new_with_options(params: &Params, vd_set: &VDSet, options: Options) -> Self {
+        let unlimited_params = Params {
+            max_statements: usize::MAX / 2,
+            max_public_statements: usize::MAX / 2,
+            max_input_pods: usize::MAX / 2,
+            max_input_pods_public_statements: usize::MAX / 2,
+            ..params.clone()
+        };
+        let builder = MainPodBuilder::new(&unlimited_params, vd_set);
         Self {
             params: params.clone(),
             vd_set: vd_set.clone(),
             options,
+            builder,
             input_pods: Vec::new(),
             statements: Vec::new(),
             operations: Vec::new(),
             output_public_indices: Vec::new(),
-            cached_builder: None,
         }
     }
 
     /// Add an external input POD.
-    pub fn add_pod(&mut self, pod: MainPod) {
-        // Keep cached_builder in sync if it exists
-        if let Some(ref mut builder) = self.cached_builder {
-            // Won't fail - cached_builder has unlimited params
-            let _ = builder.add_pod(pod.clone());
-        }
+    pub fn add_pod(&mut self, pod: MainPod) -> Result<()> {
+        self.builder
+            .add_pod(pod.clone())
+            .map_err(|e| Error::Frontend(e.to_string()))?;
         self.input_pods.push(pod);
+        Ok(())
     }
 
     /// Add a public operation (statement will be public in output).
@@ -399,22 +405,8 @@ impl MultiPodBuilder {
         //   struct MainPodBuilder<P: Borrow<MainPod> = MainPod>
         // Then MultiPodBuilder could use MainPodBuilder<&MainPod> to borrow instead of clone,
         // while existing code using MainPodBuilder (with the default) would be unaffected.
-        let builder = self.cached_builder.get_or_insert_with(|| {
-            let unlimited_params = Params {
-                max_statements: usize::MAX / 2,
-                max_public_statements: usize::MAX / 2,
-                max_input_pods: usize::MAX / 2,
-                max_input_pods_public_statements: usize::MAX / 2,
-                ..self.params.clone()
-            };
-            let mut b = MainPodBuilder::new(&unlimited_params, &self.vd_set);
-            for pod in &self.input_pods {
-                let _ = b.add_pod(pod.clone());
-            }
-            b
-        });
-
-        let stmt = builder
+        let stmt = self
+            .builder
             .op(false, vec![], op.clone())
             .map_err(|e| Error::Frontend(e.to_string()))?;
 
@@ -927,8 +919,8 @@ mod tests {
 
         // Create MultiPodBuilder and add both external PODs
         let mut multi_builder = MultiPodBuilder::new(&params, vd_set);
-        multi_builder.add_pod(ext_pod_a.clone());
-        multi_builder.add_pod(ext_pod_b.clone());
+        multi_builder.add_pod(ext_pod_a.clone())?;
+        multi_builder.add_pod(ext_pod_b.clone())?;
 
         // Add private operations that reference different external PODs.
         // These will force multiple PODs due to private statement limits.
@@ -1110,9 +1102,9 @@ mod tests {
 
         // Create MultiPodBuilder and add all 3 external PODs
         let mut multi_builder = MultiPodBuilder::new(&params, vd_set);
-        multi_builder.add_pod(ext_pod_a);
-        multi_builder.add_pod(ext_pod_b);
-        multi_builder.add_pod(ext_pod_c);
+        multi_builder.add_pod(ext_pod_a)?;
+        multi_builder.add_pod(ext_pod_b)?;
+        multi_builder.add_pod(ext_pod_c)?;
 
         // Add public operations that each depend on a different external POD
         // All 3 must be public in POD 0, requiring 3 external inputs > max_input_pods
@@ -1296,7 +1288,7 @@ mod tests {
             .expect("ext_pod should have a public statement");
 
         let mut builder = MultiPodBuilder::new(&params, vd_set);
-        builder.add_pod(ext_pod);
+        builder.add_pod(ext_pod)?;
 
         // Output POD: public Contains statements
         let dict0 = dict!({"x" => 100});
