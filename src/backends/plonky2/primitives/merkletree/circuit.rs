@@ -14,14 +14,15 @@ use itertools::zip_eq;
 use plonky2::{
     field::types::Field,
     hash::{
-        hash_types::{HashOut, HashOutTarget},
+        hash_types::{HashOut, HashOutTarget, NUM_HASH_OUT_ELTS},
+        hashing::PlonkyPermutation,
         poseidon::PoseidonHash,
     },
     iop::{
         target::{BoolTarget, Target},
         witness::{PartialWitness, WitnessWrite},
     },
-    plonk::circuit_builder::CircuitBuilder,
+    plonk::{circuit_builder::CircuitBuilder, config::AlgebraicHasher},
 };
 use serde::{Deserialize, Serialize};
 
@@ -349,7 +350,7 @@ fn compute_root_from_leaf(
             .map(|j| builder.select(path[i], h.elements[j], sibling.elements[j]))
             .collect();
         let new_h =
-            builder.hash_n_to_hash_no_pad::<PoseidonHash>([input_1, input_2, vec![two]].concat());
+            hash_with_flag_target::<PoseidonHash>(builder, two, [input_1, input_2].concat());
 
         let h_targ: Vec<Target> = (0..HASH_SIZE)
             .map(|j| builder.select(*selector, new_h.elements[j], h.elements[j]))
@@ -401,9 +402,47 @@ fn kv_hash_target(
         .iter()
         .chain(value.elements.iter())
         .cloned()
-        .chain(iter::once(builder.one()))
         .collect();
-    builder.hash_n_to_hash_no_pad::<PoseidonHash>(inputs)
+    let one = builder.one();
+    hash_with_flag_target::<PoseidonHash>(builder, one, inputs)
+}
+
+/// Circuit matching the `merkletree::hash_with_flag` function. Variation of
+/// Poseidon hash which takes as input 1 Goldilock element as a flag, and 8
+/// Goldilocks elements as inputs to the hash. Performs the hashing in a single
+/// gate.
+/// The function is a fork of
+/// [hash_n_to_m_no_pad](https://github.com/0xPolygonZero/plonky2/tree/5d9da5a65bbcba2c66eb29c035090eb2e9ccb05f/plonky2/src/hash/hashing.rs#L118)
+/// from plonky2.
+fn hash_with_flag_target<H: AlgebraicHasher<F>>(
+    builder: &mut CircuitBuilder<F, D>,
+    flag: Target,
+    inputs: Vec<Target>,
+) -> HashOutTarget {
+    assert_eq!(inputs.len(), H::AlgebraicPermutation::RATE);
+
+    let mut state = H::AlgebraicPermutation::new(core::iter::repeat(flag));
+
+    // Absorb all input chunks.
+    for input_chunk in inputs.chunks(H::AlgebraicPermutation::RATE) {
+        // Overwrite the first r elements with the inputs. This differs from a standard sponge,
+        // where we would xor or add in the inputs. This is a well-known variant, though,
+        // sometimes called "overwrite mode".
+        state.set_from_slice(input_chunk, 0);
+        state = builder.permute::<H>(state);
+    }
+
+    // Squeeze until we have the desired number of outputs.
+    let mut outputs = Vec::with_capacity(NUM_HASH_OUT_ELTS);
+    loop {
+        for &s in state.squeeze() {
+            outputs.push(s);
+            if outputs.len() == NUM_HASH_OUT_ELTS {
+                return HashOutTarget::from_vec(outputs);
+            }
+        }
+        state = builder.permute::<H>(state);
+    }
 }
 
 /// Verifies that the merkletree state transition (from old_root to new_root)
