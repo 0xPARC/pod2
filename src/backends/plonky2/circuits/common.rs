@@ -691,38 +691,6 @@ impl CustomPredicateTarget {
     }
 }
 
-// /// This type is used to build the custom predicate table, which exposes the custom predicates with
-// /// normalized statement templates indexed by batch_id and custom_predicate_index.
-// #[derive(Clone, Serialize, Deserialize)]
-// pub struct CustomPredicateBatchTarget {
-//     pub predicates: Vec<CustomPredicateTarget>,
-// }
-//
-// impl CustomPredicateBatchTarget {
-//     pub fn id(&self, builder: &mut CircuitBuilder) -> HashOutTarget {
-//         let flattened: Vec<_> = self.predicates.iter().flat_map(|cp| cp.flatten()).collect();
-//         builder.hash_n_to_hash_no_pad::<PoseidonHash>(flattened)
-//     }
-//
-//     pub fn set_targets(
-//         &self,
-//         pw: &mut PartialWitness<F>,
-//         custom_predicate_batch: &CustomPredicateBatch,
-//     ) -> Result<()> {
-//         let pad_predicate = CustomPredicate::empty();
-//         for (i, predicate) in custom_predicate_batch
-//             .predicates()
-//             .iter()
-//             .chain(iter::repeat(&pad_predicate))
-//             .take(Params::max_custom_batch_size())
-//             .enumerate()
-//         {
-//             self.predicates[i].set_targets(pw, predicate)?;
-//         }
-//         Ok(())
-//     }
-// }
-
 /// Custom predicate structure that can be verified to belong to a batch id at a particular index
 #[derive(Clone, Serialize, Deserialize)]
 pub struct CustomPredicateInBatchTarget {
@@ -738,7 +706,7 @@ impl CustomPredicateInBatchTarget {
     /// self_predicate) and id.
     pub fn new_virtual(builder: &mut CircuitBuilder) -> CustomPredicateInBatchTarget {
         let index = builder.add_virtual_target();
-        let self_predicate = builder.add_virtual_custom_predicate(false);
+        let self_predicate = builder.add_virtual_custom_predicate(true);
         // Existence Merkle Tree proof of (index, hash(self_predicate)) -> id
         let mtp =
             MerkleClaimAndProofTarget::new_virtual(Params::max_depth_custom_batch_mt(), builder);

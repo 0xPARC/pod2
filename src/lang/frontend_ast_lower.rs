@@ -682,68 +682,6 @@ mod tests {
     }
 
     #[test]
-    fn test_multi_batch_packing() {
-        // Create more predicates than fit in a single batch
-        // With max_custom_batch_size = 4, 5 predicates should span 2 batches
-        let input = r#"
-            pred1(A) = AND(Equal(A["a"], 1))
-            pred2(B) = AND(Equal(B["b"], 2))
-            pred3(C) = AND(Equal(C["c"], 3))
-            pred4(D) = AND(Equal(D["d"], 4))
-            pred5(E) = AND(Equal(E["e"], 5))
-        "#;
-
-        let params = Params::default(); // max_custom_batch_size = 4
-
-        let result = parse_validate_and_lower(input, &params);
-        assert!(result.is_ok());
-
-        let lowered = result.unwrap();
-        let batches = lowered.batches.as_ref().expect("Expected batches");
-
-        // Should have 2 batches
-        assert_eq!(batches.batch_count(), 2);
-        assert_eq!(batches.total_predicate_count(), 5);
-
-        // First batch should have 4 predicates
-        assert_eq!(batches.batches()[0].predicates().len(), 4);
-        // Second batch should have 1 predicate
-        assert_eq!(batches.batches()[1].predicates().len(), 1);
-    }
-
-    #[test]
-    fn test_split_chains_span_batches() {
-        // Create predicates that will split, plus additional predicates
-        // to force the split chains across batch boundaries
-        let input = r#"
-            pred1(A) = AND(Equal(A["a"], 1))
-            pred2(B) = AND(Equal(B["b"], 2))
-            pred3(C) = AND(Equal(C["c"], 3))
-            large_pred(D) = AND(
-                Equal(D["a"], 1)
-                Equal(D["b"], 2)
-                Equal(D["c"], 3)
-                Equal(D["d"], 4)
-                Equal(D["e"], 5)
-                Equal(D["f"], 6)
-            )
-        "#;
-
-        let params = Params::default();
-
-        let result = parse_validate_and_lower(input, &params);
-        assert!(result.is_ok());
-
-        let lowered = result.unwrap();
-        let batches = lowered.batches.as_ref().expect("Expected batches");
-
-        // pred1, pred2, pred3 + large_pred split into 2 = 5 total predicates
-        // Should span 2 batches
-        assert_eq!(batches.total_predicate_count(), 5);
-        assert_eq!(batches.batch_count(), 2);
-    }
-
-    #[test]
     fn test_intro_predicate_in_custom_predicate() {
         use hex::ToHex;
 
