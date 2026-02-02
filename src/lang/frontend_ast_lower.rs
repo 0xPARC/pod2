@@ -375,7 +375,9 @@ impl<'a> Lowerer<'a> {
 
         let predicate = match desugared.pred_or_wc {
             PredicateOrWildcard::Predicate(p) => p,
-            _ => unreachable!(),
+            PredicateOrWildcard::Wildcard(_) => {
+                unreachable!("wildcard predicates aren't considered in requests")
+            }
         };
         Ok(MWStatementTmpl {
             pred_or_wc: middleware::PredicateOrWildcard::Predicate(predicate),
